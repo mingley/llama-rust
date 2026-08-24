@@ -1,0 +1,8 @@
+[package]
+name = "q8-gemv"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "q8_gemv"
+path = "q8_gemv.rs"
