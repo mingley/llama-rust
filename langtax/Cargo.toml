@@ -3,6 +3,13 @@ name = "q8-gemv"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "q8_gemv"
+path = "src/lib.rs"
+
 [[bin]]
 name = "q8_gemv"
-path = "q8_gemv.rs"
+path = "src/main.rs"
+
+[dependencies]
+rayon = "1.10"
