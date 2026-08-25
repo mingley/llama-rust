@@ -12,6 +12,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo build --release --bin gguf_gemv
 ./target/release/gguf_gemv write-tiny tiny-llama.gguf
 ./target/release/gguf_gemv infer tiny-llama.gguf
+./target/release/gguf_gemv write-tiny-qwen2 tiny-qwen2.gguf
+./target/release/gguf_gemv infer tiny-qwen2.gguf
 ./target/release/gguf_gemv write tiny.gguf
 ./target/release/gguf_gemv gemv tiny.gguf
 ```
@@ -54,3 +56,12 @@ y0=78.165176
 ```
 
 min(Metal gemv/s) / min(Rust gemv/s) = 6735.37 / 1336.81 = **5.04**. Metal: one 2-D dispatch (simdgroup K-split, 32 in-flight GEMVs), one commit/wait. C 1-thread on the same pack stays ~900 gemv/s (`langtax/q8_gemv.c`).
+
+## Linux testing (free)
+
+No paid VM required.
+
+- **GitHub Actions `ubuntu-latest`** on this public repo (`.github/workflows/ci.yml`): Linux `cargo test` / clippy on every push. You do not operate a machine.
+- **Persistent VM:** [Oracle Cloud Always Free](https://www.oracle.com/cloud/free/) Ampere A1 (aarch64) is the optional always-on Linux box if you want a shell. Same `cargo test --release --lib` there.
+
+This crate is `forbid(unsafe_code)` and lockfile-only, so those Linux jobs do not need llama.cpp, Metal, or crates.io SIMD packages.

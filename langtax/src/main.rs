@@ -8,8 +8,8 @@ use std::time::Instant;
 
 use llama_rust::{
     gemv_q4_k, gemv_q8_0, greedy_generate, load_gguf, pack_q4_k_block, pack_q8_0_block,
-    pack_q8_k_block, tiny_llama_gguf, write_gguf, write_gguf_with_kv, GgmlType, Kv, Llama,
-    TensorWrite, Tokenizer, QK8_0, QK_K,
+    pack_q8_k_block, tiny_llama_gguf, tiny_qwen2_gguf, write_gguf, write_gguf_with_kv, GgmlType,
+    Kv, Llama, TensorWrite, Tokenizer, QK8_0, QK_K,
 };
 
 fn y_checksum(y: &[f32]) -> u64 {
@@ -255,12 +255,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("wrote {path} bytes={}", bytes.len());
             Ok(())
         }
+        "write-tiny-qwen2" => {
+            let path = args.next().ok_or("write-tiny-qwen2 <path>")?;
+            let bytes = tiny_qwen2_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
         "infer" => {
             let path = args.next().ok_or("infer <path>")?;
             infer_file(Path::new(&path))
         }
         other => Err(format!(
-            "usage: gguf_gemv write|gemv|write-q4k|gemv-q4k|write-tiny|infer <path> (got {other})"
+            "usage: gguf_gemv write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|infer <path> (got {other})"
         )
         .into()),
     }

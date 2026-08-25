@@ -9,7 +9,7 @@ mod pool;
 mod quant;
 mod tok;
 
-pub use decode::{greedy_generate, tiny_llama_gguf, KvCache, Llama, LlamaError};
+pub use decode::{greedy_generate, tiny_llama_gguf, tiny_qwen2_gguf, KvCache, Llama, LlamaError};
 pub use gguf::{
     load_gguf, write_gguf, write_gguf_with_kv, GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite,
     GGUF_DEFAULT_ALIGNMENT,

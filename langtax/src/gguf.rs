@@ -287,6 +287,25 @@ pub fn write_gguf(tensors: &[TensorWrite]) -> Vec<u8> {
 
 /// Serialize `kv` then `tensors` as a GGUF v3 blob.
 pub fn write_gguf_with_kv(kv: &[(String, Kv)], tensors: &[TensorWrite]) -> Vec<u8> {
+    write_gguf_kv_tensors(kv, tensors, None)
+}
+
+/// Like [`write_gguf_with_kv`], but each tensor’s ggml_type integer is taken
+/// from `type_ids` (same length as `tensors`). Used to emit unsupported types.
+#[cfg(test)]
+pub(crate) fn write_gguf_with_type_ids(
+    kv: &[(String, Kv)],
+    tensors: &[TensorWrite],
+    type_ids: &[i32],
+) -> Vec<u8> {
+    write_gguf_kv_tensors(kv, tensors, Some(type_ids))
+}
+
+fn write_gguf_kv_tensors(
+    kv: &[(String, Kv)],
+    tensors: &[TensorWrite],
+    type_ids: Option<&[i32]>,
+) -> Vec<u8> {
     let alignment = GGUF_DEFAULT_ALIGNMENT;
     let mut offsets = Vec::with_capacity(tensors.len());
     let mut off = 0usize;
@@ -308,13 +327,16 @@ pub fn write_gguf_with_kv(kv: &[(String, Kv)], tensors: &[TensorWrite]) -> Vec<u
         put_kv_payload(&mut buf, val);
     }
 
-    for (t, offset) in tensors.iter().zip(offsets.iter()) {
+    for (i, (t, offset)) in tensors.iter().zip(offsets.iter()).enumerate() {
         put_string(&mut buf, &t.name);
         put_u32(&mut buf, u32::try_from(t.shape.len()).unwrap_or(0));
         for &d in &t.shape {
             put_i64(&mut buf, i64::try_from(d).unwrap_or(0));
         }
-        put_i32(&mut buf, t.ty.to_i32());
+        let type_id = type_ids
+            .and_then(|ids| ids.get(i).copied())
+            .unwrap_or_else(|| t.ty.to_i32());
+        put_i32(&mut buf, type_id);
         put_u64(&mut buf, *offset);
     }
 
@@ -1009,5 +1031,30 @@ mod tests {
         assert_eq!(g.tensor("w_q6k").unwrap().data.len(), Q6_K_BLOCK);
         assert_eq!(g.tensor("w_q6k").unwrap().data, q6.to_vec());
         assert_eq!(g.tensor("w_q4k").unwrap().data, q4.to_vec());
+    }
+
+    #[test]
+    fn load_unsupported_ggml_type_error_includes_type_id() {
+        // ggml Q5_K is 10; not a shipped decode dtype.
+        const Q5_K: i32 = 10;
+        let bytes = write_gguf_with_type_ids(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.name".into(), Kv::String("bad-type".into())),
+            ],
+            &[TensorWrite {
+                name: "w".into(),
+                ty: GgmlType::F32,
+                shape: vec![1],
+                data: vec![0, 0, 0, 0],
+            }],
+            &[Q5_K],
+        );
+        let err = load_gguf(&bytes).expect_err("unsupported type");
+        let msg = err.to_string();
+        assert!(
+            msg.contains(&Q5_K.to_string()),
+            "error should include type id {Q5_K}: {msg}"
+        );
     }
 }
