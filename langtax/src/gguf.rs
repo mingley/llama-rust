@@ -286,7 +286,7 @@ mod tests {
     use super::*;
     use crate::fp16::load_f16_le;
     use crate::quant::{
-        gemv_q4_0, gemv_q8_0, pack_q4_0_block, pack_q8_0_block, Q4_0_BLOCK, Q8_0_BLOCK, QK4_0,
+        gemv_q4_0, gemv_q8_0, pack_q4_0_from_i4, pack_q8_0_block, Q4_0_BLOCK, Q8_0_BLOCK, QK4_0,
         QK8_0,
     };
 
@@ -310,26 +310,42 @@ mod tests {
         sum
     }
 
-    fn independent_q4_dot(w: &[u8], x: &[u8]) -> f32 {
+    /// ggml `dequantize_row_q4_0`: lo -> y[j], hi -> y[j+16], then f32 dot.
+    fn dequant_q4_0_row(w: &[u8]) -> Vec<f32> {
         let nblocks = w.len() / Q4_0_BLOCK;
-        assert_eq!(x.len(), nblocks * Q8_0_BLOCK);
-        let mut sum = 0.0f32;
+        let mut y = vec![0.0f32; nblocks * QK4_0];
         for b in 0..nblocks {
             let wb = &w[b * Q4_0_BLOCK..(b + 1) * Q4_0_BLOCK];
-            let xb = &x[b * Q8_0_BLOCK..(b + 1) * Q8_0_BLOCK];
-            let dw = load_f16_le(wb);
-            let dx = load_f16_le(xb);
-            let mut acc = 0i32;
-            for i in 0..(QK4_0 / 2) {
-                let packed = wb[2 + i];
+            let d = load_f16_le(wb);
+            for j in 0..(QK4_0 / 2) {
+                let packed = wb[2 + j];
                 let lo = i32::from(packed & 0x0f) - 8;
                 let hi = i32::from(packed >> 4) - 8;
-                acc += lo * (xb[2 + 2 * i] as i8) as i32;
-                acc += hi * (xb[2 + 2 * i + 1] as i8) as i32;
+                y[b * QK4_0 + j] = lo as f32 * d;
+                y[b * QK4_0 + j + 16] = hi as f32 * d;
             }
-            sum += acc as f32 * (dw * dx);
         }
-        sum
+        y
+    }
+
+    fn dequant_q8_0_row(x: &[u8]) -> Vec<f32> {
+        let nblocks = x.len() / Q8_0_BLOCK;
+        let mut y = vec![0.0f32; nblocks * QK8_0];
+        for b in 0..nblocks {
+            let xb = &x[b * Q8_0_BLOCK..(b + 1) * Q8_0_BLOCK];
+            let d = load_f16_le(xb);
+            for i in 0..QK8_0 {
+                y[b * QK8_0 + i] = (xb[2 + i] as i8) as f32 * d;
+            }
+        }
+        y
+    }
+
+    fn independent_q4_dot(w: &[u8], x: &[u8]) -> f32 {
+        let wy = dequant_q4_0_row(w);
+        let xy = dequant_q8_0_row(x);
+        assert_eq!(wy.len(), xy.len());
+        wy.iter().zip(xy.iter()).map(|(a, b)| a * b).sum()
     }
 
     #[test]
@@ -357,11 +373,11 @@ mod tests {
         }
         for r in 0..n_rows {
             for b in 0..(n_cols / QK4_0) {
-                let mut qs = [0u8; QK4_0 / 2];
-                for (i, q) in qs.iter_mut().enumerate() {
-                    *q = ((r * 3 + b + i) % 256) as u8;
+                let mut v = [0i8; QK4_0];
+                for (i, q) in v.iter_mut().enumerate() {
+                    *q = ((r * 3 + b + i) % 15) as i8 - 7;
                 }
-                w4.extend_from_slice(&pack_q4_0_block(0.07 + r as f32 * 0.01, &qs));
+                w4.extend_from_slice(&pack_q4_0_from_i4(0.07 + r as f32 * 0.01, &v));
             }
         }
 
@@ -413,5 +429,44 @@ mod tests {
             let rel = (yv - expected).abs() / (1.0 + expected.abs());
             assert!(rel < 1e-5, "q4 row {r}: {yv} vs {expected}");
         }
+    }
+
+    /// If GEMV interleaved nibbles with x[2j]/x[2j+1], this is 3*dw*dx not 11*dw*dx.
+    #[test]
+    fn q4_0_lo_hi_map_to_elem_j_and_j16() {
+        let mut v = [0i8; QK4_0];
+        v[0] = 1;
+        v[16] = 2;
+        let w = pack_q4_0_from_i4(1.0, &v);
+        let mut xq = [0i8; QK8_0];
+        xq[0] = 3;
+        xq[16] = 4;
+        let x = pack_q8_0_block(1.0, &xq);
+        let bytes = write_gguf(&[
+            TensorWrite {
+                name: "w_q4".into(),
+                ty: GgmlType::Q4_0,
+                shape: vec![32, 1],
+                data: w.to_vec(),
+            },
+            TensorWrite {
+                name: "x_q8".into(),
+                ty: GgmlType::Q8_0,
+                shape: vec![32],
+                data: x.to_vec(),
+            },
+        ]);
+        let g = load_gguf(&bytes).expect("load");
+        let mut y = [0.0f32];
+        gemv_q4_0(
+            32,
+            &g.tensor("w_q4").unwrap().data,
+            &g.tensor("x_q8").unwrap().data,
+            &mut y,
+        );
+        let expected = independent_q4_dot(&w, &x);
+        // 1*3 + 2*4 = 11 at scale 1 (fp16 1.0 is exact).
+        assert!((expected - 11.0).abs() < 1e-5, "oracle {expected}");
+        assert!((y[0] - 11.0).abs() < 1e-5, "gemv {}", y[0]);
     }
 }

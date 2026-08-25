@@ -48,6 +48,18 @@ pub fn pack_q4_0_block(scale: f32, qs: &[u8; QK4_0 / 2]) -> [u8; Q4_0_BLOCK] {
     out
 }
 
+/// Pack 32 signed 4-bit values in GGUF/ggml order: `v[j]` in low nibble of
+/// `qs[j]`, `v[j+16]` in high nibble (`dequantize_row_q4_0`).
+pub fn pack_q4_0_from_i4(scale: f32, v: &[i8; QK4_0]) -> [u8; Q4_0_BLOCK] {
+    let mut qs = [0u8; QK4_0 / 2];
+    for j in 0..(QK4_0 / 2) {
+        let lo = ((i32::from(v[j]) + 8) as u8) & 0x0f;
+        let hi = ((i32::from(v[j + 16]) + 8) as u8) & 0x0f;
+        qs[j] = lo | (hi << 4);
+    }
+    pack_q4_0_block(scale, &qs)
+}
+
 /// y[m] = W[m, n_cols] x[n_cols], W and x as GGUF Q8_0 block streams.
 pub fn gemv_q8_0(n_cols: usize, w: &[u8], x: &[u8], y: &mut [f32]) {
     let rb = q8_0_row_bytes(n_cols);
@@ -107,12 +119,12 @@ fn vec_dot_q4_row(row: &[u8], x: &[u8]) -> f32 {
         let dw = load_f16_le(wb);
         let dx = load_f16_le(xb);
         let mut acc = 0i32;
-        for i in 0..(QK4_0 / 2) {
-            let packed = wb[2 + i];
+        for j in 0..(QK4_0 / 2) {
+            let packed = wb[2 + j];
             let lo = i32::from(packed & 0x0f) - 8;
             let hi = i32::from(packed >> 4) - 8;
-            acc += lo * (xb[2 + 2 * i] as i8) as i32;
-            acc += hi * (xb[2 + 2 * i + 1] as i8) as i32;
+            acc += lo * (xb[2 + j] as i8) as i32;
+            acc += hi * (xb[2 + j + 16] as i8) as i32;
         }
         sum += acc as f32 * (dw * dx);
     }
