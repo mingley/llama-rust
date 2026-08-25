@@ -44,7 +44,7 @@ fn main() {
     let sec = t0.elapsed().as_secs_f64();
     let wbytes = (niter * m * nb * std::mem::size_of::<BlockQ80>()) as f64;
     let bytes = wbytes + (niter * m * nb * std::mem::size_of::<BlockQ80>()) as f64;
-    println!("lang=Rust kernel=q8_0_neon M={m} K={k} niter={niter}");
+    println!("lang=Rust kernel=q8_0_safe M={m} K={k} niter={niter}");
     println!("time_s={sec:.6} gemv/s={:.2}", niter as f64 / sec);
     println!(
         "weight_GiB/s={:.2}  (W+x GiB/s={:.2})",

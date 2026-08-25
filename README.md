@@ -44,12 +44,12 @@ RUSTFLAGS='-C target-cpu=native' cargo build --release --manifest-path langtax/C
 | run | gemv/s | vs C pre |
 |---|---:|---:|
 | **C pre** `lang=C` clang `-O3 -mcpu=native` | **3430.59** | 1.00 |
-| **Rust post 1** `lang=Rust` 8-thread NEON | **13234.08** | **3.86x** |
-| **Rust post 2** (consecutive process) | **17457.72** | **5.09x** |
+| **Rust post 1** `lang=Rust kernel=q8_0_safe` | **9377.75** | **2.73x** |
+| **Rust post 2** (consecutive process) | **11051.63** | **3.22x** |
 
-Both consecutive Rust launches are ≥2× the live C pre. Rust `gemv_q8_0` (what the CLI times) is an 8-worker persistent rayon pool over row chunks, 2-row NEON SDOT per worker. `cargo test --release --lib gemv_q8_0_matches_independent_scalar` drives that same function against an independent scalar pack-dot.
+Both consecutive Rust launches are ≥2× the frozen C pre. `gemv_q8_0` is **fully safe** (`#![forbid(unsafe_code)]`): slice/index loops + a 10-worker persistent rayon pool. LLVM emits `sdot` from the constant-32 i8 dots — no `std::arch`, no `unsafe` in this crate. `cargo test --release --lib gemv_q8_0_matches_independent_scalar` drives that same function against an independent scalar pack-dot.
 
-Single-thread identical-ISA kernels were ~1.00× (C 3000–3061 vs Rust 3065–3108). The ≥2× is extra P-cores, not codegen magic. Software-fp16 inner loop was 0.35× — kernel fidelity still matters.
+Single-thread identical-ISA kernels were ~1.00× (C 3000–3061 vs Rust 3065–3108). The ≥2× is extra P-cores, not language. Software-fp16 inner loop was 0.35× — kernel fidelity still matters.
 
 ## If you wrote llama.cpp in Rust
 

@@ -1,15 +1,17 @@
 //! Packed Q8_0 GEMV. The timed CLI and the correctness test both call [`gemv_q8_0`].
+//!
+//! No `unsafe` in this crate. LLVM emits NEON SDOT from the constant-32 i8
+//! loops; the ≥2× vs 1-thread C is the 10-worker pool.
 
-#![allow(clippy::needless_range_loop)]
+#![forbid(unsafe_code)]
 
-use std::arch::aarch64::*;
 use std::sync::LazyLock;
 
 use rayon::prelude::*;
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
-/// Eight workers: P-core count on this M4 Pro without dragging in E-cores.
-const GEMV_THREADS: usize = 8;
+/// Ten workers: M4 Pro P-cores. E-cores stay unused.
+const GEMV_THREADS: usize = 10;
 
 static POOL: LazyLock<ThreadPool> = LazyLock::new(|| {
     ThreadPoolBuilder::new()
@@ -55,159 +57,93 @@ pub fn gemv_q8_0(k: usize, w: &[BlockQ80], x: &[BlockQ80], y: &mut [f32]) {
         y.par_chunks_mut(chunk_rows)
             .zip(w.par_chunks(chunk_rows * nb))
             .for_each(|(y_part, w_part)| {
-                gemv_serial(k, w_part, x, y_part);
+                gemv_serial(w_part, x, y_part);
             });
     });
 }
 
-fn gemv_serial(k: usize, w: &[BlockQ80], x: &[BlockQ80], y: &mut [f32]) {
-    let nb = k / QK8_0;
-    let m = y.len();
-    let mut r = 0usize;
-    while r + 1 < m {
-        unsafe {
-            let (y0, y1) = vec_dot_q8_0_pair(
-                k,
-                w.as_ptr().add(r * nb),
-                w.as_ptr().add((r + 1) * nb),
-                x.as_ptr(),
-            );
-            y[r] = y0;
-            y[r + 1] = y1;
-        }
-        r += 2;
+fn gemv_serial(w: &[BlockQ80], x: &[BlockQ80], y: &mut [f32]) {
+    let nb = x.len();
+    let mut w_off = 0usize;
+    let mut rows = y;
+    while rows.len() >= 2 {
+        let (pair, rest) = rows.split_at_mut(2);
+        let w0 = &w[w_off..w_off + nb];
+        let w1 = &w[w_off + nb..w_off + 2 * nb];
+        let (a, b) = vec_dot_pair(w0, w1, x);
+        pair[0] = a;
+        pair[1] = b;
+        w_off += 2 * nb;
+        rows = rest;
     }
-    if r < m {
-        unsafe {
-            y[r] = vec_dot_q8_0_neon(k, w.as_ptr().add(r * nb), x.as_ptr());
-        }
+    if let Some(last) = rows.first_mut() {
+        *last = vec_dot_row(&w[w_off..], x);
     }
 }
 
-#[target_feature(enable = "neon,dotprod")]
-unsafe fn vec_dot_q8_0_neon(n: usize, x: *const BlockQ80, y: *const BlockQ80) -> f32 {
-    let nb = n / QK8_0;
-    let mut ib = 0usize;
-    let mut sumv0 = vdupq_n_f32(0.0);
-    let mut sumv1 = vdupq_n_f32(0.0);
-
-    while ib + 1 < nb {
-        let x0 = &*x.add(ib);
-        let x1 = &*x.add(ib + 1);
-        let y0 = &*y.add(ib);
-        let y1 = &*y.add(ib + 1);
-
-        let x0_0 = vld1q_s8(x0.qs.as_ptr());
-        let x0_1 = vld1q_s8(x0.qs.as_ptr().add(16));
-        let x1_0 = vld1q_s8(x1.qs.as_ptr());
-        let x1_1 = vld1q_s8(x1.qs.as_ptr().add(16));
-        let y0_0 = vld1q_s8(y0.qs.as_ptr());
-        let y0_1 = vld1q_s8(y0.qs.as_ptr().add(16));
-        let y1_0 = vld1q_s8(y1.qs.as_ptr());
-        let y1_1 = vld1q_s8(y1.qs.as_ptr().add(16));
-
-        let p0 = vaddq_s32(
-            vdotq_s32(vdupq_n_s32(0), x0_0, y0_0),
-            vdotq_s32(vdupq_n_s32(0), x0_1, y0_1),
-        );
-        let p1 = vaddq_s32(
-            vdotq_s32(vdupq_n_s32(0), x1_0, y1_0),
-            vdotq_s32(vdupq_n_s32(0), x1_1, y1_1),
-        );
-        sumv0 = vmlaq_n_f32(sumv0, vcvtq_f32_s32(p0), x0.d * y0.d);
-        sumv1 = vmlaq_n_f32(sumv1, vcvtq_f32_s32(p1), x1.d * y1.d);
-        ib += 2;
+#[inline(always)]
+fn dot32(a: &[i8; QK8_0], b: &[i8; QK8_0]) -> i32 {
+    // Constant trip count. With `-C target-cpu=native` LLVM emits SDOT.
+    let mut acc = 0i32;
+    for i in 0..QK8_0 {
+        acc += a[i] as i32 * b[i] as i32;
     }
-    let mut sumf = vaddvq_f32(sumv0) + vaddvq_f32(sumv1);
-    while ib < nb {
-        let xb = &*x.add(ib);
-        let yb = &*y.add(ib);
-        let mut sumi = 0i32;
-        for j in 0..QK8_0 {
-            sumi += xb.qs[j] as i32 * yb.qs[j] as i32;
-        }
-        sumf += sumi as f32 * (xb.d * yb.d);
-        ib += 1;
-    }
-    sumf
+    acc
 }
 
-/// Two W rows against one x. Shares the x loads.
-#[target_feature(enable = "neon,dotprod")]
-unsafe fn vec_dot_q8_0_pair(
-    n: usize,
-    w0: *const BlockQ80,
-    w1: *const BlockQ80,
-    x: *const BlockQ80,
-) -> (f32, f32) {
-    let nb = n / QK8_0;
-    let mut ib = 0usize;
-    let mut sum0a = vdupq_n_f32(0.0);
-    let mut sum0b = vdupq_n_f32(0.0);
-    let mut sum1a = vdupq_n_f32(0.0);
-    let mut sum1b = vdupq_n_f32(0.0);
-
-    while ib + 1 < nb {
-        let a0 = &*w0.add(ib);
-        let a1 = &*w0.add(ib + 1);
-        let b0 = &*w1.add(ib);
-        let b1 = &*w1.add(ib + 1);
-        let x0 = &*x.add(ib);
-        let x1 = &*x.add(ib + 1);
-
-        let x0_0 = vld1q_s8(x0.qs.as_ptr());
-        let x0_1 = vld1q_s8(x0.qs.as_ptr().add(16));
-        let x1_0 = vld1q_s8(x1.qs.as_ptr());
-        let x1_1 = vld1q_s8(x1.qs.as_ptr().add(16));
-
-        let a00 = vld1q_s8(a0.qs.as_ptr());
-        let a01 = vld1q_s8(a0.qs.as_ptr().add(16));
-        let a10 = vld1q_s8(a1.qs.as_ptr());
-        let a11 = vld1q_s8(a1.qs.as_ptr().add(16));
-        let b00 = vld1q_s8(b0.qs.as_ptr());
-        let b01 = vld1q_s8(b0.qs.as_ptr().add(16));
-        let b10 = vld1q_s8(b1.qs.as_ptr());
-        let b11 = vld1q_s8(b1.qs.as_ptr().add(16));
-
-        let p_a0 = vaddq_s32(
-            vdotq_s32(vdupq_n_s32(0), a00, x0_0),
-            vdotq_s32(vdupq_n_s32(0), a01, x0_1),
-        );
-        let p_a1 = vaddq_s32(
-            vdotq_s32(vdupq_n_s32(0), a10, x1_0),
-            vdotq_s32(vdupq_n_s32(0), a11, x1_1),
-        );
-        let p_b0 = vaddq_s32(
-            vdotq_s32(vdupq_n_s32(0), b00, x0_0),
-            vdotq_s32(vdupq_n_s32(0), b01, x0_1),
-        );
-        let p_b1 = vaddq_s32(
-            vdotq_s32(vdupq_n_s32(0), b10, x1_0),
-            vdotq_s32(vdupq_n_s32(0), b11, x1_1),
-        );
-
-        sum0a = vmlaq_n_f32(sum0a, vcvtq_f32_s32(p_a0), a0.d * x0.d);
-        sum0b = vmlaq_n_f32(sum0b, vcvtq_f32_s32(p_a1), a1.d * x1.d);
-        sum1a = vmlaq_n_f32(sum1a, vcvtq_f32_s32(p_b0), b0.d * x0.d);
-        sum1b = vmlaq_n_f32(sum1b, vcvtq_f32_s32(p_b1), b1.d * x1.d);
-        ib += 2;
+fn vec_dot_row(row: &[BlockQ80], x: &[BlockQ80]) -> f32 {
+    let n = x.len();
+    let mut i = 0usize;
+    let mut acc0 = 0.0f32;
+    let mut acc1 = 0.0f32;
+    while i + 1 < n {
+        let a0 = &row[i];
+        let a1 = &row[i + 1];
+        let x0 = &x[i];
+        let x1 = &x[i + 1];
+        acc0 += dot32(&a0.qs, &x0.qs) as f32 * (a0.d * x0.d);
+        acc1 += dot32(&a1.qs, &x1.qs) as f32 * (a1.d * x1.d);
+        i += 2;
     }
-    let mut s0 = vaddvq_f32(sum0a) + vaddvq_f32(sum0b);
-    let mut s1 = vaddvq_f32(sum1a) + vaddvq_f32(sum1b);
-    while ib < nb {
-        let a = &*w0.add(ib);
-        let b = &*w1.add(ib);
-        let xv = &*x.add(ib);
-        let mut sa = 0i32;
-        let mut sb = 0i32;
-        for j in 0..QK8_0 {
-            let xq = xv.qs[j] as i32;
-            sa += a.qs[j] as i32 * xq;
-            sb += b.qs[j] as i32 * xq;
-        }
-        s0 += sa as f32 * (a.d * xv.d);
-        s1 += sb as f32 * (b.d * xv.d);
-        ib += 1;
+    let mut sum = acc0 + acc1;
+    while i < n {
+        let wb = &row[i];
+        let xb = &x[i];
+        sum += dot32(&wb.qs, &xb.qs) as f32 * (wb.d * xb.d);
+        i += 1;
+    }
+    sum
+}
+
+fn vec_dot_pair(w0: &[BlockQ80], w1: &[BlockQ80], x: &[BlockQ80]) -> (f32, f32) {
+    let n = x.len();
+    let mut i = 0usize;
+    let mut s0a = 0.0f32;
+    let mut s0b = 0.0f32;
+    let mut s1a = 0.0f32;
+    let mut s1b = 0.0f32;
+    while i + 1 < n {
+        let a0 = &w0[i];
+        let a1 = &w0[i + 1];
+        let b0 = &w1[i];
+        let b1 = &w1[i + 1];
+        let x0 = &x[i];
+        let x1 = &x[i + 1];
+        s0a += dot32(&a0.qs, &x0.qs) as f32 * (a0.d * x0.d);
+        s0b += dot32(&a1.qs, &x1.qs) as f32 * (a1.d * x1.d);
+        s1a += dot32(&b0.qs, &x0.qs) as f32 * (b0.d * x0.d);
+        s1b += dot32(&b1.qs, &x1.qs) as f32 * (b1.d * x1.d);
+        i += 2;
+    }
+    let mut s0 = s0a + s0b;
+    let mut s1 = s1a + s1b;
+    while i < n {
+        let a = &w0[i];
+        let b = &w1[i];
+        let xv = &x[i];
+        s0 += dot32(&a.qs, &xv.qs) as f32 * (a.d * xv.d);
+        s1 += dot32(&b.qs, &xv.qs) as f32 * (b.d * xv.d);
+        i += 1;
     }
     (s0, s1)
 }
