@@ -52,3 +52,5 @@ y_checksum=80e188057fa1eef0 y0=78.165176
 ```
 
 min(Rust gemv/s) / max(C gemv/s) = 4386.36 / 950.02 = **4.62**. C is `clang -O3 -mcpu=native` on `langtax/q8_gemv.c` (measurement binary, not linked into the crate). Rust is `--release` `-C target-cpu=native`.
+
+Owned Metal counterpart (also not linked): `langtax/q8_gemv.metal` + `q8_gemv_mtl.m`. Same GGUF 34-byte blocks, runtime-compiled on `Apple M4 Pro`. Naive one-thread-per-row: **1058 gemv/s**, y0=78.165176. Occupancy/simdgroup work is still open; the kernel is ours.
