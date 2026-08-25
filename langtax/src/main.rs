@@ -1,4 +1,4 @@
-//! Load a GGUF (or write a tiny one) and GEMV Q8_0 W × Q8_0 x.
+//! Load a GGUF (or write a tiny one) and GEMV Q8_0 or Q4_K.
 
 use std::env;
 use std::fs::File;
@@ -6,7 +6,10 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Instant;
 
-use llama_rust::{gemv_q8_0, load_gguf, pack_q8_0_block, write_gguf, GgmlType, TensorWrite, QK8_0};
+use llama_rust::{
+    gemv_q4_k, gemv_q8_0, load_gguf, pack_q4_k_block, pack_q8_0_block, pack_q8_k_block, write_gguf,
+    write_gguf_with_kv, GgmlType, Kv, TensorWrite, QK8_0, QK_K,
+};
 
 fn y_checksum(y: &[f32]) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
@@ -81,6 +84,70 @@ fn demo_gguf(n_cols: usize, n_rows: usize) -> Vec<u8> {
     ])
 }
 
+fn demo_q4k_gguf(n_cols: usize, n_rows: usize) -> Vec<u8> {
+    let mut w = Vec::new();
+    let mut x = Vec::new();
+    let mut seed = 1u64;
+    for _r in 0..n_rows {
+        for _b in 0..(n_cols / QK_K) {
+            let mut qs = [0u8; QK_K];
+            for q in &mut qs {
+                *q = u8::try_from(rnd_u32(&mut seed) % 16).unwrap_or(0);
+            }
+            let mut sc = [0u8; 8];
+            let mut mn = [0u8; 8];
+            for s in &mut sc {
+                *s = u8::try_from(1 + rnd_u32(&mut seed) % 8).unwrap_or(1);
+            }
+            for m in &mut mn {
+                *m = u8::try_from(rnd_u32(&mut seed) % 4).unwrap_or(0);
+            }
+            let extra = u16::try_from(rnd_u32(&mut seed) % 50).unwrap_or(0);
+            let d = 20.0 / 1000.0 + f32::from(extra) / 1000.0;
+            w.extend_from_slice(&pack_q4_k_block(d, 10.0 / 1000.0, &sc, &mn, &qs));
+        }
+    }
+    for _b in 0..(n_cols / QK_K) {
+        let mut qs = [0i8; QK_K];
+        for q in &mut qs {
+            *q = centered_i8(rnd_u32(&mut seed));
+        }
+        x.extend_from_slice(&pack_q8_k_block(1.0 / 127.0, &qs));
+    }
+    write_gguf_with_kv(
+        &[
+            ("general.alignment".into(), Kv::U32(32)),
+            ("general.name".into(), Kv::String("llama-rust".into())),
+            ("llama.ok".into(), Kv::Bool(true)),
+            ("llama.scale".into(), Kv::F32(1.5)),
+            (
+                "llama.ids".into(),
+                Kv::Array {
+                    elem: 4,
+                    items: vec![Kv::U32(1), Kv::U32(2)],
+                },
+            ),
+        ],
+        &[
+            TensorWrite {
+                name: "w_q4k".into(),
+                ty: GgmlType::Q4_K,
+                shape: vec![
+                    u64::try_from(n_cols).unwrap_or(0),
+                    u64::try_from(n_rows).unwrap_or(0),
+                ],
+                data: w,
+            },
+            TensorWrite {
+                name: "x_q8k".into(),
+                ty: GgmlType::Q8_K,
+                shape: vec![u64::try_from(n_cols).unwrap_or(0)],
+                data: x,
+            },
+        ],
+    )
+}
+
 fn gemv_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = read_path(path)?;
     let g = load_gguf(&bytes)?;
@@ -111,6 +178,36 @@ fn gemv_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn gemv_q4k_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = read_path(path)?;
+    let g = load_gguf(&bytes)?;
+    let w = g
+        .tensor("w_q4k")
+        .ok_or_else(|| format!("missing tensor w_q4k in {}", path.display()))?;
+    let x = g
+        .tensor("x_q8k")
+        .ok_or_else(|| format!("missing tensor x_q8k in {}", path.display()))?;
+    let n_cols = w.n_cols();
+    let n_rows = w.n_rows();
+    let mut y = vec![0.0f32; n_rows];
+    for _ in 0..8 {
+        gemv_q4_k(n_cols, &w.data, &x.data, &mut y)?;
+    }
+    let niter = 8usize;
+    let t0 = Instant::now();
+    for _ in 0..niter {
+        gemv_q4_k(n_cols, &w.data, &x.data, &mut y)?;
+    }
+    let sec = t0.elapsed().as_secs_f64();
+    let niter_f = f64::from(u32::try_from(niter).unwrap_or(0));
+    let gemv_s = if sec > 0.0 { niter_f / sec } else { 0.0 };
+    let y0 = y.first().copied().unwrap_or(0.0);
+    println!("lang=Rust kernel=q4_k_gguf M={n_rows} K={n_cols} niter={niter}");
+    println!("time_s={sec:.6} gemv/s={gemv_s:.2}");
+    println!("y_checksum={:016x} y0={y0:.6}", y_checksum(&y));
+    Ok(())
+}
+
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
     let cmd = args.next().unwrap_or_else(|| "gemv".into());
@@ -128,8 +225,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let path = args.next().ok_or("gemv <path>")?;
             gemv_file(Path::new(&path))
         }
+        "write-q4k" => {
+            let path = args.next().ok_or("write-q4k <path>")?;
+            let bytes = demo_q4k_gguf(256, 64);
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "gemv-q4k" => {
+            let path = args.next().ok_or("gemv-q4k <path>")?;
+            gemv_q4k_file(Path::new(&path))
+        }
         other => Err(format!(
-            "usage: gguf_gemv write <path> | gguf_gemv gemv <path> (got {other})"
+            "usage: gguf_gemv write|gemv|write-q4k|gemv-q4k <path> (got {other})"
         )
         .into()),
     }

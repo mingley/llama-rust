@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::quant::{Q4_0_BLOCK, Q8_0_BLOCK, QK8_0};
+use crate::quant::{Q4_0_BLOCK, Q4_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK8_0, QK_K};
 
 /// GGUF magic `GGUF`.
 pub(crate) const GGUF_MAGIC: &[u8; 4] = b"GGUF";
@@ -20,6 +20,12 @@ pub enum GgmlType {
     Q4_0 = 2,
     /// `GGML_TYPE_Q8_0`.
     Q8_0 = 8,
+    /// `GGML_TYPE_Q4_K`.
+    #[expect(non_camel_case_types, reason = "matches ggml GGML_TYPE_Q4_K")]
+    Q4_K = 12,
+    /// `GGML_TYPE_Q8_K`.
+    #[expect(non_camel_case_types, reason = "matches ggml GGML_TYPE_Q8_K")]
+    Q8_K = 15,
 }
 
 impl GgmlType {
@@ -27,6 +33,8 @@ impl GgmlType {
         match v {
             2 => Ok(Self::Q4_0),
             8 => Ok(Self::Q8_0),
+            12 => Ok(Self::Q4_K),
+            15 => Ok(Self::Q8_K),
             other => Err(GgufError::UnsupportedType(other)),
         }
     }
@@ -36,12 +44,34 @@ impl GgmlType {
         match self {
             Self::Q4_0 => 2,
             Self::Q8_0 => 8,
+            Self::Q4_K => 12,
+            Self::Q8_K => 15,
+        }
+    }
+
+    fn layout(self) -> (usize, usize) {
+        match self {
+            Self::Q4_0 => (Q4_0_BLOCK, QK4_0),
+            Self::Q8_0 => (Q8_0_BLOCK, QK8_0),
+            Self::Q4_K => (Q4_K_BLOCK, QK_K),
+            Self::Q8_K => (Q8_K_BLOCK, QK_K),
         }
     }
 }
 
+const GGUF_TYPE_UINT8: i32 = 0;
+const GGUF_TYPE_INT8: i32 = 1;
+const GGUF_TYPE_UINT16: i32 = 2;
+const GGUF_TYPE_INT16: i32 = 3;
 const GGUF_TYPE_UINT32: i32 = 4;
+const GGUF_TYPE_INT32: i32 = 5;
+const GGUF_TYPE_FLOAT32: i32 = 6;
+const GGUF_TYPE_BOOL: i32 = 7;
 const GGUF_TYPE_STRING: i32 = 8;
+const GGUF_TYPE_ARRAY: i32 = 9;
+const GGUF_TYPE_UINT64: i32 = 10;
+const GGUF_TYPE_INT64: i32 = 11;
+const GGUF_TYPE_FLOAT64: i32 = 12;
 
 /// Failure while parsing a GGUF blob.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,9 +84,9 @@ pub enum GgufError {
     Truncated,
     /// A GGUF string was not valid UTF-8.
     Utf8,
-    /// Tensor `ggml_type` is not Q4_0 or Q8_0.
+    /// Tensor `ggml_type` is not Q4_0, Q8_0, Q4_K, or Q8_K.
     UnsupportedType(i32),
-    /// KV type is not `uint32` or `string`.
+    /// KV type is not a GGUF v3 value type.
     UnsupportedKv(i32),
     /// Rank, extent, or element count is unusable.
     Shape,
@@ -134,13 +164,60 @@ pub struct Gguf {
     pub tensors: Vec<Tensor>,
 }
 
-/// GGUF metadata value. This crate writes `uint32` and `string` only.
+/// GGUF metadata value (`gguf_type`).
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Kv {
+pub enum Kv {
+    /// `GGUF_TYPE_UINT8`.
+    U8(u8),
+    /// `GGUF_TYPE_INT8`.
+    I8(i8),
+    /// `GGUF_TYPE_UINT16`.
+    U16(u16),
+    /// `GGUF_TYPE_INT16`.
+    I16(i16),
     /// `GGUF_TYPE_UINT32`.
     U32(u32),
+    /// `GGUF_TYPE_INT32`.
+    I32(i32),
+    /// `GGUF_TYPE_FLOAT32`.
+    F32(f32),
+    /// `GGUF_TYPE_BOOL` (stored as `i8`).
+    Bool(bool),
     /// `GGUF_TYPE_STRING`.
     String(String),
+    /// `GGUF_TYPE_ARRAY`. `elem` is the inner `gguf_type`; items may themselves be arrays.
+    Array {
+        /// Element `gguf_type` (may be `ARRAY` for a nested header).
+        elem: i32,
+        /// Array elements, each matching `elem`.
+        items: Vec<Kv>,
+    },
+    /// `GGUF_TYPE_UINT64`.
+    U64(u64),
+    /// `GGUF_TYPE_INT64`.
+    I64(i64),
+    /// `GGUF_TYPE_FLOAT64`.
+    F64(f64),
+}
+
+impl Kv {
+    fn tag(&self) -> i32 {
+        match self {
+            Self::U8(_) => GGUF_TYPE_UINT8,
+            Self::I8(_) => GGUF_TYPE_INT8,
+            Self::U16(_) => GGUF_TYPE_UINT16,
+            Self::I16(_) => GGUF_TYPE_INT16,
+            Self::U32(_) => GGUF_TYPE_UINT32,
+            Self::I32(_) => GGUF_TYPE_INT32,
+            Self::F32(_) => GGUF_TYPE_FLOAT32,
+            Self::Bool(_) => GGUF_TYPE_BOOL,
+            Self::String(_) => GGUF_TYPE_STRING,
+            Self::Array { .. } => GGUF_TYPE_ARRAY,
+            Self::U64(_) => GGUF_TYPE_UINT64,
+            Self::I64(_) => GGUF_TYPE_INT64,
+            Self::F64(_) => GGUF_TYPE_FLOAT64,
+        }
+    }
 }
 
 impl Gguf {
@@ -169,10 +246,26 @@ impl Gguf {
             _ => None,
         }
     }
+
+    /// Metadata value for `key`, if present.
+    pub fn kv(&self, key: &str) -> Option<&Kv> {
+        self.kv.get(key)
+    }
 }
 
 /// Serialize `tensors` as a GGUF v3 blob with `general.alignment` and `general.name`.
 pub fn write_gguf(tensors: &[TensorWrite]) -> Vec<u8> {
+    write_gguf_with_kv(
+        &[
+            ("general.alignment".into(), Kv::U32(32)),
+            ("general.name".into(), Kv::String("llama-rust".into())),
+        ],
+        tensors,
+    )
+}
+
+/// Serialize `kv` then `tensors` as a GGUF v3 blob.
+pub fn write_gguf_with_kv(kv: &[(String, Kv)], tensors: &[TensorWrite]) -> Vec<u8> {
     let alignment = GGUF_DEFAULT_ALIGNMENT;
     let mut offsets = Vec::with_capacity(tensors.len());
     let mut off = 0usize;
@@ -186,15 +279,13 @@ pub fn write_gguf(tensors: &[TensorWrite]) -> Vec<u8> {
     buf.extend_from_slice(GGUF_MAGIC);
     put_u32(&mut buf, GGUF_VERSION);
     put_i64(&mut buf, i64::try_from(tensors.len()).unwrap_or(0));
-    put_i64(&mut buf, 2);
+    put_i64(&mut buf, i64::try_from(kv.len()).unwrap_or(0));
 
-    put_string(&mut buf, "general.alignment");
-    put_i32(&mut buf, GGUF_TYPE_UINT32);
-    put_u32(&mut buf, u32::try_from(alignment).unwrap_or(32));
-
-    put_string(&mut buf, "general.name");
-    put_i32(&mut buf, GGUF_TYPE_STRING);
-    put_string(&mut buf, "llama-rust");
+    for (key, val) in kv {
+        put_string(&mut buf, key);
+        put_i32(&mut buf, val.tag());
+        put_kv_payload(&mut buf, val);
+    }
 
     for (t, offset) in tensors.iter().zip(offsets.iter()) {
         put_string(&mut buf, &t.name);
@@ -276,14 +367,11 @@ pub fn load_gguf(bytes: &[u8]) -> Result<Gguf, GgufError> {
     for (name, shape, ty, offset) in infos {
         let n_el = shape.iter().try_fold(1u64, |a, &b| a.checked_mul(b));
         let n_el = usize::try_from(n_el.ok_or(GgufError::Shape)?).map_err(|_| GgufError::Shape)?;
-        let block = match ty {
-            GgmlType::Q8_0 => Q8_0_BLOCK,
-            GgmlType::Q4_0 => Q4_0_BLOCK,
-        };
-        if !n_el.is_multiple_of(QK8_0) {
+        let (block, k) = ty.layout();
+        if !n_el.is_multiple_of(k) {
             return Err(GgufError::Shape);
         }
-        let nbytes = (n_el / QK8_0) * block;
+        let nbytes = (n_el / k) * block;
         let start = data_start
             .checked_add(usize::try_from(offset).map_err(|_| GgufError::Truncated)?)
             .ok_or(GgufError::Truncated)?;
@@ -325,6 +413,38 @@ fn put_string(buf: &mut Vec<u8>, s: &str) {
     buf.extend_from_slice(s.as_bytes());
 }
 
+fn put_u8(buf: &mut Vec<u8>, v: u8) {
+    buf.push(v);
+}
+
+fn put_u16(buf: &mut Vec<u8>, v: u16) {
+    buf.extend_from_slice(&v.to_le_bytes());
+}
+
+fn put_kv_payload(buf: &mut Vec<u8>, val: &Kv) {
+    match val {
+        Kv::U8(v) => put_u8(buf, *v),
+        Kv::I8(v) => put_u8(buf, u8::from_le_bytes(v.to_le_bytes())),
+        Kv::U16(v) => put_u16(buf, *v),
+        Kv::I16(v) => buf.extend_from_slice(&v.to_le_bytes()),
+        Kv::U32(v) => put_u32(buf, *v),
+        Kv::I32(v) => put_i32(buf, *v),
+        Kv::F32(v) => put_u32(buf, v.to_bits()),
+        Kv::Bool(v) => put_u8(buf, u8::from(*v)),
+        Kv::String(s) => put_string(buf, s),
+        Kv::Array { elem, items } => {
+            put_i32(buf, *elem);
+            put_u64(buf, u64::try_from(items.len()).unwrap_or(0));
+            for item in items {
+                put_kv_payload(buf, item);
+            }
+        }
+        Kv::U64(v) => put_u64(buf, *v),
+        Kv::I64(v) => put_i64(buf, *v),
+        Kv::F64(v) => put_u64(buf, v.to_bits()),
+    }
+}
+
 fn read_exact<'a>(bytes: &'a [u8], pos: &mut usize, n: usize) -> Result<&'a [u8], GgufError> {
     let end = pos.checked_add(n).ok_or(GgufError::Truncated)?;
     let s = bytes.get(*pos..end).ok_or(GgufError::Truncated)?;
@@ -356,10 +476,42 @@ fn read_string(bytes: &[u8], pos: &mut usize) -> Result<String, GgufError> {
     String::from_utf8(s.to_vec()).map_err(|_| GgufError::Utf8)
 }
 
+fn read_u8(bytes: &[u8], pos: &mut usize) -> Result<u8, GgufError> {
+    let s = read_exact(bytes, pos, 1)?;
+    Ok(*s.first().ok_or(GgufError::Truncated)?)
+}
+
+fn read_u16(bytes: &[u8], pos: &mut usize) -> Result<u16, GgufError> {
+    Ok(u16::from_le_bytes(read_array(bytes, pos)?))
+}
+
+fn read_i16(bytes: &[u8], pos: &mut usize) -> Result<i16, GgufError> {
+    Ok(i16::from_le_bytes(read_array(bytes, pos)?))
+}
+
 fn read_kv_value(bytes: &[u8], pos: &mut usize, ty: i32) -> Result<Kv, GgufError> {
     match ty {
+        GGUF_TYPE_UINT8 => Ok(Kv::U8(read_u8(bytes, pos)?)),
+        GGUF_TYPE_INT8 => Ok(Kv::I8(i8::from_le_bytes([read_u8(bytes, pos)?]))),
+        GGUF_TYPE_UINT16 => Ok(Kv::U16(read_u16(bytes, pos)?)),
+        GGUF_TYPE_INT16 => Ok(Kv::I16(read_i16(bytes, pos)?)),
         GGUF_TYPE_UINT32 => Ok(Kv::U32(read_u32(bytes, pos)?)),
+        GGUF_TYPE_INT32 => Ok(Kv::I32(read_i32(bytes, pos)?)),
+        GGUF_TYPE_FLOAT32 => Ok(Kv::F32(f32::from_bits(read_u32(bytes, pos)?))),
+        GGUF_TYPE_BOOL => Ok(Kv::Bool(read_u8(bytes, pos)? != 0)),
         GGUF_TYPE_STRING => Ok(Kv::String(read_string(bytes, pos)?)),
+        GGUF_TYPE_ARRAY => {
+            let elem = read_i32(bytes, pos)?;
+            let n = usize::try_from(read_u64(bytes, pos)?).map_err(|_| GgufError::Truncated)?;
+            let mut items = Vec::new();
+            for _ in 0..n {
+                items.push(read_kv_value(bytes, pos, elem)?);
+            }
+            Ok(Kv::Array { elem, items })
+        }
+        GGUF_TYPE_UINT64 => Ok(Kv::U64(read_u64(bytes, pos)?)),
+        GGUF_TYPE_INT64 => Ok(Kv::I64(read_i64(bytes, pos)?)),
+        GGUF_TYPE_FLOAT64 => Ok(Kv::F64(f64::from_bits(read_u64(bytes, pos)?))),
         other => Err(GgufError::UnsupportedKv(other)),
     }
 }
@@ -369,8 +521,9 @@ mod tests {
     use super::*;
     use crate::fp16::load_f16_le;
     use crate::quant::{
-        gemv_q4_0, gemv_q8_0, i8_from_bits, pack_q4_0_from_i4, pack_q8_0_block, Q4_0_BLOCK,
-        Q8_0_BLOCK, QK4_0, QK8_0,
+        gemv_q4_0, gemv_q4_k, gemv_q8_0, i8_from_bits, pack_q4_0_from_i4, pack_q4_k_block,
+        pack_q8_0_block, pack_q8_k_block, Q4_0_BLOCK, Q4_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0,
+        QK8_0, QK_K,
     };
 
     fn independent_q8_dot(w: &[u8], x: &[u8]) -> f32 {
@@ -576,5 +729,226 @@ mod tests {
             "oracle {expected}"
         );
         assert!((y[0] - 11.0).abs() * 100_000.0 < 1.0, "gemv {}", y[0]);
+    }
+
+    /// ggml `get_scale_min_k4` (oracle; not the GEMV loop).
+    fn oracle_scale_min_k4(j: usize, q: &[u8]) -> (u8, u8) {
+        if j < 4 {
+            (q[j] & 63, q[j + 4] & 63)
+        } else {
+            (
+                (q[j + 4] & 0x0f) | ((q[j - 4] >> 6) << 4),
+                (q[j + 4] >> 4) | ((q[j] >> 6) << 4),
+            )
+        }
+    }
+
+    /// ggml `dequantize_row_q4_K`: `y = d*sc*q - dmin*m`.
+    fn dequant_q4_k_row(w: &[u8]) -> Vec<f32> {
+        let nblocks = w.len() / Q4_K_BLOCK;
+        let mut y = vec![0.0f32; nblocks * QK_K];
+        for b in 0..nblocks {
+            let wb = &w[b * Q4_K_BLOCK..(b + 1) * Q4_K_BLOCK];
+            let d = load_f16_le(wb).unwrap();
+            let minv = load_f16_le(&wb[2..]).unwrap();
+            let scales = &wb[4..16];
+            let mut qoff = 16usize;
+            let mut yo = b * QK_K;
+            let mut is = 0usize;
+            for _ in 0..4 {
+                let (sc, m) = oracle_scale_min_k4(is, scales);
+                let d1 = d * f32::from(sc);
+                let m1 = minv * f32::from(m);
+                let (sc, m) = oracle_scale_min_k4(is + 1, scales);
+                let d2 = d * f32::from(sc);
+                let m2 = minv * f32::from(m);
+                let q = &wb[qoff..qoff + 32];
+                for l in 0..32 {
+                    y[yo + l] = d1 * f32::from(q[l] & 0x0f) - m1;
+                }
+                yo += 32;
+                for l in 0..32 {
+                    y[yo + l] = d2 * f32::from(q[l] >> 4) - m2;
+                }
+                yo += 32;
+                qoff += 32;
+                is += 2;
+            }
+        }
+        y
+    }
+
+    /// ggml `dequantize_row_q8_K`: `y[j] = d * qs[j]`.
+    fn dequant_q8_k_row(x: &[u8]) -> Vec<f32> {
+        let nblocks = x.len() / Q8_K_BLOCK;
+        let mut y = vec![0.0f32; nblocks * QK_K];
+        for b in 0..nblocks {
+            let xb = &x[b * Q8_K_BLOCK..(b + 1) * Q8_K_BLOCK];
+            let d = f32::from_bits(u32::from_le_bytes(xb[0..4].try_into().unwrap()));
+            for i in 0..QK_K {
+                y[b * QK_K + i] = d * f32::from(i8_from_bits(xb[4 + i]));
+            }
+        }
+        y
+    }
+
+    fn independent_q4k_dot(w: &[u8], x: &[u8]) -> f32 {
+        let wy = dequant_q4_k_row(w);
+        let xy = dequant_q8_k_row(x);
+        assert_eq!(wy.len(), xy.len());
+        wy.iter().zip(xy.iter()).map(|(a, b)| a * b).sum()
+    }
+
+    #[test]
+    fn write_load_kv_types_and_q4k_gemv_match_file_bytes() {
+        let mut qs0 = [0u8; QK_K];
+        qs0[0] = 1;
+        qs0[32] = 2;
+        let mut sc0 = [0u8; 8];
+        sc0[0] = 1;
+        sc0[1] = 1;
+        let z8 = [0u8; 8];
+        let w0 = pack_q4_k_block(1.0, 0.0, &sc0, &z8, &qs0);
+
+        let qs1 = [0u8; QK_K];
+        let mut mn1 = [0u8; 8];
+        mn1[0] = 1;
+        let w1 = pack_q4_k_block(1.0, 1.0, &z8, &mn1, &qs1);
+
+        let mut w4k = Vec::new();
+        w4k.extend_from_slice(&w0);
+        w4k.extend_from_slice(&w1);
+
+        let mut xq = [0i8; QK_K];
+        xq[0] = 3;
+        xq[32] = 4;
+        let x8k = pack_q8_k_block(1.0, &xq);
+
+        let w8 = pack_q8_0_block(1.0, &[0i8; QK8_0]);
+        let x8 = pack_q8_0_block(1.0, &[0i8; QK8_0]);
+        let w4 = pack_q4_0_from_i4(1.0, &[0i8; QK4_0]);
+
+        let nested = Kv::Array {
+            elem: GGUF_TYPE_ARRAY,
+            items: vec![Kv::Array {
+                elem: GGUF_TYPE_UINT8,
+                items: vec![Kv::U8(1), Kv::U8(2)],
+            }],
+        };
+        let kv = vec![
+            ("general.alignment".into(), Kv::U32(32)),
+            ("general.name".into(), Kv::String("llama-rust".into())),
+            ("llama.ok".into(), Kv::Bool(true)),
+            ("llama.scale".into(), Kv::F32(1.5)),
+            (
+                "llama.ids".into(),
+                Kv::Array {
+                    elem: GGUF_TYPE_UINT32,
+                    items: vec![Kv::U32(7), Kv::U32(9)],
+                },
+            ),
+            ("llama.u8".into(), Kv::U8(1)),
+            ("llama.i8".into(), Kv::I8(-2)),
+            ("llama.u16".into(), Kv::U16(3)),
+            ("llama.i16".into(), Kv::I16(-4)),
+            ("llama.i32".into(), Kv::I32(-5)),
+            ("llama.u64".into(), Kv::U64(6)),
+            ("llama.i64".into(), Kv::I64(-7)),
+            ("llama.f64".into(), Kv::F64(2.0)),
+            ("llama.nested".into(), nested.clone()),
+        ];
+        let bytes = write_gguf_with_kv(
+            &kv,
+            &[
+                TensorWrite {
+                    name: "w_q8".into(),
+                    ty: GgmlType::Q8_0,
+                    shape: vec![32, 1],
+                    data: w8.to_vec(),
+                },
+                TensorWrite {
+                    name: "x_q8".into(),
+                    ty: GgmlType::Q8_0,
+                    shape: vec![32],
+                    data: x8.to_vec(),
+                },
+                TensorWrite {
+                    name: "w_q4".into(),
+                    ty: GgmlType::Q4_0,
+                    shape: vec![32, 1],
+                    data: w4.to_vec(),
+                },
+                TensorWrite {
+                    name: "w_q4k".into(),
+                    ty: GgmlType::Q4_K,
+                    shape: vec![256, 2],
+                    data: w4k.clone(),
+                },
+                TensorWrite {
+                    name: "x_q8k".into(),
+                    ty: GgmlType::Q8_K,
+                    shape: vec![256],
+                    data: x8k.to_vec(),
+                },
+            ],
+        );
+
+        let g = load_gguf(&bytes).expect("load");
+        assert_eq!(g.kv("llama.ok"), Some(&Kv::Bool(true)));
+        assert_eq!(g.kv("llama.scale"), Some(&Kv::F32(1.5)));
+        assert_eq!(
+            g.kv("llama.ids"),
+            Some(&Kv::Array {
+                elem: GGUF_TYPE_UINT32,
+                items: vec![Kv::U32(7), Kv::U32(9)],
+            })
+        );
+        assert_eq!(g.kv("llama.u8"), Some(&Kv::U8(1)));
+        assert_eq!(g.kv("llama.i8"), Some(&Kv::I8(-2)));
+        assert_eq!(g.kv("llama.u16"), Some(&Kv::U16(3)));
+        assert_eq!(g.kv("llama.i16"), Some(&Kv::I16(-4)));
+        assert_eq!(g.kv("llama.i32"), Some(&Kv::I32(-5)));
+        assert_eq!(g.kv("llama.u64"), Some(&Kv::U64(6)));
+        assert_eq!(g.kv("llama.i64"), Some(&Kv::I64(-7)));
+        assert_eq!(g.kv("llama.f64"), Some(&Kv::F64(2.0)));
+        assert_eq!(g.kv("llama.nested"), Some(&nested));
+        assert_eq!(g.tensor("w_q8").unwrap().data, w8);
+        assert_eq!(g.tensor("w_q4").unwrap().data, w4);
+        assert_eq!(g.tensor("w_q4k").unwrap().data, w4k);
+        assert_eq!(g.tensor("x_q8k").unwrap().data, x8k.to_vec());
+
+        let mut y = [0.0f32, 0.0];
+        gemv_q4_k(
+            256,
+            &g.tensor("w_q4k").unwrap().data,
+            &g.tensor("x_q8k").unwrap().data,
+            &mut y,
+        )
+        .unwrap();
+        let e0 = independent_q4k_dot(&w0, &x8k);
+        let e1 = independent_q4k_dot(&w1, &x8k);
+        assert!((e0 - 11.0).abs() * 100_000.0 < 1.0, "oracle0 {e0}");
+        assert!((e1 + 3.0).abs() * 100_000.0 < 1.0, "oracle1 {e1}");
+        assert!((y[0] - e0).abs() * 100_000.0 < 1.0, "gemv0 {}", y[0]);
+        assert!((y[1] - e1).abs() * 100_000.0 < 1.0, "gemv1 {}", y[1]);
+
+        let mut y8 = [0.0f32];
+        gemv_q8_0(
+            32,
+            &g.tensor("w_q8").unwrap().data,
+            &g.tensor("x_q8").unwrap().data,
+            &mut y8,
+        )
+        .unwrap();
+        let mut y4 = [0.0f32];
+        gemv_q4_0(
+            32,
+            &g.tensor("w_q4").unwrap().data,
+            &g.tensor("x_q8").unwrap().data,
+            &mut y4,
+        )
+        .unwrap();
+        assert!(y8[0].abs() * 100_000.0 < 1.0);
+        assert!(y4[0].abs() * 100_000.0 < 1.0);
     }
 }

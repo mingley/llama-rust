@@ -3,8 +3,8 @@
 use std::time::Instant;
 
 use llama_rust::{
-    gemv_q4_0, gemv_q8_0, load_gguf, pack_q4_0_block, pack_q8_0_block, write_gguf, GgmlType,
-    TensorWrite, QK4_0, QK8_0,
+    gemv_q4_0, gemv_q4_k, gemv_q8_0, load_gguf, pack_q4_0_block, pack_q4_k_block, pack_q8_0_block,
+    pack_q8_k_block, write_gguf, GgmlType, TensorWrite, QK4_0, QK8_0, QK_K,
 };
 
 fn rnd_u32(seed: &mut u64) -> u32 {
@@ -162,10 +162,88 @@ fn bench_q4(n: usize) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn bench_q4k(n: usize) -> Result<(), Box<dyn std::error::Error>> {
+    let mut seed = 5u64;
+    let mut w = Vec::new();
+    let mut x = Vec::new();
+    for _ in 0..n {
+        for _b in 0..(n / QK_K) {
+            let mut qs = [0u8; QK_K];
+            for q in &mut qs {
+                *q = u8::try_from(rnd_u32(&mut seed) % 16).unwrap_or(0);
+            }
+            let mut sc = [0u8; 8];
+            let mut mn = [0u8; 8];
+            for s in &mut sc {
+                *s = u8::try_from(1 + rnd_u32(&mut seed) % 8).unwrap_or(1);
+            }
+            for m in &mut mn {
+                *m = u8::try_from(rnd_u32(&mut seed) % 4).unwrap_or(0);
+            }
+            let extra = u16::try_from(rnd_u32(&mut seed) % 50).unwrap_or(0);
+            w.extend_from_slice(&pack_q4_k_block(
+                20.0 / 1000.0 + f32::from(extra) / 1000.0,
+                10.0 / 1000.0,
+                &sc,
+                &mn,
+                &qs,
+            ));
+        }
+    }
+    for _b in 0..(n / QK_K) {
+        let mut qs = [0i8; QK_K];
+        for q in &mut qs {
+            *q = centered_i8(rnd_u32(&mut seed));
+        }
+        x.extend_from_slice(&pack_q8_k_block(1.0 / 127.0, &qs));
+    }
+    let n64 = u64::try_from(n).unwrap_or(0);
+    let bytes = write_gguf(&[
+        TensorWrite {
+            name: "w_q4k".into(),
+            ty: GgmlType::Q4_K,
+            shape: vec![n64, n64],
+            data: w,
+        },
+        TensorWrite {
+            name: "x_q8k".into(),
+            ty: GgmlType::Q8_K,
+            shape: vec![n64],
+            data: x,
+        },
+    ]);
+    let g = load_gguf(&bytes)?;
+    let wt = g
+        .tensor("w_q4k")
+        .ok_or_else(|| "missing tensor w_q4k".to_string())?;
+    let xt = g
+        .tensor("x_q8k")
+        .ok_or_else(|| "missing tensor x_q8k".to_string())?;
+    let mut y = vec![0.0f32; n];
+    let niter = 8usize;
+    for _ in 0..16 {
+        gemv_q4_k(n, &wt.data, &xt.data, &mut y)?;
+    }
+    let t0 = Instant::now();
+    for _ in 0..niter {
+        gemv_q4_k(n, &wt.data, &xt.data, &mut y)?;
+    }
+    let sec = t0.elapsed().as_secs_f64();
+    print_bench(
+        "q4_k_gguf",
+        n,
+        niter,
+        sec,
+        y.first().copied().unwrap_or(0.0),
+    );
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     for n in [128usize, 256, 512, 1024] {
         bench_q8(n)?;
     }
     bench_q4(256)?;
+    bench_q4k(256)?;
     Ok(())
 }
