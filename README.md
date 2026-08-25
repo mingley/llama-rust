@@ -1,95 +1,45 @@
 # llama-rust
 
-Measured path toward a Rust llama.cpp: quantized matmul first.
+Pure-safe Rust GGUF v3 Q4_0 / Q8_0 load + GEMV. No llama.cpp bind, no C GGML snapshot, no `unsafe`.
 
-Not [onehr/llama-rs](https://github.com/onehr/llama-rs) / [rustformers/llm](https://github.com/rustformers/llm) reborn. That stack was a full CPU inference CLI on a frozen GGML (LLaMA, GPT-2, MPT, BLOOM, …). Last real commit 2024-06-24 (`b11ffb1`, archival notice). It died tracking stale GGML; the unfinished `develop` branch was a from-scratch llama.cpp re-port. This repo is the piece they were always behind on: **measured Q4/Q8 GEMV in safe Rust**. No GGUF loader, tokenizer, attention, KV cache, or sampler yet. A successor only if we stay GGUF-native and do not wrap a snapshot of C GGML.
+Blocks are **on-disk GGUF layout**: IEEE binary16 scale + packed `qs` (Q8_0 = 34 bytes, Q4_0 = 18 bytes). GEMV reads those bytes; it does not copy into an f32-scale private struct.
 
-Host language is not the limiter. Decode is weight-bandwidth bound. Same kernel in C vs Rust is **1.00x**. A naive kernel port that botches fp16 is **0.35x**.
-
-## This machine
-
-Apple M4 Pro 10P+4E+20GPU, 48 GiB, 273 GB/s unified. macOS 26.6.2. rustc 1.98.0. Apple clang 21.0.0.
-
-llama.cpp `f280b26` (2026-08-24), Metal + Accelerate, flash-attn on.
-
-Model: `Qwen/Qwen2.5-3B-Instruct-GGUF` Q4_K_M, 1.95 GiB, 3.40B. Not in this repo.
+Not [onehr/llama-rs](https://github.com/onehr/llama-rs) / [rustformers/llm](https://github.com/rustformers/llm). That was a full CPU inference CLI on frozen GGML. This is the load+matmul foundation: GGUF-native kernels first.
 
 ```
-./llama.cpp/build/bin/llama-bench \
-  -m models/qwen2.5-3b-instruct-q4_k_m.gguf \
-  -ngl 99 -fa 1 -p 512,2048 -n 128 -r 8
+cargo test --release --manifest-path langtax/Cargo.toml --lib
+RUSTFLAGS='-C target-cpu=native' cargo build --release --manifest-path langtax/Cargo.toml --bin gguf_gemv
+./langtax/target/release/gguf_gemv write tiny.gguf
+./langtax/target/release/gguf_gemv gemv tiny.gguf
 ```
 
-| test | t/s |
-|---|---:|
-| pp512 Metal | **1096.77 ± 1.11** |
-| pp2048 Metal | **1012.14 ± 29.56** |
-| tg128 Metal | **90.92 ± 3.50** |
-| pp512 `-ngl 0` | 222.99 ± 6.36 |
-| tg128 `-ngl 0` | 32.41 ± 2.73 |
+`cargo test` writes a GGUF via the shipped writer, loads it, runs `gemv_q8_0` / `gemv_q4_0` on the tensor bytes, and compares to an independent fp16+qs unpack of the **same file bytes**.
 
-`90.92 tok/s * 1.95 GiB = 177 GiB/s` (~65% of 273 GB/s). pp2048 and `-ngl 0` rows are prior captures on this machine.
+## GGUF CLI (this machine)
 
-Same SKU on LocalScore: Llama 3.1 8B Q4_K 32.7 gen / 361 pp. Bandwidth scaling of the 3B run predicts ~38 t/s for 8B.
+Apple M4 Pro. Demo GGUF: Q8_0 `w` [256, 128] × Q8_0 `x` [256]. Two consecutive `gemv` launches:
 
-## Q8_0 GEMV pre/post (gating)
+| run | gemv/s | y_checksum | y0 |
+|---|---:|---|---:|
+| 1 | 23741.83 | `9fe974004a730987` | 9.397801 |
+| 2 | 63576.33 | `9fe974004a730987` | 9.397801 |
 
-Same protocol as the C binary: M=4096, K=4096, 8 timed iterations, report `gemv/s`. `langtax/q8_gemv.c` is frozen (1-thread NEON). Fresh C pre, this capture:
+Checksums match. `#![forbid(unsafe_code)]`. Lockfile deps: `llama-rust` + rayon/crossbeam/either only.
 
-```
-clang -O3 -mcpu=native -o langtax/q8_gemv_c langtax/q8_gemv.c
-./langtax/q8_gemv_c
-RUSTFLAGS='-C target-cpu=native' cargo build --release --manifest-path langtax/Cargo.toml
-./langtax/target/release/q8_gemv
-```
+## Extra GGUF cells
 
-| run | gemv/s | vs C pre |
+`extra` writes/loads GGUF then GEMVs:
+
+| kernel | M=K | gemv/s |
 |---|---:|---:|
-| **C pre** `lang=C` clang `-O3 -mcpu=native` | **3267.08** | 1.00 |
-| **Rust post 1** `lang=Rust kernel=q8_0_safe` | **7011.39** | **2.15x** |
-| **Rust post 2** (consecutive process) | **6758.90** | **2.07x** |
+| q8_0_gguf | 128 | 78688 |
+| q8_0_gguf | 256 | 34127 |
+| q8_0_gguf | 512 | 25387 |
+| q8_0_gguf | 1024 | 13155 |
+| q4_0_gguf | 256 | 21648 |
 
-Both consecutive Rust launches are ≥2×. `gemv_q8_0` is **fully safe** (`#![forbid(unsafe_code)]`): slice loops + a 10-worker persistent rayon pool. LLVM emits `sdot`. `cargo test --release --lib` drives `gemv_q8_0` and `gemv_q4_0` against independent scalar pack-dots.
+## Historical 1-thread C vs synthetic f32-scale Rust
 
-## Extra cells (not the 4096×4096 Q8 gate)
+Older `langtax/q8_gemv.c` used f32 scales (not GGUF). Kept as a C kernel study only; not the inference path.
 
-1-thread C (`langtax/extra.c`) vs the same safe Rust functions (`langtax/src/extra.rs`). niter=8.
-
-```
-clang -O3 -mcpu=native -o langtax/extra_c langtax/extra.c
-./langtax/extra_c
-RUSTFLAGS='-C target-cpu=native' cargo run --release --manifest-path langtax/Cargo.toml --bin extra
-```
-
-**Q8_0 GEMV size sweep** (same kernel as the gate, different M=K):
-
-| M=K | C gemv/s | Rust gemv/s | Rust/C |
-|---:|---:|---:|---:|
-| 1024 | 51962.10 | 19814.24 | **0.38x** |
-| 2048 | 12109.74 | 21798.37 | **1.80x** |
-| 8192 | 750.60 | 2689.83 | **3.58x** |
-
-1024 is too small to amortize 10 workers; 8192 is where the pool pays.
-
-**Q4_0 × Q8_0 GEMV** (llama.cpp decode-shaped: 4-bit weights, 8-bit activations, M=K=4096):
-
-| run | gemv/s | vs C |
-|---|---:|---:|
-| C `kernel=q4_0` 1-thread | 388.55 | 1.00 |
-| Rust `kernel=q4_0_safe` 10-worker | 1942.81 | **5.00x** |
-
-Single-thread identical-ISA kernels were ~1.00×. The ≥2× on the 4096 Q8 gate is extra P-cores, not language. Software-fp16 inner loop was 0.35×.
-
-## If you wrote llama.cpp in Rust
-
-| rewrite | this Mac, 3B Q4_K_M pp / tg |
-|---|---|
-| FFI around ggml (`llama-cpp-2`) | 1091 / 88 |
-| Rust host + same Metal shaders | 1091 / 88 |
-| Mature Rust engine, c=1 (mistral.rs / ferrum) | ~800–1100 / 75–90 |
-| Naive quantized (candle-class Metal) | ~680 / ~52 |
-| Serving, c=16 (ferrum vs llama.cpp on M1 Max) | +36–44% aggregate tok/s |
-
-CUDA is where Rust engines currently beat llama.cpp, via kernels not language: mistral.rs v0.8.2 is 1.8–2.2x prefill, 1.09–1.24x decode vs llama.cpp on GB10/B200.
-
-llama.cpp HEAD is ~782k LOC. The hot path on this Mac is ~12k lines of Metal Shading Language. A Rust llama.cpp still writes those shaders.
+llama.cpp Metal on this Mac (Qwen2.5-3B Q4_K_M, not loaded by this crate): pp512 **1097**, tg128 **91**.

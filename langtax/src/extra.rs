@@ -1,104 +1,141 @@
-//! Extra measured cells: Q8_0 GEMV size sweep + Q4_0 GEMV. Same pack functions as the gate CLI.
+//! Extra cells: GGUF-native Q8 size sweep + Q4_0 GEMV via write+load+matmul.
 
 use std::time::Instant;
 
-use q8_gemv::{gemv_q4_0, gemv_q8_0, BlockQ40, BlockQ80, QK4_0, QK8_0};
+use llama_rust::{
+    gemv_q4_0, gemv_q8_0, load_gguf, pack_q4_0_block, pack_q8_0_block, write_gguf, GgmlType,
+    TensorWrite, QK4_0, QK8_0,
+};
 
 fn rnd(seed: &mut u64) -> u32 {
     *seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
     (*seed >> 33) as u32
 }
 
-fn fill_q8(w: &mut [BlockQ80], x: &mut [BlockQ80]) {
-    let mut seed = 1u64;
-    for b in w.iter_mut() {
-        let amax = 0.01 + (rnd(&mut seed) % 1000) as f32 / 1000.0;
-        b.d = amax / 127.0;
-        for j in 0..QK8_0 {
-            b.qs[j] = ((rnd(&mut seed) % 255) as i32 - 128) as i8;
+fn q8_pair(n_cols: usize, n_rows: usize, seed0: u64) -> (Vec<u8>, Vec<u8>) {
+    let mut seed = seed0;
+    let mut w = Vec::new();
+    let mut x = Vec::new();
+    for _ in 0..n_rows {
+        for _ in 0..(n_cols / QK8_0) {
+            let mut qs = [0i8; QK8_0];
+            for q in &mut qs {
+                *q = ((rnd(&mut seed) % 255) as i32 - 128) as i8;
+            }
+            w.extend_from_slice(&pack_q8_0_block(
+                0.02 + (rnd(&mut seed) % 80) as f32 / 1000.0,
+                &qs,
+            ));
         }
     }
-    for b in x.iter_mut() {
-        b.d = 1.0 / 127.0;
-        for j in 0..QK8_0 {
-            b.qs[j] = ((rnd(&mut seed) % 255) as i32 - 128) as i8;
+    for _ in 0..(n_cols / QK8_0) {
+        let mut qs = [0i8; QK8_0];
+        for q in &mut qs {
+            *q = ((rnd(&mut seed) % 255) as i32 - 128) as i8;
         }
+        x.extend_from_slice(&pack_q8_0_block(1.0 / 127.0, &qs));
     }
+    (w, x)
 }
 
-fn fill_q4(w: &mut [BlockQ40], x: &mut [BlockQ80]) {
+fn bench_q8(n: usize) {
+    let (w, x) = q8_pair(n, n, 1);
+    let bytes = write_gguf(&[
+        TensorWrite {
+            name: "w_q8".into(),
+            ty: GgmlType::Q8_0,
+            shape: vec![n as u64, n as u64],
+            data: w,
+        },
+        TensorWrite {
+            name: "x_q8".into(),
+            ty: GgmlType::Q8_0,
+            shape: vec![n as u64],
+            data: x,
+        },
+    ]);
+    let g = load_gguf(&bytes).expect("load");
+    let wt = g.tensor("w_q8").unwrap();
+    let xt = g.tensor("x_q8").unwrap();
+    let mut y = vec![0.0f32; n];
+    let niter = 8usize;
+    for _ in 0..16 {
+        gemv_q8_0(n, &wt.data, &xt.data, &mut y);
+    }
+    let t0 = Instant::now();
+    for _ in 0..niter {
+        gemv_q8_0(n, &wt.data, &xt.data, &mut y);
+    }
+    let sec = t0.elapsed().as_secs_f64();
+    println!("lang=Rust kernel=q8_0_gguf M={n} K={n} niter={niter}");
+    println!(
+        "time_s={sec:.6} gemv/s={:.2}",
+        niter as f64 / sec.max(1e-12)
+    );
+    println!("y0={:.6}", y[0]);
+}
+
+fn bench_q4(n: usize) {
     let mut seed = 3u64;
-    for b in w.iter_mut() {
-        b.d = 0.02 + (rnd(&mut seed) % 800) as f32 / 10000.0;
-        for j in 0..(QK4_0 / 2) {
-            b.qs[j] = (rnd(&mut seed) % 256) as u8;
+    let mut w = Vec::new();
+    let mut x = Vec::new();
+    for _ in 0..n {
+        for _ in 0..(n / QK4_0) {
+            let mut qs = [0u8; QK4_0 / 2];
+            for q in &mut qs {
+                *q = (rnd(&mut seed) % 256) as u8;
+            }
+            w.extend_from_slice(&pack_q4_0_block(
+                0.03 + (rnd(&mut seed) % 50) as f32 / 1000.0,
+                &qs,
+            ));
         }
     }
-    for b in x.iter_mut() {
-        b.d = 1.0 / 127.0;
-        for j in 0..QK8_0 {
-            b.qs[j] = ((rnd(&mut seed) % 255) as i32 - 128) as i8;
+    for _ in 0..(n / QK8_0) {
+        let mut qs = [0i8; QK8_0];
+        for q in &mut qs {
+            *q = ((rnd(&mut seed) % 255) as i32 - 128) as i8;
         }
+        x.extend_from_slice(&pack_q8_0_block(1.0 / 127.0, &qs));
     }
-}
-
-fn bench_q8(m: usize, k: usize, niter: usize, warmup: usize) {
-    let nb = k / QK8_0;
-    let mut w = vec![BlockQ80::zero(); m * nb];
-    let mut x = vec![BlockQ80::zero(); nb];
-    let mut y = vec![0.0f32; m];
-    fill_q8(&mut w, &mut x);
-    for _ in 0..warmup {
-        gemv_q8_0(k, &w, &x, &mut y);
-    }
-    let t0 = Instant::now();
-    let mut sink = 0.0f32;
-    for _ in 0..niter {
-        gemv_q8_0(k, &w, &x, &mut y);
-        sink += y[0];
-    }
-    let sec = t0.elapsed().as_secs_f64();
-    let wbytes = (niter * m * nb * std::mem::size_of::<BlockQ80>()) as f64;
-    println!("lang=Rust kernel=q8_0_safe M={m} K={k} niter={niter}");
-    println!("time_s={sec:.6} gemv/s={:.2}", niter as f64 / sec);
-    println!(
-        "weight_GiB/s={:.2} sink={sink:.4} check={:.4}",
-        wbytes / sec / ((1u64 << 30) as f64),
-        y[0]
-    );
-}
-
-fn bench_q4(m: usize, k: usize, niter: usize, warmup: usize) {
-    let nb = k / QK4_0;
-    let mut w = vec![BlockQ40::zero(); m * nb];
-    let mut x = vec![BlockQ80::zero(); nb];
-    let mut y = vec![0.0f32; m];
-    fill_q4(&mut w, &mut x);
-    for _ in 0..warmup {
-        gemv_q4_0(k, &w, &x, &mut y);
+    let bytes = write_gguf(&[
+        TensorWrite {
+            name: "w_q4".into(),
+            ty: GgmlType::Q4_0,
+            shape: vec![n as u64, n as u64],
+            data: w,
+        },
+        TensorWrite {
+            name: "x_q8".into(),
+            ty: GgmlType::Q8_0,
+            shape: vec![n as u64],
+            data: x,
+        },
+    ]);
+    let g = load_gguf(&bytes).expect("load");
+    let wt = g.tensor("w_q4").unwrap();
+    let xt = g.tensor("x_q8").unwrap();
+    let mut y = vec![0.0f32; n];
+    let niter = 8usize;
+    for _ in 0..16 {
+        gemv_q4_0(n, &wt.data, &xt.data, &mut y);
     }
     let t0 = Instant::now();
-    let mut sink = 0.0f32;
     for _ in 0..niter {
-        gemv_q4_0(k, &w, &x, &mut y);
-        sink += y[0];
+        gemv_q4_0(n, &wt.data, &xt.data, &mut y);
     }
     let sec = t0.elapsed().as_secs_f64();
-    let wbytes = (niter * m * nb * std::mem::size_of::<BlockQ40>()) as f64;
-    println!("lang=Rust kernel=q4_0_safe M={m} K={k} niter={niter}");
-    println!("time_s={sec:.6} gemv/s={:.2}", niter as f64 / sec);
+    println!("lang=Rust kernel=q4_0_gguf M={n} K={n} niter={niter}");
     println!(
-        "weight_GiB/s={:.2} sink={sink:.4} check={:.4}",
-        wbytes / sec / ((1u64 << 30) as f64),
-        y[0]
+        "time_s={sec:.6} gemv/s={:.2}",
+        niter as f64 / sec.max(1e-12)
     );
+    println!("y0={:.6}", y[0]);
 }
 
 fn main() {
-    let niter = 8usize;
-    let warmup = 64usize;
-    for &n in &[1024usize, 2048, 8192] {
-        bench_q8(n, n, niter, warmup);
+    for &n in &[128usize, 256, 512, 1024] {
+        bench_q8(n);
     }
-    bench_q4(4096, 4096, niter, warmup);
+    bench_q4(256);
 }
