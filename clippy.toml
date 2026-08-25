@@ -1,0 +1,34 @@
+# Lints that carry the rules the reviewers currently carry.
+#
+# Every entry here should trace back to a real incident or a real review
+# comment. The point is that a lesson learned once becomes a build error for
+# everyone afterwards, instead of a wiki page nobody rereads.
+
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+
+too-many-lines-threshold = 200
+
+doc-valid-idents = [ "..", "LinkedIn", "MySQL", "REST.li", "SQLAlchemy", "Updog" ]
+
+disallowed-methods = [
+  { path = "std::thread::sleep", reason = "Blocks the executor thread. Use tokio::time::sleep." },
+  { path = "std::fs::read", reason = "Blocking IO on an async runtime. Use tokio::fs." },
+  { path = "std::fs::read_to_string", reason = "Blocking IO on an async runtime. Use tokio::fs." },
+  { path = "std::fs::write", reason = "Blocking IO on an async runtime. Use tokio::fs." },
+  { path = "std::net::TcpStream::connect", reason = "Blocking connect. Use tokio::net::TcpStream." },
+]
+
+disallowed-types = [
+  { path = "std::sync::Mutex", reason = "Held across await points too easily. Use tokio::sync::Mutex, or parking_lot for short non-async critical sections." },
+  { path = "std::sync::RwLock", reason = "Held across await points too easily. Use tokio::sync::RwLock, or parking_lot for short non-async critical sections." },
+]
+
+# These guards encode thread-local enter/exit state. Holding one across an
+# await lets another task run inside the wrong trace context.
+await-holding-invalid-types = [
+  { path = "tracing::span::Entered", reason = "Do not hold a tracing span guard across await. Use Future::instrument or #[instrument]." },
+  { path = "tracing::span::EnteredSpan", reason = "Do not hold a tracing span guard across await. Use Future::instrument or #[instrument]." },
+]

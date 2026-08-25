@@ -1,5 +1,6 @@
 llama.cpp/
 models/
+/target
 langtax/target/
 langtax/q8_gemv_c
 langtax/q8_gemv_c_nofast

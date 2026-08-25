@@ -7,11 +7,14 @@ Blocks are **on-disk GGUF layout**: IEEE binary16 scale + packed `qs` (Q8_0 = 34
 Not [onehr/llama-rs](https://github.com/onehr/llama-rs) / [rustformers/llm](https://github.com/rustformers/llm). That was a full CPU inference CLI on frozen GGML. This is the load+matmul foundation: GGUF-native kernels first.
 
 ```
-cargo test --release --manifest-path langtax/Cargo.toml --lib
-RUSTFLAGS='-C target-cpu=native' cargo build --release --manifest-path langtax/Cargo.toml --bin gguf_gemv
-./langtax/target/release/gguf_gemv write tiny.gguf
-./langtax/target/release/gguf_gemv gemv tiny.gguf
+cargo test --release --lib
+cargo clippy --all-targets --all-features -- -D warnings
+RUSTFLAGS='-C target-cpu=native' cargo build --release --bin gguf_gemv
+./target/release/gguf_gemv write tiny.gguf
+./target/release/gguf_gemv gemv tiny.gguf
 ```
+
+Workspace `[lints]` + `clippy.toml` deny unwrap/expect/panic, indexing, wrap/truncation casts, `std::fs::{read,write}`, and `std::sync::{Mutex,RwLock}`. Tests may still unwrap/index/panic. File I/O is `File` + `Read`/`Write` (this crate is sync; it does not take a tokio dep to satisfy the clippy method list).
 
 `cargo test` writes a GGUF via the shipped writer, loads it, runs `gemv_q8_0` / `gemv_q4_0` on the tensor bytes, and compares to an independent fp16+qs unpack of the **same file bytes**.
 
