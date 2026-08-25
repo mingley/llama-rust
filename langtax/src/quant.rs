@@ -487,6 +487,140 @@ pub fn gemv_q6_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
     Ok(())
 }
 
+/// Unpack one F32 GGUF row into `y[n_cols]`.
+pub fn dequant_f32_row(n_cols: usize, row: &[u8], y: &mut [f32]) -> Result<(), QuantError> {
+    let rb = f32_row_bytes(n_cols)?;
+    require_len("F32 row bytes", row.len(), rb)?;
+    require_len("F32 y elems", y.len(), n_cols)?;
+    for (chunk, yv) in row.as_chunks::<4>().0.iter().zip(y.iter_mut()) {
+        *yv = f32::from_bits(u32::from_le_bytes(*chunk));
+    }
+    Ok(())
+}
+
+/// Unpack one Q4_K GGUF row into `y[n_cols]` (`x = d*sc*q - dmin*m`).
+pub fn dequant_q4_k_row(n_cols: usize, row: &[u8], y: &mut [f32]) -> Result<(), QuantError> {
+    let rb = q4_k_row_bytes(n_cols)?;
+    require_len("Q4_K row bytes", row.len(), rb)?;
+    require_len("Q4_K y elems", y.len(), n_cols)?;
+    for yv in y.iter_mut() {
+        *yv = 0.0;
+    }
+    let (w_blocks, _) = row.as_chunks::<Q4_K_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(d) = load_f16_le(wb) else { continue };
+        let Some(dmin) = load_f16_le(wb.get(2..).unwrap_or(&[])) else {
+            continue;
+        };
+        let Some(scales) = wb.get(4..16) else {
+            continue;
+        };
+        let Some(qs) = wb.get(16..144) else { continue };
+        let x_base = b.saturating_mul(QK_K);
+        for group in 0..4 {
+            let Some((sc0, m0)) = scale_min_k4(scales, group * 2) else {
+                continue;
+            };
+            let Some((sc1, m1)) = scale_min_k4(scales, group * 2 + 1) else {
+                continue;
+            };
+            let Some(packed) = qs.get(group * 32..group * 32 + 32) else {
+                continue;
+            };
+            let a0 = d * f32::from(sc0);
+            let b0 = dmin * f32::from(m0);
+            let a1 = d * f32::from(sc1);
+            let b1 = dmin * f32::from(m1);
+            let lo_base = x_base.saturating_add(group * 64);
+            let hi_base = lo_base.saturating_add(32);
+            for (l, p) in packed.iter().enumerate() {
+                let q0 = f32::from(p & 0x0f);
+                let q1 = f32::from(p >> 4);
+                if let Some(slot) = y.get_mut(lo_base.saturating_add(l)) {
+                    *slot = a0 * q0 - b0;
+                }
+                if let Some(slot) = y.get_mut(hi_base.saturating_add(l)) {
+                    *slot = a1 * q1 - b1;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Unpack one Q6_K GGUF row into `y[n_cols]` (`x = d * scale * q`).
+pub fn dequant_q6_k_row(n_cols: usize, row: &[u8], y: &mut [f32]) -> Result<(), QuantError> {
+    let rb = q6_k_row_bytes(n_cols)?;
+    require_len("Q6_K row bytes", row.len(), rb)?;
+    require_len("Q6_K y elems", y.len(), n_cols)?;
+    for yv in y.iter_mut() {
+        *yv = 0.0;
+    }
+    let (w_blocks, _) = row.as_chunks::<Q6_K_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(d) = load_f16_le(wb.get(208..).unwrap_or(&[])) else {
+            continue;
+        };
+        let Some(ql) = wb.get(..128) else { continue };
+        let Some(qh) = wb.get(128..192) else { continue };
+        let Some(scb) = wb.get(192..208) else {
+            continue;
+        };
+        let x_base = b.saturating_mul(QK_K);
+        for group in 0..2 {
+            let ql_off = group * 64;
+            let qh_off = group * 32;
+            let sc_off = group * 8;
+            let y_off = x_base.saturating_add(group * 128);
+            for l in 0..32 {
+                let is = l / 16;
+                let Some(&ql0) = ql.get(ql_off + l) else {
+                    continue;
+                };
+                let Some(&ql1) = ql.get(ql_off + l + 32) else {
+                    continue;
+                };
+                let Some(&qhv) = qh.get(qh_off + l) else {
+                    continue;
+                };
+                let q1 = q6_from_bits((ql0 & 0x0f) | ((qhv & 3) << 4));
+                let q2 = q6_from_bits((ql1 & 0x0f) | (((qhv >> 2) & 3) << 4));
+                let q3 = q6_from_bits((ql0 >> 4) | (((qhv >> 4) & 3) << 4));
+                let q4 = q6_from_bits((ql1 >> 4) | (((qhv >> 6) & 3) << 4));
+                let Some(&s0) = scb.get(sc_off + is) else {
+                    continue;
+                };
+                let Some(&s2) = scb.get(sc_off + is + 2) else {
+                    continue;
+                };
+                let Some(&s4) = scb.get(sc_off + is + 4) else {
+                    continue;
+                };
+                let Some(&s6) = scb.get(sc_off + is + 6) else {
+                    continue;
+                };
+                let v1 = d * f32::from(i8_from_bits(s0)) * f32::from(q1);
+                let v2 = d * f32::from(i8_from_bits(s2)) * f32::from(q2);
+                let v3 = d * f32::from(i8_from_bits(s4)) * f32::from(q3);
+                let v4 = d * f32::from(i8_from_bits(s6)) * f32::from(q4);
+                if let Some(slot) = y.get_mut(y_off.saturating_add(l)) {
+                    *slot = v1;
+                }
+                if let Some(slot) = y.get_mut(y_off.saturating_add(l + 32)) {
+                    *slot = v2;
+                }
+                if let Some(slot) = y.get_mut(y_off.saturating_add(l + 64)) {
+                    *slot = v3;
+                }
+                if let Some(slot) = y.get_mut(y_off.saturating_add(l + 96)) {
+                    *slot = v4;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 #[inline(never)]
 fn add_f32(a: f32, b: f32) -> f32 {
     a + b
@@ -832,5 +966,36 @@ mod tests {
         gemv_q6_k_f32(QK_K, &w, &x, &mut y).unwrap();
         // y[0]*d*sc0*x0 + y[32]*d*sc2*x32 = 1*1*3 + 2*1*4 = 11
         assert!((y[0] - 11.0).abs() * 100_000.0 < 1.0, "{}", y[0]);
+        let mut row = [0.0f32; QK_K];
+        dequant_q6_k_row(QK_K, &w, &mut row).unwrap();
+        let via_dequant: f32 = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
+        assert!(
+            (via_dequant - y[0]).abs() * 100_000.0 < 1.0,
+            "{via_dequant} vs {}",
+            y[0]
+        );
+    }
+
+    #[test]
+    fn dequant_q4_k_row_dot_matches_gemv() {
+        let mut qs = [0u8; QK_K];
+        qs[0] = 3;
+        qs[32] = 5;
+        let sc = [2u8, 1, 1, 1, 1, 1, 1, 1];
+        let mn = [0u8; 8];
+        let w = pack_q4_k_block(25.0 / 100.0, 0.0, &sc, &mn, &qs);
+        let mut x = [0.0f32; QK_K];
+        x[0] = 2.0;
+        x[32] = 4.0;
+        let mut y = [0.0f32];
+        gemv_q4_k_f32(QK_K, &w, &x, &mut y).unwrap();
+        let mut row = [0.0f32; QK_K];
+        dequant_q4_k_row(QK_K, &w, &mut row).unwrap();
+        let via_dequant: f32 = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
+        assert!(
+            (via_dequant - y[0]).abs() * 100_000.0 < 1.0,
+            "{via_dequant} vs {}",
+            y[0]
+        );
     }
 }

@@ -2,8 +2,9 @@
 
 use crate::gguf::{GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 use crate::quant::{
-    gemv_f32, gemv_q4_k_f32, gemv_q6_k_f32, pack_f32, pack_q4_k_block, pack_q6_k_block, QuantError,
-    QK_K,
+    dequant_f32_row, dequant_q4_k_row, dequant_q6_k_row, f32_row_bytes, gemv_f32, gemv_q4_k_f32,
+    gemv_q6_k_f32, pack_f32, pack_q4_k_block, pack_q6_k_block, q4_k_row_bytes, q6_k_row_bytes,
+    QuantError, QK_K,
 };
 use crate::tok::{TokError, Tokenizer};
 use crate::{write_gguf_with_kv, GGUF_DEFAULT_ALIGNMENT};
@@ -19,10 +20,19 @@ const TINY_N_ROT: usize = 64;
 /// Decode / load failure.
 #[derive(Debug)]
 pub enum LlamaError {
-    /// Missing or malformed tensor.
-    Tensor(&'static str),
-    /// Hyperparameter / shape mismatch.
-    Shape,
+    /// Missing tensor. Carries the GGUF tensor name.
+    Tensor(String),
+    /// Hyperparameter / shape mismatch. Carries the tensor, KV key, or check involved.
+    Shape(String),
+    /// Tensor ggml type cannot be used for this op. `ty` is the GGUF `ggml_type` integer.
+    Type {
+        /// Tensor name.
+        tensor: String,
+        /// `ggml_type` integer.
+        ty: i32,
+    },
+    /// Required KV key missing.
+    MissingKv(String),
     /// Quantized matmul failed.
     Quant(QuantError),
     /// GGUF parse failed.
@@ -35,7 +45,11 @@ impl std::fmt::Display for LlamaError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Tensor(n) => write!(f, "missing tensor {n}"),
-            Self::Shape => write!(f, "llama shape mismatch"),
+            Self::Shape(what) => write!(f, "llama shape mismatch: {what}"),
+            Self::Type { tensor, ty } => {
+                write!(f, "unsupported ggml type {ty} on tensor {tensor}")
+            }
+            Self::MissingKv(k) => write!(f, "missing kv {k}"),
             Self::Quant(e) => write!(f, "{e}"),
             Self::Gguf(e) => write!(f, "{e}"),
             Self::Tok(e) => write!(f, "{e}"),
@@ -64,6 +78,7 @@ impl From<TokError> for LlamaError {
 }
 
 struct QuantMat {
+    name: String,
     ty: GgmlType,
     n_cols: usize,
     data: Vec<u8>,
@@ -74,8 +89,11 @@ struct QuantMat {
 struct Layer {
     attn_norm: Vec<f32>,
     wq: QuantMat,
+    bq: Option<Vec<f32>>,
     wk: QuantMat,
+    bk: Option<Vec<f32>>,
     wv: QuantMat,
+    bv: Option<Vec<f32>>,
     wo: QuantMat,
     ffn_norm: Vec<f32>,
     gate: QuantMat,
@@ -94,7 +112,7 @@ pub struct Llama {
     n_rot: usize,
     rms_eps: f32,
     rope_base: f32,
-    token_embd: Vec<f32>,
+    token_embd: QuantMat,
     output_norm: Vec<f32>,
     output: QuantMat,
     layers: Vec<Layer>,
@@ -110,52 +128,42 @@ pub struct KvCache {
 }
 
 impl Llama {
-    /// Build from a loaded GGUF using `{arch}.*` KV (`llama` or `qwen2`) and
-    /// `blk.{i}.*` tensor names.
+    /// Build from a loaded GGUF using `{arch}.*` KV (`llama`, `qwen2`, `mistral`,
+    /// or `phi3`) and `blk.{i}.*` tensor names.
     pub fn from_gguf(g: &Gguf) -> Result<Self, LlamaError> {
         let arch = architecture(g)?;
-        let n_layer = usize_from_u32(arch_u32(g, arch, "block_count"))?;
-        let n_embd = usize_from_u32(arch_u32(g, arch, "embedding_length"))?;
-        let n_head = usize_from_u32(arch_u32(g, arch, "attention.head_count"))?;
-        let n_head_kv = usize_from_u32(arch_u32(g, arch, "attention.head_count_kv"))?;
-        let n_rot = usize_from_u32(arch_u32(g, arch, "rope.dimension_count"))?;
+        let n_layer = require_usize(g, arch, "block_count")?;
+        let n_embd = require_usize(g, arch, "embedding_length")?;
+        let n_head = require_usize(g, arch, "attention.head_count")?;
+        let n_head_kv = require_usize(g, arch, "attention.head_count_kv")?;
+        if n_layer == 0 {
+            return Err(LlamaError::Shape(arch_key(arch, "block_count")));
+        }
+        if n_embd == 0 {
+            return Err(LlamaError::Shape(arch_key(arch, "embedding_length")));
+        }
+        if n_head == 0 {
+            return Err(LlamaError::Shape(arch_key(arch, "attention.head_count")));
+        }
+        if n_head_kv == 0 {
+            return Err(LlamaError::Shape(arch_key(arch, "attention.head_count_kv")));
+        }
+        if !n_head.is_multiple_of(n_head_kv) {
+            return Err(LlamaError::Shape(arch_key(arch, "attention.head_count_kv")));
+        }
+        let n_rot = rope_dimension(g, arch, n_embd, n_head)?;
         let n_vocab = g
             .tensor("token_embd.weight")
             .map(Tensor::n_rows)
-            .ok_or(LlamaError::Tensor("token_embd.weight"))?;
-        if n_layer == 0 || n_embd == 0 || n_head == 0 || n_head_kv == 0 || n_rot == 0 {
-            return Err(LlamaError::Shape);
-        }
-        if !n_head.is_multiple_of(n_head_kv) {
-            return Err(LlamaError::Shape);
-        }
+            .ok_or_else(|| LlamaError::Tensor("token_embd.weight".into()))?;
         let rms_eps = arch_f32(g, arch, "attention.layer_norm_rms_epsilon").unwrap_or(1e-5);
         let rope_base = arch_f32(g, arch, "rope.freq_base").unwrap_or(10_000.0);
-        let token_embd = f32s(
-            g.tensor("token_embd.weight")
-                .ok_or(LlamaError::Tensor("token_embd.weight"))?,
-        )?;
-        let output_norm = f32s(
-            g.tensor("output_norm.weight")
-                .ok_or(LlamaError::Tensor("output_norm.weight"))?,
-        )?;
-        let output = quant_mat(
-            g.tensor("output.weight")
-                .ok_or(LlamaError::Tensor("output.weight"))?,
-        )?;
+        let token_embd = quant_mat(need(g, "token_embd.weight")?)?;
+        let output_norm = f32s(need(g, "output_norm.weight")?)?;
+        let output = quant_mat(need(g, "output.weight")?)?;
         let mut layers = Vec::new();
         for i in 0..n_layer {
-            layers.push(Layer {
-                attn_norm: f32s(need(g, &format!("blk.{i}.attn_norm.weight"))?)?,
-                wq: quant_mat(need(g, &format!("blk.{i}.attn_q.weight"))?)?,
-                wk: quant_mat(need(g, &format!("blk.{i}.attn_k.weight"))?)?,
-                wv: quant_mat(need(g, &format!("blk.{i}.attn_v.weight"))?)?,
-                wo: quant_mat(need(g, &format!("blk.{i}.attn_output.weight"))?)?,
-                ffn_norm: f32s(need(g, &format!("blk.{i}.ffn_norm.weight"))?)?,
-                gate: quant_mat(need(g, &format!("blk.{i}.ffn_gate.weight"))?)?,
-                up: quant_mat(need(g, &format!("blk.{i}.ffn_up.weight"))?)?,
-                down: quant_mat(need(g, &format!("blk.{i}.ffn_down.weight"))?)?,
-            });
+            layers.push(load_layer(g, i)?);
         }
         Ok(Self {
             n_vocab,
@@ -181,7 +189,7 @@ impl Llama {
             .checked_mul(self.n_head_kv)
             .and_then(|v| v.checked_mul(max_seq))
             .and_then(|v| v.checked_mul(hd))
-            .ok_or(LlamaError::Shape)?;
+            .ok_or_else(|| LlamaError::Shape("kv cache size".into()))?;
         Ok(KvCache {
             k: vec![0.0; n_k],
             v: vec![0.0; n_k],
@@ -194,7 +202,7 @@ impl Llama {
         if self.n_embd.is_multiple_of(self.n_head) {
             Ok(self.n_embd / self.n_head)
         } else {
-            Err(LlamaError::Shape)
+            Err(LlamaError::Shape("embedding_length / head_count".into()))
         }
     }
 
@@ -202,15 +210,15 @@ impl Llama {
     pub fn forward(&self, cache: &mut KvCache, token: u32) -> Result<Vec<f32>, LlamaError> {
         let hd = self.head_dim()?;
         if cache.n_past >= cache.max_seq {
-            return Err(LlamaError::Shape);
+            return Err(LlamaError::Shape("kv cache full".into()));
         }
-        let mut x = embed(&self.token_embd, self.n_embd, token)?;
+        let mut x = embed(&self.token_embd, token)?;
         for (li, layer) in self.layers.iter().enumerate() {
             let residual = x.clone();
             x = rmsnorm(&x, &layer.attn_norm, self.rms_eps)?;
-            let q = gemv_mat(&layer.wq, &x)?;
-            let k = gemv_mat(&layer.wk, &x)?;
-            let v = gemv_mat(&layer.wv, &x)?;
+            let q = add_bias(gemv_mat(&layer.wq, &x)?, layer.bq.as_deref())?;
+            let k = add_bias(gemv_mat(&layer.wk, &x)?, layer.bk.as_deref())?;
+            let v = add_bias(gemv_mat(&layer.wv, &x)?, layer.bv.as_deref())?;
             let mut qh = split_heads(&q, self.n_head, hd)?;
             let mut kh = split_heads(&k, self.n_head_kv, hd)?;
             let vh = split_heads(&v, self.n_head_kv, hd)?;
@@ -297,12 +305,7 @@ pub fn greedy_generate(
     prompt: &str,
     n_predict: usize,
 ) -> Result<String, LlamaError> {
-    let mut ids = tok.encode(prompt)?;
-    if let Some(bos) = tok.bos {
-        if ids.first().copied() != Some(bos) {
-            ids.insert(0, bos);
-        }
-    }
+    let mut ids = prompt_ids(tok, prompt)?;
     let max_seq = ids.len().saturating_add(n_predict).saturating_add(1);
     let mut cache = model.new_cache(max_seq)?;
     let mut last = Vec::new();
@@ -320,17 +323,101 @@ pub fn greedy_generate(
     Ok(tok.decode(&ids))
 }
 
+fn prompt_ids(tok: &Tokenizer, prompt: &str) -> Result<Vec<u32>, LlamaError> {
+    let mut ids = tok.encode(prompt)?;
+    if tok.add_bos {
+        if let Some(bos) = tok.bos {
+            if ids.first().copied() != Some(bos) {
+                ids.insert(0, bos);
+            }
+        }
+    }
+    Ok(ids)
+}
+
 /// Writer-built Llama-shaped GGUF: mixed F32/Q4_K/Q6_K weights + tokenizer KV.
 pub fn tiny_llama_gguf() -> Vec<u8> {
-    tiny_arch_gguf("llama")
+    tiny_arch_gguf(TinySpec {
+        arch: "llama",
+        token_embd: GgmlType::F32,
+        output: GgmlType::F32,
+        rope_dimension_count: true,
+        qkv_bias: false,
+        add_bos_token: None,
+    })
 }
 
-/// Writer-built Qwen2-shaped GGUF: same tensors as [`tiny_llama_gguf`], `qwen2.*` KV.
+/// Writer-built Qwen2-shaped GGUF: `qwen2.*` KV, no `rope.dimension_count`, QKV bias,
+/// `add_bos_token=false`.
 pub fn tiny_qwen2_gguf() -> Vec<u8> {
-    tiny_arch_gguf("qwen2")
+    tiny_arch_gguf(TinySpec {
+        arch: "qwen2",
+        token_embd: GgmlType::F32,
+        output: GgmlType::F32,
+        rope_dimension_count: false,
+        qkv_bias: true,
+        add_bos_token: Some(false),
+    })
 }
 
-fn tiny_arch_gguf(arch: &str) -> Vec<u8> {
+/// Writer-built Mistral-shaped GGUF: same tensors as [`tiny_llama_gguf`], `mistral.*` KV.
+pub fn tiny_mistral_gguf() -> Vec<u8> {
+    tiny_arch_gguf(TinySpec {
+        arch: "mistral",
+        token_embd: GgmlType::F32,
+        output: GgmlType::F32,
+        rope_dimension_count: true,
+        qkv_bias: false,
+        add_bos_token: None,
+    })
+}
+
+/// Writer-built Phi-3-shaped GGUF: same tensors as [`tiny_llama_gguf`], `phi3.*` KV.
+pub fn tiny_phi3_gguf() -> Vec<u8> {
+    tiny_arch_gguf(TinySpec {
+        arch: "phi3",
+        token_embd: GgmlType::F32,
+        output: GgmlType::F32,
+        rope_dimension_count: true,
+        qkv_bias: false,
+        add_bos_token: None,
+    })
+}
+
+/// Writer-built Llama GGUF with Q4_K `token_embd.weight`.
+pub fn tiny_q4k_embd_gguf() -> Vec<u8> {
+    tiny_arch_gguf(TinySpec {
+        arch: "llama",
+        token_embd: GgmlType::Q4_K,
+        output: GgmlType::F32,
+        rope_dimension_count: true,
+        qkv_bias: false,
+        add_bos_token: None,
+    })
+}
+
+/// Writer-built Llama GGUF with Q6_K `token_embd.weight` and Q6_K `output.weight`.
+pub fn tiny_q6k_embd_gguf() -> Vec<u8> {
+    tiny_arch_gguf(TinySpec {
+        arch: "llama",
+        token_embd: GgmlType::Q6_K,
+        output: GgmlType::Q6_K,
+        rope_dimension_count: true,
+        qkv_bias: false,
+        add_bos_token: None,
+    })
+}
+
+struct TinySpec {
+    arch: &'static str,
+    token_embd: GgmlType,
+    output: GgmlType,
+    rope_dimension_count: bool,
+    qkv_bias: bool,
+    add_bos_token: Option<bool>,
+}
+
+fn tiny_arch_gguf(spec: TinySpec) -> Vec<u8> {
     let n_embd = TINY_N_EMBD;
     let n_ff = TINY_N_FF;
     let n_vocab = TINY_N_VOCAB;
@@ -339,9 +426,9 @@ fn tiny_arch_gguf(arch: &str) -> Vec<u8> {
     let mut tensors = vec![
         tw(
             "token_embd.weight",
-            GgmlType::F32,
+            spec.token_embd,
             vec![n_embd, n_vocab],
-            pack_f32(&pat_f32(n_embd * n_vocab, 1)),
+            pack_mat(spec.token_embd, n_embd, n_vocab, 1),
         ),
         tw(
             "output_norm.weight",
@@ -351,9 +438,9 @@ fn tiny_arch_gguf(arch: &str) -> Vec<u8> {
         ),
         tw(
             "output.weight",
-            GgmlType::F32,
+            spec.output,
             vec![n_embd, n_vocab],
-            pack_f32(&pat_f32(n_embd * n_vocab, 2)),
+            pack_mat(spec.output, n_embd, n_vocab, 2),
         ),
         tw(
             "blk.0.attn_norm.weight",
@@ -410,16 +497,39 @@ fn tiny_arch_gguf(arch: &str) -> Vec<u8> {
         vec![n_embd, n_ff],
         pack_q6k_mat(n_embd, n_ff, 9),
     ));
-    let kv = tiny_kv(arch);
-    write_gguf_with_kv(&kv, &tensors)
+    if spec.qkv_bias {
+        tensors.push(tw(
+            "blk.0.attn_q.bias",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_f32(&pat_f32(n_embd, 11)),
+        ));
+        tensors.push(tw(
+            "blk.0.attn_k.bias",
+            GgmlType::F32,
+            vec![n_kv],
+            pack_f32(&pat_f32(n_kv, 12)),
+        ));
+        tensors.push(tw(
+            "blk.0.attn_v.bias",
+            GgmlType::F32,
+            vec![n_kv],
+            pack_f32(&pat_f32(n_kv, 13)),
+        ));
+    }
+    write_gguf_with_kv(&tiny_kv(&spec), &tensors)
 }
 
 fn architecture(g: &Gguf) -> Result<&str, LlamaError> {
     match g.kv("general.architecture") {
-        Some(Kv::String(s)) if s == "llama" || s == "qwen2" => Ok(s.as_str()),
-        Some(Kv::String(_)) => Err(LlamaError::Shape),
+        Some(Kv::String(s)) if supported_arch(s) => Ok(s.as_str()),
+        Some(Kv::String(s)) => Err(LlamaError::Shape(format!("unknown architecture {s}"))),
         _ => Ok("llama"),
     }
+}
+
+fn supported_arch(s: &str) -> bool {
+    s == "llama" || s == "qwen2" || s == "mistral" || s == "phi3"
 }
 
 fn arch_key(arch: &str, field: &str) -> String {
@@ -430,6 +540,7 @@ fn arch_key(arch: &str, field: &str) -> String {
     k
 }
 
+#[cfg(test)]
 fn arch_u32(g: &Gguf, arch: &str, field: &str) -> Option<u32> {
     g.kv_u32(&arch_key(arch, field))
 }
@@ -438,8 +549,32 @@ fn arch_f32(g: &Gguf, arch: &str, field: &str) -> Option<f32> {
     g.kv_f32(&arch_key(arch, field))
 }
 
-fn tiny_kv(arch: &str) -> Vec<(String, Kv)> {
-    vec![
+fn require_usize(g: &Gguf, arch: &str, field: &str) -> Result<usize, LlamaError> {
+    let key = arch_key(arch, field);
+    let v = g
+        .kv_u32(&key)
+        .ok_or_else(|| LlamaError::MissingKv(key.clone()))?;
+    usize::try_from(v).map_err(|_| LlamaError::Shape(key))
+}
+
+fn rope_dimension(g: &Gguf, arch: &str, n_embd: usize, n_head: usize) -> Result<usize, LlamaError> {
+    let key = arch_key(arch, "rope.dimension_count");
+    if let Some(v) = g.kv_u32(&key) {
+        let n = usize::try_from(v).map_err(|_| LlamaError::Shape(key.clone()))?;
+        if n == 0 {
+            return Err(LlamaError::Shape(key));
+        }
+        return Ok(n);
+    }
+    if n_head == 0 || !n_embd.is_multiple_of(n_head) {
+        return Err(LlamaError::Shape(key));
+    }
+    Ok(n_embd / n_head)
+}
+
+fn tiny_kv(spec: &TinySpec) -> Vec<(String, Kv)> {
+    let arch = spec.arch;
+    let mut kv = vec![
         (
             "general.alignment".into(),
             Kv::U32(u32::try_from(GGUF_DEFAULT_ALIGNMENT).unwrap_or(32)),
@@ -466,10 +601,6 @@ fn tiny_kv(arch: &str) -> Vec<(String, Kv)> {
             arch_key(arch, "attention.head_count_kv"),
             Kv::U32(u32::try_from(TINY_N_HEAD_KV).unwrap_or(0)),
         ),
-        (
-            arch_key(arch, "rope.dimension_count"),
-            Kv::U32(u32::try_from(TINY_N_ROT).unwrap_or(0)),
-        ),
         (arch_key(arch, "rope.freq_base"), Kv::F32(10_000.0)),
         (
             arch_key(arch, "attention.layer_norm_rms_epsilon"),
@@ -494,7 +625,17 @@ fn tiny_kv(arch: &str) -> Vec<(String, Kv)> {
         ),
         ("tokenizer.ggml.bos_token_id".into(), Kv::U32(4)),
         ("tokenizer.ggml.eos_token_id".into(), Kv::U32(5)),
-    ]
+    ];
+    if spec.rope_dimension_count {
+        kv.push((
+            arch_key(arch, "rope.dimension_count"),
+            Kv::U32(u32::try_from(TINY_N_ROT).unwrap_or(0)),
+        ));
+    }
+    if let Some(v) = spec.add_bos_token {
+        kv.push(("tokenizer.ggml.add_bos_token".into(), Kv::Bool(v)));
+    }
+    kv
 }
 
 fn tw(name: &str, ty: GgmlType, shape: Vec<usize>, data: Vec<u8>) -> TensorWrite {
@@ -518,6 +659,14 @@ fn pat_f32(n: usize, seed: u32) -> Vec<f32> {
         out.push((f32::from(k) - 100.0) / 4000.0);
     }
     out
+}
+
+fn pack_mat(ty: GgmlType, n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
+    match ty {
+        GgmlType::Q4_K => pack_q4k_mat(n_cols, n_rows, seed),
+        GgmlType::Q6_K => pack_q6k_mat(n_cols, n_rows, seed),
+        _ => pack_f32(&pat_f32(n_cols.saturating_mul(n_rows), seed)),
+    }
 }
 
 fn pack_q4k_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
@@ -562,20 +711,44 @@ fn pack_q6k_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
 }
 
 fn need<'a>(g: &'a Gguf, name: &str) -> Result<&'a Tensor, LlamaError> {
-    g.tensor(name).ok_or(LlamaError::Tensor("layer tensor"))
+    g.tensor(name)
+        .ok_or_else(|| LlamaError::Tensor(name.to_string()))
 }
 
-fn usize_from_u32(v: Option<u32>) -> Result<usize, LlamaError> {
-    usize::try_from(v.unwrap_or(0)).map_err(|_| LlamaError::Shape)
+fn load_layer(g: &Gguf, i: usize) -> Result<Layer, LlamaError> {
+    Ok(Layer {
+        attn_norm: f32s(need(g, &format!("blk.{i}.attn_norm.weight"))?)?,
+        wq: quant_mat(need(g, &format!("blk.{i}.attn_q.weight"))?)?,
+        bq: optional_f32(g, &format!("blk.{i}.attn_q.bias"))?,
+        wk: quant_mat(need(g, &format!("blk.{i}.attn_k.weight"))?)?,
+        bk: optional_f32(g, &format!("blk.{i}.attn_k.bias"))?,
+        wv: quant_mat(need(g, &format!("blk.{i}.attn_v.weight"))?)?,
+        bv: optional_f32(g, &format!("blk.{i}.attn_v.bias"))?,
+        wo: quant_mat(need(g, &format!("blk.{i}.attn_output.weight"))?)?,
+        ffn_norm: f32s(need(g, &format!("blk.{i}.ffn_norm.weight"))?)?,
+        gate: quant_mat(need(g, &format!("blk.{i}.ffn_gate.weight"))?)?,
+        up: quant_mat(need(g, &format!("blk.{i}.ffn_up.weight"))?)?,
+        down: quant_mat(need(g, &format!("blk.{i}.ffn_down.weight"))?)?,
+    })
+}
+
+fn optional_f32(g: &Gguf, name: &str) -> Result<Option<Vec<f32>>, LlamaError> {
+    match g.tensor(name) {
+        Some(t) => Ok(Some(f32s(t)?)),
+        None => Ok(None),
+    }
 }
 
 fn f32s(t: &Tensor) -> Result<Vec<f32>, LlamaError> {
     if t.ty != GgmlType::F32 {
-        return Err(LlamaError::Shape);
+        return Err(LlamaError::Type {
+            tensor: t.name.clone(),
+            ty: t.ty.to_i32(),
+        });
     }
     let (chunks, rem) = t.data.as_chunks::<4>();
     if !rem.is_empty() {
-        return Err(LlamaError::Shape);
+        return Err(LlamaError::Shape(t.name.clone()));
     }
     Ok(chunks
         .iter()
@@ -584,12 +757,19 @@ fn f32s(t: &Tensor) -> Result<Vec<f32>, LlamaError> {
 }
 
 fn quant_mat(t: &Tensor) -> Result<QuantMat, LlamaError> {
-    Ok(QuantMat {
-        ty: t.ty,
-        n_cols: t.n_cols(),
-        n_rows: t.n_rows(),
-        data: t.data.clone(),
-    })
+    match t.ty {
+        GgmlType::F32 | GgmlType::Q4_K | GgmlType::Q6_K => Ok(QuantMat {
+            name: t.name.clone(),
+            ty: t.ty,
+            n_cols: t.n_cols(),
+            n_rows: t.n_rows(),
+            data: t.data.clone(),
+        }),
+        other => Err(LlamaError::Type {
+            tensor: t.name.clone(),
+            ty: other.to_i32(),
+        }),
+    }
 }
 
 fn gemv_mat(m: &QuantMat, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
@@ -598,22 +778,57 @@ fn gemv_mat(m: &QuantMat, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
         GgmlType::F32 => gemv_f32(m.n_cols, &m.data, x, &mut y)?,
         GgmlType::Q4_K => gemv_q4_k_f32(m.n_cols, &m.data, x, &mut y)?,
         GgmlType::Q6_K => gemv_q6_k_f32(m.n_cols, &m.data, x, &mut y)?,
-        _ => return Err(LlamaError::Shape),
+        other => {
+            return Err(LlamaError::Type {
+                tensor: m.name.clone(),
+                ty: other.to_i32(),
+            })
+        }
     }
     Ok(y)
 }
 
-fn embed(emb: &[f32], n_embd: usize, token: u32) -> Result<Vec<f32>, LlamaError> {
-    let row = usize::try_from(token).map_err(|_| LlamaError::Shape)?;
-    let start = row.checked_mul(n_embd).ok_or(LlamaError::Shape)?;
-    emb.get(start..start + n_embd)
-        .map(<[f32]>::to_vec)
-        .ok_or(LlamaError::Shape)
+fn embed(emb: &QuantMat, token: u32) -> Result<Vec<f32>, LlamaError> {
+    let row = usize::try_from(token).map_err(|_| LlamaError::Shape(emb.name.clone()))?;
+    let rb = match emb.ty {
+        GgmlType::F32 => f32_row_bytes(emb.n_cols)?,
+        GgmlType::Q4_K => q4_k_row_bytes(emb.n_cols)?,
+        GgmlType::Q6_K => q6_k_row_bytes(emb.n_cols)?,
+        other => {
+            return Err(LlamaError::Type {
+                tensor: emb.name.clone(),
+                ty: other.to_i32(),
+            })
+        }
+    };
+    let start = row
+        .checked_mul(rb)
+        .ok_or_else(|| LlamaError::Shape(emb.name.clone()))?;
+    let end = start
+        .checked_add(rb)
+        .ok_or_else(|| LlamaError::Shape(emb.name.clone()))?;
+    let bytes = emb
+        .data
+        .get(start..end)
+        .ok_or_else(|| LlamaError::Shape(emb.name.clone()))?;
+    let mut y = vec![0.0f32; emb.n_cols];
+    match emb.ty {
+        GgmlType::F32 => dequant_f32_row(emb.n_cols, bytes, &mut y)?,
+        GgmlType::Q4_K => dequant_q4_k_row(emb.n_cols, bytes, &mut y)?,
+        GgmlType::Q6_K => dequant_q6_k_row(emb.n_cols, bytes, &mut y)?,
+        other => {
+            return Err(LlamaError::Type {
+                tensor: emb.name.clone(),
+                ty: other.to_i32(),
+            })
+        }
+    }
+    Ok(y)
 }
 
 fn rmsnorm(x: &[f32], w: &[f32], eps: f32) -> Result<Vec<f32>, LlamaError> {
     if x.len() != w.len() {
-        return Err(LlamaError::Shape);
+        return Err(LlamaError::Shape("rmsnorm".into()));
     }
     let mut ss = 0.0f32;
     for v in x {
@@ -679,19 +894,28 @@ fn softmax(x: &mut [f32]) {
 
 fn add(a: &[f32], b: &[f32]) -> Result<Vec<f32>, LlamaError> {
     if a.len() != b.len() {
-        return Err(LlamaError::Shape);
+        return Err(LlamaError::Shape("vector add".into()));
     }
     Ok(a.iter().zip(b.iter()).map(|(x, y)| x + y).collect())
 }
 
+fn add_bias(x: Vec<f32>, bias: Option<&[f32]>) -> Result<Vec<f32>, LlamaError> {
+    match bias {
+        None => Ok(x),
+        Some(b) => add(&x, b),
+    }
+}
+
 fn split_heads(x: &[f32], n_head: usize, hd: usize) -> Result<Vec<Vec<f32>>, LlamaError> {
     if x.len() != n_head.saturating_mul(hd) {
-        return Err(LlamaError::Shape);
+        return Err(LlamaError::Shape("split_heads".into()));
     }
     let mut out = Vec::new();
     for h in 0..n_head {
         let off = h.saturating_mul(hd);
-        let row = x.get(off..off + hd).ok_or(LlamaError::Shape)?;
+        let row = x
+            .get(off..off + hd)
+            .ok_or_else(|| LlamaError::Shape("split_heads".into()))?;
         out.push(row.to_vec());
     }
     Ok(out)
@@ -708,7 +932,9 @@ fn store_kv(
     let hd = heads.first().map(Vec::len).unwrap_or(0);
     for (h, vec) in heads.iter().enumerate() {
         let off = kv_offset(layer, h, n_head_kv, max_seq, t, hd)?;
-        let dst = cache.get_mut(off..off + hd).ok_or(LlamaError::Shape)?;
+        let dst = cache
+            .get_mut(off..off + hd)
+            .ok_or_else(|| LlamaError::Shape("kv store".into()))?;
         for (d, s) in dst.iter_mut().zip(vec.iter()) {
             *d = *s;
         }
@@ -726,7 +952,9 @@ fn kv_at(
     hd: usize,
 ) -> Result<&[f32], LlamaError> {
     let off = kv_offset(layer, head, n_head_kv, max_seq, t, hd)?;
-    cache.get(off..off + hd).ok_or(LlamaError::Shape)
+    cache
+        .get(off..off + hd)
+        .ok_or_else(|| LlamaError::Shape("kv load".into()))
 }
 
 fn kv_offset(
@@ -743,7 +971,7 @@ fn kv_offset(
         .and_then(|v| v.checked_mul(max_seq))
         .and_then(|v| v.checked_add(t))
         .and_then(|v| v.checked_mul(hd))
-        .ok_or(LlamaError::Shape)
+        .ok_or_else(|| LlamaError::Shape("kv offset".into()))
 }
 
 fn argmax(x: &[f32]) -> u32 {
@@ -883,6 +1111,43 @@ mod tests {
         y
     }
 
+    fn oracle_embed(t: &Tensor, token: u32) -> Vec<f32> {
+        let n_cols = t.n_cols();
+        let row = usize::try_from(token).unwrap();
+        match t.ty {
+            GgmlType::F32 => {
+                let mut x = vec![0.0f32; n_cols];
+                for (c, xv) in x.iter_mut().enumerate() {
+                    let off = (row * n_cols + c) * 4;
+                    *xv = f32::from_bits(u32::from_le_bytes(
+                        t.data[off..off + 4].try_into().unwrap(),
+                    ));
+                }
+                x
+            }
+            GgmlType::Q4_K => {
+                let rb = (n_cols / QK_K) * crate::quant::Q4_K_BLOCK;
+                dequant_q4_k_row(&t.data[row * rb..(row + 1) * rb])
+            }
+            GgmlType::Q6_K => {
+                let rb = (n_cols / QK_K) * crate::quant::Q6_K_BLOCK;
+                dequant_q6_k_row(&t.data[row * rb..(row + 1) * rb])
+            }
+            _ => panic!("oracle embed ty"),
+        }
+    }
+
+    fn oracle_add_bias(mut y: Vec<f32>, bias: Option<&Tensor>) -> Vec<f32> {
+        let Some(b) = bias else {
+            return y;
+        };
+        let bv = f32s(b).unwrap();
+        for (yv, bb) in y.iter_mut().zip(bv.iter()) {
+            *yv += *bb;
+        }
+        y
+    }
+
     fn oracle_rmsnorm(x: &[f32], w: &[f32], eps: f32) -> Vec<f32> {
         let ss: f32 = x.iter().map(|v| v * v).sum();
         let rms = (ss / x.len() as f32 + eps).sqrt();
@@ -905,29 +1170,37 @@ mod tests {
         v
     }
 
+    fn oracle_n_rot(g: &Gguf, arch: &str, n_embd: usize, n_head: usize) -> usize {
+        arch_u32(g, arch, "rope.dimension_count")
+            .map(|v| v as usize)
+            .unwrap_or(n_embd / n_head)
+    }
+
     fn oracle_forward(g: &Gguf, token: u32) -> Vec<f32> {
         let arch = architecture(g).expect("arch");
         let n_embd = arch_u32(g, arch, "embedding_length").unwrap() as usize;
         let n_head = arch_u32(g, arch, "attention.head_count").unwrap() as usize;
         let n_kv = arch_u32(g, arch, "attention.head_count_kv").unwrap() as usize;
-        let n_rot = arch_u32(g, arch, "rope.dimension_count").unwrap() as usize;
+        let n_rot = oracle_n_rot(g, arch, n_embd, n_head);
         let eps = arch_f32(g, arch, "attention.layer_norm_rms_epsilon").unwrap();
         let base = arch_f32(g, arch, "rope.freq_base").unwrap();
         let hd = n_embd / n_head;
         let emb = g.tensor("token_embd.weight").unwrap();
-        let mut x = vec![0.0f32; n_embd];
-        let row = usize::try_from(token).unwrap();
-        for (c, xv) in x.iter_mut().enumerate() {
-            let off = (row * n_embd + c) * 4;
-            *xv = f32::from_bits(u32::from_le_bytes(
-                emb.data[off..off + 4].try_into().unwrap(),
-            ));
-        }
+        let residual = oracle_embed(emb, token);
         let an = f32s(g.tensor("blk.0.attn_norm.weight").unwrap()).unwrap();
-        x = oracle_rmsnorm(&x, &an, eps);
-        let q = oracle_gemv(g.tensor("blk.0.attn_q.weight").unwrap(), &x);
-        let k = oracle_gemv(g.tensor("blk.0.attn_k.weight").unwrap(), &x);
-        let v = oracle_gemv(g.tensor("blk.0.attn_v.weight").unwrap(), &x);
+        let x = oracle_rmsnorm(&residual, &an, eps);
+        let q = oracle_add_bias(
+            oracle_gemv(g.tensor("blk.0.attn_q.weight").unwrap(), &x),
+            g.tensor("blk.0.attn_q.bias"),
+        );
+        let k = oracle_add_bias(
+            oracle_gemv(g.tensor("blk.0.attn_k.weight").unwrap(), &x),
+            g.tensor("blk.0.attn_k.bias"),
+        );
+        let v = oracle_add_bias(
+            oracle_gemv(g.tensor("blk.0.attn_v.weight").unwrap(), &x),
+            g.tensor("blk.0.attn_v.bias"),
+        );
         let mut qh: Vec<Vec<f32>> = q.chunks(hd).map(<[f32]>::to_vec).collect();
         let mut kh: Vec<Vec<f32>> = k.chunks(hd).map(<[f32]>::to_vec).collect();
         let vh: Vec<Vec<f32>> = v.chunks(hd).map(<[f32]>::to_vec).collect();
@@ -950,15 +1223,7 @@ mod tests {
             }
         }
         let mut x = oracle_gemv(g.tensor("blk.0.attn_output.weight").unwrap(), &attn);
-        // residual skipped first rms? wait we overwrote x. Re-read embed residual.
-        let mut res = vec![0.0f32; n_embd];
-        for (c, xv) in res.iter_mut().enumerate() {
-            let off = (row * n_embd + c) * 4;
-            *xv = f32::from_bits(u32::from_le_bytes(
-                emb.data[off..off + 4].try_into().unwrap(),
-            ));
-        }
-        x = x.iter().zip(res.iter()).map(|(a, b)| a + b).collect();
+        x = x.iter().zip(residual.iter()).map(|(a, b)| a + b).collect();
         let fnorm = f32s(g.tensor("blk.0.ffn_norm.weight").unwrap()).unwrap();
         let xn = oracle_rmsnorm(&x, &fnorm, eps);
         let gate = oracle_gemv(g.tensor("blk.0.ffn_gate.weight").unwrap(), &xn);
@@ -975,6 +1240,24 @@ mod tests {
         oracle_gemv(g.tensor("output.weight").unwrap(), &x)
     }
 
+    fn assert_logits_match(got: &[f32], exp: &[f32]) {
+        assert_eq!(got.len(), exp.len());
+        for (i, (a, b)) in got.iter().zip(exp.iter()).enumerate() {
+            let rel = (a - b).abs() / (1.0 + b.abs());
+            assert!(rel * 1000.0 < 1.0, "logit {i}: {a} vs {b}");
+        }
+    }
+
+    fn load_fwd_match(bytes: &[u8], token: u32) {
+        let g = load_gguf(bytes).expect("load");
+        let model = Llama::from_gguf(&g).expect("model");
+        let mut cache = model.new_cache(4).expect("cache");
+        let got = model.forward(&mut cache, token).expect("fwd");
+        let exp = oracle_forward(&g, token);
+        assert_logits_match(&got, &exp);
+        assert_eq!(cache.n_past, 1);
+    }
+
     #[test]
     fn tiny_llama_logits_match_independent_oracle() {
         let bytes = tiny_llama_gguf();
@@ -985,17 +1268,8 @@ mod tests {
         );
         assert_eq!(g.tensor("blk.0.attn_q.weight").unwrap().ty, GgmlType::Q4_K);
         assert_eq!(g.tensor("output_norm.weight").unwrap().ty, GgmlType::F32);
-        let model = Llama::from_gguf(&g).expect("model");
-        let mut cache = model.new_cache(4).expect("cache");
-        let token = 3u32;
-        let got = model.forward(&mut cache, token).expect("fwd");
-        let exp = oracle_forward(&g, token);
-        assert_eq!(got.len(), exp.len());
-        for (i, (a, b)) in got.iter().zip(exp.iter()).enumerate() {
-            let rel = (a - b).abs() / (1.0 + b.abs());
-            assert!(rel * 1000.0 < 1.0, "logit {i}: {a} vs {b}");
-        }
-        assert_eq!(cache.n_past, 1);
+        assert!(g.tensor("blk.0.attn_q.bias").is_none());
+        load_fwd_match(&bytes, 3);
     }
 
     #[test]
@@ -1003,8 +1277,10 @@ mod tests {
         let bytes = tiny_llama_gguf();
         let g = load_gguf(&bytes).expect("load");
         let tok = Tokenizer::from_gguf(&g).expect("tok");
+        assert!(tok.add_bos);
         assert_eq!(tok.encode("ab").unwrap(), vec![3]);
         assert_eq!(tok.decode(&[1, 2]), "ab");
+        assert_eq!(prompt_ids(&tok, "ab").unwrap().first().copied(), tok.bos);
         let model = Llama::from_gguf(&g).expect("model");
         let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
         assert!(out.contains("ab"), "{out}");
@@ -1022,16 +1298,10 @@ mod tests {
         );
         assert_eq!(g.kv_u32("qwen2.block_count"), Some(1));
         assert!(g.kv_u32("llama.block_count").is_none());
-        let model = Llama::from_gguf(&g).expect("model");
-        let mut cache = model.new_cache(4).expect("cache");
-        let token = 3u32;
-        let got = model.forward(&mut cache, token).expect("fwd");
-        let exp = oracle_forward(&g, token);
-        assert_eq!(got.len(), exp.len());
-        for (i, (a, b)) in got.iter().zip(exp.iter()).enumerate() {
-            let rel = (a - b).abs() / (1.0 + b.abs());
-            assert!(rel * 1000.0 < 1.0, "logit {i}: {a} vs {b}");
-        }
+        assert!(g.kv_u32("qwen2.rope.dimension_count").is_none());
+        assert!(g.tensor("blk.0.attn_q.bias").is_some());
+        assert_eq!(g.kv_bool("tokenizer.ggml.add_bos_token"), Some(false));
+        load_fwd_match(&bytes, 3);
     }
 
     #[test]
@@ -1039,6 +1309,10 @@ mod tests {
         let bytes = tiny_qwen2_gguf();
         let g = load_gguf(&bytes).expect("load");
         let tok = Tokenizer::from_gguf(&g).expect("tok");
+        assert!(!tok.add_bos);
+        let ids = prompt_ids(&tok, "ab").expect("ids");
+        assert_eq!(ids, tok.encode("ab").unwrap());
+        assert_ne!(ids.first().copied(), tok.bos);
         let model = Llama::from_gguf(&g).expect("model");
         let prompt = tok.decode(&[3]);
         assert!(!prompt.is_empty());
@@ -1046,6 +1320,41 @@ mod tests {
         assert!(!out.is_empty());
         let out2 = greedy_generate(&model, &tok, &prompt, 2).expect("gen2");
         assert_eq!(out, out2);
+    }
+
+    #[test]
+    fn tiny_q4k_embd_logits_match_independent_oracle() {
+        let bytes = tiny_q4k_embd_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        assert_eq!(g.tensor("token_embd.weight").unwrap().ty, GgmlType::Q4_K);
+        load_fwd_match(&bytes, 3);
+    }
+
+    #[test]
+    fn tiny_q6k_embd_logits_match_independent_oracle() {
+        let bytes = tiny_q6k_embd_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        assert_eq!(g.tensor("token_embd.weight").unwrap().ty, GgmlType::Q6_K);
+        assert_eq!(g.tensor("output.weight").unwrap().ty, GgmlType::Q6_K);
+        load_fwd_match(&bytes, 3);
+    }
+
+    #[test]
+    fn tiny_mistral_and_phi3_load_and_greedy() {
+        for bytes in [tiny_mistral_gguf(), tiny_phi3_gguf()] {
+            let g = load_gguf(&bytes).expect("load");
+            let tok = Tokenizer::from_gguf(&g).expect("tok");
+            let model = Llama::from_gguf(&g).expect("model");
+            let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+            let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+            assert_eq!(out, out2);
+            assert!(!out.is_empty());
+            load_fwd_match(&bytes, 3);
+        }
+        let m = load_gguf(&tiny_mistral_gguf()).unwrap();
+        assert_eq!(m.kv_u32("mistral.block_count"), Some(1));
+        let p = load_gguf(&tiny_phi3_gguf()).unwrap();
+        assert_eq!(p.kv_u32("phi3.block_count"), Some(1));
     }
 
     #[test]
@@ -1074,6 +1383,72 @@ mod tests {
         assert!(
             err.contains(&Q5_K.to_string()),
             "error should include type id {Q5_K}: {err}"
+        );
+    }
+
+    #[test]
+    fn missing_tensor_error_names_tensor() {
+        let bytes = write_gguf_with_kv(
+            &tiny_kv(&TinySpec {
+                arch: "llama",
+                token_embd: GgmlType::F32,
+                output: GgmlType::F32,
+                rope_dimension_count: true,
+                qkv_bias: false,
+                add_bos_token: None,
+            }),
+            &[tw(
+                "token_embd.weight",
+                GgmlType::F32,
+                vec![TINY_N_EMBD, TINY_N_VOCAB],
+                pack_f32(&pat_f32(TINY_N_EMBD * TINY_N_VOCAB, 1)),
+            )],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(&g) {
+            Ok(_) => panic!("expected missing tensor"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("output_norm.weight"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
+    fn unknown_architecture_error_names_arch() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("falcon".into())),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(&g) {
+            Ok(_) => panic!("expected unknown arch"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("falcon"), "error should name arch: {err}");
+    }
+
+    #[test]
+    fn missing_kv_error_names_key() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("llama".into())),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(&g) {
+            Ok(_) => panic!("expected missing kv"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("llama.block_count"),
+            "error should name kv key: {err}"
         );
     }
 }

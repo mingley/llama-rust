@@ -49,7 +49,7 @@ impl GgmlType {
     }
 
     /// GGUF `ggml_type` integer.
-    const fn to_i32(self) -> i32 {
+    pub const fn to_i32(self) -> i32 {
         match self {
             Self::F32 => 0,
             Self::Q4_0 => 2,
@@ -269,6 +269,14 @@ impl Gguf {
     pub fn kv_f32(&self, key: &str) -> Option<f32> {
         match self.kv.get(key) {
             Some(Kv::F32(v)) => Some(*v),
+            _ => None,
+        }
+    }
+
+    /// `bool` metadata value, if present.
+    pub fn kv_bool(&self, key: &str) -> Option<bool> {
+        match self.kv.get(key) {
+            Some(Kv::Bool(v)) => Some(*v),
             _ => None,
         }
     }

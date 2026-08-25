@@ -36,6 +36,8 @@ pub struct Tokenizer {
     pub bos: Option<u32>,
     /// EOS id, if present.
     pub eos: Option<u32>,
+    /// Whether encode/generate should prepend `bos`. Default true when the KV is absent.
+    pub add_bos: bool,
 }
 
 impl Tokenizer {
@@ -71,6 +73,7 @@ impl Tokenizer {
             merges,
             bos: g.kv_u32("tokenizer.ggml.bos_token_id"),
             eos: g.kv_u32("tokenizer.ggml.eos_token_id"),
+            add_bos: g.kv_bool("tokenizer.ggml.add_bos_token").unwrap_or(true),
         })
     }
 
