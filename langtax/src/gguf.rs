@@ -3,7 +3,9 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use crate::quant::{Q4_0_BLOCK, Q4_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK8_0, QK_K};
+use crate::quant::{
+    F32_SIZE, Q4_0_BLOCK, Q4_K_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK8_0, QK_K,
+};
 
 /// GGUF magic `GGUF`.
 pub(crate) const GGUF_MAGIC: &[u8; 4] = b"GGUF";
@@ -16,6 +18,8 @@ pub const GGUF_DEFAULT_ALIGNMENT: usize = 32;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(i32)]
 pub enum GgmlType {
+    /// `GGML_TYPE_F32`.
+    F32 = 0,
     /// `GGML_TYPE_Q4_0`.
     Q4_0 = 2,
     /// `GGML_TYPE_Q8_0`.
@@ -23,6 +27,9 @@ pub enum GgmlType {
     /// `GGML_TYPE_Q4_K`.
     #[expect(non_camel_case_types, reason = "matches ggml GGML_TYPE_Q4_K")]
     Q4_K = 12,
+    /// `GGML_TYPE_Q6_K`.
+    #[expect(non_camel_case_types, reason = "matches ggml GGML_TYPE_Q6_K")]
+    Q6_K = 14,
     /// `GGML_TYPE_Q8_K`.
     #[expect(non_camel_case_types, reason = "matches ggml GGML_TYPE_Q8_K")]
     Q8_K = 15,
@@ -31,9 +38,11 @@ pub enum GgmlType {
 impl GgmlType {
     fn from_i32(v: i32) -> Result<Self, GgufError> {
         match v {
+            0 => Ok(Self::F32),
             2 => Ok(Self::Q4_0),
             8 => Ok(Self::Q8_0),
             12 => Ok(Self::Q4_K),
+            14 => Ok(Self::Q6_K),
             15 => Ok(Self::Q8_K),
             other => Err(GgufError::UnsupportedType(other)),
         }
@@ -42,18 +51,22 @@ impl GgmlType {
     /// GGUF `ggml_type` integer.
     const fn to_i32(self) -> i32 {
         match self {
+            Self::F32 => 0,
             Self::Q4_0 => 2,
             Self::Q8_0 => 8,
             Self::Q4_K => 12,
+            Self::Q6_K => 14,
             Self::Q8_K => 15,
         }
     }
 
     fn layout(self) -> (usize, usize) {
         match self {
+            Self::F32 => (F32_SIZE, 1),
             Self::Q4_0 => (Q4_0_BLOCK, QK4_0),
             Self::Q8_0 => (Q8_0_BLOCK, QK8_0),
             Self::Q4_K => (Q4_K_BLOCK, QK_K),
+            Self::Q6_K => (Q6_K_BLOCK, QK_K),
             Self::Q8_K => (Q8_K_BLOCK, QK_K),
         }
     }
@@ -84,7 +97,7 @@ pub enum GgufError {
     Truncated,
     /// A GGUF string was not valid UTF-8.
     Utf8,
-    /// Tensor `ggml_type` is not Q4_0, Q8_0, Q4_K, or Q8_K.
+    /// Tensor `ggml_type` is not F32, Q4_0, Q8_0, Q4_K, Q6_K, or Q8_K.
     UnsupportedType(i32),
     /// KV type is not a GGUF v3 value type.
     UnsupportedKv(i32),
@@ -250,6 +263,14 @@ impl Gguf {
     /// Metadata value for `key`, if present.
     pub fn kv(&self, key: &str) -> Option<&Kv> {
         self.kv.get(key)
+    }
+
+    /// `float32` metadata value, if present.
+    pub fn kv_f32(&self, key: &str) -> Option<f32> {
+        match self.kv.get(key) {
+            Some(Kv::F32(v)) => Some(*v),
+            _ => None,
+        }
     }
 }
 
@@ -521,9 +542,9 @@ mod tests {
     use super::*;
     use crate::fp16::load_f16_le;
     use crate::quant::{
-        gemv_q4_0, gemv_q4_k, gemv_q8_0, i8_from_bits, pack_q4_0_from_i4, pack_q4_k_block,
-        pack_q8_0_block, pack_q8_k_block, Q4_0_BLOCK, Q4_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0,
-        QK8_0, QK_K,
+        gemv_q4_0, gemv_q4_k, gemv_q8_0, i8_from_bits, pack_f32, pack_q4_0_from_i4,
+        pack_q4_k_block, pack_q6_k_block, pack_q8_0_block, pack_q8_k_block, Q4_0_BLOCK, Q4_K_BLOCK,
+        Q6_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK8_0, QK_K,
     };
 
     fn independent_q8_dot(w: &[u8], x: &[u8]) -> f32 {
@@ -950,5 +971,43 @@ mod tests {
         .unwrap();
         assert!(y8[0].abs() * 100_000.0 < 1.0);
         assert!(y4[0].abs() * 100_000.0 < 1.0);
+    }
+
+    #[test]
+    fn write_load_f32_and_q6k_match_file_bytes() {
+        let f32_data = pack_f32(&[1.0, 2.0, 3.0, 4.0]);
+        let mut qs = [0i8; QK_K];
+        qs[0] = 1;
+        let mut sc = [0i8; 16];
+        sc[0] = 1;
+        let q6 = pack_q6_k_block(1.0, &sc, &qs);
+        let q4 = pack_q4_k_block(1.0, 0.0, &[1u8; 8], &[0u8; 8], &[0u8; QK_K]);
+        let bytes = write_gguf(&[
+            TensorWrite {
+                name: "norm".into(),
+                ty: GgmlType::F32,
+                shape: vec![4],
+                data: f32_data.clone(),
+            },
+            TensorWrite {
+                name: "w_q6k".into(),
+                ty: GgmlType::Q6_K,
+                shape: vec![256, 1],
+                data: q6.to_vec(),
+            },
+            TensorWrite {
+                name: "w_q4k".into(),
+                ty: GgmlType::Q4_K,
+                shape: vec![256, 1],
+                data: q4.to_vec(),
+            },
+        ]);
+        let g = load_gguf(&bytes).expect("load mixed");
+        assert_eq!(g.tensor("norm").unwrap().ty, GgmlType::F32);
+        assert_eq!(g.tensor("norm").unwrap().data, f32_data);
+        assert_eq!(g.tensor("w_q6k").unwrap().ty, GgmlType::Q6_K);
+        assert_eq!(g.tensor("w_q6k").unwrap().data.len(), Q6_K_BLOCK);
+        assert_eq!(g.tensor("w_q6k").unwrap().data, q6.to_vec());
+        assert_eq!(g.tensor("w_q4k").unwrap().data, q4.to_vec());
     }
 }

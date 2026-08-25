@@ -7,8 +7,9 @@ use std::path::Path;
 use std::time::Instant;
 
 use llama_rust::{
-    gemv_q4_k, gemv_q8_0, load_gguf, pack_q4_k_block, pack_q8_0_block, pack_q8_k_block, write_gguf,
-    write_gguf_with_kv, GgmlType, Kv, TensorWrite, QK8_0, QK_K,
+    gemv_q4_k, gemv_q8_0, greedy_generate, load_gguf, pack_q4_k_block, pack_q8_0_block,
+    pack_q8_k_block, tiny_llama_gguf, write_gguf, write_gguf_with_kv, GgmlType, Kv, Llama,
+    TensorWrite, Tokenizer, QK8_0, QK_K,
 };
 
 fn y_checksum(y: &[f32]) -> u64 {
@@ -208,6 +209,17 @@ fn gemv_q4k_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn infer_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = read_path(path)?;
+    let g = load_gguf(&bytes)?;
+    let model = Llama::from_gguf(&g)?;
+    let tok = Tokenizer::from_gguf(&g)?;
+    let text = greedy_generate(&model, &tok, "ab", 2)?;
+    println!("prompt=ab n_predict=2");
+    println!("generated={text}");
+    Ok(())
+}
+
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
     let cmd = args.next().unwrap_or_else(|| "gemv".into());
@@ -236,8 +248,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let path = args.next().ok_or("gemv-q4k <path>")?;
             gemv_q4k_file(Path::new(&path))
         }
+        "write-tiny" => {
+            let path = args.next().ok_or("write-tiny <path>")?;
+            let bytes = tiny_llama_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "infer" => {
+            let path = args.next().ok_or("infer <path>")?;
+            infer_file(Path::new(&path))
+        }
         other => Err(format!(
-            "usage: gguf_gemv write|gemv|write-q4k|gemv-q4k <path> (got {other})"
+            "usage: gguf_gemv write|gemv|write-q4k|gemv-q4k|write-tiny|infer <path> (got {other})"
         )
         .into()),
     }
