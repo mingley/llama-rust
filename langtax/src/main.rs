@@ -226,8 +226,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     match cmd.as_str() {
         "write" => {
             let path = args.next().ok_or("write <path>")?;
-            let n_cols = 256usize;
-            let n_rows = 128usize;
+            let n_cols = 4096usize;
+            let n_rows = 4096usize;
             let bytes = demo_gguf(n_cols, n_rows);
             write_path(Path::new(&path), &bytes)?;
             println!("wrote {path} bytes={}", bytes.len());

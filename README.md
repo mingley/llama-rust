@@ -29,17 +29,26 @@ prompt=ab n_predict=2
 generated=ab
 ```
 
-Both runs print that string. `#![forbid(unsafe_code)]`. Lockfile: `llama-rust` + rayon/crossbeam/either.
+Both runs print that string. `#![forbid(unsafe_code)]`. No FFI. `Cargo.lock` names only `llama-rust`.
 
-Q8_0 GEMV subcommand still `y_checksum=9fe974004a730987`.
+Q8_0 GEMV (`write`+`gemv`, M=K=4096, GGUF-byte blocks) two runs, same checksum both times and vs 1-thread C:
 
-## Extra GEMV cells
+```
+lang=Rust kernel=q8_0_gguf M=4096 K=4096 niter=8
+time_s=0.001684 gemv/s=4751.42
+y_checksum=80e188057fa1eef0 y0=78.165176
 
-| kernel | M=K | gemv/s |
-|---|---:|---:|
-| q8_0_gguf | 128 | 32537 |
-| q8_0_gguf | 256 | 24980 |
-| q8_0_gguf | 512 | 44693 |
-| q8_0_gguf | 1024 | 12521 |
-| q4_0_gguf | 256 | 36377 |
-| q4_k_gguf | 256 | 11996 |
+lang=Rust kernel=q8_0_gguf M=4096 K=4096 niter=8
+time_s=0.001824 gemv/s=4386.36
+y_checksum=80e188057fa1eef0 y0=78.165176
+
+lang=C kernel=q8_0_gguf M=4096 K=4096 niter=8
+time_s=0.008823 gemv/s=906.76
+y_checksum=80e188057fa1eef0 y0=78.165176
+
+lang=C kernel=q8_0_gguf M=4096 K=4096 niter=8
+time_s=0.008421 gemv/s=950.02
+y_checksum=80e188057fa1eef0 y0=78.165176
+```
+
+min(Rust gemv/s) / max(C gemv/s) = 4386.36 / 950.02 = **4.62**. C is `clang -O3 -mcpu=native` on `langtax/q8_gemv.c` (measurement binary, not linked into the crate). Rust is `--release` `-C target-cpu=native`.

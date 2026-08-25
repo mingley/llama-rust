@@ -2,10 +2,8 @@
 
 use std::fmt;
 
-use rayon::prelude::*;
-
 use crate::fp16::{load_f16_le, store_f16_le};
-use crate::pool::install;
+use crate::pool::for_each_row;
 
 /// Q8_0 / Q4_0 block width in elements (`ggml` `QK8_0` / `QK4_0`).
 pub const QK8_0: usize = 32;
@@ -65,6 +63,11 @@ impl fmt::Display for QuantError {
 }
 
 impl std::error::Error for QuantError {}
+
+fn row_bytes(w: &[u8], rb: usize, r: usize) -> Option<&[u8]> {
+    let start = r.checked_mul(rb)?;
+    w.get(start..)?.get(..rb)
+}
 
 /// Bit-cast `u8` to `i8` without a wrapping `as`.
 pub(crate) fn i8_from_bits(b: u8) -> i8 {
@@ -369,17 +372,10 @@ pub fn gemv_q8_0(n_cols: usize, w: &[u8], x: &[u8], y: &mut [f32]) -> Result<(),
     if y.is_empty() {
         return Ok(());
     }
-    install(|| {
-        y.par_iter_mut().enumerate().for_each(|(r, out)| {
-            *out = match r.checked_mul(rb) {
-                Some(start) => w
-                    .get(start..)
-                    .and_then(|s| s.get(..rb))
-                    .map(|row| vec_dot_q8_row(row, x))
-                    .unwrap_or(0.0),
-                None => 0.0,
-            };
-        });
+    for_each_row(y, |r, out| {
+        *out = row_bytes(w, rb, r)
+            .map(|row| vec_dot_q8_row(row, x))
+            .unwrap_or(0.0);
     });
     Ok(())
 }
@@ -398,17 +394,10 @@ pub fn gemv_q4_0(n_cols: usize, w: &[u8], x: &[u8], y: &mut [f32]) -> Result<(),
     if y.is_empty() {
         return Ok(());
     }
-    install(|| {
-        y.par_iter_mut().enumerate().for_each(|(r, out)| {
-            *out = match r.checked_mul(w_rb) {
-                Some(start) => w
-                    .get(start..)
-                    .and_then(|s| s.get(..w_rb))
-                    .map(|row| vec_dot_q4_row(row, x))
-                    .unwrap_or(0.0),
-                None => 0.0,
-            };
-        });
+    for_each_row(y, |r, out| {
+        *out = row_bytes(w, w_rb, r)
+            .map(|row| vec_dot_q4_row(row, x))
+            .unwrap_or(0.0);
     });
     Ok(())
 }
@@ -427,17 +416,10 @@ pub fn gemv_q4_k(n_cols: usize, w: &[u8], x: &[u8], y: &mut [f32]) -> Result<(),
     if y.is_empty() {
         return Ok(());
     }
-    install(|| {
-        y.par_iter_mut().enumerate().for_each(|(r, out)| {
-            *out = match r.checked_mul(w_rb) {
-                Some(start) => w
-                    .get(start..)
-                    .and_then(|s| s.get(..w_rb))
-                    .map(|row| vec_dot_q4_k_row(row, x))
-                    .unwrap_or(0.0),
-                None => 0.0,
-            };
-        });
+    for_each_row(y, |r, out| {
+        *out = row_bytes(w, w_rb, r)
+            .map(|row| vec_dot_q4_k_row(row, x))
+            .unwrap_or(0.0);
     });
     Ok(())
 }
@@ -455,17 +437,10 @@ pub fn gemv_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(),
     if y.is_empty() {
         return Ok(());
     }
-    install(|| {
-        y.par_iter_mut().enumerate().for_each(|(r, out)| {
-            *out = match r.checked_mul(rb) {
-                Some(start) => w
-                    .get(start..)
-                    .and_then(|s| s.get(..rb))
-                    .map(|row| vec_dot_f32_row(row, x))
-                    .unwrap_or(0.0),
-                None => 0.0,
-            };
-        });
+    for_each_row(y, |r, out| {
+        *out = row_bytes(w, rb, r)
+            .map(|row| vec_dot_f32_row(row, x))
+            .unwrap_or(0.0);
     });
     Ok(())
 }
@@ -483,17 +458,10 @@ pub fn gemv_q4_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
     if y.is_empty() {
         return Ok(());
     }
-    install(|| {
-        y.par_iter_mut().enumerate().for_each(|(r, out)| {
-            *out = match r.checked_mul(w_rb) {
-                Some(start) => w
-                    .get(start..)
-                    .and_then(|s| s.get(..w_rb))
-                    .map(|row| vec_dot_q4_k_f32_row(row, x))
-                    .unwrap_or(0.0),
-                None => 0.0,
-            };
-        });
+    for_each_row(y, |r, out| {
+        *out = row_bytes(w, w_rb, r)
+            .map(|row| vec_dot_q4_k_f32_row(row, x))
+            .unwrap_or(0.0);
     });
     Ok(())
 }
@@ -511,19 +479,17 @@ pub fn gemv_q6_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
     if y.is_empty() {
         return Ok(());
     }
-    install(|| {
-        y.par_iter_mut().enumerate().for_each(|(r, out)| {
-            *out = match r.checked_mul(w_rb) {
-                Some(start) => w
-                    .get(start..)
-                    .and_then(|s| s.get(..w_rb))
-                    .map(|row| vec_dot_q6_k_f32_row(row, x))
-                    .unwrap_or(0.0),
-                None => 0.0,
-            };
-        });
+    for_each_row(y, |r, out| {
+        *out = row_bytes(w, w_rb, r)
+            .map(|row| vec_dot_q6_k_f32_row(row, x))
+            .unwrap_or(0.0);
     });
     Ok(())
+}
+
+#[inline(never)]
+fn add_f32(a: f32, b: f32) -> f32 {
+    a + b
 }
 
 fn vec_dot_q8_row(row: &[u8], x: &[u8]) -> f32 {
@@ -539,7 +505,7 @@ fn vec_dot_q8_row(row: &[u8], x: &[u8]) -> f32 {
         for (wq, xq) in wqs.iter().zip(xqs.iter()).take(QK8_0) {
             acc += i32::from(i8_from_bits(*wq)) * i32::from(i8_from_bits(*xq));
         }
-        sum += (acc as f32) * (dw * dx);
+        sum = add_f32(sum, (acc as f32) * (dw * dx));
     }
     sum
 }
@@ -775,6 +741,79 @@ mod tests {
     fn gemv_q4_k_rejects_unaligned_cols() {
         let mut y = [0.0f32];
         assert!(gemv_q4_k(255, &[], &[], &mut y).is_err());
+    }
+
+    fn dequant_q8_row(bytes: &[u8]) -> Vec<f32> {
+        let mut out = Vec::new();
+        let (blocks, _) = bytes.as_chunks::<Q8_0_BLOCK>();
+        for block in blocks {
+            let Some(d) = load_f16_le(block) else {
+                continue;
+            };
+            let Some(qs) = block.get(2..) else {
+                continue;
+            };
+            for q in qs.iter().take(QK8_0) {
+                out.push(d * f32::from(i8_from_bits(*q)));
+            }
+        }
+        out
+    }
+
+    fn oracle_q8_dot(w_row: &[u8], x: &[u8]) -> f32 {
+        dequant_q8_row(w_row)
+            .iter()
+            .zip(dequant_q8_row(x).iter())
+            .map(|(a, b)| a * b)
+            .sum()
+    }
+
+    #[test]
+    fn gemv_q8_multi_row_parallel_matches_sequential_and_oracle() {
+        let n_cols = 64usize;
+        let n_rows = 8usize;
+        let mut w = Vec::new();
+        let mut x = Vec::new();
+        for r in 0..n_rows {
+            for _b in 0..(n_cols / QK8_0) {
+                let mut qs = [0i8; QK8_0];
+                for (i, q) in qs.iter_mut().enumerate() {
+                    let base = i8::try_from(r).unwrap_or(0);
+                    let off = i8::try_from(i).unwrap_or(0);
+                    *q = base.wrapping_add(off).wrapping_sub(16);
+                }
+                w.extend_from_slice(&pack_q8_0_block(
+                    5.0 / 100.0 + f32::from(u16::try_from(r).unwrap_or(0)) / 100.0,
+                    &qs,
+                ));
+            }
+        }
+        for b in 0..(n_cols / QK8_0) {
+            let mut qs = [0i8; QK8_0];
+            for (i, q) in qs.iter_mut().enumerate() {
+                let base = i8::try_from(b).unwrap_or(0);
+                let off = i8::try_from(i).unwrap_or(0);
+                *q = base.wrapping_add(off).wrapping_sub(8);
+            }
+            x.extend_from_slice(&pack_q8_0_block(2.0 / 100.0, &qs));
+        }
+
+        let mut y_par = vec![0.0f32; n_rows];
+        gemv_q8_0(n_cols, &w, &x, &mut y_par).unwrap();
+        let mut y_seq = vec![0.0f32; n_rows];
+        crate::pool::with_sequential(|| {
+            gemv_q8_0(n_cols, &w, &x, &mut y_seq).unwrap();
+        });
+        assert_eq!(y_par, y_seq);
+
+        let rb = q8_0_row_bytes(n_cols).unwrap();
+        for (r, yv) in y_par.iter().enumerate() {
+            let start = r.saturating_mul(rb);
+            let row = w.get(start..start.saturating_add(rb)).unwrap_or(&[]);
+            let expected = oracle_q8_dot(row, &x);
+            let rel = (yv - expected).abs() / (1.0 + expected.abs());
+            assert!(rel * 100_000.0 < 1.0, "row {r}: {yv} vs {expected}");
+        }
     }
 
     #[test]

@@ -15,9 +15,6 @@ path = "src/main.rs"
 name = "extra"
 path = "src/extra.rs"
 
-[dependencies]
-rayon = "1.10"
-
 [lints]
 workspace = true
 
