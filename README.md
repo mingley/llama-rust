@@ -20,19 +20,19 @@ Model: `Qwen/Qwen2.5-3B-Instruct-GGUF` Q4_K_M, 1.95 GiB, 3.40B. Not in this repo
 
 | test | t/s |
 |---|---:|
-| pp512 Metal | **1090.81 ± 3.79** |
+| pp512 Metal | **1096.77 ± 1.11** |
 | pp2048 Metal | **1012.14 ± 29.56** |
-| tg128 Metal | **88.27 ± 1.28** |
+| tg128 Metal | **90.92 ± 3.50** |
 | pp512 `-ngl 0` | 222.99 ± 6.36 |
 | tg128 `-ngl 0` | 32.41 ± 2.73 |
 
-`88.27 tok/s * 1.95 GiB = 172 GiB/s` (~65% of 273 GB/s).
+`90.92 tok/s * 1.95 GiB = 177 GiB/s` (~65% of 273 GB/s). pp2048 and `-ngl 0` rows are prior captures on this machine.
 
 Same SKU on LocalScore: Llama 3.1 8B Q4_K 32.7 gen / 361 pp. Bandwidth scaling of the 3B run predicts ~38 t/s for 8B.
 
 ## Q8_0 GEMV pre/post (gating)
 
-Same protocol as the C binary: M=4096, K=4096, 8 timed iterations, report `gemv/s`. C source is frozen. Fresh C pre (not the old README band):
+Same protocol as the C binary: M=4096, K=4096, 8 timed iterations, report `gemv/s`. `langtax/q8_gemv.c` is frozen (1-thread NEON). Fresh C pre, this capture:
 
 ```
 clang -O3 -mcpu=native -o langtax/q8_gemv_c langtax/q8_gemv.c
@@ -43,13 +43,40 @@ RUSTFLAGS='-C target-cpu=native' cargo build --release --manifest-path langtax/C
 
 | run | gemv/s | vs C pre |
 |---|---:|---:|
-| **C pre** `lang=C` clang `-O3 -mcpu=native` | **3430.59** | 1.00 |
-| **Rust post 1** `lang=Rust kernel=q8_0_safe` | **9377.75** | **2.73x** |
-| **Rust post 2** (consecutive process) | **11051.63** | **3.22x** |
+| **C pre** `lang=C` clang `-O3 -mcpu=native` | **3267.08** | 1.00 |
+| **Rust post 1** `lang=Rust kernel=q8_0_safe` | **7011.39** | **2.15x** |
+| **Rust post 2** (consecutive process) | **6758.90** | **2.07x** |
 
-Both consecutive Rust launches are ≥2× the frozen C pre. `gemv_q8_0` is **fully safe** (`#![forbid(unsafe_code)]`): slice/index loops + a 10-worker persistent rayon pool. LLVM emits `sdot` from the constant-32 i8 dots — no `std::arch`, no `unsafe` in this crate. `cargo test --release --lib gemv_q8_0_matches_independent_scalar` drives that same function against an independent scalar pack-dot.
+Both consecutive Rust launches are ≥2×. `gemv_q8_0` is **fully safe** (`#![forbid(unsafe_code)]`): slice loops + a 10-worker persistent rayon pool. LLVM emits `sdot`. `cargo test --release --lib` drives `gemv_q8_0` and `gemv_q4_0` against independent scalar pack-dots.
 
-Single-thread identical-ISA kernels were ~1.00× (C 3000–3061 vs Rust 3065–3108). The ≥2× is extra P-cores, not language. Software-fp16 inner loop was 0.35× — kernel fidelity still matters.
+## Extra cells (not the 4096×4096 Q8 gate)
+
+1-thread C (`langtax/extra.c`) vs the same safe Rust functions (`langtax/src/extra.rs`). niter=8.
+
+```
+clang -O3 -mcpu=native -o langtax/extra_c langtax/extra.c
+./langtax/extra_c
+RUSTFLAGS='-C target-cpu=native' cargo run --release --manifest-path langtax/Cargo.toml --bin extra
+```
+
+**Q8_0 GEMV size sweep** (same kernel as the gate, different M=K):
+
+| M=K | C gemv/s | Rust gemv/s | Rust/C |
+|---:|---:|---:|---:|
+| 1024 | 51962.10 | 19814.24 | **0.38x** |
+| 2048 | 12109.74 | 21798.37 | **1.80x** |
+| 8192 | 750.60 | 2689.83 | **3.58x** |
+
+1024 is too small to amortize 10 workers; 8192 is where the pool pays.
+
+**Q4_0 × Q8_0 GEMV** (llama.cpp decode-shaped: 4-bit weights, 8-bit activations, M=K=4096):
+
+| run | gemv/s | vs C |
+|---|---:|---:|
+| C `kernel=q4_0` 1-thread | 388.55 | 1.00 |
+| Rust `kernel=q4_0_safe` 10-worker | 1942.81 | **5.00x** |
+
+Single-thread identical-ISA kernels were ~1.00×. The ≥2× on the 4096 Q8 gate is extra P-cores, not language. Software-fp16 inner loop was 0.35×.
 
 ## If you wrote llama.cpp in Rust
 

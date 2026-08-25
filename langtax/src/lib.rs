@@ -21,6 +21,7 @@ static POOL: LazyLock<ThreadPool> = LazyLock::new(|| {
 });
 
 pub const QK8_0: usize = 32;
+pub const QK4_0: usize = 32;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
@@ -34,6 +35,24 @@ impl BlockQ80 {
         Self {
             d: 0.0,
             qs: [0; QK8_0],
+        }
+    }
+}
+
+/// Q4_0 weight block: 32 4-bit values packed as nibbles, plus f32 scale.
+/// Nibbles are stored as ggml: low nibble = even index, high = odd, biased by 8.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct BlockQ40 {
+    pub d: f32,
+    pub qs: [u8; QK4_0 / 2],
+}
+
+impl BlockQ40 {
+    pub fn zero() -> Self {
+        Self {
+            d: 0.0,
+            qs: [0; QK4_0 / 2],
         }
     }
 }
@@ -148,6 +167,55 @@ fn vec_dot_pair(w0: &[BlockQ80], w1: &[BlockQ80], x: &[BlockQ80]) -> (f32, f32) 
     (s0, s1)
 }
 
+/// y[m] = W_q4[m, k] x_q8[k]. Same K multiple of 32 as Q8_0.
+pub fn gemv_q4_0(k: usize, w: &[BlockQ40], x: &[BlockQ80], y: &mut [f32]) {
+    assert!(k.is_multiple_of(QK4_0), "k must be a multiple of {QK4_0}");
+    let nb = k / QK4_0;
+    let m = y.len();
+    assert_eq!(x.len(), nb, "x blocks");
+    assert_eq!(w.len(), m * nb, "W blocks");
+    if m == 0 {
+        return;
+    }
+    let nthreads = GEMV_THREADS.min(m).max(1);
+    let chunk_rows = m.div_ceil(nthreads).max(1);
+    POOL.install(|| {
+        y.par_chunks_mut(chunk_rows)
+            .zip(w.par_chunks(chunk_rows * nb))
+            .for_each(|(y_part, w_part)| {
+                gemv_q4_serial(w_part, x, y_part);
+            });
+    });
+}
+
+fn gemv_q4_serial(w: &[BlockQ40], x: &[BlockQ80], y: &mut [f32]) {
+    let nb = x.len();
+    for (r, out) in y.iter_mut().enumerate() {
+        *out = vec_dot_q4_row(&w[r * nb..(r + 1) * nb], x);
+    }
+}
+
+#[inline(always)]
+fn dot_q4_q8(w: &BlockQ40, x: &BlockQ80) -> f32 {
+    let mut acc = 0i32;
+    for i in 0..(QK4_0 / 2) {
+        let packed = w.qs[i];
+        let lo = (packed & 0x0f) as i32 - 8;
+        let hi = (packed >> 4) as i32 - 8;
+        acc += lo * x.qs[2 * i] as i32;
+        acc += hi * x.qs[2 * i + 1] as i32;
+    }
+    acc as f32 * (w.d * x.d)
+}
+
+fn vec_dot_q4_row(row: &[BlockQ40], x: &[BlockQ80]) -> f32 {
+    let mut sum = 0.0f32;
+    for (wb, xb) in row.iter().zip(x.iter()) {
+        sum += dot_q4_q8(wb, xb);
+    }
+    sum
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -201,6 +269,63 @@ mod tests {
             assert!(
                 rel < 1e-5,
                 "row {r}: gemv={} scalar={} rel={rel}",
+                y[r],
+                expected
+            );
+        }
+    }
+
+    fn scalar_dot_q4_row(row: &[BlockQ40], x: &[BlockQ80]) -> f32 {
+        assert_eq!(row.len(), x.len());
+        let mut sum = 0.0f32;
+        for (wb, xb) in row.iter().zip(x.iter()) {
+            let mut acc = 0i32;
+            for i in 0..(QK4_0 / 2) {
+                let packed = wb.qs[i];
+                let lo = (packed & 0x0f) as i32 - 8;
+                let hi = (packed >> 4) as i32 - 8;
+                acc += lo * xb.qs[2 * i] as i32;
+                acc += hi * xb.qs[2 * i + 1] as i32;
+            }
+            sum += acc as f32 * (wb.d * xb.d);
+        }
+        sum
+    }
+
+    #[test]
+    fn gemv_q4_0_matches_independent_scalar() {
+        let k = 96usize;
+        let m = 17usize;
+        let nb = k / QK4_0;
+        let mut w = vec![BlockQ40::zero(); m * nb];
+        let mut x = vec![BlockQ80::zero(); nb];
+        let mut seed = 11u64;
+        let mut rnd = || {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            (seed >> 33) as u32
+        };
+        for b in w.iter_mut() {
+            b.d = 0.05 + (rnd() % 40) as f32 / 1000.0;
+            for j in 0..(QK4_0 / 2) {
+                b.qs[j] = (rnd() % 256) as u8;
+            }
+        }
+        for b in x.iter_mut() {
+            b.d = 0.03;
+            for j in 0..QK8_0 {
+                b.qs[j] = ((rnd() % 21) as i32 - 10) as i8;
+            }
+        }
+        let mut y = vec![0.0f32; m];
+        gemv_q4_0(k, &w, &x, &mut y);
+        for r in 0..m {
+            let row = &w[r * nb..(r + 1) * nb];
+            let expected = scalar_dot_q4_row(row, &x);
+            let denom = 1.0 + expected.abs();
+            let rel = (y[r] - expected).abs() / denom;
+            assert!(
+                rel < 1e-5,
+                "row {r}: q4 gemv={} scalar={} rel={rel}",
                 y[r],
                 expected
             );

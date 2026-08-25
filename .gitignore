@@ -3,5 +3,6 @@ models/
 langtax/target/
 langtax/q8_gemv_c
 langtax/q8_gemv_c_nofast
+langtax/extra_c
 *.gguf
 .DS_Store

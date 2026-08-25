@@ -11,5 +11,9 @@ path = "src/lib.rs"
 name = "q8_gemv"
 path = "src/main.rs"
 
+[[bin]]
+name = "extra"
+path = "src/extra.rs"
+
 [dependencies]
 rayon = "1.10"
