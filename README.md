@@ -1,6 +1,8 @@
-# llama-rust-perf
+# llama-rust
 
-Counterfactual: what tokens/s you get if you rewrite [llama.cpp](https://github.com/ggml-org/llama.cpp) in Rust.
+Measured path toward a Rust llama.cpp: quantized matmul first.
+
+Not [onehr/llama-rs](https://github.com/onehr/llama-rs) / [rustformers/llm](https://github.com/rustformers/llm) reborn. That stack was a full CPU inference CLI on a frozen GGML (LLaMA, GPT-2, MPT, BLOOM, …). Last real commit 2024-06-24 (`b11ffb1`, archival notice). It died tracking stale GGML; the unfinished `develop` branch was a from-scratch llama.cpp re-port. This repo is the piece they were always behind on: **measured Q4/Q8 GEMV in safe Rust**. No GGUF loader, tokenizer, attention, KV cache, or sampler yet. A successor only if we stay GGUF-native and do not wrap a snapshot of C GGML.
 
 Host language is not the limiter. Decode is weight-bandwidth bound. Same kernel in C vs Rust is **1.00x**. A naive kernel port that botches fp16 is **0.35x**.
 
