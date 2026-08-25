@@ -31,26 +31,26 @@ generated=ab
 
 Both runs print that string. `#![forbid(unsafe_code)]`. No FFI. `Cargo.lock` names only `llama-rust`.
 
-Q8_0 GEMV (`write`+`gemv`, M=K=4096, GGUF-byte blocks) two runs, same checksum both times and vs 1-thread C:
+Q8_0 GEMV (`write`+`gemv`, M=K=4096, GGUF-byte blocks). Two-run `y0=` match across Rust CPU and owned Metal. Crate lockfile is still only `llama-rust`; Metal is a measurement binary (`q8_gemv.metal` + `q8_gemv_mtl.m`), not linked.
 
 ```
 lang=Rust kernel=q8_0_gguf M=4096 K=4096 niter=8
-time_s=0.001684 gemv/s=4751.42
+time_s=0.002375 gemv/s=3368.42
 y_checksum=80e188057fa1eef0 y0=78.165176
 
 lang=Rust kernel=q8_0_gguf M=4096 K=4096 niter=8
-time_s=0.001824 gemv/s=4386.36
+time_s=0.005984 gemv/s=1336.81
 y_checksum=80e188057fa1eef0 y0=78.165176
 
-lang=C kernel=q8_0_gguf M=4096 K=4096 niter=8
-time_s=0.008823 gemv/s=906.76
-y_checksum=80e188057fa1eef0 y0=78.165176
+lang=Metal kernel=q8_0_gguf M=4096 K=4096 niter=32
+device=Apple M4 Pro
+time_s=0.004644 gemv/s=6890.06
+y0=78.165176
 
-lang=C kernel=q8_0_gguf M=4096 K=4096 niter=8
-time_s=0.008421 gemv/s=950.02
-y_checksum=80e188057fa1eef0 y0=78.165176
+lang=Metal kernel=q8_0_gguf M=4096 K=4096 niter=32
+device=Apple M4 Pro
+time_s=0.004751 gemv/s=6735.37
+y0=78.165176
 ```
 
-min(Rust gemv/s) / max(C gemv/s) = 4386.36 / 950.02 = **4.62**. C is `clang -O3 -mcpu=native` on `langtax/q8_gemv.c` (measurement binary, not linked into the crate). Rust is `--release` `-C target-cpu=native`.
-
-Owned Metal counterpart (also not linked): `langtax/q8_gemv.metal` + `q8_gemv_mtl.m`. Same GGUF 34-byte blocks, runtime-compiled on `Apple M4 Pro`. Naive one-thread-per-row: **1058 gemv/s**, y0=78.165176. Occupancy/simdgroup work is still open; the kernel is ours.
+min(Metal gemv/s) / min(Rust gemv/s) = 6735.37 / 1336.81 = **5.04**. Metal: one 2-D dispatch (simdgroup K-split, 32 in-flight GEMVs), one commit/wait. C 1-thread on the same pack stays ~900 gemv/s (`langtax/q8_gemv.c`).

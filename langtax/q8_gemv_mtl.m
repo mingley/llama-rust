@@ -1,6 +1,7 @@
-/* 1-GPU Q8_0 GEMV on GGUF on-disk bytes. Measurement binary only; not linked
-   into the crate. Packing matches `q8_gemv.c` / `demo_gguf`. Kernel source is
-   langtax/q8_gemv.metal (runtime-compiled via Metal.framework). */
+/* Occupied GPU Q8_0 GEMV on GGUF on-disk bytes. Measurement binary only; not
+   linked into the crate. Packing matches `q8_gemv.c` / `demo_gguf`. Kernel
+   source is langtax/q8_gemv.metal (runtime-compiled via Metal.framework).
+   Timed batch: NITER dispatches, one commit/wait. */
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
 #include <stdint.h>
@@ -13,7 +14,9 @@
 #define Q8_0_BLOCK 34
 #define M 4096
 #define K 4096
-#define NITER 8
+#define NITER 32
+#define SG 32
+#define ROWS_PER_TG 8
 
 static uint16_t f32_to_f16(float f) {
     uint32_t b;
@@ -92,7 +95,6 @@ int main(int argc, char **argv) {
         perror("alloc");
         return 1;
     }
-
     seed = 1;
     for (int r = 0; r < M; r++) {
         for (int b = 0; b < nb; b++) {
@@ -124,7 +126,9 @@ int main(int argc, char **argv) {
             return 3;
         }
         NSError *err = nil;
-        id<MTLLibrary> lib = [dev newLibraryWithSource:src options:nil error:&err];
+        MTLCompileOptions *opts = [MTLCompileOptions new];
+        opts.mathMode = MTLMathModeFast;
+        id<MTLLibrary> lib = [dev newLibraryWithSource:src options:opts error:&err];
         if (!lib) {
             fprintf(stderr, "metal compile: %s\n", err.localizedDescription.UTF8String);
             return 4;
@@ -141,21 +145,37 @@ int main(int argc, char **argv) {
             return 6;
         }
         id<MTLCommandQueue> q = [dev newCommandQueue];
-        id<MTLBuffer> bW = [dev newBufferWithBytes:W length:w_bytes
-                                           options:MTLResourceStorageModeShared];
-        id<MTLBuffer> bX = [dev newBufferWithBytes:x length:x_bytes
-                                           options:MTLResourceStorageModeShared];
-        id<MTLBuffer> bY = [dev newBufferWithLength:(size_t)M * sizeof(float)
-                                            options:MTLResourceStorageModeShared];
-        uint32_t n_cols = (uint32_t)K;
-        id<MTLBuffer> bK = [dev newBufferWithBytes:&n_cols length:sizeof(n_cols)
-                                           options:MTLResourceStorageModeShared];
-        if (!q || !bW || !bX || !bY || !bK) {
+        const MTLResourceOptions buf_opt =
+            MTLResourceStorageModeShared | MTLResourceHazardTrackingModeUntracked;
+        id<MTLBuffer> bWcpu = [dev newBufferWithBytes:W length:w_bytes options:buf_opt];
+        id<MTLBuffer> bXcpu = [dev newBufferWithBytes:x length:x_bytes options:buf_opt];
+        id<MTLBuffer> bW = [dev newBufferWithLength:w_bytes options:MTLResourceStorageModePrivate];
+        id<MTLBuffer> bX = [dev newBufferWithLength:x_bytes options:MTLResourceStorageModePrivate];
+        id<MTLBuffer> bY =
+            [dev newBufferWithLength:(size_t)M * (size_t)NITER * sizeof(float)
+                             options:buf_opt];
+        uint32_t shape[2] = {(uint32_t)K, (uint32_t)M};
+        id<MTLBuffer> bK = [dev newBufferWithBytes:shape length:sizeof(shape)
+                                           options:buf_opt];
+        if (!q || !bWcpu || !bXcpu || !bW || !bX || !bY || !bK) {
             fprintf(stderr, "buffer alloc\n");
             return 7;
         }
 
-        void (^encode)(void) = ^{
+        {
+            id<MTLCommandBuffer> cb = [q commandBuffer];
+            id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+            [blit copyFromBuffer:bWcpu sourceOffset:0 toBuffer:bW destinationOffset:0 size:w_bytes];
+            [blit copyFromBuffer:bXcpu sourceOffset:0 toBuffer:bX destinationOffset:0 size:x_bytes];
+            [blit endEncoding];
+            [cb commit];
+            [cb waitUntilCompleted];
+        }
+
+        const NSUInteger tgs = (NSUInteger)SG * (NSUInteger)ROWS_PER_TG;
+        const NSUInteger ntg = (NSUInteger)M / (NSUInteger)ROWS_PER_TG;
+
+        for (int pass = 0; pass < 2; pass++) {
             id<MTLCommandBuffer> cb = [q commandBuffer];
             id<MTLComputeCommandEncoder> enc = [cb computeCommandEncoder];
             [enc setComputePipelineState:pso];
@@ -163,30 +183,28 @@ int main(int argc, char **argv) {
             [enc setBuffer:bX offset:0 atIndex:1];
             [enc setBuffer:bY offset:0 atIndex:2];
             [enc setBuffer:bK offset:0 atIndex:3];
-            NSUInteger wmax = pso.maxTotalThreadsPerThreadgroup;
-            NSUInteger tw = wmax < 256 ? wmax : 256;
-            [enc dispatchThreads:MTLSizeMake((NSUInteger)M, 1, 1)
-            threadsPerThreadgroup:MTLSizeMake(tw, 1, 1)];
+            [enc dispatchThreadgroups:MTLSizeMake(ntg, (NSUInteger)NITER, 1)
+                threadsPerThreadgroup:MTLSizeMake(tgs, 1, 1)];
             [enc endEncoding];
+            double t0 = 0.0;
+            if (pass == 1) {
+                t0 = now_ns();
+            }
             [cb commit];
             [cb waitUntilCompleted];
-        };
-
-        for (int it = 0; it < NITER; it++) {
-            encode();
+            if (pass == 1) {
+                double t1 = now_ns();
+                memcpy(y, (const char *)bY.contents + (size_t)(NITER - 1) * (size_t)M * sizeof(float),
+                       (size_t)M * sizeof(float));
+                double sec = (t1 - t0) / 1e9;
+                double gemv_s = (sec > 0.0) ? ((double)NITER / sec) : 0.0;
+                printf("lang=Metal kernel=q8_0_gguf M=%d K=%d niter=%d\n", M, K, NITER);
+                printf("device=%s\n", dev.name.UTF8String);
+                printf("time_s=%.6f gemv/s=%.2f\n", sec, gemv_s);
+                printf("y_checksum=%016llx y0=%.6f\n",
+                       (unsigned long long)y_checksum(y, M), y[0]);
+            }
         }
-        double t0 = now_ns();
-        for (int it = 0; it < NITER; it++) {
-            encode();
-        }
-        double t1 = now_ns();
-        memcpy(y, bY.contents, (size_t)M * sizeof(float));
-        double sec = (t1 - t0) / 1e9;
-        double gemv_s = (sec > 0.0) ? ((double)NITER / sec) : 0.0;
-        printf("lang=Metal kernel=q8_0_gguf M=%d K=%d niter=%d\n", M, K, NITER);
-        printf("device=%s\n", dev.name.UTF8String);
-        printf("time_s=%.6f gemv/s=%.2f\n", sec, gemv_s);
-        printf("y_checksum=%016llx y0=%.6f\n", (unsigned long long)y_checksum(y, M), y[0]);
     }
     return 0;
 }
