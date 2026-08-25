@@ -10,8 +10,7 @@ unused_must_use = "deny"
 unused_results = "deny"
 
 [workspace.lints.clippy]
-# Failure paths must be written down, not inferred. These are the lints that
-# turn "someone should have noticed" into "the build said no".
+# Restriction/pedantic lints that are allow or warn by default.
 allow_attributes = "deny"
 allow_attributes_without_reason = "deny"
 unwrap_used = "deny"
@@ -29,9 +28,7 @@ await_holding_invalid_type = "deny"
 disallowed_methods = "deny"
 disallowed_types = "deny"
 disallowed_macros = "deny"
-
 indexing_slicing = "deny"
-
 cast_possible_truncation = "deny"
 cast_possible_wrap = "deny"
 cast_sign_loss = "deny"
