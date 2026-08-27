@@ -8,12 +8,14 @@ mod fp16;
 mod gguf;
 mod pool;
 mod quant;
+mod sample;
 mod tok;
 
 pub use cli::{parse_infer_args, InferArgs, InferCmd, BIN_USAGE, INFER_USAGE};
 pub use decode::{
-    greedy_generate, greedy_generate_ctx, tiny_llama_gguf, tiny_mistral_gguf, tiny_phi3_gguf,
-    tiny_q4k_embd_gguf, tiny_q6k_embd_gguf, tiny_qwen2_gguf, KvCache, Llama, LlamaError,
+    generate, generate_ctx, greedy_generate, greedy_generate_ctx, tiny_llama_gguf,
+    tiny_mistral_gguf, tiny_phi3_gguf, tiny_q4k_embd_gguf, tiny_q6k_embd_gguf, tiny_qwen2_gguf,
+    KvCache, Llama, LlamaError,
 };
 pub use gguf::{
     load_gguf, load_gguf_owned, write_gguf, write_gguf_with_kv, GgmlType, Gguf, GgufError, Kv,
@@ -27,4 +29,5 @@ pub use quant::{
     q8_0_row_bytes, q8_k_row_bytes, QuantError, F32_SIZE, Q4_0_BLOCK, Q4_K_BLOCK, Q6_K_BLOCK,
     Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK8_0, QK_K,
 };
+pub use sample::{argmax, sample_next, splitmix64, SampleError, SampleParams, Sampler};
 pub use tok::{TokError, Tokenizer};
