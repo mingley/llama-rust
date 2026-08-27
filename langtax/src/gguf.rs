@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::quant::{
-    F16_SIZE, F32_SIZE, IQ3_S_BLOCK, IQ4_NL_BLOCK, IQ4_XS_BLOCK, Q4_0_BLOCK, Q4_K_BLOCK,
-    Q5_K_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK4_NL, QK8_0, QK_K,
+    F16_SIZE, F32_SIZE, IQ3_S_BLOCK, IQ3_XXS_BLOCK, IQ4_NL_BLOCK, IQ4_XS_BLOCK, Q4_0_BLOCK,
+    Q4_K_BLOCK, Q5_K_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK4_NL, QK8_0, QK_K,
 };
 
 /// GGUF magic `GGUF`.
@@ -39,6 +39,9 @@ pub enum GgmlType {
     /// `GGML_TYPE_Q8_K`.
     #[expect(non_camel_case_types, reason = "matches ggml GGML_TYPE_Q8_K")]
     Q8_K = 15,
+    /// `GGML_TYPE_IQ3_XXS`.
+    #[expect(non_camel_case_types, reason = "matches ggml GGML_TYPE_IQ3_XXS")]
+    IQ3_XXS = 18,
     /// `GGML_TYPE_IQ3_S`.
     #[expect(non_camel_case_types, reason = "matches ggml GGML_TYPE_IQ3_S")]
     IQ3_S = 21,
@@ -61,6 +64,7 @@ impl GgmlType {
             13 => Ok(Self::Q5_K),
             14 => Ok(Self::Q6_K),
             15 => Ok(Self::Q8_K),
+            18 => Ok(Self::IQ3_XXS),
             20 => Ok(Self::IQ4_NL),
             21 => Ok(Self::IQ3_S),
             23 => Ok(Self::IQ4_XS),
@@ -79,6 +83,7 @@ impl GgmlType {
             Self::Q5_K => 13,
             Self::Q6_K => 14,
             Self::Q8_K => 15,
+            Self::IQ3_XXS => 18,
             Self::IQ3_S => 21,
             Self::IQ4_NL => 20,
             Self::IQ4_XS => 23,
@@ -95,6 +100,7 @@ impl GgmlType {
             Self::Q5_K => (Q5_K_BLOCK, QK_K),
             Self::Q6_K => (Q6_K_BLOCK, QK_K),
             Self::Q8_K => (Q8_K_BLOCK, QK_K),
+            Self::IQ3_XXS => (IQ3_XXS_BLOCK, QK_K),
             Self::IQ3_S => (IQ3_S_BLOCK, QK_K),
             Self::IQ4_NL => (IQ4_NL_BLOCK, QK4_NL),
             Self::IQ4_XS => (IQ4_XS_BLOCK, QK_K),
@@ -127,7 +133,7 @@ pub enum GgufError {
     Truncated,
     /// A GGUF string was not valid UTF-8.
     Utf8,
-    /// Tensor `ggml_type` is not F32, F16, Q4_0, Q8_0, Q4_K, Q5_K, Q6_K, Q8_K, IQ3_S, IQ4_NL, or IQ4_XS.
+    /// Tensor `ggml_type` is not F32, F16, Q4_0, Q8_0, Q4_K, Q5_K, Q6_K, Q8_K, IQ3_XXS, IQ3_S, IQ4_NL, or IQ4_XS.
     UnsupportedType(i32),
     /// KV type is not a GGUF v3 value type.
     UnsupportedKv(i32),
@@ -701,10 +707,10 @@ mod tests {
     use crate::fp16::load_f16_le;
     use crate::quant::{
         gemv_q4_0, gemv_q4_k, gemv_q8_0, i8_from_bits, pack_f16, pack_f32, pack_iq3_s_block,
-        pack_iq4_nl_block, pack_iq4_xs_block, pack_q4_0_from_i4, pack_q4_k_block, pack_q5_k_block,
-        pack_q6_k_block, pack_q8_0_block, pack_q8_k_block, IQ3_S_BLOCK, IQ4_NL_BLOCK, IQ4_XS_BLOCK,
-        Q4_0_BLOCK, Q4_K_BLOCK, Q5_K_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK4_NL,
-        QK8_0, QK_K,
+        pack_iq3_xxs_block, pack_iq4_nl_block, pack_iq4_xs_block, pack_q4_0_from_i4,
+        pack_q4_k_block, pack_q5_k_block, pack_q6_k_block, pack_q8_0_block, pack_q8_k_block,
+        IQ3_S_BLOCK, IQ3_XXS_BLOCK, IQ4_NL_BLOCK, IQ4_XS_BLOCK, Q4_0_BLOCK, Q4_K_BLOCK, Q5_K_BLOCK,
+        Q6_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK4_NL, QK8_0, QK_K,
     };
 
     fn independent_q8_dot(w: &[u8], x: &[u8]) -> f32 {
@@ -1208,6 +1214,28 @@ mod tests {
     }
 
     #[test]
+    fn write_load_iq3xxs_matches_file_bytes() {
+        let mut qs = [0u8; 64];
+        qs[0] = 3;
+        qs[1] = 12;
+        let mut signs = [0u8; 32];
+        signs[0] = 1;
+        let iq = pack_iq3_xxs_block(1.0, &[1u8; 8], &qs, &signs);
+        let bytes = write_gguf(&[TensorWrite {
+            name: "w_iq3xxs".into(),
+            ty: GgmlType::IQ3_XXS,
+            shape: vec![256, 1],
+            data: iq.to_vec(),
+        }]);
+        let g = load_gguf(&bytes).expect("load iq3xxs");
+        let t = g.tensor("w_iq3xxs").expect("w_iq3xxs");
+        assert_eq!(t.ty, GgmlType::IQ3_XXS);
+        assert_eq!(t.ty.to_i32(), 18);
+        assert_eq!(t.data.len(), IQ3_XXS_BLOCK);
+        assert_eq!(t.data, iq.to_vec());
+    }
+
+    #[test]
     fn write_load_iq3s_matches_file_bytes() {
         let mut qs = [0u16; 64];
         qs[0] = 3;
@@ -1295,7 +1323,7 @@ mod tests {
 
     #[test]
     fn load_unsupported_ggml_type_error_includes_type_id() {
-        // ggml IQ2_XXS is 16; remaining IQ* stay rejected after IQ3_S shipped.
+        // ggml IQ2_XXS is 16; remaining IQ* stay rejected after IQ3_XXS shipped.
         const IQ2_XXS: i32 = 16;
         let bytes = write_gguf_with_type_ids(
             &[
