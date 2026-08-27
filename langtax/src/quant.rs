@@ -6141,8 +6141,7 @@ mod tests {
             let qs = &wb[2..66];
             let scales = &wb[66..74];
             let mut yo = b * QK_K;
-            for ib32 in 0..QK_K / 32 {
-                let sc = scales[ib32];
+            for (ib32, &sc) in scales.iter().enumerate() {
                 let db0 = d * (0.5 + f32::from(sc & 0x0f)) * 0.25;
                 let db1 = d * (0.5 + f32::from(sc >> 4)) * 0.25;
                 for l in 0..4 {
