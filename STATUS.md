@@ -1,4 +1,4 @@
-# Stopped 2026-08-27 — GGUF move-once (no mmap)
+# Stopped 2026-08-27 — prefill GEMM
 
 HEAD is this branch’s tip. Worktree should be clean before the next resume.
 No in-flight code.
@@ -11,6 +11,7 @@ Local: `~/dev/llama-rust-perf`
 - `forbid(unsafe_code)`, no llama.cpp/FFI, `Cargo.lock` crate-only (no SIMD crates, no rayon).
 - GGUF v3: F32, Q4_0, Q8_0, Q4_K, Q6_K, Q8_K. Kernels read on-disk bytes (no private f32-scale copy).
 - Decode: RMSNorm, RoPE, GQA+KV, SwiGLU, lm_head, greedy sample.
+- **Prefill GEMM.** Prompt tokens are one causal pass. Each weight row is dotted with every prompt token (`gemm_f32` / `gemm_q4_k_f32` / `gemm_q6_k_f32`). A single token stays GEMV. Generation after the prompt is still one-token `forward`.
 - Architectures: `llama`, `qwen2`, `mistral`, `phi3` `{arch}.*` KV.
 - Q4_K_M shape that common OSS files actually have:
   - quantized `token_embd.weight` (Q4_K / Q6_K / F32)
@@ -26,20 +27,19 @@ Local: `~/dev/llama-rust-perf`
 
 ## In progress
 
-Nothing. This slice is STATUS item 1 (stop cloning the GGUF without mmap).
+Nothing. This slice is STATUS item 1 (prefill GEMM).
 
 ## Still needed (production / researcher bar)
 
 Ordered by how much they block “others can actually use this”:
 
-1. **Prefill GEMM.** Prompt tokens are decoded one-by-one. Fine for short `--prompt`, not for a 2k-token prompt.
-2. **Tokenizer.** GPT-2 BPE is character-then-merge, linear `id_of` over 151k vocab, no byte-fallback. Decode of Qwen pieces produced `ĊĊ`. Chat template is unread.
-3. **Sampling.** Greedy only. No temperature / top-k / top-p / repeat penalty.
-4. **Serving.** No HTTP, no OpenAI-compat, no batching, no multi-request. Not a production inference server.
-5. **Metal-in-crate.** Owned MSL kernels exist as a sidecar. Decode still CPU.
-6. **Dtypes / arches still rejected.** Q5_K, F16, IQ*, Gemma, MoE, vision, Qwen3, Llama4. Tied `output.weight` (reuse `token_embd`) untested.
-7. **KV cache** sized to prompt+predict is the default; `{arch}.context_length` is still unused. `--n-ctx` is an override only.
-8. **crates.io** unpublished. Linux proof is GHA tiny/oracle tests only (2GB GGUF is gitignored).
+1. **Tokenizer.** GPT-2 BPE is character-then-merge, linear `id_of` over 151k vocab, no byte-fallback. Decode of Qwen pieces produced `ĊĊ`. Chat template is unread.
+2. **Sampling.** Greedy only. No temperature / top-k / top-p / repeat penalty.
+3. **Serving.** No HTTP, no OpenAI-compat, no batching, no multi-request. Not a production inference server.
+4. **Metal-in-crate.** Owned MSL kernels exist as a sidecar. Decode still CPU.
+5. **Dtypes / arches still rejected.** Q5_K, F16, IQ*, Gemma, MoE, vision, Qwen3, Llama4. Tied `output.weight` (reuse `token_embd`) untested.
+6. **KV cache** sized to prompt+predict is the default; `{arch}.context_length` is still unused. `--n-ctx` is an override only.
+7. **crates.io** unpublished. Linux proof is GHA tiny/oracle tests only (2GB GGUF is gitignored).
 
 Non-goals that were explicitly parked: SIMD crates (`wide`/`pulp`/`std::simd`); matching llama.cpp tok/s; downloading HF checkpoints in CI; mmap (`unsafe` or a crate).
 
@@ -51,4 +51,4 @@ cargo clippy --all-targets --all-features -- -D warnings
 ./target/release/gguf_gemv infer models/qwen2.5-3b-instruct-q4_k_m.gguf --prompt ab --n-predict 2
 ```
 
-Next code change should be item 1 (prefill GEMM). Do not add crates.io runtime deps or `unsafe`.
+Next code change should be item 1 (tokenizer). Do not add crates.io runtime deps or `unsafe`.

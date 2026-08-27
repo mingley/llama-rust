@@ -4,7 +4,7 @@ Pure-safe Rust GGUF v3 Llama-family **prompt → text**. No llama.cpp bind, no C
 
 See [STATUS.md](STATUS.md) for what shipped, what is not started, and the resume list.
 
-Loads mixed Q4_K_M-shaped dtypes (**F32**, **Q4_K**, **Q6_K**, plus Q4_0/Q8_0/Q8_K) for `llama` / `qwen2` / `mistral` / `phi3`. Quantized weights **and token embeddings** stay **on-disk bytes** in **one file blob**; `Llama` takes that blob and addresses tensors by range (no per-matrix clone, no mmap). Missing `{arch}.rope.dimension_count` is derived from embedding length / head count. Optional `attn_q`/`attn_k`/`attn_v` bias tensors are applied when present. `tokenizer.ggml.add_bos_token=false` is honored. Decode is RMSNorm, RoPE, GQA + KV cache, SwiGLU, lm_head. Sampling is greedy. Load/decode errors name the tensor, ggml type id, and/or KV key.
+Loads mixed Q4_K_M-shaped dtypes (**F32**, **Q4_K**, **Q6_K**, plus Q4_0/Q8_0/Q8_K) for `llama` / `qwen2` / `mistral` / `phi3`. Quantized weights **and token embeddings** stay **on-disk bytes** in **one file blob**; `Llama` takes that blob and addresses tensors by range (no per-matrix clone, no mmap). Missing `{arch}.rope.dimension_count` is derived from embedding length / head count. Optional `attn_q`/`attn_k`/`attn_v` bias tensors are applied when present. `tokenizer.ggml.add_bos_token=false` is honored. Decode is RMSNorm, RoPE, GQA + KV cache, SwiGLU, lm_head. Prompt prefill is one causal GEMM pass over the prompt tokens; generation after that is one-token GEMV + KV. Sampling is greedy. Load/decode errors name the tensor, ggml type id, and/or KV key.
 
 Not [onehr/llama-rs](https://github.com/onehr/llama-rs) / [rustformers/llm]. That wrapped frozen GGML. This is GGUF-native.
 
@@ -25,7 +25,7 @@ cargo build --release --bin gguf_gemv
 
 Workspace lints deny unwrap/panic/indexing/wrap-casts/`std::fs::{read,write}`. File I/O is `File` + `Read`/`Write`.
 
-Tests write GGUFs (F32 + Q6_K + Q4_K, quantized embeddings, QKV bias, missing rope dim, mistral/phi3 prefixes), load them, compare logits to an independent scalar of the same ggml/Llama math on those bytes, then encode/greedy/decode.
+Tests write GGUFs (F32 + Q6_K + Q4_K, quantized embeddings, QKV bias, missing rope dim, mistral/phi3 prefixes), load them, compare logits to an independent scalar of the same ggml/Llama math on those bytes (including multi-token prefill), then encode/greedy/decode.
 
 ## CLI (this machine)
 

@@ -71,3 +71,39 @@ pub(crate) fn for_each_row(y: &mut [f32], row: impl Fn(usize, &mut f32) + Sync) 
         }
     });
 }
+
+/// Apply `row` to each group of `group` outputs. `y.len()` must be
+/// `n_rows * group`. Used by GEMM so one weight row writes every token.
+pub(crate) fn for_each_group(y: &mut [f32], group: usize, row: impl Fn(usize, &mut [f32]) + Sync) {
+    if y.is_empty() || group == 0 || !y.len().is_multiple_of(group) {
+        return;
+    }
+    let n_rows = y.len() / group;
+    let workers = worker_count(n_rows);
+    if workers <= 1 {
+        for (i, out) in y.chunks_mut(group).enumerate() {
+            row(i, out);
+        }
+        return;
+    }
+    let row = &row;
+    let chunk_rows = n_rows.div_ceil(workers);
+    let chunk_elems = chunk_rows.saturating_mul(group);
+    thread::scope(|scope| {
+        let mut base = 0usize;
+        let mut joins = Vec::new();
+        for piece in y.chunks_mut(chunk_elems) {
+            let start = base;
+            let n = piece.len() / group;
+            base = base.saturating_add(n);
+            joins.push(scope.spawn(move || {
+                for (i, out) in piece.chunks_mut(group).enumerate() {
+                    row(start.saturating_add(i), out);
+                }
+            }));
+        }
+        for join in joins {
+            if let Ok(()) = join.join() {}
+        }
+    });
+}

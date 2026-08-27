@@ -3,7 +3,7 @@
 use std::fmt;
 
 use crate::fp16::{load_f16_le, store_f16_le};
-use crate::pool::for_each_row;
+use crate::pool::{for_each_group, for_each_row};
 
 /// Q8_0 / Q4_0 block width in elements (`ggml` `QK8_0` / `QK4_0`).
 pub const QK8_0: usize = 32;
@@ -463,6 +463,143 @@ pub fn gemv_q4_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
             .map(|row| vec_dot_q4_k_f32_row(row, x))
             .unwrap_or(0.0);
     });
+    Ok(())
+}
+
+/// `Y[t, r] = W_f32[r, n_cols] · X[t, n_cols]`.
+///
+/// `x` is `n_tokens * n_cols` (token-major). `y` is `n_tokens * n_rows`
+/// (token-major). Each weight row is read once and dotted with every token.
+pub fn gemm_f32(
+    n_cols: usize,
+    n_tokens: usize,
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+) -> Result<(), QuantError> {
+    if n_tokens == 1 {
+        return gemv_f32(n_cols, w, x, y);
+    }
+    gemm_f32_x(
+        n_cols,
+        n_tokens,
+        w,
+        x,
+        y,
+        f32_row_bytes(n_cols)?,
+        "W F32 bytes",
+        vec_dot_f32_row,
+    )
+}
+
+/// `Y[t, r] = W_q4k[r, n_cols] · X[t, n_cols]`. Token-major `x` / `y`.
+pub fn gemm_q4_k_f32(
+    n_cols: usize,
+    n_tokens: usize,
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+) -> Result<(), QuantError> {
+    if n_tokens == 1 {
+        return gemv_q4_k_f32(n_cols, w, x, y);
+    }
+    gemm_f32_x(
+        n_cols,
+        n_tokens,
+        w,
+        x,
+        y,
+        q4_k_row_bytes(n_cols)?,
+        "W Q4_K bytes",
+        vec_dot_q4_k_f32_row,
+    )
+}
+
+/// `Y[t, r] = W_q6k[r, n_cols] · X[t, n_cols]`. Token-major `x` / `y`.
+pub fn gemm_q6_k_f32(
+    n_cols: usize,
+    n_tokens: usize,
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+) -> Result<(), QuantError> {
+    if n_tokens == 1 {
+        return gemv_q6_k_f32(n_cols, w, x, y);
+    }
+    gemm_f32_x(
+        n_cols,
+        n_tokens,
+        w,
+        x,
+        y,
+        q6_k_row_bytes(n_cols)?,
+        "W Q6_K bytes",
+        vec_dot_q6_k_f32_row,
+    )
+}
+
+fn gemm_f32_x(
+    n_cols: usize,
+    n_tokens: usize,
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+    rb: usize,
+    w_what: &'static str,
+    dot: impl Fn(&[u8], &[f32]) -> f32 + Sync,
+) -> Result<(), QuantError> {
+    if n_tokens == 0 {
+        return Err(QuantError::Size {
+            what: "n_tokens",
+            expected: 1,
+            actual: 0,
+        });
+    }
+    let n_x = n_tokens.checked_mul(n_cols).ok_or(QuantError::Size {
+        what: "X F32 elems overflow",
+        expected: n_cols,
+        actual: n_tokens,
+    })?;
+    require_len("X F32 elems", x.len(), n_x)?;
+    if !y.len().is_multiple_of(n_tokens) {
+        return Err(QuantError::Size {
+            what: "Y F32 elems",
+            expected: n_tokens,
+            actual: y.len(),
+        });
+    }
+    let n_rows = y.len() / n_tokens;
+    let expected_w = rb.checked_mul(n_rows).ok_or(QuantError::Size {
+        what: "W bytes overflow",
+        expected: rb,
+        actual: n_rows,
+    })?;
+    require_len(w_what, w.len(), expected_w)?;
+    if n_rows == 0 {
+        return Ok(());
+    }
+    let mut scratch = vec![0.0f32; y.len()];
+    for_each_group(&mut scratch, n_tokens, |r, out| {
+        let Some(wrow) = row_bytes(w, rb, r) else {
+            return;
+        };
+        for (t, slot) in out.iter_mut().enumerate() {
+            let start = t.saturating_mul(n_cols);
+            let Some(xt) = x.get(start..start.saturating_add(n_cols)) else {
+                continue;
+            };
+            *slot = dot(wrow, xt);
+        }
+    });
+    for t in 0..n_tokens {
+        for r in 0..n_rows {
+            let src = r.saturating_mul(n_tokens).saturating_add(t);
+            let dst = t.saturating_mul(n_rows).saturating_add(r);
+            if let (Some(&sv), Some(dv)) = (scratch.get(src), y.get_mut(dst)) {
+                *dv = sv;
+            }
+        }
+    }
     Ok(())
 }
 
@@ -997,5 +1134,103 @@ mod tests {
             "{via_dequant} vs {}",
             y[0]
         );
+    }
+
+    fn assert_close(got: &[f32], exp: &[f32]) {
+        assert_eq!(got.len(), exp.len());
+        for (i, (a, b)) in got.iter().zip(exp.iter()).enumerate() {
+            let rel = (a - b).abs() / (1.0 + b.abs());
+            assert!(rel * 100_000.0 < 1.0, "elem {i}: {a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn gemm_f32_q4k_q6k_match_repeated_gemv() {
+        let n_tokens = 3usize;
+
+        let n_cols_f = 4usize;
+        let n_rows_f = 3usize;
+        let mut w_f = Vec::new();
+        for r in 0..n_rows_f {
+            for c in 0..n_cols_f {
+                let v = f32::from(u16::try_from(r * 10 + c + 1).unwrap_or(1)) / 10.0;
+                w_f.extend_from_slice(&v.to_bits().to_le_bytes());
+            }
+        }
+        let mut x_f = Vec::new();
+        for t in 0..n_tokens {
+            for c in 0..n_cols_f {
+                x_f.push(f32::from(u16::try_from(t + c + 1).unwrap_or(1)) / 4.0);
+            }
+        }
+        let mut y_gemm = vec![0.0f32; n_rows_f * n_tokens];
+        gemm_f32(n_cols_f, n_tokens, &w_f, &x_f, &mut y_gemm).unwrap();
+        let mut y_gemv = Vec::new();
+        for t in 0..n_tokens {
+            let start = t * n_cols_f;
+            let xt = &x_f[start..start + n_cols_f];
+            let mut yt = vec![0.0f32; n_rows_f];
+            gemv_f32(n_cols_f, &w_f, xt, &mut yt).unwrap();
+            y_gemv.extend_from_slice(&yt);
+        }
+        assert_eq!(y_gemm, y_gemv);
+
+        let n_cols = QK_K;
+        let n_rows = 2usize;
+        let mut w4 = Vec::new();
+        let mut w6 = Vec::new();
+        for r in 0..n_rows {
+            let mut qs4 = [0u8; QK_K];
+            let mut qs6 = [0i8; QK_K];
+            qs4[0] = u8::try_from(2 + r).unwrap_or(2);
+            qs4[32] = u8::try_from(3 + r).unwrap_or(3);
+            qs6[0] = i8::try_from(1 + r).unwrap_or(1);
+            qs6[32] = i8::try_from(2 + r).unwrap_or(2);
+            let sc4 = [2u8, 1, 1, 1, 1, 1, 1, 1];
+            let mut sc6 = [0i8; 16];
+            sc6[0] = 1;
+            sc6[2] = 1;
+            w4.extend_from_slice(&pack_q4_k_block(25.0 / 100.0, 0.0, &sc4, &[0u8; 8], &qs4));
+            w6.extend_from_slice(&pack_q6_k_block(1.0, &sc6, &qs6));
+        }
+        let mut xk = vec![0.0f32; n_cols * n_tokens];
+        for t in 0..n_tokens {
+            if let Some(slot) = xk.get_mut(t * n_cols) {
+                *slot = f32::from(u16::try_from(t + 1).unwrap_or(1));
+            }
+            if let Some(slot) = xk.get_mut(t * n_cols + 32) {
+                *slot = 2.0;
+            }
+        }
+        let mut y4 = vec![0.0f32; n_rows * n_tokens];
+        let mut y6 = vec![0.0f32; n_rows * n_tokens];
+        gemm_q4_k_f32(n_cols, n_tokens, &w4, &xk, &mut y4).unwrap();
+        gemm_q6_k_f32(n_cols, n_tokens, &w6, &xk, &mut y6).unwrap();
+        let mut exp4 = Vec::new();
+        let mut exp6 = Vec::new();
+        for t in 0..n_tokens {
+            let xt = &xk[t * n_cols..(t + 1) * n_cols];
+            let mut a = vec![0.0f32; n_rows];
+            let mut b = vec![0.0f32; n_rows];
+            gemv_q4_k_f32(n_cols, &w4, xt, &mut a).unwrap();
+            gemv_q6_k_f32(n_cols, &w6, xt, &mut b).unwrap();
+            exp4.extend_from_slice(&a);
+            exp6.extend_from_slice(&b);
+        }
+        assert_close(&y4, &exp4);
+        assert_close(&y6, &exp6);
+
+        crate::pool::with_sequential(|| {
+            let mut y_seq = vec![0.0f32; n_rows * n_tokens];
+            gemm_q4_k_f32(n_cols, n_tokens, &w4, &xk, &mut y_seq).unwrap();
+            assert_close(&y_seq, &exp4);
+        });
+    }
+
+    #[test]
+    fn gemm_rejects_zero_tokens_and_bad_x_len() {
+        let mut y = [0.0f32; 2];
+        assert!(gemm_f32(4, 0, &[0u8; 16], &[], &mut y).is_err());
+        assert!(gemm_f32(4, 2, &[0u8; 16], &[1.0], &mut y).is_err());
     }
 }
