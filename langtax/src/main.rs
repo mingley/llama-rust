@@ -8,8 +8,8 @@ use std::time::Instant;
 
 use llama_rust::{
     gemv_q4_k, gemv_q8_0, greedy_generate, load_gguf, pack_q4_k_block, pack_q8_0_block,
-    pack_q8_k_block, tiny_llama_gguf, tiny_qwen2_gguf, write_gguf, write_gguf_with_kv, GgmlType,
-    Kv, Llama, TensorWrite, Tokenizer, QK8_0, QK_K,
+    pack_q8_k_block, parse_infer, tiny_llama_gguf, tiny_qwen2_gguf, write_gguf, write_gguf_with_kv,
+    GgmlType, InferArgs, Kv, Llama, TensorWrite, Tokenizer, INFER_USAGE, QK8_0, QK_K,
 };
 
 fn y_checksum(y: &[f32]) -> u64 {
@@ -209,13 +209,13 @@ fn gemv_q4k_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn infer_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = read_path(path)?;
+fn infer_file(args: &InferArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = read_path(Path::new(&args.path))?;
     let g = load_gguf(&bytes)?;
     let model = Llama::from_gguf(&g)?;
     let tok = Tokenizer::from_gguf(&g)?;
-    let text = greedy_generate(&model, &tok, "ab", 2)?;
-    println!("prompt=ab n_predict=2");
+    let text = greedy_generate(&model, &tok, &args.prompt, args.n_predict)?;
+    println!("prompt={} n_predict={}", args.prompt, args.n_predict);
     println!("generated={text}");
     Ok(())
 }
@@ -263,11 +263,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         "infer" => {
-            let path = args.next().ok_or("infer <path>")?;
-            infer_file(Path::new(&path))
+            let infer = parse_infer(args)?;
+            infer_file(&infer)
         }
         other => Err(format!(
-            "usage: gguf_gemv write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|infer <path> (got {other})"
+            "usage: gguf_gemv write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|{INFER_USAGE} (got {other})"
         )
         .into()),
     }

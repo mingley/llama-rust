@@ -306,6 +306,12 @@ pub fn greedy_generate(
     n_predict: usize,
 ) -> Result<String, LlamaError> {
     let mut ids = prompt_ids(tok, prompt)?;
+    if ids.is_empty() {
+        return Err(LlamaError::Shape("empty prompt".into()));
+    }
+    if n_predict == 0 {
+        return Ok(tok.decode(&ids));
+    }
     let max_seq = ids.len().saturating_add(n_predict).saturating_add(1);
     let mut cache = model.new_cache(max_seq)?;
     let mut last = Vec::new();
@@ -1286,6 +1292,7 @@ mod tests {
         assert!(out.contains("ab"), "{out}");
         let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
         assert_eq!(out, out2);
+        assert_eq!(greedy_generate(&model, &tok, "ab", 0).expect("n=0"), "ab");
     }
 
     #[test]
@@ -1320,6 +1327,11 @@ mod tests {
         assert!(!out.is_empty());
         let out2 = greedy_generate(&model, &tok, &prompt, 2).expect("gen2");
         assert_eq!(out, out2);
+        let empty = greedy_generate(&model, &tok, "", 2);
+        match empty {
+            Ok(s) => panic!("empty qwen2 prompt should fail, got {s:?}"),
+            Err(e) => assert!(e.to_string().contains("empty prompt"), "{e}"),
+        }
     }
 
     #[test]

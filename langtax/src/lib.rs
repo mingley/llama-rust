@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod cli;
 mod decode;
 mod fp16;
 mod gguf;
@@ -9,6 +10,7 @@ mod pool;
 mod quant;
 mod tok;
 
+pub use cli::{parse_infer, CliError, InferArgs, INFER_USAGE};
 pub use decode::{
     greedy_generate, tiny_llama_gguf, tiny_mistral_gguf, tiny_phi3_gguf, tiny_q4k_embd_gguf,
     tiny_q6k_embd_gguf, tiny_qwen2_gguf, KvCache, Llama, LlamaError,
