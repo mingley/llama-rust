@@ -2,11 +2,12 @@
 
 use crate::gguf::{GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 use crate::quant::{
-    dequant_f16_row, dequant_f32_row, dequant_iq4_nl_row, dequant_iq4_xs_row, dequant_q4_k_row,
-    dequant_q5_k_row, dequant_q6_k_row, f16_row_bytes, f32_row_bytes, gemm_f16, gemm_f32,
-    gemm_iq4_nl_f32, gemm_iq4_xs_f32, gemm_q4_k_f32, gemm_q5_k_f32, gemm_q6_k_f32, gemv_f16,
-    gemv_f32, gemv_iq4_nl_f32, gemv_iq4_xs_f32, gemv_q4_k_f32, gemv_q5_k_f32, gemv_q6_k_f32,
-    iq4_nl_row_bytes, iq4_xs_row_bytes, pack_f16, pack_f32, pack_iq4_nl_block, pack_iq4_xs_block,
+    dequant_f16_row, dequant_f32_row, dequant_iq3_s_row, dequant_iq4_nl_row, dequant_iq4_xs_row,
+    dequant_q4_k_row, dequant_q5_k_row, dequant_q6_k_row, f16_row_bytes, f32_row_bytes, gemm_f16,
+    gemm_f32, gemm_iq3_s_f32, gemm_iq4_nl_f32, gemm_iq4_xs_f32, gemm_q4_k_f32, gemm_q5_k_f32,
+    gemm_q6_k_f32, gemv_f16, gemv_f32, gemv_iq3_s_f32, gemv_iq4_nl_f32, gemv_iq4_xs_f32,
+    gemv_q4_k_f32, gemv_q5_k_f32, gemv_q6_k_f32, iq3_s_row_bytes, iq4_nl_row_bytes,
+    iq4_xs_row_bytes, pack_f16, pack_f32, pack_iq3_s_block, pack_iq4_nl_block, pack_iq4_xs_block,
     pack_q4_k_block, pack_q5_k_block, pack_q6_k_block, q4_k_row_bytes, q5_k_row_bytes,
     q6_k_row_bytes, QuantError, QK4_NL, QK_K,
 };
@@ -571,6 +572,22 @@ pub fn tiny_iq4nl_gguf() -> Vec<u8> {
     })
 }
 
+/// Writer-built Llama GGUF with IQ3_S 2-D weights (token_embd, output, attn/ffn).
+///
+/// 1-D norms stay F32. `GGML_TYPE_IQ3_S` = 21. Common OSS `*-IQ3_S.gguf` files
+/// and mixed `*-IQ3_M.gguf` tensors use this type for 256-wide 2-D weights.
+pub fn tiny_iq3s_gguf() -> Vec<u8> {
+    tiny_arch_gguf(TinySpec {
+        arch: "llama",
+        token_embd: GgmlType::IQ3_S,
+        output: GgmlType::IQ3_S,
+        layer: Some(GgmlType::IQ3_S),
+        rope_dimension_count: true,
+        qkv_bias: false,
+        add_bos_token: None,
+    })
+}
+
 /// Writer-built Llama GGUF with IQ4_XS 2-D weights (token_embd, output, attn/ffn).
 ///
 /// 1-D norms stay F32. `GGML_TYPE_IQ4_XS` = 23. Common OSS `*-IQ4_XS.gguf` files
@@ -592,8 +609,9 @@ struct TinySpec {
     token_embd: GgmlType,
     output: GgmlType,
     /// When set, every 2-D layer weight uses this type. Otherwise the mixed
-    /// Q4_K / Q6_K / F32 mix used by [`tiny_llama_gguf`]. Q5_K / IQ4_NL / IQ4_XS
-    /// are used by [`tiny_q5k_gguf`] / [`tiny_iq4nl_gguf`] / [`tiny_iq4xs_gguf`].
+    /// Q4_K / Q6_K / F32 mix used by [`tiny_llama_gguf`]. Q5_K / IQ3_S / IQ4_NL /
+    /// IQ4_XS are used by [`tiny_q5k_gguf`] / [`tiny_iq3s_gguf`] /
+    /// [`tiny_iq4nl_gguf`] / [`tiny_iq4xs_gguf`].
     layer: Option<GgmlType>,
     rope_dimension_count: bool,
     qkv_bias: bool,
@@ -866,11 +884,37 @@ fn pack_mat(ty: GgmlType, n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
         GgmlType::Q4_K => pack_q4k_mat(n_cols, n_rows, seed),
         GgmlType::Q5_K => pack_q5k_mat(n_cols, n_rows, seed),
         GgmlType::Q6_K => pack_q6k_mat(n_cols, n_rows, seed),
+        GgmlType::IQ3_S => pack_iq3s_mat(n_cols, n_rows, seed),
         GgmlType::IQ4_NL => pack_iq4nl_mat(n_cols, n_rows, seed),
         GgmlType::IQ4_XS => pack_iq4xs_mat(n_cols, n_rows, seed),
         GgmlType::F16 => pack_f16(&pat_f32(n_cols.saturating_mul(n_rows), seed)),
         _ => pack_f32(&pat_f32(n_cols.saturating_mul(n_rows), seed)),
     }
+}
+
+fn pack_iq3s_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut s = seed;
+    for _ in 0..n_rows {
+        let mut qs = [0u16; 64];
+        for q in &mut qs {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1);
+            *q = u16::try_from(s % 512).unwrap_or(0);
+        }
+        let mut signs = [0u8; 32];
+        for c in &mut signs {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1);
+            *c = u8::try_from(s % 256).unwrap_or(0);
+        }
+        let mut sc = [1u8; 8];
+        for c in &mut sc {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1);
+            *c = u8::try_from(s % 8).unwrap_or(1);
+        }
+        out.extend_from_slice(&pack_iq3_s_block(25.0 / 100.0, &sc, &qs, &signs));
+        let _ = n_cols;
+    }
+    out
 }
 
 fn pack_iq4nl_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
@@ -1029,6 +1073,7 @@ fn quant_mat(t: Tensor<'_>) -> Result<QuantMat, LlamaError> {
         | GgmlType::Q4_K
         | GgmlType::Q5_K
         | GgmlType::Q6_K
+        | GgmlType::IQ3_S
         | GgmlType::IQ4_NL
         | GgmlType::IQ4_XS => {
             let (start, end) = t.blob_range();
@@ -1065,6 +1110,7 @@ impl Llama {
             GgmlType::Q4_K => gemm_q4_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             GgmlType::Q5_K => gemm_q5_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             GgmlType::Q6_K => gemm_q6_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
+            GgmlType::IQ3_S => gemm_iq3_s_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             GgmlType::IQ4_NL => gemm_iq4_nl_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             GgmlType::IQ4_XS => gemm_iq4_xs_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             other => {
@@ -1086,6 +1132,7 @@ impl Llama {
             GgmlType::Q4_K => gemv_q4_k_f32(m.n_cols, data, x, &mut y)?,
             GgmlType::Q5_K => gemv_q5_k_f32(m.n_cols, data, x, &mut y)?,
             GgmlType::Q6_K => gemv_q6_k_f32(m.n_cols, data, x, &mut y)?,
+            GgmlType::IQ3_S => gemv_iq3_s_f32(m.n_cols, data, x, &mut y)?,
             GgmlType::IQ4_NL => gemv_iq4_nl_f32(m.n_cols, data, x, &mut y)?,
             GgmlType::IQ4_XS => gemv_iq4_xs_f32(m.n_cols, data, x, &mut y)?,
             other => {
@@ -1108,6 +1155,7 @@ impl Llama {
             GgmlType::Q4_K => q4_k_row_bytes(emb.n_cols)?,
             GgmlType::Q5_K => q5_k_row_bytes(emb.n_cols)?,
             GgmlType::Q6_K => q6_k_row_bytes(emb.n_cols)?,
+            GgmlType::IQ3_S => iq3_s_row_bytes(emb.n_cols)?,
             GgmlType::IQ4_NL => iq4_nl_row_bytes(emb.n_cols)?,
             GgmlType::IQ4_XS => iq4_xs_row_bytes(emb.n_cols)?,
             other => {
@@ -1133,6 +1181,7 @@ impl Llama {
             GgmlType::Q4_K => dequant_q4_k_row(emb.n_cols, bytes, &mut y)?,
             GgmlType::Q5_K => dequant_q5_k_row(emb.n_cols, bytes, &mut y)?,
             GgmlType::Q6_K => dequant_q6_k_row(emb.n_cols, bytes, &mut y)?,
+            GgmlType::IQ3_S => dequant_iq3_s_row(emb.n_cols, bytes, &mut y)?,
             GgmlType::IQ4_NL => dequant_iq4_nl_row(emb.n_cols, bytes, &mut y)?,
             GgmlType::IQ4_XS => dequant_iq4_xs_row(emb.n_cols, bytes, &mut y)?,
             other => {
@@ -1452,6 +1501,78 @@ mod tests {
         }
     }
 
+    /// ggml `dequantize_row_iq3_s` (oracle). Independent of crate `dequant_iq3_s_row`.
+    fn dequant_iq3_s_row_oracle(w: &[u8]) -> Vec<f32> {
+        const GRID: [u32; 512] = crate::quant::IQ3S_GRID;
+        let nblocks = w.len() / crate::quant::IQ3_S_BLOCK;
+        let mut y = vec![0.0f32; nblocks * QK_K];
+        for b in 0..nblocks {
+            let wb = &w[b * crate::quant::IQ3_S_BLOCK..(b + 1) * crate::quant::IQ3_S_BLOCK];
+            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let qs = &wb[2..66];
+            let qh = &wb[66..74];
+            let signs = &wb[74..106];
+            let scales = &wb[106..110];
+            let mut yo = b * QK_K;
+            let mut qs_i = 0usize;
+            let mut sg_i = 0usize;
+            let mut qh_i = 0usize;
+            for ib32 in (0..QK_K / 32).step_by(2) {
+                let sc = scales[ib32 / 2];
+                let db1 = d * (1.0 + 2.0 * f32::from(sc & 0x0f));
+                let db2 = d * (1.0 + 2.0 * f32::from(sc >> 4));
+                for l in 0..4 {
+                    let sh = u32::try_from(l).unwrap_or(0).saturating_mul(2);
+                    let idx1 = usize::from(qs[qs_i + 2 * l])
+                        | (usize::from(qh[qh_i]).wrapping_shl(8u32.saturating_sub(sh)) & 256);
+                    let idx2 = usize::from(qs[qs_i + 2 * l + 1])
+                        | (usize::from(qh[qh_i]).wrapping_shl(7u32.saturating_sub(sh)) & 256);
+                    let g1 = GRID[idx1].to_le_bytes();
+                    let g2 = GRID[idx2].to_le_bytes();
+                    let sign = signs[sg_i + l];
+                    for j in 0..4 {
+                        let s0 = if sign & (1u8 << j) == 0 { 1.0 } else { -1.0 };
+                        let s1 = if sign & (1u8 << (j + 4)) == 0 {
+                            1.0
+                        } else {
+                            -1.0
+                        };
+                        y[yo + j] = db1 * f32::from(g1[j]) * s0;
+                        y[yo + j + 4] = db1 * f32::from(g2[j]) * s1;
+                    }
+                    yo += 8;
+                }
+                qs_i += 8;
+                sg_i += 4;
+                for l in 0..4 {
+                    let sh = u32::try_from(l).unwrap_or(0).saturating_mul(2);
+                    let idx1 = usize::from(qs[qs_i + 2 * l])
+                        | (usize::from(qh[qh_i + 1]).wrapping_shl(8u32.saturating_sub(sh)) & 256);
+                    let idx2 = usize::from(qs[qs_i + 2 * l + 1])
+                        | (usize::from(qh[qh_i + 1]).wrapping_shl(7u32.saturating_sub(sh)) & 256);
+                    let g1 = GRID[idx1].to_le_bytes();
+                    let g2 = GRID[idx2].to_le_bytes();
+                    let sign = signs[sg_i + l];
+                    for j in 0..4 {
+                        let s0 = if sign & (1u8 << j) == 0 { 1.0 } else { -1.0 };
+                        let s1 = if sign & (1u8 << (j + 4)) == 0 {
+                            1.0
+                        } else {
+                            -1.0
+                        };
+                        y[yo + j] = db2 * f32::from(g1[j]) * s0;
+                        y[yo + j + 4] = db2 * f32::from(g2[j]) * s1;
+                    }
+                    yo += 8;
+                }
+                qs_i += 8;
+                sg_i += 4;
+                qh_i += 2;
+            }
+        }
+        y
+    }
+
     /// ggml `dequantize_row_iq4_nl` (oracle). Independent of crate `dequant_iq4_nl_row`.
     fn dequant_iq4_nl_row_oracle(w: &[u8]) -> Vec<f32> {
         const KVALUES: [i8; 16] = [
@@ -1625,6 +1746,13 @@ mod tests {
                     *yv = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
                 }
             }
+            GgmlType::IQ3_S => {
+                let rb = (n_cols / QK_K) * crate::quant::IQ3_S_BLOCK;
+                for (r, yv) in y.iter_mut().enumerate() {
+                    let row = dequant_iq3_s_row_oracle(&t.data[r * rb..(r + 1) * rb]);
+                    *yv = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
+                }
+            }
             GgmlType::IQ4_NL => {
                 let rb = (n_cols / QK4_NL) * crate::quant::IQ4_NL_BLOCK;
                 for (r, yv) in y.iter_mut().enumerate() {
@@ -1680,6 +1808,10 @@ mod tests {
             GgmlType::Q5_K => {
                 let rb = (n_cols / QK_K) * crate::quant::Q5_K_BLOCK;
                 dequant_q5_k_row_oracle(&t.data[row * rb..(row + 1) * rb])
+            }
+            GgmlType::IQ3_S => {
+                let rb = (n_cols / QK_K) * crate::quant::IQ3_S_BLOCK;
+                dequant_iq3_s_row_oracle(&t.data[row * rb..(row + 1) * rb])
             }
             GgmlType::IQ4_NL => {
                 let rb = (n_cols / QK4_NL) * crate::quant::IQ4_NL_BLOCK;
@@ -2037,6 +2169,22 @@ mod tests {
     }
 
     #[test]
+    fn tiny_iq3s_logits_match_independent_oracle() {
+        let bytes = tiny_iq3s_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        assert_eq!(g.tensor("token_embd.weight").unwrap().ty, GgmlType::IQ3_S);
+        assert_eq!(g.tensor("output.weight").unwrap().ty, GgmlType::IQ3_S);
+        assert_eq!(g.tensor("blk.0.attn_q.weight").unwrap().ty, GgmlType::IQ3_S);
+        assert_eq!(
+            g.tensor("blk.0.ffn_gate.weight").unwrap().ty,
+            GgmlType::IQ3_S
+        );
+        assert_eq!(g.tensor("output_norm.weight").unwrap().ty, GgmlType::F32);
+        assert_eq!(g.tensor("token_embd.weight").unwrap().ty.to_i32(), 21);
+        load_fwd_match(&bytes, 3);
+    }
+
+    #[test]
     fn tiny_iq4xs_logits_match_independent_oracle() {
         let bytes = tiny_iq4xs_gguf();
         let g = load_gguf(&bytes).expect("load");
@@ -2066,6 +2214,7 @@ mod tests {
             tiny_f16_gguf(),
             tiny_q5k_gguf(),
             tiny_iq4nl_gguf(),
+            tiny_iq3s_gguf(),
             tiny_iq4xs_gguf(),
         ] {
             load_prefill_match(&bytes, &tokens);
@@ -2113,7 +2262,7 @@ mod tests {
 
     #[test]
     fn decode_load_unsupported_ggml_type_error_includes_type_id() {
-        // ggml IQ2_XXS is 16; remaining IQ* stay rejected after IQ4_NL shipped.
+        // ggml IQ2_XXS is 16; remaining IQ* stay rejected after IQ3_S shipped.
         const IQ2_XXS: i32 = 16;
         let bytes = crate::gguf::write_gguf_with_type_ids(
             &[

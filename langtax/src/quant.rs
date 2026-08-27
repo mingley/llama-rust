@@ -1,4 +1,4 @@
-//! GGUF on-disk F16 / Q4_0 / Q8_0 / Q4_K / Q5_K / Q6_K / Q8_K / IQ4_NL / IQ4_XS blocks. GEMV reads those bytes; no f32-scale copy.
+//! GGUF on-disk F16 / Q4_0 / Q8_0 / Q4_K / Q5_K / Q6_K / Q8_K / IQ3_S / IQ4_NL / IQ4_XS blocks. GEMV reads those bytes; no f32-scale copy.
 
 use std::fmt;
 
@@ -31,9 +31,78 @@ pub const IQ4_XS_BLOCK: usize = 2 + 2 + QK_K / 64 + QK_K / 2;
 pub const QK4_NL: usize = 32;
 /// ggml `block_iq4_nl`: binary16 `d` + `uint8 qs[16]` (18 bytes / 32 weights).
 pub const IQ4_NL_BLOCK: usize = 2 + QK4_NL / 2;
+/// ggml `block_iq3_s`: binary16 `d`, `qs[64]`, `qh[8]`, `signs[32]`, `scales[4]` (110 bytes / 256 weights).
+pub const IQ3_S_BLOCK: usize = 2 + QK_K / 4 + QK_K / 32 + QK_K / 8 + QK_K / 64;
 /// ggml `kvalues_iq4nl` (shared by IQ4_NL and IQ4_XS).
 const KVALUES_IQ4NL: [i8; 16] = [
     -127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113,
+];
+/// ggml `iq3s_grid` (512 × 4 packed uint8 magnitudes).
+pub(crate) const IQ3S_GRID: [u32; 512] = [
+    0x01010101, 0x01010103, 0x01010105, 0x0101010b, 0x0101010f, 0x01010301, 0x01010303, 0x01010305,
+    0x01010309, 0x0101030d, 0x01010501, 0x01010503, 0x0101050b, 0x01010707, 0x01010901, 0x01010905,
+    0x0101090b, 0x0101090f, 0x01010b03, 0x01010b07, 0x01010d01, 0x01010d05, 0x01010f03, 0x01010f09,
+    0x01010f0f, 0x01030101, 0x01030103, 0x01030105, 0x01030109, 0x01030301, 0x01030303, 0x0103030b,
+    0x01030501, 0x01030507, 0x0103050f, 0x01030703, 0x0103070b, 0x01030909, 0x01030d03, 0x01030d0b,
+    0x01030f05, 0x01050101, 0x01050103, 0x0105010b, 0x0105010f, 0x01050301, 0x01050307, 0x0105030d,
+    0x01050503, 0x0105050b, 0x01050701, 0x01050709, 0x01050905, 0x0105090b, 0x0105090f, 0x01050b03,
+    0x01050b07, 0x01050f01, 0x01050f07, 0x01070107, 0x01070303, 0x0107030b, 0x01070501, 0x01070505,
+    0x01070703, 0x01070707, 0x0107070d, 0x01070909, 0x01070b01, 0x01070b05, 0x01070d0f, 0x01070f03,
+    0x01070f0b, 0x01090101, 0x01090307, 0x0109030f, 0x01090503, 0x01090509, 0x01090705, 0x01090901,
+    0x01090907, 0x01090b03, 0x01090f01, 0x010b0105, 0x010b0109, 0x010b0501, 0x010b0505, 0x010b050d,
+    0x010b0707, 0x010b0903, 0x010b090b, 0x010b090f, 0x010b0d0d, 0x010b0f07, 0x010d010d, 0x010d0303,
+    0x010d0307, 0x010d0703, 0x010d0b05, 0x010d0f03, 0x010f0101, 0x010f0105, 0x010f0109, 0x010f0501,
+    0x010f0505, 0x010f050d, 0x010f0707, 0x010f0b01, 0x010f0b09, 0x03010101, 0x03010103, 0x03010105,
+    0x03010109, 0x03010301, 0x03010303, 0x03010307, 0x0301030b, 0x0301030f, 0x03010501, 0x03010505,
+    0x03010703, 0x03010709, 0x0301070d, 0x03010b09, 0x03010b0d, 0x03010d03, 0x03010f05, 0x03030101,
+    0x03030103, 0x03030107, 0x0303010d, 0x03030301, 0x03030309, 0x03030503, 0x03030701, 0x03030707,
+    0x03030903, 0x03030b01, 0x03030b05, 0x03030f01, 0x03030f0d, 0x03050101, 0x03050305, 0x0305030b,
+    0x0305030f, 0x03050501, 0x03050509, 0x03050705, 0x03050901, 0x03050907, 0x03050b0b, 0x03050d01,
+    0x03050f05, 0x03070103, 0x03070109, 0x0307010f, 0x03070301, 0x03070307, 0x03070503, 0x0307050f,
+    0x03070701, 0x03070709, 0x03070903, 0x03070d05, 0x03070f01, 0x03090107, 0x0309010b, 0x03090305,
+    0x03090309, 0x03090703, 0x03090707, 0x03090905, 0x0309090d, 0x03090b01, 0x03090b09, 0x030b0103,
+    0x030b0301, 0x030b0307, 0x030b0503, 0x030b0701, 0x030b0705, 0x030b0b03, 0x030d0501, 0x030d0509,
+    0x030d050f, 0x030d0909, 0x030d090d, 0x030f0103, 0x030f0107, 0x030f0301, 0x030f0305, 0x030f0503,
+    0x030f070b, 0x030f0903, 0x030f0d05, 0x030f0f01, 0x05010101, 0x05010103, 0x05010107, 0x0501010b,
+    0x0501010f, 0x05010301, 0x05010305, 0x05010309, 0x0501030d, 0x05010503, 0x05010507, 0x0501050f,
+    0x05010701, 0x05010705, 0x05010903, 0x05010907, 0x0501090b, 0x05010b01, 0x05010b05, 0x05010d0f,
+    0x05010f01, 0x05010f07, 0x05010f0b, 0x05030101, 0x05030105, 0x05030301, 0x05030307, 0x0503030f,
+    0x05030505, 0x0503050b, 0x05030703, 0x05030709, 0x05030905, 0x05030b03, 0x05050103, 0x05050109,
+    0x0505010f, 0x05050503, 0x05050507, 0x05050701, 0x0505070f, 0x05050903, 0x05050b07, 0x05050b0f,
+    0x05050f03, 0x05050f09, 0x05070101, 0x05070105, 0x0507010b, 0x05070303, 0x05070505, 0x05070509,
+    0x05070703, 0x05070707, 0x05070905, 0x05070b01, 0x05070d0d, 0x05090103, 0x0509010f, 0x05090501,
+    0x05090507, 0x05090705, 0x0509070b, 0x05090903, 0x05090f05, 0x05090f0b, 0x050b0109, 0x050b0303,
+    0x050b0505, 0x050b070f, 0x050b0901, 0x050b0b07, 0x050b0f01, 0x050d0101, 0x050d0105, 0x050d010f,
+    0x050d0503, 0x050d0b0b, 0x050d0d03, 0x050f010b, 0x050f0303, 0x050f050d, 0x050f0701, 0x050f0907,
+    0x050f0b01, 0x07010105, 0x07010303, 0x07010307, 0x0701030b, 0x0701030f, 0x07010505, 0x07010703,
+    0x07010707, 0x0701070b, 0x07010905, 0x07010909, 0x0701090f, 0x07010b03, 0x07010d07, 0x07010f03,
+    0x07030103, 0x07030107, 0x0703010b, 0x07030309, 0x07030503, 0x07030507, 0x07030901, 0x07030d01,
+    0x07030f05, 0x07030f0d, 0x07050101, 0x07050305, 0x07050501, 0x07050705, 0x07050709, 0x07050b01,
+    0x07070103, 0x07070301, 0x07070309, 0x07070503, 0x07070507, 0x0707050f, 0x07070701, 0x07070903,
+    0x07070907, 0x0707090f, 0x07070b0b, 0x07070f07, 0x07090107, 0x07090303, 0x0709030d, 0x07090505,
+    0x07090703, 0x07090b05, 0x07090d01, 0x07090d09, 0x070b0103, 0x070b0301, 0x070b0305, 0x070b050b,
+    0x070b0705, 0x070b0909, 0x070b0b0d, 0x070b0f07, 0x070d030d, 0x070d0903, 0x070f0103, 0x070f0107,
+    0x070f0501, 0x070f0505, 0x070f070b, 0x09010101, 0x09010109, 0x09010305, 0x09010501, 0x09010509,
+    0x0901050f, 0x09010705, 0x09010903, 0x09010b01, 0x09010f01, 0x09030105, 0x0903010f, 0x09030303,
+    0x09030307, 0x09030505, 0x09030701, 0x0903070b, 0x09030907, 0x09030b03, 0x09030b0b, 0x09050103,
+    0x09050107, 0x09050301, 0x0905030b, 0x09050503, 0x09050707, 0x09050901, 0x09050b0f, 0x09050d05,
+    0x09050f01, 0x09070109, 0x09070303, 0x09070307, 0x09070501, 0x09070505, 0x09070703, 0x0907070b,
+    0x09090101, 0x09090105, 0x09090509, 0x0909070f, 0x09090901, 0x09090f03, 0x090b010b, 0x090b010f,
+    0x090b0503, 0x090b0d05, 0x090d0307, 0x090d0709, 0x090d0d01, 0x090f0301, 0x090f030b, 0x090f0701,
+    0x090f0907, 0x090f0b03, 0x0b010105, 0x0b010301, 0x0b010309, 0x0b010505, 0x0b010901, 0x0b010909,
+    0x0b01090f, 0x0b010b05, 0x0b010d0d, 0x0b010f09, 0x0b030103, 0x0b030107, 0x0b03010b, 0x0b030305,
+    0x0b030503, 0x0b030705, 0x0b030f05, 0x0b050101, 0x0b050303, 0x0b050507, 0x0b050701, 0x0b05070d,
+    0x0b050b07, 0x0b070105, 0x0b07010f, 0x0b070301, 0x0b07050f, 0x0b070909, 0x0b070b03, 0x0b070d0b,
+    0x0b070f07, 0x0b090103, 0x0b090109, 0x0b090501, 0x0b090705, 0x0b09090d, 0x0b0b0305, 0x0b0b050d,
+    0x0b0b0b03, 0x0b0b0b07, 0x0b0d0905, 0x0b0f0105, 0x0b0f0109, 0x0b0f0505, 0x0d010303, 0x0d010307,
+    0x0d01030b, 0x0d010703, 0x0d010707, 0x0d010d01, 0x0d030101, 0x0d030501, 0x0d03050f, 0x0d030d09,
+    0x0d050305, 0x0d050709, 0x0d050905, 0x0d050b0b, 0x0d050d05, 0x0d050f01, 0x0d070101, 0x0d070309,
+    0x0d070503, 0x0d070901, 0x0d09050b, 0x0d090907, 0x0d090d05, 0x0d0b0101, 0x0d0b0107, 0x0d0b0709,
+    0x0d0b0d01, 0x0d0d010b, 0x0d0d0901, 0x0d0f0303, 0x0d0f0307, 0x0f010101, 0x0f010109, 0x0f01010f,
+    0x0f010501, 0x0f010505, 0x0f01070d, 0x0f010901, 0x0f010b09, 0x0f010d05, 0x0f030105, 0x0f030303,
+    0x0f030509, 0x0f030907, 0x0f03090b, 0x0f050103, 0x0f050109, 0x0f050301, 0x0f05030d, 0x0f050503,
+    0x0f050701, 0x0f050b03, 0x0f070105, 0x0f070705, 0x0f07070b, 0x0f070b07, 0x0f090103, 0x0f09010b,
+    0x0f090307, 0x0f090501, 0x0f090b01, 0x0f0b0505, 0x0f0b0905, 0x0f0d0105, 0x0f0d0703, 0x0f0f0101,
 ];
 /// ggml `GGML_TYPE_F32` element size.
 pub const F32_SIZE: usize = 4;
@@ -361,6 +430,49 @@ pub fn pack_iq4_nl_block(d: f32, qs_i4: &[u8; QK4_NL]) -> [u8; IQ4_NL_BLOCK] {
     out
 }
 
+/// Pack one IQ3_S block: binary16 `d`, 9-bit grid indices, signs, 4-bit scales.
+///
+/// `qs_idx[g]` is 0..=511 for group `g` of 4 weights (`dequantize_row_iq3_s`).
+/// `signs[s]` is one bit per weight in groups of 8 (`kmask_iq2xs`).
+/// `scales[ib]` is 0..=15 for 32-wide sub-block `ib` (`db = d * (1 + 2*ls)`).
+pub fn pack_iq3_s_block(
+    d: f32,
+    scales: &[u8; 8],
+    qs_idx: &[u16; 64],
+    signs: &[u8; 32],
+) -> [u8; IQ3_S_BLOCK] {
+    let mut out = [0u8; IQ3_S_BLOCK];
+    let db = store_f16_le(d);
+    out[0] = db[0];
+    out[1] = db[1];
+    for (g, idx) in qs_idx.iter().enumerate() {
+        let v = *idx & 511;
+        if let Some(slot) = out.get_mut(2 + g) {
+            *slot = u8::try_from(v & 0xff).unwrap_or(0);
+        }
+        if v >= 256 {
+            let ib = g / 8;
+            let pos = u32::try_from(g % 8).unwrap_or(0);
+            if let Some(slot) = out.get_mut(66 + ib) {
+                *slot |= 1u8.wrapping_shl(pos);
+            }
+        }
+    }
+    for (i, s) in signs.iter().enumerate() {
+        if let Some(slot) = out.get_mut(74 + i) {
+            *slot = *s;
+        }
+    }
+    for ib in 0..4 {
+        let lo = scales.get(ib * 2).copied().unwrap_or(0) & 0x0f;
+        let hi = scales.get(ib * 2 + 1).copied().unwrap_or(0) & 0x0f;
+        if let Some(slot) = out.get_mut(106 + ib) {
+            *slot = lo | (hi << 4);
+        }
+    }
+    out
+}
+
 /// Pack one Q8_K block: f32 `d`, 256 signed `qs`, and ggml `bsums` of 16.
 pub fn pack_q8_k_block(d: f32, qs: &[i8; QK_K]) -> [u8; Q8_K_BLOCK] {
     let mut out = [0u8; Q8_K_BLOCK];
@@ -434,6 +546,17 @@ pub fn iq4_nl_row_bytes(n_cols: usize) -> Result<usize, QuantError> {
         });
     }
     Ok((n_cols / QK4_NL) * IQ4_NL_BLOCK)
+}
+
+/// Packed IQ3_S bytes for one matrix row of `n_cols` columns.
+pub fn iq3_s_row_bytes(n_cols: usize) -> Result<usize, QuantError> {
+    if !n_cols.is_multiple_of(QK_K) {
+        return Err(QuantError::UnalignedCols {
+            n_cols,
+            block: QK_K,
+        });
+    }
+    Ok((n_cols / QK_K) * IQ3_S_BLOCK)
 }
 
 /// Packed Q8_K bytes for one matrix row of `n_cols` columns.
@@ -541,6 +664,31 @@ fn q6_from_bits(bits: u8) -> i8 {
 /// ggml Q5_K 5-bit quant: low nibble plus optional high bit 16.
 fn q5_from_nibble(nibble: u8, qh: u8, mask: u8) -> u8 {
     (nibble & 0x0f).saturating_add(if qh & mask == 0 { 0 } else { 16 })
+}
+
+/// ggml `iq3s_grid[idx]` as 4 little-endian magnitude bytes.
+fn iq3s_grid4(idx: u16) -> [u8; 4] {
+    IQ3S_GRID
+        .get(usize::from(idx & 511))
+        .copied()
+        .unwrap_or(0)
+        .to_le_bytes()
+}
+
+/// ggml 9-bit IQ3_S grid index: `qs | ((qh << left_shift) & 256)`.
+fn iq3s_idx(qs: u8, qh: u8, left_shift: u32) -> u16 {
+    let lo = u16::from(qs);
+    let hi = u16::try_from(u32::from(qh).wrapping_shl(left_shift) & 256).unwrap_or(0);
+    lo | hi
+}
+
+/// ggml `kmask_iq2xs` sign: set bit → −1, clear → +1.
+fn iq_sign(signs: u8, bit: u32) -> f32 {
+    if signs & 1u8.wrapping_shl(bit) == 0 {
+        1.0
+    } else {
+        -1.0
+    }
 }
 
 /// ggml `kvalues_iq4nl[nibble]`.
@@ -806,6 +954,20 @@ pub fn gemm_iq4_nl_f32(
     gemm_f32_x(GemmKind::IQ4NL, n_cols, n_tokens, w, x, y)
 }
 
+/// `Y[t, r] = W_iq3s[r, n_cols] · X[t, n_cols]`. Token-major `x` / `y`.
+pub fn gemm_iq3_s_f32(
+    n_cols: usize,
+    n_tokens: usize,
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+) -> Result<(), QuantError> {
+    if n_tokens == 1 {
+        return gemv_iq3_s_f32(n_cols, w, x, y);
+    }
+    gemm_f32_x(GemmKind::IQ3S, n_cols, n_tokens, w, x, y)
+}
+
 #[derive(Clone, Copy)]
 enum GemmKind {
     F16,
@@ -813,6 +975,7 @@ enum GemmKind {
     Q4K,
     Q5K,
     Q6K,
+    IQ3S,
     IQ4NL,
     IQ4XS,
 }
@@ -852,6 +1015,7 @@ fn gemm_f32_x(
         GemmKind::Q4K => (q4_k_row_bytes(n_cols)?, "W Q4_K bytes"),
         GemmKind::Q5K => (q5_k_row_bytes(n_cols)?, "W Q5_K bytes"),
         GemmKind::Q6K => (q6_k_row_bytes(n_cols)?, "W Q6_K bytes"),
+        GemmKind::IQ3S => (iq3_s_row_bytes(n_cols)?, "W IQ3_S bytes"),
         GemmKind::IQ4NL => (iq4_nl_row_bytes(n_cols)?, "W IQ4_NL bytes"),
         GemmKind::IQ4XS => (iq4_xs_row_bytes(n_cols)?, "W IQ4_XS bytes"),
     };
@@ -880,6 +1044,7 @@ fn gemm_f32_x(
                 GemmKind::Q4K => vec_dot_q4_k_f32_row(wrow, xt),
                 GemmKind::Q5K => vec_dot_q5_k_f32_row(wrow, xt),
                 GemmKind::Q6K => vec_dot_q6_k_f32_row(wrow, xt),
+                GemmKind::IQ3S => vec_dot_iq3_s_f32_row(wrow, xt),
                 GemmKind::IQ4NL => vec_dot_iq4_nl_f32_row(wrow, xt),
                 GemmKind::IQ4XS => vec_dot_iq4_xs_f32_row(wrow, xt),
             };
@@ -934,6 +1099,27 @@ pub fn gemv_q5_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
     for_each_row(y, |r, out| {
         *out = row_bytes(w, w_rb, r)
             .map(|row| vec_dot_q5_k_f32_row(row, x))
+            .unwrap_or(0.0);
+    });
+    Ok(())
+}
+
+/// `y[m] = W_iq3s[m, n_cols] x_f32[n_cols]`.
+pub fn gemv_iq3_s_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    let w_rb = iq3_s_row_bytes(n_cols)?;
+    require_len("x F32 elems", x.len(), n_cols)?;
+    let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
+        what: "W IQ3_S bytes overflow",
+        expected: w_rb,
+        actual: y.len(),
+    })?;
+    require_len("W IQ3_S bytes", w.len(), expected_w)?;
+    if y.is_empty() {
+        return Ok(());
+    }
+    for_each_row(y, |r, out| {
+        *out = row_bytes(w, w_rb, r)
+            .map(|row| vec_dot_iq3_s_f32_row(row, x))
             .unwrap_or(0.0);
     });
     Ok(())
@@ -1118,6 +1304,101 @@ pub fn dequant_q5_k_row(n_cols: usize, row: &[u8], y: &mut [f32]) -> Result<(), 
         }
     }
     Ok(())
+}
+
+/// Unpack one IQ3_S GGUF row into `y[n_cols]` (`x = d*(1+2*ls)*grid*sign`).
+pub fn dequant_iq3_s_row(n_cols: usize, row: &[u8], y: &mut [f32]) -> Result<(), QuantError> {
+    let rb = iq3_s_row_bytes(n_cols)?;
+    require_len("IQ3_S row bytes", row.len(), rb)?;
+    require_len("IQ3_S y elems", y.len(), n_cols)?;
+    for yv in y.iter_mut() {
+        *yv = 0.0;
+    }
+    let (w_blocks, _) = row.as_chunks::<IQ3_S_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(d) = load_f16_le(wb) else { continue };
+        let Some(qs) = wb.get(2..66) else { continue };
+        let Some(qh) = wb.get(66..74) else { continue };
+        let Some(signs) = wb.get(74..106) else {
+            continue;
+        };
+        let Some(scales) = wb.get(106..110) else {
+            continue;
+        };
+        let x_base = b.saturating_mul(QK_K);
+        for pair in 0..4 {
+            let Some(&sc) = scales.get(pair) else {
+                continue;
+            };
+            let db1 = d * (1.0 + 2.0 * f32::from(sc & 0x0f));
+            let db2 = d * (1.0 + 2.0 * f32::from(sc >> 4));
+            let qs1 = pair.saturating_mul(16);
+            let qh1 = pair.saturating_mul(2);
+            let sg1 = pair.saturating_mul(8);
+            let y1 = x_base.saturating_add(pair.saturating_mul(64));
+            let Some(qs_a) = qs.get(qs1..qs1.saturating_add(8)) else {
+                continue;
+            };
+            let Some(qs_b) = qs.get(qs1.saturating_add(8)..qs1.saturating_add(16)) else {
+                continue;
+            };
+            let Some(&qh_a) = qh.get(qh1) else {
+                continue;
+            };
+            let Some(&qh_b) = qh.get(qh1.saturating_add(1)) else {
+                continue;
+            };
+            let Some(sg_a) = signs.get(sg1..sg1.saturating_add(4)) else {
+                continue;
+            };
+            let Some(sg_b) = signs.get(sg1.saturating_add(4)..sg1.saturating_add(8)) else {
+                continue;
+            };
+            let Some(y_a) = y.get_mut(y1..y1.saturating_add(32)) else {
+                continue;
+            };
+            write_iq3_s_super(qs_a, qh_a, sg_a, db1, y_a);
+            let Some(y_b) = y.get_mut(y1.saturating_add(32)..y1.saturating_add(64)) else {
+                continue;
+            };
+            write_iq3_s_super(qs_b, qh_b, sg_b, db2, y_b);
+        }
+    }
+    Ok(())
+}
+
+fn write_iq3_s_super(qs: &[u8], qh: u8, signs: &[u8], db: f32, y: &mut [f32]) {
+    for l in 0usize..4 {
+        let q0_off = l.saturating_mul(2);
+        let Some(&q0) = qs.get(q0_off) else {
+            continue;
+        };
+        let Some(&q1) = qs.get(q0_off.saturating_add(1)) else {
+            continue;
+        };
+        let Some(&sv) = signs.get(l) else {
+            continue;
+        };
+        let l32 = u32::try_from(l).unwrap_or(0);
+        let g1 = iq3s_grid4(iq3s_idx(q0, qh, 8u32.saturating_sub(l32.saturating_mul(2))));
+        let g2 = iq3s_grid4(iq3s_idx(q1, qh, 7u32.saturating_sub(l32.saturating_mul(2))));
+        let base = l.saturating_mul(8);
+        for j in 0..4 {
+            let j32 = u32::try_from(j).unwrap_or(0);
+            let Some(&gv1) = g1.get(j) else {
+                continue;
+            };
+            let Some(&gv2) = g2.get(j) else {
+                continue;
+            };
+            if let Some(slot) = y.get_mut(base.saturating_add(j)) {
+                *slot = db * f32::from(gv1) * iq_sign(sv, j32);
+            }
+            if let Some(slot) = y.get_mut(base.saturating_add(j).saturating_add(4)) {
+                *slot = db * f32::from(gv2) * iq_sign(sv, j32.saturating_add(4));
+            }
+        }
+    }
 }
 
 /// Unpack one IQ4_NL GGUF row into `y[n_cols]` (`x = d * kvalues_iq4nl[q]`).
@@ -1486,6 +1767,102 @@ fn vec_dot_q5_k_f32_row(row: &[u8], x: &[f32]) -> f32 {
                 sum += (a0 * q0 - b0) * *xl;
                 sum += (a1 * q1 - b1) * *xh;
             }
+        }
+    }
+    sum
+}
+
+fn vec_dot_iq3_s_f32_row(row: &[u8], x: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    let (w_blocks, _) = row.as_chunks::<IQ3_S_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(d) = load_f16_le(wb) else { continue };
+        let Some(qs) = wb.get(2..66) else { continue };
+        let Some(qh) = wb.get(66..74) else { continue };
+        let Some(signs) = wb.get(74..106) else {
+            continue;
+        };
+        let Some(scales) = wb.get(106..110) else {
+            continue;
+        };
+        let x_base = b.saturating_mul(QK_K);
+        let Some(xr) = x.get(x_base..x_base.saturating_add(QK_K)) else {
+            continue;
+        };
+        for pair in 0..4 {
+            let Some(&sc) = scales.get(pair) else {
+                continue;
+            };
+            let db1 = d * (1.0 + 2.0 * f32::from(sc & 0x0f));
+            let db2 = d * (1.0 + 2.0 * f32::from(sc >> 4));
+            let qs1 = pair.saturating_mul(16);
+            let qh1 = pair.saturating_mul(2);
+            let sg1 = pair.saturating_mul(8);
+            let xb = pair.saturating_mul(64);
+            let Some(qs_a) = qs.get(qs1..qs1.saturating_add(8)) else {
+                continue;
+            };
+            let Some(qs_b) = qs.get(qs1.saturating_add(8)..qs1.saturating_add(16)) else {
+                continue;
+            };
+            let Some(&qh_a) = qh.get(qh1) else {
+                continue;
+            };
+            let Some(&qh_b) = qh.get(qh1.saturating_add(1)) else {
+                continue;
+            };
+            let Some(sg_a) = signs.get(sg1..sg1.saturating_add(4)) else {
+                continue;
+            };
+            let Some(sg_b) = signs.get(sg1.saturating_add(4)..sg1.saturating_add(8)) else {
+                continue;
+            };
+            let Some(x_a) = xr.get(xb..xb.saturating_add(32)) else {
+                continue;
+            };
+            let Some(x_b) = xr.get(xb.saturating_add(32)..xb.saturating_add(64)) else {
+                continue;
+            };
+            sum += dot_iq3_s_super(qs_a, qh_a, sg_a, db1, x_a);
+            sum += dot_iq3_s_super(qs_b, qh_b, sg_b, db2, x_b);
+        }
+    }
+    sum
+}
+
+fn dot_iq3_s_super(qs: &[u8], qh: u8, signs: &[u8], db: f32, x: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    for l in 0usize..4 {
+        let q0_off = l.saturating_mul(2);
+        let Some(&q0) = qs.get(q0_off) else {
+            continue;
+        };
+        let Some(&q1) = qs.get(q0_off.saturating_add(1)) else {
+            continue;
+        };
+        let Some(&sv) = signs.get(l) else {
+            continue;
+        };
+        let l32 = u32::try_from(l).unwrap_or(0);
+        let g1 = iq3s_grid4(iq3s_idx(q0, qh, 8u32.saturating_sub(l32.saturating_mul(2))));
+        let g2 = iq3s_grid4(iq3s_idx(q1, qh, 7u32.saturating_sub(l32.saturating_mul(2))));
+        let base = l.saturating_mul(8);
+        for j in 0..4 {
+            let j32 = u32::try_from(j).unwrap_or(0);
+            let Some(&gv1) = g1.get(j) else {
+                continue;
+            };
+            let Some(&gv2) = g2.get(j) else {
+                continue;
+            };
+            let Some(&x0) = x.get(base.saturating_add(j)) else {
+                continue;
+            };
+            let Some(&x1) = x.get(base.saturating_add(j).saturating_add(4)) else {
+                continue;
+            };
+            sum += db * f32::from(gv1) * iq_sign(sv, j32) * x0;
+            sum += db * f32::from(gv2) * iq_sign(sv, j32.saturating_add(4)) * x1;
         }
     }
     sum
@@ -2315,6 +2692,181 @@ mod tests {
             gemm_iq4_nl_f32(n_cols, n_tokens, &w, &xk, &mut y_seq).unwrap();
             assert_close(&y_seq, &exp_oracle);
         });
+    }
+
+    /// ggml `dequantize_row_iq3_s` (oracle). Independent of crate kernels.
+    fn oracle_iq3_s_row(w: &[u8]) -> Vec<f32> {
+        const GRID: [u32; 512] = IQ3S_GRID;
+        let nblocks = w.len() / IQ3_S_BLOCK;
+        let mut y = vec![0.0f32; nblocks * QK_K];
+        for b in 0..nblocks {
+            let wb = &w[b * IQ3_S_BLOCK..(b + 1) * IQ3_S_BLOCK];
+            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let qs = &wb[2..66];
+            let qh = &wb[66..74];
+            let signs = &wb[74..106];
+            let scales = &wb[106..110];
+            let mut yo = b * QK_K;
+            let mut qs_i = 0usize;
+            let mut sg_i = 0usize;
+            let mut qh_i = 0usize;
+            for ib32 in (0..QK_K / 32).step_by(2) {
+                let sc = scales[ib32 / 2];
+                let db1 = d * (1.0 + 2.0 * f32::from(sc & 0x0f));
+                let db2 = d * (1.0 + 2.0 * f32::from(sc >> 4));
+                for l in 0..4 {
+                    let sh = u32::try_from(l).unwrap_or(0).saturating_mul(2);
+                    let idx1 = usize::from(qs[qs_i + 2 * l])
+                        | (usize::from(qh[qh_i]).wrapping_shl(8u32.saturating_sub(sh)) & 256);
+                    let idx2 = usize::from(qs[qs_i + 2 * l + 1])
+                        | (usize::from(qh[qh_i]).wrapping_shl(7u32.saturating_sub(sh)) & 256);
+                    let g1 = GRID[idx1].to_le_bytes();
+                    let g2 = GRID[idx2].to_le_bytes();
+                    let sign = signs[sg_i + l];
+                    for j in 0..4 {
+                        let s0 = if sign & (1u8 << j) == 0 { 1.0 } else { -1.0 };
+                        let s1 = if sign & (1u8 << (j + 4)) == 0 {
+                            1.0
+                        } else {
+                            -1.0
+                        };
+                        y[yo + j] = db1 * f32::from(g1[j]) * s0;
+                        y[yo + j + 4] = db1 * f32::from(g2[j]) * s1;
+                    }
+                    yo += 8;
+                }
+                qs_i += 8;
+                sg_i += 4;
+                for l in 0..4 {
+                    let sh = u32::try_from(l).unwrap_or(0).saturating_mul(2);
+                    let idx1 = usize::from(qs[qs_i + 2 * l])
+                        | (usize::from(qh[qh_i + 1]).wrapping_shl(8u32.saturating_sub(sh)) & 256);
+                    let idx2 = usize::from(qs[qs_i + 2 * l + 1])
+                        | (usize::from(qh[qh_i + 1]).wrapping_shl(7u32.saturating_sub(sh)) & 256);
+                    let g1 = GRID[idx1].to_le_bytes();
+                    let g2 = GRID[idx2].to_le_bytes();
+                    let sign = signs[sg_i + l];
+                    for j in 0..4 {
+                        let s0 = if sign & (1u8 << j) == 0 { 1.0 } else { -1.0 };
+                        let s1 = if sign & (1u8 << (j + 4)) == 0 {
+                            1.0
+                        } else {
+                            -1.0
+                        };
+                        y[yo + j] = db2 * f32::from(g1[j]) * s0;
+                        y[yo + j + 4] = db2 * f32::from(g2[j]) * s1;
+                    }
+                    yo += 8;
+                }
+                qs_i += 8;
+                sg_i += 4;
+                qh_i += 2;
+            }
+        }
+        y
+    }
+
+    fn oracle_iq3_s_dot(row: &[u8], x: &[f32]) -> f32 {
+        oracle_iq3_s_row(row)
+            .iter()
+            .zip(x.iter())
+            .map(|(a, b)| a * b)
+            .sum()
+    }
+
+    #[test]
+    fn pack_iq3_s_gemv_and_dequant_match_independent_oracle() {
+        let mut qs_idx = [0u16; 64];
+        qs_idx[0] = 3;
+        qs_idx[1] = 12;
+        qs_idx[8] = 256;
+        qs_idx[9] = 511;
+        let mut signs = [0u8; 32];
+        signs[0] = 0b0001_0001;
+        signs[4] = 0b1000_0000;
+        let sc = [1u8, 2, 3, 0, 4, 5, 6, 7];
+        let w = pack_iq3_s_block(25.0 / 100.0, &sc, &qs_idx, &signs);
+        assert_eq!(w.len(), IQ3_S_BLOCK);
+        assert_eq!(w[2], 3);
+        assert_eq!(w[3], 12);
+        // group 8 high bit → qh[1] bit 0
+        assert_eq!(w[67] & 1, 1);
+        // scales[0] = 1 | (2 << 4)
+        assert_eq!(w[106], 0x21);
+        let mut x = [0.0f32; QK_K];
+        x[0] = 2.0;
+        x[4] = 4.0;
+        x[32] = 1.0;
+        x[36] = 3.0;
+        let mut y = [0.0f32];
+        gemv_iq3_s_f32(QK_K, &w, &x, &mut y).unwrap();
+        let expected = oracle_iq3_s_dot(&w, &x);
+        let rel = (y[0] - expected).abs() / (1.0 + expected.abs());
+        assert!(rel * 100_000.0 < 1.0, "gemv {} vs {expected}", y[0]);
+        let mut row = [0.0f32; QK_K];
+        dequant_iq3_s_row(QK_K, &w, &mut row).unwrap();
+        let oracle = oracle_iq3_s_row(&w);
+        assert_close(&row, &oracle);
+        let via_dequant: f32 = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
+        assert!(
+            (via_dequant - y[0]).abs() * 100_000.0 < 1.0,
+            "{via_dequant} vs {}",
+            y[0]
+        );
+    }
+
+    #[test]
+    fn gemm_iq3_s_matches_repeated_gemv_and_oracle() {
+        let n_cols = QK_K;
+        let n_rows = 2usize;
+        let n_tokens = 3usize;
+        let mut w = Vec::new();
+        for r in 0..n_rows {
+            let mut qs_idx = [0u16; 64];
+            qs_idx[0] = u16::try_from(3 + r).unwrap_or(3);
+            qs_idx[1] = 12;
+            qs_idx[8] = 256;
+            let mut signs = [0u8; 32];
+            signs[0] = 0b0000_0011;
+            let sc = [1u8, 2, 3, 0, 4, 5, 6, 7];
+            w.extend_from_slice(&pack_iq3_s_block(25.0 / 100.0, &sc, &qs_idx, &signs));
+        }
+        let mut xk = vec![0.0f32; n_cols * n_tokens];
+        for t in 0..n_tokens {
+            if let Some(slot) = xk.get_mut(t * n_cols) {
+                *slot = f32::from(u16::try_from(t + 1).unwrap_or(1));
+            }
+            if let Some(slot) = xk.get_mut(t * n_cols + 4) {
+                *slot = 2.0;
+            }
+        }
+        let mut y = vec![0.0f32; n_rows * n_tokens];
+        gemm_iq3_s_f32(n_cols, n_tokens, &w, &xk, &mut y).unwrap();
+        let mut exp = Vec::new();
+        let mut exp_oracle = Vec::new();
+        for t in 0..n_tokens {
+            let xt = &xk[t * n_cols..(t + 1) * n_cols];
+            let mut a = vec![0.0f32; n_rows];
+            gemv_iq3_s_f32(n_cols, &w, xt, &mut a).unwrap();
+            exp.extend_from_slice(&a);
+            for r in 0..n_rows {
+                let row = &w[r * IQ3_S_BLOCK..(r + 1) * IQ3_S_BLOCK];
+                exp_oracle.push(oracle_iq3_s_dot(row, xt));
+            }
+        }
+        assert_close(&y, &exp);
+        assert_close(&y, &exp_oracle);
+        crate::pool::with_sequential(|| {
+            let mut y_seq = vec![0.0f32; n_rows * n_tokens];
+            gemm_iq3_s_f32(n_cols, n_tokens, &w, &xk, &mut y_seq).unwrap();
+            assert_close(&y_seq, &exp_oracle);
+        });
+    }
+
+    #[test]
+    fn gemv_iq3_s_rejects_unaligned_cols() {
+        let mut y = [0.0f32];
+        assert!(gemv_iq3_s_f32(255, &[], &[], &mut y).is_err());
     }
 
     #[test]
