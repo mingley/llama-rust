@@ -6,6 +6,7 @@ use crate::quant::{
     gemm_q6_k_f32, gemv_f32, gemv_q4_k_f32, gemv_q6_k_f32, pack_f32, pack_q4_k_block,
     pack_q6_k_block, q4_k_row_bytes, q6_k_row_bytes, QuantError, QK_K,
 };
+use crate::sample::{SampleError, SampleParams, Sampler};
 use crate::tok::{TokError, Tokenizer};
 use crate::{write_gguf_with_kv, GGUF_DEFAULT_ALIGNMENT};
 
@@ -41,6 +42,8 @@ pub enum LlamaError {
     Tok(TokError),
     /// `--prompt` was empty (no tokens to decode).
     EmptyPrompt,
+    /// Sampling failed.
+    Sample(SampleError),
 }
 
 impl std::fmt::Display for LlamaError {
@@ -56,6 +59,7 @@ impl std::fmt::Display for LlamaError {
             Self::Gguf(e) => write!(f, "{e}"),
             Self::Tok(e) => write!(f, "{e}"),
             Self::EmptyPrompt => write!(f, "empty prompt"),
+            Self::Sample(e) => write!(f, "{e}"),
         }
     }
 }
@@ -77,6 +81,12 @@ impl From<GgufError> for LlamaError {
 impl From<TokError> for LlamaError {
     fn from(v: TokError) -> Self {
         Self::Tok(v)
+    }
+}
+
+impl From<SampleError> for LlamaError {
+    fn from(v: SampleError) -> Self {
+        Self::Sample(v)
     }
 }
 
@@ -364,6 +374,53 @@ pub fn greedy_generate_ctx(
     let mut last = model.prefill(&mut cache, &ids)?;
     for _ in 0..n_predict {
         let next = argmax(&last);
+        if tok.eos == Some(next) {
+            break;
+        }
+        ids.push(next);
+        last = model.forward(&mut cache, next)?;
+    }
+    Ok(tok.decode(&ids))
+}
+
+/// Generate with [`SampleParams`]. [`SampleParams::greedy`] is the seedless path.
+pub fn generate(
+    model: &Llama,
+    tok: &Tokenizer,
+    prompt: &str,
+    n_predict: usize,
+    params: &SampleParams,
+) -> Result<String, LlamaError> {
+    generate_ctx(model, tok, prompt, n_predict, None, params)
+}
+
+/// [`generate`] with optional KV capacity (`n_ctx`).
+pub fn generate_ctx(
+    model: &Llama,
+    tok: &Tokenizer,
+    prompt: &str,
+    n_predict: usize,
+    n_ctx: Option<usize>,
+    params: &SampleParams,
+) -> Result<String, LlamaError> {
+    if prompt.is_empty() {
+        return Err(LlamaError::EmptyPrompt);
+    }
+    let mut ids = prompt_ids(tok, prompt)?;
+    if ids.is_empty() {
+        return Err(LlamaError::EmptyPrompt);
+    }
+    let needed = ids.len().saturating_add(n_predict);
+    let max_seq = match n_ctx {
+        Some(n) if n < needed => return Err(LlamaError::Shape("n_ctx".into())),
+        Some(n) => n,
+        None => needed.saturating_add(1),
+    };
+    let mut cache = model.new_cache(max_seq)?;
+    let mut last = model.prefill(&mut cache, &ids)?;
+    let mut sampler = Sampler::new(*params)?;
+    for _ in 0..n_predict {
+        let next = sampler.sample(&last, &ids)?;
         if tok.eos == Some(next) {
             break;
         }

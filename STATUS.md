@@ -1,4 +1,4 @@
-# Stopped 2026-08-27 — tokenizer
+# Stopped 2026-08-27 — sampling
 
 HEAD is this branch’s tip. Worktree should be clean before the next resume.
 No in-flight code.
@@ -10,7 +10,8 @@ Local: `~/dev/llama-rust-perf`
 
 - `forbid(unsafe_code)`, no llama.cpp/FFI, `Cargo.lock` crate-only (no SIMD crates, no rayon).
 - GGUF v3: F32, Q4_0, Q8_0, Q4_K, Q6_K, Q8_K. Kernels read on-disk bytes (no private f32-scale copy).
-- Decode: RMSNorm, RoPE, GQA+KV, SwiGLU, lm_head, greedy sample.
+- Decode: RMSNorm, RoPE, GQA+KV, SwiGLU, lm_head, greedy sample by default.
+- **Sampling.** Seedless greedy (`temperature <= 0`, argmax, first index on ties) is still the `infer` / `greedy_generate` path. `SampleParams` + `generate` add temperature, top-k, top-p, and unique-id repeat penalty (`logit > 0` then `/=`, else `*=`). Stochastic draws use SplitMix64 and require a seed. No CLI sampling flags.
 - Prefill GEMM. Prompt tokens are one causal pass. A single token stays GEMV.
 - Architectures: `llama`, `qwen2`, `mistral`, `phi3` `{arch}.*` KV.
 - Q4_K_M shape that common OSS files actually have:
@@ -32,19 +33,18 @@ Local: `~/dev/llama-rust-perf`
 
 ## In progress
 
-Nothing. This slice is STATUS item 1 (tokenizer).
+Nothing. This slice is STATUS item 1 (sampling).
 
 ## Still needed (production / researcher bar)
 
 Ordered by how much they block “others can actually use this”:
 
-1. **Sampling.** Greedy only. No temperature / top-k / top-p / repeat penalty.
-2. **Serving.** No HTTP, no OpenAI-compat, no batching, no multi-request. Not a production inference server.
-3. **Metal-in-crate.** Owned MSL kernels exist as a sidecar. Decode still CPU.
-4. **Dtypes / arches still rejected.** Q5_K, F16, IQ*, Gemma, MoE, vision, Qwen3, Llama4. Tied `output.weight` (reuse `token_embd`) untested.
-5. **KV cache** sized to prompt+predict is the default; `{arch}.context_length` is still unused. `--n-ctx` is an override only.
-6. **crates.io** unpublished. Linux proof is GHA tiny/oracle tests only (2GB GGUF is gitignored).
-7. **Chat template apply.** The Jinja string is read. Rendering it (and special-token split of `<|im_start|>` in the prompt) is not started. BPE has no Unicode regex pre-tokenizer.
+1. **Serving.** No HTTP, no OpenAI-compat, no batching, no multi-request. Not a production inference server.
+2. **Metal-in-crate.** Owned MSL kernels exist as a sidecar. Decode still CPU.
+3. **Dtypes / arches still rejected.** Q5_K, F16, IQ*, Gemma, MoE, vision, Qwen3, Llama4. Tied `output.weight` (reuse `token_embd`) untested.
+4. **KV cache** sized to prompt+predict is the default; `{arch}.context_length` is still unused. `--n-ctx` is an override only.
+5. **crates.io** unpublished. Linux proof is GHA tiny/oracle tests only (2GB GGUF is gitignored).
+6. **Chat template apply.** The Jinja string is read. Rendering it (and special-token split of `<|im_start|>` in the prompt) is not started. BPE has no Unicode regex pre-tokenizer.
 
 Non-goals that were explicitly parked: SIMD crates (`wide`/`pulp`/`std::simd`); matching llama.cpp tok/s; downloading HF checkpoints in CI; mmap (`unsafe` or a crate).
 
@@ -56,4 +56,4 @@ cargo clippy --all-targets --all-features -- -D warnings
 ./target/release/gguf_gemv infer models/qwen2.5-3b-instruct-q4_k_m.gguf --prompt ab --n-predict 2
 ```
 
-Next code change should be item 1 (sampling). Do not add crates.io runtime deps or `unsafe`.
+Next code change should be item 1 (serving) unless the goal is Metal-in-crate or more dtypes. Do not add crates.io runtime deps or `unsafe`.
