@@ -1,4 +1,4 @@
-//! GGUF on-disk F16 / BF16 / Q4_0 / Q4_1 / Q5_0 / Q5_1 / Q8_0 / Q2_K / Q3_K / Q4_K / Q5_K / Q6_K / Q8_K / IQ1_M / IQ1_S / IQ2_XXS / IQ2_XS / IQ2_S / IQ3_XXS / IQ3_S / IQ4_NL / IQ4_XS / MXFP4 / NVFP4 blocks. GEMV reads those bytes; no f32-scale copy.
+//! GGUF on-disk F16 / BF16 / Q4_0 / Q4_1 / Q5_0 / Q5_1 / Q8_0 / Q1_0 / Q2_K / Q3_K / Q4_K / Q5_K / Q6_K / Q8_K / IQ1_M / IQ1_S / IQ2_XXS / IQ2_XS / IQ2_S / IQ3_XXS / IQ3_S / IQ4_NL / IQ4_XS / MXFP4 / NVFP4 blocks. GEMV reads those bytes; no f32-scale copy.
 
 use std::fmt;
 
@@ -35,6 +35,10 @@ pub const QK_NVFP4: usize = 64;
 pub(crate) const QK_NVFP4_SUB: usize = 16;
 /// ggml `block_nvfp4`: 4 UE4M3 `d` + `uint8 qs[32]` (36 bytes / 64 weights).
 pub const NVFP4_BLOCK: usize = QK_NVFP4 / QK_NVFP4_SUB + QK_NVFP4 / 2;
+/// ggml `QK1_0` block width in elements (`block_q1_0`).
+pub const QK1_0: usize = 128;
+/// ggml `block_q1_0`: binary16 `d` + `uint8 qs[16]` (18 bytes / 128 weights).
+pub const Q1_0_BLOCK: usize = 2 + QK1_0 / 8;
 /// ggml super-block width (`QK_K`).
 pub const QK_K: usize = 256;
 /// ggml `K_SCALE_SIZE`: packed 6-bit scales/mins for 8 Q4_K sub-blocks.
@@ -4170,6 +4174,17 @@ pub fn nvfp4_row_bytes(n_cols: usize) -> Result<usize, QuantError> {
     Ok((n_cols / QK_NVFP4) * NVFP4_BLOCK)
 }
 
+/// Packed Q1_0 bytes for one matrix row of `n_cols` columns.
+pub fn q1_0_row_bytes(n_cols: usize) -> Result<usize, QuantError> {
+    if !n_cols.is_multiple_of(QK1_0) {
+        return Err(QuantError::UnalignedCols {
+            n_cols,
+            block: QK1_0,
+        });
+    }
+    Ok((n_cols / QK1_0) * Q1_0_BLOCK)
+}
+
 /// Pack one Q8_0 block: binary16 scale + 32 signed `qs` bytes.
 pub fn pack_q8_0_block(scale: f32, qs: &[i8; QK8_0]) -> [u8; Q8_0_BLOCK] {
     let mut out = [0u8; Q8_0_BLOCK];
@@ -4321,6 +4336,35 @@ pub fn pack_q5_1_block(d: f32, m: f32, qs_i5: &[u8; QK5_1]) -> [u8; Q5_1_BLOCK] 
     let qhb = qh.to_le_bytes();
     if let Some(dst) = out.get_mut(4..8) {
         dst.copy_from_slice(&qhb);
+    }
+    out
+}
+
+/// Pack one Q1_0 block: binary16 `d`, 128 sign bits.
+///
+/// `qs_bit[i]` is 0 or 1 in element order (`dequantize_row_q1_0`:
+/// bit `j` is `qs[j/8] >> (j%8)`; `x = bit ? d : -d`).
+pub fn pack_q1_0_block(d: f32, qs_bit: &[u8; QK1_0]) -> [u8; Q1_0_BLOCK] {
+    let mut out = [0u8; Q1_0_BLOCK];
+    let db = store_f16_le(d);
+    if let Some(slot) = out.get_mut(0) {
+        *slot = db[0];
+    }
+    if let Some(slot) = out.get_mut(1) {
+        *slot = db[1];
+    }
+    let Some(qs_dst) = out.get_mut(2..) else {
+        return out;
+    };
+    for (j, bit) in qs_bit.iter().enumerate() {
+        if *bit & 1 == 0 {
+            continue;
+        }
+        let byte_index = j / 8;
+        let bit_offset = u32::try_from(j % 8).unwrap_or(0);
+        if let Some(slot) = qs_dst.get_mut(byte_index) {
+            *slot |= 1u8.checked_shl(bit_offset).unwrap_or(0);
+        }
     }
     out
 }
@@ -5796,6 +5840,20 @@ pub fn gemm_nvfp4_f32(
     gemm_f32_x(GemmKind::NVFP4, n_cols, n_tokens, w, x, y)
 }
 
+/// `Y[t, r] = W_q10[r, n_cols] · X[t, n_cols]`. Token-major `x` / `y`.
+pub fn gemm_q1_0_f32(
+    n_cols: usize,
+    n_tokens: usize,
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+) -> Result<(), QuantError> {
+    if n_tokens == 1 {
+        return gemv_q1_0_f32(n_cols, w, x, y);
+    }
+    gemm_f32_x(GemmKind::Q10, n_cols, n_tokens, w, x, y)
+}
+
 /// `Y[t, r] = W_iq4xs[r, n_cols] · X[t, n_cols]`. Token-major `x` / `y`.
 pub fn gemm_iq4_xs_f32(
     n_cols: usize,
@@ -5934,6 +5992,7 @@ enum GemmKind {
     Q51,
     MXFP4,
     NVFP4,
+    Q10,
     Q4K,
     Q5K,
     Q6K,
@@ -5988,6 +6047,7 @@ fn gemm_f32_x(
         GemmKind::Q51 => (q5_1_row_bytes(n_cols)?, "W Q5_1 bytes"),
         GemmKind::MXFP4 => (mxfp4_row_bytes(n_cols)?, "W MXFP4 bytes"),
         GemmKind::NVFP4 => (nvfp4_row_bytes(n_cols)?, "W NVFP4 bytes"),
+        GemmKind::Q10 => (q1_0_row_bytes(n_cols)?, "W Q1_0 bytes"),
         GemmKind::Q4K => (q4_k_row_bytes(n_cols)?, "W Q4_K bytes"),
         GemmKind::Q5K => (q5_k_row_bytes(n_cols)?, "W Q5_K bytes"),
         GemmKind::Q6K => (q6_k_row_bytes(n_cols)?, "W Q6_K bytes"),
@@ -6031,6 +6091,7 @@ fn gemm_f32_x(
                 GemmKind::Q51 => vec_dot_q5_1_f32_row(wrow, xt),
                 GemmKind::MXFP4 => vec_dot_mxfp4_f32_row(wrow, xt),
                 GemmKind::NVFP4 => vec_dot_nvfp4_f32_row(wrow, xt),
+                GemmKind::Q10 => vec_dot_q1_0_f32_row(wrow, xt),
                 GemmKind::Q4K => vec_dot_q4_k_f32_row(wrow, xt),
                 GemmKind::Q5K => vec_dot_q5_k_f32_row(wrow, xt),
                 GemmKind::Q6K => vec_dot_q6_k_f32_row(wrow, xt),
@@ -6242,6 +6303,27 @@ pub fn gemv_nvfp4_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resu
     for_each_row(y, |r, out| {
         *out = row_bytes(w, w_rb, r)
             .map(|row| vec_dot_nvfp4_f32_row(row, x))
+            .unwrap_or(0.0);
+    });
+    Ok(())
+}
+
+/// `y[m] = W_q10[m, n_cols] x_f32[n_cols]`.
+pub fn gemv_q1_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    let w_rb = q1_0_row_bytes(n_cols)?;
+    require_len("x F32 elems", x.len(), n_cols)?;
+    let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
+        what: "W Q1_0 bytes overflow",
+        expected: w_rb,
+        actual: y.len(),
+    })?;
+    require_len("W Q1_0 bytes", w.len(), expected_w)?;
+    if y.is_empty() {
+        return Ok(());
+    }
+    for_each_row(y, |r, out| {
+        *out = row_bytes(w, w_rb, r)
+            .map(|row| vec_dot_q1_0_f32_row(row, x))
             .unwrap_or(0.0);
     });
     Ok(())
@@ -6741,6 +6823,34 @@ pub fn dequant_mxfp4_row(n_cols: usize, row: &[u8], y: &mut [f32]) -> Result<(),
             }
             if let Some(slot) = y.get_mut(hi_base.saturating_add(j)) {
                 *slot = q1 * d;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Unpack one Q1_0 GGUF row into `y[n_cols]` (`x = bit ? d : -d`).
+pub fn dequant_q1_0_row(n_cols: usize, row: &[u8], y: &mut [f32]) -> Result<(), QuantError> {
+    let rb = q1_0_row_bytes(n_cols)?;
+    require_len("Q1_0 row bytes", row.len(), rb)?;
+    require_len("Q1_0 y elems", y.len(), n_cols)?;
+    for yv in y.iter_mut() {
+        *yv = 0.0;
+    }
+    let (w_blocks, _) = row.as_chunks::<Q1_0_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(d) = load_f16_le(wb) else { continue };
+        let neg_d = -d;
+        let Some(qs) = wb.get(2..) else { continue };
+        let x_base = b.saturating_mul(QK1_0);
+        for (byte_index, p) in qs.iter().enumerate() {
+            let elem_base = x_base.saturating_add(byte_index.saturating_mul(8));
+            for bit_offset in 0..8 {
+                let shift = u32::try_from(bit_offset).unwrap_or(0);
+                let bit = (*p >> shift) & 1;
+                if let Some(slot) = y.get_mut(elem_base.saturating_add(bit_offset)) {
+                    *slot = if bit != 0 { d } else { neg_d };
+                }
             }
         }
     }
@@ -7967,6 +8077,33 @@ fn vec_dot_mxfp4_f32_row(row: &[u8], x: &[f32]) -> f32 {
     sum
 }
 
+fn vec_dot_q1_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    let (w_blocks, _) = row.as_chunks::<Q1_0_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(d) = load_f16_le(wb) else { continue };
+        let neg_d = -d;
+        let Some(qs) = wb.get(2..) else { continue };
+        let x_base = b.saturating_mul(QK1_0);
+        let Some(xr) = x.get(x_base..x_base.saturating_add(QK1_0)) else {
+            continue;
+        };
+        for (byte_index, p) in qs.iter().enumerate() {
+            let elem_base = byte_index.saturating_mul(8);
+            let Some(x8) = xr.get(elem_base..elem_base.saturating_add(8)) else {
+                continue;
+            };
+            for (bit_offset, xv) in x8.iter().enumerate() {
+                let shift = u32::try_from(bit_offset).unwrap_or(0);
+                let bit = (*p >> shift) & 1;
+                let w = if bit != 0 { d } else { neg_d };
+                sum += w * *xv;
+            }
+        }
+    }
+    sum
+}
+
 fn vec_dot_nvfp4_f32_row(row: &[u8], x: &[f32]) -> f32 {
     let mut sum = 0.0f32;
     let (w_blocks, _) = row.as_chunks::<NVFP4_BLOCK>();
@@ -8792,6 +8929,12 @@ mod tests {
     fn gemv_nvfp4_rejects_unaligned_cols() {
         let mut y = [0.0f32];
         assert!(gemv_nvfp4_f32(63, &[], &[], &mut y).is_err());
+    }
+
+    #[test]
+    fn gemv_q1_0_rejects_unaligned_cols() {
+        let mut y = [0.0f32];
+        assert!(gemv_q1_0_f32(127, &[], &[], &mut y).is_err());
     }
 
     fn dequant_q8_row(bytes: &[u8]) -> Vec<f32> {
@@ -9896,6 +10039,123 @@ mod tests {
         crate::pool::with_sequential(|| {
             let mut y_seq = vec![0.0f32; n_rows * n_tokens];
             gemm_nvfp4_f32(n_cols, n_tokens, &w, &xk, &mut y_seq).unwrap();
+            assert_close(&y_seq, &exp_oracle);
+        });
+    }
+
+    /// ggml `dequantize_row_q1_0` (oracle). Independent of crate kernels.
+    fn oracle_q1_0_row(w: &[u8]) -> Vec<f32> {
+        let nblocks = w.len() / Q1_0_BLOCK;
+        let mut y = vec![0.0f32; nblocks * QK1_0];
+        for b in 0..nblocks {
+            let wb = &w[b * Q1_0_BLOCK..(b + 1) * Q1_0_BLOCK];
+            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let qs = &wb[2..];
+            for j in 0..QK1_0 {
+                let bit = (qs[j / 8] >> (j % 8)) & 1;
+                y[b * QK1_0 + j] = if bit != 0 { d } else { -d };
+            }
+        }
+        y
+    }
+
+    fn oracle_q1_0_dot(row: &[u8], x: &[f32]) -> f32 {
+        oracle_q1_0_row(row)
+            .iter()
+            .zip(x.iter())
+            .map(|(a, b)| a * b)
+            .sum()
+    }
+
+    #[test]
+    fn pack_q1_0_gemv_and_dequant_match_independent_oracle() {
+        let mut qs = [0u8; QK1_0];
+        qs[0] = 1;
+        qs[1] = 0;
+        qs[7] = 1;
+        qs[8] = 1;
+        qs[15] = 0;
+        qs[16] = 1;
+        qs[127] = 1;
+        let w = pack_q1_0_block(5.0 / 10.0, &qs);
+        assert_eq!(w.len(), Q1_0_BLOCK);
+        assert_eq!(Q1_0_BLOCK, 18);
+        // Sequential LSB-first: bit j is qs[j/8] >> (j%8). Not NVFP4 nibbles.
+        assert_eq!(w[2], 0x81);
+        assert_eq!(w[3], 0x01);
+        assert_eq!(w[4], 0x01);
+        assert_eq!(w[17], 0x80);
+        let mut x = [0.0f32; QK1_0];
+        x[0] = 2.0;
+        x[1] = 3.0;
+        x[7] = 4.0;
+        x[8] = 1.0;
+        x[16] = 5.0;
+        x[127] = 6.0;
+        let mut y = [0.0f32];
+        gemv_q1_0_f32(QK1_0, &w, &x, &mut y).unwrap();
+        let expected = oracle_q1_0_dot(&w, &x);
+        let rel = (y[0] - expected).abs() / (1.0 + expected.abs());
+        assert!(rel * 100_000.0 < 1.0, "gemv {} vs {expected}", y[0]);
+        let mut row = [0.0f32; QK1_0];
+        dequant_q1_0_row(QK1_0, &w, &mut row).unwrap();
+        let oracle = oracle_q1_0_row(&w);
+        assert_close(&row, &oracle);
+        let via_dequant: f32 = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
+        assert!(
+            (via_dequant - y[0]).abs() * 100_000.0 < 1.0,
+            "{via_dequant} vs {}",
+            y[0]
+        );
+    }
+
+    #[test]
+    fn gemm_q1_0_matches_repeated_gemv_and_oracle() {
+        let n_cols = QK1_0;
+        let n_rows = 2usize;
+        let n_tokens = 3usize;
+        let mut w = Vec::new();
+        for r in 0..n_rows {
+            let mut qs = [0u8; QK1_0];
+            qs[0] = 1;
+            qs[1] = u8::try_from(r % 2).unwrap_or(0);
+            qs[8] = 1;
+            qs[16] = 1;
+            qs[32] = 0;
+            w.extend_from_slice(&pack_q1_0_block(25.0 / 100.0, &qs));
+        }
+        let mut xk = vec![0.0f32; n_cols * n_tokens];
+        for t in 0..n_tokens {
+            if let Some(slot) = xk.get_mut(t * n_cols) {
+                *slot = f32::from(u16::try_from(t + 1).unwrap_or(1));
+            }
+            if let Some(slot) = xk.get_mut(t * n_cols + 1) {
+                *slot = 2.0;
+            }
+            if let Some(slot) = xk.get_mut(t * n_cols + 8) {
+                *slot = 3.0;
+            }
+        }
+        let mut y = vec![0.0f32; n_rows * n_tokens];
+        gemm_q1_0_f32(n_cols, n_tokens, &w, &xk, &mut y).unwrap();
+        let mut exp = Vec::new();
+        let mut exp_oracle = Vec::new();
+        let rb = Q1_0_BLOCK;
+        for t in 0..n_tokens {
+            let xt = &xk[t * n_cols..(t + 1) * n_cols];
+            let mut a = vec![0.0f32; n_rows];
+            gemv_q1_0_f32(n_cols, &w, xt, &mut a).unwrap();
+            exp.extend_from_slice(&a);
+            for r in 0..n_rows {
+                let row = &w[r * rb..(r + 1) * rb];
+                exp_oracle.push(oracle_q1_0_dot(row, xt));
+            }
+        }
+        assert_close(&y, &exp);
+        assert_close(&y, &exp_oracle);
+        crate::pool::with_sequential(|| {
+            let mut y_seq = vec![0.0f32; n_rows * n_tokens];
+            gemm_q1_0_f32(n_cols, n_tokens, &w, &xk, &mut y_seq).unwrap();
             assert_close(&y_seq, &exp_oracle);
         });
     }
