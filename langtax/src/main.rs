@@ -7,7 +7,7 @@ use std::path::Path;
 use std::time::Instant;
 
 use llama_rust::{
-    gemv_q4_k, gemv_q8_0, greedy_generate_ctx, load_gguf, pack_q4_k_block, pack_q8_0_block,
+    gemv_q4_k, gemv_q8_0, greedy_generate_ctx, load_gguf_owned, pack_q4_k_block, pack_q8_0_block,
     pack_q8_k_block, parse_infer_args, tiny_llama_gguf, tiny_qwen2_gguf, write_gguf,
     write_gguf_with_kv, GgmlType, InferArgs, InferCmd, Kv, Llama, TensorWrite, Tokenizer,
     BIN_USAGE, INFER_USAGE, QK8_0, QK_K,
@@ -152,7 +152,7 @@ fn demo_q4k_gguf(n_cols: usize, n_rows: usize) -> Vec<u8> {
 
 fn gemv_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = read_path(path)?;
-    let g = load_gguf(&bytes)?;
+    let g = load_gguf_owned(bytes)?;
     let w = g
         .tensor("w_q8")
         .ok_or_else(|| format!("missing tensor w_q8 in {}", path.display()))?;
@@ -163,12 +163,12 @@ fn gemv_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let n_rows = w.n_rows();
     let mut y = vec![0.0f32; n_rows];
     for _ in 0..8 {
-        gemv_q8_0(n_cols, &w.data, &x.data, &mut y)?;
+        gemv_q8_0(n_cols, w.data, x.data, &mut y)?;
     }
     let niter = 8usize;
     let t0 = Instant::now();
     for _ in 0..niter {
-        gemv_q8_0(n_cols, &w.data, &x.data, &mut y)?;
+        gemv_q8_0(n_cols, w.data, x.data, &mut y)?;
     }
     let sec = t0.elapsed().as_secs_f64();
     let niter_f = f64::from(u32::try_from(niter).unwrap_or(0));
@@ -182,7 +182,7 @@ fn gemv_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 
 fn gemv_q4k_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = read_path(path)?;
-    let g = load_gguf(&bytes)?;
+    let g = load_gguf_owned(bytes)?;
     let w = g
         .tensor("w_q4k")
         .ok_or_else(|| format!("missing tensor w_q4k in {}", path.display()))?;
@@ -193,12 +193,12 @@ fn gemv_q4k_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let n_rows = w.n_rows();
     let mut y = vec![0.0f32; n_rows];
     for _ in 0..8 {
-        gemv_q4_k(n_cols, &w.data, &x.data, &mut y)?;
+        gemv_q4_k(n_cols, w.data, x.data, &mut y)?;
     }
     let niter = 8usize;
     let t0 = Instant::now();
     for _ in 0..niter {
-        gemv_q4_k(n_cols, &w.data, &x.data, &mut y)?;
+        gemv_q4_k(n_cols, w.data, x.data, &mut y)?;
     }
     let sec = t0.elapsed().as_secs_f64();
     let niter_f = f64::from(u32::try_from(niter).unwrap_or(0));
@@ -212,9 +212,9 @@ fn gemv_q4k_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 
 fn infer_file(args: &InferArgs) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = read_path(Path::new(&args.path))?;
-    let g = load_gguf(&bytes)?;
-    let model = Llama::from_gguf(&g)?;
+    let g = load_gguf_owned(bytes)?;
     let tok = Tokenizer::from_gguf(&g)?;
+    let model = Llama::from_gguf(g)?;
     let text = greedy_generate_ctx(&model, &tok, &args.prompt, args.n_predict, args.n_ctx)?;
     println!("prompt={} n_predict={}", args.prompt, args.n_predict);
     println!("generated={text}");

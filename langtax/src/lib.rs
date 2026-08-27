@@ -16,8 +16,8 @@ pub use decode::{
     tiny_q4k_embd_gguf, tiny_q6k_embd_gguf, tiny_qwen2_gguf, KvCache, Llama, LlamaError,
 };
 pub use gguf::{
-    load_gguf, write_gguf, write_gguf_with_kv, GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite,
-    GGUF_DEFAULT_ALIGNMENT,
+    load_gguf, load_gguf_owned, write_gguf, write_gguf_with_kv, GgmlType, Gguf, GgufError, Kv,
+    Tensor, TensorWrite, GGUF_DEFAULT_ALIGNMENT,
 };
 pub use quant::{
     dequant_f32_row, dequant_q4_k_row, dequant_q6_k_row, f32_row_bytes, gemv_f32, gemv_q4_0,
