@@ -1,4 +1,4 @@
-//! GGUF on-disk F16 / Q4_0 / Q8_0 / Q4_K / Q5_K / Q6_K / Q8_K / IQ2_XXS / IQ2_S / IQ3_XXS / IQ3_S / IQ4_NL / IQ4_XS blocks. GEMV reads those bytes; no f32-scale copy.
+//! GGUF on-disk F16 / Q4_0 / Q8_0 / Q4_K / Q5_K / Q6_K / Q8_K / IQ2_XXS / IQ2_XS / IQ2_S / IQ3_XXS / IQ3_S / IQ4_NL / IQ4_XS blocks. GEMV reads those bytes; no f32-scale copy.
 
 use std::fmt;
 
@@ -39,6 +39,8 @@ pub const IQ3_XXS_BLOCK: usize = 2 + 3 * QK_K / 8;
 pub const IQ2_S_BLOCK: usize = 2 + QK_K / 4 + QK_K / 32 + QK_K / 32;
 /// ggml `block_iq2_xxs`: binary16 `d` + `qs[QK_K/8]` uint16 (66 bytes / 256 weights).
 pub const IQ2_XXS_BLOCK: usize = 2 + QK_K / 8 * 2;
+/// ggml `block_iq2_xs`: binary16 `d`, `qs[QK_K/8]` uint16, `scales[QK_K/32]` (74 bytes / 256 weights).
+pub const IQ2_XS_BLOCK: usize = 2 + QK_K / 8 * 2 + QK_K / 32;
 /// ggml `kvalues_iq4nl` (shared by IQ4_NL and IQ4_XS).
 const KVALUES_IQ4NL: [i8; 16] = [
     -127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113,
@@ -1431,6 +1433,521 @@ pub(crate) const IQ2XXS_GRID: [u64; 256] = [
     0x2b2b2b0819190808,
     0x2b2b2b1908081908,
 ];
+/// ggml `iq2xs_grid` (512 × 8 packed uint8 magnitudes).
+pub(crate) const IQ2XS_GRID: [u64; 512] = [
+    0x0808080808080808,
+    0x080808080808082b,
+    0x0808080808081919,
+    0x0808080808082b08,
+    0x0808080808082b2b,
+    0x0808080808190819,
+    0x0808080808191908,
+    0x080808080819192b,
+    0x0808080808192b19,
+    0x08080808082b0808,
+    0x08080808082b082b,
+    0x08080808082b1919,
+    0x08080808082b2b08,
+    0x0808080819080819,
+    0x0808080819081908,
+    0x080808081908192b,
+    0x0808080819082b19,
+    0x0808080819190808,
+    0x080808081919082b,
+    0x0808080819191919,
+    0x0808080819192b08,
+    0x08080808192b0819,
+    0x08080808192b1908,
+    0x080808082b080808,
+    0x080808082b08082b,
+    0x080808082b081919,
+    0x080808082b082b08,
+    0x080808082b190819,
+    0x080808082b191908,
+    0x080808082b192b19,
+    0x080808082b2b0808,
+    0x0808081908080819,
+    0x0808081908081908,
+    0x080808190808192b,
+    0x0808081908082b19,
+    0x0808081908190808,
+    0x080808190819082b,
+    0x0808081908191919,
+    0x0808081908192b08,
+    0x0808081908192b2b,
+    0x08080819082b0819,
+    0x08080819082b1908,
+    0x0808081919080808,
+    0x080808191908082b,
+    0x0808081919081919,
+    0x0808081919082b08,
+    0x0808081919190819,
+    0x0808081919191908,
+    0x08080819192b0808,
+    0x08080819192b2b08,
+    0x080808192b080819,
+    0x080808192b081908,
+    0x080808192b190808,
+    0x0808082b08080808,
+    0x0808082b0808082b,
+    0x0808082b08081919,
+    0x0808082b08082b08,
+    0x0808082b08190819,
+    0x0808082b08191908,
+    0x0808082b082b0808,
+    0x0808082b19080819,
+    0x0808082b19081908,
+    0x0808082b19190808,
+    0x0808082b19191919,
+    0x0808082b2b080808,
+    0x0808082b2b082b2b,
+    0x0808190808080819,
+    0x0808190808081908,
+    0x080819080808192b,
+    0x0808190808082b19,
+    0x0808190808190808,
+    0x080819080819082b,
+    0x0808190808191919,
+    0x0808190808192b08,
+    0x08081908082b0819,
+    0x08081908082b1908,
+    0x0808190819080808,
+    0x080819081908082b,
+    0x0808190819081919,
+    0x0808190819082b08,
+    0x0808190819190819,
+    0x0808190819191908,
+    0x080819081919192b,
+    0x08081908192b0808,
+    0x080819082b080819,
+    0x080819082b081908,
+    0x080819082b190808,
+    0x0808191908080808,
+    0x080819190808082b,
+    0x0808191908081919,
+    0x0808191908082b08,
+    0x0808191908190819,
+    0x0808191908191908,
+    0x08081919082b0808,
+    0x0808191919080819,
+    0x0808191919081908,
+    0x0808191919190808,
+    0x08081919192b0819,
+    0x080819192b080808,
+    0x0808192b08080819,
+    0x0808192b08081908,
+    0x0808192b08190808,
+    0x0808192b082b192b,
+    0x0808192b19080808,
+    0x0808192b1908082b,
+    0x0808192b2b081908,
+    0x08082b0808080808,
+    0x08082b080808082b,
+    0x08082b0808081919,
+    0x08082b0808082b08,
+    0x08082b0808082b2b,
+    0x08082b0808190819,
+    0x08082b0808191908,
+    0x08082b08082b0808,
+    0x08082b08082b1919,
+    0x08082b0819080819,
+    0x08082b0819081908,
+    0x08082b0819190808,
+    0x08082b0819192b08,
+    0x08082b082b080808,
+    0x08082b082b2b0808,
+    0x08082b082b2b2b2b,
+    0x08082b1908080819,
+    0x08082b1908081908,
+    0x08082b1908190808,
+    0x08082b1919080808,
+    0x08082b192b080819,
+    0x08082b192b082b19,
+    0x08082b2b08080808,
+    0x08082b2b082b0808,
+    0x08082b2b082b2b08,
+    0x08082b2b2b19192b,
+    0x08082b2b2b2b0808,
+    0x0819080808080819,
+    0x0819080808081908,
+    0x081908080808192b,
+    0x0819080808082b19,
+    0x0819080808190808,
+    0x081908080819082b,
+    0x0819080808191919,
+    0x0819080808192b08,
+    0x08190808082b0819,
+    0x08190808082b1908,
+    0x0819080819080808,
+    0x081908081908082b,
+    0x0819080819081919,
+    0x0819080819082b08,
+    0x0819080819190819,
+    0x0819080819191908,
+    0x08190808192b0808,
+    0x08190808192b2b2b,
+    0x081908082b080819,
+    0x081908082b081908,
+    0x081908082b190808,
+    0x0819081908080808,
+    0x081908190808082b,
+    0x0819081908081919,
+    0x0819081908082b08,
+    0x0819081908190819,
+    0x0819081908191908,
+    0x08190819082b0808,
+    0x0819081919080819,
+    0x0819081919081908,
+    0x0819081919190808,
+    0x081908192b080808,
+    0x081908192b191908,
+    0x081908192b19192b,
+    0x0819082b08080819,
+    0x0819082b08081908,
+    0x0819082b0808192b,
+    0x0819082b08190808,
+    0x0819082b19080808,
+    0x0819082b192b0808,
+    0x0819190808080808,
+    0x081919080808082b,
+    0x0819190808081919,
+    0x0819190808082b08,
+    0x0819190808190819,
+    0x0819190808191908,
+    0x08191908082b0808,
+    0x0819190819080819,
+    0x0819190819081908,
+    0x0819190819082b19,
+    0x0819190819190808,
+    0x08191908192b1908,
+    0x081919082b080808,
+    0x0819191908080819,
+    0x0819191908081908,
+    0x0819191908190808,
+    0x0819191919080808,
+    0x0819192b08080808,
+    0x0819192b08191908,
+    0x0819192b19082b19,
+    0x08192b0808080819,
+    0x08192b0808081908,
+    0x08192b0808190808,
+    0x08192b080819082b,
+    0x08192b0819080808,
+    0x08192b0819191908,
+    0x08192b082b08192b,
+    0x08192b1908080808,
+    0x08192b1908081919,
+    0x08192b19192b192b,
+    0x08192b2b19190819,
+    0x08192b2b2b2b2b19,
+    0x082b080808080808,
+    0x082b08080808082b,
+    0x082b080808081919,
+    0x082b080808082b08,
+    0x082b080808082b2b,
+    0x082b080808190819,
+    0x082b080808191908,
+    0x082b0808082b0808,
+    0x082b080819080819,
+    0x082b080819081908,
+    0x082b080819190808,
+    0x082b08082b080808,
+    0x082b08082b2b0808,
+    0x082b081908080819,
+    0x082b081908081908,
+    0x082b081908190808,
+    0x082b081919080808,
+    0x082b081919082b08,
+    0x082b0819192b1919,
+    0x082b082b08080808,
+    0x082b082b082b082b,
+    0x082b082b2b080808,
+    0x082b082b2b2b2b08,
+    0x082b190808080819,
+    0x082b190808081908,
+    0x082b190808190808,
+    0x082b1908082b2b19,
+    0x082b190819080808,
+    0x082b191908080808,
+    0x082b191919080819,
+    0x082b19191919082b,
+    0x082b19192b192b19,
+    0x082b192b08080819,
+    0x082b192b08192b2b,
+    0x082b192b2b2b192b,
+    0x082b2b0808080808,
+    0x082b2b0808082b08,
+    0x082b2b0808082b2b,
+    0x082b2b08082b0808,
+    0x082b2b0819191919,
+    0x082b2b082b082b08,
+    0x082b2b082b2b082b,
+    0x082b2b19192b2b08,
+    0x082b2b192b190808,
+    0x082b2b2b08082b08,
+    0x082b2b2b082b0808,
+    0x082b2b2b2b08082b,
+    0x082b2b2b2b082b08,
+    0x082b2b2b2b082b2b,
+    0x1908080808080819,
+    0x1908080808081908,
+    0x190808080808192b,
+    0x1908080808082b19,
+    0x1908080808190808,
+    0x190808080819082b,
+    0x1908080808191919,
+    0x1908080808192b08,
+    0x19080808082b0819,
+    0x19080808082b1908,
+    0x1908080819080808,
+    0x190808081908082b,
+    0x1908080819081919,
+    0x1908080819082b08,
+    0x1908080819082b2b,
+    0x1908080819190819,
+    0x1908080819191908,
+    0x19080808192b0808,
+    0x19080808192b1919,
+    0x190808082b080819,
+    0x190808082b081908,
+    0x190808082b190808,
+    0x1908081908080808,
+    0x190808190808082b,
+    0x1908081908081919,
+    0x1908081908082b08,
+    0x1908081908190819,
+    0x1908081908191908,
+    0x19080819082b0808,
+    0x1908081919080819,
+    0x1908081919081908,
+    0x1908081919190808,
+    0x190808192b080808,
+    0x190808192b081919,
+    0x190808192b2b082b,
+    0x1908082b08080819,
+    0x1908082b08081908,
+    0x1908082b08190808,
+    0x1908082b0819082b,
+    0x1908082b082b2b19,
+    0x1908082b19080808,
+    0x1908190808080808,
+    0x190819080808082b,
+    0x1908190808081919,
+    0x1908190808082b08,
+    0x1908190808190819,
+    0x1908190808191908,
+    0x1908190808192b19,
+    0x19081908082b0808,
+    0x1908190819080819,
+    0x1908190819081908,
+    0x1908190819190808,
+    0x190819082b080808,
+    0x190819082b191908,
+    0x1908191908080819,
+    0x1908191908081908,
+    0x1908191908190808,
+    0x19081919082b1908,
+    0x1908191919080808,
+    0x190819192b192b2b,
+    0x1908192b08080808,
+    0x1908192b08082b2b,
+    0x1908192b19081908,
+    0x1908192b19190808,
+    0x19082b0808080819,
+    0x19082b0808081908,
+    0x19082b0808190808,
+    0x19082b0819080808,
+    0x19082b0819081919,
+    0x19082b0819191908,
+    0x19082b08192b082b,
+    0x19082b1908080808,
+    0x19082b1908190819,
+    0x19082b1919081908,
+    0x19082b1919190808,
+    0x19082b19192b2b19,
+    0x19082b2b08081908,
+    0x1919080808080808,
+    0x191908080808082b,
+    0x1919080808081919,
+    0x1919080808082b08,
+    0x1919080808190819,
+    0x1919080808191908,
+    0x19190808082b0808,
+    0x19190808082b2b08,
+    0x1919080819080819,
+    0x1919080819081908,
+    0x1919080819190808,
+    0x191908082b080808,
+    0x1919081908080819,
+    0x1919081908081908,
+    0x1919081908190808,
+    0x1919081908191919,
+    0x1919081919080808,
+    0x191908191908082b,
+    0x1919082b08080808,
+    0x1919082b19081908,
+    0x1919082b2b2b2b2b,
+    0x1919190808080819,
+    0x1919190808081908,
+    0x1919190808190808,
+    0x19191908082b0819,
+    0x1919190819080808,
+    0x19191908192b0808,
+    0x191919082b080819,
+    0x191919082b2b0819,
+    0x1919191908080808,
+    0x1919191908082b08,
+    0x191919192b080808,
+    0x191919192b082b08,
+    0x1919192b082b0819,
+    0x1919192b192b2b08,
+    0x1919192b2b2b0819,
+    0x19192b0808080808,
+    0x19192b0808191908,
+    0x19192b0819080819,
+    0x19192b0819190808,
+    0x19192b082b192b19,
+    0x19192b1908192b2b,
+    0x19192b1919080808,
+    0x19192b191908082b,
+    0x19192b2b2b081919,
+    0x192b080808080819,
+    0x192b080808081908,
+    0x192b080808190808,
+    0x192b080819080808,
+    0x192b080819191908,
+    0x192b0808192b082b,
+    0x192b08082b08192b,
+    0x192b08082b2b2b19,
+    0x192b081908080808,
+    0x192b082b082b1908,
+    0x192b082b19082b2b,
+    0x192b082b2b19082b,
+    0x192b190808080808,
+    0x192b19080819192b,
+    0x192b191908190808,
+    0x192b191919080808,
+    0x192b191919081919,
+    0x192b19192b2b1908,
+    0x192b2b0808080819,
+    0x192b2b08192b2b2b,
+    0x192b2b19082b1919,
+    0x192b2b2b0808192b,
+    0x192b2b2b19191908,
+    0x192b2b2b192b082b,
+    0x2b08080808080808,
+    0x2b0808080808082b,
+    0x2b08080808081919,
+    0x2b08080808082b08,
+    0x2b08080808190819,
+    0x2b08080808191908,
+    0x2b080808082b0808,
+    0x2b080808082b2b2b,
+    0x2b08080819080819,
+    0x2b08080819081908,
+    0x2b08080819190808,
+    0x2b0808082b080808,
+    0x2b0808082b08082b,
+    0x2b0808082b2b2b08,
+    0x2b0808082b2b2b2b,
+    0x2b08081908080819,
+    0x2b08081908081908,
+    0x2b0808190808192b,
+    0x2b08081908190808,
+    0x2b08081919080808,
+    0x2b08081919190819,
+    0x2b08081919192b19,
+    0x2b08082b08080808,
+    0x2b08082b082b0808,
+    0x2b08082b2b080808,
+    0x2b08082b2b08082b,
+    0x2b08082b2b2b0808,
+    0x2b08082b2b2b2b08,
+    0x2b08190808080819,
+    0x2b08190808081908,
+    0x2b08190808190808,
+    0x2b0819080819082b,
+    0x2b08190808191919,
+    0x2b08190819080808,
+    0x2b081908192b0808,
+    0x2b0819082b082b19,
+    0x2b08191908080808,
+    0x2b08191919081908,
+    0x2b0819192b2b1919,
+    0x2b08192b08192b08,
+    0x2b08192b192b2b2b,
+    0x2b082b0808080808,
+    0x2b082b0808082b08,
+    0x2b082b08082b1919,
+    0x2b082b0819192b2b,
+    0x2b082b082b080808,
+    0x2b082b082b08082b,
+    0x2b082b082b2b2b08,
+    0x2b082b190808192b,
+    0x2b082b2b082b082b,
+    0x2b082b2b2b080808,
+    0x2b082b2b2b082b08,
+    0x2b082b2b2b19192b,
+    0x2b082b2b2b2b2b08,
+    0x2b19080808080819,
+    0x2b19080808081908,
+    0x2b19080808190808,
+    0x2b19080819080808,
+    0x2b1908081919192b,
+    0x2b1908082b081908,
+    0x2b19081908080808,
+    0x2b190819082b082b,
+    0x2b190819192b1908,
+    0x2b19082b1919192b,
+    0x2b19082b2b082b19,
+    0x2b19190808080808,
+    0x2b19190808081919,
+    0x2b19190819081908,
+    0x2b19190819190808,
+    0x2b19190819192b08,
+    0x2b191919082b2b19,
+    0x2b1919192b190808,
+    0x2b1919192b19082b,
+    0x2b19192b19080819,
+    0x2b192b0819190819,
+    0x2b192b082b2b192b,
+    0x2b192b1919082b19,
+    0x2b192b2b08191919,
+    0x2b192b2b192b0808,
+    0x2b2b080808080808,
+    0x2b2b08080808082b,
+    0x2b2b080808082b08,
+    0x2b2b080808082b2b,
+    0x2b2b0808082b0808,
+    0x2b2b0808082b2b2b,
+    0x2b2b08082b2b0808,
+    0x2b2b081919190819,
+    0x2b2b081919192b19,
+    0x2b2b08192b2b192b,
+    0x2b2b082b08080808,
+    0x2b2b082b0808082b,
+    0x2b2b082b08082b08,
+    0x2b2b082b082b2b2b,
+    0x2b2b082b2b080808,
+    0x2b2b082b2b2b0808,
+    0x2b2b190819080808,
+    0x2b2b19082b191919,
+    0x2b2b192b192b1919,
+    0x2b2b192b2b192b08,
+    0x2b2b2b0808082b2b,
+    0x2b2b2b08082b0808,
+    0x2b2b2b08082b082b,
+    0x2b2b2b08082b2b08,
+    0x2b2b2b082b2b0808,
+    0x2b2b2b082b2b2b08,
+    0x2b2b2b1908081908,
+    0x2b2b2b192b081908,
+    0x2b2b2b192b08192b,
+    0x2b2b2b2b082b2b08,
+    0x2b2b2b2b082b2b2b,
+    0x2b2b2b2b2b190819,
+    0x2b2b2b2b2b2b2b2b,
+];
 /// ggml `GGML_TYPE_F32` element size.
 pub const F32_SIZE: usize = 4;
 /// ggml `GGML_TYPE_F16` element size (`ggml_fp16_t` / IEEE binary16).
@@ -1935,6 +2452,44 @@ pub fn pack_iq2_xxs_block(
     out
 }
 
+/// Pack one IQ2_XS block: binary16 `d`, 9-bit grid indices + 7-bit signs, 4-bit scales.
+///
+/// `qs_idx[g]` is 0..=511 for group `g` of 8 weights (`dequantize_row_iq2_xs`).
+/// `signs[s]` is a 7-bit `ksigns_iq2xs` selector packed into `qs[g] >> 9`.
+/// `scales[ib]` is 0..=15 for 16-wide half-block `ib` (`db = d*(0.5+ls)*0.25`).
+pub fn pack_iq2_xs_block(
+    d: f32,
+    scales: &[u8; 16],
+    qs_idx: &[u16; 32],
+    signs: &[u8; 32],
+) -> [u8; IQ2_XS_BLOCK] {
+    let mut out = [0u8; IQ2_XS_BLOCK];
+    let db = store_f16_le(d);
+    out[0] = db[0];
+    out[1] = db[1];
+    for (g, idx) in qs_idx.iter().enumerate() {
+        let q = *idx & 511;
+        let sel = signs.get(g).copied().unwrap_or(0) & 127;
+        let packed = q | (u16::from(sel) << 9);
+        let bytes = packed.to_le_bytes();
+        let off = 2 + g.saturating_mul(2);
+        if let Some(slot) = out.get_mut(off) {
+            *slot = bytes[0];
+        }
+        if let Some(slot) = out.get_mut(off.saturating_add(1)) {
+            *slot = bytes[1];
+        }
+    }
+    for ib in 0..8 {
+        let lo = scales.get(ib * 2).copied().unwrap_or(0) & 0x0f;
+        let hi = scales.get(ib * 2 + 1).copied().unwrap_or(0) & 0x0f;
+        if let Some(slot) = out.get_mut(66 + ib) {
+            *slot = lo | (hi << 4);
+        }
+    }
+    out
+}
+
 /// Pack one Q8_K block: f32 `d`, 256 signed `qs`, and ggml `bsums` of 16.
 pub fn pack_q8_k_block(d: f32, qs: &[i8; QK_K]) -> [u8; Q8_K_BLOCK] {
     let mut out = [0u8; Q8_K_BLOCK];
@@ -2052,6 +2607,17 @@ pub fn iq2_xxs_row_bytes(n_cols: usize) -> Result<usize, QuantError> {
         });
     }
     Ok((n_cols / QK_K) * IQ2_XXS_BLOCK)
+}
+
+/// Packed IQ2_XS bytes for one matrix row of `n_cols` columns.
+pub fn iq2_xs_row_bytes(n_cols: usize) -> Result<usize, QuantError> {
+    if !n_cols.is_multiple_of(QK_K) {
+        return Err(QuantError::UnalignedCols {
+            n_cols,
+            block: QK_K,
+        });
+    }
+    Ok((n_cols / QK_K) * IQ2_XS_BLOCK)
 }
 
 /// Packed Q8_K bytes for one matrix row of `n_cols` columns.
@@ -2206,6 +2772,15 @@ fn iq2s_grid8(idx: u16) -> [u8; 8] {
 fn iq2xxs_grid8(idx: u8) -> [u8; 8] {
     IQ2XXS_GRID
         .get(usize::from(idx))
+        .copied()
+        .unwrap_or(0)
+        .to_le_bytes()
+}
+
+/// ggml `iq2xs_grid[idx]` as 8 little-endian magnitude bytes.
+fn iq2xs_grid8(idx: u16) -> [u8; 8] {
+    IQ2XS_GRID
+        .get(usize::from(idx & 511))
         .copied()
         .unwrap_or(0)
         .to_le_bytes()
@@ -2546,6 +3121,20 @@ pub fn gemm_iq2_xxs_f32(
     gemm_f32_x(GemmKind::IQ2XXS, n_cols, n_tokens, w, x, y)
 }
 
+/// `Y[t, r] = W_iq2xs[r, n_cols] · X[t, n_cols]`. Token-major `x` / `y`.
+pub fn gemm_iq2_xs_f32(
+    n_cols: usize,
+    n_tokens: usize,
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+) -> Result<(), QuantError> {
+    if n_tokens == 1 {
+        return gemv_iq2_xs_f32(n_cols, w, x, y);
+    }
+    gemm_f32_x(GemmKind::IQ2XS, n_cols, n_tokens, w, x, y)
+}
+
 #[derive(Clone, Copy)]
 enum GemmKind {
     F16,
@@ -2555,6 +3144,7 @@ enum GemmKind {
     Q6K,
     IQ2S,
     IQ2XXS,
+    IQ2XS,
     IQ3S,
     IQ3XXS,
     IQ4NL,
@@ -2598,6 +3188,7 @@ fn gemm_f32_x(
         GemmKind::Q6K => (q6_k_row_bytes(n_cols)?, "W Q6_K bytes"),
         GemmKind::IQ2S => (iq2_s_row_bytes(n_cols)?, "W IQ2_S bytes"),
         GemmKind::IQ2XXS => (iq2_xxs_row_bytes(n_cols)?, "W IQ2_XXS bytes"),
+        GemmKind::IQ2XS => (iq2_xs_row_bytes(n_cols)?, "W IQ2_XS bytes"),
         GemmKind::IQ3S => (iq3_s_row_bytes(n_cols)?, "W IQ3_S bytes"),
         GemmKind::IQ3XXS => (iq3_xxs_row_bytes(n_cols)?, "W IQ3_XXS bytes"),
         GemmKind::IQ4NL => (iq4_nl_row_bytes(n_cols)?, "W IQ4_NL bytes"),
@@ -2630,6 +3221,7 @@ fn gemm_f32_x(
                 GemmKind::Q6K => vec_dot_q6_k_f32_row(wrow, xt),
                 GemmKind::IQ2S => vec_dot_iq2_s_f32_row(wrow, xt),
                 GemmKind::IQ2XXS => vec_dot_iq2_xxs_f32_row(wrow, xt),
+                GemmKind::IQ2XS => vec_dot_iq2_xs_f32_row(wrow, xt),
                 GemmKind::IQ3S => vec_dot_iq3_s_f32_row(wrow, xt),
                 GemmKind::IQ3XXS => vec_dot_iq3_xxs_f32_row(wrow, xt),
                 GemmKind::IQ4NL => vec_dot_iq4_nl_f32_row(wrow, xt),
@@ -2759,6 +3351,32 @@ pub fn gemv_iq2_xxs_f32(
     for_each_row(y, |r, out| {
         *out = row_bytes(w, w_rb, r)
             .map(|row| vec_dot_iq2_xxs_f32_row(row, x))
+            .unwrap_or(0.0);
+    });
+    Ok(())
+}
+
+/// `y[m] = W_iq2xs[m, n_cols] x_f32[n_cols]`.
+pub fn gemv_iq2_xs_f32(
+    n_cols: usize,
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+) -> Result<(), QuantError> {
+    let w_rb = iq2_xs_row_bytes(n_cols)?;
+    require_len("x F32 elems", x.len(), n_cols)?;
+    let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
+        what: "W IQ2_XS bytes overflow",
+        expected: w_rb,
+        actual: y.len(),
+    })?;
+    require_len("W IQ2_XS bytes", w.len(), expected_w)?;
+    if y.is_empty() {
+        return Ok(());
+    }
+    for_each_row(y, |r, out| {
+        *out = row_bytes(w, w_rb, r)
+            .map(|row| vec_dot_iq2_xs_f32_row(row, x))
             .unwrap_or(0.0);
     });
     Ok(())
@@ -3096,6 +3714,68 @@ fn write_iq2_xxs_super(qs: &[u8], aux32: u32, db: f32, y: &mut [f32]) {
             };
             if let Some(slot) = y.get_mut(base.saturating_add(j)) {
                 *slot = db * f32::from(gv) * iq_sign(sv, j32);
+            }
+        }
+    }
+}
+
+/// Unpack one IQ2_XS GGUF row into `y[n_cols]` (`x = d*(0.5+ls)*0.25*grid*sign`).
+pub fn dequant_iq2_xs_row(n_cols: usize, row: &[u8], y: &mut [f32]) -> Result<(), QuantError> {
+    let rb = iq2_xs_row_bytes(n_cols)?;
+    require_len("IQ2_XS row bytes", row.len(), rb)?;
+    require_len("IQ2_XS y elems", y.len(), n_cols)?;
+    for yv in y.iter_mut() {
+        *yv = 0.0;
+    }
+    let (w_blocks, _) = row.as_chunks::<IQ2_XS_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(d) = load_f16_le(wb) else { continue };
+        let Some(qs) = wb.get(2..66) else { continue };
+        let Some(scales) = wb.get(66..74) else {
+            continue;
+        };
+        let x_base = b.saturating_mul(QK_K);
+        for ib32 in 0usize..8 {
+            let Some(&sc) = scales.get(ib32) else {
+                continue;
+            };
+            let db0 = d * (0.5 + f32::from(sc & 0x0f)) * 0.25;
+            let db1 = d * (0.5 + f32::from(sc >> 4)) * 0.25;
+            let off = ib32.saturating_mul(8);
+            let Some(qs_g) = qs.get(off..off.saturating_add(8)) else {
+                continue;
+            };
+            let y_off = x_base.saturating_add(ib32.saturating_mul(32));
+            let Some(y_g) = y.get_mut(y_off..y_off.saturating_add(32)) else {
+                continue;
+            };
+            write_iq2_xs_super(qs_g, db0, db1, y_g);
+        }
+    }
+    Ok(())
+}
+
+fn write_iq2_xs_super(qs: &[u8], db0: f32, db1: f32, y: &mut [f32]) {
+    for l in 0usize..4 {
+        let off = l.saturating_mul(2);
+        let Some(&b0) = qs.get(off) else {
+            continue;
+        };
+        let Some(&b1) = qs.get(off.saturating_add(1)) else {
+            continue;
+        };
+        let q16 = u16::from_le_bytes([b0, b1]);
+        let sv = ksigns_iq2xs(u8::try_from(q16 >> 9).unwrap_or(0));
+        let g = iq2xs_grid8(q16);
+        let dl = if l < 2 { db0 } else { db1 };
+        let base = l.saturating_mul(8);
+        for j in 0..8 {
+            let j32 = u32::try_from(j).unwrap_or(0);
+            let Some(&gv) = g.get(j) else {
+                continue;
+            };
+            if let Some(slot) = y.get_mut(base.saturating_add(j)) {
+                *slot = dl * f32::from(gv) * iq_sign(sv, j32);
             }
         }
     }
@@ -3773,6 +4453,68 @@ fn dot_iq2_xxs_super(qs: &[u8], aux32: u32, db: f32, x: &[f32]) -> f32 {
                 continue;
             };
             sum += db * f32::from(gv) * iq_sign(sv, j32) * xv;
+        }
+    }
+    sum
+}
+
+fn vec_dot_iq2_xs_f32_row(row: &[u8], x: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    let (w_blocks, _) = row.as_chunks::<IQ2_XS_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(d) = load_f16_le(wb) else { continue };
+        let Some(qs) = wb.get(2..66) else { continue };
+        let Some(scales) = wb.get(66..74) else {
+            continue;
+        };
+        let x_base = b.saturating_mul(QK_K);
+        let Some(xr) = x.get(x_base..x_base.saturating_add(QK_K)) else {
+            continue;
+        };
+        for ib32 in 0usize..8 {
+            let Some(&sc) = scales.get(ib32) else {
+                continue;
+            };
+            let db0 = d * (0.5 + f32::from(sc & 0x0f)) * 0.25;
+            let db1 = d * (0.5 + f32::from(sc >> 4)) * 0.25;
+            let off = ib32.saturating_mul(8);
+            let Some(qs_g) = qs.get(off..off.saturating_add(8)) else {
+                continue;
+            };
+            let xb = ib32.saturating_mul(32);
+            let Some(x_g) = xr.get(xb..xb.saturating_add(32)) else {
+                continue;
+            };
+            sum += dot_iq2_xs_super(qs_g, db0, db1, x_g);
+        }
+    }
+    sum
+}
+
+fn dot_iq2_xs_super(qs: &[u8], db0: f32, db1: f32, x: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    for l in 0usize..4 {
+        let off = l.saturating_mul(2);
+        let Some(&b0) = qs.get(off) else {
+            continue;
+        };
+        let Some(&b1) = qs.get(off.saturating_add(1)) else {
+            continue;
+        };
+        let q16 = u16::from_le_bytes([b0, b1]);
+        let sv = ksigns_iq2xs(u8::try_from(q16 >> 9).unwrap_or(0));
+        let g = iq2xs_grid8(q16);
+        let dl = if l < 2 { db0 } else { db1 };
+        let base = l.saturating_mul(8);
+        for j in 0..8 {
+            let j32 = u32::try_from(j).unwrap_or(0);
+            let Some(&gv) = g.get(j) else {
+                continue;
+            };
+            let Some(&xv) = x.get(base.saturating_add(j)) else {
+                continue;
+            };
+            sum += dl * f32::from(gv) * iq_sign(sv, j32) * xv;
         }
     }
     sum
@@ -5386,6 +6128,152 @@ mod tests {
     fn gemv_iq2_xxs_rejects_unaligned_cols() {
         let mut y = [0.0f32];
         assert!(gemv_iq2_xxs_f32(255, &[], &[], &mut y).is_err());
+    }
+
+    /// ggml `dequantize_row_iq2_xs` (oracle). Independent of crate kernels.
+    fn oracle_iq2_xs_row(w: &[u8]) -> Vec<f32> {
+        const GRID: [u64; 512] = IQ2XS_GRID;
+        let nblocks = w.len() / IQ2_XS_BLOCK;
+        let mut y = vec![0.0f32; nblocks * QK_K];
+        for b in 0..nblocks {
+            let wb = &w[b * IQ2_XS_BLOCK..(b + 1) * IQ2_XS_BLOCK];
+            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let qs = &wb[2..66];
+            let scales = &wb[66..74];
+            let mut yo = b * QK_K;
+            for (ib32, &sc) in scales.iter().enumerate() {
+                let db0 = d * (0.5 + f32::from(sc & 0x0f)) * 0.25;
+                let db1 = d * (0.5 + f32::from(sc >> 4)) * 0.25;
+                for l in 0..4 {
+                    let off = ib32 * 8 + l * 2;
+                    let q16 = u16::from_le_bytes([qs[off], qs[off + 1]]);
+                    let g = GRID[usize::from(q16 & 511)].to_le_bytes();
+                    let signs = KSIGNS_IQ2XS[usize::from(q16 >> 9)];
+                    let dl = if l < 2 { db0 } else { db1 };
+                    for j in 0..8 {
+                        let s = if signs & (1u8 << j) == 0 { 1.0 } else { -1.0 };
+                        y[yo + j] = dl * f32::from(g[j]) * s;
+                    }
+                    yo += 8;
+                }
+            }
+        }
+        y
+    }
+
+    fn oracle_iq2_xs_dot(row: &[u8], x: &[f32]) -> f32 {
+        oracle_iq2_xs_row(row)
+            .iter()
+            .zip(x.iter())
+            .map(|(a, b)| a * b)
+            .sum()
+    }
+
+    #[test]
+    fn pack_iq2_xs_gemv_and_dequant_match_independent_oracle() {
+        let mut qs_idx = [0u16; 32];
+        qs_idx[0] = 3;
+        qs_idx[1] = 12;
+        qs_idx[4] = 256;
+        qs_idx[5] = 511;
+        let mut signs = [0u8; 32];
+        signs[0] = 0b0001_0001;
+        signs[4] = 0b0100_0000;
+        let mut sc = [0u8; 16];
+        sc[0] = 1;
+        sc[1] = 2;
+        sc[2] = 3;
+        sc[3] = 0;
+        sc[4] = 4;
+        sc[5] = 5;
+        sc[6] = 6;
+        sc[7] = 7;
+        let w = pack_iq2_xs_block(25.0 / 100.0, &sc, &qs_idx, &signs);
+        assert_eq!(w.len(), IQ2_XS_BLOCK);
+        let q0 = u16::from_le_bytes([w[2], w[3]]);
+        assert_eq!(q0 & 511, 3);
+        assert_eq!(q0 >> 9, 0b0001_0001);
+        let q4 = u16::from_le_bytes([w[10], w[11]]);
+        assert_eq!(q4 & 511, 256);
+        assert_eq!(q4 >> 9, 0b0100_0000);
+        // scales[0] = 1 | (2 << 4)
+        assert_eq!(w[66], 0x21);
+        let mut x = [0.0f32; QK_K];
+        x[0] = 2.0;
+        x[8] = 4.0;
+        x[32] = 1.0;
+        x[40] = 3.0;
+        let mut y = [0.0f32];
+        gemv_iq2_xs_f32(QK_K, &w, &x, &mut y).unwrap();
+        let expected = oracle_iq2_xs_dot(&w, &x);
+        let rel = (y[0] - expected).abs() / (1.0 + expected.abs());
+        assert!(rel * 100_000.0 < 1.0, "gemv {} vs {expected}", y[0]);
+        let mut row = [0.0f32; QK_K];
+        dequant_iq2_xs_row(QK_K, &w, &mut row).unwrap();
+        let oracle = oracle_iq2_xs_row(&w);
+        assert_close(&row, &oracle);
+        let via_dequant: f32 = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
+        assert!(
+            (via_dequant - y[0]).abs() * 100_000.0 < 1.0,
+            "{via_dequant} vs {}",
+            y[0]
+        );
+    }
+
+    #[test]
+    fn gemm_iq2_xs_matches_repeated_gemv_and_oracle() {
+        let n_cols = QK_K;
+        let n_rows = 2usize;
+        let n_tokens = 3usize;
+        let mut w = Vec::new();
+        for r in 0..n_rows {
+            let mut qs_idx = [0u16; 32];
+            qs_idx[0] = u16::try_from(3 + r).unwrap_or(3);
+            qs_idx[1] = 12;
+            qs_idx[4] = 256;
+            let mut signs = [0u8; 32];
+            signs[0] = 0b0000_0011;
+            let mut sc = [1u8; 16];
+            sc[0] = 1;
+            sc[1] = 2;
+            w.extend_from_slice(&pack_iq2_xs_block(25.0 / 100.0, &sc, &qs_idx, &signs));
+        }
+        let mut xk = vec![0.0f32; n_cols * n_tokens];
+        for t in 0..n_tokens {
+            if let Some(slot) = xk.get_mut(t * n_cols) {
+                *slot = f32::from(u16::try_from(t + 1).unwrap_or(1));
+            }
+            if let Some(slot) = xk.get_mut(t * n_cols + 8) {
+                *slot = 2.0;
+            }
+        }
+        let mut y = vec![0.0f32; n_rows * n_tokens];
+        gemm_iq2_xs_f32(n_cols, n_tokens, &w, &xk, &mut y).unwrap();
+        let mut exp = Vec::new();
+        let mut exp_oracle = Vec::new();
+        for t in 0..n_tokens {
+            let xt = &xk[t * n_cols..(t + 1) * n_cols];
+            let mut a = vec![0.0f32; n_rows];
+            gemv_iq2_xs_f32(n_cols, &w, xt, &mut a).unwrap();
+            exp.extend_from_slice(&a);
+            for r in 0..n_rows {
+                let row = &w[r * IQ2_XS_BLOCK..(r + 1) * IQ2_XS_BLOCK];
+                exp_oracle.push(oracle_iq2_xs_dot(row, xt));
+            }
+        }
+        assert_close(&y, &exp);
+        assert_close(&y, &exp_oracle);
+        crate::pool::with_sequential(|| {
+            let mut y_seq = vec![0.0f32; n_rows * n_tokens];
+            gemm_iq2_xs_f32(n_cols, n_tokens, &w, &xk, &mut y_seq).unwrap();
+            assert_close(&y_seq, &exp_oracle);
+        });
+    }
+
+    #[test]
+    fn gemv_iq2_xs_rejects_unaligned_cols() {
+        let mut y = [0.0f32];
+        assert!(gemv_iq2_xs_f32(255, &[], &[], &mut y).is_err());
     }
 
     #[test]
