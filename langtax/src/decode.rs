@@ -2,10 +2,11 @@
 
 use crate::gguf::{GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 use crate::quant::{
-    dequant_f16_row, dequant_f32_row, dequant_q4_k_row, dequant_q6_k_row, f16_row_bytes,
-    f32_row_bytes, gemm_f16, gemm_f32, gemm_q4_k_f32, gemm_q6_k_f32, gemv_f16, gemv_f32,
-    gemv_q4_k_f32, gemv_q6_k_f32, pack_f16, pack_f32, pack_q4_k_block, pack_q6_k_block,
-    q4_k_row_bytes, q6_k_row_bytes, QuantError, QK_K,
+    dequant_f16_row, dequant_f32_row, dequant_q4_k_row, dequant_q5_k_row, dequant_q6_k_row,
+    f16_row_bytes, f32_row_bytes, gemm_f16, gemm_f32, gemm_q4_k_f32, gemm_q5_k_f32, gemm_q6_k_f32,
+    gemv_f16, gemv_f32, gemv_q4_k_f32, gemv_q5_k_f32, gemv_q6_k_f32, pack_f16, pack_f32,
+    pack_q4_k_block, pack_q5_k_block, pack_q6_k_block, q4_k_row_bytes, q5_k_row_bytes,
+    q6_k_row_bytes, QuantError, QK_K,
 };
 use crate::sample::{SampleError, SampleParams, Sampler};
 use crate::tok::{TokError, Tokenizer};
@@ -537,12 +538,28 @@ pub fn tiny_f16_gguf() -> Vec<u8> {
     })
 }
 
+/// Writer-built Llama GGUF with Q5_K 2-D weights (token_embd, output, attn/ffn).
+///
+/// 1-D norms stay F32. `GGML_TYPE_Q5_K` = 13.
+pub fn tiny_q5k_gguf() -> Vec<u8> {
+    tiny_arch_gguf(TinySpec {
+        arch: "llama",
+        token_embd: GgmlType::Q5_K,
+        output: GgmlType::Q5_K,
+        layer: Some(GgmlType::Q5_K),
+        rope_dimension_count: true,
+        qkv_bias: false,
+        add_bos_token: None,
+    })
+}
+
 struct TinySpec {
     arch: &'static str,
     token_embd: GgmlType,
     output: GgmlType,
     /// When set, every 2-D layer weight uses this type. Otherwise the mixed
-    /// Q4_K / Q6_K / F32 mix used by [`tiny_llama_gguf`].
+    /// Q4_K / Q6_K / F32 mix used by [`tiny_llama_gguf`]. Q5_K is used by
+    /// [`tiny_q5k_gguf`].
     layer: Option<GgmlType>,
     rope_dimension_count: bool,
     qkv_bias: bool,
@@ -813,10 +830,36 @@ fn pat_f32(n: usize, seed: u32) -> Vec<f32> {
 fn pack_mat(ty: GgmlType, n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
     match ty {
         GgmlType::Q4_K => pack_q4k_mat(n_cols, n_rows, seed),
+        GgmlType::Q5_K => pack_q5k_mat(n_cols, n_rows, seed),
         GgmlType::Q6_K => pack_q6k_mat(n_cols, n_rows, seed),
         GgmlType::F16 => pack_f16(&pat_f32(n_cols.saturating_mul(n_rows), seed)),
         _ => pack_f32(&pat_f32(n_cols.saturating_mul(n_rows), seed)),
     }
+}
+
+fn pack_q5k_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut s = seed;
+    for _ in 0..n_rows {
+        let mut qs = [0u8; QK_K];
+        for q in &mut qs {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1);
+            *q = u8::try_from(s % 24).unwrap_or(0);
+        }
+        let mut sc = [1u8; 8];
+        for c in &mut sc {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1);
+            *c = u8::try_from(1 + s % 4).unwrap_or(1);
+        }
+        let mut mn = [0u8; 8];
+        for c in &mut mn {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1);
+            *c = u8::try_from(s % 3).unwrap_or(0);
+        }
+        out.extend_from_slice(&pack_q5_k_block(25.0 / 100.0, 5.0 / 100.0, &sc, &mn, &qs));
+        let _ = n_cols;
+    }
+    out
 }
 
 fn pack_q4k_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
@@ -908,7 +951,7 @@ fn f32s(t: Tensor<'_>) -> Result<Vec<f32>, LlamaError> {
 
 fn quant_mat(t: Tensor<'_>) -> Result<QuantMat, LlamaError> {
     match t.ty {
-        GgmlType::F32 | GgmlType::F16 | GgmlType::Q4_K | GgmlType::Q6_K => {
+        GgmlType::F32 | GgmlType::F16 | GgmlType::Q4_K | GgmlType::Q5_K | GgmlType::Q6_K => {
             let (start, end) = t.blob_range();
             Ok(QuantMat {
                 name: t.name.to_string(),
@@ -941,6 +984,7 @@ impl Llama {
             GgmlType::F32 => gemm_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             GgmlType::F16 => gemm_f16(m.n_cols, n_tokens, data, x, &mut y)?,
             GgmlType::Q4_K => gemm_q4_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
+            GgmlType::Q5_K => gemm_q5_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             GgmlType::Q6_K => gemm_q6_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             other => {
                 return Err(LlamaError::Type {
@@ -959,6 +1003,7 @@ impl Llama {
             GgmlType::F32 => gemv_f32(m.n_cols, data, x, &mut y)?,
             GgmlType::F16 => gemv_f16(m.n_cols, data, x, &mut y)?,
             GgmlType::Q4_K => gemv_q4_k_f32(m.n_cols, data, x, &mut y)?,
+            GgmlType::Q5_K => gemv_q5_k_f32(m.n_cols, data, x, &mut y)?,
             GgmlType::Q6_K => gemv_q6_k_f32(m.n_cols, data, x, &mut y)?,
             other => {
                 return Err(LlamaError::Type {
@@ -978,6 +1023,7 @@ impl Llama {
             GgmlType::F32 => f32_row_bytes(emb.n_cols)?,
             GgmlType::F16 => f16_row_bytes(emb.n_cols)?,
             GgmlType::Q4_K => q4_k_row_bytes(emb.n_cols)?,
+            GgmlType::Q5_K => q5_k_row_bytes(emb.n_cols)?,
             GgmlType::Q6_K => q6_k_row_bytes(emb.n_cols)?,
             other => {
                 return Err(LlamaError::Type {
@@ -1000,6 +1046,7 @@ impl Llama {
             GgmlType::F32 => dequant_f32_row(emb.n_cols, bytes, &mut y)?,
             GgmlType::F16 => dequant_f16_row(emb.n_cols, bytes, &mut y)?,
             GgmlType::Q4_K => dequant_q4_k_row(emb.n_cols, bytes, &mut y)?,
+            GgmlType::Q5_K => dequant_q5_k_row(emb.n_cols, bytes, &mut y)?,
             GgmlType::Q6_K => dequant_q6_k_row(emb.n_cols, bytes, &mut y)?,
             other => {
                 return Err(LlamaError::Type {
@@ -1318,6 +1365,48 @@ mod tests {
         }
     }
 
+    /// ggml `dequantize_row_q5_K` (oracle). Independent of crate `dequant_q5_k_row`.
+    fn dequant_q5_k_row_oracle(w: &[u8]) -> Vec<f32> {
+        let nblocks = w.len() / crate::quant::Q5_K_BLOCK;
+        let mut y = vec![0.0f32; nblocks * QK_K];
+        for b in 0..nblocks {
+            let wb = &w[b * crate::quant::Q5_K_BLOCK..(b + 1) * crate::quant::Q5_K_BLOCK];
+            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let minv = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
+            let scales = &wb[4..16];
+            let qh = &wb[16..48];
+            let mut qoff = 48usize;
+            let mut yo = b * QK_K;
+            let mut is = 0usize;
+            let mut u1: u8 = 1;
+            let mut u2: u8 = 2;
+            for _ in 0..4 {
+                let (sc, m) = oracle_scale_min(is, scales);
+                let d1 = d * f32::from(sc);
+                let m1 = minv * f32::from(m);
+                let (sc, m) = oracle_scale_min(is + 1, scales);
+                let d2 = d * f32::from(sc);
+                let m2 = minv * f32::from(m);
+                let q = &wb[qoff..qoff + 32];
+                for l in 0..32 {
+                    let q5 = (q[l] & 0x0f) + if qh[l] & u1 == 0 { 0 } else { 16 };
+                    y[yo + l] = d1 * f32::from(q5) - m1;
+                }
+                yo += 32;
+                for l in 0..32 {
+                    let q5 = (q[l] >> 4) + if qh[l] & u2 == 0 { 0 } else { 16 };
+                    y[yo + l] = d2 * f32::from(q5) - m2;
+                }
+                yo += 32;
+                qoff += 32;
+                is += 2;
+                u1 <<= 2;
+                u2 <<= 2;
+            }
+        }
+        y
+    }
+
     /// ggml `dequantize_row_q6_K` (oracle).
     fn dequant_q6_k_row(w: &[u8]) -> Vec<f32> {
         let nblocks = w.len() / crate::quant::Q6_K_BLOCK;
@@ -1391,6 +1480,13 @@ mod tests {
                     *yv = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
                 }
             }
+            GgmlType::Q5_K => {
+                let rb = (n_cols / QK_K) * crate::quant::Q5_K_BLOCK;
+                for (r, yv) in y.iter_mut().enumerate() {
+                    let row = dequant_q5_k_row_oracle(&t.data[r * rb..(r + 1) * rb]);
+                    *yv = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
+                }
+            }
             GgmlType::Q6_K => {
                 let rb = (n_cols / QK_K) * crate::quant::Q6_K_BLOCK;
                 for (r, yv) in y.iter_mut().enumerate() {
@@ -1428,6 +1524,10 @@ mod tests {
             GgmlType::Q4_K => {
                 let rb = (n_cols / QK_K) * crate::quant::Q4_K_BLOCK;
                 dequant_q4_k_row(&t.data[row * rb..(row + 1) * rb])
+            }
+            GgmlType::Q5_K => {
+                let rb = (n_cols / QK_K) * crate::quant::Q5_K_BLOCK;
+                dequant_q5_k_row_oracle(&t.data[row * rb..(row + 1) * rb])
             }
             GgmlType::Q6_K => {
                 let rb = (n_cols / QK_K) * crate::quant::Q6_K_BLOCK;
@@ -1742,6 +1842,22 @@ mod tests {
     }
 
     #[test]
+    fn tiny_q5k_logits_match_independent_oracle() {
+        let bytes = tiny_q5k_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        assert_eq!(g.tensor("token_embd.weight").unwrap().ty, GgmlType::Q5_K);
+        assert_eq!(g.tensor("output.weight").unwrap().ty, GgmlType::Q5_K);
+        assert_eq!(g.tensor("blk.0.attn_q.weight").unwrap().ty, GgmlType::Q5_K);
+        assert_eq!(
+            g.tensor("blk.0.ffn_gate.weight").unwrap().ty,
+            GgmlType::Q5_K
+        );
+        assert_eq!(g.tensor("output_norm.weight").unwrap().ty, GgmlType::F32);
+        assert_eq!(g.tensor("token_embd.weight").unwrap().ty.to_i32(), 13);
+        load_fwd_match(&bytes, 3);
+    }
+
+    #[test]
     fn prefill_prompt_logits_match_independent_oracle() {
         let tokens = [1u32, 2, 3];
         for bytes in [
@@ -1750,6 +1866,7 @@ mod tests {
             tiny_q4k_embd_gguf(),
             tiny_q6k_embd_gguf(),
             tiny_f16_gguf(),
+            tiny_q5k_gguf(),
         ] {
             load_prefill_match(&bytes, &tokens);
             load_prefill_match(&bytes, &[3]);
@@ -1796,7 +1913,8 @@ mod tests {
 
     #[test]
     fn decode_load_unsupported_ggml_type_error_includes_type_id() {
-        const Q5_K: i32 = 13;
+        // ggml IQ2_XXS is 16; IQ* stays rejected after Q5_K shipped.
+        const IQ2_XXS: i32 = 16;
         let bytes = crate::gguf::write_gguf_with_type_ids(
             &[
                 ("general.alignment".into(), Kv::U32(32)),
@@ -1808,7 +1926,7 @@ mod tests {
                 shape: vec![1],
                 data: vec![0, 0, 0, 0],
             }],
-            &[Q5_K],
+            &[IQ2_XXS],
         );
         let err = match load_gguf(&bytes) {
             Err(e) => e.to_string(),
@@ -1818,8 +1936,8 @@ mod tests {
             },
         };
         assert!(
-            err.contains(&Q5_K.to_string()),
-            "error should include type id {Q5_K}: {err}"
+            err.contains(&IQ2_XXS.to_string()),
+            "error should include type id {IQ2_XXS}: {err}"
         );
     }
 
