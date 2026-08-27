@@ -32,7 +32,7 @@ pub const MXFP4_BLOCK: usize = 1 + QK_MXFP4 / 2;
 /// ggml `QK_NVFP4` super-block width in elements (`block_nvfp4`).
 pub const QK_NVFP4: usize = 64;
 /// ggml `QK_NVFP4_SUB`: 16-element sub-block with one UE4M3 scale.
-pub const QK_NVFP4_SUB: usize = 16;
+pub(crate) const QK_NVFP4_SUB: usize = 16;
 /// ggml `block_nvfp4`: 4 UE4M3 `d` + `uint8 qs[32]` (36 bytes / 64 weights).
 pub const NVFP4_BLOCK: usize = QK_NVFP4 / QK_NVFP4_SUB + QK_NVFP4 / 2;
 /// ggml super-block width (`QK_K`).
