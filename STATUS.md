@@ -6,9 +6,11 @@ for prompt, n_predict, and n_ctx”). After this commit, HEAD is this tree.
 HOLD: **do not claim a win vs llama.cpp.** This repository has **no
 llama.cpp binary** and **no tok/s table**. Do not invent llama.cpp numbers.
 
-GitHub About was lying (`measured vs llama.cpp`). The honest About is:
-safe Rust GGUF-native Llama decode; no llama.cpp bind; not rustformers/llm.
-No measurement vs llama.cpp exists in this tree.
+GitHub About was lying (`measured vs llama.cpp`). The honest in-repo About
+is: safe Rust GGUF-native Llama decode; no llama.cpp bind; not rustformers/llm.
+No measurement vs llama.cpp exists in this tree. This environment got HTTP 401
+on `PATCH /repos/mingley/llama-rust`, so the GitHub description field is
+**still the lie** until a repo admin sets it to the same sentence.
 
 CLI PRs: #1 closed unmerged. #2 is already on `main` (`4beae44`) and is
 **unsigned**. #3 stays draft / unsigned. Do not merge #3.

@@ -2,7 +2,7 @@
 
 Pure-safe Rust GGUF v3 Llama-family **prompt → text**. No llama.cpp bind, no C GGML snapshot, no `unsafe`.
 
-**About (honest):** safe Rust GGUF-native Llama decode. Not rustformers/llm. This tree has **no llama.cpp binary** and **no tok/s table**. Do not claim a win vs llama.cpp. Do not invent llama.cpp numbers. See [STATUS.md](STATUS.md).
+**About (honest):** safe Rust GGUF-native Llama decode. Not rustformers/llm. This tree has **no llama.cpp binary** and **no tok/s table**. Do not claim a win vs llama.cpp. Do not invent llama.cpp numbers. The GitHub description field still said `measured vs llama.cpp` after this pass (API 401 from this environment); a repo admin must set it to that sentence. See [STATUS.md](STATUS.md).
 
 Loads mixed Q4_K_M-shaped dtypes (**F32**, **Q4_K**, **Q6_K**, plus Q4_0/Q8_0/Q8_K) for `llama` / `qwen2` / `mistral` / `phi3`. Quantized weights **and token embeddings** stay **on-disk bytes**. Missing `{arch}.rope.dimension_count` is derived from embedding length / head count. Optional `attn_q`/`attn_k`/`attn_v` bias tensors are applied when present. `tokenizer.ggml.add_bos_token=false` is honored. Decode is RMSNorm, RoPE, GQA + KV cache, SwiGLU, lm_head. Sampling is greedy. Load/decode errors name the tensor, ggml type id, and/or KV key.
 
