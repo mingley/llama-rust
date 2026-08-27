@@ -1,4 +1,4 @@
-//! GGUF on-disk Q4_0 / Q8_0 / Q4_K / Q8_K blocks. GEMV reads those bytes; no f32-scale copy.
+//! GGUF on-disk F16 / Q4_0 / Q8_0 / Q4_K / Q8_K blocks. GEMV reads those bytes; no f32-scale copy.
 
 use std::fmt;
 
@@ -25,6 +25,8 @@ pub const Q8_K_BLOCK: usize = 4 + QK_K + QK_K / 16 * 2;
 pub const Q6_K_BLOCK: usize = QK_K / 2 + QK_K / 4 + QK_K / 16 + 2;
 /// ggml `GGML_TYPE_F32` element size.
 pub const F32_SIZE: usize = 4;
+/// ggml `GGML_TYPE_F16` element size (`ggml_fp16_t` / IEEE binary16).
+pub const F16_SIZE: usize = 2;
 
 /// Size / alignment failure for a quantized GEMV.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -283,6 +285,15 @@ pub fn f32_row_bytes(n_cols: usize) -> Result<usize, QuantError> {
     })
 }
 
+/// Packed F16 bytes for one matrix row of `n_cols` columns.
+pub fn f16_row_bytes(n_cols: usize) -> Result<usize, QuantError> {
+    n_cols.checked_mul(F16_SIZE).ok_or(QuantError::Size {
+        what: "F16 row overflow",
+        expected: n_cols,
+        actual: F16_SIZE,
+    })
+}
+
 /// Packed Q6_K bytes for one matrix row of `n_cols` columns.
 pub fn q6_k_row_bytes(n_cols: usize) -> Result<usize, QuantError> {
     if !n_cols.is_multiple_of(QK_K) {
@@ -299,6 +310,15 @@ pub fn pack_f32(values: &[f32]) -> Vec<u8> {
     let mut out = Vec::with_capacity(values.len().saturating_mul(F32_SIZE));
     for v in values {
         out.extend_from_slice(&store_f32_le(*v));
+    }
+    out
+}
+
+/// Pack values as little-endian IEEE binary16 GGUF bytes (`GGML_TYPE_F16`).
+pub fn pack_f16(values: &[f32]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(values.len().saturating_mul(F16_SIZE));
+    for v in values {
+        out.extend_from_slice(&store_f16_le(*v));
     }
     out
 }
@@ -424,6 +444,27 @@ pub fn gemv_q4_k(n_cols: usize, w: &[u8], x: &[u8], y: &mut [f32]) -> Result<(),
     Ok(())
 }
 
+/// `y[m] = W_f16[m, n_cols] x[n_cols]`. On-disk bytes stay IEEE binary16.
+pub fn gemv_f16(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    let rb = f16_row_bytes(n_cols)?;
+    require_len("x F32 elems", x.len(), n_cols)?;
+    let expected_w = rb.checked_mul(y.len()).ok_or(QuantError::Size {
+        what: "W F16 bytes overflow",
+        expected: rb,
+        actual: y.len(),
+    })?;
+    require_len("W F16 bytes", w.len(), expected_w)?;
+    if y.is_empty() {
+        return Ok(());
+    }
+    for_each_row(y, |r, out| {
+        *out = row_bytes(w, rb, r)
+            .map(|row| vec_dot_f16_row(row, x))
+            .unwrap_or(0.0);
+    });
+    Ok(())
+}
+
 /// `y[m] = W_f32[m, n_cols] x[n_cols]`.
 pub fn gemv_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
     let rb = f32_row_bytes(n_cols)?;
@@ -464,6 +505,20 @@ pub fn gemv_q4_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
             .unwrap_or(0.0);
     });
     Ok(())
+}
+
+/// `Y[t, r] = W_f16[r, n_cols] · X[t, n_cols]`. Token-major `x` / `y`.
+pub fn gemm_f16(
+    n_cols: usize,
+    n_tokens: usize,
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+) -> Result<(), QuantError> {
+    if n_tokens == 1 {
+        return gemv_f16(n_cols, w, x, y);
+    }
+    gemm_f32_x(GemmKind::F16, n_cols, n_tokens, w, x, y)
 }
 
 /// `Y[t, r] = W_f32[r, n_cols] · X[t, n_cols]`.
@@ -513,6 +568,7 @@ pub fn gemm_q6_k_f32(
 
 #[derive(Clone, Copy)]
 enum GemmKind {
+    F16,
     F32,
     Q4K,
     Q6K,
@@ -548,6 +604,7 @@ fn gemm_f32_x(
     }
     let n_rows = y.len() / n_tokens;
     let (rb, w_what) = match kind {
+        GemmKind::F16 => (f16_row_bytes(n_cols)?, "W F16 bytes"),
         GemmKind::F32 => (f32_row_bytes(n_cols)?, "W F32 bytes"),
         GemmKind::Q4K => (q4_k_row_bytes(n_cols)?, "W Q4_K bytes"),
         GemmKind::Q6K => (q6_k_row_bytes(n_cols)?, "W Q6_K bytes"),
@@ -572,6 +629,7 @@ fn gemm_f32_x(
                 continue;
             };
             *slot = match kind {
+                GemmKind::F16 => vec_dot_f16_row(wrow, xt),
                 GemmKind::F32 => vec_dot_f32_row(wrow, xt),
                 GemmKind::Q4K => vec_dot_q4_k_f32_row(wrow, xt),
                 GemmKind::Q6K => vec_dot_q6_k_f32_row(wrow, xt),
@@ -608,6 +666,17 @@ pub fn gemv_q6_k_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
             .map(|row| vec_dot_q6_k_f32_row(row, x))
             .unwrap_or(0.0);
     });
+    Ok(())
+}
+
+/// Unpack one F16 GGUF row into `y[n_cols]` (`ggml_fp16_to_fp32` / IEEE binary16).
+pub fn dequant_f16_row(n_cols: usize, row: &[u8], y: &mut [f32]) -> Result<(), QuantError> {
+    let rb = f16_row_bytes(n_cols)?;
+    require_len("F16 row bytes", row.len(), rb)?;
+    require_len("F16 y elems", y.len(), n_cols)?;
+    for (chunk, yv) in row.as_chunks::<2>().0.iter().zip(y.iter_mut()) {
+        *yv = load_f16_le(chunk).unwrap_or(0.0);
+    }
     Ok(())
 }
 
@@ -849,6 +918,14 @@ fn vec_dot_q4_k_row(row: &[u8], x: &[u8]) -> f32 {
                 sum += (a1 * q1 - b1) * x1;
             }
         }
+    }
+    sum
+}
+
+fn vec_dot_f16_row(row: &[u8], x: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    for (chunk, xv) in row.as_chunks::<2>().0.iter().zip(x.iter()) {
+        sum += load_f16_le(chunk).unwrap_or(0.0) * *xv;
     }
     sum
 }
@@ -1129,6 +1206,94 @@ mod tests {
             let rel = (a - b).abs() / (1.0 + b.abs());
             assert!(rel * 100_000.0 < 1.0, "elem {i}: {a} vs {b}");
         }
+    }
+
+    /// Independent IEEE binary16 element (ggml `ggml_fp16_to_fp32`).
+    fn oracle_f16_elem(bytes: &[u8]) -> f32 {
+        crate::fp16::f16_to_f32(u16::from_le_bytes([bytes[0], bytes[1]]))
+    }
+
+    fn oracle_f16_dot(row: &[u8], x: &[f32]) -> f32 {
+        let mut sum = 0.0f32;
+        for (i, xv) in x.iter().enumerate() {
+            let off = i * 2;
+            sum += oracle_f16_elem(&row[off..off + 2]) * *xv;
+        }
+        sum
+    }
+
+    #[test]
+    fn pack_f16_gemv_and_dequant_match_independent_oracle() {
+        let vals = [1.0f32, -0.5, 0.25, 2.0, -1.0, 0.125, 3.5, -2.0];
+        let w = pack_f16(&vals);
+        assert_eq!(w.len(), vals.len() * F16_SIZE);
+        let mut row = vec![0.0f32; vals.len()];
+        dequant_f16_row(vals.len(), &w, &mut row).unwrap();
+        for (i, (got, src)) in row.iter().zip(vals.iter()).enumerate() {
+            let exp = oracle_f16_elem(&w[i * 2..i * 2 + 2]);
+            let rel = (got - exp).abs() / (1.0 + exp.abs());
+            assert!(rel * 100_000.0 < 1.0, "dequant {i}: {got} vs {exp}");
+            let back = crate::fp16::f16_to_f32(crate::fp16::f32_to_f16(*src));
+            assert_eq!(*got, back);
+        }
+        let x = [1.0f32, 2.0, 0.5, -1.0, 0.25, 4.0, -0.5, 1.0];
+        let mut y = [0.0f32];
+        gemv_f16(vals.len(), &w, &x, &mut y).unwrap();
+        let expected = oracle_f16_dot(&w, &x);
+        let rel = (y[0] - expected).abs() / (1.0 + expected.abs());
+        assert!(rel * 100_000.0 < 1.0, "gemv {} vs {expected}", y[0]);
+        let via_dequant: f32 = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
+        assert!(
+            (via_dequant - y[0]).abs() * 100_000.0 < 1.0,
+            "{via_dequant} vs {}",
+            y[0]
+        );
+    }
+
+    #[test]
+    fn gemm_f16_matches_repeated_gemv() {
+        let n_cols = 4usize;
+        let n_rows = 3usize;
+        let n_tokens = 3usize;
+        let mut w = Vec::new();
+        for r in 0..n_rows {
+            for c in 0..n_cols {
+                let v = f32::from(u16::try_from(r * 10 + c + 1).unwrap_or(1)) / 10.0;
+                w.extend_from_slice(&store_f16_le(v));
+            }
+        }
+        let mut x = Vec::new();
+        for t in 0..n_tokens {
+            for c in 0..n_cols {
+                x.push(f32::from(u16::try_from(t + c + 1).unwrap_or(1)) / 4.0);
+            }
+        }
+        let mut y_gemm = vec![0.0f32; n_rows * n_tokens];
+        gemm_f16(n_cols, n_tokens, &w, &x, &mut y_gemm).unwrap();
+        let mut y_gemv = Vec::new();
+        for t in 0..n_tokens {
+            let start = t * n_cols;
+            let xt = &x[start..start + n_cols];
+            let mut yt = vec![0.0f32; n_rows];
+            gemv_f16(n_cols, &w, xt, &mut yt).unwrap();
+            y_gemv.extend_from_slice(&yt);
+        }
+        assert_close(&y_gemm, &y_gemv);
+        let mut y_oracle = Vec::new();
+        for t in 0..n_tokens {
+            let xt = &x[t * n_cols..(t + 1) * n_cols];
+            let rb = n_cols * F16_SIZE;
+            for r in 0..n_rows {
+                let row = &w[r * rb..(r + 1) * rb];
+                y_oracle.push(oracle_f16_dot(row, xt));
+            }
+        }
+        assert_close(&y_gemm, &y_oracle);
+        crate::pool::with_sequential(|| {
+            let mut y_seq = vec![0.0f32; n_rows * n_tokens];
+            gemm_f16(n_cols, n_tokens, &w, &x, &mut y_seq).unwrap();
+            assert_close(&y_seq, &y_oracle);
+        });
     }
 
     #[test]

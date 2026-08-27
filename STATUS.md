@@ -1,4 +1,4 @@
-# Stopped 2026-08-27 — serving
+# Stopped 2026-08-27 — F16 2-D weights
 
 HEAD is this branch’s tip. Worktree should be clean before the next resume.
 No in-flight code.
@@ -9,13 +9,14 @@ Repo: https://github.com/mingley/llama-rust
 Local: `~/dev/llama-rust-perf`
 
 - `forbid(unsafe_code)`, no llama.cpp/FFI, `Cargo.lock` crate-only (no SIMD crates, no rayon).
-- GGUF v3: F32, Q4_0, Q8_0, Q4_K, Q6_K, Q8_K. Kernels read on-disk bytes (no private f32-scale copy).
+- GGUF v3: F32, F16, Q4_0, Q8_0, Q4_K, Q6_K, Q8_K. Kernels read on-disk bytes (no private f32-scale copy).
+- F16 is IEEE binary16 (`GGML_TYPE_F16` = 1). Writer-built tiny uses F16 for 2-D weights (`token_embd`, `output`, attn/ffn); 1-D norms stay F32. Load/GEMV/GEMM/embed logits match an independent scalar of the same ggml `ggml_fp16_to_fp32` math. Kernel Integrity has not signed it. No tok/s.
 - Decode: RMSNorm, RoPE, GQA+KV, SwiGLU, lm_head, greedy sample by default.
 - **Sampling.** Seedless greedy (`temperature <= 0`, argmax, first index on ties) is still the `infer` / `greedy_generate` path. `SampleParams` + `generate` add temperature, top-k, top-p, and unique-id repeat penalty (`logit > 0` then `/=`, else `*=`). Stochastic draws use SplitMix64 and require a seed. No CLI sampling flags.
 - Prefill GEMM. Prompt tokens are one causal pass. A single token stays GEMV.
 - Architectures: `llama`, `qwen2`, `mistral`, `phi3` `{arch}.*` KV.
 - Q4_K_M shape that common OSS files actually have:
-  - quantized `token_embd.weight` (Q4_K / Q6_K / F32)
+  - quantized `token_embd.weight` (Q4_K / Q6_K / F32) or F16
   - missing `{arch}.rope.dimension_count` derived from `embedding_length / head_count`
   - optional F32 `attn_{q,k,v}.bias`
   - `tokenizer.ggml.add_bos_token=false` honored
@@ -34,14 +35,14 @@ Local: `~/dev/llama-rust-perf`
 
 ## In progress
 
-Nothing. This slice is STATUS item 1 (serving).
+Nothing. This slice is STATUS item 2 (F16). Metal-in-crate was skipped: this Linux VM cannot compile or run Metal.
 
 ## Still needed (production / researcher bar)
 
 Ordered by how much they block “others can actually use this”:
 
 1. **Metal-in-crate.** Owned MSL kernels exist as a sidecar. Decode still CPU.
-2. **Dtypes / arches still rejected.** Q5_K, F16, IQ*, Gemma, MoE, vision, Qwen3, Llama4. Tied `output.weight` (reuse `token_embd`) untested.
+2. **Dtypes / arches still rejected.** Q5_K, IQ*, Gemma, MoE, vision, Qwen3, Llama4. 1-D F16 norms/bias still rejected. Tied `output.weight` (reuse `token_embd`) untested.
 3. **KV cache** sized to prompt+predict is the default; `{arch}.context_length` is still unused. `--n-ctx` is an override only.
 4. **crates.io** unpublished. Linux proof is GHA tiny/oracle tests only (2GB GGUF is gitignored).
 5. **Chat template apply.** The Jinja string is read. Rendering it (and special-token split of `<|im_start|>` in the prompt) is not started. BPE has no Unicode regex pre-tokenizer.
@@ -58,4 +59,4 @@ cargo clippy --all-targets --all-features -- -D warnings
 ./target/release/gguf_gemv serve tiny-llama.gguf
 ```
 
-Next code change should be item 1 (Metal-in-crate) unless the goal is more dtypes or production serving. Do not add crates.io runtime deps or `unsafe`.
+Next code change should be item 1 (Metal-in-crate) on a machine that can compile Metal, or remaining item-2 dtypes (Q5_K first). Do not add crates.io runtime deps or `unsafe`. Do not start Metal-in-crate on Linux.

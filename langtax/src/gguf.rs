@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::quant::{
-    F32_SIZE, Q4_0_BLOCK, Q4_K_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK8_0, QK_K,
+    F16_SIZE, F32_SIZE, Q4_0_BLOCK, Q4_K_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK8_0,
+    QK_K,
 };
 
 /// GGUF magic `GGUF`.
@@ -20,6 +21,8 @@ pub const GGUF_DEFAULT_ALIGNMENT: usize = 32;
 pub enum GgmlType {
     /// `GGML_TYPE_F32`.
     F32 = 0,
+    /// `GGML_TYPE_F16`.
+    F16 = 1,
     /// `GGML_TYPE_Q4_0`.
     Q4_0 = 2,
     /// `GGML_TYPE_Q8_0`.
@@ -39,6 +42,7 @@ impl GgmlType {
     fn from_i32(v: i32) -> Result<Self, GgufError> {
         match v {
             0 => Ok(Self::F32),
+            1 => Ok(Self::F16),
             2 => Ok(Self::Q4_0),
             8 => Ok(Self::Q8_0),
             12 => Ok(Self::Q4_K),
@@ -52,6 +56,7 @@ impl GgmlType {
     pub const fn to_i32(self) -> i32 {
         match self {
             Self::F32 => 0,
+            Self::F16 => 1,
             Self::Q4_0 => 2,
             Self::Q8_0 => 8,
             Self::Q4_K => 12,
@@ -63,6 +68,7 @@ impl GgmlType {
     fn layout(self) -> (usize, usize) {
         match self {
             Self::F32 => (F32_SIZE, 1),
+            Self::F16 => (F16_SIZE, 1),
             Self::Q4_0 => (Q4_0_BLOCK, QK4_0),
             Self::Q8_0 => (Q8_0_BLOCK, QK8_0),
             Self::Q4_K => (Q4_K_BLOCK, QK_K),
@@ -97,7 +103,7 @@ pub enum GgufError {
     Truncated,
     /// A GGUF string was not valid UTF-8.
     Utf8,
-    /// Tensor `ggml_type` is not F32, Q4_0, Q8_0, Q4_K, Q6_K, or Q8_K.
+    /// Tensor `ggml_type` is not F32, F16, Q4_0, Q8_0, Q4_K, Q6_K, or Q8_K.
     UnsupportedType(i32),
     /// KV type is not a GGUF v3 value type.
     UnsupportedKv(i32),
@@ -670,7 +676,7 @@ mod tests {
     use super::*;
     use crate::fp16::load_f16_le;
     use crate::quant::{
-        gemv_q4_0, gemv_q4_k, gemv_q8_0, i8_from_bits, pack_f32, pack_q4_0_from_i4,
+        gemv_q4_0, gemv_q4_k, gemv_q8_0, i8_from_bits, pack_f16, pack_f32, pack_q4_0_from_i4,
         pack_q4_k_block, pack_q6_k_block, pack_q8_0_block, pack_q8_k_block, Q4_0_BLOCK, Q4_K_BLOCK,
         Q6_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK8_0, QK_K,
     };
@@ -1140,6 +1146,22 @@ mod tests {
     }
 
     #[test]
+    fn write_load_f16_matches_file_bytes() {
+        let f16_data = pack_f16(&[1.0, -0.5, 0.25, 2.0]);
+        let bytes = write_gguf(&[TensorWrite {
+            name: "w_f16".into(),
+            ty: GgmlType::F16,
+            shape: vec![4],
+            data: f16_data.clone(),
+        }]);
+        let g = load_gguf(&bytes).expect("load f16");
+        let t = g.tensor("w_f16").expect("w_f16");
+        assert_eq!(t.ty, GgmlType::F16);
+        assert_eq!(t.data, f16_data.as_slice());
+        assert_eq!(t.data.len(), 8);
+    }
+
+    #[test]
     fn load_owned_keeps_one_blob_and_tensor_ranges() {
         let f32_data = pack_f32(&[1.0, 2.0, 3.0, 4.0]);
         let bytes = write_gguf(&[TensorWrite {
@@ -1165,8 +1187,8 @@ mod tests {
 
     #[test]
     fn load_unsupported_ggml_type_error_includes_type_id() {
-        // ggml Q5_K is 10; not a shipped decode dtype.
-        const Q5_K: i32 = 10;
+        // ggml Q5_K is 13; still not a shipped decode dtype.
+        const Q5_K: i32 = 13;
         let bytes = write_gguf_with_type_ids(
             &[
                 ("general.alignment".into(), Kv::U32(32)),
