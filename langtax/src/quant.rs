@@ -10954,25 +10954,25 @@ mod tests {
             let qh = &wb[48..52];
             let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[52], wb[53]]));
             let mut yo = b * QK_K;
-            for n in 0..5 {
-                for m in 0..32 {
-                    let q = qs[m].wrapping_mul(POW3[n]);
+            for &p in &POW3 {
+                for &byte in qs.iter().take(32) {
+                    let q = byte.wrapping_mul(p);
                     let xi = (u16::from(q).wrapping_mul(3)) >> 8;
                     y[yo] = (f32::from(xi) - 1.0) * d;
                     yo += 1;
                 }
             }
-            for n in 0..5 {
-                for m in 0..16 {
-                    let q = qs[32 + m].wrapping_mul(POW3[n]);
+            for &p in &POW3 {
+                for &byte in qs.iter().skip(32).take(16) {
+                    let q = byte.wrapping_mul(p);
                     let xi = (u16::from(q).wrapping_mul(3)) >> 8;
                     y[yo] = (f32::from(xi) - 1.0) * d;
                     yo += 1;
                 }
             }
-            for n in 0..4 {
-                for j in 0..4 {
-                    let q = qh[j].wrapping_mul(POW3[n]);
+            for &p in POW3.iter().take(4) {
+                for &byte in qh.iter() {
+                    let q = byte.wrapping_mul(p);
                     let xi = (u16::from(q).wrapping_mul(3)) >> 8;
                     y[yo] = (f32::from(xi) - 1.0) * d;
                     yo += 1;
