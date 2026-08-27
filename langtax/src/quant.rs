@@ -480,16 +480,7 @@ pub fn gemm_f32(
     if n_tokens == 1 {
         return gemv_f32(n_cols, w, x, y);
     }
-    gemm_f32_x(
-        n_cols,
-        n_tokens,
-        w,
-        x,
-        y,
-        f32_row_bytes(n_cols)?,
-        "W F32 bytes",
-        vec_dot_f32_row,
-    )
+    gemm_f32_x(GemmKind::F32, n_cols, n_tokens, w, x, y)
 }
 
 /// `Y[t, r] = W_q4k[r, n_cols] · X[t, n_cols]`. Token-major `x` / `y`.
@@ -503,16 +494,7 @@ pub fn gemm_q4_k_f32(
     if n_tokens == 1 {
         return gemv_q4_k_f32(n_cols, w, x, y);
     }
-    gemm_f32_x(
-        n_cols,
-        n_tokens,
-        w,
-        x,
-        y,
-        q4_k_row_bytes(n_cols)?,
-        "W Q4_K bytes",
-        vec_dot_q4_k_f32_row,
-    )
+    gemm_f32_x(GemmKind::Q4K, n_cols, n_tokens, w, x, y)
 }
 
 /// `Y[t, r] = W_q6k[r, n_cols] · X[t, n_cols]`. Token-major `x` / `y`.
@@ -526,27 +508,23 @@ pub fn gemm_q6_k_f32(
     if n_tokens == 1 {
         return gemv_q6_k_f32(n_cols, w, x, y);
     }
-    gemm_f32_x(
-        n_cols,
-        n_tokens,
-        w,
-        x,
-        y,
-        q6_k_row_bytes(n_cols)?,
-        "W Q6_K bytes",
-        vec_dot_q6_k_f32_row,
-    )
+    gemm_f32_x(GemmKind::Q6K, n_cols, n_tokens, w, x, y)
+}
+
+#[derive(Clone, Copy)]
+enum GemmKind {
+    F32,
+    Q4K,
+    Q6K,
 }
 
 fn gemm_f32_x(
+    kind: GemmKind,
     n_cols: usize,
     n_tokens: usize,
     w: &[u8],
     x: &[f32],
     y: &mut [f32],
-    rb: usize,
-    w_what: &'static str,
-    dot: impl Fn(&[u8], &[f32]) -> f32 + Sync,
 ) -> Result<(), QuantError> {
     if n_tokens == 0 {
         return Err(QuantError::Size {
@@ -569,6 +547,11 @@ fn gemm_f32_x(
         });
     }
     let n_rows = y.len() / n_tokens;
+    let (rb, w_what) = match kind {
+        GemmKind::F32 => (f32_row_bytes(n_cols)?, "W F32 bytes"),
+        GemmKind::Q4K => (q4_k_row_bytes(n_cols)?, "W Q4_K bytes"),
+        GemmKind::Q6K => (q6_k_row_bytes(n_cols)?, "W Q6_K bytes"),
+    };
     let expected_w = rb.checked_mul(n_rows).ok_or(QuantError::Size {
         what: "W bytes overflow",
         expected: rb,
@@ -588,7 +571,11 @@ fn gemm_f32_x(
             let Some(xt) = x.get(start..start.saturating_add(n_cols)) else {
                 continue;
             };
-            *slot = dot(wrow, xt);
+            *slot = match kind {
+                GemmKind::F32 => vec_dot_f32_row(wrow, xt),
+                GemmKind::Q4K => vec_dot_q4_k_f32_row(wrow, xt),
+                GemmKind::Q6K => vec_dot_q6_k_f32_row(wrow, xt),
+            };
         }
     });
     for t in 0..n_tokens {
