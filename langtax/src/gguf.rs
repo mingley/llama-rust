@@ -6,8 +6,8 @@ use std::fmt;
 use crate::quant::{
     BF16_SIZE, F16_SIZE, F32_SIZE, IQ1_M_BLOCK, IQ1_S_BLOCK, IQ2_S_BLOCK, IQ2_XS_BLOCK,
     IQ2_XXS_BLOCK, IQ3_S_BLOCK, IQ3_XXS_BLOCK, IQ4_NL_BLOCK, IQ4_XS_BLOCK, Q2_K_BLOCK, Q3_K_BLOCK,
-    Q4_0_BLOCK, Q4_1_BLOCK, Q4_K_BLOCK, Q5_K_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0,
-    QK4_1, QK4_NL, QK8_0, QK_K,
+    Q4_0_BLOCK, Q4_1_BLOCK, Q4_K_BLOCK, Q5_0_BLOCK, Q5_K_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK,
+    QK4_0, QK4_1, QK4_NL, QK5_0, QK8_0, QK_K,
 };
 
 /// GGUF magic `GGUF`.
@@ -31,6 +31,8 @@ pub enum GgmlType {
     Q4_0 = 2,
     /// `GGML_TYPE_Q4_1`.
     Q4_1 = 3,
+    /// `GGML_TYPE_Q5_0`.
+    Q5_0 = 6,
     /// `GGML_TYPE_Q8_0`.
     Q8_0 = 8,
     /// `GGML_TYPE_Q2_K`.
@@ -88,6 +90,7 @@ impl GgmlType {
             30 => Ok(Self::BF16),
             2 => Ok(Self::Q4_0),
             3 => Ok(Self::Q4_1),
+            6 => Ok(Self::Q5_0),
             8 => Ok(Self::Q8_0),
             10 => Ok(Self::Q2_K),
             11 => Ok(Self::Q3_K),
@@ -116,6 +119,7 @@ impl GgmlType {
             Self::BF16 => 30,
             Self::Q4_0 => 2,
             Self::Q4_1 => 3,
+            Self::Q5_0 => 6,
             Self::Q8_0 => 8,
             Self::Q2_K => 10,
             Self::Q3_K => 11,
@@ -142,6 +146,7 @@ impl GgmlType {
             Self::BF16 => (BF16_SIZE, 1),
             Self::Q4_0 => (Q4_0_BLOCK, QK4_0),
             Self::Q4_1 => (Q4_1_BLOCK, QK4_1),
+            Self::Q5_0 => (Q5_0_BLOCK, QK5_0),
             Self::Q8_0 => (Q8_0_BLOCK, QK8_0),
             Self::Q2_K => (Q2_K_BLOCK, QK_K),
             Self::Q3_K => (Q3_K_BLOCK, QK_K),
@@ -187,7 +192,7 @@ pub enum GgufError {
     Truncated,
     /// A GGUF string was not valid UTF-8.
     Utf8,
-    /// Tensor `ggml_type` is not F32, F16, BF16, Q4_0, Q4_1, Q8_0, Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, Q8_K, IQ1_M, IQ1_S, IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S, IQ4_NL, or IQ4_XS.
+    /// Tensor `ggml_type` is not F32, F16, BF16, Q4_0, Q4_1, Q5_0, Q8_0, Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, Q8_K, IQ1_M, IQ1_S, IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S, IQ4_NL, or IQ4_XS.
     UnsupportedType(i32),
     /// KV type is not a GGUF v3 value type.
     UnsupportedKv(i32),
@@ -764,11 +769,11 @@ mod tests {
         pack_iq1_m_block, pack_iq1_s_block, pack_iq2_s_block, pack_iq2_xs_block,
         pack_iq2_xxs_block, pack_iq3_s_block, pack_iq3_xxs_block, pack_iq4_nl_block,
         pack_iq4_xs_block, pack_q2_k_block, pack_q3_k_block, pack_q4_0_from_i4, pack_q4_1_block,
-        pack_q4_k_block, pack_q5_k_block, pack_q6_k_block, pack_q8_0_block, pack_q8_k_block,
-        IQ1_M_BLOCK, IQ1_S_BLOCK, IQ2_S_BLOCK, IQ2_XS_BLOCK, IQ2_XXS_BLOCK, IQ3_S_BLOCK,
-        IQ3_XXS_BLOCK, IQ4_NL_BLOCK, IQ4_XS_BLOCK, Q2_K_BLOCK, Q3_K_BLOCK, Q4_0_BLOCK, Q4_1_BLOCK,
-        Q4_K_BLOCK, Q5_K_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK4_1, QK4_NL, QK8_0,
-        QK_K,
+        pack_q4_k_block, pack_q5_0_block, pack_q5_k_block, pack_q6_k_block, pack_q8_0_block,
+        pack_q8_k_block, IQ1_M_BLOCK, IQ1_S_BLOCK, IQ2_S_BLOCK, IQ2_XS_BLOCK, IQ2_XXS_BLOCK,
+        IQ3_S_BLOCK, IQ3_XXS_BLOCK, IQ4_NL_BLOCK, IQ4_XS_BLOCK, Q2_K_BLOCK, Q3_K_BLOCK, Q4_0_BLOCK,
+        Q4_1_BLOCK, Q4_K_BLOCK, Q5_0_BLOCK, Q5_K_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0,
+        QK4_1, QK4_NL, QK5_0, QK8_0, QK_K,
     };
 
     fn independent_q8_dot(w: &[u8], x: &[u8]) -> f32 {
@@ -1329,6 +1334,26 @@ mod tests {
     }
 
     #[test]
+    fn write_load_q50_matches_file_bytes() {
+        let mut qs = [0u8; QK5_0];
+        qs[0] = 19;
+        qs[16] = 28;
+        let q50 = pack_q5_0_block(1.0, &qs);
+        let bytes = write_gguf(&[TensorWrite {
+            name: "w_q50".into(),
+            ty: GgmlType::Q5_0,
+            shape: vec![32, 1],
+            data: q50.to_vec(),
+        }]);
+        let g = load_gguf(&bytes).expect("load q50");
+        let t = g.tensor("w_q50").expect("w_q50");
+        assert_eq!(t.ty, GgmlType::Q5_0);
+        assert_eq!(t.ty.to_i32(), 6);
+        assert_eq!(t.data.len(), Q5_0_BLOCK);
+        assert_eq!(t.data, q50.to_vec());
+    }
+
+    #[test]
     fn write_load_q5k_matches_file_bytes() {
         let mut qs = [0u8; QK_K];
         qs[0] = 3;
@@ -1576,8 +1601,8 @@ mod tests {
 
     #[test]
     fn load_unsupported_ggml_type_error_includes_type_id() {
-        // ggml Q5_0 is 6; Q4_1 (3) is now loaded. Remaining after Q4_1.
-        const Q5_0: i32 = 6;
+        // ggml Q5_1 is 7; Q5_0 (6) is now loaded. Remaining after Q5_0.
+        const Q5_1: i32 = 7;
         let bytes = write_gguf_with_type_ids(
             &[
                 ("general.alignment".into(), Kv::U32(32)),
@@ -1589,13 +1614,13 @@ mod tests {
                 shape: vec![1],
                 data: vec![0, 0, 0, 0],
             }],
-            &[Q5_0],
+            &[Q5_1],
         );
         let err = load_gguf(&bytes).expect_err("unsupported type");
         let msg = err.to_string();
         assert!(
-            msg.contains(&Q5_0.to_string()),
-            "error should include type id {Q5_0}: {msg}"
+            msg.contains(&Q5_1.to_string()),
+            "error should include type id {Q5_1}: {msg}"
         );
     }
 }
