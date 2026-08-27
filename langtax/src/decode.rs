@@ -1444,9 +1444,8 @@ fn pack_mxfp4_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
                 s = s.wrapping_mul(1_664_525).wrapping_add(1);
                 *q = u8::try_from(s % 16).unwrap_or(0);
             }
-            s = s.wrapping_mul(1_664_525).wrapping_add(1);
-            let e = u8::try_from(120 + s % 16).unwrap_or(127);
-            out.extend_from_slice(&pack_mxfp4_block(e, &qs));
+            // e=127 → GGML_E8M0_TO_FP32_HALF = 0.5 (same bar as Q5_1's fixed d).
+            out.extend_from_slice(&pack_mxfp4_block(127, &qs));
         }
     }
     out
