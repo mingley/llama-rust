@@ -6952,7 +6952,7 @@ pub fn dequant_q2_0_row(n_cols: usize, row: &[u8], y: &mut [f32]) -> Result<(), 
         for (byte_index, p) in qs.iter().enumerate() {
             let elem_base = x_base.saturating_add(byte_index.saturating_mul(4));
             for q_off in 0..4 {
-                let shift = u32::try_from(q_off.saturating_mul(2)).unwrap_or(0);
+                let shift = u32::try_from(q_off).unwrap_or(0).saturating_mul(2);
                 let q = (*p >> shift) & 0x03;
                 if let Some(slot) = y.get_mut(elem_base.saturating_add(q_off)) {
                     *slot = (f32::from(q) - 1.0) * d;
@@ -8226,7 +8226,7 @@ fn vec_dot_q2_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
                 continue;
             };
             for (q_off, xv) in x4.iter().enumerate() {
-                let shift = u32::try_from(q_off.saturating_mul(2)).unwrap_or(0);
+                let shift = u32::try_from(q_off).unwrap_or(0).saturating_mul(2);
                 let q = (*p >> shift) & 0x03;
                 sum += (f32::from(q) - 1.0) * d * *xv;
             }
