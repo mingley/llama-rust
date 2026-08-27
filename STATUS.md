@@ -6,19 +6,16 @@ for prompt, n_predict, and n_ctx”). After this commit, HEAD is this tree.
 HOLD: **do not claim a win vs llama.cpp.** This repository has **no
 llama.cpp binary** and **no tok/s table**. Do not invent llama.cpp numbers.
 
-GitHub About was lying (`measured vs llama.cpp`). The honest in-repo About
-is: safe Rust GGUF-native Llama decode; no llama.cpp bind; not rustformers/llm.
-No measurement vs llama.cpp exists in this tree.
-
-Tried `gh repo edit mingley/llama-rust --description '…'` as requested.
-Result: **HTTP 403 Resource not accessible by integration** (auth is the
-Cursor `cursor` integration, not a repo-settings token). The GitHub
-description field is **still the lie**. Required admin write:
+GitHub About still says `measured vs llama.cpp`. That is a repo-settings
+field, not a file. It still needs a repo-settings write to:
 
 `Safe Rust GGUF-native Llama decode. No llama.cpp bind. Not rustformers/llm.`
 
-CLI PRs: #1 closed unmerged. #2 is already on `main` (`4beae44`) and is
-**unsigned**. #3 stays draft / unsigned. Do not merge #3.
+The honest in-repo About is that sentence. No measurement vs llama.cpp
+exists in this tree.
+
+CLI: #2 is on `main` as `4beae44` (Kernel Integrity passed it as a CLI
+slice). #1 is closed. #3 stays draft. Do not merge #3.
 
 Worktree should be clean. No in-flight code beyond this docs/status pass.
 
@@ -82,4 +79,4 @@ cargo clippy --all-targets --all-features -- -D warnings
 
 Next code change should be item 1 (move weight bytes once; do not add
 `unsafe` or a mmap crate) unless prefill GEMM is the goal. Do not add
-crates.io runtime deps. Do not merge unsigned CLI drafts.
+crates.io runtime deps. #3 stays draft.
