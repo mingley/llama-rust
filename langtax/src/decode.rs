@@ -2,9 +2,9 @@
 
 use crate::gguf::{GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 use crate::quant::{
-    dequant_f32_row, dequant_q4_k_row, dequant_q6_k_row, f32_row_bytes, gemv_f32, gemv_q4_k_f32,
-    gemv_q6_k_f32, pack_f32, pack_q4_k_block, pack_q6_k_block, q4_k_row_bytes, q6_k_row_bytes,
-    QuantError, QK_K,
+    dequant_f32_row, dequant_q4_k_row, dequant_q6_k_row, f32_row_bytes, gemm_f32, gemm_q4_k_f32,
+    gemm_q6_k_f32, gemv_f32, gemv_q4_k_f32, gemv_q6_k_f32, pack_f32, pack_q4_k_block,
+    pack_q6_k_block, q4_k_row_bytes, q6_k_row_bytes, QuantError, QK_K,
 };
 use crate::tok::{TokError, Tokenizer};
 use crate::{write_gguf_with_kv, GGUF_DEFAULT_ALIGNMENT};
@@ -228,92 +228,99 @@ impl Llama {
 
     /// One decode step. Writes K/V at `cache.n_past` and increments it. Returns logits.
     pub fn forward(&self, cache: &mut KvCache, token: u32) -> Result<Vec<f32>, LlamaError> {
+        self.prefill(cache, &[token])
+    }
+
+    /// Decode `tokens` in one causal pass. Prompt tokens share each weight
+    /// row (GEMM; a single token stays GEMV). Writes K/V at
+    /// `cache.n_past .. n_past+len` and returns logits of the last token.
+    pub fn prefill(&self, cache: &mut KvCache, tokens: &[u32]) -> Result<Vec<f32>, LlamaError> {
+        let n = tokens.len();
+        if n == 0 {
+            return Err(LlamaError::Shape("prefill tokens".into()));
+        }
         let hd = self.head_dim()?;
-        if cache.n_past >= cache.max_seq {
+        let n0 = cache.n_past;
+        let end = n0
+            .checked_add(n)
+            .ok_or_else(|| LlamaError::Shape("kv cache full".into()))?;
+        if end > cache.max_seq {
             return Err(LlamaError::Shape("kv cache full".into()));
         }
-        let mut x = self.embed(token)?;
+        let mut x = Vec::new();
+        for tok in tokens {
+            x.extend(self.embed(*tok)?);
+        }
+        if x.len() != n.saturating_mul(self.n_embd) {
+            return Err(LlamaError::Shape("prefill embed".into()));
+        }
         for (li, layer) in self.layers.iter().enumerate() {
             let residual = x.clone();
-            x = rmsnorm(&x, &layer.attn_norm, self.rms_eps)?;
-            let q = add_bias(self.gemv_mat(&layer.wq, &x)?, layer.bq.as_deref())?;
-            let k = add_bias(self.gemv_mat(&layer.wk, &x)?, layer.bk.as_deref())?;
-            let v = add_bias(self.gemv_mat(&layer.wv, &x)?, layer.bv.as_deref())?;
-            let mut qh = split_heads(&q, self.n_head, hd)?;
-            let mut kh = split_heads(&k, self.n_head_kv, hd)?;
-            let vh = split_heads(&v, self.n_head_kv, hd)?;
-            for h in &mut qh {
-                rope(h, cache.n_past, self.n_rot, self.rope_base)?;
-            }
-            for h in &mut kh {
-                rope(h, cache.n_past, self.n_rot, self.rope_base)?;
-            }
-            store_kv(
-                &mut cache.k,
-                li,
-                self.n_head_kv,
-                cache.max_seq,
-                cache.n_past,
-                &kh,
+            x = rmsnorm_rows(&x, self.n_embd, &layer.attn_norm, self.rms_eps)?;
+            let q = add_bias_rows(
+                self.gemm_mat(&layer.wq, n, &x)?,
+                layer.wq.n_rows,
+                layer.bq.as_deref(),
             )?;
-            store_kv(
-                &mut cache.v,
-                li,
-                self.n_head_kv,
-                cache.max_seq,
-                cache.n_past,
-                &vh,
+            let k = add_bias_rows(
+                self.gemm_mat(&layer.wk, n, &x)?,
+                layer.wk.n_rows,
+                layer.bk.as_deref(),
             )?;
-            let seq = cache.n_past + 1;
-            let mut attn = vec![0.0f32; self.n_embd];
-            let scale = (f32::from(u16::try_from(hd).unwrap_or(1))).sqrt();
-            let inv = if scale > 0.0 { 1.0 / scale } else { 0.0 };
-            let gqa = self.n_head / self.n_head_kv;
-            for (hq, qvec) in qh.iter().enumerate() {
-                let hkv = hq / gqa;
-                let mut scores = vec![0.0f32; seq];
-                for t in 0..seq {
-                    let kv = kv_at(&cache.k, li, hkv, self.n_head_kv, cache.max_seq, t, hd)?;
-                    let mut dot = 0.0f32;
-                    for (a, b) in qvec.iter().zip(kv.iter()) {
-                        dot += *a * *b;
-                    }
-                    if let Some(s) = scores.get_mut(t) {
-                        *s = dot * inv;
-                    }
+            let v = add_bias_rows(
+                self.gemm_mat(&layer.wv, n, &x)?,
+                layer.wv.n_rows,
+                layer.bv.as_deref(),
+            )?;
+            for t in 0..n {
+                let pos = n0.saturating_add(t);
+                let k_t = token_row(&k, t, layer.wk.n_rows, "prefill k")?;
+                let v_t = token_row(&v, t, layer.wv.n_rows, "prefill v")?;
+                let mut kh = split_heads(k_t, self.n_head_kv, hd)?;
+                let vh = split_heads(v_t, self.n_head_kv, hd)?;
+                for h in &mut kh {
+                    rope(h, pos, self.n_rot, self.rope_base)?;
                 }
-                softmax(&mut scores);
-                let mut acc = vec![0.0f32; hd];
-                for t in 0..seq {
-                    let Some(&st) = scores.get(t) else { continue };
-                    let vv = kv_at(&cache.v, li, hkv, self.n_head_kv, cache.max_seq, t, hd)?;
-                    for (a, b) in acc.iter_mut().zip(vv.iter()) {
-                        *a += st * *b;
-                    }
+                store_kv(&mut cache.k, li, self.n_head_kv, cache.max_seq, pos, &kh)?;
+                store_kv(&mut cache.v, li, self.n_head_kv, cache.max_seq, pos, &vh)?;
+            }
+            let mut attn = vec![0.0f32; n.saturating_mul(self.n_embd)];
+            for t in 0..n {
+                let pos = n0.saturating_add(t);
+                let q_t = token_row(&q, t, layer.wq.n_rows, "prefill q")?;
+                let mut qh = split_heads(q_t, self.n_head, hd)?;
+                for h in &mut qh {
+                    rope(h, pos, self.n_rot, self.rope_base)?;
                 }
-                let off = hq.saturating_mul(hd);
-                if let Some(dst) = attn.get_mut(off..off + hd) {
-                    for (d, s) in dst.iter_mut().zip(acc.iter()) {
-                        *d = *s;
-                    }
+                let one = attend_query(cache, li, &qh, self.n_head_kv, hd, pos.saturating_add(1))?;
+                let dst_off = t.saturating_mul(self.n_embd);
+                let dst = attn
+                    .get_mut(dst_off..dst_off.saturating_add(self.n_embd))
+                    .ok_or_else(|| LlamaError::Shape("prefill attn".into()))?;
+                for (d, s) in dst.iter_mut().zip(one.iter()) {
+                    *d = *s;
                 }
             }
-            let proj = self.gemv_mat(&layer.wo, &attn)?;
+            let proj = self.gemm_mat(&layer.wo, n, &attn)?;
             x = add(&proj, &residual)?;
             let residual = x.clone();
-            x = rmsnorm(&x, &layer.ffn_norm, self.rms_eps)?;
-            let gate = self.gemv_mat(&layer.gate, &x)?;
-            let up = self.gemv_mat(&layer.up, &x)?;
+            x = rmsnorm_rows(&x, self.n_embd, &layer.ffn_norm, self.rms_eps)?;
+            let gate = self.gemm_mat(&layer.gate, n, &x)?;
+            let up = self.gemm_mat(&layer.up, n, &x)?;
             let mut h = silu(&gate)?;
             for (hv, uv) in h.iter_mut().zip(up.iter()) {
                 *hv *= *uv;
             }
-            let down = self.gemv_mat(&layer.down, &h)?;
+            let down = self.gemm_mat(&layer.down, n, &h)?;
             x = add(&down, &residual)?;
         }
-        x = rmsnorm(&x, &self.output_norm, self.rms_eps)?;
-        let logits = self.gemv_mat(&self.output, &x)?;
-        cache.n_past += 1;
+        let last_off = n.saturating_sub(1).saturating_mul(self.n_embd);
+        let last = x
+            .get(last_off..last_off.saturating_add(self.n_embd))
+            .ok_or_else(|| LlamaError::Shape("prefill last".into()))?;
+        let xn = rmsnorm(last, &self.output_norm, self.rms_eps)?;
+        let logits = self.gemv_mat(&self.output, &xn)?;
+        cache.n_past = end;
         Ok(logits)
     }
 }
@@ -354,10 +361,7 @@ pub fn greedy_generate_ctx(
         None => needed.saturating_add(1),
     };
     let mut cache = model.new_cache(max_seq)?;
-    let mut last = Vec::new();
-    for id in &ids {
-        last = model.forward(&mut cache, *id)?;
-    }
+    let mut last = model.prefill(&mut cache, &ids)?;
     for _ in 0..n_predict {
         let next = argmax(&last);
         if tok.eos == Some(next) {
@@ -823,6 +827,30 @@ fn quant_mat(t: Tensor<'_>) -> Result<QuantMat, LlamaError> {
 }
 
 impl Llama {
+    fn gemm_mat(&self, m: &QuantMat, n_tokens: usize, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
+        if n_tokens == 1 {
+            return self.gemv_mat(m, x);
+        }
+        let data = self.mat_bytes(m)?;
+        let n_out = m
+            .n_rows
+            .checked_mul(n_tokens)
+            .ok_or_else(|| LlamaError::Shape(m.name.clone()))?;
+        let mut y = vec![0.0f32; n_out];
+        match m.ty {
+            GgmlType::F32 => gemm_f32(m.n_cols, n_tokens, data, x, &mut y)?,
+            GgmlType::Q4_K => gemm_q4_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
+            GgmlType::Q6_K => gemm_q6_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
+            other => {
+                return Err(LlamaError::Type {
+                    tensor: m.name.clone(),
+                    ty: other.to_i32(),
+                })
+            }
+        }
+        Ok(y)
+    }
+
     fn gemv_mat(&self, m: &QuantMat, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
         let data = self.mat_bytes(m)?;
         let mut y = vec![0.0f32; m.n_rows];
@@ -878,6 +906,103 @@ impl Llama {
         }
         Ok(y)
     }
+}
+
+fn token_row<'a>(
+    x: &'a [f32],
+    t: usize,
+    width: usize,
+    what: &'static str,
+) -> Result<&'a [f32], LlamaError> {
+    let start = t
+        .checked_mul(width)
+        .ok_or_else(|| LlamaError::Shape(what.into()))?;
+    let end = start
+        .checked_add(width)
+        .ok_or_else(|| LlamaError::Shape(what.into()))?;
+    x.get(start..end)
+        .ok_or_else(|| LlamaError::Shape(what.into()))
+}
+
+fn rmsnorm_rows(x: &[f32], width: usize, w: &[f32], eps: f32) -> Result<Vec<f32>, LlamaError> {
+    if width == 0 || !x.len().is_multiple_of(width) {
+        return Err(LlamaError::Shape("rmsnorm".into()));
+    }
+    let mut out = Vec::new();
+    for row in x.chunks(width) {
+        out.extend(rmsnorm(row, w, eps)?);
+    }
+    Ok(out)
+}
+
+fn add_bias_rows(
+    mut x: Vec<f32>,
+    width: usize,
+    bias: Option<&[f32]>,
+) -> Result<Vec<f32>, LlamaError> {
+    let Some(b) = bias else {
+        return Ok(x);
+    };
+    if b.len() != width || width == 0 || !x.len().is_multiple_of(width) {
+        return Err(LlamaError::Shape("vector add".into()));
+    }
+    for row in x.chunks_mut(width) {
+        for (xv, bv) in row.iter_mut().zip(b.iter()) {
+            *xv += *bv;
+        }
+    }
+    Ok(x)
+}
+
+fn attend_query(
+    cache: &KvCache,
+    layer: usize,
+    qh: &[Vec<f32>],
+    n_head_kv: usize,
+    hd: usize,
+    seq: usize,
+) -> Result<Vec<f32>, LlamaError> {
+    if n_head_kv == 0 {
+        return Err(LlamaError::Shape("gqa".into()));
+    }
+    let n_embd = qh.len().saturating_mul(hd);
+    let mut attn = vec![0.0f32; n_embd];
+    let scale = (f32::from(u16::try_from(hd).unwrap_or(1))).sqrt();
+    let inv = if scale > 0.0 { 1.0 / scale } else { 0.0 };
+    let gqa = qh.len() / n_head_kv;
+    if gqa == 0 {
+        return Err(LlamaError::Shape("gqa".into()));
+    }
+    for (hq, qvec) in qh.iter().enumerate() {
+        let hkv = hq / gqa;
+        let mut scores = vec![0.0f32; seq];
+        for t in 0..seq {
+            let kv = kv_at(&cache.k, layer, hkv, n_head_kv, cache.max_seq, t, hd)?;
+            let mut dot = 0.0f32;
+            for (a, b) in qvec.iter().zip(kv.iter()) {
+                dot += *a * *b;
+            }
+            if let Some(s) = scores.get_mut(t) {
+                *s = dot * inv;
+            }
+        }
+        softmax(&mut scores);
+        let mut acc = vec![0.0f32; hd];
+        for t in 0..seq {
+            let Some(&st) = scores.get(t) else { continue };
+            let vv = kv_at(&cache.v, layer, hkv, n_head_kv, cache.max_seq, t, hd)?;
+            for (a, b) in acc.iter_mut().zip(vv.iter()) {
+                *a += st * *b;
+            }
+        }
+        let off = hq.saturating_mul(hd);
+        if let Some(dst) = attn.get_mut(off..off + hd) {
+            for (d, s) in dst.iter_mut().zip(acc.iter()) {
+                *d = *s;
+            }
+        }
+    }
+    Ok(attn)
 }
 
 fn rmsnorm(x: &[f32], w: &[f32], eps: f32) -> Result<Vec<f32>, LlamaError> {
@@ -951,13 +1076,6 @@ fn add(a: &[f32], b: &[f32]) -> Result<Vec<f32>, LlamaError> {
         return Err(LlamaError::Shape("vector add".into()));
     }
     Ok(a.iter().zip(b.iter()).map(|(x, y)| x + y).collect())
-}
-
-fn add_bias(x: Vec<f32>, bias: Option<&[f32]>) -> Result<Vec<f32>, LlamaError> {
-    match bias {
-        None => Ok(x),
-        Some(b) => add(&x, b),
-    }
 }
 
 fn split_heads(x: &[f32], n_head: usize, hd: usize) -> Result<Vec<Vec<f32>>, LlamaError> {
@@ -1231,6 +1349,11 @@ mod tests {
     }
 
     fn oracle_forward(g: &Gguf, token: u32) -> Vec<f32> {
+        oracle_forward_seq(g, &[token])
+    }
+
+    /// Independent scalar Llama math for a token sequence (causal attn + GQA).
+    fn oracle_forward_seq(g: &Gguf, tokens: &[u32]) -> Vec<f32> {
         let arch = architecture(g).expect("arch");
         let n_embd = arch_u32(g, arch, "embedding_length").unwrap() as usize;
         let n_head = arch_u32(g, arch, "attention.head_count").unwrap() as usize;
@@ -1239,59 +1362,89 @@ mod tests {
         let eps = arch_f32(g, arch, "attention.layer_norm_rms_epsilon").unwrap();
         let base = arch_f32(g, arch, "rope.freq_base").unwrap();
         let hd = n_embd / n_head;
-        let emb = g.tensor("token_embd.weight").unwrap();
-        let residual = oracle_embed(emb, token);
-        let an = f32s(g.tensor("blk.0.attn_norm.weight").unwrap()).unwrap();
-        let x = oracle_rmsnorm(&residual, &an, eps);
-        let q = oracle_add_bias(
-            oracle_gemv(g.tensor("blk.0.attn_q.weight").unwrap(), &x),
-            g.tensor("blk.0.attn_q.bias"),
-        );
-        let k = oracle_add_bias(
-            oracle_gemv(g.tensor("blk.0.attn_k.weight").unwrap(), &x),
-            g.tensor("blk.0.attn_k.bias"),
-        );
-        let v = oracle_add_bias(
-            oracle_gemv(g.tensor("blk.0.attn_v.weight").unwrap(), &x),
-            g.tensor("blk.0.attn_v.bias"),
-        );
-        let mut qh: Vec<Vec<f32>> = q.chunks(hd).map(<[f32]>::to_vec).collect();
-        let mut kh: Vec<Vec<f32>> = k.chunks(hd).map(<[f32]>::to_vec).collect();
-        let vh: Vec<Vec<f32>> = v.chunks(hd).map(<[f32]>::to_vec).collect();
-        for h in &mut qh {
-            *h = oracle_rope(h.clone(), 0, n_rot, base);
-        }
-        for h in &mut kh {
-            *h = oracle_rope(h.clone(), 0, n_rot, base);
-        }
         let gqa = n_head / n_kv;
-        let mut attn = vec![0.0f32; n_embd];
-        // seq=1: softmax of a single score is 1, so attn = v_head (GQA).
-        for (hq, _) in qh.iter().enumerate() {
-            let hkv = hq / gqa;
-            let off = hq * hd;
-            if let Some(dst) = attn.get_mut(off..off + hd) {
-                for (d, s) in dst.iter_mut().zip(vh[hkv].iter()) {
-                    *d = *s;
-                }
+        let emb = g.tensor("token_embd.weight").unwrap();
+        let mut k_cache: Vec<Vec<Vec<f32>>> = vec![Vec::new(); n_kv];
+        let mut v_cache: Vec<Vec<Vec<f32>>> = vec![Vec::new(); n_kv];
+        let mut last = Vec::new();
+        for (pos, &token) in tokens.iter().enumerate() {
+            let residual = oracle_embed(emb, token);
+            let an = f32s(g.tensor("blk.0.attn_norm.weight").unwrap()).unwrap();
+            let x = oracle_rmsnorm(&residual, &an, eps);
+            let q = oracle_add_bias(
+                oracle_gemv(g.tensor("blk.0.attn_q.weight").unwrap(), &x),
+                g.tensor("blk.0.attn_q.bias"),
+            );
+            let k = oracle_add_bias(
+                oracle_gemv(g.tensor("blk.0.attn_k.weight").unwrap(), &x),
+                g.tensor("blk.0.attn_k.bias"),
+            );
+            let v = oracle_add_bias(
+                oracle_gemv(g.tensor("blk.0.attn_v.weight").unwrap(), &x),
+                g.tensor("blk.0.attn_v.bias"),
+            );
+            let mut qh: Vec<Vec<f32>> = q.chunks(hd).map(<[f32]>::to_vec).collect();
+            let mut kh: Vec<Vec<f32>> = k.chunks(hd).map(<[f32]>::to_vec).collect();
+            let vh: Vec<Vec<f32>> = v.chunks(hd).map(<[f32]>::to_vec).collect();
+            for h in &mut qh {
+                *h = oracle_rope(h.clone(), pos, n_rot, base);
             }
+            for h in &mut kh {
+                *h = oracle_rope(h.clone(), pos, n_rot, base);
+            }
+            for (hkv, khv) in kh.iter().enumerate() {
+                k_cache[hkv].push(khv.clone());
+                v_cache[hkv].push(vh[hkv].clone());
+            }
+            let seq = pos + 1;
+            let inv = 1.0 / (hd as f32).sqrt();
+            let mut attn = vec![0.0f32; n_embd];
+            for (hq, qvec) in qh.iter().enumerate() {
+                let hkv = hq / gqa;
+                let mut scores = vec![0.0f32; seq];
+                for t in 0..seq {
+                    let kv = &k_cache[hkv][t];
+                    scores[t] = qvec.iter().zip(kv.iter()).map(|(a, b)| a * b).sum::<f32>() * inv;
+                }
+                let m = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                let mut s = 0.0f32;
+                for v in &mut scores {
+                    *v = (*v - m).exp();
+                    s += *v;
+                }
+                if s > 0.0 {
+                    for v in &mut scores {
+                        *v /= s;
+                    }
+                }
+                let mut acc = vec![0.0f32; hd];
+                for t in 0..seq {
+                    let st = scores[t];
+                    for (a, b) in acc.iter_mut().zip(v_cache[hkv][t].iter()) {
+                        *a += st * *b;
+                    }
+                }
+                let off = hq * hd;
+                attn[off..off + hd].copy_from_slice(&acc);
+            }
+            let mut x = oracle_gemv(g.tensor("blk.0.attn_output.weight").unwrap(), &attn);
+            x = x.iter().zip(residual.iter()).map(|(a, b)| a + b).collect();
+            let fnorm = f32s(g.tensor("blk.0.ffn_norm.weight").unwrap()).unwrap();
+            let xn = oracle_rmsnorm(&x, &fnorm, eps);
+            let gate = oracle_gemv(g.tensor("blk.0.ffn_gate.weight").unwrap(), &xn);
+            let up = oracle_gemv(g.tensor("blk.0.ffn_up.weight").unwrap(), &xn);
+            let h: Vec<f32> = gate
+                .iter()
+                .zip(up.iter())
+                .map(|(g, u)| (g / (1.0 + (-g).exp())) * u)
+                .collect();
+            let down = oracle_gemv(g.tensor("blk.0.ffn_down.weight").unwrap(), &h);
+            x = down.iter().zip(x.iter()).map(|(a, b)| a + b).collect();
+            let on = f32s(g.tensor("output_norm.weight").unwrap()).unwrap();
+            x = oracle_rmsnorm(&x, &on, eps);
+            last = oracle_gemv(g.tensor("output.weight").unwrap(), &x);
         }
-        let mut x = oracle_gemv(g.tensor("blk.0.attn_output.weight").unwrap(), &attn);
-        x = x.iter().zip(residual.iter()).map(|(a, b)| a + b).collect();
-        let fnorm = f32s(g.tensor("blk.0.ffn_norm.weight").unwrap()).unwrap();
-        let xn = oracle_rmsnorm(&x, &fnorm, eps);
-        let gate = oracle_gemv(g.tensor("blk.0.ffn_gate.weight").unwrap(), &xn);
-        let up = oracle_gemv(g.tensor("blk.0.ffn_up.weight").unwrap(), &xn);
-        let h: Vec<f32> = gate
-            .iter()
-            .zip(up.iter())
-            .map(|(g, u)| (g / (1.0 + (-g).exp())) * u)
-            .collect();
-        let down = oracle_gemv(g.tensor("blk.0.ffn_down.weight").unwrap(), &h);
-        x = down.iter().zip(x.iter()).map(|(a, b)| a + b).collect();
-        let on = f32s(g.tensor("output_norm.weight").unwrap()).unwrap();
-        x = oracle_rmsnorm(&x, &on, eps);
-        oracle_gemv(g.tensor("output.weight").unwrap(), &x)
+        last
     }
 
     fn assert_logits_match(got: &[f32], exp: &[f32]) {
@@ -1310,6 +1463,18 @@ mod tests {
         let exp = oracle_forward(&g, token);
         assert_logits_match(&got, &exp);
         assert_eq!(cache.n_past, 1);
+    }
+
+    fn load_prefill_match(bytes: &[u8], tokens: &[u32]) {
+        let g = load_gguf(bytes).expect("load");
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        let mut cache = model
+            .new_cache(tokens.len().saturating_add(2))
+            .expect("cache");
+        let got = model.prefill(&mut cache, tokens).expect("prefill");
+        let exp = oracle_forward_seq(&g, tokens);
+        assert_logits_match(&got, &exp);
+        assert_eq!(cache.n_past, tokens.len());
     }
 
     #[test]
@@ -1434,6 +1599,40 @@ mod tests {
         assert_eq!(g.tensor("token_embd.weight").unwrap().ty, GgmlType::Q6_K);
         assert_eq!(g.tensor("output.weight").unwrap().ty, GgmlType::Q6_K);
         load_fwd_match(&bytes, 3);
+    }
+
+    #[test]
+    fn prefill_prompt_logits_match_independent_oracle() {
+        let tokens = [1u32, 2, 3];
+        for bytes in [
+            tiny_llama_gguf(),
+            tiny_qwen2_gguf(),
+            tiny_q4k_embd_gguf(),
+            tiny_q6k_embd_gguf(),
+        ] {
+            load_prefill_match(&bytes, &tokens);
+            load_prefill_match(&bytes, &[3]);
+        }
+    }
+
+    #[test]
+    fn prefill_logits_match_token_by_token_forward() {
+        let tokens = [4u32, 3, 1];
+        let bytes = tiny_llama_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        let mut batched = model.new_cache(8).expect("c1");
+        let pref = model.prefill(&mut batched, &tokens).expect("prefill");
+        let model2 = Llama::from_gguf(load_gguf(&bytes).expect("reload")).expect("m2");
+        let mut step = model2.new_cache(8).expect("c2");
+        let mut last = Vec::new();
+        for t in tokens {
+            last = model2.forward(&mut step, t).expect("fwd");
+        }
+        assert_logits_match(&pref, &last);
+        assert_eq!(batched.n_past, step.n_past);
+        let exp = oracle_forward_seq(&g, &tokens);
+        assert_logits_match(&pref, &exp);
     }
 
     #[test]

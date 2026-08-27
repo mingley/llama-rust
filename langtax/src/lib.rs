@@ -20,10 +20,11 @@ pub use gguf::{
     Tensor, TensorWrite, GGUF_DEFAULT_ALIGNMENT,
 };
 pub use quant::{
-    dequant_f32_row, dequant_q4_k_row, dequant_q6_k_row, f32_row_bytes, gemv_f32, gemv_q4_0,
-    gemv_q4_k, gemv_q4_k_f32, gemv_q6_k_f32, gemv_q8_0, pack_f32, pack_q4_0_block,
-    pack_q4_0_from_i4, pack_q4_k_block, pack_q6_k_block, pack_q8_0_block, pack_q8_k_block,
-    q4_0_row_bytes, q4_k_row_bytes, q6_k_row_bytes, q8_0_row_bytes, q8_k_row_bytes, QuantError,
-    F32_SIZE, Q4_0_BLOCK, Q4_K_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK8_0, QK_K,
+    dequant_f32_row, dequant_q4_k_row, dequant_q6_k_row, f32_row_bytes, gemm_f32, gemm_q4_k_f32,
+    gemm_q6_k_f32, gemv_f32, gemv_q4_0, gemv_q4_k, gemv_q4_k_f32, gemv_q6_k_f32, gemv_q8_0,
+    pack_f32, pack_q4_0_block, pack_q4_0_from_i4, pack_q4_k_block, pack_q6_k_block,
+    pack_q8_0_block, pack_q8_k_block, q4_0_row_bytes, q4_k_row_bytes, q6_k_row_bytes,
+    q8_0_row_bytes, q8_k_row_bytes, QuantError, F32_SIZE, Q4_0_BLOCK, Q4_K_BLOCK, Q6_K_BLOCK,
+    Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK8_0, QK_K,
 };
 pub use tok::{TokError, Tokenizer};
