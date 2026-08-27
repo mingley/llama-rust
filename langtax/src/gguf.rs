@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::fmt;
 
 use crate::quant::{
-    F16_SIZE, F32_SIZE, IQ4_XS_BLOCK, Q4_0_BLOCK, Q4_K_BLOCK, Q5_K_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK,
-    Q8_K_BLOCK, QK4_0, QK8_0, QK_K,
+    F16_SIZE, F32_SIZE, IQ4_NL_BLOCK, IQ4_XS_BLOCK, Q4_0_BLOCK, Q4_K_BLOCK, Q5_K_BLOCK, Q6_K_BLOCK,
+    Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK4_NL, QK8_0, QK_K,
 };
 
 /// GGUF magic `GGUF`.
@@ -39,6 +39,9 @@ pub enum GgmlType {
     /// `GGML_TYPE_Q8_K`.
     #[expect(non_camel_case_types, reason = "matches ggml GGML_TYPE_Q8_K")]
     Q8_K = 15,
+    /// `GGML_TYPE_IQ4_NL`.
+    #[expect(non_camel_case_types, reason = "matches ggml GGML_TYPE_IQ4_NL")]
+    IQ4_NL = 20,
     /// `GGML_TYPE_IQ4_XS`.
     #[expect(non_camel_case_types, reason = "matches ggml GGML_TYPE_IQ4_XS")]
     IQ4_XS = 23,
@@ -55,6 +58,7 @@ impl GgmlType {
             13 => Ok(Self::Q5_K),
             14 => Ok(Self::Q6_K),
             15 => Ok(Self::Q8_K),
+            20 => Ok(Self::IQ4_NL),
             23 => Ok(Self::IQ4_XS),
             other => Err(GgufError::UnsupportedType(other)),
         }
@@ -71,6 +75,7 @@ impl GgmlType {
             Self::Q5_K => 13,
             Self::Q6_K => 14,
             Self::Q8_K => 15,
+            Self::IQ4_NL => 20,
             Self::IQ4_XS => 23,
         }
     }
@@ -85,6 +90,7 @@ impl GgmlType {
             Self::Q5_K => (Q5_K_BLOCK, QK_K),
             Self::Q6_K => (Q6_K_BLOCK, QK_K),
             Self::Q8_K => (Q8_K_BLOCK, QK_K),
+            Self::IQ4_NL => (IQ4_NL_BLOCK, QK4_NL),
             Self::IQ4_XS => (IQ4_XS_BLOCK, QK_K),
         }
     }
@@ -115,7 +121,7 @@ pub enum GgufError {
     Truncated,
     /// A GGUF string was not valid UTF-8.
     Utf8,
-    /// Tensor `ggml_type` is not F32, F16, Q4_0, Q8_0, Q4_K, Q5_K, Q6_K, Q8_K, or IQ4_XS.
+    /// Tensor `ggml_type` is not F32, F16, Q4_0, Q8_0, Q4_K, Q5_K, Q6_K, Q8_K, IQ4_NL, or IQ4_XS.
     UnsupportedType(i32),
     /// KV type is not a GGUF v3 value type.
     UnsupportedKv(i32),
@@ -688,10 +694,10 @@ mod tests {
     use super::*;
     use crate::fp16::load_f16_le;
     use crate::quant::{
-        gemv_q4_0, gemv_q4_k, gemv_q8_0, i8_from_bits, pack_f16, pack_f32, pack_iq4_xs_block,
-        pack_q4_0_from_i4, pack_q4_k_block, pack_q5_k_block, pack_q6_k_block, pack_q8_0_block,
-        pack_q8_k_block, IQ4_XS_BLOCK, Q4_0_BLOCK, Q4_K_BLOCK, Q5_K_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK,
-        Q8_K_BLOCK, QK4_0, QK8_0, QK_K,
+        gemv_q4_0, gemv_q4_k, gemv_q8_0, i8_from_bits, pack_f16, pack_f32, pack_iq4_nl_block,
+        pack_iq4_xs_block, pack_q4_0_from_i4, pack_q4_k_block, pack_q5_k_block, pack_q6_k_block,
+        pack_q8_0_block, pack_q8_k_block, IQ4_NL_BLOCK, IQ4_XS_BLOCK, Q4_0_BLOCK, Q4_K_BLOCK,
+        Q5_K_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK4_NL, QK8_0, QK_K,
     };
 
     fn independent_q8_dot(w: &[u8], x: &[u8]) -> f32 {
@@ -1195,6 +1201,26 @@ mod tests {
     }
 
     #[test]
+    fn write_load_iq4nl_matches_file_bytes() {
+        let mut qs = [0u8; QK4_NL];
+        qs[0] = 3;
+        qs[16] = 12;
+        let iq = pack_iq4_nl_block(1.0, &qs);
+        let bytes = write_gguf(&[TensorWrite {
+            name: "w_iq4nl".into(),
+            ty: GgmlType::IQ4_NL,
+            shape: vec![32, 1],
+            data: iq.to_vec(),
+        }]);
+        let g = load_gguf(&bytes).expect("load iq4nl");
+        let t = g.tensor("w_iq4nl").expect("w_iq4nl");
+        assert_eq!(t.ty, GgmlType::IQ4_NL);
+        assert_eq!(t.ty.to_i32(), 20);
+        assert_eq!(t.data.len(), IQ4_NL_BLOCK);
+        assert_eq!(t.data, iq.to_vec());
+    }
+
+    #[test]
     fn write_load_iq4xs_matches_file_bytes() {
         let mut qs = [0u8; QK_K];
         qs[0] = 3;
@@ -1240,7 +1266,7 @@ mod tests {
 
     #[test]
     fn load_unsupported_ggml_type_error_includes_type_id() {
-        // ggml IQ2_XXS is 16; remaining IQ* stay rejected after IQ4_XS shipped.
+        // ggml IQ2_XXS is 16; remaining IQ* stay rejected after IQ4_NL shipped.
         const IQ2_XXS: i32 = 16;
         let bytes = write_gguf_with_type_ids(
             &[
