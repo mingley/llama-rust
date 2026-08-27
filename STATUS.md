@@ -10,7 +10,7 @@ Local: `~/dev/llama-rust-perf`
 
 - `forbid(unsafe_code)`, no llama.cpp/FFI, `Cargo.lock` crate-only (no SIMD crates, no rayon).
 - GGUF v3: F32, F16, Q4_0, Q8_0, Q4_K, Q5_K, Q6_K, Q8_K. Kernels read on-disk bytes (no private f32-scale copy).
-- F16 is IEEE binary16 (`GGML_TYPE_F16` = 1). Writer-built tiny uses F16 for 2-D weights (`token_embd`, `output`, attn/ffn); 1-D norms stay F32. Load/GEMV/GEMM/embed logits match an independent scalar of the same ggml `ggml_fp16_to_fp32` math. Kernel Integrity has not signed it. No tok/s.
+- F16 is IEEE binary16 (`GGML_TYPE_F16` = 1). Writer-built tiny uses F16 for 2-D weights (`token_embd`, `output`, attn/ffn); 1-D norms stay F32. Load/GEMV/GEMM/embed logits match an independent scalar of the same ggml `ggml_fp16_to_fp32` math. No tok/s.
 - Q5_K is `GGML_TYPE_Q5_K` = 13 (176-byte `block_q5_K`). Writer-built tiny uses Q5_K for 2-D weights (`token_embd`, `output`, attn/ffn); 1-D norms stay F32. Load/GEMV/GEMM/embed logits match an independent scalar of the same ggml `dequantize_row_q5_K` walk (`d*sc*q5 - dmin*m`, `qh` 5th bit). Kernel Integrity has not signed it. No tok/s.
 - Decode: RMSNorm, RoPE, GQA+KV, SwiGLU, lm_head, greedy sample by default.
 - **Sampling.** Seedless greedy (`temperature <= 0`, argmax, first index on ties) is still the `infer` / `greedy_generate` path. `SampleParams` + `generate` add temperature, top-k, top-p, and unique-id repeat penalty (`logit > 0` then `/=`, else `*=`). Stochastic draws use SplitMix64 and require a seed. No CLI sampling flags.
