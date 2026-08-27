@@ -39,6 +39,8 @@ pub enum LlamaError {
     Gguf(GgufError),
     /// Tokenizer failed.
     Tok(TokError),
+    /// `--prompt` was empty (no tokens to decode).
+    EmptyPrompt,
 }
 
 impl std::fmt::Display for LlamaError {
@@ -53,6 +55,7 @@ impl std::fmt::Display for LlamaError {
             Self::Quant(e) => write!(f, "{e}"),
             Self::Gguf(e) => write!(f, "{e}"),
             Self::Tok(e) => write!(f, "{e}"),
+            Self::EmptyPrompt => write!(f, "empty prompt"),
         }
     }
 }
@@ -299,14 +302,40 @@ impl Llama {
 }
 
 /// Greedy generate: encode prompt, decode `n_predict` tokens, return decoded string.
+///
+/// KV is sized to `prompt + n_predict + 1`. See [`greedy_generate_ctx`] to set `--n-ctx`.
 pub fn greedy_generate(
     model: &Llama,
     tok: &Tokenizer,
     prompt: &str,
     n_predict: usize,
 ) -> Result<String, LlamaError> {
+    greedy_generate_ctx(model, tok, prompt, n_predict, None)
+}
+
+/// Seedless greedy generate with optional KV capacity (`--n-ctx`).
+///
+/// `n_ctx` must be at least prompt tokens + `n_predict`. `None` uses prompt + `n_predict` + 1.
+pub fn greedy_generate_ctx(
+    model: &Llama,
+    tok: &Tokenizer,
+    prompt: &str,
+    n_predict: usize,
+    n_ctx: Option<usize>,
+) -> Result<String, LlamaError> {
+    if prompt.is_empty() {
+        return Err(LlamaError::EmptyPrompt);
+    }
     let mut ids = prompt_ids(tok, prompt)?;
-    let max_seq = ids.len().saturating_add(n_predict).saturating_add(1);
+    if ids.is_empty() {
+        return Err(LlamaError::EmptyPrompt);
+    }
+    let needed = ids.len().saturating_add(n_predict);
+    let max_seq = match n_ctx {
+        Some(n) if n < needed => return Err(LlamaError::Shape("n_ctx".into())),
+        Some(n) => n,
+        None => needed.saturating_add(1),
+    };
     let mut cache = model.new_cache(max_seq)?;
     let mut last = Vec::new();
     for id in &ids {
@@ -1286,6 +1315,28 @@ mod tests {
         assert!(out.contains("ab"), "{out}");
         let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
         assert_eq!(out, out2);
+    }
+
+    #[test]
+    fn greedy_prompt_and_n_predict_are_inputs_not_hardcoded() {
+        let bytes = tiny_llama_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(&g).expect("model");
+        assert_eq!(greedy_generate(&model, &tok, "a", 0).expect("a"), "a");
+        assert_eq!(greedy_generate(&model, &tok, "b", 0).expect("b"), "b");
+        assert_eq!(greedy_generate(&model, &tok, "ab", 0).expect("ab"), "ab");
+        let err = greedy_generate(&model, &tok, "", 2).expect_err("empty");
+        assert!(err.to_string().contains("empty prompt"), "{err}");
+        let q = load_gguf(&tiny_qwen2_gguf()).expect("qwen2");
+        let qtok = Tokenizer::from_gguf(&q).expect("qtok");
+        let qmodel = Llama::from_gguf(&q).expect("qmodel");
+        assert_eq!(
+            greedy_generate_ctx(&qmodel, &qtok, "ab", 0, Some(1)).expect("n_ctx=1"),
+            "ab"
+        );
+        let short = greedy_generate_ctx(&model, &tok, "ab", 2, Some(1)).expect_err("n_ctx");
+        assert!(short.to_string().contains("n_ctx"), "{short}");
     }
 
     #[test]

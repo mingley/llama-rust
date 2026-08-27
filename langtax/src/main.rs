@@ -7,9 +7,10 @@ use std::path::Path;
 use std::time::Instant;
 
 use llama_rust::{
-    gemv_q4_k, gemv_q8_0, greedy_generate, load_gguf, pack_q4_k_block, pack_q8_0_block,
-    pack_q8_k_block, tiny_llama_gguf, tiny_qwen2_gguf, write_gguf, write_gguf_with_kv, GgmlType,
-    Kv, Llama, TensorWrite, Tokenizer, QK8_0, QK_K,
+    gemv_q4_k, gemv_q8_0, greedy_generate_ctx, load_gguf, pack_q4_k_block, pack_q8_0_block,
+    pack_q8_k_block, parse_infer_args, tiny_llama_gguf, tiny_qwen2_gguf, write_gguf,
+    write_gguf_with_kv, GgmlType, InferArgs, InferCmd, Kv, Llama, TensorWrite, Tokenizer,
+    BIN_USAGE, INFER_USAGE, QK8_0, QK_K,
 };
 
 fn y_checksum(y: &[f32]) -> u64 {
@@ -209,13 +210,13 @@ fn gemv_q4k_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn infer_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = read_path(path)?;
+fn infer_file(args: &InferArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = read_path(Path::new(&args.path))?;
     let g = load_gguf(&bytes)?;
     let model = Llama::from_gguf(&g)?;
     let tok = Tokenizer::from_gguf(&g)?;
-    let text = greedy_generate(&model, &tok, "ab", 2)?;
-    println!("prompt=ab n_predict=2");
+    let text = greedy_generate_ctx(&model, &tok, &args.prompt, args.n_predict, args.n_ctx)?;
+    println!("prompt={} n_predict={}", args.prompt, args.n_predict);
     println!("generated={text}");
     Ok(())
 }
@@ -224,6 +225,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
     let cmd = args.next().unwrap_or_else(|| "gemv".into());
     match cmd.as_str() {
+        "help" | "--help" | "-h" => {
+            print!("{BIN_USAGE}");
+            Ok(())
+        }
         "write" => {
             let path = args.next().ok_or("write <path>")?;
             let n_cols = 4096usize;
@@ -262,14 +267,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             println!("wrote {path} bytes={}", bytes.len());
             Ok(())
         }
-        "infer" => {
-            let path = args.next().ok_or("infer <path>")?;
-            infer_file(Path::new(&path))
-        }
-        other => Err(format!(
-            "usage: gguf_gemv write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|infer <path> (got {other})"
-        )
-        .into()),
+        "infer" => match parse_infer_args(args)? {
+            InferCmd::Help => {
+                print!("{INFER_USAGE}");
+                Ok(())
+            }
+            InferCmd::Run(opts) => infer_file(&opts),
+        },
+        other => Err(format!("{BIN_USAGE}got {other}").into()),
     }
 }
 
