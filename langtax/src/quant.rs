@@ -1,4 +1,4 @@
-//! GGUF on-disk F16 / BF16 / Q4_0 / Q4_1 / Q5_0 / Q5_1 / Q8_0 / Q2_K / Q3_K / Q4_K / Q5_K / Q6_K / Q8_K / IQ1_M / IQ1_S / IQ2_XXS / IQ2_XS / IQ2_S / IQ3_XXS / IQ3_S / IQ4_NL / IQ4_XS / MXFP4 blocks. GEMV reads those bytes; no f32-scale copy.
+//! GGUF on-disk F16 / BF16 / Q4_0 / Q4_1 / Q5_0 / Q5_1 / Q8_0 / Q2_K / Q3_K / Q4_K / Q5_K / Q6_K / Q8_K / IQ1_M / IQ1_S / IQ2_XXS / IQ2_XS / IQ2_S / IQ3_XXS / IQ3_S / IQ4_NL / IQ4_XS / MXFP4 / NVFP4 blocks. GEMV reads those bytes; no f32-scale copy.
 
 use std::fmt;
 
@@ -29,6 +29,12 @@ pub const Q5_1_BLOCK: usize = 2 + 2 + 4 + QK5_1 / 2;
 pub const QK_MXFP4: usize = 32;
 /// ggml `block_mxfp4`: E8M0 `e` + `uint8 qs[16]` (17 bytes / 32 weights).
 pub const MXFP4_BLOCK: usize = 1 + QK_MXFP4 / 2;
+/// ggml `QK_NVFP4` super-block width in elements (`block_nvfp4`).
+pub const QK_NVFP4: usize = 64;
+/// ggml `QK_NVFP4_SUB`: 16-element sub-block with one UE4M3 scale.
+pub(crate) const QK_NVFP4_SUB: usize = 16;
+/// ggml `block_nvfp4`: 4 UE4M3 `d` + `uint8 qs[32]` (36 bytes / 64 weights).
+pub const NVFP4_BLOCK: usize = QK_NVFP4 / QK_NVFP4_SUB + QK_NVFP4 / 2;
 /// ggml super-block width (`QK_K`).
 pub const QK_K: usize = 256;
 /// ggml `K_SCALE_SIZE`: packed 6-bit scales/mins for 8 Q4_K sub-blocks.
@@ -71,7 +77,7 @@ const IQ1S_DELTA: f32 = 0.125;
 const KVALUES_IQ4NL: [i8; 16] = [
     -127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113,
 ];
-/// ggml `kvalues_mxfp4` / `kvalues_fp4` (E2M1 values doubled).
+/// ggml `kvalues_fp4` / `kvalues_mxfp4` (E2M1 values doubled; shared by MXFP4 and NVFP4).
 const KVALUES_MXFP4: [i8; 16] = [0, 1, 2, 3, 4, 6, 8, 12, 0, -1, -2, -3, -4, -6, -8, -12];
 /// ggml `iq3xxs_grid` (256 × 4 packed uint8 magnitudes).
 pub(crate) const IQ3XXS_GRID: [u32; 256] = [
@@ -4153,6 +4159,17 @@ pub fn mxfp4_row_bytes(n_cols: usize) -> Result<usize, QuantError> {
     Ok((n_cols / QK_MXFP4) * MXFP4_BLOCK)
 }
 
+/// Packed NVFP4 bytes for one matrix row of `n_cols` columns.
+pub fn nvfp4_row_bytes(n_cols: usize) -> Result<usize, QuantError> {
+    if !n_cols.is_multiple_of(QK_NVFP4) {
+        return Err(QuantError::UnalignedCols {
+            n_cols,
+            block: QK_NVFP4,
+        });
+    }
+    Ok((n_cols / QK_NVFP4) * NVFP4_BLOCK)
+}
+
 /// Pack one Q8_0 block: binary16 scale + 32 signed `qs` bytes.
 pub fn pack_q8_0_block(scale: f32, qs: &[i8; QK8_0]) -> [u8; Q8_0_BLOCK] {
     let mut out = [0u8; Q8_0_BLOCK];
@@ -4304,6 +4321,35 @@ pub fn pack_q5_1_block(d: f32, m: f32, qs_i5: &[u8; QK5_1]) -> [u8; Q5_1_BLOCK] 
     let qhb = qh.to_le_bytes();
     if let Some(dst) = out.get_mut(4..8) {
         dst.copy_from_slice(&qhb);
+    }
+    out
+}
+
+/// Pack one NVFP4 super-block: 4 UE4M3 `d`, 64 E2M1 nibble indices.
+///
+/// `qs_i4[i]` is 0..=15 in element order (`dequantize_row_nvfp4`:
+/// four 16-wide sub-blocks; lo nibble is `yb[j]`, hi nibble is `yb[j+8]`,
+/// `j < 8`; `x = kvalues_fp4[q] * ggml_ue4m3_to_fp32(d[s])`).
+pub fn pack_nvfp4_block(d: [u8; 4], qs_i4: &[u8; QK_NVFP4]) -> [u8; NVFP4_BLOCK] {
+    let mut out = [0u8; NVFP4_BLOCK];
+    if let Some(dst) = out.get_mut(..4) {
+        dst.copy_from_slice(&d);
+    }
+    for s in 0usize..4 {
+        let elem_base = s.saturating_mul(QK_NVFP4_SUB);
+        let Some(lo) = qs_i4.get(elem_base..elem_base.saturating_add(8)) else {
+            return out;
+        };
+        let Some(hi) = qs_i4.get(elem_base.saturating_add(8)..elem_base.saturating_add(16)) else {
+            return out;
+        };
+        let qs_off = 4usize.saturating_add(s.saturating_mul(8));
+        let Some(qs_dst) = out.get_mut(qs_off..qs_off.saturating_add(8)) else {
+            return out;
+        };
+        for ((slot, l), h) in qs_dst.iter_mut().zip(lo.iter()).zip(hi.iter()) {
+            *slot = (l & 0x0f) | ((h & 0x0f) << 4);
+        }
     }
     out
 }
@@ -5354,12 +5400,30 @@ fn kvalue_iq4nl(nibble: u8) -> i8 {
         .unwrap_or(0)
 }
 
-/// ggml `kvalues_mxfp4[nibble]` (E2M1 values doubled).
+/// ggml `kvalues_fp4[nibble]` (E2M1 values doubled; MXFP4 / NVFP4).
 fn kvalue_mxfp4(nibble: u8) -> i8 {
     KVALUES_MXFP4
         .get(usize::from(nibble & 0x0f))
         .copied()
         .unwrap_or(0)
+}
+
+/// ggml `ggml_ue4m3_to_fp32`: unsigned E4M3 (4 exp bits, bias 7, 3 mantissa).
+///
+/// Returns `raw * 0.5` so `kvalues_fp4[q] * d` matches E2M1 × UE4M3 scale
+/// (`kvalues_fp4` stores doubled E2M1). `0` and `0x7F` decode to 0.
+fn ue4m3_to_fp32(x: u8) -> f32 {
+    if x == 0 || x == 0x7f {
+        return 0.0;
+    }
+    let exp = i32::from((x >> 3) & 0x0f);
+    let man = f32::from(x & 0x07);
+    let raw = if exp == 0 {
+        man * 2f32.powi(-9)
+    } else {
+        (1.0 + man / 8.0) * 2f32.powi(exp - 7)
+    };
+    raw * 0.5
 }
 
 /// ggml `ggml_e8m0_to_fp32_half` / `GGML_E8M0_TO_FP32_HALF`.
@@ -5718,6 +5782,20 @@ pub fn gemm_mxfp4_f32(
     gemm_f32_x(GemmKind::MXFP4, n_cols, n_tokens, w, x, y)
 }
 
+/// `Y[t, r] = W_nvfp4[r, n_cols] · X[t, n_cols]`. Token-major `x` / `y`.
+pub fn gemm_nvfp4_f32(
+    n_cols: usize,
+    n_tokens: usize,
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+) -> Result<(), QuantError> {
+    if n_tokens == 1 {
+        return gemv_nvfp4_f32(n_cols, w, x, y);
+    }
+    gemm_f32_x(GemmKind::NVFP4, n_cols, n_tokens, w, x, y)
+}
+
 /// `Y[t, r] = W_iq4xs[r, n_cols] · X[t, n_cols]`. Token-major `x` / `y`.
 pub fn gemm_iq4_xs_f32(
     n_cols: usize,
@@ -5855,6 +5933,7 @@ enum GemmKind {
     Q50,
     Q51,
     MXFP4,
+    NVFP4,
     Q4K,
     Q5K,
     Q6K,
@@ -5908,6 +5987,7 @@ fn gemm_f32_x(
         GemmKind::Q50 => (q5_0_row_bytes(n_cols)?, "W Q5_0 bytes"),
         GemmKind::Q51 => (q5_1_row_bytes(n_cols)?, "W Q5_1 bytes"),
         GemmKind::MXFP4 => (mxfp4_row_bytes(n_cols)?, "W MXFP4 bytes"),
+        GemmKind::NVFP4 => (nvfp4_row_bytes(n_cols)?, "W NVFP4 bytes"),
         GemmKind::Q4K => (q4_k_row_bytes(n_cols)?, "W Q4_K bytes"),
         GemmKind::Q5K => (q5_k_row_bytes(n_cols)?, "W Q5_K bytes"),
         GemmKind::Q6K => (q6_k_row_bytes(n_cols)?, "W Q6_K bytes"),
@@ -5950,6 +6030,7 @@ fn gemm_f32_x(
                 GemmKind::Q50 => vec_dot_q5_0_f32_row(wrow, xt),
                 GemmKind::Q51 => vec_dot_q5_1_f32_row(wrow, xt),
                 GemmKind::MXFP4 => vec_dot_mxfp4_f32_row(wrow, xt),
+                GemmKind::NVFP4 => vec_dot_nvfp4_f32_row(wrow, xt),
                 GemmKind::Q4K => vec_dot_q4_k_f32_row(wrow, xt),
                 GemmKind::Q5K => vec_dot_q5_k_f32_row(wrow, xt),
                 GemmKind::Q6K => vec_dot_q6_k_f32_row(wrow, xt),
@@ -6140,6 +6221,27 @@ pub fn gemv_mxfp4_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resu
     for_each_row(y, |r, out| {
         *out = row_bytes(w, w_rb, r)
             .map(|row| vec_dot_mxfp4_f32_row(row, x))
+            .unwrap_or(0.0);
+    });
+    Ok(())
+}
+
+/// `y[m] = W_nvfp4[m, n_cols] x_f32[n_cols]`.
+pub fn gemv_nvfp4_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    let w_rb = nvfp4_row_bytes(n_cols)?;
+    require_len("x F32 elems", x.len(), n_cols)?;
+    let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
+        what: "W NVFP4 bytes overflow",
+        expected: w_rb,
+        actual: y.len(),
+    })?;
+    require_len("W NVFP4 bytes", w.len(), expected_w)?;
+    if y.is_empty() {
+        return Ok(());
+    }
+    for_each_row(y, |r, out| {
+        *out = row_bytes(w, w_rb, r)
+            .map(|row| vec_dot_nvfp4_f32_row(row, x))
             .unwrap_or(0.0);
     });
     Ok(())
@@ -6639,6 +6741,39 @@ pub fn dequant_mxfp4_row(n_cols: usize, row: &[u8], y: &mut [f32]) -> Result<(),
             }
             if let Some(slot) = y.get_mut(hi_base.saturating_add(j)) {
                 *slot = q1 * d;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Unpack one NVFP4 GGUF row into `y[n_cols]` (`x = kvalues_fp4[q] * d`).
+pub fn dequant_nvfp4_row(n_cols: usize, row: &[u8], y: &mut [f32]) -> Result<(), QuantError> {
+    let rb = nvfp4_row_bytes(n_cols)?;
+    require_len("NVFP4 row bytes", row.len(), rb)?;
+    require_len("NVFP4 y elems", y.len(), n_cols)?;
+    for yv in y.iter_mut() {
+        *yv = 0.0;
+    }
+    let (w_blocks, _) = row.as_chunks::<NVFP4_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some((d_bytes, qs)) = wb.split_at_checked(4) else {
+            continue;
+        };
+        let x_base = b.saturating_mul(QK_NVFP4);
+        for (s, (d_byte, qs_sub)) in d_bytes.iter().zip(qs.chunks(8)).enumerate() {
+            let d = ue4m3_to_fp32(*d_byte);
+            let sub_base = x_base.saturating_add(s.saturating_mul(QK_NVFP4_SUB));
+            let hi_base = sub_base.saturating_add(8);
+            for (j, p) in qs_sub.iter().enumerate() {
+                let q0 = f32::from(kvalue_mxfp4(*p & 0x0f));
+                let q1 = f32::from(kvalue_mxfp4(*p >> 4));
+                if let Some(slot) = y.get_mut(sub_base.saturating_add(j)) {
+                    *slot = q0 * d;
+                }
+                if let Some(slot) = y.get_mut(hi_base.saturating_add(j)) {
+                    *slot = q1 * d;
+                }
             }
         }
     }
@@ -7832,6 +7967,37 @@ fn vec_dot_mxfp4_f32_row(row: &[u8], x: &[f32]) -> f32 {
     sum
 }
 
+fn vec_dot_nvfp4_f32_row(row: &[u8], x: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    let (w_blocks, _) = row.as_chunks::<NVFP4_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some((d_bytes, qs)) = wb.split_at_checked(4) else {
+            continue;
+        };
+        let x_base = b.saturating_mul(QK_NVFP4);
+        let Some(xr) = x.get(x_base..x_base.saturating_add(QK_NVFP4)) else {
+            continue;
+        };
+        for (s, (d_byte, qs_sub)) in d_bytes.iter().zip(qs.chunks(8)).enumerate() {
+            let d = ue4m3_to_fp32(*d_byte);
+            let sub = s.saturating_mul(QK_NVFP4_SUB);
+            let Some(xlo) = xr.get(sub..sub.saturating_add(8)) else {
+                continue;
+            };
+            let Some(xhi) = xr.get(sub.saturating_add(8)..sub.saturating_add(16)) else {
+                continue;
+            };
+            for ((p, xl), xh) in qs_sub.iter().zip(xlo.iter()).zip(xhi.iter()) {
+                let q0 = f32::from(kvalue_mxfp4(*p & 0x0f));
+                let q1 = f32::from(kvalue_mxfp4(*p >> 4));
+                sum += q0 * d * *xl;
+                sum += q1 * d * *xh;
+            }
+        }
+    }
+    sum
+}
+
 fn vec_dot_q4_k_f32_row(row: &[u8], x: &[f32]) -> f32 {
     let mut sum = 0.0f32;
     let (w_blocks, _) = row.as_chunks::<Q4_K_BLOCK>();
@@ -8620,6 +8786,12 @@ mod tests {
     fn gemv_mxfp4_rejects_unaligned_cols() {
         let mut y = [0.0f32];
         assert!(gemv_mxfp4_f32(31, &[], &[], &mut y).is_err());
+    }
+
+    #[test]
+    fn gemv_nvfp4_rejects_unaligned_cols() {
+        let mut y = [0.0f32];
+        assert!(gemv_nvfp4_f32(63, &[], &[], &mut y).is_err());
     }
 
     fn dequant_q8_row(bytes: &[u8]) -> Vec<f32> {
@@ -9577,6 +9749,153 @@ mod tests {
         crate::pool::with_sequential(|| {
             let mut y_seq = vec![0.0f32; n_rows * n_tokens];
             gemm_mxfp4_f32(n_cols, n_tokens, &w, &xk, &mut y_seq).unwrap();
+            assert_close(&y_seq, &exp_oracle);
+        });
+    }
+
+    /// ggml `dequantize_row_nvfp4` (oracle). Independent of crate kernels.
+    fn oracle_nvfp4_row(w: &[u8]) -> Vec<f32> {
+        const KVALUES: [i8; 16] = [0, 1, 2, 3, 4, 6, 8, 12, 0, -1, -2, -3, -4, -6, -8, -12];
+        let nblocks = w.len() / NVFP4_BLOCK;
+        let mut y = vec![0.0f32; nblocks * QK_NVFP4];
+        for b in 0..nblocks {
+            let wb = &w[b * NVFP4_BLOCK..(b + 1) * NVFP4_BLOCK];
+            let d_bytes = &wb[..4];
+            let qs = &wb[4..];
+            for s in 0..4 {
+                let ue = d_bytes[s];
+                // ggml_ue4m3_to_fp32: unsigned E4M3, then * 0.5 for doubled kvalues.
+                let d = if ue == 0 || ue == 0x7f {
+                    0.0
+                } else {
+                    let exp = i32::from((ue >> 3) & 0x0f);
+                    let man = f32::from(ue & 0x07);
+                    let raw = if exp == 0 {
+                        man * f32::from_bits(0x3b00_0000)
+                    } else {
+                        let biased = u32::try_from(120i32.saturating_add(exp)).unwrap_or(0);
+                        (1.0 + man * 0.125) * f32::from_bits(biased.checked_shl(23).unwrap_or(0))
+                    };
+                    raw * 0.5
+                };
+                let yo = b * QK_NVFP4 + s * QK_NVFP4_SUB;
+                for j in 0..8 {
+                    let p = qs[s * 8 + j];
+                    let x0 = f32::from(KVALUES[usize::from(p & 0x0f)]);
+                    let x1 = f32::from(KVALUES[usize::from(p >> 4)]);
+                    y[yo + j] = x0 * d;
+                    y[yo + j + 8] = x1 * d;
+                }
+            }
+        }
+        y
+    }
+
+    fn oracle_nvfp4_dot(row: &[u8], x: &[f32]) -> f32 {
+        oracle_nvfp4_row(row)
+            .iter()
+            .zip(x.iter())
+            .map(|(a, b)| a * b)
+            .sum()
+    }
+
+    #[test]
+    fn pack_nvfp4_gemv_and_dequant_match_independent_oracle() {
+        let mut qs = [0u8; QK_NVFP4];
+        qs[0] = 3;
+        qs[8] = 13;
+        qs[16] = 7;
+        qs[24] = 8;
+        qs[32] = 1;
+        qs[40] = 14;
+        qs[48] = 4;
+        qs[56] = 11;
+        // Distinct UE4M3 scales (not MXFP4's single E8M0). 0x38 = exp 7 man 0 → d=0.5.
+        let d = [0x38, 0x40, 0x30, 0x48];
+        let w = pack_nvfp4_block(d, &qs);
+        assert_eq!(w.len(), NVFP4_BLOCK);
+        assert_eq!(NVFP4_BLOCK, 36);
+        assert_eq!(&w[..4], &d);
+        // sub0: lo y[0]=3, hi y[8]=13 → 0xD3
+        assert_eq!(w[4], 0xd3);
+        // sub1: lo y[16]=7, hi y[24]=8 → 0x87
+        assert_eq!(w[12], 0x87);
+        // sub2: lo y[32]=1, hi y[40]=14 → 0xE1
+        assert_eq!(w[20], 0xe1);
+        // sub3: lo y[48]=4, hi y[56]=11 → 0xB4
+        assert_eq!(w[28], 0xb4);
+        let mut x = [0.0f32; QK_NVFP4];
+        x[0] = 2.0;
+        x[8] = 4.0;
+        x[16] = 1.0;
+        x[24] = 3.0;
+        x[32] = 5.0;
+        x[40] = 1.0;
+        x[48] = 2.0;
+        x[56] = 6.0;
+        let mut y = [0.0f32];
+        gemv_nvfp4_f32(QK_NVFP4, &w, &x, &mut y).unwrap();
+        let expected = oracle_nvfp4_dot(&w, &x);
+        let rel = (y[0] - expected).abs() / (1.0 + expected.abs());
+        assert!(rel * 100_000.0 < 1.0, "gemv {} vs {expected}", y[0]);
+        let mut row = [0.0f32; QK_NVFP4];
+        dequant_nvfp4_row(QK_NVFP4, &w, &mut row).unwrap();
+        let oracle = oracle_nvfp4_row(&w);
+        assert_close(&row, &oracle);
+        let via_dequant: f32 = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
+        assert!(
+            (via_dequant - y[0]).abs() * 100_000.0 < 1.0,
+            "{via_dequant} vs {}",
+            y[0]
+        );
+    }
+
+    #[test]
+    fn gemm_nvfp4_matches_repeated_gemv_and_oracle() {
+        let n_cols = QK_NVFP4;
+        let n_rows = 2usize;
+        let n_tokens = 3usize;
+        let mut w = Vec::new();
+        for r in 0..n_rows {
+            let mut qs = [0u8; QK_NVFP4];
+            qs[0] = u8::try_from(3 + r).unwrap_or(3);
+            qs[8] = u8::try_from(13 + r).unwrap_or(13);
+            qs[16] = 7;
+            qs[32] = 2;
+            w.extend_from_slice(&pack_nvfp4_block([0x38, 0x40, 0x30, 0x48], &qs));
+        }
+        let mut xk = vec![0.0f32; n_cols * n_tokens];
+        for t in 0..n_tokens {
+            if let Some(slot) = xk.get_mut(t * n_cols) {
+                *slot = f32::from(u16::try_from(t + 1).unwrap_or(1));
+            }
+            if let Some(slot) = xk.get_mut(t * n_cols + 8) {
+                *slot = 2.0;
+            }
+            if let Some(slot) = xk.get_mut(t * n_cols + 16) {
+                *slot = 3.0;
+            }
+        }
+        let mut y = vec![0.0f32; n_rows * n_tokens];
+        gemm_nvfp4_f32(n_cols, n_tokens, &w, &xk, &mut y).unwrap();
+        let mut exp = Vec::new();
+        let mut exp_oracle = Vec::new();
+        let rb = NVFP4_BLOCK;
+        for t in 0..n_tokens {
+            let xt = &xk[t * n_cols..(t + 1) * n_cols];
+            let mut a = vec![0.0f32; n_rows];
+            gemv_nvfp4_f32(n_cols, &w, xt, &mut a).unwrap();
+            exp.extend_from_slice(&a);
+            for r in 0..n_rows {
+                let row = &w[r * rb..(r + 1) * rb];
+                exp_oracle.push(oracle_nvfp4_dot(row, xt));
+            }
+        }
+        assert_close(&y, &exp);
+        assert_close(&y, &exp_oracle);
+        crate::pool::with_sequential(|| {
+            let mut y_seq = vec![0.0f32; n_rows * n_tokens];
+            gemm_nvfp4_f32(n_cols, n_tokens, &w, &xk, &mut y_seq).unwrap();
             assert_close(&y_seq, &exp_oracle);
         });
     }
