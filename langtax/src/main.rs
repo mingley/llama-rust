@@ -253,11 +253,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => {
             eprintln!("{e}");
             eprintln!("{}", usage());
-            Err(e.into())
+            std::process::exit(2);
         }
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    run()
+fn main() {
+    if let Err(e) = run() {
+        eprintln!("{e}");
+        std::process::exit(1);
+    }
 }
