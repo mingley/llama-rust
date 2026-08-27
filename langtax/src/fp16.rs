@@ -1,4 +1,4 @@
-//! IEEE-754 binary16 <-> f32. GGUF Q4_0/Q8_0 scales are `ggml_half`.
+//! IEEE-754 binary16 / bfloat16 <-> f32. GGUF Q4_0/Q8_0 scales are `ggml_half`.
 
 /// Convert IEEE binary16 bits to `f32`.
 pub(crate) fn f16_to_f32(h: u16) -> f32 {
@@ -58,6 +58,35 @@ pub(crate) fn store_f16_le(scale: f32) -> [u8; 2] {
     f32_to_f16(scale).to_le_bytes()
 }
 
+/// ggml `GGML_BF16_TO_FP32`: place the 16 bits in the high half of an `f32`.
+pub(crate) fn bf16_to_f32(h: u16) -> f32 {
+    f32::from_bits(u32::from(h) << 16)
+}
+
+/// ggml `ggml_compute_fp32_to_bf16` (round to nearest even; quiet NaN).
+pub(crate) fn f32_to_bf16(f: f32) -> u16 {
+    let u = f.to_bits();
+    if (u & 0x7fff_ffff) > 0x7f80_0000 {
+        let hi = u16::try_from(u >> 16).unwrap_or(0);
+        return hi | 64;
+    }
+    let lsb = (u >> 16) & 1;
+    let rounded = u.wrapping_add(0x7fff + lsb);
+    u16::try_from(rounded >> 16).unwrap_or(0)
+}
+
+/// Load a little-endian bfloat16 at the start of `bytes`.
+pub(crate) fn load_bf16_le(bytes: &[u8]) -> Option<f32> {
+    let a = *bytes.first()?;
+    let b = *bytes.get(1)?;
+    Some(bf16_to_f32(u16::from_le_bytes([a, b])))
+}
+
+/// Store `scale` as little-endian bfloat16.
+pub(crate) fn store_bf16_le(scale: f32) -> [u8; 2] {
+    f32_to_bf16(scale).to_le_bytes()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,6 +106,28 @@ mod tests {
     fn roundtrip_normals() {
         for &v in &[1.0 / 127.0, 0.125, 1.0, 3.5, -2.0] {
             let back = f16_to_f32(f32_to_f16(v));
+            let rel = (back - v).abs() / (1.0 + v.abs());
+            assert!(rel * 1000.0 < 1.0, "{v} -> {back}");
+        }
+    }
+
+    #[test]
+    fn bf16_known_values() {
+        assert_eq!(bf16_to_f32(0x0000), 0.0);
+        assert_eq!(bf16_to_f32(0x3f80), 1.0);
+        assert_eq!(bf16_to_f32(0xbf80), -1.0);
+        assert_eq!(bf16_to_f32(0x3f00), 0.5);
+        assert_eq!(f32_to_bf16(1.0), 0x3f80);
+        assert_eq!(f32_to_bf16(-1.0), 0xbf80);
+        assert_eq!(f32_to_bf16(0.5), 0x3f00);
+        assert_eq!(load_bf16_le(&[0x80, 0x3f]), Some(1.0));
+        assert_eq!(store_bf16_le(1.0), [0x80, 0x3f]);
+    }
+
+    #[test]
+    fn bf16_roundtrip_normals() {
+        for &v in &[1.0 / 127.0, 0.125, 1.0, 3.5, -2.0] {
+            let back = bf16_to_f32(f32_to_bf16(v));
             let rel = (back - v).abs() / (1.0 + v.abs());
             assert!(rel * 1000.0 < 1.0, "{v} -> {back}");
         }
