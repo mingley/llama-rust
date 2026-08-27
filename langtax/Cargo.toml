@@ -2,6 +2,8 @@
 name = "llama-rust"
 version = "0.1.0"
 edition = "2021"
+description = "Safe Rust GGUF-native Llama decode. No llama.cpp bind."
+
 
 [lib]
 name = "llama_rust"

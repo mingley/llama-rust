@@ -2,7 +2,7 @@
 
 Pure-safe Rust GGUF v3 Llama-family **prompt → text**. No llama.cpp bind, no C GGML snapshot, no `unsafe`.
 
-See [STATUS.md](STATUS.md) for what shipped, what is not started, and the resume list.
+**About (honest):** safe Rust GGUF-native Llama decode. Not rustformers/llm. This tree has **no llama.cpp binary** and **no tok/s table**. Do not claim a win vs llama.cpp. Do not invent llama.cpp numbers. See [STATUS.md](STATUS.md).
 
 Loads mixed Q4_K_M-shaped dtypes (**F32**, **Q4_K**, **Q6_K**, plus Q4_0/Q8_0/Q8_K) for `llama` / `qwen2` / `mistral` / `phi3`. Quantized weights **and token embeddings** stay **on-disk bytes**. Missing `{arch}.rope.dimension_count` is derived from embedding length / head count. Optional `attn_q`/`attn_k`/`attn_v` bias tensors are applied when present. `tokenizer.ggml.add_bos_token=false` is honored. Decode is RMSNorm, RoPE, GQA + KV cache, SwiGLU, lm_head. Sampling is greedy. Load/decode errors name the tensor, ggml type id, and/or KV key.
 
@@ -69,7 +69,7 @@ time_s=0.004751 gemv/s=6735.37
 y0=78.165176
 ```
 
-min(Metal gemv/s) / min(Rust gemv/s) = 6735.37 / 1336.81 = **5.04**. Metal: one 2-D dispatch (simdgroup K-split, 32 in-flight GEMVs), one commit/wait. C 1-thread on the same pack stays ~900 gemv/s (`langtax/q8_gemv.c`).
+min(Metal gemv/s) / min(Rust gemv/s) = 6735.37 / 1336.81 = **5.04** on that **one Apple M4 Pro**. Metal: one 2-D dispatch (simdgroup K-split, 32 in-flight GEMVs), one commit/wait. C 1-thread on the same pack stays ~900 gemv/s (`langtax/q8_gemv.c`). These are Rust vs owned Metal vs the C sidecar on that host — **not** llama.cpp, and **not** tok/s.
 
 ## Linux testing (free)
 

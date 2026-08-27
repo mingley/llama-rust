@@ -1,12 +1,25 @@
-# Stopped 2026-08-27 — infer CLI flags
+# Status 2026-08-27 — Kernel Integrity HOLD
 
-HEAD is this branch’s tip. Worktree should be clean before the next resume.
-No in-flight code.
+Honesty pass on `main`. Parent of this file: `4beae44` (“Add infer CLI flags
+for prompt, n_predict, and n_ctx”). After this commit, HEAD is this tree.
+
+HOLD: **do not claim a win vs llama.cpp.** This repository has **no
+llama.cpp binary** and **no tok/s table**. Do not invent llama.cpp numbers.
+
+GitHub About was lying (`measured vs llama.cpp`). The honest About is:
+safe Rust GGUF-native Llama decode; no llama.cpp bind; not rustformers/llm.
+No measurement vs llama.cpp exists in this tree.
+
+CLI PRs: #1 closed unmerged. #2 is already on `main` (`4beae44`) and is
+**unsigned**. #3 stays draft / unsigned. Do not merge #3.
+
+Worktree should be clean. No in-flight code beyond this docs/status pass.
 
 ## Shipped (use this)
 
 Repo: https://github.com/mingley/llama-rust
 Local: `~/dev/llama-rust-perf`
+GHA: Linux `cargo fmt` / clippy / `cargo test --release --lib` on push.
 
 - `forbid(unsafe_code)`, no llama.cpp/FFI, `Cargo.lock` crate-only (no SIMD crates, no rayon).
 - GGUF v3: F32, Q4_0, Q8_0, Q4_K, Q6_K, Q8_K. Kernels read on-disk bytes (no private f32-scale copy).
@@ -18,14 +31,21 @@ Local: `~/dev/llama-rust-perf`
   - optional F32 `attn_{q,k,v}.bias`
   - `tokenizer.ggml.add_bos_token=false` honored
 - Load/decode errors name tensor, ggml type id, and/or KV key.
-- CLI: `gguf_gemv infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]`. Seedless greedy. Defaults remain `ab` / 2 so the shipped two-run command still works.
-- Proven (unchanged): writer-built tiny two-run `generated=ab`. Real `models/qwen2.5-3b-instruct-q4_k_m.gguf` two-run `generated=abĊĊ` (~1.4s, M4 Pro).
-- Metal Q8 GEMV is a **measurement binary** (`q8_gemv.metal` + `q8_gemv_mtl.m`), not linked into the crate. Occupied min 6735 gemv/s vs CPU min 1337, y0=78.165176 both.
-- Constraints that stay: no `#[allow]`, clippy workspace lints, no `std::fs::{read,write}`, no Mutex/RwLock, `thread::scope` row dispatch, author `mingley`.
+- CLI (on `4beae44`): `gguf_gemv infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]`.
+  Seedless greedy. Defaults remain `ab` / 2.
+- Proven on Apple M4 Pro only (not this Linux host, not llama.cpp): writer-built
+  tiny two-run `generated=ab`. Local `models/qwen2.5-3b-instruct-q4_k_m.gguf`
+  two-run `generated=abĊĊ` (~1.4s).
+- Metal Q8 GEMV is a **measurement binary** (`q8_gemv.metal` + `q8_gemv_mtl.m`),
+  not linked into the crate. Occupied min 6735 gemv/s vs CPU min 1337,
+  y0=78.165176 both — **same M4 Pro, Rust vs owned Metal**, not vs llama.cpp.
+- Constraints that stay: no `#[allow]`, clippy workspace lints, no
+  `std::fs::{read,write}`, no Mutex/RwLock, `thread::scope` row dispatch,
+  author `mingley`.
 
 ## In progress
 
-Nothing. Last implementation before this slice was `a1de84a` (“Load common OSS Q4_K_M GGUFs for greedy infer”). This slice is infer CLI flags (STATUS item 1).
+Nothing. Docs/status/About honesty only.
 
 ## Still needed (production / researcher bar)
 
@@ -41,7 +61,9 @@ Ordered by how much they block “others can actually use this”:
 8. **KV cache** sized to prompt+predict is the default; `{arch}.context_length` is still unused. `--n-ctx` is an override only.
 9. **crates.io** unpublished. Linux proof is GHA tiny/oracle tests only (2GB GGUF is gitignored).
 
-Non-goals that were explicitly parked: SIMD crates (`wide`/`pulp`/`std::simd`); matching llama.cpp tok/s; downloading HF checkpoints in CI.
+Parked: SIMD crates (`wide`/`pulp`/`std::simd`); a llama.cpp tok/s comparison
+(no llama.cpp binary in this tree — do not invent one); downloading HF
+checkpoints in CI. Kernel Integrity signs later.
 
 ## Resume
 
@@ -51,4 +73,6 @@ cargo clippy --all-targets --all-features -- -D warnings
 ./target/release/gguf_gemv infer models/qwen2.5-3b-instruct-q4_k_m.gguf --prompt ab --n-predict 2
 ```
 
-Next code change should be item 1 (move weight bytes once; do not add `unsafe` or a mmap crate) unless prefill GEMM is the goal. Do not add crates.io runtime deps.
+Next code change should be item 1 (move weight bytes once; do not add
+`unsafe` or a mmap crate) unless prefill GEMM is the goal. Do not add
+crates.io runtime deps. Do not merge unsigned CLI drafts.
