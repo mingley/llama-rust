@@ -2,7 +2,7 @@
 
 Pure-safe Rust GGUF v3 Llama-family **prompt → text**. No llama.cpp bind, no C GGML snapshot, no `unsafe`.
 
-**Paused 2026-08-25** (credits). See [STATUS.md](STATUS.md) for what shipped, what is not started, and the resume list.
+See [STATUS.md](STATUS.md) for what shipped, what is not started, and the resume list.
 
 Loads mixed Q4_K_M-shaped dtypes (**F32**, **Q4_K**, **Q6_K**, plus Q4_0/Q8_0/Q8_K) for `llama` / `qwen2` / `mistral` / `phi3`. Quantized weights **and token embeddings** stay **on-disk bytes**. Missing `{arch}.rope.dimension_count` is derived from embedding length / head count. Optional `attn_q`/`attn_k`/`attn_v` bias tensors are applied when present. `tokenizer.ggml.add_bos_token=false` is honored. Decode is RMSNorm, RoPE, GQA + KV cache, SwiGLU, lm_head. Sampling is greedy. Load/decode errors name the tensor, ggml type id, and/or KV key.
 
@@ -14,11 +14,14 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo build --release --bin gguf_gemv
 ./target/release/gguf_gemv write-tiny tiny-llama.gguf
 ./target/release/gguf_gemv infer tiny-llama.gguf
+./target/release/gguf_gemv infer tiny-llama.gguf --prompt a --n-predict 4
 ./target/release/gguf_gemv write-tiny-qwen2 tiny-qwen2.gguf
-./target/release/gguf_gemv infer tiny-qwen2.gguf
+./target/release/gguf_gemv infer tiny-qwen2.gguf -p ab -n 2
 ./target/release/gguf_gemv write tiny.gguf
 ./target/release/gguf_gemv gemv tiny.gguf
 ```
+
+`infer` is seedless greedy. `--prompt` / `-p` (default `ab`), `--n-predict` / `-n` (default `2`), optional `--n-ctx` (KV capacity; default prompt + `n_predict` + 1).
 
 Workspace lints deny unwrap/panic/indexing/wrap-casts/`std::fs::{read,write}`. File I/O is `File` + `Read`/`Write`.
 
