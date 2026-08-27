@@ -4447,12 +4447,12 @@ fn for_each_tq2_0_trit(wb: &[u8], mut visit: impl FnMut(usize, i8)) {
         return;
     };
     let mut i = 0usize;
-    for group in 0..2 {
+    for group in 0..2usize {
         let j = group.saturating_mul(32);
         let Some(qs32) = qs.get(j..j.saturating_add(32)) else {
             return;
         };
-        for l in 0..4 {
+        for l in 0..4usize {
             for (m, &byte) in qs32.iter().enumerate() {
                 visit(i.saturating_add(m), tq2_0_signed_trit(byte, l));
             }
@@ -4468,12 +4468,12 @@ fn for_each_tq2_0_trit(wb: &[u8], mut visit: impl FnMut(usize, i8)) {
 /// 2-bit trits at `m`, `m+32`, `m+64`, `m+96` of that 128-wide group.
 pub fn pack_tq2_0_block(d: f32, qs_trit: &[u8; QK_K]) -> [u8; TQ2_0_BLOCK] {
     let mut out = [0u8; TQ2_0_BLOCK];
-    for group in 0..2 {
+    for group in 0..2usize {
         let j = group.saturating_mul(32);
         let y_base = group.saturating_mul(128);
-        for m in 0..32 {
+        for m in 0..32usize {
             let mut q = 0u8;
-            for l in 0..4 {
+            for l in 0..4usize {
                 let idx = y_base
                     .saturating_add(l.saturating_mul(32))
                     .saturating_add(m);
