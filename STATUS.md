@@ -8,9 +8,14 @@ llama.cpp binary** and **no tok/s table**. Do not invent llama.cpp numbers.
 
 GitHub About was lying (`measured vs llama.cpp`). The honest in-repo About
 is: safe Rust GGUF-native Llama decode; no llama.cpp bind; not rustformers/llm.
-No measurement vs llama.cpp exists in this tree. This environment got HTTP 401
-on `PATCH /repos/mingley/llama-rust`, so the GitHub description field is
-**still the lie** until a repo admin sets it to the same sentence.
+No measurement vs llama.cpp exists in this tree.
+
+Tried `gh repo edit mingley/llama-rust --description '…'` as requested.
+Result: **HTTP 403 Resource not accessible by integration** (auth is the
+Cursor `cursor` integration, not a repo-settings token). The GitHub
+description field is **still the lie**. Required admin write:
+
+`Safe Rust GGUF-native Llama decode. No llama.cpp bind. Not rustformers/llm.`
 
 CLI PRs: #1 closed unmerged. #2 is already on `main` (`4beae44`) and is
 **unsigned**. #3 stays draft / unsigned. Do not merge #3.
