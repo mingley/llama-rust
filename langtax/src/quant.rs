@@ -4560,9 +4560,9 @@ pub fn pack_iq1_s_block(
     let db = store_f16_le(d);
     out[0] = db[0];
     out[1] = db[1];
-    for ib in 0..8 {
+    for ib in 0usize..8 {
         let mut qh = 0u16;
-        for l in 0..4 {
+        for l in 0usize..4 {
             let g = ib.saturating_mul(4).saturating_add(l);
             let idx = qs_idx.get(g).copied().unwrap_or(0) & 2047;
             if let Some(slot) = out.get_mut(2 + g) {
@@ -8584,7 +8584,7 @@ mod tests {
                         usize::from(qs[ib * 4 + l]) | (usize::from((qhv >> (3 * l)) & 7) << 8);
                     let g = GRID[idx].to_le_bytes();
                     for j in 0..8 {
-                        y[yo + j] = dl * (f32::from(g[j] as i8) + delta);
+                        y[yo + j] = dl * (f32::from(i8::from_le_bytes([g[j]])) + delta);
                     }
                     yo += 8;
                 }

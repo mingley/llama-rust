@@ -1804,7 +1804,7 @@ mod tests {
                         usize::from(qs[ib * 4 + l]) | (usize::from((qhv >> (3 * l)) & 7) << 8);
                     let g = GRID[idx].to_le_bytes();
                     for j in 0..8 {
-                        y[yo + j] = dl * (f32::from(g[j] as i8) + delta);
+                        y[yo + j] = dl * (f32::from(i8::from_le_bytes([g[j]])) + delta);
                     }
                     yo += 8;
                 }
