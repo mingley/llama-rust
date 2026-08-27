@@ -12,6 +12,7 @@ usage: gguf_gemv infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]
 pub const BIN_USAGE: &str = "\
 usage: gguf_gemv <command> [args]
   infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]
+  serve <path> [--n-predict N] [--n-ctx N] [--bind HOST:PORT]
   write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2 <path>
 ";
 

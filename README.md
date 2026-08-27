@@ -4,7 +4,7 @@ Pure-safe Rust GGUF v3 Llama-family **prompt → text**. No llama.cpp bind, no C
 
 See [STATUS.md](STATUS.md) for what shipped, what is not started, and the resume list.
 
-Loads mixed Q4_K_M-shaped dtypes (**F32**, **Q4_K**, **Q6_K**, plus Q4_0/Q8_0/Q8_K) for `llama` / `qwen2` / `mistral` / `phi3`. Quantized weights **and token embeddings** stay **on-disk bytes** in **one file blob**; `Llama` takes that blob and addresses tensors by range (no per-matrix clone, no mmap). Missing `{arch}.rope.dimension_count` is derived from embedding length / head count. Optional `attn_q`/`attn_k`/`attn_v` bias tensors are applied when present. `tokenizer.ggml.add_bos_token=false` is honored. Tokenizer: GPT-2 / Qwen pieces use bytes-to-unicode (`Ċ` is newline, `Ġ` is space); SentencePiece uses `▁` and `<0xHH>` byte-fallback; `token_id` is a `HashMap`. `tokenizer.chat_template` is read, not rendered. Decode is RMSNorm, RoPE, GQA + KV cache, SwiGLU, lm_head. Prompt prefill is one causal GEMM pass over the prompt tokens; generation after that is one-token GEMV + KV. Sampling default is seedless greedy (argmax). `SampleParams` adds temperature, top-k, top-p, and unique-id repeat penalty; `temperature > 0` needs a seed (SplitMix64). Load/decode errors name the tensor, ggml type id, and/or KV key.
+Loads mixed Q4_K_M-shaped dtypes (**F32**, **Q4_K**, **Q6_K**, plus Q4_0/Q8_0/Q8_K) for `llama` / `qwen2` / `mistral` / `phi3`. Quantized weights **and token embeddings** stay **on-disk bytes** in **one file blob**; `Llama` takes that blob and addresses tensors by range (no per-matrix clone, no mmap). Missing `{arch}.rope.dimension_count` is derived from embedding length / head count. Optional `attn_q`/`attn_k`/`attn_v` bias tensors are applied when present. `tokenizer.ggml.add_bos_token=false` is honored. Tokenizer: GPT-2 / Qwen pieces use bytes-to-unicode (`Ċ` is newline, `Ġ` is space); SentencePiece uses `▁` and `<0xHH>` byte-fallback; `token_id` is a `HashMap`. `tokenizer.chat_template` is read, not rendered. Decode is RMSNorm, RoPE, GQA + KV cache, SwiGLU, lm_head. Prompt prefill is one causal GEMM pass over the prompt tokens; generation after that is one-token GEMV + KV. Sampling default is seedless greedy (argmax). `SampleParams` adds temperature, top-k, top-p, and unique-id repeat penalty; `temperature > 0` needs a seed (SplitMix64). `serve` is a std-only loopback HTTP/1.1 listener: one request at a time, `POST /generate` JSON, seedless greedy. Not a production inference server. Load/decode errors name the tensor, ggml type id, and/or KV key.
 
 Not [onehr/llama-rs](https://github.com/onehr/llama-rs) / [rustformers/llm]. That wrapped frozen GGML. This is GGUF-native.
 
@@ -15,6 +15,7 @@ cargo build --release --bin gguf_gemv
 ./target/release/gguf_gemv write-tiny tiny-llama.gguf
 ./target/release/gguf_gemv infer tiny-llama.gguf
 ./target/release/gguf_gemv infer tiny-llama.gguf --prompt a --n-predict 4
+./target/release/gguf_gemv serve tiny-llama.gguf
 ./target/release/gguf_gemv write-tiny-qwen2 tiny-qwen2.gguf
 ./target/release/gguf_gemv infer tiny-qwen2.gguf -p ab -n 2
 ./target/release/gguf_gemv write tiny.gguf
@@ -23,9 +24,11 @@ cargo build --release --bin gguf_gemv
 
 `infer` is seedless greedy. `--prompt` / `-p` (default `ab`), `--n-predict` / `-n` (default `2`), optional `--n-ctx` (KV capacity; default prompt + `n_predict` + 1). Temperature / top-k / top-p / repeat penalty live on `SampleParams` / `generate`; the CLI path is unchanged.
 
+`serve` binds `127.0.0.1:8080` (override with `--bind HOST:PORT`; host must be `127.0.0.1` or `localhost`). One HTTP/1.1 request at a time: `POST /generate` with `{"prompt":"..."}` and optional `n_predict`, response `{"generated":"..."}`. Empty prompt and a missing GGUF file fail cleanly. No batching, no concurrent requests, no OpenAI-compat, no tok/s. Kernel Integrity has not signed it.
+
 Workspace lints deny unwrap/panic/indexing/wrap-casts/`std::fs::{read,write}`. File I/O is `File` + `Read`/`Write`.
 
-Tests write GGUFs (F32 + Q6_K + Q4_K, quantized embeddings, QKV bias, missing rope dim, mistral/phi3 prefixes), load them, compare logits to an independent scalar of the same ggml/Llama math on those bytes (including multi-token prefill), then encode/greedy/decode. Sampler tests compare temperature / top-k / top-p / repeat penalty to an independent candidate-list oracle of the same math, plus SplitMix64 published outputs. Tokenizer tests cover GPT-2 `Ċ`/`Ġ` piece decode, `<0xHH>` byte-fallback, SentencePiece `▁`, HashMap `token_id`, and the writer-built tiny merge.
+Tests write GGUFs (F32 + Q6_K + Q4_K, quantized embeddings, QKV bias, missing rope dim, mistral/phi3 prefixes), load them, compare logits to an independent scalar of the same ggml/Llama math on those bytes (including multi-token prefill), then encode/greedy/decode. Sampler tests compare temperature / top-k / top-p / repeat penalty to an independent candidate-list oracle of the same math, plus SplitMix64 published outputs. Tokenizer tests cover GPT-2 `Ċ`/`Ġ` piece decode, `<0xHH>` byte-fallback, SentencePiece `▁`, HashMap `token_id`, and the writer-built tiny merge. Serve tests cover CLI parse, loopback bind, HTTP/1.1 framing, JSON request/response shape, empty prompt, and tiny-model `POST /generate` vs `greedy_generate_ctx` (no 2GB GGUF).
 
 ## CLI (this machine)
 

@@ -9,6 +9,7 @@ mod gguf;
 mod pool;
 mod quant;
 mod sample;
+mod serve;
 mod tok;
 
 pub use cli::{parse_infer_args, InferArgs, InferCmd, BIN_USAGE, INFER_USAGE};
@@ -30,4 +31,5 @@ pub use quant::{
     Q8_0_BLOCK, Q8_K_BLOCK, QK4_0, QK8_0, QK_K,
 };
 pub use sample::{argmax, sample_next, splitmix64, SampleError, SampleParams, Sampler};
+pub use serve::{parse_serve_args, run_serve, ServeArgs, ServeCmd, ServeError, SERVE_USAGE};
 pub use tok::{TokError, Tokenizer};
