@@ -134,20 +134,22 @@ pub struct TensorWrite {
     pub data: Vec<u8>,
 }
 
-/// Loaded tensor. `data` is the on-disk payload.
-#[derive(Clone, Debug)]
-pub struct Tensor {
+/// Loaded tensor view. `data` is a subslice of the GGUF's single file blob.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tensor<'a> {
     /// Tensor name in the GGUF name table.
-    pub name: String,
+    pub name: &'a str,
     /// ggml type tag.
     pub ty: GgmlType,
     /// Dimension sizes, GGUF order (innermost first).
-    pub shape: Vec<u64>,
-    /// GGUF tensor payload, same bytes as on disk.
-    pub data: Vec<u8>,
+    pub shape: &'a [u64],
+    /// GGUF tensor payload, same bytes as on disk (range of [`Gguf::blob`]).
+    pub data: &'a [u8],
+    start: usize,
+    end: usize,
 }
 
-impl Tensor {
+impl Tensor<'_> {
     /// Innermost dimension (columns for a 2-D weight).
     pub fn n_cols(&self) -> usize {
         self.shape
@@ -164,17 +166,34 @@ impl Tensor {
             None => 1,
         }
     }
+
+    /// Inclusive-exclusive byte range of [`Self::data`] inside [`Gguf::blob`].
+    pub fn blob_range(&self) -> (usize, usize) {
+        (self.start, self.end)
+    }
 }
 
-/// Parsed GGUF v3 file: alignment, KV, tensors.
+/// On-disk tensor location inside [`Gguf::blob`].
+#[derive(Clone, Debug)]
+struct TensorInfo {
+    name: String,
+    ty: GgmlType,
+    shape: Vec<u64>,
+    start: usize,
+    end: usize,
+}
+
+/// Parsed GGUF v3 file: one owned file blob, KV, tensor ranges.
 #[derive(Clone, Debug)]
 pub struct Gguf {
+    /// Entire file. Tensor payloads are ranges of this allocation.
+    blob: Vec<u8>,
     /// Tensor data alignment in bytes.
     pub(crate) alignment: usize,
     /// Key-value metadata from the header.
     pub(crate) kv: HashMap<String, Kv>,
-    /// Tensors in file order.
-    pub tensors: Vec<Tensor>,
+    /// Tensor metadata in file order.
+    infos: Vec<TensorInfo>,
 }
 
 /// GGUF metadata value (`gguf_type`).
@@ -234,9 +253,50 @@ impl Kv {
 }
 
 impl Gguf {
-    /// First tensor named `name`, if present.
-    pub fn tensor(&self, name: &str) -> Option<&Tensor> {
-        self.tensors.iter().find(|t| t.name == name)
+    fn view(&self, index: usize) -> Option<Tensor<'_>> {
+        let info = self.infos.get(index)?;
+        let data = self.blob.get(info.start..info.end)?;
+        Some(Tensor {
+            name: info.name.as_str(),
+            ty: info.ty,
+            shape: info.shape.as_slice(),
+            data,
+            start: info.start,
+            end: info.end,
+        })
+    }
+
+    /// First tensor named `name`, if present. Payload is a subslice of [`Self::blob`].
+    pub fn tensor(&self, name: &str) -> Option<Tensor<'_>> {
+        self.infos
+            .iter()
+            .position(|t| t.name == name)
+            .and_then(|i| self.view(i))
+    }
+
+    /// Tensors in file order. Each payload is a range of [`Self::blob`].
+    pub fn tensors(&self) -> impl Iterator<Item = Tensor<'_>> + '_ {
+        (0..self.infos.len()).filter_map(|i| self.view(i))
+    }
+
+    /// Entire file bytes this GGUF was parsed from.
+    pub fn blob(&self) -> &[u8] {
+        &self.blob
+    }
+
+    /// Byte length of the single owned file blob.
+    pub fn blob_len(&self) -> usize {
+        self.blob.len()
+    }
+
+    /// Consume the GGUF and return the file blob. Weight loaders take this once.
+    pub fn into_blob(self) -> Vec<u8> {
+        self.blob
+    }
+
+    /// True when `t.data` is a subslice of this GGUF's blob (no private copy).
+    pub fn payload_in_blob(&self, t: Tensor<'_>) -> bool {
+        slice_in_slice(&self.blob, t.data)
     }
 
     /// Tensor-data alignment in bytes.
@@ -360,8 +420,31 @@ fn write_gguf_kv_tensors(
     buf
 }
 
-/// Parse a GGUF v3 blob. Tensor `data` is copied from the file bytes.
+/// Parse a GGUF v3 slice. Copies the file once into a single blob; tensor
+/// payloads are ranges of that blob, not per-tensor clones.
 pub fn load_gguf(bytes: &[u8]) -> Result<Gguf, GgufError> {
+    load_gguf_owned(bytes.to_vec())
+}
+
+/// Parse an owned GGUF file. The `Vec` becomes the blob; tensor bytes are not
+/// copied again.
+pub fn load_gguf_owned(bytes: Vec<u8>) -> Result<Gguf, GgufError> {
+    let parsed = parse_gguf(&bytes)?;
+    Ok(Gguf {
+        blob: bytes,
+        alignment: parsed.alignment,
+        kv: parsed.kv,
+        infos: parsed.infos,
+    })
+}
+
+struct Parsed {
+    alignment: usize,
+    kv: HashMap<String, Kv>,
+    infos: Vec<TensorInfo>,
+}
+
+fn parse_gguf(bytes: &[u8]) -> Result<Parsed, GgufError> {
     let mut pos = 0usize;
     let magic = read_exact(bytes, &mut pos, 4)?;
     if magic != GGUF_MAGIC {
@@ -393,7 +476,7 @@ pub fn load_gguf(bytes: &[u8]) -> Result<Gguf, GgufError> {
     };
 
     let n_tensors_usize = usize::try_from(n_tensors).map_err(|_| GgufError::Truncated)?;
-    let mut infos = Vec::with_capacity(n_tensors_usize);
+    let mut raw = Vec::with_capacity(n_tensors_usize);
     for _ in 0..n_tensors {
         let name = read_string(bytes, &mut pos)?;
         let n_dims = usize::try_from(read_u32(bytes, &mut pos)?).map_err(|_| GgufError::Shape)?;
@@ -410,12 +493,12 @@ pub fn load_gguf(bytes: &[u8]) -> Result<Gguf, GgufError> {
         }
         let ty = GgmlType::from_i32(read_i32(bytes, &mut pos)?)?;
         let offset = read_u64(bytes, &mut pos)?;
-        infos.push((name, shape, ty, offset));
+        raw.push((name, shape, ty, offset));
     }
 
     let data_start = align_up(pos, alignment);
-    let mut tensors = Vec::with_capacity(infos.len());
-    for (name, shape, ty, offset) in infos {
+    let mut infos = Vec::with_capacity(raw.len());
+    for (name, shape, ty, offset) in raw {
         let n_el = shape.iter().try_fold(1u64, |a, &b| a.checked_mul(b));
         let n_el = usize::try_from(n_el.ok_or(GgufError::Shape)?).map_err(|_| GgufError::Shape)?;
         let (block, k) = ty.layout();
@@ -427,24 +510,39 @@ pub fn load_gguf(bytes: &[u8]) -> Result<Gguf, GgufError> {
             .checked_add(usize::try_from(offset).map_err(|_| GgufError::Truncated)?)
             .ok_or(GgufError::Truncated)?;
         let end = start.checked_add(nbytes).ok_or(GgufError::Truncated)?;
-        let data = bytes.get(start..end).ok_or(GgufError::Truncated)?.to_vec();
-        tensors.push(Tensor {
+        if bytes.get(start..end).is_none() {
+            return Err(GgufError::Truncated);
+        }
+        infos.push(TensorInfo {
             name,
             ty,
             shape,
-            data,
+            start,
+            end,
         });
     }
 
-    Ok(Gguf {
+    Ok(Parsed {
         alignment,
         kv,
-        tensors,
+        infos,
     })
 }
 
 fn align_up(n: usize, a: usize) -> usize {
     n.div_ceil(a) * a
+}
+
+fn slice_in_slice(hay: &[u8], needle: &[u8]) -> bool {
+    let hay_addr = hay.as_ptr() as usize;
+    let needle_addr = needle.as_ptr() as usize;
+    let Some(hay_end) = hay_addr.checked_add(hay.len()) else {
+        return false;
+    };
+    let Some(needle_end) = needle_addr.checked_add(needle.len()) else {
+        return false;
+    };
+    needle_addr >= hay_addr && needle_end <= hay_end
 }
 
 fn put_u32(buf: &mut Vec<u8>, v: u32) {
@@ -721,19 +819,19 @@ mod tests {
         assert_eq!(tw4.ty, GgmlType::Q4_0);
 
         let mut y8 = vec![0.0f32; n_rows];
-        gemv_q8_0(n_cols, &tw8.data, &tx.data, &mut y8).unwrap();
+        gemv_q8_0(n_cols, tw8.data, tx.data, &mut y8).unwrap();
         let rb8 = (n_cols / QK8_0) * Q8_0_BLOCK;
         for (r, yv) in y8.iter().enumerate() {
-            let expected = independent_q8_dot(&tw8.data[r * rb8..(r + 1) * rb8], &tx.data);
+            let expected = independent_q8_dot(&tw8.data[r * rb8..(r + 1) * rb8], tx.data);
             let rel = (yv - expected).abs() / (1.0 + expected.abs());
             assert!(rel * 100_000.0 < 1.0, "q8 row {r}: {yv} vs {expected}");
         }
 
         let mut y4 = vec![0.0f32; n_rows];
-        gemv_q4_0(n_cols, &tw4.data, &tx.data, &mut y4).unwrap();
+        gemv_q4_0(n_cols, tw4.data, tx.data, &mut y4).unwrap();
         let rb4 = (n_cols / QK4_0) * Q4_0_BLOCK;
         for (r, yv) in y4.iter().enumerate() {
-            let expected = independent_q4_dot(&tw4.data[r * rb4..(r + 1) * rb4], &tx.data);
+            let expected = independent_q4_dot(&tw4.data[r * rb4..(r + 1) * rb4], tx.data);
             let rel = (yv - expected).abs() / (1.0 + expected.abs());
             assert!(rel * 100_000.0 < 1.0, "q4 row {r}: {yv} vs {expected}");
         }
@@ -768,8 +866,8 @@ mod tests {
         let mut y = [0.0f32];
         gemv_q4_0(
             32,
-            &g.tensor("w_q4").unwrap().data,
-            &g.tensor("x_q8").unwrap().data,
+            g.tensor("w_q4").unwrap().data,
+            g.tensor("x_q8").unwrap().data,
             &mut y,
         )
         .unwrap();
@@ -971,8 +1069,8 @@ mod tests {
         let mut y = [0.0f32, 0.0];
         gemv_q4_k(
             256,
-            &g.tensor("w_q4k").unwrap().data,
-            &g.tensor("x_q8k").unwrap().data,
+            g.tensor("w_q4k").unwrap().data,
+            g.tensor("x_q8k").unwrap().data,
             &mut y,
         )
         .unwrap();
@@ -986,16 +1084,16 @@ mod tests {
         let mut y8 = [0.0f32];
         gemv_q8_0(
             32,
-            &g.tensor("w_q8").unwrap().data,
-            &g.tensor("x_q8").unwrap().data,
+            g.tensor("w_q8").unwrap().data,
+            g.tensor("x_q8").unwrap().data,
             &mut y8,
         )
         .unwrap();
         let mut y4 = [0.0f32];
         gemv_q4_0(
             32,
-            &g.tensor("w_q4").unwrap().data,
-            &g.tensor("x_q8").unwrap().data,
+            g.tensor("w_q4").unwrap().data,
+            g.tensor("x_q8").unwrap().data,
             &mut y4,
         )
         .unwrap();
@@ -1039,6 +1137,30 @@ mod tests {
         assert_eq!(g.tensor("w_q6k").unwrap().data.len(), Q6_K_BLOCK);
         assert_eq!(g.tensor("w_q6k").unwrap().data, q6.to_vec());
         assert_eq!(g.tensor("w_q4k").unwrap().data, q4.to_vec());
+    }
+
+    #[test]
+    fn load_owned_keeps_one_blob_and_tensor_ranges() {
+        let f32_data = pack_f32(&[1.0, 2.0, 3.0, 4.0]);
+        let bytes = write_gguf(&[TensorWrite {
+            name: "norm".into(),
+            ty: GgmlType::F32,
+            shape: vec![4],
+            data: f32_data.clone(),
+        }]);
+        let g = load_gguf_owned(bytes.clone()).expect("owned");
+        assert_eq!(g.blob_len(), bytes.len());
+        assert_eq!(g.blob(), bytes.as_slice());
+        let t = g.tensor("norm").expect("norm");
+        assert!(g.payload_in_blob(t));
+        assert_eq!(t.data, f32_data.as_slice());
+        let (start, end) = t.blob_range();
+        assert_eq!(&g.blob()[start..end], f32_data.as_slice());
+        let sliced = load_gguf(&bytes).expect("slice");
+        assert_eq!(sliced.blob_len(), bytes.len());
+        let st = sliced.tensor("norm").expect("norm2");
+        assert!(sliced.payload_in_blob(st));
+        assert_eq!(st.data, f32_data.as_slice());
     }
 
     #[test]

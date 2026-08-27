@@ -79,11 +79,11 @@ fn bench_q8(n: usize) -> Result<(), Box<dyn std::error::Error>> {
     let mut y = vec![0.0f32; n];
     let niter = 8usize;
     for _ in 0..16 {
-        gemv_q8_0(n, &wt.data, &xt.data, &mut y)?;
+        gemv_q8_0(n, wt.data, xt.data, &mut y)?;
     }
     let t0 = Instant::now();
     for _ in 0..niter {
-        gemv_q8_0(n, &wt.data, &xt.data, &mut y)?;
+        gemv_q8_0(n, wt.data, xt.data, &mut y)?;
     }
     let sec = t0.elapsed().as_secs_f64();
     print_bench(
@@ -145,11 +145,11 @@ fn bench_q4(n: usize) -> Result<(), Box<dyn std::error::Error>> {
     let mut y = vec![0.0f32; n];
     let niter = 8usize;
     for _ in 0..16 {
-        gemv_q4_0(n, &wt.data, &xt.data, &mut y)?;
+        gemv_q4_0(n, wt.data, xt.data, &mut y)?;
     }
     let t0 = Instant::now();
     for _ in 0..niter {
-        gemv_q4_0(n, &wt.data, &xt.data, &mut y)?;
+        gemv_q4_0(n, wt.data, xt.data, &mut y)?;
     }
     let sec = t0.elapsed().as_secs_f64();
     print_bench(
@@ -222,11 +222,11 @@ fn bench_q4k(n: usize) -> Result<(), Box<dyn std::error::Error>> {
     let mut y = vec![0.0f32; n];
     let niter = 8usize;
     for _ in 0..16 {
-        gemv_q4_k(n, &wt.data, &xt.data, &mut y)?;
+        gemv_q4_k(n, wt.data, xt.data, &mut y)?;
     }
     let t0 = Instant::now();
     for _ in 0..niter {
-        gemv_q4_k(n, &wt.data, &xt.data, &mut y)?;
+        gemv_q4_k(n, wt.data, xt.data, &mut y)?;
     }
     let sec = t0.elapsed().as_secs_f64();
     print_bench(

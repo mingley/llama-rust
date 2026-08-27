@@ -84,8 +84,9 @@ struct QuantMat {
     name: String,
     ty: GgmlType,
     n_cols: usize,
-    data: Vec<u8>,
     n_rows: usize,
+    start: usize,
+    end: usize,
 }
 
 /// Per-layer weights.
@@ -104,7 +105,7 @@ struct Layer {
     down: QuantMat,
 }
 
-/// Loaded Llama-family weights. Quantized matrices stay on-disk bytes.
+/// Loaded Llama-family weights. Quantized matrices are ranges of one file blob.
 pub struct Llama {
     /// Vocab size.
     pub n_vocab: usize,
@@ -115,6 +116,7 @@ pub struct Llama {
     n_rot: usize,
     rms_eps: f32,
     rope_base: f32,
+    blob: Vec<u8>,
     token_embd: QuantMat,
     output_norm: Vec<f32>,
     output: QuantMat,
@@ -133,12 +135,15 @@ pub struct KvCache {
 impl Llama {
     /// Build from a loaded GGUF using `{arch}.*` KV (`llama`, `qwen2`, `mistral`,
     /// or `phi3`) and `blk.{i}.*` tensor names.
-    pub fn from_gguf(g: &Gguf) -> Result<Self, LlamaError> {
-        let arch = architecture(g)?;
-        let n_layer = require_usize(g, arch, "block_count")?;
-        let n_embd = require_usize(g, arch, "embedding_length")?;
-        let n_head = require_usize(g, arch, "attention.head_count")?;
-        let n_head_kv = require_usize(g, arch, "attention.head_count_kv")?;
+    ///
+    /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
+    /// blob; they do not clone tensor bytes.
+    pub fn from_gguf(g: Gguf) -> Result<Self, LlamaError> {
+        let arch = architecture(&g)?;
+        let n_layer = require_usize(&g, arch, "block_count")?;
+        let n_embd = require_usize(&g, arch, "embedding_length")?;
+        let n_head = require_usize(&g, arch, "attention.head_count")?;
+        let n_head_kv = require_usize(&g, arch, "attention.head_count_kv")?;
         if n_layer == 0 {
             return Err(LlamaError::Shape(arch_key(arch, "block_count")));
         }
@@ -154,19 +159,19 @@ impl Llama {
         if !n_head.is_multiple_of(n_head_kv) {
             return Err(LlamaError::Shape(arch_key(arch, "attention.head_count_kv")));
         }
-        let n_rot = rope_dimension(g, arch, n_embd, n_head)?;
+        let n_rot = rope_dimension(&g, arch, n_embd, n_head)?;
         let n_vocab = g
             .tensor("token_embd.weight")
-            .map(Tensor::n_rows)
+            .map(|t| t.n_rows())
             .ok_or_else(|| LlamaError::Tensor("token_embd.weight".into()))?;
-        let rms_eps = arch_f32(g, arch, "attention.layer_norm_rms_epsilon").unwrap_or(1e-5);
-        let rope_base = arch_f32(g, arch, "rope.freq_base").unwrap_or(10_000.0);
-        let token_embd = quant_mat(need(g, "token_embd.weight")?)?;
-        let output_norm = f32s(need(g, "output_norm.weight")?)?;
-        let output = quant_mat(need(g, "output.weight")?)?;
+        let rms_eps = arch_f32(&g, arch, "attention.layer_norm_rms_epsilon").unwrap_or(1e-5);
+        let rope_base = arch_f32(&g, arch, "rope.freq_base").unwrap_or(10_000.0);
+        let token_embd = quant_mat(need(&g, "token_embd.weight")?)?;
+        let output_norm = f32s(need(&g, "output_norm.weight")?)?;
+        let output = quant_mat(need(&g, "output.weight")?)?;
         let mut layers = Vec::new();
         for i in 0..n_layer {
-            layers.push(load_layer(g, i)?);
+            layers.push(load_layer(&g, i)?);
         }
         Ok(Self {
             n_vocab,
@@ -176,11 +181,23 @@ impl Llama {
             n_rot,
             rms_eps,
             rope_base,
+            blob: g.into_blob(),
             token_embd,
             output_norm,
             output,
             layers,
         })
+    }
+
+    /// Byte length of the single owned GGUF blob. Weight payloads are ranges of it.
+    pub fn blob_len(&self) -> usize {
+        self.blob.len()
+    }
+
+    fn mat_bytes(&self, m: &QuantMat) -> Result<&[u8], LlamaError> {
+        self.blob
+            .get(m.start..m.end)
+            .ok_or_else(|| LlamaError::Shape(m.name.clone()))
     }
 
     /// Allocate a KV cache for `max_seq` generated+prompt tokens.
@@ -215,13 +232,13 @@ impl Llama {
         if cache.n_past >= cache.max_seq {
             return Err(LlamaError::Shape("kv cache full".into()));
         }
-        let mut x = embed(&self.token_embd, token)?;
+        let mut x = self.embed(token)?;
         for (li, layer) in self.layers.iter().enumerate() {
             let residual = x.clone();
             x = rmsnorm(&x, &layer.attn_norm, self.rms_eps)?;
-            let q = add_bias(gemv_mat(&layer.wq, &x)?, layer.bq.as_deref())?;
-            let k = add_bias(gemv_mat(&layer.wk, &x)?, layer.bk.as_deref())?;
-            let v = add_bias(gemv_mat(&layer.wv, &x)?, layer.bv.as_deref())?;
+            let q = add_bias(self.gemv_mat(&layer.wq, &x)?, layer.bq.as_deref())?;
+            let k = add_bias(self.gemv_mat(&layer.wk, &x)?, layer.bk.as_deref())?;
+            let v = add_bias(self.gemv_mat(&layer.wv, &x)?, layer.bv.as_deref())?;
             let mut qh = split_heads(&q, self.n_head, hd)?;
             let mut kh = split_heads(&k, self.n_head_kv, hd)?;
             let vh = split_heads(&v, self.n_head_kv, hd)?;
@@ -281,21 +298,21 @@ impl Llama {
                     }
                 }
             }
-            let proj = gemv_mat(&layer.wo, &attn)?;
+            let proj = self.gemv_mat(&layer.wo, &attn)?;
             x = add(&proj, &residual)?;
             let residual = x.clone();
             x = rmsnorm(&x, &layer.ffn_norm, self.rms_eps)?;
-            let gate = gemv_mat(&layer.gate, &x)?;
-            let up = gemv_mat(&layer.up, &x)?;
+            let gate = self.gemv_mat(&layer.gate, &x)?;
+            let up = self.gemv_mat(&layer.up, &x)?;
             let mut h = silu(&gate)?;
             for (hv, uv) in h.iter_mut().zip(up.iter()) {
                 *hv *= *uv;
             }
-            let down = gemv_mat(&layer.down, &h)?;
+            let down = self.gemv_mat(&layer.down, &h)?;
             x = add(&down, &residual)?;
         }
         x = rmsnorm(&x, &self.output_norm, self.rms_eps)?;
-        let logits = gemv_mat(&self.output, &x)?;
+        let logits = self.gemv_mat(&self.output, &x)?;
         cache.n_past += 1;
         Ok(logits)
     }
@@ -739,7 +756,7 @@ fn pack_q6k_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
     out
 }
 
-fn need<'a>(g: &'a Gguf, name: &str) -> Result<&'a Tensor, LlamaError> {
+fn need<'a>(g: &'a Gguf, name: &str) -> Result<Tensor<'a>, LlamaError> {
     g.tensor(name)
         .ok_or_else(|| LlamaError::Tensor(name.to_string()))
 }
@@ -768,16 +785,16 @@ fn optional_f32(g: &Gguf, name: &str) -> Result<Option<Vec<f32>>, LlamaError> {
     }
 }
 
-fn f32s(t: &Tensor) -> Result<Vec<f32>, LlamaError> {
+fn f32s(t: Tensor<'_>) -> Result<Vec<f32>, LlamaError> {
     if t.ty != GgmlType::F32 {
         return Err(LlamaError::Type {
-            tensor: t.name.clone(),
+            tensor: t.name.to_string(),
             ty: t.ty.to_i32(),
         });
     }
     let (chunks, rem) = t.data.as_chunks::<4>();
     if !rem.is_empty() {
-        return Err(LlamaError::Shape(t.name.clone()));
+        return Err(LlamaError::Shape(t.name.to_string()));
     }
     Ok(chunks
         .iter()
@@ -785,74 +802,82 @@ fn f32s(t: &Tensor) -> Result<Vec<f32>, LlamaError> {
         .collect())
 }
 
-fn quant_mat(t: &Tensor) -> Result<QuantMat, LlamaError> {
+fn quant_mat(t: Tensor<'_>) -> Result<QuantMat, LlamaError> {
     match t.ty {
-        GgmlType::F32 | GgmlType::Q4_K | GgmlType::Q6_K => Ok(QuantMat {
-            name: t.name.clone(),
-            ty: t.ty,
-            n_cols: t.n_cols(),
-            n_rows: t.n_rows(),
-            data: t.data.clone(),
-        }),
+        GgmlType::F32 | GgmlType::Q4_K | GgmlType::Q6_K => {
+            let (start, end) = t.blob_range();
+            Ok(QuantMat {
+                name: t.name.to_string(),
+                ty: t.ty,
+                n_cols: t.n_cols(),
+                n_rows: t.n_rows(),
+                start,
+                end,
+            })
+        }
         other => Err(LlamaError::Type {
-            tensor: t.name.clone(),
+            tensor: t.name.to_string(),
             ty: other.to_i32(),
         }),
     }
 }
 
-fn gemv_mat(m: &QuantMat, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
-    let mut y = vec![0.0f32; m.n_rows];
-    match m.ty {
-        GgmlType::F32 => gemv_f32(m.n_cols, &m.data, x, &mut y)?,
-        GgmlType::Q4_K => gemv_q4_k_f32(m.n_cols, &m.data, x, &mut y)?,
-        GgmlType::Q6_K => gemv_q6_k_f32(m.n_cols, &m.data, x, &mut y)?,
-        other => {
-            return Err(LlamaError::Type {
-                tensor: m.name.clone(),
-                ty: other.to_i32(),
-            })
+impl Llama {
+    fn gemv_mat(&self, m: &QuantMat, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
+        let data = self.mat_bytes(m)?;
+        let mut y = vec![0.0f32; m.n_rows];
+        match m.ty {
+            GgmlType::F32 => gemv_f32(m.n_cols, data, x, &mut y)?,
+            GgmlType::Q4_K => gemv_q4_k_f32(m.n_cols, data, x, &mut y)?,
+            GgmlType::Q6_K => gemv_q6_k_f32(m.n_cols, data, x, &mut y)?,
+            other => {
+                return Err(LlamaError::Type {
+                    tensor: m.name.clone(),
+                    ty: other.to_i32(),
+                })
+            }
         }
+        Ok(y)
     }
-    Ok(y)
-}
 
-fn embed(emb: &QuantMat, token: u32) -> Result<Vec<f32>, LlamaError> {
-    let row = usize::try_from(token).map_err(|_| LlamaError::Shape(emb.name.clone()))?;
-    let rb = match emb.ty {
-        GgmlType::F32 => f32_row_bytes(emb.n_cols)?,
-        GgmlType::Q4_K => q4_k_row_bytes(emb.n_cols)?,
-        GgmlType::Q6_K => q6_k_row_bytes(emb.n_cols)?,
-        other => {
-            return Err(LlamaError::Type {
-                tensor: emb.name.clone(),
-                ty: other.to_i32(),
-            })
+    fn embed(&self, token: u32) -> Result<Vec<f32>, LlamaError> {
+        let emb = &self.token_embd;
+        let data = self.mat_bytes(emb)?;
+        let row = usize::try_from(token).map_err(|_| LlamaError::Shape(emb.name.clone()))?;
+        let rb = match emb.ty {
+            GgmlType::F32 => f32_row_bytes(emb.n_cols)?,
+            GgmlType::Q4_K => q4_k_row_bytes(emb.n_cols)?,
+            GgmlType::Q6_K => q6_k_row_bytes(emb.n_cols)?,
+            other => {
+                return Err(LlamaError::Type {
+                    tensor: emb.name.clone(),
+                    ty: other.to_i32(),
+                })
+            }
+        };
+        let start = row
+            .checked_mul(rb)
+            .ok_or_else(|| LlamaError::Shape(emb.name.clone()))?;
+        let end = start
+            .checked_add(rb)
+            .ok_or_else(|| LlamaError::Shape(emb.name.clone()))?;
+        let bytes = data
+            .get(start..end)
+            .ok_or_else(|| LlamaError::Shape(emb.name.clone()))?;
+        let mut y = vec![0.0f32; emb.n_cols];
+        match emb.ty {
+            GgmlType::F32 => dequant_f32_row(emb.n_cols, bytes, &mut y)?,
+            GgmlType::Q4_K => dequant_q4_k_row(emb.n_cols, bytes, &mut y)?,
+            GgmlType::Q6_K => dequant_q6_k_row(emb.n_cols, bytes, &mut y)?,
+            other => {
+                return Err(LlamaError::Type {
+                    tensor: emb.name.clone(),
+                    ty: other.to_i32(),
+                })
+            }
         }
-    };
-    let start = row
-        .checked_mul(rb)
-        .ok_or_else(|| LlamaError::Shape(emb.name.clone()))?;
-    let end = start
-        .checked_add(rb)
-        .ok_or_else(|| LlamaError::Shape(emb.name.clone()))?;
-    let bytes = emb
-        .data
-        .get(start..end)
-        .ok_or_else(|| LlamaError::Shape(emb.name.clone()))?;
-    let mut y = vec![0.0f32; emb.n_cols];
-    match emb.ty {
-        GgmlType::F32 => dequant_f32_row(emb.n_cols, bytes, &mut y)?,
-        GgmlType::Q4_K => dequant_q4_k_row(emb.n_cols, bytes, &mut y)?,
-        GgmlType::Q6_K => dequant_q6_k_row(emb.n_cols, bytes, &mut y)?,
-        other => {
-            return Err(LlamaError::Type {
-                tensor: emb.name.clone(),
-                ty: other.to_i32(),
-            })
-        }
+        Ok(y)
     }
-    Ok(y)
 }
 
 fn rmsnorm(x: &[f32], w: &[f32], eps: f32) -> Result<Vec<f32>, LlamaError> {
@@ -1018,7 +1043,7 @@ fn argmax(x: &[f32]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::load_gguf;
+    use crate::{load_gguf, load_gguf_owned};
 
     /// ggml `dequantize_row_q4_K` (oracle).
     fn dequant_q4_k_row(w: &[u8]) -> Vec<f32> {
@@ -1103,7 +1128,7 @@ mod tests {
         y
     }
 
-    fn oracle_gemv(t: &Tensor, x: &[f32]) -> Vec<f32> {
+    fn oracle_gemv(t: Tensor<'_>, x: &[f32]) -> Vec<f32> {
         let n_cols = t.n_cols();
         let n_rows = t.n_rows();
         let mut y = vec![0.0f32; n_rows];
@@ -1140,7 +1165,7 @@ mod tests {
         y
     }
 
-    fn oracle_embed(t: &Tensor, token: u32) -> Vec<f32> {
+    fn oracle_embed(t: Tensor<'_>, token: u32) -> Vec<f32> {
         let n_cols = t.n_cols();
         let row = usize::try_from(token).unwrap();
         match t.ty {
@@ -1166,7 +1191,7 @@ mod tests {
         }
     }
 
-    fn oracle_add_bias(mut y: Vec<f32>, bias: Option<&Tensor>) -> Vec<f32> {
+    fn oracle_add_bias(mut y: Vec<f32>, bias: Option<Tensor<'_>>) -> Vec<f32> {
         let Some(b) = bias else {
             return y;
         };
@@ -1279,12 +1304,33 @@ mod tests {
 
     fn load_fwd_match(bytes: &[u8], token: u32) {
         let g = load_gguf(bytes).expect("load");
-        let model = Llama::from_gguf(&g).expect("model");
+        let model = Llama::from_gguf(g.clone()).expect("model");
         let mut cache = model.new_cache(4).expect("cache");
         let got = model.forward(&mut cache, token).expect("fwd");
         let exp = oracle_forward(&g, token);
         assert_logits_match(&got, &exp);
         assert_eq!(cache.n_past, 1);
+    }
+
+    #[test]
+    fn from_gguf_takes_file_blob_once_and_logits_match() {
+        let bytes = tiny_llama_gguf();
+        let g = load_gguf_owned(bytes.clone()).expect("owned");
+        assert_eq!(g.blob_len(), bytes.len());
+        let mut n_tensors = 0usize;
+        for t in g.tensors() {
+            assert!(g.payload_in_blob(t), "{}", t.name);
+            n_tensors = n_tensors.saturating_add(1);
+        }
+        assert!(n_tensors > 0);
+        let blob_len = g.blob_len();
+        let model = Llama::from_gguf(g).expect("model");
+        assert_eq!(model.blob_len(), blob_len);
+        let g2 = load_gguf(&bytes).expect("reload");
+        let mut cache = model.new_cache(4).expect("cache");
+        let got = model.forward(&mut cache, 3).expect("fwd");
+        let exp = oracle_forward(&g2, 3);
+        assert_logits_match(&got, &exp);
     }
 
     #[test]
@@ -1310,7 +1356,7 @@ mod tests {
         assert_eq!(tok.encode("ab").unwrap(), vec![3]);
         assert_eq!(tok.decode(&[1, 2]), "ab");
         assert_eq!(prompt_ids(&tok, "ab").unwrap().first().copied(), tok.bos);
-        let model = Llama::from_gguf(&g).expect("model");
+        let model = Llama::from_gguf(g.clone()).expect("model");
         let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
         assert!(out.contains("ab"), "{out}");
         let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
@@ -1322,7 +1368,7 @@ mod tests {
         let bytes = tiny_llama_gguf();
         let g = load_gguf(&bytes).expect("load");
         let tok = Tokenizer::from_gguf(&g).expect("tok");
-        let model = Llama::from_gguf(&g).expect("model");
+        let model = Llama::from_gguf(g.clone()).expect("model");
         assert_eq!(greedy_generate(&model, &tok, "a", 0).expect("a"), "a");
         assert_eq!(greedy_generate(&model, &tok, "b", 0).expect("b"), "b");
         assert_eq!(greedy_generate(&model, &tok, "ab", 0).expect("ab"), "ab");
@@ -1330,7 +1376,7 @@ mod tests {
         assert!(err.to_string().contains("empty prompt"), "{err}");
         let q = load_gguf(&tiny_qwen2_gguf()).expect("qwen2");
         let qtok = Tokenizer::from_gguf(&q).expect("qtok");
-        let qmodel = Llama::from_gguf(&q).expect("qmodel");
+        let qmodel = Llama::from_gguf(q.clone()).expect("qmodel");
         assert_eq!(
             greedy_generate_ctx(&qmodel, &qtok, "ab", 0, Some(1)).expect("n_ctx=1"),
             "ab"
@@ -1364,7 +1410,7 @@ mod tests {
         let ids = prompt_ids(&tok, "ab").expect("ids");
         assert_eq!(ids, tok.encode("ab").unwrap());
         assert_ne!(ids.first().copied(), tok.bos);
-        let model = Llama::from_gguf(&g).expect("model");
+        let model = Llama::from_gguf(g.clone()).expect("model");
         let prompt = tok.decode(&[3]);
         assert!(!prompt.is_empty());
         let out = greedy_generate(&model, &tok, &prompt, 2).expect("gen");
@@ -1395,7 +1441,7 @@ mod tests {
         for bytes in [tiny_mistral_gguf(), tiny_phi3_gguf()] {
             let g = load_gguf(&bytes).expect("load");
             let tok = Tokenizer::from_gguf(&g).expect("tok");
-            let model = Llama::from_gguf(&g).expect("model");
+            let model = Llama::from_gguf(g.clone()).expect("model");
             let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
             let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
             assert_eq!(out, out2);
@@ -1426,7 +1472,7 @@ mod tests {
         );
         let err = match load_gguf(&bytes) {
             Err(e) => e.to_string(),
-            Ok(g) => match Llama::from_gguf(&g) {
+            Ok(g) => match Llama::from_gguf(g.clone()) {
                 Ok(_) => panic!("decode should reject unknown type"),
                 Err(e) => e.to_string(),
             },
@@ -1456,7 +1502,7 @@ mod tests {
             )],
         );
         let g = load_gguf(&bytes).expect("load");
-        let err = match Llama::from_gguf(&g) {
+        let err = match Llama::from_gguf(g.clone()) {
             Ok(_) => panic!("expected missing tensor"),
             Err(e) => e.to_string(),
         };
@@ -1476,7 +1522,7 @@ mod tests {
             &[],
         );
         let g = load_gguf(&bytes).expect("load");
-        let err = match Llama::from_gguf(&g) {
+        let err = match Llama::from_gguf(g.clone()) {
             Ok(_) => panic!("expected unknown arch"),
             Err(e) => e.to_string(),
         };
@@ -1493,7 +1539,7 @@ mod tests {
             &[],
         );
         let g = load_gguf(&bytes).expect("load");
-        let err = match Llama::from_gguf(&g) {
+        let err = match Llama::from_gguf(g.clone()) {
             Ok(_) => panic!("expected missing kv"),
             Err(e) => e.to_string(),
         };
