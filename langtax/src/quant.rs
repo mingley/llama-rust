@@ -1,4 +1,4 @@
-//! GGUF on-disk F16 / Q4_0 / Q8_0 / Q4_K / Q5_K / Q6_K / Q8_K / IQ1_S / IQ2_XXS / IQ2_XS / IQ2_S / IQ3_XXS / IQ3_S / IQ4_NL / IQ4_XS blocks. GEMV reads those bytes; no f32-scale copy.
+//! GGUF on-disk F16 / Q4_0 / Q8_0 / Q4_K / Q5_K / Q6_K / Q8_K / IQ1_M / IQ1_S / IQ2_XXS / IQ2_XS / IQ2_S / IQ3_XXS / IQ3_S / IQ4_NL / IQ4_XS blocks. GEMV reads those bytes; no f32-scale copy.
 
 use std::fmt;
 
@@ -43,7 +43,9 @@ pub const IQ2_XXS_BLOCK: usize = 2 + QK_K / 8 * 2;
 pub const IQ2_XS_BLOCK: usize = 2 + QK_K / 8 * 2 + QK_K / 32;
 /// ggml `block_iq1_s`: binary16 `d`, `qs[QK_K/8]`, `qh[QK_K/32]` uint16 (50 bytes / 256 weights).
 pub const IQ1_S_BLOCK: usize = 2 + QK_K / 8 + QK_K / 16;
-/// ggml `IQ1S_DELTA` added to each grid value (`±0.125`).
+/// ggml `block_iq1_m`: `qs[QK_K/8]`, `qh[QK_K/16]`, `scales[QK_K/32]` (56 bytes / 256 weights).
+pub const IQ1_M_BLOCK: usize = QK_K / 8 + QK_K / 16 + QK_K / 32;
+/// ggml `IQ1S_DELTA` / `IQ1M_DELTA` added to each grid value (`±0.125`).
 const IQ1S_DELTA: f32 = 0.125;
 /// ggml `kvalues_iq4nl` (shared by IQ4_NL and IQ4_XS).
 const KVALUES_IQ4NL: [i8; 16] = [
@@ -4588,6 +4590,68 @@ pub fn pack_iq1_s_block(
     out
 }
 
+/// Pack one IQ1_M block: 11-bit grid indices, per-16 3-bit scales, per-8 delta sign.
+///
+/// Super-block `d` is packed into the high nibbles of the four `uint16` scale words
+/// (`dequantize_row_iq1_m`). `qs_idx[g]` is 0..=2047 for group `g` of 8 weights.
+/// `scales[ib]` is 0..=7 for 16-wide sub-block `ib` (`dl = d*(2*ls+1)`).
+/// `delta_neg[g]` is the `qh` shift bit: nonzero → −`IQ1S_DELTA`, else +`IQ1S_DELTA`.
+pub fn pack_iq1_m_block(
+    d: f32,
+    scales: &[u8; 16],
+    qs_idx: &[u16; 32],
+    delta_neg: &[u8; 32],
+) -> [u8; IQ1_M_BLOCK] {
+    let mut out = [0u8; IQ1_M_BLOCK];
+    for g in 0usize..32 {
+        let idx = qs_idx.get(g).copied().unwrap_or(0) & 2047;
+        if let Some(slot) = out.get_mut(g) {
+            *slot = u8::try_from(idx & 0xff).unwrap_or(0);
+        }
+        let qh_off = 32usize.saturating_add(g / 2);
+        let shift32 = u32::try_from(4 * (g % 2)).unwrap_or(0);
+        let hi = u8::try_from((idx >> 8) & 7).unwrap_or(0);
+        if let Some(slot) = out.get_mut(qh_off) {
+            *slot |= hi.wrapping_shl(shift32);
+            if delta_neg.get(g).copied().unwrap_or(0) != 0 {
+                *slot |= 0x08u8.wrapping_shl(shift32);
+            }
+        }
+    }
+    let mut sc = [0u16; 4];
+    for ib in 0usize..16 {
+        let ls = u16::from(scales.get(ib).copied().unwrap_or(0) & 7);
+        let sh32 = u32::try_from(3 * (ib % 4)).unwrap_or(0);
+        if let Some(slot) = sc.get_mut(ib / 4) {
+            *slot |= ls.wrapping_shl(sh32);
+        }
+    }
+    let s = u16::from_le_bytes(store_f16_le(d));
+    if let Some(slot) = sc.get_mut(0) {
+        *slot |= (s & 0x000f) << 12;
+    }
+    if let Some(slot) = sc.get_mut(1) {
+        *slot |= (s & 0x00f0) << 8;
+    }
+    if let Some(slot) = sc.get_mut(2) {
+        *slot |= (s & 0x0f00) << 4;
+    }
+    if let Some(slot) = sc.get_mut(3) {
+        *slot |= s & 0xf000;
+    }
+    for (i, v) in sc.iter().enumerate() {
+        let bytes = v.to_le_bytes();
+        let off = 48usize.saturating_add(i.saturating_mul(2));
+        if let Some(slot) = out.get_mut(off) {
+            *slot = bytes[0];
+        }
+        if let Some(slot) = out.get_mut(off.saturating_add(1)) {
+            *slot = bytes[1];
+        }
+    }
+    out
+}
+
 /// Pack one Q8_K block: f32 `d`, 256 signed `qs`, and ggml `bsums` of 16.
 pub fn pack_q8_k_block(d: f32, qs: &[i8; QK_K]) -> [u8; Q8_K_BLOCK] {
     let mut out = [0u8; Q8_K_BLOCK];
@@ -4727,6 +4791,17 @@ pub fn iq1_s_row_bytes(n_cols: usize) -> Result<usize, QuantError> {
         });
     }
     Ok((n_cols / QK_K) * IQ1_S_BLOCK)
+}
+
+/// Packed IQ1_M bytes for one matrix row of `n_cols` columns.
+pub fn iq1_m_row_bytes(n_cols: usize) -> Result<usize, QuantError> {
+    if !n_cols.is_multiple_of(QK_K) {
+        return Err(QuantError::UnalignedCols {
+            n_cols,
+            block: QK_K,
+        });
+    }
+    Ok((n_cols / QK_K) * IQ1_M_BLOCK)
 }
 
 /// Packed Q8_K bytes for one matrix row of `n_cols` columns.
@@ -5268,6 +5343,20 @@ pub fn gemm_iq1_s_f32(
     gemm_f32_x(GemmKind::IQ1S, n_cols, n_tokens, w, x, y)
 }
 
+/// `Y[t, r] = W_iq1m[r, n_cols] · X[t, n_cols]`. Token-major `x` / `y`.
+pub fn gemm_iq1_m_f32(
+    n_cols: usize,
+    n_tokens: usize,
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+) -> Result<(), QuantError> {
+    if n_tokens == 1 {
+        return gemv_iq1_m_f32(n_cols, w, x, y);
+    }
+    gemm_f32_x(GemmKind::IQ1M, n_cols, n_tokens, w, x, y)
+}
+
 #[derive(Clone, Copy)]
 enum GemmKind {
     F16,
@@ -5276,6 +5365,7 @@ enum GemmKind {
     Q5K,
     Q6K,
     IQ1S,
+    IQ1M,
     IQ2S,
     IQ2XXS,
     IQ2XS,
@@ -5321,6 +5411,7 @@ fn gemm_f32_x(
         GemmKind::Q5K => (q5_k_row_bytes(n_cols)?, "W Q5_K bytes"),
         GemmKind::Q6K => (q6_k_row_bytes(n_cols)?, "W Q6_K bytes"),
         GemmKind::IQ1S => (iq1_s_row_bytes(n_cols)?, "W IQ1_S bytes"),
+        GemmKind::IQ1M => (iq1_m_row_bytes(n_cols)?, "W IQ1_M bytes"),
         GemmKind::IQ2S => (iq2_s_row_bytes(n_cols)?, "W IQ2_S bytes"),
         GemmKind::IQ2XXS => (iq2_xxs_row_bytes(n_cols)?, "W IQ2_XXS bytes"),
         GemmKind::IQ2XS => (iq2_xs_row_bytes(n_cols)?, "W IQ2_XS bytes"),
@@ -5355,6 +5446,7 @@ fn gemm_f32_x(
                 GemmKind::Q5K => vec_dot_q5_k_f32_row(wrow, xt),
                 GemmKind::Q6K => vec_dot_q6_k_f32_row(wrow, xt),
                 GemmKind::IQ1S => vec_dot_iq1_s_f32_row(wrow, xt),
+                GemmKind::IQ1M => vec_dot_iq1_m_f32_row(wrow, xt),
                 GemmKind::IQ2S => vec_dot_iq2_s_f32_row(wrow, xt),
                 GemmKind::IQ2XXS => vec_dot_iq2_xxs_f32_row(wrow, xt),
                 GemmKind::IQ2XS => vec_dot_iq2_xs_f32_row(wrow, xt),
@@ -5534,6 +5626,27 @@ pub fn gemv_iq1_s_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resu
     for_each_row(y, |r, out| {
         *out = row_bytes(w, w_rb, r)
             .map(|row| vec_dot_iq1_s_f32_row(row, x))
+            .unwrap_or(0.0);
+    });
+    Ok(())
+}
+
+/// `y[m] = W_iq1m[m, n_cols] x_f32[n_cols]`.
+pub fn gemv_iq1_m_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    let w_rb = iq1_m_row_bytes(n_cols)?;
+    require_len("x F32 elems", x.len(), n_cols)?;
+    let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
+        what: "W IQ1_M bytes overflow",
+        expected: w_rb,
+        actual: y.len(),
+    })?;
+    require_len("W IQ1_M bytes", w.len(), expected_w)?;
+    if y.is_empty() {
+        return Ok(());
+    }
+    for_each_row(y, |r, out| {
+        *out = row_bytes(w, w_rb, r)
+            .map(|row| vec_dot_iq1_m_f32_row(row, x))
             .unwrap_or(0.0);
     });
     Ok(())
@@ -5990,6 +6103,95 @@ fn write_iq1_s_super(qs: &[u8], qh: u16, dl: f32, delta: f32, y: &mut [f32]) {
         let l32 = u32::try_from(l.saturating_mul(3)).unwrap_or(0);
         let hi = (qh >> l32) & 7;
         let idx = u16::from(q) | (hi << 8);
+        let g = iq1s_grid8(idx);
+        let base = l.saturating_mul(8);
+        for j in 0..8 {
+            let Some(&gv) = g.get(j) else {
+                continue;
+            };
+            if let Some(slot) = y.get_mut(base.saturating_add(j)) {
+                *slot = dl * (f32::from(gv) + delta);
+            }
+        }
+    }
+}
+
+/// Unpack one IQ1_M GGUF row into `y[n_cols]` (`x = d*(2*ls+1)*(grid±IQ1S_DELTA)`).
+pub fn dequant_iq1_m_row(n_cols: usize, row: &[u8], y: &mut [f32]) -> Result<(), QuantError> {
+    let rb = iq1_m_row_bytes(n_cols)?;
+    require_len("IQ1_M row bytes", row.len(), rb)?;
+    require_len("IQ1_M y elems", y.len(), n_cols)?;
+    for yv in y.iter_mut() {
+        *yv = 0.0;
+    }
+    let (w_blocks, _) = row.as_chunks::<IQ1_M_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(qs) = wb.get(..32) else { continue };
+        let Some(qh) = wb.get(32..48) else { continue };
+        let Some(sc) = wb.get(48..56) else { continue };
+        let Some(d) = iq1_m_super_d(sc) else { continue };
+        let x_base = b.saturating_mul(QK_K);
+        for ib in 0usize..8 {
+            let Some(scv) = iq1_m_scale_u16(sc, ib / 2) else {
+                continue;
+            };
+            let sh = u32::try_from(6 * (ib % 2)).unwrap_or(0);
+            let dl1 = d * (2.0 * f32::from((scv >> sh) & 7) + 1.0);
+            let dl2 = d * (2.0 * f32::from((scv >> sh.saturating_add(3)) & 7) + 1.0);
+            let qs_off = ib.saturating_mul(4);
+            let qh_off = ib.saturating_mul(2);
+            let Some(qs_g) = qs.get(qs_off..qs_off.saturating_add(4)) else {
+                continue;
+            };
+            let Some(qh_g) = qh.get(qh_off..qh_off.saturating_add(2)) else {
+                continue;
+            };
+            let y_off = x_base.saturating_add(ib.saturating_mul(32));
+            let Some(y_g) = y.get_mut(y_off..y_off.saturating_add(32)) else {
+                continue;
+            };
+            write_iq1_m_super(qs_g, qh_g, dl1, dl2, y_g);
+        }
+    }
+    Ok(())
+}
+
+fn iq1_m_scale_u16(sc: &[u8], i: usize) -> Option<u16> {
+    let off = i.saturating_mul(2);
+    let b0 = sc.get(off).copied()?;
+    let b1 = sc.get(off.saturating_add(1)).copied()?;
+    Some(u16::from_le_bytes([b0, b1]))
+}
+
+fn iq1_m_super_d(sc: &[u8]) -> Option<f32> {
+    let sc0 = iq1_m_scale_u16(sc, 0)?;
+    let sc1 = iq1_m_scale_u16(sc, 1)?;
+    let sc2 = iq1_m_scale_u16(sc, 2)?;
+    let sc3 = iq1_m_scale_u16(sc, 3)?;
+    let bits = (sc0 >> 12) | ((sc1 >> 8) & 0x00f0) | ((sc2 >> 4) & 0x0f00) | (sc3 & 0xf000);
+    Some(crate::fp16::f16_to_f32(bits))
+}
+
+fn write_iq1_m_super(qs: &[u8], qh: &[u8], dl1: f32, dl2: f32, y: &mut [f32]) {
+    for l in 0usize..4 {
+        let Some(&q) = qs.get(l) else {
+            continue;
+        };
+        let Some(&qhb) = qh.get(l / 2) else {
+            continue;
+        };
+        let idx = if l.is_multiple_of(2) {
+            u16::from(q) | ((u16::from(qhb) << 8) & 0x700)
+        } else {
+            u16::from(q) | ((u16::from(qhb) << 4) & 0x700)
+        };
+        let delta_bit = if l.is_multiple_of(2) { 0x08 } else { 0x80 };
+        let delta = if qhb & delta_bit != 0 {
+            -IQ1S_DELTA
+        } else {
+            IQ1S_DELTA
+        };
+        let dl = if l < 2 { dl1 } else { dl2 };
         let g = iq1s_grid8(idx);
         let base = l.saturating_mul(8);
         for j in 0..8 {
@@ -6792,6 +6994,79 @@ fn dot_iq1_s_super(qs: &[u8], qh: u16, dl: f32, delta: f32, x: &[f32]) -> f32 {
         let l32 = u32::try_from(l.saturating_mul(3)).unwrap_or(0);
         let hi = (qh >> l32) & 7;
         let idx = u16::from(q) | (hi << 8);
+        let g = iq1s_grid8(idx);
+        let base = l.saturating_mul(8);
+        for j in 0..8 {
+            let Some(&gv) = g.get(j) else {
+                continue;
+            };
+            let Some(&xv) = x.get(base.saturating_add(j)) else {
+                continue;
+            };
+            sum += dl * (f32::from(gv) + delta) * xv;
+        }
+    }
+    sum
+}
+
+fn vec_dot_iq1_m_f32_row(row: &[u8], x: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    let (w_blocks, _) = row.as_chunks::<IQ1_M_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(qs) = wb.get(..32) else { continue };
+        let Some(qh) = wb.get(32..48) else { continue };
+        let Some(sc) = wb.get(48..56) else { continue };
+        let Some(d) = iq1_m_super_d(sc) else { continue };
+        let x_base = b.saturating_mul(QK_K);
+        let Some(xr) = x.get(x_base..x_base.saturating_add(QK_K)) else {
+            continue;
+        };
+        for ib in 0usize..8 {
+            let Some(scv) = iq1_m_scale_u16(sc, ib / 2) else {
+                continue;
+            };
+            let sh = u32::try_from(6 * (ib % 2)).unwrap_or(0);
+            let dl1 = d * (2.0 * f32::from((scv >> sh) & 7) + 1.0);
+            let dl2 = d * (2.0 * f32::from((scv >> sh.saturating_add(3)) & 7) + 1.0);
+            let qs_off = ib.saturating_mul(4);
+            let qh_off = ib.saturating_mul(2);
+            let Some(qs_g) = qs.get(qs_off..qs_off.saturating_add(4)) else {
+                continue;
+            };
+            let Some(qh_g) = qh.get(qh_off..qh_off.saturating_add(2)) else {
+                continue;
+            };
+            let xb = ib.saturating_mul(32);
+            let Some(x_g) = xr.get(xb..xb.saturating_add(32)) else {
+                continue;
+            };
+            sum += dot_iq1_m_super(qs_g, qh_g, dl1, dl2, x_g);
+        }
+    }
+    sum
+}
+
+fn dot_iq1_m_super(qs: &[u8], qh: &[u8], dl1: f32, dl2: f32, x: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    for l in 0usize..4 {
+        let Some(&q) = qs.get(l) else {
+            continue;
+        };
+        let Some(&qhb) = qh.get(l / 2) else {
+            continue;
+        };
+        let idx = if l.is_multiple_of(2) {
+            u16::from(q) | ((u16::from(qhb) << 8) & 0x700)
+        } else {
+            u16::from(q) | ((u16::from(qhb) << 4) & 0x700)
+        };
+        let delta_bit = if l.is_multiple_of(2) { 0x08 } else { 0x80 };
+        let delta = if qhb & delta_bit != 0 {
+            -IQ1S_DELTA
+        } else {
+            IQ1S_DELTA
+        };
+        let dl = if l < 2 { dl1 } else { dl2 };
         let g = iq1s_grid8(idx);
         let base = l.saturating_mul(8);
         for j in 0..8 {
@@ -8704,6 +8979,170 @@ mod tests {
     fn gemv_iq1_s_rejects_unaligned_cols() {
         let mut y = [0.0f32];
         assert!(gemv_iq1_s_f32(255, &[], &[], &mut y).is_err());
+    }
+
+    /// ggml `dequantize_row_iq1_m` (oracle). Independent of crate kernels.
+    fn oracle_iq1_m_row(w: &[u8]) -> Vec<f32> {
+        const GRID: [u64; 2048] = IQ1S_GRID;
+        const DELTA: f32 = 0.125;
+        let nblocks = w.len() / IQ1_M_BLOCK;
+        let mut y = vec![0.0f32; nblocks * QK_K];
+        for b in 0..nblocks {
+            let wb = &w[b * IQ1_M_BLOCK..(b + 1) * IQ1_M_BLOCK];
+            let qs = &wb[0..32];
+            let qh = &wb[32..48];
+            let scb = &wb[48..56];
+            let sc = [
+                u16::from_le_bytes([scb[0], scb[1]]),
+                u16::from_le_bytes([scb[2], scb[3]]),
+                u16::from_le_bytes([scb[4], scb[5]]),
+                u16::from_le_bytes([scb[6], scb[7]]),
+            ];
+            let bits = (sc[0] >> 12)
+                | ((sc[1] >> 8) & 0x00f0)
+                | ((sc[2] >> 4) & 0x0f00)
+                | (sc[3] & 0xf000);
+            let d = crate::fp16::f16_to_f32(bits);
+            let mut yo = b * QK_K;
+            for ib in 0..8 {
+                let scv = sc[ib / 2];
+                let sh = 6 * (ib % 2);
+                let dl1 = d * (2.0 * f32::from((scv >> sh) & 7) + 1.0);
+                let dl2 = d * (2.0 * f32::from((scv >> (sh + 3)) & 7) + 1.0);
+                for l in 0..4 {
+                    let qhb = qh[ib * 2 + l / 2];
+                    let idx = if l % 2 == 0 {
+                        usize::from(qs[ib * 4 + l]) | (usize::from(qhb) << 8 & 0x700)
+                    } else {
+                        usize::from(qs[ib * 4 + l]) | (usize::from(qhb) << 4 & 0x700)
+                    };
+                    let delta_bit = if l % 2 == 0 { 0x08 } else { 0x80 };
+                    let delta = if qhb & delta_bit != 0 { -DELTA } else { DELTA };
+                    let dl = if l < 2 { dl1 } else { dl2 };
+                    let g = GRID[idx].to_le_bytes();
+                    for j in 0..8 {
+                        y[yo + j] = dl * (f32::from(i8::from_le_bytes([g[j]])) + delta);
+                    }
+                    yo += 8;
+                }
+            }
+        }
+        y
+    }
+
+    fn oracle_iq1_m_dot(row: &[u8], x: &[f32]) -> f32 {
+        oracle_iq1_m_row(row)
+            .iter()
+            .zip(x.iter())
+            .map(|(a, b)| a * b)
+            .sum()
+    }
+
+    #[test]
+    fn pack_iq1_m_gemv_and_dequant_match_independent_oracle() {
+        let mut qs_idx = [0u16; 32];
+        qs_idx[0] = 3;
+        qs_idx[1] = 12;
+        qs_idx[4] = 256;
+        qs_idx[5] = 2047;
+        let mut sc = [0u8; 16];
+        sc[0] = 1;
+        sc[1] = 2;
+        sc[2] = 3;
+        let mut delta_neg = [0u8; 32];
+        delta_neg[1] = 1;
+        delta_neg[4] = 1;
+        let w = pack_iq1_m_block(25.0 / 100.0, &sc, &qs_idx, &delta_neg);
+        assert_eq!(w.len(), IQ1_M_BLOCK);
+        assert_eq!(w[0], 3);
+        assert_eq!(w[1], 12);
+        assert_eq!(w[4], 0);
+        assert_eq!(w[5], 255);
+        assert_eq!(w[32] & 7, 0);
+        assert_eq!((w[32] >> 4) & 7, 0);
+        assert_ne!(w[32] & 0x80, 0);
+        assert_eq!(w[34] & 7, 1);
+        assert_eq!((w[34] >> 4) & 7, 7);
+        assert_ne!(w[34] & 0x08, 0);
+        let sc0 = u16::from_le_bytes([w[48], w[49]]);
+        assert_eq!(sc0 & 7, 1);
+        assert_eq!((sc0 >> 3) & 7, 2);
+        let mut x = [0.0f32; QK_K];
+        x[0] = 2.0;
+        x[8] = 4.0;
+        x[32] = 1.0;
+        x[40] = 3.0;
+        let mut y = [0.0f32];
+        gemv_iq1_m_f32(QK_K, &w, &x, &mut y).unwrap();
+        let expected = oracle_iq1_m_dot(&w, &x);
+        let rel = (y[0] - expected).abs() / (1.0 + expected.abs());
+        assert!(rel * 100_000.0 < 1.0, "gemv {} vs {expected}", y[0]);
+        let mut row = [0.0f32; QK_K];
+        dequant_iq1_m_row(QK_K, &w, &mut row).unwrap();
+        let oracle = oracle_iq1_m_row(&w);
+        assert_close(&row, &oracle);
+        let via_dequant: f32 = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
+        assert!(
+            (via_dequant - y[0]).abs() * 100_000.0 < 1.0,
+            "{via_dequant} vs {}",
+            y[0]
+        );
+    }
+
+    #[test]
+    fn gemm_iq1_m_matches_repeated_gemv_and_oracle() {
+        let n_cols = QK_K;
+        let n_rows = 2usize;
+        let n_tokens = 3usize;
+        let mut w = Vec::new();
+        for r in 0..n_rows {
+            let mut qs_idx = [0u16; 32];
+            qs_idx[0] = u16::try_from(3 + r).unwrap_or(3);
+            qs_idx[1] = 12;
+            qs_idx[4] = 256;
+            let mut sc = [1u8; 16];
+            sc[0] = 1;
+            sc[1] = 2;
+            let mut delta_neg = [0u8; 32];
+            delta_neg[0] = 1;
+            w.extend_from_slice(&pack_iq1_m_block(25.0 / 100.0, &sc, &qs_idx, &delta_neg));
+        }
+        let mut xk = vec![0.0f32; n_cols * n_tokens];
+        for t in 0..n_tokens {
+            if let Some(slot) = xk.get_mut(t * n_cols) {
+                *slot = f32::from(u16::try_from(t + 1).unwrap_or(1));
+            }
+            if let Some(slot) = xk.get_mut(t * n_cols + 8) {
+                *slot = 2.0;
+            }
+        }
+        let mut y = vec![0.0f32; n_rows * n_tokens];
+        gemm_iq1_m_f32(n_cols, n_tokens, &w, &xk, &mut y).unwrap();
+        let mut exp = Vec::new();
+        let mut exp_oracle = Vec::new();
+        for t in 0..n_tokens {
+            let xt = &xk[t * n_cols..(t + 1) * n_cols];
+            let mut a = vec![0.0f32; n_rows];
+            gemv_iq1_m_f32(n_cols, &w, xt, &mut a).unwrap();
+            exp.extend_from_slice(&a);
+            for r in 0..n_rows {
+                let row = &w[r * IQ1_M_BLOCK..(r + 1) * IQ1_M_BLOCK];
+                exp_oracle.push(oracle_iq1_m_dot(row, xt));
+            }
+        }
+        assert_close(&y, &exp);
+        assert_close(&y, &exp_oracle);
+        crate::pool::with_sequential(|| {
+            let mut y_seq = vec![0.0f32; n_rows * n_tokens];
+            gemm_iq1_m_f32(n_cols, n_tokens, &w, &xk, &mut y_seq).unwrap();
+            assert_close(&y_seq, &exp_oracle);
+        });
+    }
+
+    #[test]
+    fn gemv_iq1_m_rejects_unaligned_cols() {
+        let mut y = [0.0f32];
+        assert!(gemv_iq1_m_f32(255, &[], &[], &mut y).is_err());
     }
 
     #[test]
