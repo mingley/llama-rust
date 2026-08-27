@@ -299,14 +299,39 @@ impl Llama {
 }
 
 /// Greedy generate: encode prompt, decode `n_predict` tokens, return decoded string.
+///
+/// KV length is `prompt tokens + n_predict + 1`.
 pub fn greedy_generate(
     model: &Llama,
     tok: &Tokenizer,
     prompt: &str,
     n_predict: usize,
 ) -> Result<String, LlamaError> {
+    greedy_generate_with(model, tok, prompt, n_predict, None)
+}
+
+/// Like [`greedy_generate`], with an optional KV `max_seq` override.
+///
+/// `None` keeps the prompt + predict + 1 sizing. `Some(n)` must be at least
+/// that large or the error names `max_seq`.
+pub fn greedy_generate_with(
+    model: &Llama,
+    tok: &Tokenizer,
+    prompt: &str,
+    n_predict: usize,
+    max_seq: Option<usize>,
+) -> Result<String, LlamaError> {
     let mut ids = prompt_ids(tok, prompt)?;
-    let max_seq = ids.len().saturating_add(n_predict).saturating_add(1);
+    let need = ids.len().saturating_add(n_predict).saturating_add(1);
+    let max_seq = match max_seq {
+        Some(n) if n < need => {
+            return Err(LlamaError::Shape(format!(
+                "max_seq {n} < prompt+n_predict+1 ({need})"
+            )));
+        }
+        Some(n) => n,
+        None => need,
+    };
     let mut cache = model.new_cache(max_seq)?;
     let mut last = Vec::new();
     for id in &ids {
@@ -1286,6 +1311,14 @@ mod tests {
         assert!(out.contains("ab"), "{out}");
         let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
         assert_eq!(out, out2);
+        let out3 = greedy_generate_with(&model, &tok, "ab", 2, Some(32)).expect("gen max_seq");
+        assert_eq!(out, out3);
+        let err = greedy_generate_with(&model, &tok, "ab", 2, Some(1)).expect_err("tiny max_seq");
+        let msg = err.to_string();
+        assert!(msg.contains("max_seq"), "{msg}");
+        assert!(msg.contains('1'), "{msg}");
+        let just_prompt = greedy_generate_with(&model, &tok, "a", 0, None).expect("n_predict 0");
+        assert!(just_prompt.contains('a'), "{just_prompt}");
     }
 
     #[test]

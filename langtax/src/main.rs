@@ -7,9 +7,9 @@ use std::path::Path;
 use std::time::Instant;
 
 use llama_rust::{
-    gemv_q4_k, gemv_q8_0, greedy_generate, load_gguf, pack_q4_k_block, pack_q8_0_block,
-    pack_q8_k_block, tiny_llama_gguf, tiny_qwen2_gguf, write_gguf, write_gguf_with_kv, GgmlType,
-    Kv, Llama, TensorWrite, Tokenizer, QK8_0, QK_K,
+    gemv_q4_k, gemv_q8_0, greedy_generate_with, load_gguf, pack_q4_k_block, pack_q8_0_block,
+    pack_q8_k_block, parse_args, tiny_llama_gguf, tiny_qwen2_gguf, usage, write_gguf,
+    write_gguf_with_kv, Cmd, GgmlType, InferArgs, Kv, Llama, TensorWrite, Tokenizer, QK8_0, QK_K,
 };
 
 fn y_checksum(y: &[f32]) -> u64 {
@@ -209,67 +209,52 @@ fn gemv_q4k_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn infer_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = read_path(path)?;
+fn infer_file(opts: &InferArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = read_path(Path::new(&opts.path))?;
     let g = load_gguf(&bytes)?;
     let model = Llama::from_gguf(&g)?;
     let tok = Tokenizer::from_gguf(&g)?;
-    let text = greedy_generate(&model, &tok, "ab", 2)?;
-    println!("prompt=ab n_predict=2");
+    let text = greedy_generate_with(&model, &tok, &opts.prompt, opts.n_predict, opts.max_seq)?;
+    print!("prompt={}", opts.prompt);
+    print!(" n_predict={}", opts.n_predict);
+    if let Some(m) = opts.max_seq {
+        print!(" max_seq={m}");
+    }
+    println!();
     println!("generated={text}");
     Ok(())
 }
 
+fn write_bytes(path: &str, bytes: &[u8]) -> Result<(), Box<dyn std::error::Error>> {
+    write_path(Path::new(path), bytes)?;
+    println!("wrote {path} bytes={}", bytes.len());
+    Ok(())
+}
+
+fn run_cmd(cmd: Cmd) -> Result<(), Box<dyn std::error::Error>> {
+    match cmd {
+        Cmd::Help => {
+            println!("{}", usage());
+            Ok(())
+        }
+        Cmd::Write { path } => write_bytes(&path, &demo_gguf(4096, 4096)),
+        Cmd::Gemv { path } => gemv_file(Path::new(&path)),
+        Cmd::WriteQ4k { path } => write_bytes(&path, &demo_q4k_gguf(256, 64)),
+        Cmd::GemvQ4k { path } => gemv_q4k_file(Path::new(&path)),
+        Cmd::WriteTiny { path } => write_bytes(&path, &tiny_llama_gguf()),
+        Cmd::WriteTinyQwen2 { path } => write_bytes(&path, &tiny_qwen2_gguf()),
+        Cmd::Infer(opts) => infer_file(&opts),
+    }
+}
+
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let mut args = env::args().skip(1);
-    let cmd = args.next().unwrap_or_else(|| "gemv".into());
-    match cmd.as_str() {
-        "write" => {
-            let path = args.next().ok_or("write <path>")?;
-            let n_cols = 4096usize;
-            let n_rows = 4096usize;
-            let bytes = demo_gguf(n_cols, n_rows);
-            write_path(Path::new(&path), &bytes)?;
-            println!("wrote {path} bytes={}", bytes.len());
-            Ok(())
+    match parse_args(env::args().skip(1)) {
+        Ok(cmd) => run_cmd(cmd),
+        Err(e) => {
+            eprintln!("{e}");
+            eprintln!("{}", usage());
+            Err(e.into())
         }
-        "gemv" => {
-            let path = args.next().ok_or("gemv <path>")?;
-            gemv_file(Path::new(&path))
-        }
-        "write-q4k" => {
-            let path = args.next().ok_or("write-q4k <path>")?;
-            let bytes = demo_q4k_gguf(256, 64);
-            write_path(Path::new(&path), &bytes)?;
-            println!("wrote {path} bytes={}", bytes.len());
-            Ok(())
-        }
-        "gemv-q4k" => {
-            let path = args.next().ok_or("gemv-q4k <path>")?;
-            gemv_q4k_file(Path::new(&path))
-        }
-        "write-tiny" => {
-            let path = args.next().ok_or("write-tiny <path>")?;
-            let bytes = tiny_llama_gguf();
-            write_path(Path::new(&path), &bytes)?;
-            println!("wrote {path} bytes={}", bytes.len());
-            Ok(())
-        }
-        "write-tiny-qwen2" => {
-            let path = args.next().ok_or("write-tiny-qwen2 <path>")?;
-            let bytes = tiny_qwen2_gguf();
-            write_path(Path::new(&path), &bytes)?;
-            println!("wrote {path} bytes={}", bytes.len());
-            Ok(())
-        }
-        "infer" => {
-            let path = args.next().ok_or("infer <path>")?;
-            infer_file(Path::new(&path))
-        }
-        other => Err(format!(
-            "usage: gguf_gemv write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|infer <path> (got {other})"
-        )
-        .into()),
     }
 }
 

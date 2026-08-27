@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod cli;
 mod decode;
 mod fp16;
 mod gguf;
@@ -9,9 +10,12 @@ mod pool;
 mod quant;
 mod tok;
 
+pub use cli::{
+    parse_args, usage, CliError, Cmd, InferArgs, DEFAULT_INFER_PROMPT, DEFAULT_N_PREDICT,
+};
 pub use decode::{
-    greedy_generate, tiny_llama_gguf, tiny_mistral_gguf, tiny_phi3_gguf, tiny_q4k_embd_gguf,
-    tiny_q6k_embd_gguf, tiny_qwen2_gguf, KvCache, Llama, LlamaError,
+    greedy_generate, greedy_generate_with, tiny_llama_gguf, tiny_mistral_gguf, tiny_phi3_gguf,
+    tiny_q4k_embd_gguf, tiny_q6k_embd_gguf, tiny_qwen2_gguf, KvCache, Llama, LlamaError,
 };
 pub use gguf::{
     load_gguf, write_gguf, write_gguf_with_kv, GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite,
