@@ -4,7 +4,7 @@ Pure-safe Rust GGUF v3 Llama-family **prompt → text**. No llama.cpp bind, no C
 
 See [STATUS.md](STATUS.md) for what shipped, what is not started, and the resume list.
 
-Loads mixed Q4_K_M-shaped dtypes (**F32**, **Q4_K**, **Q6_K**, plus Q4_0/Q8_0/Q8_K) for `llama` / `qwen2` / `mistral` / `phi3`. Quantized weights **and token embeddings** stay **on-disk bytes** in **one file blob**; `Llama` takes that blob and addresses tensors by range (no per-matrix clone, no mmap). Missing `{arch}.rope.dimension_count` is derived from embedding length / head count. Optional `attn_q`/`attn_k`/`attn_v` bias tensors are applied when present. `tokenizer.ggml.add_bos_token=false` is honored. Decode is RMSNorm, RoPE, GQA + KV cache, SwiGLU, lm_head. Prompt prefill is one causal GEMM pass over the prompt tokens; generation after that is one-token GEMV + KV. Sampling is greedy. Load/decode errors name the tensor, ggml type id, and/or KV key.
+Loads mixed Q4_K_M-shaped dtypes (**F32**, **Q4_K**, **Q6_K**, plus Q4_0/Q8_0/Q8_K) for `llama` / `qwen2` / `mistral` / `phi3`. Quantized weights **and token embeddings** stay **on-disk bytes** in **one file blob**; `Llama` takes that blob and addresses tensors by range (no per-matrix clone, no mmap). Missing `{arch}.rope.dimension_count` is derived from embedding length / head count. Optional `attn_q`/`attn_k`/`attn_v` bias tensors are applied when present. `tokenizer.ggml.add_bos_token=false` is honored. Tokenizer: GPT-2 / Qwen pieces use bytes-to-unicode (`Ċ` is newline, `Ġ` is space); SentencePiece uses `▁` and `<0xHH>` byte-fallback; `token_id` is a `HashMap`. `tokenizer.chat_template` is read, not rendered. Decode is RMSNorm, RoPE, GQA + KV cache, SwiGLU, lm_head. Prompt prefill is one causal GEMM pass over the prompt tokens; generation after that is one-token GEMV + KV. Sampling is greedy. Load/decode errors name the tensor, ggml type id, and/or KV key.
 
 Not [onehr/llama-rs](https://github.com/onehr/llama-rs) / [rustformers/llm]. That wrapped frozen GGML. This is GGUF-native.
 
@@ -25,7 +25,7 @@ cargo build --release --bin gguf_gemv
 
 Workspace lints deny unwrap/panic/indexing/wrap-casts/`std::fs::{read,write}`. File I/O is `File` + `Read`/`Write`.
 
-Tests write GGUFs (F32 + Q6_K + Q4_K, quantized embeddings, QKV bias, missing rope dim, mistral/phi3 prefixes), load them, compare logits to an independent scalar of the same ggml/Llama math on those bytes (including multi-token prefill), then encode/greedy/decode.
+Tests write GGUFs (F32 + Q6_K + Q4_K, quantized embeddings, QKV bias, missing rope dim, mistral/phi3 prefixes), load them, compare logits to an independent scalar of the same ggml/Llama math on those bytes (including multi-token prefill), then encode/greedy/decode. Tokenizer tests cover GPT-2 `Ċ`/`Ġ` piece decode, `<0xHH>` byte-fallback, SentencePiece `▁`, HashMap `token_id`, and the writer-built tiny merge.
 
 ## CLI (this machine)
 
@@ -38,14 +38,14 @@ generated=ab
 
 Both runs print that string.
 
-Same binary on local `models/qwen2.5-3b-instruct-q4_k_m.gguf` (qwen2, no `rope.dimension_count`, Q4_K `token_embd`, Q6_K `output`, F32 QKV biases, `add_bos_token=false`), two runs:
+Same binary on local `models/qwen2.5-3b-instruct-q4_k_m.gguf` (qwen2, no `rope.dimension_count`, Q4_K `token_embd`, Q6_K `output`, F32 QKV biases, `add_bos_token=false`), two runs recorded before GPT-2 piece decode:
 
 ```
 prompt=ab n_predict=2
 generated=abĊĊ
 ```
 
-Both runs print that string (~1.4s). `#![forbid(unsafe_code)]`. No FFI. `Cargo.lock` names only `llama-rust`.
+`Ċ` is the GPT-2 bytes-to-unicode mapping of newline. Decode now emits `\n` for that piece (the two-run string was two newlines printed raw). `#![forbid(unsafe_code)]`. No FFI. `Cargo.lock` names only `llama-rust`.
 
 Q8_0 GEMV (`write`+`gemv`, M=K=4096, GGUF-byte blocks). Two-run `y0=` match across Rust CPU and owned Metal. Crate lockfile is still only `llama-rust`; Metal is a measurement binary (`q8_gemv.metal` + `q8_gemv_mtl.m`), not linked.
 
