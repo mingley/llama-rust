@@ -1,4 +1,4 @@
-# Stopped 2026-08-27 — sampling
+# Stopped 2026-08-27 — serving
 
 HEAD is this branch’s tip. Worktree should be clean before the next resume.
 No in-flight code.
@@ -21,6 +21,7 @@ Local: `~/dev/llama-rust-perf`
   - `tokenizer.ggml.add_bos_token=false` honored
 - Load/decode errors name tensor, ggml type id, and/or KV key.
 - CLI: `gguf_gemv infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]`. Seedless greedy. Defaults remain `ab` / 2 so the shipped two-run command still works.
+- **Serving.** Local `gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--bind HOST:PORT]`. Std `TcpListener` on `127.0.0.1` (default `:8080`; `localhost` allowed). One HTTP/1.1 request at a time: `POST /generate` JSON `{"prompt"}` optional `n_predict` → `{"generated"}`. Seedless greedy (`greedy_generate_ctx`). Missing file and empty prompt fail cleanly. No batching, no multi-request, no OpenAI-compat, no tok/s. Not a production inference server. Kernel Integrity has not signed it.
 - One file blob. `load_gguf_owned(Vec<u8>)` keeps the file bytes. Tensor payloads are ranges of that blob. mmap is still forbidden (`unsafe` or a crate).
 - **Tokenizer.** `token_id` / merge rank are `HashMap` lookups, not a linear scan of the vocab.
   - `tokenizer.ggml.model=gpt2` (and vocabs that contain `Ġ` / `Ċ`): UTF-8 bytes → GPT-2 bytes-to-unicode → BPE. Decode maps `Ċ` → `\n` and `Ġ` → space. The recorded Qwen `generated=abĊĊ` was two newline pieces printed raw.
@@ -33,18 +34,18 @@ Local: `~/dev/llama-rust-perf`
 
 ## In progress
 
-Nothing. This slice is STATUS item 1 (sampling).
+Nothing. This slice is STATUS item 1 (serving).
 
 ## Still needed (production / researcher bar)
 
 Ordered by how much they block “others can actually use this”:
 
-1. **Serving.** No HTTP, no OpenAI-compat, no batching, no multi-request. Not a production inference server.
-2. **Metal-in-crate.** Owned MSL kernels exist as a sidecar. Decode still CPU.
-3. **Dtypes / arches still rejected.** Q5_K, F16, IQ*, Gemma, MoE, vision, Qwen3, Llama4. Tied `output.weight` (reuse `token_embd`) untested.
-4. **KV cache** sized to prompt+predict is the default; `{arch}.context_length` is still unused. `--n-ctx` is an override only.
-5. **crates.io** unpublished. Linux proof is GHA tiny/oracle tests only (2GB GGUF is gitignored).
-6. **Chat template apply.** The Jinja string is read. Rendering it (and special-token split of `<|im_start|>` in the prompt) is not started. BPE has no Unicode regex pre-tokenizer.
+1. **Metal-in-crate.** Owned MSL kernels exist as a sidecar. Decode still CPU.
+2. **Dtypes / arches still rejected.** Q5_K, F16, IQ*, Gemma, MoE, vision, Qwen3, Llama4. Tied `output.weight` (reuse `token_embd`) untested.
+3. **KV cache** sized to prompt+predict is the default; `{arch}.context_length` is still unused. `--n-ctx` is an override only.
+4. **crates.io** unpublished. Linux proof is GHA tiny/oracle tests only (2GB GGUF is gitignored).
+5. **Chat template apply.** The Jinja string is read. Rendering it (and special-token split of `<|im_start|>` in the prompt) is not started. BPE has no Unicode regex pre-tokenizer.
+6. **Serving beyond local.** Loopback one-request `serve` exists. No batching, no concurrent requests, no OpenAI-compat. Not a production inference server.
 
 Non-goals that were explicitly parked: SIMD crates (`wide`/`pulp`/`std::simd`); matching llama.cpp tok/s; downloading HF checkpoints in CI; mmap (`unsafe` or a crate).
 
@@ -54,6 +55,7 @@ Non-goals that were explicitly parked: SIMD crates (`wide`/`pulp`/`std::simd`); 
 cargo test --release --lib
 cargo clippy --all-targets --all-features -- -D warnings
 ./target/release/gguf_gemv infer models/qwen2.5-3b-instruct-q4_k_m.gguf --prompt ab --n-predict 2
+./target/release/gguf_gemv serve tiny-llama.gguf
 ```
 
-Next code change should be item 1 (serving) unless the goal is Metal-in-crate or more dtypes. Do not add crates.io runtime deps or `unsafe`.
+Next code change should be item 1 (Metal-in-crate) unless the goal is more dtypes or production serving. Do not add crates.io runtime deps or `unsafe`.
