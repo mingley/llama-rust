@@ -304,7 +304,7 @@ pub fn pack_iq4_xs_block(d: f32, scales: &[u8; 8], qs_i4: &[u8; QK_K]) -> [u8; I
     let mut scales_h = 0u16;
     for ib in 0usize..8 {
         let ls = scales.get(ib).copied().unwrap_or(0) & 63;
-        let nibble_shift = if ib % 2 == 0 { 0u32 } else { 4u32 };
+        let nibble_shift = if ib.is_multiple_of(2) { 0u32 } else { 4u32 };
         if let Some(slot) = out.get_mut(4 + ib / 2) {
             *slot |= (ls & 0x0f).wrapping_shl(nibble_shift);
         }
@@ -514,7 +514,7 @@ fn kvalue_iq4nl(nibble: u8) -> i8 {
 
 /// ggml IQ4_XS 6-bit scale `ls` for sub-block `ib` (`0..8`).
 fn iq4_xs_ls(scales_l: &[u8], scales_h: u16, ib: usize) -> u8 {
-    let lo_shift = if ib % 2 == 0 { 0u32 } else { 4u32 };
+    let lo_shift = if ib.is_multiple_of(2) { 0u32 } else { 4u32 };
     let lo = scales_l
         .get(ib / 2)
         .copied()
