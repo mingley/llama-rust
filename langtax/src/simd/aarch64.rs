@@ -25,13 +25,14 @@
 
 use core::arch::aarch64::{
     float32x4_t, int16x8_t, int32x4_t, int8x16_t, int8x8_t, uint32x4_t, uint8x16_t, uint8x8_t,
-    vaddq_f32, vaddvq_f32, vaddvq_s32, vand_u8, vandq_u32, vcvt_f32_f16, vcvtq_f32_s32,
-    vcvtq_f32_u32, vdup_n_u8, vdupq_laneq_f32, vdupq_n_f32, vdupq_n_s32, vdupq_n_u32, vfmaq_f32,
-    vget_high_s16, vget_high_s8, vget_high_u16, vget_low_s16, vget_low_s8, vget_low_u16,
-    vgetq_lane_f32, vld1_u8, vld1q_f32, vld1q_u8, vmovl_s16, vmovl_s8, vmovl_u16, vmovl_u8,
-    vmull_s8, vmulq_f32, vorrq_u32, vpadalq_s16, vreinterpret_f16_u16, vreinterpret_s8_u8,
-    vreinterpret_u16_u8, vreinterpretq_f32_u8, vreinterpretq_s32_u32, vreinterpretq_s8_u8,
-    vsetq_lane_s32, vshlq_n_u32, vshlq_u32, vshr_n_u8, vshrq_n_u32, vsubq_f32, vsubq_s32,
+    vaddq_f32, vaddq_s32, vaddvq_f32, vaddvq_s32, vand_u8, vandq_s32, vandq_u32, vceqq_u32,
+    vcvt_f32_f16, vcvtq_f32_s32, vcvtq_f32_u32, vdup_n_u8, vdupq_laneq_f32, vdupq_n_f32,
+    vdupq_n_s32, vdupq_n_u32, vfmaq_f32, vget_high_s16, vget_high_s8, vget_high_u16, vget_low_s16,
+    vget_low_s8, vget_low_u16, vgetq_lane_f32, vld1_u8, vld1q_f32, vld1q_u8, vmovl_s16, vmovl_s8,
+    vmovl_u16, vmovl_u8, vmull_s8, vmulq_f32, vorrq_u32, vpadalq_s16, vreinterpret_f16_u16,
+    vreinterpret_s8_u8, vreinterpret_u16_u8, vreinterpretq_f32_u8, vreinterpretq_s32_u32,
+    vreinterpretq_s8_u8, vsetq_lane_s32, vshlq_n_u32, vshlq_u32, vshr_n_u8, vshrq_n_u32, vsubq_f32,
+    vsubq_s32,
 };
 
 use crate::fp16::load_f16_le;
@@ -293,18 +294,42 @@ fn lane_index_s32() -> int32x4_t {
     vsetq_lane_s32::<3>(3, vsetq_lane_s32::<2>(2, vsetq_lane_s32::<1>(1, v)))
 }
 
-/// The five-bit codes of four consecutive Q5 elements.
+/// Four Q5_0 codes, already biased: `(nibble | fifth) - 16`.
 ///
-/// `nibbles` holds the low four bits of each code, one per `u32` lane. The
-/// fifth bit of lane `l` is bit `base + l` of the block's `qh` word, which the
-/// scalar kernel reaches as `(qh >> sj) << 4 & 0x10` for the low half and
+/// `nibbles` holds the low four bits of each code, one per lane. The fifth bit
+/// of lane `l` is bit `base + l` of the block's `qh` word, which the scalar
+/// kernel reaches as `(qh >> sj) << 4 & 0x10` for the low half and
 /// `(qh >> (sj + 12)) & 0x10` for the high half: the same bit, the same
-/// position. `VSHL` with a negative count is a right shift, so the shift
-/// vector is negated. Lanes whose bit index is 32 or more cannot arise, since
-/// `base` is at most 28 and `l` at most 3.
+/// element. Lanes whose bit index is 32 or more cannot arise, since `base` is
+/// at most 28 and `l` at most 3.
+///
+/// Testing the bit where it lies, rather than shifting it down into position 4
+/// and OR-ing it in, folds it into the bias subtraction the kernel has to do
+/// anyway: a Q5_0 code with the bit set is exactly `nibble`, and one with it
+/// clear is `nibble - 16`.
 #[inline]
 #[target_feature(enable = "neon")]
-fn q5_codes(nibbles: uint32x4_t, qh: uint32x4_t, base: i32) -> uint32x4_t {
+fn q5_0_codes(nibbles: uint32x4_t, qh: uint32x4_t, base: i32) -> int32x4_t {
+    let shifts = vaddq_s32(vdupq_n_s32(base), lane_index_s32());
+    let clear = vceqq_u32(
+        vandq_u32(qh, vshlq_u32(vdupq_n_u32(1), shifts)),
+        vdupq_n_u32(0),
+    );
+    vaddq_s32(
+        vreinterpretq_s32_u32(nibbles),
+        vandq_s32(vreinterpretq_s32_u32(clear), vdupq_n_s32(-16)),
+    )
+}
+
+/// Four Q5_1 codes: `nibble | fifth`, unbiased.
+///
+/// Q5_1 has no bias to fold, so the shift-and-OR form is a wash on instruction
+/// count and measures faster on x86-64 than the masked form [`q5_0_codes`]
+/// uses. `VSHL` with a negative count is a right shift, so the shift vector is
+/// negated.
+#[inline]
+#[target_feature(enable = "neon")]
+fn q5_1_codes(nibbles: uint32x4_t, qh: uint32x4_t, base: i32) -> uint32x4_t {
     let shifts = vsubq_s32(vdupq_n_s32(base.saturating_neg()), lane_index_s32());
     let fifth = vshlq_n_u32::<4>(vandq_u32(vshlq_u32(qh, shifts), vdupq_n_u32(1)));
     vorrq_u32(nibbles, fifth)
@@ -367,7 +392,6 @@ fn dot_q5_0_f32_neon(row: &[u8], x: &[f32]) -> f32 {
         };
         let dv = f16_scale(*dbits);
         let qh = vdupq_n_u32(u32::from_le_bytes(*qhb));
-        let bias = vdupq_n_s32(16);
         for (c, pack) in qs.as_chunks::<4>().0.iter().enumerate() {
             let j = c.saturating_mul(4);
             let (Ok(base), Some(xlo), Some(xhi)) = (
@@ -384,11 +408,8 @@ fn dot_q5_0_f32_neon(row: &[u8], x: &[f32]) -> f32 {
             // by `d` separately rather than folding it into the FMA keeps each
             // dequantized weight bit-identical; only the accumulation
             // reassociates.
-            let q_lo = vsubq_s32(vreinterpretq_s32_u32(q5_codes(low, qh, base)), bias);
-            let q_hi = vsubq_s32(
-                vreinterpretq_s32_u32(q5_codes(high, qh, base.saturating_add(16))),
-                bias,
-            );
+            let q_lo = q5_0_codes(low, qh, base);
+            let q_hi = q5_0_codes(high, qh, base.saturating_add(16));
             acc = vfmaq_f32(acc, vmulq_f32(vcvtq_f32_s32(q_lo), dv), load_f32x4(xlo));
             acc = vfmaq_f32(acc, vmulq_f32(vcvtq_f32_s32(q_hi), dv), load_f32x4(xhi));
         }
@@ -439,10 +460,10 @@ fn dot_q5_1_f32_neon(row: &[u8], x: &[f32]) -> f32 {
             // The scalar kernel writes `q * d + m`, a multiply and then an add,
             // so this must not contract to an FMA: a separate `vaddq_f32` keeps
             // both roundings and the dequantized weight bit-identical.
-            let w_lo = vaddq_f32(vmulq_f32(vcvtq_f32_u32(q5_codes(low, qh, base)), dv), mv);
+            let w_lo = vaddq_f32(vmulq_f32(vcvtq_f32_u32(q5_1_codes(low, qh, base)), dv), mv);
             let w_hi = vaddq_f32(
                 vmulq_f32(
-                    vcvtq_f32_u32(q5_codes(high, qh, base.saturating_add(16))),
+                    vcvtq_f32_u32(q5_1_codes(high, qh, base.saturating_add(16))),
                     dv,
                 ),
                 mv,
