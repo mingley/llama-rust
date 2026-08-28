@@ -7,11 +7,55 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The SIMD fast path. `--all-features` is `--features simd` today.
+          - name: simd
+            features: "--all-features"
+          # The auditable configuration: `lib.rs` puts the crate under
+          # `forbid(unsafe_code)` here, so this job failing to compile is the
+          # signal that unsafe leaked outside `src/simd/`.
+          - name: no-unsafe
+            features: "--no-default-features"
+    name: test (${{ matrix.name }})
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo test --release --lib
+      - run: cargo clippy --all-targets ${{ matrix.features }} -- -D warnings
+      - run: cargo test --release --lib ${{ matrix.features }}
+
+  # The NEON kernels are the reference host's path (Apple M4 Pro) but no hosted
+  # runner is aarch64 Linux, so they are built and run under qemu.
+  aarch64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+          components: clippy
+      - run: sudo apt-get update && sudo apt-get install -y qemu-user-static gcc-aarch64-linux-gnu
+      - run: cargo clippy --target aarch64-unknown-linux-gnu --all-targets --all-features -- -D warnings
+      - run: cargo test --release --lib --target aarch64-unknown-linux-gnu
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER: qemu-aarch64-static -L /usr/aarch64-linux-gnu
+
+  # Miri cannot execute vendor SIMD intrinsics, so it runs the scalar
+  # configuration only. See the SIMD module docs for what that does and does not
+  # cover.
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - run: cargo miri test --lib --no-default-features
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance
