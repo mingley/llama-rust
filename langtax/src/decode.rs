@@ -5740,3 +5740,274 @@ mod tests {
         );
     }
 }
+
+/// Self-contained timing harness. Every test here is `#[ignore]`d so the normal
+/// suite stays fast; run it with
+/// `cargo test --release --lib bench_ -- --ignored --nocapture`.
+///
+/// The tiny oracle fixtures are far too small to time (256-wide, 1 layer,
+/// 6-token vocab), so this module writes a larger synthetic Llama-shaped GGUF
+/// with the Q4_K/Q6_K mix a real `*-Q4_K_M.gguf` uses.
+#[cfg(test)]
+mod bench {
+    use super::*;
+    use crate::load_gguf_owned;
+    use std::hint::black_box;
+    use std::time::{Duration, Instant};
+
+    /// Dimensions of the synthetic benchmark model.
+    struct BenchSpec {
+        n_embd: usize,
+        n_head: usize,
+        n_head_kv: usize,
+        n_ff: usize,
+        n_layer: usize,
+        n_vocab: usize,
+    }
+
+    impl BenchSpec {
+        /// ~40 MiB of weights: wide enough that GEMV work dominates per-row
+        /// bookkeeping, small enough to build and run inside a test.
+        fn default() -> Self {
+            Self {
+                n_embd: 1024,
+                n_head: 16,
+                n_head_kv: 4,
+                n_ff: 2816,
+                n_layer: 4,
+                n_vocab: 4096,
+            }
+        }
+
+        fn head_dim(&self) -> usize {
+            self.n_embd / self.n_head
+        }
+
+        fn n_kv(&self) -> usize {
+            self.n_head_kv * self.head_dim()
+        }
+    }
+
+    /// `pack_mat` emits exactly one block per row (the tiny fixtures are all
+    /// `n_cols == QK_K`). The benchmark needs wide rows, so pack
+    /// `n_cols / QK_K` blocks per row here.
+    fn bench_pack_mat(ty: GgmlType, n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
+        assert!(n_cols.is_multiple_of(QK_K));
+        let mut out = Vec::new();
+        let mut s = seed;
+        let mut next = move || {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1);
+            s
+        };
+        for _ in 0..n_rows.saturating_mul(n_cols / QK_K) {
+            match ty {
+                GgmlType::Q4_K => {
+                    let mut qs = [0u8; QK_K];
+                    for q in &mut qs {
+                        *q = u8::try_from(next() % 8).unwrap();
+                    }
+                    let mut sc = [1u8; 8];
+                    for c in &mut sc {
+                        *c = u8::try_from(1 + next() % 4).unwrap();
+                    }
+                    out.extend_from_slice(&pack_q4_k_block(25.0 / 100.0, 0.0, &sc, &[0u8; 8], &qs));
+                }
+                GgmlType::Q6_K => {
+                    let mut qs = [0i8; QK_K];
+                    for q in &mut qs {
+                        *q = i8::try_from(i32::try_from(next() % 5).unwrap() - 2).unwrap();
+                    }
+                    let mut sc = [1i8; 16];
+                    for c in &mut sc {
+                        *c = i8::try_from(1 + next() % 3).unwrap();
+                    }
+                    out.extend_from_slice(&pack_q6_k_block(25.0 / 100.0, &sc, &qs));
+                }
+                other => panic!("bench_pack_mat: unhandled type {other:?}"),
+            }
+        }
+        out
+    }
+
+    fn bench_gguf(s: &BenchSpec) -> Vec<u8> {
+        let arch = "llama";
+        let u32v = |v: usize| Kv::U32(u32::try_from(v).unwrap());
+        let kv = vec![
+            ("general.alignment".into(), u32v(GGUF_DEFAULT_ALIGNMENT)),
+            ("general.architecture".into(), Kv::String(arch.into())),
+            (arch_key(arch, "block_count"), u32v(s.n_layer)),
+            (arch_key(arch, "embedding_length"), u32v(s.n_embd)),
+            (arch_key(arch, "feed_forward_length"), u32v(s.n_ff)),
+            (arch_key(arch, "attention.head_count"), u32v(s.n_head)),
+            (arch_key(arch, "attention.head_count_kv"), u32v(s.n_head_kv)),
+            (arch_key(arch, "rope.dimension_count"), u32v(s.head_dim())),
+            (arch_key(arch, "rope.freq_base"), Kv::F32(10_000.0)),
+            (
+                arch_key(arch, "attention.layer_norm_rms_epsilon"),
+                Kv::F32(1.0 / 100_000.0),
+            ),
+        ];
+        let ones = vec![1.0f32; s.n_embd];
+        let mut tensors = vec![
+            tw(
+                "token_embd.weight",
+                GgmlType::Q4_K,
+                vec![s.n_embd, s.n_vocab],
+                bench_pack_mat(GgmlType::Q4_K, s.n_embd, s.n_vocab, 1),
+            ),
+            tw(
+                "output.weight",
+                GgmlType::Q6_K,
+                vec![s.n_embd, s.n_vocab],
+                bench_pack_mat(GgmlType::Q6_K, s.n_embd, s.n_vocab, 2),
+            ),
+            tw(
+                "output_norm.weight",
+                GgmlType::F32,
+                vec![s.n_embd],
+                pack_f32(&ones),
+            ),
+        ];
+        for li in 0..s.n_layer {
+            let seed = u32::try_from(li).unwrap() * 16 + 3;
+            let mat = |name: &str, ty: GgmlType, n_cols: usize, n_rows: usize, bump: u32| {
+                tw(
+                    &format!("blk.{li}.{name}.weight"),
+                    ty,
+                    vec![n_cols, n_rows],
+                    bench_pack_mat(ty, n_cols, n_rows, seed + bump),
+                )
+            };
+            tensors.push(tw(
+                &format!("blk.{li}.attn_norm.weight"),
+                GgmlType::F32,
+                vec![s.n_embd],
+                pack_f32(&ones),
+            ));
+            tensors.push(tw(
+                &format!("blk.{li}.ffn_norm.weight"),
+                GgmlType::F32,
+                vec![s.n_embd],
+                pack_f32(&ones),
+            ));
+            tensors.push(mat("attn_q", GgmlType::Q4_K, s.n_embd, s.n_embd, 0));
+            tensors.push(mat("attn_k", GgmlType::Q4_K, s.n_embd, s.n_kv(), 1));
+            tensors.push(mat("attn_v", GgmlType::Q4_K, s.n_embd, s.n_kv(), 2));
+            tensors.push(mat("attn_output", GgmlType::Q4_K, s.n_embd, s.n_embd, 3));
+            tensors.push(mat("ffn_gate", GgmlType::Q4_K, s.n_embd, s.n_ff, 4));
+            tensors.push(mat("ffn_up", GgmlType::Q4_K, s.n_embd, s.n_ff, 5));
+            tensors.push(mat("ffn_down", GgmlType::Q6_K, s.n_ff, s.n_embd, 6));
+        }
+        write_gguf_with_kv(&kv, &tensors)
+    }
+
+    fn bench_model(s: &BenchSpec) -> Llama {
+        let g = load_gguf_owned(bench_gguf(s)).expect("load bench gguf");
+        Llama::from_gguf(g).expect("bench model")
+    }
+
+    fn median(samples: &mut [Duration]) -> Duration {
+        samples.sort_unstable();
+        samples[samples.len() / 2]
+    }
+
+    fn report(label: &str, mut samples: Vec<Duration>) {
+        let best = *samples.iter().min().unwrap();
+        let med = median(&mut samples);
+        println!(
+            "{label:<44} min {:>10.3} ms   median {:>10.3} ms   n={}",
+            best.as_secs_f64() * 1e3,
+            med.as_secs_f64() * 1e3,
+            samples.len()
+        );
+    }
+
+    /// Single-token decode latency (`forward`) after a 1-token prefill.
+    #[test]
+    #[ignore = "timing harness"]
+    fn bench_decode_step() {
+        let spec = BenchSpec::default();
+        let model = bench_model(&spec);
+        println!("blob {} MiB", model.blob_len() / (1024 * 1024));
+        let mut cache = model.new_cache(64).expect("cache");
+        let mut last = model.prefill(&mut cache, &[1]).expect("prefill");
+        let mut samples = Vec::new();
+        let mut sink = 0usize;
+        for i in 0..24 {
+            let tok = argmax(&last) % u32::try_from(spec.n_vocab).unwrap();
+            let t0 = Instant::now();
+            last = model.forward(&mut cache, tok).expect("forward");
+            let dt = t0.elapsed();
+            if i >= 4 {
+                samples.push(dt);
+            }
+            sink = sink.wrapping_add(black_box(last.len()));
+            if cache.n_past + 2 >= 64 {
+                cache = model.new_cache(64).expect("cache");
+                last = model.prefill(&mut cache, &[1]).expect("prefill");
+            }
+        }
+        assert!(sink > 0);
+        report("decode 1 token (forward)", samples);
+    }
+
+    /// Multi-token prefill (`prefill`, GEMM path).
+    #[test]
+    #[ignore = "timing harness"]
+    fn bench_prefill() {
+        let spec = BenchSpec::default();
+        let model = bench_model(&spec);
+        for n in [8usize, 32, 64] {
+            let tokens: Vec<u32> = (0..n)
+                .map(|i| u32::try_from(i % spec.n_vocab).unwrap())
+                .collect();
+            let mut samples = Vec::new();
+            let mut sink = 0usize;
+            for _ in 0..5 {
+                let mut cache = model.new_cache(n + 1).expect("cache");
+                let t0 = Instant::now();
+                let out = model.prefill(&mut cache, &tokens).expect("prefill");
+                samples.push(t0.elapsed());
+                sink = sink.wrapping_add(black_box(out.len()));
+            }
+            assert!(sink > 0);
+            report(&format!("prefill {n} tokens"), samples);
+        }
+    }
+
+    /// Row-dispatch cost in isolation: the row closure does nothing, so the
+    /// whole sample is fork/join (or loop) overhead.
+    #[test]
+    #[ignore = "timing harness"]
+    fn bench_dispatch_overhead() {
+        for n_rows in [64usize, 1024, 4096] {
+            let mut y = vec![0.0f32; n_rows];
+            let reps = 200usize;
+            let mut samples = Vec::new();
+            for _ in 0..9 {
+                let t0 = Instant::now();
+                for _ in 0..reps {
+                    crate::pool::for_each_row(&mut y, |i, out| {
+                        *out = black_box(i as f32);
+                    });
+                }
+                samples.push(t0.elapsed() / u32::try_from(reps).unwrap());
+            }
+            report(&format!("dispatch {n_rows} rows, empty body"), samples);
+            let mut samples = Vec::new();
+            for _ in 0..9 {
+                let t0 = Instant::now();
+                for _ in 0..reps {
+                    crate::pool::with_sequential(|| {
+                        crate::pool::for_each_row(&mut y, |i, out| {
+                            *out = black_box(i as f32);
+                        });
+                    });
+                }
+                samples.push(t0.elapsed() / u32::try_from(reps).unwrap());
+            }
+            report(&format!("dispatch {n_rows} rows, sequential"), samples);
+            assert!(black_box(y.iter().sum::<f32>()) >= 0.0);
+        }
+    }
+}
