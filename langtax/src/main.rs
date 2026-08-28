@@ -10,9 +10,9 @@ use llama_rust::{
     gemv_q4_k, gemv_q8_0, greedy_generate_ctx, load_gguf_owned, pack_q4_k_block, pack_q8_0_block,
     pack_q8_k_block, parse_infer_args, parse_serve_args, run_serve, tiny_gemma_gguf,
     tiny_llama4_gguf, tiny_llama_gguf, tiny_llama_moe_gguf, tiny_qwen2_gguf, tiny_qwen2moe_gguf,
-    tiny_qwen3_gguf, tiny_qwen3moe_gguf, write_gguf, write_gguf_with_kv, GgmlType, InferArgs,
-    InferCmd, Kv, Llama, ServeCmd, TensorWrite, Tokenizer, BIN_USAGE, INFER_USAGE, QK8_0, QK_K,
-    SERVE_USAGE,
+    tiny_qwen2vl_gguf, tiny_qwen3_gguf, tiny_qwen3moe_gguf, write_gguf, write_gguf_with_kv,
+    GgmlType, InferArgs, InferCmd, Kv, Llama, ServeCmd, TensorWrite, Tokenizer, BIN_USAGE,
+    INFER_USAGE, QK8_0, QK_K, SERVE_USAGE,
 };
 
 fn y_checksum(y: &[f32]) -> u64 {
@@ -307,6 +307,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "write-tiny-qwen3moe" => {
             let path = args.next().ok_or("write-tiny-qwen3moe <path>")?;
             let bytes = tiny_qwen3moe_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-qwen2vl" => {
+            let path = args.next().ok_or("write-tiny-qwen2vl <path>")?;
+            let bytes = tiny_qwen2vl_gguf();
             write_path(Path::new(&path), &bytes)?;
             println!("wrote {path} bytes={}", bytes.len());
             Ok(())
