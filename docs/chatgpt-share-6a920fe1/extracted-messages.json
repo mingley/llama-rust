@@ -1,0 +1,1281 @@
+[
+  {
+    "index": 4,
+    "id": "b1b53073-feda-4039-accb-42ab0cc9b072",
+    "role": "user",
+    "name": null,
+    "content_type": "text",
+    "hidden": false,
+    "model": null,
+    "create_time": 1787956285.125,
+    "text": "I think there could be large market for making really good mid tier LLM type models really nice to use and extremely cheap to serve at scale.\n\nlike GLM-5.3-Flash concept at scale.\n\nIf I wanted to either start my own shop that researches this and does inference, or only does inference but just get's insanely good at doing it. What OSS libs should I make? Focus on Rust only(we will only build in Rust).",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 9,
+    "id": "0b21870b-86e2-4865-9fca-e88642d0ed4f",
+    "role": "assistant",
+    "name": null,
+    "content_type": "model_editable_context",
+    "hidden": false,
+    "model": null,
+    "create_time": 1787956285.5503237,
+    "text": "",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 10,
+    "id": "0d34fbf8-6ea2-4504-b6b3-47d0f38fec86",
+    "role": "assistant",
+    "name": null,
+    "content_type": "text",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956285.549729,
+    "text": "I’ll frame this around where Rust can create a durable systems advantage, not just reimplement Python APIs. I’m checking the current inference stack first so the recommendations target real gaps rather than already-solved areas.",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 11,
+    "id": "57bbd46e-5bb2-4a9a-9a86-7d367a6be00c",
+    "role": "assistant",
+    "name": null,
+    "content_type": "code",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956285.549729,
+    "text": "fast|Rust LLM inference server 2026 mistral.rs candle burn llama.cpp vllm rust inference engine|30\nfast|mistral.rs GitHub Rust LLM inference continuous batching paged attention speculative decoding 2026|30\nfast|Hugging Face candle Rust quantized inference flash attention 2026|30\nfast|vLLM 2026 features paged attention disaggregated serving speculative decoding prefix caching|30\nfast|SGLang 2026 inference serving features radix attention speculative decoding disaggregated prefill|30\nfast|GLM-5.3-Flash model inference architecture 2026|30\nlength|long",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 12,
+    "id": "2c37f9f5-78a4-4678-bc6e-c4771e9cfd1d",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787956290.8090844
+  },
+  {
+    "index": 13,
+    "id": "b63f4c68-cdbc-4a70-ae02-d8005c3ef7e0",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787956290.806318
+  },
+  {
+    "index": 15,
+    "id": "96495f1d-9748-4755-9d98-d9a0fd278841",
+    "role": "assistant",
+    "name": null,
+    "content_type": "code",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956291.713681,
+    "text": "fast|Rust GPU kernel library CubeCL 2026 CUDA ROCm inference Rust|30\nfast|Burn Rust CubeCL inference CUDA ROCm 2026 GitHub|30\nfast|Rust CUDA kernel cudarc NCCL bindings 2026 GitHub|30\nfast|Rust safetensors tokenizers HuggingFace candle CUDA kernels flash attention 2026|30\nfast|Rust distributed inference NCCL RDMA GPUDirect crate 2026|30\nfast|Rust quantization library FP8 FP4 GPTQ AWQ LLM 2026|30\nfast|NVIDIA NIXL KV cache transfer inference 2026 GitHub|30\nfast|Mooncake KVCache Rust RDMA LLM inference 2026|30\nlength|long",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 16,
+    "id": "130047f8-8c57-42d8-9512-e1e8e21cb3af",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787956296.7288136
+  },
+  {
+    "index": 18,
+    "id": "1a6170df-6a71-4287-bc06-895ec8ab3565",
+    "role": "assistant",
+    "name": null,
+    "content_type": "thoughts",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956303.585475,
+    "text": "**Prioritizing opportunities**\n\nI’m narrowing the strongest Rust opportunities to serving schedulers, KV-cache fabrics, quantization, mixture-of-experts runtimes, hybrid-attention kernels, speculative decoding, and model compatibility layers. I’m weighing impact, differentiation, and practical adoption potential.\n\n**Prioritized opportunities**",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 19,
+    "id": "ed5b9679-7512-487a-b19f-ae2f7f9944e5",
+    "role": "assistant",
+    "name": null,
+    "content_type": "thoughts",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956305.918271,
+    "text": "**Searched 8 websites**",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 20,
+    "id": "989ae192-79f8-4e8d-a342-f4b24777201d",
+    "role": "assistant",
+    "name": null,
+    "content_type": "text",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956297.542528,
+    "text": "The current landscape changes the answer substantially: Rust already has a credible single-node inference engine in `mistral.rs`, and CubeCL/Burn are becoming a real Rust-native compute layer. So I would not start by building “vLLM in Rust.” The better opportunities are the missing layers around it—especially KV movement, MoE execution, scheduling, and hardware-aware compression.",
+    "safe_urls": [
+      "https://github.com/EricLBuehler/mistral.rs",
+      "https://github.com/Tracel-AI/burn",
+      "https://github.com/tracel-ai/cubecl"
+    ],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 21,
+    "id": "1793cac6-bd4c-423d-ade5-e114ec7c9d40",
+    "role": "assistant",
+    "name": null,
+    "content_type": "code",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956297.542528,
+    "text": "fast|site:huggingface.co z-ai GLM-5.3-Flash model card 320B 18B active 1M context|7\nfast|site:docs.z.ai GLM-5.3-Flash 320B 18B active inference|7\nfast|GLM-5.3-Flash Hugging Face official z-ai 2026|7\nfast|Rust structured output LLM grammar constrained decoding crate 2026|30\nfast|Rust LLM tokenizer server structured generation JSON schema crate 2026|30\nlength|medium",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 22,
+    "id": "c4a1cc18-9c66-4b92-9ac8-7e33fddff881",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787956309.5599294
+  },
+  {
+    "index": 23,
+    "id": "c6bac3d7-a345-4701-a36a-f96900310dad",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787956309.555795
+  },
+  {
+    "index": 24,
+    "id": "9f5e7535-8811-49d3-a187-d3b93ebc7846",
+    "role": "assistant",
+    "name": null,
+    "content_type": "thoughts",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956314.349783,
+    "text": "**Shaping the roadmap**\n\nI’m turning these themes into focused Rust libraries rather than one oversized framework. My strongest bets are KV-cache movement, MoE serving, SLO-aware batching, quantization, attention kernels, speculative decoding, weight storage, and benchmarking.\n\n**Shaped the roadmap**",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 25,
+    "id": "4e807fae-4a10-46e4-9b4d-121608728308",
+    "role": "assistant",
+    "name": null,
+    "content_type": "thoughts",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956321.888563,
+    "text": "**Searched 11 websites**",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 26,
+    "id": "86382256-3386-4ec5-9979-3091ab56a489",
+    "role": "assistant",
+    "name": null,
+    "content_type": "reasoning_recap",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956321.890548,
+    "text": "Worked for 36s",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 27,
+    "id": "817f0704-0ed0-4a3c-a1e1-e8f02a18cc56",
+    "role": "assistant",
+    "name": null,
+    "content_type": "text",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956310.854461,
+    "text": "Yes. There is a plausible company thesis here: as open-weight models become increasingly capable, part of the economic advantage shifts from “who owns the weights?” toward “who can turn those weights into the cheapest reliable token stream?” GLM-5.3-Flash is a good example: 320B total parameters, only 18B active per token, hybrid sparse/linear attention, and Z.ai claims roughly one-tenth the serving price of GLM-5.2.  [1](https://huggingface.co/zai-org/GLM-5.3-Flash) [2](https://z.ai/blog/glm-5.3-flash)\n\nI would not begin by making another generic Rust ML framework. Burn/CubeCL already occupy that layer, `cudarc` gives Rust good access to CUDA/cuBLASLt/NCCL/etc., and `mistral.rs` already has continuous batching, paged attention, prefix caching, quantization, speculative decoding, multi-GPU, and model serving.  [1](https://github.com/EricLBuehler/mistral.rs) [2](https://github.com/chelsea0x3b/cudarc) [3](https://github.com/tracel-ai/cubecl)\n\nInstead, build the missing inference-systems primitives as independent crates.\n\n### The stack I would build\n\n| Priority | Library | What it does | Company value |\n|---|---|---|---|\n| 1 | `kv-fabric` | distributed KV/state memory | Extremely high |\n| 2 | `moe-runtime` | optimized sparse MoE execution | Extremely high |\n| 3 | `infer-scheduler` | continuous batching + SLO scheduling | Very high |\n| 4 | `quant-rs` | hardware-aware mixed quantization | Very high |\n| 5 | `attention-rs` | modern attention/state kernels | Very high |\n| 6 | `speculate-rs` | generalized speculative decoding | High |\n| 7 | `tensor-loader` | ultra-fast weight loading/resharding | High |\n| 8 | `infer-bench` | standardized inference benchmarking | High OSS leverage |\n| 9 | `model-ir` | inference-oriented model IR/compiler | Huge, but later |\n\nThe first five are where I think the real opportunity lies.\n\n---\n\n## 1. `kv-fabric`: Rust-native LLM memory fabric\n\nThis would probably be my #1 company-level bet.\n\nThink:\n\n```text\nGPU HBM\n ↕\nlocal DRAM\n ↕\nremote DRAM\n ↕\nNVMe\n ↕\nother GPU nodes\n```\n\nBut the API understands that what it is moving is specifically LLM state:\n\n```rust\nKvHandle\nSequenceId\nPrefixId\nLayerRange\nTokenRange\nDevice\nMemoryTier\n```\n\nFeatures:\n\n```text\npaged KV allocation\nprefix deduplication\nradix prefix cache\n\nGPU ↔ GPU\nGPU ↔ host\nhost ↔ remote host\nGPU ↔ remote GPU\n\nRDMA\nGPUDirect RDMA\nNVLink\nTCP fallback\n\nasync transfers\ntransfer/compute overlap\n\nKV eviction\nKV compression\nKV prefetch\n\ndistributed cache directory\n\nprefill → decode state transfer\n\nmultimodal encoder-state caching\n\nlinear-attention recurrent-state transfer\n```\n\nThis is increasingly becoming a fundamental layer of inference infrastructure.\n\nvLLM and SGLang now support disaggregated prefill/decode, and systems like Mooncake and NVIDIA NIXL exist specifically because state movement has become a first-class inference problem. Mooncake reports 75% more requests under real Kimi workloads from its KV-centric architecture.  [1](https://developer.nvidia.com/blog/?p=113426) [2](https://docs.vllm.ai/en/stable/) [3](https://kvcache-ai.github.io/Mooncake/) [4](https://sgl-project.github.io/advanced_features/server_arguments.html)\n\nA good Rust version could effectively become:\n\n> **Tokio for LLM memory movement.**\n\nNot an inference engine. A primitive every inference engine can consume.\n\nAnd Rust is unusually appropriate here because you have:\n\n```text\nlifetimes\nownership\nasync\nzero-copy abstractions\nmemory safety\nexplicit resource ownership\nstrong concurrency\n```\n\nexactly around an area filled with pinned buffers, registered RDMA regions, GPU pointers, asynchronous DMA, cache ownership and cancellation.\n\nThat is a serious OSS project.\n\n---\n\n# 2. `moe-runtime`: a dedicated Rust MoE execution engine\n\nThis is probably the most directly relevant project to your GLM-5.3-Flash thesis.\n\nGLM-5.3-Flash illustrates why:\n\n```text\nTotal model: 320B\nActive/token: 18B\n```\n\n [1](https://huggingface.co/zai-org/GLM-5.3-Flash) [2](https://z.ai/blog/glm-5.3-flash)\n\nThat means the model is computationally closer to a much smaller model than its total parameter count suggests.\n\nBut you still have **320B parameters worth of experts to store and make available**.\n\nThat turns MoE serving into a systems problem:\n\n```text\nWhere should each expert live?\n\nWhich experts are hot?\n\nCan experts be replicated?\n\nCan cold experts live in host RAM?\n\nCan they be prefetched?\n\nCan neighboring requests be batched by expert?\n\nCan expert routing inform scheduling?\n\nCan hot experts use FP8 while cold ones use FP4?\n\nCan frequently co-activated experts be colocated?\n\nCan we rebalance expert placement dynamically?\n```\n\nI would make the abstraction something like:\n\n```rust\ntrait ExpertStore {\n async fn acquire(\n &self,\n expert: ExpertId,\n device: DeviceId,\n ) -> ExpertLease;\n}\n```\n\nThen separately:\n\n```rust\nRouter\nExpertPlacement\nExpertCache\nExpertExecutor\nExpertPrefetcher\nExpertProfiler\n```\n\nThe executor should support:\n\n```text\ngrouped GEMM\nfused router + dispatch\nFP8\nNVFP4\nMXFP4\nINT4\nexpert parallelism\ntensor parallelism\ndynamic expert replication\nCPU/DRAM expert offloading\n```\n\nThis can eventually become almost a specialized database:\n\n```text\ntokens = queries\nexperts = partitions\nHBM = cache\nDRAM = secondary storage\nrouting = query plan\n```\n\nAnd the runtime continuously optimizes placement from observed traffic.\n\nThat could become a genuine competitive advantage.\n\n---\n\n# 3. `infer-scheduler`: the scheduler separated from the inference engine\n\nCurrent inference systems have increasingly sophisticated schedulers because batching directly determines economics.\n\nBuild a standalone Rust scheduling library.\n\nInput:\n\n```rust\nRequest {\n prompt_tokens,\n expected_output_tokens,\n deadline,\n priority,\n tenant,\n cached_prefix,\n model,\n adapter,\n}\n```\n\nHardware:\n\n```rust\nWorker {\n model,\n kv_available,\n compute_available,\n cached_prefixes,\n cached_experts,\n}\n```\n\nOutput:\n\n```rust\nSchedule {\n batch,\n worker,\n prefill_chunks,\n decode_slots,\n}\n```\n\nThen support algorithms for:\n\n```text\ncontinuous batching\nchunked prefill\nprefill/decode separation\nprefix-aware routing\nexpert-aware routing\ndeadline scheduling\npriority scheduling\nfairness\ntenant quotas\nbackpressure\nearly rejection\nadmission control\nspeculative-decoding-aware scheduling\nlatency vs throughput optimization\n```\n\nMooncake's scheduler even performs SLO-aware early rejection rather than wasting GPU cycles on work it predicts cannot meet the requested latency objective.  [1](https://kvcache-ai.github.io/Mooncake/)\n\nRust is a particularly good language for this because the hot scheduling path really should not involve:\n\n```text\nPython GC\nPython object graphs\nPython interpreter overhead\n```\n\nSGLang itself explicitly advertises a \"zero-overhead CPU scheduler\", which tells you how important this layer has become.  [1](https://github.com/sgl-project/sglang?from_theconsensus=1)\n\n---\n\n# 4. `quant-rs`: hardware-aware quantization rather than \"convert to INT4\"\n\nI think quantization tooling has substantial room for improvement.\n\nDon't make:\n\n```text\nmodel -> AWQ\n```\n\nMake:\n\n```text\nmodel + workload + hardware + quality constraint\n ↓\n optimized model\n```\n\nFor example:\n\n```text\nLayer 0 BF16\nLayer 1 FP8\nLayer 2 FP8\nExpert 1 NVFP4\nExpert 2 NVFP4\nExpert 19 FP8\nattention KV FP8\nembedding BF16\nlm_head FP8\n```\n\nThe optimizer searches for:\n\n```text\nminimum $/M tokens\n\nsubject to:\n\nMMLU drop < x\ncoding drop < y\nperplexity < z\nTTFT < target\nITL < target\nVRAM < target\n```\n\nSomething like:\n\n```rust\nlet result = QuantOptimizer::new(model)\n .hardware(Hardware::B200)\n .objective(Minimize::CostPerToken)\n .max_quality_loss(0.005)\n .optimize();\n```\n\n`mistral.rs` already has an interesting version of this idea through per-layer quantization topology and hardware-aware quant-method selection.  [1](https://github.com/EricLBuehler/mistral.rs)\n\nI would push the idea much further.\n\nFor MoEs in particular, quantization doesn't necessarily need to be uniform across experts.\n\nThat's an interesting research area in itself.\n\n---\n\n# 5. `attention-rs`: modern attention primitives\n\nDon't build merely another FlashAttention implementation.\n\nThe architecture frontier is moving beyond homogeneous transformer attention.\n\nGLM-5.3-Flash contains a hybrid of approximately:\n\n```text\n34 Kimi Delta Attention layers\n11 MLA / sparse-attention layers\n```\n\nplus MoE and mHC residual structure.  [1](https://sebastianraschka.com/blog/2026/glm-5-3-flash-architecture-notes.html)\n\nSGLang already has specialized support for GDN linear attention, DeepSeek sparse attention, MLA, FlashAttention and different prefill/decode attention backends.  [1](https://github.com/sgl-project/sglang/blob/main/docs/docs/advanced_features/attention_backend.mdx)\n\nRust needs an equivalent low-level vocabulary.\n\nI'd want:\n\n```rust\ntrait AttentionState { ... }\n\ntrait AttentionKernel {\n fn prefill(...);\n fn decode(...);\n}\n```\n\nImplementations:\n\n```text\nMHA\nGQA\nMLA\nDSA\nKDA\nGDN\nsliding window\nblock sparse\nlinear/recurrent attention\n```\n\nAnd importantly:\n\n```text\nprefill implementation != decode implementation\n```\n\nbecause they are fundamentally different workloads.\n\nUsing CubeCL for portable kernels where it performs well would keep the source Rust-native while allowing CUDA/HIP/Metal backends. CubeCL now targets CUDA, ROCm, Metal, Vulkan, WebGPU and CPU from Rust-defined kernels.  [1](https://github.com/tracel-ai/cubecl)\n\nFor absolute NVIDIA performance, you can also wrap vendor primitives using `cudarc`.\n\n---\n\n# 6. `speculate-rs`: speculative execution as a reusable library\n\nToday engines tend to implement this internally.\n\nI'd extract:\n\n```text\ndraft models\nMTP\nEAGLE\nn-gram\nsuffix matching\ntree speculation\nadaptive speculation\nheterogeneous draft hardware\n```\n\ninto a generalized runtime.\n\nSomething interesting happens at hyperscale:\n\nA speculation strategy shouldn't be static.\n\nImagine:\n\n```text\nrequest begins\n ↓\nmeasure acceptance\n ↓\nacceptance 85%\n ↓\nincrease speculative depth\n\nlater acceptance 35%\n ↓\ndecrease depth\n```\n\nOr even:\n\n```text\ncoding request → draft model A\ncreative text → draft model B\nJSON → grammar-aware speculation\n```\n\nBoth SGLang and vLLM now have fairly elaborate speculative-decoding implementations, showing that the problem has become important enough to deserve its own systems layer.  [1](https://docs.vllm.ai/en/stable/) [2](https://sgl-project.github.io/advanced_features/speculative_decoding.html)\n\n---\n\n# 7. `tensor-loader`: make loading 300B parameters boring\n\nAnother underappreciated problem.\n\nA server shouldn't spend forever doing:\n\n```text\ndownload\ndeserialize\nallocate CPU tensors\ncopy\ntransform\nreshard\ncopy GPU\n```\n\nBuild:\n\n```text\nSafetensors\n ↓\nmemory map\n ↓\ndirect tensor views\n ↓\nparallel decompression/transform\n ↓\nGPU placement\n```\n\nSupport:\n\n```text\nzero-copy mmap\nasync file IO\nGPUDirect Storage\nparallel shard loading\ntensor parallel resharding\nexpert parallel resharding\nquantization during load\nstreaming model startup\nlazy expert loading\nremote object storage\n```\n\nThen you can do fun things like:\n\n> Start accepting requests before every cold MoE expert has been loaded.\n\nThat becomes valuable for autoscaling.\n\n---\n\n# 8. `infer-bench`: MLPerf-like serving benchmarks that people actually enjoy using\n\nThis sounds less glamorous, but I would build it **first**.\n\nEvery optimization you do subsequently needs measurement.\n\nSomething like:\n\n```bash\ninfer-bench \\\n --server http://localhost:8000 \\\n --trace coding.jsonl \\\n --concurrency 256\n```\n\nOutputs:\n\n```text\nTTFT p50/p95/p99\nITL p50/p95/p99\n\ninput tok/s\noutput tok/s\ntotal tok/s\n\nGPU utilization\nHBM bandwidth\nKV utilization\nprefix hit rate\nexpert cache hit rate\nspeculation acceptance\n\njoules/token\n\n$/1M input tokens\n$/1M output tokens\n\nSLO attainment %\n```\n\nAnd workload replay:\n\n```text\nChatGPT-like\ncoding agent\nlong context\nRAG\nshort chat\nbatch extraction\ntool-calling agents\n```\n\nThis becomes incredibly useful for your own research.\n\nMore importantly, it gives you a way to publish claims like:\n\n```text\nmoe-runtime-rs\nvs vLLM\nvs SGLang\n\nB200 × 8\n\n+31% output tokens/sec\n-19% p99 ITL\n-24% $/M tokens\n```\n\nThat attracts exactly the engineering community you'd eventually hire from.\n\n---\n\n# Then there is the very large bet: `model-ir`\n\nThis one I'd postpone.\n\nImagine an inference-specific IR:\n\n```text\nHuggingFace model\n ↓\nModel IR\n ↓\narchitecture lowering\n ↓\nhardware lowering\n ↓\noptimized execution graph\n```\n\nRather than hand-implementing every:\n\n```text\nQwen\nGLM\nDeepSeek\nLlama\nKimi\nMistral\n```\n\narchitecture.\n\nThe IR understands concepts such as:\n\n```text\nAttention\nLinearAttention\nMoE\nRouter\nRMSNorm\nRoPE\nResidual\nConv\nVisionEncoder\n```\n\nThen compiler passes perform:\n\n```text\noperator fusion\nquantization\nparallelism partitioning\nexpert placement\nmemory planning\nkernel selection\nCUDA graph formation\nprefill/decode specialization\n```\n\nThat eventually becomes something resembling:\n\n> LLVM for LLM inference.\n\nEnormous upside.\n\nAlso enormous scope.\n\nDon't start there.\n\n---\n\n## What I specifically would NOT build\n\nI would avoid spending meaningful time building another:\n\n```text\ngeneric tensor library\ngeneric autograd engine\ntokenizer\nSafetensors parser\nOpenAI-compatible HTTP server\nbasic CUDA wrapper\nLlama-only inference engine\nllama.cpp clone\ngeneric async runtime\n```\n\nThose aren't where the differentiation is.\n\nUse existing Rust:\n\n```text\nTokio\ncudarc\nCubeCL\nsafetensors\ntokenizers\nserde\naxum/hyper\n```\n\nand contribute upstream when necessary. `cudarc`, for example, already exposes CUDA Driver, NVRTC, cuBLAS/cuBLASLt, NCCL, cuDNN, cuFILE, CUPTI and other primitives through Rust.  [1](https://github.com/chelsea0x3b/cudarc)\n\n---\n\n# The architecture I'd ultimately aim for\n\n```text\n API\n │\n infer-router\n │\n infer-scheduler\n / \\\n / \\\n PREFILL DECODE\n │ │\n └──── kv-fabric ┘\n │\n ┌────────────┼────────────┐\n │ │ │\n attention-rs moe-runtime speculate-rs\n │ │ │\n └───────── quant-rs ──────┘\n │\n model-ir\n │\n CubeCL / cudarc\n │\n CUDA / ROCm / Metal / etc.\n```\n\nAnd:\n\n```text\n infer-bench\n ↑\n measures everything\n```\n\nThe crates remain useful independently.\n\nYour commercial system combines them.\n\nThat is a very good OSS/business boundary.\n\n---\n\n## If the target is specifically \"GLM-5.3-Flash economics\"\n\nI'd prioritize differently:\n\n```text\n1. moe-runtime\n2. kv-fabric\n3. attention-rs\n4. quant-rs\n5. infer-scheduler\n6. infer-bench\n7. speculate-rs\n```\n\nWhy?\n\nA model like GLM-5.3-Flash is basically a giant systems-engineering invitation.\n\nIt has:\n\n```text\n320B stored parameters\n18B active parameters\n\nsparse MoE\nlinear attention\nsparse attention\n1M context\nmultimodality\n```\n\n [1](https://docs.z.ai/release-notes/new-released) [2](https://huggingface.co/zai-org/GLM-5.3-Flash)\n\nThe naive inference problem is:\n\n> \"How do I execute a 320B model?\"\n\nThe much more interesting problem is:\n\n> **\"How little of this 320B model do I actually need to touch for each token?\"**\n\nThat question leads directly to:\n\n```text\nexpert placement\nexpert caching\nexpert prefetch\nquantization\nstate caching\nprefix reuse\nsparse execution\nspeculative execution\nrequest scheduling\n```\n\nAnd that's where I think your proposed company could get genuinely interesting.\n\nMy first OSS repo would therefore probably be **`moe-runtime-rs`**, but I would quietly build `infer-bench` alongside it from day one. If `moe-runtime-rs` can eventually take an open MoE and demonstrate materially lower **$/output-token at fixed latency and quality** than vLLM/SGLang on identical hardware, you have the beginnings of something much bigger than a Rust ML hobby project.  [1](https://docs.vllm.ai/en/stable/) [2](https://github.com/sgl-project/sglang?from_theconsensus=1) memcite",
+    "safe_urls": [
+      "https://developer.nvidia.com/blog/?p=113426",
+      "https://docs.vllm.ai/en/stable/",
+      "https://docs.z.ai/release-notes/new-released",
+      "https://github.com/EricLBuehler/mistral.rs",
+      "https://github.com/chelsea0x3b/cudarc",
+      "https://github.com/sgl-project/sglang/blob/main/docs/docs/advanced_features/attention_backend.mdx",
+      "https://github.com/sgl-project/sglang?from_theconsensus=1",
+      "https://github.com/tracel-ai/cubecl",
+      "https://huggingface.co/zai-org/GLM-5.3-Flash",
+      "https://images.openai.com/static-rsc-1/5CdFixsyQ2sEaZG3xe5aJayYiv0EiwMttdvkAYH6YWkoCkv5_SnouRK5i3ozJ2DdP7lrH9aXj4JVQeZInf28F6tDPNuUE1_m8Xg4WgH4I2fAPqJ_uLW77BvIPcdRenp4-8Hrnuv8Obwk44PqHjRmqfDxWEaEzuOOEDqGPwGafkkEN3utiAWgIZ7kKlLCnV3GnJuVzaTs-DiIwetOXjMs4-JIVyeMshVEug98lXobyNz9cu9cyD9xJ4I61pUom4J-yqJDv0Oxb0HtQn8psrPPZmUhkZdpJyKb5SVJFaK9hXaNlZCGdsW_qNOeixJHnEfhp6WUGrLQkGY-EHDX5EgJalPMLI4u_4Ry-W6TgUmg1cwtmaEvO1SayXlnsiVrQnOMSvIuJvFFr_fJkKEpKSjfyA",
+      "https://images.openai.com/static-rsc-1/OdYhPsHFBnjWO-iRDmhze0Dl4hRaU743zYcjLFiULzsWfNIP6xke-GgccNfC3KERBGkm1VS2Cvf1ZU4xJL5zhjZS02XyV2wYB8fK0-jhie15dvNqP-uixTT87HqXonSjnwEpFLqQ9kZdBg0jVRptBHjMZp7yN-aFnIgi9kI8R-ykijuqMMhWPa5Ll1M-rOxEUvy4QmSANWn-z2dMLASyDZblzGftKM9mfa7oKbilKpM",
+      "https://images.openai.com/static-rsc-1/PssM_SKn6lg6ilQG4XyNaoNZONRMZev5STSNmSvHcH7-9-AaTCo3N_fVBHShHpu5Q_RhbPDg0et5ohv8e6Zq-3wcuFbeglME5_Xr07YJCw4cBAotgErwa_Wdter-ET3i",
+      "https://images.openai.com/static-rsc-1/TGxYY2piKhrLy0dOH9MDkdS9yzAROnjRtRr8bmWtAlxsT2_b5_MFXTpA3UZ5jfUX316wlOIhPoObDFlvvkOQs6krVv7jD1Z4jaFj6sz9fbtN4aQUwyXrNYyFmqC3VoPPluVPkZ4fghGdFx-IsxYAhA",
+      "https://images.openai.com/static-rsc-1/VzuDQoTuIVWvDdxOx2xsWP0yxo_g7FFA0ey_MKH9ugs95oPqjnZPWlqJpIXfFbzsW-DSJ7b3FSMjqnipsZ_Clqinok7A2XOMSrpMMEq_hrWpk4a-87z104iY8Lsu2BY-0MfSIORD5wfL4jxrQXc6zg",
+      "https://images.openai.com/static-rsc-1/XYOL4y8_ff-DYVNWQI7rTkl8Fm814Ixp-Dm-kHkCkBlZ6UaBqvngbtjXcarXY0fx5NOG4bR2AIgdaLKvq3o0uf1kVVjYBOstID36F-fbP9MjX3S6WTHf33DbISj-23Zc",
+      "https://images.openai.com/static-rsc-1/bZnoJLYascC1kZ3lm49ST8Qh5DHWsQYmLAcJntc5Muu-0KiV3kOdtkk6w2NarTsAEgQ9j4tAQdDFTgTfpdxQH2UrVLQ6xlSZbDjvZtU3ql3QshBpiVRmy2by8Wlz3i4b",
+      "https://images.openai.com/static-rsc-1/kXUBRSDDvTDLtQGf0dGB2gehVl82ne5MMt9XhZW9Ekh1Mvya2KhCmADKKGDskf_KBZ01Q87mfRm6UqE_V9hIVogAUzcp9Mzq1f1oJZ0x5MbPlXpVlKvyxLE--541iMEY",
+      "https://images.openai.com/static-rsc-1/o8LYGp8bHqcsGZgFvNcEB-0Y_a3auxjNeGxPdyXbuB_u1f8DdjcKQAu_PHcd2Fb4Nqm3rNL2rkrfxqtILwpfE462HJnGneFVo0pxPOEwlCZiUn75hxkuuWzlgYrqZVt8riwYadvnz2cXIfij3KEojO7oIaI8ADhxfttLr6HsegJE1pBkCRZMjzSktN4cHb95s0JGC7y6A9iqm9a0_7F-2ezX-FyEC6sP9ebyefAwMnmG27SxKT1ZE12sbZ8gi8EI",
+      "https://images.openai.com/static-rsc-1/xODk0-cgoDPeD4Pj-d_LXP4B0Jscv_yVLJgdu0zlG4nc_SyqVh5T5SJ3OPbZjWFQJDe_yGtBlT1G8Mu59NxfeV4uAKg_kN0D7U5dlpK2W8Hq5qN_22M9tO7p2rowQkzj",
+      "https://kvcache-ai.github.io/Mooncake/",
+      "https://sebastianraschka.com/blog/2026/glm-5-3-flash-architecture-notes.html",
+      "https://sgl-project.github.io/advanced_features/server_arguments.html",
+      "https://sgl-project.github.io/advanced_features/speculative_decoding.html",
+      "https://z.ai/blog/glm-5.3-flash"
+    ],
+    "citations": [
+      {
+        "urls": [
+          "https://huggingface.co/zai-org/GLM-5.3-Flash",
+          "https://z.ai/blog/glm-5.3-flash"
+        ],
+        "alt": "([Z.ai](https://z.ai/blog/glm-5.3-flash?utm_source=chatgpt.com))",
+        "title": "GLM-5.3-Flash: Frontier Intelligence, Flash Cost"
+      },
+      {
+        "urls": [
+          "https://github.com/EricLBuehler/mistral.rs",
+          "https://github.com/chelsea0x3b/cudarc",
+          "https://github.com/tracel-ai/cubecl"
+        ],
+        "alt": "([GitHub](https://github.com/chelsea0x3b/cudarc?utm_source=chatgpt.com))",
+        "title": "GitHub - chelsea0x3b/cudarc: Safe rust wrapper around CUDA toolkit · GitHub"
+      },
+      {
+        "urls": [
+          "https://developer.nvidia.com/blog/?p=113426",
+          "https://docs.vllm.ai/en/stable/",
+          "https://kvcache-ai.github.io/Mooncake/",
+          "https://sgl-project.github.io/advanced_features/server_arguments.html"
+        ],
+        "alt": "([vLLM](https://docs.vllm.ai/en/stable/?utm_source=chatgpt.com))",
+        "title": "vLLM"
+      },
+      {
+        "urls": [
+          "https://huggingface.co/zai-org/GLM-5.3-Flash",
+          "https://z.ai/blog/glm-5.3-flash"
+        ],
+        "alt": "([Hugging Face](https://huggingface.co/zai-org/GLM-5.3-Flash?utm_source=chatgpt.com))",
+        "title": "zai-org/GLM-5.3-Flash · Hugging Face"
+      },
+      {
+        "urls": [
+          "https://kvcache-ai.github.io/Mooncake/"
+        ],
+        "alt": "([KVCACHE AI](https://kvcache-ai.github.io/Mooncake/?utm_source=chatgpt.com))",
+        "title": "Welcome to Mooncake — Mooncake"
+      },
+      {
+        "urls": [
+          "https://github.com/sgl-project/sglang?from_theconsensus=1"
+        ],
+        "alt": "([GitHub](https://github.com/sgl-project/sglang?from_theconsensus=1&utm_source=chatgpt.com))",
+        "title": "GitHub - sgl-project/sglang: SGLang is a high-performance serving framework for large language models and multimodal models. · GitHub"
+      },
+      {
+        "urls": [
+          "https://github.com/EricLBuehler/mistral.rs"
+        ],
+        "alt": "([GitHub](https://github.com/EricLBuehler/mistral.rs?utm_source=chatgpt.com))",
+        "title": "GitHub - EricLBuehler/mistral.rs: Fast, flexible LLM inference · GitHub"
+      },
+      {
+        "urls": [
+          "https://sebastianraschka.com/blog/2026/glm-5-3-flash-architecture-notes.html"
+        ],
+        "alt": "([Sebastian Raschka, PhD](https://sebastianraschka.com/blog/2026/glm-5-3-flash-architecture-notes.html?utm_source=chatgpt.com))",
+        "title": "GLM-5.3-Flash Architecture Notes | Sebastian Raschka, PhD"
+      },
+      {
+        "urls": [
+          "https://github.com/sgl-project/sglang/blob/main/docs/docs/advanced_features/attention_backend.mdx"
+        ],
+        "alt": "([GitHub](https://github.com/sgl-project/sglang/blob/main/docs/docs/advanced_features/attention_backend.mdx?utm_source=chatgpt.com))",
+        "title": "sglang/docs/docs/advanced_features/attention_backend.mdx at main · sgl-project/sglang · GitHub"
+      },
+      {
+        "urls": [
+          "https://github.com/tracel-ai/cubecl"
+        ],
+        "alt": "([GitHub](https://github.com/tracel-ai/cubecl?utm_source=chatgpt.com))",
+        "title": "GitHub - tracel-ai/cubecl: Multi-platform high-performance compute language extension for Rust. · GitHub"
+      },
+      {
+        "urls": [
+          "https://docs.vllm.ai/en/stable/",
+          "https://sgl-project.github.io/advanced_features/speculative_decoding.html"
+        ],
+        "alt": "([SGLang Documentation](https://sgl-project.github.io/advanced_features/speculative_decoding.html?utm_source=chatgpt.com))",
+        "title": "Speculative Decoding - SGLang Documentation"
+      },
+      {
+        "urls": [
+          "https://github.com/chelsea0x3b/cudarc"
+        ],
+        "alt": "([GitHub](https://github.com/chelsea0x3b/cudarc?utm_source=chatgpt.com))",
+        "title": "GitHub - chelsea0x3b/cudarc: Safe rust wrapper around CUDA toolkit · GitHub"
+      },
+      {
+        "urls": [
+          "https://docs.z.ai/release-notes/new-released",
+          "https://huggingface.co/zai-org/GLM-5.3-Flash"
+        ],
+        "alt": "([Hugging Face](https://huggingface.co/zai-org/GLM-5.3-Flash?utm_source=chatgpt.com))",
+        "title": "zai-org/GLM-5.3-Flash · Hugging Face"
+      },
+      {
+        "urls": [
+          "https://docs.vllm.ai/en/stable/",
+          "https://github.com/sgl-project/sglang?from_theconsensus=1"
+        ],
+        "alt": "([GitHub](https://github.com/sgl-project/sglang?from_theconsensus=1&utm_source=chatgpt.com))",
+        "title": "GitHub - sgl-project/sglang: SGLang is a high-performance serving framework for large language models and multimodal models. · GitHub"
+      },
+      {
+        "urls": [],
+        "alt": null,
+        "title": null
+      },
+      {
+        "urls": [],
+        "alt": "",
+        "title": null
+      }
+    ],
+    "reasoning_recap": null
+  },
+  {
+    "index": 28,
+    "id": "8a18c310-eaa7-4543-97d5-09af14185d97",
+    "role": "user",
+    "name": null,
+    "content_type": "text",
+    "hidden": false,
+    "model": null,
+    "create_time": 1787956488.376,
+    "text": "from first principles. which one actually fills gaps to raise eyebrows and gain traction for filling a real void",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 29,
+    "id": "34b960c1-e6e9-4025-8397-aeff1049b53c",
+    "role": "assistant",
+    "name": null,
+    "content_type": "text",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956488.781716,
+    "text": "The highest-signal question is not “what sounds technically impressive?” It is “what painful capability is missing badly enough that other inference engines would adopt it rather than reimplement it?” I’m narrowing the list against that criterion.",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 30,
+    "id": "5152f339-7016-4332-94de-9aae4fe2e4db",
+    "role": "assistant",
+    "name": null,
+    "content_type": "code",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956488.781716,
+    "text": "fast|\"Rust LLM inference engine mistral.rs continuous batching paged attention prefix cache speculative decoding MoE 2026\"|30|github.com\nfast|\"Mooncake KVCache disaggregated inference architecture NIXL vLLM 2026\"|30|github.com;kvcache-ai.github.io;docs.vllm.ai\nfast|\"SGLang MoE expert parallelism expert cache offload grouped GEMM 2026\"|30|docs.sglang.ai;github.com\nfast|\"vLLM expert parallel load balancing EPLB MoE offload 2026\"|30|docs.vllm.ai;github.com\nfast|\"Rust CubeCL CUDA inference kernels 2026\"|30|github.com;cubecl.dev\nfast|\"quantization LLM hardware aware mixed precision search serving 2026 AWQ AutoRound llm compressor\"|30|github.com;docs.vllm.ai\nlength|long",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 31,
+    "id": "4a48b2b6-6dd8-4a1a-851e-c242d03befe7",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787956493.2894206
+  },
+  {
+    "index": 32,
+    "id": "a1530cfc-3c2b-43b1-88f4-46c21da2718c",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787956493.2867968
+  },
+  {
+    "index": 33,
+    "id": "3ad1682d-6add-4215-a273-bfb8af816957",
+    "role": "assistant",
+    "name": null,
+    "content_type": "code",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956493.6935,
+    "text": "fast|\"site:github.com EricLBuehler mistral.rs Rust inference continuous batching paged attention 2026\"\nfast|\"site:github.com tracel-ai cubecl Rust CUDA Metal ROCm 2026\"\nfast|\"site:github.com NVIDIA nixl inference transfer library KV cache 2026\"\nfast|\"site:github.com kvcache-ai Mooncake KV cache transfer engine 2026\"\nfast|\"site:github.com deepseek-ai DeepEP expert parallel communication 2026\"\nfast|\"site:github.com flashinfer-ai flashinfer MoE grouped gemm expert parallel 2026\"\nfast|\"site:github.com sgl-project sglang expert parallel load balancing 2026\"\nlength|long",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 34,
+    "id": "9546ee83-83de-4b2b-8f07-03103e1faca7",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787956495.5711823
+  },
+  {
+    "index": 35,
+    "id": "b5b13073-1fd7-4b37-9f49-b554fe116d8c",
+    "role": "assistant",
+    "name": null,
+    "content_type": "thoughts",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956502.422674,
+    "text": "**Investigating Rust gaps**\n\nI’m narrowing the search toward standalone Rust infrastructure rather than crowded serving, quantization, attention, or transport projects. I’m testing whether deterministic inference control, memory lifecycle, or benchmarking offers a genuinely underdeveloped niche.\n\n**Evaluating systems wedges**\n\nI’m finding that a Rust-first MoE transport or fused-kernel layer could stand out if it interoperates with existing stacks while reducing framework coupling. The key test is measurable performance, portability, and a clear adoption path.\n\n**Investigated Rust gaps and evaluated systems wedges**",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 36,
+    "id": "4cf0919b-d590-49e2-b411-ef406c26e838",
+    "role": "assistant",
+    "name": null,
+    "content_type": "thoughts",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956505.282925,
+    "text": "**Searched 1 website**",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 37,
+    "id": "c6d9d454-503a-4880-bc63-822b3694be34",
+    "role": "assistant",
+    "name": null,
+    "content_type": "text",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956496.029267,
+    "text": "One correction to my earlier ranking: a broad `moe-runtime` or `kv-fabric` would not be a clean void anymore. vLLM now has expert-parallel load balancing and many all-to-all backends, while Mooncake has become a full transfer/cache/elastic-MoE substrate used by vLLM, SGLang, TensorRT-LLM and others.",
+    "safe_urls": [
+      "https://docs.vllm.ai/en/latest/serving/expert_parallel_deployment/",
+      "https://pypi.org/project/mooncake-transfer-engine-npu/0.3.12/"
+    ],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 38,
+    "id": "0ed48670-935a-43eb-aaca-9a6450d9f4c4",
+    "role": "assistant",
+    "name": null,
+    "content_type": "code",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956496.029267,
+    "text": "fast|\"DeepEP communication library MoE CUDA all-to-all low latency expert parallel limitations GitHub\"\nfast|\"NVIDIA NIXL language C++ Python API Rust bindings inference transfer 2026\"\nfast|\"Rust RDMA GPU memory NCCL NVSHMEM library crates 2026 GitHub\"\nfast|\"Rust MoE grouped GEMM GPU inference library GitHub\"\nfast|\"Rust NCCL bindings CUDA GPU direct RDMA crate GitHub\"\nfast|\"SGLang MoE alltoall backend DeepEP FlashInfer PPLX MORI NIXL 2026\"\nlength|long",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 39,
+    "id": "44d753d0-d898-4ccc-99b2-f54b7f752092",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787956506.945592
+  },
+  {
+    "index": 40,
+    "id": "51532e04-e160-4986-92d6-468a4846d605",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787956506.942521
+  },
+  {
+    "index": 41,
+    "id": "b48023b7-9bb1-4364-830f-57bd480c6bef",
+    "role": "assistant",
+    "name": null,
+    "content_type": "code",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956507.512717,
+    "text": "open|https://github.com/deepseek-ai/DeepEP\nopen|https://github.com/NVIDIA/nixl\nopen|https://github.com/flashinfer-ai/flashinfer\nopen|https://github.com/kvcache-ai/Mooncake\nlength|long",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 42,
+    "id": "5e02669d-d48d-47a3-a541-d940d46a24d7",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787956510.2223868
+  },
+  {
+    "index": 44,
+    "id": "8206862d-e074-431d-958a-48f19880fbed",
+    "role": "assistant",
+    "name": null,
+    "content_type": "code",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956510.642786,
+    "text": "find|turn824757view2|MoE\nfind|turn824757view2|communication\nfind|turn824757view2|Python\nfind|turn824757view2|Rust\nfind|turn824757view3|Rust\nlength|medium",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 45,
+    "id": "12d792e4-6a7e-47c5-a6c2-511cd11d727f",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787956511.6613793
+  },
+  {
+    "index": 47,
+    "id": "372263c4-cc8d-4d46-979d-0ebcf97cc214",
+    "role": "assistant",
+    "name": null,
+    "content_type": "thoughts",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956519.905083,
+    "text": "**Searched 8 websites**",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 48,
+    "id": "afd53c90-3941-4796-896d-d75c3fbe3011",
+    "role": "assistant",
+    "name": null,
+    "content_type": "reasoning_recap",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956519.910402,
+    "text": "Worked for 31s",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 49,
+    "id": "01f94a18-8b5a-4878-bc38-71c546befbc3",
+    "role": "assistant",
+    "name": null,
+    "content_type": "text",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787956511.994965,
+    "text": "The one I would actually build is narrower than any of my earlier suggestions:\n\n**A Rust-native dynamic expert-residency / MoE memory virtualization library.**\n\nNot “another MoE runtime.” Not “another KV cache.” Something more specific:\n\n> Make a 300B–1T sparse MoE behave as though its experts live in a giant virtual memory space, while automatically keeping the right experts in GPU HBM.\n\nCall it something like `expertvm`.\n\nFrom first principles, this attacks the strange economic property of modern MoEs:\n\n```text\nGLM-style sparse MoE\n\n320B parameters stored\n ~18B parameters used per token\n```\n\nYou pay for enough HBM to hold an enormous model even though each token touches only a fraction of it.\n\nThat is waste.\n\nThe inference system therefore has two fundamentally different resources:\n\n```text\ncompute requirement ≈ active parameters\nmemory requirement ≈ total parameters\n```\n\nSparse MoE has dramatically reduced the first without proportionally reducing the second.\n\nThat gap is the opportunity.\n\nIf `expertvm` could make:\n\n```text\nHBM\n ↓ overflow\nother GPU HBM\n ↓\nhost DRAM\n ↓\nNVMe\n```\n\nlook like one expert address space, you could potentially serve large sparse models with less premium GPU memory.\n\nAnd **that directly attacks $/token**.\n\nWhat makes this more interesting is that the ecosystem does not have a clean, mature, engine-independent answer to it yet.\n\nDeepEP is excellent, but its core abstraction is primarily **moving tokens to resident experts**:\n\n```text\ntoken\n ↓\ndispatch\n ↓\nremote expert\n ↓\ncombine\n```\n\nIt is now extremely sophisticated—GPU-initiated communication, scale-out to EP2048, computation overlap, etc.  [1](https://github.com/deepseek-ai/DeepEP)\n\nThat means trying to compete with DeepEP on all-to-all is a poor wedge.\n\nFlashInfer similarly already covers fused MoE, grouped GEMM, FP8/FP4, routing, attention and distributed communication.  [1](https://github.com/flashinfer-ai/flashinfer)\n\nAgain: don't compete there.\n\nThe interesting inverse problem is:\n\n```text\nInstead of:\n\nmove token → expert\n\nask:\n\nshould expert → move?\nwhere should expert live?\nhow many copies should exist?\nwhen should it move?\ncan I know that before it is needed?\n```\n\nThat is a much less settled problem.\n\nAnd there are strong signals that the frontier projects themselves are moving toward it. DeepEP explicitly lists an ongoing feature for elastic GPU/CPU buffers that map a contiguous virtual address space over hybrid GPU and CPU physical memory.  [1](https://github.com/deepseek-ai/DeepEP) SGLang just added DWDP for MoE prefill, which prefetches peer expert weights over NVLink and computes them locally; they explicitly describe it as early development, while already reporting up to 1.92× improvement in one configuration.  [1](https://whatsnew.fyi/product/sglang)\n\nThat is exactly the kind of signal I look for:\n\n> very smart teams are independently reaching toward the primitive, but nobody owns the abstraction yet.\n\n### What `expertvm` actually does\n\nImagine the inference engine asks:\n\n```rust\nlet expert = experts.acquire(\n layer,\n expert_id,\n device,\n).await?;\n```\n\nThe engine doesn't care where it currently exists.\n\nInternally:\n\n```text\n Expert 193\n\n │\n residency table\n │\n ┌─────────────────┼─────────────────┐\n │ │ │\n GPU 3 HBM CPU DRAM NVMe/object\n hot copy warm copy cold copy\n```\n\nAnd the runtime is continuously answering:\n\n```text\nWhich experts are hot?\n\nWhich experts tend to activate together?\n\nWhich GPU will need this expert next?\n\nShould I replicate it?\n\nShould I evict something else?\n\nShould I transfer the expert,\nor transfer the tokens?\n\nCan I hide the transfer underneath\nthe previous layer's computation?\n```\n\nThat last question is especially important.\n\nSuppose you're computing layer 17.\n\nThe router for layer 18 determines:\n\n```text\nbatch needs experts:\n4, 17, 23, 91, 106\n```\n\nIf 106 isn't local:\n\n```text\ncompute layer 17\n │\n ├──────── DMA expert 106 ────────┐\n │ │\n ▼ ▼\nlayer 17 finishes expert ready\n │\n ▼\n layer 18\n```\n\nNow the expensive movement can disappear behind useful GPU work.\n\nEventually you get much more sophisticated policies.\n\nFor example:\n\n```text\nexpert 17:\n activation frequency = 14%\n replicate everywhere\n\nexpert 82:\n activation frequency = 0.02%\n keep in CPU RAM\n\nexpert 193:\n heavily used by coding prompts\n replicate on coding-serving workers\n\nexpert 221:\n correlated with experts 37 and 91\n colocate them\n```\n\nNow you're applying cache/locality theory to neural network weights.\n\nThat is the part I think could raise eyebrows.\n\n### Why this is more compelling than the other ideas\n\n`kv-fabric` has enormous value, but Mooncake has already become formidable. It supports DRAM/NVMe hierarchies, distributed KV storage, weight management, replication, RDMA transfer and integrations across SGLang, vLLM and TensorRT-LLM.  [1](https://pypi.org/project/mooncake-transfer-engine-npu/0.3.12/)\n\nI would not try to beat Mooncake head-on.\n\n`attention-rs` also isn't enough of a void. FlashInfer already exposes paged/ragged attention, MLA, sparse attention, fused prefill/decode and a large collection of highly tuned kernels.  [1](https://github.com/flashinfer-ai/flashinfer)\n\n`quant-rs` is useful, but there's an enormous amount of quantization work happening.\n\n`infer-scheduler` is valuable, but schedulers are deeply coupled to execution engines. You'd have difficulty getting vLLM/SGLang to outsource their core scheduler to a Rust crate.\n\n`model-ir` is fascinating but far too broad.\n\n`infer-bench` would get users, but probably doesn't create the “holy shit, this changes serving economics” reaction.\n\nExpert memory virtualization can.\n\n### The eyebrow-raising demonstration\n\nDon't initially advertise the Rust.\n\nAdvertise this:\n\n> **Run a 320B MoE efficiently with 160 GB of HBM.**\n\nOr:\n\n> **Same GLM-5.x throughput using 4 GPUs instead of 8.**\n\nOr:\n\n> **Serve a 1T-parameter MoE while keeping only 30% of expert weights resident in HBM.**\n\nObviously the exact achievable numbers need experimentation.\n\nBut that's the type of result that matters.\n\nNobody cares that:\n\n```text\nexpertvm is memory safe!\n```\n\nPeople care that:\n\n```text\nvLLM + expertvm\nH200 x4\n\n$0.19 / M tokens\n```\n\nbeats:\n\n```text\nvLLM\nH200 x8\n\n$0.31 / M tokens\n```\n\nat equivalent latency.\n\nThen people ask:\n\n> What the hell is `expertvm`?\n\nThat's how an infrastructure library gets traction.\n\n### And Rust actually contributes something here\n\nThis also happens to be unusually well matched to Rust.\n\nThe runtime will contain complicated states like:\n\n```rust\nenum Residency {\n Loading {\n from: Tier,\n to: Device,\n transfer: TransferHandle,\n },\n\n Resident {\n device: Device,\n allocation: DeviceAllocation,\n },\n\n Replicated {\n copies: SmallVec<[DeviceAllocation; 4]>,\n },\n\n Evicting {\n allocation: DeviceAllocation,\n destination: Tier,\n },\n\n Cold {\n location: StorageLocation,\n },\n}\n```\n\nYou really don't want:\n\n```text\nexpert evicted\nbut CUDA kernel still references it\n\nbuffer freed\nwhile RDMA operation is in flight\n\ntwo workers independently loading same expert\n\nGPU disappears\nbut residency directory thinks its copy exists\n\ncancellation occurs halfway through migration\n```\n\nThese are ownership/state-transition problems.\n\nRust gives you a genuine architectural advantage there rather than merely being the language you happen to prefer.\n\n### Keep the first version extremely narrow\n\nI wouldn't start with NVMe, RDMA, prediction, cluster scheduling and everything else.\n\nV0:\n\n```text\nsingle node\n8 GPUs\n\nHBM ↔ HBM\nCPU pinned DRAM ↔ HBM\n\nexpert registry\nexpert leases\nasync migration\nLRU/LFU residency\nhot expert replication\nlayer-ahead prefetch\nmetrics\n```\n\nAnd integrate one model:\n\n```text\nQwen/GLM/DeepSeek sparse MoE\n```\n\nThen benchmark:\n\n```text\nstatic EP\nvs\nexpertvm\n```\n\nwhile intentionally restricting available HBM.\n\nV1:\n\n```text\ntraffic-aware placement\nco-activation placement\nadaptive replication\n```\n\nV2:\n\n```text\nRDMA\nmulti-node\nremote expert residency\n```\n\nV3 gets interesting:\n\n```text\npredictive residency\n```\n\nThe runtime learns:\n\n```text\nP(expert_j at layer L+1 |\n experts selected at layers L,L-1,...,\n prompt class,\n session)\n```\n\nand prefetches experts before the router even asks for them.\n\nNow you're crossing from pure systems work into inference research.\n\nThat aligns almost perfectly with the company you described: **research into making good mid-tier/open models absurdly cheap to run.**\n\nSo if you asked me to put your next year of OSS effort behind exactly one bet:\n\n**Don't build `moe-runtime-rs`.**\n\nBuild:\n\n> **`expertvm`: engine-agnostic virtual memory and dynamic residency for sparse model weights.**\n\nDesign it so vLLM/SGLang/mistral.rs/etc. can eventually use it rather than requiring anyone to adopt your inference server.\n\nThat is the first idea from the original list where I see the combination of **real emerging bottleneck + incomplete incumbent solution + measurable economic win + clean OSS primitive + unusually strong fit for Rust.** memcite",
+    "safe_urls": [
+      "https://github.com/deepseek-ai/DeepEP",
+      "https://github.com/flashinfer-ai/flashinfer",
+      "https://pypi.org/project/mooncake-transfer-engine-npu/0.3.12/",
+      "https://whatsnew.fyi/product/sglang"
+    ],
+    "citations": [
+      {
+        "urls": [
+          "https://github.com/deepseek-ai/DeepEP"
+        ],
+        "alt": "([GitHub](https://github.com/deepseek-ai/DeepEP))",
+        "title": "GitHub - deepseek-ai/DeepEP: DeepEP: an efficient expert-parallel communication library · GitHub"
+      },
+      {
+        "urls": [
+          "https://github.com/flashinfer-ai/flashinfer"
+        ],
+        "alt": "([GitHub](https://github.com/flashinfer-ai/flashinfer))",
+        "title": "GitHub - flashinfer-ai/flashinfer: FlashInfer: Kernel Library for LLM Serving · GitHub"
+      },
+      {
+        "urls": [
+          "https://github.com/deepseek-ai/DeepEP"
+        ],
+        "alt": "([GitHub](https://github.com/deepseek-ai/DeepEP))",
+        "title": "GitHub - deepseek-ai/DeepEP: DeepEP: an efficient expert-parallel communication library · GitHub"
+      },
+      {
+        "urls": [
+          "https://whatsnew.fyi/product/sglang"
+        ],
+        "alt": "([What's New](https://whatsnew.fyi/product/sglang?utm_source=chatgpt.com))",
+        "title": "SGLang changelog — v0.5.18, Aug 22, 2026 · What's New"
+      },
+      {
+        "urls": [
+          "https://pypi.org/project/mooncake-transfer-engine-npu/0.3.12/"
+        ],
+        "alt": "([PyPI](https://pypi.org/project/mooncake-transfer-engine-npu/0.3.12/?utm_source=chatgpt.com))",
+        "title": "mooncake-transfer-engine-npu · PyPI"
+      },
+      {
+        "urls": [
+          "https://github.com/flashinfer-ai/flashinfer"
+        ],
+        "alt": "([GitHub](https://github.com/flashinfer-ai/flashinfer))",
+        "title": "GitHub - flashinfer-ai/flashinfer: FlashInfer: Kernel Library for LLM Serving · GitHub"
+      },
+      {
+        "urls": [],
+        "alt": null,
+        "title": null
+      },
+      {
+        "urls": [],
+        "alt": "",
+        "title": null
+      }
+    ],
+    "reasoning_recap": null
+  },
+  {
+    "index": 50,
+    "id": "cca658af-57a7-4be3-b4ed-42d5f5a9c31a",
+    "role": "user",
+    "name": null,
+    "content_type": "text",
+    "hidden": false,
+    "model": null,
+    "create_time": 1787957007.049,
+    "text": "how does this relate to that https://github.com/mingley/llama-rust",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 51,
+    "id": "a49f8d5d-0f89-4b3f-a08d-adaa1c68c73a",
+    "role": "assistant",
+    "name": null,
+    "content_type": "text",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957007.547596,
+    "text": "I’ll compare the repo’s actual abstraction boundary against the `expertvm` idea: what `llama-rust` already owns, what it would have to grow into, and whether `expertvm` should live inside it or as a separate crate.",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 52,
+    "id": "df59d995-2e4c-43c5-9e83-1db1c37a8925",
+    "role": "assistant",
+    "name": null,
+    "content_type": "code",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957007.547596,
+    "text": "open|https://github.com/mingley/llama-rust\nfast|site:github.com/mingley/llama-rust llama-rust README inference Rust\nlength|medium",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 53,
+    "id": "0ca96188-267c-4908-926b-6f9ca47d7cef",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787957010.1553428
+  },
+  {
+    "index": 54,
+    "id": "79b98b9d-b918-42a0-9ea3-d9f249821f2c",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787957010.151842
+  },
+  {
+    "index": 56,
+    "id": "d0013589-236e-45a5-9ac2-2e837db5a2b2",
+    "role": "assistant",
+    "name": null,
+    "content_type": "code",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957011.359419,
+    "text": "open|turn135023view0|167\nclick|turn135023view0|79\nclick|turn135023view0|76\nlength|long",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 57,
+    "id": "da1c816e-bdd6-4cc6-be00-5759b9b3828e",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787957012.5331824
+  },
+  {
+    "index": 59,
+    "id": "48f0d926-ee33-443a-b7bb-f1d3ee60a321",
+    "role": "assistant",
+    "name": null,
+    "content_type": "code",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957013.614577,
+    "text": "find|turn473875view1|Not started\nfind|turn473875view1|MoE\nfind|turn473875view1|mmap\nfind|turn473875view1|GPU\nfind|turn473875view1|multi\nlength|medium",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 60,
+    "id": "8a2c963a-3f05-4bae-86df-f791812ac65d",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787957014.7571154
+  },
+  {
+    "index": 62,
+    "id": "fd9d0b1a-aee4-45e4-803e-e94ebcf6123c",
+    "role": "assistant",
+    "name": null,
+    "content_type": "thoughts",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957020.235615,
+    "text": "**Relating the architectures**\n\nI’m seeing `llama-rust` as a compact CPU inference kernel whose contiguous weight buffer is an early, non-virtualized storage layer. ExpertVM would generalize that into tiered expert residency, routing, eviction, and asynchronous transfers.\n\n**Related the architectures**",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 63,
+    "id": "12b4360d-37cc-4455-af56-bece2bc0c68f",
+    "role": "assistant",
+    "name": null,
+    "content_type": "thoughts",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957022.497846,
+    "text": "**Searched 1 website**",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 64,
+    "id": "4c00c33d-0a25-4596-af65-7a9a1253c638",
+    "role": "assistant",
+    "name": null,
+    "content_type": "reasoning_recap",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957022.499022,
+    "text": "Worked for 14s",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 65,
+    "id": "bf5b9720-c04e-40d3-91b1-39a88e0f39bf",
+    "role": "assistant",
+    "name": null,
+    "content_type": "text",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957015.084902,
+    "text": "It relates very directly, but I would treat `llama-rust` as the execution/reference engine and `expertvm` as a new systems layer underneath it—not turn `llama-rust` itself into a giant production serving stack.\n\nToday, `llama-rust` essentially has this architecture:\n\n```text\nGGUF file\n ↓\nowned Vec \n ↓\ntensor metadata + byte ranges\n ↓\nmodel implementation\n ↓\nattention / MoE routing / FFN\n ↓\nquantized GEMV/GEMM\n ↓\nCPU\n```\n\nThat description is literal: the repo currently keeps one owned file blob and refers to tensor payloads as ranges inside it. It already implements the actual MoE math for Llama-style MoE, Qwen2MoE, Qwen3MoE, Llama4, and Qwen3Next.  [1](https://github.com/mingley/llama-rust) [2](https://github.com/mingley/llama-rust/blob/main/STATUS.md)\n\nSo you have already built a surprising amount of the machinery needed to experiment with `expertvm`.\n\nThe key distinction is:\n\n```text\nllama-rust answers:\n\n\"What does this model mean,\nand how do I execute its math correctly?\"\n\n\nexpertvm answers:\n\n\"Where are the weights needed\nfor that math physically located right now?\"\n```\n\nThose are separate problems.\n\n### The exact seam\n\nRight now, conceptually, an expert weight looks something like:\n\n```rust\nTensor {\n dtype: Q4_K,\n shape: ...,\n range: 18372910..19483721,\n}\n```\n\nand ultimately:\n\n```text\ntensor.range\n ↓\n&model_blob[range]\n ↓\nGEMV\n```\n\nThat means the assumption baked into the system is:\n\n> Every weight is already locally addressable.\n\n`expertvm` breaks that assumption.\n\nInstead:\n\n```text\nGGUF metadata\n ↓\n TensorHandle\n ↓\n┌─────────────────────┐\n│ ExpertStore │\n│ │\n│ HBM │\n│ other GPU HBM │\n│ pinned CPU DRAM │\n│ NVMe eventually │\n└─────────────────────┘\n ↓\n ExpertLease\n ↓\n kernel\n```\n\nSo the model execution code says:\n\n```rust\nlet gate = experts.acquire(layer, expert, Weight::Gate).await?;\nlet up = experts.acquire(layer, expert, Weight::Up).await?;\nlet down = experts.acquire(layer, expert, Weight::Down).await?;\n\nexecute_expert(x, gate, up, down);\n```\n\nIt no longer needs to know whether expert 83 was sitting:\n\n```text\nGPU 0\nGPU 5\nCPU RAM\nNVMe\n```\n\nthree milliseconds ago.\n\nThat is the relationship.\n\nAnd your existing MoE work makes `llama-rust` unusually useful as the first integration target. It already knows the semantic differences between Qwen2MoE, Qwen3MoE, Llama MoE, Llama4, etc., rather than having only a toy generic MoE abstraction.  [1](https://github.com/mingley/llama-rust/blob/main/STATUS.md)\n\n### In fact, one thing in `llama-rust` is almost the primitive ancestor of this idea\n\nYour current weight representation is already:\n\n> one backing storage object + tensor views into ranges\n\nrather than:\n\n> deserialize every matrix into independent allocations.\n\nThe README explicitly says quantized tensors remain in the original file blob and are addressed by range, with no per-matrix clone.  [1](https://github.com/mingley/llama-rust)\n\nThat's conceptually very close to what we'd want:\n\n```text\nCurrent:\n\nTensor\n ↓\nRange\n ↓\nFileBlob\n\n\nFuture:\n\nTensor\n ↓\nWeightId\n ↓\nResidencyManager\n ↓\nPhysicalBacking\n```\n\nThe big conceptual change is replacing:\n\n```rust\n&blob[tensor.range]\n```\n\nwith something resembling:\n\n```rust\nlet lease = store.acquire(tensor.id(), target_device).await?;\n```\n\nThat tiny-looking abstraction change opens an enormous systems space.\n\n---\n\nThere is an important fork, though.\n\nYour current `llama-rust` is deliberately a very different project from what `expertvm` eventually needs to be.\n\nIt currently has:\n\n```text\n#![forbid(unsafe_code)]\nno FFI\nessentially dependency-free\nCPU decode\nMetal only as external measurement code\nno mmap\nno batching\nno concurrent serving\n```\n\nand the repo explicitly parks mmap and production serving as non-goals/current gaps.  [1](https://github.com/mingley/llama-rust) [2](https://github.com/mingley/llama-rust/blob/main/STATUS.md)\n\nThat philosophy is excellent for what `llama-rust` currently demonstrates:\n\n> **Can we correctly execute modern quantized LLM architectures from GGUF in pure safe Rust?**\n\nBut a serious `expertvm` implementation eventually wants:\n\n```text\nCUDA\nHIP\npinned memory\nDMA\nCUDA events\nstreams\npeer-to-peer copies\nNVLink\nRDMA\nregistered memory\nGPUDirect\npossibly io_uring / mmap\n```\n\nAt the bottom of that stack, someone necessarily interacts with unsafe foreign APIs.\n\nTrying to preserve:\n\n```text\nzero unsafe anywhere\nzero dependencies\n```\n\nwould actively handicap the project.\n\nInstead I'd preserve the more valuable invariant:\n\n> **All public memory/residency semantics are safe Rust. Unsafe hardware interaction is confined below a tiny audited boundary.**\n\nFor example:\n\n```text\n safe Rust\n\n ExpertResidency\n │\n Lease\n │\n MigrationPlan\n │\n PlacementPolicy\n │\n──────────────────────────────────\n unsafe boundary\n──────────────────────────────────\n │\n CUDA / RDMA / mmap\n```\n\nThat's actually a stronger demonstration of Rust's value than avoiding `unsafe` entirely.\n\n---\n\n### So I would evolve the repository family like this\n\nNot:\n\n```text\nllama-rust\n ↓\nadd everything\n ↓\n500,000-line vLLM competitor\n```\n\nInstead:\n\n```text\n llama-rust\n / \\\n / \\\n model semantics reference\n GGUF parsing correctness\n quant formats tests\n MoE routing\n │\n │\n ▼\n expertvm\n │\n ├── expert registry\n ├── residency\n ├── leases\n ├── migration\n ├── caching\n ├── prefetch\n └── replication\n\n │\n ▼\n hardware backends\n```\n\nEventually there might be a broader workspace:\n\n```text\nllm-systems-rs/\n\n crates/\n gguf/\n quant/\n kernels/\n model/\n expertvm/\n cuda/\n metal/\n\n engines/\n llama-rust/\n```\n\nBut I wouldn't reorganize yet.\n\n### Your next step could actually use `llama-rust` as the research vehicle\n\nYou don't need B200s and RDMA to prove whether the basic idea has merit.\n\nYour repo already understands Qwen3MoE.\n\nStart with CPU memory residency.\n\nRight now:\n\n```text\nentire GGUF\n ↓\nVec \n ↓\nall expert bytes resident\n```\n\nChange the expert path experimentally to:\n\n```text\ndense/common weights\n ↓\nresident\n\nexpert weights\n ↓\nExpertStore\n ↓\nsmall resident cache\n```\n\nArtificially constrain the cache:\n\n```text\n64 experts total\n8 may be \"resident\"\n```\n\nThen execute a real trace and measure:\n\n```text\nexpert access frequency\ncache hit rate\n\nreuse distance\nexpert co-activation\nlayer-to-layer predictability\n\nLRU hit rate\nLFU hit rate\noracle hit rate\n\nprefetch hit rate\n```\n\nThis is extremely valuable because before building some elaborate CUDA transfer system, you can answer the fundamental research question:\n\n> **Are expert activation patterns predictable/local enough for dynamic residency to work?**\n\nSuppose Qwen3MoE produces:\n\n```text\nrandom policy 12% hit\nLRU 37%\nfrequency-aware 58%\n1-layer predictor 81%\noracle 94%\n```\n\nNow there is something here.\n\nConversely, if realistic workloads give:\n\n```text\nbest realistic policy 18%\n```\n\nyou just learned that this particular direction is economically weak before spending six months writing CUDA infrastructure.\n\nAnd `llama-rust` gives you an unusually clean environment for doing that because you own the entire execution path.\n\n### There's an even more interesting experiment\n\nInstrument the router you already have.\n\nFor every generated token:\n\n```text\ntoken\nlayer\nselected experts\nrouting probabilities\n```\n\nRecord:\n\n```text\nT0:\nL0: 4, 17\nL1: 31, 52\nL2: 8, 91\n...\n\nT1:\nL0: 4, 19\nL1: 31, 52\nL2: 8, 73\n...\n```\n\nThen analyze:\n\n```text\nP(E_t,l | E_t-1,l)\n\nP(E_t,l+1 | E_t,l)\n\nP(E | prompt/domain)\n\nP(E_a | E_b)\n\nexpert popularity distribution\n\nworking-set size\n\nreuse distance\n```\n\nThis tells us something deeper than simply implementing inference.\n\nYou're studying the **memory-access behavior of sparse neural networks**.\n\nThat can directly inform the design of `expertvm`.\n\nAnd if you find something like:\n\n```text\n20% of experts account for 75% of activations\n```\n\nor:\n\n```text\ngiven previous-layer routing,\nnext-layer expert selection is 85% predictable\n```\n\nthen that itself is potentially a very interesting public research result.\n\n---\n\nSo I would revise the trajectory of `llama-rust` slightly.\n\nThe work you've already done isn't wasted relative to the serving-company idea. It's almost the ideal **correctness laboratory**.\n\nYou've established:\n\n```text\nGGUF understanding\nquant formats\nkernel implementation\nreal model architectures\nKV\nMoE routing\nexpert execution\n```\n\nwhile deliberately not yet going deep into serving infrastructure.  [1](https://github.com/mingley/llama-rust)\n\nThat means the natural next interesting layer isn't:\n\n```text\nadd an OpenAI HTTP API\n```\n\nor:\n\n```text\nadd Tokio\n```\n\nor even:\n\n```text\nmatch llama.cpp tokens/sec\n```\n\nThose would make it a more complete inference engine, but they don't create much novelty.\n\nThe potentially high-signal pivot is:\n\n```text\n llama-rust\n\n \"we can execute the model\"\n │\n ▼\n instrument sparse MoE\n │\n ▼\n characterize expert locality\n │\n ▼\n build expertvm\n │\n ▼\n virtualize expert weights\n │\n ▼\n GPU implementation\n │\n ▼\n prove lower HBM / $ per token\n```\n\nThat turns `llama-rust` from **“a very clean Rust implementation of LLM inference”** into the foundational testbed for a specific research thesis that the mainstream inference stack has not clearly solved.\n\nThat is a much more differentiated trajectory. memcite",
+    "safe_urls": [
+      "https://github.com/mingley/llama-rust",
+      "https://github.com/mingley/llama-rust/blob/main/STATUS.md"
+    ],
+    "citations": [
+      {
+        "urls": [
+          "https://github.com/mingley/llama-rust",
+          "https://github.com/mingley/llama-rust/blob/main/STATUS.md"
+        ],
+        "alt": "([GitHub](https://github.com/mingley/llama-rust))",
+        "title": "GitHub - mingley/llama-rust: Safe Rust quantized GEMV kernels; measured vs llama.cpp. Not rustformers/llm. · GitHub"
+      },
+      {
+        "urls": [
+          "https://github.com/mingley/llama-rust/blob/main/STATUS.md"
+        ],
+        "alt": "([GitHub](https://github.com/mingley/llama-rust/blob/main/STATUS.md))",
+        "title": "llama-rust/STATUS.md at main · mingley/llama-rust · GitHub"
+      },
+      {
+        "urls": [
+          "https://github.com/mingley/llama-rust"
+        ],
+        "alt": "([GitHub](https://github.com/mingley/llama-rust))",
+        "title": "GitHub - mingley/llama-rust: Safe Rust quantized GEMV kernels; measured vs llama.cpp. Not rustformers/llm. · GitHub"
+      },
+      {
+        "urls": [
+          "https://github.com/mingley/llama-rust",
+          "https://github.com/mingley/llama-rust/blob/main/STATUS.md"
+        ],
+        "alt": "([GitHub](https://github.com/mingley/llama-rust))",
+        "title": "GitHub - mingley/llama-rust: Safe Rust quantized GEMV kernels; measured vs llama.cpp. Not rustformers/llm. · GitHub"
+      },
+      {
+        "urls": [
+          "https://github.com/mingley/llama-rust"
+        ],
+        "alt": "([GitHub](https://github.com/mingley/llama-rust))",
+        "title": "GitHub - mingley/llama-rust: Safe Rust quantized GEMV kernels; measured vs llama.cpp. Not rustformers/llm. · GitHub"
+      },
+      {
+        "urls": [],
+        "alt": null,
+        "title": null
+      },
+      {
+        "urls": [],
+        "alt": "",
+        "title": null
+      }
+    ],
+    "reasoning_recap": null
+  },
+  {
+    "index": 66,
+    "id": "3dcf01d5-17b4-4927-a53d-ed271721a0b3",
+    "role": "user",
+    "name": null,
+    "content_type": "text",
+    "hidden": false,
+    "model": null,
+    "create_time": 1787957089.552,
+    "text": "so if I did not have access to a real expensive GPU, could I use the code from https://github.com/mingley/llama-rust to simulate this while building the expertvm at all?",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 67,
+    "id": "c9b8c44c-cb97-4b76-a0e3-6cf0bcdfc4ab",
+    "role": "assistant",
+    "name": null,
+    "content_type": "code",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957090.084249,
+    "text": "open|https://github.com/mingley/llama-rust\nfast|site:github.com/mingley/llama-rust expert MoE GGUF CPU README STATUS|30|github.com\nlength|medium",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 68,
+    "id": "08669f85-45d5-4680-bd53-3530ef4dc1df",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787957091.2693737
+  },
+  {
+    "index": 69,
+    "id": "7378995f-7486-439e-b453-3f5bcd26e00c",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787957091.2663085
+  },
+  {
+    "index": 71,
+    "id": "92db3dd6-410d-41ee-9bc4-9cddde35c21c",
+    "role": "assistant",
+    "name": null,
+    "content_type": "code",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957091.923543,
+    "text": "open|turn946223view0|167\nclick|turn946223view0|79\nlength|medium",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 72,
+    "id": "32e9562c-8506-443e-96ba-a6896dbeb784",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787957092.7755094
+  },
+  {
+    "index": 74,
+    "id": "2ea5fb37-d490-4517-9aba-655932b9a937",
+    "role": "assistant",
+    "name": null,
+    "content_type": "thoughts",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957100.360885,
+    "text": "**Designing a simulation**\n\nI’m separating policy testing from hardware benchmarking: a Rust prototype can model HBM, RAM, and storage tiers with explicit transfers, latency, bandwidth, and eviction, while leaving real out-of-core memory mapping for a later phase.\n\n**Designed a simulation**",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 75,
+    "id": "46646870-0f65-4471-95e6-74e28ff8606b",
+    "role": "assistant",
+    "name": null,
+    "content_type": "thoughts",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957102.80988,
+    "text": "**Searched 1 website**",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 76,
+    "id": "e3fc944c-f526-4084-b3f3-096db0453bac",
+    "role": "assistant",
+    "name": null,
+    "content_type": "reasoning_recap",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957102.811178,
+    "text": "Worked for 12s",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 77,
+    "id": "03f73356-5983-4cb7-b7d5-315aa91dd2cb",
+    "role": "assistant",
+    "name": null,
+    "content_type": "text",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957093.169345,
+    "text": "Yes. In fact, `llama-rust` is enough to build roughly the first 70–80% of the intellectually important part of `expertvm` without an expensive GPU.\n\nThe key is to separate two things:\n\n```text\nA. Does expert virtualization work as a systems policy?\nB. Does our implementation actually win on H100/B200 hardware?\n```\n\nYou can answer A almost completely on CPU. You need expensive hardware mainly for B.\n\n`llama-rust` is particularly useful because it already implements real MoE routing for Qwen2MoE, Qwen3MoE, Llama4, Qwen3Next, etc.  [1](https://github.com/mingley/llama-rust)\n\nThe first thing I would build is this seam:\n\n```rust\n// llama-rust currently conceptually does:\nexpert_weight.bytes()\n\n// change to:\nexpert_store.acquire(expert_id, layer_id, weight_id)\n```\n\nThen define:\n\n```rust\ntrait ExpertStore {\n fn acquire(\n &mut self,\n expert: ExpertId,\n ) -> Result;\n}\n```\n\nNow the actual model math doesn't care where the expert lives.\n\nYou can implement multiple backends:\n\n```text\nExpertStore\n\n├── DirectStore\n│ current llama-rust behavior\n│\n├── CachedStore\n│ bounded \"fast memory\" cache\n│\n├── TieredStore\n│ fast RAM / slow RAM / disk\n│\n└── SimulatedGpuStore\n fake HBM capacity\n fake PCIe bandwidth\n fake NVLink bandwidth\n fake DMA concurrency\n```\n\nThat last one is where this gets powerful.\n\nSuppose you tell the simulator:\n\n```text\nHBM capacity: 80 GiB\n\nCPU → HBM:\n bandwidth: 32 GB/s\n latency: 10 us\n\nGPU1 → GPU0 NVLink:\n bandwidth: 450 GB/s\n latency: 2 us\n\nconcurrent DMA: 4\n```\n\nThose buffers don't actually have to be HBM.\n\nThe simulator maintains the exact state transitions:\n\n```text\nExpert 57\n\nCPU_RESIDENT\n │\n │ acquire()\n ▼\nTRANSFERRING_TO_GPU\n │\n │ simulated transfer completion\n ▼\nGPU_RESIDENT\n │\n │ lease count = 1\n ▼\nIN_USE\n```\n\nAnd you can test all of the difficult logic:\n\n```text\nallocation\neviction\nprefetch\nreplication\nleases\nconcurrent requests\ntransfer scheduling\ncache replacement\ncapacity constraints\nexpert pinning\nhot/cold promotion\nco-activation\nadmission\ncancellation\n```\n\nwithout touching CUDA.\n\nThe execution timeline can even be simulated. If expert 32 is 180 MB and your modeled PCIe bandwidth is 32 GB/s:\n\n```text\ntransfer ≈ 180 MB / 32 GB/s\n ≈ 5.6 ms\n```\n\nYou don't `sleep(5.6ms)` necessarily. A discrete-event simulator advances a logical clock:\n\n```text\nt=0.000 layer 15 starts\n\nt=0.400 router discovers experts\n [12, 32, 91]\n\nt=0.400 12: HBM hit\n 91: HBM hit\n 32: miss\n\nt=0.400 start CPU→HBM(32)\n\nt=3.100 layer computation finishes\n\nt=6.000 expert 32 arrives\n\n STALL = 2.900ms\n```\n\nNow you have an actual research environment.\n\n### More importantly, `llama-rust` gives you real access traces\n\nDon't generate synthetic expert choices.\n\nRun an actual Qwen3MoE through `llama-rust`.\n\nIts router produces something like:\n\n```text\ntoken=137 layer=0 experts=[16, 31, 82]\ntoken=137 layer=1 experts=[4, 19, 22]\ntoken=137 layer=2 experts=[16, 73, 91]\n\ntoken=138 layer=0 experts=[16, 31, 47]\n...\n```\n\nRecord that as:\n\n```rust\nstruct ExpertAccess {\n sequence: SequenceId,\n token: usize,\n layer: usize,\n experts: Vec,\n}\n```\n\nNow replay the same trace through different `expertvm` policies.\n\nFor example:\n\n```text\nPolicy HBM hit bytes moved stalls\n──────────────────────────────────────────────────────────\nRandom 22% 8.7 TB 42.1s\nLRU 51% 5.3 TB 25.4s\nLFU 63% 3.9 TB 18.7s\nLayer-aware LRU 68% 3.1 TB 14.2s\nCoactivation-aware 74% 2.4 TB 9.8s\nPredictive prefetch 89% 2.7 TB 2.1s\nOracle 96% 2.0 TB 0.4s\n```\n\nThose are made-up numbers, but that's exactly the experiment you want.\n\nAnd now you can ask much more important questions than “is my CUDA kernel fast?”\n\nYou can determine:\n\n```text\nWhat is the minimum working set?\n\nHow skewed is expert popularity?\n\nDoes locality persist between tokens?\n\nDoes locality persist between sequences?\n\nDoes prompt domain affect expert selection?\n\nDoes conversation history?\n\nAre expert activations correlated?\n\nHow far ahead can selection be predicted?\n\nHow much HBM is necessary for 95% hit rate?\n\nAt what PCIe bandwidth does virtualization become viable?\n\nHow much does NVLink change the optimal policy?\n\nWhen is moving tokens cheaper than moving weights?\n```\n\nThat's real inference research.\n\n### You can also make the CPU implementation real, not just simulated\n\nThere is one architectural limitation in `llama-rust` today that you would need to change.\n\nIt currently reads the quantized model into a single owned file blob and tensors reference ranges within that blob. There is no mmap.  [1](https://github.com/mingley/llama-rust)\n\nSo:\n\n```text\ntoday\n\nGGUF\n ↓ read\nVec containing entire model\n ↓\nTensorRange\n```\n\ndoesn't demonstrate actual constrained residency because the whole model is still occupying RAM.\n\nI'd change the storage abstraction first:\n\n```text\n WeightStorage\n │\n ┌────────────┼─────────────┐\n │ │ │\n InMemory Mmap Synthetic\n │ │ │\n └────────────┼─────────────┘\n │\n TensorView\n```\n\nThen an expert can genuinely be:\n\n```text\ndisk\n ↓\npage/read\n ↓\nbounded RAM expert cache\n ↓\nGEMV\n```\n\nYou could run a model substantially larger than the amount of RAM you're willing to dedicate to expert residency.\n\nAnd this isn't hypothetical. A very recent llama.cpp experiment ran a 48.4 GB Qwen3-Next-80B GGUF on a 16 GB M1 Mac CPU-only by maintaining a bounded residency set for expert pages.  [1](https://github.com/ggml-org/llama.cpp/discussions/27712) Another recent llama.cpp experiment reports 31–52% decode improvements from explicitly prefetching routed expert weight ranges rather than relying on scattered page faults.  [1](https://github.com/ggml-org/llama.cpp/discussions/25779)\n\nThat is strong evidence that your laptop can be a legitimate laboratory for the problem.\n\n### There is also an important update to my previous answer\n\nAfter searching specifically for this, I would no longer claim that **basic expert virtualization itself is an untouched void**.\n\nThe field is moving extremely quickly.\n\nIn just the last few weeks there are projects doing:\n\n- bounded CPU/disk residency for oversized MoEs,  [1](https://github.com/ggml-org/llama.cpp/discussions/27712)\n- explicit expert prefetch based on router outputs,  [1](https://github.com/ggml-org/llama.cpp/discussions/25779)\n- VRAM expert caches + CPU-pinned experts + PCIe access in `moe-l2`.  [1](https://github.com/yalun753/moe-l2)\n\nThat actually makes the `llama-rust` research route more important. Don't spend six months independently building “LRU experts between RAM and GPU.” That is rapidly becoming commodity.\n\nUse `llama-rust` to figure out what the **next abstraction** should be.\n\nFor example, a much more interesting result would be:\n\n> Expert residency shouldn't be reactive caching at all. Router behavior is sufficiently predictable that a predictive policy reduces cold-expert stalls by 85%.\n\nOr:\n\n> The optimal decision is dynamically choosing between moving expert weights and dispatching activations based on fan-in, expert size, topology, and predicted reuse.\n\nThat starts looking like:\n\n```text\n router\n │\n ▼\n Expert Planner\n │\n ┌──────────────┼──────────────┐\n │ │ │\n move weights move tokens replicate\n │ │ │\n CPU → GPU GPU → GPU GPU → GPU\n```\n\nThat's substantially more novel than an expert LRU.\n\nSo yes: **I would absolutely start this without buying a GPU.**\n\nI'd make `llama-rust` produce real MoE access traces, build `expertvm` as a policy-independent residency/lease abstraction, add a deterministic topology simulator, and use actual model routing to discover what policies are worth pursuing.\n\nOnly once the simulator/replay results show a compelling hypothesis would I rent H100/H200/B200 time to validate it physically. You don't need to own that hardware to discover the algorithm. memcite",
+    "safe_urls": [
+      "https://github.com/ggml-org/llama.cpp/discussions/25779",
+      "https://github.com/ggml-org/llama.cpp/discussions/27712",
+      "https://github.com/mingley/llama-rust",
+      "https://github.com/yalun753/moe-l2"
+    ],
+    "citations": [
+      {
+        "urls": [
+          "https://github.com/mingley/llama-rust"
+        ],
+        "alt": "([GitHub](https://github.com/mingley/llama-rust))",
+        "title": "GitHub - mingley/llama-rust: Safe Rust quantized GEMV kernels; measured vs llama.cpp. Not rustformers/llm. · GitHub"
+      },
+      {
+        "urls": [
+          "https://github.com/mingley/llama-rust"
+        ],
+        "alt": "([GitHub](https://github.com/mingley/llama-rust))",
+        "title": "GitHub - mingley/llama-rust: Safe Rust quantized GEMV kernels; measured vs llama.cpp. Not rustformers/llm. · GitHub"
+      },
+      {
+        "urls": [
+          "https://github.com/ggml-org/llama.cpp/discussions/27712"
+        ],
+        "alt": "([GitHub](https://github.com/ggml-org/llama.cpp/discussions/27712?utm_source=chatgpt.com))",
+        "title": "Oversized MoE Runtime: Qwen3-Next-80B (48.4 GB) on a 16 GB M1 Mac, CPU-only · ggml-org llama.cpp · Discussion #27712 · GitHub"
+      },
+      {
+        "urls": [
+          "https://github.com/ggml-org/llama.cpp/discussions/25779"
+        ],
+        "alt": "([GitHub](https://github.com/ggml-org/llama.cpp/discussions/25779?utm_source=chatgpt.com))",
+        "title": "Explicit-read prefetch for MoE experts: +31–52% tok/s on RAM-constrained GGUFs · ggml-org llama.cpp · Discussion #25779 · GitHub"
+      },
+      {
+        "urls": [
+          "https://github.com/ggml-org/llama.cpp/discussions/27712"
+        ],
+        "alt": "([GitHub](https://github.com/ggml-org/llama.cpp/discussions/27712?utm_source=chatgpt.com))",
+        "title": "Oversized MoE Runtime: Qwen3-Next-80B (48.4 GB) on a 16 GB M1 Mac, CPU-only · ggml-org llama.cpp · Discussion #27712 · GitHub"
+      },
+      {
+        "urls": [
+          "https://github.com/ggml-org/llama.cpp/discussions/25779"
+        ],
+        "alt": "([GitHub](https://github.com/ggml-org/llama.cpp/discussions/25779?utm_source=chatgpt.com))",
+        "title": "Explicit-read prefetch for MoE experts: +31–52% tok/s on RAM-constrained GGUFs · ggml-org llama.cpp · Discussion #25779 · GitHub"
+      },
+      {
+        "urls": [
+          "https://github.com/yalun753/moe-l2"
+        ],
+        "alt": "([GitHub](https://github.com/yalun753/moe-l2?utm_source=chatgpt.com))",
+        "title": "GitHub - yalun753/moe-l2: MoE expert offload for low-VRAM GPUs — run 100B+ MoE models (DeepSeek, Qwen, Mixtral) on 8 GB cards. Expert caching, LRU hot cache, OpenAI-compatible proxy, GGUF multi-shard. · GitHub"
+      },
+      {
+        "urls": [],
+        "alt": null,
+        "title": null
+      },
+      {
+        "urls": [],
+        "alt": "",
+        "title": null
+      }
+    ],
+    "reasoning_recap": null
+  },
+  {
+    "index": 78,
+    "id": "3a741989-91a9-4f15-aaff-ecaad1718472",
+    "role": "user",
+    "name": null,
+    "content_type": "text",
+    "hidden": false,
+    "model": null,
+    "create_time": 1787957137.436,
+    "text": "i want to build a synthetic high demand GPU environment with mechanical invarants perfectly replicating how GPU ops would work so that we can make each of these things as fast as possible with agents that don't have GPUs to actually use.",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 79,
+    "id": "31ebeb68-1768-4f25-8092-e372c1acba2a",
+    "role": "assistant",
+    "name": null,
+    "content_type": "thoughts",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957144.2625,
+    "text": "**Designing the simulator**\n\nI’m treating this as a semantic GPU emulator, not a cycle-accurate replacement. I’d model streams, events, memory, transfers, synchronization, failures, and collectives with deterministic state transitions, then add calibrated timing profiles for optimization experiments.\n\n**Designed the simulator**",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 80,
+    "id": "eb68e973-4ba2-42a0-8ead-913f13523bab",
+    "role": "assistant",
+    "name": null,
+    "content_type": "text",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957138.249484,
+    "text": "Yes. The useful target is not “simulate a GPU” in the graphics/ISA sense. It is to build a deterministic **GPU systems simulator** that exactly preserves the resource, ordering, transfer, memory, and synchronization rules that inference software depends on, then plug real-model traces into it.",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 81,
+    "id": "b20f0d57-3d58-40cf-a941-d516bbf3aa04",
+    "role": "assistant",
+    "name": null,
+    "content_type": "code",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957138.249484,
+    "text": "fast|NVIDIA CUDA streams ordering events asynchronous memcpy copy engines documentation 2026|30|docs.nvidia.com\nfast|Accel-Sim GPU simulator GitHub GPGPU-Sim current 2026|30|github.com\nfast|gem5 GPU model ROCm current 2026 GPU simulation|30|gem5.org\nfast|NVIDIA NIXL asynchronous GPU memory transfer semantics documentation|30|docs.nvidia.com\nlength|medium",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 82,
+    "id": "3d7eac18-3810-4ea0-acbb-73acb19c573a",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787957146.900395
+  },
+  {
+    "index": 83,
+    "id": "92fcc96f-7911-4219-8ac6-ecc948404810",
+    "role": "tool",
+    "name": "web.run",
+    "content_type": "text",
+    "redacted": true,
+    "text": "The output of this plugin was redacted.",
+    "create_time": 1787957146.89711
+  },
+  {
+    "index": 85,
+    "id": "97bc4ba0-ef26-47c7-8425-bb41244d575f",
+    "role": "assistant",
+    "name": null,
+    "content_type": "thoughts",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957156.689163,
+    "text": "**Searched 2 websites**",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 86,
+    "id": "825299ca-8a45-4e4f-9c16-ccb204e34890",
+    "role": "assistant",
+    "name": null,
+    "content_type": "reasoning_recap",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957156.692006,
+    "text": "Worked for 18s",
+    "safe_urls": [],
+    "citations": [],
+    "reasoning_recap": null
+  },
+  {
+    "index": 87,
+    "id": "545ee905-e3db-471c-8d00-6e29d14085c6",
+    "role": "assistant",
+    "name": null,
+    "content_type": "text",
+    "hidden": false,
+    "model": "gpt-5-6-thinking",
+    "create_time": 1787957147.58816,
+    "text": "Yes. I think this is a substantially better idea than merely making a fake “GPU backend.”\n\nThe right target is:\n\n> A deterministic Rust GPU-systems emulator for inference infrastructure, where the semantics are exact and the performance model is parameterized/calibratable.\n\nThen `llama-rust` becomes your source of real model behavior, while `expertvm`, schedulers, caches, prefetchers, allocators, etc. execute against the simulated GPU environment.\n\nThe critical distinction is that you should not attempt to perfectly simulate an H100 transistor-by-transistor or instruction-by-instruction. Projects such as Accel-Sim/GPGPU-Sim already pursue detailed GPU architectural simulation, including SM cores, caches and memory systems, and those simulations can become extremely expensive.  [1](https://github.com/accel-sim) [2](https://github.com/accel-sim/accel-sim-framework/blob/dev/gpu-simulator/gpgpu-sim4.md)\n\nYou want a different abstraction level.\n\n### 1. Make semantics exact; make timing a model\n\nThere are two categories of GPU behavior.\n\nThese can be reproduced essentially exactly:\n\n```text\nmemory capacity\nallocation/free\nallocation lifetimes\n\nstream ordering\nevent dependencies\nbarriers\nsynchronization\n\nkernel enqueue semantics\nasync copies\n\ncopy engine availability\npeer accessibility\n\nHBM residency\nhost-pinned residency\n\nP2P topology\nNVLink topology\nPCIe topology\n\nconcurrent transfer limits\n\nresource ownership\n\nOOM behavior\n\ndata dependencies\n\ncollective dependencies\n\nCUDA graph dependencies\n```\n\nCUDA's stream/event model gives you concrete rules here. Operations within a stream are ordered; cross-stream dependencies are established explicitly with mechanisms such as events, and async GPU work can continue after the host-side call returns.  [1](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html) [2](https://docs.nvidia.com/holoscan/sdk-user-guide/using-the-sdk/cuda-stream-handling)\n\nThose are mechanical invariants.\n\nAgents can safely optimize against them.\n\nBut this:\n\n```text\nthis grouped FP8 GEMM takes exactly 42.7 μs\n```\n\ncannot be known perfectly without the actual GPU.\n\nThat belongs in the parameterized performance model.\n\nSo architect the system as:\n\n```text\n EXACT\n mechanical model\n │\n ▼\n dependency/resource DAG\n │\n ▼\n PARAMETERIZED\n timing model\n │\n ▼\n virtual clock\n```\n\nThat separation is extremely important.\n\n---\n\nThe simulator I would build would have roughly six layers:\n\n```text\nllama-rust / expertvm\n │\n ▼\nGPU operation API\n │\n ▼\nCUDA-like semantics\n │\n ▼\nResource simulator\n │\n ▼\nTopology simulator\n │\n ▼\nTiming model\n │\n ▼\nDiscrete-event engine\n```\n\nAnd all of it can be Rust.\n\n## The fundamental primitive should be an operation\n\nSomething like:\n\n```rust\nenum GpuOp {\n Kernel(KernelOp),\n Memcpy(MemcpyOp),\n Collective(CollectiveOp),\n EventRecord(EventId),\n EventWait(EventId),\n Alloc(AllocOp),\n Free(AllocationId),\n}\n```\n\nEvery operation has dependencies:\n\n```rust\nstruct Operation {\n id: OpId,\n stream: StreamId,\n\n reads: Vec,\n writes: Vec,\n\n kind: GpuOp,\n}\n```\n\nThe simulator turns that into a DAG.\n\nFor example:\n\n```text\nStream 0:\n\n GEMM A\n │\n ▼\n Event X\n\n\nStream 1:\n\n Wait X\n │\n ▼\n H2D expert 83\n │\n ▼\n Expert GEMM\n```\n\nThe actual simulator therefore understands causality rather than just doing `sleep()`.\n\nThat matters because CUDA itself is fundamentally asynchronous. NVIDIA explicitly documents cases where operations in independent streams have undefined relative ordering, while event dependencies establish ordering between them.  [1](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html) [2](https://docs.nvidia.com/cuvs/developer-guide/coding-guidelines/cpp-guidelines)\n\n---\n\n# Model physical resources explicitly\n\nFor an H100 profile you might have:\n\n```rust\nGpu {\n hbm: MemoryPool {\n capacity: GiB(80),\n bandwidth: ...,\n },\n\n compute: ComputeResources {\n sms: 120,\n tensor_cores: ...,\n },\n\n copy_engines: [...],\n\n pcie: Link { ... },\n\n nvlinks: [...],\n}\n```\n\nAnd for eight GPUs:\n\n```text\nCPU NUMA 0\n │\n PCIe\n │\n switch\n ┌──┼────┬────┐\nGPU0 GPU1 GPU2 GPU3\n │ ╲ ...\n │ NVLink\n │\nGPU4 ...\n```\n\nNow contention becomes real.\n\nIf:\n\n```text\nExpert A → GPU0\nExpert B → GPU0\nKV block → GPU0\n```\n\nall require the same PCIe path simultaneously, you cannot give all three:\n\n```text\n32 GB/s\n```\n\nThe link itself is a constrained resource.\n\nYou simulate:\n\n```text\nPCIe x16 capacity = X\n\ntransfer A ──┐\ntransfer B ──┼── shared link\ntransfer C ──┘\n```\n\nLikewise NVLink.\n\nLikewise HBM bandwidth.\n\nLikewise copy engines.\n\nThis is where an `expertvm` agent starts having something meaningful to optimize.\n\n---\n\n# Then represent kernels structurally\n\nDo not simulate CUDA instructions.\n\nHave something like:\n\n```rust\nKernelOp::Matmul {\n m,\n n,\n k,\n lhs_dtype,\n rhs_dtype,\n output_dtype,\n}\n```\n\nor:\n\n```rust\nKernelOp::GroupedMoeGemm {\n experts,\n tokens_per_expert,\n hidden_dim,\n intermediate_dim,\n dtype,\n}\n```\n\nThen the hardware profile estimates:\n\n```text\ncompute requirement\nmemory bytes\nHBM bandwidth requirement\nlaunch overhead\noccupancy\n```\n\nA basic first model is essentially roofline:\n\n```text\ncompute_time =\n FLOPs / effective_compute_rate\n\nmemory_time =\n bytes / effective_memory_bandwidth\n\nkernel_time ≈\n launch_overhead +\n max(compute_time, memory_time)\n```\n\nLater you make it much better.\n\nFor example:\n\n```text\nsmall GEMM efficiency curve\nlarge GEMM efficiency curve\nFP8 Tensor Core efficiency\ngrouped GEMM penalty\nshape-dependent efficiency\nattention kernel curves\nexpert count overhead\n```\n\nThese become entries in the GPU profile rather than simulator logic.\n\n---\n\n# This gives you something very powerful: virtual GPUs\n\nYou could have:\n\n```text\nprofiles/\n a100-80gb.toml\n h100-sxm.toml\n h200-sxm.toml\n b200.toml\n\n 8xh100-nvlink.toml\n 8xb200-nvlink.toml\n\n hypothetical/\n cheap-48gb.toml\n```\n\nThen:\n\n```bash\ncargo run --release -- \\\n --hardware profiles/8xh100-nvlink.toml \\\n --workload traces/qwen3-moe-coding.trace\n```\n\nAnd receive:\n\n```text\nSimulated workload\n\nGPU utilization 78.3%\nHBM utilization 94.1%\n\nTTFT p50 41.8 ms\nTTFT p99 92.4 ms\n\nITL p50 7.2 ms\n\nPCIe utilization 63.8%\nNVLink utilization 28.1%\n\nExpert cache hit 81.7%\n\nGPU stalls:\n expert transfer 13.1%\n compute 2.3%\n synchronization 1.8%\n```\n\nNow an agent can modify:\n\n```text\nexpertvm/src/prefetch.rs\n```\n\nrun:\n\n```bash\ncargo bench\n```\n\nand get:\n\n```text\nbefore: 7.2ms ITL\nafter: 5.9ms ITL\n\nexpert transfer stalls:\n13.1% → 4.8%\n```\n\nwithout having an H100.\n\nThat's exactly the environment you're describing.\n\n---\n\n# `llama-rust` makes this much better\n\nYou have two things to simulate:\n\n```text\n1. model semantics\n2. GPU execution\n```\n\nDo not simulate the first.\n\nActually execute it on CPU.\n\nThat's the clever part.\n\nYou can make:\n\n```text\n llama-rust\n\n actual CPU execution\n / \\\n / \\\n real tensors GPU trace\n real router │\n real tokens │\n \\ /\n \\ /\n ▼\n virtual GPU\n```\n\nSuppose Qwen's router really selects:\n\n```text\nlayer 31:\nexperts = [7, 19, 82, 113]\n```\n\n`llama-rust` computes those selections for real.\n\n`expertvm` then asks:\n\n```text\nWhere are 7,19,82,113?\n```\n\nThe virtual GPU says:\n\n```text\n7 GPU0\n19 GPU0\n82 CPU DRAM\n113 GPU3\n```\n\nAnd the system has to decide:\n\n```text\ndispatch token to GPU3?\n\ncopy expert 113?\n\nreuse remote expert?\n\nprefetch 82?\n\nevict something?\n```\n\nAll the decision making is real.\n\nOnly the physical time taken by the hardware is simulated.\n\nThat is a much stronger environment than synthetic/random MoE traces.\n\n---\n\n# Make time completely virtual\n\nThis is critical for agents.\n\nDo not make:\n\n```rust\ntokio::time::sleep(Duration::from_micros(40)).await;\n```\n\nInstead implement a discrete-event simulator:\n\n```text\nvirtual clock = 120.000 μs\n\nevent queue:\n\n120.400 kernel A done\n121.300 memcpy B done\n124.100 collective C done\n```\n\nPop:\n\n```text\n120.400\n```\n\nadvance the clock instantly:\n\n```text\n120.400\n```\n\nprocess consequences.\n\nThen proceed.\n\nA simulated 30-minute production workload could potentially execute in seconds or minutes depending on how much model computation you retain.\n\nIt is also deterministic:\n\n```text\ncommit A\nhardware H\nworkload W\nseed S\n\nalways produces\n\nperformance P\n```\n\nAgents love that.\n\n---\n\n# The other major thing: invariants\n\nI would go extremely hard on this.\n\nFor example:\n\n```rust\ninvariant!(\n allocation.lease_count > 0\n => !allocation.can_be_freed()\n);\n```\n\n```rust\ninvariant!(\n kernel.reads.iter().all(\n |a| memory.is_resident(a, kernel.device)\n )\n);\n```\n\n```rust\ninvariant!(\n transfer.completed()\n => destination.contains(transfer.object)\n);\n```\n\n```rust\ninvariant!(\n stream[i + 1].start >= stream[i].finish\n);\n```\n\n```rust\ninvariant!(\n hbm.used_bytes <= hbm.capacity\n);\n```\n\nAnd:\n\n```text\nan expert cannot simultaneously be:\n\nEvicted\nand\nactively used by a kernel\n```\n\nYou can encode many of these directly into the Rust types.\n\nFor example:\n\n```rust\nExpert \n\nExpert \n\nExpert \n\nExpert \n```\n\nwith only legal transitions:\n\n```text\nCold\n ↓\nTransferring\n ↓\nResident\n ↓\nLeased\n ↓\nResident\n ↓\nEvicting\n ↓\nCold\n```\n\nThat gives you an unusually good agent-development environment:\n\n> Agents are allowed to aggressively optimize policies, but the simulator makes illegal GPU states impossible or immediately detectable.\n\nThis may actually be one of the strongest arguments for Rust here.\n\n---\n\n# Build an adversarial workload generator too\n\nThis matters if agents are doing the optimization.\n\nOtherwise they will Goodhart the benchmark.\n\nDon't just give them:\n\n```text\none GLM trace\none H100 topology\n```\n\nHave:\n\n```text\nworkloads/\n\nuniform_experts\nhotset_experts\nrapidly_shifting_hotset\nadversarial_cache_thrash\ncoding_trace\nchat_trace\nlong_context_trace\nbatch_1\nbatch_128\nprefill_heavy\ndecode_heavy\n\ntopologies/\n\n1_gpu\n2_gpu_pcie\n8_gpu_nvlink\n8_gpu_bad_numa\n2_node_rdma\nasymmetric_links\n\nfaults/\n\ntransfer_delay\nGPU unavailable\nmemory pressure\nrequest cancellation\nexpert loading failure\n```\n\nThen optimization is evaluated across all of them.\n\nAn agent can't win by hard-coding:\n\n```rust\nkeep expert 31 resident\n```\n\nbecause hidden scenarios punish it.\n\n---\n\n# You should have two separate test scores\n\nThis becomes important.\n\n### Semantic score\n\nBinary.\n\n```text\nCorrectness: PASS\n```\n\nDid the software obey:\n\n```text\nCUDA ordering\nmemory ownership\ncapacity\nevent dependencies\nresidency\nsynchronization\n```\n\nIf not, optimization rejected.\n\n### Performance score\n\nContinuous:\n\n```text\n$/M tokens\nITL\nTTFT\nthroughput\nHBM needed\nbytes transferred\nenergy estimate\n```\n\nAgents minimize that.\n\nSo your agent loop becomes:\n\n```text\n Agent\n │\n ▼\n modify expertvm\n │\n ▼\n cargo test\n │\n semantics pass?\n / \\\n no yes\n │ │\n reject ▼\n simulator\n │\n ▼\n score\n │\n ▼\n keep / revert\n```\n\nYou could run thousands of optimization experiments.\n\n---\n\n# There is one serious danger\n\nYou cannot allow agents to optimize the simulator instead of the real GPU.\n\nThis is the classic simulation-to-reality problem.\n\nSuppose the model says:\n\n```text\nPCIe transfer = bytes / 32 GB/s\n```\n\nAgent discovers that breaking one transfer into 8,000 tiny copies somehow yields the same bandwidth.\n\nReal hardware:\n\n```text\n8,000 tiny transfers = terrible\n```\n\nThe agent found a hole in your simulator.\n\nSo your performance model needs:\n\n```text\nfixed overhead\nsize-dependent throughput\nqueueing\nconcurrency limits\nalignment\nstartup latency\ncontention\n```\n\nAnd eventually calibration.\n\nThe same applies to kernels.\n\n---\n\n# Therefore I'd make calibration part of the architecture from day one\n\nYou won't need GPUs to develop against it.\n\nSomeone with GPUs can later run:\n\n```bash\ngpu-profile capture --output h100.json\n```\n\nIt benchmarks:\n\n```text\nmemcpy size sweep\nP2P size sweep\n\nGEMM shapes\nMoE GEMM shapes\n\nFP16/BF16/FP8/FP4\n\nattention shapes\n\nconcurrent copy+compute\n\nmultiple stream contention\n```\n\nAnd produces:\n\n```text\nHardwareProfile\n```\n\nThat profile goes into the simulator.\n\nNow the open-source community could contribute:\n\n```text\nprofiles/\n h100-sxm-nvidia-driver-X.json\n h200-sxm.json\n b200.json\n mi355x.json\n```\n\nYou personally don't need to own any of them.\n\nThis is probably the most important architectural choice:\n\n> **The simulator should consume empirical hardware profiles, not contain hard-coded claims about hardware performance.**\n\n---\n\nThere is precedent for detailed GPU simulation: Accel-Sim/GPGPU-Sim models SMs, caches and memory systems and is actively maintained.  [1](https://github.com/accel-sim) [2](https://github.com/accel-sim/accel-sim-framework/blob/dev/gpu-simulator/gpgpu-sim4.md) But I think copying that scope would be a mistake for your purpose.\n\nYour abstraction should stop around here:\n\n```text\n inference system\n │\n GPU systems semantics\n │\n resource contention\n │\n calibrated op costs\n │\n STOP\n─────────────────────────────────────────\nwarp scheduler\nregister bank conflicts\ninstruction pipeline\nL1 cache implementation\nTensor Core circuitry\n─────────────────────────────────────────\n don't model initially\n```\n\nThose deeper effects appear indirectly through empirical kernel cost curves.\n\nThat lets the simulator be perhaps **six orders of magnitude cheaper to execute** than cycle-level simulation while preserving the properties your inference-system agents actually manipulate.\n\nAnd this gives the whole project a much larger purpose than `expertvm`.\n\nYou'd effectively be building:\n\n> **a GPU CI environment for systems software that doesn't require GPUs.**\n\n`expertvm` would just be its first killer application.\n\nThe stack I'd now pursue is:\n\n```text\n llama-rust\n │\n real model behavior\n │\n ▼\n gpu-sim-rs\n deterministic GPU systems VM\n │\n ┌────────┼─────────┐\n ▼ ▼ ▼\n expertvm scheduler kv-fabric\n │ │ │\n └────────┼─────────┘\n ▼\n agents optimize\n │\n ▼\n eventually validate on\n physical hardware\n```\n\nThat is more interesting to me than building `expertvm` alone. It creates the infrastructure that lets you use fleets of coding/research agents to work on high-end inference optimization despite none of those agents having access to a physical GPU.  [1](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html) [2](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html) memcite",
+    "safe_urls": [
+      "https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html",
+      "https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html",
+      "https://docs.nvidia.com/cuvs/developer-guide/coding-guidelines/cpp-guidelines",
+      "https://docs.nvidia.com/holoscan/sdk-user-guide/using-the-sdk/cuda-stream-handling",
+      "https://github.com/accel-sim",
+      "https://github.com/accel-sim/accel-sim-framework/blob/dev/gpu-simulator/gpgpu-sim4.md"
+    ],
+    "citations": [
+      {
+        "urls": [
+          "https://github.com/accel-sim",
+          "https://github.com/accel-sim/accel-sim-framework/blob/dev/gpu-simulator/gpgpu-sim4.md"
+        ],
+        "alt": "([GitHub](https://github.com/accel-sim?utm_source=chatgpt.com))",
+        "title": "Accel-Sim · GitHub"
+      },
+      {
+        "urls": [
+          "https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html",
+          "https://docs.nvidia.com/holoscan/sdk-user-guide/using-the-sdk/cuda-stream-handling"
+        ],
+        "alt": "([NVIDIA Docs](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html?utm_source=chatgpt.com))",
+        "title": "CUDA Runtime API :: CUDA Toolkit Documentation"
+      },
+      {
+        "urls": [
+          "https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html",
+          "https://docs.nvidia.com/cuvs/developer-guide/coding-guidelines/cpp-guidelines"
+        ],
+        "alt": "([NVIDIA Docs](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html?utm_source=chatgpt.com))",
+        "title": "CUDA Runtime API :: CUDA Toolkit Documentation"
+      },
+      {
+        "urls": [
+          "https://github.com/accel-sim",
+          "https://github.com/accel-sim/accel-sim-framework/blob/dev/gpu-simulator/gpgpu-sim4.md"
+        ],
+        "alt": "([GitHub](https://github.com/accel-sim?utm_source=chatgpt.com))",
+        "title": "Accel-Sim · GitHub"
+      },
+      {
+        "urls": [
+          "https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html",
+          "https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html"
+        ],
+        "alt": "([NVIDIA Docs](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html?utm_source=chatgpt.com))",
+        "title": "CUDA Runtime API :: CUDA Toolkit Documentation"
+      },
+      {
+        "urls": [],
+        "alt": null,
+        "title": null
+      },
+      {
+        "urls": [],
+        "alt": "",
+        "title": null
+      }
+    ],
+    "reasoning_recap": null
+  }
+]
