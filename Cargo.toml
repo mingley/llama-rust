@@ -4,7 +4,10 @@ resolver = "2"
 
 [workspace.lints.rust]
 missing_docs = "deny"
-unsafe_code = "forbid"
+# `deny`, not `forbid`, so the SIMD kernels can opt in with an `expect` and a
+# written reason. Everything outside `langtax/src/simd/` stays unsafe-free, and
+# `--no-default-features` restores a crate-level `forbid` (see `langtax/src/lib.rs`).
+unsafe_code = "deny"
 unreachable_pub = "warn"
 unused_must_use = "deny"
 unused_results = "deny"
