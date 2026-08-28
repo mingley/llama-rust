@@ -7,10 +7,12 @@ mod decode;
 mod fp16;
 mod gguf;
 mod pool;
+mod pretok;
 mod quant;
 mod sample;
 mod serve;
 mod tok;
+mod ucd;
 
 pub use cli::{parse_infer_args, InferArgs, InferCmd, BIN_USAGE, INFER_USAGE};
 pub use decode::{
@@ -28,6 +30,7 @@ pub use gguf::{
     load_gguf, load_gguf_owned, write_gguf, write_gguf_with_kv, GgmlType, Gguf, GgufError, Kv,
     Tensor, TensorWrite, GGUF_DEFAULT_ALIGNMENT,
 };
+pub use pretok::PreTokenizer;
 pub use quant::{
     bf16_row_bytes, dequant_bf16_row, dequant_f16_row, dequant_f32_row, dequant_iq1_m_row,
     dequant_iq1_s_row, dequant_iq2_s_row, dequant_iq2_xs_row, dequant_iq2_xxs_row,
