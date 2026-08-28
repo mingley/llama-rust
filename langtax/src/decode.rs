@@ -7318,13 +7318,28 @@ mod tests {
     /// `tests/reference/qwen2.5-0.5b-instruct-q4_k_m.json`.
     #[test]
     fn real_model_matches_llama_cpp_reference() {
+        // Unset means "not requested" and skipping is correct. Set-but-unusable
+        // must fail loudly: silently skipping there reports green while verifying
+        // nothing, which is the failure mode this whole test exists to prevent.
+        // It bit the CI workflow, which passed a relative `models` -- `cargo test`
+        // runs with the crate directory as CWD, so that resolved against
+        // `langtax/` and the job passed in 0.00s having loaded no weights.
         let Ok(dir) = std::env::var("LLAMA_RUST_REAL_MODEL_DIR") else {
             return;
         };
-        let path = format!("{dir}/qwen2.5-0.5b-instruct-q4_k_m.gguf");
-        let Ok(mut file) = std::fs::File::open(&path) else {
-            return;
-        };
+        let path = std::path::Path::new(&dir).join("qwen2.5-0.5b-instruct-q4_k_m.gguf");
+        let opened = std::fs::File::open(&path);
+        assert!(
+            opened.is_ok(),
+            "LLAMA_RUST_REAL_MODEL_DIR={dir} is set but {} could not be opened. \
+             Tests run with the crate directory as CWD, so a relative path resolves \
+             against langtax/, not the repo root -- pass an absolute path. \
+             See tests/reference/README.md to fetch the weights.",
+            path.display()
+        );
+        let mut file = opened.expect("checked by the assertion above");
+        // Printed so a CI log shows the test did real work rather than skipping.
+        eprintln!("real-model differential test: {}", path.display());
         let mut blob = Vec::new();
         let _read = std::io::Read::read_to_end(&mut file, &mut blob).expect("read gguf");
         let g = load_gguf_owned(blob).expect("load real gguf");

@@ -46,7 +46,13 @@ jobs:
             exit 1
           fi
 
+      # Absolute path is required: `cargo test` runs with the crate directory as
+      # CWD, so a relative `models` resolves against `langtax/`. That is not a
+      # cosmetic detail -- it previously made this job pass in 0.00s having
+      # loaded no weights at all. The test now fails loudly rather than skipping
+      # when the variable is set but the model cannot be opened, so a repeat of
+      # this mistake surfaces as a red job instead of a false green.
       - name: Differential test vs llama.cpp reference
         env:
-          LLAMA_RUST_REAL_MODEL_DIR: models
+          LLAMA_RUST_REAL_MODEL_DIR: ${{ github.workspace }}/models
         run: cargo test --release --lib real_model -- --nocapture

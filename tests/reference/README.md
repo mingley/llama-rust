@@ -31,13 +31,24 @@ NEOX rope convention, and has `add_bos_token=false`.
 The model is not committed (it is ~470 MB). Point the test at a directory
 containing it; the test skips cleanly when the variable is unset.
 
+**Use an absolute path.** `cargo test` runs with the crate directory as the
+working directory, so a relative `models` resolves against `langtax/`, not the
+repo root. That is not a cosmetic detail: it originally made the CI job report
+green in 0.00 s having loaded no weights. The test now distinguishes the two
+cases — unset means "not requested" and skips, while set-but-unopenable fails
+loudly — so a repeat of that mistake shows up as a red job rather than a false
+green.
+
 ```
 mkdir -p models
 curl -L -o models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
   "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf?download=true"
 
-LLAMA_RUST_REAL_MODEL_DIR=models cargo test --release --lib real_model
+LLAMA_RUST_REAL_MODEL_DIR="$PWD/models" cargo test --release --lib real_model -- --nocapture
 ```
+
+When it really runs it prints the resolved model path and takes seconds, not
+milliseconds. A 0.00 s pass means it skipped.
 
 ## Regenerating the reference
 
