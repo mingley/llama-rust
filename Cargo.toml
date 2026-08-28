@@ -1,5 +1,5 @@
 [workspace]
-members = ["langtax"]
+members = ["langtax", "gpu-sim"]
 resolver = "2"
 
 [workspace.lints.rust]

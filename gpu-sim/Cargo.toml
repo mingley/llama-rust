@@ -1,0 +1,13 @@
+[package]
+name = "gpu-sim"
+version = "0.1.0"
+edition = "2021"
+description = "Deterministic GPU-systems VM: exact CUDA-like invariants, parameterized timing."
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/mingley/llama-rust"
+keywords = ["gpu", "simulation", "inference", "moe"]
+categories = ["simulation"]
+
+[lints]
+workspace = true
