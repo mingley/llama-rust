@@ -21,9 +21,9 @@ pub use decode::{
     tiny_llama_moe_gguf, tiny_mistral_gguf, tiny_mxfp4_gguf, tiny_nvfp4_gguf, tiny_phi3_gguf,
     tiny_q10_gguf, tiny_q20_gguf, tiny_q2k_gguf, tiny_q3k_gguf, tiny_q41_gguf, tiny_q4k_embd_gguf,
     tiny_q50_gguf, tiny_q51_gguf, tiny_q5k_gguf, tiny_q6k_embd_gguf, tiny_q81_gguf,
-    tiny_qwen2_gguf, tiny_qwen2moe_gguf, tiny_qwen2vl_gguf, tiny_qwen3_gguf, tiny_qwen3moe_gguf,
-    tiny_qwen3next_gguf, tiny_qwen3vl_gguf, tiny_tied_copy_gguf, tiny_tied_gguf, tiny_tq10_gguf,
-    tiny_tq20_gguf, KvCache, Llama, LlamaError,
+    tiny_qwen2_gguf, tiny_qwen2moe_gguf, tiny_qwen2vl_gguf, tiny_qwen35_gguf, tiny_qwen3_gguf,
+    tiny_qwen3moe_gguf, tiny_qwen3next_gguf, tiny_qwen3vl_gguf, tiny_tied_copy_gguf,
+    tiny_tied_gguf, tiny_tq10_gguf, tiny_tq20_gguf, KvCache, Llama, LlamaError,
 };
 pub use gguf::{
     load_gguf, load_gguf_owned, write_gguf, write_gguf_with_kv, GgmlType, Gguf, GgufError, Kv,
