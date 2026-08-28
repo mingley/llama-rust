@@ -300,19 +300,30 @@ The research question, before any CUDA:
 > Are expert activation patterns predictable/local enough for dynamic
 > residency to work?
 
-Made-up target table (replace with measured numbers; do not ship the
-fiction):
+Measured tables (regenerate; do not hand-edit the numbers):
+
+Synthetic stress case `tests/traces/cycling.jsonl` (24 acquires, 3 keys,
+`--capacity 2`). This is where policies **differ**:
 
 ```
-random policy        ?
-LRU                  ?
-frequency-aware      ?
-1-layer predictor     ?
-oracle               ?
+policy        hits  misses  evicts  hits‰
+random           7      17      15    291
+lru              0      24      22      0
+lfu              0      24      22      0
+layer-ahead      3      21      19    125
+predictor        7      17      15    291
+oracle          11      13      11    458
 ```
 
-If the best realistic policy is ~18% hit, stop. If a 1-layer predictor
-is ~80% with oracle ~94%, there is a paper and a crate.
+Writer-built tiny Qwen3MoE `tests/traces/tiny-qwen3moe.jsonl` (`ab`, 8
+predicted tokens, 1 layer, 4 experts, top-2). Working set is **2 experts**,
+so `--capacity 2` is ~888‰ for every policy (2 compulsory misses) and
+`--capacity 1` is 0‰ for every policy including oracle. That is a toy
+router, not a 320B result. A real Qwen3MoE GGUF is required before the
+kill-switch (“best non-oracle ≈ random ≈ 18% → stop”).
+
+If the best realistic policy on a **real** trace is ~18% hit, stop. If a
+1-layer predictor is ~80% with oracle ~94%, there is a paper and a crate.
 
 Use writer-built tinies first, then a real Qwen3MoE / Qwen2MoE GGUF
 when one is on disk. Traces are the product of this phase; check them in
@@ -494,12 +505,14 @@ model, do not celebrate the sim.
 3. Finish landing leftover public-API work onto `main` (no new PRs).
 4. Rewrite README/STATUS to the verifiable-reference positioning, with
    this plan linked.
-5. MoE `ExpertAccess` trace emission behind a test/bin flag.
-6. `ExpertStore` trait + `DirectStore` (identity) + `CachedStore` on
-   writer-built Qwen3MoE.
-7. Skeleton `gpu-sim-rs` in-tree or as a workspace crate: streams,
-   events, HBM capacity, memcpy ops, the lease state machine, virtual
-   clock. No CUDA.
+5. [x] MoE `ExpertAccess` trace emission behind a test/bin flag
+   (`gguf_gemv trace`, `KvCache::enable_moe_trace`, identity vs untraced greedy).
+6. [x] `ExpertStore` trait + `DirectStore` (identity) + `CachedStore` (leases)
+   in `expertvm`. Decoder still reads the GGUF blob; the store is the
+   residency lab fed by traces. Wiring `gemv_part` through the store is
+   the next decode seam.
+7. [x] `gpu-sim` workspace crate: streams, events, HBM, memcpy, leases,
+   virtual clock. No CUDA. `expertvm sim` is the first app.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

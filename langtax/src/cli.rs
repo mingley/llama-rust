@@ -19,6 +19,15 @@ usage: gguf_gemv infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]
       --n-ctx N       KV capacity (default: prompt + n_predict + 1)
 ";
 
+/// Usage for the `trace` verb.
+pub const TRACE_USAGE: &str = "\
+usage: gguf_gemv trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE
+  -p, --prompt TEXT   prompt (default: ab)
+  -n, --n-predict N   tokens to generate (default: 2)
+      --n-ctx N       KV capacity (default: prompt + n_predict + 1)
+      --out FILE      write ExpertAccess JSONL (required)
+";
+
 /// Usage for the `chat` verb.
 pub const CHAT_USAGE: &str = "\
 usage: gguf_gemv chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--show-prompt]
@@ -33,6 +42,7 @@ usage: gguf_gemv chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--
 pub const BIN_USAGE: &str = "\
 usage: gguf_gemv <command> [args]
   infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]
+  trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE
   chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--show-prompt]
   serve <path> [--n-predict N] [--n-ctx N] [--bind HOST:PORT]
   write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|write-tiny-qwen3|write-tiny-gemma|write-tiny-llama4|write-tiny-llama-moe|write-tiny-qwen2moe|write-tiny-qwen3moe|write-tiny-qwen2vl|write-tiny-qwen3vl|write-tiny-qwen3next|write-tiny-qwen35|write-tiny-phi2 <path>
@@ -123,6 +133,90 @@ where
         prompt,
         n_predict,
         n_ctx,
+    }))
+}
+
+/// Parsed `trace` invocation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TraceCmd {
+    /// `--help` / `-h`.
+    Help,
+    /// Emit MoE JSONL with these arguments.
+    Run(TraceArgs),
+}
+
+/// Arguments for `gguf_gemv trace`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceArgs {
+    /// Same greedy settings as [`InferArgs`].
+    pub infer: InferArgs,
+    /// Destination JSONL path.
+    pub out: String,
+}
+
+/// Parse operands after the `trace` verb.
+pub fn parse_trace_args<I, S>(args: I) -> Result<TraceCmd, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut path = None;
+    let mut prompt = InferArgs::DEFAULT_PROMPT.to_string();
+    let mut n_predict = InferArgs::DEFAULT_N_PREDICT;
+    let mut n_ctx = None;
+    let mut out = None;
+    let mut it = args.into_iter();
+    while let Some(raw) = it.next() {
+        let arg = raw.as_ref();
+        if arg == "--help" || arg == "-h" {
+            return Ok(TraceCmd::Help);
+        }
+        let (key, inline) = match arg.split_once('=') {
+            Some((k, v)) => (k, Some(v)),
+            None => (arg, None),
+        };
+        match key {
+            "--prompt" | "-p" => {
+                prompt = trace_value("prompt", inline, &mut it)?;
+            }
+            "--n-predict" | "-n" => {
+                n_predict = parse_usize("n-predict", &trace_value("n-predict", inline, &mut it)?)?;
+            }
+            "--n-ctx" => {
+                let n = parse_usize("n-ctx", &trace_value("n-ctx", inline, &mut it)?)?;
+                if n == 0 {
+                    return trace_usage_err("n-ctx must be > 0");
+                }
+                n_ctx = Some(n);
+            }
+            "--out" => {
+                out = Some(trace_value("out", inline, &mut it)?);
+            }
+            flag if flag.starts_with('-') => {
+                return trace_usage_err(&format!("unknown flag {flag}"));
+            }
+            other => {
+                if path.is_some() {
+                    return trace_usage_err(&format!("unexpected argument {other}"));
+                }
+                path = Some(other.to_string());
+            }
+        }
+    }
+    let Some(path) = path else {
+        return trace_usage_err("missing GGUF path");
+    };
+    let Some(out) = out else {
+        return trace_usage_err("missing --out");
+    };
+    Ok(TraceCmd::Run(TraceArgs {
+        infer: InferArgs {
+            path,
+            prompt,
+            n_predict,
+            n_ctx,
+        },
+        out,
     }))
 }
 
@@ -379,6 +473,24 @@ fn usage_err<T>(msg: &str) -> Result<T, String> {
     Err(format!("{msg}\n{INFER_USAGE}"))
 }
 
+fn trace_usage_err<T>(msg: &str) -> Result<T, String> {
+    Err(format!("{msg}\n{TRACE_USAGE}"))
+}
+
+fn trace_value<I, S>(name: &str, inline: Option<&str>, it: &mut I) -> Result<String, String>
+where
+    I: Iterator<Item = S>,
+    S: AsRef<str>,
+{
+    if let Some(v) = inline {
+        return Ok(v.to_string());
+    }
+    match it.next() {
+        Some(s) => Ok(s.as_ref().to_string()),
+        None => trace_usage_err(&format!("missing --{name} value")),
+    }
+}
+
 fn opt_value<I, S>(name: &str, inline: Option<&str>, it: &mut I) -> Result<String, String>
 where
     I: Iterator<Item = S>,
@@ -576,5 +688,21 @@ mod tests {
             ends_turn(&tok, 2),
             "eot_id is not eos but still ends the turn"
         );
+    }
+
+    #[test]
+    fn trace_requires_out_and_path() {
+        let err = parse_trace_args(["m.gguf"]).unwrap_err();
+        assert!(err.contains("missing --out"), "{err}");
+        assert!(err.contains("gguf_gemv trace"), "{err}");
+        match parse_trace_args(["m.gguf", "--out", "t.jsonl"]).expect("ok") {
+            TraceCmd::Run(a) => {
+                assert_eq!(a.out, "t.jsonl");
+                assert_eq!(a.infer.path, "m.gguf");
+                assert_eq!(a.infer.prompt, InferArgs::DEFAULT_PROMPT);
+            }
+            TraceCmd::Help => panic!("expected Run"),
+        }
+        assert_eq!(parse_trace_args(["--help"]).unwrap(), TraceCmd::Help);
     }
 }

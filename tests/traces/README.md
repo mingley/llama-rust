@@ -1,15 +1,21 @@
 # Traces
 
-Small MoE access traces checked in so `expertvm` CLI and docs stay honest.
+Measured MoE access traces. Replay them; do not paste fictional hit rates.
 
 | File | What |
 | --- | --- |
-| `cycling.jsonl` | 24 tokens, 3 experts cycling. LRU with `--capacity 2` thrashes (0 hits); oracle does not. |
+| `cycling.jsonl` | Synthetic 3-expert cycle. LRU `--capacity 2` = 0 hits; oracle = 11/24. |
+| `tiny-qwen3moe.jsonl` | Writer-built Qwen3MoE, `ab` + 8 tokens. Working set is 2 experts. |
+| `tiny-llama-moe.jsonl` | Writer-built official llama MoE, same prompt. Working set is 2 experts. |
+| `tiny-qwen2moe.jsonl` | Writer-built Qwen2MoE, same prompt. Working set is 2 experts. |
 
-Generate real traces from the decoder:
+Writer-built tinies do **not** answer “is residency predictable on a 320B MoE?”.
+They prove the decoder emits JSONL and that `expertvm replay` is honest.
+A real Qwen3MoE / Qwen2MoE GGUF is the next input.
 
 ```
-gguf_gemv trace <gguf> -p PROMPT -n N --out trace.jsonl
+gguf_gemv write-tiny-qwen3moe tiny-qwen3moe.gguf
+gguf_gemv trace tiny-qwen3moe.gguf -p ab -n 8 --out tests/traces/tiny-qwen3moe.jsonl
+expertvm replay tests/traces/tiny-qwen3moe.jsonl --capacity 2
+expertvm replay tests/traces/cycling.jsonl --capacity 2
 ```
-
-Do not paste fictional hit rates into PLAN.md or README. Replay the file.

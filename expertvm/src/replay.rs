@@ -21,10 +21,9 @@ pub struct ReplayRow {
 
 impl ReplayRow {
     fn finish(mut self, n: u64) -> Self {
-        self.hits_permille = if n == 0 {
-            0
-        } else {
-            u32::try_from(self.hits.saturating_mul(1000) / n).unwrap_or(u32::MAX)
+        self.hits_permille = match self.hits.saturating_mul(1000).checked_div(n) {
+            Some(v) => u32::try_from(v).unwrap_or(u32::MAX),
+            None => 0,
         };
         self
     }

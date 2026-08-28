@@ -43,7 +43,10 @@ pub fn plan_window(
     let n = upcoming.len();
     let n64 = u64::try_from(n).unwrap_or(1);
     let hits64 = u64::try_from(hits).unwrap_or(0);
-    let permille = hits64.saturating_mul(1000) / n64.max(1);
+    let permille = hits64
+        .saturating_mul(1000)
+        .checked_div(n64.max(1))
+        .unwrap_or(0);
     if permille >= u64::from(threshold_permille) {
         Plan::Stay
     } else {

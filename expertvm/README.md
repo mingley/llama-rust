@@ -60,8 +60,13 @@ expertvm replay trace.jsonl --capacity 8
 expertvm sim    trace.jsonl --capacity 8 --expert-bytes 188743680 --profile h100
 ```
 
-Traces are produced by `gguf_gemv trace` once the decoder seam is wired.
-Until then, any JSONL of the form
+Traces are produced by `gguf_gemv trace`:
+
+```
+gguf_gemv write-tiny-qwen3moe tiny-qwen3moe.gguf
+gguf_gemv trace tiny-qwen3moe.gguf -p ab -n 8 --out trace.jsonl
+expertvm replay trace.jsonl --capacity 2
+```
 
 ```json
 {"sequence":0,"token":0,"layer":0,"experts":[3,7]}

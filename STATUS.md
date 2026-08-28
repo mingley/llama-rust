@@ -6,8 +6,22 @@ Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a
 Work lands on `main`. No PRs.
 
 `llama-rust` is the correctness laboratory (GGUF math, oracle + llama.cpp
-greedy). Next high-signal layer is MoE access traces → `ExpertStore` →
-`expertvm` / `gpu-sim-rs`, not an OpenAI server or a tok/s race. See PLAN.md.
+greedy). `expertvm` is expert residency / virtual memory. `gpu-sim` is the
+GPU-systems VM (exact invariants, profiled timing). Traces are real JSONL
+from the decoder; hit rates are measured by `expertvm replay`.
+
+## Shipped 2026-08-28 — expertvm + gpu-sim + MoE traces
+
+- Workspace crates: [`gpu-sim/`](gpu-sim/), [`expertvm/`](expertvm/).
+- `gguf_gemv trace <gguf> --out FILE` emits `ExpertAccess` JSONL. Opt-in;
+  greedy tokens match the untraced path. Dense models emit zero events.
+- Checked-in traces: [`tests/traces/`](tests/traces/). Cycling synthetic is
+  the policy discriminator (LRU 0‰ vs oracle 458‰ at capacity 2). Writer-built
+  tinies have a 2-expert working set — not a 320B result.
+- `expertvm analyze|replay|sim`. `DirectStore` / `CachedStore` (leases).
+  `sim_replay` runs H2D+GEMM on `gpu-sim` profiles (`h100`, `h200`, `cheap`).
+- Kill-switch still applies: do not build CUDA until a **real** MoE GGUF
+  shows non-oracle policies beating random by a lot.
 
 # Stopped 2026-08-28 — official phi2 (historical)
 
@@ -19,7 +33,7 @@ item below.
 Repo: https://github.com/mingley/llama-rust
 Local: `~/dev/llama-rust-perf`
 
-- `forbid(unsafe_code)`, no llama.cpp/FFI, `Cargo.lock` crate-only (no SIMD crates, no rayon).
+- `forbid(unsafe_code)` without `simd`, no llama.cpp/FFI, `Cargo.lock` has no crates.io packages (workspace path crates `gpu-sim` / `expertvm` only).
 - GGUF v3: F32, F16, BF16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q8_1, Q1_0, Q2_0, TQ1_0, TQ2_0, Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, Q8_K, IQ1_M, IQ1_S, IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S, IQ4_NL, IQ4_XS, MXFP4, NVFP4. Kernels read on-disk bytes (no private f32-scale copy).
 - F16 is IEEE binary16 (`GGML_TYPE_F16` = 1). Writer-built tiny uses F16 for 2-D weights (`token_embd`, `output`, attn/ffn). 1-D attn/ffn/`output_norm` and optional `attn_{q,k,v}.bias` may be F16 or F32; on-disk F16 stays IEEE binary16 and is applied via the same `ggml_fp16_to_fp32` scalar walk as 2-D F16. Writer-built tiny can emit F16 1-D norms (and F16 QKV bias). Load/GEMV/GEMM/embed logits match an independent scalar of the same ggml/Llama math as the F32-norm twin. A 1-D F16 tensor that is not a norm/bias this crate applies fails with a named error. Not a new dtype. No tok/s.
 - BF16 is ggml bfloat16 (`GGML_TYPE_BF16` = 30). Writer-built tiny uses BF16 for 2-D weights (`token_embd`, `output`, attn/ffn); 1-D norms stay F32. Load/GEMV/GEMM/embed logits match an independent scalar of the same ggml `dequantize_row_bf16` / `GGML_BF16_TO_FP32` math (IEEE binary16-adjacent: 8-bit exp, high-16 of f32). No tok/s.

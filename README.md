@@ -30,6 +30,9 @@ cargo build --release --bin gguf_gemv
 ./target/release/gguf_gemv infer tiny-qwen2moe.gguf -p ab -n 2
 ./target/release/gguf_gemv write-tiny-qwen3moe tiny-qwen3moe.gguf
 ./target/release/gguf_gemv infer tiny-qwen3moe.gguf -p ab -n 2
+./target/release/gguf_gemv trace tiny-qwen3moe.gguf -p ab -n 8 --out tests/traces/tiny-qwen3moe.jsonl
+./target/release/expertvm replay tests/traces/tiny-qwen3moe.jsonl --capacity 2
+./target/release/expertvm replay tests/traces/cycling.jsonl --capacity 2
 ./target/release/gguf_gemv write-tiny-qwen2vl tiny-qwen2vl.gguf
 ./target/release/gguf_gemv infer tiny-qwen2vl.gguf -p ab -n 2
 ./target/release/gguf_gemv write-tiny-qwen3vl tiny-qwen3vl.gguf
@@ -45,6 +48,8 @@ cargo build --release --bin gguf_gemv
 ```
 
 `infer` is seedless greedy. `--prompt` / `-p` (default `ab`), `--n-predict` / `-n` (default `2`), optional `--n-ctx` (KV capacity; default prompt + `n_predict` + 1). Temperature / top-k / top-p / repeat penalty live on `SampleParams` / `generate`; the CLI path is unchanged.
+
+`trace` is the same greedy path plus an opt-in MoE access log (`ExpertAccess` JSONL). `--out FILE` is required. Tracing does not change generated tokens. Pipe the file to `expertvm replay` / `expertvm sim`. Workspace crates: [`expertvm/`](expertvm/), [`gpu-sim/`](gpu-sim/). Plan: [`PLAN.md`](PLAN.md).
 
 `serve` binds `127.0.0.1:8080` (override with `--bind HOST:PORT`; host must be `127.0.0.1` or `localhost`). One HTTP/1.1 request at a time: `POST /generate` with `{"prompt":"..."}` and optional `n_predict`, response `{"generated":"..."}`. Empty prompt and a missing GGUF file fail cleanly. No batching, no concurrent requests, no OpenAI-compat, no tok/s. Kernel Integrity has not signed it.
 
@@ -70,9 +75,9 @@ prompt=ab n_predict=2
 generated=abĊĊ
 ```
 
-`Ċ` is the GPT-2 bytes-to-unicode mapping of newline. Decode now emits `\n` for that piece (the two-run string was two newlines printed raw). `#![forbid(unsafe_code)]`. No FFI. `Cargo.lock` names only `llama-rust`.
+`Ċ` is the GPT-2 bytes-to-unicode mapping of newline. Decode now emits `\n` for that piece (the two-run string was two newlines printed raw). `#![forbid(unsafe_code)]` without `simd`. No FFI. Workspace members: `llama-rust`, `gpu-sim`, `expertvm` (path deps only).
 
-Q8_0 GEMV (`write`+`gemv`, M=K=4096, GGUF-byte blocks). Two-run `y0=` match across Rust CPU and owned Metal. Crate lockfile is still only `llama-rust`; Metal is a measurement binary (`q8_gemv.metal` + `q8_gemv_mtl.m`), not linked.
+Q8_0 GEMV (`write`+`gemv`, M=K=4096, GGUF-byte blocks). Two-run `y0=` match across Rust CPU and owned Metal. No crates.io deps; Metal is a measurement binary (`q8_gemv.metal` + `q8_gemv_mtl.m`), not linked.
 
 ```
 lang=Rust kernel=q8_0_gguf M=4096 K=4096 niter=8
@@ -103,4 +108,4 @@ No paid VM required.
 - **GitHub Actions `ubuntu-latest`** on this public repo (`.github/workflows/ci.yml`): Linux `cargo test` / clippy on every push. You do not operate a machine.
 - **Persistent VM:** [Oracle Cloud Always Free](https://www.oracle.com/cloud/free/) Ampere A1 (aarch64) is the optional always-on Linux box if you want a shell. Same `cargo test --release --lib` there.
 
-This crate is `forbid(unsafe_code)` and lockfile-only, so those Linux jobs do not need llama.cpp, Metal, or crates.io SIMD packages.
+This crate is `forbid(unsafe_code)` without `simd`, and the lockfile has no crates.io packages, so those Linux jobs do not need llama.cpp, Metal, or crates.io SIMD packages.

@@ -71,6 +71,7 @@ use crate::quant::{
 use crate::sample::{SampleError, SampleParams, Sampler};
 use crate::tok::{TokError, Tokenizer};
 use crate::{write_gguf_with_kv, GGUF_DEFAULT_ALIGNMENT};
+use expertvm::{ExpertAccess, Trace};
 use std::sync::Arc;
 
 const TINY_N_EMBD: usize = 256;
@@ -510,6 +511,57 @@ pub struct KvCache {
     /// joined when the cache drops. `None` for models too small to benefit and
     /// under `pool::with_sequential`.
     pool: Option<Pool<GemvRows>>,
+    moe_trace: MoeTraceBuf,
+}
+
+impl KvCache {
+    /// Record MoE router decisions into an [`expertvm::Trace`].
+    ///
+    /// Off by default: the events vec stays empty and decode does not allocate
+    /// for tracing. Must be enabled before prefill/decode of the sequence.
+    pub fn enable_moe_trace(&mut self, sequence: u64) {
+        self.moe_trace.enabled = true;
+        self.moe_trace.sequence = sequence;
+        self.moe_trace.events.clear();
+    }
+
+    /// Take recorded router events. Empty if tracing was never enabled.
+    pub fn take_moe_trace(&mut self) -> Trace {
+        Trace {
+            events: core::mem::take(&mut self.moe_trace.events),
+        }
+    }
+}
+
+/// Opt-in MoE access log. Disabled path never pushes, so it cannot reallocate.
+#[derive(Default)]
+struct MoeTraceBuf {
+    enabled: bool,
+    sequence: u64,
+    layer: u32,
+    token0: u32,
+    events: Vec<ExpertAccess>,
+}
+
+impl MoeTraceBuf {
+    fn record(&mut self, token_off: usize, experts: &[usize]) {
+        if !self.enabled {
+            return;
+        }
+        let token = self
+            .token0
+            .saturating_add(u32::try_from(token_off).unwrap_or(u32::MAX));
+        let mut ids = Vec::new();
+        for e in experts {
+            ids.push(u32::try_from(*e).unwrap_or(u32::MAX));
+        }
+        self.events.push(ExpertAccess {
+            sequence: self.sequence,
+            token,
+            layer: self.layer,
+            experts: ids,
+        });
+    }
 }
 
 /// Working buffers for one forward pass, reused across decode steps.
@@ -809,6 +861,7 @@ impl Llama {
             max_seq,
             scratch: Scratch::default(),
             pool: None,
+            moe_trace: MoeTraceBuf::default(),
         })
     }
 
@@ -901,8 +954,10 @@ impl Llama {
             max_seq,
             scratch: s,
             pool,
+            moe_trace,
         } = cache;
         let max_seq = *max_seq;
+        moe_trace.token0 = u32::try_from(n0).unwrap_or(u32::MAX);
         // Single-token steps are the only ones the pool serves: GEMM lays `y`
         // out token-major, so a row range there is not a contiguous slice.
         if n == 1 && pool.is_none() && self.wants_pool() {
@@ -927,6 +982,7 @@ impl Llama {
             }
         }
         for (li, layer) in self.layers.iter().enumerate() {
+            moe_trace.layer = u32::try_from(li).unwrap_or(u32::MAX);
             if layer.wk.n_rows != self.n_head_kv.saturating_mul(hd)
                 || layer.wv.n_rows != self.n_head_kv.saturating_mul(hd)
             {
@@ -1105,23 +1161,25 @@ impl Llama {
                         }
                         self.gemm_into(&dense.down, n, &s.gate, &mut s.ffn_out, pool)?;
                     }
-                    LayerFfn::Llama4Moe(moe) => self.llama4_moe_into(moe.as_ref(), n, s, pool)?,
+                    LayerFfn::Llama4Moe(moe) => {
+                        self.llama4_moe_into(moe.as_ref(), n, s, pool, moe_trace)?
+                    }
                     // The remaining expert FFNs still build their own row vectors.
                     // They are pooled but not allocation-free; see `Scratch`.
                     LayerFfn::LlamaMoe(moe) => {
-                        let rows = self.llama_moe_rows(moe.as_ref(), n, &s.x, pool)?;
+                        let rows = self.llama_moe_rows(moe.as_ref(), n, &s.x, pool, moe_trace)?;
                         copy_buf(&mut s.ffn_out, &rows);
                     }
                     LayerFfn::Qwen2Moe(moe) => {
-                        let rows = self.qwen2moe_rows(moe.as_ref(), n, &s.x, pool)?;
+                        let rows = self.qwen2moe_rows(moe.as_ref(), n, &s.x, pool, moe_trace)?;
                         copy_buf(&mut s.ffn_out, &rows);
                     }
                     LayerFfn::Qwen3Moe(moe) => {
-                        let rows = self.qwen3moe_rows(moe.as_ref(), n, &s.x, pool)?;
+                        let rows = self.qwen3moe_rows(moe.as_ref(), n, &s.x, pool, moe_trace)?;
                         copy_buf(&mut s.ffn_out, &rows);
                     }
                     LayerFfn::Qwen3Next(moe) => {
-                        let rows = self.qwen3next_rows(moe.as_ref(), n, &s.x, pool)?;
+                        let rows = self.qwen3next_rows(moe.as_ref(), n, &s.x, pool, moe_trace)?;
                         copy_buf(&mut s.ffn_out, &rows);
                     }
                     LayerFfn::Phi2(_) => return Err(LlamaError::Shape("phi2 ffn".into())),
@@ -1196,6 +1254,44 @@ pub fn greedy_generate_ctx(
         next = argmax(model.forward_logits(&mut cache, next)?);
     }
     Ok(tok.decode(&ids))
+}
+
+/// [`greedy_generate_ctx`] plus an [`expertvm::Trace`] of every MoE router decision.
+///
+/// Tracing is opt-in. Logits and greedy tokens must match an untraced run.
+pub fn greedy_generate_traced(
+    model: &Llama,
+    tok: &Tokenizer,
+    prompt: &str,
+    n_predict: usize,
+    n_ctx: Option<usize>,
+    sequence: u64,
+) -> Result<(String, Trace), LlamaError> {
+    if prompt.is_empty() {
+        return Err(LlamaError::EmptyPrompt);
+    }
+    let mut ids = prompt_ids(tok, prompt)?;
+    if ids.is_empty() {
+        return Err(LlamaError::EmptyPrompt);
+    }
+    let needed = ids.len().saturating_add(n_predict);
+    let max_seq = match n_ctx {
+        Some(n) if n < needed => return Err(LlamaError::Shape("n_ctx".into())),
+        Some(n) => n,
+        None => needed.saturating_add(1),
+    };
+    let mut cache = model.new_cache(max_seq)?;
+    cache.enable_moe_trace(sequence);
+    let mut next = argmax(model.prefill_logits(&mut cache, &ids)?);
+    for _ in 0..n_predict {
+        if tok.eos == Some(next) {
+            break;
+        }
+        ids.push(next);
+        next = argmax(model.forward_logits(&mut cache, next)?);
+    }
+    let trace = cache.take_moe_trace();
+    Ok((tok.decode(&ids), trace))
 }
 
 /// Generate with [`SampleParams`]. [`SampleParams::greedy`] is the seedless path.
@@ -4572,7 +4668,6 @@ impl Llama {
                 if p.run(job, x, y) {
                     return Ok(());
                 }
-
             }
         }
         let data = self
@@ -4612,6 +4707,7 @@ impl Llama {
         n_tokens: usize,
         x: &[f32],
         pool: &mut GemvPool,
+        moe_trace: &mut MoeTraceBuf,
     ) -> Result<Vec<f32>, LlamaError> {
         let n_embd = moe.down_exps.n_rows;
         if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
@@ -4631,6 +4727,7 @@ impl Llama {
             softmax(&mut probs);
             let mut selected = Vec::new();
             topk_into(&probs, moe.n_expert_used, &mut selected)?;
+            moe_trace.record(t, &selected);
             let mut wsum = 0.0f32;
             let mut weights = Vec::new();
             for &e in &selected {
@@ -4675,6 +4772,7 @@ impl Llama {
         n_tokens: usize,
         s: &mut Scratch,
         pool: &mut GemvPool,
+        moe_trace: &mut MoeTraceBuf,
     ) -> Result<(), LlamaError> {
         let n_embd = moe.down_shexp.n_rows;
         if n_embd == 0 || !s.x.len().is_multiple_of(n_embd) {
@@ -4694,6 +4792,7 @@ impl Llama {
                 return Err(LlamaError::Shape("llama4 ffn_gate_inp".into()));
             }
             topk_into(&s.moe.logits, moe.n_expert_used, &mut s.moe.order)?;
+            moe_trace.record(t, &s.moe.order);
             fit(&mut s.moe.routed, n_embd);
             for i in 0..s.moe.order.len() {
                 let Some(e) = s.moe.order.get(i).copied() else {
@@ -4735,6 +4834,7 @@ impl Llama {
         n_tokens: usize,
         x: &[f32],
         pool: &mut GemvPool,
+        moe_trace: &mut MoeTraceBuf,
     ) -> Result<Vec<f32>, LlamaError> {
         let n_embd = moe.down_shexp.n_rows;
         if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
@@ -4776,6 +4876,7 @@ impl Llama {
             softmax(&mut probs);
             let mut selected = Vec::new();
             topk_into(&probs, moe.n_expert_used, &mut selected)?;
+            moe_trace.record(t, &selected);
             let off = t.saturating_mul(n_embd);
             let dst = out
                 .get_mut(off..off.saturating_add(n_embd))
@@ -4812,6 +4913,7 @@ impl Llama {
         n_tokens: usize,
         x: &[f32],
         pool: &mut GemvPool,
+        moe_trace: &mut MoeTraceBuf,
     ) -> Result<Vec<f32>, LlamaError> {
         let n_embd = moe.down_exps.n_rows;
         if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
@@ -4831,6 +4933,7 @@ impl Llama {
             softmax(&mut probs);
             let mut selected = Vec::new();
             topk_into(&probs, moe.n_expert_used, &mut selected)?;
+            moe_trace.record(t, &selected);
             let mut wsum = 0.0f32;
             let mut weights = Vec::new();
             for &e in &selected {
@@ -4873,6 +4976,7 @@ impl Llama {
         n_tokens: usize,
         x: &[f32],
         pool: &mut GemvPool,
+        moe_trace: &mut MoeTraceBuf,
     ) -> Result<Vec<f32>, LlamaError> {
         let n_embd = moe.down_shexp.n_rows;
         if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
@@ -4914,6 +5018,7 @@ impl Llama {
             softmax(&mut probs);
             let mut selected = Vec::new();
             topk_into(&probs, moe.n_expert_used, &mut selected)?;
+            moe_trace.record(t, &selected);
             let mut wsum = 0.0f32;
             let mut weights = Vec::new();
             for &e in &selected {
@@ -9403,6 +9508,50 @@ mod tests {
             qwen3moe_pref, llama4_pref,
             "qwen3moe must not copy Llama4 sigmoid / weight-before-FFN"
         );
+    }
+
+    #[test]
+    fn tiny_qwen3moe_trace_is_identity_and_feeds_expertvm() {
+        let bytes = tiny_qwen3moe_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("model");
+        let plain = greedy_generate(&model, &tok, "ab", 4).expect("plain");
+        let (traced, trace) =
+            greedy_generate_traced(&model, &tok, "ab", 4, None, 0).expect("traced");
+        assert_eq!(plain, traced, "tracing must not change greedy tokens");
+        assert!(!trace.events.is_empty(), "MoE layers must emit accesses");
+        for e in &trace.events {
+            assert_eq!(e.layer, 0);
+            assert_eq!(e.experts.len(), TINY_QWEN3MOE_N_EXPERT_USED);
+        }
+        let mut store = expertvm::DirectStore::from_trace(&trace);
+        for k in trace.keys() {
+            let blob = expertvm::ExpertStore::acquire(&mut store, k).expect("blob");
+            assert_eq!(blob, vec![1]);
+        }
+        assert_eq!(expertvm::ExpertStore::misses(&store), 0);
+        let table = expertvm::compare(&trace, 2, 8);
+        let oracle = table
+            .iter()
+            .find(|r| r.policy == expertvm::Policy::Oracle)
+            .expect("oracle");
+        let lru = table
+            .iter()
+            .find(|r| r.policy == expertvm::Policy::Lru)
+            .expect("lru");
+        assert!(oracle.hits >= lru.hits);
+    }
+
+    #[test]
+    fn dense_llama_trace_is_empty() {
+        let bytes = tiny_llama_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("model");
+        let (text, trace) = greedy_generate_traced(&model, &tok, "ab", 2, None, 0).expect("traced");
+        assert!(!text.is_empty());
+        assert!(trace.events.is_empty());
     }
 
     #[test]

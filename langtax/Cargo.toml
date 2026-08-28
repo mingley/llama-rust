@@ -9,6 +9,9 @@ default = ["simd"]
 # crate-level `forbid(unsafe_code)`; see `src/lib.rs`.
 simd = []
 
+[dependencies]
+expertvm = { path = "../expertvm" }
+
 [lib]
 name = "llama_rust"
 path = "src/lib.rs"

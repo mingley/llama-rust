@@ -21,22 +21,23 @@ mod tok;
 mod ucd;
 
 pub use cli::{
-    parse_chat_args, parse_infer_args, run_chat, ChatArgs, ChatCmd, InferArgs, InferCmd, BIN_USAGE,
-    CHAT_USAGE, INFER_USAGE,
+    parse_chat_args, parse_infer_args, parse_trace_args, run_chat, ChatArgs, ChatCmd, InferArgs,
+    InferCmd, TraceArgs, TraceCmd, BIN_USAGE, CHAT_USAGE, INFER_USAGE, TRACE_USAGE,
 };
 pub use decode::{
-    generate, generate_ctx, greedy_generate, greedy_generate_ctx, tiny_bf16_gguf,
-    tiny_f16_1d_bias_gguf, tiny_f16_1d_gguf, tiny_f16_gguf, tiny_gemma_gguf, tiny_iq1m_gguf,
-    tiny_iq1s_gguf, tiny_iq2s_gguf, tiny_iq2xs_gguf, tiny_iq2xxs_gguf, tiny_iq3s_gguf,
-    tiny_iq3xxs_gguf, tiny_iq4nl_gguf, tiny_iq4xs_gguf, tiny_llama4_gguf, tiny_llama_gguf,
-    tiny_llama_moe_gguf, tiny_mha_gguf, tiny_mistral_gguf, tiny_mqa_gguf, tiny_mxfp4_gguf,
-    tiny_nvfp4_gguf, tiny_phi2_gguf, tiny_phi3_gguf, tiny_q10_gguf, tiny_q20_gguf, tiny_q2k_gguf,
-    tiny_q3k_gguf, tiny_q40_gguf, tiny_q41_gguf, tiny_q4k_embd_gguf, tiny_q50_gguf, tiny_q51_gguf,
-    tiny_q5k_gguf, tiny_q6k_embd_gguf, tiny_q80_gguf, tiny_q81_gguf, tiny_qwen2_gguf,
-    tiny_qwen2moe_gguf, tiny_qwen2vl_gguf, tiny_qwen35_gguf, tiny_qwen3_gguf, tiny_qwen3moe_gguf,
-    tiny_qwen3next_gguf, tiny_qwen3vl_gguf, tiny_tied_copy_gguf, tiny_tied_gguf, tiny_tq10_gguf,
-    tiny_tq20_gguf, KvCache, Llama, LlamaError,
+    generate, generate_ctx, greedy_generate, greedy_generate_ctx, greedy_generate_traced,
+    tiny_bf16_gguf, tiny_f16_1d_bias_gguf, tiny_f16_1d_gguf, tiny_f16_gguf, tiny_gemma_gguf,
+    tiny_iq1m_gguf, tiny_iq1s_gguf, tiny_iq2s_gguf, tiny_iq2xs_gguf, tiny_iq2xxs_gguf,
+    tiny_iq3s_gguf, tiny_iq3xxs_gguf, tiny_iq4nl_gguf, tiny_iq4xs_gguf, tiny_llama4_gguf,
+    tiny_llama_gguf, tiny_llama_moe_gguf, tiny_mha_gguf, tiny_mistral_gguf, tiny_mqa_gguf,
+    tiny_mxfp4_gguf, tiny_nvfp4_gguf, tiny_phi2_gguf, tiny_phi3_gguf, tiny_q10_gguf, tiny_q20_gguf,
+    tiny_q2k_gguf, tiny_q3k_gguf, tiny_q40_gguf, tiny_q41_gguf, tiny_q4k_embd_gguf, tiny_q50_gguf,
+    tiny_q51_gguf, tiny_q5k_gguf, tiny_q6k_embd_gguf, tiny_q80_gguf, tiny_q81_gguf,
+    tiny_qwen2_gguf, tiny_qwen2moe_gguf, tiny_qwen2vl_gguf, tiny_qwen35_gguf, tiny_qwen3_gguf,
+    tiny_qwen3moe_gguf, tiny_qwen3next_gguf, tiny_qwen3vl_gguf, tiny_tied_copy_gguf,
+    tiny_tied_gguf, tiny_tq10_gguf, tiny_tq20_gguf, KvCache, Llama, LlamaError,
 };
+pub use expertvm::{ExpertAccess, ExpertKey, Trace};
 pub use gguf::{
     load_gguf, load_gguf_owned, write_gguf, write_gguf_with_kv, GgmlType, Gguf, GgufError, Kv,
     Tensor, TensorWrite, GGUF_DEFAULT_ALIGNMENT,

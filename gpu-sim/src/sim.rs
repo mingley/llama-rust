@@ -1,5 +1,6 @@
 //! Discrete-event GPU-systems simulator.
 
+use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
 
 use crate::error::SimError;
@@ -261,8 +262,8 @@ impl Sim {
         event: EventId,
         stream: StreamId,
     ) -> Result<OpId, SimError> {
-        if !self.events.contains_key(&event) {
-            let _prev = self.events.insert(event, Ev { recorded_by: None });
+        if let Entry::Vacant(slot) = self.events.entry(event) {
+            let _ev = slot.insert(Ev { recorded_by: None });
         }
         self.submit(device, stream, Kind::EventWait { event })
     }

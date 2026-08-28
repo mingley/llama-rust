@@ -56,11 +56,10 @@ pub fn analyze(trace: &Trace) -> TraceStats {
     for c in counts.iter().take(hot_n) {
         hot = hot.saturating_add(*c);
     }
-    let top20_share_pt = if n_acquires == 0 {
-        0
-    } else {
-        hot.saturating_mul(1000) / n_acquires
-    };
+    let top20_share_pt = hot
+        .saturating_mul(1000)
+        .checked_div(n_acquires)
+        .unwrap_or(0);
     let mut persist_hit = 0u64;
     let mut persist_n = 0u64;
     let mut prev: Option<&crate::access::ExpertAccess> = None;
@@ -80,11 +79,10 @@ pub fn analyze(trace: &Trace) -> TraceStats {
         }
         prev = Some(e);
     }
-    let layer_persist_pt = if persist_n == 0 {
-        0
-    } else {
-        persist_hit.saturating_mul(1000) / persist_n
-    };
+    let layer_persist_pt = persist_hit
+        .saturating_mul(1000)
+        .checked_div(persist_n)
+        .unwrap_or(0);
     TraceStats {
         n_events,
         n_acquires,

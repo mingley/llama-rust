@@ -7,13 +7,14 @@ use std::path::Path;
 use std::time::Instant;
 
 use llama_rust::{
-    gemv_q4_k, gemv_q8_0, greedy_generate_ctx, load_gguf_owned, pack_q4_k_block, pack_q8_0_block,
-    pack_q8_k_block, parse_chat_args, parse_infer_args, parse_serve_args, run_chat, run_serve,
-    tiny_gemma_gguf, tiny_llama4_gguf, tiny_llama_gguf, tiny_llama_moe_gguf, tiny_phi2_gguf,
-    tiny_qwen2_gguf, tiny_qwen2moe_gguf, tiny_qwen2vl_gguf, tiny_qwen35_gguf, tiny_qwen3_gguf,
-    tiny_qwen3moe_gguf, tiny_qwen3next_gguf, tiny_qwen3vl_gguf, write_gguf, write_gguf_with_kv,
-    ChatCmd, GgmlType, InferArgs, InferCmd, Kv, Llama, ServeCmd, TensorWrite, Tokenizer, BIN_USAGE,
-    CHAT_USAGE, INFER_USAGE, QK8_0, QK_K, SERVE_USAGE,
+    gemv_q4_k, gemv_q8_0, greedy_generate_ctx, greedy_generate_traced, load_gguf_owned,
+    pack_q4_k_block, pack_q8_0_block, pack_q8_k_block, parse_chat_args, parse_infer_args,
+    parse_serve_args, parse_trace_args, run_chat, run_serve, tiny_gemma_gguf, tiny_llama4_gguf,
+    tiny_llama_gguf, tiny_llama_moe_gguf, tiny_phi2_gguf, tiny_qwen2_gguf, tiny_qwen2moe_gguf,
+    tiny_qwen2vl_gguf, tiny_qwen35_gguf, tiny_qwen3_gguf, tiny_qwen3moe_gguf, tiny_qwen3next_gguf,
+    tiny_qwen3vl_gguf, write_gguf, write_gguf_with_kv, ChatCmd, GgmlType, InferArgs, InferCmd, Kv,
+    Llama, ServeCmd, TensorWrite, Tokenizer, TraceCmd, BIN_USAGE, CHAT_USAGE, INFER_USAGE, QK8_0,
+    QK_K, SERVE_USAGE, TRACE_USAGE,
 };
 
 fn y_checksum(y: &[f32]) -> u64 {
@@ -224,6 +225,31 @@ fn infer_file(args: &InferArgs) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+fn trace_file(args: &llama_rust::TraceArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = read_path(Path::new(&args.infer.path))?;
+    let g = load_gguf_owned(bytes)?;
+    let tok = Tokenizer::from_gguf(&g)?;
+    let model = Llama::from_gguf(g)?;
+    let (text, trace) = greedy_generate_traced(
+        &model,
+        &tok,
+        &args.infer.prompt,
+        args.infer.n_predict,
+        args.infer.n_ctx,
+        0,
+    )?;
+    write_path(Path::new(&args.out), trace.to_jsonl().as_bytes())?;
+    println!(
+        "prompt={} n_predict={} events={} --out={}",
+        args.infer.prompt,
+        args.infer.n_predict,
+        trace.events.len(),
+        args.out
+    );
+    println!("generated={text}");
+    Ok(())
+}
+
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
     let cmd = args.next().unwrap_or_else(|| "gemv".into());
@@ -353,6 +379,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(())
             }
             InferCmd::Run(opts) => infer_file(&opts),
+        },
+        "trace" => match parse_trace_args(args)? {
+            TraceCmd::Help => {
+                print!("{TRACE_USAGE}");
+                Ok(())
+            }
+            TraceCmd::Run(opts) => trace_file(&opts),
         },
         "chat" => match parse_chat_args(args)? {
             ChatCmd::Help => {
