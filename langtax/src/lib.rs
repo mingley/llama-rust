@@ -10,14 +10,20 @@ mod decode;
 mod fp16;
 mod gguf;
 mod pool;
+mod pretok;
 mod quant;
 mod sample;
 mod serve;
 #[cfg(feature = "simd")]
 mod simd;
+mod template;
 mod tok;
+mod ucd;
 
-pub use cli::{parse_infer_args, InferArgs, InferCmd, BIN_USAGE, INFER_USAGE};
+pub use cli::{
+    parse_chat_args, parse_infer_args, run_chat, ChatArgs, ChatCmd, InferArgs, InferCmd, BIN_USAGE,
+    CHAT_USAGE, INFER_USAGE,
+};
 pub use decode::{
     generate, generate_ctx, greedy_generate, greedy_generate_ctx, tiny_bf16_gguf,
     tiny_f16_1d_bias_gguf, tiny_f16_1d_gguf, tiny_f16_gguf, tiny_gemma_gguf, tiny_iq1m_gguf,
@@ -35,6 +41,7 @@ pub use gguf::{
     load_gguf, load_gguf_owned, write_gguf, write_gguf_with_kv, GgmlType, Gguf, GgufError, Kv,
     Tensor, TensorWrite, GGUF_DEFAULT_ALIGNMENT,
 };
+pub use pretok::PreTokenizer;
 pub use quant::{
     bf16_row_bytes, dequant_bf16_row, dequant_f16_row, dequant_f32_row, dequant_iq1_m_row,
     dequant_iq1_s_row, dequant_iq2_s_row, dequant_iq2_xs_row, dequant_iq2_xxs_row,
@@ -73,4 +80,7 @@ pub use quant::{
 };
 pub use sample::{argmax, sample_next, splitmix64, SampleError, SampleParams, Sampler};
 pub use serve::{parse_serve_args, run_serve, ServeArgs, ServeCmd, ServeError, SERVE_USAGE};
+pub use template::{
+    render_chat_template, ChatMessage, ChatOptions, Template, TemplateError, Value,
+};
 pub use tok::{TokError, Tokenizer};
