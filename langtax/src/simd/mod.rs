@@ -37,6 +37,13 @@ mod aarch64;
 #[cfg(all(target_arch = "x86_64", target_endian = "little"))]
 mod x86;
 
+#[cfg(all(
+    test,
+    target_endian = "little",
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+mod tests;
+
 /// Row kernel over GGUF weight bytes and an `f32` activation row.
 pub(crate) type RowDotF32 = fn(&[u8], &[f32]) -> f32;
 

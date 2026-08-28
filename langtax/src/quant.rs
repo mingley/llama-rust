@@ -5831,8 +5831,10 @@ fn require_len(what: &'static str, actual: usize, expected: usize) -> Result<(),
     }
 }
 
-/// Scalar building blocks the SIMD fast path needs, behind one `pub(crate)`
-/// facade so the kernels themselves stay private to this module.
+/// Scalar building blocks the SIMD fast path needs: the reference its
+/// differential tests compare against and the shared Q4_K scale unpacking.
+/// Keeping them behind one `pub(crate)` facade leaves the kernels themselves
+/// private to this module.
 ///
 /// Gated on the targets `crate::simd` actually has kernels for, so nothing here
 /// becomes dead code elsewhere.
@@ -5842,6 +5844,36 @@ fn require_len(what: &'static str, actual: usize, expected: usize) -> Result<(),
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
 pub(crate) mod scalar {
+    /// `GGML_TYPE_F32` weight bytes against an `f32` activation row.
+    #[cfg(test)]
+    pub(crate) fn f32_row(row: &[u8], x: &[f32]) -> f32 {
+        super::vec_dot_f32_row(row, x)
+    }
+
+    /// `GGML_TYPE_F16` weight bytes against an `f32` activation row.
+    #[cfg(test)]
+    pub(crate) fn f16_row(row: &[u8], x: &[f32]) -> f32 {
+        super::vec_dot_f16_row(row, x)
+    }
+
+    /// Q4_K weight bytes against an `f32` activation row.
+    #[cfg(test)]
+    pub(crate) fn q4_k_f32_row(row: &[u8], x: &[f32]) -> f32 {
+        super::vec_dot_q4_k_f32_row(row, x)
+    }
+
+    /// Q6_K weight bytes against an `f32` activation row.
+    #[cfg(test)]
+    pub(crate) fn q6_k_f32_row(row: &[u8], x: &[f32]) -> f32 {
+        super::vec_dot_q6_k_f32_row(row, x)
+    }
+
+    /// Q8_0 weight bytes against a Q8_0 activation row.
+    #[cfg(test)]
+    pub(crate) fn q8_0_row(row: &[u8], x: &[u8]) -> f32 {
+        super::vec_dot_q8_row(row, x)
+    }
+
     /// ggml `get_scale_min_k4`: 6-bit scale and min for Q4_K sub-block `j`.
     pub(crate) fn q4_k_scale_min(scales: &[u8], j: usize) -> Option<(u8, u8)> {
         super::scale_min_k4(scales, j)
