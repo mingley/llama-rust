@@ -4,12 +4,14 @@
 
 mod cli;
 mod decode;
+pub mod fixtures;
 mod fp16;
 mod gguf;
 mod pool;
 mod quant;
 mod sample;
 mod serve;
+mod session;
 mod tok;
 
 pub use cli::{parse_infer_args, InferArgs, InferCmd, BIN_USAGE, INFER_USAGE};
@@ -66,4 +68,8 @@ pub use quant::{
 };
 pub use sample::{argmax, sample_next, splitmix64, SampleError, SampleParams, Sampler};
 pub use serve::{parse_serve_args, run_serve, ServeArgs, ServeCmd, ServeError, SERVE_USAGE};
+pub use session::{GenerateOptions, Generated, Model, Session, Step, StepAction, StopReason};
 pub use tok::{TokError, Tokenizer};
+
+/// Anything that can go wrong loading a GGUF or decoding from it.
+pub use decode::LlamaError as Error;

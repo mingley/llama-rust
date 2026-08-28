@@ -162,6 +162,8 @@ pub enum LlamaError {
     EmptyPrompt,
     /// Sampling failed.
     Sample(SampleError),
+    /// Reading a GGUF file from disk failed.
+    Io(std::io::Error),
 }
 
 impl std::fmt::Display for LlamaError {
@@ -178,6 +180,7 @@ impl std::fmt::Display for LlamaError {
             Self::Tok(e) => write!(f, "{e}"),
             Self::EmptyPrompt => write!(f, "empty prompt"),
             Self::Sample(e) => write!(f, "{e}"),
+            Self::Io(e) => write!(f, "{e}"),
         }
     }
 }
@@ -205,6 +208,12 @@ impl From<TokError> for LlamaError {
 impl From<SampleError> for LlamaError {
     fn from(v: SampleError) -> Self {
         Self::Sample(v)
+    }
+}
+
+impl From<std::io::Error> for LlamaError {
+    fn from(v: std::io::Error) -> Self {
+        Self::Io(v)
     }
 }
 
@@ -364,6 +373,18 @@ pub struct KvCache {
     /// Tokens already in the cache.
     pub n_past: usize,
     max_seq: usize,
+}
+
+impl KvCache {
+    /// Tokens this cache was allocated for, as passed to [`Llama::new_cache`].
+    ///
+    /// A cache cannot grow: [`Llama::prefill`] fails once `n_past + tokens`
+    /// would exceed this. Positions at or past [`Self::n_past`] hold stale
+    /// bytes that attention never reads, so setting `n_past = 0` reuses the
+    /// allocation for an unrelated sequence.
+    pub fn capacity(&self) -> usize {
+        self.max_seq
+    }
 }
 
 impl Llama {
@@ -805,7 +826,10 @@ pub fn generate_ctx(
     Ok(tok.decode(&ids))
 }
 
-fn prompt_ids(tok: &Tokenizer, prompt: &str) -> Result<Vec<u32>, LlamaError> {
+/// Encode a prompt for decode: BPE ids, with BOS prepended when the GGUF's
+/// `tokenizer.ggml.add_bos_token` asks for one and the encode did not already
+/// produce it. Shared with [`crate::Session`] so both entry points agree.
+pub(crate) fn prompt_ids(tok: &Tokenizer, prompt: &str) -> Result<Vec<u32>, LlamaError> {
     let mut ids = tok.encode(prompt)?;
     if tok.add_bos {
         if let Some(bos) = tok.bos {

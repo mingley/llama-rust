@@ -7,13 +7,14 @@ use std::path::Path;
 use std::time::Instant;
 
 use llama_rust::{
-    gemv_q4_k, gemv_q8_0, greedy_generate_ctx, load_gguf_owned, pack_q4_k_block, pack_q8_0_block,
-    pack_q8_k_block, parse_infer_args, parse_serve_args, run_serve, tiny_gemma_gguf,
-    tiny_llama4_gguf, tiny_llama_gguf, tiny_llama_moe_gguf, tiny_qwen2_gguf, tiny_qwen2moe_gguf,
-    tiny_qwen2vl_gguf, tiny_qwen35_gguf, tiny_qwen3_gguf, tiny_qwen3moe_gguf, tiny_qwen3next_gguf,
-    tiny_qwen3vl_gguf, write_gguf, write_gguf_with_kv, GgmlType, InferArgs, InferCmd, Kv, Llama,
-    ServeCmd, TensorWrite, Tokenizer, BIN_USAGE, INFER_USAGE, QK8_0, QK_K, SERVE_USAGE,
+    gemv_q4_k, gemv_q8_0, load_gguf_owned, pack_q4_k_block, pack_q8_0_block, pack_q8_k_block,
+    parse_infer_args, parse_serve_args, run_serve, tiny_gemma_gguf, tiny_llama4_gguf,
+    tiny_llama_gguf, tiny_llama_moe_gguf, tiny_qwen2_gguf, tiny_qwen2moe_gguf, tiny_qwen2vl_gguf,
+    tiny_qwen35_gguf, tiny_qwen3_gguf, tiny_qwen3moe_gguf, tiny_qwen3next_gguf, tiny_qwen3vl_gguf,
+    write_gguf, write_gguf_with_kv, GgmlType, InferArgs, InferCmd, Kv, ServeCmd, TensorWrite,
+    BIN_USAGE, INFER_USAGE, QK8_0, QK_K, SERVE_USAGE,
 };
+use llama_rust::{GenerateOptions, Model};
 
 fn y_checksum(y: &[f32]) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325u64;
@@ -213,13 +214,15 @@ fn gemv_q4k_file(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn infer_file(args: &InferArgs) -> Result<(), Box<dyn std::error::Error>> {
-    let bytes = read_path(Path::new(&args.path))?;
-    let g = load_gguf_owned(bytes)?;
-    let tok = Tokenizer::from_gguf(&g)?;
-    let model = Llama::from_gguf(g)?;
-    let text = greedy_generate_ctx(&model, &tok, &args.prompt, args.n_predict, args.n_ctx)?;
+    let model = Model::from_path(Path::new(&args.path))?;
+    let mut options = GenerateOptions::new(args.n_predict);
+    if let Some(n_ctx) = args.n_ctx {
+        options = options.with_n_ctx(n_ctx);
+    }
+    let done = model.session().generate_detailed(&args.prompt, &options)?;
     println!("prompt={} n_predict={}", args.prompt, args.n_predict);
-    println!("generated={text}");
+    // Echo prompt plus continuation, which is what this CLI has always printed.
+    println!("generated={}", model.tokenizer().decode(&done.all_tokens()));
     Ok(())
 }
 
