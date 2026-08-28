@@ -380,6 +380,13 @@ impl Llama {
         if !n_head.is_multiple_of(n_head_kv) {
             return Err(LlamaError::Shape(arch_key(arch, "attention.head_count_kv")));
         }
+        // Official qwen3next.cpp `load_arch_hparams` runs before tensors and
+        // rejects `n_expert==0` / missing required `ssm.*` KV.
+        let qwen3next_hparams = if arch == "qwen3next" {
+            Some(load_qwen3next_hparams(&g, arch, n_layer)?)
+        } else {
+            None
+        };
         let n_rot = rope_dimension(&g, arch, n_embd, n_head)?;
         let rope_sections = if arch == "qwen2vl" || arch == "qwen3vl" {
             Some(load_rope_dimension_sections(&g, arch)?)
@@ -422,11 +429,6 @@ impl Llama {
         };
         let qwen3moe_hparams = if arch == "qwen3moe" {
             Some(load_qwen3moe_hparams(&g, arch)?)
-        } else {
-            None
-        };
-        let qwen3next_hparams = if arch == "qwen3next" {
-            Some(load_qwen3next_hparams(&g, arch, n_layer)?)
         } else {
             None
         };
