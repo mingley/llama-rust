@@ -341,6 +341,9 @@ pub struct Llama {
     rope_sections: Option<[i32; 4]>,
     /// Official Qwen3VL / Qwen35 `LLAMA_ROPE_TYPE_IMROPE` (`ggml_mrope_cache_init` `is_imrope`).
     rope_imrope: bool,
+    /// Official `llama_model_rope_type` = `LLAMA_ROPE_TYPE_NEOX` for this arch.
+    /// Selects the `n_dims/2` offset pairing instead of adjacent-lane NORM.
+    rope_neox: bool,
     /// `1` for llama/qwen2/mistral/phi3. Gemma official walk scales embeds by `sqrt(n_embd)`.
     embed_scale: f32,
     /// Official Gemma FFN is `LLM_FFN_GELU` (GeGLU). Other loaded arches stay SwiGLU
@@ -418,6 +421,7 @@ impl Llama {
             None
         };
         let rope_imrope = arch == "qwen3vl" || arch == "qwen35";
+        let rope_neox = rope_is_neox(arch);
         let n_vocab = g
             .tensor("token_embd.weight")
             .map(|t| t.n_rows())
@@ -482,6 +486,7 @@ impl Llama {
             rope_base,
             rope_sections,
             rope_imrope,
+            rope_neox,
             embed_scale,
             ffn_gelu: gemma,
             blob: g.into_blob(),
@@ -605,6 +610,7 @@ impl Llama {
                             self.rope_base,
                             self.rope_sections,
                             self.rope_imrope,
+                            self.rope_neox,
                         )?;
                     }
                     if layer.qk_l2 {
@@ -636,6 +642,7 @@ impl Llama {
                             self.rope_base,
                             self.rope_sections,
                             self.rope_imrope,
+                            self.rope_neox,
                         )?;
                     }
                     if layer.qk_l2 {
@@ -4457,6 +4464,41 @@ fn rope(vec: &mut [f32], pos: usize, n_rot: usize, base: f32) -> Result<(), Llam
     Ok(())
 }
 
+/// Official `GGML_ROPE_TYPE_NEOX`: `rotate_pairs(n_dims, n_dims/2, .., scale = 2)`.
+///
+/// Same theta walk as [`rope`]; only the element pairing differs. NORM rotates
+/// adjacent lanes `(i0, i0+1)`; NEOX rotates `(i0/2, i0/2 + n_dims/2)`.
+fn rope_neox(vec: &mut [f32], pos: usize, n_rot: usize, base: f32) -> Result<(), LlamaError> {
+    let n = n_rot.min(vec.len());
+    if n < 2 {
+        return Ok(());
+    }
+    if !n.is_multiple_of(2) {
+        return Err(LlamaError::Shape("rope.dimension_count".into()));
+    }
+    let n_offset = n / 2;
+    let n_rot_f = f32::from(u16::try_from(n_rot).unwrap_or(2));
+    let mut theta = f32::from(u16::try_from(pos).unwrap_or(u16::MAX));
+    let theta_scale = base.powf(-2.0 / n_rot_f);
+    let mut i0 = 0usize;
+    while i0 + 1 < n {
+        let ic = i0 / 2;
+        let cos = theta.cos();
+        let sin = theta.sin();
+        let x0 = *vec.get(ic).unwrap_or(&0.0);
+        let x1 = *vec.get(ic.saturating_add(n_offset)).unwrap_or(&0.0);
+        if let Some(slot) = vec.get_mut(ic) {
+            *slot = x0 * cos - x1 * sin;
+        }
+        if let Some(slot) = vec.get_mut(ic.saturating_add(n_offset)) {
+            *slot = x0 * sin + x1 * cos;
+        }
+        theta *= theta_scale;
+        i0 += 2;
+    }
+    Ok(())
+}
+
 /// Official Qwen2VL / Qwen3VL text walk: `ggml_rope_multi` when sections are present.
 fn apply_rope(
     vec: &mut [f32],
@@ -4465,13 +4507,38 @@ fn apply_rope(
     base: f32,
     sections: Option<[i32; 4]>,
     is_imrope: bool,
+    neox: bool,
 ) -> Result<(), LlamaError> {
     if let Some(sections) = sections {
         // Official `llama-graph.cpp` text tokens: `[t,h,w,e] = [p,p,p,0]`.
         // Official `n_pos_per_embd()` is 4 for both MROPE and IMROPE.
         rope_multi(vec, [pos, pos, pos, 0], n_rot, base, sections, is_imrope)
+    } else if neox {
+        rope_neox(vec, pos, n_rot, base)
     } else {
         rope(vec, pos, n_rot, base)
+    }
+}
+
+/// Official `llama_model_rope_type` (`src/llama-model.cpp`) for the architectures
+/// this crate loads: `true` selects `LLAMA_ROPE_TYPE_NEOX`, `false` selects
+/// `LLAMA_ROPE_TYPE_NORM`.
+///
+/// `qwen2vl` (MROPE) and `qwen3vl` / `qwen35` (IMROPE) are not listed here: they
+/// carry `rope.dimension_sections` and take the [`rope_multi`] path, which already
+/// rotates on the NEOX `n_dims/2` offset.
+///
+/// `mistral` is not an official `LLM_ARCH_NAMES` entry (official Mistral GGUF is
+/// `architecture=llama`); it is Llama-family, so it stays NORM.
+fn rope_is_neox(arch: &str) -> bool {
+    match arch {
+        // LLAMA / LLAMA4 => LLAMA_ROPE_TYPE_NORM.
+        "llama" | "llama4" | "mistral" => false,
+        // QWEN2 / QWEN2MOE / QWEN3 / QWEN3MOE / QWEN3NEXT / PHI3 / GEMMA
+        // => LLAMA_ROPE_TYPE_NEOX.
+        "qwen2" | "qwen2moe" | "qwen3" | "qwen3moe" | "qwen3next" | "phi3" | "gemma" => true,
+        // MROPE / IMROPE arches reach `rope_multi`; the flag is unused for them.
+        _ => false,
     }
 }
 
@@ -6159,6 +6226,42 @@ mod tests {
         v
     }
 
+    /// Independent scalar of official `GGML_ROPE_TYPE_NEOX`, transcribed from
+    /// `ggml/src/ggml-cpu/ops.cpp` `rotate_pairs(n_dims, n_dims/2, cache, .., scale = 2)`:
+    /// `ic = i0/2`, `x0 = src[ic]`, `x1 = src[ic + n_dims/2]`. The theta walk is the
+    /// same `i0 += 2` progression as NORM; only the rotated lane pair differs.
+    fn oracle_rope_neox(mut v: Vec<f32>, pos: usize, n_rot: usize, base: f32) -> Vec<f32> {
+        let n = n_rot.min(v.len());
+        if n < 2 || !n.is_multiple_of(2) {
+            return v;
+        }
+        let n_offset = n / 2;
+        let mut theta = pos as f32;
+        let theta_scale = base.powf(-2.0 / n_rot as f32);
+        let mut i0 = 0usize;
+        while i0 + 1 < n {
+            let ic = i0 / 2;
+            let (c, s) = (theta.cos(), theta.sin());
+            let x0 = v[ic];
+            let x1 = v[ic + n_offset];
+            v[ic] = x0 * c - x1 * s;
+            v[ic + n_offset] = x0 * s + x1 * c;
+            theta *= theta_scale;
+            i0 += 2;
+        }
+        v
+    }
+
+    /// Independent transcription of official `llama_model_rope_type`
+    /// (`src/llama-model.cpp`) for the architectures this crate loads.
+    /// `true` = `LLAMA_ROPE_TYPE_NEOX`, `false` = `LLAMA_ROPE_TYPE_NORM`.
+    fn oracle_rope_is_neox(arch: &str) -> bool {
+        matches!(
+            arch,
+            "qwen2" | "qwen2moe" | "qwen3" | "qwen3moe" | "qwen3next" | "phi3" | "gemma"
+        )
+    }
+
     /// Independent scalar of official `ggml_rope_multi` /
     /// `GGML_ROPE_TYPE_MROPE` or `GGML_ROPE_TYPE_IMROPE`.
     fn oracle_rope_multi(
@@ -6331,6 +6434,7 @@ mod tests {
                     None
                 };
                 let is_imrope = arch == "qwen3vl" || arch == "qwen35";
+                let neox = oracle_rope_is_neox(arch);
                 for h in &mut qh {
                     *h = match sections {
                         Some(s) => oracle_rope_multi(
@@ -6341,6 +6445,7 @@ mod tests {
                             s,
                             is_imrope,
                         ),
+                        None if neox => oracle_rope_neox(h.clone(), pos, n_rot, base),
                         None => oracle_rope(h.clone(), pos, n_rot, base),
                     };
                 }
@@ -6354,6 +6459,7 @@ mod tests {
                             s,
                             is_imrope,
                         ),
+                        None if neox => oracle_rope_neox(h.clone(), pos, n_rot, base),
                         None => oracle_rope(h.clone(), pos, n_rot, base),
                     };
                 }
@@ -6469,6 +6575,138 @@ mod tests {
             let rel = (a - b).abs() / (1.0 + b.abs());
             assert!(rel * 1000.0 < 1.0, "logit {i}: {a} vs {b}");
         }
+    }
+
+    /// Official `ggml/src/ggml-cpu/ops.cpp` `rotate_pairs`:
+    /// `GGML_ROPE_TYPE_NORMAL` passes `n_offset = 1, scale = 1` so `ic = i0` and the
+    /// rotated pair is `(i0, i0 + 1)`; `GGML_ROPE_TYPE_NEOX` passes
+    /// `n_offset = n_dims/2, scale = 2` so `ic = i0/2` and the pair is
+    /// `(i0/2, i0/2 + n_dims/2)`. Both walk theta identically (`i0 += 2`).
+    ///
+    /// Pinned against values computed by hand from that definition, so this test does
+    /// not depend on the model oracle and would fail if either convention regressed
+    /// or the two were swapped.
+    #[test]
+    fn rope_norm_and_neox_pair_different_lanes() {
+        let n_rot = 4usize;
+        let base = 10_000.0f32;
+        let pos = 1usize;
+        let src = [1.0f32, 2.0, 3.0, 4.0];
+        let theta0 = 1.0f32;
+        let theta1 = theta0 * base.powf(-2.0 / 4.0);
+        let (c0, s0) = (theta0.cos(), theta0.sin());
+        let (c1, s1) = (theta1.cos(), theta1.sin());
+
+        // NORM rotates (0,1) at theta0 and (2,3) at theta1.
+        let want_norm = [
+            src[0] * c0 - src[1] * s0,
+            src[0] * s0 + src[1] * c0,
+            src[2] * c1 - src[3] * s1,
+            src[2] * s1 + src[3] * c1,
+        ];
+        let mut got_norm = src;
+        rope(&mut got_norm, pos, n_rot, base).expect("norm rope");
+        for (got, want) in got_norm.iter().zip(want_norm.iter()) {
+            assert!(
+                (got - want).abs() < 1e-6,
+                "NORM {got_norm:?} vs {want_norm:?}"
+            );
+        }
+
+        // NEOX rotates (0,2) at theta0 and (1,3) at theta1.
+        let want_neox = [
+            src[0] * c0 - src[2] * s0,
+            src[1] * c1 - src[3] * s1,
+            src[0] * s0 + src[2] * c0,
+            src[1] * s1 + src[3] * c1,
+        ];
+        let mut got_neox = src;
+        rope_neox(&mut got_neox, pos, n_rot, base).expect("neox rope");
+        for (got, want) in got_neox.iter().zip(want_neox.iter()) {
+            assert!(
+                (got - want).abs() < 1e-6,
+                "NEOX {got_neox:?} vs {want_neox:?}"
+            );
+        }
+
+        assert_ne!(
+            got_norm, got_neox,
+            "NORM and NEOX must not coincide on asymmetric input"
+        );
+    }
+
+    /// Per-architecture rope type, transcribed from official `llama_model_rope_type`.
+    /// Production and oracle must agree, and the Llama family must stay NORM while
+    /// the Qwen dense/MoE line, Phi-3, and Gemma are NEOX.
+    #[test]
+    fn rope_type_matches_official_arch_table() {
+        for arch in ["llama", "llama4", "mistral"] {
+            assert!(!rope_is_neox(arch), "{arch} is LLAMA_ROPE_TYPE_NORM");
+            assert!(!oracle_rope_is_neox(arch), "{arch} oracle NORM");
+        }
+        for arch in [
+            "qwen2",
+            "qwen2moe",
+            "qwen3",
+            "qwen3moe",
+            "qwen3next",
+            "phi3",
+            "gemma",
+        ] {
+            assert!(rope_is_neox(arch), "{arch} is LLAMA_ROPE_TYPE_NEOX");
+            assert!(oracle_rope_is_neox(arch), "{arch} oracle NEOX");
+        }
+        // MROPE / IMROPE arches carry `rope.dimension_sections` and take the
+        // `rope_multi` path, which already rotates on the NEOX offset.
+        for arch in ["qwen2vl", "qwen3vl", "qwen35"] {
+            assert!(!rope_is_neox(arch), "{arch} routes through rope_multi");
+        }
+    }
+
+    /// Text tokens feed `[t, h, w, e] = [p, p, p, 0]`, which collapses the m-RoPE
+    /// sector walk onto plain NEOX lane math. Distinct per-axis positions (what an
+    /// image token supplies) must diverge, otherwise m-RoPE is untested.
+    #[test]
+    fn rope_multi_reduces_to_neox_on_text_and_differs_on_distinct_axes() {
+        let n_rot = 8usize;
+        let base = 10_000.0f32;
+        let sections = [2i32, 1, 1, 0];
+        let src = [0.5f32, -1.5, 2.0, 3.5, -0.25, 1.25, -2.5, 0.75];
+
+        let mut neox = src;
+        rope_neox(&mut neox, 3, n_rot, base).expect("neox");
+
+        let mut text = src;
+        rope_multi(&mut text, [3, 3, 3, 0], n_rot, base, sections, false).expect("mrope text");
+        for (got, want) in text.iter().zip(neox.iter()) {
+            assert!(
+                (got - want).abs() < 1e-6,
+                "text m-RoPE {text:?} must equal NEOX {neox:?}"
+            );
+        }
+
+        let mut axes = src;
+        rope_multi(&mut axes, [3, 7, 11, 0], n_rot, base, sections, false).expect("mrope axes");
+        assert_ne!(
+            axes, neox,
+            "distinct t/h/w positions must exercise the m-RoPE sector walk"
+        );
+    }
+
+    /// The writer-built gated-attention tinies saturate the attention gate, so
+    /// `attn *= sigmoid(gate)` is a numerical no-op (or annihilates attention) on
+    /// those fixtures and model-level tests cannot distinguish gated-Q from ungated
+    /// attention. Recorded here so the limitation stays visible instead of being
+    /// implied by a passing inequality assertion. A gated fixture whose
+    /// pre-activation lands near zero would let the qwen35 test discriminate again.
+    #[test]
+    fn gated_attn_fixture_saturates_sigmoid() {
+        // Observed qwen35 tiny gate pre-activation.
+        assert_eq!(sigmoid_f32(19.617_193), 1.0);
+        // Observed qwen3next tiny gate pre-activation.
+        assert!(sigmoid_f32(-44.839_5) < 1e-19);
+        // A non-degenerate gate would actually scale attention.
+        assert!((sigmoid_f32(0.0) - 0.5).abs() < 1e-6);
     }
 
     fn load_fwd_match(bytes: &[u8], token: u32) {
@@ -7733,10 +7971,16 @@ mod tests {
         };
         let mut qc = model.new_cache(8).expect("qc");
         let qwen2vl_pref = model.prefill(&mut qc, &tokens).expect("qwen2vl pref");
-        assert_ne!(
-            qwen2vl_pref, qwen2_pref,
-            "qwen2vl m-RoPE must change multi-token logits vs qwen2 adjacent-pair RoPE"
-        );
+        // Official `ggml_mrope_cache_init` on text positions `[p, p, p, 0]` assigns
+        // theta_t / theta_h / theta_w to every rotated lane, and all three equal the
+        // token position, so the m-RoPE cache is identical to the NEOX cache. A VL
+        // checkpoint on pure text therefore must match its text-only sibling.
+        //
+        // This previously asserted inequality, which only held because `qwen2` was
+        // rotating NORM adjacent lanes while m-RoPE rotated the NEOX `n_dims/2`
+        // offset: the assertion was detecting a bug, not m-RoPE. Real m-RoPE lane
+        // math is covered by `rope_multi_reduces_to_neox_on_text_and_differs_on_distinct_axes`.
+        assert_logits_match(&qwen2vl_pref, &qwen2_pref);
         assert_ne!(
             qwen2vl_pref, qwen3_pref,
             "qwen2vl must not copy qwen3 QK-Norm"
@@ -8129,10 +8373,13 @@ mod tests {
         };
         let mut qc = model.new_cache(8).expect("qc");
         let qwen35_pref = model.prefill(&mut qc, &tokens).expect("qwen35 pref");
-        assert_ne!(
-            qwen35_pref, qwen3_pref,
-            "qwen35 gated-Q/IMROPE must change logits vs dense qwen3"
-        );
+        // IMROPE on text positions likewise reduces to NEOX (every sector maps to
+        // theta_t / theta_h / theta_w, all equal to the position). The writer-built
+        // tiny additionally saturates the attention gate, so gated-Q is a numerical
+        // no-op here — see `gated_attn_fixture_saturates_sigmoid`. Both effects mean
+        // qwen35 and dense qwen3 must agree on this fixture; the previous inequality
+        // assertion only held because `qwen3` was rotating NORM adjacent lanes.
+        assert_logits_match(&qwen35_pref, &qwen3_pref);
         assert_ne!(
             qwen35_pref, qwen3vl_pref,
             "qwen35 must not copy qwen3vl (no gated Q / no post_attention_norm)"
