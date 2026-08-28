@@ -584,6 +584,7 @@ pub fn tiny_q6k_embd_gguf() -> Vec<u8> {
 /// Writer-built Llama GGUF with F16 2-D weights (token_embd, output, attn/ffn).
 ///
 /// 1-D norms stay F32, matching common OSS F16 GGUF files from convert-hf-to-gguf.
+/// See [`tiny_f16_1d_gguf`] for F16 1-D norms (same 2-D bytes, F32-norm twin).
 pub fn tiny_f16_gguf() -> Vec<u8> {
     tiny_arch_gguf(TinySpec {
         arch: "llama",
@@ -594,6 +595,47 @@ pub fn tiny_f16_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
     })
+}
+
+/// Writer-built Llama GGUF with F16 2-D weights and F16 1-D norms.
+///
+/// On-disk IEEE binary16 (`GGML_TYPE_F16` = 1). Load walks those bytes with
+/// the same `ggml_fp16_to_fp32` scalar used for 2-D F16, then applies the
+/// existing F32 RMSNorm. F32-norm twin is [`tiny_f16_gguf`].
+pub fn tiny_f16_1d_gguf() -> Vec<u8> {
+    tiny_arch_gguf_lm_head_vec1d(
+        TinySpec {
+            arch: "llama",
+            token_embd: GgmlType::F16,
+            output: GgmlType::F16,
+            layer: Some(GgmlType::F16),
+            rope_dimension_count: true,
+            qkv_bias: false,
+            add_bos_token: None,
+        },
+        TinyLmHead::Distinct,
+        GgmlType::F16,
+    )
+}
+
+/// Writer-built Qwen2-shaped GGUF with F16 1-D norms and F16 QKV bias.
+///
+/// Same optional-bias writer path as [`tiny_qwen2_gguf`]; 1-D tensors are
+/// on-disk IEEE binary16. 2-D weights stay the mixed Q4_K_M mix.
+pub fn tiny_f16_1d_bias_gguf() -> Vec<u8> {
+    tiny_arch_gguf_lm_head_vec1d(
+        TinySpec {
+            arch: "qwen2",
+            token_embd: GgmlType::F32,
+            output: GgmlType::F32,
+            layer: None,
+            rope_dimension_count: false,
+            qkv_bias: true,
+            add_bos_token: Some(false),
+        },
+        TinyLmHead::Distinct,
+        GgmlType::F16,
+    )
 }
 
 /// Writer-built Llama GGUF with BF16 2-D weights (token_embd, output, attn/ffn).
@@ -986,6 +1028,10 @@ fn tiny_arch_gguf(spec: TinySpec) -> Vec<u8> {
 }
 
 fn tiny_arch_gguf_lm_head(spec: TinySpec, lm_head: TinyLmHead) -> Vec<u8> {
+    tiny_arch_gguf_lm_head_vec1d(spec, lm_head, GgmlType::F32)
+}
+
+fn tiny_arch_gguf_lm_head_vec1d(spec: TinySpec, lm_head: TinyLmHead, vec1d: GgmlType) -> Vec<u8> {
     let n_embd = TINY_N_EMBD;
     let n_ff = TINY_N_FF;
     let n_vocab = TINY_N_VOCAB;
@@ -1000,9 +1046,9 @@ fn tiny_arch_gguf_lm_head(spec: TinySpec, lm_head: TinyLmHead) -> Vec<u8> {
         ),
         tw(
             "output_norm.weight",
-            GgmlType::F32,
+            vec1d,
             vec![n_embd],
-            pack_f32(&ones),
+            pack_vec1d(vec1d, &ones),
         ),
     ];
     match lm_head {
@@ -1022,15 +1068,15 @@ fn tiny_arch_gguf_lm_head(spec: TinySpec, lm_head: TinyLmHead) -> Vec<u8> {
     }
     tensors.push(tw(
         "blk.0.attn_norm.weight",
-        GgmlType::F32,
+        vec1d,
         vec![n_embd],
-        pack_f32(&ones),
+        pack_vec1d(vec1d, &ones),
     ));
     tensors.push(tw(
         "blk.0.ffn_norm.weight",
-        GgmlType::F32,
+        vec1d,
         vec![n_embd],
-        pack_f32(&ones),
+        pack_vec1d(vec1d, &ones),
     ));
     tensors.push(layer_tw(
         &spec,
@@ -1091,21 +1137,21 @@ fn tiny_arch_gguf_lm_head(spec: TinySpec, lm_head: TinyLmHead) -> Vec<u8> {
     if spec.qkv_bias {
         tensors.push(tw(
             "blk.0.attn_q.bias",
-            GgmlType::F32,
+            vec1d,
             vec![n_embd],
-            pack_f32(&pat_f32(n_embd, 11)),
+            pack_vec1d(vec1d, &pat_f32(n_embd, 11)),
         ));
         tensors.push(tw(
             "blk.0.attn_k.bias",
-            GgmlType::F32,
+            vec1d,
             vec![n_kv],
-            pack_f32(&pat_f32(n_kv, 12)),
+            pack_vec1d(vec1d, &pat_f32(n_kv, 12)),
         ));
         tensors.push(tw(
             "blk.0.attn_v.bias",
-            GgmlType::F32,
+            vec1d,
             vec![n_kv],
-            pack_f32(&pat_f32(n_kv, 13)),
+            pack_vec1d(vec1d, &pat_f32(n_kv, 13)),
         ));
     }
     write_gguf_with_kv(&tiny_kv(&spec), &tensors)
@@ -1267,6 +1313,13 @@ fn pat_f32(n: usize, seed: u32) -> Vec<f32> {
         out.push((f32::from(k) - 100.0) / 4000.0);
     }
     out
+}
+
+fn pack_vec1d(ty: GgmlType, values: &[f32]) -> Vec<u8> {
+    match ty {
+        GgmlType::F16 => pack_f16(values),
+        _ => pack_f32(values),
+    }
 }
 
 fn pack_mat(ty: GgmlType, n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
@@ -1831,24 +1884,47 @@ fn optional_f32(g: &Gguf, name: &str) -> Result<Option<Vec<f32>>, LlamaError> {
     }
 }
 
+fn is_applied_norm_or_bias(name: &str) -> bool {
+    name == "output_norm.weight"
+        || name.ends_with(".attn_norm.weight")
+        || name.ends_with(".ffn_norm.weight")
+        || name.ends_with(".attn_q.bias")
+        || name.ends_with(".attn_k.bias")
+        || name.ends_with(".attn_v.bias")
+}
+
 fn f32s(t: Tensor<'_>) -> Result<Vec<f32>, LlamaError> {
-    if t.ty != GgmlType::F32 {
+    match t.ty {
+        GgmlType::F32 => {
+            let (chunks, rem) = t.data.as_chunks::<4>();
+            if !rem.is_empty() {
+                return Err(LlamaError::Shape(t.name.to_string()));
+            }
+            Ok(chunks
+                .iter()
+                .map(|c| f32::from_bits(u32::from_le_bytes(*c)))
+                .collect())
+        }
+        GgmlType::F16 if is_applied_norm_or_bias(t.name) && t.n_rows() == 1 => {
+            let n = t.n_cols();
+            let mut y = vec![0.0f32; n];
+            dequant_f16_row(n, t.data, &mut y)?;
+            Ok(y)
+        }
+        other => Err(LlamaError::Type {
+            tensor: t.name.to_string(),
+            ty: other.to_i32(),
+        }),
+    }
+}
+
+fn quant_mat(t: Tensor<'_>) -> Result<QuantMat, LlamaError> {
+    if t.ty == GgmlType::F16 && t.shape.len() < 2 {
         return Err(LlamaError::Type {
             tensor: t.name.to_string(),
             ty: t.ty.to_i32(),
         });
     }
-    let (chunks, rem) = t.data.as_chunks::<4>();
-    if !rem.is_empty() {
-        return Err(LlamaError::Shape(t.name.to_string()));
-    }
-    Ok(chunks
-        .iter()
-        .map(|c| f32::from_bits(u32::from_le_bytes(*c)))
-        .collect())
-}
-
-fn quant_mat(t: Tensor<'_>) -> Result<QuantMat, LlamaError> {
     match t.ty {
         GgmlType::F32
         | GgmlType::F16
@@ -3826,6 +3902,162 @@ mod tests {
     }
 
     #[test]
+    fn tiny_f16_1d_norms_load_and_match_f32_norm_twin() {
+        let f16_1d = tiny_f16_1d_gguf();
+        let f32_norm = tiny_f16_gguf();
+        let g16 = load_gguf(&f16_1d).expect("load f16 1d");
+        let g32 = load_gguf(&f32_norm).expect("load f32 norm twin");
+        assert_eq!(g16.tensor("token_embd.weight").unwrap().ty, GgmlType::F16);
+        assert_eq!(g16.tensor("output.weight").unwrap().ty, GgmlType::F16);
+        assert_eq!(g16.tensor("blk.0.attn_q.weight").unwrap().ty, GgmlType::F16);
+        assert_eq!(g16.tensor("output_norm.weight").unwrap().ty, GgmlType::F16);
+        assert_eq!(
+            g16.tensor("blk.0.attn_norm.weight").unwrap().ty,
+            GgmlType::F16
+        );
+        assert_eq!(
+            g16.tensor("blk.0.ffn_norm.weight").unwrap().ty,
+            GgmlType::F16
+        );
+        assert_eq!(g32.tensor("output_norm.weight").unwrap().ty, GgmlType::F32);
+        assert_eq!(
+            g16.tensor("token_embd.weight").unwrap().data,
+            g32.tensor("token_embd.weight").unwrap().data
+        );
+        assert_eq!(
+            g16.tensor("output.weight").unwrap().data,
+            g32.tensor("output.weight").unwrap().data
+        );
+
+        let m16 = Llama::from_gguf(g16.clone()).expect("f16 1d model");
+        let m32 = Llama::from_gguf(g32.clone()).expect("f32 twin model");
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let gemv16 = m16.gemv_output(&x).expect("f16 1d gemv");
+        let gemv32 = m32.gemv_output(&x).expect("f32 twin gemv");
+        assert_logits_match(&gemv16, &gemv32);
+        let exp_gemv = oracle_gemv(g16.tensor("output.weight").unwrap(), &x);
+        assert_logits_match(&gemv16, &exp_gemv);
+
+        let mut x2 = pat_f32(TINY_N_EMBD, 22);
+        x2.extend(pat_f32(TINY_N_EMBD, 23));
+        let gemm16 = m16.gemm_output(2, &x2).expect("f16 1d gemm");
+        let gemm32 = m32.gemm_output(2, &x2).expect("f32 twin gemm");
+        assert_logits_match(&gemm16, &gemm32);
+
+        let emb16 = m16.embed_token(3).expect("f16 1d embed");
+        let emb32 = m32.embed_token(3).expect("f32 twin embed");
+        assert_logits_match(&emb16, &emb32);
+        let exp_emb = oracle_embed(g16.tensor("token_embd.weight").unwrap(), 3);
+        assert_logits_match(&emb16, &exp_emb);
+
+        load_fwd_match(&f16_1d, 3);
+        load_prefill_match(&f16_1d, &[1, 2, 3]);
+        let mut c1 = m16.new_cache(4).expect("c1");
+        let mut c2 = m32.new_cache(4).expect("c2");
+        let got = m16.forward(&mut c1, 3).expect("f16 1d fwd");
+        let twin = m32.forward(&mut c2, 3).expect("f32 twin fwd");
+        let exp = oracle_forward(&g16, 3);
+        assert_logits_match(&got, &exp);
+        assert_logits_match(&got, &twin);
+    }
+
+    #[test]
+    fn tiny_f16_1d_bias_loads_and_matches_oracle() {
+        let bytes = tiny_f16_1d_bias_gguf();
+        let g = load_gguf(&bytes).expect("load f16 1d bias");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("qwen2".into()))
+        );
+        assert_eq!(g.tensor("output_norm.weight").unwrap().ty, GgmlType::F16);
+        assert_eq!(
+            g.tensor("blk.0.attn_norm.weight").unwrap().ty,
+            GgmlType::F16
+        );
+        assert_eq!(g.tensor("blk.0.attn_q.bias").unwrap().ty, GgmlType::F16);
+        assert_eq!(g.tensor("blk.0.attn_k.bias").unwrap().ty, GgmlType::F16);
+        assert_eq!(g.tensor("blk.0.attn_v.bias").unwrap().ty, GgmlType::F16);
+        assert_eq!(g.tensor("token_embd.weight").unwrap().ty, GgmlType::F32);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+    }
+
+    #[test]
+    fn one_d_f16_that_is_not_applied_norm_or_bias_fails_named() {
+        let n = TINY_N_EMBD;
+        let bytes = write_gguf_with_kv(
+            &tiny_kv(&tiny_llama_spec()),
+            &[
+                tw(
+                    "token_embd.weight",
+                    GgmlType::F32,
+                    vec![n, TINY_N_VOCAB],
+                    pack_f32(&pat_f32(n.saturating_mul(TINY_N_VOCAB), 1)),
+                ),
+                tw(
+                    "output.bias",
+                    GgmlType::F16,
+                    vec![n],
+                    pack_f16(&pat_f32(n, 2)),
+                ),
+                tw(
+                    "rope_freqs.weight",
+                    GgmlType::F16,
+                    vec![n],
+                    pack_f16(&pat_f32(n, 3)),
+                ),
+            ],
+        );
+        let g = load_gguf(&bytes).expect("load extra 1-D F16");
+        for name in ["output.bias", "rope_freqs.weight"] {
+            let t = g.tensor(name).expect("extra tensor");
+            assert_eq!(t.ty, GgmlType::F16);
+            assert_eq!(t.shape.len(), 1);
+            let err = match f32s(t) {
+                Ok(_) => panic!("f32s should reject 1-D F16 {name}"),
+                Err(e) => e.to_string(),
+            };
+            assert!(err.contains(name), "error should name tensor {name}: {err}");
+            assert!(
+                err.contains("type 1"),
+                "error should name ggml type 1: {err}"
+            );
+        }
+
+        let ones = vec![1.0f32; n];
+        let bad_embd = write_gguf_with_kv(
+            &tiny_kv(&tiny_llama_spec()),
+            &[
+                tw(
+                    "token_embd.weight",
+                    GgmlType::F16,
+                    vec![n],
+                    pack_f16(&pat_f32(n, 1)),
+                ),
+                tw(
+                    "output_norm.weight",
+                    GgmlType::F32,
+                    vec![n],
+                    pack_f32(&ones),
+                ),
+            ],
+        );
+        let g_bad = load_gguf(&bad_embd).expect("load 1-D F16 token_embd");
+        let err = match Llama::from_gguf(g_bad) {
+            Ok(_) => panic!("1-D F16 token_embd.weight should fail"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("token_embd.weight"),
+            "error should name tensor: {err}"
+        );
+        assert!(
+            err.contains("type 1"),
+            "error should name ggml type 1: {err}"
+        );
+    }
+
+    #[test]
     fn tiny_bf16_logits_match_independent_oracle() {
         let bytes = tiny_bf16_gguf();
         let g = load_gguf(&bytes).expect("load");
@@ -4229,6 +4461,8 @@ mod tests {
             tiny_q4k_embd_gguf(),
             tiny_q6k_embd_gguf(),
             tiny_f16_gguf(),
+            tiny_f16_1d_gguf(),
+            tiny_f16_1d_bias_gguf(),
             tiny_bf16_gguf(),
             tiny_q2k_gguf(),
             tiny_q3k_gguf(),
