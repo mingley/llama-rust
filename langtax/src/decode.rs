@@ -2,6 +2,9 @@
 //! Official Qwen3 adds per-head QK-Norm (`attn_q_norm` / `attn_k_norm`) before RoPE.
 //! Official Llama4 text (llama.cpp `src/models/llama4.cpp`) adds iRoPE/NoPE, unweighted
 //! QK-Norm after RoPE, and interleaved expert FFN (sigmoid top-k + shared expert).
+//! Official llama MoE (`architecture=llama` with `n_expert>0`) follows
+//! `src/models/llama.cpp` `build_moe_ffn`: softmax, then top-k; SwiGLU weights
+//! after the expert with `norm_w` clamp `2^-14`. No Mixtral architecture.
 
 use crate::gguf::{GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 use crate::quant::{
@@ -48,6 +51,12 @@ const TINY_N_ROT: usize = 64;
 const TINY_N_EXPERT: usize = 2;
 /// Writer-built tiny Llama4 `llama4.expert_used_count` (Scout uses 1).
 const TINY_N_EXPERT_USED: usize = 1;
+/// Writer-built tiny official llama MoE (`llama.expert_count`). Mixtral-shaped: k < n.
+const TINY_LLAMA_N_EXPERT: usize = 4;
+/// Writer-built tiny `llama.expert_used_count` (official Mixtral convert uses 2).
+const TINY_LLAMA_N_EXPERT_USED: usize = 2;
+/// Official `build_moe_ffn` `norm_w` clamp: smallest f16 (`2^-14`).
+const MOE_NORM_W_CLAMP: f32 = 1.0 / 16_384.0;
 /// Official llama.cpp `hparams.n_no_rope_layer_step` default for Llama4 text.
 const LLAMA4_NO_ROPE_LAYER_STEP: usize = 4;
 /// Official Llama4 NoPE temperature floor (`n_attn_temp_floor_scale` = 8192).
@@ -154,6 +163,16 @@ fn reuse_token_embd_as_output(token_embd: &QuantMat) -> QuantMat {
     }
 }
 
+/// Official llama MoE (`build_moe_ffn` SOFTMAX + `norm_w`, no shared expert).
+struct LlamaMoe {
+    gate_inp: QuantMat,
+    gate_exps: QuantMat,
+    up_exps: QuantMat,
+    down_exps: QuantMat,
+    n_expert: usize,
+    n_expert_used: usize,
+}
+
 /// Official Llama4 expert FFN (`build_moe_ffn` SIGMOID + shared expert).
 struct Llama4Moe {
     gate_inp: QuantMat,
@@ -174,10 +193,12 @@ struct DenseFfn {
     down: QuantMat,
 }
 
-/// Dense SwiGLU / Gemma GeGLU, or official Llama4 expert FFN on MoE layers.
+/// Dense SwiGLU / Gemma GeGLU, official llama MoE, or official Llama4 expert FFN.
 enum LayerFfn {
-    /// `ffn_gate` / `ffn_up` / `ffn_down` (llama / qwen2 / mistral / phi3 / gemma / qwen3).
+    /// `ffn_gate` / `ffn_up` / `ffn_down` (dense llama / qwen2 / mistral / phi3 / gemma / qwen3).
     Dense(Box<DenseFfn>),
+    /// Official `llama` MoE (`n_expert>0`): routed `*_exps`, softmax then top-k.
+    LlamaMoe(Box<LlamaMoe>),
     /// Official `llama4` MoE layer: routed `*_exps` + shared `*_shexp`.
     Llama4Moe(Box<Llama4Moe>),
 }
@@ -239,6 +260,7 @@ pub struct KvCache {
 impl Llama {
     /// Build from a loaded GGUF using `{arch}.*` KV (`llama`, `qwen2`, `mistral`,
     /// `phi3`, `gemma`, `qwen3`, or `llama4`) and `blk.{i}.*` tensor names.
+    /// Official llama MoE is still `architecture=llama` with `n_expert>0`.
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
     /// blob; they do not clone tensor bytes. When `output.weight` is absent,
@@ -287,9 +309,20 @@ impl Llama {
         } else {
             None
         };
+        let llama_moe_hparams = if arch == "llama" {
+            load_llama_moe_hparams(&g, arch)?
+        } else {
+            None
+        };
         let mut layers = Vec::new();
         for i in 0..n_layer {
-            layers.push(load_layer(&g, i, qk_norm, llama4_hparams.as_ref())?);
+            layers.push(load_layer(
+                &g,
+                i,
+                qk_norm,
+                llama4_hparams.as_ref(),
+                llama_moe_hparams.as_ref(),
+            )?);
         }
         Ok(Self {
             n_vocab,
@@ -465,6 +498,7 @@ impl Llama {
                     }
                     self.gemm_mat(&dense.down, n, &h)?
                 }
+                LayerFfn::LlamaMoe(moe) => self.llama_moe_rows(moe.as_ref(), n, &x)?,
                 LayerFfn::Llama4Moe(moe) => self.llama4_moe_rows(moe.as_ref(), n, &x)?,
             };
             x = add(&down, &residual)?;
@@ -596,6 +630,7 @@ fn tiny_llama_spec() -> TinySpec {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     }
 }
 
@@ -630,6 +665,7 @@ pub fn tiny_qwen2_gguf() -> Vec<u8> {
         rope_dimension_count: false,
         qkv_bias: true,
         add_bos_token: Some(false),
+        llama_moe: false,
     })
 }
 
@@ -643,6 +679,7 @@ pub fn tiny_mistral_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -656,6 +693,7 @@ pub fn tiny_phi3_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -674,6 +712,7 @@ pub fn tiny_gemma_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -693,6 +732,7 @@ pub fn tiny_qwen3_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: Some(false),
+        llama_moe: false,
     })
 }
 
@@ -714,6 +754,29 @@ pub fn tiny_llama4_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: Some(false),
+        llama_moe: false,
+    })
+}
+
+/// Writer-built official llama MoE GGUF: `architecture=llama` with `n_expert>0`.
+///
+/// Official convert writes MixtralForCausalLM as `general.architecture=llama`
+/// (`MixtralForCausalLM` → `"llama"`). Official `LLM_ARCH_NAMES` has no
+/// `"mixtral"`; `general.architecture=mixtral` is `LLM_ARCH_UNKNOWN`. Decode
+/// follows llama.cpp `src/models/llama.cpp` `build_moe_ffn`: softmax, then
+/// top-k; SwiGLU; weights after the expert with `norm_w` clamp `2^-14`. No
+/// shared expert, iRoPE, QK-Norm, or Mixtral architecture. Dense `llama`
+/// (`n_expert==0`) stays the existing SwiGLU path.
+pub fn tiny_llama_moe_gguf() -> Vec<u8> {
+    tiny_arch_gguf(TinySpec {
+        arch: "llama",
+        token_embd: GgmlType::F32,
+        output: GgmlType::F32,
+        layer: None,
+        rope_dimension_count: true,
+        qkv_bias: false,
+        add_bos_token: None,
+        llama_moe: true,
     })
 }
 
@@ -727,6 +790,7 @@ pub fn tiny_q4k_embd_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -740,6 +804,7 @@ pub fn tiny_q6k_embd_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -756,6 +821,7 @@ pub fn tiny_f16_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -774,6 +840,7 @@ pub fn tiny_f16_1d_gguf() -> Vec<u8> {
             rope_dimension_count: true,
             qkv_bias: false,
             add_bos_token: None,
+            llama_moe: false,
         },
         TinyLmHead::Distinct,
         GgmlType::F16,
@@ -794,6 +861,7 @@ pub fn tiny_f16_1d_bias_gguf() -> Vec<u8> {
             rope_dimension_count: false,
             qkv_bias: true,
             add_bos_token: Some(false),
+            llama_moe: false,
         },
         TinyLmHead::Distinct,
         GgmlType::F16,
@@ -813,6 +881,7 @@ pub fn tiny_bf16_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -828,6 +897,7 @@ pub fn tiny_q2k_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -843,6 +913,7 @@ pub fn tiny_q3k_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -858,6 +929,7 @@ pub fn tiny_q41_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -873,6 +945,7 @@ pub fn tiny_q50_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -888,6 +961,7 @@ pub fn tiny_q51_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -903,6 +977,7 @@ pub fn tiny_mxfp4_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -918,6 +993,7 @@ pub fn tiny_nvfp4_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -933,6 +1009,7 @@ pub fn tiny_q10_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -948,6 +1025,7 @@ pub fn tiny_q20_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -963,6 +1041,7 @@ pub fn tiny_q81_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -978,6 +1057,7 @@ pub fn tiny_tq10_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -993,6 +1073,7 @@ pub fn tiny_tq20_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -1008,6 +1089,7 @@ pub fn tiny_q5k_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -1024,6 +1106,7 @@ pub fn tiny_iq4nl_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -1040,6 +1123,7 @@ pub fn tiny_iq2xxs_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -1056,6 +1140,7 @@ pub fn tiny_iq2xs_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -1072,6 +1157,7 @@ pub fn tiny_iq1s_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -1088,6 +1174,7 @@ pub fn tiny_iq1m_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -1104,6 +1191,7 @@ pub fn tiny_iq2s_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -1120,6 +1208,7 @@ pub fn tiny_iq3xxs_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -1136,6 +1225,7 @@ pub fn tiny_iq3s_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -1152,6 +1242,7 @@ pub fn tiny_iq4xs_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+        llama_moe: false,
     })
 }
 
@@ -1173,6 +1264,8 @@ struct TinySpec {
     rope_dimension_count: bool,
     qkv_bias: bool,
     add_bos_token: Option<bool>,
+    /// Official llama MoE: `architecture=llama` with `n_expert>0` (not a mixtral arch).
+    llama_moe: bool,
 }
 
 /// How the writer emits `output.weight` relative to `token_embd.weight`.
@@ -1345,6 +1438,41 @@ fn tiny_arch_gguf_lm_head_vec1d(spec: TinySpec, lm_head: TinyLmHead, vec1d: Ggml
             n_ff,
             9,
             GgmlType::Q6_K,
+        ));
+    } else if spec.llama_moe {
+        // Official llama.cpp MoE: architecture=llama, *_exps, no shexp, no mixtral arch.
+        tensors.push(tw(
+            "blk.0.ffn_gate_inp.weight",
+            GgmlType::F32,
+            vec![n_embd, TINY_LLAMA_N_EXPERT],
+            pack_mat(GgmlType::F32, n_embd, TINY_LLAMA_N_EXPERT, 14),
+        ));
+        tensors.push(layer_tw_exps(
+            &spec,
+            "blk.0.ffn_gate_exps.weight",
+            n_embd,
+            n_ff,
+            TINY_LLAMA_N_EXPERT,
+            15,
+            GgmlType::Q4_K,
+        ));
+        tensors.push(layer_tw_exps(
+            &spec,
+            "blk.0.ffn_up_exps.weight",
+            n_embd,
+            n_ff,
+            TINY_LLAMA_N_EXPERT,
+            17,
+            GgmlType::Q4_K,
+        ));
+        tensors.push(layer_tw_exps(
+            &spec,
+            "blk.0.ffn_down_exps.weight",
+            n_ff,
+            n_embd,
+            TINY_LLAMA_N_EXPERT,
+            19,
+            GgmlType::Q4_K,
         ));
     } else {
         tensors.push(layer_tw(
@@ -1529,6 +1657,16 @@ fn tiny_kv(spec: &TinySpec) -> Vec<(String, Kv)> {
         kv.push((
             arch_key(arch, "expert_feed_forward_length"),
             Kv::U32(u32::try_from(TINY_N_FF).unwrap_or(0)),
+        ));
+    }
+    if spec.llama_moe {
+        kv.push((
+            arch_key(arch, "expert_count"),
+            Kv::U32(u32::try_from(TINY_LLAMA_N_EXPERT).unwrap_or(0)),
+        ));
+        kv.push((
+            arch_key(arch, "expert_used_count"),
+            Kv::U32(u32::try_from(TINY_LLAMA_N_EXPERT_USED).unwrap_or(0)),
         ));
     }
     kv
@@ -2152,6 +2290,11 @@ fn need<'a>(g: &'a Gguf, name: &str) -> Result<Tensor<'a>, LlamaError> {
         .ok_or_else(|| LlamaError::Tensor(name.to_string()))
 }
 
+struct LlamaMoeHparams {
+    n_expert: usize,
+    n_expert_used: usize,
+}
+
 struct Llama4Hparams {
     n_expert: usize,
     n_expert_used: usize,
@@ -2159,6 +2302,26 @@ struct Llama4Hparams {
     n_moe_layer_step: usize,
     n_no_rope_layer_step: usize,
     use_kq_norm: bool,
+}
+
+/// Official llama.cpp: `n_expert==0` (or missing `llama.expert_count`) is dense.
+fn load_llama_moe_hparams(g: &Gguf, arch: &str) -> Result<Option<LlamaMoeHparams>, LlamaError> {
+    let key = arch_key(arch, "expert_count");
+    let Some(v) = g.kv_u32(&key) else {
+        return Ok(None);
+    };
+    let n_expert = usize::try_from(v).map_err(|_| LlamaError::Shape(key.clone()))?;
+    if n_expert == 0 {
+        return Ok(None);
+    }
+    let n_expert_used = require_usize(g, arch, "expert_used_count")?;
+    if n_expert_used == 0 || n_expert_used > n_expert {
+        return Err(LlamaError::Shape(arch_key(arch, "expert_used_count")));
+    }
+    Ok(Some(LlamaMoeHparams {
+        n_expert,
+        n_expert_used,
+    }))
 }
 
 fn load_llama4_hparams(g: &Gguf, arch: &str, n_layer: usize) -> Result<Llama4Hparams, LlamaError> {
@@ -2211,6 +2374,7 @@ fn load_layer(
     i: usize,
     qk_norm: bool,
     llama4: Option<&Llama4Hparams>,
+    llama_moe: Option<&LlamaMoeHparams>,
 ) -> Result<Layer, LlamaError> {
     let use_rope = match llama4 {
         Some(h) => llama4_use_rope(i, h.n_no_rope_layer_step),
@@ -2220,15 +2384,24 @@ fn load_layer(
         Some(h) => use_rope && h.use_kq_norm,
         None => false,
     };
-    let ffn = match llama4 {
-        Some(h) if llama4_is_moe_layer(i, h.n_moe_layer_step) => {
+    let ffn = if let Some(h) = llama4 {
+        if llama4_is_moe_layer(i, h.n_moe_layer_step) {
             LayerFfn::Llama4Moe(Box::new(load_llama4_moe(g, i, h)?))
+        } else {
+            LayerFfn::Dense(Box::new(DenseFfn {
+                gate: quant_mat(need(g, &format!("blk.{i}.ffn_gate.weight"))?)?,
+                up: quant_mat(need(g, &format!("blk.{i}.ffn_up.weight"))?)?,
+                down: quant_mat(need(g, &format!("blk.{i}.ffn_down.weight"))?)?,
+            }))
         }
-        _ => LayerFfn::Dense(Box::new(DenseFfn {
+    } else if let Some(h) = llama_moe {
+        LayerFfn::LlamaMoe(Box::new(load_llama_moe(g, i, h)?))
+    } else {
+        LayerFfn::Dense(Box::new(DenseFfn {
             gate: quant_mat(need(g, &format!("blk.{i}.ffn_gate.weight"))?)?,
             up: quant_mat(need(g, &format!("blk.{i}.ffn_up.weight"))?)?,
             down: quant_mat(need(g, &format!("blk.{i}.ffn_down.weight"))?)?,
-        })),
+        }))
     };
     Ok(Layer {
         attn_norm: f32s(need(g, &format!("blk.{i}.attn_norm.weight"))?)?,
@@ -2253,6 +2426,36 @@ fn load_layer(
         qk_l2,
         ffn_norm: f32s(need(g, &format!("blk.{i}.ffn_norm.weight"))?)?,
         ffn,
+    })
+}
+
+fn load_llama_moe(g: &Gguf, i: usize, h: &LlamaMoeHparams) -> Result<LlamaMoe, LlamaError> {
+    let gate_inp = quant_mat(need(g, &format!("blk.{i}.ffn_gate_inp.weight"))?)?;
+    let gate_exps = quant_mat(need(g, &format!("blk.{i}.ffn_gate_exps.weight"))?)?;
+    let up_exps = quant_mat(need(g, &format!("blk.{i}.ffn_up_exps.weight"))?)?;
+    let down_exps = quant_mat(need(g, &format!("blk.{i}.ffn_down_exps.weight"))?)?;
+    if gate_inp.n_rows != h.n_expert || gate_inp.n_parts != 1 {
+        return Err(LlamaError::Shape(format!("blk.{i}.ffn_gate_inp.weight")));
+    }
+    for (t, name) in [
+        (&gate_exps, format!("blk.{i}.ffn_gate_exps.weight")),
+        (&up_exps, format!("blk.{i}.ffn_up_exps.weight")),
+        (&down_exps, format!("blk.{i}.ffn_down_exps.weight")),
+    ] {
+        if t.n_parts != h.n_expert {
+            return Err(LlamaError::Shape(name));
+        }
+    }
+    if gate_exps.n_rows != up_exps.n_rows || down_exps.n_cols != up_exps.n_rows {
+        return Err(LlamaError::Shape(format!("blk.{i}.ffn_*_exps.weight")));
+    }
+    Ok(LlamaMoe {
+        gate_inp,
+        gate_exps,
+        up_exps,
+        down_exps,
+        n_expert: h.n_expert,
+        n_expert_used: h.n_expert_used,
     })
 }
 
@@ -2491,6 +2694,68 @@ impl Llama {
             }
         }
         Ok(y)
+    }
+
+    /// Official llama.cpp `build_moe_ffn` for `architecture=llama` + `n_expert>0`:
+    /// softmax over all experts, then top-k; SwiGLU; weights after the expert
+    /// with `norm_w` clamp `2^-14`. No shared expert (Mixtral-shaped).
+    fn llama_moe_rows(
+        &self,
+        moe: &LlamaMoe,
+        n_tokens: usize,
+        x: &[f32],
+    ) -> Result<Vec<f32>, LlamaError> {
+        let n_embd = moe.down_exps.n_rows;
+        if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
+            return Err(LlamaError::Shape("llama moe".into()));
+        }
+        let n_out = n_tokens
+            .checked_mul(n_embd)
+            .ok_or_else(|| LlamaError::Shape("llama moe".into()))?;
+        let mut out = vec![0.0f32; n_out];
+        for t in 0..n_tokens {
+            let xt = token_row(x, t, n_embd, "llama moe x")?;
+            let logits = self.gemv_mat(&moe.gate_inp, xt)?;
+            if logits.len() != moe.n_expert {
+                return Err(LlamaError::Shape("llama ffn_gate_inp".into()));
+            }
+            let mut probs = logits;
+            softmax(&mut probs);
+            let selected = topk_logits(&probs, moe.n_expert_used)?;
+            let mut wsum = 0.0f32;
+            let mut weights = Vec::new();
+            for &e in &selected {
+                let w = probs.get(e).copied().unwrap_or(0.0);
+                weights.push(w);
+                wsum += w;
+            }
+            if wsum < MOE_NORM_W_CLAMP {
+                wsum = MOE_NORM_W_CLAMP;
+            }
+            for w in &mut weights {
+                *w /= wsum;
+            }
+            let off = t.saturating_mul(n_embd);
+            let dst = out
+                .get_mut(off..off.saturating_add(n_embd))
+                .ok_or_else(|| LlamaError::Shape("llama moe out".into()))?;
+            for (e, w) in selected.iter().zip(weights.iter()) {
+                let ge = expert_view(&moe.gate_exps, *e)?;
+                let ue = expert_view(&moe.up_exps, *e)?;
+                let de = expert_view(&moe.down_exps, *e)?;
+                let g = self.gemv_mat(&ge, xt)?;
+                let u = self.gemv_mat(&ue, xt)?;
+                let mut hh = silu(&g)?;
+                for (a, b) in hh.iter_mut().zip(u.iter()) {
+                    *a *= *b;
+                }
+                let y = self.gemv_mat(&de, &hh)?;
+                for (d, v) in dst.iter_mut().zip(y.iter()) {
+                    *d += *v * *w;
+                }
+            }
+        }
+        Ok(out)
     }
 
     /// Official llama4.cpp MoE: top-k on raw router logits, sigmoid weights applied
@@ -2806,7 +3071,7 @@ fn sigmoid_f32(x: f32) -> f32 {
 /// ggml `ggml_argsort_top_k` descending; ties keep the lower index.
 fn topk_logits(logits: &[f32], k: usize) -> Result<Vec<usize>, LlamaError> {
     if k == 0 || k > logits.len() {
-        return Err(LlamaError::Shape("llama4 expert_used_count".into()));
+        return Err(LlamaError::Shape("expert_used_count".into()));
     }
     let mut idx: Vec<usize> = (0..logits.len()).collect();
     idx.sort_by(|&a, &b| {
@@ -4236,6 +4501,60 @@ mod tests {
         oracle_gemv(g.tensor("e").expect("e"), x)
     }
 
+    /// Official llama.cpp `build_moe_ffn` on one token: softmax, then top-k;
+    /// SwiGLU; weights after the expert with `norm_w` clamp `2^-14`.
+    fn oracle_llama_moe(g: &Gguf, xn: &[f32]) -> Vec<f32> {
+        let n_expert = arch_u32(g, "llama", "expert_count").unwrap() as usize;
+        let n_used = arch_u32(g, "llama", "expert_used_count").unwrap() as usize;
+        let logits = oracle_gemv(g.tensor("blk.0.ffn_gate_inp.weight").unwrap(), xn);
+        assert_eq!(logits.len(), n_expert);
+        let m = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let mut probs: Vec<f32> = logits.iter().map(|v| (v - m).exp()).collect();
+        let z: f32 = probs.iter().sum();
+        if z > 0.0 {
+            for p in &mut probs {
+                *p /= z;
+            }
+        }
+        let mut idx: Vec<usize> = (0..n_expert).collect();
+        idx.sort_by(|&a, &b| match probs[b].partial_cmp(&probs[a]) {
+            Some(core::cmp::Ordering::Equal) | None => a.cmp(&b),
+            Some(ord) => ord,
+        });
+        idx.truncate(n_used);
+        let mut wsum = 0.0f32;
+        let mut weights = Vec::new();
+        for &e in &idx {
+            let w = probs[e];
+            weights.push(w);
+            wsum += w;
+        }
+        if wsum < MOE_NORM_W_CLAMP {
+            wsum = MOE_NORM_W_CLAMP;
+        }
+        for w in &mut weights {
+            *w /= wsum;
+        }
+        let gate_exps = g.tensor("blk.0.ffn_gate_exps.weight").unwrap();
+        let up_exps = g.tensor("blk.0.ffn_up_exps.weight").unwrap();
+        let down_exps = g.tensor("blk.0.ffn_down_exps.weight").unwrap();
+        let mut routed = vec![0.0f32; xn.len()];
+        for (e, w) in idx.iter().zip(weights.iter()) {
+            let gate = oracle_gemv_expert(gate_exps, *e, xn);
+            let up = oracle_gemv_expert(up_exps, *e, xn);
+            let h: Vec<f32> = gate
+                .iter()
+                .zip(up.iter())
+                .map(|(gv, u)| (gv / (1.0 + (-gv).exp())) * u)
+                .collect();
+            let y = oracle_gemv_expert(down_exps, *e, &h);
+            for (o, v) in routed.iter_mut().zip(y.iter()) {
+                *o += *v * *w;
+            }
+        }
+        routed
+    }
+
     /// Official llama4.cpp MoE on one token: top-k raw logits, sigmoid weight
     /// before SwiGLU, plus shared expert.
     fn oracle_llama4_moe(g: &Gguf, xn: &[f32]) -> Vec<f32> {
@@ -4434,8 +4753,11 @@ mod tests {
             x = x.iter().zip(residual.iter()).map(|(a, b)| a + b).collect();
             let fnorm = f32s(g.tensor("blk.0.ffn_norm.weight").unwrap()).unwrap();
             let xn = oracle_rmsnorm(&x, &fnorm, eps);
+            let llama_moe = arch == "llama" && arch_u32(g, arch, "expert_count").unwrap_or(0) > 0;
             let down = if llama4 {
                 oracle_llama4_moe(g, &xn)
+            } else if llama_moe {
+                oracle_llama_moe(g, &xn)
             } else {
                 let gate = oracle_gemv(g.tensor("blk.0.ffn_gate.weight").unwrap(), &xn);
                 let up = oracle_gemv(g.tensor("blk.0.ffn_up.weight").unwrap(), &xn);
@@ -5221,6 +5543,7 @@ mod tests {
             tiny_gemma_gguf(),
             tiny_qwen3_gguf(),
             tiny_llama4_gguf(),
+            tiny_llama_moe_gguf(),
         ] {
             load_prefill_match(&bytes, &tokens);
             load_prefill_match(&bytes, &[3]);
@@ -5444,6 +5767,89 @@ mod tests {
         assert_ne!(
             llama4_pref, llama_pref,
             "llama4 iRoPE/QK-L2/expert FFN must change multi-token logits vs llama"
+        );
+    }
+
+    #[test]
+    fn tiny_llama_moe_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_llama_moe_gguf();
+        let g = load_gguf(&bytes).expect("load llama moe");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("llama".into()))
+        );
+        assert_eq!(g.kv_u32("llama.block_count"), Some(1));
+        assert_eq!(g.kv_u32("llama.embedding_length"), Some(256));
+        assert_eq!(g.kv_u32("llama.feed_forward_length"), Some(256));
+        assert_eq!(g.kv_u32("llama.attention.head_count"), Some(4));
+        assert_eq!(g.kv_u32("llama.attention.head_count_kv"), Some(2));
+        assert_eq!(g.kv_u32("llama.expert_count"), Some(4));
+        assert_eq!(g.kv_u32("llama.expert_used_count"), Some(2));
+        assert!(g.kv_u32("llama.expert_feed_forward_length").is_none());
+        assert!(g.kv_u32("llama.interleave_moe_layer_step").is_none());
+        assert!(g.kv_u32("mixtral.block_count").is_none());
+        assert!(g.kv_u32("mixtral.expert_count").is_none());
+        assert!(g.tensor("blk.0.attn_q_norm.weight").is_none());
+        assert!(g.tensor("blk.0.attn_k_norm.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_gate.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_up.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_down.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_gate_inp.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_gate_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_up_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_down_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_gate_shexp.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_up_shexp.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_down_shexp.weight").is_none());
+        assert_eq!(
+            g.tensor("blk.0.ffn_gate_exps.weight").unwrap().shape,
+            &[256, 256, 4]
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("output.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        let mut x2 = pat_f32(TINY_N_EMBD, 22);
+        x2.extend(pat_f32(TINY_N_EMBD, 23));
+        let got_gemm = model.gemm_output(2, &x2).expect("gemm");
+        let llama_bytes = tiny_llama_gguf();
+        let llama_g = load_gguf(&llama_bytes).expect("llama");
+        let llama_m = Llama::from_gguf(llama_g).expect("llama m");
+        let llama_gemm = llama_m.gemm_output(2, &x2).expect("llama gemm");
+        assert_logits_match(&got_gemm, &llama_gemm);
+        let emb = model.embed_token(3).expect("embed");
+        let exp_emb = oracle_embed(g.tensor("token_embd.weight").unwrap(), 3);
+        assert_logits_match(&emb, &exp_emb);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        let tokens = [1u32, 2, 3];
+        let llama_pref = {
+            let lg = load_gguf(&llama_bytes).expect("llama reload");
+            let lm = Llama::from_gguf(lg).expect("lm");
+            let mut c = lm.new_cache(8).expect("c");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        let mut mc = model.new_cache(8).expect("mc");
+        let moe_pref = model.prefill(&mut mc, &tokens).expect("llama moe pref");
+        assert_ne!(
+            moe_pref, llama_pref,
+            "llama MoE softmax/top-k/norm_w must change logits vs dense llama"
+        );
+        let llama4_pref = {
+            let l4 = load_gguf(&tiny_llama4_gguf()).expect("llama4");
+            let m4 = Llama::from_gguf(l4).expect("m4");
+            let mut c = m4.new_cache(8).expect("c4");
+            m4.prefill(&mut c, &tokens).expect("llama4 pref")
+        };
+        assert_ne!(
+            moe_pref, llama4_pref,
+            "official llama MoE must not copy Llama4 sigmoid/shared-expert"
         );
     }
 
@@ -5680,6 +6086,7 @@ mod tests {
                 rope_dimension_count: true,
                 qkv_bias: false,
                 add_bos_token: None,
+                llama_moe: false,
             }),
             &[tw(
                 "token_embd.weight",
