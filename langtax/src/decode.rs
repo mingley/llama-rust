@@ -342,6 +342,11 @@ impl Llama {
             return Err(LlamaError::Shape(arch_key(arch, "attention.head_count_kv")));
         }
         let n_rot = rope_dimension(&g, arch, n_embd, n_head)?;
+        let rope_sections = if arch == "qwen2vl" {
+            Some(load_qwen2vl_rope_sections(&g, arch)?)
+        } else {
+            None
+        };
         let n_vocab = g
             .tensor("token_embd.weight")
             .map(|t| t.n_rows())
@@ -376,11 +381,6 @@ impl Llama {
         };
         let qwen3moe_hparams = if arch == "qwen3moe" {
             Some(load_qwen3moe_hparams(&g, arch)?)
-        } else {
-            None
-        };
-        let rope_sections = if arch == "qwen2vl" {
-            Some(load_qwen2vl_rope_sections(&g, arch)?)
         } else {
             None
         };
@@ -3808,7 +3808,7 @@ fn apply_rope(
 ) -> Result<(), LlamaError> {
     if let Some(sections) = sections {
         // Official `llama-graph.cpp` text tokens: `[t,h,w,e] = [p,p,p,0]`.
-        rope_multi(vec, pos, pos, pos, 0, n_rot, base, sections)
+        rope_multi(vec, [pos, pos, pos, 0], n_rot, base, sections)
     } else {
         rope(vec, pos, n_rot, base)
     }
@@ -3816,12 +3816,10 @@ fn apply_rope(
 
 /// Official `ggml_compute_forward_rope_flt` `GGML_ROPE_TYPE_MROPE`:
 /// `ggml_mrope_cache_init` (not IMROPE, not VISION) + NEOX `rotate_pairs`.
+/// `pos` is `[t, h, w, e]` (`n_pos_per_token=4`).
 fn rope_multi(
     vec: &mut [f32],
-    pos_t: usize,
-    pos_h: usize,
-    pos_w: usize,
-    pos_e: usize,
+    pos: [usize; 4],
     n_rot: usize,
     base: f32,
     sections: [i32; 4],
@@ -3830,9 +3828,21 @@ fn rope_multi(
     if n < 2 {
         return Ok(());
     }
-    if n % 2 != 0 {
+    if !n.is_multiple_of(2) {
         return Err(LlamaError::Shape("qwen2vl rope.dimension_count".into()));
     }
+    let pos_t = *pos
+        .first()
+        .ok_or_else(|| LlamaError::Shape("qwen2vl n_pos_per_token".into()))?;
+    let pos_h = *pos
+        .get(1)
+        .ok_or_else(|| LlamaError::Shape("qwen2vl n_pos_per_token".into()))?;
+    let pos_w = *pos
+        .get(2)
+        .ok_or_else(|| LlamaError::Shape("qwen2vl n_pos_per_token".into()))?;
+    let pos_e = *pos
+        .get(3)
+        .ok_or_else(|| LlamaError::Shape("qwen2vl n_pos_per_token".into()))?;
     let s0 = *sections
         .first()
         .ok_or_else(|| LlamaError::Shape("qwen2vl rope.dimension_sections".into()))?;
@@ -5445,16 +5455,13 @@ mod tests {
     /// Independent scalar of official `ggml_rope_multi` / `GGML_ROPE_TYPE_MROPE`.
     fn oracle_rope_multi(
         mut v: Vec<f32>,
-        pos_t: usize,
-        pos_h: usize,
-        pos_w: usize,
-        pos_e: usize,
+        pos: [usize; 4],
         n_rot: usize,
         base: f32,
         sections: [i32; 4],
     ) -> Vec<f32> {
         let n = n_rot.min(v.len());
-        if n < 2 || n % 2 != 0 {
+        if n < 2 || !n.is_multiple_of(2) {
             return v;
         }
         let s0 = sections[0];
@@ -5465,18 +5472,22 @@ mod tests {
         if sect_dims <= 0 {
             return v;
         }
-        let sect_dims_us = sect_dims as usize;
+        let Ok(sect_dims_us) = usize::try_from(sect_dims) else {
+            return v;
+        };
         let sec_w = s0 + s1;
         let n_offset = n / 2;
         let theta_scale = base.powf(-2.0 / n_rot as f32);
-        let mut theta_t = pos_t as f32;
-        let mut theta_h = pos_h as f32;
-        let mut theta_w = pos_w as f32;
-        let mut theta_e = pos_e as f32;
+        let mut theta_t = pos[0] as f32;
+        let mut theta_h = pos[1] as f32;
+        let mut theta_w = pos[2] as f32;
+        let mut theta_e = pos[3] as f32;
         let mut i0 = 0usize;
         while i0 + 1 < n {
             let ic = i0 / 2;
-            let sector = (ic % sect_dims_us) as i32;
+            let Ok(sector) = i32::try_from(ic % sect_dims_us) else {
+                return v;
+            };
             let theta = if sector >= s0 && sector < sec_w {
                 theta_h
             } else if sector >= sec_w && sector < sec_w + s2 {
@@ -5589,13 +5600,13 @@ mod tests {
                 };
                 for h in &mut qh {
                     *h = match sections {
-                        Some(s) => oracle_rope_multi(h.clone(), pos, pos, pos, 0, n_rot, base, s),
+                        Some(s) => oracle_rope_multi(h.clone(), [pos, pos, pos, 0], n_rot, base, s),
                         None => oracle_rope(h.clone(), pos, n_rot, base),
                     };
                 }
                 for h in &mut kh {
                     *h = match sections {
-                        Some(s) => oracle_rope_multi(h.clone(), pos, pos, pos, 0, n_rot, base, s),
+                        Some(s) => oracle_rope_multi(h.clone(), [pos, pos, pos, 0], n_rot, base, s),
                         None => oracle_rope(h.clone(), pos, n_rot, base),
                     };
                 }
@@ -6946,19 +6957,13 @@ mod tests {
         let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
         assert_eq!(out, out2);
         assert!(!out.is_empty());
-        let qwen2_fwd = {
+        let tokens = [1u32, 2, 3];
+        let qwen2_pref = {
             let qg = load_gguf(&qwen2_bytes).expect("qwen2 reload");
             let qm = Llama::from_gguf(qg).expect("qm");
-            let mut c = qm.new_cache(4).expect("c");
-            qm.forward(&mut c, 3).expect("qwen2 fwd")
+            let mut c = qm.new_cache(8).expect("c");
+            qm.prefill(&mut c, &tokens).expect("qwen2 pref")
         };
-        let mut vc = model.new_cache(4).expect("vc");
-        let qwen2vl_fwd = model.forward(&mut vc, 3).expect("qwen2vl fwd");
-        assert_ne!(
-            qwen2vl_fwd, qwen2_fwd,
-            "qwen2vl m-RoPE must change logits vs qwen2 adjacent-pair RoPE"
-        );
-        let tokens = [1u32, 2, 3];
         let qwen3_pref = {
             let q3 = load_gguf(&tiny_qwen3_gguf()).expect("qwen3");
             let m3 = Llama::from_gguf(q3).expect("m3");
@@ -6967,6 +6972,10 @@ mod tests {
         };
         let mut qc = model.new_cache(8).expect("qc");
         let qwen2vl_pref = model.prefill(&mut qc, &tokens).expect("qwen2vl pref");
+        assert_ne!(
+            qwen2vl_pref, qwen2_pref,
+            "qwen2vl m-RoPE must change multi-token logits vs qwen2 adjacent-pair RoPE"
+        );
         assert_ne!(
             qwen2vl_pref, qwen3_pref,
             "qwen2vl must not copy qwen3 QK-Norm"
