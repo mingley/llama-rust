@@ -3,6 +3,13 @@
 version = 4
 
 [[package]]
+name = "expertvm"
+version = "0.1.0"
+dependencies = [
+ "gpu-sim",
+]
+
+[[package]]
 name = "gpu-sim"
 version = "0.1.0"
 
