@@ -15,7 +15,10 @@ mod template;
 mod tok;
 mod ucd;
 
-pub use cli::{parse_infer_args, InferArgs, InferCmd, BIN_USAGE, INFER_USAGE};
+pub use cli::{
+    parse_chat_args, parse_infer_args, run_chat, ChatArgs, ChatCmd, InferArgs, InferCmd, BIN_USAGE,
+    CHAT_USAGE, INFER_USAGE,
+};
 pub use decode::{
     generate, generate_ctx, greedy_generate, greedy_generate_ctx, tiny_bf16_gguf,
     tiny_f16_1d_bias_gguf, tiny_f16_1d_gguf, tiny_f16_gguf, tiny_gemma_gguf, tiny_iq1m_gguf,

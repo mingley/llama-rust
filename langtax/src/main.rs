@@ -8,10 +8,10 @@ use std::time::Instant;
 
 use llama_rust::{
     gemv_q4_k, gemv_q8_0, greedy_generate_ctx, load_gguf_owned, pack_q4_k_block, pack_q8_0_block,
-    pack_q8_k_block, parse_infer_args, parse_serve_args, run_serve, tiny_gemma_gguf,
-    tiny_llama4_gguf, tiny_llama_gguf, tiny_qwen2_gguf, tiny_qwen3_gguf, write_gguf,
-    write_gguf_with_kv, GgmlType, InferArgs, InferCmd, Kv, Llama, ServeCmd, TensorWrite, Tokenizer,
-    BIN_USAGE, INFER_USAGE, QK8_0, QK_K, SERVE_USAGE,
+    pack_q8_k_block, parse_chat_args, parse_infer_args, parse_serve_args, run_chat, run_serve,
+    tiny_gemma_gguf, tiny_llama4_gguf, tiny_llama_gguf, tiny_qwen2_gguf, tiny_qwen3_gguf,
+    write_gguf, write_gguf_with_kv, ChatCmd, GgmlType, InferArgs, InferCmd, Kv, Llama, ServeCmd,
+    TensorWrite, Tokenizer, BIN_USAGE, CHAT_USAGE, INFER_USAGE, QK8_0, QK_K, SERVE_USAGE,
 };
 
 fn y_checksum(y: &[f32]) -> u64 {
@@ -295,6 +295,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(())
             }
             InferCmd::Run(opts) => infer_file(&opts),
+        },
+        "chat" => match parse_chat_args(args)? {
+            ChatCmd::Help => {
+                print!("{CHAT_USAGE}");
+                Ok(())
+            }
+            ChatCmd::Run(opts) => run_chat(&opts),
         },
         "serve" => match parse_serve_args(args)? {
             ServeCmd::Help => {
