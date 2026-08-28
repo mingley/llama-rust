@@ -1,8 +1,9 @@
 # STATUS
 
 Live research plan: [PLAN.md](PLAN.md).
-Full ChatGPT share extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6a920fe1.md).
-Work lands on `main`.
+Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6a920fe1.md).
+Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
+Work lands on `main`. No PRs.
 
 `llama-rust` is the correctness laboratory (GGUF math, oracle + llama.cpp
 greedy). Next high-signal layer is MoE access traces → `ExpertStore` →

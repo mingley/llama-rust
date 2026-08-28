@@ -1,8 +1,12 @@
-# ChatGPT share extract
+# ChatGPT share extract (visible HTML)
 
 Source: https://chatgpt.com/share/6a920fe1-48ac-83ea-9404-7f4c1062c17e  
-Fetched 2026-08-28. Five user turns, five assistant replies. This is the full
-conversation text as retrieved from the public share, not a summary.
+Fetched 2026-08-28. The share **was reachable**. This file is the five user
+turns and five assistant replies as shown on the public HTML page.
+
+The complete share-API extract (search batches, thought summaries, cited
+URLs, raw JSON) is in [`chatgpt-share-6a920fe1/`](chatgpt-share-6a920fe1/).
+Plugin/tool result bodies are redacted in ChatGPT’s share payload.
 
 The executable plan derived from this transcript is [`PLAN.md`](../PLAN.md).
 

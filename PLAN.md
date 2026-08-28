@@ -1,8 +1,13 @@
 # Plan: cheap mid-tier serving, `llama-rust` as the lab
 
-Derived from the full ChatGPT share
-[https://chatgpt.com/share/6a920fe1-48ac-83ea-9404-7f4c1062c17e](https://chatgpt.com/share/6a920fe1-48ac-83ea-9404-7f4c1062c17e)
-(verbatim extract: [`docs/chatgpt-share-6a920fe1.md`](docs/chatgpt-share-6a920fe1.md)).
+Derived from the ChatGPT share
+[https://chatgpt.com/share/6a920fe1-48ac-83ea-9404-7f4c1062c17e](https://chatgpt.com/share/6a920fe1-48ac-83ea-9404-7f4c1062c17e).
+
+The share **was reachable**. Visible five-turn HTML:
+[`docs/chatgpt-share-6a920fe1.md`](docs/chatgpt-share-6a920fe1.md).
+Complete share-API extract (searches, thought summaries, sources, raw JSON):
+[`docs/chatgpt-share-6a920fe1/`](docs/chatgpt-share-6a920fe1/).
+Plugin result bodies are redacted in the share; custom instructions were not included.
 
 Work lands on `main`. No open PRs.
 
@@ -484,15 +489,15 @@ model, do not celebrate the sim.
 
 ## Immediate next commits on `main`
 
-1. This document + the share extract.
-2. Finish landing chat-template/tokenizer and the public API onto `main`
-   (currently leftover branches; no new PRs).
-3. Rewrite README/STATUS to the verifiable-reference positioning, with
+1. [x] This document + the visible share extract.
+2. [x] Complete share-API extract (transcript, searches, sources, raw JSON).
+3. Finish landing leftover public-API work onto `main` (no new PRs).
+4. Rewrite README/STATUS to the verifiable-reference positioning, with
    this plan linked.
-4. MoE `ExpertAccess` trace emission behind a test/bin flag.
-5. `ExpertStore` trait + `DirectStore` (identity) + `CachedStore` on
+5. MoE `ExpertAccess` trace emission behind a test/bin flag.
+6. `ExpertStore` trait + `DirectStore` (identity) + `CachedStore` on
    writer-built Qwen3MoE.
-6. Skeleton `gpu-sim-rs` in-tree or as a workspace crate: streams,
+7. Skeleton `gpu-sim-rs` in-tree or as a workspace crate: streams,
    events, HBM capacity, memcpy ops, the lease state machine, virtual
    clock. No CUDA.
 
@@ -516,3 +521,15 @@ Researchers can:
 That is the company-shaped outcome. `llama-rust` remains the
 verifiable, hackable reference engine. `expertvm` is the OSS primitive.
 `gpu-sim-rs` is how fleets of agents work on it anyway.
+
+---
+
+## Source conversation turns
+
+| Turn | User | Conclusion kept in this plan |
+| --- | --- | --- |
+| 1 | What Rust OSS libs for cheap mid-tier / GLM-5.3-Flash serving? | Nine-crate stack. Do not build another ML framework. Independent primitives. |
+| 2 | Which one actually fills a void? | Not a broad `moe-runtime`. **`expertvm`**: dynamic expert residency / weight virtualization. |
+| 3 | How does that relate to `mingley/llama-rust`? | This repo = semantics + correctness lab. `expertvm` = physical location of weights. Do not merge into a serving monster. |
+| 4 | Simulate without an expensive GPU? | Yes. ~70–80% of the policy question is CPU traces + a store/simulator. GPU is for proving economics. |
+| 5 | Synthetic high-demand GPU with mechanical invariants for GPU-less agents | **`gpu-sim-rs`**: exact systems semantics, calibrated timing, discrete event. `expertvm` is the first app. |
