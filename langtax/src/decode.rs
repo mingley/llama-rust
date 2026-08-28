@@ -4780,17 +4780,21 @@ mod tests {
         let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
         assert_eq!(out, out2);
         assert!(!out.is_empty());
-        let llama_fwd = {
+        // Seq-1 GEMV: softmax of one score is 1, V is un-normed, so QK-Norm
+        // cannot change that step. Prefill over several tokens does: per-key
+        // K RMS reweights scores (official Qwen3 walk vs llama/qwen2).
+        let tokens = [1u32, 2, 3];
+        let llama_pref = {
             let lg = load_gguf(&llama_bytes).expect("llama reload");
             let lm = Llama::from_gguf(lg).expect("lm");
-            let mut c = lm.new_cache(4).expect("c");
-            lm.forward(&mut c, 3).expect("llama fwd")
+            let mut c = lm.new_cache(8).expect("c");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
         };
-        let mut qc = model.new_cache(4).expect("qc");
-        let qwen3_fwd = model.forward(&mut qc, 3).expect("qwen3 fwd");
+        let mut qc = model.new_cache(8).expect("qc");
+        let qwen3_pref = model.prefill(&mut qc, &tokens).expect("qwen3 pref");
         assert_ne!(
-            qwen3_fwd, llama_fwd,
-            "qwen3 QK-Norm must change logits vs llama on the same tiny weights"
+            qwen3_pref, llama_pref,
+            "qwen3 QK-Norm must change multi-token logits vs llama on the same tiny weights"
         );
     }
 
