@@ -73,9 +73,21 @@ jobs:
         run: >
           cargo miri test --lib --all-features --
           --test-threads=1 --nocapture simd::tests::dispatch_engages
-          2>&1 | tee /dev/stderr | grep -q 'f32=false .* q8_0=false'
+          2>&1 | tee /dev/stderr
+          | grep -q 'simd dispatch: f32=false .* q8_0=false$'
         env:
           MIRIFLAGS: -Zmiri-strict-provenance
+      # The other half: with the flag, every selector must engage. Run on its
+      # own so the check is a few seconds rather than grepping the long run.
+      - name: dispatch engages with forced target features
+        run: >
+          cargo miri test --lib --all-features --
+          --test-threads=1 --nocapture simd::tests::dispatch_engages
+          2>&1 | tee /dev/stderr
+          | grep -q 'simd dispatch: f32=true .* q8_0=true$'
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance
+          RUSTFLAGS: -C target-feature=+avx2,+fma,+f16c
       - name: kernels under Miri
         run: >
           cargo miri test --lib --all-features -- --test-threads=1 simd::tests::
