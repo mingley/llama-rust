@@ -5675,34 +5675,42 @@ mod tests {
     /// A steady-state decode step must not touch the allocator. `unsafe impl
     /// GlobalAlloc` is not available under `#![forbid(unsafe_code)]`, so this
     /// checks the observable consequence instead: every reused buffer keeps its
-    /// address and capacity, i.e. no `Vec` in the cache or its scratch grows or
-    /// moves. The tiny fixtures cover the dense, GeGLU, QK-norm and MoE walks.
+    /// address and capacity, i.e. no `Vec` in the cache, its scratch or its
+    /// pool grows or moves. A changed buffer count fails the same comparison.
+    ///
+    /// [`Llama::forward_logits`] is the entry point under test.
+    /// [`Llama::forward`] copies the logits into a fresh `Vec` by definition,
+    /// so it can never be allocation-free.
+    ///
+    /// The tiny fixtures cover the dense, GeGLU, QK-norm and MoE walks; the
+    /// forced-pool pass covers the pool's input staging and spare buffers,
+    /// which the fixtures are otherwise too small to reach.
     #[test]
     fn steady_state_decode_never_regrows_a_buffer() {
-        for (name, bytes) in [
-            ("llama", tiny_llama_gguf()),
-            ("gemma", tiny_gemma_gguf()),
-            ("qwen3", tiny_qwen3_gguf()),
-            ("llama4", tiny_llama4_gguf()),
-        ] {
-            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("model");
+        /// One step through the borrowed-logits path, dropping the borrow so
+        /// the caller can inspect the cache again.
+        fn step(model: &Llama, cache: &mut KvCache, tok: u32) {
+            let logits = model.forward_logits(cache, tok).expect("forward");
+            assert!(!logits.is_empty(), "empty logits");
+        }
+        fn check(name: &str, model: &Llama) {
             let mut cache = model.new_cache(64).expect("cache");
             // Warm up: a 3-token prefill plus one decode step sizes every buffer.
             let _ = model.prefill(&mut cache, &[1, 3, 2]).expect("prefill");
-            let _ = model.forward(&mut cache, 1).expect("warmup");
+            step(model, &mut cache, 1);
             let before = Llama::cache_buffer_ids(&cache);
-            for step in 0..40u32 {
-                let _ = model.forward(&mut cache, step % 4).expect("forward");
+            for s in 0..40u32 {
+                step(model, &mut cache, s % 4);
                 assert_eq!(
                     Llama::cache_buffer_ids(&cache),
                     before,
-                    "{name}: decode step {step} reallocated a buffer"
+                    "{name}: decode step {s} reallocated a buffer"
                 );
             }
             // A prefill wider than the warmup does grow the buffers once, and
             // then the following decode steps must be steady again.
             let mut cache = model.new_cache(64).expect("cache");
-            let _ = model.forward(&mut cache, 1).expect("warmup");
+            step(model, &mut cache, 1);
             let narrow = Llama::cache_buffer_ids(&cache);
             let _ = model.prefill(&mut cache, &[1, 3, 2, 1, 3]).expect("wide");
             assert_ne!(
@@ -5711,14 +5719,24 @@ mod tests {
                 "{name}: a 5-token prefill after a 1-token warmup should grow"
             );
             let grown = Llama::cache_buffer_ids(&cache);
-            for step in 0..8u32 {
-                let _ = model.forward(&mut cache, step % 4).expect("forward");
+            for s in 0..8u32 {
+                step(model, &mut cache, s % 4);
                 assert_eq!(
                     Llama::cache_buffer_ids(&cache),
                     grown,
-                    "{name}: decode after prefill reallocated at step {step}"
+                    "{name}: decode after prefill reallocated at step {s}"
                 );
             }
+        }
+        for (name, bytes) in [
+            ("llama", tiny_llama_gguf()),
+            ("gemma", tiny_gemma_gguf()),
+            ("qwen3", tiny_qwen3_gguf()),
+            ("llama4", tiny_llama4_gguf()),
+        ] {
+            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("model");
+            check(name, &model);
+            with_forced_pool(|| check(&format!("{name} pooled"), &model));
         }
     }
 
