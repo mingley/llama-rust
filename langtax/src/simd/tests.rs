@@ -210,14 +210,20 @@ fn dispatch_engages_on_this_host() {
     {
         let have = std::arch::is_x86_feature_detected!("avx2")
             && std::arch::is_x86_feature_detected!("fma");
+        let have_f16c = have && std::arch::is_x86_feature_detected!("f16c");
         assert_eq!(f32k.is_some(), have, "F32 dispatch disagrees with AVX2+FMA");
         assert_eq!(q4k.is_some(), have, "Q4_K dispatch disagrees with AVX2+FMA");
         assert_eq!(q6k.is_some(), have, "Q6_K dispatch disagrees with AVX2+FMA");
-        assert_eq!(q8k.is_some(), have, "Q8_0 dispatch disagrees with AVX2+FMA");
         assert_eq!(
             f16k.is_some(),
-            have && std::arch::is_x86_feature_detected!("f16c"),
+            have_f16c,
             "F16 dispatch disagrees with AVX2+FMA+F16C"
+        );
+        // Q8_0 converts its block scales with `VCVTPH2PS` too.
+        assert_eq!(
+            q8k.is_some(),
+            have_f16c,
+            "Q8_0 dispatch disagrees with AVX2+FMA+F16C"
         );
     }
     #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
@@ -654,6 +660,46 @@ fn q8_0_is_bit_identical_to_scalar() {
     }
 }
 
+/// Q8_0 decodes its two block scales in hardware rather than through
+/// [`f16_to_f32`], which is the difference between a 1.2x and a 2.6x kernel.
+/// That shortcut is only sound if the hardware agrees on every pattern, so
+/// every finite binary16 is used as a scale here, on both sides of the product.
+#[test]
+fn q8_0_block_scales_are_bit_identical_for_all_finite_patterns() {
+    let Some(simd) = q8_0_row_dot() else { return };
+    let mut state = 0x5eed_8f16_u64;
+    let mut qs = [0i8; QK8_0];
+    for q in &mut qs {
+        *q = rand_i8(&mut state);
+    }
+    // A fixed second scale of 1.0 keeps the product equal to the swept one, so
+    // the sweep is not masked by a zero or infinite partner.
+    let one = pack_q8_0_block(1.0, &qs);
+    for bits in 0u16..=u16::MAX {
+        if bits & 0x7c00 == 0x7c00 {
+            continue;
+        }
+        let scaled = pack_q8_0_scale_bits(bits, &qs);
+        for (row, x) in [(&scaled, &one), (&one, &scaled)] {
+            assert_eq!(
+                simd(row, x).to_bits(),
+                sc::q8_0_row(row, x).to_bits(),
+                "q8_0 scale {bits:#06x}"
+            );
+        }
+    }
+}
+
+/// A Q8_0 block with a literal binary16 scale, which `pack_q8_0_block` cannot
+/// produce: it takes an `f32` and rounds, so subnormal scales flush to zero.
+fn pack_q8_0_scale_bits(scale: u16, qs: &[i8; QK8_0]) -> [u8; Q8_0_BLOCK] {
+    let mut block = pack_q8_0_block(1.0, qs);
+    if let Some(slot) = block.get_mut(..2) {
+        slot.copy_from_slice(&scale.to_le_bytes());
+    }
+    block
+}
+
 /// `i8::MIN` is the one input where `-x` overflows and where a saturating
 /// multiply-accumulate (`_mm256_maddubs_epi16` and friends) would go wrong.
 /// Both extremes are pinned here, in every position of a block.
@@ -976,6 +1022,189 @@ fn gemv_entry_points_match_row_scalars() {
             y.get(r).copied().unwrap_or(f32::NAN).to_bits(),
             sc::q8_0_row(row, &x8).to_bits(),
             "gemv_q8_0 row {r} is not bit-identical"
+        );
+    }
+}
+
+// ------------------------------------------------- throughput
+
+/// Rows and columns per benchmarked GEMV. Matches the M=K=4096 point the
+/// repository already has scalar and Metal numbers for.
+const BENCH_N: usize = 4096;
+
+/// Timed sweeps per kernel, after one untimed warm-up sweep.
+const BENCH_SWEEPS: usize = 4;
+
+/// `usize` as `f64`, exact for every count here and free of a lossy cast.
+fn as_f64(n: usize) -> f64 {
+    let hi = u32::try_from(n >> 32).unwrap_or(u32::MAX);
+    let lo = u32::try_from(n & 0xffff_ffff).unwrap_or(0);
+    f64::from(hi) * 4_294_967_296.0 + f64::from(lo)
+}
+
+/// One weight matrix laid out exactly as `gemv_*` sees it: `n_rows` rows of
+/// `row_bytes` contiguous bytes in a single blob.
+struct BenchMat {
+    w: Vec<u8>,
+    row_bytes: usize,
+    n_rows: usize,
+}
+
+impl BenchMat {
+    fn row(&self, r: usize) -> &[u8] {
+        let start = r * self.row_bytes;
+        self.w.get(start..start + self.row_bytes).unwrap_or(&[])
+    }
+
+    /// Bytes of weight touched by `BENCH_SWEEPS` sweeps.
+    fn swept_bytes(&self) -> f64 {
+        as_f64(self.row_bytes) * as_f64(self.n_rows) * as_f64(BENCH_SWEEPS)
+    }
+}
+
+/// Time `BENCH_SWEEPS` GEMV sweeps. The accumulator is returned so the whole
+/// loop cannot be optimized away.
+fn time_f32(dot: fn(&[u8], &[f32]) -> f32, m: &BenchMat, x: &[f32]) -> (f64, f32) {
+    let mut acc = 0.0f32;
+    for r in 0..m.n_rows {
+        acc += dot(m.row(r), x);
+    }
+    let t0 = std::time::Instant::now();
+    for _ in 0..BENCH_SWEEPS {
+        for r in 0..m.n_rows {
+            acc += dot(m.row(r), x);
+        }
+    }
+    (t0.elapsed().as_secs_f64(), acc)
+}
+
+/// As [`time_f32`], for the Q8_0-activation kernel.
+fn time_q8(dot: fn(&[u8], &[u8]) -> f32, m: &BenchMat, x: &[u8]) -> (f64, f32) {
+    let mut acc = 0.0f32;
+    for r in 0..m.n_rows {
+        acc += dot(m.row(r), x);
+    }
+    let t0 = std::time::Instant::now();
+    for _ in 0..BENCH_SWEEPS {
+        for r in 0..m.n_rows {
+            acc += dot(m.row(r), x);
+        }
+    }
+    (t0.elapsed().as_secs_f64(), acc)
+}
+
+/// One line per kernel: GEMV rate, weight bandwidth and the speedup.
+fn report_bench(kind: &str, m: &BenchMat, scalar: (f64, f32), simd: (f64, f32)) {
+    let sweeps = as_f64(BENCH_SWEEPS);
+    let rate = |secs: f64| if secs > 0.0 { sweeps / secs } else { 0.0 };
+    let gbs = |secs: f64| {
+        if secs > 0.0 {
+            m.swept_bytes() / secs / 1e9
+        } else {
+            0.0
+        }
+    };
+    let speedup = if simd.0 > 0.0 { scalar.0 / simd.0 } else { 0.0 };
+    eprintln!(
+        "kernel={kind} M={} K={BENCH_N} scalar={:.1} gemv/s ({:.1} GB/s) \
+         simd={:.1} gemv/s ({:.1} GB/s) speedup={speedup:.2}x [acc {} {}]",
+        m.n_rows,
+        rate(scalar.0),
+        gbs(scalar.0),
+        rate(simd.0),
+        gbs(simd.0),
+        scalar.1,
+        simd.1
+    );
+}
+
+/// Per-kernel throughput, scalar against SIMD, measured in one process on one
+/// data set so the only variable is the kernel. Ignored by default because it
+/// is a measurement, not an assertion:
+///
+/// ```text
+/// cargo test --release --lib -- --ignored --nocapture simd::tests::kernel_throughput
+/// ```
+#[test]
+#[ignore = "measurement, not an assertion; run with --ignored --nocapture"]
+fn kernel_throughput() {
+    let mut state = 0xbec4_0000_u64;
+    let x: Vec<f32> = (0..BENCH_N).map(|_| signed(&mut state, 1.0)).collect();
+
+    if let Some(simd) = f32_row_dot() {
+        let vals: Vec<f32> = (0..BENCH_N).map(|_| signed(&mut state, 1.0)).collect();
+        let row = pack_f32(&vals);
+        let m = BenchMat {
+            row_bytes: row.len(),
+            n_rows: BENCH_N,
+            w: row.repeat(BENCH_N),
+        };
+        report_bench(
+            "f32",
+            &m,
+            time_f32(sc::f32_row, &m, &x),
+            time_f32(simd, &m, &x),
+        );
+    }
+
+    if let Some(simd) = f16_row_dot() {
+        let vals: Vec<f32> = (0..BENCH_N).map(|_| signed(&mut state, 1.0)).collect();
+        let row = pack_f16(&vals);
+        let m = BenchMat {
+            row_bytes: row.len(),
+            n_rows: BENCH_N,
+            w: row.repeat(BENCH_N),
+        };
+        report_bench(
+            "f16",
+            &m,
+            time_f32(sc::f16_row, &m, &x),
+            time_f32(simd, &m, &x),
+        );
+    }
+
+    if let Some(simd) = q4_k_f32_row_dot() {
+        let (row, _, _) = q4_k_row_case(BENCH_N / QK_K, &mut state);
+        let m = BenchMat {
+            row_bytes: row.len(),
+            n_rows: BENCH_N,
+            w: row.repeat(BENCH_N),
+        };
+        report_bench(
+            "q4_k",
+            &m,
+            time_f32(sc::q4_k_f32_row, &m, &x),
+            time_f32(simd, &m, &x),
+        );
+    }
+
+    if let Some(simd) = q6_k_f32_row_dot() {
+        let (row, _, _) = q6_k_row_case(BENCH_N / QK_K, &mut state);
+        let m = BenchMat {
+            row_bytes: row.len(),
+            n_rows: BENCH_N,
+            w: row.repeat(BENCH_N),
+        };
+        report_bench(
+            "q6_k",
+            &m,
+            time_f32(sc::q6_k_f32_row, &m, &x),
+            time_f32(simd, &m, &x),
+        );
+    }
+
+    if let Some(simd) = q8_0_row_dot() {
+        let (row, x8) = q8_0_row_case(BENCH_N / QK8_0, &mut state);
+        let m = BenchMat {
+            row_bytes: row.len(),
+            n_rows: BENCH_N,
+            w: row.repeat(BENCH_N),
+        };
+        report_bench(
+            "q8_0",
+            &m,
+            time_q8(sc::q8_0_row, &m, &x8),
+            time_q8(simd, &m, &x8),
         );
     }
 }

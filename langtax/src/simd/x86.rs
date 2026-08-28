@@ -30,9 +30,9 @@ use core::arch::x86_64::{
     _mm256_extracti128_si256, _mm256_fmadd_ps, _mm256_loadu_ps, _mm256_loadu_si256,
     _mm256_madd_epi16, _mm256_mul_ps, _mm256_or_si256, _mm256_set1_epi32, _mm256_set1_ps,
     _mm256_setzero_ps, _mm256_slli_epi32, _mm256_srli_epi32, _mm256_sub_epi32, _mm256_sub_ps,
-    _mm_add_epi32, _mm_add_ps, _mm_add_ss, _mm_and_si128, _mm_cvtsi128_si32, _mm_cvtss_f32,
-    _mm_loadl_epi64, _mm_loadu_si128, _mm_movehl_ps, _mm_set1_epi8, _mm_shuffle_epi32,
-    _mm_shuffle_ps, _mm_srli_epi16,
+    _mm_add_epi32, _mm_add_ps, _mm_add_ss, _mm_and_si128, _mm_cvtph_ps, _mm_cvtsi128_si32,
+    _mm_cvtsi32_si128, _mm_cvtss_f32, _mm_loadl_epi64, _mm_loadu_si128, _mm_movehl_ps, _mm_mul_ss,
+    _mm_set1_epi8, _mm_shuffle_epi32, _mm_shuffle_ps, _mm_srli_epi16,
 };
 
 use crate::fp16::load_f16_le;
@@ -88,9 +88,13 @@ pub(super) fn dot_q6_k_f32_row(row: &[u8], x: &[f32]) -> f32 {
 
 /// Q8_0 weight row against a Q8_0 activation row.
 pub(super) fn dot_q8_0_row(row: &[u8], x: &[u8]) -> f32 {
-    debug_assert!(have_avx2_fma(), "AVX2+FMA kernel reached without AVX2+FMA");
-    // SAFETY: as `dot_f32_row`; reachable only through `super::q8_0_row_dot`,
-    // which checks `CAP_AVX2_FMA`.
+    debug_assert!(
+        have_avx2_fma() && std::arch::is_x86_feature_detected!("f16c"),
+        "Q8_0 kernel reached without AVX2+FMA+F16C"
+    );
+    // SAFETY: as `dot_f32_row`, plus `f16c` for the block scale conversion.
+    // `super::q8_0_row_dot` requires both `CAP_AVX2_FMA` and `CAP_F16C` before
+    // it will hand out this function.
     unsafe { dot_q8_0_avx2(row, x) }
 }
 
@@ -390,18 +394,38 @@ fn q6_lane(low: __m256i, qh: __m256i, shift: u32, mask2: __m256i, bias: __m256i)
     _mm256_cvtepi32_ps(_mm256_sub_epi32(bits, bias))
 }
 
+/// The product of two little-endian binary16 block scales.
+///
+/// `VCVTPH2PS` is the IEEE binary16 -> `f32` conversion in hardware and is
+/// exact for every finite and infinite input, so each lane matches
+/// `crate::fp16::f16_to_f32` bit for bit; the two differ only in the payload of
+/// a signaling NaN, which the hardware quiets. Doing it this way rather than
+/// through the software conversion is worth about 2x on this kernel, because
+/// Q8_0 decodes two scales for every 32 elements.
+#[inline]
+#[target_feature(enable = "avx2", enable = "f16c")]
+fn scale_product(w: [u8; 2], x: [u8; 2]) -> f32 {
+    let [w0, w1] = w;
+    let [x0, x1] = x;
+    let both = _mm_cvtph_ps(_mm_cvtsi32_si128(i32::from_le_bytes([w0, w1, x0, x1])));
+    // Lane 0 is the weight scale and lane 1 the activation scale, so this is
+    // `dw * dx`, the same product in the same order as the scalar kernel.
+    _mm_cvtss_f32(_mm_mul_ss(both, _mm_shuffle_ps::<0x55>(both, both)))
+}
+
 /// # Safety
 ///
-/// The caller must run on a CPU with `avx2` and `fma`.
-#[target_feature(enable = "avx2", enable = "fma")]
+/// The caller must run on a CPU with `avx2`, `fma` and `f16c`.
+#[target_feature(enable = "avx2", enable = "fma", enable = "f16c")]
 fn dot_q8_0_avx2(row: &[u8], x: &[u8]) -> f32 {
     let mut sum = 0.0f32;
     let (w_blocks, _) = row.as_chunks::<Q8_0_BLOCK>();
     let (x_blocks, _) = x.as_chunks::<Q8_0_BLOCK>();
     for (wb, xb) in w_blocks.iter().zip(x_blocks.iter()) {
-        let Some(dw) = load_f16_le(wb) else { continue };
-        let Some(dx) = load_f16_le(xb) else { continue };
         // A Q8_0 block is a binary16 scale followed by exactly 32 `i8`.
+        let (Some(dw), Some(dx)) = (wb.first_chunk::<2>(), xb.first_chunk::<2>()) else {
+            continue;
+        };
         let (Some(wqs), Some(xqs)) = (wb.last_chunk::<32>(), xb.last_chunk::<32>()) else {
             continue;
         };
@@ -423,7 +447,7 @@ fn dot_q8_0_avx2(row: &[u8], x: &[u8]) -> f32 {
                 _mm256_cvtepi8_epi16(_mm256_extracti128_si256::<1>(xv)),
             ),
         );
-        sum = sc::add_f32(sum, (hsum_epi32(prod) as f32) * (dw * dx));
+        sum = sc::add_f32(sum, (hsum_epi32(prod) as f32) * scale_product(*dw, *dx));
     }
     sum
 }

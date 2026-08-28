@@ -176,7 +176,7 @@ pub(crate) fn q6_k_f32_row_dot() -> Option<RowDotF32> {
 pub(crate) fn q8_0_row_dot() -> Option<RowDotQ8> {
     let found = caps();
     #[cfg(all(target_arch = "x86_64", target_endian = "little"))]
-    if found & CAP_AVX2_FMA != 0 {
+    if found & CAP_AVX2_FMA != 0 && found & CAP_F16C != 0 {
         return Some(x86::dot_q8_0_row);
     }
     #[cfg(all(target_arch = "aarch64", target_endian = "little"))]

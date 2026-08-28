@@ -27,8 +27,8 @@ use core::arch::aarch64::{
     float32x4_t, int16x8_t, int32x4_t, int8x16_t, uint32x4_t, uint8x16_t, uint8x8_t, vaddq_f32,
     vaddvq_f32, vaddvq_s32, vand_u8, vandq_u32, vcvt_f32_f16, vcvtq_f32_s32, vcvtq_f32_u32,
     vdup_n_u8, vdupq_n_f32, vdupq_n_s32, vdupq_n_u32, vfmaq_f32, vget_high_s8, vget_high_u16,
-    vget_low_s8, vget_low_u16, vld1_u8, vld1q_f32, vld1q_u8, vmovl_u16, vmovl_u8, vmull_s8,
-    vmulq_f32, vorrq_u32, vpadalq_s16, vreinterpret_f16_u16, vreinterpret_u16_u8,
+    vget_low_s8, vget_low_u16, vgetq_lane_f32, vld1_u8, vld1q_f32, vld1q_u8, vmovl_u16, vmovl_u8,
+    vmull_s8, vmulq_f32, vorrq_u32, vpadalq_s16, vreinterpret_f16_u16, vreinterpret_u16_u8,
     vreinterpretq_f32_u8, vreinterpretq_s32_u32, vreinterpretq_s8_u8, vshlq_n_u32, vshr_n_u8,
     vshrq_n_u32, vsubq_f32, vsubq_s32,
 };
@@ -217,6 +217,25 @@ fn dot_f16_neon(row: &[u8], x: &[f32]) -> f32 {
 #[target_feature(enable = "neon")]
 fn widen_f16x4(bytes: &[u8; 8]) -> float32x4_t {
     vcvt_f32_f16(vreinterpret_f16_u16(vreinterpret_u16_u8(load_u8x8(bytes))))
+}
+
+/// The product of two little-endian binary16 block scales.
+///
+/// `FCVTL` is exact for every finite and infinite binary16, including
+/// subnormals, so each lane matches `crate::fp16::f16_to_f32` bit for bit; the
+/// two differ only in the payload of a signaling NaN, which the hardware
+/// quiets. Doing it this way rather than through the software conversion is
+/// worth about 2x on this kernel, because Q8_0 decodes two scales for every 32
+/// elements.
+#[inline]
+#[target_feature(enable = "neon")]
+fn scale_product(w: [u8; 2], x: [u8; 2]) -> f32 {
+    let [w0, w1] = w;
+    let [x0, x1] = x;
+    let both = widen_f16x4(&[w0, w1, x0, x1, 0, 0, 0, 0]);
+    // Lane 0 is the weight scale and lane 1 the activation scale, so this is
+    // `dw * dx`, the same product in the same order as the scalar kernel.
+    vgetq_lane_f32::<0>(both) * vgetq_lane_f32::<1>(both)
 }
 
 /// # Safety
@@ -420,9 +439,10 @@ fn dot_q8_0_neon(row: &[u8], x: &[u8]) -> f32 {
     let (w_blocks, _) = row.as_chunks::<Q8_0_BLOCK>();
     let (x_blocks, _) = x.as_chunks::<Q8_0_BLOCK>();
     for (wb, xb) in w_blocks.iter().zip(x_blocks.iter()) {
-        let Some(dw) = load_f16_le(wb) else { continue };
-        let Some(dx) = load_f16_le(xb) else { continue };
         // A Q8_0 block is a binary16 scale followed by exactly 32 `i8`.
+        let (Some(dw), Some(dx)) = (wb.first_chunk::<2>(), xb.first_chunk::<2>()) else {
+            continue;
+        };
         let (Some(wqs), Some(xqs)) = (wb.last_chunk::<32>(), xb.last_chunk::<32>()) else {
             continue;
         };
@@ -443,7 +463,7 @@ fn dot_q8_0_neon(row: &[u8], x: &[u8]) -> f32 {
         let acc = vdupq_n_s32(0);
         let acc = mull_acc(acc, load_s8x16(wlo), load_s8x16(xlo));
         let acc = mull_acc(acc, load_s8x16(whi), load_s8x16(xhi));
-        sum = sc::add_f32(sum, (vaddvq_s32(acc) as f32) * (dw * dx));
+        sum = sc::add_f32(sum, (vaddvq_s32(acc) as f32) * scale_product(*dw, *dx));
     }
     sum
 }
