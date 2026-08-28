@@ -42,28 +42,29 @@ use crate::quant::{
     dequant_iq3_s_row, dequant_iq3_xxs_row, dequant_iq4_nl_row, dequant_iq4_xs_row,
     dequant_mxfp4_row, dequant_nvfp4_row, dequant_q1_0_row, dequant_q2_0_row, dequant_q2_k_row,
     dequant_q3_k_row, dequant_q4_1_row, dequant_q4_k_row, dequant_q5_0_row, dequant_q5_1_row,
-    dequant_q5_k_row, dequant_q6_k_row, dequant_q8_1_row, dequant_tq1_0_row, dequant_tq2_0_row,
-    f16_row_bytes, f32_row_bytes, gemm_bf16, gemm_f16, gemm_f32, gemm_iq1_m_f32, gemm_iq1_s_f32,
-    gemm_iq2_s_f32, gemm_iq2_xs_f32, gemm_iq2_xxs_f32, gemm_iq3_s_f32, gemm_iq3_xxs_f32,
-    gemm_iq4_nl_f32, gemm_iq4_xs_f32, gemm_mxfp4_f32, gemm_nvfp4_f32, gemm_q1_0_f32, gemm_q2_0_f32,
-    gemm_q2_k_f32, gemm_q3_k_f32, gemm_q4_1_f32, gemm_q4_k_f32, gemm_q5_0_f32, gemm_q5_1_f32,
-    gemm_q5_k_f32, gemm_q6_k_f32, gemm_q8_1_f32, gemm_tq1_0_f32, gemm_tq2_0_f32, gemv_bf16,
-    gemv_f16, gemv_f32, gemv_iq1_m_f32, gemv_iq1_s_f32, gemv_iq2_s_f32, gemv_iq2_xs_f32,
-    gemv_iq2_xxs_f32, gemv_iq3_s_f32, gemv_iq3_xxs_f32, gemv_iq4_nl_f32, gemv_iq4_xs_f32,
-    gemv_mxfp4_f32, gemv_nvfp4_f32, gemv_q1_0_f32, gemv_q2_0_f32, gemv_q2_k_f32, gemv_q3_k_f32,
-    gemv_q4_1_f32, gemv_q4_k_f32, gemv_q5_0_f32, gemv_q5_1_f32, gemv_q5_k_f32, gemv_q6_k_f32,
-    gemv_q8_1_f32, gemv_tq1_0_f32, gemv_tq2_0_f32, iq1_m_row_bytes, iq1_s_row_bytes,
-    iq2_s_row_bytes, iq2_xs_row_bytes, iq2_xxs_row_bytes, iq3_s_row_bytes, iq3_xxs_row_bytes,
-    iq4_nl_row_bytes, iq4_xs_row_bytes, mxfp4_row_bytes, nvfp4_row_bytes, pack_bf16, pack_f16,
-    pack_f32, pack_iq1_m_block, pack_iq1_s_block, pack_iq2_s_block, pack_iq2_xs_block,
-    pack_iq2_xxs_block, pack_iq3_s_block, pack_iq3_xxs_block, pack_iq4_nl_block, pack_iq4_xs_block,
-    pack_mxfp4_block, pack_nvfp4_block, pack_q1_0_block, pack_q2_0_block, pack_q2_k_block,
-    pack_q3_k_block, pack_q4_1_block, pack_q4_k_block, pack_q5_0_block, pack_q5_1_block,
-    pack_q5_k_block, pack_q6_k_block, pack_q8_1_block, pack_tq1_0_block, pack_tq2_0_block,
-    q1_0_row_bytes, q2_0_row_bytes, q2_k_row_bytes, q3_k_row_bytes, q4_1_row_bytes, q4_k_row_bytes,
-    q5_0_row_bytes, q5_1_row_bytes, q5_k_row_bytes, q6_k_row_bytes, q8_1_row_bytes,
-    tq1_0_row_bytes, tq2_0_row_bytes, QuantError, QK1_0, QK2_0, QK4_1, QK4_NL, QK5_0, QK5_1, QK8_1,
-    QK_K, QK_MXFP4, QK_NVFP4,
+    dequant_q5_k_row, dequant_q6_k_row, dequant_q8_0_row, dequant_q8_1_row, dequant_tq1_0_row,
+    dequant_tq2_0_row, f16_row_bytes, f32_row_bytes, gemm_bf16, gemm_f16, gemm_f32, gemm_iq1_m_f32,
+    gemm_iq1_s_f32, gemm_iq2_s_f32, gemm_iq2_xs_f32, gemm_iq2_xxs_f32, gemm_iq3_s_f32,
+    gemm_iq3_xxs_f32, gemm_iq4_nl_f32, gemm_iq4_xs_f32, gemm_mxfp4_f32, gemm_nvfp4_f32,
+    gemm_q1_0_f32, gemm_q2_0_f32, gemm_q2_k_f32, gemm_q3_k_f32, gemm_q4_1_f32, gemm_q4_k_f32,
+    gemm_q5_0_f32, gemm_q5_1_f32, gemm_q5_k_f32, gemm_q6_k_f32, gemm_q8_0_f32, gemm_q8_1_f32,
+    gemm_tq1_0_f32, gemm_tq2_0_f32, gemv_bf16, gemv_f16, gemv_f32, gemv_iq1_m_f32, gemv_iq1_s_f32,
+    gemv_iq2_s_f32, gemv_iq2_xs_f32, gemv_iq2_xxs_f32, gemv_iq3_s_f32, gemv_iq3_xxs_f32,
+    gemv_iq4_nl_f32, gemv_iq4_xs_f32, gemv_mxfp4_f32, gemv_nvfp4_f32, gemv_q1_0_f32, gemv_q2_0_f32,
+    gemv_q2_k_f32, gemv_q3_k_f32, gemv_q4_1_f32, gemv_q4_k_f32, gemv_q5_0_f32, gemv_q5_1_f32,
+    gemv_q5_k_f32, gemv_q6_k_f32, gemv_q8_0_f32, gemv_q8_1_f32, gemv_tq1_0_f32, gemv_tq2_0_f32,
+    iq1_m_row_bytes, iq1_s_row_bytes, iq2_s_row_bytes, iq2_xs_row_bytes, iq2_xxs_row_bytes,
+    iq3_s_row_bytes, iq3_xxs_row_bytes, iq4_nl_row_bytes, iq4_xs_row_bytes, mxfp4_row_bytes,
+    nvfp4_row_bytes, pack_bf16, pack_f16, pack_f32, pack_iq1_m_block, pack_iq1_s_block,
+    pack_iq2_s_block, pack_iq2_xs_block, pack_iq2_xxs_block, pack_iq3_s_block, pack_iq3_xxs_block,
+    pack_iq4_nl_block, pack_iq4_xs_block, pack_mxfp4_block, pack_nvfp4_block, pack_q1_0_block,
+    pack_q2_0_block, pack_q2_k_block, pack_q3_k_block, pack_q4_1_block, pack_q4_k_block,
+    pack_q5_0_block, pack_q5_1_block, pack_q5_k_block, pack_q6_k_block, pack_q8_0_block,
+    pack_q8_1_block, pack_tq1_0_block, pack_tq2_0_block, q1_0_row_bytes, q2_0_row_bytes,
+    q2_k_row_bytes, q3_k_row_bytes, q4_1_row_bytes, q4_k_row_bytes, q5_0_row_bytes, q5_1_row_bytes,
+    q5_k_row_bytes, q6_k_row_bytes, q8_0_row_bytes, q8_1_row_bytes, tq1_0_row_bytes,
+    tq2_0_row_bytes, QuantError, QK1_0, QK2_0, QK4_1, QK4_NL, QK5_0, QK5_1, QK8_0, QK8_1, QK_K,
+    QK_MXFP4, QK_NVFP4,
 };
 use crate::sample::{SampleError, SampleParams, Sampler};
 use crate::tok::{TokError, Tokenizer};
@@ -368,6 +369,9 @@ pub struct Llama {
     rope_sections: Option<[i32; 4]>,
     /// Official Qwen3VL / Qwen35 `LLAMA_ROPE_TYPE_IMROPE` (`ggml_mrope_cache_init` `is_imrope`).
     rope_imrope: bool,
+    /// Official `llama_model_rope_type` = `LLAMA_ROPE_TYPE_NEOX` for this arch.
+    /// Selects the `n_dims/2` offset pairing instead of adjacent-lane NORM.
+    rope_neox: bool,
     /// `1` for llama/qwen2/mistral/phi3. Gemma official walk scales embeds by `sqrt(n_embd)`.
     embed_scale: f32,
     /// Official Gemma FFN is `LLM_FFN_GELU` (GeGLU). Other loaded arches stay SwiGLU
@@ -461,6 +465,7 @@ impl Llama {
             None
         };
         let rope_imrope = arch == "qwen3vl" || arch == "qwen35";
+        let rope_neox = rope_is_neox(arch);
         let n_vocab = g
             .tensor("token_embd.weight")
             .map(|t| t.n_rows())
@@ -535,6 +540,7 @@ impl Llama {
             rope_base,
             rope_sections,
             rope_imrope,
+            rope_neox,
             embed_scale,
             ffn_gelu: gemma,
             blob: g.into_blob(),
@@ -672,7 +678,7 @@ impl Llama {
                             self.rope_base,
                             self.rope_sections,
                             self.rope_imrope,
-                            self.phi2,
+                            self.rope_neox,
                         )?;
                     }
                     if layer.qk_l2 {
@@ -704,7 +710,7 @@ impl Llama {
                             self.rope_base,
                             self.rope_sections,
                             self.rope_imrope,
-                            self.phi2,
+                            self.rope_neox,
                         )?;
                     }
                     if layer.qk_l2 {
@@ -1700,6 +1706,37 @@ pub fn tiny_q20_gguf() -> Vec<u8> {
     })
 }
 
+/// Writer-built Llama GGUF with no grouping: `head_count_kv == head_count == 4`.
+///
+/// GQA ratio 1 (plain multi-head attention). Every other fixture uses ratio 2.
+pub fn tiny_mha_gguf() -> Vec<u8> {
+    tiny_arch_gguf_gqa(tiny_llama_spec(), TinyLmHead::Distinct, GgmlType::F32, 4)
+}
+
+/// Writer-built Llama GGUF with a single KV head: `head_count_kv = 1`.
+///
+/// GQA ratio 4 (multi-query attention), the opposite extreme from
+/// [`tiny_mha_gguf`]. Real checkpoints sit between these: Qwen2.5-0.5B is 14/2.
+pub fn tiny_mqa_gguf() -> Vec<u8> {
+    tiny_arch_gguf_gqa(tiny_llama_spec(), TinyLmHead::Distinct, GgmlType::F32, 1)
+}
+
+/// Writer-built Llama GGUF with Q8_0 2-D weights (token_embd, output, attn/ffn).
+///
+/// 1-D norms stay F32. `GGML_TYPE_Q8_0` = 8 (34-byte `block_q8_0`).
+pub fn tiny_q80_gguf() -> Vec<u8> {
+    tiny_arch_gguf(TinySpec {
+        arch: "llama",
+        token_embd: GgmlType::Q8_0,
+        output: GgmlType::Q8_0,
+        layer: Some(GgmlType::Q8_0),
+        rope_dimension_count: true,
+        qkv_bias: false,
+        add_bos_token: None,
+        llama_moe: false,
+    })
+}
+
 /// Writer-built Llama GGUF with Q8_1 2-D weights (token_embd, output, attn/ffn).
 ///
 /// 1-D norms stay F32. `GGML_TYPE_Q8_1` = 9.
@@ -1958,10 +1995,25 @@ fn tiny_arch_gguf_lm_head(spec: TinySpec, lm_head: TinyLmHead) -> Vec<u8> {
 }
 
 fn tiny_arch_gguf_lm_head_vec1d(spec: TinySpec, lm_head: TinyLmHead, vec1d: GgmlType) -> Vec<u8> {
+    tiny_arch_gguf_gqa(spec, lm_head, vec1d, TINY_N_HEAD_KV)
+}
+
+/// Writer-built tiny with an explicit `attention.head_count_kv`.
+///
+/// Every other fixture pins `head_count_kv = 2` against `head_count = 4`, so the
+/// suite only ever exercised a GQA ratio of 2. Real checkpoints use other ratios
+/// (Qwen2.5-0.5B is 14/2 = 7), and a grouping bug at any other ratio would pass
+/// the whole harness.
+fn tiny_arch_gguf_gqa(
+    spec: TinySpec,
+    lm_head: TinyLmHead,
+    vec1d: GgmlType,
+    n_head_kv: usize,
+) -> Vec<u8> {
     let n_embd = TINY_N_EMBD;
     let n_ff = TINY_N_FF;
     let n_vocab = TINY_N_VOCAB;
-    let n_kv = TINY_N_HEAD_KV * TINY_N_ROT;
+    let n_kv = n_head_kv * TINY_N_ROT;
     let ones = vec![1.0f32; n_embd];
     let mut tensors = vec![
         tw(
@@ -2385,7 +2437,7 @@ fn tiny_arch_gguf_lm_head_vec1d(spec: TinySpec, lm_head: TinyLmHead, vec1d: Ggml
             pack_vec1d(vec1d, &pat_f32(n_kv, 13)),
         ));
     }
-    write_gguf_with_kv(&tiny_kv(&spec), &tensors)
+    write_gguf_with_kv(&tiny_kv_gqa(&spec, n_head_kv), &tensors)
 }
 
 fn architecture(g: &Gguf) -> Result<&str, LlamaError> {
@@ -2458,7 +2510,14 @@ fn rope_dimension(g: &Gguf, arch: &str, n_embd: usize, n_head: usize) -> Result<
     Ok(n_embd / n_head)
 }
 
+/// Default-GQA convenience wrapper. Only tests build KV without going through
+/// [`tiny_arch_gguf_gqa`].
+#[cfg(test)]
 fn tiny_kv(spec: &TinySpec) -> Vec<(String, Kv)> {
+    tiny_kv_gqa(spec, TINY_N_HEAD_KV)
+}
+
+fn tiny_kv_gqa(spec: &TinySpec, n_head_kv: usize) -> Vec<(String, Kv)> {
     let arch = spec.arch;
     let mut kv = vec![
         (
@@ -2485,7 +2544,7 @@ fn tiny_kv(spec: &TinySpec) -> Vec<(String, Kv)> {
         ),
         (
             arch_key(arch, "attention.head_count_kv"),
-            Kv::U32(u32::try_from(TINY_N_HEAD_KV).unwrap_or(0)),
+            Kv::U32(u32::try_from(n_head_kv).unwrap_or(0)),
         ),
         (arch_key(arch, "rope.freq_base"), Kv::F32(10_000.0)),
         (
@@ -2762,6 +2821,7 @@ fn pack_mat(ty: GgmlType, n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
         GgmlType::NVFP4 => pack_nvfp4_mat(n_cols, n_rows, seed),
         GgmlType::Q1_0 => pack_q10_mat(n_cols, n_rows, seed),
         GgmlType::Q2_0 => pack_q20_mat(n_cols, n_rows, seed),
+        GgmlType::Q8_0 => pack_q80_mat(n_cols, n_rows, seed),
         GgmlType::Q8_1 => pack_q81_mat(n_cols, n_rows, seed),
         GgmlType::TQ1_0 => pack_tq10_mat(n_cols, n_rows, seed),
         GgmlType::TQ2_0 => pack_tq20_mat(n_cols, n_rows, seed),
@@ -3161,6 +3221,24 @@ fn pack_q20_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
                 *q = u8::try_from(s % 4).unwrap_or(0);
             }
             out.extend_from_slice(&pack_q2_0_block(25.0 / 100.0, &qs));
+        }
+    }
+    out
+}
+
+fn pack_q80_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut s = seed;
+    let nblocks = n_cols / QK8_0;
+    for _ in 0..n_rows {
+        for _ in 0..nblocks {
+            let mut qs = [0i8; QK8_0];
+            for q in &mut qs {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1);
+                let k = u8::try_from(s % 17).unwrap_or(0);
+                *q = i8::try_from(i32::from(k).saturating_sub(8)).unwrap_or(0);
+            }
+            out.extend_from_slice(&pack_q8_0_block(25.0 / 100.0, &qs));
         }
     }
     out
@@ -3951,6 +4029,7 @@ fn quant_mat(t: Tensor<'_>) -> Result<QuantMat, LlamaError> {
         | GgmlType::NVFP4
         | GgmlType::Q1_0
         | GgmlType::Q2_0
+        | GgmlType::Q8_0
         | GgmlType::Q8_1
         | GgmlType::TQ1_0
         | GgmlType::TQ2_0
@@ -4020,6 +4099,7 @@ impl Llama {
             GgmlType::NVFP4 => gemm_nvfp4_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             GgmlType::Q1_0 => gemm_q1_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             GgmlType::Q2_0 => gemm_q2_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
+            GgmlType::Q8_0 => gemm_q8_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             GgmlType::Q8_1 => gemm_q8_1_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             GgmlType::TQ1_0 => gemm_tq1_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             GgmlType::TQ2_0 => gemm_tq2_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
@@ -4061,6 +4141,7 @@ impl Llama {
             GgmlType::NVFP4 => gemv_nvfp4_f32(m.n_cols, data, x, &mut y)?,
             GgmlType::Q1_0 => gemv_q1_0_f32(m.n_cols, data, x, &mut y)?,
             GgmlType::Q2_0 => gemv_q2_0_f32(m.n_cols, data, x, &mut y)?,
+            GgmlType::Q8_0 => gemv_q8_0_f32(m.n_cols, data, x, &mut y)?,
             GgmlType::Q8_1 => gemv_q8_1_f32(m.n_cols, data, x, &mut y)?,
             GgmlType::TQ1_0 => gemv_tq1_0_f32(m.n_cols, data, x, &mut y)?,
             GgmlType::TQ2_0 => gemv_tq2_0_f32(m.n_cols, data, x, &mut y)?,
@@ -4445,6 +4526,7 @@ impl Llama {
             GgmlType::NVFP4 => nvfp4_row_bytes(emb.n_cols)?,
             GgmlType::Q1_0 => q1_0_row_bytes(emb.n_cols)?,
             GgmlType::Q2_0 => q2_0_row_bytes(emb.n_cols)?,
+            GgmlType::Q8_0 => q8_0_row_bytes(emb.n_cols)?,
             GgmlType::Q8_1 => q8_1_row_bytes(emb.n_cols)?,
             GgmlType::TQ1_0 => tq1_0_row_bytes(emb.n_cols)?,
             GgmlType::TQ2_0 => tq2_0_row_bytes(emb.n_cols)?,
@@ -4490,6 +4572,7 @@ impl Llama {
             GgmlType::NVFP4 => dequant_nvfp4_row(emb.n_cols, bytes, &mut y)?,
             GgmlType::Q1_0 => dequant_q1_0_row(emb.n_cols, bytes, &mut y)?,
             GgmlType::Q2_0 => dequant_q2_0_row(emb.n_cols, bytes, &mut y)?,
+            GgmlType::Q8_0 => dequant_q8_0_row(emb.n_cols, bytes, &mut y)?,
             GgmlType::Q8_1 => dequant_q8_1_row(emb.n_cols, bytes, &mut y)?,
             GgmlType::TQ1_0 => dequant_tq1_0_row(emb.n_cols, bytes, &mut y)?,
             GgmlType::TQ2_0 => dequant_tq2_0_row(emb.n_cols, bytes, &mut y)?,
@@ -4878,6 +4961,41 @@ fn rope(vec: &mut [f32], pos: usize, n_rot: usize, base: f32) -> Result<(), Llam
     Ok(())
 }
 
+/// Official `GGML_ROPE_TYPE_NEOX`: `rotate_pairs(n_dims, n_dims/2, .., scale = 2)`.
+///
+/// Same theta walk as [`rope`]; only the element pairing differs. NORM rotates
+/// adjacent lanes `(i0, i0+1)`; NEOX rotates `(i0/2, i0/2 + n_dims/2)`.
+fn rope_neox(vec: &mut [f32], pos: usize, n_rot: usize, base: f32) -> Result<(), LlamaError> {
+    let n = n_rot.min(vec.len());
+    if n < 2 {
+        return Ok(());
+    }
+    if !n.is_multiple_of(2) {
+        return Err(LlamaError::Shape("rope.dimension_count".into()));
+    }
+    let n_offset = n / 2;
+    let n_rot_f = f32::from(u16::try_from(n_rot).unwrap_or(2));
+    let mut theta = f32::from(u16::try_from(pos).unwrap_or(u16::MAX));
+    let theta_scale = base.powf(-2.0 / n_rot_f);
+    let mut i0 = 0usize;
+    while i0 + 1 < n {
+        let ic = i0 / 2;
+        let cos = theta.cos();
+        let sin = theta.sin();
+        let x0 = *vec.get(ic).unwrap_or(&0.0);
+        let x1 = *vec.get(ic.saturating_add(n_offset)).unwrap_or(&0.0);
+        if let Some(slot) = vec.get_mut(ic) {
+            *slot = x0 * cos - x1 * sin;
+        }
+        if let Some(slot) = vec.get_mut(ic.saturating_add(n_offset)) {
+            *slot = x0 * sin + x1 * cos;
+        }
+        theta *= theta_scale;
+        i0 += 2;
+    }
+    Ok(())
+}
+
 /// Official Qwen2VL / Qwen3VL text walk: `ggml_rope_multi` when sections are present.
 /// Official phi2 uses `LLAMA_ROPE_TYPE_NEOX` (`llama_model_rope_type`).
 fn apply_rope(
@@ -4900,35 +5018,28 @@ fn apply_rope(
     }
 }
 
-/// Official `ggml_compute_forward_rope` `LLAMA_ROPE_TYPE_NEOX`: pairs offset by `n_rot/2`.
-fn rope_neox(vec: &mut [f32], pos: usize, n_rot: usize, base: f32) -> Result<(), LlamaError> {
-    let n = n_rot.min(vec.len());
-    if n < 2 {
-        return Ok(());
-    }
-    if !n.is_multiple_of(2) {
-        return Err(LlamaError::Shape("rope.dimension_count".into()));
-    }
-    let n_offset = n / 2;
-    let n_rot_f = f32::from(u16::try_from(n_rot).unwrap_or(2));
-    let mut theta = f32::from(u16::try_from(pos).unwrap_or(u16::MAX));
-    let theta_scale = base.powf(-2.0 / n_rot_f);
-    let mut i = 0usize;
-    while i < n_offset {
-        let cos = theta.cos();
-        let sin = theta.sin();
-        let x0 = *vec.get(i).unwrap_or(&0.0);
-        let x1 = *vec.get(i.saturating_add(n_offset)).unwrap_or(&0.0);
-        if let Some(slot) = vec.get_mut(i) {
-            *slot = x0 * cos - x1 * sin;
+/// Official `llama_model_rope_type` (`src/llama-model.cpp`) for the architectures
+/// this crate loads: `true` selects `LLAMA_ROPE_TYPE_NEOX`, `false` selects
+/// `LLAMA_ROPE_TYPE_NORM`.
+///
+/// `qwen2vl` (MROPE) and `qwen3vl` / `qwen35` (IMROPE) are not listed here: they
+/// carry `rope.dimension_sections` and take the [`rope_multi`] path, which already
+/// rotates on the NEOX `n_dims/2` offset.
+///
+/// `mistral` is not an official `LLM_ARCH_NAMES` entry (official Mistral GGUF is
+/// `architecture=llama`); it is Llama-family, so it stays NORM.
+fn rope_is_neox(arch: &str) -> bool {
+    match arch {
+        // LLAMA / LLAMA4 => LLAMA_ROPE_TYPE_NORM.
+        "llama" | "llama4" | "mistral" => false,
+        // QWEN2 / QWEN2MOE / QWEN3 / QWEN3MOE / QWEN3NEXT / PHI2 / PHI3 / GEMMA
+        // => LLAMA_ROPE_TYPE_NEOX.
+        "qwen2" | "qwen2moe" | "qwen3" | "qwen3moe" | "qwen3next" | "phi2" | "phi3" | "gemma" => {
+            true
         }
-        if let Some(slot) = vec.get_mut(i.saturating_add(n_offset)) {
-            *slot = x0 * sin + x1 * cos;
-        }
-        theta *= theta_scale;
-        i = i.saturating_add(1);
+        // MROPE / IMROPE arches reach `rope_multi`; the flag is unused for them.
+        _ => false,
     }
-    Ok(())
 }
 
 /// Official `ggml_compute_forward_rope_flt` `ggml_mrope_cache_init` + NEOX
@@ -5926,6 +6037,23 @@ mod tests {
         y
     }
 
+    /// ggml `dequantize_row_q8_0` (oracle). `block_q8_0` is fp16 `d` then `qs[32]`
+    /// int8, 34 bytes; `y = q * d`. Independent of crate `dequant_q8_0_row`.
+    fn dequant_q8_0_row_oracle(w: &[u8]) -> Vec<f32> {
+        let nblocks = w.len() / crate::quant::Q8_0_BLOCK;
+        let mut y = vec![0.0f32; nblocks * QK8_0];
+        for b in 0..nblocks {
+            let wb = &w[b * crate::quant::Q8_0_BLOCK..(b + 1) * crate::quant::Q8_0_BLOCK];
+            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let qs = &wb[2..];
+            let yo = b * QK8_0;
+            for j in 0..QK8_0 {
+                y[yo + j] = f32::from(i8::from_le_bytes([qs[j]])) * d;
+            }
+        }
+        y
+    }
+
     /// ggml `dequantize_row_q5_K` (oracle). Independent of crate `dequant_q5_k_row`.
     fn dequant_q5_k_row_oracle(w: &[u8]) -> Vec<f32> {
         let nblocks = w.len() / crate::quant::Q5_K_BLOCK;
@@ -6108,6 +6236,13 @@ mod tests {
                     *yv = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
                 }
             }
+            GgmlType::Q8_0 => {
+                let rb = (n_cols / QK8_0) * crate::quant::Q8_0_BLOCK;
+                for (r, yv) in y.iter_mut().enumerate() {
+                    let row = dequant_q8_0_row_oracle(&t.data[r * rb..(r + 1) * rb]);
+                    *yv = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
+                }
+            }
             GgmlType::Q8_1 => {
                 let rb = (n_cols / QK8_1) * crate::quant::Q8_1_BLOCK;
                 for (r, yv) in y.iter_mut().enumerate() {
@@ -6283,6 +6418,10 @@ mod tests {
             GgmlType::Q2_0 => {
                 let rb = (n_cols / QK2_0) * crate::quant::Q2_0_BLOCK;
                 dequant_q2_0_row_oracle(&t.data[row * rb..(row + 1) * rb])
+            }
+            GgmlType::Q8_0 => {
+                let rb = (n_cols / QK8_0) * crate::quant::Q8_0_BLOCK;
+                dequant_q8_0_row_oracle(&t.data[row * rb..(row + 1) * rb])
             }
             GgmlType::Q8_1 => {
                 let rb = (n_cols / QK8_1) * crate::quant::Q8_1_BLOCK;
@@ -6618,25 +6757,6 @@ mod tests {
             .collect()
     }
 
-    fn oracle_rope_neox(mut v: Vec<f32>, pos: usize, n_rot: usize, base: f32) -> Vec<f32> {
-        let n = n_rot.min(v.len());
-        if n < 2 || !n.is_multiple_of(2) {
-            return v;
-        }
-        let n_offset = n / 2;
-        let mut theta = pos as f32;
-        let theta_scale = base.powf(-2.0 / n_rot as f32);
-        for i in 0..n_offset {
-            let (c, s) = (theta.cos(), theta.sin());
-            let x0 = v[i];
-            let x1 = v[i + n_offset];
-            v[i] = x0 * c - x1 * s;
-            v[i + n_offset] = x0 * s + x1 * c;
-            theta *= theta_scale;
-        }
-        v
-    }
-
     fn oracle_rope(mut v: Vec<f32>, pos: usize, n_rot: usize, base: f32) -> Vec<f32> {
         let mut theta = pos as f32;
         let theta_scale = base.powf(-2.0 / n_rot as f32);
@@ -6651,6 +6771,42 @@ mod tests {
             i += 2;
         }
         v
+    }
+
+    /// Independent scalar of official `GGML_ROPE_TYPE_NEOX`, transcribed from
+    /// `ggml/src/ggml-cpu/ops.cpp` `rotate_pairs(n_dims, n_dims/2, cache, .., scale = 2)`:
+    /// `ic = i0/2`, `x0 = src[ic]`, `x1 = src[ic + n_dims/2]`. The theta walk is the
+    /// same `i0 += 2` progression as NORM; only the rotated lane pair differs.
+    fn oracle_rope_neox(mut v: Vec<f32>, pos: usize, n_rot: usize, base: f32) -> Vec<f32> {
+        let n = n_rot.min(v.len());
+        if n < 2 || !n.is_multiple_of(2) {
+            return v;
+        }
+        let n_offset = n / 2;
+        let mut theta = pos as f32;
+        let theta_scale = base.powf(-2.0 / n_rot as f32);
+        let mut i0 = 0usize;
+        while i0 + 1 < n {
+            let ic = i0 / 2;
+            let (c, s) = (theta.cos(), theta.sin());
+            let x0 = v[ic];
+            let x1 = v[ic + n_offset];
+            v[ic] = x0 * c - x1 * s;
+            v[ic + n_offset] = x0 * s + x1 * c;
+            theta *= theta_scale;
+            i0 += 2;
+        }
+        v
+    }
+
+    /// Independent transcription of official `llama_model_rope_type`
+    /// (`src/llama-model.cpp`) for the architectures this crate loads.
+    /// `true` = `LLAMA_ROPE_TYPE_NEOX`, `false` = `LLAMA_ROPE_TYPE_NORM`.
+    fn oracle_rope_is_neox(arch: &str) -> bool {
+        matches!(
+            arch,
+            "qwen2" | "qwen2moe" | "qwen3" | "qwen3moe" | "qwen3next" | "phi2" | "phi3" | "gemma"
+        )
     }
 
     /// Independent scalar of official `ggml_rope_multi` /
@@ -6836,6 +6992,7 @@ mod tests {
                     None
                 };
                 let is_imrope = arch == "qwen3vl" || arch == "qwen35";
+                let neox = oracle_rope_is_neox(arch);
                 for h in &mut qh {
                     *h = match sections {
                         Some(s) => oracle_rope_multi(
@@ -6846,7 +7003,7 @@ mod tests {
                             s,
                             is_imrope,
                         ),
-                        None if phi2 => oracle_rope_neox(h.clone(), pos, n_rot, base),
+                        None if neox => oracle_rope_neox(h.clone(), pos, n_rot, base),
                         None => oracle_rope(h.clone(), pos, n_rot, base),
                     };
                 }
@@ -6860,7 +7017,7 @@ mod tests {
                             s,
                             is_imrope,
                         ),
-                        None if phi2 => oracle_rope_neox(h.clone(), pos, n_rot, base),
+                        None if neox => oracle_rope_neox(h.clone(), pos, n_rot, base),
                         None => oracle_rope(h.clone(), pos, n_rot, base),
                     };
                 }
@@ -7011,6 +7168,231 @@ mod tests {
             let rel = (a - b).abs() / (1.0 + b.abs());
             assert!(rel * 1000.0 < 1.0, "logit {i}: {a} vs {b}");
         }
+    }
+
+    /// Official `ggml/src/ggml-cpu/ops.cpp` `rotate_pairs`:
+    /// `GGML_ROPE_TYPE_NORMAL` passes `n_offset = 1, scale = 1` so `ic = i0` and the
+    /// rotated pair is `(i0, i0 + 1)`; `GGML_ROPE_TYPE_NEOX` passes
+    /// `n_offset = n_dims/2, scale = 2` so `ic = i0/2` and the pair is
+    /// `(i0/2, i0/2 + n_dims/2)`. Both walk theta identically (`i0 += 2`).
+    ///
+    /// Pinned against values computed by hand from that definition, so this test does
+    /// not depend on the model oracle and would fail if either convention regressed
+    /// or the two were swapped.
+    #[test]
+    fn rope_norm_and_neox_pair_different_lanes() {
+        let n_rot = 4usize;
+        let base = 10_000.0f32;
+        let pos = 1usize;
+        let src = [1.0f32, 2.0, 3.0, 4.0];
+        let theta0 = 1.0f32;
+        let theta1 = theta0 * base.powf(-2.0 / 4.0);
+        let (c0, s0) = (theta0.cos(), theta0.sin());
+        let (c1, s1) = (theta1.cos(), theta1.sin());
+
+        // NORM rotates (0,1) at theta0 and (2,3) at theta1.
+        let want_norm = [
+            src[0] * c0 - src[1] * s0,
+            src[0] * s0 + src[1] * c0,
+            src[2] * c1 - src[3] * s1,
+            src[2] * s1 + src[3] * c1,
+        ];
+        let mut got_norm = src;
+        rope(&mut got_norm, pos, n_rot, base).expect("norm rope");
+        for (got, want) in got_norm.iter().zip(want_norm.iter()) {
+            assert!(
+                (got - want).abs() < 1e-6,
+                "NORM {got_norm:?} vs {want_norm:?}"
+            );
+        }
+
+        // NEOX rotates (0,2) at theta0 and (1,3) at theta1.
+        let want_neox = [
+            src[0] * c0 - src[2] * s0,
+            src[1] * c1 - src[3] * s1,
+            src[0] * s0 + src[2] * c0,
+            src[1] * s1 + src[3] * c1,
+        ];
+        let mut got_neox = src;
+        rope_neox(&mut got_neox, pos, n_rot, base).expect("neox rope");
+        for (got, want) in got_neox.iter().zip(want_neox.iter()) {
+            assert!(
+                (got - want).abs() < 1e-6,
+                "NEOX {got_neox:?} vs {want_neox:?}"
+            );
+        }
+
+        assert_ne!(
+            got_norm, got_neox,
+            "NORM and NEOX must not coincide on asymmetric input"
+        );
+    }
+
+    /// Per-architecture rope type, transcribed from official `llama_model_rope_type`.
+    /// Production and oracle must agree, and the Llama family must stay NORM while
+    /// the Qwen dense/MoE line, Phi-3, and Gemma are NEOX.
+    #[test]
+    fn rope_type_matches_official_arch_table() {
+        for arch in ["llama", "llama4", "mistral"] {
+            assert!(!rope_is_neox(arch), "{arch} is LLAMA_ROPE_TYPE_NORM");
+            assert!(!oracle_rope_is_neox(arch), "{arch} oracle NORM");
+        }
+        for arch in [
+            "qwen2",
+            "qwen2moe",
+            "qwen3",
+            "qwen3moe",
+            "qwen3next",
+            "phi2",
+            "phi3",
+            "gemma",
+        ] {
+            assert!(rope_is_neox(arch), "{arch} is LLAMA_ROPE_TYPE_NEOX");
+            assert!(oracle_rope_is_neox(arch), "{arch} oracle NEOX");
+        }
+        // MROPE / IMROPE arches carry `rope.dimension_sections` and take the
+        // `rope_multi` path, which already rotates on the NEOX offset.
+        for arch in ["qwen2vl", "qwen3vl", "qwen35"] {
+            assert!(!rope_is_neox(arch), "{arch} routes through rope_multi");
+        }
+    }
+
+    /// Text tokens feed `[t, h, w, e] = [p, p, p, 0]`, which collapses the m-RoPE
+    /// sector walk onto plain NEOX lane math. Distinct per-axis positions (what an
+    /// image token supplies) must diverge, otherwise m-RoPE is untested.
+    #[test]
+    fn rope_multi_reduces_to_neox_on_text_and_differs_on_distinct_axes() {
+        let n_rot = 8usize;
+        let base = 10_000.0f32;
+        let sections = [2i32, 1, 1, 0];
+        let src = [0.5f32, -1.5, 2.0, 3.5, -0.25, 1.25, -2.5, 0.75];
+
+        let mut neox = src;
+        rope_neox(&mut neox, 3, n_rot, base).expect("neox");
+
+        let mut text = src;
+        rope_multi(&mut text, [3, 3, 3, 0], n_rot, base, sections, false).expect("mrope text");
+        for (got, want) in text.iter().zip(neox.iter()) {
+            assert!(
+                (got - want).abs() < 1e-6,
+                "text m-RoPE {text:?} must equal NEOX {neox:?}"
+            );
+        }
+
+        let mut axes = src;
+        rope_multi(&mut axes, [3, 7, 11, 0], n_rot, base, sections, false).expect("mrope axes");
+        assert_ne!(
+            axes, neox,
+            "distinct t/h/w positions must exercise the m-RoPE sector walk"
+        );
+    }
+
+    /// The writer-built gated-attention tinies saturate the attention gate, so
+    /// `attn *= sigmoid(gate)` is a numerical no-op (or annihilates attention) on
+    /// those fixtures and model-level tests cannot distinguish gated-Q from ungated
+    /// attention. Recorded here so the limitation stays visible instead of being
+    /// implied by a passing inequality assertion. A gated fixture whose
+    /// pre-activation lands near zero would let the qwen35 test discriminate again.
+    #[test]
+    fn gated_attn_fixture_saturates_sigmoid() {
+        // Observed qwen35 tiny gate pre-activation.
+        assert_eq!(sigmoid_f32(19.617_193), 1.0);
+        // Observed qwen3next tiny gate pre-activation.
+        assert!(sigmoid_f32(-44.839_5) < 1e-19);
+        // A non-degenerate gate would actually scale attention.
+        assert!((sigmoid_f32(0.0) - 0.5).abs() < 1e-6);
+    }
+
+    /// Differential check against llama.cpp on a real quantized checkpoint.
+    ///
+    /// The writer-built tinies and the in-tree oracle cannot substitute for this.
+    /// Every per-dtype oracle calls `crate::fp16::f16_to_f32`, so a bug in that
+    /// primitive is invisible to the whole suite, and the tiny fixtures use
+    /// hand-picked scales that avoid the ranges where real weights live. A
+    /// subnormal binary16 bug that halved real Q4_K / Q6_K weights survived 221
+    /// passing tests for exactly those two reasons.
+    ///
+    /// Skips unless `LLAMA_RUST_REAL_MODEL_DIR` names a directory holding
+    /// `qwen2.5-0.5b-instruct-q4_k_m.gguf`. Reference values, model SHA, capture
+    /// tool, and the reason logits are not compared exactly are recorded in
+    /// `tests/reference/qwen2.5-0.5b-instruct-q4_k_m.json`.
+    #[test]
+    fn real_model_matches_llama_cpp_reference() {
+        // Unset means "not requested" and skipping is correct. Set-but-unusable
+        // must fail loudly: silently skipping there reports green while verifying
+        // nothing, which is the failure mode this whole test exists to prevent.
+        // It bit the CI workflow, which passed a relative `models` -- `cargo test`
+        // runs with the crate directory as CWD, so that resolved against
+        // `langtax/` and the job passed in 0.00s having loaded no weights.
+        let Ok(dir) = std::env::var("LLAMA_RUST_REAL_MODEL_DIR") else {
+            return;
+        };
+        let path = std::path::Path::new(&dir).join("qwen2.5-0.5b-instruct-q4_k_m.gguf");
+        let opened = std::fs::File::open(&path);
+        assert!(
+            opened.is_ok(),
+            "LLAMA_RUST_REAL_MODEL_DIR={dir} is set but {} could not be opened. \
+             Tests run with the crate directory as CWD, so a relative path resolves \
+             against langtax/, not the repo root -- pass an absolute path. \
+             See tests/reference/README.md to fetch the weights.",
+            path.display()
+        );
+        let mut file = opened.expect("checked by the assertion above");
+        // Printed so a CI log shows the test did real work rather than skipping.
+        eprintln!("real-model differential test: {}", path.display());
+        let mut blob = Vec::new();
+        let _read = std::io::Read::read_to_end(&mut file, &mut blob).expect("read gguf");
+        let g = load_gguf_owned(blob).expect("load real gguf");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("qwen2".into()))
+        );
+
+        // Tokenization must match llama.cpp exactly; a divergence here changes
+        // the model input and invalidates every downstream comparison.
+        let tok = Tokenizer::from_gguf(&g).expect("tokenizer");
+        let ids = tok.encode("The capital of France is").expect("encode");
+        assert_eq!(
+            ids,
+            [785u32, 6722, 315, 9625, 374],
+            "tokenization diverged from llama.cpp"
+        );
+
+        let model = Llama::from_gguf(g).expect("model");
+        assert_eq!(model.n_vocab, 151_936);
+
+        let mut cache = model.new_cache(64).expect("cache");
+        let logits = model.prefill(&mut cache, &ids).expect("prefill");
+        let best = argmax(&logits);
+        assert_eq!(best, 12095, "argmax must be token 12095 (\" Paris\")");
+
+        // llama.cpp reports max logit 17.504869 here. The two do genuinely
+        // different arithmetic (llama.cpp quantizes activations to Q8_K for
+        // K-quant dot products; this crate multiplies against f32 activations),
+        // so this is a sanity band, not an equality check. A whole-logit-unit
+        // drift means a real bug.
+        let mx = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        assert!(
+            (mx - 17.504_87).abs() < 0.5,
+            "max logit {mx} drifted from llama.cpp 17.504869"
+        );
+
+        // Greedy continuation is the acceptance criterion: it must match
+        // llama.cpp token for token.
+        let mut gen = Vec::new();
+        let mut cur = best;
+        for _ in 0..8 {
+            gen.push(cur);
+            let step = model.forward(&mut cache, cur).expect("forward");
+            cur = argmax(&step);
+        }
+        assert_eq!(
+            gen,
+            [12095u32, 13, 1084, 374, 279, 7772, 3283, 304],
+            "greedy token ids diverged from llama.cpp"
+        );
+        let text = tok.decode(&gen);
+        assert_eq!(text, " Paris. It is the largest city in");
     }
 
     fn load_fwd_match(bytes: &[u8], token: u32) {
@@ -7487,6 +7869,85 @@ mod tests {
         load_fwd_match(&bytes, 3);
     }
 
+    /// GQA ratios other than 2 were entirely uncovered: every writer-built fixture
+    /// pins `head_count = 4, head_count_kv = 2`. A grouping bug at any other ratio
+    /// would pass the whole harness. Real checkpoints do use other ratios
+    /// (Qwen2.5-0.5B is 14/2 = 7, covered only by the gated real-model test).
+    #[test]
+    fn gqa_ratios_other_than_two_match_independent_oracle() {
+        for (bytes, n_head_kv, gqa) in [
+            (tiny_mha_gguf(), 4u32, 1u32),
+            (tiny_mqa_gguf(), 1, 4),
+            (tiny_llama_gguf(), 2, 2),
+        ] {
+            let g = load_gguf(&bytes).expect("load");
+            assert_eq!(g.kv_u32("llama.attention.head_count"), Some(4));
+            assert_eq!(g.kv_u32("llama.attention.head_count_kv"), Some(n_head_kv));
+            assert_eq!(4 / n_head_kv, gqa, "gqa ratio");
+            // Single token and multi-token prefill both walk the KV grouping.
+            load_fwd_match(&bytes, 3);
+            load_prefill_match(&bytes, &[1, 2, 3]);
+        }
+    }
+
+    /// The three ratios must not collapse onto the same logits, otherwise the
+    /// test above would pass even if `head_count_kv` were ignored entirely.
+    #[test]
+    fn gqa_ratio_changes_logits() {
+        let mut seen: Vec<Vec<f32>> = Vec::new();
+        for bytes in [tiny_mha_gguf(), tiny_llama_gguf(), tiny_mqa_gguf()] {
+            let g = load_gguf(&bytes).expect("load");
+            let m = Llama::from_gguf(g).expect("model");
+            let mut c = m.new_cache(8).expect("cache");
+            seen.push(m.prefill(&mut c, &[1, 2, 3]).expect("prefill"));
+        }
+        assert_ne!(seen[0], seen[1], "gqa 1 vs 2 must differ");
+        assert_ne!(seen[1], seen[2], "gqa 2 vs 4 must differ");
+        assert_ne!(seen[0], seen[2], "gqa 1 vs 4 must differ");
+    }
+
+    #[test]
+    fn tiny_q80_logits_match_independent_oracle() {
+        let bytes = tiny_q80_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        assert_eq!(g.tensor("token_embd.weight").unwrap().ty, GgmlType::Q8_0);
+        assert_eq!(g.tensor("output.weight").unwrap().ty, GgmlType::Q8_0);
+        assert_eq!(g.tensor("blk.0.attn_q.weight").unwrap().ty, GgmlType::Q8_0);
+        assert_eq!(
+            g.tensor("blk.0.ffn_gate.weight").unwrap().ty,
+            GgmlType::Q8_0
+        );
+        assert_eq!(g.tensor("output_norm.weight").unwrap().ty, GgmlType::F32);
+        assert_eq!(
+            g.tensor("blk.0.attn_norm.weight").unwrap().ty,
+            GgmlType::F32
+        );
+        assert_eq!(g.tensor("token_embd.weight").unwrap().ty.to_i32(), 8);
+        load_fwd_match(&bytes, 3);
+    }
+
+    /// `block_q8_0` is 34 bytes (fp16 `d` + `qs[32]`), distinct from Q8_1 = 9
+    /// (36 B, extra fp16 `s`) and Q8_K = 15 (292 B). Reading Q8_0 with the Q8_1
+    /// stride would silently misalign every block after the first.
+    #[test]
+    fn q8_0_block_layout_is_distinct_from_q8_1() {
+        assert_eq!(crate::quant::Q8_0_BLOCK, 34);
+        assert_eq!(crate::quant::Q8_1_BLOCK, 36);
+        assert_eq!(QK8_0, 32);
+        let qs: Vec<i8> = (0i8..32).map(|i| i.saturating_sub(16)).collect();
+        let mut arr = [0i8; 32];
+        arr.copy_from_slice(&qs);
+        let block = pack_q8_0_block(0.5, &arr);
+        assert_eq!(block.len(), crate::quant::Q8_0_BLOCK);
+        let mut y = vec![0.0f32; 32];
+        dequant_q8_0_row(32, &block, &mut y).expect("dequant q8_0");
+        let want = dequant_q8_0_row_oracle(&block);
+        assert_eq!(y, want);
+        for (j, v) in y.iter().enumerate() {
+            assert!((v - f32::from(qs[j]) * 0.5).abs() < 1e-6, "lane {j}");
+        }
+    }
+
     #[test]
     fn tiny_q81_logits_match_independent_oracle() {
         let bytes = tiny_q81_gguf();
@@ -7743,6 +8204,9 @@ mod tests {
             tiny_nvfp4_gguf(),
             tiny_q10_gguf(),
             tiny_q20_gguf(),
+            tiny_q80_gguf(),
+            tiny_mha_gguf(),
+            tiny_mqa_gguf(),
             tiny_q81_gguf(),
             tiny_tq10_gguf(),
             tiny_tq20_gguf(),
@@ -8276,10 +8740,16 @@ mod tests {
         };
         let mut qc = model.new_cache(8).expect("qc");
         let qwen2vl_pref = model.prefill(&mut qc, &tokens).expect("qwen2vl pref");
-        assert_ne!(
-            qwen2vl_pref, qwen2_pref,
-            "qwen2vl m-RoPE must change multi-token logits vs qwen2 adjacent-pair RoPE"
-        );
+        // Official `ggml_mrope_cache_init` on text positions `[p, p, p, 0]` assigns
+        // theta_t / theta_h / theta_w to every rotated lane, and all three equal the
+        // token position, so the m-RoPE cache is identical to the NEOX cache. A VL
+        // checkpoint on pure text therefore must match its text-only sibling.
+        //
+        // This previously asserted inequality, which only held because `qwen2` was
+        // rotating NORM adjacent lanes while m-RoPE rotated the NEOX `n_dims/2`
+        // offset: the assertion was detecting a bug, not m-RoPE. Real m-RoPE lane
+        // math is covered by `rope_multi_reduces_to_neox_on_text_and_differs_on_distinct_axes`.
+        assert_logits_match(&qwen2vl_pref, &qwen2_pref);
         assert_ne!(
             qwen2vl_pref, qwen3_pref,
             "qwen2vl must not copy qwen3 QK-Norm"
@@ -8672,10 +9142,13 @@ mod tests {
         };
         let mut qc = model.new_cache(8).expect("qc");
         let qwen35_pref = model.prefill(&mut qc, &tokens).expect("qwen35 pref");
-        assert_ne!(
-            qwen35_pref, qwen3_pref,
-            "qwen35 gated-Q/IMROPE must change logits vs dense qwen3"
-        );
+        // IMROPE on text positions likewise reduces to NEOX (every sector maps to
+        // theta_t / theta_h / theta_w, all equal to the position). The writer-built
+        // tiny additionally saturates the attention gate, so gated-Q is a numerical
+        // no-op here — see `gated_attn_fixture_saturates_sigmoid`. Both effects mean
+        // qwen35 and dense qwen3 must agree on this fixture; the previous inequality
+        // assertion only held because `qwen3` was rotating NORM adjacent lanes.
+        assert_logits_match(&qwen35_pref, &qwen3_pref);
         assert_ne!(
             qwen35_pref, qwen3vl_pref,
             "qwen35 must not copy qwen3vl (no gated Q / no post_attention_norm)"

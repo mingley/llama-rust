@@ -1,0 +1,58 @@
+name: real-model
+
+# Differential check against llama.cpp on a real quantized checkpoint.
+#
+# Not on every push: it downloads ~470 MB of weights. The in-tree oracle cannot
+# replace this, because every per-dtype oracle calls `crate::fp16::f16_to_f32`,
+# so a bug in that primitive is invisible to the whole suite. That is how a
+# subnormal binary16 bug which halved real Q4_K / Q6_K weights survived 221
+# passing tests.
+on:
+  workflow_dispatch:
+  schedule:
+    # Daily, off-peak.
+    - cron: '17 4 * * *'
+
+jobs:
+  real-model:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache model
+        id: cache-model
+        uses: actions/cache@v4
+        with:
+          path: models
+          key: qwen2.5-0.5b-instruct-q4_k_m
+
+      - name: Download model
+        if: steps.cache-model.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p models
+          curl -fL --retry 3 -o models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
+            "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf?download=true"
+
+      - name: Verify model identity
+        run: |
+          expected=$(python3 -c "import json;print(json.load(open('tests/reference/qwen2.5-0.5b-instruct-q4_k_m.json'))['model']['sha256'])")
+          actual=$(sha256sum models/qwen2.5-0.5b-instruct-q4_k_m.gguf | cut -d' ' -f1)
+          echo "expected $expected"
+          echo "actual   $actual"
+          if [ "$expected" != "$actual" ]; then
+            echo "::error::model SHA256 differs from the committed reference; regenerate tests/reference/ before trusting a pass or failure"
+            exit 1
+          fi
+
+      # Absolute path is required: `cargo test` runs with the crate directory as
+      # CWD, so a relative `models` resolves against `langtax/`. That is not a
+      # cosmetic detail -- it previously made this job pass in 0.00s having
+      # loaded no weights at all. The test now fails loudly rather than skipping
+      # when the variable is set but the model cannot be opened, so a repeat of
+      # this mistake surfaces as a red job instead of a false green.
+      - name: Differential test vs llama.cpp reference
+        env:
+          LLAMA_RUST_REAL_MODEL_DIR: ${{ github.workspace }}/models
+        run: cargo test --release --lib real_model -- --nocapture

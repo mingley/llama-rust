@@ -6207,6 +6207,20 @@ pub fn gemm_q8_1_f32(
     gemm_f32_x(GemmKind::Q81, n_cols, n_tokens, w, x, y)
 }
 
+/// `Y[t, r] = W_q8_0[r, n_cols] · X[t, n_cols]`. Token-major `x` / `y`.
+pub fn gemm_q8_0_f32(
+    n_cols: usize,
+    n_tokens: usize,
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+) -> Result<(), QuantError> {
+    if n_tokens == 1 {
+        return gemv_q8_0_f32(n_cols, w, x, y);
+    }
+    gemm_f32_x(GemmKind::Q80, n_cols, n_tokens, w, x, y)
+}
+
 /// `Y[t, r] = W_tq10[r, n_cols] · X[t, n_cols]`. Token-major `x` / `y`.
 pub fn gemm_tq1_0_f32(
     n_cols: usize,
@@ -6375,6 +6389,7 @@ enum GemmKind {
     NVFP4,
     Q10,
     Q20,
+    Q80,
     Q81,
     TQ10,
     TQ20,
@@ -6434,6 +6449,7 @@ fn gemm_f32_x(
         GemmKind::NVFP4 => (nvfp4_row_bytes(n_cols)?, "W NVFP4 bytes"),
         GemmKind::Q10 => (q1_0_row_bytes(n_cols)?, "W Q1_0 bytes"),
         GemmKind::Q20 => (q2_0_row_bytes(n_cols)?, "W Q2_0 bytes"),
+        GemmKind::Q80 => (q8_0_row_bytes(n_cols)?, "W Q8_0 bytes"),
         GemmKind::Q81 => (q8_1_row_bytes(n_cols)?, "W Q8_1 bytes"),
         GemmKind::TQ10 => (tq1_0_row_bytes(n_cols)?, "W TQ1_0 bytes"),
         GemmKind::TQ20 => (tq2_0_row_bytes(n_cols)?, "W TQ2_0 bytes"),
@@ -6482,6 +6498,7 @@ fn gemm_f32_x(
                 GemmKind::NVFP4 => vec_dot_nvfp4_f32_row(wrow, xt),
                 GemmKind::Q10 => vec_dot_q1_0_f32_row(wrow, xt),
                 GemmKind::Q20 => vec_dot_q2_0_f32_row(wrow, xt),
+                GemmKind::Q80 => vec_dot_q8_0_f32_row(wrow, xt),
                 GemmKind::Q81 => vec_dot_q8_1_f32_row(wrow, xt),
                 GemmKind::TQ10 => vec_dot_tq1_0_f32_row(wrow, xt),
                 GemmKind::TQ20 => vec_dot_tq2_0_f32_row(wrow, xt),
@@ -6759,6 +6776,27 @@ pub fn gemv_q8_1_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
     for_each_row(y, |r, out| {
         *out = row_bytes(w, w_rb, r)
             .map(|row| vec_dot_q8_1_f32_row(row, x))
+            .unwrap_or(0.0);
+    });
+    Ok(())
+}
+
+/// `y[m] = W_q8_0[m, n_cols] x_f32[n_cols]` on GGUF `block_q8_0` bytes.
+pub fn gemv_q8_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Result<(), QuantError> {
+    let w_rb = q8_0_row_bytes(n_cols)?;
+    require_len("x F32 elems", x.len(), n_cols)?;
+    let expected_w = w_rb.checked_mul(y.len()).ok_or(QuantError::Size {
+        what: "W Q8_0 bytes overflow",
+        expected: w_rb,
+        actual: y.len(),
+    })?;
+    require_len("W Q8_0 bytes", w.len(), expected_w)?;
+    if y.is_empty() {
+        return Ok(());
+    }
+    for_each_row(y, |r, out| {
+        *out = row_bytes(w, w_rb, r)
+            .map(|row| vec_dot_q8_0_f32_row(row, x))
             .unwrap_or(0.0);
     });
     Ok(())
@@ -7381,6 +7419,38 @@ pub fn dequant_q8_1_row(n_cols: usize, row: &[u8], y: &mut [f32]) -> Result<(), 
         let Some(d) = load_f16_le(wb) else { continue };
         let Some(qs) = wb.get(4..) else { continue };
         let x_base = b.saturating_mul(QK8_1);
+        for (j, q) in qs.iter().enumerate() {
+            if let Some(slot) = y.get_mut(x_base.saturating_add(j)) {
+                *slot = f32::from(i8_from_bits(*q)) * d;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Unpack one Q8_0 GGUF row into `y[n_cols]` (ggml `dequantize_row_q8_0`: `y = q * d`).
+///
+/// `block_q8_0` is 34 bytes: fp16 `d` then `qs[32]` int8. Distinct from Q8_1 = 9
+/// (36 B, extra fp16 `s`) and Q8_K = 15 (292 B, f32 `d` + `bsums`).
+pub fn dequant_q8_0_row(n_cols: usize, row: &[u8], y: &mut [f32]) -> Result<(), QuantError> {
+    let rb = q8_0_row_bytes(n_cols)?;
+    require_len("Q8_0 row bytes", row.len(), rb)?;
+    require_len("Q8_0 y elems", y.len(), n_cols)?;
+    for yv in y.iter_mut() {
+        *yv = 0.0;
+    }
+    let (w_blocks, leftover) = row.as_chunks::<Q8_0_BLOCK>();
+    if !leftover.is_empty() {
+        return Err(QuantError::Size {
+            what: "Q8_0 leftover bytes",
+            expected: 0,
+            actual: leftover.len(),
+        });
+    }
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(d) = load_f16_le(wb) else { continue };
+        let Some(qs) = wb.get(2..) else { continue };
+        let x_base = b.saturating_mul(QK8_0);
         for (j, q) in qs.iter().enumerate() {
             if let Some(slot) = y.get_mut(x_base.saturating_add(j)) {
                 *slot = f32::from(i8_from_bits(*q)) * d;
@@ -8730,6 +8800,23 @@ fn vec_dot_q8_1_f32_row(row: &[u8], x: &[f32]) -> f32 {
         let Some(qs) = wb.get(4..) else { continue };
         let x_base = b.saturating_mul(QK8_1);
         let Some(xr) = x.get(x_base..x_base.saturating_add(QK8_1)) else {
+            continue;
+        };
+        for (q, xv) in qs.iter().zip(xr.iter()) {
+            sum += f32::from(i8_from_bits(*q)) * d * *xv;
+        }
+    }
+    sum
+}
+
+fn vec_dot_q8_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    let (w_blocks, _) = row.as_chunks::<Q8_0_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(d) = load_f16_le(wb) else { continue };
+        let Some(qs) = wb.get(2..) else { continue };
+        let x_base = b.saturating_mul(QK8_0);
+        let Some(xr) = x.get(x_base..x_base.saturating_add(QK8_0)) else {
             continue;
         };
         for (q, xv) in qs.iter().zip(xr.iter()) {
