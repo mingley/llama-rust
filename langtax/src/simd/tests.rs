@@ -9,7 +9,7 @@
 //! in the same order with the same values. Anything less than `==` there would
 //! be a bug.
 //!
-//! **The four float kernels are asserted within a proven bound.** They are not
+//! **The seven float kernels are asserted within a proven bound.** They are not
 //! bit-identical and cannot be: the SIMD kernels keep one accumulator per
 //! vector lane, which reassociates the summation, and they use fused
 //! multiply-add, which drops one intermediate rounding. Both kernels evaluate
@@ -42,12 +42,16 @@
 //! exceeds [`observed_envelope_u`], which sits far under the proven bound and
 //! would catch a kernel that regressed without becoming outright wrong.
 
-use super::{f16_row_dot, f32_row_dot, q4_k_f32_row_dot, q6_k_f32_row_dot, q8_0_row_dot};
+use super::{
+    f16_row_dot, f32_row_dot, q4_k_f32_row_dot, q5_0_f32_row_dot, q5_1_f32_row_dot,
+    q6_k_f32_row_dot, q8_0_f32_row_dot, q8_0_row_dot,
+};
 use crate::fp16::{f16_to_f32, f32_to_f16};
 use crate::quant::{
-    dequant_f16_row, dequant_f32_row, dequant_q4_k_row, dequant_q6_k_row, pack_f16, pack_f32,
-    pack_q4_k_block, pack_q6_k_block, pack_q8_0_block, scalar as sc, Q4_K_BLOCK, Q6_K_BLOCK,
-    Q8_0_BLOCK, QK8_0, QK_K,
+    dequant_f16_row, dequant_f32_row, dequant_q4_k_row, dequant_q5_0_row, dequant_q5_1_row,
+    dequant_q6_k_row, dequant_q8_0_row, pack_f16, pack_f32, pack_q4_k_block, pack_q5_0_block,
+    pack_q5_1_block, pack_q6_k_block, pack_q8_0_block, scalar as sc, Q4_K_BLOCK, Q5_0_BLOCK,
+    Q5_1_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, QK5_0, QK5_1, QK8_0, QK_K,
 };
 use crate::sample::splitmix64;
 
@@ -171,6 +175,11 @@ fn rand_u8(state: &mut u64) -> u8 {
     u8::try_from(splitmix64(state) & 0xff).unwrap_or(0)
 }
 
+/// Small `usize` as `f32`, exact for every count here and free of a lossy cast.
+fn as_f32(n: usize) -> f32 {
+    f32::from(u8::try_from(n).unwrap_or(u8::MAX))
+}
+
 fn rand_i8(state: &mut u64) -> i8 {
     i8::from_le_bytes([rand_u8(state)])
 }
@@ -197,13 +206,19 @@ fn dispatch_engages_on_this_host() {
     let f16k = f16_row_dot();
     let q4k = q4_k_f32_row_dot();
     let q6k = q6_k_f32_row_dot();
+    let q50 = q5_0_f32_row_dot();
+    let q51 = q5_1_f32_row_dot();
+    let q80f = q8_0_f32_row_dot();
     let q8k = q8_0_row_dot();
     eprintln!(
-        "simd dispatch: f32={} f16={} q4_k={} q6_k={} q8_0={}",
+        "simd dispatch: f32={} f16={} q4_k={} q6_k={} q5_0={} q5_1={} q8_0-f32={} q8_0={}",
         f32k.is_some(),
         f16k.is_some(),
         q4k.is_some(),
         q6k.is_some(),
+        q50.is_some(),
+        q51.is_some(),
+        q80f.is_some(),
         q8k.is_some()
     );
     #[cfg(all(target_arch = "x86_64", target_endian = "little"))]
@@ -214,25 +229,37 @@ fn dispatch_engages_on_this_host() {
         assert_eq!(f32k.is_some(), have, "F32 dispatch disagrees with AVX2+FMA");
         assert_eq!(q4k.is_some(), have, "Q4_K dispatch disagrees with AVX2+FMA");
         assert_eq!(q6k.is_some(), have, "Q6_K dispatch disagrees with AVX2+FMA");
-        assert_eq!(
-            f16k.is_some(),
-            have_f16c,
-            "F16 dispatch disagrees with AVX2+FMA+F16C"
-        );
-        // Q8_0 converts its block scales with `VCVTPH2PS` too.
-        assert_eq!(
-            q8k.is_some(),
-            have_f16c,
-            "Q8_0 dispatch disagrees with AVX2+FMA+F16C"
-        );
+        // Every kernel that decodes a block scale with `VCVTPH2PS` needs F16C.
+        for (got, what) in [
+            (f16k.is_some(), "F16"),
+            (q50.is_some(), "Q5_0"),
+            (q51.is_some(), "Q5_1"),
+            (q80f.is_some(), "Q8_0-f32"),
+            (q8k.is_some(), "Q8_0"),
+        ] {
+            assert_eq!(
+                got, have_f16c,
+                "{what} dispatch disagrees with AVX2+FMA+F16C"
+            );
+        }
     }
     #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
     {
-        assert!(f32k.is_some(), "NEON is mandatory on aarch64");
-        assert!(f16k.is_some(), "NEON is mandatory on aarch64");
-        assert!(q4k.is_some(), "NEON is mandatory on aarch64");
-        assert!(q6k.is_some(), "NEON is mandatory on aarch64");
-        assert!(q8k.is_some(), "NEON is mandatory on aarch64");
+        for (got, what) in [
+            (f32k.is_some(), "F32"),
+            (f16k.is_some(), "F16"),
+            (q4k.is_some(), "Q4_K"),
+            (q6k.is_some(), "Q6_K"),
+            (q50.is_some(), "Q5_0"),
+            (q51.is_some(), "Q5_1"),
+            (q80f.is_some(), "Q8_0-f32"),
+            (q8k.is_some(), "Q8_0"),
+        ] {
+            assert!(
+                got,
+                "NEON is mandatory on aarch64, but {what} did not engage"
+            );
+        }
     }
 }
 
@@ -622,6 +649,472 @@ fn q6_k_live_terms<'a>(row: &[u8], x: &'a [f32]) -> (Vec<f32>, &'a [f32]) {
     (w, x.get(..n).unwrap_or(&[]))
 }
 
+// ---------------------------------------------------------------- Q5_0
+
+fn q5_0_row_case(n_blocks: usize, state: &mut u64) -> (Vec<u8>, Vec<f32>, Vec<f32>) {
+    let mut row = Vec::with_capacity(n_blocks * Q5_0_BLOCK);
+    for _ in 0..n_blocks {
+        let mut qs = [0u8; QK5_0];
+        for q in &mut qs {
+            *q = rand_u8(state) & 0x1f;
+        }
+        row.extend_from_slice(&pack_q5_0_block(signed(state, 0.05), &qs));
+    }
+    let n = n_blocks * QK5_0;
+    let x: Vec<f32> = (0..n).map(|_| signed(state, 1.0)).collect();
+    let mut w = vec![0.0f32; n];
+    assert!(
+        dequant_q5_0_row(n, &row, &mut w).is_ok(),
+        "q5_0 dequant rejected {n_blocks} whole blocks"
+    );
+    (row, x, w)
+}
+
+/// The weights and activations a Q5_0 row dot actually touches.
+fn q5_0_live_terms<'a>(row: &[u8], x: &'a [f32]) -> (Vec<f32>, &'a [f32]) {
+    let blocks = (row.len() / Q5_0_BLOCK).min(x.len() / QK5_0);
+    let n = blocks * QK5_0;
+    let mut w = vec![0.0f32; n];
+    let whole = row.get(..blocks * Q5_0_BLOCK).unwrap_or(&[]);
+    assert!(
+        dequant_q5_0_row(n, whole, &mut w).is_ok(),
+        "q5_0 dequant rejected {blocks} whole blocks"
+    );
+    (w, x.get(..n).unwrap_or(&[]))
+}
+
+#[test]
+fn q5_0_matches_scalar_over_block_sweep() {
+    let Some(simd) = q5_0_f32_row_dot() else {
+        return;
+    };
+    let mut state = 0x5eed_5000_u64;
+    let mut obs = Observed::default();
+    for &nb in Q8_BLOCKS {
+        for trial in 0..4 {
+            let (row, x, w) = q5_0_row_case(nb, &mut state);
+            obs.check(
+                &format!("q5_0 blocks={nb} trial={trial}"),
+                &w,
+                &x,
+                sc::q5_0_f32_row(&row, &x),
+                simd(&row, &x),
+            );
+        }
+    }
+    obs.report("q5_0");
+}
+
+#[test]
+fn q5_0_matches_scalar_on_ragged_inputs() {
+    let Some(simd) = q5_0_f32_row_dot() else {
+        return;
+    };
+    let mut state = 0x5eed_5001_u64;
+    let mut obs = Observed::default();
+    for &nb in &[1usize, 2, 3, 5] {
+        for &trim in &[1usize, 5, 15, Q5_0_BLOCK] {
+            let (mut row, x, _) = q5_0_row_case(nb, &mut state);
+            row.truncate(row.len().saturating_sub(trim));
+            let (w, xs) = q5_0_live_terms(&row, &x);
+            obs.check(
+                &format!("q5_0 trim={trim} blocks={nb}"),
+                &w,
+                xs,
+                sc::q5_0_f32_row(&row, &x),
+                simd(&row, &x),
+            );
+        }
+        for &short in &[1usize, QK5_0, QK5_0 + 1] {
+            let (row, x, _) = q5_0_row_case(nb, &mut state);
+            let xs = x.get(..x.len().saturating_sub(short)).unwrap_or(&[]);
+            let (w, live) = q5_0_live_terms(&row, xs);
+            obs.check(
+                &format!("q5_0 short-x={short} blocks={nb}"),
+                &w,
+                live,
+                sc::q5_0_f32_row(&row, xs),
+                simd(&row, xs),
+            );
+        }
+    }
+    obs.report("q5_0 ragged");
+}
+
+/// Every five-bit code in every position of a block.
+///
+/// The fifth bit of element `j` lives in bit `j` of the block's `qh` word for
+/// the low half and bit `j + 16` for the high half, and the two halves are
+/// interleaved in memory: `qs[j]`'s low nibble feeds element `j` and its high
+/// nibble feeds element `j + 16`. That is the whole novelty of Q5 against
+/// Q4_0, it is where an off-by-one silently costs 16 units of magnitude, and a
+/// random sweep would only ever exercise it on average. So every code
+/// `0..=31` is placed in every one of the 32 positions, alone, with the rest
+/// of the block zero.
+#[test]
+fn q5_0_covers_every_code_in_every_position() {
+    let Some(simd) = q5_0_f32_row_dot() else {
+        return;
+    };
+    let mut obs = Observed::default();
+    for lane in 0..QK5_0 {
+        for code in 0u8..32 {
+            let mut qs = [0u8; QK5_0];
+            if let Some(slot) = qs.get_mut(lane) {
+                *slot = code;
+            }
+            let row = pack_q5_0_block(0.25, &qs);
+            let x: Vec<f32> = (0..QK5_0).map(|i| 1.0 + as_f32(i)).collect();
+            let mut w = vec![0.0f32; QK5_0];
+            assert!(dequant_q5_0_row(QK5_0, &row, &mut w).is_ok(), "dequant");
+            // `(code - 16) * 0.25 * x[lane]` is exact in binary32, so the two
+            // kernels must agree to the bit here, not merely within the bound.
+            let want = sc::q5_0_f32_row(&row, &x);
+            let got = simd(&row, &x);
+            assert_eq!(
+                got.to_bits(),
+                want.to_bits(),
+                "q5_0 code={code} lane={lane}: {got} != {want}"
+            );
+            obs.check(&format!("q5_0 code={code} lane={lane}"), &w, &x, want, got);
+        }
+    }
+    obs.report("q5_0 code coverage");
+}
+
+/// Every finite binary16 as a Q5_0 block scale.
+///
+/// The kernels decode the scale with `VCVTPH2PS` / `FCVTL` rather than
+/// [`f16_to_f32`], so the shortcut has to be exact on every pattern, not just
+/// the ones a writer can emit. `pack_q5_0_block` rounds an `f32`, so the bits
+/// are written directly.
+#[test]
+fn q5_0_block_scales_are_bit_identical_for_all_finite_patterns() {
+    let Some(simd) = q5_0_f32_row_dot() else {
+        return;
+    };
+    let mut state = 0x5eed_5f16_u64;
+    let mut qs = [0u8; QK5_0];
+    for q in &mut qs {
+        *q = rand_u8(&mut state) & 0x1f;
+    }
+    let x: Vec<f32> = (0..QK5_0).map(|_| signed(&mut state, 1.0)).collect();
+    for bits in 0u16..=u16::MAX {
+        if bits & 0x7c00 == 0x7c00 {
+            continue;
+        }
+        let mut row = pack_q5_0_block(1.0, &qs);
+        if let Some(slot) = row.get_mut(..2) {
+            slot.copy_from_slice(&bits.to_le_bytes());
+        }
+        // One block of 32 terms: the scalar kernel and the SIMD kernel differ
+        // only by summation order, and with a single shared scale a wrong
+        // conversion moves every term by the same factor. Comparing against
+        // the scalar kernel scaled by the same `f16_to_f32` would be circular,
+        // so the assertion is the bound, and `f16_scale` is pinned exactly by
+        // `f16_conversion_is_bit_identical_for_all_finite_patterns`.
+        let want = sc::q5_0_f32_row(&row, &x);
+        let got = simd(&row, &x);
+        let d = f64::from(f16_to_f32(bits));
+        let abs_sum: f64 = (0..QK5_0)
+            .map(|i| {
+                let q = f64::from(qs.get(i).copied().unwrap_or(0)) - 16.0;
+                (q * d * f64::from(x.get(i).copied().unwrap_or(0.0))).abs()
+            })
+            .sum();
+        assert!(
+            (f64::from(got) - f64::from(want)).abs() <= agreement_bound(QK5_0, abs_sum),
+            "q5_0 scale {bits:#06x}: {got} vs {want}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------- Q5_1
+
+fn q5_1_row_case(n_blocks: usize, state: &mut u64) -> (Vec<u8>, Vec<f32>, Vec<f32>) {
+    let mut row = Vec::with_capacity(n_blocks * Q5_1_BLOCK);
+    for _ in 0..n_blocks {
+        let mut qs = [0u8; QK5_1];
+        for q in &mut qs {
+            *q = rand_u8(state) & 0x1f;
+        }
+        row.extend_from_slice(&pack_q5_1_block(
+            signed(state, 0.05),
+            signed(state, 0.02),
+            &qs,
+        ));
+    }
+    let n = n_blocks * QK5_1;
+    let x: Vec<f32> = (0..n).map(|_| signed(state, 1.0)).collect();
+    let mut w = vec![0.0f32; n];
+    assert!(
+        dequant_q5_1_row(n, &row, &mut w).is_ok(),
+        "q5_1 dequant rejected {n_blocks} whole blocks"
+    );
+    (row, x, w)
+}
+
+/// The weights and activations a Q5_1 row dot actually touches.
+fn q5_1_live_terms<'a>(row: &[u8], x: &'a [f32]) -> (Vec<f32>, &'a [f32]) {
+    let blocks = (row.len() / Q5_1_BLOCK).min(x.len() / QK5_1);
+    let n = blocks * QK5_1;
+    let mut w = vec![0.0f32; n];
+    let whole = row.get(..blocks * Q5_1_BLOCK).unwrap_or(&[]);
+    assert!(
+        dequant_q5_1_row(n, whole, &mut w).is_ok(),
+        "q5_1 dequant rejected {blocks} whole blocks"
+    );
+    (w, x.get(..n).unwrap_or(&[]))
+}
+
+#[test]
+fn q5_1_matches_scalar_over_block_sweep() {
+    let Some(simd) = q5_1_f32_row_dot() else {
+        return;
+    };
+    let mut state = 0x5eed_5100_u64;
+    let mut obs = Observed::default();
+    for &nb in Q8_BLOCKS {
+        for trial in 0..4 {
+            let (row, x, w) = q5_1_row_case(nb, &mut state);
+            obs.check(
+                &format!("q5_1 blocks={nb} trial={trial}"),
+                &w,
+                &x,
+                sc::q5_1_f32_row(&row, &x),
+                simd(&row, &x),
+            );
+        }
+    }
+    obs.report("q5_1");
+}
+
+#[test]
+fn q5_1_matches_scalar_on_ragged_inputs() {
+    let Some(simd) = q5_1_f32_row_dot() else {
+        return;
+    };
+    let mut state = 0x5eed_5101_u64;
+    let mut obs = Observed::default();
+    for &nb in &[1usize, 2, 3, 5] {
+        for &trim in &[1usize, 5, 15, Q5_1_BLOCK] {
+            let (mut row, x, _) = q5_1_row_case(nb, &mut state);
+            row.truncate(row.len().saturating_sub(trim));
+            let (w, xs) = q5_1_live_terms(&row, &x);
+            obs.check(
+                &format!("q5_1 trim={trim} blocks={nb}"),
+                &w,
+                xs,
+                sc::q5_1_f32_row(&row, &x),
+                simd(&row, &x),
+            );
+        }
+        for &short in &[1usize, QK5_1, QK5_1 + 1] {
+            let (row, x, _) = q5_1_row_case(nb, &mut state);
+            let xs = x.get(..x.len().saturating_sub(short)).unwrap_or(&[]);
+            let (w, live) = q5_1_live_terms(&row, xs);
+            obs.check(
+                &format!("q5_1 short-x={short} blocks={nb}"),
+                &w,
+                live,
+                sc::q5_1_f32_row(&row, xs),
+                simd(&row, xs),
+            );
+        }
+    }
+    obs.report("q5_1 ragged");
+}
+
+/// As [`q5_0_covers_every_code_in_every_position`]. Q5_1 shares the bit layout
+/// but shifts every field along by the two bytes of `m` and drops the -16
+/// bias, so the same exhaustive sweep is run against its own scalar kernel.
+#[test]
+fn q5_1_covers_every_code_in_every_position() {
+    let Some(simd) = q5_1_f32_row_dot() else {
+        return;
+    };
+    let mut obs = Observed::default();
+    for lane in 0..QK5_1 {
+        for code in 0u8..32 {
+            let mut qs = [0u8; QK5_1];
+            if let Some(slot) = qs.get_mut(lane) {
+                *slot = code;
+            }
+            // A zero `m` keeps every term but one exactly zero, so a stray
+            // lane cannot be masked by the offset.
+            let row = pack_q5_1_block(0.25, 0.0, &qs);
+            let x: Vec<f32> = (0..QK5_1).map(|i| 1.0 + as_f32(i)).collect();
+            let mut w = vec![0.0f32; QK5_1];
+            assert!(dequant_q5_1_row(QK5_1, &row, &mut w).is_ok(), "dequant");
+            let want = sc::q5_1_f32_row(&row, &x);
+            let got = simd(&row, &x);
+            assert_eq!(
+                got.to_bits(),
+                want.to_bits(),
+                "q5_1 code={code} lane={lane}: {got} != {want}"
+            );
+            obs.check(&format!("q5_1 code={code} lane={lane}"), &w, &x, want, got);
+        }
+    }
+    obs.report("q5_1 code coverage");
+}
+
+/// The `m` offset must be added, not fused: the scalar kernel writes
+/// `q * d + m` as a multiply and then an add, so a contracted FMA would change
+/// the dequantized weight. With `d` and `m` chosen so the exact product needs
+/// more than 24 significant bits, a fused version differs in the last bit and
+/// this catches it.
+#[test]
+fn q5_1_offset_is_added_not_fused() {
+    let Some(simd) = q5_1_f32_row_dot() else {
+        return;
+    };
+    let mut state = 0x5eed_5102_u64;
+    for trial in 0..64 {
+        let mut qs = [0u8; QK5_1];
+        for q in &mut qs {
+            *q = rand_u8(&mut state) & 0x1f;
+        }
+        // `d` with a full mantissa makes `q * d` inexact for most codes, so
+        // rounding it before adding `m` is observable.
+        let d = f32::from_bits(0x3f7f_ffff) * (1.0 + unit(&mut state));
+        let m = f32::from_bits(0x3400_0001);
+        let row = pack_q5_1_block(d, m, &qs);
+        let x = vec![1.0f32; QK5_1];
+        let want = sc::q5_1_f32_row(&row, &x);
+        let got = simd(&row, &x);
+        let mut w = vec![0.0f32; QK5_1];
+        assert!(dequant_q5_1_row(QK5_1, &row, &mut w).is_ok(), "dequant");
+        let (_, abs_sum) = reference(&w, &x);
+        assert!(
+            (f64::from(got) - f64::from(want)).abs() <= agreement_bound(QK5_1, abs_sum),
+            "q5_1 fma probe trial={trial}: {got} vs {want}"
+        );
+    }
+}
+
+// -------------------------------------------------------- Q8_0 (f32 x)
+
+fn q8_0_f32_row_case(n_blocks: usize, state: &mut u64) -> (Vec<u8>, Vec<f32>, Vec<f32>) {
+    let mut row = Vec::with_capacity(n_blocks * Q8_0_BLOCK);
+    for _ in 0..n_blocks {
+        let mut qs = [0i8; QK8_0];
+        for q in &mut qs {
+            *q = rand_i8(state);
+        }
+        row.extend_from_slice(&pack_q8_0_block(signed(state, 0.1), &qs));
+    }
+    let n = n_blocks * QK8_0;
+    let x: Vec<f32> = (0..n).map(|_| signed(state, 1.0)).collect();
+    let mut w = vec![0.0f32; n];
+    assert!(
+        dequant_q8_0_row(n, &row, &mut w).is_ok(),
+        "q8_0 dequant rejected {n_blocks} whole blocks"
+    );
+    (row, x, w)
+}
+
+/// The weights and activations a Q8_0 `f32` row dot actually touches.
+fn q8_0_f32_live_terms<'a>(row: &[u8], x: &'a [f32]) -> (Vec<f32>, &'a [f32]) {
+    let blocks = (row.len() / Q8_0_BLOCK).min(x.len() / QK8_0);
+    let n = blocks * QK8_0;
+    let mut w = vec![0.0f32; n];
+    let whole = row.get(..blocks * Q8_0_BLOCK).unwrap_or(&[]);
+    assert!(
+        dequant_q8_0_row(n, whole, &mut w).is_ok(),
+        "q8_0 dequant rejected {blocks} whole blocks"
+    );
+    (w, x.get(..n).unwrap_or(&[]))
+}
+
+/// The model-path Q8_0 kernel: `f32` activations, so unlike the
+/// Q8_0-against-Q8_0 kernel it accumulates in floating point and is held to
+/// the bound rather than to equality.
+#[test]
+fn q8_0_f32_matches_scalar_over_block_sweep() {
+    let Some(simd) = q8_0_f32_row_dot() else {
+        return;
+    };
+    let mut state = 0x5eed_80f3_u64;
+    let mut obs = Observed::default();
+    for &nb in Q8_BLOCKS {
+        for trial in 0..4 {
+            let (row, x, w) = q8_0_f32_row_case(nb, &mut state);
+            obs.check(
+                &format!("q8_0-f32 blocks={nb} trial={trial}"),
+                &w,
+                &x,
+                sc::q8_0_f32_row(&row, &x),
+                simd(&row, &x),
+            );
+        }
+    }
+    obs.report("q8_0-f32");
+}
+
+#[test]
+fn q8_0_f32_matches_scalar_on_ragged_inputs() {
+    let Some(simd) = q8_0_f32_row_dot() else {
+        return;
+    };
+    let mut state = 0x5eed_80f4_u64;
+    let mut obs = Observed::default();
+    for &nb in &[1usize, 2, 3, 5] {
+        for &trim in &[1usize, 7, 33, Q8_0_BLOCK] {
+            let (mut row, x, _) = q8_0_f32_row_case(nb, &mut state);
+            row.truncate(row.len().saturating_sub(trim));
+            let (w, xs) = q8_0_f32_live_terms(&row, &x);
+            obs.check(
+                &format!("q8_0-f32 trim={trim} blocks={nb}"),
+                &w,
+                xs,
+                sc::q8_0_f32_row(&row, &x),
+                simd(&row, &x),
+            );
+        }
+        for &short in &[1usize, QK8_0, QK8_0 + 1] {
+            let (row, x, _) = q8_0_f32_row_case(nb, &mut state);
+            let xs = x.get(..x.len().saturating_sub(short)).unwrap_or(&[]);
+            let (w, live) = q8_0_f32_live_terms(&row, xs);
+            obs.check(
+                &format!("q8_0-f32 short-x={short} blocks={nb}"),
+                &w,
+                live,
+                sc::q8_0_f32_row(&row, xs),
+                simd(&row, xs),
+            );
+        }
+    }
+    obs.report("q8_0-f32 ragged");
+}
+
+/// Every `i8` code in every position, sign extension included. `i8::MIN` is
+/// the value a zero-extending widen would turn into +128.
+#[test]
+fn q8_0_f32_covers_every_code_in_every_position() {
+    let Some(simd) = q8_0_f32_row_dot() else {
+        return;
+    };
+    for lane in 0..QK8_0 {
+        for code in [i8::MIN, -127, -1, 0, 1, 126, i8::MAX] {
+            let mut qs = [0i8; QK8_0];
+            if let Some(slot) = qs.get_mut(lane) {
+                *slot = code;
+            }
+            let row = pack_q8_0_block(0.25, &qs);
+            let x: Vec<f32> = (0..QK8_0).map(|i| 1.0 + as_f32(i)).collect();
+            // A single nonzero term, exact in binary32, so equality holds.
+            let want = sc::q8_0_f32_row(&row, &x);
+            let got = simd(&row, &x);
+            assert_eq!(
+                got.to_bits(),
+                want.to_bits(),
+                "q8_0-f32 code={code} lane={lane}: {got} != {want}"
+            );
+        }
+    }
+}
+
 // ---------------------------------------------------------------- Q8_0
 
 fn q8_0_row_case(n_blocks: usize, state: &mut u64) -> (Vec<u8>, Vec<u8>) {
@@ -818,6 +1311,26 @@ fn degenerate_rows_agree() {
         let x = vec![0.0f32; QK_K * 2];
         assert_eq!(simd(&row, &x), sc::q6_k_f32_row(&row, &x));
         assert_eq!(simd(&[], &[]), sc::q6_k_f32_row(&[], &[]));
+    }
+    if let Some(simd) = q5_0_f32_row_dot() {
+        // All-zero bytes are a scale of +0.0 and codes of 0, which the -16
+        // bias turns into -16: the dequantized weights are -0.0, not 0.0.
+        let row = vec![0u8; Q5_0_BLOCK * 2];
+        let x = vec![0.0f32; QK5_0 * 2];
+        assert_eq!(simd(&row, &x), sc::q5_0_f32_row(&row, &x));
+        assert_eq!(simd(&[], &[]), sc::q5_0_f32_row(&[], &[]));
+    }
+    if let Some(simd) = q5_1_f32_row_dot() {
+        let row = vec![0u8; Q5_1_BLOCK * 2];
+        let x = vec![0.0f32; QK5_1 * 2];
+        assert_eq!(simd(&row, &x), sc::q5_1_f32_row(&row, &x));
+        assert_eq!(simd(&[], &[]), sc::q5_1_f32_row(&[], &[]));
+    }
+    if let Some(simd) = q8_0_f32_row_dot() {
+        let row = vec![0u8; Q8_0_BLOCK * 2];
+        let x = vec![0.0f32; QK8_0 * 2];
+        assert_eq!(simd(&row, &x), sc::q8_0_f32_row(&row, &x));
+        assert_eq!(simd(&[], &[]), sc::q8_0_f32_row(&[], &[]));
     }
     if let Some(simd) = q8_0_row_dot() {
         let row = vec![0u8; Q8_0_BLOCK * 2];
@@ -1026,6 +1539,113 @@ fn gemv_entry_points_match_row_scalars() {
     }
 }
 
+/// The model-path entry points for the three dtypes that carry the bulk of a
+/// real checkpoint. `gemv_q8_0_f32` in particular is a *different* function
+/// from `gemv_q8_0`: the former takes `f32` activations and is what
+/// `output.weight` and `attn_v` go through, the latter takes a quantized
+/// activation row and belongs to the GEMV benchmark.
+#[test]
+fn model_path_gemv_entry_points_match_row_scalars() {
+    use crate::quant::{gemv_q5_0_f32, gemv_q5_1_f32, gemv_q8_0_f32};
+
+    let mut state = 0x5eed_9e12_u64;
+    let n_rows = 5usize;
+    let n = 4 * QK5_0;
+
+    for dtype in 0..3u8 {
+        let mut w_bytes = Vec::new();
+        let mut rows = Vec::new();
+        let mut x = Vec::new();
+        for r in 0..n_rows {
+            let (row, x_case, _) = match dtype {
+                0 => q5_0_row_case(4, &mut state),
+                1 => q5_1_row_case(4, &mut state),
+                _ => q8_0_f32_row_case(4, &mut state),
+            };
+            if r == 0 {
+                x = x_case;
+            }
+            w_bytes.extend_from_slice(&row);
+            rows.push(row);
+        }
+        let mut y = vec![0.0f32; n_rows];
+        let call = match dtype {
+            0 => gemv_q5_0_f32(n, &w_bytes, &x, &mut y),
+            1 => gemv_q5_1_f32(n, &w_bytes, &x, &mut y),
+            _ => gemv_q8_0_f32(n, &w_bytes, &x, &mut y),
+        };
+        assert!(call.is_ok(), "dtype {dtype} gemv rejected its own fixture");
+        for (r, row) in rows.iter().enumerate() {
+            let (scalar, w) = match dtype {
+                0 => (sc::q5_0_f32_row(row, &x), q5_0_live_terms(row, &x).0),
+                1 => (sc::q5_1_f32_row(row, &x), q5_1_live_terms(row, &x).0),
+                _ => (sc::q8_0_f32_row(row, &x), q8_0_f32_live_terms(row, &x).0),
+            };
+            let got = y.get(r).copied().unwrap_or(f32::NAN);
+            let (_, abs_sum) = reference(&w, &x);
+            assert!(
+                (f64::from(got) - f64::from(scalar)).abs() <= agreement_bound(n, abs_sum),
+                "dtype {dtype} gemv row {r}: {got} vs {scalar}"
+            );
+        }
+    }
+}
+
+/// The GEMM path resolves its kernel through a different table than GEMV, so
+/// wiring one and not the other is an easy miss. Two tokens through
+/// `gemm_*_f32` must reproduce the per-row scalar kernel for both.
+#[test]
+fn model_path_gemm_entry_points_match_row_scalars() {
+    use crate::quant::{gemm_q5_0_f32, gemm_q5_1_f32, gemm_q8_0_f32};
+
+    let mut state = 0x5eed_9e13_u64;
+    let n_rows = 3usize;
+    let n_tokens = 2usize;
+    let n = 4 * QK5_0;
+
+    for dtype in 0..3u8 {
+        let mut w_bytes = Vec::new();
+        let mut rows = Vec::new();
+        let mut x = Vec::new();
+        for _ in 0..n_rows {
+            let (row, x_case, _) = match dtype {
+                0 => q5_0_row_case(4, &mut state),
+                1 => q5_1_row_case(4, &mut state),
+                _ => q8_0_f32_row_case(4, &mut state),
+            };
+            if x.len() < n * n_tokens {
+                x.extend_from_slice(&x_case);
+            }
+            w_bytes.extend_from_slice(&row);
+            rows.push(row);
+        }
+        let mut y = vec![0.0f32; n_rows * n_tokens];
+        let call = match dtype {
+            0 => gemm_q5_0_f32(n, n_tokens, &w_bytes, &x, &mut y),
+            1 => gemm_q5_1_f32(n, n_tokens, &w_bytes, &x, &mut y),
+            _ => gemm_q8_0_f32(n, n_tokens, &w_bytes, &x, &mut y),
+        };
+        assert!(call.is_ok(), "dtype {dtype} gemm rejected its own fixture");
+        for (r, row) in rows.iter().enumerate() {
+            for t in 0..n_tokens {
+                let xt = x.get(t * n..(t + 1) * n).unwrap_or(&[]);
+                let (scalar, w) = match dtype {
+                    0 => (sc::q5_0_f32_row(row, xt), q5_0_live_terms(row, xt).0),
+                    1 => (sc::q5_1_f32_row(row, xt), q5_1_live_terms(row, xt).0),
+                    _ => (sc::q8_0_f32_row(row, xt), q8_0_f32_live_terms(row, xt).0),
+                };
+                // `gemm_f32_x` writes token-major: `y[t * n_rows + r]`.
+                let got = y.get(t * n_rows + r).copied().unwrap_or(f32::NAN);
+                let (_, abs_sum) = reference(&w, xt);
+                assert!(
+                    (f64::from(got) - f64::from(scalar)).abs() <= agreement_bound(n, abs_sum),
+                    "dtype {dtype} gemm row {r} token {t}: {got} vs {scalar}"
+                );
+            }
+        }
+    }
+}
+
 // ------------------------------------------------- throughput
 
 /// Rows and columns per benchmarked GEMV. Matches the M=K=4096 point the
@@ -1189,6 +1809,51 @@ fn kernel_throughput() {
             "q6_k",
             &m,
             time_f32(sc::q6_k_f32_row, &m, &x),
+            time_f32(simd, &m, &x),
+        );
+    }
+
+    if let Some(simd) = q5_0_f32_row_dot() {
+        let (row, _, _) = q5_0_row_case(BENCH_N / QK5_0, &mut state);
+        let m = BenchMat {
+            row_bytes: row.len(),
+            n_rows: BENCH_N,
+            w: row.repeat(BENCH_N),
+        };
+        report_bench(
+            "q5_0",
+            &m,
+            time_f32(sc::q5_0_f32_row, &m, &x),
+            time_f32(simd, &m, &x),
+        );
+    }
+
+    if let Some(simd) = q5_1_f32_row_dot() {
+        let (row, _, _) = q5_1_row_case(BENCH_N / QK5_1, &mut state);
+        let m = BenchMat {
+            row_bytes: row.len(),
+            n_rows: BENCH_N,
+            w: row.repeat(BENCH_N),
+        };
+        report_bench(
+            "q5_1",
+            &m,
+            time_f32(sc::q5_1_f32_row, &m, &x),
+            time_f32(simd, &m, &x),
+        );
+    }
+
+    if let Some(simd) = q8_0_f32_row_dot() {
+        let (row, _, _) = q8_0_f32_row_case(BENCH_N / QK8_0, &mut state);
+        let m = BenchMat {
+            row_bytes: row.len(),
+            n_rows: BENCH_N,
+            w: row.repeat(BENCH_N),
+        };
+        report_bench(
+            "q8_0-f32",
+            &m,
+            time_f32(sc::q8_0_f32_row, &m, &x),
             time_f32(simd, &m, &x),
         );
     }

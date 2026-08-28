@@ -1,4 +1,4 @@
-//! NEON row kernels for F32, F16, Q4_K, Q6_K and Q8_0 on aarch64.
+//! NEON row kernels for F32, F16, Q4_K, Q5_0, Q5_1, Q6_K and Q8_0 on aarch64.
 //!
 //! # Where `unsafe` lives
 //!
@@ -10,7 +10,7 @@
 //!    no alignment requirement beyond the element type, which a live reference
 //!    to the array already guarantees. All arrays come from `as_chunks` /
 //!    `first_chunk` / `last_chunk`; no raw offset arithmetic appears anywhere.
-//! 2. Five dispatch wrappers, which call a `#[target_feature]` kernel after
+//! 2. Eight dispatch wrappers, which call a `#[target_feature]` kernel after
 //!    [`super`] has confirmed the CPU supports Advanced SIMD.
 //!
 //! Everything else is register-only and safe to call from a function that
@@ -24,18 +24,22 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 use core::arch::aarch64::{
-    float32x4_t, int16x8_t, int32x4_t, int8x16_t, uint32x4_t, uint8x16_t, uint8x8_t, vaddq_f32,
-    vaddvq_f32, vaddvq_s32, vand_u8, vandq_u32, vcvt_f32_f16, vcvtq_f32_s32, vcvtq_f32_u32,
-    vdup_n_u8, vdupq_n_f32, vdupq_n_s32, vdupq_n_u32, vfmaq_f32, vget_high_s8, vget_high_u16,
-    vget_low_s8, vget_low_u16, vgetq_lane_f32, vld1_u8, vld1q_f32, vld1q_u8, vmovl_u16, vmovl_u8,
-    vmull_s8, vmulq_f32, vorrq_u32, vpadalq_s16, vreinterpret_f16_u16, vreinterpret_u16_u8,
-    vreinterpretq_f32_u8, vreinterpretq_s32_u32, vreinterpretq_s8_u8, vshlq_n_u32, vshr_n_u8,
-    vshrq_n_u32, vsubq_f32, vsubq_s32,
+    float32x4_t, int16x8_t, int32x4_t, int8x16_t, int8x8_t, uint32x4_t, uint8x16_t, uint8x8_t,
+    vaddq_f32, vaddvq_f32, vaddvq_s32, vand_u8, vandq_u32, vcvt_f32_f16, vcvtq_f32_s32,
+    vcvtq_f32_u32, vdup_n_u8, vdupq_n_f32, vdupq_n_s32, vdupq_n_u32, vfmaq_f32, vget_high_s16,
+    vget_high_s8, vget_high_u16, vget_low_s16, vget_low_s8, vget_low_u16, vgetq_lane_f32, vld1_u8,
+    vld1q_f32, vld1q_u8, vmovl_s16, vmovl_s8, vmovl_u16, vmovl_u8, vmull_s8, vmulq_f32, vorrq_u32,
+    vpadalq_s16, vreinterpret_f16_u16, vreinterpret_s8_u8, vreinterpret_u16_u8,
+    vreinterpretq_f32_u8, vreinterpretq_s32_u32, vreinterpretq_s8_u8, vsetq_lane_s32, vshlq_n_u32,
+    vshlq_u32, vshr_n_u8, vshrq_n_u32, vsubq_f32, vsubq_s32,
 };
 
 use crate::fp16::load_f16_le;
 use crate::quant::scalar as sc;
-use crate::quant::{i8_from_bits, Q4_K_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, QK_K};
+use crate::quant::{
+    i8_from_bits, Q4_K_BLOCK, Q5_0_BLOCK, Q5_1_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, QK5_0, QK5_1, QK8_0,
+    QK_K,
+};
 
 /// True when this CPU reports Advanced SIMD. `std`'s detection macro caches its
 /// answer, so this is a load and a test.
@@ -77,6 +81,31 @@ pub(super) fn dot_q6_k_f32_row(row: &[u8], x: &[f32]) -> f32 {
     // SAFETY: as `dot_f32_row`; reachable only through
     // `super::q6_k_f32_row_dot`.
     unsafe { dot_q6_k_f32_neon(row, x) }
+}
+
+/// Q5_0 weight row against an `f32` activation row.
+pub(super) fn dot_q5_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
+    debug_assert!(have_neon(), "NEON kernel reached without NEON");
+    // SAFETY: as `dot_f32_row`. Reachable only through
+    // `super::q5_0_f32_row_dot`, which checks `CAP_NEON`.
+    unsafe { dot_q5_0_f32_neon(row, x) }
+}
+
+/// Q5_1 weight row against an `f32` activation row.
+pub(super) fn dot_q5_1_f32_row(row: &[u8], x: &[f32]) -> f32 {
+    debug_assert!(have_neon(), "NEON kernel reached without NEON");
+    // SAFETY: as `dot_f32_row`. Reachable only through
+    // `super::q5_1_f32_row_dot`, which checks `CAP_NEON`.
+    unsafe { dot_q5_1_f32_neon(row, x) }
+}
+
+/// Q8_0 weight row against an `f32` activation row. This is the model path;
+/// [`dot_q8_0_row`] is the Q8_0-activation kernel the GEMV benchmark uses.
+pub(super) fn dot_q8_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
+    debug_assert!(have_neon(), "NEON kernel reached without NEON");
+    // SAFETY: as `dot_f32_row`. Reachable only through
+    // `super::q8_0_f32_row_dot`, which checks `CAP_NEON`.
+    unsafe { dot_q8_0_f32_neon(row, x) }
 }
 
 /// Q8_0 weight row against a Q8_0 activation row.
@@ -236,6 +265,221 @@ fn scale_product(w: [u8; 2], x: [u8; 2]) -> f32 {
     // Lane 0 is the weight scale and lane 1 the activation scale, so this is
     // `dw * dx`, the same product in the same order as the scalar kernel.
     vgetq_lane_f32::<0>(both) * vgetq_lane_f32::<1>(both)
+}
+
+/// One little-endian binary16 block scale, decoded in hardware.
+///
+/// Same exactness argument as [`scale_product`]. Q5_0, Q5_1 and Q8_0 all carry
+/// one or two scales per 32 elements, dense enough that the software
+/// conversion would otherwise dominate.
+#[inline]
+#[target_feature(enable = "neon")]
+fn f16_scale(bits: [u8; 2]) -> f32 {
+    let [b0, b1] = bits;
+    vgetq_lane_f32::<0>(widen_f16x4(&[b0, b1, 0, 0, 0, 0, 0, 0]))
+}
+
+/// The lane index vector `[0, 1, 2, 3]`, built without a memory load.
+#[inline]
+#[target_feature(enable = "neon")]
+fn lane_index_s32() -> int32x4_t {
+    let v = vdupq_n_s32(0);
+    vsetq_lane_s32::<3>(3, vsetq_lane_s32::<2>(2, vsetq_lane_s32::<1>(1, v)))
+}
+
+/// The five-bit codes of four consecutive Q5 elements.
+///
+/// `nibbles` holds the low four bits of each code, one per `u32` lane. The
+/// fifth bit of lane `l` is bit `base + l` of the block's `qh` word, which the
+/// scalar kernel reaches as `(qh >> sj) << 4 & 0x10` for the low half and
+/// `(qh >> (sj + 12)) & 0x10` for the high half: the same bit, the same
+/// position. `VSHL` with a negative count is a right shift, so the shift
+/// vector is negated. Lanes whose bit index is 32 or more cannot arise, since
+/// `base` is at most 28 and `l` at most 3.
+#[inline]
+#[target_feature(enable = "neon")]
+fn q5_codes(nibbles: uint32x4_t, qh: uint32x4_t, base: i32) -> uint32x4_t {
+    let shifts = vsubq_s32(vdupq_n_s32(base.saturating_neg()), lane_index_s32());
+    let fifth = vshlq_n_u32::<4>(vandq_u32(vshlq_u32(qh, shifts), vdupq_n_u32(1)));
+    vorrq_u32(nibbles, fifth)
+}
+
+/// The two halves of a Q5 block's `qs` byte pack, as four `u32` lanes each.
+///
+/// Element `j` of the block takes the low nibble of `qs[j]` and element
+/// `j + 16` the high nibble, exactly as the scalar kernel's `*p & 0x0f` and
+/// `*p >> 4`. NEON widens eight bytes at a time and the caller steps in fours,
+/// so the upper half is padded and discarded.
+#[inline]
+#[target_feature(enable = "neon")]
+fn q5_nibbles(pack: &[u8; 4]) -> (uint32x4_t, uint32x4_t) {
+    let &[p0, p1, p2, p3] = pack;
+    let bytes = widen_u8x8(load_u8x8(&[p0, p1, p2, p3, 0, 0, 0, 0])).0;
+    (vandq_u32(bytes, vdupq_n_u32(0x0f)), vshrq_n_u32::<4>(bytes))
+}
+
+/// Widen eight `i8` lanes to two vectors of four `i32`.
+#[inline]
+#[target_feature(enable = "neon")]
+fn widen_s8x8(v: int8x8_t) -> (int32x4_t, int32x4_t) {
+    let wide = vmovl_s8(v);
+    (
+        vmovl_s16(vget_low_s16(wide)),
+        vmovl_s16(vget_high_s16(wide)),
+    )
+}
+
+/// # Safety
+///
+/// The caller must run on a CPU with Advanced SIMD.
+#[target_feature(enable = "neon")]
+fn dot_q5_0_f32_neon(row: &[u8], x: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    let (w_blocks, _) = row.as_chunks::<Q5_0_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        // A Q5_0 block is a binary16 scale, a `u32` of fifth bits, then 16
+        // bytes holding two nibbles each.
+        let Some(dbits) = wb.first_chunk::<2>() else {
+            continue;
+        };
+        let Some(qhb) = wb.get(2..).and_then(<[u8]>::first_chunk::<4>) else {
+            continue;
+        };
+        let Some(qs) = wb.get(6..) else { continue };
+        let x_base = b.saturating_mul(QK5_0);
+        let Some(xr) = x.get(x_base..x_base.saturating_add(QK5_0)) else {
+            continue;
+        };
+        let dv = vdupq_n_f32(f16_scale(*dbits));
+        let qh = vdupq_n_u32(u32::from_le_bytes(*qhb));
+        let bias = vdupq_n_s32(16);
+        let mut acc = vdupq_n_f32(0.0);
+        for (c, pack) in qs.as_chunks::<4>().0.iter().enumerate() {
+            let j = c.saturating_mul(4);
+            let (Ok(base), Some(xlo), Some(xhi)) = (
+                i32::try_from(j),
+                xr.get(j..).and_then(<[f32]>::first_chunk::<4>),
+                xr.get(j.saturating_add(16)..)
+                    .and_then(<[f32]>::first_chunk::<4>),
+            ) else {
+                continue;
+            };
+            let (low, high) = q5_nibbles(pack);
+            // Codes are 0..=31 and the bias makes them -16..=15, so the scalar
+            // kernel's `i32::from(..) - 16` is reproduced exactly. Multiplying
+            // by `d` separately rather than folding it into the FMA keeps each
+            // dequantized weight bit-identical; only the accumulation
+            // reassociates.
+            let q_lo = vsubq_s32(vreinterpretq_s32_u32(q5_codes(low, qh, base)), bias);
+            let q_hi = vsubq_s32(
+                vreinterpretq_s32_u32(q5_codes(high, qh, base.saturating_add(16))),
+                bias,
+            );
+            acc = vfmaq_f32(acc, vmulq_f32(vcvtq_f32_s32(q_lo), dv), load_f32x4(xlo));
+            acc = vfmaq_f32(acc, vmulq_f32(vcvtq_f32_s32(q_hi), dv), load_f32x4(xhi));
+        }
+        sum = sc::add_f32(sum, vaddvq_f32(acc));
+    }
+    sum
+}
+
+/// # Safety
+///
+/// The caller must run on a CPU with Advanced SIMD.
+#[target_feature(enable = "neon")]
+fn dot_q5_1_f32_neon(row: &[u8], x: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    let (w_blocks, _) = row.as_chunks::<Q5_1_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        // Q5_1 is Q5_0 with a second binary16, the offset `m`, inserted after
+        // the scale; everything after it shifts along by two bytes.
+        let Some(dbits) = wb.first_chunk::<2>() else {
+            continue;
+        };
+        let Some(mbits) = wb.get(2..).and_then(<[u8]>::first_chunk::<2>) else {
+            continue;
+        };
+        let Some(qhb) = wb.get(4..).and_then(<[u8]>::first_chunk::<4>) else {
+            continue;
+        };
+        let Some(qs) = wb.get(8..) else { continue };
+        let x_base = b.saturating_mul(QK5_1);
+        let Some(xr) = x.get(x_base..x_base.saturating_add(QK5_1)) else {
+            continue;
+        };
+        let dv = vdupq_n_f32(f16_scale(*dbits));
+        let mv = vdupq_n_f32(f16_scale(*mbits));
+        let qh = vdupq_n_u32(u32::from_le_bytes(*qhb));
+        let mut acc = vdupq_n_f32(0.0);
+        for (c, pack) in qs.as_chunks::<4>().0.iter().enumerate() {
+            let j = c.saturating_mul(4);
+            let (Ok(base), Some(xlo), Some(xhi)) = (
+                i32::try_from(j),
+                xr.get(j..).and_then(<[f32]>::first_chunk::<4>),
+                xr.get(j.saturating_add(16)..)
+                    .and_then(<[f32]>::first_chunk::<4>),
+            ) else {
+                continue;
+            };
+            let (low, high) = q5_nibbles(pack);
+            // The scalar kernel writes `q * d + m`, a multiply and then an add,
+            // so this must not contract to an FMA: a separate `vaddq_f32` keeps
+            // both roundings and the dequantized weight bit-identical.
+            let w_lo = vaddq_f32(vmulq_f32(vcvtq_f32_u32(q5_codes(low, qh, base)), dv), mv);
+            let w_hi = vaddq_f32(
+                vmulq_f32(
+                    vcvtq_f32_u32(q5_codes(high, qh, base.saturating_add(16))),
+                    dv,
+                ),
+                mv,
+            );
+            acc = vfmaq_f32(acc, w_lo, load_f32x4(xlo));
+            acc = vfmaq_f32(acc, w_hi, load_f32x4(xhi));
+        }
+        sum = sc::add_f32(sum, vaddvq_f32(acc));
+    }
+    sum
+}
+
+/// # Safety
+///
+/// The caller must run on a CPU with Advanced SIMD.
+#[target_feature(enable = "neon")]
+fn dot_q8_0_f32_neon(row: &[u8], x: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    let (w_blocks, _) = row.as_chunks::<Q8_0_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(dbits) = wb.first_chunk::<2>() else {
+            continue;
+        };
+        let Some(qs) = wb.last_chunk::<32>() else {
+            continue;
+        };
+        let x_base = b.saturating_mul(QK8_0);
+        let Some(xr) = x.get(x_base..x_base.saturating_add(QK8_0)) else {
+            continue;
+        };
+        let dv = vdupq_n_f32(f16_scale(*dbits));
+        let mut acc = vdupq_n_f32(0.0);
+        for (c, pack) in qs.as_chunks::<8>().0.iter().enumerate() {
+            let off = c.saturating_mul(8);
+            let (Some(xlo), Some(xhi)) = (
+                xr.get(off..).and_then(<[f32]>::first_chunk::<4>),
+                xr.get(off.saturating_add(4)..)
+                    .and_then(<[f32]>::first_chunk::<4>),
+            ) else {
+                continue;
+            };
+            // `vmovl_s8` sign-extends, matching the scalar kernel's
+            // `i8_from_bits`. As in Q5_0, `d` is applied by a separate multiply
+            // so the dequantized weight is bit-identical.
+            let (q_lo, q_hi) = widen_s8x8(vreinterpret_s8_u8(load_u8x8(pack)));
+            acc = vfmaq_f32(acc, vmulq_f32(vcvtq_f32_s32(q_lo), dv), load_f32x4(xlo));
+            acc = vfmaq_f32(acc, vmulq_f32(vcvtq_f32_s32(q_hi), dv), load_f32x4(xhi));
+        }
+        sum = sc::add_f32(sum, vaddvq_f32(acc));
+    }
+    sum
 }
 
 /// # Safety

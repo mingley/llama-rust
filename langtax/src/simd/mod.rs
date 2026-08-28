@@ -1,6 +1,15 @@
-//! Opt-in SIMD fast path for the five dtypes a Q4_K_M-class GGUF touches in
-//! bulk: F32, F16, Q4_K, Q6_K and Q8_0. The other 25 ggml dtypes keep running
-//! on the scalar kernels in [`crate::quant`].
+//! Opt-in SIMD fast path for the dtypes a Q4_K_M-class GGUF touches in bulk:
+//! F32, F16, Q4_K, Q5_0, Q5_1, Q6_K and Q8_0. The other 23 ggml dtypes keep
+//! running on the scalar kernels in [`crate::quant`].
+//!
+//! The dtype list is not a guess. On `Qwen2.5-0.5B-Instruct-Q4_K_M`, the file
+//! this crate is tested against, a "Q4_K_M" name means Q4_K on `ffn_down`
+//! only; Q5_0 carries attention and the FFN gate/up, and Q8_0 carries the
+//! language-model head. Measured over the 2-D weights a decode step actually
+//! multiplies: Q5_0 51.0%, Q8_0 27.8%, Q6_K 10.6%, Q4_K 10.6%. Covering F32,
+//! F16 and Q4_K/Q6_K alone left 79% of the multiply-accumulates on the scalar
+//! path and capped the end-to-end gain at 1.15x whatever the per-kernel
+//! numbers said.
 //!
 //! # Shape of the fast path
 //!
@@ -31,12 +40,15 @@
 //!
 //! # Numerics
 //!
-//! The Q8_0 kernels accumulate in `i32`, which is exact, so they are
-//! bit-identical to the scalar kernel. The F32/F16/Q4_K/Q6_K kernels keep one
-//! accumulator per vector lane and use fused multiply-add, so they reassociate
-//! the summation and skip one intermediate rounding. Both kernels compute the
-//! same exact-arithmetic quantity; see `tests` for the error bound that the
-//! differential tests enforce.
+//! The Q8_0-against-Q8_0 kernel accumulates in `i32`, which is exact, so it is
+//! bit-identical to the scalar kernel. Every kernel that takes `f32`
+//! activations keeps one accumulator per vector lane and uses fused
+//! multiply-add, so it reassociates the summation and skips one intermediate
+//! rounding. In all of them the dequantized weight itself is bit-identical to
+//! the scalar kernel's: `d` is applied by a separate multiply, and Q5_1's
+//! `q * d + m` by a separate add, precisely so that only the accumulation
+//! differs. Both kernels compute the same exact-arithmetic quantity; see
+//! `tests` for the error bound that the differential tests enforce.
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -174,6 +186,54 @@ pub(crate) fn q6_k_f32_row_dot() -> Option<RowDotF32> {
     #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
     if found & CAP_NEON != 0 {
         return Some(aarch64::dot_q6_k_f32_row);
+    }
+    let _ = found;
+    None
+}
+
+/// Vector kernel for `GGML_TYPE_Q5_0` weights, or `None` for the scalar path.
+pub(crate) fn q5_0_f32_row_dot() -> Option<RowDotF32> {
+    let found = caps();
+    #[cfg(all(target_arch = "x86_64", target_endian = "little"))]
+    if found & CAP_AVX2_FMA != 0 && found & CAP_F16C != 0 {
+        return Some(x86::dot_q5_0_f32_row);
+    }
+    #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
+    if found & CAP_NEON != 0 {
+        return Some(aarch64::dot_q5_0_f32_row);
+    }
+    let _ = found;
+    None
+}
+
+/// Vector kernel for `GGML_TYPE_Q5_1` weights, or `None` for the scalar path.
+pub(crate) fn q5_1_f32_row_dot() -> Option<RowDotF32> {
+    let found = caps();
+    #[cfg(all(target_arch = "x86_64", target_endian = "little"))]
+    if found & CAP_AVX2_FMA != 0 && found & CAP_F16C != 0 {
+        return Some(x86::dot_q5_1_f32_row);
+    }
+    #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
+    if found & CAP_NEON != 0 {
+        return Some(aarch64::dot_q5_1_f32_row);
+    }
+    let _ = found;
+    None
+}
+
+/// Vector kernel for `GGML_TYPE_Q8_0` weights against an `f32` activation row,
+/// or `None` for the scalar path. This is the model path: `output.weight` and
+/// `attn_v` on the reference checkpoint, and every weight of a whole-model
+/// `*-Q8_0.gguf`. [`q8_0_row_dot`] is the separate Q8_0-activation kernel.
+pub(crate) fn q8_0_f32_row_dot() -> Option<RowDotF32> {
+    let found = caps();
+    #[cfg(all(target_arch = "x86_64", target_endian = "little"))]
+    if found & CAP_AVX2_FMA != 0 && found & CAP_F16C != 0 {
+        return Some(x86::dot_q8_0_f32_row);
+    }
+    #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
+    if found & CAP_NEON != 0 {
+        return Some(aarch64::dot_q8_0_f32_row);
     }
     let _ = found;
     None

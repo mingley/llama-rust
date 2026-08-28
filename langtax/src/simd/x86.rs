@@ -1,4 +1,5 @@
-//! AVX2 + FMA row kernels for F32, F16, Q4_K, Q6_K and Q8_0 on x86-64.
+//! AVX2 + FMA row kernels for F32, F16, Q4_K, Q5_0, Q5_1, Q6_K and Q8_0 on
+//! x86-64.
 //!
 //! # Where `unsafe` lives
 //!
@@ -13,7 +14,7 @@
 //!    borrow checker supplies it. The kernels obtain those arrays from
 //!    `as_chunks` / `first_chunk` / `last_chunk`, so no raw offset arithmetic
 //!    is involved anywhere.
-//! 2. Five dispatch wrappers, which call a `#[target_feature]` kernel after
+//! 2. Eight dispatch wrappers, which call a `#[target_feature]` kernel after
 //!    [`super`] has confirmed the CPU supports it.
 #![expect(
     unsafe_code,
@@ -26,23 +27,32 @@
 use core::arch::x86_64::{
     __m128i, __m256, __m256i, _mm256_add_epi32, _mm256_add_ps, _mm256_and_si256,
     _mm256_castps256_ps128, _mm256_castsi256_ps, _mm256_castsi256_si128, _mm256_cvtepi32_ps,
-    _mm256_cvtepi8_epi16, _mm256_cvtepu8_epi32, _mm256_cvtph_ps, _mm256_extractf128_ps,
-    _mm256_extracti128_si256, _mm256_fmadd_ps, _mm256_loadu_ps, _mm256_loadu_si256,
-    _mm256_madd_epi16, _mm256_mul_ps, _mm256_or_si256, _mm256_set1_epi32, _mm256_set1_ps,
-    _mm256_setzero_ps, _mm256_slli_epi32, _mm256_srli_epi32, _mm256_sub_epi32, _mm256_sub_ps,
-    _mm_add_epi32, _mm_add_ps, _mm_add_ss, _mm_and_si128, _mm_cvtph_ps, _mm_cvtsi128_si32,
-    _mm_cvtsi32_si128, _mm_cvtss_f32, _mm_loadl_epi64, _mm_loadu_si128, _mm_movehl_ps, _mm_mul_ss,
-    _mm_set1_epi8, _mm_shuffle_epi32, _mm_shuffle_ps, _mm_srli_epi16,
+    _mm256_cvtepi8_epi16, _mm256_cvtepi8_epi32, _mm256_cvtepu8_epi32, _mm256_cvtph_ps,
+    _mm256_extractf128_ps, _mm256_extracti128_si256, _mm256_fmadd_ps, _mm256_loadu_ps,
+    _mm256_loadu_si256, _mm256_madd_epi16, _mm256_mul_ps, _mm256_or_si256, _mm256_set1_epi32,
+    _mm256_set1_ps, _mm256_setr_epi32, _mm256_setzero_ps, _mm256_slli_epi32, _mm256_srli_epi32,
+    _mm256_srlv_epi32, _mm256_sub_epi32, _mm256_sub_ps, _mm_add_epi32, _mm_add_ps, _mm_add_ss,
+    _mm_and_si128, _mm_cvtph_ps, _mm_cvtsi128_si32, _mm_cvtsi32_si128, _mm_cvtss_f32,
+    _mm_loadl_epi64, _mm_loadu_si128, _mm_movehl_ps, _mm_mul_ss, _mm_set1_epi8, _mm_shuffle_epi32,
+    _mm_shuffle_ps, _mm_srli_epi16,
 };
 
 use crate::fp16::load_f16_le;
 use crate::quant::scalar as sc;
-use crate::quant::{i8_from_bits, Q4_K_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, QK_K};
+use crate::quant::{
+    i8_from_bits, Q4_K_BLOCK, Q5_0_BLOCK, Q5_1_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, QK5_0, QK5_1, QK8_0,
+    QK_K,
+};
 
 /// True when this CPU has the features the kernels below are compiled for.
 /// `std`'s detection macros cache their answer, so this is a load and a test.
 fn have_avx2_fma() -> bool {
     std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma")
+}
+
+/// As [`have_avx2_fma`], plus the binary16 conversion the block scales use.
+fn have_avx2_fma_f16c() -> bool {
+    have_avx2_fma() && std::arch::is_x86_feature_detected!("f16c")
 }
 
 /// `GGML_TYPE_F32` weight row against an `f32` activation row.
@@ -60,10 +70,7 @@ pub(super) fn dot_f32_row(row: &[u8], x: &[f32]) -> f32 {
 
 /// `GGML_TYPE_F16` weight row against an `f32` activation row.
 pub(super) fn dot_f16_row(row: &[u8], x: &[f32]) -> f32 {
-    debug_assert!(
-        have_avx2_fma() && std::arch::is_x86_feature_detected!("f16c"),
-        "F16C kernel reached without AVX2+FMA+F16C"
-    );
+    debug_assert!(have_avx2_fma_f16c(), "F16 kernel reached without F16C");
     // SAFETY: as `dot_f32_row`, plus `f16c` for `_mm256_cvtph_ps`.
     // `super::f16_row_dot` requires both `CAP_AVX2_FMA` and `CAP_F16C` before
     // it will hand out this function.
@@ -86,12 +93,35 @@ pub(super) fn dot_q6_k_f32_row(row: &[u8], x: &[f32]) -> f32 {
     unsafe { dot_q6_k_f32_avx2(row, x) }
 }
 
+/// Q5_0 weight row against an `f32` activation row.
+pub(super) fn dot_q5_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
+    debug_assert!(have_avx2_fma_f16c(), "Q5_0 kernel reached without F16C");
+    // SAFETY: as `dot_f32_row`, plus `f16c` for the block scale. Reachable only
+    // through `super::q5_0_f32_row_dot`, which checks `CAP_AVX2_FMA` and
+    // `CAP_F16C`.
+    unsafe { dot_q5_0_f32_avx2(row, x) }
+}
+
+/// Q5_1 weight row against an `f32` activation row.
+pub(super) fn dot_q5_1_f32_row(row: &[u8], x: &[f32]) -> f32 {
+    debug_assert!(have_avx2_fma_f16c(), "Q5_1 kernel reached without F16C");
+    // SAFETY: as `dot_q5_0_f32_row`; reachable only through
+    // `super::q5_1_f32_row_dot`.
+    unsafe { dot_q5_1_f32_avx2(row, x) }
+}
+
+/// Q8_0 weight row against an `f32` activation row. This is the model path;
+/// [`dot_q8_0_row`] is the Q8_0-activation kernel the GEMV benchmark uses.
+pub(super) fn dot_q8_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
+    debug_assert!(have_avx2_fma_f16c(), "Q8_0 f32 kernel reached without F16C");
+    // SAFETY: as `dot_q5_0_f32_row`; reachable only through
+    // `super::q8_0_f32_row_dot`.
+    unsafe { dot_q8_0_f32_avx2(row, x) }
+}
+
 /// Q8_0 weight row against a Q8_0 activation row.
 pub(super) fn dot_q8_0_row(row: &[u8], x: &[u8]) -> f32 {
-    debug_assert!(
-        have_avx2_fma() && std::arch::is_x86_feature_detected!("f16c"),
-        "Q8_0 kernel reached without AVX2+FMA+F16C"
-    );
+    debug_assert!(have_avx2_fma_f16c(), "Q8_0 kernel reached without F16C");
     // SAFETY: as `dot_f32_row`, plus `f16c` for the block scale conversion.
     // `super::q8_0_row_dot` requires both `CAP_AVX2_FMA` and `CAP_F16C` before
     // it will hand out this function.
@@ -448,6 +478,209 @@ fn dot_q8_0_avx2(row: &[u8], x: &[u8]) -> f32 {
             ),
         );
         sum = sc::add_f32(sum, (hsum_epi32(prod) as f32) * scale_product(*dw, *dx));
+    }
+    sum
+}
+
+/// One little-endian binary16 block scale, decoded in hardware.
+///
+/// Same exactness argument as [`scale_product`]. Q5_0, Q5_1 and Q8_0 all carry
+/// one or two scales per 32 elements, dense enough that the software
+/// conversion would otherwise dominate.
+#[inline]
+#[target_feature(enable = "avx2", enable = "f16c")]
+fn f16_scale(bits: [u8; 2]) -> f32 {
+    let [b0, b1] = bits;
+    _mm_cvtss_f32(_mm_cvtph_ps(_mm_cvtsi32_si128(i32::from_le_bytes([
+        b0, b1, 0, 0,
+    ]))))
+}
+
+/// The five-bit codes of eight consecutive Q5 elements.
+///
+/// `nibbles` holds the low four bits of each code, one per `i32` lane. The
+/// fifth bit of lane `l` is bit `base + l` of the block's `qh` word, which the
+/// scalar kernel reaches as `(qh >> sj) << 4 & 0x10` for the low half and
+/// `(qh >> (sj + 12)) & 0x10` for the high half: the same bit, the same
+/// position. Lanes whose bit index is 32 or more cannot arise, since `base` is
+/// at most 24 and `l` at most 7.
+#[inline]
+#[target_feature(enable = "avx2")]
+fn q5_codes(nibbles: __m256i, qh: __m256i, base: i32) -> __m256i {
+    let lanes = _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7);
+    let shifted = _mm256_srlv_epi32(qh, _mm256_add_epi32(_mm256_set1_epi32(base), lanes));
+    let fifth = _mm256_slli_epi32::<4>(_mm256_and_si256(shifted, _mm256_set1_epi32(1)));
+    _mm256_or_si256(nibbles, fifth)
+}
+
+/// The two halves of a Q5 block's `qs` byte pack, as `i32` lanes.
+///
+/// Element `j` of the block takes the low nibble of `qs[j]` and element
+/// `j + 16` the high nibble, exactly as the scalar kernel's `*p & 0x0f` and
+/// `*p >> 4`.
+#[inline]
+#[target_feature(enable = "avx2")]
+fn q5_nibbles(pack: &[u8; 8]) -> (__m256i, __m256i) {
+    let bytes = _mm256_cvtepu8_epi32(load_u8x8(pack));
+    (
+        _mm256_and_si256(bytes, _mm256_set1_epi32(0x0f)),
+        _mm256_srli_epi32::<4>(bytes),
+    )
+}
+
+/// # Safety
+///
+/// The caller must run on a CPU with `avx2`, `fma` and `f16c`.
+#[target_feature(enable = "avx2", enable = "fma", enable = "f16c")]
+fn dot_q5_0_f32_avx2(row: &[u8], x: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    let (w_blocks, _) = row.as_chunks::<Q5_0_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        // A Q5_0 block is a binary16 scale, a `u32` of fifth bits, then 16
+        // bytes holding two nibbles each.
+        let Some(dbits) = wb.first_chunk::<2>() else {
+            continue;
+        };
+        let Some(qhb) = wb.get(2..).and_then(<[u8]>::first_chunk::<4>) else {
+            continue;
+        };
+        let Some(qs) = wb.get(6..) else { continue };
+        let x_base = b.saturating_mul(QK5_0);
+        let Some(xr) = x.get(x_base..x_base.saturating_add(QK5_0)) else {
+            continue;
+        };
+        let dv = _mm256_set1_ps(f16_scale(*dbits));
+        let qh = _mm256_set1_epi32(i32::from_ne_bytes(u32::from_le_bytes(*qhb).to_ne_bytes()));
+        let bias = _mm256_set1_epi32(16);
+        let mut acc = _mm256_setzero_ps();
+        for (c, pack) in qs.as_chunks::<8>().0.iter().enumerate() {
+            let j = c.saturating_mul(8);
+            let (Ok(base), Some(xlo), Some(xhi)) = (
+                i32::try_from(j),
+                xr.get(j..).and_then(<[f32]>::first_chunk::<8>),
+                xr.get(j.saturating_add(16)..)
+                    .and_then(<[f32]>::first_chunk::<8>),
+            ) else {
+                continue;
+            };
+            let (low, high) = q5_nibbles(pack);
+            // Codes are 0..=31 and the bias makes them -16..=15, so the scalar
+            // kernel's `i32::from(..) - 16` is reproduced exactly. Multiplying
+            // by `d` separately rather than folding it into the FMA keeps each
+            // dequantized weight bit-identical; only the accumulation
+            // reassociates.
+            let w_lo = _mm256_mul_ps(
+                _mm256_cvtepi32_ps(_mm256_sub_epi32(q5_codes(low, qh, base), bias)),
+                dv,
+            );
+            let w_hi = _mm256_mul_ps(
+                _mm256_cvtepi32_ps(_mm256_sub_epi32(
+                    q5_codes(high, qh, base.saturating_add(16)),
+                    bias,
+                )),
+                dv,
+            );
+            acc = _mm256_fmadd_ps(w_lo, load_f32x8(xlo), acc);
+            acc = _mm256_fmadd_ps(w_hi, load_f32x8(xhi), acc);
+        }
+        sum = sc::add_f32(sum, hsum_ps(acc));
+    }
+    sum
+}
+
+/// # Safety
+///
+/// The caller must run on a CPU with `avx2`, `fma` and `f16c`.
+#[target_feature(enable = "avx2", enable = "fma", enable = "f16c")]
+fn dot_q5_1_f32_avx2(row: &[u8], x: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    let (w_blocks, _) = row.as_chunks::<Q5_1_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        // Q5_1 is Q5_0 with a second binary16, the offset `m`, inserted after
+        // the scale; everything after it shifts along by two bytes.
+        let Some(dbits) = wb.first_chunk::<2>() else {
+            continue;
+        };
+        let Some(mbits) = wb.get(2..).and_then(<[u8]>::first_chunk::<2>) else {
+            continue;
+        };
+        let Some(qhb) = wb.get(4..).and_then(<[u8]>::first_chunk::<4>) else {
+            continue;
+        };
+        let Some(qs) = wb.get(8..) else { continue };
+        let x_base = b.saturating_mul(QK5_1);
+        let Some(xr) = x.get(x_base..x_base.saturating_add(QK5_1)) else {
+            continue;
+        };
+        let dv = _mm256_set1_ps(f16_scale(*dbits));
+        let mv = _mm256_set1_ps(f16_scale(*mbits));
+        let qh = _mm256_set1_epi32(i32::from_ne_bytes(u32::from_le_bytes(*qhb).to_ne_bytes()));
+        let mut acc = _mm256_setzero_ps();
+        for (c, pack) in qs.as_chunks::<8>().0.iter().enumerate() {
+            let j = c.saturating_mul(8);
+            let (Ok(base), Some(xlo), Some(xhi)) = (
+                i32::try_from(j),
+                xr.get(j..).and_then(<[f32]>::first_chunk::<8>),
+                xr.get(j.saturating_add(16)..)
+                    .and_then(<[f32]>::first_chunk::<8>),
+            ) else {
+                continue;
+            };
+            let (low, high) = q5_nibbles(pack);
+            // The scalar kernel writes `q * d + m`, a multiply and then an add,
+            // so this must not contract to an FMA: a separate `_mm256_add_ps`
+            // keeps both roundings and the dequantized weight bit-identical.
+            let w_lo = _mm256_add_ps(
+                _mm256_mul_ps(_mm256_cvtepi32_ps(q5_codes(low, qh, base)), dv),
+                mv,
+            );
+            let w_hi = _mm256_add_ps(
+                _mm256_mul_ps(
+                    _mm256_cvtepi32_ps(q5_codes(high, qh, base.saturating_add(16))),
+                    dv,
+                ),
+                mv,
+            );
+            acc = _mm256_fmadd_ps(w_lo, load_f32x8(xlo), acc);
+            acc = _mm256_fmadd_ps(w_hi, load_f32x8(xhi), acc);
+        }
+        sum = sc::add_f32(sum, hsum_ps(acc));
+    }
+    sum
+}
+
+/// # Safety
+///
+/// The caller must run on a CPU with `avx2`, `fma` and `f16c`.
+#[target_feature(enable = "avx2", enable = "fma", enable = "f16c")]
+fn dot_q8_0_f32_avx2(row: &[u8], x: &[f32]) -> f32 {
+    let mut sum = 0.0f32;
+    let (w_blocks, _) = row.as_chunks::<Q8_0_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(dbits) = wb.first_chunk::<2>() else {
+            continue;
+        };
+        let Some(qs) = wb.last_chunk::<32>() else {
+            continue;
+        };
+        let x_base = b.saturating_mul(QK8_0);
+        let Some(xr) = x.get(x_base..x_base.saturating_add(QK8_0)) else {
+            continue;
+        };
+        let dv = _mm256_set1_ps(f16_scale(*dbits));
+        let mut acc = _mm256_setzero_ps();
+        for (c, pack) in qs.as_chunks::<8>().0.iter().enumerate() {
+            let off = c.saturating_mul(8);
+            let Some(xs) = xr.get(off..).and_then(<[f32]>::first_chunk::<8>) else {
+                continue;
+            };
+            // `_mm256_cvtepi8_epi32` sign-extends, matching the scalar
+            // kernel's `i8_from_bits`. As in Q5_0, `d` is applied by a separate
+            // multiply so the dequantized weight is bit-identical.
+            let q = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(load_u8x8(pack)));
+            acc = _mm256_fmadd_ps(_mm256_mul_ps(q, dv), load_f32x8(xs), acc);
+        }
+        sum = sc::add_f32(sum, hsum_ps(acc));
     }
     sum
 }

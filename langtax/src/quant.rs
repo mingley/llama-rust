@@ -5868,6 +5868,24 @@ pub(crate) mod scalar {
         super::vec_dot_q6_k_f32_row(row, x)
     }
 
+    /// Q5_0 weight bytes against an `f32` activation row.
+    #[cfg(test)]
+    pub(crate) fn q5_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
+        super::vec_dot_q5_0_f32_row(row, x)
+    }
+
+    /// Q5_1 weight bytes against an `f32` activation row.
+    #[cfg(test)]
+    pub(crate) fn q5_1_f32_row(row: &[u8], x: &[f32]) -> f32 {
+        super::vec_dot_q5_1_f32_row(row, x)
+    }
+
+    /// Q8_0 weight bytes against an `f32` activation row.
+    #[cfg(test)]
+    pub(crate) fn q8_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
+        super::vec_dot_q8_0_f32_row(row, x)
+    }
+
     /// Q8_0 weight bytes against a Q8_0 activation row.
     #[cfg(test)]
     pub(crate) fn q8_0_row(row: &[u8], x: &[u8]) -> f32 {
@@ -5922,6 +5940,24 @@ row_kernel!(
     vec_dot_q6_k_f32_row,
     q6_k_f32_row_dot
 );
+row_kernel!(
+    q5_0_f32_row_kernel,
+    RowDotF32,
+    vec_dot_q5_0_f32_row,
+    q5_0_f32_row_dot
+);
+row_kernel!(
+    q5_1_f32_row_kernel,
+    RowDotF32,
+    vec_dot_q5_1_f32_row,
+    q5_1_f32_row_dot
+);
+row_kernel!(
+    q8_0_f32_row_kernel,
+    RowDotF32,
+    vec_dot_q8_0_f32_row,
+    q8_0_f32_row_dot
+);
 row_kernel!(q8_0_row_kernel, RowDotQ8, vec_dot_q8_row, q8_0_row_dot);
 
 /// The SIMD kernel for `kind`, or `None` when this dtype or this CPU has none.
@@ -5934,6 +5970,9 @@ fn simd_row_dot(kind: GemmKind) -> Option<RowDotF32> {
         GemmKind::F16 => crate::simd::f16_row_dot(),
         GemmKind::Q4K => crate::simd::q4_k_f32_row_dot(),
         GemmKind::Q6K => crate::simd::q6_k_f32_row_dot(),
+        GemmKind::Q50 => crate::simd::q5_0_f32_row_dot(),
+        GemmKind::Q51 => crate::simd::q5_1_f32_row_dot(),
+        GemmKind::Q80 => crate::simd::q8_0_f32_row_dot(),
         _ => None,
     }
 }
@@ -6603,13 +6642,13 @@ fn gemm_f32_x(
                 GemmKind::Q2K => vec_dot_q2_k_f32_row(wrow, xt),
                 GemmKind::Q3K => vec_dot_q3_k_f32_row(wrow, xt),
                 GemmKind::Q41 => vec_dot_q4_1_f32_row(wrow, xt),
-                GemmKind::Q50 => vec_dot_q5_0_f32_row(wrow, xt),
-                GemmKind::Q51 => vec_dot_q5_1_f32_row(wrow, xt),
+                GemmKind::Q50 => simd.unwrap_or(vec_dot_q5_0_f32_row)(wrow, xt),
+                GemmKind::Q51 => simd.unwrap_or(vec_dot_q5_1_f32_row)(wrow, xt),
                 GemmKind::MXFP4 => vec_dot_mxfp4_f32_row(wrow, xt),
                 GemmKind::NVFP4 => vec_dot_nvfp4_f32_row(wrow, xt),
                 GemmKind::Q10 => vec_dot_q1_0_f32_row(wrow, xt),
                 GemmKind::Q20 => vec_dot_q2_0_f32_row(wrow, xt),
-                GemmKind::Q80 => vec_dot_q8_0_f32_row(wrow, xt),
+                GemmKind::Q80 => simd.unwrap_or(vec_dot_q8_0_f32_row)(wrow, xt),
                 GemmKind::Q81 => vec_dot_q8_1_f32_row(wrow, xt),
                 GemmKind::TQ10 => vec_dot_tq1_0_f32_row(wrow, xt),
                 GemmKind::TQ20 => vec_dot_tq2_0_f32_row(wrow, xt),
@@ -6757,10 +6796,9 @@ pub fn gemv_q5_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
     if y.is_empty() {
         return Ok(());
     }
+    let dot = q5_0_f32_row_kernel();
     for_each_row(y, |r, out| {
-        *out = row_bytes(w, w_rb, r)
-            .map(|row| vec_dot_q5_0_f32_row(row, x))
-            .unwrap_or(0.0);
+        *out = row_bytes(w, w_rb, r).map(|row| dot(row, x)).unwrap_or(0.0);
     });
     Ok(())
 }
@@ -6778,10 +6816,9 @@ pub fn gemv_q5_1_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
     if y.is_empty() {
         return Ok(());
     }
+    let dot = q5_1_f32_row_kernel();
     for_each_row(y, |r, out| {
-        *out = row_bytes(w, w_rb, r)
-            .map(|row| vec_dot_q5_1_f32_row(row, x))
-            .unwrap_or(0.0);
+        *out = row_bytes(w, w_rb, r).map(|row| dot(row, x)).unwrap_or(0.0);
     });
     Ok(())
 }
@@ -6904,10 +6941,9 @@ pub fn gemv_q8_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
     if y.is_empty() {
         return Ok(());
     }
+    let dot = q8_0_f32_row_kernel();
     for_each_row(y, |r, out| {
-        *out = row_bytes(w, w_rb, r)
-            .map(|row| vec_dot_q8_0_f32_row(row, x))
-            .unwrap_or(0.0);
+        *out = row_bytes(w, w_rb, r).map(|row| dot(row, x)).unwrap_or(0.0);
     });
     Ok(())
 }
