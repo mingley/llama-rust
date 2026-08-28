@@ -4540,7 +4540,7 @@ impl Llama {
         m: &QuantMat,
         part: usize,
         x: &[f32],
-        y: &mut Vec<f32],
+        y: &mut Vec<f32>,
         pool: &mut GemvPool,
     ) -> Result<(), LlamaError> {
         let (base, len) = self.mat_part_range(m, part)?;
