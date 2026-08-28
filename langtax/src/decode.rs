@@ -56,7 +56,7 @@ const TINY_LLAMA_N_EXPERT: usize = 4;
 /// Writer-built tiny `llama.expert_used_count` (official Mixtral convert uses 2).
 const TINY_LLAMA_N_EXPERT_USED: usize = 2;
 /// Official `build_moe_ffn` `norm_w` clamp: smallest f16 (`2^-14`).
-const MOE_NORM_W_CLAMP: f32 = 6.103515625e-5;
+const MOE_NORM_W_CLAMP: f32 = 1.0 / 16_384.0;
 /// Official llama.cpp `hparams.n_no_rope_layer_step` default for Llama4 text.
 const LLAMA4_NO_ROPE_LAYER_STEP: usize = 4;
 /// Official Llama4 NoPE temperature floor (`n_attn_temp_floor_scale` = 8192).
