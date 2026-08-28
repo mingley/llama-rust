@@ -37,28 +37,29 @@ use crate::quant::{
     dequant_iq3_s_row, dequant_iq3_xxs_row, dequant_iq4_nl_row, dequant_iq4_xs_row,
     dequant_mxfp4_row, dequant_nvfp4_row, dequant_q1_0_row, dequant_q2_0_row, dequant_q2_k_row,
     dequant_q3_k_row, dequant_q4_1_row, dequant_q4_k_row, dequant_q5_0_row, dequant_q5_1_row,
-    dequant_q5_k_row, dequant_q6_k_row, dequant_q8_1_row, dequant_tq1_0_row, dequant_tq2_0_row,
-    f16_row_bytes, f32_row_bytes, gemm_bf16, gemm_f16, gemm_f32, gemm_iq1_m_f32, gemm_iq1_s_f32,
-    gemm_iq2_s_f32, gemm_iq2_xs_f32, gemm_iq2_xxs_f32, gemm_iq3_s_f32, gemm_iq3_xxs_f32,
-    gemm_iq4_nl_f32, gemm_iq4_xs_f32, gemm_mxfp4_f32, gemm_nvfp4_f32, gemm_q1_0_f32, gemm_q2_0_f32,
-    gemm_q2_k_f32, gemm_q3_k_f32, gemm_q4_1_f32, gemm_q4_k_f32, gemm_q5_0_f32, gemm_q5_1_f32,
-    gemm_q5_k_f32, gemm_q6_k_f32, gemm_q8_1_f32, gemm_tq1_0_f32, gemm_tq2_0_f32, gemv_bf16,
-    gemv_f16, gemv_f32, gemv_iq1_m_f32, gemv_iq1_s_f32, gemv_iq2_s_f32, gemv_iq2_xs_f32,
-    gemv_iq2_xxs_f32, gemv_iq3_s_f32, gemv_iq3_xxs_f32, gemv_iq4_nl_f32, gemv_iq4_xs_f32,
-    gemv_mxfp4_f32, gemv_nvfp4_f32, gemv_q1_0_f32, gemv_q2_0_f32, gemv_q2_k_f32, gemv_q3_k_f32,
-    gemv_q4_1_f32, gemv_q4_k_f32, gemv_q5_0_f32, gemv_q5_1_f32, gemv_q5_k_f32, gemv_q6_k_f32,
-    gemv_q8_1_f32, gemv_tq1_0_f32, gemv_tq2_0_f32, iq1_m_row_bytes, iq1_s_row_bytes,
-    iq2_s_row_bytes, iq2_xs_row_bytes, iq2_xxs_row_bytes, iq3_s_row_bytes, iq3_xxs_row_bytes,
-    iq4_nl_row_bytes, iq4_xs_row_bytes, mxfp4_row_bytes, nvfp4_row_bytes, pack_bf16, pack_f16,
-    pack_f32, pack_iq1_m_block, pack_iq1_s_block, pack_iq2_s_block, pack_iq2_xs_block,
-    pack_iq2_xxs_block, pack_iq3_s_block, pack_iq3_xxs_block, pack_iq4_nl_block, pack_iq4_xs_block,
-    pack_mxfp4_block, pack_nvfp4_block, pack_q1_0_block, pack_q2_0_block, pack_q2_k_block,
-    pack_q3_k_block, pack_q4_1_block, pack_q4_k_block, pack_q5_0_block, pack_q5_1_block,
-    pack_q5_k_block, pack_q6_k_block, pack_q8_1_block, pack_tq1_0_block, pack_tq2_0_block,
-    q1_0_row_bytes, q2_0_row_bytes, q2_k_row_bytes, q3_k_row_bytes, q4_1_row_bytes, q4_k_row_bytes,
-    q5_0_row_bytes, q5_1_row_bytes, q5_k_row_bytes, q6_k_row_bytes, q8_1_row_bytes,
-    tq1_0_row_bytes, tq2_0_row_bytes, QuantError, QK1_0, QK2_0, QK4_1, QK4_NL, QK5_0, QK5_1, QK8_1,
-    QK_K, QK_MXFP4, QK_NVFP4,
+    dequant_q5_k_row, dequant_q6_k_row, dequant_q8_0_row, dequant_q8_1_row, dequant_tq1_0_row,
+    dequant_tq2_0_row, f16_row_bytes, f32_row_bytes, gemm_bf16, gemm_f16, gemm_f32, gemm_iq1_m_f32,
+    gemm_iq1_s_f32, gemm_iq2_s_f32, gemm_iq2_xs_f32, gemm_iq2_xxs_f32, gemm_iq3_s_f32,
+    gemm_iq3_xxs_f32, gemm_iq4_nl_f32, gemm_iq4_xs_f32, gemm_mxfp4_f32, gemm_nvfp4_f32,
+    gemm_q1_0_f32, gemm_q2_0_f32, gemm_q2_k_f32, gemm_q3_k_f32, gemm_q4_1_f32, gemm_q4_k_f32,
+    gemm_q5_0_f32, gemm_q5_1_f32, gemm_q5_k_f32, gemm_q6_k_f32, gemm_q8_0_f32, gemm_q8_1_f32,
+    gemm_tq1_0_f32, gemm_tq2_0_f32, gemv_bf16, gemv_f16, gemv_f32, gemv_iq1_m_f32, gemv_iq1_s_f32,
+    gemv_iq2_s_f32, gemv_iq2_xs_f32, gemv_iq2_xxs_f32, gemv_iq3_s_f32, gemv_iq3_xxs_f32,
+    gemv_iq4_nl_f32, gemv_iq4_xs_f32, gemv_mxfp4_f32, gemv_nvfp4_f32, gemv_q1_0_f32, gemv_q2_0_f32,
+    gemv_q2_k_f32, gemv_q3_k_f32, gemv_q4_1_f32, gemv_q4_k_f32, gemv_q5_0_f32, gemv_q5_1_f32,
+    gemv_q5_k_f32, gemv_q6_k_f32, gemv_q8_0_f32, gemv_q8_1_f32, gemv_tq1_0_f32, gemv_tq2_0_f32,
+    iq1_m_row_bytes, iq1_s_row_bytes, iq2_s_row_bytes, iq2_xs_row_bytes, iq2_xxs_row_bytes,
+    iq3_s_row_bytes, iq3_xxs_row_bytes, iq4_nl_row_bytes, iq4_xs_row_bytes, mxfp4_row_bytes,
+    nvfp4_row_bytes, pack_bf16, pack_f16, pack_f32, pack_iq1_m_block, pack_iq1_s_block,
+    pack_iq2_s_block, pack_iq2_xs_block, pack_iq2_xxs_block, pack_iq3_s_block, pack_iq3_xxs_block,
+    pack_iq4_nl_block, pack_iq4_xs_block, pack_mxfp4_block, pack_nvfp4_block, pack_q1_0_block,
+    pack_q2_0_block, pack_q2_k_block, pack_q3_k_block, pack_q4_1_block, pack_q4_k_block,
+    pack_q5_0_block, pack_q5_1_block, pack_q5_k_block, pack_q6_k_block, pack_q8_0_block,
+    pack_q8_1_block, pack_tq1_0_block, pack_tq2_0_block, q1_0_row_bytes, q2_0_row_bytes,
+    q2_k_row_bytes, q3_k_row_bytes, q4_1_row_bytes, q4_k_row_bytes, q5_0_row_bytes, q5_1_row_bytes,
+    q5_k_row_bytes, q6_k_row_bytes, q8_0_row_bytes, q8_1_row_bytes, tq1_0_row_bytes,
+    tq2_0_row_bytes, QuantError, QK1_0, QK2_0, QK4_1, QK4_NL, QK5_0, QK5_1, QK8_0, QK8_1, QK_K,
+    QK_MXFP4, QK_NVFP4,
 };
 use crate::sample::{SampleError, SampleParams, Sampler};
 use crate::tok::{TokError, Tokenizer};
@@ -1374,6 +1375,22 @@ pub fn tiny_q20_gguf() -> Vec<u8> {
     })
 }
 
+/// Writer-built Llama GGUF with Q8_0 2-D weights (token_embd, output, attn/ffn).
+///
+/// 1-D norms stay F32. `GGML_TYPE_Q8_0` = 8 (34-byte `block_q8_0`).
+pub fn tiny_q80_gguf() -> Vec<u8> {
+    tiny_arch_gguf(TinySpec {
+        arch: "llama",
+        token_embd: GgmlType::Q8_0,
+        output: GgmlType::Q8_0,
+        layer: Some(GgmlType::Q8_0),
+        rope_dimension_count: true,
+        qkv_bias: false,
+        add_bos_token: None,
+        llama_moe: false,
+    })
+}
+
 /// Writer-built Llama GGUF with Q8_1 2-D weights (token_embd, output, attn/ffn).
 ///
 /// 1-D norms stay F32. `GGML_TYPE_Q8_1` = 9.
@@ -2430,6 +2447,7 @@ fn pack_mat(ty: GgmlType, n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
         GgmlType::NVFP4 => pack_nvfp4_mat(n_cols, n_rows, seed),
         GgmlType::Q1_0 => pack_q10_mat(n_cols, n_rows, seed),
         GgmlType::Q2_0 => pack_q20_mat(n_cols, n_rows, seed),
+        GgmlType::Q8_0 => pack_q80_mat(n_cols, n_rows, seed),
         GgmlType::Q8_1 => pack_q81_mat(n_cols, n_rows, seed),
         GgmlType::TQ1_0 => pack_tq10_mat(n_cols, n_rows, seed),
         GgmlType::TQ2_0 => pack_tq20_mat(n_cols, n_rows, seed),
@@ -2829,6 +2847,24 @@ fn pack_q20_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
                 *q = u8::try_from(s % 4).unwrap_or(0);
             }
             out.extend_from_slice(&pack_q2_0_block(25.0 / 100.0, &qs));
+        }
+    }
+    out
+}
+
+fn pack_q80_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut s = seed;
+    let nblocks = n_cols / QK8_0;
+    for _ in 0..n_rows {
+        for _ in 0..nblocks {
+            let mut qs = [0i8; QK8_0];
+            for q in &mut qs {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1);
+                let k = u8::try_from(s % 17).unwrap_or(0);
+                *q = i8::try_from(i32::from(k).saturating_sub(8)).unwrap_or(0);
+            }
+            out.extend_from_slice(&pack_q8_0_block(25.0 / 100.0, &qs));
         }
     }
     out
@@ -3592,6 +3628,7 @@ fn quant_mat(t: Tensor<'_>) -> Result<QuantMat, LlamaError> {
         | GgmlType::NVFP4
         | GgmlType::Q1_0
         | GgmlType::Q2_0
+        | GgmlType::Q8_0
         | GgmlType::Q8_1
         | GgmlType::TQ1_0
         | GgmlType::TQ2_0
@@ -3661,6 +3698,7 @@ impl Llama {
             GgmlType::NVFP4 => gemm_nvfp4_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             GgmlType::Q1_0 => gemm_q1_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             GgmlType::Q2_0 => gemm_q2_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
+            GgmlType::Q8_0 => gemm_q8_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             GgmlType::Q8_1 => gemm_q8_1_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             GgmlType::TQ1_0 => gemm_tq1_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
             GgmlType::TQ2_0 => gemm_tq2_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
@@ -3702,6 +3740,7 @@ impl Llama {
             GgmlType::NVFP4 => gemv_nvfp4_f32(m.n_cols, data, x, &mut y)?,
             GgmlType::Q1_0 => gemv_q1_0_f32(m.n_cols, data, x, &mut y)?,
             GgmlType::Q2_0 => gemv_q2_0_f32(m.n_cols, data, x, &mut y)?,
+            GgmlType::Q8_0 => gemv_q8_0_f32(m.n_cols, data, x, &mut y)?,
             GgmlType::Q8_1 => gemv_q8_1_f32(m.n_cols, data, x, &mut y)?,
             GgmlType::TQ1_0 => gemv_tq1_0_f32(m.n_cols, data, x, &mut y)?,
             GgmlType::TQ2_0 => gemv_tq2_0_f32(m.n_cols, data, x, &mut y)?,
@@ -4086,6 +4125,7 @@ impl Llama {
             GgmlType::NVFP4 => nvfp4_row_bytes(emb.n_cols)?,
             GgmlType::Q1_0 => q1_0_row_bytes(emb.n_cols)?,
             GgmlType::Q2_0 => q2_0_row_bytes(emb.n_cols)?,
+            GgmlType::Q8_0 => q8_0_row_bytes(emb.n_cols)?,
             GgmlType::Q8_1 => q8_1_row_bytes(emb.n_cols)?,
             GgmlType::TQ1_0 => tq1_0_row_bytes(emb.n_cols)?,
             GgmlType::TQ2_0 => tq2_0_row_bytes(emb.n_cols)?,
@@ -4131,6 +4171,7 @@ impl Llama {
             GgmlType::NVFP4 => dequant_nvfp4_row(emb.n_cols, bytes, &mut y)?,
             GgmlType::Q1_0 => dequant_q1_0_row(emb.n_cols, bytes, &mut y)?,
             GgmlType::Q2_0 => dequant_q2_0_row(emb.n_cols, bytes, &mut y)?,
+            GgmlType::Q8_0 => dequant_q8_0_row(emb.n_cols, bytes, &mut y)?,
             GgmlType::Q8_1 => dequant_q8_1_row(emb.n_cols, bytes, &mut y)?,
             GgmlType::TQ1_0 => dequant_tq1_0_row(emb.n_cols, bytes, &mut y)?,
             GgmlType::TQ2_0 => dequant_tq2_0_row(emb.n_cols, bytes, &mut y)?,
@@ -5537,6 +5578,23 @@ mod tests {
         y
     }
 
+    /// ggml `dequantize_row_q8_0` (oracle). `block_q8_0` is fp16 `d` then `qs[32]`
+    /// int8, 34 bytes; `y = q * d`. Independent of crate `dequant_q8_0_row`.
+    fn dequant_q8_0_row_oracle(w: &[u8]) -> Vec<f32> {
+        let nblocks = w.len() / crate::quant::Q8_0_BLOCK;
+        let mut y = vec![0.0f32; nblocks * QK8_0];
+        for b in 0..nblocks {
+            let wb = &w[b * crate::quant::Q8_0_BLOCK..(b + 1) * crate::quant::Q8_0_BLOCK];
+            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let qs = &wb[2..];
+            let yo = b * QK8_0;
+            for j in 0..QK8_0 {
+                y[yo + j] = f32::from(i8::from_le_bytes([qs[j]])) * d;
+            }
+        }
+        y
+    }
+
     /// ggml `dequantize_row_q5_K` (oracle). Independent of crate `dequant_q5_k_row`.
     fn dequant_q5_k_row_oracle(w: &[u8]) -> Vec<f32> {
         let nblocks = w.len() / crate::quant::Q5_K_BLOCK;
@@ -5719,6 +5777,13 @@ mod tests {
                     *yv = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
                 }
             }
+            GgmlType::Q8_0 => {
+                let rb = (n_cols / QK8_0) * crate::quant::Q8_0_BLOCK;
+                for (r, yv) in y.iter_mut().enumerate() {
+                    let row = dequant_q8_0_row_oracle(&t.data[r * rb..(r + 1) * rb]);
+                    *yv = row.iter().zip(x.iter()).map(|(a, b)| a * b).sum();
+                }
+            }
             GgmlType::Q8_1 => {
                 let rb = (n_cols / QK8_1) * crate::quant::Q8_1_BLOCK;
                 for (r, yv) in y.iter_mut().enumerate() {
@@ -5894,6 +5959,10 @@ mod tests {
             GgmlType::Q2_0 => {
                 let rb = (n_cols / QK2_0) * crate::quant::Q2_0_BLOCK;
                 dequant_q2_0_row_oracle(&t.data[row * rb..(row + 1) * rb])
+            }
+            GgmlType::Q8_0 => {
+                let rb = (n_cols / QK8_0) * crate::quant::Q8_0_BLOCK;
+                dequant_q8_0_row_oracle(&t.data[row * rb..(row + 1) * rb])
             }
             GgmlType::Q8_1 => {
                 let rb = (n_cols / QK8_1) * crate::quant::Q8_1_BLOCK;
@@ -7184,6 +7253,48 @@ mod tests {
     }
 
     #[test]
+    fn tiny_q80_logits_match_independent_oracle() {
+        let bytes = tiny_q80_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        assert_eq!(g.tensor("token_embd.weight").unwrap().ty, GgmlType::Q8_0);
+        assert_eq!(g.tensor("output.weight").unwrap().ty, GgmlType::Q8_0);
+        assert_eq!(g.tensor("blk.0.attn_q.weight").unwrap().ty, GgmlType::Q8_0);
+        assert_eq!(
+            g.tensor("blk.0.ffn_gate.weight").unwrap().ty,
+            GgmlType::Q8_0
+        );
+        assert_eq!(g.tensor("output_norm.weight").unwrap().ty, GgmlType::F32);
+        assert_eq!(
+            g.tensor("blk.0.attn_norm.weight").unwrap().ty,
+            GgmlType::F32
+        );
+        assert_eq!(g.tensor("token_embd.weight").unwrap().ty.to_i32(), 8);
+        load_fwd_match(&bytes, 3);
+    }
+
+    /// `block_q8_0` is 34 bytes (fp16 `d` + `qs[32]`), distinct from Q8_1 = 9
+    /// (36 B, extra fp16 `s`) and Q8_K = 15 (292 B). Reading Q8_0 with the Q8_1
+    /// stride would silently misalign every block after the first.
+    #[test]
+    fn q8_0_block_layout_is_distinct_from_q8_1() {
+        assert_eq!(crate::quant::Q8_0_BLOCK, 34);
+        assert_eq!(crate::quant::Q8_1_BLOCK, 36);
+        assert_eq!(QK8_0, 32);
+        let qs: Vec<i8> = (0i8..32).map(|i| i.saturating_sub(16)).collect();
+        let mut arr = [0i8; 32];
+        arr.copy_from_slice(&qs);
+        let block = pack_q8_0_block(0.5, &arr);
+        assert_eq!(block.len(), crate::quant::Q8_0_BLOCK);
+        let mut y = vec![0.0f32; 32];
+        dequant_q8_0_row(32, &block, &mut y).expect("dequant q8_0");
+        let want = dequant_q8_0_row_oracle(&block);
+        assert_eq!(y, want);
+        for (j, v) in y.iter().enumerate() {
+            assert!((v - f32::from(qs[j]) * 0.5).abs() < 1e-6, "lane {j}");
+        }
+    }
+
+    #[test]
     fn tiny_q81_logits_match_independent_oracle() {
         let bytes = tiny_q81_gguf();
         let g = load_gguf(&bytes).expect("load");
@@ -7439,6 +7550,7 @@ mod tests {
             tiny_nvfp4_gguf(),
             tiny_q10_gguf(),
             tiny_q20_gguf(),
+            tiny_q80_gguf(),
             tiny_q81_gguf(),
             tiny_tq10_gguf(),
             tiny_tq20_gguf(),
