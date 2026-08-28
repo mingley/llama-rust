@@ -1,0 +1,4 @@
+{
+  "name": "llama-rust",
+  "install": "rustup toolchain install stable --profile minimal --component clippy --component rustfmt --no-self-update && rustup default stable && cargo build --release --all-targets"
+}
