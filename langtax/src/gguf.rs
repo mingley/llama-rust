@@ -100,8 +100,62 @@ pub enum GgmlType {
     TQ2_0 = 35,
 }
 
+/// ggml-removed slots, including the IQ4_NL_4_4 family (36..=38).
+const fn is_ggml_removed_type_id(id: i32) -> bool {
+    matches!(id, 4 | 5 | 31 | 32 | 33 | 36 | 37 | 38)
+}
+
+/// ggml `GGML_TYPE_COUNT` (exclusive end of the live type table).
+#[cfg(test)]
+const GGML_TYPE_COUNT: i32 = 43;
+
+/// How this crate treats a GGUF `ggml_type` integer.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GgmlTypeClass {
+    /// Loadable on-disk type this crate already accepts.
+    Accepted,
+    /// ggml-removed slot (`blck_size = 0`, `type_size = 0`, `is_quantized = false`).
+    /// Not a missing dequant and not a live on-disk 2-D weight type.
+    Removed,
+    /// Live integer/float storage (`I8`/`I16`/`I32`/`I64`/`F64`). Not a weight quant.
+    Storage,
+    /// Live ggml type this crate does not load, or an id outside ggml's table.
+    Unsupported,
+}
+
+#[cfg(test)]
+const fn is_ggml_storage_type_id(id: i32) -> bool {
+    matches!(id, 24..=28)
+}
+
+/// Classify a GGUF `ggml_type` id the way ggml's table does.
+#[cfg(test)]
+pub(crate) fn classify_ggml_type_id(id: i32) -> GgmlTypeClass {
+    if is_ggml_removed_type_id(id) {
+        return GgmlTypeClass::Removed;
+    }
+    if is_ggml_storage_type_id(id) {
+        return GgmlTypeClass::Storage;
+    }
+    if GgmlType::from_i32(id).is_ok() {
+        return GgmlTypeClass::Accepted;
+    }
+    GgmlTypeClass::Unsupported
+}
+
+/// First live ggml weight-type id this crate still rejects, if any.
+/// Skips ggml-removed slots and I8/I16/I32/I64/F64 storage.
+#[cfg(test)]
+pub(crate) fn next_remaining_live_rejected_ggml_type_id() -> Option<i32> {
+    (0..GGML_TYPE_COUNT).find(|&id| classify_ggml_type_id(id) == GgmlTypeClass::Unsupported)
+}
+
 impl GgmlType {
     fn from_i32(v: i32) -> Result<Self, GgufError> {
+        if is_ggml_removed_type_id(v) {
+            return Err(GgufError::RemovedType(v));
+        }
         match v {
             0 => Ok(Self::F32),
             1 => Ok(Self::F16),
@@ -236,6 +290,8 @@ pub enum GgufError {
     Utf8,
     /// Tensor `ggml_type` is not F32, F16, BF16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q8_1, Q1_0, Q2_0, TQ1_0, TQ2_0, Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, Q8_K, IQ1_M, IQ1_S, IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S, IQ4_NL, IQ4_XS, MXFP4, or NVFP4.
     UnsupportedType(i32),
+    /// Tensor `ggml_type` is a ggml-removed slot (`blck_size = 0`), not a missing dequant.
+    RemovedType(i32),
     /// KV type is not a GGUF v3 value type.
     UnsupportedKv(i32),
     /// Rank, extent, or element count is unusable.
@@ -250,6 +306,7 @@ impl fmt::Display for GgufError {
             Self::Truncated => write!(f, "truncated GGUF"),
             Self::Utf8 => write!(f, "non-utf8 GGUF string"),
             Self::UnsupportedType(t) => write!(f, "unsupported ggml type {t}"),
+            Self::RemovedType(t) => write!(f, "ggml-removed type {t}"),
             Self::UnsupportedKv(t) => write!(f, "unsupported GGUF kv type {t}"),
             Self::Shape => write!(f, "invalid GGUF tensor shape"),
         }
@@ -1813,30 +1870,73 @@ mod tests {
     }
 
     #[test]
-    fn load_unsupported_ggml_type_error_includes_type_id() {
-        // ggml IQ4_NL_4_4 is 36; TQ2_0 (35) is now loaded. Remaining after TQ2_0.
-        // I8/I16/I32/I64/F64 (24..=28) are integer/float storage, not weight quants.
-        // IQ4_NL_4_4/4_8/8_8 (36..=38) are packed IQ4_NL variants removed from GGUF.
-        // Do not open IQ4_NL_4_4.
+    fn ggml_type_36_37_38_are_removed_not_missing_dequant() {
+        for id in [36, 37, 38] {
+            assert_eq!(
+                classify_ggml_type_id(id),
+                GgmlTypeClass::Removed,
+                "type {id} must be ggml-removed, not a missing dequant"
+            );
+            assert_ne!(
+                classify_ggml_type_id(id),
+                GgmlTypeClass::Unsupported,
+                "type {id} is not a live type awaiting a dequant"
+            );
+            assert_eq!(GgmlType::from_i32(id), Err(GgufError::RemovedType(id)));
+        }
+        assert_eq!(classify_ggml_type_id(20), GgmlTypeClass::Accepted);
+        assert_eq!(GgmlType::from_i32(20), Ok(GgmlType::IQ4_NL));
+        assert_ne!(GgmlType::IQ4_NL.to_i32(), 36);
+        for id in [35, 34, 9, 42, 41, 40, 39] {
+            assert_eq!(
+                classify_ggml_type_id(id),
+                GgmlTypeClass::Accepted,
+                "already-accepted type {id} must stay accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn load_2d_type_36_fails_named_removed() {
+        // Tag a 2-D tensor as ggml-removed 36. Do not treat 36 as IQ4_NL or invent a dtype.
         const IQ4_NL_4_4: i32 = 36;
         let bytes = write_gguf_with_type_ids(
             &[
                 ("general.alignment".into(), Kv::U32(32)),
-                ("general.name".into(), Kv::String("bad-type".into())),
+                ("general.name".into(), Kv::String("removed-type-36".into())),
             ],
             &[TensorWrite {
                 name: "w".into(),
                 ty: GgmlType::F32,
-                shape: vec![1],
-                data: vec![0, 0, 0, 0],
+                shape: vec![4, 2],
+                data: vec![0u8; 32],
             }],
             &[IQ4_NL_4_4],
         );
-        let err = load_gguf(&bytes).expect_err("unsupported type");
+        let err = load_gguf(&bytes).expect_err("type 36 must not load");
+        assert_eq!(err, GgufError::RemovedType(IQ4_NL_4_4));
         let msg = err.to_string();
         assert!(
             msg.contains(&IQ4_NL_4_4.to_string()),
             "error should include type id {IQ4_NL_4_4}: {msg}"
         );
+        assert!(
+            msg.contains("removed"),
+            "error should name the type as removed: {msg}"
+        );
+    }
+
+    #[test]
+    fn remaining_rejected_walk_skips_ggml_removed_and_reports_none() {
+        // I8/I16/I32/I64/F64 (24..=28) are integer/float storage, not weight quants.
+        // Q4_2/Q4_3 (4..=5), Q4_0_4_4 family (31..=33), and IQ4_NL_4_4 family (36..=38)
+        // are ggml-removed (`blck_size = 0`). After skipping those, MXFP4=39 / NVFP4=40 /
+        // Q1_0=41 / Q2_0=42 are already accepted. No remaining live rejected weight type.
+        assert_eq!(classify_ggml_type_id(36), GgmlTypeClass::Removed);
+        assert_eq!(classify_ggml_type_id(37), GgmlTypeClass::Removed);
+        assert_eq!(classify_ggml_type_id(38), GgmlTypeClass::Removed);
+        let next = next_remaining_live_rejected_ggml_type_id();
+        assert_ne!(next, Some(36), "walk must not stop on ggml-removed 36");
+        assert_eq!(next, None, "no remaining live rejected ggml weight type");
     }
 }

@@ -1,4 +1,4 @@
-# Stopped 2026-08-27 — TQ2_0 2-D weights
+# Stopped 2026-08-28 — ggml-removed type 36
 
 HEAD is this branch’s tip. Worktree should be clean before the next resume.
 No in-flight code.
@@ -24,6 +24,7 @@ Local: `~/dev/llama-rust-perf`
 - Q8_1 is `GGML_TYPE_Q8_1` = 9 (36-byte `block_q8_1`). Writer-built tiny uses Q8_1 for 2-D weights (`token_embd`, `output`, attn/ffn); 1-D norms stay F32. Load/GEMV/GEMM/embed logits match an independent scalar of the same ggml Q8_1 dequant walk (`q*d`, fp16 `d` + fp16 `s=d*sum(qs)` + `qs[32]` int8, `QK8_1=32`). Distinct from Q8_0=8 (34 B / 32, no `s`). No tok/s.
 - TQ1_0 is `GGML_TYPE_TQ1_0` = 34 (54-byte `block_tq1_0`). Writer-built tiny uses TQ1_0 for 2-D weights (`token_embd`, `output`, attn/ffn); 1-D norms stay F32. Load/GEMV/GEMM/embed logits match an independent scalar of the same ggml `dequantize_row_tq1_0` walk (`y = (xi - 1) * d`, `qs[48]` 5 trits/byte then `qh[4]` 4 trits/byte, `q * pow3[l]` then `((q as u16 * 3) >> 8)`, `QK_K=256`). Distinct from TQ2_0=35 (66 B / 256), Q1_0=41 (18 B / 128), and Q8_1=9 (36 B / 32). No tok/s.
 - TQ2_0 is `GGML_TYPE_TQ2_0` = 35 (66-byte `block_tq2_0`). Writer-built tiny uses TQ2_0 for 2-D weights (`token_embd`, `output`, attn/ffn); 1-D norms stay F32. Load/GEMV/GEMM/embed logits match an independent scalar of the same ggml `dequantize_row_tq2_0` walk (`y = (xi - 1) * d`, `qs[64]` 4 trits/byte at 2 bits, two 32-byte groups `j=0` then `j=32`, `l` then `m`, `(qs[j+m] >> (l*2)) & 3`, `QK_K=256`). Distinct from TQ1_0=34 (54 B / 256, 5 trits/byte + qh), Q2_0=42 (18 B / 64, sequential 2-bit), and Q1_0=41 (18 B / 128). No tok/s.
+- ggml type ids 36/37/38 (`IQ4_NL_4_4` / `IQ4_NL_4_8` / `IQ4_NL_8_8`) are ggml-removed slots (`TYPE_IQ4_NL_4_4 REMOVED, use IQ4_NL with runtime repacking`, `blck_size = 0`, `type_size = 0`, `is_quantized = false`). Classified as ggml-removed, not a missing dequant, and not IQ4_NL (20). A 2-D tensor tagged type 36 fails with a named error (`ggml-removed type 36`). No `block_iq4_nl_4_4` dequant. No tok/s.
 - Q5_K is `GGML_TYPE_Q5_K` = 13 (176-byte `block_q5_K`). Writer-built tiny uses Q5_K for 2-D weights (`token_embd`, `output`, attn/ffn); 1-D norms stay F32. Load/GEMV/GEMM/embed logits match an independent scalar of the same ggml `dequantize_row_q5_K` walk (`d*sc*q5 - dmin*m`, `qh` 5th bit). No tok/s.
 - IQ4_XS is `GGML_TYPE_IQ4_XS` = 23 (136-byte `block_iq4_xs`). First IQ* type that common OSS `*-IQ4_XS.gguf` files actually have. Writer-built tiny uses IQ4_XS for 2-D weights (`token_embd`, `output`, attn/ffn); 1-D norms stay F32. Load/GEMV/GEMM/embed logits match an independent scalar of the same ggml `dequantize_row_iq4_xs` walk (`d*(ls-32)*kvalues_iq4nl[q]`). No tok/s.
 - IQ4_NL is `GGML_TYPE_IQ4_NL` = 20 (18-byte `block_iq4_nl`). Next IQ* type that common OSS `*-IQ4_NL.gguf` files actually have (bartowski / mradermacher standalone, and mixed IQ*_M tensors). Writer-built tiny uses IQ4_NL for 2-D weights (`token_embd`, `output`, attn/ffn); 1-D norms stay F32. Load/GEMV/GEMM/embed logits match an independent scalar of the same ggml `dequantize_row_iq4_nl` walk (`d * kvalues_iq4nl[q]`). No tok/s.
@@ -43,7 +44,7 @@ Local: `~/dev/llama-rust-perf`
   - missing `{arch}.rope.dimension_count` derived from `embedding_length / head_count`
   - optional F32 `attn_{q,k,v}.bias`
   - `tokenizer.ggml.add_bos_token=false` honored
-- Load/decode errors name tensor, ggml type id, and/or KV key.
+- Load/decode errors name tensor, ggml type id, and/or KV key. ggml-removed type ids are named as removed.
 - CLI: `gguf_gemv infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]`. Seedless greedy. Defaults remain `ab` / 2 so the shipped two-run command still works.
 - **Serving.** Local `gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--bind HOST:PORT]`. Std `TcpListener` on `127.0.0.1` (default `:8080`; `localhost` allowed). One HTTP/1.1 request at a time: `POST /generate` JSON `{"prompt"}` optional `n_predict` → `{"generated"}`. Seedless greedy (`greedy_generate_ctx`). Missing file and empty prompt fail cleanly. No batching, no multi-request, no OpenAI-compat, no tok/s. Not a production inference server. Kernel Integrity has not signed it.
 - One file blob. `load_gguf_owned(Vec<u8>)` keeps the file bytes. Tensor payloads are ranges of that blob. mmap is still forbidden (`unsafe` or a crate).
@@ -58,14 +59,14 @@ Local: `~/dev/llama-rust-perf`
 
 ## In progress
 
-Nothing. This slice is STATUS item 2 (TQ2_0). Metal-in-crate was skipped: this Linux VM cannot compile or run Metal.
+Nothing. This slice is STATUS item 2 (ggml-removed type 36). Metal-in-crate was skipped: this Linux VM cannot compile or run Metal.
 
 ## Still needed (production / researcher bar)
 
 Ordered by how much they block “others can actually use this”:
 
 1. **Metal-in-crate.** Owned MSL kernels exist as a sidecar. Decode still CPU.
-2. **Dtypes / arches still rejected.** Gemma, MoE, vision, Qwen3, Llama4. 1-D F16 norms/bias still rejected. Tied `output.weight` (reuse `token_embd`) untested. Common OSS IQ* 2-D, BF16 2-D, Q2_K 2-D, Q3_K 2-D, Q4_1 2-D, Q5_0 2-D, Q5_1 2-D, MXFP4 2-D, NVFP4 2-D, Q1_0 2-D, Q2_0 2-D, Q8_1 2-D, TQ1_0 2-D, and TQ2_0 2-D are loaded (IQ1_M / IQ1_S / IQ2_XXS / IQ2_XS / IQ2_S / IQ3_XXS / IQ3_S / IQ4_NL / IQ4_XS / BF16 / Q2_K / Q3_K / Q4_1 / Q5_0 / Q5_1 / MXFP4 / NVFP4 / Q1_0 / Q2_0 / Q8_1 / TQ1_0 / TQ2_0). Next remaining rejected type id is IQ4_NL_4_4 = 36.
+2. **Dtypes / arches still rejected.** Gemma, MoE, vision, Qwen3, Llama4. 1-D F16 norms/bias still rejected. Tied `output.weight` (reuse `token_embd`) untested. Common OSS IQ* 2-D, BF16 2-D, Q2_K 2-D, Q3_K 2-D, Q4_1 2-D, Q5_0 2-D, Q5_1 2-D, MXFP4 2-D, NVFP4 2-D, Q1_0 2-D, Q2_0 2-D, Q8_1 2-D, TQ1_0 2-D, and TQ2_0 2-D are loaded (IQ1_M / IQ1_S / IQ2_XXS / IQ2_XS / IQ2_S / IQ3_XXS / IQ3_S / IQ4_NL / IQ4_XS / BF16 / Q2_K / Q3_K / Q4_1 / Q5_0 / Q5_1 / MXFP4 / NVFP4 / Q1_0 / Q2_0 / Q8_1 / TQ1_0 / TQ2_0). IQ4_NL_4_4/4_8/8_8 (36..=38) are ggml-removed, not a remaining hole. Next remaining live rejected ggml weight type id: none.
 3. **KV cache** sized to prompt+predict is the default; `{arch}.context_length` is still unused. `--n-ctx` is an override only.
 4. **crates.io** unpublished. Linux proof is GHA tiny/oracle tests only (2GB GGUF is gitignored).
 5. **Chat template apply.** The Jinja string is read. Rendering it (and special-token split of `<|im_start|>` in the prompt) is not started. BPE has no Unicode regex pre-tokenizer.
@@ -82,4 +83,4 @@ cargo clippy --all-targets --all-features -- -D warnings
 ./target/release/gguf_gemv serve tiny-llama.gguf
 ```
 
-Next code change should be item 1 (Metal-in-crate) on a machine that can compile Metal, or remaining item-2 work (IQ4_NL_4_4, Gemma / MoE / vision / Qwen3 / Llama4, 1-D F16 norms/bias, tied `output.weight`). Do not add crates.io runtime deps or `unsafe`. Do not start Metal-in-crate on Linux. Do not open IQ4_NL_4_4.
+Next code change should be item 1 (Metal-in-crate) on a machine that can compile Metal, or remaining item-2 work (Gemma / MoE / vision / Qwen3 / Llama4, 1-D F16 norms/bias, tied `output.weight`). Do not add crates.io runtime deps or `unsafe`. Do not start Metal-in-crate on Linux. Do not invent a `block_iq4_nl_4_4` dequant.
