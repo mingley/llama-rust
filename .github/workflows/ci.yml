@@ -46,9 +46,16 @@ jobs:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER: qemu-aarch64-static -L /usr/aarch64-linux-gnu
 
-  # Miri cannot execute vendor SIMD intrinsics, so it runs the scalar
-  # configuration only. See the SIMD module docs for what that does and does not
-  # cover.
+  # Miri interprets the x86-64 intrinsics used here, so it can run the
+  # differential tests against the real AVX2 kernels rather than merely
+  # compiling them. `-C target-feature` is what makes
+  # `is_x86_feature_detected!` say yes under the interpreter; without it every
+  # selector returns `None` and the tests quietly test nothing.
+  #
+  # Scoped to `simd::tests` because that is the only module with `unsafe` in it
+  # and because a full-suite Miri run is hours of transformer forward passes.
+  # The three exhaustive 65536-pattern sweeps are skipped for the same reason;
+  # the native test jobs above run them.
   miri:
     runs-on: ubuntu-latest
     steps:
@@ -56,6 +63,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
-      - run: cargo miri test --lib --no-default-features
+      - run: >
+          cargo miri test --lib --all-features -- --test-threads=1 simd::tests::
+          --skip f16_conversion_is_bit_identical
+          --skip q8_0_block_scales_are_bit_identical
         env:
           MIRIFLAGS: -Zmiri-strict-provenance
+          RUSTFLAGS: -C target-feature=+avx2,+fma,+f16c

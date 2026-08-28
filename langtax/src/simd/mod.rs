@@ -21,6 +21,14 @@
 //! with `--no-default-features` drops this module entirely and restores a
 //! crate-level `forbid(unsafe_code)`.
 //!
+//! Miri interprets the x86-64 intrinsics used here, so CI runs the differential
+//! tests under `-Zmiri-strict-provenance` against the real AVX2 kernels rather
+//! than merely compiling them. It has to be told the CPU features exist
+//! (`-C target-feature=+avx2,+fma,+f16c`), because under the interpreter
+//! `is_x86_feature_detected!` otherwise says no and every selector returns
+//! `None`. Miri does not implement the NEON reductions, so the aarch64 kernels
+//! rest on the differential tests alone, run natively and under qemu.
+//!
 //! # Numerics
 //!
 //! The Q8_0 kernels accumulate in `i32`, which is exact, so they are
