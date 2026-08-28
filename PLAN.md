@@ -251,7 +251,7 @@ The reference engine has to be something researchers will actually load.
 - [x] Q8_0 and Q4_0 2-D weights
 - [x] Real-model llama.cpp differential (fail-loud if env is set)
 - [x] SIMD fast path + persistent pool landed on `main`
-- [ ] Chat templates + special-token split + Unicode BPE pre-tokenizer
+- [x] Chat templates + special-token split + Unicode BPE pre-tokenizer
 - [ ] Layered public API (`Model`/`Session`), examples, crates.io metadata
 - [ ] README/STATUS rewritten for “verifiable reference,” not “no tok/s curiosity”
 - [ ] More than one real-model fixture (NEOX Qwen + NORM Llama control)
