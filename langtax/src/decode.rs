@@ -6628,6 +6628,70 @@ mod bench {
         }
     }
 
+    /// What is left to win, and where. Times one decode step's worth of GEMV
+    /// against the whole step, both single-threaded, plus the two per-token
+    /// non-matmul loops that looked worth suspecting.
+    ///
+    /// This is the measurement that says when to stop: if the GEMV kernels are
+    /// the step, then no amount of work in `decode.rs` moves the number and the
+    /// next win has to come from the kernels or from more cores.
+    #[test]
+    #[ignore = "timing harness"]
+    fn bench_step_breakdown() {
+        let spec = BenchSpec::default();
+        let model = bench_model(&spec);
+        let vocab = u32::try_from(spec.n_vocab).unwrap();
+        let x = vec![0.01f32; spec.n_embd];
+        let xff = vec![0.01f32; spec.n_ff];
+
+        // Every GEMV a decode step performs, in the order the step does them.
+        let mut mats: Vec<(&QuantMat, &[f32])> = Vec::new();
+        for layer in &model.layers {
+            for m in [&layer.wq, &layer.wk, &layer.wv, &layer.wo] {
+                mats.push((m, &x));
+            }
+            if let LayerFfn::Dense(dense) = &layer.ffn {
+                mats.push((&dense.gate, &x));
+                mats.push((&dense.up, &x));
+                mats.push((&dense.down, &xff));
+            }
+        }
+        mats.push((&model.output, &x));
+        let n_gemv = mats.len();
+
+        let mut y = Vec::new();
+        let mut samples = Vec::new();
+        for _ in 0..9 {
+            let t0 = Instant::now();
+            crate::pool::with_sequential(|| {
+                for (m, xv) in &mats {
+                    model.gemv_into(m, xv, &mut y, &mut None).expect("gemv");
+                }
+            });
+            samples.push(t0.elapsed());
+            assert!(!black_box(&y).is_empty());
+        }
+        report(&format!("{n_gemv} GEMV only, 1 thread"), samples);
+
+        let rope_calls = spec
+            .n_layer
+            .saturating_mul(spec.n_head.saturating_add(spec.n_head_kv));
+        let mut v = vec![0.5f32; spec.head_dim()];
+        let mut samples = Vec::new();
+        for _ in 0..9 {
+            let t0 = Instant::now();
+            for i in 0..rope_calls {
+                rope(&mut v, 17 + (i & 7), spec.head_dim(), 10_000.0).expect("rope");
+            }
+            samples.push(t0.elapsed());
+        }
+        assert!(black_box(v.iter().sum::<f32>()).is_finite());
+        report(&format!("rope x{rope_calls}, 1 thread"), samples);
+
+        let seq = crate::pool::with_sequential(|| decode_samples(&model, vocab, 4, 8));
+        report("whole step, 1 thread", seq);
+    }
+
     /// Writes `y[i] = first + i` and nothing else, so a [`Pool::run`] sample is
     /// all dispatch and no arithmetic — the same shape as the empty-body
     /// closure the `thread::scope` measurement uses.
