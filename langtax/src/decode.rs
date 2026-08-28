@@ -167,16 +167,19 @@ struct Llama4Moe {
     n_expert_used: usize,
 }
 
+/// Dense SwiGLU / GeGLU weights (`ffn_gate` / `ffn_up` / `ffn_down`).
+struct DenseFfn {
+    gate: QuantMat,
+    up: QuantMat,
+    down: QuantMat,
+}
+
 /// Dense SwiGLU / Gemma GeGLU, or official Llama4 expert FFN on MoE layers.
 enum LayerFfn {
     /// `ffn_gate` / `ffn_up` / `ffn_down` (llama / qwen2 / mistral / phi3 / gemma / qwen3).
-    Dense {
-        gate: QuantMat,
-        up: QuantMat,
-        down: QuantMat,
-    },
+    Dense(Box<DenseFfn>),
     /// Official `llama4` MoE layer: routed `*_exps` + shared `*_shexp`.
-    Llama4Moe(Llama4Moe),
+    Llama4Moe(Box<Llama4Moe>),
 }
 
 /// Per-layer weights.
@@ -453,16 +456,16 @@ impl Llama {
             let residual = x.clone();
             x = rmsnorm_rows(&x, self.n_embd, &layer.ffn_norm, self.rms_eps)?;
             let down = match &layer.ffn {
-                LayerFfn::Dense { gate, up, down } => {
-                    let gate = self.gemm_mat(gate, n, &x)?;
-                    let up = self.gemm_mat(up, n, &x)?;
+                LayerFfn::Dense(dense) => {
+                    let gate = self.gemm_mat(&dense.gate, n, &x)?;
+                    let up = self.gemm_mat(&dense.up, n, &x)?;
                     let mut h = ffn_gate_act(&gate, self.ffn_gelu)?;
                     for (hv, uv) in h.iter_mut().zip(up.iter()) {
                         *hv *= *uv;
                     }
-                    self.gemm_mat(down, n, &h)?
+                    self.gemm_mat(&dense.down, n, &h)?
                 }
-                LayerFfn::Llama4Moe(moe) => self.llama4_moe_rows(moe, n, &x)?,
+                LayerFfn::Llama4Moe(moe) => self.llama4_moe_rows(moe.as_ref(), n, &x)?,
             };
             x = add(&down, &residual)?;
         }
@@ -2196,11 +2199,11 @@ fn load_llama4_hparams(g: &Gguf, arch: &str, n_layer: usize) -> Result<Llama4Hpa
 }
 
 fn llama4_is_moe_layer(i: usize, step: usize) -> bool {
-    step > 0 && (i.saturating_add(1) % step) == 0
+    step > 0 && i.saturating_add(1).is_multiple_of(step)
 }
 
 fn llama4_use_rope(i: usize, step: usize) -> bool {
-    step > 0 && (i.saturating_add(1) % step) != 0
+    step > 0 && !i.saturating_add(1).is_multiple_of(step)
 }
 
 fn load_layer(
@@ -2219,13 +2222,13 @@ fn load_layer(
     };
     let ffn = match llama4 {
         Some(h) if llama4_is_moe_layer(i, h.n_moe_layer_step) => {
-            LayerFfn::Llama4Moe(load_llama4_moe(g, i, h)?)
+            LayerFfn::Llama4Moe(Box::new(load_llama4_moe(g, i, h)?))
         }
-        _ => LayerFfn::Dense {
+        _ => LayerFfn::Dense(Box::new(DenseFfn {
             gate: quant_mat(need(g, &format!("blk.{i}.ffn_gate.weight"))?)?,
             up: quant_mat(need(g, &format!("blk.{i}.ffn_up.weight"))?)?,
             down: quant_mat(need(g, &format!("blk.{i}.ffn_down.weight"))?)?,
-        },
+        })),
     };
     Ok(Layer {
         attn_norm: f32s(need(g, &format!("blk.{i}.attn_norm.weight"))?)?,
