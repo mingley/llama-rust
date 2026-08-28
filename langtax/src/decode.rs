@@ -5,6 +5,9 @@
 //! Official llama MoE (`architecture=llama` with `n_expert>0`) follows
 //! `src/models/llama.cpp` `build_moe_ffn`: softmax, then top-k; SwiGLU weights
 //! after the expert with `norm_w` clamp `2^-14`. No Mixtral architecture.
+//! Official Qwen2MoE (`architecture=qwen2moe`) follows `src/models/qwen2moe.cpp`:
+//! softmax then top-k without `norm_w`; SwiGLU experts; shared expert gated by
+//! `silu(x)/x` (sigmoid) on `ffn_gate_inp_shexp`. Not `qwen3moe`.
 
 use crate::gguf::{GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 use crate::quant::{
@@ -55,6 +58,10 @@ const TINY_N_EXPERT_USED: usize = 1;
 const TINY_LLAMA_N_EXPERT: usize = 4;
 /// Writer-built tiny `llama.expert_used_count` (official Mixtral convert uses 2).
 const TINY_LLAMA_N_EXPERT_USED: usize = 2;
+/// Writer-built tiny Qwen2MoE `qwen2moe.expert_count` (official load rejects 0).
+const TINY_QWEN2MOE_N_EXPERT: usize = 4;
+/// Writer-built tiny `qwen2moe.expert_used_count` (Qwen1.5-MoE convert uses 4; tiny uses 2).
+const TINY_QWEN2MOE_N_EXPERT_USED: usize = 2;
 /// Official `build_moe_ffn` `norm_w` clamp: smallest f16 (`2^-14`).
 const MOE_NORM_W_CLAMP: f32 = 1.0 / 16_384.0;
 /// Official llama.cpp `hparams.n_no_rope_layer_step` default for Llama4 text.
@@ -186,6 +193,20 @@ struct Llama4Moe {
     n_expert_used: usize,
 }
 
+/// Official Qwen2MoE (`build_moe_ffn` SOFTMAX, `norm_w=false`, gated shared expert).
+struct Qwen2Moe {
+    gate_inp: QuantMat,
+    gate_exps: QuantMat,
+    up_exps: QuantMat,
+    down_exps: QuantMat,
+    gate_inp_shexp: QuantMat,
+    gate_shexp: QuantMat,
+    up_shexp: QuantMat,
+    down_shexp: QuantMat,
+    n_expert: usize,
+    n_expert_used: usize,
+}
+
 /// Dense SwiGLU / GeGLU weights (`ffn_gate` / `ffn_up` / `ffn_down`).
 struct DenseFfn {
     gate: QuantMat,
@@ -193,7 +214,7 @@ struct DenseFfn {
     down: QuantMat,
 }
 
-/// Dense SwiGLU / Gemma GeGLU, official llama MoE, or official Llama4 expert FFN.
+/// Dense SwiGLU / Gemma GeGLU, official llama MoE, Llama4, or Qwen2MoE expert FFN.
 enum LayerFfn {
     /// `ffn_gate` / `ffn_up` / `ffn_down` (dense llama / qwen2 / mistral / phi3 / gemma / qwen3).
     Dense(Box<DenseFfn>),
@@ -201,6 +222,8 @@ enum LayerFfn {
     LlamaMoe(Box<LlamaMoe>),
     /// Official `llama4` MoE layer: routed `*_exps` + shared `*_shexp`.
     Llama4Moe(Box<Llama4Moe>),
+    /// Official `qwen2moe`: routed `*_exps` + gated shared `*_shexp`.
+    Qwen2Moe(Box<Qwen2Moe>),
 }
 
 /// Per-layer weights.
@@ -259,7 +282,7 @@ pub struct KvCache {
 
 impl Llama {
     /// Build from a loaded GGUF using `{arch}.*` KV (`llama`, `qwen2`, `mistral`,
-    /// `phi3`, `gemma`, `qwen3`, or `llama4`) and `blk.{i}.*` tensor names.
+    /// `phi3`, `gemma`, `qwen3`, `llama4`, or `qwen2moe`) and `blk.{i}.*` tensor names.
     /// Official llama MoE is still `architecture=llama` with `n_expert>0`.
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
@@ -314,6 +337,11 @@ impl Llama {
         } else {
             None
         };
+        let qwen2moe_hparams = if arch == "qwen2moe" {
+            Some(load_qwen2moe_hparams(&g, arch)?)
+        } else {
+            None
+        };
         let mut layers = Vec::new();
         for i in 0..n_layer {
             layers.push(load_layer(
@@ -322,6 +350,7 @@ impl Llama {
                 qk_norm,
                 llama4_hparams.as_ref(),
                 llama_moe_hparams.as_ref(),
+                qwen2moe_hparams.as_ref(),
             )?);
         }
         Ok(Self {
@@ -500,6 +529,7 @@ impl Llama {
                 }
                 LayerFfn::LlamaMoe(moe) => self.llama_moe_rows(moe.as_ref(), n, &x)?,
                 LayerFfn::Llama4Moe(moe) => self.llama4_moe_rows(moe.as_ref(), n, &x)?,
+                LayerFfn::Qwen2Moe(moe) => self.qwen2moe_rows(moe.as_ref(), n, &x)?,
             };
             x = add(&down, &residual)?;
         }
@@ -739,7 +769,7 @@ pub fn tiny_qwen3_gguf() -> Vec<u8> {
 /// Writer-built Llama4-shaped GGUF: `llama4.*` KV plus official expert FFN tensors.
 ///
 /// Official `general.architecture=llama4` (`MODEL_ARCH_NAMES[LLAMA4] = "llama4"`,
-/// not `mixtral` / `qwen2moe` / `qwen3moe`). Decode follows llama.cpp
+/// not `mixtral` / `qwen3moe`). Decode follows llama.cpp
 /// `src/models/llama4.cpp` text walk: iRoPE/NoPE (`n_no_rope_layer_step = 4`),
 /// unweighted QK-Norm after RoPE (`Llama4TextL2Norm`, no `attn_q_norm` tensors),
 /// expert FFN (`ffn_gate_inp` / `*_exps` / `*_shexp`, sigmoid top-k on raw
@@ -777,6 +807,27 @@ pub fn tiny_llama_moe_gguf() -> Vec<u8> {
         qkv_bias: false,
         add_bos_token: None,
         llama_moe: true,
+    })
+}
+
+/// Writer-built official Qwen2MoE GGUF: `architecture=qwen2moe` with `qwen2moe.*` KV.
+///
+/// Official `LLM_ARCH_NAMES` has `LLM_ARCH_QWEN2MOE = "qwen2moe"`; convert writes
+/// `general.architecture=qwen2moe`. Decode follows llama.cpp
+/// `src/models/qwen2moe.cpp`: `build_moe_ffn` softmax then top-k, `norm_w=false`;
+/// SwiGLU experts; shared expert (`*_shexp` + `ffn_gate_inp_shexp`) gated by
+/// `silu(x)/x` (sigmoid). Not `qwen3moe`, not Mixtral, not Llama4 sigmoid /
+/// weight-before-FFN, not llama-MoE `norm_w`. No QK-Norm, embed-scale, or vision.
+pub fn tiny_qwen2moe_gguf() -> Vec<u8> {
+    tiny_arch_gguf(TinySpec {
+        arch: "qwen2moe",
+        token_embd: GgmlType::F32,
+        output: GgmlType::F32,
+        layer: None,
+        rope_dimension_count: true,
+        qkv_bias: false,
+        add_bos_token: Some(false),
+        llama_moe: false,
     })
 }
 
@@ -1474,6 +1525,71 @@ fn tiny_arch_gguf_lm_head_vec1d(spec: TinySpec, lm_head: TinyLmHead, vec1d: Ggml
             19,
             GgmlType::Q4_K,
         ));
+    } else if spec.arch == "qwen2moe" {
+        // Official qwen2moe.cpp: *_exps + *_shexp + ffn_gate_inp_shexp. No dense FFN.
+        tensors.push(tw(
+            "blk.0.ffn_gate_inp.weight",
+            GgmlType::F32,
+            vec![n_embd, TINY_QWEN2MOE_N_EXPERT],
+            pack_mat(GgmlType::F32, n_embd, TINY_QWEN2MOE_N_EXPERT, 14),
+        ));
+        tensors.push(layer_tw_exps(
+            &spec,
+            "blk.0.ffn_gate_exps.weight",
+            n_embd,
+            n_ff,
+            TINY_QWEN2MOE_N_EXPERT,
+            15,
+            GgmlType::Q4_K,
+        ));
+        tensors.push(layer_tw_exps(
+            &spec,
+            "blk.0.ffn_up_exps.weight",
+            n_embd,
+            n_ff,
+            TINY_QWEN2MOE_N_EXPERT,
+            17,
+            GgmlType::Q4_K,
+        ));
+        tensors.push(layer_tw_exps(
+            &spec,
+            "blk.0.ffn_down_exps.weight",
+            n_ff,
+            n_embd,
+            TINY_QWEN2MOE_N_EXPERT,
+            19,
+            GgmlType::Q4_K,
+        ));
+        tensors.push(tw(
+            "blk.0.ffn_gate_inp_shexp.weight",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_mat(GgmlType::F32, n_embd, 1, 20),
+        ));
+        tensors.push(layer_tw(
+            &spec,
+            "blk.0.ffn_up_shexp.weight",
+            n_embd,
+            n_ff,
+            7,
+            GgmlType::Q4_K,
+        ));
+        tensors.push(layer_tw(
+            &spec,
+            "blk.0.ffn_down_shexp.weight",
+            n_ff,
+            n_embd,
+            8,
+            GgmlType::Q4_K,
+        ));
+        tensors.push(layer_tw(
+            &spec,
+            "blk.0.ffn_gate_shexp.weight",
+            n_embd,
+            n_ff,
+            9,
+            GgmlType::Q6_K,
+        ));
     } else {
         tensors.push(layer_tw(
             &spec,
@@ -1539,6 +1655,7 @@ fn supported_arch(s: &str) -> bool {
         || s == "gemma"
         || s == "qwen3"
         || s == "llama4"
+        || s == "qwen2moe"
 }
 
 fn arch_key(arch: &str, field: &str) -> String {
@@ -1667,6 +1784,24 @@ fn tiny_kv(spec: &TinySpec) -> Vec<(String, Kv)> {
         kv.push((
             arch_key(arch, "expert_used_count"),
             Kv::U32(u32::try_from(TINY_LLAMA_N_EXPERT_USED).unwrap_or(0)),
+        ));
+    }
+    if arch == "qwen2moe" {
+        kv.push((
+            arch_key(arch, "expert_count"),
+            Kv::U32(u32::try_from(TINY_QWEN2MOE_N_EXPERT).unwrap_or(0)),
+        ));
+        kv.push((
+            arch_key(arch, "expert_used_count"),
+            Kv::U32(u32::try_from(TINY_QWEN2MOE_N_EXPERT_USED).unwrap_or(0)),
+        ));
+        kv.push((
+            arch_key(arch, "expert_feed_forward_length"),
+            Kv::U32(u32::try_from(TINY_N_FF).unwrap_or(0)),
+        ));
+        kv.push((
+            arch_key(arch, "expert_shared_feed_forward_length"),
+            Kv::U32(u32::try_from(TINY_N_FF).unwrap_or(0)),
         ));
     }
     kv
@@ -2304,6 +2439,13 @@ struct Llama4Hparams {
     use_kq_norm: bool,
 }
 
+struct Qwen2MoeHparams {
+    n_expert: usize,
+    n_expert_used: usize,
+    n_ff_exp: usize,
+    n_ff_shexp: usize,
+}
+
 /// Official llama.cpp: `n_expert==0` (or missing `llama.expert_count`) is dense.
 fn load_llama_moe_hparams(g: &Gguf, arch: &str) -> Result<Option<LlamaMoeHparams>, LlamaError> {
     let key = arch_key(arch, "expert_count");
@@ -2369,12 +2511,61 @@ fn llama4_use_rope(i: usize, step: usize) -> bool {
     step > 0 && !i.saturating_add(1).is_multiple_of(step)
 }
 
+/// Official qwen2moe.cpp: `n_expert` / `n_expert_used` must be > 0.
+/// `n_ff_exp` defaults to `n_ff / n_expert_used`; `n_ff_shexp` defaults to `n_ff`.
+fn load_qwen2moe_hparams(g: &Gguf, arch: &str) -> Result<Qwen2MoeHparams, LlamaError> {
+    let n_expert = require_usize(g, arch, "expert_count")?;
+    if n_expert == 0 {
+        return Err(LlamaError::Shape(
+            "n_expert must be > 0 for QWEN2MOE".into(),
+        ));
+    }
+    let n_expert_used = require_usize(g, arch, "expert_used_count")?;
+    if n_expert_used == 0 {
+        return Err(LlamaError::Shape(
+            "n_expert_used must be > 0 for QWEN2MOE".into(),
+        ));
+    }
+    if n_expert_used > n_expert {
+        return Err(LlamaError::Shape(arch_key(arch, "expert_used_count")));
+    }
+    let n_ff = require_usize(g, arch, "feed_forward_length")?;
+    if n_ff == 0 {
+        return Err(LlamaError::Shape(arch_key(arch, "feed_forward_length")));
+    }
+    let n_ff_exp = match g.kv_u32(&arch_key(arch, "expert_feed_forward_length")) {
+        Some(v) if v > 0 => usize::try_from(v)
+            .map_err(|_| LlamaError::Shape(arch_key(arch, "expert_feed_forward_length")))?,
+        _ => {
+            if !n_ff.is_multiple_of(n_expert_used) {
+                return Err(LlamaError::Shape(arch_key(
+                    arch,
+                    "expert_feed_forward_length",
+                )));
+            }
+            n_ff / n_expert_used
+        }
+    };
+    let n_ff_shexp = match g.kv_u32(&arch_key(arch, "expert_shared_feed_forward_length")) {
+        Some(v) if v > 0 => usize::try_from(v)
+            .map_err(|_| LlamaError::Shape(arch_key(arch, "expert_shared_feed_forward_length")))?,
+        _ => n_ff,
+    };
+    Ok(Qwen2MoeHparams {
+        n_expert,
+        n_expert_used,
+        n_ff_exp,
+        n_ff_shexp,
+    })
+}
+
 fn load_layer(
     g: &Gguf,
     i: usize,
     qk_norm: bool,
     llama4: Option<&Llama4Hparams>,
     llama_moe: Option<&LlamaMoeHparams>,
+    qwen2moe: Option<&Qwen2MoeHparams>,
 ) -> Result<Layer, LlamaError> {
     let use_rope = match llama4 {
         Some(h) => llama4_use_rope(i, h.n_no_rope_layer_step),
@@ -2396,6 +2587,8 @@ fn load_layer(
         }
     } else if let Some(h) = llama_moe {
         LayerFfn::LlamaMoe(Box::new(load_llama_moe(g, i, h)?))
+    } else if let Some(h) = qwen2moe {
+        LayerFfn::Qwen2Moe(Box::new(load_qwen2moe(g, i, h)?))
     } else {
         LayerFfn::Dense(Box::new(DenseFfn {
             gate: quant_mat(need(g, &format!("blk.{i}.ffn_gate.weight"))?)?,
@@ -2490,6 +2683,61 @@ fn load_llama4_moe(g: &Gguf, i: usize, h: &Llama4Hparams) -> Result<Llama4Moe, L
         gate_exps,
         up_exps,
         down_exps,
+        gate_shexp,
+        up_shexp,
+        down_shexp,
+        n_expert: h.n_expert,
+        n_expert_used: h.n_expert_used,
+    })
+}
+
+fn load_qwen2moe(g: &Gguf, i: usize, h: &Qwen2MoeHparams) -> Result<Qwen2Moe, LlamaError> {
+    let gate_inp = quant_mat(need(g, &format!("blk.{i}.ffn_gate_inp.weight"))?)?;
+    let gate_exps = quant_mat(need(g, &format!("blk.{i}.ffn_gate_exps.weight"))?)?;
+    let up_exps = quant_mat(need(g, &format!("blk.{i}.ffn_up_exps.weight"))?)?;
+    let down_exps = quant_mat(need(g, &format!("blk.{i}.ffn_down_exps.weight"))?)?;
+    let gate_inp_shexp = quant_mat(need(g, &format!("blk.{i}.ffn_gate_inp_shexp.weight"))?)?;
+    let gate_shexp = quant_mat(need(g, &format!("blk.{i}.ffn_gate_shexp.weight"))?)?;
+    let up_shexp = quant_mat(need(g, &format!("blk.{i}.ffn_up_shexp.weight"))?)?;
+    let down_shexp = quant_mat(need(g, &format!("blk.{i}.ffn_down_shexp.weight"))?)?;
+    if gate_inp.n_rows != h.n_expert || gate_inp.n_parts != 1 {
+        return Err(LlamaError::Shape(format!("blk.{i}.ffn_gate_inp.weight")));
+    }
+    for (t, name) in [
+        (&gate_exps, format!("blk.{i}.ffn_gate_exps.weight")),
+        (&up_exps, format!("blk.{i}.ffn_up_exps.weight")),
+        (&down_exps, format!("blk.{i}.ffn_down_exps.weight")),
+    ] {
+        if t.n_parts != h.n_expert {
+            return Err(LlamaError::Shape(name));
+        }
+    }
+    if gate_exps.n_rows != h.n_ff_exp
+        || up_exps.n_rows != h.n_ff_exp
+        || down_exps.n_cols != h.n_ff_exp
+    {
+        return Err(LlamaError::Shape(format!("blk.{i}.ffn_*_exps.weight")));
+    }
+    if gate_inp_shexp.n_cols != down_shexp.n_rows
+        || gate_inp_shexp.n_rows != 1
+        || gate_inp_shexp.n_parts != 1
+    {
+        return Err(LlamaError::Shape(format!(
+            "blk.{i}.ffn_gate_inp_shexp.weight"
+        )));
+    }
+    if gate_shexp.n_rows != h.n_ff_shexp
+        || up_shexp.n_rows != h.n_ff_shexp
+        || down_shexp.n_cols != h.n_ff_shexp
+    {
+        return Err(LlamaError::Shape(format!("blk.{i}.ffn_*_shexp.weight")));
+    }
+    Ok(Qwen2Moe {
+        gate_inp,
+        gate_exps,
+        up_exps,
+        down_exps,
+        gate_inp_shexp,
         gate_shexp,
         up_shexp,
         down_shexp,
@@ -2807,6 +3055,82 @@ impl Llama {
                 .get_mut(off..off.saturating_add(n_embd))
                 .ok_or_else(|| LlamaError::Shape("llama4 moe out".into()))?;
             for (d, s) in dst.iter_mut().zip(routed.iter()) {
+                *d += *s;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Official qwen2moe.cpp: softmax then top-k, weights after SwiGLU (`norm_w=false`),
+    /// plus shared expert gated by `silu(x)/x` on `ffn_gate_inp_shexp`.
+    fn qwen2moe_rows(
+        &self,
+        moe: &Qwen2Moe,
+        n_tokens: usize,
+        x: &[f32],
+    ) -> Result<Vec<f32>, LlamaError> {
+        let n_embd = moe.down_shexp.n_rows;
+        if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
+            return Err(LlamaError::Shape("qwen2moe".into()));
+        }
+        let gate_s = self.gemm_mat(&moe.gate_shexp, n_tokens, x)?;
+        let up_s = self.gemm_mat(&moe.up_shexp, n_tokens, x)?;
+        let mut h_s = silu(&gate_s)?;
+        for (hv, uv) in h_s.iter_mut().zip(up_s.iter()) {
+            *hv *= *uv;
+        }
+        let mut shexp = self.gemm_mat(&moe.down_shexp, n_tokens, &h_s)?;
+        let shexp_gate = self.gemm_mat(&moe.gate_inp_shexp, n_tokens, x)?;
+        if shexp_gate.len() != n_tokens {
+            return Err(LlamaError::Shape("qwen2moe ffn_gate_inp_shexp".into()));
+        }
+        for t in 0..n_tokens {
+            let w = sigmoid_f32(shexp_gate.get(t).copied().unwrap_or(0.0));
+            let off = t.saturating_mul(n_embd);
+            let row = shexp
+                .get_mut(off..off.saturating_add(n_embd))
+                .ok_or_else(|| LlamaError::Shape("qwen2moe shexp".into()))?;
+            for v in row.iter_mut() {
+                *v *= w;
+            }
+        }
+        let n_out = n_tokens
+            .checked_mul(n_embd)
+            .ok_or_else(|| LlamaError::Shape("qwen2moe".into()))?;
+        let mut out = vec![0.0f32; n_out];
+        for t in 0..n_tokens {
+            let xt = token_row(x, t, n_embd, "qwen2moe x")?;
+            let logits = self.gemv_mat(&moe.gate_inp, xt)?;
+            if logits.len() != moe.n_expert {
+                return Err(LlamaError::Shape("qwen2moe ffn_gate_inp".into()));
+            }
+            let mut probs = logits;
+            softmax(&mut probs);
+            let selected = topk_logits(&probs, moe.n_expert_used)?;
+            let off = t.saturating_mul(n_embd);
+            let dst = out
+                .get_mut(off..off.saturating_add(n_embd))
+                .ok_or_else(|| LlamaError::Shape("qwen2moe out".into()))?;
+            for e in selected {
+                let w = probs.get(e).copied().unwrap_or(0.0);
+                let ge = expert_view(&moe.gate_exps, e)?;
+                let ue = expert_view(&moe.up_exps, e)?;
+                let de = expert_view(&moe.down_exps, e)?;
+                let g = self.gemv_mat(&ge, xt)?;
+                let u = self.gemv_mat(&ue, xt)?;
+                let mut hh = silu(&g)?;
+                for (a, b) in hh.iter_mut().zip(u.iter()) {
+                    *a *= *b;
+                }
+                let y = self.gemv_mat(&de, &hh)?;
+                for (d, v) in dst.iter_mut().zip(y.iter()) {
+                    *d += *v * w;
+                }
+            }
+            let srow = shexp
+                .get(off..off.saturating_add(n_embd))
+                .ok_or_else(|| LlamaError::Shape("qwen2moe shexp add".into()))?;
+            for (d, s) in dst.iter_mut().zip(srow.iter()) {
                 *d += *s;
             }
         }
@@ -4602,6 +4926,66 @@ mod tests {
             .collect()
     }
 
+    /// Official qwen2moe.cpp on one token: softmax then top-k, weights after
+    /// SwiGLU without `norm_w`, plus shared expert * sigmoid(`ffn_gate_inp_shexp`).
+    fn oracle_qwen2moe(g: &Gguf, xn: &[f32]) -> Vec<f32> {
+        let n_expert = arch_u32(g, "qwen2moe", "expert_count").unwrap() as usize;
+        let n_used = arch_u32(g, "qwen2moe", "expert_used_count").unwrap() as usize;
+        let logits = oracle_gemv(g.tensor("blk.0.ffn_gate_inp.weight").unwrap(), xn);
+        assert_eq!(logits.len(), n_expert);
+        let m = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let mut probs: Vec<f32> = logits.iter().map(|v| (v - m).exp()).collect();
+        let z: f32 = probs.iter().sum();
+        if z > 0.0 {
+            for p in &mut probs {
+                *p /= z;
+            }
+        }
+        let mut idx: Vec<usize> = (0..n_expert).collect();
+        idx.sort_by(|&a, &b| match probs[b].partial_cmp(&probs[a]) {
+            Some(core::cmp::Ordering::Equal) | None => a.cmp(&b),
+            Some(ord) => ord,
+        });
+        idx.truncate(n_used);
+        let gate_exps = g.tensor("blk.0.ffn_gate_exps.weight").unwrap();
+        let up_exps = g.tensor("blk.0.ffn_up_exps.weight").unwrap();
+        let down_exps = g.tensor("blk.0.ffn_down_exps.weight").unwrap();
+        let mut routed = vec![0.0f32; xn.len()];
+        for e in idx {
+            let w = probs[e];
+            let gate = oracle_gemv_expert(gate_exps, e, xn);
+            let up = oracle_gemv_expert(up_exps, e, xn);
+            let h: Vec<f32> = gate
+                .iter()
+                .zip(up.iter())
+                .map(|(gv, u)| (gv / (1.0 + (-gv).exp())) * u)
+                .collect();
+            let y = oracle_gemv_expert(down_exps, e, &h);
+            for (o, v) in routed.iter_mut().zip(y.iter()) {
+                *o += *v * w;
+            }
+        }
+        let gate_s = oracle_gemv(g.tensor("blk.0.ffn_gate_shexp.weight").unwrap(), xn);
+        let up_s = oracle_gemv(g.tensor("blk.0.ffn_up_shexp.weight").unwrap(), xn);
+        let h_s: Vec<f32> = gate_s
+            .iter()
+            .zip(up_s.iter())
+            .map(|(gv, u)| (gv / (1.0 + (-gv).exp())) * u)
+            .collect();
+        let mut shexp = oracle_gemv(g.tensor("blk.0.ffn_down_shexp.weight").unwrap(), &h_s);
+        let gate_inp_s = oracle_gemv(g.tensor("blk.0.ffn_gate_inp_shexp.weight").unwrap(), xn);
+        assert_eq!(gate_inp_s.len(), 1);
+        let sw = 1.0 / (1.0 + (-gate_inp_s[0]).exp());
+        for v in &mut shexp {
+            *v *= sw;
+        }
+        routed
+            .iter()
+            .zip(shexp.iter())
+            .map(|(a, b)| a + b)
+            .collect()
+    }
+
     fn oracle_rope(mut v: Vec<f32>, pos: usize, n_rot: usize, base: f32) -> Vec<f32> {
         let mut theta = pos as f32;
         let theta_scale = base.powf(-2.0 / n_rot as f32);
@@ -4754,10 +5138,13 @@ mod tests {
             let fnorm = f32s(g.tensor("blk.0.ffn_norm.weight").unwrap()).unwrap();
             let xn = oracle_rmsnorm(&x, &fnorm, eps);
             let llama_moe = arch == "llama" && arch_u32(g, arch, "expert_count").unwrap_or(0) > 0;
+            let qwen2moe = arch == "qwen2moe";
             let down = if llama4 {
                 oracle_llama4_moe(g, &xn)
             } else if llama_moe {
                 oracle_llama_moe(g, &xn)
+            } else if qwen2moe {
+                oracle_qwen2moe(g, &xn)
             } else {
                 let gate = oracle_gemv(g.tensor("blk.0.ffn_gate.weight").unwrap(), &xn);
                 let up = oracle_gemv(g.tensor("blk.0.ffn_up.weight").unwrap(), &xn);
@@ -5544,6 +5931,7 @@ mod tests {
             tiny_qwen3_gguf(),
             tiny_llama4_gguf(),
             tiny_llama_moe_gguf(),
+            tiny_qwen2moe_gguf(),
         ] {
             load_prefill_match(&bytes, &tokens);
             load_prefill_match(&bytes, &[3]);
@@ -5896,23 +6284,107 @@ mod tests {
     }
 
     #[test]
-    fn qwen2moe_architecture_error_names_arch() {
-        let bytes = write_gguf_with_kv(
-            &[
-                ("general.alignment".into(), Kv::U32(32)),
-                ("general.architecture".into(), Kv::String("qwen2moe".into())),
-            ],
-            &[],
+    fn tiny_qwen2moe_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_qwen2moe_gguf();
+        let g = load_gguf(&bytes).expect("load qwen2moe");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("qwen2moe".into()))
         );
-        let g = load_gguf(&bytes).expect("load");
-        let err = match Llama::from_gguf(g) {
-            Ok(_) => panic!("expected unknown arch"),
-            Err(e) => e.to_string(),
+        assert_eq!(g.kv_u32("qwen2moe.block_count"), Some(1));
+        assert_eq!(g.kv_u32("qwen2moe.embedding_length"), Some(256));
+        assert_eq!(g.kv_u32("qwen2moe.feed_forward_length"), Some(256));
+        assert_eq!(g.kv_u32("qwen2moe.attention.head_count"), Some(4));
+        assert_eq!(g.kv_u32("qwen2moe.attention.head_count_kv"), Some(2));
+        assert_eq!(g.kv_u32("qwen2moe.expert_count"), Some(4));
+        assert_eq!(g.kv_u32("qwen2moe.expert_used_count"), Some(2));
+        assert_eq!(g.kv_u32("qwen2moe.expert_feed_forward_length"), Some(256));
+        assert_eq!(
+            g.kv_u32("qwen2moe.expert_shared_feed_forward_length"),
+            Some(256)
+        );
+        assert!(g.kv_u32("llama.block_count").is_none());
+        assert!(g.kv_u32("llama4.block_count").is_none());
+        assert!(g.kv_u32("mixtral.block_count").is_none());
+        assert!(g.kv_u32("qwen3moe.block_count").is_none());
+        assert!(g.tensor("blk.0.attn_q_norm.weight").is_none());
+        assert!(g.tensor("blk.0.attn_k_norm.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_gate.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_up.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_down.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_gate_inp.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_gate_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_up_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_down_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_gate_inp_shexp.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_gate_shexp.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_up_shexp.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_down_shexp.weight").is_some());
+        assert_eq!(
+            g.tensor("blk.0.ffn_gate_exps.weight").unwrap().shape,
+            &[256, 256, 4]
+        );
+        assert_eq!(
+            g.tensor("blk.0.ffn_gate_inp_shexp.weight").unwrap().shape,
+            &[256]
+        );
+        assert_eq!(g.kv_bool("tokenizer.ggml.add_bos_token"), Some(false));
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("output.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        let mut x2 = pat_f32(TINY_N_EMBD, 22);
+        x2.extend(pat_f32(TINY_N_EMBD, 23));
+        let got_gemm = model.gemm_output(2, &x2).expect("gemm");
+        let llama_bytes = tiny_llama_gguf();
+        let llama_g = load_gguf(&llama_bytes).expect("llama");
+        let llama_m = Llama::from_gguf(llama_g).expect("llama m");
+        let llama_gemm = llama_m.gemm_output(2, &x2).expect("llama gemm");
+        assert_logits_match(&got_gemm, &llama_gemm);
+        let emb = model.embed_token(3).expect("embed");
+        let exp_emb = oracle_embed(g.tensor("token_embd.weight").unwrap(), 3);
+        assert_logits_match(&emb, &exp_emb);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        assert!(!tok.add_bos);
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        let tokens = [1u32, 2, 3];
+        let llama_pref = {
+            let lg = load_gguf(&llama_bytes).expect("llama reload");
+            let lm = Llama::from_gguf(lg).expect("lm");
+            let mut c = lm.new_cache(8).expect("c");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
         };
-        assert!(err.contains("qwen2moe"), "error should name arch: {err}");
-        assert!(
-            err.contains("unknown architecture"),
-            "error should name unknown architecture: {err}"
+        let mut qc = model.new_cache(8).expect("qc");
+        let qwen2moe_pref = model.prefill(&mut qc, &tokens).expect("qwen2moe pref");
+        assert_ne!(
+            qwen2moe_pref, llama_pref,
+            "qwen2moe softmax/shared-expert must change logits vs dense llama"
+        );
+        let llama_moe_pref = {
+            let mg = load_gguf(&tiny_llama_moe_gguf()).expect("llama moe");
+            let mm = Llama::from_gguf(mg).expect("mm");
+            let mut c = mm.new_cache(8).expect("cm");
+            mm.prefill(&mut c, &tokens).expect("llama moe pref")
+        };
+        assert_ne!(
+            qwen2moe_pref, llama_moe_pref,
+            "qwen2moe must not copy llama-MoE norm_w / no-shexp"
+        );
+        let llama4_pref = {
+            let l4 = load_gguf(&tiny_llama4_gguf()).expect("llama4");
+            let m4 = Llama::from_gguf(l4).expect("m4");
+            let mut c = m4.new_cache(8).expect("c4");
+            m4.prefill(&mut c, &tokens).expect("llama4 pref")
+        };
+        assert_ne!(
+            qwen2moe_pref, llama4_pref,
+            "qwen2moe must not copy Llama4 sigmoid / weight-before-FFN"
         );
     }
 
