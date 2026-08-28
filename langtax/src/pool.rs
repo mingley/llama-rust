@@ -4,12 +4,14 @@
 //! every call. That is the only shape safe Rust allows for a *borrowed* closure
 //! writing into *borrowed* buffers: handing `&mut [f32]` to a thread that
 //! outlives the call needs either `unsafe` lifetime erasure or shared job state
-//! behind a `Mutex`, and this crate has neither. The cost is a fixed ~64 us of
-//! spawn/join per call regardless of row count, which a GEMM over a whole
-//! prompt amortises and a single-token GEMV does not.
+//! behind a `Mutex`, and this crate has neither. The cost is ~100 us of
+//! spawn/join per call on 4 vCPUs, near enough flat in row count
+//! (`bench_dispatch_overhead`), which a GEMM over a whole prompt amortises and
+//! a single-token GEMV does not.
 //!
-//! [`Pool`] keeps its workers between calls, for the GEMV in the decode loop.
-//! It sidesteps the lifetime problem by never sending a borrow at all:
+//! [`Pool`] keeps its workers between calls, for the GEMV in the decode loop,
+//! and costs 4-13 us for the same dispatch. It sidesteps the lifetime problem
+//! by never sending a borrow at all:
 //!
 //! * the job is `Copy` plain data (which rows of which matrix),
 //! * the weights live in the worker's own `Arc<K>`, not in the caller's frame,
@@ -20,6 +22,11 @@
 //!
 //! Everything crosses bounded `mpsc` channels, so there is no lock, no
 //! `unsafe`, and nothing borrowed.
+//!
+//! Two things that look like details are most of the win, and the pool was
+//! *slower* than the fork/join it replaced without them: the caller computes a
+//! chunk instead of blocking, and workers spin before parking. Both are about
+//! wake-up latency rather than throughput; see [`Pool`] and [`SPINS`].
 
 use std::cell::Cell;
 use std::num::NonZeroUsize;
