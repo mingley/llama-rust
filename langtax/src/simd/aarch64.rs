@@ -365,9 +365,10 @@ fn widen_s8x8(v: int8x8_t) -> (int32x4_t, int32x4_t) {
 /// The `QK_K` kernels reduce per super-block, which costs one horizontal sum
 /// per 256 elements. A Q5 or Q8_0 block is 32 elements, so the same shape
 /// would be eight times as many reductions and the reduction, not the
-/// arithmetic, would set the rate: it was worth 1.6x on Q5_0 and 1.9x on
-/// Q8_0. The scalar kernel runs one `sum` across every block too, so this is
-/// the same reassociation the bound already covers, not a new one.
+/// arithmetic, would set the rate: reducing once per row instead measured
+/// 1.28x on Q5_0, 1.40x on Q5_1 and 1.53x on Q8_0. The scalar kernel runs one
+/// `sum` across every block too, so this is the same reassociation the bound
+/// already covers, not a new one.
 ///
 /// # Safety
 ///

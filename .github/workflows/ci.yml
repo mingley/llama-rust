@@ -54,7 +54,7 @@ jobs:
   #
   # Scoped to `simd::tests` because that is the only module with `unsafe` in it
   # and because a full-suite Miri run is hours of transformer forward passes.
-  # The three exhaustive 65536-pattern sweeps are skipped for the same reason;
+  # The exhaustive 65536-pattern scale sweeps are skipped for the same reason;
   # the native test jobs above run them.
   miri:
     runs-on: ubuntu-latest
@@ -63,10 +63,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
-      - run: >
+      # Guards the thing that makes this job worth having. Without
+      # `-C target-feature` every selector returns `None`, every differential
+      # test early-returns, and the job passes green having interpreted no
+      # SIMD at all. This step asserts that vacuous state really is what
+      # happens unforced, so a future change that makes the forced run
+      # silently stop engaging cannot pass unnoticed.
+      - name: dispatch is vacuous without forced target features
+        run: >
+          cargo miri test --lib --all-features --
+          --test-threads=1 --nocapture simd::tests::dispatch_engages
+          2>&1 | tee /dev/stderr | grep -q 'f32=false .* q8_0=false'
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance
+      - name: kernels under Miri
+        run: >
           cargo miri test --lib --all-features -- --test-threads=1 simd::tests::
-          --skip f16_conversion_is_bit_identical
+          --skip f16_conversion_is_bit_identical_for_all_finite_patterns
           --skip q8_0_block_scales_are_bit_identical
+          --skip q5_0_block_scales_are_bit_identical
         env:
           MIRIFLAGS: -Zmiri-strict-provenance
           RUSTFLAGS: -C target-feature=+avx2,+fma,+f16c
