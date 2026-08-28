@@ -5,8 +5,9 @@ use std::fs::File;
 use std::io::{BufRead, Read, Write};
 use std::path::Path;
 
-use crate::decode::{greedy_generate_ctx, Llama};
+use crate::decode::Llama;
 use crate::gguf::load_gguf_owned;
+use crate::sample::argmax;
 use crate::template::ChatMessage;
 use crate::tok::Tokenizer;
 
@@ -284,26 +285,68 @@ fn chat_turn<W: Write>(
     if args.show_prompt {
         writeln!(out, "--- rendered prompt ---\n{prompt}\n--- end ---")?;
     }
-    let raw = greedy_generate_ctx(model, tok, &prompt, args.n_predict, args.n_ctx)?;
-    let reply = trim_at_special(tok, &raw);
-    writeln!(out, "{reply}")?;
-    history.push(ChatMessage::assistant(reply));
+    let reply = generate_reply(model, tok, &prompt, args)?;
+    writeln!(out, "{}", reply.trim())?;
+    history.push(ChatMessage::assistant(reply.trim()));
     Ok(())
 }
 
-/// Cut a reply at the first special token it emits.
+/// Greedy-decode one assistant turn and return only the new text.
 ///
-/// Generation stops on `eos`, but a model can also end its turn with `<|eot_id|>`
-/// or `<|im_end|>`, which are separate ids. Everything after one of those
-/// belongs to the next turn's scaffolding, not to the reply.
-fn trim_at_special<'a>(tok: &Tokenizer, text: &'a str) -> &'a str {
-    let mut cut = text.len();
-    for (piece, _id) in tok.special_tokens() {
-        if let Some(i) = text.find(piece) {
-            cut = cut.min(i);
+/// [`greedy_generate_ctx`] decodes the prompt and the continuation together,
+/// which is what `infer` wants but not what a conversation wants: the reply has
+/// to go into the history on its own, and the prompt is full of markers
+/// [`Tokenizer::decode`] drops.
+fn generate_reply(
+    model: &Llama,
+    tok: &Tokenizer,
+    prompt: &str,
+    args: &ChatArgs,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let mut ids = tok.encode(prompt)?;
+    if tok.add_bos {
+        if let Some(bos) = tok.bos {
+            if ids.first().copied() != Some(bos) {
+                ids.insert(0, bos);
+            }
         }
     }
-    text.get(..cut).unwrap_or(text).trim_end()
+    if ids.is_empty() {
+        return Err("the chat template rendered an empty prompt".into());
+    }
+    let needed = ids.len().saturating_add(args.n_predict);
+    let max_seq = match args.n_ctx {
+        Some(n) if n < needed => {
+            return Err(format!("--n-ctx {n} is below the {needed} tokens this turn needs").into())
+        }
+        Some(n) => n,
+        None => needed.saturating_add(1),
+    };
+    let mut cache = model.new_cache(max_seq)?;
+    let mut logits = model.prefill(&mut cache, &ids)?;
+    let mut reply = Vec::new();
+    for _ in 0..args.n_predict {
+        let next = argmax(&logits);
+        if ends_turn(tok, next) {
+            break;
+        }
+        reply.push(next);
+        logits = model.forward(&mut cache, next)?;
+    }
+    Ok(tok.decode(&reply))
+}
+
+/// Whether `id` ends the assistant's turn.
+///
+/// `eos` alone is not enough. An instruct model closes its turn with whatever
+/// marker its own template uses (`<|im_end|>`, `<|eot_id|>`, `<end_of_turn>`),
+/// and in several families that is a different id from `eos`. llama.cpp keeps
+/// an explicit end-of-generation set for this; GGUF does not always carry the
+/// flags, so we use the rule that holds regardless: a control token in the
+/// output stream means the reply is over, because control tokens never belong
+/// inside one.
+fn ends_turn(tok: &Tokenizer, id: u32) -> bool {
+    tok.eos == Some(id) || tok.is_special(id)
 }
 
 /// Read a file with `File` + `Read`, not `std::fs::read`.
@@ -498,15 +541,17 @@ mod tests {
     }
 
     #[test]
-    fn a_reply_is_cut_at_the_first_end_of_turn_marker() {
+    fn any_control_token_ends_the_turn_not_just_eos() {
         use crate::gguf::{write_gguf_with_kv, Kv};
         use crate::load_gguf;
+        // Llama-3's shape: `eos` is `<|end_of_text|>` but an instruct turn ends
+        // with `<|eot_id|>`, a different id.
         let kv = vec![
             (
                 "tokenizer.ggml.tokens".to_string(),
                 Kv::Array {
                     elem: 8,
-                    items: ["a", "<|im_end|>", "<|im_start|>"]
+                    items: ["a", "<|end_of_text|>", "<|eot_id|>", "b"]
                         .into_iter()
                         .map(|s| Kv::String(s.into()))
                         .collect(),
@@ -516,20 +561,20 @@ mod tests {
                 "tokenizer.ggml.token_type".to_string(),
                 Kv::Array {
                     elem: 5,
-                    items: vec![Kv::I32(1), Kv::I32(3), Kv::I32(3)],
+                    items: vec![Kv::I32(1), Kv::I32(3), Kv::I32(3), Kv::I32(1)],
                 },
             ),
+            ("tokenizer.ggml.eos_token_id".to_string(), Kv::U32(1)),
         ];
         let bytes = write_gguf_with_kv(&kv, &[]);
         let g = load_gguf(&bytes).expect("gguf");
         let tok = Tokenizer::from_gguf(&g).expect("tok");
-        assert_eq!(trim_at_special(&tok, "hello"), "hello");
-        assert_eq!(trim_at_special(&tok, "hello<|im_end|>\n"), "hello");
-        assert_eq!(
-            trim_at_special(&tok, "hi <|im_end|>\n<|im_start|>user\n"),
-            "hi"
+        assert!(!ends_turn(&tok, 0), "ordinary text must not stop the turn");
+        assert!(!ends_turn(&tok, 3));
+        assert!(ends_turn(&tok, 1), "eos");
+        assert!(
+            ends_turn(&tok, 2),
+            "eot_id is not eos but still ends the turn"
         );
-        // The earliest marker wins, not the first one in the vocab.
-        assert_eq!(trim_at_special(&tok, "a<|im_start|>b<|im_end|>"), "a");
     }
 }
