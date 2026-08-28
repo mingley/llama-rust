@@ -275,7 +275,26 @@ impl GgmlType {
         }
     }
 
-    fn layout(self) -> (usize, usize) {
+    /// Weights per packed block (ggml `ggml_blck_size`).
+    ///
+    /// `1` for the unquantized types. A tensor's innermost dimension has to be
+    /// a multiple of this or the kernels reject the row, which is why odd
+    /// `n_embd` values cannot be quantized to a 256-wide K-quant.
+    pub const fn block_size(self) -> usize {
+        self.layout().1
+    }
+
+    /// Packed bytes per block (ggml `ggml_type_size`).
+    ///
+    /// Together with [`Self::block_size`] this gives the bit width of a dtype:
+    /// `Q4_K` stores 256 weights in 144 bytes, so `144 * 8 / 256` is 4.5 bits
+    /// per weight.
+    pub const fn type_size(self) -> usize {
+        self.layout().0
+    }
+
+    /// Packed bytes and weights per block, in that order.
+    const fn layout(self) -> (usize, usize) {
         match self {
             Self::F32 => (F32_SIZE, 1),
             Self::F16 => (F16_SIZE, 1),
@@ -384,6 +403,9 @@ pub struct Tensor<'a> {
     /// ggml type tag.
     pub ty: GgmlType,
     /// Dimension sizes, GGUF order (innermost first).
+    ///
+    /// Raw `u64` as stored in the file. For feeding a kernel, [`Self::n_cols`]
+    /// and [`Self::n_rows`] hand back `usize` and save the conversion.
     pub shape: &'a [u64],
     /// GGUF tensor payload, same bytes as on disk (range of [`Gguf::blob`]).
     pub data: &'a [u8],

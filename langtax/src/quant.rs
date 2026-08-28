@@ -19,10 +19,16 @@
 //! | Shape | Meaning |
 //! |---|---|
 //! | `pack_<t>_block(..) -> [u8; <T>_BLOCK]` | Quantize one block into GGUF's packed layout |
-//! | `<t>_row_bytes(n_cols) -> usize` | Packed byte length of one matrix row |
+//! | `<t>_row_bytes(n_cols) -> Result<usize, QuantError>` | Packed byte length of one matrix row |
 //! | `dequant_<t>_row(n_cols, row, y)` | Expand one packed row into `y: &mut [f32]` |
 //! | `gemv_<t>_f32(n_cols, w, x, y)` | `y[m] = W[m, ..] · x`, activations in f32 |
 //! | `gemm_<t>_f32(n_cols, n_tokens, w, x, y)` | The same against `n_tokens` activation columns |
+//!
+//! `n_cols` always comes first, and outputs are always the last argument and
+//! always caller-allocated — no kernel here allocates. Coming from a loaded
+//! checkpoint, [`crate::gguf::Tensor::n_cols`] is the `n_cols` to pass and
+//! `tensor.data` is the `w`; the raw `shape` field is `&[u64]`, so prefer the
+//! accessors to avoid a conversion at every call site.
 //!
 //! Two families of constants come with each dtype: `QK_*` / `QK<n>_*` is the
 //! number of *elements* per block, and `<T>_BLOCK` is the number of *bytes* the

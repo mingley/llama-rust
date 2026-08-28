@@ -96,6 +96,55 @@ impl GenerateOptions {
         self
     }
 
+    /// Set [`SampleParams::temperature`], leaving the other knobs alone.
+    ///
+    /// Anything above zero makes the draw stochastic and so needs
+    /// [`Self::with_seed`]; generation fails with [`crate::Error::Sample`]
+    /// rather than seeding itself from the clock.
+    ///
+    /// ```
+    /// use llama_rust::GenerateOptions;
+    ///
+    /// let opts = GenerateOptions::new(32)
+    ///     .with_temperature(0.8)
+    ///     .with_top_p(0.95)
+    ///     .with_seed(7);
+    /// assert!(!opts.sampling.is_greedy());
+    /// ```
+    #[must_use]
+    pub const fn with_temperature(mut self, temperature: f32) -> Self {
+        self.sampling.temperature = temperature;
+        self
+    }
+
+    /// Set [`SampleParams::top_k`]. Zero disables the filter.
+    #[must_use]
+    pub const fn with_top_k(mut self, top_k: usize) -> Self {
+        self.sampling.top_k = top_k;
+        self
+    }
+
+    /// Set [`SampleParams::top_p`]. One disables the filter.
+    #[must_use]
+    pub const fn with_top_p(mut self, top_p: f32) -> Self {
+        self.sampling.top_p = top_p;
+        self
+    }
+
+    /// Set [`SampleParams::repeat_penalty`]. One disables the penalty.
+    #[must_use]
+    pub const fn with_repeat_penalty(mut self, repeat_penalty: f32) -> Self {
+        self.sampling.repeat_penalty = repeat_penalty;
+        self
+    }
+
+    /// Set [`SampleParams::seed`], making a stochastic run reproducible.
+    #[must_use]
+    pub const fn with_seed(mut self, seed: u64) -> Self {
+        self.sampling.seed = Some(seed);
+        self
+    }
+
     /// Set [`Self::stop_at_eos`].
     #[must_use]
     pub const fn with_stop_at_eos(mut self, stop_at_eos: bool) -> Self {
