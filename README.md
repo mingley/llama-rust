@@ -30,7 +30,7 @@ cargo build --release --bin gguf_gemv
 ./target/release/gguf_gemv infer tiny-qwen2moe.gguf -p ab -n 2
 ./target/release/gguf_gemv write-tiny-qwen3moe tiny-qwen3moe.gguf
 ./target/release/gguf_gemv infer tiny-qwen3moe.gguf -p ab -n 2
-./target/release/gguf_gemv trace tiny-qwen3moe.gguf -p ab -n 8 --out tests/traces/tiny-qwen3moe.jsonl
+./target/release/gguf_gemv trace tiny-qwen3moe.gguf -p ab -n 8 --out tests/traces/tiny-qwen3moe.jsonl --capacity 2
 ./target/release/expertvm replay tests/traces/tiny-qwen3moe.jsonl --capacity 2
 ./target/release/expertvm replay tests/traces/cycling.jsonl --capacity 2
 ./target/release/gguf_gemv write-tiny-qwen2vl tiny-qwen2vl.gguf
@@ -49,7 +49,7 @@ cargo build --release --bin gguf_gemv
 
 `infer` is seedless greedy. `--prompt` / `-p` (default `ab`), `--n-predict` / `-n` (default `2`), optional `--n-ctx` (KV capacity; default prompt + `n_predict` + 1). Temperature / top-k / top-p / repeat penalty live on `SampleParams` / `generate`; the CLI path is unchanged.
 
-`trace` is the same greedy path plus an opt-in MoE access log (`ExpertAccess` JSONL). `--out FILE` is required. Tracing does not change generated tokens. Pipe the file to `expertvm replay` / `expertvm sim`. Workspace crates: [`expertvm/`](expertvm/), [`gpu-sim/`](gpu-sim/). Plan: [`PLAN.md`](PLAN.md).
+`trace` is the same greedy path plus an opt-in MoE access log (`ExpertAccess` JSONL). `--out FILE` is required. After decode it prints the `expertvm replay` table (`--capacity`, default 8). Tracing does not change generated tokens. Workspace crates: [`expertvm/`](expertvm/), [`gpu-sim/`](gpu-sim/). Plan: [`PLAN.md`](PLAN.md).
 
 `serve` binds `127.0.0.1:8080` (override with `--bind HOST:PORT`; host must be `127.0.0.1` or `localhost`). One HTTP/1.1 request at a time: `POST /generate` with `{"prompt":"..."}` and optional `n_predict`, response `{"generated":"..."}`. Empty prompt and a missing GGUF file fail cleanly. No batching, no concurrent requests, no OpenAI-compat, no tok/s. Kernel Integrity has not signed it.
 

@@ -83,6 +83,7 @@ Local: `~/dev/llama-rust-perf`
   - `tokenizer.ggml.add_bos_token=false` honored
 - Load/decode errors name tensor, ggml type id, and/or KV key. ggml-removed type ids are named as removed.
 - CLI: `gguf_gemv infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]`. Seedless greedy. Defaults remain `ab` / 2 so the shipped two-run command still works.
+- **MoE traces.** `gguf_gemv trace <path> --out FILE [--capacity N]`. Same greedy as `infer`, writes JSONL, prints the measured expertvm hit-rate table. Identity vs untraced greedy.
 - **Serving.** Local `gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--bind HOST:PORT]`. Std `TcpListener` on `127.0.0.1` (default `:8080`; `localhost` allowed). One HTTP/1.1 request at a time: `POST /generate` JSON `{"prompt"}` optional `n_predict` → `{"generated"}`. Seedless greedy (`greedy_generate_ctx`). Missing file and empty prompt fail cleanly. No batching, no multi-request, no OpenAI-compat, no tok/s. Not a production inference server. Kernel Integrity has not signed it.
 - One file blob. `load_gguf_owned(Vec<u8>)` keeps the file bytes. Tensor payloads are ranges of that blob. mmap is still forbidden (`unsafe` or a crate).
 - **Tokenizer.** `token_id` / merge rank are `HashMap` lookups, not a linear scan of the vocab.

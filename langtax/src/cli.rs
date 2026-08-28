@@ -21,11 +21,12 @@ usage: gguf_gemv infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]
 
 /// Usage for the `trace` verb.
 pub const TRACE_USAGE: &str = "\
-usage: gguf_gemv trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE
+usage: gguf_gemv trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE [--capacity N]
   -p, --prompt TEXT   prompt (default: ab)
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: prompt + n_predict + 1)
       --out FILE      write ExpertAccess JSONL (required)
+      --capacity N    expertvm cache slots for the printed table (default: 8)
 ";
 
 /// Usage for the `chat` verb.
@@ -42,7 +43,7 @@ usage: gguf_gemv chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--
 pub const BIN_USAGE: &str = "\
 usage: gguf_gemv <command> [args]
   infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]
-  trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE
+  trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE [--capacity N]
   chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--show-prompt]
   serve <path> [--n-predict N] [--n-ctx N] [--bind HOST:PORT]
   write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|write-tiny-qwen3|write-tiny-gemma|write-tiny-llama4|write-tiny-llama-moe|write-tiny-qwen2moe|write-tiny-qwen3moe|write-tiny-qwen2vl|write-tiny-qwen3vl|write-tiny-qwen3next|write-tiny-qwen35|write-tiny-phi2 <path>
@@ -152,6 +153,8 @@ pub struct TraceArgs {
     pub infer: InferArgs,
     /// Destination JSONL path.
     pub out: String,
+    /// Expert cache slots for the printed `expertvm replay` table.
+    pub capacity: usize,
 }
 
 /// Parse operands after the `trace` verb.
@@ -165,6 +168,7 @@ where
     let mut n_predict = InferArgs::DEFAULT_N_PREDICT;
     let mut n_ctx = None;
     let mut out = None;
+    let mut capacity = 8usize;
     let mut it = args.into_iter();
     while let Some(raw) = it.next() {
         let arg = raw.as_ref();
@@ -192,6 +196,12 @@ where
             "--out" => {
                 out = Some(trace_value("out", inline, &mut it)?);
             }
+            "--capacity" | "-c" => {
+                capacity = parse_usize("capacity", &trace_value("capacity", inline, &mut it)?)?;
+                if capacity == 0 {
+                    return trace_usage_err("capacity must be > 0");
+                }
+            }
             flag if flag.starts_with('-') => {
                 return trace_usage_err(&format!("unknown flag {flag}"));
             }
@@ -217,6 +227,7 @@ where
             n_ctx,
         },
         out,
+        capacity,
     }))
 }
 
@@ -700,9 +711,14 @@ mod tests {
                 assert_eq!(a.out, "t.jsonl");
                 assert_eq!(a.infer.path, "m.gguf");
                 assert_eq!(a.infer.prompt, InferArgs::DEFAULT_PROMPT);
+                assert_eq!(a.capacity, 8);
             }
             TraceCmd::Help => panic!("expected Run"),
         }
         assert_eq!(parse_trace_args(["--help"]).unwrap(), TraceCmd::Help);
+        match parse_trace_args(["m.gguf", "--out", "t.jsonl", "-c", "2"]).expect("cap") {
+            TraceCmd::Run(a) => assert_eq!(a.capacity, 2),
+            TraceCmd::Help => panic!("expected Run"),
+        }
     }
 }

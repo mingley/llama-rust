@@ -247,6 +247,11 @@ fn trace_file(args: &llama_rust::TraceArgs) -> Result<(), Box<dyn std::error::Er
         args.out
     );
     println!("generated={text}");
+    println!("{}", expertvm::analyze(&trace).report());
+    print!(
+        "{}",
+        expertvm::format_table(&expertvm::compare(&trace, args.capacity, 8))
+    );
     Ok(())
 }
 
