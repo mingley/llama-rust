@@ -534,6 +534,23 @@ impl Gguf {
             _ => None,
         }
     }
+
+    /// `INT32` array metadata, if every element is `I32`.
+    pub fn kv_i32s(&self, key: &str) -> Option<Vec<i32>> {
+        match self.kv.get(key) {
+            Some(Kv::Array { items, .. }) => {
+                let mut out = Vec::new();
+                for item in items {
+                    match item {
+                        Kv::I32(v) => out.push(*v),
+                        _ => return None,
+                    }
+                }
+                Some(out)
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Serialize `tensors` as a GGUF v3 blob with `general.alignment` and `general.name`.
