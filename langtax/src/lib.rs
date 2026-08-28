@@ -77,17 +77,16 @@
 //! [`StepAction::Stop`] to end generation early.
 //!
 //! ```
-//! use llama_rust::{fixtures, GenerateOptions, Model, SampleParams, StepAction};
+//! use llama_rust::{fixtures, GenerateOptions, Model, StepAction};
 //!
 //! # fn main() -> Result<(), llama_rust::Error> {
 //! let model = Model::from_bytes(fixtures::tiny_qwen2_gguf())?;
-//! let opts = GenerateOptions::new(8).with_sampling(SampleParams {
-//!     temperature: 0.8,
-//!     top_k: 40,
-//!     top_p: 0.95,
-//!     repeat_penalty: 1.1,
-//!     seed: Some(1234),
-//! });
+//! let opts = GenerateOptions::new(8)
+//!     .with_temperature(0.8)
+//!     .with_top_k(40)
+//!     .with_top_p(0.95)
+//!     .with_repeat_penalty(1.1)
+//!     .with_seed(1234);
 //!
 //! let mut peak_logit = f32::MIN;
 //! let done = model.session().generate_streaming("ab", &opts, |step| {
@@ -166,7 +165,7 @@
 //!
 //! | Module | What lives there |
 //! |---|---|
-//! | *(root)* | [`Model`], [`Session`], [`GenerateOptions`], [`Generated`], [`Step`], [`Error`] |
+//! | *(root)* | [`Model`], [`Session`], [`GenerateOptions`], [`Generated`], [`Step`], [`SampleParams`], [`Tokenizer`], [`Error`] |
 //! | [`gguf`] | GGUF v3 reader and writer: [`gguf::Gguf`], [`gguf::load_gguf`], [`gguf::write_gguf`], [`gguf::GgmlType`], [`gguf::Kv`] |
 //! | [`kernels`] | Dequant and matmul kernels: `dequant_*`, `gemv_*`, `gemm_*`, `pack_*`, `*_row_bytes`, block-size constants |
 //! | [`sample`] | [`sample::SampleParams`], [`sample::Sampler`], [`sample::sample_next`], [`sample::argmax`] |
@@ -177,6 +176,19 @@
 //! [`Llama`] and [`KvCache`] also sit at the root: they are the raw decode
 //! handle and its cache, one layer below [`Session`], and you will want them as
 //! soon as you care about logits or cache placement.
+//!
+//! # Example programs
+//!
+//! Five in `examples/`. All but the first default to an in-memory fixture, so
+//! `cargo run --example <name>` works with nothing downloaded.
+//!
+//! | Example | What it shows |
+//! |---|---|
+//! | `generate` | File to text, with prefill and decode throughput timed apart. Needs a real `.gguf`. |
+//! | `stream_tokens` | Per-token callback, stopping early on a stop sequence |
+//! | `sampling` | Six sampler configurations side by side, and why a seed is mandatory |
+//! | `kernels` | Dequantize a row, run the fused GEMV over packed bytes, cross-check the two |
+//! | `gguf_inventory` | Metadata dump and a per-dtype tensor census of a checkpoint |
 //!
 //! # What it loads
 //!
