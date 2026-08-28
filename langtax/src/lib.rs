@@ -11,6 +11,7 @@ mod pretok;
 mod quant;
 mod sample;
 mod serve;
+mod template;
 mod tok;
 mod ucd;
 
@@ -68,4 +69,7 @@ pub use quant::{
 };
 pub use sample::{argmax, sample_next, splitmix64, SampleError, SampleParams, Sampler};
 pub use serve::{parse_serve_args, run_serve, ServeArgs, ServeCmd, ServeError, SERVE_USAGE};
+pub use template::{
+    render_chat_template, ChatMessage, ChatOptions, Template, TemplateError, Value,
+};
 pub use tok::{TokError, Tokenizer};
