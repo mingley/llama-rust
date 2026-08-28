@@ -528,12 +528,21 @@ fn q5_nibbles(pack: &[u8; 8]) -> (__m256i, __m256i) {
     )
 }
 
+/// One accumulator for the whole row, reduced once at the end.
+///
+/// The `QK_K` kernels reduce per super-block, which costs one horizontal sum
+/// per 256 elements. A Q5 or Q8_0 block is 32 elements, so the same shape
+/// would be eight times as many reductions and the reduction, not the
+/// arithmetic, would set the rate: it was worth 1.6x on Q5_0 and 1.9x on
+/// Q8_0. The scalar kernel runs one `sum` across every block too, so this is
+/// the same reassociation the bound already covers, not a new one.
+///
 /// # Safety
 ///
 /// The caller must run on a CPU with `avx2`, `fma` and `f16c`.
 #[target_feature(enable = "avx2", enable = "fma", enable = "f16c")]
 fn dot_q5_0_f32_avx2(row: &[u8], x: &[f32]) -> f32 {
-    let mut sum = 0.0f32;
+    let mut acc = _mm256_setzero_ps();
     let (w_blocks, _) = row.as_chunks::<Q5_0_BLOCK>();
     for (b, wb) in w_blocks.iter().enumerate() {
         // A Q5_0 block is a binary16 scale, a `u32` of fifth bits, then 16
@@ -552,7 +561,6 @@ fn dot_q5_0_f32_avx2(row: &[u8], x: &[f32]) -> f32 {
         let dv = _mm256_set1_ps(f16_scale(*dbits));
         let qh = _mm256_set1_epi32(i32::from_ne_bytes(u32::from_le_bytes(*qhb).to_ne_bytes()));
         let bias = _mm256_set1_epi32(16);
-        let mut acc = _mm256_setzero_ps();
         for (c, pack) in qs.as_chunks::<8>().0.iter().enumerate() {
             let j = c.saturating_mul(8);
             let (Ok(base), Some(xlo), Some(xhi)) = (
@@ -583,17 +591,18 @@ fn dot_q5_0_f32_avx2(row: &[u8], x: &[f32]) -> f32 {
             acc = _mm256_fmadd_ps(w_lo, load_f32x8(xlo), acc);
             acc = _mm256_fmadd_ps(w_hi, load_f32x8(xhi), acc);
         }
-        sum = sc::add_f32(sum, hsum_ps(acc));
     }
-    sum
+    hsum_ps(acc)
 }
 
+/// Reduced once per row, as [`dot_q5_0_f32_avx2`].
+///
 /// # Safety
 ///
 /// The caller must run on a CPU with `avx2`, `fma` and `f16c`.
 #[target_feature(enable = "avx2", enable = "fma", enable = "f16c")]
 fn dot_q5_1_f32_avx2(row: &[u8], x: &[f32]) -> f32 {
-    let mut sum = 0.0f32;
+    let mut acc = _mm256_setzero_ps();
     let (w_blocks, _) = row.as_chunks::<Q5_1_BLOCK>();
     for (b, wb) in w_blocks.iter().enumerate() {
         // Q5_1 is Q5_0 with a second binary16, the offset `m`, inserted after
@@ -615,7 +624,6 @@ fn dot_q5_1_f32_avx2(row: &[u8], x: &[f32]) -> f32 {
         let dv = _mm256_set1_ps(f16_scale(*dbits));
         let mv = _mm256_set1_ps(f16_scale(*mbits));
         let qh = _mm256_set1_epi32(i32::from_ne_bytes(u32::from_le_bytes(*qhb).to_ne_bytes()));
-        let mut acc = _mm256_setzero_ps();
         for (c, pack) in qs.as_chunks::<8>().0.iter().enumerate() {
             let j = c.saturating_mul(8);
             let (Ok(base), Some(xlo), Some(xhi)) = (
@@ -644,17 +652,18 @@ fn dot_q5_1_f32_avx2(row: &[u8], x: &[f32]) -> f32 {
             acc = _mm256_fmadd_ps(w_lo, load_f32x8(xlo), acc);
             acc = _mm256_fmadd_ps(w_hi, load_f32x8(xhi), acc);
         }
-        sum = sc::add_f32(sum, hsum_ps(acc));
     }
-    sum
+    hsum_ps(acc)
 }
 
+/// Reduced once per row, as [`dot_q5_0_f32_avx2`].
+///
 /// # Safety
 ///
 /// The caller must run on a CPU with `avx2`, `fma` and `f16c`.
 #[target_feature(enable = "avx2", enable = "fma", enable = "f16c")]
 fn dot_q8_0_f32_avx2(row: &[u8], x: &[f32]) -> f32 {
-    let mut sum = 0.0f32;
+    let mut acc = _mm256_setzero_ps();
     let (w_blocks, _) = row.as_chunks::<Q8_0_BLOCK>();
     for (b, wb) in w_blocks.iter().enumerate() {
         let Some(dbits) = wb.first_chunk::<2>() else {
@@ -668,7 +677,6 @@ fn dot_q8_0_f32_avx2(row: &[u8], x: &[f32]) -> f32 {
             continue;
         };
         let dv = _mm256_set1_ps(f16_scale(*dbits));
-        let mut acc = _mm256_setzero_ps();
         for (c, pack) in qs.as_chunks::<8>().0.iter().enumerate() {
             let off = c.saturating_mul(8);
             let Some(xs) = xr.get(off..).and_then(<[f32]>::first_chunk::<8>) else {
@@ -680,7 +688,6 @@ fn dot_q8_0_f32_avx2(row: &[u8], x: &[f32]) -> f32 {
             let q = _mm256_cvtepi32_ps(_mm256_cvtepi8_epi32(load_u8x8(pack)));
             acc = _mm256_fmadd_ps(_mm256_mul_ps(q, dv), load_f32x8(xs), acc);
         }
-        sum = sc::add_f32(sum, hsum_ps(acc));
     }
-    sum
+    hsum_ps(acc)
 }

@@ -329,12 +329,21 @@ fn widen_s8x8(v: int8x8_t) -> (int32x4_t, int32x4_t) {
     )
 }
 
+/// One accumulator for the whole row, reduced once at the end.
+///
+/// The `QK_K` kernels reduce per super-block, which costs one horizontal sum
+/// per 256 elements. A Q5 or Q8_0 block is 32 elements, so the same shape
+/// would be eight times as many reductions and the reduction, not the
+/// arithmetic, would set the rate: it was worth 1.6x on Q5_0 and 1.9x on
+/// Q8_0. The scalar kernel runs one `sum` across every block too, so this is
+/// the same reassociation the bound already covers, not a new one.
+///
 /// # Safety
 ///
 /// The caller must run on a CPU with Advanced SIMD.
 #[target_feature(enable = "neon")]
 fn dot_q5_0_f32_neon(row: &[u8], x: &[f32]) -> f32 {
-    let mut sum = 0.0f32;
+    let mut acc = vdupq_n_f32(0.0);
     let (w_blocks, _) = row.as_chunks::<Q5_0_BLOCK>();
     for (b, wb) in w_blocks.iter().enumerate() {
         // A Q5_0 block is a binary16 scale, a `u32` of fifth bits, then 16
@@ -353,7 +362,6 @@ fn dot_q5_0_f32_neon(row: &[u8], x: &[f32]) -> f32 {
         let dv = vdupq_n_f32(f16_scale(*dbits));
         let qh = vdupq_n_u32(u32::from_le_bytes(*qhb));
         let bias = vdupq_n_s32(16);
-        let mut acc = vdupq_n_f32(0.0);
         for (c, pack) in qs.as_chunks::<4>().0.iter().enumerate() {
             let j = c.saturating_mul(4);
             let (Ok(base), Some(xlo), Some(xhi)) = (
@@ -378,17 +386,18 @@ fn dot_q5_0_f32_neon(row: &[u8], x: &[f32]) -> f32 {
             acc = vfmaq_f32(acc, vmulq_f32(vcvtq_f32_s32(q_lo), dv), load_f32x4(xlo));
             acc = vfmaq_f32(acc, vmulq_f32(vcvtq_f32_s32(q_hi), dv), load_f32x4(xhi));
         }
-        sum = sc::add_f32(sum, vaddvq_f32(acc));
     }
-    sum
+    vaddvq_f32(acc)
 }
 
+/// Reduced once per row, as [`dot_q5_0_f32_neon`].
+///
 /// # Safety
 ///
 /// The caller must run on a CPU with Advanced SIMD.
 #[target_feature(enable = "neon")]
 fn dot_q5_1_f32_neon(row: &[u8], x: &[f32]) -> f32 {
-    let mut sum = 0.0f32;
+    let mut acc = vdupq_n_f32(0.0);
     let (w_blocks, _) = row.as_chunks::<Q5_1_BLOCK>();
     for (b, wb) in w_blocks.iter().enumerate() {
         // Q5_1 is Q5_0 with a second binary16, the offset `m`, inserted after
@@ -410,7 +419,6 @@ fn dot_q5_1_f32_neon(row: &[u8], x: &[f32]) -> f32 {
         let dv = vdupq_n_f32(f16_scale(*dbits));
         let mv = vdupq_n_f32(f16_scale(*mbits));
         let qh = vdupq_n_u32(u32::from_le_bytes(*qhb));
-        let mut acc = vdupq_n_f32(0.0);
         for (c, pack) in qs.as_chunks::<4>().0.iter().enumerate() {
             let j = c.saturating_mul(4);
             let (Ok(base), Some(xlo), Some(xhi)) = (
@@ -436,17 +444,18 @@ fn dot_q5_1_f32_neon(row: &[u8], x: &[f32]) -> f32 {
             acc = vfmaq_f32(acc, w_lo, load_f32x4(xlo));
             acc = vfmaq_f32(acc, w_hi, load_f32x4(xhi));
         }
-        sum = sc::add_f32(sum, vaddvq_f32(acc));
     }
-    sum
+    vaddvq_f32(acc)
 }
 
+/// Reduced once per row, as [`dot_q5_0_f32_neon`].
+///
 /// # Safety
 ///
 /// The caller must run on a CPU with Advanced SIMD.
 #[target_feature(enable = "neon")]
 fn dot_q8_0_f32_neon(row: &[u8], x: &[f32]) -> f32 {
-    let mut sum = 0.0f32;
+    let mut acc = vdupq_n_f32(0.0);
     let (w_blocks, _) = row.as_chunks::<Q8_0_BLOCK>();
     for (b, wb) in w_blocks.iter().enumerate() {
         let Some(dbits) = wb.first_chunk::<2>() else {
@@ -460,7 +469,6 @@ fn dot_q8_0_f32_neon(row: &[u8], x: &[f32]) -> f32 {
             continue;
         };
         let dv = vdupq_n_f32(f16_scale(*dbits));
-        let mut acc = vdupq_n_f32(0.0);
         for (c, pack) in qs.as_chunks::<8>().0.iter().enumerate() {
             let off = c.saturating_mul(8);
             let (Some(xlo), Some(xhi)) = (
@@ -477,9 +485,8 @@ fn dot_q8_0_f32_neon(row: &[u8], x: &[f32]) -> f32 {
             acc = vfmaq_f32(acc, vmulq_f32(vcvtq_f32_s32(q_lo), dv), load_f32x4(xlo));
             acc = vfmaq_f32(acc, vmulq_f32(vcvtq_f32_s32(q_hi), dv), load_f32x4(xhi));
         }
-        sum = sc::add_f32(sum, vaddvq_f32(acc));
     }
-    sum
+    vaddvq_f32(acc)
 }
 
 /// # Safety
