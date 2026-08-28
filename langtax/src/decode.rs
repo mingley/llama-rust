@@ -445,6 +445,15 @@ impl Llama {
         } else {
             None
         };
+        // Official phi2.cpp `load_arch_hparams` reads
+        // `LLM_KV_ATTENTION_LAYERNORM_EPS` (`{arch}.attention.layer_norm_epsilon`)
+        // with the other hparams, before tensor materialization.
+        let phi2 = arch == "phi2";
+        let rms_eps = if phi2 {
+            require_f32(&g, arch, "attention.layer_norm_epsilon")?
+        } else {
+            arch_f32(&g, arch, "attention.layer_norm_rms_epsilon").unwrap_or(1e-5)
+        };
         let n_rot = rope_dimension(&g, arch, n_embd, n_head)?;
         let rope_sections = if arch == "qwen2vl" || arch == "qwen3vl" || arch == "qwen35" {
             Some(load_rope_dimension_sections(&g, arch)?)
@@ -456,12 +465,6 @@ impl Llama {
             .tensor("token_embd.weight")
             .map(|t| t.n_rows())
             .ok_or_else(|| LlamaError::Tensor("token_embd.weight".into()))?;
-        let phi2 = arch == "phi2";
-        let rms_eps = if phi2 {
-            require_f32(&g, arch, "attention.layer_norm_epsilon")?
-        } else {
-            arch_f32(&g, arch, "attention.layer_norm_rms_epsilon").unwrap_or(1e-5)
-        };
         let rope_base = arch_f32(&g, arch, "rope.freq_base").unwrap_or(10_000.0);
         let gemma = arch == "gemma";
         let n_embd_f = f32::from(u16::try_from(n_embd).unwrap_or(1));
@@ -3243,19 +3246,21 @@ fn pack_q5k_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
 fn pack_q4k_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
     let mut out = Vec::new();
     let mut s = seed;
+    let nblocks = n_cols / QK_K;
     for _ in 0..n_rows {
-        let mut qs = [0u8; QK_K];
-        for q in &mut qs {
-            s = s.wrapping_mul(1_664_525).wrapping_add(1);
-            *q = u8::try_from(s % 8).unwrap_or(0);
+        for _ in 0..nblocks {
+            let mut qs = [0u8; QK_K];
+            for q in &mut qs {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1);
+                *q = u8::try_from(s % 8).unwrap_or(0);
+            }
+            let mut sc = [1u8; 8];
+            for c in &mut sc {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1);
+                *c = u8::try_from(1 + s % 4).unwrap_or(1);
+            }
+            out.extend_from_slice(&pack_q4_k_block(25.0 / 100.0, 0.0, &sc, &[0u8; 8], &qs));
         }
-        let mut sc = [1u8; 8];
-        for c in &mut sc {
-            s = s.wrapping_mul(1_664_525).wrapping_add(1);
-            *c = u8::try_from(1 + s % 4).unwrap_or(1);
-        }
-        out.extend_from_slice(&pack_q4_k_block(25.0 / 100.0, 0.0, &sc, &[0u8; 8], &qs));
-        let _ = n_cols;
     }
     out
 }
@@ -3888,7 +3893,6 @@ fn optional_f32(g: &Gguf, name: &str) -> Result<Option<Vec<f32>>, LlamaError> {
 fn is_applied_norm_or_bias(name: &str) -> bool {
     name == "output_norm.weight"
         || name == "output_norm.bias"
-        || name == "output.bias"
         || name.ends_with(".attn_norm.weight")
         || name.ends_with(".attn_norm.bias")
         || name.ends_with(".ffn_norm.weight")
@@ -4794,12 +4798,7 @@ fn rmsnorm(x: &[f32], w: &[f32], eps: f32) -> Result<Vec<f32>, LlamaError> {
 }
 
 /// Official `ggml_compute_forward_norm_f32` + `build_norm` `LLM_NORM` (weight, optional bias).
-fn layernorm(
-    x: &[f32],
-    w: &[f32],
-    b: Option<&[f32]>,
-    eps: f32,
-) -> Result<Vec<f32>, LlamaError> {
+fn layernorm(x: &[f32], w: &[f32], b: Option<&[f32]>, eps: f32) -> Result<Vec<f32>, LlamaError> {
     if x.len() != w.len() {
         return Err(LlamaError::Shape("layernorm".into()));
     }
@@ -6957,7 +6956,8 @@ mod tests {
                     f32s(g.tensor("blk.0.ffn_norm.weight").unwrap()).unwrap()
                 };
                 let xn = oracle_rmsnorm(&x, &fnorm, eps);
-                let llama_moe = arch == "llama" && arch_u32(g, arch, "expert_count").unwrap_or(0) > 0;
+                let llama_moe =
+                    arch == "llama" && arch_u32(g, arch, "expert_count").unwrap_or(0) > 0;
                 let qwen2moe = arch == "qwen2moe";
                 let qwen3moe = arch == "qwen3moe";
                 let down = if llama4 {
