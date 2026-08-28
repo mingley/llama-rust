@@ -123,6 +123,19 @@ struct QuantMat {
     end: usize,
 }
 
+/// Reuse `token_embd.weight` as the lm_head when `output.weight` is absent.
+/// Copies only the range metadata (same on-disk bytes). Does not clone the matrix.
+fn reuse_token_embd_as_output(token_embd: &QuantMat) -> QuantMat {
+    QuantMat {
+        name: token_embd.name.clone(),
+        ty: token_embd.ty,
+        n_cols: token_embd.n_cols,
+        n_rows: token_embd.n_rows,
+        start: token_embd.start,
+        end: token_embd.end,
+    }
+}
+
 /// Per-layer weights.
 struct Layer {
     attn_norm: Vec<f32>,
@@ -171,7 +184,8 @@ impl Llama {
     /// or `phi3`) and `blk.{i}.*` tensor names.
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
-    /// blob; they do not clone tensor bytes.
+    /// blob; they do not clone tensor bytes. When `output.weight` is absent,
+    /// the lm_head reuses the `token_embd.weight` range (same on-disk bytes).
     pub fn from_gguf(g: Gguf) -> Result<Self, LlamaError> {
         let arch = architecture(&g)?;
         let n_layer = require_usize(&g, arch, "block_count")?;
@@ -202,7 +216,10 @@ impl Llama {
         let rope_base = arch_f32(&g, arch, "rope.freq_base").unwrap_or(10_000.0);
         let token_embd = quant_mat(need(&g, "token_embd.weight")?)?;
         let output_norm = f32s(need(&g, "output_norm.weight")?)?;
-        let output = quant_mat(need(&g, "output.weight")?)?;
+        let output = match g.tensor("output.weight") {
+            Some(t) => quant_mat(t)?,
+            None => reuse_token_embd_as_output(&token_embd),
+        };
         let mut layers = Vec::new();
         for i in 0..n_layer {
             layers.push(load_layer(&g, i)?);
@@ -466,9 +483,8 @@ fn prompt_ids(tok: &Tokenizer, prompt: &str) -> Result<Vec<u32>, LlamaError> {
     Ok(ids)
 }
 
-/// Writer-built Llama-shaped GGUF: mixed F32/Q4_K/Q6_K weights + tokenizer KV.
-pub fn tiny_llama_gguf() -> Vec<u8> {
-    tiny_arch_gguf(TinySpec {
+fn tiny_llama_spec() -> TinySpec {
+    TinySpec {
         arch: "llama",
         token_embd: GgmlType::F32,
         output: GgmlType::F32,
@@ -476,7 +492,27 @@ pub fn tiny_llama_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
-    })
+    }
+}
+
+/// Writer-built Llama-shaped GGUF: mixed F32/Q4_K/Q6_K weights + tokenizer KV.
+pub fn tiny_llama_gguf() -> Vec<u8> {
+    tiny_arch_gguf(tiny_llama_spec())
+}
+
+/// Writer-built Llama GGUF that omits `output.weight` (tied embeddings).
+///
+/// Load reuses the already-loaded `token_embd.weight` range. Same on-disk
+/// bytes; no matrix clone.
+pub fn tiny_tied_gguf() -> Vec<u8> {
+    tiny_arch_gguf_lm_head(tiny_llama_spec(), TinyLmHead::Tied)
+}
+
+/// Writer-built Llama GGUF whose `output.weight` is an identical copy of
+/// `token_embd.weight` (same type, same pack seed). Untied control for the
+/// tied-reuse oracle.
+pub fn tiny_tied_copy_gguf() -> Vec<u8> {
+    tiny_arch_gguf_lm_head(tiny_llama_spec(), TinyLmHead::CopyTokenEmbd)
 }
 
 /// Writer-built Qwen2-shaped GGUF: `qwen2.*` KV, no `rope.dimension_count`, QKV bias,
@@ -935,7 +971,21 @@ struct TinySpec {
     add_bos_token: Option<bool>,
 }
 
+/// How the writer emits `output.weight` relative to `token_embd.weight`.
+enum TinyLmHead {
+    /// Distinct `output.weight` packed with seed 2 (existing tiny files).
+    Distinct,
+    /// Omit `output.weight` so load reuses `token_embd.weight`.
+    Tied,
+    /// Write `output.weight` as an identical copy of `token_embd.weight` (seed 1).
+    CopyTokenEmbd,
+}
+
 fn tiny_arch_gguf(spec: TinySpec) -> Vec<u8> {
+    tiny_arch_gguf_lm_head(spec, TinyLmHead::Distinct)
+}
+
+fn tiny_arch_gguf_lm_head(spec: TinySpec, lm_head: TinyLmHead) -> Vec<u8> {
     let n_embd = TINY_N_EMBD;
     let n_ff = TINY_N_FF;
     let n_vocab = TINY_N_VOCAB;
@@ -954,27 +1004,50 @@ fn tiny_arch_gguf(spec: TinySpec) -> Vec<u8> {
             vec![n_embd],
             pack_f32(&ones),
         ),
-        tw(
+    ];
+    match lm_head {
+        TinyLmHead::Tied => {}
+        TinyLmHead::Distinct => tensors.push(tw(
             "output.weight",
             spec.output,
             vec![n_embd, n_vocab],
             pack_mat(spec.output, n_embd, n_vocab, 2),
-        ),
-        tw(
-            "blk.0.attn_norm.weight",
-            GgmlType::F32,
-            vec![n_embd],
-            pack_f32(&ones),
-        ),
-        tw(
-            "blk.0.ffn_norm.weight",
-            GgmlType::F32,
-            vec![n_embd],
-            pack_f32(&ones),
-        ),
-        layer_tw(&spec, "blk.0.attn_k.weight", n_embd, n_kv, 3, GgmlType::F32),
-        layer_tw(&spec, "blk.0.attn_v.weight", n_embd, n_kv, 4, GgmlType::F32),
-    ];
+        )),
+        TinyLmHead::CopyTokenEmbd => tensors.push(tw(
+            "output.weight",
+            spec.token_embd,
+            vec![n_embd, n_vocab],
+            pack_mat(spec.token_embd, n_embd, n_vocab, 1),
+        )),
+    }
+    tensors.push(tw(
+        "blk.0.attn_norm.weight",
+        GgmlType::F32,
+        vec![n_embd],
+        pack_f32(&ones),
+    ));
+    tensors.push(tw(
+        "blk.0.ffn_norm.weight",
+        GgmlType::F32,
+        vec![n_embd],
+        pack_f32(&ones),
+    ));
+    tensors.push(layer_tw(
+        &spec,
+        "blk.0.attn_k.weight",
+        n_embd,
+        n_kv,
+        3,
+        GgmlType::F32,
+    ));
+    tensors.push(layer_tw(
+        &spec,
+        "blk.0.attn_v.weight",
+        n_embd,
+        n_kv,
+        4,
+        GgmlType::F32,
+    ));
     tensors.push(layer_tw(
         &spec,
         "blk.0.attn_q.weight",
@@ -1996,6 +2069,36 @@ impl Llama {
             }
         }
         Ok(y)
+    }
+
+    #[cfg(test)]
+    fn output_blob_range(&self) -> (usize, usize) {
+        (self.output.start, self.output.end)
+    }
+
+    #[cfg(test)]
+    fn token_embd_blob_range(&self) -> (usize, usize) {
+        (self.token_embd.start, self.token_embd.end)
+    }
+
+    #[cfg(test)]
+    fn gemv_output(&self, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
+        self.gemv_mat(&self.output, x)
+    }
+
+    #[cfg(test)]
+    fn gemv_token_embd(&self, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
+        self.gemv_mat(&self.token_embd, x)
+    }
+
+    #[cfg(test)]
+    fn gemm_output(&self, n_tokens: usize, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
+        self.gemm_mat(&self.output, n_tokens, x)
+    }
+
+    #[cfg(test)]
+    fn embed_token(&self, token: u32) -> Result<Vec<f32>, LlamaError> {
+        self.embed(token)
     }
 }
 
@@ -3547,7 +3650,11 @@ mod tests {
             x = down.iter().zip(x.iter()).map(|(a, b)| a + b).collect();
             let on = f32s(g.tensor("output_norm.weight").unwrap()).unwrap();
             x = oracle_rmsnorm(&x, &on, eps);
-            last = oracle_gemv(g.tensor("output.weight").unwrap(), &x);
+            let lm_head = g
+                .tensor("output.weight")
+                .or_else(|| g.tensor("token_embd.weight"))
+                .expect("lm_head");
+            last = oracle_gemv(lm_head, &x);
         }
         last
     }
@@ -4145,6 +4252,8 @@ mod tests {
             tiny_iq3xxs_gguf(),
             tiny_iq3s_gguf(),
             tiny_iq4xs_gguf(),
+            tiny_tied_gguf(),
+            tiny_tied_copy_gguf(),
         ] {
             load_prefill_match(&bytes, &tokens);
             load_prefill_match(&bytes, &[3]);
@@ -4187,6 +4296,83 @@ mod tests {
         assert_eq!(m.kv_u32("mistral.block_count"), Some(1));
         let p = load_gguf(&tiny_phi3_gguf()).unwrap();
         assert_eq!(p.kv_u32("phi3.block_count"), Some(1));
+    }
+
+    #[test]
+    fn tiny_tied_omits_output_weight_and_reuses_token_embd_range() {
+        let tied = tiny_tied_gguf();
+        let g = load_gguf(&tied).expect("load tied");
+        assert!(g.tensor("output.weight").is_none());
+        assert!(g.tensor("token_embd.weight").is_some());
+        let model = Llama::from_gguf(g).expect("tied model");
+        assert_eq!(model.output_blob_range(), model.token_embd_blob_range());
+        let x = vec![0.25f32; TINY_N_EMBD];
+        let y_out = model.gemv_output(&x).expect("gemv output");
+        let y_emb = model.gemv_token_embd(&x).expect("gemv embd");
+        assert_eq!(y_out, y_emb);
+    }
+
+    #[test]
+    fn tiny_tied_load_gemv_gemm_embed_match_untied_copy_oracle() {
+        let tied = tiny_tied_gguf();
+        let copy = tiny_tied_copy_gguf();
+        let gt = load_gguf(&tied).expect("tied");
+        let gc = load_gguf(&copy).expect("copy");
+        assert!(gt.tensor("output.weight").is_none());
+        let out = gc.tensor("output.weight").expect("copy output");
+        let emb = gc.tensor("token_embd.weight").expect("copy embd");
+        assert_eq!(out.ty, emb.ty);
+        assert_eq!(out.data, emb.data);
+        let tied_m = Llama::from_gguf(gt.clone()).expect("tied m");
+        let copy_m = Llama::from_gguf(gc.clone()).expect("copy m");
+        assert_eq!(tied_m.output_blob_range(), tied_m.token_embd_blob_range());
+        assert_ne!(copy_m.output_blob_range(), copy_m.token_embd_blob_range());
+
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let tied_gemv = tied_m.gemv_output(&x).expect("tied gemv");
+        let copy_gemv = copy_m.gemv_output(&x).expect("copy gemv");
+        assert_logits_match(&tied_gemv, &copy_gemv);
+        let exp_gemv = oracle_gemv(out, &x);
+        assert_logits_match(&tied_gemv, &exp_gemv);
+
+        let mut x2 = pat_f32(TINY_N_EMBD, 22);
+        x2.extend(pat_f32(TINY_N_EMBD, 23));
+        let tied_gemm = tied_m.gemm_output(2, &x2).expect("tied gemm");
+        let copy_gemm = copy_m.gemm_output(2, &x2).expect("copy gemm");
+        assert_logits_match(&tied_gemm, &copy_gemm);
+
+        let emb_t = tied_m.embed_token(3).expect("tied embed");
+        let emb_c = copy_m.embed_token(3).expect("copy embed");
+        assert_logits_match(&emb_t, &emb_c);
+        let exp_emb = oracle_embed(gt.tensor("token_embd.weight").unwrap(), 3);
+        assert_logits_match(&emb_t, &exp_emb);
+
+        load_fwd_match(&tied, 3);
+        load_prefill_match(&tied, &[1, 2, 3]);
+        load_fwd_match(&copy, 3);
+        load_prefill_match(&copy, &[1, 2, 3]);
+
+        let mut c1 = tied_m.new_cache(4).expect("c1");
+        let mut c2 = copy_m.new_cache(4).expect("c2");
+        let got = tied_m.forward(&mut c1, 3).expect("tied fwd");
+        let exp = oracle_forward(&gc, 3);
+        assert_logits_match(&got, &exp);
+        let copy_fwd = copy_m.forward(&mut c2, 3).expect("copy fwd");
+        assert_logits_match(&got, &copy_fwd);
+    }
+
+    #[test]
+    fn missing_token_embd_and_output_fails_named() {
+        let bytes = write_gguf_with_kv(&tiny_kv(&tiny_llama_spec()), &[]);
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected missing tensor"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("token_embd.weight"),
+            "error should name tensor: {err}"
+        );
     }
 
     #[test]
