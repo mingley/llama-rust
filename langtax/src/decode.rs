@@ -1,4 +1,5 @@
 //! Llama-family decode on GGUF bytes: RMSNorm, RoPE, GQA+KV, SwiGLU or Gemma GeGLU, lm_head.
+//! Official Qwen3 adds per-head QK-Norm (`attn_q_norm` / `attn_k_norm`) before RoPE.
 
 use crate::gguf::{GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 use crate::quant::{
@@ -146,6 +147,10 @@ struct Layer {
     wv: QuantMat,
     bv: Option<Vec<f32>>,
     wo: QuantMat,
+    /// Official Qwen3 `blk.{i}.attn_q_norm` (RMSNorm on Q after projection, before RoPE).
+    attn_q_norm: Option<Vec<f32>>,
+    /// Official Qwen3 `blk.{i}.attn_k_norm` (RMSNorm on K after projection, before RoPE).
+    attn_k_norm: Option<Vec<f32>>,
     ffn_norm: Vec<f32>,
     gate: QuantMat,
     up: QuantMat,
@@ -165,7 +170,8 @@ pub struct Llama {
     rope_base: f32,
     /// `1` for llama/qwen2/mistral/phi3. Gemma official walk scales embeds by `sqrt(n_embd)`.
     embed_scale: f32,
-    /// Official Gemma FFN is `LLM_FFN_GELU` (GeGLU). Other loaded arches stay SwiGLU.
+    /// Official Gemma FFN is `LLM_FFN_GELU` (GeGLU). Other loaded arches stay SwiGLU
+    /// (`LLM_FFN_SILU`), including official Qwen3.
     ffn_gelu: bool,
     blob: Vec<u8>,
     token_embd: QuantMat,
@@ -185,7 +191,7 @@ pub struct KvCache {
 
 impl Llama {
     /// Build from a loaded GGUF using `{arch}.*` KV (`llama`, `qwen2`, `mistral`,
-    /// `phi3`, or `gemma`) and `blk.{i}.*` tensor names.
+    /// `phi3`, `gemma`, or `qwen3`) and `blk.{i}.*` tensor names.
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
     /// blob; they do not clone tensor bytes. When `output.weight` is absent,
@@ -227,9 +233,10 @@ impl Llama {
             Some(t) => quant_mat(t)?,
             None => reuse_token_embd_as_output(&token_embd),
         };
+        let qk_norm = arch == "qwen3";
         let mut layers = Vec::new();
         for i in 0..n_layer {
-            layers.push(load_layer(&g, i)?);
+            layers.push(load_layer(&g, i, qk_norm)?);
         }
         Ok(Self {
             n_vocab,
@@ -335,6 +342,10 @@ impl Llama {
                 layer.wv.n_rows,
                 layer.bv.as_deref(),
             )?;
+            // Official Qwen3: RMSNorm on Q and K after projection, before RoPE
+            // (`attn_q_norm` / `attn_k_norm`, per-head, `LLM_NORM_RMS`).
+            let q = qk_norm_rows(q, hd, layer.attn_q_norm.as_deref(), self.rms_eps)?;
+            let k = qk_norm_rows(k, hd, layer.attn_k_norm.as_deref(), self.rms_eps)?;
             for t in 0..n {
                 let pos = n0.saturating_add(t);
                 let k_t = token_row(&k, t, layer.wk.n_rows, "prefill k")?;
@@ -582,6 +593,25 @@ pub fn tiny_gemma_gguf() -> Vec<u8> {
         rope_dimension_count: true,
         qkv_bias: false,
         add_bos_token: None,
+    })
+}
+
+/// Writer-built Qwen3-shaped GGUF: `qwen3.*` KV plus official QK-Norm tensors.
+///
+/// Official `general.architecture=qwen3` (`MODEL_ARCH_NAMES[QWEN3] = "qwen3"`,
+/// not `qwen3moe`). Decode follows llama.cpp `src/models/qwen3.cpp`: RMSNorm
+/// on Q and K after projection / before RoPE (`blk.{i}.attn_q_norm` /
+/// `attn_k_norm`, per-head). FFN stays SwiGLU. No embed-scale, GeGLU, or
+/// softcap. RMSNorm on GGUF bytes as-is.
+pub fn tiny_qwen3_gguf() -> Vec<u8> {
+    tiny_arch_gguf(TinySpec {
+        arch: "qwen3",
+        token_embd: GgmlType::F32,
+        output: GgmlType::F32,
+        layer: None,
+        rope_dimension_count: true,
+        qkv_bias: false,
+        add_bos_token: Some(false),
     })
 }
 
@@ -1108,6 +1138,21 @@ fn tiny_arch_gguf_lm_head_vec1d(spec: TinySpec, lm_head: TinyLmHead, vec1d: Ggml
         vec![n_embd],
         pack_vec1d(vec1d, &ones),
     ));
+    if spec.arch == "qwen3" {
+        let qk_ones = vec![1.0f32; TINY_N_ROT];
+        tensors.push(tw(
+            "blk.0.attn_q_norm.weight",
+            vec1d,
+            vec![TINY_N_ROT],
+            pack_vec1d(vec1d, &qk_ones),
+        ));
+        tensors.push(tw(
+            "blk.0.attn_k_norm.weight",
+            vec1d,
+            vec![TINY_N_ROT],
+            pack_vec1d(vec1d, &qk_ones),
+        ));
+    }
     tensors.push(layer_tw(
         &spec,
         "blk.0.attn_k.weight",
@@ -1196,7 +1241,7 @@ fn architecture(g: &Gguf) -> Result<&str, LlamaError> {
 }
 
 fn supported_arch(s: &str) -> bool {
-    s == "llama" || s == "qwen2" || s == "mistral" || s == "phi3" || s == "gemma"
+    s == "llama" || s == "qwen2" || s == "mistral" || s == "phi3" || s == "gemma" || s == "qwen3"
 }
 
 fn arch_key(arch: &str, field: &str) -> String {
@@ -1890,7 +1935,7 @@ fn need<'a>(g: &'a Gguf, name: &str) -> Result<Tensor<'a>, LlamaError> {
         .ok_or_else(|| LlamaError::Tensor(name.to_string()))
 }
 
-fn load_layer(g: &Gguf, i: usize) -> Result<Layer, LlamaError> {
+fn load_layer(g: &Gguf, i: usize, qk_norm: bool) -> Result<Layer, LlamaError> {
     Ok(Layer {
         attn_norm: f32s(need(g, &format!("blk.{i}.attn_norm.weight"))?)?,
         wq: quant_mat(need(g, &format!("blk.{i}.attn_q.weight"))?)?,
@@ -1900,6 +1945,16 @@ fn load_layer(g: &Gguf, i: usize) -> Result<Layer, LlamaError> {
         wv: quant_mat(need(g, &format!("blk.{i}.attn_v.weight"))?)?,
         bv: optional_f32(g, &format!("blk.{i}.attn_v.bias"))?,
         wo: quant_mat(need(g, &format!("blk.{i}.attn_output.weight"))?)?,
+        attn_q_norm: if qk_norm {
+            Some(f32s(need(g, &format!("blk.{i}.attn_q_norm.weight"))?)?)
+        } else {
+            None
+        },
+        attn_k_norm: if qk_norm {
+            Some(f32s(need(g, &format!("blk.{i}.attn_k_norm.weight"))?)?)
+        } else {
+            None
+        },
         ffn_norm: f32s(need(g, &format!("blk.{i}.ffn_norm.weight"))?)?,
         gate: quant_mat(need(g, &format!("blk.{i}.ffn_gate.weight"))?)?,
         up: quant_mat(need(g, &format!("blk.{i}.ffn_up.weight"))?)?,
@@ -1918,6 +1973,8 @@ fn is_applied_norm_or_bias(name: &str) -> bool {
     name == "output_norm.weight"
         || name.ends_with(".attn_norm.weight")
         || name.ends_with(".ffn_norm.weight")
+        || name.ends_with(".attn_q_norm.weight")
+        || name.ends_with(".attn_k_norm.weight")
         || name.ends_with(".attn_q.bias")
         || name.ends_with(".attn_k.bias")
         || name.ends_with(".attn_v.bias")
@@ -2233,6 +2290,19 @@ fn rmsnorm_rows(x: &[f32], width: usize, w: &[f32], eps: f32) -> Result<Vec<f32>
         out.extend(rmsnorm(row, w, eps)?);
     }
     Ok(out)
+}
+
+/// Official Qwen3 QK-Norm: per-head `LLM_NORM_RMS` on Q or K. Absent for other arches.
+fn qk_norm_rows(
+    x: Vec<f32>,
+    head_dim: usize,
+    w: Option<&[f32]>,
+    eps: f32,
+) -> Result<Vec<f32>, LlamaError> {
+    match w {
+        Some(w) => rmsnorm_rows(&x, head_dim, w, eps),
+        None => Ok(x),
+    }
 }
 
 fn add_bias_rows(
@@ -3738,6 +3808,19 @@ mod tests {
             let mut qh: Vec<Vec<f32>> = q.chunks(hd).map(<[f32]>::to_vec).collect();
             let mut kh: Vec<Vec<f32>> = k.chunks(hd).map(<[f32]>::to_vec).collect();
             let vh: Vec<Vec<f32>> = v.chunks(hd).map(<[f32]>::to_vec).collect();
+            // Official Qwen3 QK-Norm (`LLM_NORM_RMS` on each head) before RoPE.
+            if let Some(qn) = g.tensor("blk.0.attn_q_norm.weight") {
+                let w = f32s(qn).unwrap();
+                for h in &mut qh {
+                    *h = oracle_rmsnorm(h, &w, eps);
+                }
+            }
+            if let Some(kn) = g.tensor("blk.0.attn_k_norm.weight") {
+                let w = f32s(kn).unwrap();
+                for h in &mut kh {
+                    *h = oracle_rmsnorm(h, &w, eps);
+                }
+            }
             for h in &mut qh {
                 *h = oracle_rope(h.clone(), pos, n_rot, base);
             }
@@ -4564,6 +4647,7 @@ mod tests {
             tiny_tied_gguf(),
             tiny_tied_copy_gguf(),
             tiny_gemma_gguf(),
+            tiny_qwen3_gguf(),
         ] {
             load_prefill_match(&bytes, &tokens);
             load_prefill_match(&bytes, &[3]);
@@ -4640,6 +4724,98 @@ mod tests {
         assert_ne!(
             gemma_fwd, llama_fwd,
             "gemma embed-scale+GeGLU must change logits vs llama SwiGLU on the same tiny weights"
+        );
+    }
+
+    #[test]
+    fn tiny_qwen3_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_qwen3_gguf();
+        let g = load_gguf(&bytes).expect("load qwen3");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("qwen3".into()))
+        );
+        assert_eq!(g.kv_u32("qwen3.block_count"), Some(1));
+        assert_eq!(g.kv_u32("qwen3.embedding_length"), Some(256));
+        assert_eq!(g.kv_u32("qwen3.feed_forward_length"), Some(256));
+        assert_eq!(g.kv_u32("qwen3.attention.head_count"), Some(4));
+        assert_eq!(g.kv_u32("qwen3.attention.head_count_kv"), Some(2));
+        assert!(g.kv_u32("qwen2.block_count").is_none());
+        assert!(g.kv_u32("llama.block_count").is_none());
+        assert!(g.tensor("blk.0.attn_q_norm.weight").is_some());
+        assert!(g.tensor("blk.0.attn_k_norm.weight").is_some());
+        assert_eq!(
+            g.tensor("blk.0.attn_q_norm.weight").unwrap().n_cols(),
+            TINY_N_ROT
+        );
+        assert_eq!(
+            g.tensor("blk.0.attn_k_norm.weight").unwrap().n_cols(),
+            TINY_N_ROT
+        );
+        assert!(g.tensor("blk.0.attn_q.bias").is_none());
+        assert!(g.tensor("blk.0.attn_post_norm.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_post_norm.weight").is_none());
+        assert_eq!(g.kv_bool("tokenizer.ggml.add_bos_token"), Some(false));
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("output.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        let mut x2 = pat_f32(TINY_N_EMBD, 22);
+        x2.extend(pat_f32(TINY_N_EMBD, 23));
+        let got_gemm = model.gemm_output(2, &x2).expect("gemm");
+        let llama_bytes = tiny_llama_gguf();
+        let llama_g = load_gguf(&llama_bytes).expect("llama");
+        let llama_m = Llama::from_gguf(llama_g).expect("llama m");
+        let llama_gemm = llama_m.gemm_output(2, &x2).expect("llama gemm");
+        assert_logits_match(&got_gemm, &llama_gemm);
+        let emb = model.embed_token(3).expect("embed");
+        let exp_emb = oracle_embed(g.tensor("token_embd.weight").unwrap(), 3);
+        assert_logits_match(&emb, &exp_emb);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        assert!(!tok.add_bos);
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        // Seq-1 GEMV: softmax of one score is 1, V is un-normed, so QK-Norm
+        // cannot change that step. Prefill over several tokens does: per-key
+        // K RMS reweights scores (official Qwen3 walk vs llama/qwen2).
+        let tokens = [1u32, 2, 3];
+        let llama_pref = {
+            let lg = load_gguf(&llama_bytes).expect("llama reload");
+            let lm = Llama::from_gguf(lg).expect("lm");
+            let mut c = lm.new_cache(8).expect("c");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        let mut qc = model.new_cache(8).expect("qc");
+        let qwen3_pref = model.prefill(&mut qc, &tokens).expect("qwen3 pref");
+        assert_ne!(
+            qwen3_pref, llama_pref,
+            "qwen3 QK-Norm must change multi-token logits vs llama on the same tiny weights"
+        );
+    }
+
+    #[test]
+    fn qwen3moe_architecture_error_names_arch() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("qwen3moe".into())),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected unknown arch"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("qwen3moe"), "error should name arch: {err}");
+        assert!(
+            err.contains("unknown architecture"),
+            "error should name unknown architecture: {err}"
         );
     }
 
@@ -4847,6 +5023,10 @@ mod tests {
             Err(e) => e.to_string(),
         };
         assert!(err.contains("falcon"), "error should name arch: {err}");
+        assert!(
+            err.contains("unknown architecture"),
+            "error should name unknown architecture: {err}"
+        );
     }
 
     #[test]
