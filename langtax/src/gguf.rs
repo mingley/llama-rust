@@ -100,10 +100,17 @@ pub enum GgmlType {
     TQ2_0 = 35,
 }
 
+/// ggml-removed slots, including the IQ4_NL_4_4 family (36..=38).
+const fn is_ggml_removed_type_id(id: i32) -> bool {
+    matches!(id, 4 | 5 | 31 | 32 | 33 | 36 | 37 | 38)
+}
+
 /// ggml `GGML_TYPE_COUNT` (exclusive end of the live type table).
+#[cfg(test)]
 const GGML_TYPE_COUNT: i32 = 43;
 
 /// How this crate treats a GGUF `ggml_type` integer.
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GgmlTypeClass {
     /// Loadable on-disk type this crate already accepts.
@@ -117,16 +124,13 @@ pub(crate) enum GgmlTypeClass {
     Unsupported,
 }
 
-/// ggml-removed slots, including the IQ4_NL_4_4 family (36..=38).
-pub(crate) const fn is_ggml_removed_type_id(id: i32) -> bool {
-    matches!(id, 4 | 5 | 31 | 32 | 33 | 36 | 37 | 38)
-}
-
+#[cfg(test)]
 const fn is_ggml_storage_type_id(id: i32) -> bool {
     matches!(id, 24..=28)
 }
 
 /// Classify a GGUF `ggml_type` id the way ggml's table does.
+#[cfg(test)]
 pub(crate) fn classify_ggml_type_id(id: i32) -> GgmlTypeClass {
     if is_ggml_removed_type_id(id) {
         return GgmlTypeClass::Removed;
@@ -142,6 +146,7 @@ pub(crate) fn classify_ggml_type_id(id: i32) -> GgmlTypeClass {
 
 /// First live ggml weight-type id this crate still rejects, if any.
 /// Skips ggml-removed slots and I8/I16/I32/I64/F64 storage.
+#[cfg(test)]
 pub(crate) fn next_remaining_live_rejected_ggml_type_id() -> Option<i32> {
     (0..GGML_TYPE_COUNT).find(|&id| classify_ggml_type_id(id) == GgmlTypeClass::Unsupported)
 }
