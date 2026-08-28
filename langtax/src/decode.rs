@@ -36,6 +36,7 @@
 //! bias. Not Mixtral, not `qwen3vlmoe`, not linear-attn. Not a phi3 redo.
 
 use crate::gguf::{GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
+use crate::pool::{Pool, RowKernel};
 use crate::quant::{
     bf16_row_bytes, dequant_bf16_row, dequant_f16_row, dequant_f32_row, dequant_iq1_m_row,
     dequant_iq1_s_row, dequant_iq2_s_row, dequant_iq2_xs_row, dequant_iq2_xxs_row,
@@ -70,6 +71,7 @@ use crate::quant::{
 use crate::sample::{SampleError, SampleParams, Sampler};
 use crate::tok::{TokError, Tokenizer};
 use crate::{write_gguf_with_kv, GGUF_DEFAULT_ALIGNMENT};
+use std::sync::Arc;
 
 const TINY_N_EMBD: usize = 256;
 const TINY_N_HEAD: usize = 4;
@@ -378,7 +380,9 @@ pub struct Llama {
     /// Official Gemma FFN is `LLM_FFN_GELU` (GeGLU). Other loaded arches stay SwiGLU
     /// (`LLM_FFN_SILU`), including official Qwen3, Llama4, and Qwen3MoE.
     ffn_gelu: bool,
-    blob: Vec<u8>,
+    /// The GGUF file blob. `Arc` because the GEMV pool's workers read weight
+    /// rows out of it and must not borrow from a decode frame.
+    blob: Arc<Vec<u8>>,
     token_embd: QuantMat,
     output_norm: Vec<f32>,
     /// Official phi2 `output_norm.bias` (`LLM_NORM`).
@@ -391,6 +395,109 @@ pub struct Llama {
     layers: Vec<Layer>,
 }
 
+/// One weight matrix as the GEMV pool sees it: plain numbers, no borrows.
+///
+/// `gemv_*` derives its row count from `y.len()` and requires exactly
+/// `row_bytes * y.len()` weight bytes, so rows `first .. last` of a matrix are
+/// just the byte range `[base + first * row_bytes, base + last * row_bytes)`
+/// against `y[first..last]`. No kernel signature has to change for this.
+#[derive(Clone, Copy)]
+struct GemvJob {
+    ty: GgmlType,
+    n_cols: usize,
+    /// Byte offset of row 0 in the model blob.
+    base: usize,
+    row_bytes: usize,
+}
+
+/// GEMV rows out of the model blob, run on the pool's worker threads.
+struct GemvRows {
+    blob: Arc<Vec<u8>>,
+}
+
+/// The pool slot threaded through the forward pass. `&mut` so a decode step can
+/// spawn the workers on first use and reuse them afterwards.
+type GemvPool = Option<Pool<GemvRows>>;
+
+impl RowKernel for GemvRows {
+    type Job = GemvJob;
+
+    fn rows(&self, job: GemvJob, first: usize, x: &[f32], y: &mut [f32]) -> bool {
+        let Some(start) = first
+            .checked_mul(job.row_bytes)
+            .and_then(|off| off.checked_add(job.base))
+        else {
+            return false;
+        };
+        let Some(end) = y
+            .len()
+            .checked_mul(job.row_bytes)
+            .and_then(|len| start.checked_add(len))
+        else {
+            return false;
+        };
+        let Some(w) = self.blob.get(start..end) else {
+            return false;
+        };
+        matches!(gemv_rows(job.ty, job.n_cols, w, x, y), Ok(true))
+    }
+}
+
+/// Work below which a pooled GEMV loses to a sequential one. Chosen from
+/// `bench_dispatch_overhead`: the pool costs a few microseconds per call, and
+/// the sequential kernels run on the order of a MAC per nanosecond per core.
+const PAR_MIN_WORK: usize = 1 << 16;
+
+#[cfg(test)]
+thread_local! {
+    /// Test hook overriding the size threshold: `Some(true)` sends every GEMV
+    /// to the pool (the tiny fixtures are all below it), `Some(false)` sends
+    /// none, which is the pre-pool behaviour and what the benchmark compares
+    /// against inside one process.
+    static POOL_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(test)]
+fn with_pool_override<R>(to: Option<bool>, f: impl FnOnce() -> R) -> R {
+    POOL_OVERRIDE.with(|flag| {
+        let prev = flag.replace(to);
+        let out = f();
+        flag.set(prev);
+        out
+    })
+}
+
+/// Run `f` with every GEMV routed through the pool regardless of size.
+#[cfg(test)]
+pub(crate) fn with_forced_pool<R>(f: impl FnOnce() -> R) -> R {
+    with_pool_override(Some(true), f)
+}
+
+/// Run `f` with the pool disabled, i.e. every GEMV in the calling thread.
+#[cfg(test)]
+pub(crate) fn without_pool<R>(f: impl FnOnce() -> R) -> R {
+    with_pool_override(Some(false), f)
+}
+
+#[cfg(test)]
+fn pool_override() -> Option<bool> {
+    POOL_OVERRIDE.with(std::cell::Cell::get)
+}
+
+#[cfg(not(test))]
+fn pool_override() -> Option<bool> {
+    None
+}
+
+/// Whether an `n_rows x n_cols` GEMV is big enough to hand to the pool.
+fn pooled_gemv(n_rows: usize, n_cols: usize) -> bool {
+    match pool_override() {
+        Some(forced) => forced && n_rows > 1,
+        None => n_rows > 1 && n_rows.saturating_mul(n_cols) >= PAR_MIN_WORK,
+    }
+}
+
 /// KV cache for GQA decode.
 pub struct KvCache {
     k: Vec<f32>,
@@ -398,6 +505,125 @@ pub struct KvCache {
     /// Tokens already in the cache.
     pub n_past: usize,
     max_seq: usize,
+    scratch: Scratch,
+    /// GEMV workers, spawned on the first decode step that can use them and
+    /// joined when the cache drops. `None` for models too small to benefit and
+    /// under `pool::with_sequential`.
+    pool: Option<Pool<GemvRows>>,
+}
+
+/// Working buffers for one forward pass, reused across decode steps.
+///
+/// Every buffer starts empty and is grown by [`fit`] on first use, so the first
+/// `prefill` / `forward` on a fresh cache allocates and every later step of the
+/// same or smaller token count allocates nothing. Buffers do not shrink: a
+/// 512-token prefill leaves 512-token capacity behind, which is what the
+/// following single-token steps then reuse.
+///
+/// The dense and official-Llama4-expert FFNs run entirely out of these buffers.
+/// The `llama` / `qwen2moe` / `qwen3moe` / `qwen3next` expert FFNs still build
+/// their own row vectors internally and are copied into `ffn_out`; they get the
+/// GEMV pool but not the allocation-free steady state.
+#[derive(Default)]
+struct Scratch {
+    /// Layer activations, `n_tokens * n_embd`. Normed in place per sublayer.
+    x: Vec<f32>,
+    /// `x` as it was before the current sublayer, `n_tokens * n_embd`.
+    residual: Vec<f32>,
+    /// Q / K / V projections, `n_tokens * w{q,k,v}.n_rows`.
+    q: Vec<f32>,
+    k: Vec<f32>,
+    v: Vec<f32>,
+    /// Official Qwen3Next attention gate split out of the joint Q projection,
+    /// `n_tokens * n_head * n_embd_head`. Empty for every other architecture.
+    q_gate: Vec<f32>,
+    /// Concatenated per-head attention output, `n_tokens * n_embd`.
+    attn: Vec<f32>,
+    /// `attn_output` projection of `attn`, `n_tokens * n_embd`.
+    attn_proj: Vec<f32>,
+    /// FFN gate (holds the SwiGLU/GeGLU product after activation) and up,
+    /// `n_tokens * n_ff`.
+    gate: Vec<f32>,
+    up: Vec<f32>,
+    /// `ffn_down` output, or the MoE sum, `n_tokens * n_embd`.
+    ffn_out: Vec<f32>,
+    /// Softmaxed attention scores for one head, `n_past + 1`.
+    scores: Vec<f32>,
+    /// `output_norm` of the last token, `n_embd`.
+    xn: Vec<f32>,
+    /// Returned logits, `n_vocab`.
+    logits: Vec<f32>,
+    moe: MoeScratch,
+}
+
+/// Working buffers for the official Llama4 expert FFN.
+#[derive(Default)]
+struct MoeScratch {
+    /// Router logits, `n_expert`.
+    logits: Vec<f32>,
+    /// Router top-k expert indices, `n_expert_used`.
+    order: Vec<usize>,
+    /// Sum of the selected experts for one token, `n_embd`.
+    routed: Vec<f32>,
+    /// `x_t` scaled by the router weight, `n_embd`.
+    xw: Vec<f32>,
+    /// One routed expert's gate / up / down, `n_ff_exp` and `n_embd`.
+    g: Vec<f32>,
+    u: Vec<f32>,
+    y: Vec<f32>,
+}
+
+impl Scratch {
+    /// Heap address and capacity of every buffer.
+    ///
+    /// A reallocation moves the address, changes the capacity, or both, so
+    /// comparing this across decode steps proves the steady state reuses its
+    /// buffers. `#![forbid(unsafe_code)]` rules out a `GlobalAlloc` counter
+    /// (`GlobalAlloc` is an unsafe trait), so this is the check that stands in
+    /// for one.
+    #[cfg(test)]
+    fn buffer_ids(&self) -> Vec<(usize, usize)> {
+        let f32s = [
+            &self.x,
+            &self.residual,
+            &self.q,
+            &self.k,
+            &self.v,
+            &self.attn,
+            &self.attn_proj,
+            &self.gate,
+            &self.up,
+            &self.ffn_out,
+            &self.scores,
+            &self.xn,
+            &self.logits,
+            &self.moe.logits,
+            &self.moe.routed,
+            &self.moe.xw,
+            &self.moe.g,
+            &self.moe.u,
+            &self.moe.y,
+        ];
+        let mut out: Vec<(usize, usize)> = f32s
+            .iter()
+            .map(|b| (b.as_ptr() as usize, b.capacity()))
+            .collect();
+        out.push((self.moe.order.as_ptr() as usize, self.moe.order.capacity()));
+        out
+    }
+}
+
+/// Resize `buf` to `len` zeros. Does not allocate once capacity is reached,
+/// which is what makes a steady-state decode step allocation-free.
+fn fit(buf: &mut Vec<f32>, len: usize) {
+    buf.clear();
+    buf.resize(len, 0.0);
+}
+
+/// `fit` plus a copy, for the residual and the last-token norm input.
+fn copy_buf(dst: &mut Vec<f32>, src: &[f32]) {
+    dst.clear();
+    dst.extend_from_slice(src);
 }
 
 impl Llama {
@@ -544,7 +770,7 @@ impl Llama {
             rope_neox,
             embed_scale,
             ffn_gelu: gemma,
-            blob: g.into_blob(),
+            blob: Arc::new(g.into_blob()),
             token_embd,
             output_norm,
             output_norm_b,
@@ -581,7 +807,34 @@ impl Llama {
             v: vec![0.0; n_k],
             n_past: 0,
             max_seq,
+            scratch: Scratch::default(),
+            pool: None,
         })
+    }
+
+    #[cfg(test)]
+    fn cache_buffer_ids(cache: &KvCache) -> Vec<(usize, usize)> {
+        let mut out = vec![
+            (cache.k.as_ptr() as usize, cache.k.capacity()),
+            (cache.v.as_ptr() as usize, cache.v.capacity()),
+        ];
+        out.extend(cache.scratch.buffer_ids());
+        if let Some(pool) = cache.pool.as_ref() {
+            out.extend(pool.buffer_ids());
+        }
+        out
+    }
+
+    #[cfg(test)]
+    fn cache_pool_workers(cache: &KvCache) -> usize {
+        cache.pool.as_ref().map_or(0, Pool::workers)
+    }
+
+    /// Whether any weight matrix is big enough for the GEMV pool to pay off.
+    /// `attn_q` / `attn_output` are `n_embd x n_embd` and the lm_head is the
+    /// widest matrix, so those two bound the rest.
+    fn wants_pool(&self) -> bool {
+        pooled_gemv(self.output.n_rows, self.output.n_cols) || pooled_gemv(self.n_embd, self.n_embd)
     }
 
     fn head_dim(&self) -> Result<usize, LlamaError> {
@@ -593,14 +846,39 @@ impl Llama {
     }
 
     /// One decode step. Writes K/V at `cache.n_past` and increments it. Returns logits.
+    ///
+    /// Copies the logits out of the cache. [`Llama::forward_logits`] borrows
+    /// them instead and is the allocation-free entry point.
     pub fn forward(&self, cache: &mut KvCache, token: u32) -> Result<Vec<f32>, LlamaError> {
-        self.prefill(cache, &[token])
+        self.forward_logits(cache, token).map(<[f32]>::to_vec)
+    }
+
+    /// [`Llama::forward`] returning the cache's own logits buffer instead of a
+    /// fresh `Vec`. `cache` stays borrowed for as long as the slice is held.
+    ///
+    /// Allocates nothing once the cache's buffers have been sized by a first
+    /// call of the same or larger token count.
+    pub fn forward_logits<'c>(
+        &self,
+        cache: &'c mut KvCache,
+        token: u32,
+    ) -> Result<&'c [f32], LlamaError> {
+        self.prefill_logits(cache, &[token])
     }
 
     /// Decode `tokens` in one causal pass. Prompt tokens share each weight
     /// row (GEMM; a single token stays GEMV). Writes K/V at
     /// `cache.n_past .. n_past+len` and returns logits of the last token.
     pub fn prefill(&self, cache: &mut KvCache, tokens: &[u32]) -> Result<Vec<f32>, LlamaError> {
+        self.prefill_logits(cache, tokens).map(<[f32]>::to_vec)
+    }
+
+    /// [`Llama::prefill`] returning the cache's own logits buffer.
+    pub fn prefill_logits<'c>(
+        &self,
+        cache: &'c mut KvCache,
+        tokens: &[u32],
+    ) -> Result<&'c [f32], LlamaError> {
         let n = tokens.len();
         if n == 0 {
             return Err(LlamaError::Shape("prefill tokens".into()));
@@ -613,65 +891,91 @@ impl Llama {
         if end > cache.max_seq {
             return Err(LlamaError::Shape("kv cache full".into()));
         }
-        let mut x = Vec::new();
-        for tok in tokens {
-            x.extend(self.embed(*tok)?);
+        let width = n
+            .checked_mul(self.n_embd)
+            .ok_or_else(|| LlamaError::Shape("prefill embed".into()))?;
+        let KvCache {
+            k: cache_k,
+            v: cache_v,
+            n_past,
+            max_seq,
+            scratch: s,
+            pool,
+        } = cache;
+        let max_seq = *max_seq;
+        // Single-token steps are the only ones the pool serves: GEMM lays `y`
+        // out token-major, so a row range there is not a contiguous slice.
+        if n == 1 && pool.is_none() && self.wants_pool() {
+            *pool = Pool::new(
+                Arc::new(GemvRows {
+                    blob: Arc::clone(&self.blob),
+                }),
+                self.output.n_rows.max(self.n_embd),
+            );
         }
-        if x.len() != n.saturating_mul(self.n_embd) {
-            return Err(LlamaError::Shape("prefill embed".into()));
+        // Attention scores are `n_past + 1` long, so they would otherwise grow
+        // on every decode step. Take the full-context capacity up front.
+        if s.scores.capacity() < max_seq {
+            fit(&mut s.scores, max_seq);
         }
-        for v in &mut x {
-            *v *= self.embed_scale;
+        fit(&mut s.x, width);
+        for (t, tok) in tokens.iter().enumerate() {
+            let row = token_row_mut(&mut s.x, t, self.n_embd, "prefill embed")?;
+            self.embed_into(*tok, row)?;
+            for v in row.iter_mut() {
+                *v *= self.embed_scale;
+            }
         }
         for (li, layer) in self.layers.iter().enumerate() {
-            let residual = x.clone();
-            x = if self.phi2 {
-                layernorm_rows(
-                    &x,
+            if layer.wk.n_rows != self.n_head_kv.saturating_mul(hd)
+                || layer.wv.n_rows != self.n_head_kv.saturating_mul(hd)
+            {
+                return Err(LlamaError::Shape("qkv head split".into()));
+            }
+            copy_buf(&mut s.residual, &s.x);
+            if self.phi2 {
+                layernorm_rows_inplace(
+                    &mut s.x,
                     self.n_embd,
                     &layer.attn_norm,
                     layer.attn_norm_b.as_deref(),
                     self.rms_eps,
-                )?
+                )?;
             } else {
-                rmsnorm_rows(&x, self.n_embd, &layer.attn_norm, self.rms_eps)?
-            };
-            let attn_norm_output = x.clone();
-            let q_full = add_bias_rows(
-                self.gemm_mat(&layer.wq, n, &x)?,
-                layer.wq.n_rows,
-                layer.bq.as_deref(),
-            )?;
-            let k = add_bias_rows(
-                self.gemm_mat(&layer.wk, n, &x)?,
-                layer.wk.n_rows,
-                layer.bk.as_deref(),
-            )?;
-            let v = add_bias_rows(
-                self.gemm_mat(&layer.wv, n, &x)?,
-                layer.wv.n_rows,
-                layer.bv.as_deref(),
-            )?;
+                rmsnorm_rows_inplace(&mut s.x, self.n_embd, &layer.attn_norm, self.rms_eps)?;
+            }
+            // `s.x` holds the `attn_norm` output from here until the residual add.
+            // Official phi2 feeds it to attention *and* the FFN (parallel
+            // residual), so that branch runs its FFN before the add rather than
+            // keeping a second copy of the normed activations.
+            self.gemm_into(&layer.wq, n, &s.x, &mut s.q, pool)?;
+            add_bias_rows(&mut s.q, layer.wq.n_rows, layer.bq.as_deref())?;
+            self.gemm_into(&layer.wk, n, &s.x, &mut s.k, pool)?;
+            add_bias_rows(&mut s.k, layer.wk.n_rows, layer.bk.as_deref())?;
+            self.gemm_into(&layer.wv, n, &s.x, &mut s.v, pool)?;
+            add_bias_rows(&mut s.v, layer.wv.n_rows, layer.bv.as_deref())?;
             // Official Qwen3Next: joint Q projection is query+gate
             // (`n_embd_head * n_head * 2`), split per head, gate applied after attn.
-            let (q, attn_gate) = if layer.attn_q_gate {
-                split_qwen3next_q_gate(&q_full, n, self.n_head, hd)?
-            } else {
-                (q_full, None)
-            };
+            let q_width = self.n_head.saturating_mul(hd);
+            if layer.attn_q_gate {
+                split_qwen3next_q_gate_into(&mut s.q, &mut s.q_gate, n, self.n_head, hd)?;
+            } else if layer.wq.n_rows != q_width {
+                return Err(LlamaError::Shape("qkv head split".into()));
+            }
             // Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next: RMSNorm on Q and K
             // after projection, before RoPE (`attn_q_norm` / `attn_k_norm`,
             // per-head, `LLM_NORM_RMS`).
-            let q = qk_norm_rows(q, hd, layer.attn_q_norm.as_deref(), self.rms_eps)?;
-            let k = qk_norm_rows(k, hd, layer.attn_k_norm.as_deref(), self.rms_eps)?;
+            if let Some(w) = layer.attn_q_norm.as_deref() {
+                rmsnorm_rows_inplace(&mut s.q, hd, w, self.rms_eps)?;
+            }
+            if let Some(w) = layer.attn_k_norm.as_deref() {
+                rmsnorm_rows_inplace(&mut s.k, hd, w, self.rms_eps)?;
+            }
             for t in 0..n {
                 let pos = n0.saturating_add(t);
-                let k_t = token_row(&k, t, layer.wk.n_rows, "prefill k")?;
-                let v_t = token_row(&v, t, layer.wv.n_rows, "prefill v")?;
-                let mut kh = split_heads(k_t, self.n_head_kv, hd)?;
-                let vh = split_heads(v_t, self.n_head_kv, hd)?;
+                let k_t = token_row_mut(&mut s.k, t, layer.wk.n_rows, "prefill k")?;
                 if layer.use_rope {
-                    for h in &mut kh {
+                    for h in k_t.chunks_mut(hd) {
                         apply_rope(
                             h,
                             pos,
@@ -684,26 +988,21 @@ impl Llama {
                     }
                     if layer.qk_l2 {
                         // Official Llama4: unweighted RMS after RoPE (`Llama4TextL2Norm`).
-                        for h in &mut kh {
-                            *h = rmsnorm_unweighted(h, self.rms_eps)?;
+                        for h in k_t.chunks_mut(hd) {
+                            rmsnorm_unweighted_inplace(h, self.rms_eps);
                         }
                     }
                 }
-                store_kv(&mut cache.k, li, self.n_head_kv, cache.max_seq, pos, &kh)?;
-                store_kv(&mut cache.v, li, self.n_head_kv, cache.max_seq, pos, &vh)?;
+                store_kv(cache_k, li, self.n_head_kv, max_seq, pos, hd, k_t)?;
+                let v_t = token_row(&s.v, t, layer.wv.n_rows, "prefill v")?;
+                store_kv(cache_v, li, self.n_head_kv, max_seq, pos, hd, v_t)?;
             }
-            let mut attn = vec![0.0f32; n.saturating_mul(self.n_embd)];
+            fit(&mut s.attn, width);
             for t in 0..n {
                 let pos = n0.saturating_add(t);
-                let q_width = if layer.attn_q_gate {
-                    self.n_embd
-                } else {
-                    layer.wq.n_rows
-                };
-                let q_t = token_row(&q, t, q_width, "prefill q")?;
-                let mut qh = split_heads(q_t, self.n_head, hd)?;
+                let q_t = token_row_mut(&mut s.q, t, q_width, "prefill q")?;
                 if layer.use_rope {
-                    for h in &mut qh {
+                    for h in q_t.chunks_mut(hd) {
                         apply_rope(
                             h,
                             pos,
@@ -715,27 +1014,23 @@ impl Llama {
                         )?;
                     }
                     if layer.qk_l2 {
-                        for h in &mut qh {
-                            *h = rmsnorm_unweighted(h, self.rms_eps)?;
+                        for h in q_t.chunks_mut(hd) {
+                            rmsnorm_unweighted_inplace(h, self.rms_eps);
                         }
                     }
                     if self.phi2 {
                         // Official phi2.cpp: scale Q after RoPE, then attn scale 1.0.
                         let hd_f = f32::from(u16::try_from(hd).unwrap_or(1));
                         let q_scale = if hd_f > 0.0 { 1.0 / hd_f.sqrt() } else { 0.0 };
-                        for h in &mut qh {
-                            for v in h.iter_mut() {
-                                *v *= q_scale;
-                            }
+                        for v in q_t.iter_mut() {
+                            *v *= q_scale;
                         }
                     }
                 } else {
                     // Official Llama4 NoPE: Q *= attn temperature scale.
                     let scale = llama4_attn_temp_scale(pos);
-                    for h in &mut qh {
-                        for v in h.iter_mut() {
-                            *v *= scale;
-                        }
+                    for v in q_t.iter_mut() {
+                        *v *= scale;
                     }
                 }
                 let score_scale = if self.phi2 {
@@ -748,102 +1043,111 @@ impl Llama {
                         0.0
                     }
                 };
-                let one = attend_query(
-                    cache,
+                let dst_off = t.saturating_mul(self.n_embd);
+                let dst = s
+                    .attn
+                    .get_mut(dst_off..dst_off.saturating_add(self.n_embd))
+                    .ok_or_else(|| LlamaError::Shape("prefill attn".into()))?;
+                attend_query(
+                    cache_k,
+                    cache_v,
                     li,
-                    &qh,
+                    q_t,
                     self.n_head_kv,
                     hd,
                     pos.saturating_add(1),
+                    max_seq,
                     score_scale,
+                    &mut s.scores,
+                    dst,
                 )?;
-                let dst_off = t.saturating_mul(self.n_embd);
-                let dst = attn
-                    .get_mut(dst_off..dst_off.saturating_add(self.n_embd))
-                    .ok_or_else(|| LlamaError::Shape("prefill attn".into()))?;
-                for (d, s) in dst.iter_mut().zip(one.iter()) {
-                    *d = *s;
-                }
             }
-            if let Some(gate) = attn_gate.as_ref() {
-                if gate.len() != attn.len() {
+            if layer.attn_q_gate {
+                if s.q_gate.len() != s.attn.len() {
                     return Err(LlamaError::Shape("attn gate".into()));
                 }
-                for (a, g) in attn.iter_mut().zip(gate.iter()) {
+                for (a, g) in s.attn.iter_mut().zip(s.q_gate.iter()) {
                     *a *= sigmoid_f32(*g);
                 }
             }
-            let proj = add_bias_rows(
-                self.gemm_mat(&layer.wo, n, &attn)?,
-                layer.wo.n_rows,
-                layer.wo_b.as_deref(),
-            )?;
+            self.gemm_into(&layer.wo, n, &s.attn, &mut s.attn_proj, pool)?;
+            add_bias_rows(&mut s.attn_proj, layer.wo.n_rows, layer.wo_b.as_deref())?;
             if self.phi2 {
                 // Official phi2.cpp: FFN on the same `attn_norm` as attention
                 // (parallel residual), then `attn + ffn + inpL`.
-                let down = match &layer.ffn {
+                match &layer.ffn {
                     LayerFfn::Phi2(ffn) => {
-                        let up = add_bias_rows(
-                            self.gemm_mat(&ffn.up, n, &attn_norm_output)?,
-                            ffn.up.n_rows,
-                            Some(ffn.up_b.as_slice()),
-                        )?;
-                        let h = gelu(&up)?;
+                        self.gemm_into(&ffn.up, n, &s.x, &mut s.up, pool)?;
+                        add_bias_rows(&mut s.up, ffn.up.n_rows, Some(ffn.up_b.as_slice()))?;
+                        gelu_inplace(&mut s.up);
+                        self.gemm_into(&ffn.down, n, &s.up, &mut s.ffn_out, pool)?;
                         add_bias_rows(
-                            self.gemm_mat(&ffn.down, n, &h)?,
+                            &mut s.ffn_out,
                             ffn.down.n_rows,
                             Some(ffn.down_b.as_slice()),
-                        )?
+                        )?;
                     }
                     _ => return Err(LlamaError::Shape("phi2 ffn".into())),
-                };
-                let summed = add(&proj, &down)?;
-                x = add(&summed, &residual)?;
+                }
+                add_into(&mut s.x, &s.attn_proj, &s.ffn_out)?;
+                add_assign(&mut s.x, &s.residual)?;
             } else {
-                x = add(&proj, &residual)?;
-                let residual = x.clone();
-                x = rmsnorm_rows(&x, self.n_embd, &layer.ffn_norm, self.rms_eps)?;
-                let down = match &layer.ffn {
+                add_into(&mut s.x, &s.attn_proj, &s.residual)?;
+                copy_buf(&mut s.residual, &s.x);
+                rmsnorm_rows_inplace(&mut s.x, self.n_embd, &layer.ffn_norm, self.rms_eps)?;
+                match &layer.ffn {
                     LayerFfn::Dense(dense) => {
-                        let gate = self.gemm_mat(&dense.gate, n, &x)?;
-                        let up = self.gemm_mat(&dense.up, n, &x)?;
-                        let mut h = ffn_gate_act(&gate, self.ffn_gelu)?;
-                        for (hv, uv) in h.iter_mut().zip(up.iter()) {
+                        self.gemm_into(&dense.gate, n, &s.x, &mut s.gate, pool)?;
+                        self.gemm_into(&dense.up, n, &s.x, &mut s.up, pool)?;
+                        ffn_gate_act_inplace(&mut s.gate, self.ffn_gelu);
+                        for (hv, uv) in s.gate.iter_mut().zip(s.up.iter()) {
                             *hv *= *uv;
                         }
-                        self.gemm_mat(&dense.down, n, &h)?
+                        self.gemm_into(&dense.down, n, &s.gate, &mut s.ffn_out, pool)?;
                     }
-                    LayerFfn::LlamaMoe(moe) => self.llama_moe_rows(moe.as_ref(), n, &x)?,
-                    LayerFfn::Llama4Moe(moe) => self.llama4_moe_rows(moe.as_ref(), n, &x)?,
-                    LayerFfn::Qwen2Moe(moe) => self.qwen2moe_rows(moe.as_ref(), n, &x)?,
-                    LayerFfn::Qwen3Moe(moe) => self.qwen3moe_rows(moe.as_ref(), n, &x)?,
-                    LayerFfn::Qwen3Next(moe) => self.qwen3next_rows(moe.as_ref(), n, &x)?,
+                    LayerFfn::Llama4Moe(moe) => self.llama4_moe_into(moe.as_ref(), n, s, pool)?,
+                    // The remaining expert FFNs still build their own row vectors.
+                    // They are pooled but not allocation-free; see `Scratch`.
+                    LayerFfn::LlamaMoe(moe) => {
+                        let rows = self.llama_moe_rows(moe.as_ref(), n, &s.x, pool)?;
+                        copy_buf(&mut s.ffn_out, &rows);
+                    }
+                    LayerFfn::Qwen2Moe(moe) => {
+                        let rows = self.qwen2moe_rows(moe.as_ref(), n, &s.x, pool)?;
+                        copy_buf(&mut s.ffn_out, &rows);
+                    }
+                    LayerFfn::Qwen3Moe(moe) => {
+                        let rows = self.qwen3moe_rows(moe.as_ref(), n, &s.x, pool)?;
+                        copy_buf(&mut s.ffn_out, &rows);
+                    }
+                    LayerFfn::Qwen3Next(moe) => {
+                        let rows = self.qwen3next_rows(moe.as_ref(), n, &s.x, pool)?;
+                        copy_buf(&mut s.ffn_out, &rows);
+                    }
                     LayerFfn::Phi2(_) => return Err(LlamaError::Shape("phi2 ffn".into())),
-                };
-                x = add(&down, &residual)?;
+                }
+                add_into(&mut s.x, &s.ffn_out, &s.residual)?;
             }
         }
         let last_off = n.saturating_sub(1).saturating_mul(self.n_embd);
-        let last = x
-            .get(last_off..last_off.saturating_add(self.n_embd))
-            .ok_or_else(|| LlamaError::Shape("prefill last".into()))?;
-        let xn = if self.phi2 {
-            layernorm(
-                last,
+        let last =
+            s.x.get(last_off..last_off.saturating_add(self.n_embd))
+                .ok_or_else(|| LlamaError::Shape("prefill last".into()))?;
+        copy_buf(&mut s.xn, last);
+        if self.phi2 {
+            layernorm_inplace(
+                &mut s.xn,
                 &self.output_norm,
                 self.output_norm_b.as_deref(),
                 self.rms_eps,
-            )?
+            )?;
         } else {
-            rmsnorm(last, &self.output_norm, self.rms_eps)?
-        };
-        let logits = add_bias_rows(
-            self.gemv_mat(&self.output, &xn)?,
-            self.n_vocab,
-            self.output_b.as_deref(),
-        )?;
-        cache.n_past = end;
-        Ok(logits)
+            rmsnorm_inplace(&mut s.xn, &self.output_norm, self.rms_eps)?;
+        }
+        self.gemv_into(&self.output, &s.xn, &mut s.logits, pool)?;
+        add_bias_rows(&mut s.logits, self.n_vocab, self.output_b.as_deref())?;
+        *n_past = end;
+        Ok(&s.logits)
     }
 }
 
@@ -883,14 +1187,13 @@ pub fn greedy_generate_ctx(
         None => needed.saturating_add(1),
     };
     let mut cache = model.new_cache(max_seq)?;
-    let mut last = model.prefill(&mut cache, &ids)?;
+    let mut next = argmax(model.prefill_logits(&mut cache, &ids)?);
     for _ in 0..n_predict {
-        let next = argmax(&last);
         if tok.eos == Some(next) {
             break;
         }
         ids.push(next);
-        last = model.forward(&mut cache, next)?;
+        next = argmax(model.forward_logits(&mut cache, next)?);
     }
     Ok(tok.decode(&ids))
 }
@@ -929,7 +1232,10 @@ pub fn generate_ctx(
         None => needed.saturating_add(1),
     };
     let mut cache = model.new_cache(max_seq)?;
-    let mut last = model.prefill(&mut cache, &ids)?;
+    // The sampler needs `ids` while it reads the logits, so keep one reusable
+    // copy here rather than borrowing the cache across the call.
+    let mut last = Vec::new();
+    copy_buf(&mut last, model.prefill_logits(&mut cache, &ids)?);
     let mut sampler = Sampler::new(*params)?;
     for _ in 0..n_predict {
         let next = sampler.sample(&last, &ids)?;
@@ -937,7 +1243,7 @@ pub fn generate_ctx(
             break;
         }
         ids.push(next);
-        last = model.forward(&mut cache, next)?;
+        copy_buf(&mut last, model.forward_logits(&mut cache, next)?);
     }
     Ok(tok.decode(&ids))
 }
@@ -4117,46 +4423,55 @@ fn quant_mat(t: Tensor<'_>) -> Result<QuantMat, LlamaError> {
 }
 
 impl Llama {
-    fn gemm_mat(&self, m: &QuantMat, n_tokens: usize, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
+    /// `y[t, r] = W[r] · x[t]`, into `y` (grown to `n_rows * n_tokens`).
+    fn gemm_into(
+        &self,
+        m: &QuantMat,
+        n_tokens: usize,
+        x: &[f32],
+        y: &mut Vec<f32>,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
         if n_tokens == 1 {
-            return self.gemv_mat(m, x);
+            return self.gemv_into(m, x, y, pool);
         }
         let data = self.mat_bytes(m)?;
         let n_out = m
             .n_rows
             .checked_mul(n_tokens)
             .ok_or_else(|| LlamaError::Shape(m.name.clone()))?;
-        let mut y = vec![0.0f32; n_out];
+        fit(y, n_out);
+        let y = y.as_mut_slice();
         match m.ty {
-            GgmlType::F32 => gemm_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::F16 => gemm_f16(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::BF16 => gemm_bf16(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q2_K => gemm_q2_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q3_K => gemm_q3_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q4_1 => gemm_q4_1_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q5_0 => gemm_q5_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q5_1 => gemm_q5_1_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::MXFP4 => gemm_mxfp4_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::NVFP4 => gemm_nvfp4_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q1_0 => gemm_q1_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q2_0 => gemm_q2_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q4_0 => gemm_q4_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q8_0 => gemm_q8_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q8_1 => gemm_q8_1_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::TQ1_0 => gemm_tq1_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::TQ2_0 => gemm_tq2_0_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q4_K => gemm_q4_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q5_K => gemm_q5_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::Q6_K => gemm_q6_k_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ1_S => gemm_iq1_s_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ1_M => gemm_iq1_m_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ2_XXS => gemm_iq2_xxs_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ2_XS => gemm_iq2_xs_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ2_S => gemm_iq2_s_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ3_XXS => gemm_iq3_xxs_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ3_S => gemm_iq3_s_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ4_NL => gemm_iq4_nl_f32(m.n_cols, n_tokens, data, x, &mut y)?,
-            GgmlType::IQ4_XS => gemm_iq4_xs_f32(m.n_cols, n_tokens, data, x, &mut y)?,
+            GgmlType::F32 => gemm_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::F16 => gemm_f16(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::BF16 => gemm_bf16(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q2_K => gemm_q2_k_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q3_K => gemm_q3_k_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q4_1 => gemm_q4_1_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q5_0 => gemm_q5_0_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q5_1 => gemm_q5_1_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::MXFP4 => gemm_mxfp4_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::NVFP4 => gemm_nvfp4_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q1_0 => gemm_q1_0_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q2_0 => gemm_q2_0_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q4_0 => gemm_q4_0_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q8_0 => gemm_q8_0_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q8_1 => gemm_q8_1_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::TQ1_0 => gemm_tq1_0_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::TQ2_0 => gemm_tq2_0_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q4_K => gemm_q4_k_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q5_K => gemm_q5_k_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::Q6_K => gemm_q6_k_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ1_S => gemm_iq1_s_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ1_M => gemm_iq1_m_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ2_XXS => gemm_iq2_xxs_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ2_XS => gemm_iq2_xs_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ2_S => gemm_iq2_s_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ3_XXS => gemm_iq3_xxs_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ3_S => gemm_iq3_s_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ4_NL => gemm_iq4_nl_f32(m.n_cols, n_tokens, data, x, y)?,
+            GgmlType::IQ4_XS => gemm_iq4_xs_f32(m.n_cols, n_tokens, data, x, y)?,
             other => {
                 return Err(LlamaError::Type {
                     tensor: m.name.clone(),
@@ -4164,50 +4479,128 @@ impl Llama {
                 })
             }
         }
+        Ok(())
+    }
+
+    /// `y[r] = W[r] · x`, into `y` (grown to `n_rows`).
+    fn gemv_into(
+        &self,
+        m: &QuantMat,
+        x: &[f32],
+        y: &mut Vec<f32>,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        self.gemv_range_into(m, m.start, m.end.saturating_sub(m.start), x, y, pool)
+    }
+
+    /// [`Llama::gemm_into`] into a fresh vector.
+    ///
+    /// Only the expert FFNs that still work in owned rows use this; the dense
+    /// path writes straight into [`Scratch`].
+    fn gemm_mat(
+        &self,
+        m: &QuantMat,
+        n_tokens: usize,
+        x: &[f32],
+        pool: &mut GemvPool,
+    ) -> Result<Vec<f32>, LlamaError> {
+        let mut y = Vec::new();
+        self.gemm_into(m, n_tokens, x, &mut y, pool)?;
         Ok(y)
     }
 
-    fn gemv_mat(&self, m: &QuantMat, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
-        let data = self.mat_bytes(m)?;
-        let mut y = vec![0.0f32; m.n_rows];
-        match m.ty {
-            GgmlType::F32 => gemv_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::F16 => gemv_f16(m.n_cols, data, x, &mut y)?,
-            GgmlType::BF16 => gemv_bf16(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q2_K => gemv_q2_k_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q3_K => gemv_q3_k_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q4_1 => gemv_q4_1_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q5_0 => gemv_q5_0_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q5_1 => gemv_q5_1_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::MXFP4 => gemv_mxfp4_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::NVFP4 => gemv_nvfp4_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q1_0 => gemv_q1_0_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q2_0 => gemv_q2_0_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q4_0 => gemv_q4_0_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q8_0 => gemv_q8_0_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q8_1 => gemv_q8_1_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::TQ1_0 => gemv_tq1_0_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::TQ2_0 => gemv_tq2_0_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q4_K => gemv_q4_k_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q5_K => gemv_q5_k_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::Q6_K => gemv_q6_k_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ1_S => gemv_iq1_s_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ1_M => gemv_iq1_m_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ2_XXS => gemv_iq2_xxs_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ2_XS => gemv_iq2_xs_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ2_S => gemv_iq2_s_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ3_XXS => gemv_iq3_xxs_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ3_S => gemv_iq3_s_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ4_NL => gemv_iq4_nl_f32(m.n_cols, data, x, &mut y)?,
-            GgmlType::IQ4_XS => gemv_iq4_xs_f32(m.n_cols, data, x, &mut y)?,
-            other => {
-                return Err(LlamaError::Type {
-                    tensor: m.name.clone(),
-                    ty: other.to_i32(),
-                })
+    /// [`Llama::gemv_into`] into a fresh vector.
+    fn gemv_mat(
+        &self,
+        m: &QuantMat,
+        x: &[f32],
+        pool: &mut GemvPool,
+    ) -> Result<Vec<f32>, LlamaError> {
+        let mut y = Vec::new();
+        self.gemv_into(m, x, &mut y, pool)?;
+        Ok(y)
+    }
+
+    /// [`Llama::gemv_part_into`] into a fresh vector.
+    fn gemv_part_mat(
+        &self,
+        m: &QuantMat,
+        part: usize,
+        x: &[f32],
+        pool: &mut GemvPool,
+    ) -> Result<Vec<f32>, LlamaError> {
+        let mut y = Vec::new();
+        self.gemv_part_into(m, part, x, &mut y, pool)?;
+        Ok(y)
+    }
+
+    /// [`Llama::gemv_into`] against one part of a 3-D `*_exps` matrix.
+    fn gemv_part_into(
+        &self,
+        m: &QuantMat,
+        part: usize,
+        x: &[f32],
+        y: &mut Vec<f32],
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        let (base, len) = self.mat_part_range(m, part)?;
+        self.gemv_range_into(m, base, len, x, y, pool)
+    }
+
+    /// GEMV against the blob range `[base, base + len)`, on the pool when the
+    /// matrix is big enough and the pool accepts the job, else in this thread.
+    fn gemv_range_into(
+        &self,
+        m: &QuantMat,
+        base: usize,
+        len: usize,
+        x: &[f32],
+        y: &mut Vec<f32>,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        fit(y, m.n_rows);
+        let y = y.as_mut_slice();
+        if pooled_gemv(m.n_rows, m.n_cols) {
+            if let Some(p) = pool.as_mut() {
+                let row_bytes = row_bytes_for(m.ty, m.n_cols, &m.name)?;
+                let job = GemvJob {
+                    ty: m.ty,
+                    n_cols: m.n_cols,
+                    base,
+                    row_bytes,
+                };
+                if p.run(job, x, y) {
+                    return Ok(());
+                }
+
             }
         }
-        Ok(y)
+        let data = self
+            .blob
+            .get(base..base.saturating_add(len))
+            .ok_or_else(|| LlamaError::Shape(m.name.clone()))?;
+        if gemv_rows(m.ty, m.n_cols, data, x, y)? {
+            Ok(())
+        } else {
+            Err(LlamaError::Type {
+                tensor: m.name.clone(),
+                ty: m.ty.to_i32(),
+            })
+        }
+    }
+
+    /// Byte offset and length of one part of a 3-D `*_exps` matrix.
+    /// `n_parts == 1` matrices have a single part covering the whole range.
+    fn mat_part_range(&self, m: &QuantMat, part: usize) -> Result<(usize, usize), LlamaError> {
+        if m.n_parts == 0 || part >= m.n_parts {
+            return Err(LlamaError::Shape(m.name.clone()));
+        }
+        let total = self.mat_bytes(m)?.len();
+        let per = total / m.n_parts;
+        if per.saturating_mul(m.n_parts) != total {
+            return Err(LlamaError::Shape(m.name.clone()));
+        }
+        Ok((m.start.saturating_add(part.saturating_mul(per)), per))
     }
 
     /// Official llama.cpp `build_moe_ffn` for `architecture=llama` + `n_expert>0`:
@@ -4218,6 +4611,7 @@ impl Llama {
         moe: &LlamaMoe,
         n_tokens: usize,
         x: &[f32],
+        pool: &mut GemvPool,
     ) -> Result<Vec<f32>, LlamaError> {
         let n_embd = moe.down_exps.n_rows;
         if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
@@ -4229,13 +4623,14 @@ impl Llama {
         let mut out = vec![0.0f32; n_out];
         for t in 0..n_tokens {
             let xt = token_row(x, t, n_embd, "llama moe x")?;
-            let logits = self.gemv_mat(&moe.gate_inp, xt)?;
+            let logits = self.gemv_mat(&moe.gate_inp, xt, pool)?;
             if logits.len() != moe.n_expert {
                 return Err(LlamaError::Shape("llama ffn_gate_inp".into()));
             }
             let mut probs = logits;
             softmax(&mut probs);
-            let selected = topk_logits(&probs, moe.n_expert_used)?;
+            let mut selected = Vec::new();
+            topk_into(&probs, moe.n_expert_used, &mut selected)?;
             let mut wsum = 0.0f32;
             let mut weights = Vec::new();
             for &e in &selected {
@@ -4254,16 +4649,14 @@ impl Llama {
                 .get_mut(off..off.saturating_add(n_embd))
                 .ok_or_else(|| LlamaError::Shape("llama moe out".into()))?;
             for (e, w) in selected.iter().zip(weights.iter()) {
-                let ge = expert_view(&moe.gate_exps, *e)?;
-                let ue = expert_view(&moe.up_exps, *e)?;
-                let de = expert_view(&moe.down_exps, *e)?;
-                let g = self.gemv_mat(&ge, xt)?;
-                let u = self.gemv_mat(&ue, xt)?;
-                let mut hh = silu(&g)?;
+                let g = self.gemv_part_mat(&moe.gate_exps, *e, xt, pool)?;
+                let u = self.gemv_part_mat(&moe.up_exps, *e, xt, pool)?;
+                let mut hh = g;
+                silu_inplace(&mut hh);
                 for (a, b) in hh.iter_mut().zip(u.iter()) {
                     *a *= *b;
                 }
-                let y = self.gemv_mat(&de, &hh)?;
+                let y = self.gemv_part_mat(&moe.down_exps, *e, &hh, pool)?;
                 for (d, v) in dst.iter_mut().zip(y.iter()) {
                     *d += *v * *w;
                 }
@@ -4274,57 +4667,64 @@ impl Llama {
 
     /// Official llama4.cpp MoE: top-k on raw router logits, sigmoid weights applied
     /// to the FFN input (`weight_before_ffn`), SwiGLU experts, plus shared expert.
-    fn llama4_moe_rows(
+    ///
+    /// Reads `s.x` and writes `s.ffn_out`.
+    fn llama4_moe_into(
         &self,
         moe: &Llama4Moe,
         n_tokens: usize,
-        x: &[f32],
-    ) -> Result<Vec<f32>, LlamaError> {
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
         let n_embd = moe.down_shexp.n_rows;
-        if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
+        if n_embd == 0 || !s.x.len().is_multiple_of(n_embd) {
             return Err(LlamaError::Shape("llama4 moe".into()));
         }
-        let gate_s = self.gemm_mat(&moe.gate_shexp, n_tokens, x)?;
-        let up_s = self.gemm_mat(&moe.up_shexp, n_tokens, x)?;
-        let mut h_s = silu(&gate_s)?;
-        for (hv, uv) in h_s.iter_mut().zip(up_s.iter()) {
+        self.gemm_into(&moe.gate_shexp, n_tokens, &s.x, &mut s.gate, pool)?;
+        self.gemm_into(&moe.up_shexp, n_tokens, &s.x, &mut s.up, pool)?;
+        silu_inplace(&mut s.gate);
+        for (hv, uv) in s.gate.iter_mut().zip(s.up.iter()) {
             *hv *= *uv;
         }
-        let mut out = self.gemm_mat(&moe.down_shexp, n_tokens, &h_s)?;
+        self.gemm_into(&moe.down_shexp, n_tokens, &s.gate, &mut s.ffn_out, pool)?;
         for t in 0..n_tokens {
-            let xt = token_row(x, t, n_embd, "llama4 moe x")?;
-            let logits = self.gemv_mat(&moe.gate_inp, xt)?;
-            if logits.len() != moe.n_expert {
+            let xt = token_row(&s.x, t, n_embd, "llama4 moe x")?;
+            self.gemv_into(&moe.gate_inp, xt, &mut s.moe.logits, pool)?;
+            if s.moe.logits.len() != moe.n_expert {
                 return Err(LlamaError::Shape("llama4 ffn_gate_inp".into()));
             }
-            let selected = topk_logits(&logits, moe.n_expert_used)?;
-            let mut routed = vec![0.0f32; n_embd];
-            for e in selected {
-                let w = sigmoid_f32(logits.get(e).copied().unwrap_or(0.0));
-                let xw: Vec<f32> = xt.iter().map(|v| *v * w).collect();
-                let ge = expert_view(&moe.gate_exps, e)?;
-                let ue = expert_view(&moe.up_exps, e)?;
-                let de = expert_view(&moe.down_exps, e)?;
-                let g = self.gemv_mat(&ge, &xw)?;
-                let u = self.gemv_mat(&ue, &xw)?;
-                let mut hh = silu(&g)?;
-                for (a, b) in hh.iter_mut().zip(u.iter()) {
+            topk_into(&s.moe.logits, moe.n_expert_used, &mut s.moe.order)?;
+            fit(&mut s.moe.routed, n_embd);
+            for i in 0..s.moe.order.len() {
+                let Some(e) = s.moe.order.get(i).copied() else {
+                    continue;
+                };
+                let w = sigmoid_f32(s.moe.logits.get(e).copied().unwrap_or(0.0));
+                fit(&mut s.moe.xw, xt.len());
+                for (d, v) in s.moe.xw.iter_mut().zip(xt.iter()) {
+                    *d = *v * w;
+                }
+                self.gemv_part_into(&moe.gate_exps, e, &s.moe.xw, &mut s.moe.g, pool)?;
+                self.gemv_part_into(&moe.up_exps, e, &s.moe.xw, &mut s.moe.u, pool)?;
+                silu_inplace(&mut s.moe.g);
+                for (a, b) in s.moe.g.iter_mut().zip(s.moe.u.iter()) {
                     *a *= *b;
                 }
-                let y = self.gemv_mat(&de, &hh)?;
-                for (o, v) in routed.iter_mut().zip(y.iter()) {
+                self.gemv_part_into(&moe.down_exps, e, &s.moe.g, &mut s.moe.y, pool)?;
+                for (o, v) in s.moe.routed.iter_mut().zip(s.moe.y.iter()) {
                     *o += *v;
                 }
             }
             let off = t.saturating_mul(n_embd);
-            let dst = out
+            let dst = s
+                .ffn_out
                 .get_mut(off..off.saturating_add(n_embd))
                 .ok_or_else(|| LlamaError::Shape("llama4 moe out".into()))?;
-            for (d, s) in dst.iter_mut().zip(routed.iter()) {
-                *d += *s;
+            for (d, v) in dst.iter_mut().zip(s.moe.routed.iter()) {
+                *d += *v;
             }
         }
-        Ok(out)
+        Ok(())
     }
 
     /// Official qwen2moe.cpp: softmax then top-k, weights after SwiGLU (`norm_w=false`),
@@ -4334,19 +4734,21 @@ impl Llama {
         moe: &Qwen2Moe,
         n_tokens: usize,
         x: &[f32],
+        pool: &mut GemvPool,
     ) -> Result<Vec<f32>, LlamaError> {
         let n_embd = moe.down_shexp.n_rows;
         if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
             return Err(LlamaError::Shape("qwen2moe".into()));
         }
-        let gate_s = self.gemm_mat(&moe.gate_shexp, n_tokens, x)?;
-        let up_s = self.gemm_mat(&moe.up_shexp, n_tokens, x)?;
-        let mut h_s = silu(&gate_s)?;
+        let gate_s = self.gemm_mat(&moe.gate_shexp, n_tokens, x, pool)?;
+        let up_s = self.gemm_mat(&moe.up_shexp, n_tokens, x, pool)?;
+        let mut h_s = gate_s;
+        silu_inplace(&mut h_s);
         for (hv, uv) in h_s.iter_mut().zip(up_s.iter()) {
             *hv *= *uv;
         }
-        let mut shexp = self.gemm_mat(&moe.down_shexp, n_tokens, &h_s)?;
-        let shexp_gate = self.gemm_mat(&moe.gate_inp_shexp, n_tokens, x)?;
+        let mut shexp = self.gemm_mat(&moe.down_shexp, n_tokens, &h_s, pool)?;
+        let shexp_gate = self.gemm_mat(&moe.gate_inp_shexp, n_tokens, x, pool)?;
         if shexp_gate.len() != n_tokens {
             return Err(LlamaError::Shape("qwen2moe ffn_gate_inp_shexp".into()));
         }
@@ -4366,29 +4768,28 @@ impl Llama {
         let mut out = vec![0.0f32; n_out];
         for t in 0..n_tokens {
             let xt = token_row(x, t, n_embd, "qwen2moe x")?;
-            let logits = self.gemv_mat(&moe.gate_inp, xt)?;
+            let logits = self.gemv_mat(&moe.gate_inp, xt, pool)?;
             if logits.len() != moe.n_expert {
                 return Err(LlamaError::Shape("qwen2moe ffn_gate_inp".into()));
             }
             let mut probs = logits;
             softmax(&mut probs);
-            let selected = topk_logits(&probs, moe.n_expert_used)?;
+            let mut selected = Vec::new();
+            topk_into(&probs, moe.n_expert_used, &mut selected)?;
             let off = t.saturating_mul(n_embd);
             let dst = out
                 .get_mut(off..off.saturating_add(n_embd))
                 .ok_or_else(|| LlamaError::Shape("qwen2moe out".into()))?;
             for e in selected {
                 let w = probs.get(e).copied().unwrap_or(0.0);
-                let ge = expert_view(&moe.gate_exps, e)?;
-                let ue = expert_view(&moe.up_exps, e)?;
-                let de = expert_view(&moe.down_exps, e)?;
-                let g = self.gemv_mat(&ge, xt)?;
-                let u = self.gemv_mat(&ue, xt)?;
-                let mut hh = silu(&g)?;
+                let g = self.gemv_part_mat(&moe.gate_exps, e, xt, pool)?;
+                let u = self.gemv_part_mat(&moe.up_exps, e, xt, pool)?;
+                let mut hh = g;
+                silu_inplace(&mut hh);
                 for (a, b) in hh.iter_mut().zip(u.iter()) {
                     *a *= *b;
                 }
-                let y = self.gemv_mat(&de, &hh)?;
+                let y = self.gemv_part_mat(&moe.down_exps, e, &hh, pool)?;
                 for (d, v) in dst.iter_mut().zip(y.iter()) {
                     *d += *v * w;
                 }
@@ -4410,6 +4811,7 @@ impl Llama {
         moe: &Qwen3Moe,
         n_tokens: usize,
         x: &[f32],
+        pool: &mut GemvPool,
     ) -> Result<Vec<f32>, LlamaError> {
         let n_embd = moe.down_exps.n_rows;
         if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
@@ -4421,13 +4823,14 @@ impl Llama {
         let mut out = vec![0.0f32; n_out];
         for t in 0..n_tokens {
             let xt = token_row(x, t, n_embd, "qwen3moe x")?;
-            let logits = self.gemv_mat(&moe.gate_inp, xt)?;
+            let logits = self.gemv_mat(&moe.gate_inp, xt, pool)?;
             if logits.len() != moe.n_expert {
                 return Err(LlamaError::Shape("qwen3moe ffn_gate_inp".into()));
             }
             let mut probs = logits;
             softmax(&mut probs);
-            let selected = topk_logits(&probs, moe.n_expert_used)?;
+            let mut selected = Vec::new();
+            topk_into(&probs, moe.n_expert_used, &mut selected)?;
             let mut wsum = 0.0f32;
             let mut weights = Vec::new();
             for &e in &selected {
@@ -4446,16 +4849,14 @@ impl Llama {
                 .get_mut(off..off.saturating_add(n_embd))
                 .ok_or_else(|| LlamaError::Shape("qwen3moe out".into()))?;
             for (e, w) in selected.iter().zip(weights.iter()) {
-                let ge = expert_view(&moe.gate_exps, *e)?;
-                let ue = expert_view(&moe.up_exps, *e)?;
-                let de = expert_view(&moe.down_exps, *e)?;
-                let g = self.gemv_mat(&ge, xt)?;
-                let u = self.gemv_mat(&ue, xt)?;
-                let mut hh = silu(&g)?;
+                let g = self.gemv_part_mat(&moe.gate_exps, *e, xt, pool)?;
+                let u = self.gemv_part_mat(&moe.up_exps, *e, xt, pool)?;
+                let mut hh = g;
+                silu_inplace(&mut hh);
                 for (a, b) in hh.iter_mut().zip(u.iter()) {
                     *a *= *b;
                 }
-                let y = self.gemv_mat(&de, &hh)?;
+                let y = self.gemv_part_mat(&moe.down_exps, *e, &hh, pool)?;
                 for (d, v) in dst.iter_mut().zip(y.iter()) {
                     *d += *v * *w;
                 }
@@ -4471,19 +4872,21 @@ impl Llama {
         moe: &Qwen2Moe,
         n_tokens: usize,
         x: &[f32],
+        pool: &mut GemvPool,
     ) -> Result<Vec<f32>, LlamaError> {
         let n_embd = moe.down_shexp.n_rows;
         if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
             return Err(LlamaError::Shape("qwen3next".into()));
         }
-        let gate_s = self.gemm_mat(&moe.gate_shexp, n_tokens, x)?;
-        let up_s = self.gemm_mat(&moe.up_shexp, n_tokens, x)?;
-        let mut h_s = silu(&gate_s)?;
+        let gate_s = self.gemm_mat(&moe.gate_shexp, n_tokens, x, pool)?;
+        let up_s = self.gemm_mat(&moe.up_shexp, n_tokens, x, pool)?;
+        let mut h_s = gate_s;
+        silu_inplace(&mut h_s);
         for (hv, uv) in h_s.iter_mut().zip(up_s.iter()) {
             *hv *= *uv;
         }
-        let mut shexp = self.gemm_mat(&moe.down_shexp, n_tokens, &h_s)?;
-        let shexp_gate = self.gemm_mat(&moe.gate_inp_shexp, n_tokens, x)?;
+        let mut shexp = self.gemm_mat(&moe.down_shexp, n_tokens, &h_s, pool)?;
+        let shexp_gate = self.gemm_mat(&moe.gate_inp_shexp, n_tokens, x, pool)?;
         if shexp_gate.len() != n_tokens {
             return Err(LlamaError::Shape("qwen3next ffn_gate_inp_shexp".into()));
         }
@@ -4503,13 +4906,14 @@ impl Llama {
         let mut out = vec![0.0f32; n_out];
         for t in 0..n_tokens {
             let xt = token_row(x, t, n_embd, "qwen3next x")?;
-            let logits = self.gemv_mat(&moe.gate_inp, xt)?;
+            let logits = self.gemv_mat(&moe.gate_inp, xt, pool)?;
             if logits.len() != moe.n_expert {
                 return Err(LlamaError::Shape("qwen3next ffn_gate_inp".into()));
             }
             let mut probs = logits;
             softmax(&mut probs);
-            let selected = topk_logits(&probs, moe.n_expert_used)?;
+            let mut selected = Vec::new();
+            topk_into(&probs, moe.n_expert_used, &mut selected)?;
             let mut wsum = 0.0f32;
             let mut weights = Vec::new();
             for &e in &selected {
@@ -4528,16 +4932,14 @@ impl Llama {
                 .get_mut(off..off.saturating_add(n_embd))
                 .ok_or_else(|| LlamaError::Shape("qwen3next out".into()))?;
             for (e, w) in selected.iter().zip(weights.iter()) {
-                let ge = expert_view(&moe.gate_exps, *e)?;
-                let ue = expert_view(&moe.up_exps, *e)?;
-                let de = expert_view(&moe.down_exps, *e)?;
-                let g = self.gemv_mat(&ge, xt)?;
-                let u = self.gemv_mat(&ue, xt)?;
-                let mut hh = silu(&g)?;
+                let g = self.gemv_part_mat(&moe.gate_exps, *e, xt, pool)?;
+                let u = self.gemv_part_mat(&moe.up_exps, *e, xt, pool)?;
+                let mut hh = g;
+                silu_inplace(&mut hh);
                 for (a, b) in hh.iter_mut().zip(u.iter()) {
                     *a *= *b;
                 }
-                let y = self.gemv_mat(&de, &hh)?;
+                let y = self.gemv_part_mat(&moe.down_exps, *e, &hh, pool)?;
                 for (d, v) in dst.iter_mut().zip(y.iter()) {
                     *d += *v * *w;
                 }
@@ -4552,47 +4954,15 @@ impl Llama {
         Ok(out)
     }
 
-    fn embed(&self, token: u32) -> Result<Vec<f32>, LlamaError> {
+    /// Dequantize `token`'s embedding row into `y` (`token_embd.n_cols` long).
+    fn embed_into(&self, token: u32, y: &mut [f32]) -> Result<(), LlamaError> {
         let emb = &self.token_embd;
+        if y.len() != emb.n_cols {
+            return Err(LlamaError::Shape(emb.name.clone()));
+        }
         let data = self.mat_bytes(emb)?;
         let row = usize::try_from(token).map_err(|_| LlamaError::Shape(emb.name.clone()))?;
-        let rb = match emb.ty {
-            GgmlType::F32 => f32_row_bytes(emb.n_cols)?,
-            GgmlType::F16 => f16_row_bytes(emb.n_cols)?,
-            GgmlType::BF16 => bf16_row_bytes(emb.n_cols)?,
-            GgmlType::Q2_K => q2_k_row_bytes(emb.n_cols)?,
-            GgmlType::Q3_K => q3_k_row_bytes(emb.n_cols)?,
-            GgmlType::Q4_1 => q4_1_row_bytes(emb.n_cols)?,
-            GgmlType::Q5_0 => q5_0_row_bytes(emb.n_cols)?,
-            GgmlType::Q5_1 => q5_1_row_bytes(emb.n_cols)?,
-            GgmlType::MXFP4 => mxfp4_row_bytes(emb.n_cols)?,
-            GgmlType::NVFP4 => nvfp4_row_bytes(emb.n_cols)?,
-            GgmlType::Q1_0 => q1_0_row_bytes(emb.n_cols)?,
-            GgmlType::Q2_0 => q2_0_row_bytes(emb.n_cols)?,
-            GgmlType::Q4_0 => q4_0_row_bytes(emb.n_cols)?,
-            GgmlType::Q8_0 => q8_0_row_bytes(emb.n_cols)?,
-            GgmlType::Q8_1 => q8_1_row_bytes(emb.n_cols)?,
-            GgmlType::TQ1_0 => tq1_0_row_bytes(emb.n_cols)?,
-            GgmlType::TQ2_0 => tq2_0_row_bytes(emb.n_cols)?,
-            GgmlType::Q4_K => q4_k_row_bytes(emb.n_cols)?,
-            GgmlType::Q5_K => q5_k_row_bytes(emb.n_cols)?,
-            GgmlType::Q6_K => q6_k_row_bytes(emb.n_cols)?,
-            GgmlType::IQ1_S => iq1_s_row_bytes(emb.n_cols)?,
-            GgmlType::IQ1_M => iq1_m_row_bytes(emb.n_cols)?,
-            GgmlType::IQ2_XXS => iq2_xxs_row_bytes(emb.n_cols)?,
-            GgmlType::IQ2_XS => iq2_xs_row_bytes(emb.n_cols)?,
-            GgmlType::IQ2_S => iq2_s_row_bytes(emb.n_cols)?,
-            GgmlType::IQ3_XXS => iq3_xxs_row_bytes(emb.n_cols)?,
-            GgmlType::IQ3_S => iq3_s_row_bytes(emb.n_cols)?,
-            GgmlType::IQ4_NL => iq4_nl_row_bytes(emb.n_cols)?,
-            GgmlType::IQ4_XS => iq4_xs_row_bytes(emb.n_cols)?,
-            other => {
-                return Err(LlamaError::Type {
-                    tensor: emb.name.clone(),
-                    ty: other.to_i32(),
-                })
-            }
-        };
+        let rb = row_bytes_for(emb.ty, emb.n_cols, &emb.name)?;
         let start = row
             .checked_mul(rb)
             .ok_or_else(|| LlamaError::Shape(emb.name.clone()))?;
@@ -4602,37 +4972,36 @@ impl Llama {
         let bytes = data
             .get(start..end)
             .ok_or_else(|| LlamaError::Shape(emb.name.clone()))?;
-        let mut y = vec![0.0f32; emb.n_cols];
         match emb.ty {
-            GgmlType::F32 => dequant_f32_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::F16 => dequant_f16_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::BF16 => dequant_bf16_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q2_K => dequant_q2_k_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q3_K => dequant_q3_k_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q4_1 => dequant_q4_1_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q5_0 => dequant_q5_0_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q5_1 => dequant_q5_1_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::MXFP4 => dequant_mxfp4_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::NVFP4 => dequant_nvfp4_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q1_0 => dequant_q1_0_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q2_0 => dequant_q2_0_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q4_0 => dequant_q4_0_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q8_0 => dequant_q8_0_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q8_1 => dequant_q8_1_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::TQ1_0 => dequant_tq1_0_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::TQ2_0 => dequant_tq2_0_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q4_K => dequant_q4_k_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q5_K => dequant_q5_k_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::Q6_K => dequant_q6_k_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ1_S => dequant_iq1_s_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ1_M => dequant_iq1_m_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ2_XXS => dequant_iq2_xxs_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ2_XS => dequant_iq2_xs_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ2_S => dequant_iq2_s_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ3_XXS => dequant_iq3_xxs_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ3_S => dequant_iq3_s_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ4_NL => dequant_iq4_nl_row(emb.n_cols, bytes, &mut y)?,
-            GgmlType::IQ4_XS => dequant_iq4_xs_row(emb.n_cols, bytes, &mut y)?,
+            GgmlType::F32 => dequant_f32_row(emb.n_cols, bytes, y)?,
+            GgmlType::F16 => dequant_f16_row(emb.n_cols, bytes, y)?,
+            GgmlType::BF16 => dequant_bf16_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q2_K => dequant_q2_k_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q3_K => dequant_q3_k_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q4_1 => dequant_q4_1_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q5_0 => dequant_q5_0_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q5_1 => dequant_q5_1_row(emb.n_cols, bytes, y)?,
+            GgmlType::MXFP4 => dequant_mxfp4_row(emb.n_cols, bytes, y)?,
+            GgmlType::NVFP4 => dequant_nvfp4_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q1_0 => dequant_q1_0_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q2_0 => dequant_q2_0_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q4_0 => dequant_q4_0_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q8_0 => dequant_q8_0_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q8_1 => dequant_q8_1_row(emb.n_cols, bytes, y)?,
+            GgmlType::TQ1_0 => dequant_tq1_0_row(emb.n_cols, bytes, y)?,
+            GgmlType::TQ2_0 => dequant_tq2_0_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q4_K => dequant_q4_k_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q5_K => dequant_q5_k_row(emb.n_cols, bytes, y)?,
+            GgmlType::Q6_K => dequant_q6_k_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ1_S => dequant_iq1_s_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ1_M => dequant_iq1_m_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ2_XXS => dequant_iq2_xxs_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ2_XS => dequant_iq2_xs_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ2_S => dequant_iq2_s_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ3_XXS => dequant_iq3_xxs_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ3_S => dequant_iq3_s_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ4_NL => dequant_iq4_nl_row(emb.n_cols, bytes, y)?,
+            GgmlType::IQ4_XS => dequant_iq4_xs_row(emb.n_cols, bytes, y)?,
             other => {
                 return Err(LlamaError::Type {
                     tensor: emb.name.clone(),
@@ -4640,7 +5009,7 @@ impl Llama {
                 })
             }
         }
-        Ok(y)
+        Ok(())
     }
 
     #[cfg(test)]
@@ -4655,23 +5024,120 @@ impl Llama {
 
     #[cfg(test)]
     fn gemv_output(&self, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
-        self.gemv_mat(&self.output, x)
+        let mut y = Vec::new();
+        self.gemv_into(&self.output, x, &mut y, &mut None)?;
+        Ok(y)
     }
 
     #[cfg(test)]
     fn gemv_token_embd(&self, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
-        self.gemv_mat(&self.token_embd, x)
+        let mut y = Vec::new();
+        self.gemv_into(&self.token_embd, x, &mut y, &mut None)?;
+        Ok(y)
     }
 
     #[cfg(test)]
     fn gemm_output(&self, n_tokens: usize, x: &[f32]) -> Result<Vec<f32>, LlamaError> {
-        self.gemm_mat(&self.output, n_tokens, x)
+        let mut y = Vec::new();
+        self.gemm_into(&self.output, n_tokens, x, &mut y, &mut None)?;
+        Ok(y)
     }
 
     #[cfg(test)]
     fn embed_token(&self, token: u32) -> Result<Vec<f32>, LlamaError> {
-        self.embed(token)
+        let mut y = vec![0.0f32; self.token_embd.n_cols];
+        self.embed_into(token, &mut y)?;
+        Ok(y)
     }
+}
+
+/// `y[r] = W[r] · x` for exactly `y.len()` rows starting at `w`.
+///
+/// The dtype dispatch for both the in-thread path and the pool's workers.
+/// Rows are independent, so a row range is bit-identical to the whole matrix.
+/// `Ok(false)` means `ty` has no GEMV kernel.
+fn gemv_rows(
+    ty: GgmlType,
+    n_cols: usize,
+    w: &[u8],
+    x: &[f32],
+    y: &mut [f32],
+) -> Result<bool, QuantError> {
+    match ty {
+        GgmlType::F32 => gemv_f32(n_cols, w, x, y)?,
+        GgmlType::F16 => gemv_f16(n_cols, w, x, y)?,
+        GgmlType::BF16 => gemv_bf16(n_cols, w, x, y)?,
+        GgmlType::Q2_K => gemv_q2_k_f32(n_cols, w, x, y)?,
+        GgmlType::Q3_K => gemv_q3_k_f32(n_cols, w, x, y)?,
+        GgmlType::Q4_1 => gemv_q4_1_f32(n_cols, w, x, y)?,
+        GgmlType::Q5_0 => gemv_q5_0_f32(n_cols, w, x, y)?,
+        GgmlType::Q5_1 => gemv_q5_1_f32(n_cols, w, x, y)?,
+        GgmlType::MXFP4 => gemv_mxfp4_f32(n_cols, w, x, y)?,
+        GgmlType::NVFP4 => gemv_nvfp4_f32(n_cols, w, x, y)?,
+        GgmlType::Q1_0 => gemv_q1_0_f32(n_cols, w, x, y)?,
+        GgmlType::Q2_0 => gemv_q2_0_f32(n_cols, w, x, y)?,
+        GgmlType::Q4_0 => gemv_q4_0_f32(n_cols, w, x, y)?,
+        GgmlType::Q8_0 => gemv_q8_0_f32(n_cols, w, x, y)?,
+        GgmlType::Q8_1 => gemv_q8_1_f32(n_cols, w, x, y)?,
+        GgmlType::TQ1_0 => gemv_tq1_0_f32(n_cols, w, x, y)?,
+        GgmlType::TQ2_0 => gemv_tq2_0_f32(n_cols, w, x, y)?,
+        GgmlType::Q4_K => gemv_q4_k_f32(n_cols, w, x, y)?,
+        GgmlType::Q5_K => gemv_q5_k_f32(n_cols, w, x, y)?,
+        GgmlType::Q6_K => gemv_q6_k_f32(n_cols, w, x, y)?,
+        GgmlType::IQ1_S => gemv_iq1_s_f32(n_cols, w, x, y)?,
+        GgmlType::IQ1_M => gemv_iq1_m_f32(n_cols, w, x, y)?,
+        GgmlType::IQ2_XXS => gemv_iq2_xxs_f32(n_cols, w, x, y)?,
+        GgmlType::IQ2_XS => gemv_iq2_xs_f32(n_cols, w, x, y)?,
+        GgmlType::IQ2_S => gemv_iq2_s_f32(n_cols, w, x, y)?,
+        GgmlType::IQ3_XXS => gemv_iq3_xxs_f32(n_cols, w, x, y)?,
+        GgmlType::IQ3_S => gemv_iq3_s_f32(n_cols, w, x, y)?,
+        GgmlType::IQ4_NL => gemv_iq4_nl_f32(n_cols, w, x, y)?,
+        GgmlType::IQ4_XS => gemv_iq4_xs_f32(n_cols, w, x, y)?,
+        _ => return Ok(false),
+    }
+    Ok(true)
+}
+
+/// Packed bytes per matrix row for `ty`.
+fn row_bytes_for(ty: GgmlType, n_cols: usize, name: &str) -> Result<usize, LlamaError> {
+    let rb = match ty {
+        GgmlType::F32 => f32_row_bytes(n_cols)?,
+        GgmlType::F16 => f16_row_bytes(n_cols)?,
+        GgmlType::BF16 => bf16_row_bytes(n_cols)?,
+        GgmlType::Q2_K => q2_k_row_bytes(n_cols)?,
+        GgmlType::Q3_K => q3_k_row_bytes(n_cols)?,
+        GgmlType::Q4_1 => q4_1_row_bytes(n_cols)?,
+        GgmlType::Q5_0 => q5_0_row_bytes(n_cols)?,
+        GgmlType::Q5_1 => q5_1_row_bytes(n_cols)?,
+        GgmlType::MXFP4 => mxfp4_row_bytes(n_cols)?,
+        GgmlType::NVFP4 => nvfp4_row_bytes(n_cols)?,
+        GgmlType::Q1_0 => q1_0_row_bytes(n_cols)?,
+        GgmlType::Q2_0 => q2_0_row_bytes(n_cols)?,
+        GgmlType::Q4_0 => q4_0_row_bytes(n_cols)?,
+        GgmlType::Q8_0 => q8_0_row_bytes(n_cols)?,
+        GgmlType::Q8_1 => q8_1_row_bytes(n_cols)?,
+        GgmlType::TQ1_0 => tq1_0_row_bytes(n_cols)?,
+        GgmlType::TQ2_0 => tq2_0_row_bytes(n_cols)?,
+        GgmlType::Q4_K => q4_k_row_bytes(n_cols)?,
+        GgmlType::Q5_K => q5_k_row_bytes(n_cols)?,
+        GgmlType::Q6_K => q6_k_row_bytes(n_cols)?,
+        GgmlType::IQ1_S => iq1_s_row_bytes(n_cols)?,
+        GgmlType::IQ1_M => iq1_m_row_bytes(n_cols)?,
+        GgmlType::IQ2_XXS => iq2_xxs_row_bytes(n_cols)?,
+        GgmlType::IQ2_XS => iq2_xs_row_bytes(n_cols)?,
+        GgmlType::IQ2_S => iq2_s_row_bytes(n_cols)?,
+        GgmlType::IQ3_XXS => iq3_xxs_row_bytes(n_cols)?,
+        GgmlType::IQ3_S => iq3_s_row_bytes(n_cols)?,
+        GgmlType::IQ4_NL => iq4_nl_row_bytes(n_cols)?,
+        GgmlType::IQ4_XS => iq4_xs_row_bytes(n_cols)?,
+        other => {
+            return Err(LlamaError::Type {
+                tensor: name.into(),
+                ty: other.to_i32(),
+            })
+        }
+    };
+    Ok(rb)
 }
 
 fn token_row<'a>(
@@ -4690,24 +5156,50 @@ fn token_row<'a>(
         .ok_or_else(|| LlamaError::Shape(what.into()))
 }
 
-fn rmsnorm_rows(x: &[f32], width: usize, w: &[f32], eps: f32) -> Result<Vec<f32>, LlamaError> {
+fn token_row_mut<'a>(
+    x: &'a mut [f32],
+    t: usize,
+    width: usize,
+    what: &'static str,
+) -> Result<&'a mut [f32], LlamaError> {
+    let start = t
+        .checked_mul(width)
+        .ok_or_else(|| LlamaError::Shape(what.into()))?;
+    let end = start
+        .checked_add(width)
+        .ok_or_else(|| LlamaError::Shape(what.into()))?;
+    x.get_mut(start..end)
+        .ok_or_else(|| LlamaError::Shape(what.into()))
+}
+
+fn rmsnorm_rows_inplace(
+    x: &mut [f32],
+    width: usize,
+    w: &[f32],
+    eps: f32,
+) -> Result<(), LlamaError> {
     if width == 0 || !x.len().is_multiple_of(width) {
         return Err(LlamaError::Shape("rmsnorm".into()));
     }
-    let mut out = Vec::new();
-    for row in x.chunks(width) {
-        out.extend(rmsnorm(row, w, eps)?);
+    for row in x.chunks_mut(width) {
+        rmsnorm_inplace(row, w, eps)?;
     }
-    Ok(out)
+    Ok(())
 }
 
-/// Official Qwen3Next: split joint Q+gate (`n_embd_head * 2` per head) into query and gate.
-fn split_qwen3next_q_gate(
-    q_full: &[f32],
+/// Official Qwen3Next: split joint Q+gate (`n_embd_head * 2` per head) into
+/// query and gate, compacting the query half of `q` in place.
+///
+/// Head `h` of token `t` starts at `t*2*n_head*hd + h*2*hd` and has to end up at
+/// `t*n_head*hd + h*hd`, which is never later in the buffer, so a forward walk
+/// only ever writes behind what it has already read.
+fn split_qwen3next_q_gate_into(
+    q: &mut Vec<f32>,
+    gate: &mut Vec<f32>,
     n_tokens: usize,
     n_head: usize,
     hd: usize,
-) -> Result<(Vec<f32>, Option<Vec<f32>>), LlamaError> {
+) -> Result<(), LlamaError> {
     let q_width = n_head
         .checked_mul(hd)
         .and_then(|v| v.checked_mul(2))
@@ -4715,18 +5207,13 @@ fn split_qwen3next_q_gate(
     let q_out_w = n_head
         .checked_mul(hd)
         .ok_or_else(|| LlamaError::Shape("qwen3next q gate".into()))?;
-    if hd == 0
-        || n_head == 0
-        || !q_full.len().is_multiple_of(q_width)
-        || q_full.len() / q_width != n_tokens
-    {
+    if hd == 0 || n_head == 0 || !q.len().is_multiple_of(q_width) || q.len() / q_width != n_tokens {
         return Err(LlamaError::Shape("qwen3next q gate".into()));
     }
     let n_out = n_tokens
         .checked_mul(q_out_w)
         .ok_or_else(|| LlamaError::Shape("qwen3next q gate".into()))?;
-    let mut q = vec![0.0f32; n_out];
-    let mut gate = vec![0.0f32; n_out];
+    fit(gate, n_out);
     for t in 0..n_tokens {
         for h in 0..n_head {
             let src = t
@@ -4735,49 +5222,28 @@ fn split_qwen3next_q_gate(
             let dst = t
                 .saturating_mul(q_out_w)
                 .saturating_add(h.saturating_mul(hd));
-            let q_src = q_full
-                .get(src..src.saturating_add(hd))
-                .ok_or_else(|| LlamaError::Shape("qwen3next q gate".into()))?;
-            let g_src = q_full
+            let g_src = q
                 .get(src.saturating_add(hd)..src.saturating_add(hd.saturating_mul(2)))
-                .ok_or_else(|| LlamaError::Shape("qwen3next q gate".into()))?;
-            let q_dst = q
-                .get_mut(dst..dst.saturating_add(hd))
                 .ok_or_else(|| LlamaError::Shape("qwen3next q gate".into()))?;
             let g_dst = gate
                 .get_mut(dst..dst.saturating_add(hd))
                 .ok_or_else(|| LlamaError::Shape("qwen3next q gate".into()))?;
-            for (d, s) in q_dst.iter_mut().zip(q_src.iter()) {
-                *d = *s;
-            }
             for (d, s) in g_dst.iter_mut().zip(g_src.iter()) {
                 *d = *s;
             }
+            if src.saturating_add(hd) > q.len() || dst.saturating_add(hd) > q.len() {
+                return Err(LlamaError::Shape("qwen3next q gate".into()));
+            }
+            q.copy_within(src..src.saturating_add(hd), dst);
         }
     }
-    Ok((q, Some(gate)))
+    q.truncate(n_out);
+    Ok(())
 }
 
-/// Official Qwen3 / Qwen3MoE QK-Norm: per-head `LLM_NORM_RMS` on Q or K.
-fn qk_norm_rows(
-    x: Vec<f32>,
-    head_dim: usize,
-    w: Option<&[f32]>,
-    eps: f32,
-) -> Result<Vec<f32>, LlamaError> {
-    match w {
-        Some(w) => rmsnorm_rows(&x, head_dim, w, eps),
-        None => Ok(x),
-    }
-}
-
-fn add_bias_rows(
-    mut x: Vec<f32>,
-    width: usize,
-    bias: Option<&[f32]>,
-) -> Result<Vec<f32>, LlamaError> {
+fn add_bias_rows(x: &mut [f32], width: usize, bias: Option<&[f32]>) -> Result<(), LlamaError> {
     let Some(b) = bias else {
-        return Ok(x);
+        return Ok(());
     };
     if b.len() != width || width == 0 || !x.len().is_multiple_of(width) {
         return Err(LlamaError::Shape("vector add".into()));
@@ -4787,74 +5253,77 @@ fn add_bias_rows(
             *xv += *bv;
         }
     }
-    Ok(x)
+    Ok(())
 }
 
+/// Softmax(`score_scale` QK^T) V for one token's heads, accumulated into `out`.
+///
+/// `q` and `out` are `n_head * hd` long; `scores` is grown to `seq`. GQA maps
+/// query head `hq` to KV head `hq / (n_head / n_head_kv)`.
+///
+/// `score_scale` is `1/sqrt(hd)` for every arch except official phi2, which
+/// scales Q after RoPE instead and passes 1.0 here.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "cache halves, layout, scale and both scratch buffers are all per-call"
+)]
 fn attend_query(
-    cache: &KvCache,
+    cache_k: &[f32],
+    cache_v: &[f32],
     layer: usize,
-    qh: &[Vec<f32>],
+    q: &[f32],
     n_head_kv: usize,
     hd: usize,
     seq: usize,
+    max_seq: usize,
     score_scale: f32,
-) -> Result<Vec<f32>, LlamaError> {
-    if n_head_kv == 0 {
+    scores: &mut Vec<f32>,
+    out: &mut [f32],
+) -> Result<(), LlamaError> {
+    if n_head_kv == 0 || hd == 0 || q.len() != out.len() || !q.len().is_multiple_of(hd) {
         return Err(LlamaError::Shape("gqa".into()));
     }
-    let n_embd = qh.len().saturating_mul(hd);
-    let mut attn = vec![0.0f32; n_embd];
-    let inv = score_scale;
-    let gqa = qh.len() / n_head_kv;
+    let gqa = (q.len() / hd) / n_head_kv;
     if gqa == 0 {
         return Err(LlamaError::Shape("gqa".into()));
     }
-    for (hq, qvec) in qh.iter().enumerate() {
+    fit(scores, seq);
+    for (hq, (qvec, dst)) in q.chunks(hd).zip(out.chunks_mut(hd)).enumerate() {
         let hkv = hq / gqa;
-        let mut scores = vec![0.0f32; seq];
-        for t in 0..seq {
-            let kv = kv_at(&cache.k, layer, hkv, n_head_kv, cache.max_seq, t, hd)?;
+        for (t, score) in scores.iter_mut().enumerate() {
+            let kv = kv_at(cache_k, layer, hkv, n_head_kv, max_seq, t, hd)?;
             let mut dot = 0.0f32;
             for (a, b) in qvec.iter().zip(kv.iter()) {
                 dot += *a * *b;
             }
-            if let Some(s) = scores.get_mut(t) {
-                *s = dot * inv;
-            }
+            *score = dot * score_scale;
         }
-        softmax(&mut scores);
-        let mut acc = vec![0.0f32; hd];
-        for t in 0..seq {
-            let Some(&st) = scores.get(t) else { continue };
-            let vv = kv_at(&cache.v, layer, hkv, n_head_kv, cache.max_seq, t, hd)?;
-            for (a, b) in acc.iter_mut().zip(vv.iter()) {
-                *a += st * *b;
-            }
+        softmax(scores);
+        for d in dst.iter_mut() {
+            *d = 0.0;
         }
-        let off = hq.saturating_mul(hd);
-        if let Some(dst) = attn.get_mut(off..off + hd) {
-            for (d, s) in dst.iter_mut().zip(acc.iter()) {
-                *d = *s;
+        for (t, st) in scores.iter().enumerate() {
+            let vv = kv_at(cache_v, layer, hkv, n_head_kv, max_seq, t, hd)?;
+            for (a, b) in dst.iter_mut().zip(vv.iter()) {
+                *a += *st * *b;
             }
         }
     }
-    Ok(attn)
+    Ok(())
 }
 
 /// Official Llama4 `ggml_rms_norm` without a weight (`Llama4TextL2Norm`).
-fn rmsnorm_unweighted(x: &[f32], eps: f32) -> Result<Vec<f32>, LlamaError> {
+fn rmsnorm_unweighted_inplace(x: &mut [f32], eps: f32) {
     let mut ss = 0.0f32;
-    for v in x {
+    for v in x.iter() {
         ss += *v * *v;
     }
     let n = f32::from(u16::try_from(x.len()).unwrap_or(1));
     let rms = (ss / n + eps).sqrt();
     let inv = if rms > 0.0 { 1.0 / rms } else { 0.0 };
-    let mut out = vec![0.0f32; x.len()];
-    for (o, xv) in out.iter_mut().zip(x.iter()) {
-        *o = *xv * inv;
+    for xv in x.iter_mut() {
+        *xv *= inv;
     }
-    Ok(out)
 }
 
 /// Official llama.cpp `llm_graph_input_attn_temp` for Llama4 NoPE layers.
@@ -4868,13 +5337,18 @@ fn sigmoid_f32(x: f32) -> f32 {
     1.0 / (1.0 + (-x).exp())
 }
 
-/// ggml `ggml_argsort_top_k` descending; ties keep the lower index.
-fn topk_logits(logits: &[f32], k: usize) -> Result<Vec<usize>, LlamaError> {
+/// ggml `ggml_argsort_top_k` descending; ties keep the lower index. Writes the
+/// selected indices into `order`.
+///
+/// `sort_unstable_by` rather than `sort_by`: the comparator is a total order
+/// (ties break on index) so the result is the same, and it does not allocate.
+fn topk_into(logits: &[f32], k: usize, order: &mut Vec<usize>) -> Result<(), LlamaError> {
     if k == 0 || k > logits.len() {
         return Err(LlamaError::Shape("expert_used_count".into()));
     }
-    let mut idx: Vec<usize> = (0..logits.len()).collect();
-    idx.sort_by(|&a, &b| {
+    order.clear();
+    order.extend(0..logits.len());
+    order.sort_unstable_by(|&a, &b| {
         let va = logits.get(a).copied().unwrap_or(f32::NEG_INFINITY);
         let vb = logits.get(b).copied().unwrap_or(f32::NEG_INFINITY);
         match vb.partial_cmp(&va) {
@@ -4882,51 +5356,38 @@ fn topk_logits(logits: &[f32], k: usize) -> Result<Vec<usize>, LlamaError> {
             Some(ord) => ord,
         }
     });
-    idx.truncate(k);
-    Ok(idx)
+    order.truncate(k);
+    Ok(())
 }
 
-fn expert_view(m: &QuantMat, e: usize) -> Result<QuantMat, LlamaError> {
-    if m.n_parts == 0 || e >= m.n_parts {
-        return Err(LlamaError::Shape(m.name.clone()));
-    }
-    let total = m.end.saturating_sub(m.start);
-    let part = total / m.n_parts;
-    if part.saturating_mul(m.n_parts) != total {
-        return Err(LlamaError::Shape(m.name.clone()));
-    }
-    let start = m.start.saturating_add(e.saturating_mul(part));
-    Ok(QuantMat {
-        name: m.name.clone(),
-        ty: m.ty,
-        n_cols: m.n_cols,
-        n_rows: m.n_rows,
-        n_parts: 1,
-        start,
-        end: start.saturating_add(part),
-    })
-}
-
-fn rmsnorm(x: &[f32], w: &[f32], eps: f32) -> Result<Vec<f32>, LlamaError> {
+fn rmsnorm_inplace(x: &mut [f32], w: &[f32], eps: f32) -> Result<(), LlamaError> {
     if x.len() != w.len() {
         return Err(LlamaError::Shape("rmsnorm".into()));
     }
     let mut ss = 0.0f32;
-    for v in x {
+    for v in x.iter() {
         ss += *v * *v;
     }
     let n = f32::from(u16::try_from(x.len()).unwrap_or(1));
     let rms = (ss / n + eps).sqrt();
     let inv = if rms > 0.0 { 1.0 / rms } else { 0.0 };
-    let mut out = vec![0.0f32; x.len()];
-    for ((o, xv), wv) in out.iter_mut().zip(x.iter()).zip(w.iter()) {
-        *o = *xv * inv * *wv;
+    for (xv, wv) in x.iter_mut().zip(w.iter()) {
+        *xv = *xv * inv * *wv;
     }
-    Ok(out)
+    Ok(())
 }
 
-/// Official `ggml_compute_forward_norm_f32` + `build_norm` `LLM_NORM` (weight, optional bias).
-fn layernorm(x: &[f32], w: &[f32], b: Option<&[f32]>, eps: f32) -> Result<Vec<f32>, LlamaError> {
+/// Official `ggml_compute_forward_norm_f32` + `build_norm` `LLM_NORM` (weight,
+/// optional bias), writing over its input.
+///
+/// Mean and variance are both taken before any element is written, so this
+/// produces the same bits as normalizing into a fresh buffer.
+fn layernorm_inplace(
+    x: &mut [f32],
+    w: &[f32],
+    b: Option<&[f32]>,
+    eps: f32,
+) -> Result<(), LlamaError> {
     if x.len() != w.len() {
         return Err(LlamaError::Shape("layernorm".into()));
     }
@@ -4937,12 +5398,12 @@ fn layernorm(x: &[f32], w: &[f32], b: Option<&[f32]>, eps: f32) -> Result<Vec<f3
     }
     let n = f32::from(u16::try_from(x.len()).unwrap_or(1));
     let mut sum = 0.0f32;
-    for v in x {
+    for v in x.iter() {
         sum += *v;
     }
     let mean = if n > 0.0 { sum / n } else { 0.0 };
     let mut var = 0.0f32;
-    for v in x {
+    for v in x.iter() {
         let d = *v - mean;
         var += d * d;
     }
@@ -4950,34 +5411,33 @@ fn layernorm(x: &[f32], w: &[f32], b: Option<&[f32]>, eps: f32) -> Result<Vec<f3
         var /= n;
     }
     let scale = 1.0 / (var + eps).sqrt();
-    let mut out = vec![0.0f32; x.len()];
-    for (i, ((o, xv), wv)) in out.iter_mut().zip(x.iter()).zip(w.iter()).enumerate() {
+    for (i, (xv, wv)) in x.iter_mut().zip(w.iter()).enumerate() {
         let mut y = (*xv - mean) * scale * *wv;
         if let Some(b) = b {
             if let Some(bv) = b.get(i) {
                 y += *bv;
             }
         }
-        *o = y;
+        *xv = y;
     }
-    Ok(out)
+    Ok(())
 }
 
-fn layernorm_rows(
-    x: &[f32],
+/// [`layernorm_rows`] writing over its input.
+fn layernorm_rows_inplace(
+    x: &mut [f32],
     width: usize,
     w: &[f32],
     b: Option<&[f32]>,
     eps: f32,
-) -> Result<Vec<f32>, LlamaError> {
+) -> Result<(), LlamaError> {
     if width == 0 || !x.len().is_multiple_of(width) {
         return Err(LlamaError::Shape("layernorm".into()));
     }
-    let mut out = Vec::new();
-    for row in x.chunks(width) {
-        out.extend(layernorm(row, w, b, eps)?);
+    for row in x.chunks_mut(width) {
+        layernorm_inplace(row, w, b, eps)?;
     }
-    Ok(out)
+    Ok(())
 }
 
 fn rope(vec: &mut [f32], pos: usize, n_rot: usize, base: f32) -> Result<(), LlamaError> {
@@ -5207,12 +5667,10 @@ fn rope_multi(
     Ok(())
 }
 
-fn silu(x: &[f32]) -> Result<Vec<f32>, LlamaError> {
-    let mut out = vec![0.0f32; x.len()];
-    for (o, xv) in out.iter_mut().zip(x.iter()) {
-        *o = *xv / (1.0 + (-*xv).exp());
+fn silu_inplace(x: &mut [f32]) {
+    for xv in x.iter_mut() {
+        *xv = *xv / (1.0 + (-*xv).exp());
     }
-    Ok(out)
 }
 
 /// Official llama.cpp Gemma FFN is `LLM_FFN_GELU` → `ggml_gelu` (tanh approx).
@@ -5222,19 +5680,17 @@ fn ggml_gelu_f32(x: f32) -> f32 {
     0.5 * x * (1.0 + (sqrt_2_over_pi * x * (1.0 + coef_a * x * x)).tanh())
 }
 
-fn gelu(x: &[f32]) -> Result<Vec<f32>, LlamaError> {
-    let mut out = vec![0.0f32; x.len()];
-    for (o, xv) in out.iter_mut().zip(x.iter()) {
-        *o = ggml_gelu_f32(*xv);
+fn gelu_inplace(x: &mut [f32]) {
+    for xv in x.iter_mut() {
+        *xv = ggml_gelu_f32(*xv);
     }
-    Ok(out)
 }
 
-fn ffn_gate_act(x: &[f32], use_gelu: bool) -> Result<Vec<f32>, LlamaError> {
+fn ffn_gate_act_inplace(x: &mut [f32], use_gelu: bool) {
     if use_gelu {
-        gelu(x)
+        gelu_inplace(x);
     } else {
-        silu(x)
+        silu_inplace(x);
     }
 }
 
@@ -5252,43 +5708,49 @@ fn softmax(x: &mut [f32]) {
     }
 }
 
-fn add(a: &[f32], b: &[f32]) -> Result<Vec<f32>, LlamaError> {
+/// `dst = a + b`, growing `dst` to fit. `dst` may be neither `a` nor `b`.
+fn add_into(dst: &mut Vec<f32>, a: &[f32], b: &[f32]) -> Result<(), LlamaError> {
     if a.len() != b.len() {
         return Err(LlamaError::Shape("vector add".into()));
     }
-    Ok(a.iter().zip(b.iter()).map(|(x, y)| x + y).collect())
+    fit(dst, a.len());
+    for ((d, av), bv) in dst.iter_mut().zip(a.iter()).zip(b.iter()) {
+        *d = *av + *bv;
+    }
+    Ok(())
 }
 
-fn split_heads(x: &[f32], n_head: usize, hd: usize) -> Result<Vec<Vec<f32>>, LlamaError> {
-    if x.len() != n_head.saturating_mul(hd) {
-        return Err(LlamaError::Shape("split_heads".into()));
+/// `x += r`, elementwise.
+fn add_assign(x: &mut [f32], r: &[f32]) -> Result<(), LlamaError> {
+    if x.len() != r.len() {
+        return Err(LlamaError::Shape("vector add".into()));
     }
-    let mut out = Vec::new();
-    for h in 0..n_head {
-        let off = h.saturating_mul(hd);
-        let row = x
-            .get(off..off + hd)
-            .ok_or_else(|| LlamaError::Shape("split_heads".into()))?;
-        out.push(row.to_vec());
+    for (xv, rv) in x.iter_mut().zip(r.iter()) {
+        *xv += *rv;
     }
-    Ok(out)
+    Ok(())
 }
 
+/// Scatter one token's `n_head_kv * hd` row into the cache, which is laid out
+/// head-major (`((layer * n_head_kv + head) * max_seq + t) * hd`).
 fn store_kv(
     cache: &mut [f32],
     layer: usize,
     n_head_kv: usize,
     max_seq: usize,
     t: usize,
-    heads: &[Vec<f32>],
+    hd: usize,
+    row: &[f32],
 ) -> Result<(), LlamaError> {
-    let hd = heads.first().map(Vec::len).unwrap_or(0);
-    for (h, vec) in heads.iter().enumerate() {
+    if hd == 0 || row.len() != n_head_kv.saturating_mul(hd) {
+        return Err(LlamaError::Shape("kv store".into()));
+    }
+    for (h, head) in row.chunks(hd).enumerate() {
         let off = kv_offset(layer, h, n_head_kv, max_seq, t, hd)?;
         let dst = cache
-            .get_mut(off..off + hd)
+            .get_mut(off..off.saturating_add(hd))
             .ok_or_else(|| LlamaError::Shape("kv store".into()))?;
-        for (d, s) in dst.iter_mut().zip(vec.iter()) {
+        for (d, s) in dst.iter_mut().zip(head.iter()) {
             *d = *s;
         }
     }
@@ -8392,6 +8854,126 @@ mod tests {
         }
     }
 
+    /// Every logit bit pattern from a decode step routed through the persistent
+    /// GEMV pool, against the same step run single-threaded. A pooled GEMV
+    /// computes rows `first..last` from the byte range `base + first*row_bytes`
+    /// with the same kernel, so it must agree exactly, not just within the
+    /// oracle's 1e-3.
+    #[test]
+    fn pooled_gemv_is_bit_identical_to_sequential() {
+        fn steps(model: &Llama) -> (Vec<u32>, usize) {
+            let mut cache = model.new_cache(16).expect("cache");
+            let mut bits = Vec::new();
+            let push = |l: &[f32], bits: &mut Vec<u32>| {
+                bits.extend(l.iter().map(|v| v.to_bits()));
+            };
+            push(
+                &model.prefill(&mut cache, &[1, 3, 2]).expect("prefill"),
+                &mut bits,
+            );
+            for t in 0..4u32 {
+                push(
+                    &model.forward(&mut cache, t % 4).expect("forward"),
+                    &mut bits,
+                );
+            }
+            (bits, Llama::cache_pool_workers(&cache))
+        }
+        for (name, bytes) in [
+            ("llama", tiny_llama_gguf()),
+            ("qwen2", tiny_qwen2_gguf()),
+            ("gemma", tiny_gemma_gguf()),
+            ("qwen3", tiny_qwen3_gguf()),
+            ("llama4", tiny_llama4_gguf()),
+            ("f16", tiny_f16_gguf()),
+            ("bf16", tiny_bf16_gguf()),
+            ("q2k", tiny_q2k_gguf()),
+            ("q5k", tiny_q5k_gguf()),
+            ("iq2xxs", tiny_iq2xxs_gguf()),
+            ("iq3s", tiny_iq3s_gguf()),
+            ("tq2_0", tiny_tq20_gguf()),
+        ] {
+            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("model");
+            let (want, seq_workers) = crate::pool::with_sequential(|| steps(&model));
+            assert_eq!(seq_workers, 0, "{name}: with_sequential built a pool");
+            let (got, par_workers) = with_forced_pool(|| steps(&model));
+            if crate::pool::sequential() || par_workers == 0 {
+                // Single-core host: there is no pool to compare against.
+                continue;
+            }
+            assert!(par_workers >= 2, "{name}: pool had {par_workers} workers");
+            assert_eq!(got, want, "{name}: pooled GEMV changed a logit bit");
+        }
+    }
+
+    /// A steady-state decode step must not touch the allocator. `unsafe impl
+    /// GlobalAlloc` is not available under `#![forbid(unsafe_code)]`, so this
+    /// checks the observable consequence instead: every reused buffer keeps its
+    /// address and capacity, i.e. no `Vec` in the cache, its scratch or its
+    /// pool grows or moves. A changed buffer count fails the same comparison.
+    ///
+    /// [`Llama::forward_logits`] is the entry point under test.
+    /// [`Llama::forward`] copies the logits into a fresh `Vec` by definition,
+    /// so it can never be allocation-free.
+    ///
+    /// The tiny fixtures cover the dense, GeGLU, QK-norm and MoE walks; the
+    /// forced-pool pass covers the pool's input staging and spare buffers,
+    /// which the fixtures are otherwise too small to reach.
+    #[test]
+    fn steady_state_decode_never_regrows_a_buffer() {
+        /// One step through the borrowed-logits path, dropping the borrow so
+        /// the caller can inspect the cache again.
+        fn step(model: &Llama, cache: &mut KvCache, tok: u32) {
+            let logits = model.forward_logits(cache, tok).expect("forward");
+            assert!(!logits.is_empty(), "empty logits");
+        }
+        fn check(name: &str, model: &Llama) {
+            let mut cache = model.new_cache(64).expect("cache");
+            // Warm up: a 3-token prefill plus one decode step sizes every buffer.
+            let _ = model.prefill(&mut cache, &[1, 3, 2]).expect("prefill");
+            step(model, &mut cache, 1);
+            let before = Llama::cache_buffer_ids(&cache);
+            for s in 0..40u32 {
+                step(model, &mut cache, s % 4);
+                assert_eq!(
+                    Llama::cache_buffer_ids(&cache),
+                    before,
+                    "{name}: decode step {s} reallocated a buffer"
+                );
+            }
+            // A prefill wider than the warmup does grow the buffers once, and
+            // then the following decode steps must be steady again.
+            let mut cache = model.new_cache(64).expect("cache");
+            step(model, &mut cache, 1);
+            let narrow = Llama::cache_buffer_ids(&cache);
+            let _ = model.prefill(&mut cache, &[1, 3, 2, 1, 3]).expect("wide");
+            assert_ne!(
+                Llama::cache_buffer_ids(&cache),
+                narrow,
+                "{name}: a 5-token prefill after a 1-token warmup should grow"
+            );
+            let grown = Llama::cache_buffer_ids(&cache);
+            for s in 0..8u32 {
+                step(model, &mut cache, s % 4);
+                assert_eq!(
+                    Llama::cache_buffer_ids(&cache),
+                    grown,
+                    "{name}: decode after prefill reallocated at step {s}"
+                );
+            }
+        }
+        for (name, bytes) in [
+            ("llama", tiny_llama_gguf()),
+            ("gemma", tiny_gemma_gguf()),
+            ("qwen3", tiny_qwen3_gguf()),
+            ("llama4", tiny_llama4_gguf()),
+        ] {
+            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("model");
+            check(name, &model);
+            with_forced_pool(|| check(&format!("{name} pooled"), &model));
+        }
+    }
+
     #[test]
     fn prefill_logits_match_token_by_token_forward() {
         let tokens = [4u32, 3, 1];
@@ -9998,5 +10580,571 @@ mod tests {
             err.contains("llama.block_count"),
             "error should name kv key: {err}"
         );
+    }
+}
+
+/// Self-contained timing harness. Every test here is `#[ignore]`d so the normal
+/// suite stays fast; run it with
+/// `cargo test --release --lib bench_ -- --ignored --nocapture`.
+///
+/// The tiny oracle fixtures are far too small to time (256-wide, 1 layer,
+/// 6-token vocab), so this module writes a larger synthetic Llama-shaped GGUF
+/// with the Q4_K/Q6_K mix a real `*-Q4_K_M.gguf` uses.
+#[cfg(test)]
+mod bench {
+    use super::*;
+    use crate::load_gguf_owned;
+    use std::hint::black_box;
+    use std::time::{Duration, Instant};
+
+    /// Dimensions of the synthetic benchmark model.
+    struct BenchSpec {
+        n_embd: usize,
+        n_head: usize,
+        n_head_kv: usize,
+        n_ff: usize,
+        n_layer: usize,
+        n_vocab: usize,
+    }
+
+    impl BenchSpec {
+        /// ~40 MiB of weights: wide enough that GEMV work dominates per-row
+        /// bookkeeping, small enough to build and run inside a test.
+        fn default() -> Self {
+            Self {
+                n_embd: 1024,
+                n_head: 16,
+                n_head_kv: 4,
+                n_ff: 2816,
+                n_layer: 4,
+                n_vocab: 4096,
+            }
+        }
+
+        fn head_dim(&self) -> usize {
+            self.n_embd / self.n_head
+        }
+
+        fn n_kv(&self) -> usize {
+            self.n_head_kv * self.head_dim()
+        }
+    }
+
+    /// `pack_mat` emits exactly one block per row (the tiny fixtures are all
+    /// `n_cols == QK_K`). The benchmark needs wide rows, so pack
+    /// `n_cols / QK_K` blocks per row here.
+    fn bench_pack_mat(ty: GgmlType, n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
+        assert!(n_cols.is_multiple_of(QK_K));
+        let mut out = Vec::new();
+        let mut s = seed;
+        let mut next = move || {
+            s = s.wrapping_mul(1_664_525).wrapping_add(1);
+            s
+        };
+        for _ in 0..n_rows.saturating_mul(n_cols / QK_K) {
+            match ty {
+                GgmlType::Q4_K => {
+                    // `y = d*sc*q - dmin*m`. Pick `q` in 0..=8 and `m = 4*sc`
+                    // so rows are zero-mean; all-positive weights saturate a
+                    // 4-layer stack and every logit comes out equal.
+                    let mut qs = [0u8; QK_K];
+                    for q in &mut qs {
+                        *q = u8::try_from(next() % 9).unwrap();
+                    }
+                    let mut sc = [1u8; 8];
+                    let mut mins = [0u8; 8];
+                    for (c, m) in sc.iter_mut().zip(mins.iter_mut()) {
+                        *c = u8::try_from(1 + next() % 4).unwrap();
+                        *m = c.saturating_mul(4);
+                    }
+                    out.extend_from_slice(&pack_q4_k_block(
+                        25.0 / 100.0,
+                        25.0 / 100.0,
+                        &sc,
+                        &mins,
+                        &qs,
+                    ));
+                }
+                GgmlType::Q6_K => {
+                    let mut qs = [0i8; QK_K];
+                    for q in &mut qs {
+                        *q = i8::try_from(i32::try_from(next() % 5).unwrap() - 2).unwrap();
+                    }
+                    let mut sc = [1i8; 16];
+                    for c in &mut sc {
+                        *c = i8::try_from(1 + next() % 3).unwrap();
+                    }
+                    out.extend_from_slice(&pack_q6_k_block(25.0 / 100.0, &sc, &qs));
+                }
+                other => panic!("bench_pack_mat: unhandled type {other:?}"),
+            }
+        }
+        out
+    }
+
+    fn bench_gguf(s: &BenchSpec) -> Vec<u8> {
+        let arch = "llama";
+        let u32v = |v: usize| Kv::U32(u32::try_from(v).unwrap());
+        let kv = vec![
+            ("general.alignment".into(), u32v(GGUF_DEFAULT_ALIGNMENT)),
+            ("general.architecture".into(), Kv::String(arch.into())),
+            (arch_key(arch, "block_count"), u32v(s.n_layer)),
+            (arch_key(arch, "embedding_length"), u32v(s.n_embd)),
+            (arch_key(arch, "feed_forward_length"), u32v(s.n_ff)),
+            (arch_key(arch, "attention.head_count"), u32v(s.n_head)),
+            (arch_key(arch, "attention.head_count_kv"), u32v(s.n_head_kv)),
+            (arch_key(arch, "rope.dimension_count"), u32v(s.head_dim())),
+            (arch_key(arch, "rope.freq_base"), Kv::F32(10_000.0)),
+            (
+                arch_key(arch, "attention.layer_norm_rms_epsilon"),
+                Kv::F32(1.0 / 100_000.0),
+            ),
+        ];
+        let ones = vec![1.0f32; s.n_embd];
+        let mut tensors = vec![
+            tw(
+                "token_embd.weight",
+                GgmlType::Q4_K,
+                vec![s.n_embd, s.n_vocab],
+                bench_pack_mat(GgmlType::Q4_K, s.n_embd, s.n_vocab, 1),
+            ),
+            tw(
+                "output.weight",
+                GgmlType::Q6_K,
+                vec![s.n_embd, s.n_vocab],
+                bench_pack_mat(GgmlType::Q6_K, s.n_embd, s.n_vocab, 2),
+            ),
+            tw(
+                "output_norm.weight",
+                GgmlType::F32,
+                vec![s.n_embd],
+                pack_f32(&ones),
+            ),
+        ];
+        for li in 0..s.n_layer {
+            let seed = u32::try_from(li).unwrap() * 16 + 3;
+            let mat = |name: &str, ty: GgmlType, n_cols: usize, n_rows: usize, bump: u32| {
+                tw(
+                    &format!("blk.{li}.{name}.weight"),
+                    ty,
+                    vec![n_cols, n_rows],
+                    bench_pack_mat(ty, n_cols, n_rows, seed + bump),
+                )
+            };
+            tensors.push(tw(
+                &format!("blk.{li}.attn_norm.weight"),
+                GgmlType::F32,
+                vec![s.n_embd],
+                pack_f32(&ones),
+            ));
+            tensors.push(tw(
+                &format!("blk.{li}.ffn_norm.weight"),
+                GgmlType::F32,
+                vec![s.n_embd],
+                pack_f32(&ones),
+            ));
+            tensors.push(mat("attn_q", GgmlType::Q4_K, s.n_embd, s.n_embd, 0));
+            tensors.push(mat("attn_k", GgmlType::Q4_K, s.n_embd, s.n_kv(), 1));
+            tensors.push(mat("attn_v", GgmlType::Q4_K, s.n_embd, s.n_kv(), 2));
+            tensors.push(mat("attn_output", GgmlType::Q4_K, s.n_embd, s.n_embd, 3));
+            tensors.push(mat("ffn_gate", GgmlType::Q4_K, s.n_embd, s.n_ff, 4));
+            tensors.push(mat("ffn_up", GgmlType::Q4_K, s.n_embd, s.n_ff, 5));
+            tensors.push(mat("ffn_down", GgmlType::Q6_K, s.n_ff, s.n_embd, 6));
+        }
+        write_gguf_with_kv(&kv, &tensors)
+    }
+
+    fn bench_model(s: &BenchSpec) -> Llama {
+        let g = load_gguf_owned(bench_gguf(s)).expect("load bench gguf");
+        Llama::from_gguf(g).expect("bench model")
+    }
+
+    fn median(samples: &mut [Duration]) -> Duration {
+        samples.sort_unstable();
+        samples[samples.len() / 2]
+    }
+
+    fn report(label: &str, mut samples: Vec<Duration>) {
+        let best = *samples.iter().min().unwrap();
+        let med = median(&mut samples);
+        println!(
+            "{label:<44} min {:>10.3} ms   median {:>10.3} ms   n={}",
+            best.as_secs_f64() * 1e3,
+            med.as_secs_f64() * 1e3,
+            samples.len()
+        );
+    }
+
+    /// FNV-1a over the raw bit patterns of a logits vector.
+    fn fingerprint(logits: &[f32]) -> u64 {
+        let mut h = 0xcbf2_9ce4_8422_2325u64;
+        for v in logits {
+            for b in v.to_bits().to_le_bytes() {
+                h ^= u64::from(b);
+                h = h.wrapping_mul(0x100_0000_01b3);
+            }
+        }
+        h
+    }
+
+    /// Prints bit-exact fingerprints of production logits for every arch and a
+    /// spread of dtypes. Not an assertion: it is the tool for checking that a
+    /// refactor is bit-identical, by diffing this output across two checkouts.
+    /// The oracle tests only bound the relative error at 1e-3.
+    #[test]
+    #[ignore = "diagnostic: diff across checkouts"]
+    fn bench_logits_fingerprint() {
+        // Every zero-argument fixture in the suite, so that each architecture
+        // walk and each dtype kernel the decode path can reach is pinned.
+        let cases: [(&str, Vec<u8>); 48] = [
+            ("llama", tiny_llama_gguf()),
+            ("tied", tiny_tied_gguf()),
+            ("tied_copy", tiny_tied_copy_gguf()),
+            ("mistral", tiny_mistral_gguf()),
+            ("mha", tiny_mha_gguf()),
+            ("mqa", tiny_mqa_gguf()),
+            ("llama_moe", tiny_llama_moe_gguf()),
+            ("llama4", tiny_llama4_gguf()),
+            ("qwen2", tiny_qwen2_gguf()),
+            ("qwen2moe", tiny_qwen2moe_gguf()),
+            ("qwen2vl", tiny_qwen2vl_gguf()),
+            ("qwen3", tiny_qwen3_gguf()),
+            ("qwen3moe", tiny_qwen3moe_gguf()),
+            ("qwen3next", tiny_qwen3next_gguf()),
+            ("qwen3vl", tiny_qwen3vl_gguf()),
+            ("qwen35", tiny_qwen35_gguf()),
+            ("phi2", tiny_phi2_gguf()),
+            ("phi3", tiny_phi3_gguf()),
+            ("gemma", tiny_gemma_gguf()),
+            ("f16", tiny_f16_gguf()),
+            ("f16_1d", tiny_f16_1d_gguf()),
+            ("f16_1d_bias", tiny_f16_1d_bias_gguf()),
+            ("bf16", tiny_bf16_gguf()),
+            ("q10", tiny_q10_gguf()),
+            ("q20", tiny_q20_gguf()),
+            ("q41", tiny_q41_gguf()),
+            ("q50", tiny_q50_gguf()),
+            ("q51", tiny_q51_gguf()),
+            ("q80", tiny_q80_gguf()),
+            ("q81", tiny_q81_gguf()),
+            ("q2k", tiny_q2k_gguf()),
+            ("q3k", tiny_q3k_gguf()),
+            ("q5k", tiny_q5k_gguf()),
+            ("q4k_embd", tiny_q4k_embd_gguf()),
+            ("q6k_embd", tiny_q6k_embd_gguf()),
+            ("tq10", tiny_tq10_gguf()),
+            ("tq20", tiny_tq20_gguf()),
+            ("mxfp4", tiny_mxfp4_gguf()),
+            ("nvfp4", tiny_nvfp4_gguf()),
+            ("iq1s", tiny_iq1s_gguf()),
+            ("iq1m", tiny_iq1m_gguf()),
+            ("iq2xxs", tiny_iq2xxs_gguf()),
+            ("iq2xs", tiny_iq2xs_gguf()),
+            ("iq2s", tiny_iq2s_gguf()),
+            ("iq3xxs", tiny_iq3xxs_gguf()),
+            ("iq3s", tiny_iq3s_gguf()),
+            ("iq4nl", tiny_iq4nl_gguf()),
+            ("iq4xs", tiny_iq4xs_gguf()),
+        ];
+        for (name, bytes) in cases {
+            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("model");
+            let mut cache = model.new_cache(8).expect("cache");
+            let one = model.prefill(&mut cache, &[1]).expect("prefill 1");
+            let two = model.forward(&mut cache, 3).expect("forward");
+            let mut cache = model.new_cache(8).expect("cache");
+            let seq = model.prefill(&mut cache, &[1, 3, 2]).expect("prefill 3");
+            println!(
+                "{name:<12} fwd1 {:016x} fwd2 {:016x} pre3 {:016x}",
+                fingerprint(&one),
+                fingerprint(&two),
+                fingerprint(&seq)
+            );
+        }
+        let spec = BenchSpec::default();
+        let model = bench_model(&spec);
+        let mut cache = model.new_cache(16).expect("cache");
+        let one = model.prefill(&mut cache, &[1]).expect("prefill 1");
+        let two = model.forward(&mut cache, 7).expect("forward");
+        let mut cache = model.new_cache(16).expect("cache");
+        let seq = model.prefill(&mut cache, &[1, 7, 2, 9]).expect("prefill 4");
+        println!(
+            "{:<12} fwd1 {:016x} fwd2 {:016x} pre4 {:016x}",
+            "bench1024",
+            fingerprint(&one),
+            fingerprint(&two),
+            fingerprint(&seq)
+        );
+        // A degenerate synthetic model would make every fingerprint match for
+        // uninteresting reasons, so check the logits actually vary and are finite.
+        for l in [&one, &two, &seq] {
+            let lo = l.iter().copied().fold(f32::INFINITY, f32::min);
+            let hi = l.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            assert!(lo.is_finite() && hi.is_finite() && hi > lo, "{lo} {hi}");
+        }
+        assert_ne!(fingerprint(&one), fingerprint(&two));
+    }
+
+    /// `steps` timed decode steps from one cache, after `warmup` untimed ones.
+    ///
+    /// The warmup matters more than it looks. The weights are 32 MiB and this
+    /// class of host has hundreds of MiB of L3, so the first timed loop in a
+    /// process streams the blob from RAM while every later loop finds it in
+    /// cache. At four warmup steps that alone was worth ~70%, i.e. more than
+    /// anything measured here, and it landed entirely on whichever variant ran
+    /// first.
+    ///
+    /// The cache is sized so no run has to rebuild it mid-loop. `n_past` climbs
+    /// as the loop goes, but attention over the past is under 1% of a step at
+    /// these dimensions, so the samples stay comparable.
+    fn decode_samples(model: &Llama, vocab: u32, warmup: usize, steps: usize) -> Vec<Duration> {
+        let total = warmup.saturating_add(steps);
+        let mut cache = model.new_cache(total.saturating_add(2)).expect("cache");
+        let mut last = model.prefill(&mut cache, &[1]).expect("prefill");
+        let mut samples = Vec::new();
+        for i in 0..total {
+            let tok = argmax(&last) % vocab;
+            let t0 = Instant::now();
+            last = model.forward(&mut cache, tok).expect("forward");
+            let dt = t0.elapsed();
+            if i >= warmup {
+                samples.push(dt);
+            }
+            assert!(!black_box(&last).is_empty());
+        }
+        samples
+    }
+
+    /// [`decode_samples`] through the borrowed-logits entry point.
+    fn decode_borrowed_samples(
+        model: &Llama,
+        vocab: u32,
+        warmup: usize,
+        steps: usize,
+    ) -> Vec<Duration> {
+        let total = warmup.saturating_add(steps);
+        let mut cache = model.new_cache(total.saturating_add(2)).expect("cache");
+        let mut tok = argmax(&model.prefill(&mut cache, &[1]).expect("prefill")) % vocab;
+        let mut samples = Vec::new();
+        for i in 0..total {
+            let t0 = Instant::now();
+            let logits = model.forward_logits(&mut cache, tok).expect("forward");
+            let dt = t0.elapsed();
+            if i >= warmup {
+                samples.push(dt);
+            }
+            tok = argmax(logits) % vocab;
+            assert!(!black_box(logits).is_empty());
+        }
+        samples
+    }
+
+    /// Single-token decode latency.
+    ///
+    /// `forward` is the entry point the pre-refactor checkout has too, so it is
+    /// the number to compare across checkouts. `no pool` runs the same step
+    /// with every GEMV back on `thread::scope`, which isolates the pool inside
+    /// one process and is the only pool comparison not exposed to the ~25%
+    /// run-to-run spread a shared host shows across two binaries.
+    /// `forward_logits` drops the vocab-sized copy. The 1-thread run is immune
+    /// to thread scheduling noise, so it is the honest view of what buffer
+    /// reuse alone bought.
+    #[test]
+    #[ignore = "timing harness"]
+    fn bench_decode_step() {
+        let spec = BenchSpec::default();
+        let model = bench_model(&spec);
+        println!("blob {} MiB", model.blob_len() / (1024 * 1024));
+        let vocab = u32::try_from(spec.n_vocab).unwrap();
+        let (mut par, mut nopool) = (Vec::new(), Vec::new());
+        let (mut borrowed, mut seq) = (Vec::new(), Vec::new());
+        // Interleaved, so clock drift or a noisy neighbour hits every variant
+        // instead of only the one that ran first.
+        for _ in 0..3 {
+            par.extend(decode_samples(&model, vocab, 8, 16));
+            nopool.extend(without_pool(|| decode_samples(&model, vocab, 8, 16)));
+            borrowed.extend(decode_borrowed_samples(&model, vocab, 8, 16));
+            seq.extend(crate::pool::with_sequential(|| {
+                decode_samples(&model, vocab, 4, 8)
+            }));
+        }
+        report("decode 1 token (forward)", par);
+        report("decode 1 token (forward, no pool)", nopool);
+        report("decode 1 token (forward_logits)", borrowed);
+        report("decode 1 token (forward, 1 thread)", seq);
+    }
+
+    /// `reps` timed prefills of `tokens`, after `warmup` untimed ones. Each rep
+    /// gets a fresh cache, so this is the cost a real prompt pays.
+    fn prefill_samples(model: &Llama, tokens: &[u32], warmup: usize, reps: usize) -> Vec<Duration> {
+        let mut samples = Vec::new();
+        for i in 0..warmup.saturating_add(reps) {
+            let mut cache = model
+                .new_cache(tokens.len().saturating_add(1))
+                .expect("cache");
+            let t0 = Instant::now();
+            let out = model.prefill(&mut cache, tokens).expect("prefill");
+            let dt = t0.elapsed();
+            if i >= warmup {
+                samples.push(dt);
+            }
+            assert!(!black_box(&out).is_empty());
+        }
+        samples
+    }
+
+    /// Multi-token prefill (`prefill`, GEMM path).
+    #[test]
+    #[ignore = "timing harness"]
+    fn bench_prefill() {
+        let spec = BenchSpec::default();
+        let model = bench_model(&spec);
+        let sizes = [8usize, 32, 64];
+        let mut all: Vec<Vec<Duration>> = sizes.iter().map(|_| Vec::new()).collect();
+        for _ in 0..3 {
+            for (n, samples) in sizes.iter().zip(all.iter_mut()) {
+                let tokens: Vec<u32> = (0..*n)
+                    .map(|i| u32::try_from(i % spec.n_vocab).unwrap())
+                    .collect();
+                samples.extend(prefill_samples(&model, &tokens, 1, 3));
+            }
+        }
+        for (n, samples) in sizes.iter().zip(all) {
+            report(&format!("prefill {n} tokens"), samples);
+        }
+    }
+
+    /// What is left to win, and where. Times one decode step's worth of GEMV
+    /// against the whole step, both single-threaded, plus the two per-token
+    /// non-matmul loops that looked worth suspecting.
+    ///
+    /// This is the measurement that says when to stop: if the GEMV kernels are
+    /// the step, then no amount of work in `decode.rs` moves the number and the
+    /// next win has to come from the kernels or from more cores.
+    #[test]
+    #[ignore = "timing harness"]
+    fn bench_step_breakdown() {
+        let spec = BenchSpec::default();
+        let model = bench_model(&spec);
+        let vocab = u32::try_from(spec.n_vocab).unwrap();
+        let x = vec![0.01f32; spec.n_embd];
+        let xff = vec![0.01f32; spec.n_ff];
+
+        // Every GEMV a decode step performs, in the order the step does them.
+        let mut mats: Vec<(&QuantMat, &[f32])> = Vec::new();
+        for layer in &model.layers {
+            for m in [&layer.wq, &layer.wk, &layer.wv, &layer.wo] {
+                mats.push((m, &x));
+            }
+            if let LayerFfn::Dense(dense) = &layer.ffn {
+                mats.push((&dense.gate, &x));
+                mats.push((&dense.up, &x));
+                mats.push((&dense.down, &xff));
+            }
+        }
+        mats.push((&model.output, &x));
+        let n_gemv = mats.len();
+
+        let mut y = Vec::new();
+        let mut samples = Vec::new();
+        for _ in 0..9 {
+            let t0 = Instant::now();
+            crate::pool::with_sequential(|| {
+                for (m, xv) in &mats {
+                    model.gemv_into(m, xv, &mut y, &mut None).expect("gemv");
+                }
+            });
+            samples.push(t0.elapsed());
+            assert!(!black_box(&y).is_empty());
+        }
+        report(&format!("{n_gemv} GEMV only, 1 thread"), samples);
+
+        let rope_calls = spec
+            .n_layer
+            .saturating_mul(spec.n_head.saturating_add(spec.n_head_kv));
+        let mut v = vec![0.5f32; spec.head_dim()];
+        let mut samples = Vec::new();
+        for _ in 0..9 {
+            let t0 = Instant::now();
+            for i in 0..rope_calls {
+                rope(&mut v, 17 + (i & 7), spec.head_dim(), 10_000.0).expect("rope");
+            }
+            samples.push(t0.elapsed());
+        }
+        assert!(black_box(v.iter().sum::<f32>()).is_finite());
+        report(&format!("rope x{rope_calls}, 1 thread"), samples);
+
+        let seq = crate::pool::with_sequential(|| decode_samples(&model, vocab, 4, 8));
+        report("whole step, 1 thread", seq);
+    }
+
+    /// Writes `y[i] = first + i` and nothing else, so a [`Pool::run`] sample is
+    /// all dispatch and no arithmetic — the same shape as the empty-body
+    /// closure the `thread::scope` measurement uses.
+    struct NoopRows;
+
+    impl RowKernel for NoopRows {
+        type Job = ();
+
+        fn rows(&self, _job: (), first: usize, _x: &[f32], y: &mut [f32]) -> bool {
+            for (i, out) in y.iter_mut().enumerate() {
+                *out = black_box(first.saturating_add(i) as f32);
+            }
+            true
+        }
+    }
+
+    /// Row-dispatch cost in isolation: the row body does nothing but a store,
+    /// so the whole sample is fork/join (or hand-off, or loop) overhead.
+    ///
+    /// This is the per-matmul dispatch cost that a decode step pays 7+ times
+    /// per layer. `x` is 1024 floats, the width the benchmark model projects
+    /// from, so the pool's input staging copy is counted at its real size.
+    #[test]
+    #[ignore = "timing harness"]
+    fn bench_dispatch_overhead() {
+        let x = vec![1.0f32; 1024];
+        for n_rows in [64usize, 1024, 4096] {
+            let mut y = vec![0.0f32; n_rows];
+            let reps = 200usize;
+            let per_rep = u32::try_from(reps).unwrap();
+            let mut samples = Vec::new();
+            for _ in 0..9 {
+                let t0 = Instant::now();
+                for _ in 0..reps {
+                    crate::pool::for_each_row(&mut y, |i, out| {
+                        *out = black_box(i as f32);
+                    });
+                }
+                samples.push(t0.elapsed() / per_rep);
+            }
+            report(&format!("dispatch {n_rows} rows, thread::scope"), samples);
+
+            if let Some(mut pool) = Pool::new(Arc::new(NoopRows), n_rows) {
+                let mut samples = Vec::new();
+                for _ in 0..9 {
+                    let t0 = Instant::now();
+                    for _ in 0..reps {
+                        assert!(pool.run((), &x, &mut y));
+                    }
+                    samples.push(t0.elapsed() / per_rep);
+                }
+                report(&format!("dispatch {n_rows} rows, persistent pool"), samples);
+            }
+
+            let mut samples = Vec::new();
+            for _ in 0..9 {
+                let t0 = Instant::now();
+                for _ in 0..reps {
+                    crate::pool::with_sequential(|| {
+                        crate::pool::for_each_row(&mut y, |i, out| {
+                            *out = black_box(i as f32);
+                        });
+                    });
+                }
+                samples.push(t0.elapsed() / per_rep);
+            }
+            report(&format!("dispatch {n_rows} rows, sequential"), samples);
+            assert!(black_box(y.iter().sum::<f32>()) >= 0.0);
+        }
     }
 }
