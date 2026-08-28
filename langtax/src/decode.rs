@@ -1375,6 +1375,21 @@ pub fn tiny_q20_gguf() -> Vec<u8> {
     })
 }
 
+/// Writer-built Llama GGUF with no grouping: `head_count_kv == head_count == 4`.
+///
+/// GQA ratio 1 (plain multi-head attention). Every other fixture uses ratio 2.
+pub fn tiny_mha_gguf() -> Vec<u8> {
+    tiny_arch_gguf_gqa(tiny_llama_spec(), TinyLmHead::Distinct, GgmlType::F32, 4)
+}
+
+/// Writer-built Llama GGUF with a single KV head: `head_count_kv = 1`.
+///
+/// GQA ratio 4 (multi-query attention), the opposite extreme from
+/// [`tiny_mha_gguf`]. Real checkpoints sit between these: Qwen2.5-0.5B is 14/2.
+pub fn tiny_mqa_gguf() -> Vec<u8> {
+    tiny_arch_gguf_gqa(tiny_llama_spec(), TinyLmHead::Distinct, GgmlType::F32, 1)
+}
+
 /// Writer-built Llama GGUF with Q8_0 2-D weights (token_embd, output, attn/ffn).
 ///
 /// 1-D norms stay F32. `GGML_TYPE_Q8_0` = 8 (34-byte `block_q8_0`).
@@ -1649,10 +1664,25 @@ fn tiny_arch_gguf_lm_head(spec: TinySpec, lm_head: TinyLmHead) -> Vec<u8> {
 }
 
 fn tiny_arch_gguf_lm_head_vec1d(spec: TinySpec, lm_head: TinyLmHead, vec1d: GgmlType) -> Vec<u8> {
+    tiny_arch_gguf_gqa(spec, lm_head, vec1d, TINY_N_HEAD_KV)
+}
+
+/// Writer-built tiny with an explicit `attention.head_count_kv`.
+///
+/// Every other fixture pins `head_count_kv = 2` against `head_count = 4`, so the
+/// suite only ever exercised a GQA ratio of 2. Real checkpoints use other ratios
+/// (Qwen2.5-0.5B is 14/2 = 7), and a grouping bug at any other ratio would pass
+/// the whole harness.
+fn tiny_arch_gguf_gqa(
+    spec: TinySpec,
+    lm_head: TinyLmHead,
+    vec1d: GgmlType,
+    n_head_kv: usize,
+) -> Vec<u8> {
     let n_embd = TINY_N_EMBD;
     let n_ff = TINY_N_FF;
     let n_vocab = TINY_N_VOCAB;
-    let n_kv = TINY_N_HEAD_KV * TINY_N_ROT;
+    let n_kv = n_head_kv * TINY_N_ROT;
     let ones = vec![1.0f32; n_embd];
     let mut tensors = vec![
         tw(
@@ -2076,7 +2106,7 @@ fn tiny_arch_gguf_lm_head_vec1d(spec: TinySpec, lm_head: TinyLmHead, vec1d: Ggml
             pack_vec1d(vec1d, &pat_f32(n_kv, 13)),
         ));
     }
-    write_gguf_with_kv(&tiny_kv(&spec), &tensors)
+    write_gguf_with_kv(&tiny_kv_gqa(&spec, n_head_kv), &tensors)
 }
 
 fn architecture(g: &Gguf) -> Result<&str, LlamaError> {
@@ -2143,7 +2173,14 @@ fn rope_dimension(g: &Gguf, arch: &str, n_embd: usize, n_head: usize) -> Result<
     Ok(n_embd / n_head)
 }
 
+/// Default-GQA convenience wrapper. Only tests build KV without going through
+/// [`tiny_arch_gguf_gqa`].
+#[cfg(test)]
 fn tiny_kv(spec: &TinySpec) -> Vec<(String, Kv)> {
+    tiny_kv_gqa(spec, TINY_N_HEAD_KV)
+}
+
+fn tiny_kv_gqa(spec: &TinySpec, n_head_kv: usize) -> Vec<(String, Kv)> {
     let arch = spec.arch;
     let mut kv = vec![
         (
@@ -2170,7 +2207,7 @@ fn tiny_kv(spec: &TinySpec) -> Vec<(String, Kv)> {
         ),
         (
             arch_key(arch, "attention.head_count_kv"),
-            Kv::U32(u32::try_from(TINY_N_HEAD_KV).unwrap_or(0)),
+            Kv::U32(u32::try_from(n_head_kv).unwrap_or(0)),
         ),
         (arch_key(arch, "rope.freq_base"), Kv::F32(10_000.0)),
         (
@@ -7329,6 +7366,43 @@ mod tests {
         load_fwd_match(&bytes, 3);
     }
 
+    /// GQA ratios other than 2 were entirely uncovered: every writer-built fixture
+    /// pins `head_count = 4, head_count_kv = 2`. A grouping bug at any other ratio
+    /// would pass the whole harness. Real checkpoints do use other ratios
+    /// (Qwen2.5-0.5B is 14/2 = 7, covered only by the gated real-model test).
+    #[test]
+    fn gqa_ratios_other_than_two_match_independent_oracle() {
+        for (bytes, n_head_kv, gqa) in [
+            (tiny_mha_gguf(), 4u32, 1u32),
+            (tiny_mqa_gguf(), 1, 4),
+            (tiny_llama_gguf(), 2, 2),
+        ] {
+            let g = load_gguf(&bytes).expect("load");
+            assert_eq!(g.kv_u32("llama.attention.head_count"), Some(4));
+            assert_eq!(g.kv_u32("llama.attention.head_count_kv"), Some(n_head_kv));
+            assert_eq!(4 / n_head_kv, gqa, "gqa ratio");
+            // Single token and multi-token prefill both walk the KV grouping.
+            load_fwd_match(&bytes, 3);
+            load_prefill_match(&bytes, &[1, 2, 3]);
+        }
+    }
+
+    /// The three ratios must not collapse onto the same logits, otherwise the
+    /// test above would pass even if `head_count_kv` were ignored entirely.
+    #[test]
+    fn gqa_ratio_changes_logits() {
+        let mut seen: Vec<Vec<f32>> = Vec::new();
+        for bytes in [tiny_mha_gguf(), tiny_llama_gguf(), tiny_mqa_gguf()] {
+            let g = load_gguf(&bytes).expect("load");
+            let m = Llama::from_gguf(g).expect("model");
+            let mut c = m.new_cache(8).expect("cache");
+            seen.push(m.prefill(&mut c, &[1, 2, 3]).expect("prefill"));
+        }
+        assert_ne!(seen[0], seen[1], "gqa 1 vs 2 must differ");
+        assert_ne!(seen[1], seen[2], "gqa 2 vs 4 must differ");
+        assert_ne!(seen[0], seen[2], "gqa 1 vs 4 must differ");
+    }
+
     #[test]
     fn tiny_q80_logits_match_independent_oracle() {
         let bytes = tiny_q80_gguf();
@@ -7628,6 +7702,8 @@ mod tests {
             tiny_q10_gguf(),
             tiny_q20_gguf(),
             tiny_q80_gguf(),
+            tiny_mha_gguf(),
+            tiny_mqa_gguf(),
             tiny_q81_gguf(),
             tiny_tq10_gguf(),
             tiny_tq20_gguf(),
