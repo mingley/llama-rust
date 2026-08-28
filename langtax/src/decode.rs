@@ -6778,6 +6778,83 @@ mod tests {
         assert!((sigmoid_f32(0.0) - 0.5).abs() < 1e-6);
     }
 
+    /// Differential check against llama.cpp on a real quantized checkpoint.
+    ///
+    /// The writer-built tinies and the in-tree oracle cannot substitute for this.
+    /// Every per-dtype oracle calls `crate::fp16::f16_to_f32`, so a bug in that
+    /// primitive is invisible to the whole suite, and the tiny fixtures use
+    /// hand-picked scales that avoid the ranges where real weights live. A
+    /// subnormal binary16 bug that halved real Q4_K / Q6_K weights survived 221
+    /// passing tests for exactly those two reasons.
+    ///
+    /// Skips unless `LLAMA_RUST_REAL_MODEL_DIR` names a directory holding
+    /// `qwen2.5-0.5b-instruct-q4_k_m.gguf`. Reference values, model SHA, capture
+    /// tool, and the reason logits are not compared exactly are recorded in
+    /// `tests/reference/qwen2.5-0.5b-instruct-q4_k_m.json`.
+    #[test]
+    fn real_model_matches_llama_cpp_reference() {
+        let Ok(dir) = std::env::var("LLAMA_RUST_REAL_MODEL_DIR") else {
+            return;
+        };
+        let path = format!("{dir}/qwen2.5-0.5b-instruct-q4_k_m.gguf");
+        let Ok(mut file) = std::fs::File::open(&path) else {
+            return;
+        };
+        let mut blob = Vec::new();
+        let _read = std::io::Read::read_to_end(&mut file, &mut blob).expect("read gguf");
+        let g = load_gguf_owned(blob).expect("load real gguf");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("qwen2".into()))
+        );
+
+        // Tokenization must match llama.cpp exactly; a divergence here changes
+        // the model input and invalidates every downstream comparison.
+        let tok = Tokenizer::from_gguf(&g).expect("tokenizer");
+        let ids = tok.encode("The capital of France is").expect("encode");
+        assert_eq!(
+            ids,
+            [785u32, 6722, 315, 9625, 374],
+            "tokenization diverged from llama.cpp"
+        );
+
+        let model = Llama::from_gguf(g).expect("model");
+        assert_eq!(model.n_vocab, 151_936);
+
+        let mut cache = model.new_cache(64).expect("cache");
+        let logits = model.prefill(&mut cache, &ids).expect("prefill");
+        let best = argmax(&logits);
+        assert_eq!(best, 12095, "argmax must be token 12095 (\" Paris\")");
+
+        // llama.cpp reports max logit 17.504869 here. The two do genuinely
+        // different arithmetic (llama.cpp quantizes activations to Q8_K for
+        // K-quant dot products; this crate multiplies against f32 activations),
+        // so this is a sanity band, not an equality check. A whole-logit-unit
+        // drift means a real bug.
+        let mx = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        assert!(
+            (mx - 17.504_87).abs() < 0.5,
+            "max logit {mx} drifted from llama.cpp 17.504869"
+        );
+
+        // Greedy continuation is the acceptance criterion: it must match
+        // llama.cpp token for token.
+        let mut gen = Vec::new();
+        let mut cur = best;
+        for _ in 0..8 {
+            gen.push(cur);
+            let step = model.forward(&mut cache, cur).expect("forward");
+            cur = argmax(&step);
+        }
+        assert_eq!(
+            gen,
+            [12095u32, 13, 1084, 374, 279, 7772, 3283, 304],
+            "greedy token ids diverged from llama.cpp"
+        );
+        let text = tok.decode(&gen);
+        assert_eq!(text, " Paris. It is the largest city in");
+    }
+
     fn load_fwd_match(bytes: &[u8], token: u32) {
         let g = load_gguf(bytes).expect("load");
         let model = Llama::from_gguf(g.clone()).expect("model");

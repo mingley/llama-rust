@@ -1,0 +1,139 @@
+{
+  "model": {
+    "hf_repo": "Qwen/Qwen2.5-0.5B-Instruct-GGUF",
+    "file": "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+    "sha256": "74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db",
+    "architecture": "qwen2",
+    "rope_type": "NEOX",
+    "tensor_dtypes": {
+      "Q5_0": 133,
+      "F32": 121,
+      "Q8_0": 13,
+      "Q6_K": 12,
+      "Q4_K": 12
+    }
+  },
+  "captured_with": {
+    "source": "llama.cpp libllama via tests/reference/ref.cpp",
+    "llama_cpp_build": "b1-90c26fc",
+    "host": "4-core Intel Xeon, linux x86_64",
+    "threads": 4
+  },
+  "prompt": "The capital of France is",
+  "add_bos_token": false,
+  "n_vocab": 151936,
+  "tokens": [
+    785,
+    6722,
+    315,
+    9625,
+    374
+  ],
+  "token_pieces": [
+    "The",
+    " capital",
+    " of",
+    " France",
+    " is"
+  ],
+  "logit_stats": {
+    "min": -14.420258,
+    "max": 17.504869,
+    "mean": -2.852715,
+    "rms": 4.081985
+  },
+  "top20": [
+    [
+      12095,
+      17.504869
+    ],
+    [
+      32671,
+      15.763945
+    ],
+    [
+      1304,
+      15.563717
+    ],
+    [
+      30743,
+      15.544235
+    ],
+    [
+      1447,
+      15.327649
+    ],
+    [
+      510,
+      15.173143
+    ],
+    [
+      279,
+      14.793404
+    ],
+    [
+      508,
+      14.720109
+    ],
+    [
+      320,
+      14.627428
+    ],
+    [
+      7407,
+      14.387783
+    ],
+    [
+      65892,
+      14.07955
+    ],
+    [
+      264,
+      13.850586
+    ],
+    [
+      25,
+      13.768608
+    ],
+    [
+      198,
+      13.623716
+    ],
+    [
+      2130,
+      13.482855
+    ],
+    [
+      271,
+      13.344971
+    ],
+    [
+      7436,
+      13.202559
+    ],
+    [
+      304,
+      13.082296
+    ],
+    [
+      892,
+      13.07085
+    ],
+    [
+      2598,
+      12.898043
+    ]
+  ],
+  "greedy_ids": [
+    12095,
+    13,
+    1084,
+    374,
+    279,
+    7772,
+    3283,
+    304
+  ],
+  "greedy_text": " Paris. It is the largest city in",
+  "notes": "Greedy continuation and argmax must match exactly. Logits differ by ~0.17 max because llama.cpp quantizes activations to Q8_K for K-quant dot products while this crate uses f32 activations; see README.md."
+}
