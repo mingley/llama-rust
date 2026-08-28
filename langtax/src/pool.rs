@@ -4,13 +4,14 @@
 //! every call. That is the only shape safe Rust allows for a *borrowed* closure
 //! writing into *borrowed* buffers: handing `&mut [f32]` to a thread that
 //! outlives the call needs either `unsafe` lifetime erasure or shared job state
-//! behind a `Mutex`, and this crate has neither. The cost is ~100 us of
+//! behind a `Mutex`, and this crate has neither. The cost is ~60 us of
 //! spawn/join per call on 4 vCPUs, near enough flat in row count
-//! (`bench_dispatch_overhead`), which a GEMM over a whole prompt amortises and
-//! a single-token GEMV does not.
+//! (`bench_dispatch_overhead`: 64, 1024 and 4096 rows all land within a few
+//! percent of each other), which a GEMM over a whole prompt amortises and a
+//! single-token GEMV does not.
 //!
 //! [`Pool`] keeps its workers between calls, for the GEMV in the decode loop,
-//! and costs 4-13 us for the same dispatch. It sidesteps the lifetime problem
+//! and costs 1-7 us for the same dispatch. It sidesteps the lifetime problem
 //! by never sending a borrow at all:
 //!
 //! * the job is `Copy` plain data (which rows of which matrix),
