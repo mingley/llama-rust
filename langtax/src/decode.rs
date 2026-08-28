@@ -1,4 +1,4 @@
-//! Llama-family decode on GGUF bytes: RMSNorm, RoPE, GQA+KV, SwiGLU, lm_head.
+//! Llama-family decode on GGUF bytes: RMSNorm, RoPE, GQA+KV, SwiGLU or Gemma GeGLU, lm_head.
 
 use crate::gguf::{GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 use crate::quant::{
@@ -163,6 +163,10 @@ pub struct Llama {
     n_rot: usize,
     rms_eps: f32,
     rope_base: f32,
+    /// `1` for llama/qwen2/mistral/phi3. Gemma official walk scales embeds by `sqrt(n_embd)`.
+    embed_scale: f32,
+    /// Official Gemma FFN is `LLM_FFN_GELU` (GeGLU). Other loaded arches stay SwiGLU.
+    ffn_gelu: bool,
     blob: Vec<u8>,
     token_embd: QuantMat,
     output_norm: Vec<f32>,
@@ -181,7 +185,7 @@ pub struct KvCache {
 
 impl Llama {
     /// Build from a loaded GGUF using `{arch}.*` KV (`llama`, `qwen2`, `mistral`,
-    /// or `phi3`) and `blk.{i}.*` tensor names.
+    /// `phi3`, or `gemma`) and `blk.{i}.*` tensor names.
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
     /// blob; they do not clone tensor bytes. When `output.weight` is absent,
@@ -214,6 +218,9 @@ impl Llama {
             .ok_or_else(|| LlamaError::Tensor("token_embd.weight".into()))?;
         let rms_eps = arch_f32(&g, arch, "attention.layer_norm_rms_epsilon").unwrap_or(1e-5);
         let rope_base = arch_f32(&g, arch, "rope.freq_base").unwrap_or(10_000.0);
+        let gemma = arch == "gemma";
+        let n_embd_f = f32::from(u16::try_from(n_embd).unwrap_or(1));
+        let embed_scale = if gemma { n_embd_f.sqrt() } else { 1.0 };
         let token_embd = quant_mat(need(&g, "token_embd.weight")?)?;
         let output_norm = f32s(need(&g, "output_norm.weight")?)?;
         let output = match g.tensor("output.weight") {
@@ -232,6 +239,8 @@ impl Llama {
             n_rot,
             rms_eps,
             rope_base,
+            embed_scale,
+            ffn_gelu: gemma,
             blob: g.into_blob(),
             token_embd,
             output_norm,
@@ -305,6 +314,9 @@ impl Llama {
         if x.len() != n.saturating_mul(self.n_embd) {
             return Err(LlamaError::Shape("prefill embed".into()));
         }
+        for v in &mut x {
+            *v *= self.embed_scale;
+        }
         for (li, layer) in self.layers.iter().enumerate() {
             let residual = x.clone();
             x = rmsnorm_rows(&x, self.n_embd, &layer.attn_norm, self.rms_eps)?;
@@ -358,7 +370,7 @@ impl Llama {
             x = rmsnorm_rows(&x, self.n_embd, &layer.ffn_norm, self.rms_eps)?;
             let gate = self.gemm_mat(&layer.gate, n, &x)?;
             let up = self.gemm_mat(&layer.up, n, &x)?;
-            let mut h = silu(&gate)?;
+            let mut h = ffn_gate_act(&gate, self.ffn_gelu)?;
             for (hv, uv) in h.iter_mut().zip(up.iter()) {
                 *hv *= *uv;
             }
@@ -546,6 +558,24 @@ pub fn tiny_mistral_gguf() -> Vec<u8> {
 pub fn tiny_phi3_gguf() -> Vec<u8> {
     tiny_arch_gguf(TinySpec {
         arch: "phi3",
+        token_embd: GgmlType::F32,
+        output: GgmlType::F32,
+        layer: None,
+        rope_dimension_count: true,
+        qkv_bias: false,
+        add_bos_token: None,
+    })
+}
+
+/// Writer-built Gemma-shaped GGUF: same tensors as [`tiny_llama_gguf`], `gemma.*` KV.
+///
+/// Official `general.architecture=gemma` (not `gemma2`). Decode uses the
+/// measured Gemma walk: embed `* sqrt(n_embd)`, GeGLU (`ggml_gelu`), RMSNorm
+/// on GGUF bytes as-is (convert-hf bakes `norm.weight + 1`; runtime does not
+/// add 1 again).
+pub fn tiny_gemma_gguf() -> Vec<u8> {
+    tiny_arch_gguf(TinySpec {
+        arch: "gemma",
         token_embd: GgmlType::F32,
         output: GgmlType::F32,
         layer: None,
@@ -1166,7 +1196,7 @@ fn architecture(g: &Gguf) -> Result<&str, LlamaError> {
 }
 
 fn supported_arch(s: &str) -> bool {
-    s == "llama" || s == "qwen2" || s == "mistral" || s == "phi3"
+    s == "llama" || s == "qwen2" || s == "mistral" || s == "phi3" || s == "gemma"
 }
 
 fn arch_key(arch: &str, field: &str) -> String {
@@ -2325,6 +2355,29 @@ fn silu(x: &[f32]) -> Result<Vec<f32>, LlamaError> {
         *o = *xv / (1.0 + (-*xv).exp());
     }
     Ok(out)
+}
+
+/// Official llama.cpp Gemma FFN is `LLM_FFN_GELU` → `ggml_gelu` (tanh approx).
+fn ggml_gelu_f32(x: f32) -> f32 {
+    let coef_a = 44_715.0 / 1_000_000.0;
+    let sqrt_2_over_pi = (2.0 / core::f32::consts::PI).sqrt();
+    0.5 * x * (1.0 + (sqrt_2_over_pi * x * (1.0 + coef_a * x * x)).tanh())
+}
+
+fn gelu(x: &[f32]) -> Result<Vec<f32>, LlamaError> {
+    let mut out = vec![0.0f32; x.len()];
+    for (o, xv) in out.iter_mut().zip(x.iter()) {
+        *o = ggml_gelu_f32(*xv);
+    }
+    Ok(out)
+}
+
+fn ffn_gate_act(x: &[f32], use_gelu: bool) -> Result<Vec<f32>, LlamaError> {
+    if use_gelu {
+        gelu(x)
+    } else {
+        silu(x)
+    }
 }
 
 fn softmax(x: &mut [f32]) {
@@ -3604,6 +3657,12 @@ mod tests {
         y
     }
 
+    fn oracle_gelu(x: f32) -> f32 {
+        let coef_a = 44_715.0 / 1_000_000.0;
+        let sqrt_2_over_pi = (2.0 / core::f32::consts::PI).sqrt();
+        0.5 * x * (1.0 + (sqrt_2_over_pi * x * (1.0 + coef_a * x * x)).tanh())
+    }
+
     fn oracle_rmsnorm(x: &[f32], w: &[f32], eps: f32) -> Vec<f32> {
         let ss: f32 = x.iter().map(|v| v * v).sum();
         let rms = (ss / x.len() as f32 + eps).sqrt();
@@ -3648,11 +3707,20 @@ mod tests {
         let hd = n_embd / n_head;
         let gqa = n_head / n_kv;
         let emb = g.tensor("token_embd.weight").unwrap();
+        let gemma = arch == "gemma";
+        let embed_scale = if gemma {
+            f32::from(u16::try_from(n_embd).unwrap_or(1)).sqrt()
+        } else {
+            1.0
+        };
         let mut k_cache: Vec<Vec<Vec<f32>>> = vec![Vec::new(); n_kv];
         let mut v_cache: Vec<Vec<Vec<f32>>> = vec![Vec::new(); n_kv];
         let mut last = Vec::new();
         for (pos, &token) in tokens.iter().enumerate() {
-            let residual = oracle_embed(emb, token);
+            let mut residual = oracle_embed(emb, token);
+            for v in &mut residual {
+                *v *= embed_scale;
+            }
             let an = f32s(g.tensor("blk.0.attn_norm.weight").unwrap()).unwrap();
             let x = oracle_rmsnorm(&residual, &an, eps);
             let q = oracle_add_bias(
@@ -3720,7 +3788,14 @@ mod tests {
             let h: Vec<f32> = gate
                 .iter()
                 .zip(up.iter())
-                .map(|(g, u)| (g / (1.0 + (-g).exp())) * u)
+                .map(|(gv, u)| {
+                    let act = if gemma {
+                        oracle_gelu(*gv)
+                    } else {
+                        gv / (1.0 + (-gv).exp())
+                    };
+                    act * u
+                })
                 .collect();
             let down = oracle_gemv(g.tensor("blk.0.ffn_down.weight").unwrap(), &h);
             x = down.iter().zip(x.iter()).map(|(a, b)| a + b).collect();
@@ -4488,6 +4563,7 @@ mod tests {
             tiny_iq4xs_gguf(),
             tiny_tied_gguf(),
             tiny_tied_copy_gguf(),
+            tiny_gemma_gguf(),
         ] {
             load_prefill_match(&bytes, &tokens);
             load_prefill_match(&bytes, &[3]);
@@ -4512,6 +4588,80 @@ mod tests {
         assert_eq!(batched.n_past, step.n_past);
         let exp = oracle_forward_seq(&g, &tokens);
         assert_logits_match(&pref, &exp);
+    }
+
+    #[test]
+    fn tiny_gemma_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma_gguf();
+        let g = load_gguf(&bytes).expect("load gemma");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma".into()))
+        );
+        assert_eq!(g.kv_u32("gemma.block_count"), Some(1));
+        assert_eq!(g.kv_u32("gemma.embedding_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma.feed_forward_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma.attention.head_count"), Some(4));
+        assert_eq!(g.kv_u32("gemma.attention.head_count_kv"), Some(2));
+        assert!(g.kv_u32("llama.block_count").is_none());
+        assert!(g.tensor("blk.0.attn_post_norm.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_post_norm.weight").is_none());
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("output.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        let mut x2 = pat_f32(TINY_N_EMBD, 22);
+        x2.extend(pat_f32(TINY_N_EMBD, 23));
+        let got_gemm = model.gemm_output(2, &x2).expect("gemm");
+        let llama_bytes = tiny_llama_gguf();
+        let llama_g = load_gguf(&llama_bytes).expect("llama");
+        let llama_m = Llama::from_gguf(llama_g).expect("llama m");
+        let llama_gemm = llama_m.gemm_output(2, &x2).expect("llama gemm");
+        assert_logits_match(&got_gemm, &llama_gemm);
+        let emb = model.embed_token(3).expect("embed");
+        let exp_emb = oracle_embed(g.tensor("token_embd.weight").unwrap(), 3);
+        assert_logits_match(&emb, &exp_emb);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        let llama_fwd = {
+            let lg = load_gguf(&llama_bytes).expect("llama reload");
+            let lm = Llama::from_gguf(lg).expect("lm");
+            let mut c = lm.new_cache(4).expect("c");
+            lm.forward(&mut c, 3).expect("llama fwd")
+        };
+        let mut gc = model.new_cache(4).expect("gc");
+        let gemma_fwd = model.forward(&mut gc, 3).expect("gemma fwd");
+        assert_ne!(
+            gemma_fwd, llama_fwd,
+            "gemma embed-scale+GeGLU must change logits vs llama SwiGLU on the same tiny weights"
+        );
+    }
+
+    #[test]
+    fn gemma2_architecture_error_names_arch() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma2".into())),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected unknown arch"),
+            Err(e) => e.to_string(),
+        };
+        assert!(err.contains("gemma2"), "error should name arch: {err}");
+        assert!(
+            err.contains("unknown architecture"),
+            "error should name unknown architecture: {err}"
+        );
     }
 
     #[test]
