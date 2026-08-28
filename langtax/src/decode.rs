@@ -2,6 +2,9 @@
 //! Official Qwen3 adds per-head QK-Norm (`attn_q_norm` / `attn_k_norm`) before RoPE.
 //! Official Llama4 text (llama.cpp `src/models/llama4.cpp`) adds iRoPE/NoPE, unweighted
 //! QK-Norm after RoPE, and interleaved expert FFN (sigmoid top-k + shared expert).
+//! Official Mixtral (llama.cpp llama MoE path for GGUF `{arch}` `mixtral`) adds expert
+//! FFN: softmax gate, top-k, `norm_w`, weights after SwiGLU. No shared expert, iRoPE,
+//! or QK-Norm.
 
 use crate::gguf::{GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 use crate::quant::{
@@ -44,10 +47,14 @@ const TINY_N_FF: usize = 256;
 const TINY_N_LAYER: usize = 1;
 const TINY_N_VOCAB: usize = 6;
 const TINY_N_ROT: usize = 64;
-/// Writer-built tiny Llama4 expert count (`llama4.expert_count`). Official load rejects 0.
+/// Writer-built tiny Llama4 / Mixtral expert count (`{arch}.expert_count`). Official load rejects 0.
 const TINY_N_EXPERT: usize = 2;
 /// Writer-built tiny Llama4 `llama4.expert_used_count` (Scout uses 1).
 const TINY_N_EXPERT_USED: usize = 1;
+/// Writer-built tiny Mixtral `mixtral.expert_used_count` (official Mixtral top-2).
+const TINY_MIXTRAL_N_EXPERT_USED: usize = 2;
+/// Official `build_moe_ffn` `norm_w` clamp: smallest positive IEEE binary16.
+const MIXTRAL_NORM_W_MIN: f32 = 1.0 / 16_384.0;
 /// Official llama.cpp `hparams.n_no_rope_layer_step` default for Llama4 text.
 const LLAMA4_NO_ROPE_LAYER_STEP: usize = 4;
 /// Official Llama4 NoPE temperature floor (`n_attn_temp_floor_scale` = 8192).
@@ -167,6 +174,16 @@ struct Llama4Moe {
     n_expert_used: usize,
 }
 
+/// Official Mixtral expert FFN (`build_moe_ffn` SOFTMAX + `norm_w`, no shared expert).
+struct MixtralMoe {
+    gate_inp: QuantMat,
+    gate_exps: QuantMat,
+    up_exps: QuantMat,
+    down_exps: QuantMat,
+    n_expert: usize,
+    n_expert_used: usize,
+}
+
 /// Dense SwiGLU / GeGLU weights (`ffn_gate` / `ffn_up` / `ffn_down`).
 struct DenseFfn {
     gate: QuantMat,
@@ -174,12 +191,14 @@ struct DenseFfn {
     down: QuantMat,
 }
 
-/// Dense SwiGLU / Gemma GeGLU, or official Llama4 expert FFN on MoE layers.
+/// Dense SwiGLU / Gemma GeGLU, official Llama4 expert FFN, or official Mixtral expert FFN.
 enum LayerFfn {
     /// `ffn_gate` / `ffn_up` / `ffn_down` (llama / qwen2 / mistral / phi3 / gemma / qwen3).
     Dense(Box<DenseFfn>),
     /// Official `llama4` MoE layer: routed `*_exps` + shared `*_shexp`.
     Llama4Moe(Box<Llama4Moe>),
+    /// Official `mixtral` MoE layer: routed `*_exps` only (softmax + `norm_w`).
+    MixtralMoe(Box<MixtralMoe>),
 }
 
 /// Per-layer weights.
@@ -238,7 +257,7 @@ pub struct KvCache {
 
 impl Llama {
     /// Build from a loaded GGUF using `{arch}.*` KV (`llama`, `qwen2`, `mistral`,
-    /// `phi3`, `gemma`, `qwen3`, or `llama4`) and `blk.{i}.*` tensor names.
+    /// `phi3`, `gemma`, `qwen3`, `llama4`, or `mixtral`) and `blk.{i}.*` tensor names.
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
     /// blob; they do not clone tensor bytes. When `output.weight` is absent,
@@ -287,9 +306,20 @@ impl Llama {
         } else {
             None
         };
+        let mixtral_hparams = if arch == "mixtral" {
+            Some(load_mixtral_hparams(&g, arch)?)
+        } else {
+            None
+        };
         let mut layers = Vec::new();
         for i in 0..n_layer {
-            layers.push(load_layer(&g, i, qk_norm, llama4_hparams.as_ref())?);
+            layers.push(load_layer(
+                &g,
+                i,
+                qk_norm,
+                llama4_hparams.as_ref(),
+                mixtral_hparams.as_ref(),
+            )?);
         }
         Ok(Self {
             n_vocab,
@@ -466,6 +496,7 @@ impl Llama {
                     self.gemm_mat(&dense.down, n, &h)?
                 }
                 LayerFfn::Llama4Moe(moe) => self.llama4_moe_rows(moe.as_ref(), n, &x)?,
+                LayerFfn::MixtralMoe(moe) => self.mixtral_moe_rows(moe.as_ref(), n, &x)?,
             };
             x = add(&down, &residual)?;
         }
@@ -708,6 +739,26 @@ pub fn tiny_qwen3_gguf() -> Vec<u8> {
 pub fn tiny_llama4_gguf() -> Vec<u8> {
     tiny_arch_gguf(TinySpec {
         arch: "llama4",
+        token_embd: GgmlType::F32,
+        output: GgmlType::F32,
+        layer: None,
+        rope_dimension_count: true,
+        qkv_bias: false,
+        add_bos_token: Some(false),
+    })
+}
+
+/// Writer-built Mixtral-shaped GGUF: `mixtral.*` KV plus official expert FFN tensors.
+///
+/// Official `general.architecture=mixtral` (GGUF `{arch}` string `mixtral`,
+/// not `llama4` / `qwen2moe` / `qwen3moe`). Decode follows the llama.cpp llama
+/// MoE path used for Mixtral: expert FFN (`ffn_gate_inp` / `*_exps`, softmax
+/// gate, top-k, `norm_w`, weights after SwiGLU). No shared expert, iRoPE/NoPE,
+/// or QK-Norm. FFN stays SwiGLU. No embed-scale, GeGLU, extra norms, softcap,
+/// or vision. RMSNorm on GGUF bytes as-is.
+pub fn tiny_mixtral_gguf() -> Vec<u8> {
+    tiny_arch_gguf(TinySpec {
+        arch: "mixtral",
         token_embd: GgmlType::F32,
         output: GgmlType::F32,
         layer: None,
@@ -1287,8 +1338,8 @@ fn tiny_arch_gguf_lm_head_vec1d(spec: TinySpec, lm_head: TinyLmHead, vec1d: Ggml
         6,
         GgmlType::Q4_K,
     ));
-    if spec.arch == "llama4" {
-        // Official llama4.cpp MoE layer: no dense ffn_gate/up/down.
+    if spec.arch == "llama4" || spec.arch == "mixtral" {
+        // Official Mixtral / Llama4 MoE: no dense ffn_gate/up/down.
         tensors.push(tw(
             "blk.0.ffn_gate_inp.weight",
             GgmlType::F32,
@@ -1322,30 +1373,33 @@ fn tiny_arch_gguf_lm_head_vec1d(spec: TinySpec, lm_head: TinyLmHead, vec1d: Ggml
             19,
             GgmlType::Q4_K,
         ));
-        tensors.push(layer_tw(
-            &spec,
-            "blk.0.ffn_up_shexp.weight",
-            n_embd,
-            n_ff,
-            7,
-            GgmlType::Q4_K,
-        ));
-        tensors.push(layer_tw(
-            &spec,
-            "blk.0.ffn_down_shexp.weight",
-            n_ff,
-            n_embd,
-            8,
-            GgmlType::Q4_K,
-        ));
-        tensors.push(layer_tw(
-            &spec,
-            "blk.0.ffn_gate_shexp.weight",
-            n_embd,
-            n_ff,
-            9,
-            GgmlType::Q6_K,
-        ));
+        if spec.arch == "llama4" {
+            // Official llama4.cpp shared expert. Official Mixtral has none.
+            tensors.push(layer_tw(
+                &spec,
+                "blk.0.ffn_up_shexp.weight",
+                n_embd,
+                n_ff,
+                7,
+                GgmlType::Q4_K,
+            ));
+            tensors.push(layer_tw(
+                &spec,
+                "blk.0.ffn_down_shexp.weight",
+                n_ff,
+                n_embd,
+                8,
+                GgmlType::Q4_K,
+            ));
+            tensors.push(layer_tw(
+                &spec,
+                "blk.0.ffn_gate_shexp.weight",
+                n_embd,
+                n_ff,
+                9,
+                GgmlType::Q6_K,
+            ));
+        }
     } else {
         tensors.push(layer_tw(
             &spec,
@@ -1411,6 +1465,7 @@ fn supported_arch(s: &str) -> bool {
         || s == "gemma"
         || s == "qwen3"
         || s == "llama4"
+        || s == "mixtral"
 }
 
 fn arch_key(arch: &str, field: &str) -> String {
@@ -1529,6 +1584,16 @@ fn tiny_kv(spec: &TinySpec) -> Vec<(String, Kv)> {
         kv.push((
             arch_key(arch, "expert_feed_forward_length"),
             Kv::U32(u32::try_from(TINY_N_FF).unwrap_or(0)),
+        ));
+    }
+    if arch == "mixtral" {
+        kv.push((
+            arch_key(arch, "expert_count"),
+            Kv::U32(u32::try_from(TINY_N_EXPERT).unwrap_or(0)),
+        ));
+        kv.push((
+            arch_key(arch, "expert_used_count"),
+            Kv::U32(u32::try_from(TINY_MIXTRAL_N_EXPERT_USED).unwrap_or(0)),
         ));
     }
     kv
@@ -2206,11 +2271,40 @@ fn llama4_use_rope(i: usize, step: usize) -> bool {
     step > 0 && !i.saturating_add(1).is_multiple_of(step)
 }
 
+struct MixtralHparams {
+    n_expert: usize,
+    n_expert_used: usize,
+    n_ff: usize,
+}
+
+fn load_mixtral_hparams(g: &Gguf, arch: &str) -> Result<MixtralHparams, LlamaError> {
+    let n_expert = require_usize(g, arch, "expert_count")?;
+    if n_expert == 0 {
+        return Err(LlamaError::Shape(format!(
+            "{arch} model cannot have zero experts"
+        )));
+    }
+    let n_expert_used = require_usize(g, arch, "expert_used_count")?;
+    if n_expert_used == 0 || n_expert_used > n_expert {
+        return Err(LlamaError::Shape(arch_key(arch, "expert_used_count")));
+    }
+    let n_ff = require_usize(g, arch, "feed_forward_length")?;
+    if n_ff == 0 {
+        return Err(LlamaError::Shape(arch_key(arch, "feed_forward_length")));
+    }
+    Ok(MixtralHparams {
+        n_expert,
+        n_expert_used,
+        n_ff,
+    })
+}
+
 fn load_layer(
     g: &Gguf,
     i: usize,
     qk_norm: bool,
     llama4: Option<&Llama4Hparams>,
+    mixtral: Option<&MixtralHparams>,
 ) -> Result<Layer, LlamaError> {
     let use_rope = match llama4 {
         Some(h) => llama4_use_rope(i, h.n_no_rope_layer_step),
@@ -2220,15 +2314,24 @@ fn load_layer(
         Some(h) => use_rope && h.use_kq_norm,
         None => false,
     };
-    let ffn = match llama4 {
-        Some(h) if llama4_is_moe_layer(i, h.n_moe_layer_step) => {
+    let ffn = if let Some(h) = llama4 {
+        if llama4_is_moe_layer(i, h.n_moe_layer_step) {
             LayerFfn::Llama4Moe(Box::new(load_llama4_moe(g, i, h)?))
+        } else {
+            LayerFfn::Dense(Box::new(DenseFfn {
+                gate: quant_mat(need(g, &format!("blk.{i}.ffn_gate.weight"))?)?,
+                up: quant_mat(need(g, &format!("blk.{i}.ffn_up.weight"))?)?,
+                down: quant_mat(need(g, &format!("blk.{i}.ffn_down.weight"))?)?,
+            }))
         }
-        _ => LayerFfn::Dense(Box::new(DenseFfn {
+    } else if let Some(h) = mixtral {
+        LayerFfn::MixtralMoe(Box::new(load_mixtral_moe(g, i, h)?))
+    } else {
+        LayerFfn::Dense(Box::new(DenseFfn {
             gate: quant_mat(need(g, &format!("blk.{i}.ffn_gate.weight"))?)?,
             up: quant_mat(need(g, &format!("blk.{i}.ffn_up.weight"))?)?,
             down: quant_mat(need(g, &format!("blk.{i}.ffn_down.weight"))?)?,
-        })),
+        }))
     };
     Ok(Layer {
         attn_norm: f32s(need(g, &format!("blk.{i}.attn_norm.weight"))?)?,
@@ -2290,6 +2393,36 @@ fn load_llama4_moe(g: &Gguf, i: usize, h: &Llama4Hparams) -> Result<Llama4Moe, L
         gate_shexp,
         up_shexp,
         down_shexp,
+        n_expert: h.n_expert,
+        n_expert_used: h.n_expert_used,
+    })
+}
+
+fn load_mixtral_moe(g: &Gguf, i: usize, h: &MixtralHparams) -> Result<MixtralMoe, LlamaError> {
+    let gate_inp = quant_mat(need(g, &format!("blk.{i}.ffn_gate_inp.weight"))?)?;
+    let gate_exps = quant_mat(need(g, &format!("blk.{i}.ffn_gate_exps.weight"))?)?;
+    let up_exps = quant_mat(need(g, &format!("blk.{i}.ffn_up_exps.weight"))?)?;
+    let down_exps = quant_mat(need(g, &format!("blk.{i}.ffn_down_exps.weight"))?)?;
+    if gate_inp.n_rows != h.n_expert || gate_inp.n_parts != 1 {
+        return Err(LlamaError::Shape(format!("blk.{i}.ffn_gate_inp.weight")));
+    }
+    for (t, name) in [
+        (&gate_exps, format!("blk.{i}.ffn_gate_exps.weight")),
+        (&up_exps, format!("blk.{i}.ffn_up_exps.weight")),
+        (&down_exps, format!("blk.{i}.ffn_down_exps.weight")),
+    ] {
+        if t.n_parts != h.n_expert {
+            return Err(LlamaError::Shape(name));
+        }
+    }
+    if gate_exps.n_rows != h.n_ff || up_exps.n_rows != h.n_ff || down_exps.n_cols != h.n_ff {
+        return Err(LlamaError::Shape(format!("blk.{i}.ffn_*_exps.weight")));
+    }
+    Ok(MixtralMoe {
+        gate_inp,
+        gate_exps,
+        up_exps,
+        down_exps,
         n_expert: h.n_expert,
         n_expert_used: h.n_expert_used,
     })
@@ -2543,6 +2676,71 @@ impl Llama {
                 .ok_or_else(|| LlamaError::Shape("llama4 moe out".into()))?;
             for (d, s) in dst.iter_mut().zip(routed.iter()) {
                 *d += *s;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Official llama.cpp Mixtral MoE (`build_moe_ffn` SOFTMAX + `norm_w`):
+    /// softmax on router logits, top-k, renormalize, SwiGLU, weights after FFN.
+    /// No shared expert. Not Llama4 sigmoid / `weight_before_ffn`.
+    fn mixtral_moe_rows(
+        &self,
+        moe: &MixtralMoe,
+        n_tokens: usize,
+        x: &[f32],
+    ) -> Result<Vec<f32>, LlamaError> {
+        let n_embd = moe.down_exps.n_rows;
+        if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
+            return Err(LlamaError::Shape("mixtral moe".into()));
+        }
+        let mut out = vec![0.0f32; n_tokens.saturating_mul(n_embd)];
+        for t in 0..n_tokens {
+            let xt = token_row(x, t, n_embd, "mixtral moe x")?;
+            let mut probs = self.gemv_mat(&moe.gate_inp, xt)?;
+            if probs.len() != moe.n_expert {
+                return Err(LlamaError::Shape("mixtral ffn_gate_inp".into()));
+            }
+            softmax(&mut probs);
+            let selected = topk_logits(&probs, moe.n_expert_used)?;
+            let mut weights = Vec::new();
+            for e in &selected {
+                weights.push(probs.get(*e).copied().unwrap_or(0.0));
+            }
+            let mut wsum = 0.0f32;
+            for w in &weights {
+                wsum += *w;
+            }
+            let denom = if wsum < MIXTRAL_NORM_W_MIN {
+                MIXTRAL_NORM_W_MIN
+            } else {
+                wsum
+            };
+            for w in &mut weights {
+                *w /= denom;
+            }
+            let mut routed = vec![0.0f32; n_embd];
+            for (e, w) in selected.iter().zip(weights.iter()) {
+                let ge = expert_view(&moe.gate_exps, *e)?;
+                let ue = expert_view(&moe.up_exps, *e)?;
+                let de = expert_view(&moe.down_exps, *e)?;
+                let g = self.gemv_mat(&ge, xt)?;
+                let u = self.gemv_mat(&ue, xt)?;
+                let mut hh = silu(&g)?;
+                for (a, b) in hh.iter_mut().zip(u.iter()) {
+                    *a *= *b;
+                }
+                let y = self.gemv_mat(&de, &hh)?;
+                for (o, v) in routed.iter_mut().zip(y.iter()) {
+                    *o += *v * *w;
+                }
+            }
+            let off = t.saturating_mul(n_embd);
+            let dst = out
+                .get_mut(off..off.saturating_add(n_embd))
+                .ok_or_else(|| LlamaError::Shape("mixtral moe out".into()))?;
+            for (d, s) in dst.iter_mut().zip(routed.iter()) {
+                *d = *s;
             }
         }
         Ok(out)
@@ -2806,7 +3004,7 @@ fn sigmoid_f32(x: f32) -> f32 {
 /// ggml `ggml_argsort_top_k` descending; ties keep the lower index.
 fn topk_logits(logits: &[f32], k: usize) -> Result<Vec<usize>, LlamaError> {
     if k == 0 || k > logits.len() {
-        return Err(LlamaError::Shape("llama4 expert_used_count".into()));
+        return Err(LlamaError::Shape("expert_used_count".into()));
     }
     let mut idx: Vec<usize> = (0..logits.len()).collect();
     idx.sort_by(|&a, &b| {
@@ -4283,6 +4481,60 @@ mod tests {
             .collect()
     }
 
+    /// Official llama.cpp Mixtral MoE on one token: softmax, top-k, `norm_w`,
+    /// SwiGLU, weights after FFN. No shared expert.
+    fn oracle_mixtral_moe(g: &Gguf, xn: &[f32]) -> Vec<f32> {
+        let n_expert = arch_u32(g, "mixtral", "expert_count").unwrap() as usize;
+        let n_used = arch_u32(g, "mixtral", "expert_used_count").unwrap() as usize;
+        let mut probs = oracle_gemv(g.tensor("blk.0.ffn_gate_inp.weight").unwrap(), xn);
+        assert_eq!(probs.len(), n_expert);
+        let m = probs.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let mut s = 0.0f32;
+        for v in &mut probs {
+            *v = (*v - m).exp();
+            s += *v;
+        }
+        if s > 0.0 {
+            for v in &mut probs {
+                *v /= s;
+            }
+        }
+        let mut idx: Vec<usize> = (0..n_expert).collect();
+        idx.sort_by(|&a, &b| match probs[b].partial_cmp(&probs[a]) {
+            Some(core::cmp::Ordering::Equal) | None => a.cmp(&b),
+            Some(ord) => ord,
+        });
+        idx.truncate(n_used);
+        let mut weights: Vec<f32> = idx.iter().map(|&e| probs[e]).collect();
+        let wsum: f32 = weights.iter().sum();
+        let denom = if wsum < MIXTRAL_NORM_W_MIN {
+            MIXTRAL_NORM_W_MIN
+        } else {
+            wsum
+        };
+        for w in &mut weights {
+            *w /= denom;
+        }
+        let gate_exps = g.tensor("blk.0.ffn_gate_exps.weight").unwrap();
+        let up_exps = g.tensor("blk.0.ffn_up_exps.weight").unwrap();
+        let down_exps = g.tensor("blk.0.ffn_down_exps.weight").unwrap();
+        let mut routed = vec![0.0f32; xn.len()];
+        for (e, w) in idx.iter().zip(weights.iter()) {
+            let gate = oracle_gemv_expert(gate_exps, *e, xn);
+            let up = oracle_gemv_expert(up_exps, *e, xn);
+            let h: Vec<f32> = gate
+                .iter()
+                .zip(up.iter())
+                .map(|(gv, u)| (gv / (1.0 + (-gv).exp())) * u)
+                .collect();
+            let y = oracle_gemv_expert(down_exps, *e, &h);
+            for (o, v) in routed.iter_mut().zip(y.iter()) {
+                *o += *v * *w;
+            }
+        }
+        routed
+    }
+
     fn oracle_rope(mut v: Vec<f32>, pos: usize, n_rot: usize, base: f32) -> Vec<f32> {
         let mut theta = pos as f32;
         let theta_scale = base.powf(-2.0 / n_rot as f32);
@@ -4367,7 +4619,9 @@ mod tests {
             }
             // Official llama4.cpp: iRoPE when `(il+1) % n_no_rope_layer_step != 0`.
             // Writer-built tiny is 1 layer with default step 4, so layer 0 uses RoPE.
+            // Official Mixtral uses standard RoPE (no iRoPE / NoPE / QK-L2).
             let llama4 = arch == "llama4";
+            let mixtral = arch == "mixtral";
             let n_no_rope = if llama4 { LLAMA4_NO_ROPE_LAYER_STEP } else { 0 };
             let use_rope = !llama4 || (n_no_rope > 0 && 1 % n_no_rope != 0);
             let n_expert = arch_u32(g, arch, "expert_count").unwrap_or(0) as usize;
@@ -4436,6 +4690,8 @@ mod tests {
             let xn = oracle_rmsnorm(&x, &fnorm, eps);
             let down = if llama4 {
                 oracle_llama4_moe(g, &xn)
+            } else if mixtral {
+                oracle_mixtral_moe(g, &xn)
             } else {
                 let gate = oracle_gemv(g.tensor("blk.0.ffn_gate.weight").unwrap(), &xn);
                 let up = oracle_gemv(g.tensor("blk.0.ffn_up.weight").unwrap(), &xn);
@@ -5221,6 +5477,7 @@ mod tests {
             tiny_gemma_gguf(),
             tiny_qwen3_gguf(),
             tiny_llama4_gguf(),
+            tiny_mixtral_gguf(),
         ] {
             load_prefill_match(&bytes, &tokens);
             load_prefill_match(&bytes, &[3]);
@@ -5469,23 +5726,88 @@ mod tests {
     }
 
     #[test]
-    fn mixtral_architecture_error_names_arch() {
-        let bytes = write_gguf_with_kv(
-            &[
-                ("general.alignment".into(), Kv::U32(32)),
-                ("general.architecture".into(), Kv::String("mixtral".into())),
-            ],
-            &[],
+    fn tiny_mixtral_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_mixtral_gguf();
+        let g = load_gguf(&bytes).expect("load mixtral");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("mixtral".into()))
         );
-        let g = load_gguf(&bytes).expect("load");
-        let err = match Llama::from_gguf(g) {
-            Ok(_) => panic!("expected unknown arch"),
-            Err(e) => e.to_string(),
+        assert_eq!(g.kv_u32("mixtral.block_count"), Some(1));
+        assert_eq!(g.kv_u32("mixtral.embedding_length"), Some(256));
+        assert_eq!(g.kv_u32("mixtral.feed_forward_length"), Some(256));
+        assert_eq!(g.kv_u32("mixtral.attention.head_count"), Some(4));
+        assert_eq!(g.kv_u32("mixtral.attention.head_count_kv"), Some(2));
+        assert_eq!(g.kv_u32("mixtral.expert_count"), Some(2));
+        assert_eq!(g.kv_u32("mixtral.expert_used_count"), Some(2));
+        assert!(g.kv_u32("mixtral.interleave_moe_layer_step").is_none());
+        assert!(g.kv_u32("mixtral.expert_feed_forward_length").is_none());
+        assert!(g.kv_u32("llama.block_count").is_none());
+        assert!(g.kv_u32("llama4.block_count").is_none());
+        assert!(g.tensor("blk.0.attn_q_norm.weight").is_none());
+        assert!(g.tensor("blk.0.attn_k_norm.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_gate.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_up.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_down.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_gate_inp.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_gate_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_up_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_down_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_gate_shexp.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_up_shexp.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_down_shexp.weight").is_none());
+        assert_eq!(
+            g.tensor("blk.0.ffn_gate_exps.weight").unwrap().shape,
+            &[256, 256, 2]
+        );
+        assert!(g.tensor("v.blk.0.attn_q.weight").is_none());
+        assert_eq!(g.kv_bool("tokenizer.ggml.add_bos_token"), Some(false));
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("output.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        let mut x2 = pat_f32(TINY_N_EMBD, 22);
+        x2.extend(pat_f32(TINY_N_EMBD, 23));
+        let got_gemm = model.gemm_output(2, &x2).expect("gemm");
+        let llama_bytes = tiny_llama_gguf();
+        let llama_g = load_gguf(&llama_bytes).expect("llama");
+        let llama_m = Llama::from_gguf(llama_g).expect("llama m");
+        let llama_gemm = llama_m.gemm_output(2, &x2).expect("llama gemm");
+        assert_logits_match(&got_gemm, &llama_gemm);
+        let emb = model.embed_token(3).expect("embed");
+        let exp_emb = oracle_embed(g.tensor("token_embd.weight").unwrap(), 3);
+        assert_logits_match(&emb, &exp_emb);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        assert!(!tok.add_bos);
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        let tokens = [1u32, 2, 3];
+        let llama_pref = {
+            let lg = load_gguf(&llama_bytes).expect("llama reload");
+            let lm = Llama::from_gguf(lg).expect("lm");
+            let mut c = lm.new_cache(8).expect("c");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
         };
-        assert!(err.contains("mixtral"), "error should name arch: {err}");
-        assert!(
-            err.contains("unknown architecture"),
-            "error should name unknown architecture: {err}"
+        let llama4_pref = {
+            let l4g = load_gguf(&tiny_llama4_gguf()).expect("llama4");
+            let l4m = Llama::from_gguf(l4g).expect("l4m");
+            let mut c = l4m.new_cache(8).expect("c4");
+            l4m.prefill(&mut c, &tokens).expect("llama4 pref")
+        };
+        let mut mc = model.new_cache(8).expect("mc");
+        let mixtral_pref = model.prefill(&mut mc, &tokens).expect("mixtral pref");
+        assert_ne!(
+            mixtral_pref, llama_pref,
+            "mixtral softmax expert FFN must change multi-token logits vs llama"
+        );
+        assert_ne!(
+            mixtral_pref, llama4_pref,
+            "mixtral softmax / no-shexp must differ from llama4 sigmoid / shexp"
         );
     }
 
