@@ -23,7 +23,7 @@
 
 use std::cell::Cell;
 use std::num::NonZeroUsize;
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
@@ -34,15 +34,25 @@ thread_local! {
 /// Cap worker count. Extra E-cores past this did not move the 1-thread C ratio.
 const MAX_WORKERS: usize = 10;
 
+/// Restores [`SEQUENTIAL`] on the way out, so an early return inside `f`
+/// cannot leave this thread wrongly marked.
+struct SequentialGuard(bool);
+
+impl Drop for SequentialGuard {
+    fn drop(&mut self) {
+        SEQUENTIAL.with(|flag| flag.set(self.0));
+    }
+}
+
+fn enter_sequential() -> SequentialGuard {
+    SequentialGuard(SEQUENTIAL.with(|flag| flag.replace(true)))
+}
+
 /// Run `f` with row dispatch forced to a single thread.
 #[cfg(test)]
 pub(crate) fn with_sequential<R>(f: impl FnOnce() -> R) -> R {
-    SEQUENTIAL.with(|flag| {
-        let prev = flag.replace(true);
-        let out = f();
-        flag.set(prev);
-        out
-    })
+    let _guard = enter_sequential();
+    f()
 }
 
 pub(crate) fn sequential() -> bool {
@@ -169,8 +179,15 @@ struct Worker<J> {
 ///
 /// Steady state allocates nothing: the input staging keeps its capacity and the
 /// output buffers cycle through `spare`.
+///
+/// The calling thread takes a chunk itself rather than blocking, so a pool that
+/// wants `n`-way parallelism spawns `n - 1` threads. Two reasons, both measured
+/// (see `bench_decode_step`): `n` workers plus a blocked caller oversubscribes
+/// an `n`-CPU host, and a caller that computes instead of waiting keeps its own
+/// chunk off the wake-up path entirely.
 pub(crate) struct Pool<K: RowKernel> {
     workers: Vec<Worker<K::Job>>,
+    kernel: Arc<K>,
     /// Input staging. Between jobs its refcount is 1, which is what lets
     /// [`Pool::run`] refill it through `Arc::get_mut` without allocating.
     x: Arc<Vec<f32>>,
@@ -181,7 +198,7 @@ pub(crate) struct Pool<K: RowKernel> {
 
 impl<K: RowKernel> Pool<K> {
     /// Spawn workers for `kernel`, capped the same way [`for_each_row`] caps
-    /// its scope. `None` when one worker would be used anyway, or when a
+    /// its scope. `None` when one thread would be used anyway, or when a
     /// thread could not be spawned.
     ///
     /// `rows_hint` is the row count of the widest matrix the pool will see; it
@@ -191,9 +208,11 @@ impl<K: RowKernel> Pool<K> {
         if n <= 1 {
             return None;
         }
-        let (done_tx, done) = sync_channel(n);
-        let mut workers = Vec::with_capacity(n);
-        for _ in 0..n {
+        // `n` includes the calling thread, which takes a chunk in `run`.
+        let spawn = n.saturating_sub(1);
+        let (done_tx, done) = sync_channel(spawn);
+        let mut workers = Vec::with_capacity(spawn);
+        for _ in 0..spawn {
             // Bound 2, not 1, so `Drop` can always queue `Stop` even if a job
             // is still in flight.
             let (tx, rx) = sync_channel(2);
@@ -212,21 +231,23 @@ impl<K: RowKernel> Pool<K> {
         }
         Some(Self {
             workers,
+            kernel,
             x: Arc::new(Vec::new()),
             spare: Vec::new(),
             done,
         })
     }
 
-    /// Compute rows `0 .. y.len()` of `job` across the workers.
+    /// Compute rows `0 .. y.len()` of `job`, the tail on the workers and the
+    /// first chunk on this thread.
     ///
     /// `false` if the pool did not produce every row (kernel refused the job, a
     /// worker is gone, or the input staging is still shared); the caller must
     /// then compute the matrix itself. `y` may have been partly written.
     pub(crate) fn run(&mut self, job: K::Job, x: &[f32], y: &mut [f32]) -> bool {
         let n_rows = y.len();
-        let n = self.workers.len();
-        if n_rows == 0 || n == 0 {
+        let n = self.workers.len().saturating_add(1);
+        if n_rows == 0 || self.workers.is_empty() {
             return false;
         }
         {
@@ -237,7 +258,10 @@ impl<K: RowKernel> Pool<K> {
             buf.extend_from_slice(x);
         }
         let chunk = n_rows.div_ceil(n);
-        let mut first = 0usize;
+        // This thread takes `0 .. chunk`; the workers take what follows. Send
+        // first so they are already running while this thread computes.
+        let mine = chunk.min(n_rows);
+        let mut first = mine;
         let mut sent = 0usize;
         let mut ok = true;
         for w in &self.workers {
@@ -262,6 +286,19 @@ impl<K: RowKernel> Pool<K> {
             first = last;
         }
         let mut done_rows = 0usize;
+        match y.get_mut(..mine) {
+            Some(head) => {
+                // The kernels dispatch rows themselves; keep that on this
+                // thread rather than opening a second level of parallelism.
+                let _guard = enter_sequential();
+                if self.kernel.rows(job, 0, x, head) {
+                    done_rows = mine;
+                } else {
+                    ok = false;
+                }
+            }
+            None => ok = false,
+        }
         for _ in 0..sent {
             let Ok(reply) = self.done.recv() else {
                 // A worker vanished mid-job. The buffer it held is gone too.
@@ -270,9 +307,7 @@ impl<K: RowKernel> Pool<K> {
             let end = reply.first.saturating_add(reply.out.len());
             match (reply.ok, y.get_mut(reply.first..end)) {
                 (true, Some(dst)) => {
-                    for (d, s) in dst.iter_mut().zip(reply.out.iter()) {
-                        *d = *s;
-                    }
+                    dst.copy_from_slice(&reply.out);
                     done_rows = done_rows.saturating_add(reply.out.len());
                 }
                 _ => ok = false,
@@ -316,11 +351,29 @@ impl<K: RowKernel> Drop for Pool<K> {
     }
 }
 
+/// Spins before parking. A decode step dispatches on the order of 30 GEMVs, so
+/// a worker that parks between them pays a futex wake on every one; on a 4-vCPU
+/// guest that latency cost more than the `thread::scope` spawn the pool exists
+/// to remove (the pool was 40% *slower* on median until this was added).
+/// Spinning is affordable because the pool leaves one CPU for the caller.
+const SPINS: u32 = 20_000;
+
+fn next_task<J>(rx: &Receiver<Task<J>>) -> Option<Task<J>> {
+    for _ in 0..SPINS {
+        match rx.try_recv() {
+            Ok(task) => return Some(task),
+            Err(TryRecvError::Empty) => std::hint::spin_loop(),
+            Err(TryRecvError::Disconnected) => return None,
+        }
+    }
+    rx.recv().ok()
+}
+
 fn worker_loop<K: RowKernel>(kernel: Arc<K>, rx: Receiver<Task<K::Job>>, done: SyncSender<Reply>) {
     // The kernels call `for_each_row` themselves. Keep that on this thread
     // instead of opening a second level of workers per job.
     SEQUENTIAL.with(|flag| flag.set(true));
-    while let Ok(task) = rx.recv() {
+    while let Some(task) = next_task(&rx) {
         let Task::Rows {
             job,
             first,

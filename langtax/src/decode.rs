@@ -286,34 +286,52 @@ const PAR_MIN_WORK: usize = 1 << 16;
 
 #[cfg(test)]
 thread_local! {
-    /// Test hook: run the tiny fixtures through the pool despite their size.
-    static FORCE_POOL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Test hook overriding the size threshold: `Some(true)` sends every GEMV
+    /// to the pool (the tiny fixtures are all below it), `Some(false)` sends
+    /// none, which is the pre-pool behaviour and what the benchmark compares
+    /// against inside one process.
+    static POOL_OVERRIDE: std::cell::Cell<Option<bool>> =
+        const { std::cell::Cell::new(None) };
 }
 
-/// Run `f` with the GEMV pool's size threshold ignored.
 #[cfg(test)]
-pub(crate) fn with_forced_pool<R>(f: impl FnOnce() -> R) -> R {
-    FORCE_POOL.with(|flag| {
-        let prev = flag.replace(true);
+fn with_pool_override<R>(to: Option<bool>, f: impl FnOnce() -> R) -> R {
+    POOL_OVERRIDE.with(|flag| {
+        let prev = flag.replace(to);
         let out = f();
         flag.set(prev);
         out
     })
 }
 
+/// Run `f` with every GEMV routed through the pool regardless of size.
 #[cfg(test)]
-fn forced_pool() -> bool {
-    FORCE_POOL.with(std::cell::Cell::get)
+pub(crate) fn with_forced_pool<R>(f: impl FnOnce() -> R) -> R {
+    with_pool_override(Some(true), f)
+}
+
+/// Run `f` with the pool disabled, i.e. every GEMV in the calling thread.
+#[cfg(test)]
+pub(crate) fn without_pool<R>(f: impl FnOnce() -> R) -> R {
+    with_pool_override(Some(false), f)
+}
+
+#[cfg(test)]
+fn pool_override() -> Option<bool> {
+    POOL_OVERRIDE.with(std::cell::Cell::get)
 }
 
 #[cfg(not(test))]
-fn forced_pool() -> bool {
-    false
+fn pool_override() -> Option<bool> {
+    None
 }
 
 /// Whether an `n_rows x n_cols` GEMV is big enough to hand to the pool.
 fn pooled_gemv(n_rows: usize, n_cols: usize) -> bool {
-    n_rows > 1 && (forced_pool() || n_rows.saturating_mul(n_cols) >= PAR_MIN_WORK)
+    match pool_override() {
+        Some(forced) => forced && n_rows > 1,
+        None => n_rows > 1 && n_rows.saturating_mul(n_cols) >= PAR_MIN_WORK,
+    }
 }
 
 /// KV cache for GQA decode.
@@ -562,9 +580,7 @@ impl Llama {
     /// `attn_q` / `attn_output` are `n_embd x n_embd` and the lm_head is the
     /// widest matrix, so those two bound the rest.
     fn wants_pool(&self) -> bool {
-        forced_pool()
-            || pooled_gemv(self.output.n_rows, self.output.n_cols)
-            || pooled_gemv(self.n_embd, self.n_embd)
+        pooled_gemv(self.output.n_rows, self.output.n_cols) || pooled_gemv(self.n_embd, self.n_embd)
     }
 
     fn head_dim(&self) -> Result<usize, LlamaError> {
@@ -6483,12 +6499,70 @@ mod bench {
         assert_ne!(fingerprint(&one), fingerprint(&two));
     }
 
-    /// Single-token decode latency after a 1-token prefill.
+    /// `steps` timed decode steps from one cache, after `warmup` untimed ones.
     ///
-    /// Both entry points, because they differ by exactly the vocab-sized `Vec`
-    /// that `forward` copies out: `forward` is the API the pre-refactor
-    /// checkout also has, so it is the comparable number, and `forward_logits`
-    /// is what the generation loop now uses.
+    /// The warmup matters more than it looks. The weights are 32 MiB and this
+    /// class of host has hundreds of MiB of L3, so the first timed loop in a
+    /// process streams the blob from RAM while every later loop finds it in
+    /// cache. At four warmup steps that alone was worth ~70%, i.e. more than
+    /// anything measured here, and it landed entirely on whichever variant ran
+    /// first.
+    ///
+    /// The cache is sized so no run has to rebuild it mid-loop. `n_past` climbs
+    /// as the loop goes, but attention over the past is under 1% of a step at
+    /// these dimensions, so the samples stay comparable.
+    fn decode_samples(model: &Llama, vocab: u32, warmup: usize, steps: usize) -> Vec<Duration> {
+        let total = warmup.saturating_add(steps);
+        let mut cache = model.new_cache(total.saturating_add(2)).expect("cache");
+        let mut last = model.prefill(&mut cache, &[1]).expect("prefill");
+        let mut samples = Vec::new();
+        for i in 0..total {
+            let tok = argmax(&last) % vocab;
+            let t0 = Instant::now();
+            last = model.forward(&mut cache, tok).expect("forward");
+            let dt = t0.elapsed();
+            if i >= warmup {
+                samples.push(dt);
+            }
+            assert!(!black_box(&last).is_empty());
+        }
+        samples
+    }
+
+    /// [`decode_samples`] through the borrowed-logits entry point.
+    fn decode_borrowed_samples(
+        model: &Llama,
+        vocab: u32,
+        warmup: usize,
+        steps: usize,
+    ) -> Vec<Duration> {
+        let total = warmup.saturating_add(steps);
+        let mut cache = model.new_cache(total.saturating_add(2)).expect("cache");
+        let mut tok = argmax(&model.prefill(&mut cache, &[1]).expect("prefill")) % vocab;
+        let mut samples = Vec::new();
+        for i in 0..total {
+            let t0 = Instant::now();
+            let logits = model.forward_logits(&mut cache, tok).expect("forward");
+            let dt = t0.elapsed();
+            if i >= warmup {
+                samples.push(dt);
+            }
+            tok = argmax(logits) % vocab;
+            assert!(!black_box(logits).is_empty());
+        }
+        samples
+    }
+
+    /// Single-token decode latency.
+    ///
+    /// `forward` is the entry point the pre-refactor checkout has too, so it is
+    /// the number to compare across checkouts. `no pool` runs the same step
+    /// with every GEMV back on `thread::scope`, which isolates the pool inside
+    /// one process and is the only pool comparison not exposed to the ~25%
+    /// run-to-run spread a shared host shows across two binaries.
+    /// `forward_logits` drops the vocab-sized copy. The 1-thread run is immune
+    /// to thread scheduling noise, so it is the honest view of what buffer
+    /// reuse alone bought.
     #[test]
     #[ignore = "timing harness"]
     fn bench_decode_step() {
@@ -6496,45 +6570,41 @@ mod bench {
         let model = bench_model(&spec);
         println!("blob {} MiB", model.blob_len() / (1024 * 1024));
         let vocab = u32::try_from(spec.n_vocab).unwrap();
-        let mut cache = model.new_cache(64).expect("cache");
-        let mut last = model.prefill(&mut cache, &[1]).expect("prefill");
-        let mut samples = Vec::new();
-        let mut sink = 0usize;
-        for i in 0..24 {
-            let tok = argmax(&last) % vocab;
-            let t0 = Instant::now();
-            last = model.forward(&mut cache, tok).expect("forward");
-            let dt = t0.elapsed();
-            if i >= 4 {
-                samples.push(dt);
-            }
-            sink = sink.wrapping_add(black_box(last.len()));
-            if cache.n_past + 2 >= 64 {
-                cache = model.new_cache(64).expect("cache");
-                last = model.prefill(&mut cache, &[1]).expect("prefill");
-            }
+        let (mut par, mut nopool) = (Vec::new(), Vec::new());
+        let (mut borrowed, mut seq) = (Vec::new(), Vec::new());
+        // Interleaved, so clock drift or a noisy neighbour hits every variant
+        // instead of only the one that ran first.
+        for _ in 0..3 {
+            par.extend(decode_samples(&model, vocab, 8, 16));
+            nopool.extend(without_pool(|| decode_samples(&model, vocab, 8, 16)));
+            borrowed.extend(decode_borrowed_samples(&model, vocab, 8, 16));
+            seq.extend(crate::pool::with_sequential(|| {
+                decode_samples(&model, vocab, 4, 8)
+            }));
         }
-        report("decode 1 token (forward)", samples);
+        report("decode 1 token (forward)", par);
+        report("decode 1 token (forward, no pool)", nopool);
+        report("decode 1 token (forward_logits)", borrowed);
+        report("decode 1 token (forward, 1 thread)", seq);
+    }
 
-        let mut cache = model.new_cache(64).expect("cache");
-        let mut tok = argmax(&model.prefill(&mut cache, &[1]).expect("prefill")) % vocab;
+    /// `reps` timed prefills of `tokens`, after `warmup` untimed ones. Each rep
+    /// gets a fresh cache, so this is the cost a real prompt pays.
+    fn prefill_samples(model: &Llama, tokens: &[u32], warmup: usize, reps: usize) -> Vec<Duration> {
         let mut samples = Vec::new();
-        for i in 0..24 {
+        for i in 0..warmup.saturating_add(reps) {
+            let mut cache = model
+                .new_cache(tokens.len().saturating_add(1))
+                .expect("cache");
             let t0 = Instant::now();
-            let logits = model.forward_logits(&mut cache, tok).expect("forward");
+            let out = model.prefill(&mut cache, tokens).expect("prefill");
             let dt = t0.elapsed();
-            if i >= 4 {
+            if i >= warmup {
                 samples.push(dt);
             }
-            tok = argmax(logits) % vocab;
-            sink = sink.wrapping_add(black_box(logits.len()));
-            if cache.n_past + 2 >= 64 {
-                cache = model.new_cache(64).expect("cache");
-                tok = argmax(&model.prefill(&mut cache, &[1]).expect("prefill")) % vocab;
-            }
+            assert!(!black_box(&out).is_empty());
         }
-        assert!(sink > 0);
-        report("decode 1 token (forward_logits)", samples);
+        samples
     }
 
     /// Multi-token prefill (`prefill`, GEMM path).
@@ -6543,20 +6613,17 @@ mod bench {
     fn bench_prefill() {
         let spec = BenchSpec::default();
         let model = bench_model(&spec);
-        for n in [8usize, 32, 64] {
-            let tokens: Vec<u32> = (0..n)
-                .map(|i| u32::try_from(i % spec.n_vocab).unwrap())
-                .collect();
-            let mut samples = Vec::new();
-            let mut sink = 0usize;
-            for _ in 0..5 {
-                let mut cache = model.new_cache(n + 1).expect("cache");
-                let t0 = Instant::now();
-                let out = model.prefill(&mut cache, &tokens).expect("prefill");
-                samples.push(t0.elapsed());
-                sink = sink.wrapping_add(black_box(out.len()));
+        let sizes = [8usize, 32, 64];
+        let mut all: Vec<Vec<Duration>> = sizes.iter().map(|_| Vec::new()).collect();
+        for _ in 0..3 {
+            for (n, samples) in sizes.iter().zip(all.iter_mut()) {
+                let tokens: Vec<u32> = (0..*n)
+                    .map(|i| u32::try_from(i % spec.n_vocab).unwrap())
+                    .collect();
+                samples.extend(prefill_samples(&model, &tokens, 1, 3));
             }
-            assert!(sink > 0);
+        }
+        for (n, samples) in sizes.iter().zip(all) {
             report(&format!("prefill {n} tokens"), samples);
         }
     }
