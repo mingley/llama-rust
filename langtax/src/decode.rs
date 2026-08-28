@@ -11,6 +11,10 @@
 //! Official Qwen3MoE (`architecture=qwen3moe`) follows `src/models/qwen3moe.cpp`:
 //! Qwen3 QK-Norm before RoPE; `build_moe_ffn` softmax then top-k with `norm_w`
 //! clamp `2^-14`; no shared expert. Not Mixtral, not vision.
+//! Official Qwen2VL (`architecture=qwen2vl`) follows `src/models/qwen2vl.cpp`:
+//! Qwen2 language walk plus m-RoPE (`ggml_rope_multi` / `LLAMA_ROPE_TYPE_MROPE`,
+//! `rope.dimension_sections`, text `n_pos_per_token=4`). Vision / mmproj lives
+//! in official `tools/mtmd/models/qwen2vl.cpp` (clip), not a second language arch.
 
 use crate::gguf::{GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 use crate::quant::{
@@ -79,6 +83,11 @@ const LLAMA4_ATTN_TEMP_FLOOR: f32 = 8192.0;
 const LLAMA4_ATTN_TEMP_SCALE: f32 = 1.0 / 10.0;
 /// Official Llama4 NoPE temperature offset (`f_attn_temp_offset` = 1.0).
 const LLAMA4_ATTN_TEMP_OFFSET: f32 = 1.0;
+/// Official GGUF `GGUF_TYPE_INT32` (array elem for `rope.dimension_sections`).
+const GGUF_TYPE_INT32: i32 = 5;
+/// Official Qwen2-VL-2B HF `mrope_section` `[16, 24, 24]` padded to 4 by convert
+/// (`[16, 24, 24, 0]`) at `n_rot=128`. Writer-tiny `n_rot=64` uses the same ratio.
+const TINY_QWEN2VL_ROPE_SECTIONS: [i32; 4] = [8, 12, 12, 0];
 
 /// Decode / load failure.
 #[derive(Debug)]
@@ -278,6 +287,8 @@ pub struct Llama {
     n_rot: usize,
     rms_eps: f32,
     rope_base: f32,
+    /// Official Qwen2VL `qwen2vl.rope.dimension_sections` for `ggml_rope_multi`.
+    rope_sections: Option<[i32; 4]>,
     /// `1` for llama/qwen2/mistral/phi3. Gemma official walk scales embeds by `sqrt(n_embd)`.
     embed_scale: f32,
     /// Official Gemma FFN is `LLM_FFN_GELU` (GeGLU). Other loaded arches stay SwiGLU
@@ -301,9 +312,10 @@ pub struct KvCache {
 
 impl Llama {
     /// Build from a loaded GGUF using `{arch}.*` KV (`llama`, `qwen2`, `mistral`,
-    /// `phi3`, `gemma`, `qwen3`, `llama4`, `qwen2moe`, or `qwen3moe`) and
-    /// `blk.{i}.*` tensor names. Official llama MoE is still `architecture=llama`
-    /// with `n_expert>0`.
+    /// `phi3`, `gemma`, `qwen3`, `llama4`, `qwen2moe`, `qwen3moe`, or `qwen2vl`)
+    /// and `blk.{i}.*` tensor names. Official llama MoE is still
+    /// `architecture=llama` with `n_expert>0`. Official Qwen2VL is Qwen2 plus
+    /// m-RoPE (`ggml_rope_multi`).
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
     /// blob; they do not clone tensor bytes. When `output.weight` is absent,
@@ -330,6 +342,11 @@ impl Llama {
             return Err(LlamaError::Shape(arch_key(arch, "attention.head_count_kv")));
         }
         let n_rot = rope_dimension(&g, arch, n_embd, n_head)?;
+        let rope_sections = if arch == "qwen2vl" {
+            Some(load_qwen2vl_rope_sections(&g, arch)?)
+        } else {
+            None
+        };
         let n_vocab = g
             .tensor("token_embd.weight")
             .map(|t| t.n_rows())
@@ -387,6 +404,7 @@ impl Llama {
             n_rot,
             rms_eps,
             rope_base,
+            rope_sections,
             embed_scale,
             ffn_gelu: gemma,
             blob: g.into_blob(),
@@ -495,7 +513,7 @@ impl Llama {
                 let vh = split_heads(v_t, self.n_head_kv, hd)?;
                 if layer.use_rope {
                     for h in &mut kh {
-                        rope(h, pos, self.n_rot, self.rope_base)?;
+                        apply_rope(h, pos, self.n_rot, self.rope_base, self.rope_sections)?;
                     }
                     if layer.qk_l2 {
                         // Official Llama4: unweighted RMS after RoPE (`Llama4TextL2Norm`).
@@ -514,7 +532,7 @@ impl Llama {
                 let mut qh = split_heads(q_t, self.n_head, hd)?;
                 if layer.use_rope {
                     for h in &mut qh {
-                        rope(h, pos, self.n_rot, self.rope_base)?;
+                        apply_rope(h, pos, self.n_rot, self.rope_base, self.rope_sections)?;
                     }
                     if layer.qk_l2 {
                         for h in &mut qh {
@@ -876,6 +894,29 @@ pub fn tiny_qwen3moe_gguf() -> Vec<u8> {
         layer: None,
         rope_dimension_count: true,
         qkv_bias: false,
+        add_bos_token: Some(false),
+        llama_moe: false,
+    })
+}
+
+/// Writer-built official Qwen2VL GGUF: `architecture=qwen2vl` with `qwen2vl.*` KV.
+///
+/// Official `LLM_ARCH_NAMES` has `LLM_ARCH_QWEN2VL = "qwen2vl"`; convert writes
+/// `general.architecture=qwen2vl` (`Qwen2VLForConditionalGeneration` and
+/// `Qwen2_5_VLForConditionalGeneration` → `MODEL_ARCH.QWEN2VL`). Decode follows
+/// llama.cpp `src/models/qwen2vl.cpp`: Qwen2 plus `ggml_rope_multi`
+/// (`LLAMA_ROPE_TYPE_MROPE`, `rope.dimension_sections`, text positions
+/// `[t,h,w,e] = [p,p,p,0]`, `n_pos_per_token=4`). Vision / mmproj lives in
+/// official `tools/mtmd/models/qwen2vl.cpp` (clip), not a second language arch.
+/// Not `qwen3vl` / `qwen3vlmoe` / a separate `qwen25vl` language arch. Not Mixtral.
+pub fn tiny_qwen2vl_gguf() -> Vec<u8> {
+    tiny_arch_gguf(TinySpec {
+        arch: "qwen2vl",
+        token_embd: GgmlType::F32,
+        output: GgmlType::F32,
+        layer: None,
+        rope_dimension_count: false,
+        qkv_bias: true,
         add_bos_token: Some(false),
         llama_moe: false,
     })
@@ -1742,6 +1783,7 @@ fn supported_arch(s: &str) -> bool {
         || s == "llama4"
         || s == "qwen2moe"
         || s == "qwen3moe"
+        || s == "qwen2vl"
 }
 
 fn arch_key(arch: &str, field: &str) -> String {
@@ -1902,6 +1944,19 @@ fn tiny_kv(spec: &TinySpec) -> Vec<(String, Kv)> {
         kv.push((
             arch_key(arch, "expert_feed_forward_length"),
             Kv::U32(u32::try_from(TINY_N_FF).unwrap_or(0)),
+        ));
+    }
+    if arch == "qwen2vl" {
+        // Official convert: HF `mrope_section` padded to 4 (`conversion/base.py`).
+        kv.push((
+            arch_key(arch, "rope.dimension_sections"),
+            Kv::Array {
+                elem: GGUF_TYPE_INT32,
+                items: TINY_QWEN2VL_ROPE_SECTIONS
+                    .into_iter()
+                    .map(Kv::I32)
+                    .collect(),
+            },
         ));
     }
     kv
@@ -2664,6 +2719,28 @@ fn load_qwen2moe_hparams(g: &Gguf, arch: &str) -> Result<Qwen2MoeHparams, LlamaE
         n_ff_exp,
         n_ff_shexp,
     })
+}
+
+/// Official qwen2vl.cpp: `LLM_KV_ROPE_DIMENSION_SECTIONS` is required (`true`).
+fn load_qwen2vl_rope_sections(g: &Gguf, arch: &str) -> Result<[i32; 4], LlamaError> {
+    let key = arch_key(arch, "rope.dimension_sections");
+    let items = g
+        .kv_i32s(&key)
+        .ok_or_else(|| LlamaError::MissingKv(key.clone()))?;
+    if items.len() != 4 {
+        return Err(LlamaError::Shape(key));
+    }
+    let mut out = [0i32; 4];
+    for (dst, src) in out.iter_mut().zip(items.iter()) {
+        if *src < 0 {
+            return Err(LlamaError::Shape(key.clone()));
+        }
+        *dst = *src;
+    }
+    if out.iter().all(|s| *s == 0) {
+        return Err(LlamaError::Shape(key));
+    }
+    Ok(out)
 }
 
 /// Official qwen3moe.cpp: `n_expert` / `n_expert_used` must be > 0.
@@ -3717,6 +3794,120 @@ fn rope(vec: &mut [f32], pos: usize, n_rot: usize, base: f32) -> Result<(), Llam
         }
         theta *= theta_scale;
         i += 2;
+    }
+    Ok(())
+}
+
+/// Official Qwen2VL text walk: `ggml_rope_multi` when sections are present.
+fn apply_rope(
+    vec: &mut [f32],
+    pos: usize,
+    n_rot: usize,
+    base: f32,
+    sections: Option<[i32; 4]>,
+) -> Result<(), LlamaError> {
+    if let Some(sections) = sections {
+        // Official `llama-graph.cpp` text tokens: `[t,h,w,e] = [p,p,p,0]`.
+        rope_multi(vec, [pos, pos, pos, 0], n_rot, base, sections)
+    } else {
+        rope(vec, pos, n_rot, base)
+    }
+}
+
+/// Official `ggml_compute_forward_rope_flt` `GGML_ROPE_TYPE_MROPE`:
+/// `ggml_mrope_cache_init` (not IMROPE, not VISION) + NEOX `rotate_pairs`.
+/// `pos` is `[t, h, w, e]` (`n_pos_per_token=4`).
+fn rope_multi(
+    vec: &mut [f32],
+    pos: [usize; 4],
+    n_rot: usize,
+    base: f32,
+    sections: [i32; 4],
+) -> Result<(), LlamaError> {
+    let n = n_rot.min(vec.len());
+    if n < 2 {
+        return Ok(());
+    }
+    if !n.is_multiple_of(2) {
+        return Err(LlamaError::Shape("qwen2vl rope.dimension_count".into()));
+    }
+    let pos_t = *pos
+        .first()
+        .ok_or_else(|| LlamaError::Shape("qwen2vl n_pos_per_token".into()))?;
+    let pos_h = *pos
+        .get(1)
+        .ok_or_else(|| LlamaError::Shape("qwen2vl n_pos_per_token".into()))?;
+    let pos_w = *pos
+        .get(2)
+        .ok_or_else(|| LlamaError::Shape("qwen2vl n_pos_per_token".into()))?;
+    let pos_e = *pos
+        .get(3)
+        .ok_or_else(|| LlamaError::Shape("qwen2vl n_pos_per_token".into()))?;
+    let s0 = *sections
+        .first()
+        .ok_or_else(|| LlamaError::Shape("qwen2vl rope.dimension_sections".into()))?;
+    let s1 = *sections
+        .get(1)
+        .ok_or_else(|| LlamaError::Shape("qwen2vl rope.dimension_sections".into()))?;
+    let s2 = *sections
+        .get(2)
+        .ok_or_else(|| LlamaError::Shape("qwen2vl rope.dimension_sections".into()))?;
+    let s3 = *sections
+        .get(3)
+        .ok_or_else(|| LlamaError::Shape("qwen2vl rope.dimension_sections".into()))?;
+    let sect_dims = s0
+        .checked_add(s1)
+        .and_then(|v| v.checked_add(s2))
+        .and_then(|v| v.checked_add(s3))
+        .ok_or_else(|| LlamaError::Shape("qwen2vl rope.dimension_sections".into()))?;
+    if sect_dims <= 0 {
+        return Err(LlamaError::Shape("qwen2vl rope.dimension_sections".into()));
+    }
+    let sect_dims_us = usize::try_from(sect_dims)
+        .map_err(|_| LlamaError::Shape("qwen2vl rope.dimension_sections".into()))?;
+    if sect_dims_us > n {
+        return Err(LlamaError::Shape("qwen2vl rope.dimension_sections".into()));
+    }
+    let sec_w = s0
+        .checked_add(s1)
+        .ok_or_else(|| LlamaError::Shape("qwen2vl rope.dimension_sections".into()))?;
+    let n_offset = n / 2;
+    let n_rot_f = f32::from(u16::try_from(n_rot).unwrap_or(2));
+    let theta_scale = base.powf(-2.0 / n_rot_f);
+    let mut theta_t = f32::from(u16::try_from(pos_t).unwrap_or(u16::MAX));
+    let mut theta_h = f32::from(u16::try_from(pos_h).unwrap_or(u16::MAX));
+    let mut theta_w = f32::from(u16::try_from(pos_w).unwrap_or(u16::MAX));
+    let mut theta_e = f32::from(u16::try_from(pos_e).unwrap_or(u16::MAX));
+    let mut i0 = 0usize;
+    while i0 + 1 < n {
+        let ic = i0 / 2;
+        let sector = ic % sect_dims_us;
+        let sector_i = i32::try_from(sector)
+            .map_err(|_| LlamaError::Shape("qwen2vl rope.dimension_sections".into()))?;
+        let theta = if sector_i >= s0 && sector_i < sec_w {
+            theta_h
+        } else if sector_i >= sec_w && sector_i < sec_w.saturating_add(s2) {
+            theta_w
+        } else if sector_i >= sec_w.saturating_add(s2) {
+            theta_e
+        } else {
+            theta_t
+        };
+        let cos = theta.cos();
+        let sin = theta.sin();
+        let x0 = *vec.get(ic).unwrap_or(&0.0);
+        let x1 = *vec.get(ic.saturating_add(n_offset)).unwrap_or(&0.0);
+        if let Some(slot) = vec.get_mut(ic) {
+            *slot = x0 * cos - x1 * sin;
+        }
+        if let Some(slot) = vec.get_mut(ic.saturating_add(n_offset)) {
+            *slot = x0 * sin + x1 * cos;
+        }
+        theta_t *= theta_scale;
+        theta_h *= theta_scale;
+        theta_w *= theta_scale;
+        theta_e *= theta_scale;
+        i0 += 2;
     }
     Ok(())
 }
@@ -5261,6 +5452,73 @@ mod tests {
         v
     }
 
+    /// Independent scalar of official `ggml_rope_multi` / `GGML_ROPE_TYPE_MROPE`.
+    fn oracle_rope_multi(
+        mut v: Vec<f32>,
+        pos: [usize; 4],
+        n_rot: usize,
+        base: f32,
+        sections: [i32; 4],
+    ) -> Vec<f32> {
+        let n = n_rot.min(v.len());
+        if n < 2 || !n.is_multiple_of(2) {
+            return v;
+        }
+        let s0 = sections[0];
+        let s1 = sections[1];
+        let s2 = sections[2];
+        let s3 = sections[3];
+        let sect_dims = s0 + s1 + s2 + s3;
+        if sect_dims <= 0 {
+            return v;
+        }
+        let Ok(sect_dims_us) = usize::try_from(sect_dims) else {
+            return v;
+        };
+        let sec_w = s0 + s1;
+        let n_offset = n / 2;
+        let theta_scale = base.powf(-2.0 / n_rot as f32);
+        let mut theta_t = pos[0] as f32;
+        let mut theta_h = pos[1] as f32;
+        let mut theta_w = pos[2] as f32;
+        let mut theta_e = pos[3] as f32;
+        let mut i0 = 0usize;
+        while i0 + 1 < n {
+            let ic = i0 / 2;
+            let Ok(sector) = i32::try_from(ic % sect_dims_us) else {
+                return v;
+            };
+            let theta = if sector >= s0 && sector < sec_w {
+                theta_h
+            } else if sector >= sec_w && sector < sec_w + s2 {
+                theta_w
+            } else if sector >= sec_w + s2 {
+                theta_e
+            } else {
+                theta_t
+            };
+            let (c, s) = (theta.cos(), theta.sin());
+            let x0 = v[ic];
+            let x1 = v[ic + n_offset];
+            v[ic] = x0 * c - x1 * s;
+            v[ic + n_offset] = x0 * s + x1 * c;
+            theta_t *= theta_scale;
+            theta_h *= theta_scale;
+            theta_w *= theta_scale;
+            theta_e *= theta_scale;
+            i0 += 2;
+        }
+        v
+    }
+
+    fn oracle_rope_sections(g: &Gguf, arch: &str) -> Option<[i32; 4]> {
+        let items = g.kv_i32s(&arch_key(arch, "rope.dimension_sections"))?;
+        if items.len() != 4 {
+            return None;
+        }
+        Some([items[0], items[1], items[2], items[3]])
+    }
+
     fn oracle_n_rot(g: &Gguf, arch: &str, n_embd: usize, n_head: usize) -> usize {
         arch_u32(g, arch, "rope.dimension_count")
             .map(|v| v as usize)
@@ -5335,11 +5593,22 @@ mod tests {
             let n_expert = arch_u32(g, arch, "expert_count").unwrap_or(0) as usize;
             let qk_l2 = llama4 && use_rope && n_expert != 128;
             if use_rope {
+                let sections = if arch == "qwen2vl" {
+                    oracle_rope_sections(g, arch)
+                } else {
+                    None
+                };
                 for h in &mut qh {
-                    *h = oracle_rope(h.clone(), pos, n_rot, base);
+                    *h = match sections {
+                        Some(s) => oracle_rope_multi(h.clone(), [pos, pos, pos, 0], n_rot, base, s),
+                        None => oracle_rope(h.clone(), pos, n_rot, base),
+                    };
                 }
                 for h in &mut kh {
-                    *h = oracle_rope(h.clone(), pos, n_rot, base);
+                    *h = match sections {
+                        Some(s) => oracle_rope_multi(h.clone(), [pos, pos, pos, 0], n_rot, base, s),
+                        None => oracle_rope(h.clone(), pos, n_rot, base),
+                    };
                 }
                 if qk_l2 {
                     for h in &mut qh {
@@ -6195,6 +6464,7 @@ mod tests {
             tiny_llama_moe_gguf(),
             tiny_qwen2moe_gguf(),
             tiny_qwen3moe_gguf(),
+            tiny_qwen2vl_gguf(),
         ] {
             load_prefill_match(&bytes, &tokens);
             load_prefill_match(&bytes, &[3]);
@@ -6633,24 +6903,136 @@ mod tests {
     }
 
     #[test]
-    fn qwen2vl_architecture_error_names_arch() {
+    fn tiny_qwen2vl_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_qwen2vl_gguf();
+        let g = load_gguf(&bytes).expect("load qwen2vl");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("qwen2vl".into()))
+        );
+        assert_eq!(g.kv_u32("qwen2vl.block_count"), Some(1));
+        assert_eq!(g.kv_u32("qwen2vl.embedding_length"), Some(256));
+        assert_eq!(g.kv_u32("qwen2vl.feed_forward_length"), Some(256));
+        assert_eq!(g.kv_u32("qwen2vl.attention.head_count"), Some(4));
+        assert_eq!(g.kv_u32("qwen2vl.attention.head_count_kv"), Some(2));
+        assert!(g.kv_u32("qwen2vl.rope.dimension_count").is_none());
+        assert_eq!(
+            g.kv_i32s("qwen2vl.rope.dimension_sections"),
+            Some(TINY_QWEN2VL_ROPE_SECTIONS.to_vec())
+        );
+        assert!(g.kv_u32("llama.block_count").is_none());
+        assert!(g.kv_u32("qwen2.block_count").is_none());
+        assert!(g.kv_u32("qwen3.block_count").is_none());
+        assert!(g.kv_u32("qwen3vl.block_count").is_none());
+        assert!(g.kv_u32("qwen3vlmoe.block_count").is_none());
+        assert!(g.kv_u32("qwen25vl.block_count").is_none());
+        assert!(g.kv_u32("mixtral.block_count").is_none());
+        assert!(g.tensor("blk.0.attn_q.bias").is_some());
+        assert!(g.tensor("blk.0.attn_k.bias").is_some());
+        assert!(g.tensor("blk.0.attn_v.bias").is_some());
+        assert!(g.tensor("blk.0.attn_q_norm.weight").is_none());
+        assert!(g.tensor("blk.0.attn_k_norm.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_gate.weight").is_some());
+        assert_eq!(g.kv_bool("tokenizer.ggml.add_bos_token"), Some(false));
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("output.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        let mut x2 = pat_f32(TINY_N_EMBD, 22);
+        x2.extend(pat_f32(TINY_N_EMBD, 23));
+        let got_gemm = model.gemm_output(2, &x2).expect("gemm");
+        let qwen2_bytes = tiny_qwen2_gguf();
+        let qwen2_g = load_gguf(&qwen2_bytes).expect("qwen2");
+        let qwen2_m = Llama::from_gguf(qwen2_g).expect("qwen2 m");
+        let qwen2_gemm = qwen2_m.gemm_output(2, &x2).expect("qwen2 gemm");
+        assert_logits_match(&got_gemm, &qwen2_gemm);
+        let emb = model.embed_token(3).expect("embed");
+        let exp_emb = oracle_embed(g.tensor("token_embd.weight").unwrap(), 3);
+        assert_logits_match(&emb, &exp_emb);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        let tokens = [1u32, 2, 3];
+        let qwen2_pref = {
+            let qg = load_gguf(&qwen2_bytes).expect("qwen2 reload");
+            let qm = Llama::from_gguf(qg).expect("qm");
+            let mut c = qm.new_cache(8).expect("c");
+            qm.prefill(&mut c, &tokens).expect("qwen2 pref")
+        };
+        let qwen3_pref = {
+            let q3 = load_gguf(&tiny_qwen3_gguf()).expect("qwen3");
+            let m3 = Llama::from_gguf(q3).expect("m3");
+            let mut c = m3.new_cache(8).expect("c3");
+            m3.prefill(&mut c, &tokens).expect("qwen3 pref")
+        };
+        let mut qc = model.new_cache(8).expect("qc");
+        let qwen2vl_pref = model.prefill(&mut qc, &tokens).expect("qwen2vl pref");
+        assert_ne!(
+            qwen2vl_pref, qwen2_pref,
+            "qwen2vl m-RoPE must change multi-token logits vs qwen2 adjacent-pair RoPE"
+        );
+        assert_ne!(
+            qwen2vl_pref, qwen3_pref,
+            "qwen2vl must not copy qwen3 QK-Norm"
+        );
+    }
+
+    #[test]
+    fn qwen2vl_missing_dimension_sections_names_key() {
         let bytes = write_gguf_with_kv(
             &[
                 ("general.alignment".into(), Kv::U32(32)),
                 ("general.architecture".into(), Kv::String("qwen2vl".into())),
+                ("qwen2vl.block_count".into(), Kv::U32(1)),
+                ("qwen2vl.embedding_length".into(), Kv::U32(256)),
+                ("qwen2vl.feed_forward_length".into(), Kv::U32(256)),
+                ("qwen2vl.attention.head_count".into(), Kv::U32(4)),
+                ("qwen2vl.attention.head_count_kv".into(), Kv::U32(2)),
+                ("qwen2vl.rope.freq_base".into(), Kv::F32(10_000.0)),
+                (
+                    "qwen2vl.attention.layer_norm_rms_epsilon".into(),
+                    Kv::F32(1.0 / 100_000.0),
+                ),
             ],
             &[],
         );
         let g = load_gguf(&bytes).expect("load");
         let err = match Llama::from_gguf(g) {
-            Ok(_) => panic!("expected unknown arch"),
+            Ok(_) => panic!("expected missing sections"),
             Err(e) => e.to_string(),
         };
-        assert!(err.contains("qwen2vl"), "error should name arch: {err}");
         assert!(
-            err.contains("unknown architecture"),
-            "error should name unknown architecture: {err}"
+            err.contains("qwen2vl.rope.dimension_sections"),
+            "error should name kv key: {err}"
         );
+    }
+
+    #[test]
+    fn qwen3vl_qwen3vlmoe_qwen25vl_architecture_error_names_arch() {
+        for arch in ["qwen3vl", "qwen3vlmoe", "qwen25vl"] {
+            let bytes = write_gguf_with_kv(
+                &[
+                    ("general.alignment".into(), Kv::U32(32)),
+                    ("general.architecture".into(), Kv::String(arch.into())),
+                ],
+                &[],
+            );
+            let g = load_gguf(&bytes).expect("load");
+            let err = match Llama::from_gguf(g) {
+                Ok(_) => panic!("expected unknown arch {arch}"),
+                Err(e) => e.to_string(),
+            };
+            assert!(err.contains(arch), "error should name arch: {err}");
+            assert!(
+                err.contains("unknown architecture"),
+                "error should name unknown architecture: {err}"
+            );
+        }
     }
 
     #[test]
