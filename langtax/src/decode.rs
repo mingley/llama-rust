@@ -29,6 +29,11 @@
 //! gated full attention (joint Q+gate, QK-Norm before RoPE, IMROPE, sigmoid
 //! after attn), official `post_attention_norm`, dense SwiGLU. Linear-attn /
 //! gated-delta layers are refused. Not `qwen3vlmoe`. Not Mixtral.
+//! Official Phi2 (`architecture=phi2`) follows `src/models/phi2.cpp`:
+//! `LLM_NORM` (LayerNorm + bias), `LLAMA_ROPE_TYPE_NEOX`, Q scaled by
+//! `1/sqrt(n_embd_head)` then `build_attn` scale `1.0`, parallel residual
+//! (`attn` and `LLM_FFN_GELU`/`LLM_FFN_SEQ` both from `attn_norm`), output
+//! bias. Not Mixtral, not `qwen3vlmoe`, not linear-attn. Not a phi3 redo.
 
 use crate::gguf::{GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 use crate::quant::{
@@ -135,6 +140,14 @@ const TINY_QWEN2VL_ROPE_SECTIONS: [i32; 4] = [8, 12, 12, 0];
 /// `n_rot=64` uses the same ratio. Official `src/llama-model.cpp` maps
 /// `LLM_ARCH_QWEN3VL` to `LLAMA_ROPE_TYPE_IMROPE`.
 const TINY_QWEN3VL_ROPE_SECTIONS: [i32; 4] = [12, 10, 10, 0];
+/// Official convert `add_feed_forward_length(4 * n_embd)`.
+const TINY_PHI2_N_FF: usize = 1024;
+/// Official convert `add_head_count_kv(n_head)` (no GQA).
+const TINY_PHI2_N_HEAD_KV: usize = TINY_N_HEAD;
+/// Official convert `int(partial_rotary_factor * n_embd) // n_head`.
+/// microsoft/phi-2 uses `0.4` → `32` of `80`. Writer-tiny uses `32` of `64`
+/// (`int(0.5 * 256) // 4`): even `n_rot`, same official formula.
+const TINY_PHI2_N_ROT: usize = 32;
 
 /// Decode / load failure.
 #[derive(Debug)]
@@ -287,6 +300,14 @@ struct DenseFfn {
     down: QuantMat,
 }
 
+/// Official phi2 sequential GELU (`LLM_FFN_GELU` + `LLM_FFN_SEQ`): no gate.
+struct Phi2Ffn {
+    up: QuantMat,
+    up_b: Vec<f32>,
+    down: QuantMat,
+    down_b: Vec<f32>,
+}
+
 /// Dense SwiGLU / Gemma GeGLU, official llama MoE, Llama4, Qwen2MoE, or Qwen3MoE.
 enum LayerFfn {
     /// `ffn_gate` / `ffn_up` / `ffn_down` (dense llama / qwen2 / mistral / phi3 / gemma / qwen3).
@@ -301,11 +322,15 @@ enum LayerFfn {
     Qwen3Moe(Box<Qwen3Moe>),
     /// Official `qwen3next`: routed `*_exps` (`norm_w`) + gated shared `*_shexp`.
     Qwen3Next(Box<Qwen2Moe>),
+    /// Official `phi2`: `ffn_up` / `ffn_down` GELU sequential (no `ffn_gate`).
+    Phi2(Box<Phi2Ffn>),
 }
 
 /// Per-layer weights.
 struct Layer {
     attn_norm: Vec<f32>,
+    /// Official phi2 `blk.{i}.attn_norm.bias` (`LLM_NORM`).
+    attn_norm_b: Option<Vec<f32>>,
     wq: QuantMat,
     bq: Option<Vec<f32>>,
     wk: QuantMat,
@@ -313,6 +338,8 @@ struct Layer {
     wv: QuantMat,
     bv: Option<Vec<f32>>,
     wo: QuantMat,
+    /// Official phi2 `blk.{i}.attn_output.bias` (required, flag 0).
+    wo_b: Option<Vec<f32>>,
     /// Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 `blk.{i}.attn_q_norm` (RMSNorm on Q after projection, before RoPE).
     attn_q_norm: Option<Vec<f32>>,
     /// Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 `blk.{i}.attn_k_norm` (RMSNorm on K after projection, before RoPE).
@@ -353,7 +380,13 @@ pub struct Llama {
     blob: Vec<u8>,
     token_embd: QuantMat,
     output_norm: Vec<f32>,
+    /// Official phi2 `output_norm.bias` (`LLM_NORM`).
+    output_norm_b: Option<Vec<f32>>,
     output: QuantMat,
+    /// Official phi2 `output.bias` (required, flag 0).
+    output_b: Option<Vec<f32>>,
+    /// Official `architecture=phi2` language walk (`src/models/phi2.cpp`).
+    phi2: bool,
     layers: Vec<Layer>,
 }
 
@@ -369,13 +402,14 @@ pub struct KvCache {
 impl Llama {
     /// Build from a loaded GGUF using `{arch}.*` KV (`llama`, `qwen2`, `mistral`,
     /// `phi3`, `gemma`, `qwen3`, `llama4`, `qwen2moe`, `qwen3moe`, `qwen2vl`,
-    /// `qwen3vl`, `qwen3next`, or `qwen35`) and `blk.{i}.*` tensor names. Official llama
+    /// `qwen3vl`, `qwen3next`, `qwen35`, or `phi2`) and `blk.{i}.*` tensor names. Official llama
     /// MoE is still `architecture=llama` with `n_expert>0`. Official Qwen2VL is
     /// Qwen2 plus m-RoPE (`LLAMA_ROPE_TYPE_MROPE`). Official Qwen3VL is Qwen3
     /// QK-Norm plus interleaved m-RoPE (`LLAMA_ROPE_TYPE_IMROPE`). Official
     /// Qwen3Next is gated full attention plus MoE (`norm_w`) and a sigmoid-gated
     /// shared expert. Official Qwen35 is gated full attention plus IMROPE and
-    /// dense SwiGLU; linear-attn / gated-delta layers are refused.
+    /// dense SwiGLU; linear-attn / gated-delta layers are refused. Official
+    /// Phi2 is LayerNorm + NEOX RoPE + parallel GELU FFN.
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
     /// blob; they do not clone tensor bytes. When `output.weight` is absent,
@@ -415,6 +449,15 @@ impl Llama {
         } else {
             None
         };
+        // Official phi2.cpp `load_arch_hparams` reads
+        // `LLM_KV_ATTENTION_LAYERNORM_EPS` (`{arch}.attention.layer_norm_epsilon`)
+        // with the other hparams, before tensor materialization.
+        let phi2 = arch == "phi2";
+        let rms_eps = if phi2 {
+            require_f32(&g, arch, "attention.layer_norm_epsilon")?
+        } else {
+            arch_f32(&g, arch, "attention.layer_norm_rms_epsilon").unwrap_or(1e-5)
+        };
         let n_rot = rope_dimension(&g, arch, n_embd, n_head)?;
         let rope_sections = if arch == "qwen2vl" || arch == "qwen3vl" || arch == "qwen35" {
             Some(load_rope_dimension_sections(&g, arch)?)
@@ -427,16 +470,25 @@ impl Llama {
             .tensor("token_embd.weight")
             .map(|t| t.n_rows())
             .ok_or_else(|| LlamaError::Tensor("token_embd.weight".into()))?;
-        let rms_eps = arch_f32(&g, arch, "attention.layer_norm_rms_epsilon").unwrap_or(1e-5);
         let rope_base = arch_f32(&g, arch, "rope.freq_base").unwrap_or(10_000.0);
         let gemma = arch == "gemma";
         let n_embd_f = f32::from(u16::try_from(n_embd).unwrap_or(1));
         let embed_scale = if gemma { n_embd_f.sqrt() } else { 1.0 };
         let token_embd = quant_mat(need(&g, "token_embd.weight")?)?;
         let output_norm = f32s(need(&g, "output_norm.weight")?)?;
+        let output_norm_b = if phi2 {
+            Some(f32s(need(&g, "output_norm.bias")?)?)
+        } else {
+            None
+        };
         let output = match g.tensor("output.weight") {
             Some(t) => quant_mat(t)?,
             None => reuse_token_embd_as_output(&token_embd),
+        };
+        let output_b = if phi2 {
+            Some(f32s(need(&g, "output.bias")?)?)
+        } else {
+            None
         };
         let qk_norm = arch == "qwen3"
             || arch == "qwen3moe"
@@ -466,6 +518,7 @@ impl Llama {
         };
         let layer_h = LayerHparams {
             qk_norm,
+            phi2,
             llama4: llama4_hparams.as_ref(),
             llama_moe: llama_moe_hparams.as_ref(),
             qwen2moe: qwen2moe_hparams.as_ref(),
@@ -493,7 +546,10 @@ impl Llama {
             blob: g.into_blob(),
             token_embd,
             output_norm,
+            output_norm_b,
             output,
+            output_b,
+            phi2,
             layers,
         })
     }
@@ -568,7 +624,18 @@ impl Llama {
         }
         for (li, layer) in self.layers.iter().enumerate() {
             let residual = x.clone();
-            x = rmsnorm_rows(&x, self.n_embd, &layer.attn_norm, self.rms_eps)?;
+            x = if self.phi2 {
+                layernorm_rows(
+                    &x,
+                    self.n_embd,
+                    &layer.attn_norm,
+                    layer.attn_norm_b.as_deref(),
+                    self.rms_eps,
+                )?
+            } else {
+                rmsnorm_rows(&x, self.n_embd, &layer.attn_norm, self.rms_eps)?
+            };
+            let attn_norm_output = x.clone();
             let q_full = add_bias_rows(
                 self.gemm_mat(&layer.wq, n, &x)?,
                 layer.wq.n_rows,
@@ -651,6 +718,16 @@ impl Llama {
                             *h = rmsnorm_unweighted(h, self.rms_eps)?;
                         }
                     }
+                    if self.phi2 {
+                        // Official phi2.cpp: scale Q after RoPE, then attn scale 1.0.
+                        let hd_f = f32::from(u16::try_from(hd).unwrap_or(1));
+                        let q_scale = if hd_f > 0.0 { 1.0 / hd_f.sqrt() } else { 0.0 };
+                        for h in &mut qh {
+                            for v in h.iter_mut() {
+                                *v *= q_scale;
+                            }
+                        }
+                    }
                 } else {
                     // Official Llama4 NoPE: Q *= attn temperature scale.
                     let scale = llama4_attn_temp_scale(pos);
@@ -660,7 +737,25 @@ impl Llama {
                         }
                     }
                 }
-                let one = attend_query(cache, li, &qh, self.n_head_kv, hd, pos.saturating_add(1))?;
+                let score_scale = if self.phi2 {
+                    1.0
+                } else {
+                    let scale = f32::from(u16::try_from(hd).unwrap_or(1)).sqrt();
+                    if scale > 0.0 {
+                        1.0 / scale
+                    } else {
+                        0.0
+                    }
+                };
+                let one = attend_query(
+                    cache,
+                    li,
+                    &qh,
+                    self.n_head_kv,
+                    hd,
+                    pos.saturating_add(1),
+                    score_scale,
+                )?;
                 let dst_off = t.saturating_mul(self.n_embd);
                 let dst = attn
                     .get_mut(dst_off..dst_off.saturating_add(self.n_embd))
@@ -677,34 +772,75 @@ impl Llama {
                     *a *= sigmoid_f32(*g);
                 }
             }
-            let proj = self.gemm_mat(&layer.wo, n, &attn)?;
-            x = add(&proj, &residual)?;
-            let residual = x.clone();
-            x = rmsnorm_rows(&x, self.n_embd, &layer.ffn_norm, self.rms_eps)?;
-            let down = match &layer.ffn {
-                LayerFfn::Dense(dense) => {
-                    let gate = self.gemm_mat(&dense.gate, n, &x)?;
-                    let up = self.gemm_mat(&dense.up, n, &x)?;
-                    let mut h = ffn_gate_act(&gate, self.ffn_gelu)?;
-                    for (hv, uv) in h.iter_mut().zip(up.iter()) {
-                        *hv *= *uv;
+            let proj = add_bias_rows(
+                self.gemm_mat(&layer.wo, n, &attn)?,
+                layer.wo.n_rows,
+                layer.wo_b.as_deref(),
+            )?;
+            if self.phi2 {
+                // Official phi2.cpp: FFN on the same `attn_norm` as attention
+                // (parallel residual), then `attn + ffn + inpL`.
+                let down = match &layer.ffn {
+                    LayerFfn::Phi2(ffn) => {
+                        let up = add_bias_rows(
+                            self.gemm_mat(&ffn.up, n, &attn_norm_output)?,
+                            ffn.up.n_rows,
+                            Some(ffn.up_b.as_slice()),
+                        )?;
+                        let h = gelu(&up)?;
+                        add_bias_rows(
+                            self.gemm_mat(&ffn.down, n, &h)?,
+                            ffn.down.n_rows,
+                            Some(ffn.down_b.as_slice()),
+                        )?
                     }
-                    self.gemm_mat(&dense.down, n, &h)?
-                }
-                LayerFfn::LlamaMoe(moe) => self.llama_moe_rows(moe.as_ref(), n, &x)?,
-                LayerFfn::Llama4Moe(moe) => self.llama4_moe_rows(moe.as_ref(), n, &x)?,
-                LayerFfn::Qwen2Moe(moe) => self.qwen2moe_rows(moe.as_ref(), n, &x)?,
-                LayerFfn::Qwen3Moe(moe) => self.qwen3moe_rows(moe.as_ref(), n, &x)?,
-                LayerFfn::Qwen3Next(moe) => self.qwen3next_rows(moe.as_ref(), n, &x)?,
-            };
-            x = add(&down, &residual)?;
+                    _ => return Err(LlamaError::Shape("phi2 ffn".into())),
+                };
+                let summed = add(&proj, &down)?;
+                x = add(&summed, &residual)?;
+            } else {
+                x = add(&proj, &residual)?;
+                let residual = x.clone();
+                x = rmsnorm_rows(&x, self.n_embd, &layer.ffn_norm, self.rms_eps)?;
+                let down = match &layer.ffn {
+                    LayerFfn::Dense(dense) => {
+                        let gate = self.gemm_mat(&dense.gate, n, &x)?;
+                        let up = self.gemm_mat(&dense.up, n, &x)?;
+                        let mut h = ffn_gate_act(&gate, self.ffn_gelu)?;
+                        for (hv, uv) in h.iter_mut().zip(up.iter()) {
+                            *hv *= *uv;
+                        }
+                        self.gemm_mat(&dense.down, n, &h)?
+                    }
+                    LayerFfn::LlamaMoe(moe) => self.llama_moe_rows(moe.as_ref(), n, &x)?,
+                    LayerFfn::Llama4Moe(moe) => self.llama4_moe_rows(moe.as_ref(), n, &x)?,
+                    LayerFfn::Qwen2Moe(moe) => self.qwen2moe_rows(moe.as_ref(), n, &x)?,
+                    LayerFfn::Qwen3Moe(moe) => self.qwen3moe_rows(moe.as_ref(), n, &x)?,
+                    LayerFfn::Qwen3Next(moe) => self.qwen3next_rows(moe.as_ref(), n, &x)?,
+                    LayerFfn::Phi2(_) => return Err(LlamaError::Shape("phi2 ffn".into())),
+                };
+                x = add(&down, &residual)?;
+            }
         }
         let last_off = n.saturating_sub(1).saturating_mul(self.n_embd);
         let last = x
             .get(last_off..last_off.saturating_add(self.n_embd))
             .ok_or_else(|| LlamaError::Shape("prefill last".into()))?;
-        let xn = rmsnorm(last, &self.output_norm, self.rms_eps)?;
-        let logits = self.gemv_mat(&self.output, &xn)?;
+        let xn = if self.phi2 {
+            layernorm(
+                last,
+                &self.output_norm,
+                self.output_norm_b.as_deref(),
+                self.rms_eps,
+            )?
+        } else {
+            rmsnorm(last, &self.output_norm, self.rms_eps)?
+        };
+        let logits = add_bias_rows(
+            self.gemv_mat(&self.output, &xn)?,
+            self.n_vocab,
+            self.output_b.as_deref(),
+        )?;
         cache.n_past = end;
         Ok(logits)
     }
@@ -1124,6 +1260,201 @@ pub fn tiny_qwen35_gguf() -> Vec<u8> {
         add_bos_token: Some(false),
         llama_moe: false,
     })
+}
+
+/// Writer-built official Phi2 GGUF: `architecture=phi2` with `phi2.*` KV.
+///
+/// Official `LLM_ARCH_NAMES` has `LLM_ARCH_PHI2 = "phi2"`; convert writes
+/// `general.architecture=phi2` (`PhiForCausalLM` → `MODEL_ARCH.PHI2`). Decode
+/// follows llama.cpp `src/models/phi2.cpp`: `LLM_NORM` (LayerNorm + bias),
+/// `LLAMA_ROPE_TYPE_NEOX`, Q scaled by `1/sqrt(n_embd_head)` then attn scale
+/// `1.0`, parallel residual (`LLM_FFN_GELU` / `LLM_FFN_SEQ` from the same
+/// `attn_norm`, no `ffn_gate` / no `ffn_norm`), `output.bias`. Official convert
+/// writes `layer_norm_epsilon`, `feed_forward_length = 4 * n_embd`,
+/// `head_count_kv = n_head`, `rope.dimension_count = int(partial_rotary_factor
+/// * n_embd) // n_head`, and `add_bos_token=false`. Tied `output.weight` reuse
+/// is allowed. Not Mixtral, not `qwen3vlmoe`, not linear-attn, not a phi3 redo.
+pub fn tiny_phi2_gguf() -> Vec<u8> {
+    let n_embd = TINY_N_EMBD;
+    let n_ff = TINY_PHI2_N_FF;
+    let n_vocab = TINY_N_VOCAB;
+    let n_head = TINY_N_HEAD;
+    let n_kv = TINY_PHI2_N_HEAD_KV.saturating_mul(n_embd / n_head);
+    let ones = vec![1.0f32; n_embd];
+    let kv = vec![
+        (
+            "general.alignment".into(),
+            Kv::U32(u32::try_from(GGUF_DEFAULT_ALIGNMENT).unwrap_or(32)),
+        ),
+        ("general.name".into(), Kv::String("llama-rust-tiny".into())),
+        ("general.architecture".into(), Kv::String("phi2".into())),
+        (
+            "phi2.block_count".into(),
+            Kv::U32(u32::try_from(TINY_N_LAYER).unwrap_or(0)),
+        ),
+        (
+            "phi2.embedding_length".into(),
+            Kv::U32(u32::try_from(n_embd).unwrap_or(0)),
+        ),
+        (
+            "phi2.feed_forward_length".into(),
+            Kv::U32(u32::try_from(n_ff).unwrap_or(0)),
+        ),
+        (
+            "phi2.attention.head_count".into(),
+            Kv::U32(u32::try_from(n_head).unwrap_or(0)),
+        ),
+        (
+            "phi2.attention.head_count_kv".into(),
+            Kv::U32(u32::try_from(TINY_PHI2_N_HEAD_KV).unwrap_or(0)),
+        ),
+        (
+            "phi2.rope.dimension_count".into(),
+            Kv::U32(u32::try_from(TINY_PHI2_N_ROT).unwrap_or(0)),
+        ),
+        ("phi2.rope.freq_base".into(), Kv::F32(10_000.0)),
+        (
+            "phi2.attention.layer_norm_epsilon".into(),
+            Kv::F32(1.0 / 100_000.0),
+        ),
+        ("tokenizer.ggml.add_bos_token".into(), Kv::Bool(false)),
+        (
+            "tokenizer.ggml.tokens".into(),
+            Kv::Array {
+                elem: 8,
+                items: ["<unk>", "a", "b", "ab", "<s>", "</s>"]
+                    .into_iter()
+                    .map(|s| Kv::String(s.into()))
+                    .collect(),
+            },
+        ),
+        (
+            "tokenizer.ggml.merges".into(),
+            Kv::Array {
+                elem: 8,
+                items: vec![Kv::String("a b".into())],
+            },
+        ),
+        ("tokenizer.ggml.bos_token_id".into(), Kv::U32(4)),
+        ("tokenizer.ggml.eos_token_id".into(), Kv::U32(5)),
+    ];
+    let tensors = vec![
+        tw(
+            "token_embd.weight",
+            GgmlType::F32,
+            vec![n_embd, n_vocab],
+            pack_mat(GgmlType::F32, n_embd, n_vocab, 1),
+        ),
+        tw(
+            "output_norm.weight",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &ones),
+        ),
+        tw(
+            "output_norm.bias",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_embd, 19)),
+        ),
+        tw(
+            "output.weight",
+            GgmlType::F32,
+            vec![n_embd, n_vocab],
+            pack_mat(GgmlType::F32, n_embd, n_vocab, 2),
+        ),
+        tw(
+            "output.bias",
+            GgmlType::F32,
+            vec![n_vocab],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_vocab, 17)),
+        ),
+        tw(
+            "blk.0.attn_norm.weight",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &ones),
+        ),
+        tw(
+            "blk.0.attn_norm.bias",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_embd, 18)),
+        ),
+        tw(
+            "blk.0.attn_k.weight",
+            GgmlType::F32,
+            vec![n_embd, n_kv],
+            pack_mat(GgmlType::F32, n_embd, n_kv, 3),
+        ),
+        tw(
+            "blk.0.attn_v.weight",
+            GgmlType::F32,
+            vec![n_embd, n_kv],
+            pack_mat(GgmlType::F32, n_embd, n_kv, 4),
+        ),
+        tw(
+            "blk.0.attn_q.weight",
+            GgmlType::Q4_K,
+            vec![n_embd, n_embd],
+            pack_mat(GgmlType::Q4_K, n_embd, n_embd, 5),
+        ),
+        tw(
+            "blk.0.attn_output.weight",
+            GgmlType::Q4_K,
+            vec![n_embd, n_embd],
+            pack_mat(GgmlType::Q4_K, n_embd, n_embd, 6),
+        ),
+        tw(
+            "blk.0.ffn_up.weight",
+            GgmlType::Q4_K,
+            vec![n_embd, n_ff],
+            pack_mat(GgmlType::Q4_K, n_embd, n_ff, 7),
+        ),
+        tw(
+            "blk.0.ffn_down.weight",
+            GgmlType::Q4_K,
+            vec![n_ff, n_embd],
+            pack_mat(GgmlType::Q4_K, n_ff, n_embd, 8),
+        ),
+        tw(
+            "blk.0.attn_q.bias",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_embd, 11)),
+        ),
+        tw(
+            "blk.0.attn_k.bias",
+            GgmlType::F32,
+            vec![n_kv],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_kv, 12)),
+        ),
+        tw(
+            "blk.0.attn_v.bias",
+            GgmlType::F32,
+            vec![n_kv],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_kv, 13)),
+        ),
+        tw(
+            "blk.0.attn_output.bias",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_embd, 14)),
+        ),
+        tw(
+            "blk.0.ffn_up.bias",
+            GgmlType::F32,
+            vec![n_ff],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_ff, 15)),
+        ),
+        tw(
+            "blk.0.ffn_down.bias",
+            GgmlType::F32,
+            vec![n_embd],
+            pack_vec1d(GgmlType::F32, &pat_f32(n_embd, 16)),
+        ),
+    ];
+    write_gguf_with_kv(&kv, &tensors)
 }
 
 /// Writer-built Llama GGUF with Q4_K `token_embd.weight`.
@@ -2131,6 +2462,7 @@ fn supported_arch(s: &str) -> bool {
         || s == "qwen3vl"
         || s == "qwen3next"
         || s == "qwen35"
+        || s == "phi2"
 }
 
 fn arch_key(arch: &str, field: &str) -> String {
@@ -2156,6 +2488,11 @@ fn require_usize(g: &Gguf, arch: &str, field: &str) -> Result<usize, LlamaError>
         .kv_u32(&key)
         .ok_or_else(|| LlamaError::MissingKv(key.clone()))?;
     usize::try_from(v).map_err(|_| LlamaError::Shape(key))
+}
+
+fn require_f32(g: &Gguf, arch: &str, field: &str) -> Result<f32, LlamaError> {
+    let key = arch_key(arch, field);
+    g.kv_f32(&key).ok_or(LlamaError::MissingKv(key))
 }
 
 fn rope_dimension(g: &Gguf, arch: &str, n_embd: usize, n_head: usize) -> Result<usize, LlamaError> {
@@ -2987,19 +3324,21 @@ fn pack_q5k_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
 fn pack_q4k_mat(n_cols: usize, n_rows: usize, seed: u32) -> Vec<u8> {
     let mut out = Vec::new();
     let mut s = seed;
+    let nblocks = n_cols / QK_K;
     for _ in 0..n_rows {
-        let mut qs = [0u8; QK_K];
-        for q in &mut qs {
-            s = s.wrapping_mul(1_664_525).wrapping_add(1);
-            *q = u8::try_from(s % 8).unwrap_or(0);
+        for _ in 0..nblocks {
+            let mut qs = [0u8; QK_K];
+            for q in &mut qs {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1);
+                *q = u8::try_from(s % 8).unwrap_or(0);
+            }
+            let mut sc = [1u8; 8];
+            for c in &mut sc {
+                s = s.wrapping_mul(1_664_525).wrapping_add(1);
+                *c = u8::try_from(1 + s % 4).unwrap_or(1);
+            }
+            out.extend_from_slice(&pack_q4_k_block(25.0 / 100.0, 0.0, &sc, &[0u8; 8], &qs));
         }
-        let mut sc = [1u8; 8];
-        for c in &mut sc {
-            s = s.wrapping_mul(1_664_525).wrapping_add(1);
-            *c = u8::try_from(1 + s % 4).unwrap_or(1);
-        }
-        out.extend_from_slice(&pack_q4_k_block(25.0 / 100.0, 0.0, &sc, &[0u8; 8], &qs));
-        let _ = n_cols;
     }
     out
 }
@@ -3343,6 +3682,7 @@ fn load_qwen35_hparams(g: &Gguf, arch: &str) -> Result<Qwen35Hparams, LlamaError
 
 struct LayerHparams<'a> {
     qk_norm: bool,
+    phi2: bool,
     llama4: Option<&'a Llama4Hparams>,
     llama_moe: Option<&'a LlamaMoeHparams>,
     qwen2moe: Option<&'a Qwen2MoeHparams>,
@@ -3407,6 +3747,13 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
             up: quant_mat(need(g, &format!("blk.{i}.ffn_up.weight"))?)?,
             down: quant_mat(need(g, &format!("blk.{i}.ffn_down.weight"))?)?,
         }))
+    } else if h.phi2 {
+        LayerFfn::Phi2(Box::new(Phi2Ffn {
+            up: quant_mat(need(g, &format!("blk.{i}.ffn_up.weight"))?)?,
+            up_b: f32s(need(g, &format!("blk.{i}.ffn_up.bias"))?)?,
+            down: quant_mat(need(g, &format!("blk.{i}.ffn_down.weight"))?)?,
+            down_b: f32s(need(g, &format!("blk.{i}.ffn_down.bias"))?)?,
+        }))
     } else {
         LayerFfn::Dense(Box::new(DenseFfn {
             gate: quant_mat(need(g, &format!("blk.{i}.ffn_gate.weight"))?)?,
@@ -3416,6 +3763,11 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
     };
     Ok(Layer {
         attn_norm: f32s(need(g, &format!("blk.{i}.attn_norm.weight"))?)?,
+        attn_norm_b: if h.phi2 {
+            Some(f32s(need(g, &format!("blk.{i}.attn_norm.bias"))?)?)
+        } else {
+            None
+        },
         wq: quant_mat(need(g, &format!("blk.{i}.attn_q.weight"))?)?,
         bq: optional_f32(g, &format!("blk.{i}.attn_q.bias"))?,
         wk: quant_mat(need(g, &format!("blk.{i}.attn_k.weight"))?)?,
@@ -3423,6 +3775,11 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
         wv: quant_mat(need(g, &format!("blk.{i}.attn_v.weight"))?)?,
         bv: optional_f32(g, &format!("blk.{i}.attn_v.bias"))?,
         wo: quant_mat(need(g, &format!("blk.{i}.attn_output.weight"))?)?,
+        wo_b: if h.phi2 {
+            Some(f32s(need(g, &format!("blk.{i}.attn_output.bias"))?)?)
+        } else {
+            None
+        },
         attn_q_norm: if qk_norm {
             Some(f32s(need(g, &format!("blk.{i}.attn_q_norm.weight"))?)?)
         } else {
@@ -3436,7 +3793,9 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
         use_rope,
         qk_l2,
         attn_q_gate: qwen3next.is_some() || qwen35.is_some(),
-        ffn_norm: if qwen3next.is_some() || qwen35.is_some() {
+        ffn_norm: if h.phi2 {
+            Vec::new()
+        } else if qwen3next.is_some() || qwen35.is_some() {
             f32s(need(g, &format!("blk.{i}.post_attention_norm.weight"))?)?
         } else {
             f32s(need(g, &format!("blk.{i}.ffn_norm.weight"))?)?
@@ -3611,13 +3970,18 @@ fn optional_f32(g: &Gguf, name: &str) -> Result<Option<Vec<f32>>, LlamaError> {
 
 fn is_applied_norm_or_bias(name: &str) -> bool {
     name == "output_norm.weight"
+        || name == "output_norm.bias"
         || name.ends_with(".attn_norm.weight")
+        || name.ends_with(".attn_norm.bias")
         || name.ends_with(".ffn_norm.weight")
         || name.ends_with(".attn_q_norm.weight")
         || name.ends_with(".attn_k_norm.weight")
         || name.ends_with(".attn_q.bias")
         || name.ends_with(".attn_k.bias")
         || name.ends_with(".attn_v.bias")
+        || name.ends_with(".attn_output.bias")
+        || name.ends_with(".ffn_up.bias")
+        || name.ends_with(".ffn_down.bias")
 }
 
 fn f32s(t: Tensor<'_>) -> Result<Vec<f32>, LlamaError> {
@@ -4388,14 +4752,14 @@ fn attend_query(
     n_head_kv: usize,
     hd: usize,
     seq: usize,
+    score_scale: f32,
 ) -> Result<Vec<f32>, LlamaError> {
     if n_head_kv == 0 {
         return Err(LlamaError::Shape("gqa".into()));
     }
     let n_embd = qh.len().saturating_mul(hd);
     let mut attn = vec![0.0f32; n_embd];
-    let scale = (f32::from(u16::try_from(hd).unwrap_or(1))).sqrt();
-    let inv = if scale > 0.0 { 1.0 / scale } else { 0.0 };
+    let inv = score_scale;
     let gqa = qh.len() / n_head_kv;
     if gqa == 0 {
         return Err(LlamaError::Shape("gqa".into()));
@@ -4516,6 +4880,61 @@ fn rmsnorm(x: &[f32], w: &[f32], eps: f32) -> Result<Vec<f32>, LlamaError> {
     Ok(out)
 }
 
+/// Official `ggml_compute_forward_norm_f32` + `build_norm` `LLM_NORM` (weight, optional bias).
+fn layernorm(x: &[f32], w: &[f32], b: Option<&[f32]>, eps: f32) -> Result<Vec<f32>, LlamaError> {
+    if x.len() != w.len() {
+        return Err(LlamaError::Shape("layernorm".into()));
+    }
+    if let Some(b) = b {
+        if b.len() != x.len() {
+            return Err(LlamaError::Shape("layernorm".into()));
+        }
+    }
+    let n = f32::from(u16::try_from(x.len()).unwrap_or(1));
+    let mut sum = 0.0f32;
+    for v in x {
+        sum += *v;
+    }
+    let mean = if n > 0.0 { sum / n } else { 0.0 };
+    let mut var = 0.0f32;
+    for v in x {
+        let d = *v - mean;
+        var += d * d;
+    }
+    if n > 0.0 {
+        var /= n;
+    }
+    let scale = 1.0 / (var + eps).sqrt();
+    let mut out = vec![0.0f32; x.len()];
+    for (i, ((o, xv), wv)) in out.iter_mut().zip(x.iter()).zip(w.iter()).enumerate() {
+        let mut y = (*xv - mean) * scale * *wv;
+        if let Some(b) = b {
+            if let Some(bv) = b.get(i) {
+                y += *bv;
+            }
+        }
+        *o = y;
+    }
+    Ok(out)
+}
+
+fn layernorm_rows(
+    x: &[f32],
+    width: usize,
+    w: &[f32],
+    b: Option<&[f32]>,
+    eps: f32,
+) -> Result<Vec<f32>, LlamaError> {
+    if width == 0 || !x.len().is_multiple_of(width) {
+        return Err(LlamaError::Shape("layernorm".into()));
+    }
+    let mut out = Vec::new();
+    for row in x.chunks(width) {
+        out.extend(layernorm(row, w, b, eps)?);
+    }
+    Ok(out)
+}
+
 fn rope(vec: &mut [f32], pos: usize, n_rot: usize, base: f32) -> Result<(), LlamaError> {
     let n = n_rot.min(vec.len());
     if n < 2 {
@@ -4578,6 +4997,7 @@ fn rope_neox(vec: &mut [f32], pos: usize, n_rot: usize, base: f32) -> Result<(),
 }
 
 /// Official Qwen2VL / Qwen3VL text walk: `ggml_rope_multi` when sections are present.
+/// Official phi2 uses `LLAMA_ROPE_TYPE_NEOX` (`llama_model_rope_type`).
 fn apply_rope(
     vec: &mut [f32],
     pos: usize,
@@ -4612,9 +5032,11 @@ fn rope_is_neox(arch: &str) -> bool {
     match arch {
         // LLAMA / LLAMA4 => LLAMA_ROPE_TYPE_NORM.
         "llama" | "llama4" | "mistral" => false,
-        // QWEN2 / QWEN2MOE / QWEN3 / QWEN3MOE / QWEN3NEXT / PHI3 / GEMMA
+        // QWEN2 / QWEN2MOE / QWEN3 / QWEN3MOE / QWEN3NEXT / PHI2 / PHI3 / GEMMA
         // => LLAMA_ROPE_TYPE_NEOX.
-        "qwen2" | "qwen2moe" | "qwen3" | "qwen3moe" | "qwen3next" | "phi3" | "gemma" => true,
+        "qwen2" | "qwen2moe" | "qwen3" | "qwen3moe" | "qwen3next" | "phi2" | "phi3" | "gemma" => {
+            true
+        }
         // MROPE / IMROPE arches reach `rope_multi`; the flag is unused for them.
         _ => false,
     }
@@ -6088,6 +6510,25 @@ mod tests {
         x.iter().zip(w.iter()).map(|(a, b)| a / rms * b).collect()
     }
 
+    /// Independent scalar of official `ggml_compute_forward_norm_f32` + `LLM_NORM`.
+    fn oracle_layernorm(x: &[f32], w: &[f32], b: Option<&[f32]>, eps: f32) -> Vec<f32> {
+        let n = x.len() as f32;
+        let mean = x.iter().sum::<f32>() / n;
+        let var = x.iter().map(|v| (v - mean) * (v - mean)).sum::<f32>() / n;
+        let scale = 1.0 / (var + eps).sqrt();
+        x.iter()
+            .zip(w.iter())
+            .enumerate()
+            .map(|(i, (xv, wv))| {
+                let mut y = (xv - mean) * scale * wv;
+                if let Some(b) = b {
+                    y += b[i];
+                }
+                y
+            })
+            .collect()
+    }
+
     /// Official Llama4 `ggml_rms_norm` without weight (`Llama4TextL2Norm`).
     fn oracle_rmsnorm_unweighted(x: &[f32], eps: f32) -> Vec<f32> {
         let ss: f32 = x.iter().map(|v| v * v).sum();
@@ -6364,7 +6805,7 @@ mod tests {
     fn oracle_rope_is_neox(arch: &str) -> bool {
         matches!(
             arch,
-            "qwen2" | "qwen2moe" | "qwen3" | "qwen3moe" | "qwen3next" | "phi3" | "gemma"
+            "qwen2" | "qwen2moe" | "qwen3" | "qwen3moe" | "qwen3next" | "phi2" | "phi3" | "gemma"
         )
     }
 
@@ -6464,7 +6905,12 @@ mod tests {
         let n_head = arch_u32(g, arch, "attention.head_count").unwrap() as usize;
         let n_kv = arch_u32(g, arch, "attention.head_count_kv").unwrap() as usize;
         let n_rot = oracle_n_rot(g, arch, n_embd, n_head);
-        let eps = arch_f32(g, arch, "attention.layer_norm_rms_epsilon").unwrap();
+        let phi2 = arch == "phi2";
+        let eps = if phi2 {
+            arch_f32(g, arch, "attention.layer_norm_epsilon").unwrap()
+        } else {
+            arch_f32(g, arch, "attention.layer_norm_rms_epsilon").unwrap()
+        };
         let base = arch_f32(g, arch, "rope.freq_base").unwrap();
         let hd = n_embd / n_head;
         let gqa = n_head / n_kv;
@@ -6484,7 +6930,13 @@ mod tests {
                 *v *= embed_scale;
             }
             let an = f32s(g.tensor("blk.0.attn_norm.weight").unwrap()).unwrap();
-            let x = oracle_rmsnorm(&residual, &an, eps);
+            let an_b = g.tensor("blk.0.attn_norm.bias").and_then(|t| f32s(t).ok());
+            let x = if phi2 {
+                oracle_layernorm(&residual, &an, an_b.as_deref(), eps)
+            } else {
+                oracle_rmsnorm(&residual, &an, eps)
+            };
+            let attn_norm_output = x.clone();
             let q_full = oracle_add_bias(
                 oracle_gemv(g.tensor("blk.0.attn_q.weight").unwrap(), &x),
                 g.tensor("blk.0.attn_q.bias"),
@@ -6589,8 +7041,16 @@ mod tests {
                 k_cache[hkv].push(khv.clone());
                 v_cache[hkv].push(vh[hkv].clone());
             }
+            if phi2 && use_rope {
+                let q_scale = 1.0 / (hd as f32).sqrt();
+                for h in &mut qh {
+                    for v in h.iter_mut() {
+                        *v *= q_scale;
+                    }
+                }
+            }
             let seq = pos + 1;
-            let inv = 1.0 / (hd as f32).sqrt();
+            let inv = if phi2 { 1.0 } else { 1.0 / (hd as f32).sqrt() };
             let mut attn = vec![0.0f32; n_embd];
             for (hq, qvec) in qh.iter().enumerate() {
                 let hkv = hq / gqa;
@@ -6625,52 +7085,79 @@ mod tests {
                     *a *= 1.0 / (1.0 + (-gv).exp());
                 }
             }
-            let mut x = oracle_gemv(g.tensor("blk.0.attn_output.weight").unwrap(), &attn);
-            x = x.iter().zip(residual.iter()).map(|(a, b)| a + b).collect();
-            let fnorm = if qwen3next || qwen35 {
-                f32s(g.tensor("blk.0.post_attention_norm.weight").unwrap()).unwrap()
-            } else {
-                f32s(g.tensor("blk.0.ffn_norm.weight").unwrap()).unwrap()
-            };
-            let xn = oracle_rmsnorm(&x, &fnorm, eps);
-            let llama_moe = arch == "llama" && arch_u32(g, arch, "expert_count").unwrap_or(0) > 0;
-            let qwen2moe = arch == "qwen2moe";
-            let qwen3moe = arch == "qwen3moe";
-            let down = if llama4 {
-                oracle_llama4_moe(g, &xn)
-            } else if llama_moe {
-                oracle_llama_moe(g, &xn)
-            } else if qwen2moe {
-                oracle_qwen2moe(g, &xn)
-            } else if qwen3moe {
-                oracle_qwen3moe(g, &xn)
-            } else if qwen3next {
-                oracle_qwen3next(g, &xn)
-            } else {
-                let gate = oracle_gemv(g.tensor("blk.0.ffn_gate.weight").unwrap(), &xn);
-                let up = oracle_gemv(g.tensor("blk.0.ffn_up.weight").unwrap(), &xn);
-                let h: Vec<f32> = gate
+            let mut x = oracle_add_bias(
+                oracle_gemv(g.tensor("blk.0.attn_output.weight").unwrap(), &attn),
+                g.tensor("blk.0.attn_output.bias"),
+            );
+            if phi2 {
+                let up = oracle_add_bias(
+                    oracle_gemv(g.tensor("blk.0.ffn_up.weight").unwrap(), &attn_norm_output),
+                    g.tensor("blk.0.ffn_up.bias"),
+                );
+                let h: Vec<f32> = up.iter().map(|u| oracle_gelu(*u)).collect();
+                let down = oracle_add_bias(
+                    oracle_gemv(g.tensor("blk.0.ffn_down.weight").unwrap(), &h),
+                    g.tensor("blk.0.ffn_down.bias"),
+                );
+                x = x
                     .iter()
-                    .zip(up.iter())
-                    .map(|(gv, u)| {
-                        let act = if gemma {
-                            oracle_gelu(*gv)
-                        } else {
-                            gv / (1.0 + (-gv).exp())
-                        };
-                        act * u
-                    })
+                    .zip(down.iter())
+                    .zip(residual.iter())
+                    .map(|((a, d), r)| a + d + r)
                     .collect();
-                oracle_gemv(g.tensor("blk.0.ffn_down.weight").unwrap(), &h)
-            };
-            x = down.iter().zip(x.iter()).map(|(a, b)| a + b).collect();
+            } else {
+                x = x.iter().zip(residual.iter()).map(|(a, b)| a + b).collect();
+                let fnorm = if qwen3next || qwen35 {
+                    f32s(g.tensor("blk.0.post_attention_norm.weight").unwrap()).unwrap()
+                } else {
+                    f32s(g.tensor("blk.0.ffn_norm.weight").unwrap()).unwrap()
+                };
+                let xn = oracle_rmsnorm(&x, &fnorm, eps);
+                let llama_moe =
+                    arch == "llama" && arch_u32(g, arch, "expert_count").unwrap_or(0) > 0;
+                let qwen2moe = arch == "qwen2moe";
+                let qwen3moe = arch == "qwen3moe";
+                let down = if llama4 {
+                    oracle_llama4_moe(g, &xn)
+                } else if llama_moe {
+                    oracle_llama_moe(g, &xn)
+                } else if qwen2moe {
+                    oracle_qwen2moe(g, &xn)
+                } else if qwen3moe {
+                    oracle_qwen3moe(g, &xn)
+                } else if qwen3next {
+                    oracle_qwen3next(g, &xn)
+                } else {
+                    let gate = oracle_gemv(g.tensor("blk.0.ffn_gate.weight").unwrap(), &xn);
+                    let up = oracle_gemv(g.tensor("blk.0.ffn_up.weight").unwrap(), &xn);
+                    let h: Vec<f32> = gate
+                        .iter()
+                        .zip(up.iter())
+                        .map(|(gv, u)| {
+                            let act = if gemma {
+                                oracle_gelu(*gv)
+                            } else {
+                                gv / (1.0 + (-gv).exp())
+                            };
+                            act * u
+                        })
+                        .collect();
+                    oracle_gemv(g.tensor("blk.0.ffn_down.weight").unwrap(), &h)
+                };
+                x = down.iter().zip(x.iter()).map(|(a, b)| a + b).collect();
+            }
             let on = f32s(g.tensor("output_norm.weight").unwrap()).unwrap();
-            x = oracle_rmsnorm(&x, &on, eps);
+            let on_b = g.tensor("output_norm.bias").and_then(|t| f32s(t).ok());
+            x = if phi2 {
+                oracle_layernorm(&x, &on, on_b.as_deref(), eps)
+            } else {
+                oracle_rmsnorm(&x, &on, eps)
+            };
             let lm_head = g
                 .tensor("output.weight")
                 .or_else(|| g.tensor("token_embd.weight"))
                 .expect("lm_head");
-            last = oracle_gemv(lm_head, &x);
+            last = oracle_add_bias(oracle_gemv(lm_head, &x), g.tensor("output.bias"));
         }
         last
     }
@@ -6756,6 +7243,7 @@ mod tests {
             "qwen3",
             "qwen3moe",
             "qwen3next",
+            "phi2",
             "phi3",
             "gemma",
         ] {
@@ -7729,6 +8217,7 @@ mod tests {
             tiny_qwen3vl_gguf(),
             tiny_qwen3next_gguf(),
             tiny_qwen35_gguf(),
+            tiny_phi2_gguf(),
         ] {
             load_prefill_match(&bytes, &tokens);
             load_prefill_match(&bytes, &[3]);
@@ -8652,6 +9141,130 @@ mod tests {
         assert_ne!(
             qwen35_pref, qwen3next_pref,
             "qwen35 must not copy qwen3next MoE / partial RoPE"
+        );
+    }
+
+    #[test]
+    fn tiny_phi2_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_phi2_gguf();
+        let g = load_gguf(&bytes).expect("load phi2");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("phi2".into()))
+        );
+        assert_eq!(g.kv_u32("phi2.block_count"), Some(1));
+        assert_eq!(g.kv_u32("phi2.embedding_length"), Some(256));
+        assert_eq!(g.kv_u32("phi2.feed_forward_length"), Some(1024));
+        assert_eq!(g.kv_u32("phi2.attention.head_count"), Some(4));
+        assert_eq!(g.kv_u32("phi2.attention.head_count_kv"), Some(4));
+        assert_eq!(g.kv_u32("phi2.rope.dimension_count"), Some(32));
+        assert_eq!(
+            g.kv_f32("phi2.attention.layer_norm_epsilon"),
+            Some(1.0 / 100_000.0)
+        );
+        assert!(g.kv_f32("phi2.attention.layer_norm_rms_epsilon").is_none());
+        assert!(g.kv_u32("llama.block_count").is_none());
+        assert!(g.kv_u32("phi3.block_count").is_none());
+        assert!(g.kv_u32("qwen35.block_count").is_none());
+        assert!(g.kv_u32("qwen3vlmoe.block_count").is_none());
+        assert!(g.kv_u32("mixtral.block_count").is_none());
+        assert!(g.tensor("blk.0.attn_norm.bias").is_some());
+        assert!(g.tensor("output_norm.bias").is_some());
+        assert!(g.tensor("output.bias").is_some());
+        assert!(g.tensor("blk.0.attn_output.bias").is_some());
+        assert!(g.tensor("blk.0.ffn_up.bias").is_some());
+        assert!(g.tensor("blk.0.ffn_down.bias").is_some());
+        assert!(g.tensor("blk.0.ffn_gate.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_norm.weight").is_none());
+        assert!(g.tensor("blk.0.attn_q_norm.weight").is_none());
+        assert!(g.tensor("blk.0.post_attention_norm.weight").is_none());
+        assert_eq!(g.kv_bool("tokenizer.ggml.add_bos_token"), Some(false));
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("output.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        let mut x2 = pat_f32(TINY_N_EMBD, 22);
+        x2.extend(pat_f32(TINY_N_EMBD, 23));
+        let got_gemm = model.gemm_output(2, &x2).expect("gemm");
+        let exp_gemm = {
+            let mut y = oracle_gemv(g.tensor("output.weight").unwrap(), &x2[..TINY_N_EMBD]);
+            y.extend(oracle_gemv(
+                g.tensor("output.weight").unwrap(),
+                &x2[TINY_N_EMBD..],
+            ));
+            y
+        };
+        assert_logits_match(&got_gemm, &exp_gemm);
+        let emb = model.embed_token(3).expect("embed");
+        let exp_emb = oracle_embed(g.tensor("token_embd.weight").unwrap(), 3);
+        assert_logits_match(&emb, &exp_emb);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        assert!(!tok.add_bos);
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        let tokens = [1u32, 2, 3];
+        let llama_pref = {
+            let l = load_gguf(&tiny_llama_gguf()).expect("llama");
+            let m = Llama::from_gguf(l).expect("ml");
+            let mut c = m.new_cache(8).expect("cl");
+            m.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        let phi3_pref = {
+            let p = load_gguf(&tiny_phi3_gguf()).expect("phi3");
+            let m = Llama::from_gguf(p).expect("mp");
+            let mut c = m.new_cache(8).expect("cp");
+            m.prefill(&mut c, &tokens).expect("phi3 pref")
+        };
+        let gemma_pref = {
+            let ge = load_gguf(&tiny_gemma_gguf()).expect("gemma");
+            let m = Llama::from_gguf(ge).expect("mg");
+            let mut c = m.new_cache(8).expect("cg");
+            m.prefill(&mut c, &tokens).expect("gemma pref")
+        };
+        let mut qc = model.new_cache(8).expect("qc");
+        let phi2_pref = model.prefill(&mut qc, &tokens).expect("phi2 pref");
+        assert_ne!(
+            phi2_pref, llama_pref,
+            "phi2 LayerNorm/GELU-seq/NEOX must change logits vs llama"
+        );
+        assert_ne!(
+            phi2_pref, phi3_pref,
+            "phi2 must not copy phi3 (RMSNorm + SwiGLU)"
+        );
+        assert_ne!(
+            phi2_pref, gemma_pref,
+            "phi2 must not copy gemma (embed-scale + GeGLU)"
+        );
+    }
+
+    #[test]
+    fn phi2_missing_layer_norm_epsilon_names_key() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("phi2".into())),
+                ("phi2.block_count".into(), Kv::U32(1)),
+                ("phi2.embedding_length".into(), Kv::U32(256)),
+                ("phi2.feed_forward_length".into(), Kv::U32(1024)),
+                ("phi2.attention.head_count".into(), Kv::U32(4)),
+                ("phi2.attention.head_count_kv".into(), Kv::U32(4)),
+                ("phi2.rope.freq_base".into(), Kv::F32(10_000.0)),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected missing layer_norm_epsilon"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("phi2.attention.layer_norm_epsilon"),
+            "error should name kv key: {err}"
         );
     }
 
