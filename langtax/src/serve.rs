@@ -13,6 +13,7 @@ use std::time::Duration;
 use crate::cli::InferArgs;
 use crate::decode::{greedy_generate_ctx, Llama, LlamaError};
 use crate::gguf::load_gguf_owned;
+use crate::template::ChatMessage;
 use crate::tok::Tokenizer;
 
 /// Usage for the `serve` verb.
@@ -21,6 +22,10 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--bind HOST:PORT]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: prompt + n_predict + 1)
       --bind ADDR     loopback listen address (default: 127.0.0.1:8080)
+
+POST /generate takes {\"prompt\": TEXT} or, to render the model's own
+tokenizer.chat_template, {\"messages\": [{\"role\": R, \"content\": C}, ...]}
+with optional \"add_generation_prompt\" (default true) and \"n_predict\".
 ";
 
 const MAX_REQ: u64 = 65_536;
@@ -213,8 +218,29 @@ struct HttpRequest {
 
 #[derive(Debug)]
 struct GenReq {
-    prompt: String,
+    prompt: Option<String>,
+    messages: Option<Vec<ChatMessage>>,
+    add_generation_prompt: bool,
     n_predict: Option<usize>,
+}
+
+impl GenReq {
+    /// The text to prefill: either the raw `prompt`, or `messages` rendered
+    /// through the model's own `tokenizer.chat_template`.
+    fn resolve(&self, tok: &Tokenizer) -> Result<String, String> {
+        match (&self.prompt, &self.messages) {
+            (Some(_), Some(_)) => Err("send either prompt or messages, not both".into()),
+            (Some(p), None) => Ok(p.clone()),
+            (None, Some(m)) => {
+                if m.is_empty() {
+                    return Err("messages is empty".into());
+                }
+                tok.apply_chat_template(m, self.add_generation_prompt)
+                    .map_err(|e| e.to_string())
+            }
+            (None, None) => Err("missing prompt".into()),
+        }
+    }
 }
 
 /// Read one HTTP/1.1 request, generate, write one response, close.
@@ -268,11 +294,15 @@ fn dispatch(
         Ok(g) => g,
         Err(e) => return (400, "Bad Request", json_error(&e)),
     };
-    if gen.prompt.is_empty() {
+    let prompt = match gen.resolve(tok) {
+        Ok(p) => p,
+        Err(e) => return (400, "Bad Request", json_error(&e)),
+    };
+    if prompt.is_empty() {
         return (400, "Bad Request", json_error("empty prompt"));
     }
     let n_predict = gen.n_predict.unwrap_or(args.n_predict);
-    match greedy_generate_ctx(model, tok, &gen.prompt, n_predict, args.n_ctx) {
+    match greedy_generate_ctx(model, tok, &prompt, n_predict, args.n_ctx) {
         Ok(text) => (200, "OK", json_generated(&text)),
         Err(LlamaError::EmptyPrompt) => (400, "Bad Request", json_error("empty prompt")),
         Err(e) => (500, "Internal Server Error", json_error(&e.to_string())),
@@ -535,6 +565,74 @@ impl Scan<'_> {
             .map_err(|_| format!("invalid n_predict {digits:?}"))
     }
 
+    fn parse_bool(&mut self) -> Result<bool, String> {
+        self.skip_ws();
+        match self.peek() {
+            Some('t') => self.expect_lit("true").map(|()| true),
+            Some('f') => self.expect_lit("false").map(|()| false),
+            _ => Err("expected true or false".into()),
+        }
+    }
+
+    /// `[{"role": "...", "content": "..."}, ...]`, the OpenAI message shape.
+    ///
+    /// Unknown keys inside a message are skipped so a client can send the
+    /// fields this engine has no use for. Nested objects and arrays inside a
+    /// message are still rejected, same as at the top level.
+    fn parse_messages(&mut self) -> Result<Vec<ChatMessage>, String> {
+        self.expect_char('[')?;
+        let mut out = Vec::new();
+        let mut need_comma = false;
+        loop {
+            self.skip_ws();
+            if self.peek() == Some(']') {
+                let _c = self.bump();
+                return Ok(out);
+            }
+            if need_comma {
+                self.expect_char(',')?;
+                self.skip_ws();
+                if self.peek() == Some(']') {
+                    return Err("trailing comma in messages".into());
+                }
+            }
+            out.push(self.parse_message()?);
+            need_comma = true;
+        }
+    }
+
+    fn parse_message(&mut self) -> Result<ChatMessage, String> {
+        self.expect_char('{')?;
+        let mut role = None;
+        let mut content = None;
+        let mut need_comma = false;
+        loop {
+            self.skip_ws();
+            if self.peek() == Some('}') {
+                let _c = self.bump();
+                break;
+            }
+            if need_comma {
+                self.expect_char(',')?;
+                self.skip_ws();
+                if self.peek() == Some('}') {
+                    return Err("trailing comma in message".into());
+                }
+            }
+            let key = self.parse_string()?;
+            self.expect_char(':')?;
+            match key.as_str() {
+                "role" => role = Some(self.parse_string()?),
+                "content" => content = Some(self.parse_string()?),
+                _ => self.skip_value()?,
+            }
+            need_comma = true;
+        }
+        let role = role.ok_or_else(|| "message missing role".to_string())?;
+        let content = content.ok_or_else(|| "message missing content".to_string())?;
+        Ok(ChatMessage::new(role, content))
+    }
+
     fn skip_value(&mut self) -> Result<(), String> {
         self.skip_ws();
         match self.peek() {
@@ -570,6 +668,8 @@ fn parse_gen_req(s: &str) -> Result<GenReq, String> {
     let mut scan = Scan { s, i: 0 };
     scan.expect_char('{')?;
     let mut prompt = None;
+    let mut messages = None;
+    let mut add_generation_prompt = None;
     let mut n_predict = None;
     let mut need_comma = false;
     loop {
@@ -589,6 +689,8 @@ fn parse_gen_req(s: &str) -> Result<GenReq, String> {
         scan.expect_char(':')?;
         match key.as_str() {
             "prompt" => prompt = Some(scan.parse_string()?),
+            "messages" => messages = Some(scan.parse_messages()?),
+            "add_generation_prompt" => add_generation_prompt = Some(scan.parse_bool()?),
             "n_predict" => n_predict = Some(scan.parse_usize()?),
             _ => scan.skip_value()?,
         }
@@ -598,8 +700,14 @@ fn parse_gen_req(s: &str) -> Result<GenReq, String> {
     if scan.peek().is_some() {
         return Err("trailing junk after json".into());
     }
-    let prompt = prompt.ok_or_else(|| "missing prompt".to_string())?;
-    Ok(GenReq { prompt, n_predict })
+    Ok(GenReq {
+        prompt,
+        messages,
+        // A chat request is asking the model to speak next, so the generation
+        // prompt is on unless the caller says otherwise.
+        add_generation_prompt: add_generation_prompt.unwrap_or(true),
+        n_predict,
+    })
 }
 
 fn usage_err<T>(msg: &str) -> Result<T, String> {
@@ -866,17 +974,30 @@ mod tests {
 
     #[test]
     fn json_request_shape() {
+        let (_model, tok) = tiny_model();
         let a = parse_gen_req(r#"{"prompt":"ab"}"#).unwrap();
-        assert_eq!(a.prompt, "ab");
+        assert_eq!(a.prompt.as_deref(), Some("ab"));
         assert_eq!(a.n_predict, None);
+        assert_eq!(a.resolve(&tok).unwrap(), "ab");
         let b = parse_gen_req(r#"{ "prompt" : "ab", "n_predict" : 4 }"#).unwrap();
-        assert_eq!(b.prompt, "ab");
+        assert_eq!(b.prompt.as_deref(), Some("ab"));
         assert_eq!(b.n_predict, Some(4));
         let c = parse_gen_req(r#"{"prompt":"a\"b","extra":true}"#).unwrap();
-        assert_eq!(c.prompt, "a\"b");
-        assert_eq!(parse_gen_req("{}").unwrap_err(), "missing prompt");
-        assert_eq!(parse_gen_req(r#"{"prompt":""}"#).unwrap().prompt, "");
+        assert_eq!(c.prompt.as_deref(), Some("a\"b"));
+        assert_eq!(
+            parse_gen_req("{}").unwrap().resolve(&tok).unwrap_err(),
+            "missing prompt"
+        );
+        assert_eq!(
+            parse_gen_req(r#"{"prompt":""}"#)
+                .unwrap()
+                .resolve(&tok)
+                .unwrap(),
+            ""
+        );
         assert!(parse_gen_req(r#"{"n_predict":2}"#)
+            .unwrap()
+            .resolve(&tok)
             .unwrap_err()
             .contains("missing prompt"));
         assert!(parse_gen_req(r#"{"prompt":"ab","n_predict":-1}"#)
@@ -885,6 +1006,115 @@ mod tests {
         assert!(parse_gen_req(r#"{"prompt":"ab"} extra"#)
             .unwrap_err()
             .contains("trailing"));
+    }
+
+    /// The tiny fixture has no `chat_template` of its own; give it one whose
+    /// output lands inside its three-token vocab.
+    fn chat_model(template: &str) -> (Llama, Tokenizer) {
+        let (model, mut tok) = tiny_model();
+        tok.chat_template = Some(template.to_string());
+        (model, tok)
+    }
+
+    const ECHO_TEMPLATE: &str = "{% for m in messages %}{{ m['content'] }}{% endfor %}";
+
+    #[test]
+    fn a_messages_array_renders_the_template_and_matches_the_same_prompt() {
+        let (model, tok) = chat_model(ECHO_TEMPLATE);
+        let args = defaults();
+        let expect = greedy_generate_ctx(&model, &tok, "ab", 2, None).expect("greedy");
+        let (head, body) = exchange(
+            &post_json(r#"{"messages":[{"role":"user","content":"ab"}]}"#),
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(json_field_string(&body, "generated").unwrap(), expect);
+        // Multi-turn, with the keys in either order and an ignored extra field.
+        let (_h, body) = exchange(
+            &post_json(
+                r#"{"messages":[{"content":"a","role":"user"},{"role":"assistant","name":"x","content":"b"}],"n_predict":2}"#,
+            ),
+            &model,
+            &tok,
+            &args,
+        );
+        assert_eq!(json_field_string(&body, "generated").unwrap(), expect);
+    }
+
+    #[test]
+    fn add_generation_prompt_defaults_to_true_and_can_be_turned_off() {
+        let (model, tok) = chat_model(
+            "{% for m in messages %}{{ m.content }}{% endfor %}\
+             {% if add_generation_prompt %}b{% endif %}",
+        );
+        let args = defaults();
+        let with = greedy_generate_ctx(&model, &tok, "ab", 2, None).expect("greedy ab");
+        let without = greedy_generate_ctx(&model, &tok, "a", 2, None).expect("greedy a");
+        let (_h, body) = exchange(
+            &post_json(r#"{"messages":[{"role":"user","content":"a"}]}"#),
+            &model,
+            &tok,
+            &args,
+        );
+        assert_eq!(json_field_string(&body, "generated").unwrap(), with);
+        let (_h, body) = exchange(
+            &post_json(
+                r#"{"messages":[{"role":"user","content":"a"}],"add_generation_prompt":false}"#,
+            ),
+            &model,
+            &tok,
+            &args,
+        );
+        assert_eq!(json_field_string(&body, "generated").unwrap(), without);
+    }
+
+    #[test]
+    fn chat_requests_that_cannot_be_served_are_bad_requests_not_guesses() {
+        let (model, tok) = chat_model(ECHO_TEMPLATE);
+        let args = defaults();
+        for (json, want) in [
+            (
+                r#"{"prompt":"ab","messages":[{"role":"user","content":"ab"}]}"#,
+                "not both",
+            ),
+            (r#"{"messages":[]}"#, "messages is empty"),
+            (r#"{"messages":[{"role":"user"}]}"#, "missing content"),
+            (r#"{"messages":[{"content":"ab"}]}"#, "missing role"),
+            (r#"{"messages":"ab"}"#, "expected '['"),
+            (
+                r#"{"messages":[{"role":"user","content":"ab"},]}"#,
+                "trailing comma",
+            ),
+        ] {
+            let (head, body) = exchange(&post_json(json), &model, &tok, &args);
+            assert!(head.starts_with("HTTP/1.1 400"), "{json}: {head}");
+            let msg = json_field_string(&body, "error").expect("error");
+            assert!(msg.contains(want), "{json}: got {msg:?}, want {want:?}");
+        }
+        // A model with no template at all says so instead of inventing one.
+        let (model, tok) = tiny_model();
+        let (head, body) = exchange(
+            &post_json(r#"{"messages":[{"role":"user","content":"ab"}]}"#),
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 400"), "{head}");
+        assert!(json_field_string(&body, "error")
+            .expect("error")
+            .contains("chat_template"));
+    }
+
+    #[test]
+    fn the_plain_prompt_field_is_untouched_by_the_chat_path() {
+        let (model, tok) = chat_model(ECHO_TEMPLATE);
+        let args = defaults();
+        let expect = greedy_generate_ctx(&model, &tok, "ab", 2, None).expect("greedy");
+        let (head, body) = exchange(&post_json(r#"{"prompt":"ab"}"#), &model, &tok, &args);
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(json_field_string(&body, "generated").unwrap(), expect);
     }
 
     #[test]
