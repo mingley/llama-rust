@@ -26,12 +26,12 @@
 use core::arch::aarch64::{
     float32x4_t, int16x8_t, int32x4_t, int8x16_t, int8x8_t, uint32x4_t, uint8x16_t, uint8x8_t,
     vaddq_f32, vaddvq_f32, vaddvq_s32, vand_u8, vandq_u32, vcvt_f32_f16, vcvtq_f32_s32,
-    vcvtq_f32_u32, vdup_n_u8, vdupq_n_f32, vdupq_n_s32, vdupq_n_u32, vfmaq_f32, vget_high_s16,
-    vget_high_s8, vget_high_u16, vget_low_s16, vget_low_s8, vget_low_u16, vgetq_lane_f32, vld1_u8,
-    vld1q_f32, vld1q_u8, vmovl_s16, vmovl_s8, vmovl_u16, vmovl_u8, vmull_s8, vmulq_f32, vorrq_u32,
-    vpadalq_s16, vreinterpret_f16_u16, vreinterpret_s8_u8, vreinterpret_u16_u8,
-    vreinterpretq_f32_u8, vreinterpretq_s32_u32, vreinterpretq_s8_u8, vsetq_lane_s32, vshlq_n_u32,
-    vshlq_u32, vshr_n_u8, vshrq_n_u32, vsubq_f32, vsubq_s32,
+    vcvtq_f32_u32, vdup_n_u8, vdupq_laneq_f32, vdupq_n_f32, vdupq_n_s32, vdupq_n_u32, vfmaq_f32,
+    vget_high_s16, vget_high_s8, vget_high_u16, vget_low_s16, vget_low_s8, vget_low_u16,
+    vgetq_lane_f32, vld1_u8, vld1q_f32, vld1q_u8, vmovl_s16, vmovl_s8, vmovl_u16, vmovl_u8,
+    vmull_s8, vmulq_f32, vorrq_u32, vpadalq_s16, vreinterpret_f16_u16, vreinterpret_s8_u8,
+    vreinterpret_u16_u8, vreinterpretq_f32_u8, vreinterpretq_s32_u32, vreinterpretq_s8_u8,
+    vsetq_lane_s32, vshlq_n_u32, vshlq_u32, vshr_n_u8, vshrq_n_u32, vsubq_f32, vsubq_s32,
 };
 
 use crate::fp16::load_f16_le;
@@ -267,16 +267,22 @@ fn scale_product(w: [u8; 2], x: [u8; 2]) -> f32 {
     vgetq_lane_f32::<0>(both) * vgetq_lane_f32::<1>(both)
 }
 
-/// One little-endian binary16 block scale, decoded in hardware.
+/// One little-endian binary16 block scale, decoded in hardware and broadcast
+/// across all four lanes.
 ///
 /// Same exactness argument as [`scale_product`]. Q5_0, Q5_1 and Q8_0 all carry
 /// one or two scales per 32 elements, dense enough that the software
 /// conversion would otherwise dominate.
+///
+/// The result stays in a vector register throughout. Returning an `f32` and
+/// letting the caller call `vdupq_n_f32` would round-trip it out to a general
+/// register and back once per block, which on a 32-element block is two domain
+/// crossings per 32 multiply-accumulates.
 #[inline]
 #[target_feature(enable = "neon")]
-fn f16_scale(bits: [u8; 2]) -> f32 {
+fn f16_scale(bits: [u8; 2]) -> float32x4_t {
     let [b0, b1] = bits;
-    vgetq_lane_f32::<0>(widen_f16x4(&[b0, b1, 0, 0, 0, 0, 0, 0]))
+    vdupq_laneq_f32::<0>(widen_f16x4(&[b0, b1, 0, 0, 0, 0, 0, 0]))
 }
 
 /// The lane index vector `[0, 1, 2, 3]`, built without a memory load.
@@ -359,7 +365,7 @@ fn dot_q5_0_f32_neon(row: &[u8], x: &[f32]) -> f32 {
         let Some(xr) = x.get(x_base..x_base.saturating_add(QK5_0)) else {
             continue;
         };
-        let dv = vdupq_n_f32(f16_scale(*dbits));
+        let dv = f16_scale(*dbits);
         let qh = vdupq_n_u32(u32::from_le_bytes(*qhb));
         let bias = vdupq_n_s32(16);
         for (c, pack) in qs.as_chunks::<4>().0.iter().enumerate() {
@@ -416,8 +422,8 @@ fn dot_q5_1_f32_neon(row: &[u8], x: &[f32]) -> f32 {
         let Some(xr) = x.get(x_base..x_base.saturating_add(QK5_1)) else {
             continue;
         };
-        let dv = vdupq_n_f32(f16_scale(*dbits));
-        let mv = vdupq_n_f32(f16_scale(*mbits));
+        let dv = f16_scale(*dbits);
+        let mv = f16_scale(*mbits);
         let qh = vdupq_n_u32(u32::from_le_bytes(*qhb));
         for (c, pack) in qs.as_chunks::<4>().0.iter().enumerate() {
             let j = c.saturating_mul(4);
@@ -468,7 +474,7 @@ fn dot_q8_0_f32_neon(row: &[u8], x: &[f32]) -> f32 {
         let Some(xr) = x.get(x_base..x_base.saturating_add(QK8_0)) else {
             continue;
         };
-        let dv = vdupq_n_f32(f16_scale(*dbits));
+        let dv = f16_scale(*dbits);
         for (c, pack) in qs.as_chunks::<8>().0.iter().enumerate() {
             let off = c.saturating_mul(8);
             let (Some(xlo), Some(xhi)) = (

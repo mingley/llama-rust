@@ -26,15 +26,15 @@
 
 use core::arch::x86_64::{
     __m128i, __m256, __m256i, _mm256_add_epi32, _mm256_add_ps, _mm256_and_si256,
-    _mm256_castps256_ps128, _mm256_castsi256_ps, _mm256_castsi256_si128, _mm256_cvtepi32_ps,
-    _mm256_cvtepi8_epi16, _mm256_cvtepi8_epi32, _mm256_cvtepu8_epi32, _mm256_cvtph_ps,
-    _mm256_extractf128_ps, _mm256_extracti128_si256, _mm256_fmadd_ps, _mm256_loadu_ps,
-    _mm256_loadu_si256, _mm256_madd_epi16, _mm256_mul_ps, _mm256_or_si256, _mm256_set1_epi32,
-    _mm256_set1_ps, _mm256_setr_epi32, _mm256_setzero_ps, _mm256_slli_epi32, _mm256_srli_epi32,
-    _mm256_srlv_epi32, _mm256_sub_epi32, _mm256_sub_ps, _mm_add_epi32, _mm_add_ps, _mm_add_ss,
-    _mm_and_si128, _mm_cvtph_ps, _mm_cvtsi128_si32, _mm_cvtsi32_si128, _mm_cvtss_f32,
-    _mm_loadl_epi64, _mm_loadu_si128, _mm_movehl_ps, _mm_mul_ss, _mm_set1_epi8, _mm_shuffle_epi32,
-    _mm_shuffle_ps, _mm_srli_epi16,
+    _mm256_broadcastss_ps, _mm256_castps256_ps128, _mm256_castsi256_ps, _mm256_castsi256_si128,
+    _mm256_cvtepi32_ps, _mm256_cvtepi8_epi16, _mm256_cvtepi8_epi32, _mm256_cvtepu8_epi32,
+    _mm256_cvtph_ps, _mm256_extractf128_ps, _mm256_extracti128_si256, _mm256_fmadd_ps,
+    _mm256_loadu_ps, _mm256_loadu_si256, _mm256_madd_epi16, _mm256_mul_ps, _mm256_or_si256,
+    _mm256_set1_epi32, _mm256_set1_ps, _mm256_setr_epi32, _mm256_setzero_ps, _mm256_slli_epi32,
+    _mm256_srli_epi32, _mm256_srlv_epi32, _mm256_sub_epi32, _mm256_sub_ps, _mm_add_epi32,
+    _mm_add_ps, _mm_add_ss, _mm_and_si128, _mm_cvtph_ps, _mm_cvtsi128_si32, _mm_cvtsi32_si128,
+    _mm_cvtss_f32, _mm_loadl_epi64, _mm_loadu_si128, _mm_movehl_ps, _mm_mul_ss, _mm_set1_epi8,
+    _mm_shuffle_epi32, _mm_shuffle_ps, _mm_srli_epi16,
 };
 
 use crate::fp16::load_f16_le;
@@ -482,16 +482,22 @@ fn dot_q8_0_avx2(row: &[u8], x: &[u8]) -> f32 {
     sum
 }
 
-/// One little-endian binary16 block scale, decoded in hardware.
+/// One little-endian binary16 block scale, decoded in hardware and broadcast
+/// across all eight lanes.
 ///
 /// Same exactness argument as [`scale_product`]. Q5_0, Q5_1 and Q8_0 all carry
 /// one or two scales per 32 elements, dense enough that the software
 /// conversion would otherwise dominate.
+///
+/// The result stays in a vector register throughout. Returning an `f32` and
+/// letting the caller call `_mm256_set1_ps` would round-trip it out to a
+/// general register and back once per block, which on a 32-element block is
+/// two domain crossings per 32 multiply-accumulates.
 #[inline]
 #[target_feature(enable = "avx2", enable = "f16c")]
-fn f16_scale(bits: [u8; 2]) -> f32 {
+fn f16_scale(bits: [u8; 2]) -> __m256 {
     let [b0, b1] = bits;
-    _mm_cvtss_f32(_mm_cvtph_ps(_mm_cvtsi32_si128(i32::from_le_bytes([
+    _mm256_broadcastss_ps(_mm_cvtph_ps(_mm_cvtsi32_si128(i32::from_le_bytes([
         b0, b1, 0, 0,
     ]))))
 }
@@ -558,7 +564,7 @@ fn dot_q5_0_f32_avx2(row: &[u8], x: &[f32]) -> f32 {
         let Some(xr) = x.get(x_base..x_base.saturating_add(QK5_0)) else {
             continue;
         };
-        let dv = _mm256_set1_ps(f16_scale(*dbits));
+        let dv = f16_scale(*dbits);
         let qh = _mm256_set1_epi32(i32::from_ne_bytes(u32::from_le_bytes(*qhb).to_ne_bytes()));
         let bias = _mm256_set1_epi32(16);
         for (c, pack) in qs.as_chunks::<8>().0.iter().enumerate() {
@@ -621,8 +627,8 @@ fn dot_q5_1_f32_avx2(row: &[u8], x: &[f32]) -> f32 {
         let Some(xr) = x.get(x_base..x_base.saturating_add(QK5_1)) else {
             continue;
         };
-        let dv = _mm256_set1_ps(f16_scale(*dbits));
-        let mv = _mm256_set1_ps(f16_scale(*mbits));
+        let dv = f16_scale(*dbits);
+        let mv = f16_scale(*mbits);
         let qh = _mm256_set1_epi32(i32::from_ne_bytes(u32::from_le_bytes(*qhb).to_ne_bytes()));
         for (c, pack) in qs.as_chunks::<8>().0.iter().enumerate() {
             let j = c.saturating_mul(8);
@@ -676,7 +682,7 @@ fn dot_q8_0_f32_avx2(row: &[u8], x: &[f32]) -> f32 {
         let Some(xr) = x.get(x_base..x_base.saturating_add(QK8_0)) else {
             continue;
         };
-        let dv = _mm256_set1_ps(f16_scale(*dbits));
+        let dv = f16_scale(*dbits);
         for (c, pack) in qs.as_chunks::<8>().0.iter().enumerate() {
             let off = c.saturating_mul(8);
             let Some(xs) = xr.get(off..).and_then(<[f32]>::first_chunk::<8>) else {
