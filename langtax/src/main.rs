@@ -6,14 +6,19 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Instant;
 
-use llama_rust::{
-    gemv_q4_k, gemv_q8_0, load_gguf_owned, pack_q4_k_block, pack_q8_0_block, pack_q8_k_block,
-    parse_infer_args, parse_serve_args, run_serve, tiny_gemma_gguf, tiny_llama4_gguf,
-    tiny_llama_gguf, tiny_llama_moe_gguf, tiny_qwen2_gguf, tiny_qwen2moe_gguf, tiny_qwen2vl_gguf,
-    tiny_qwen35_gguf, tiny_qwen3_gguf, tiny_qwen3moe_gguf, tiny_qwen3next_gguf, tiny_qwen3vl_gguf,
-    write_gguf, write_gguf_with_kv, GgmlType, InferArgs, InferCmd, Kv, ServeCmd, TensorWrite,
-    BIN_USAGE, INFER_USAGE, QK8_0, QK_K, SERVE_USAGE,
+use llama_rust::cli::{parse_infer_args, InferArgs, InferCmd, BIN_USAGE, INFER_USAGE};
+use llama_rust::fixtures::{
+    tiny_gemma_gguf, tiny_llama4_gguf, tiny_llama_gguf, tiny_llama_moe_gguf, tiny_qwen2_gguf,
+    tiny_qwen2moe_gguf, tiny_qwen2vl_gguf, tiny_qwen35_gguf, tiny_qwen3_gguf, tiny_qwen3moe_gguf,
+    tiny_qwen3next_gguf, tiny_qwen3vl_gguf,
 };
+use llama_rust::gguf::{
+    load_gguf_owned, write_gguf, write_gguf_with_kv, GgmlType, Kv, TensorWrite,
+};
+use llama_rust::kernels::{
+    gemv_q4_k, gemv_q8_0, pack_q4_k_block, pack_q8_0_block, pack_q8_k_block, QK8_0, QK_K,
+};
+use llama_rust::serve::{parse_serve_args, run_serve, ServeCmd, SERVE_USAGE};
 use llama_rust::{GenerateOptions, Model};
 
 fn y_checksum(y: &[f32]) -> u64 {

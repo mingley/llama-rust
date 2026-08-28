@@ -1,4 +1,9 @@
-//! `gguf_gemv infer` argument parsing. No crates.io CLI crate.
+//! Argument parsing for the `gguf_gemv` binary's `infer` verb.
+//!
+//! Hand-rolled, because the crate takes no dependencies — not even a CLI
+//! parser. Public so the binary target can use it and so its behaviour is
+//! testable, not because it is a recommended library entry point: for
+//! generating text from Rust, use [`crate::Model`] and [`crate::Session`].
 
 /// Usage for the `infer` verb.
 pub const INFER_USAGE: &str = "\

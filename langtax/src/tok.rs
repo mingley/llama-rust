@@ -395,8 +395,8 @@ mod tests {
     use super::{
         gpt2_byte_to_char, gpt2_char_to_byte, hex_byte_token, parse_byte_token, Kind, Tokenizer,
     };
+    use crate::gguf::load_gguf;
     use crate::gguf::{write_gguf_with_kv, Kv};
-    use crate::load_gguf;
 
     fn strings(items: &[&str]) -> Kv {
         Kv::Array {

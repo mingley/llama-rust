@@ -30,7 +30,9 @@
 //! after attn), official `post_attention_norm`, dense SwiGLU. Linear-attn /
 //! gated-delta layers are refused. Not `qwen3vlmoe`. Not Mixtral.
 
-use crate::gguf::{GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
+use crate::gguf::{
+    write_gguf_with_kv, GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite, GGUF_DEFAULT_ALIGNMENT,
+};
 use crate::quant::{
     bf16_row_bytes, dequant_bf16_row, dequant_f16_row, dequant_f32_row, dequant_iq1_m_row,
     dequant_iq1_s_row, dequant_iq2_s_row, dequant_iq2_xs_row, dequant_iq2_xxs_row,
@@ -63,7 +65,6 @@ use crate::quant::{
 };
 use crate::sample::{SampleError, SampleParams, Sampler};
 use crate::tok::{TokError, Tokenizer};
-use crate::{write_gguf_with_kv, GGUF_DEFAULT_ALIGNMENT};
 
 const TINY_N_EMBD: usize = 256;
 const TINY_N_HEAD: usize = 4;
@@ -734,7 +735,7 @@ impl Llama {
 /// Greedy generate: encode prompt, decode `n_predict` tokens, return decoded string.
 ///
 /// KV is sized to `prompt + n_predict + 1`. See [`greedy_generate_ctx`] to set `--n-ctx`.
-pub fn greedy_generate(
+pub(crate) fn greedy_generate(
     model: &Llama,
     tok: &Tokenizer,
     prompt: &str,
@@ -746,7 +747,7 @@ pub fn greedy_generate(
 /// Seedless greedy generate with optional KV capacity (`--n-ctx`).
 ///
 /// `n_ctx` must be at least prompt tokens + `n_predict`. `None` uses prompt + `n_predict` + 1.
-pub fn greedy_generate_ctx(
+pub(crate) fn greedy_generate_ctx(
     model: &Llama,
     tok: &Tokenizer,
     prompt: &str,
@@ -780,7 +781,7 @@ pub fn greedy_generate_ctx(
 }
 
 /// Generate with [`SampleParams`]. [`SampleParams::greedy`] is the seedless path.
-pub fn generate(
+pub(crate) fn generate(
     model: &Llama,
     tok: &Tokenizer,
     prompt: &str,
@@ -791,7 +792,7 @@ pub fn generate(
 }
 
 /// [`generate`] with optional KV capacity (`n_ctx`).
-pub fn generate_ctx(
+pub(crate) fn generate_ctx(
     model: &Llama,
     tok: &Tokenizer,
     prompt: &str,
@@ -4862,7 +4863,7 @@ fn argmax(x: &[f32]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{load_gguf, load_gguf_owned};
+    use crate::gguf::{load_gguf, load_gguf_owned};
 
     /// ggml `dequantize_row_q4_K` (oracle).
     fn dequant_q4_k_row(w: &[u8]) -> Vec<f32> {
@@ -6092,7 +6093,7 @@ mod tests {
         assert!(expert < n_parts, "expert {expert} >= {n_parts}");
         let part = t.data.len() / n_parts;
         let start = expert * part;
-        let bytes = crate::write_gguf(&[TensorWrite {
+        let bytes = crate::gguf::write_gguf(&[TensorWrite {
             name: "e".into(),
             ty: t.ty,
             shape: vec![

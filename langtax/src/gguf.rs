@@ -1,4 +1,52 @@
-//! GGUF v3 little-endian write/load. Pure functions over bytes.
+//! GGUF v3 reader and writer: pure functions over bytes.
+//!
+//! A GGUF file is a magic and version header, a key-value metadata table, a
+//! tensor-info table, and then one aligned blob of tensor payloads. This module
+//! parses all four and can write them back out.
+//!
+//! [`load_gguf`] and [`load_gguf_owned`] produce a [`Gguf`] that owns the whole
+//! file as a single `Vec<u8>`. Each [`Tensor`] borrows a *range* of that
+//! allocation, so nothing is copied per tensor and [`Tensor::blob_range`] tells
+//! you exactly where a tensor lives on disk. There is no memory mapping — that
+//! would need `unsafe`, which this crate forbids — so the trade is one file-sized
+//! read up front in exchange for no pointer arithmetic anywhere.
+//!
+//! Metadata values are [`Kv`], a direct mapping of the `gguf_type` tag set,
+//! including nested arrays. Typed accessors ([`Gguf::kv_u32`],
+//! [`Gguf::kv_string`], [`Gguf::kv_f32`], [`Gguf::kv_bool`],
+//! [`Gguf::kv_i32s`]) return `None` rather than erroring on the wrong type,
+//! because a missing or oddly typed key is normal across converter versions.
+//!
+//! # Example: write a GGUF and read it back
+//!
+//! Useful in its own right, and the mechanism behind [`crate::fixtures`]:
+//!
+//! ```
+//! use llama_rust::gguf::{load_gguf, write_gguf_with_kv, GgmlType, Kv, TensorWrite};
+//!
+//! # fn main() -> Result<(), llama_rust::gguf::GgufError> {
+//! let bytes = write_gguf_with_kv(
+//!     &[("general.architecture".to_string(), Kv::String("llama".into()))],
+//!     &[TensorWrite {
+//!         name: "token_embd.weight".to_string(),
+//!         ty: GgmlType::F32,
+//!         shape: vec![2, 3],
+//!         data: (0..6u16).flat_map(|v| f32::from(v).to_le_bytes()).collect(),
+//!     }],
+//! );
+//!
+//! let gguf = load_gguf(&bytes)?;
+//! assert_eq!(gguf.kv_string("general.architecture"), Some("llama"));
+//!
+//! let tensor = gguf.tensor("token_embd.weight").ok_or(llama_rust::gguf::GgufError::Shape)?;
+//! assert_eq!(tensor.ty, GgmlType::F32);
+//! assert_eq!((tensor.n_cols(), tensor.n_rows()), (2, 3));
+//! // The payload is a window into the one owned blob, not a copy.
+//! let (start, end) = tensor.blob_range();
+//! assert_eq!(gguf.blob().get(start..end), Some(tensor.data));
+//! # Ok(())
+//! # }
+//! ```
 
 use std::collections::HashMap;
 use std::fmt;
