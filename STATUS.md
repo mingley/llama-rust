@@ -1,7 +1,17 @@
-# Stopped 2026-08-28 — official phi2
+# STATUS
 
-HEAD is this branch’s tip. Worktree should be clean before the next resume.
-No in-flight code.
+Live research plan: [PLAN.md](PLAN.md).
+Full ChatGPT share extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6a920fe1.md).
+Work lands on `main`.
+
+`llama-rust` is the correctness laboratory (GGUF math, oracle + llama.cpp
+greedy). Next high-signal layer is MoE access traces → `ExpertStore` →
+`expertvm` / `gpu-sim-rs`, not an OpenAI server or a tok/s race. See PLAN.md.
+
+# Stopped 2026-08-28 — official phi2 (historical)
+
+The phi2 slice shipped. Resume from PLAN.md, not from the old “Metal or bloom”
+item below.
 
 ## Shipped (use this)
 
