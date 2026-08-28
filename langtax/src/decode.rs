@@ -6483,19 +6483,25 @@ mod bench {
         assert_ne!(fingerprint(&one), fingerprint(&two));
     }
 
-    /// Single-token decode latency (`forward`) after a 1-token prefill.
+    /// Single-token decode latency after a 1-token prefill.
+    ///
+    /// Both entry points, because they differ by exactly the vocab-sized `Vec`
+    /// that `forward` copies out: `forward` is the API the pre-refactor
+    /// checkout also has, so it is the comparable number, and `forward_logits`
+    /// is what the generation loop now uses.
     #[test]
     #[ignore = "timing harness"]
     fn bench_decode_step() {
         let spec = BenchSpec::default();
         let model = bench_model(&spec);
         println!("blob {} MiB", model.blob_len() / (1024 * 1024));
+        let vocab = u32::try_from(spec.n_vocab).unwrap();
         let mut cache = model.new_cache(64).expect("cache");
         let mut last = model.prefill(&mut cache, &[1]).expect("prefill");
         let mut samples = Vec::new();
         let mut sink = 0usize;
         for i in 0..24 {
-            let tok = argmax(&last) % u32::try_from(spec.n_vocab).unwrap();
+            let tok = argmax(&last) % vocab;
             let t0 = Instant::now();
             last = model.forward(&mut cache, tok).expect("forward");
             let dt = t0.elapsed();
@@ -6508,8 +6514,27 @@ mod bench {
                 last = model.prefill(&mut cache, &[1]).expect("prefill");
             }
         }
-        assert!(sink > 0);
         report("decode 1 token (forward)", samples);
+
+        let mut cache = model.new_cache(64).expect("cache");
+        let mut tok = argmax(&model.prefill(&mut cache, &[1]).expect("prefill")) % vocab;
+        let mut samples = Vec::new();
+        for i in 0..24 {
+            let t0 = Instant::now();
+            let logits = model.forward_logits(&mut cache, tok).expect("forward");
+            let dt = t0.elapsed();
+            if i >= 4 {
+                samples.push(dt);
+            }
+            tok = argmax(logits) % vocab;
+            sink = sink.wrapping_add(black_box(logits.len()));
+            if cache.n_past + 2 >= 64 {
+                cache = model.new_cache(64).expect("cache");
+                tok = argmax(&model.prefill(&mut cache, &[1]).expect("prefill")) % vocab;
+            }
+        }
+        assert!(sink > 0);
+        report("decode 1 token (forward_logits)", samples);
     }
 
     /// Multi-token prefill (`prefill`, GEMM path).
@@ -6536,14 +6561,36 @@ mod bench {
         }
     }
 
-    /// Row-dispatch cost in isolation: the row closure does nothing, so the
-    /// whole sample is fork/join (or loop) overhead.
+    /// Writes `y[i] = first + i` and nothing else, so a [`Pool::run`] sample is
+    /// all dispatch and no arithmetic — the same shape as the empty-body
+    /// closure the `thread::scope` measurement uses.
+    struct NoopRows;
+
+    impl RowKernel for NoopRows {
+        type Job = ();
+
+        fn rows(&self, _job: (), first: usize, _x: &[f32], y: &mut [f32]) -> bool {
+            for (i, out) in y.iter_mut().enumerate() {
+                *out = black_box(first.saturating_add(i) as f32);
+            }
+            true
+        }
+    }
+
+    /// Row-dispatch cost in isolation: the row body does nothing but a store,
+    /// so the whole sample is fork/join (or hand-off, or loop) overhead.
+    ///
+    /// This is the per-matmul dispatch cost that a decode step pays 7+ times
+    /// per layer. `x` is 1024 floats, the width the benchmark model projects
+    /// from, so the pool's input staging copy is counted at its real size.
     #[test]
     #[ignore = "timing harness"]
     fn bench_dispatch_overhead() {
+        let x = vec![1.0f32; 1024];
         for n_rows in [64usize, 1024, 4096] {
             let mut y = vec![0.0f32; n_rows];
             let reps = 200usize;
+            let per_rep = u32::try_from(reps).unwrap();
             let mut samples = Vec::new();
             for _ in 0..9 {
                 let t0 = Instant::now();
@@ -6552,9 +6599,22 @@ mod bench {
                         *out = black_box(i as f32);
                     });
                 }
-                samples.push(t0.elapsed() / u32::try_from(reps).unwrap());
+                samples.push(t0.elapsed() / per_rep);
             }
-            report(&format!("dispatch {n_rows} rows, empty body"), samples);
+            report(&format!("dispatch {n_rows} rows, thread::scope"), samples);
+
+            if let Some(mut pool) = Pool::new(Arc::new(NoopRows), n_rows) {
+                let mut samples = Vec::new();
+                for _ in 0..9 {
+                    let t0 = Instant::now();
+                    for _ in 0..reps {
+                        assert!(pool.run((), &x, &mut y));
+                    }
+                    samples.push(t0.elapsed() / per_rep);
+                }
+                report(&format!("dispatch {n_rows} rows, persistent pool"), samples);
+            }
+
             let mut samples = Vec::new();
             for _ in 0..9 {
                 let t0 = Instant::now();
@@ -6565,7 +6625,7 @@ mod bench {
                         });
                     });
                 }
-                samples.push(t0.elapsed() / u32::try_from(reps).unwrap());
+                samples.push(t0.elapsed() / per_rep);
             }
             report(&format!("dispatch {n_rows} rows, sequential"), samples);
             assert!(black_box(y.iter().sum::<f32>()) >= 0.0);
