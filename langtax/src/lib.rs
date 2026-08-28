@@ -15,11 +15,11 @@ mod tok;
 pub use cli::{parse_infer_args, InferArgs, InferCmd, BIN_USAGE, INFER_USAGE};
 pub use decode::{
     generate, generate_ctx, greedy_generate, greedy_generate_ctx, tiny_bf16_gguf,
-    tiny_f16_1d_bias_gguf, tiny_f16_1d_gguf, tiny_f16_gguf, tiny_iq1m_gguf, tiny_iq1s_gguf,
-    tiny_iq2s_gguf, tiny_iq2xs_gguf, tiny_iq2xxs_gguf, tiny_iq3s_gguf, tiny_iq3xxs_gguf,
-    tiny_iq4nl_gguf, tiny_iq4xs_gguf, tiny_llama_gguf, tiny_mistral_gguf, tiny_mxfp4_gguf,
-    tiny_nvfp4_gguf, tiny_phi3_gguf, tiny_q10_gguf, tiny_q20_gguf, tiny_q2k_gguf, tiny_q3k_gguf,
-    tiny_q41_gguf, tiny_q4k_embd_gguf, tiny_q50_gguf, tiny_q51_gguf, tiny_q5k_gguf,
+    tiny_f16_1d_bias_gguf, tiny_f16_1d_gguf, tiny_f16_gguf, tiny_gemma_gguf, tiny_iq1m_gguf,
+    tiny_iq1s_gguf, tiny_iq2s_gguf, tiny_iq2xs_gguf, tiny_iq2xxs_gguf, tiny_iq3s_gguf,
+    tiny_iq3xxs_gguf, tiny_iq4nl_gguf, tiny_iq4xs_gguf, tiny_llama_gguf, tiny_mistral_gguf,
+    tiny_mxfp4_gguf, tiny_nvfp4_gguf, tiny_phi3_gguf, tiny_q10_gguf, tiny_q20_gguf, tiny_q2k_gguf,
+    tiny_q3k_gguf, tiny_q41_gguf, tiny_q4k_embd_gguf, tiny_q50_gguf, tiny_q51_gguf, tiny_q5k_gguf,
     tiny_q6k_embd_gguf, tiny_q81_gguf, tiny_qwen2_gguf, tiny_tied_copy_gguf, tiny_tied_gguf,
     tiny_tq10_gguf, tiny_tq20_gguf, KvCache, Llama, LlamaError,
 };
