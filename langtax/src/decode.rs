@@ -4190,9 +4190,18 @@ mod tests {
     }
 
     #[test]
-    fn decode_load_unsupported_ggml_type_error_includes_type_id() {
-        // ggml IQ4_NL_4_4 is 36; TQ2_0 (35) is now loaded. Remaining after TQ2_0.
+    fn decode_load_type_36_fails_named_removed_and_walk_skips_it() {
+        // ggml IQ4_NL_4_4/4_8/8_8 (36..=38) are removed slots, not the next live hole.
         const IQ4_NL_4_4: i32 = 36;
+        assert_eq!(
+            crate::gguf::classify_ggml_type_id(IQ4_NL_4_4),
+            crate::gguf::GgmlTypeClass::Removed
+        );
+        assert_eq!(
+            crate::gguf::next_remaining_live_rejected_ggml_type_id(),
+            None,
+            "no remaining live rejected ggml weight type after skipping 36..=38"
+        );
         let bytes = crate::gguf::write_gguf_with_type_ids(
             &[
                 ("general.alignment".into(), Kv::U32(32)),
@@ -4201,21 +4210,25 @@ mod tests {
             &[TensorWrite {
                 name: "w".into(),
                 ty: GgmlType::F32,
-                shape: vec![1],
-                data: vec![0, 0, 0, 0],
+                shape: vec![4, 2],
+                data: vec![0u8; 32],
             }],
             &[IQ4_NL_4_4],
         );
         let err = match load_gguf(&bytes) {
             Err(e) => e.to_string(),
             Ok(g) => match Llama::from_gguf(g.clone()) {
-                Ok(_) => panic!("decode should reject unknown type"),
+                Ok(_) => panic!("decode should reject ggml-removed type 36"),
                 Err(e) => e.to_string(),
             },
         };
         assert!(
             err.contains(&IQ4_NL_4_4.to_string()),
             "error should include type id {IQ4_NL_4_4}: {err}"
+        );
+        assert!(
+            err.contains("removed"),
+            "error should name type 36 as removed: {err}"
         );
     }
 
