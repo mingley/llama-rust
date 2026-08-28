@@ -1,6 +1,9 @@
 //! Pure-safe GGUF-native Llama decode + F32/F16/BF16/Q4_0/Q4_1/Q5_0/Q5_1/Q8_0/Q8_1/Q1_0/Q2_0/TQ1_0/TQ2_0/Q2_K/Q3_K/Q4_K/Q5_K/Q6_K/Q8_K/IQ1_M/IQ1_S/IQ2_XXS/IQ2_XS/IQ2_S/IQ3_XXS/IQ3_S/IQ4_NL/IQ4_XS/MXFP4/NVFP4. No llama.cpp, no C GGML.
 
-#![forbid(unsafe_code)]
+//! Without the `simd` feature the whole engine is compiler-checked unsafe-free.
+//! With it, `src/simd/` is the only module allowed to use `unsafe`; the
+//! workspace lint keeps `unsafe_code` denied everywhere else.
+#![cfg_attr(not(feature = "simd"), forbid(unsafe_code))]
 
 mod cli;
 mod decode;
@@ -10,6 +13,8 @@ mod pool;
 mod quant;
 mod sample;
 mod serve;
+#[cfg(feature = "simd")]
+mod simd;
 mod tok;
 
 pub use cli::{parse_infer_args, InferArgs, InferCmd, BIN_USAGE, INFER_USAGE};

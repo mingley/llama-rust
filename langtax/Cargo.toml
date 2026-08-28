@@ -3,6 +3,12 @@ name = "llama-rust"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = ["simd"]
+# Vendor SIMD fast path for the hot dtypes. Off means the crate compiles under a
+# crate-level `forbid(unsafe_code)`; see `src/lib.rs`.
+simd = []
+
 [lib]
 name = "llama_rust"
 path = "src/lib.rs"

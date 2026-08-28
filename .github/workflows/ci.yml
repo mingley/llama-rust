@@ -7,11 +7,93 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The SIMD fast path. `--all-features` is `--features simd` today.
+          - name: simd
+            features: "--all-features"
+          # The auditable configuration: `lib.rs` puts the crate under
+          # `forbid(unsafe_code)` here, so this job failing to compile is the
+          # signal that unsafe leaked outside `src/simd/`.
+          - name: no-unsafe
+            features: "--no-default-features"
+    name: test (${{ matrix.name }})
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
       - run: cargo fmt --check
-      - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo test --release --lib
+      - run: cargo clippy --all-targets ${{ matrix.features }} -- -D warnings
+      - run: cargo test --release --lib ${{ matrix.features }}
+
+  # The NEON kernels are the reference host's path (Apple M4 Pro) but no hosted
+  # runner is aarch64 Linux, so they are built and run under qemu.
+  aarch64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+          components: clippy
+      - run: sudo apt-get update && sudo apt-get install -y qemu-user-static gcc-aarch64-linux-gnu
+      - run: cargo clippy --target aarch64-unknown-linux-gnu --all-targets --all-features -- -D warnings
+      - run: cargo test --release --lib --target aarch64-unknown-linux-gnu
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_RUNNER: qemu-aarch64-static -L /usr/aarch64-linux-gnu
+
+  # Miri interprets the x86-64 intrinsics used here, so it can run the
+  # differential tests against the real AVX2 kernels rather than merely
+  # compiling them. `-C target-feature` is what makes
+  # `is_x86_feature_detected!` say yes under the interpreter; without it every
+  # selector returns `None` and the tests quietly test nothing.
+  #
+  # Scoped to `simd::tests` because that is the only module with `unsafe` in it
+  # and because a full-suite Miri run is hours of transformer forward passes.
+  # The exhaustive 65536-pattern scale sweeps are skipped for the same reason;
+  # the native test jobs above run them.
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      # Guards the thing that makes this job worth having. Without
+      # `-C target-feature` every selector returns `None`, every differential
+      # test early-returns, and the job passes green having interpreted no
+      # SIMD at all. This step asserts that vacuous state really is what
+      # happens unforced, so a future change that makes the forced run
+      # silently stop engaging cannot pass unnoticed.
+      - name: dispatch is vacuous without forced target features
+        run: >
+          cargo miri test --lib --all-features --
+          --test-threads=1 --nocapture simd::tests::dispatch_engages
+          2>&1 | tee /dev/stderr
+          | grep -q 'simd dispatch: f32=false .* q8_0=false$'
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance
+      # The other half: with the flag, every selector must engage. Run on its
+      # own so the check is a few seconds rather than grepping the long run.
+      - name: dispatch engages with forced target features
+        run: >
+          cargo miri test --lib --all-features --
+          --test-threads=1 --nocapture simd::tests::dispatch_engages
+          2>&1 | tee /dev/stderr
+          | grep -q 'simd dispatch: f32=true .* q8_0=true$'
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance
+          RUSTFLAGS: -C target-feature=+avx2,+fma,+f16c
+      - name: kernels under Miri
+        run: >
+          cargo miri test --lib --all-features -- --test-threads=1 simd::tests::
+          --skip f16_conversion_is_bit_identical_for_all_finite_patterns
+          --skip q8_0_block_scales_are_bit_identical
+          --skip q5_0_block_scales_are_bit_identical
+        env:
+          MIRIFLAGS: -Zmiri-strict-provenance
+          RUSTFLAGS: -C target-feature=+avx2,+fma,+f16c
