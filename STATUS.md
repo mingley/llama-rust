@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — router permille, decode Markov, RDMA remote-home
+
+`ExpertAccess.weight_pt` is optional router mass in permille (`w` in JSONL;
+legacy lines without `w` still parse). Decode records after router weights
+and, when a store is attached, prefetches copy-forward ∪ online Markov.
+`SimulatedGpuStore::migrate` D2D-moves a page onto a peer (copy stream;
+dest GEMM waits the event). `sim_remote_home` / `expertvm remote` compute
+on GPU0 and fetch remote-home experts over the peer link (RDMA on
+`2node-rdma`).
+
 ## Shipped 2026-08-29 — Markov prefetch, co-activation placement
 
 `analyze` reports seq persist, reuse-within-8, 90% working set, and
@@ -92,8 +102,8 @@ invent `$/M tokens`.
   MoE layer’s gate/up/down part bytes. Identity: DirectStore, CachedStore
   (full slots), SimulatedGpuStore, and TieredStore bit-match blob logits on writer
   tinies (Qwen3MoE, llama MoE, Qwen2MoE, Llama4, Qwen3Next). Shared
-  experts stay on the blob. After routing, copy-forward prefetch of
-  `(layer+1, same experts)`.
+  experts stay on the blob. After routing, prefetch is copy-forward
+  `(layer+1, same experts)` union online Markov (`MoeTraceBuf`).
 - Layered API: `Model::from_bytes` / `from_gguf` / `encode` / `session`.
   `Session::{prefill, decode, attach_expert_store, expert_metrics}`.
   Example: `cargo run -p llama-rust --example session`.
@@ -218,6 +228,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 ./target/release/expertvm bench adversarial --capacity 2
 ./target/release/infer-bench trace tests/traces/cycling.jsonl --capacity 2
 ./target/release/expertvm topology --bytes 1048576
+./target/release/expertvm remote tests/traces/cycling.jsonl --expert-bytes 1048576
 ./target/release/gpu-profile probe bad-numa --bytes 1048576
 cargo run -p llama-rust --example session
 ```

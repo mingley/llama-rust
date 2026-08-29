@@ -119,6 +119,7 @@ fn ev(sequence: u64, token: u32, layer: u32, experts: Vec<u32>) -> ExpertAccess 
         token,
         layer,
         experts,
+        weight_pt: Vec::new(),
     }
 }
 

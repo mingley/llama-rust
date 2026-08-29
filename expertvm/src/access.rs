@@ -36,6 +36,8 @@ pub struct ExpertAccess {
     pub layer: u32,
     /// Selected expert ids (top-k).
     pub experts: Vec<u32>,
+    /// Router mass per selected expert, permille (`0..=1000`). Empty if unknown.
+    pub weight_pt: Vec<u32>,
 }
 
 impl ExpertAccess {
@@ -48,19 +50,17 @@ impl ExpertAccess {
             .collect()
     }
 
-    /// JSONL line without a serde dependency.
+    /// JSONL line without a serde dependency. Omits `w` when [`Self::weight_pt`] is empty.
     #[must_use]
     pub fn to_jsonl(&self) -> String {
-        let mut experts = String::from("[");
-        for (i, e) in self.experts.iter().enumerate() {
-            if i > 0 {
-                experts.push(',');
-            }
-            experts.push_str(&e.to_string());
-        }
-        experts.push(']');
+        let experts = format_u32_list(&self.experts);
+        let w = if self.weight_pt.is_empty() {
+            String::new()
+        } else {
+            format!(",\"w\":{}", format_u32_list(&self.weight_pt))
+        };
         format!(
-            "{{\"sequence\":{},\"token\":{},\"layer\":{},\"experts\":{experts}}}",
+            "{{\"sequence\":{},\"token\":{},\"layer\":{},\"experts\":{experts}{w}}}",
             self.sequence, self.token, self.layer
         )
     }
@@ -139,7 +139,21 @@ fn parse_access(line: &str) -> Result<ExpertAccess, Error> {
         token: field_u32(line, "token")?,
         layer: field_u32(line, "layer")?,
         experts: field_u32_list(line, "experts")?,
+        weight_pt: field_u32_list_opt(line, "w")?,
     })
+}
+
+/// Floor of `r` as permille without an `f32 as u32` cast (clippy `cast_possible_truncation`).
+#[must_use]
+pub fn weight_permille(r: f32) -> u32 {
+    let mut best = 0u32;
+    for i in 0..=1000u32 {
+        let numer = f32::from(u16::try_from(i).unwrap_or(1000));
+        if r >= numer / 1000.0 {
+            best = i;
+        }
+    }
+    best
 }
 
 fn after_key<'a>(line: &'a str, key: &str) -> Result<&'a str, Error> {
@@ -163,8 +177,19 @@ fn field_u32(line: &str, key: &str) -> Result<u32, Error> {
 }
 
 fn field_u32_list(line: &str, key: &str) -> Result<Vec<u32>, Error> {
-    let rest = after_key(line, key)?;
-    let start = rest.strip_prefix('[').ok_or(Error::Trace("experts []"))?;
+    parse_u32_list(after_key(line, key)?.trim())
+}
+
+fn field_u32_list_opt(line: &str, key: &str) -> Result<Vec<u32>, Error> {
+    let needle = format!("\"{key}\":");
+    match line.split(&needle).nth(1) {
+        None => Ok(Vec::new()),
+        Some(rest) => parse_u32_list(rest.trim()),
+    }
+}
+
+fn parse_u32_list(rest: &str) -> Result<Vec<u32>, Error> {
+    let start = rest.strip_prefix('[').ok_or(Error::Trace("expected []"))?;
     let inner = start.split(']').next().unwrap_or("");
     if inner.is_empty() {
         return Ok(Vec::new());
@@ -174,4 +199,16 @@ fn field_u32_list(line: &str, key: &str) -> Result<Vec<u32>, Error> {
         out.push(p.trim().parse().map_err(|_| Error::Trace("bad u32"))?);
     }
     Ok(out)
+}
+
+fn format_u32_list(xs: &[u32]) -> String {
+    let mut s = String::from("[");
+    for (i, e) in xs.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&e.to_string());
+    }
+    s.push(']');
+    s
 }

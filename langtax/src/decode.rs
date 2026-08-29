@@ -71,7 +71,10 @@ use crate::quant::{
 use crate::sample::{SampleError, SampleParams, Sampler};
 use crate::tok::{TokError, Tokenizer};
 use crate::{write_gguf_with_kv, GGUF_DEFAULT_ALIGNMENT};
-use expertvm::{DirectStore, ExpertAccess, ExpertKey, ExpertParts, ExpertStore, LiveStore, Trace};
+use expertvm::{
+    prefetch_keys, transition_pair, weight_permille, DirectStore, ExpertAccess, ExpertKey,
+    ExpertParts, ExpertStore, LiveStore, Markov, Trace,
+};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -563,7 +566,8 @@ impl KvCache {
     }
 }
 
-/// Opt-in MoE access log. Disabled path never pushes, so it cannot reallocate.
+/// Opt-in MoE access log. Events allocate only when enabled. Markov prefetch
+/// runs when a store is attached (copy-forward ∪ online `P(to|from)`).
 #[derive(Default)]
 struct MoeTraceBuf {
     enabled: bool,
@@ -571,26 +575,67 @@ struct MoeTraceBuf {
     layer: u32,
     token0: u32,
     events: Vec<ExpertAccess>,
+    markov: Markov,
+    prev: Option<ExpertAccess>,
 }
 
 impl MoeTraceBuf {
-    fn record(&mut self, token_off: usize, experts: &[usize]) {
-        if !self.enabled {
-            return;
-        }
+    fn event(&self, token_off: usize, experts: &[usize], weights: &[f32]) -> ExpertAccess {
         let token = self
             .token0
             .saturating_add(u32::try_from(token_off).unwrap_or(u32::MAX));
         let mut ids = Vec::new();
-        for e in experts {
+        let mut weight_pt = Vec::new();
+        for (i, e) in experts.iter().enumerate() {
             ids.push(u32::try_from(*e).unwrap_or(u32::MAX));
+            if !weights.is_empty() {
+                let r = weights.get(i).copied().unwrap_or(0.0);
+                weight_pt.push(weight_permille(r));
+            }
         }
-        self.events.push(ExpertAccess {
+        ExpertAccess {
             sequence: self.sequence,
             token,
             layer: self.layer,
             experts: ids,
-        });
+            weight_pt,
+        }
+    }
+
+    fn record(&mut self, token_off: usize, experts: &[usize], weights: &[f32]) {
+        if !self.enabled {
+            return;
+        }
+        self.events.push(self.event(token_off, experts, weights));
+    }
+
+    fn prefetch_experts(
+        &mut self,
+        store: &mut Option<LiveStore>,
+        token_off: usize,
+        selected: &[usize],
+    ) {
+        let Some(store) = store.as_mut() else {
+            return;
+        };
+        let mut keys = Vec::new();
+        for e in selected {
+            if let Ok(ex) = u32::try_from(*e) {
+                keys.push(ExpertKey::new(self.layer, ex));
+            }
+        }
+        let planned = prefetch_keys(&self.markov, &keys);
+        match store.prefetch(&planned) {
+            Ok(_n) => {}
+            Err(_e) => {}
+        }
+        let ev = self.event(token_off, selected, &[]);
+        if let Some(p) = self.prev.as_ref() {
+            if transition_pair(p, &ev) {
+                self.markov.observe(&p.keys(), &ev.keys());
+            }
+        }
+        self.prev = Some(ev);
     }
 }
 
@@ -4840,22 +4885,6 @@ impl Llama {
         Ok(Some(store.acquire(ExpertKey::new(layer, e))?))
     }
 
-    fn prefetch_copy_forward(store: &mut Option<LiveStore>, layer: u32, selected: &[usize]) {
-        let Some(store) = store.as_mut() else {
-            return;
-        };
-        let mut keys = Vec::new();
-        for e in selected {
-            if let Ok(ex) = u32::try_from(*e) {
-                keys.push(ExpertKey::new(layer.saturating_add(1), ex));
-            }
-        }
-        match store.prefetch(&keys) {
-            Ok(_n) => {}
-            Err(_e) => {}
-        }
-    }
-
     fn route_softmax(
         &self,
         gate: (&QuantMat, usize, usize),
@@ -4896,7 +4925,7 @@ impl Llama {
                 *o += *v * w;
             }
         }
-        Self::prefetch_copy_forward(store, moe_trace.layer, &s.moe.order);
+        moe_trace.prefetch_experts(store, t, &s.moe.order);
         Ok(())
     }
 
@@ -4988,8 +5017,8 @@ impl Llama {
                 pool,
                 "llama ffn_gate_inp",
             )?;
-            moe_trace.record(t, &s.moe.order);
             fill_router_weights(&s.moe.logits, &s.moe.order, &mut s.moe.weights, true);
+            moe_trace.record(t, &s.moe.order, &s.moe.weights);
             self.accumulate_routed(
                 (&moe.gate_exps, &moe.up_exps, &moe.down_exps),
                 (t, n_embd),
@@ -5034,13 +5063,22 @@ impl Llama {
                 return Err(LlamaError::Shape("llama4 ffn_gate_inp".into()));
             }
             topk_into(&s.moe.logits, moe.n_expert_used, &mut s.moe.order)?;
-            moe_trace.record(t, &s.moe.order);
+            s.moe.weights.clear();
+            for i in 0..s.moe.order.len() {
+                let Some(e) = s.moe.order.get(i).copied() else {
+                    continue;
+                };
+                s.moe
+                    .weights
+                    .push(sigmoid_f32(s.moe.logits.get(e).copied().unwrap_or(0.0)));
+            }
+            moe_trace.record(t, &s.moe.order, &s.moe.weights);
             fit(&mut s.moe.routed, n_embd);
             for i in 0..s.moe.order.len() {
                 let Some(e) = s.moe.order.get(i).copied() else {
                     continue;
                 };
-                let w = sigmoid_f32(s.moe.logits.get(e).copied().unwrap_or(0.0));
+                let w = s.moe.weights.get(i).copied().unwrap_or(0.0);
                 fit(&mut s.moe.xw, xt.len());
                 for (d, v) in s.moe.xw.iter_mut().zip(xt.iter()) {
                     *d = *v * w;
@@ -5078,7 +5116,7 @@ impl Llama {
                     *o += *v;
                 }
             }
-            Self::prefetch_copy_forward(store, moe_trace.layer, &s.moe.order);
+            moe_trace.prefetch_experts(store, t, &s.moe.order);
             let off = t.saturating_mul(n_embd);
             let dst = s
                 .ffn_out
@@ -5118,8 +5156,8 @@ impl Llama {
                 pool,
                 "qwen2moe ffn_gate_inp",
             )?;
-            moe_trace.record(t, &s.moe.order);
             fill_router_weights(&s.moe.logits, &s.moe.order, &mut s.moe.weights, false);
+            moe_trace.record(t, &s.moe.order, &s.moe.weights);
             self.accumulate_routed(
                 (&moe.gate_exps, &moe.up_exps, &moe.down_exps),
                 (t, n_embd),
@@ -5163,8 +5201,8 @@ impl Llama {
                 pool,
                 "qwen3moe ffn_gate_inp",
             )?;
-            moe_trace.record(t, &s.moe.order);
             fill_router_weights(&s.moe.logits, &s.moe.order, &mut s.moe.weights, true);
+            moe_trace.record(t, &s.moe.order, &s.moe.weights);
             self.accumulate_routed(
                 (&moe.gate_exps, &moe.up_exps, &moe.down_exps),
                 (t, n_embd),
@@ -5205,8 +5243,8 @@ impl Llama {
                 pool,
                 "qwen3next ffn_gate_inp",
             )?;
-            moe_trace.record(t, &s.moe.order);
             fill_router_weights(&s.moe.logits, &s.moe.order, &mut s.moe.weights, true);
+            moe_trace.record(t, &s.moe.order, &s.moe.weights);
             self.accumulate_routed(
                 (&moe.gate_exps, &moe.up_exps, &moe.down_exps),
                 (t, n_embd),
@@ -9709,6 +9747,10 @@ mod tests {
         for e in &trace.events {
             assert_eq!(e.layer, 0);
             assert_eq!(e.experts.len(), TINY_QWEN3MOE_N_EXPERT_USED);
+            assert_eq!(e.weight_pt.len(), e.experts.len());
+            for w in &e.weight_pt {
+                assert!(*w <= 1000);
+            }
         }
         let mut store = expertvm::DirectStore::from_trace(&trace);
         for k in trace.keys() {

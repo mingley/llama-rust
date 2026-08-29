@@ -10,6 +10,7 @@ fn ev(token: u32, layer: u32, experts: &[u32]) -> ExpertAccess {
         token,
         layer,
         experts: experts.to_vec(),
+        weight_pt: Vec::new(),
     }
 }
 
@@ -48,6 +49,37 @@ fn jsonl_roundtrip() {
     let text = t.to_jsonl();
     let parsed = Trace::parse(&text).expect("parse");
     assert_eq!(parsed, t);
+}
+
+#[test]
+fn jsonl_omits_w_and_parses_legacy() {
+    let t = Trace {
+        events: vec![ev(1, 2, &[3, 4])],
+    };
+    assert!(!t.to_jsonl().contains("\"w\""));
+    let parsed = Trace::parse("{\"sequence\":0,\"token\":1,\"layer\":2,\"experts\":[3,4]}\n")
+        .expect("legacy");
+    let e = parsed.events.first().expect("one");
+    assert!(e.weight_pt.is_empty());
+    assert_eq!(e.experts, vec![3, 4]);
+}
+
+#[test]
+fn jsonl_roundtrip_weight_pt() {
+    let mut e = ev(1, 2, &[3, 4]);
+    e.weight_pt = vec![500, 500];
+    let t = Trace { events: vec![e] };
+    let parsed = Trace::parse(&t.to_jsonl()).expect("parse");
+    assert_eq!(parsed, t);
+    assert!(t.to_jsonl().contains("\"w\":[500,500]"));
+}
+
+#[test]
+fn weight_permille_floors_without_cast() {
+    assert_eq!(weight_permille(0.0), 0);
+    assert_eq!(weight_permille(0.5), 500);
+    assert_eq!(weight_permille(1.0), 1000);
+    assert_eq!(weight_permille(-1.0), 0);
 }
 
 #[test]
@@ -164,6 +196,8 @@ fn planner_stays_when_window_is_resident() {
     assert!(!window_keys(&t, 0, 3).is_empty());
     let fwd = copy_forward(&[ExpertKey::new(0, 7)]);
     assert_eq!(fwd[0], ExpertKey::new(1, 7));
+    let empty = prefetch_keys(&Markov::new(), &[ExpertKey::new(0, 7)]);
+    assert_eq!(empty, fwd);
     let hot = hot_keys(&t, 1);
     assert_eq!(hot.len(), 1);
 }
@@ -497,4 +531,69 @@ fn format_table_names_policies() {
     let text = format_table(&compare(&t, 2, 4));
     assert!(text.contains("lru"));
     assert!(text.contains("oracle"));
+}
+
+#[test]
+fn migrate_moves_page_to_peer_and_gemms_there() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::new(inner, 1, HardwareProfile::example_2node_rdma(), 4096).expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    let _p = gpu.acquire(k0).expect("acq");
+    assert_eq!(gpu.device_of(k0), Some(DeviceId(0)));
+    gpu.migrate(k0, DeviceId(1)).expect("mig");
+    assert_eq!(gpu.device_of(k0), Some(DeviceId(1)));
+    let _p = gpu.acquire(k0).expect("gemm dest");
+    let score = gpu.score().expect("score");
+    assert!(score.bytes_moved >= 8192, "{}", score.bytes_moved);
+}
+
+#[test]
+fn migrate_single_gpu_is_no_peer() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::new(inner, 1, HardwareProfile::example_h100_sxm(), 4096).expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    let _p = gpu.acquire(k0).expect("acq");
+    let err = gpu.migrate(k0, DeviceId(1)).unwrap_err();
+    assert!(err.to_string().contains("no peer"), "{err}");
+}
+
+#[test]
+fn remote_home_on_rdma_pays_peer_copy() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[1])],
+    };
+    let p = HardwareProfile::example_2node_rdma();
+    let bytes = 1u64 << 20;
+    let map = striped(&t, 2);
+    let local = sim_placed(&t, p.clone(), bytes, &map).expect("local");
+    let remote = sim_remote_home(&t, p, bytes, &map).expect("remote");
+    assert!(
+        remote.bytes_moved > local.bytes_moved,
+        "remote={} local={}",
+        remote.bytes_moved,
+        local.bytes_moved
+    );
+    assert!(
+        remote.sim_ns > local.sim_ns,
+        "remote={} local={}",
+        remote.sim_ns,
+        local.sim_ns
+    );
+}
+
+#[test]
+fn live_store_migrate_is_noop_on_cached() {
+    let t = cycling_trace();
+    let mut live = LiveStore::Cached(CachedStore::new(DirectStore::from_trace(&t), 2).unwrap());
+    let k = ExpertKey::new(0, 0);
+    let _p = live.acquire(k).expect("acq");
+    live.migrate(k, DeviceId(1)).expect("noop");
 }

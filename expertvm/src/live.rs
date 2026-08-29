@@ -5,6 +5,7 @@ use crate::error::Error;
 use crate::gpu_store::SimulatedGpuStore;
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertStore, StoreMetrics};
 use crate::tiered::TieredStore;
+use gpu_sim::DeviceId;
 
 /// Runtime backend for [`crate::ExpertStore`] on a decode session.
 pub enum LiveStore {
@@ -59,6 +60,14 @@ impl LiveStore {
             Self::Cached(s) => s.is_resident(key),
             Self::Tiered(s) => s.is_resident(key),
             Self::Simulated(s) => s.is_resident(key),
+        }
+    }
+
+    /// D2D migrate on the simulated GPU; no-op for CPU stores.
+    pub fn migrate(&mut self, key: ExpertKey, dst: DeviceId) -> Result<(), Error> {
+        match self {
+            Self::Simulated(s) => s.migrate(key, dst),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => Ok(()),
         }
     }
 

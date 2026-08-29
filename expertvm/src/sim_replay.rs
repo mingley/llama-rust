@@ -6,7 +6,9 @@ use crate::place::PlaceMap;
 use crate::planner::{copy_forward, transition_pair, Markov, Prefetch};
 use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
-use gpu_sim::{AllocId, DType, DeviceId, HardwareProfile, KernelKind, Score, Sim, StreamId};
+use gpu_sim::{
+    AllocId, DType, DeviceId, EventId, HardwareProfile, KernelKind, Score, Sim, StreamId,
+};
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
@@ -308,6 +310,59 @@ pub fn sim_placed(
                     }
                 }
                 kernel(&mut sim, d, s, id)?;
+                let _prev = handles.insert(key, id);
+            }
+        }
+        if last_of_token(&trace.events, i) {
+            sim.synchronize()?;
+            token_ends.push(sim.clock_ns());
+        }
+    }
+    if token_ends.is_empty() {
+        sim.synchronize()?;
+    }
+    Ok(finish(&sim, &token_ends, hits, misses, 0))
+}
+
+/// Compute on GPU0; experts live on `map` homes. Miss: H2D to home, then peer
+/// copy (NVLink / PCIe P2P / RDMA) onto GPU0 before the GEMM.
+///
+/// Homes that are already GPU0 skip the peer hop (local H2D only). Hits GEMM
+/// on GPU0 against the replica left by the first fetch.
+pub fn sim_remote_home(
+    trace: &Trace,
+    profile: HardwareProfile,
+    bytes_per_expert: u64,
+    map: &PlaceMap,
+) -> Result<SimReplay, Error> {
+    let n_gpus = u16::try_from(profile.n_gpus()).unwrap_or(1).max(1);
+    let mut sim = Sim::new(profile);
+    let compute = DeviceId(0);
+    let s = StreamId(0);
+    let mut handles: BTreeMap<ExpertKey, AllocId> = BTreeMap::new();
+    let bytes = bytes_per_expert.max(1);
+    let mut hits = 0u64;
+    let mut misses = 0u64;
+    let mut next_event = 1u32;
+    let mut token_ends: Vec<u64> = Vec::new();
+    for (i, event) in trace.events.iter().enumerate() {
+        for key in event.keys() {
+            let home = map.home_of(key, n_gpus);
+            if let Some(id) = handles.get(&key).copied() {
+                hits = hits.saturating_add(1);
+                kernel(&mut sim, compute, s, id)?;
+            } else {
+                misses = misses.saturating_add(1);
+                let id = sim.alloc(home, bytes, s)?;
+                let _c = sim.memcpy_host_to_device(home, id, bytes, s)?;
+                if home != compute {
+                    let _c = sim.memcpy_device_to_device(home, compute, id, bytes, s)?;
+                    let ev = EventId(next_event);
+                    next_event = next_event.saturating_add(1);
+                    let _r = sim.record_event(home, ev, s)?;
+                    let _w = sim.wait_event(compute, ev, s)?;
+                }
+                kernel(&mut sim, compute, s, id)?;
                 let _prev = handles.insert(key, id);
             }
         }

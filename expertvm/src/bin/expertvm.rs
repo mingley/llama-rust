@@ -2,8 +2,8 @@
 
 use expertvm::{
     adversarial_suite, analyze, colocated, compare, compare_ep, format_table, generate, report,
-    sim_replay_cfg, striped, topology_suite, with_hot_replicas, Policy, Prefetch, SimCfg, Trace,
-    Workload,
+    sim_placed, sim_remote_home, sim_replay_cfg, striped, topology_suite, with_hot_replicas,
+    Policy, Prefetch, SimCfg, Trace, Workload,
 };
 use gpu_sim::HardwareProfile;
 use std::env;
@@ -22,6 +22,7 @@ usage: expertvm <command> [args]
   topology [--bytes N]
   ep       <trace.jsonl> [--capacity N] [--expert-bytes N] [--hbm-bytes N] [--profile NAME]
   place    <trace.jsonl> [--gpus N] [--hot-pt N]
+  remote   <trace.jsonl> [--expert-bytes N] [--profile NAME]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch
@@ -86,6 +87,7 @@ fn run() -> Result<(), String> {
         "topology" => run_topology(args),
         "ep" => run_ep(args),
         "place" => run_place(args),
+        "remote" => run_remote(args),
         other => Err(format!("{USAGE}got {other}")),
     }
 }
@@ -106,11 +108,18 @@ fn parse_cfg<I>(args: I) -> Result<Cfg, String>
 where
     I: IntoIterator<Item = String>,
 {
+    parse_cfg_profile(args, "h100")
+}
+
+fn parse_cfg_profile<I>(args: I, default_profile: &str) -> Result<Cfg, String>
+where
+    I: IntoIterator<Item = String>,
+{
     let mut path = None;
     let mut capacity = 8usize;
     let mut lookahead = 8usize;
     let mut expert_bytes = 4096u64;
-    let mut profile = "h100".to_string();
+    let mut profile = default_profile.to_string();
     let mut tokens = 64u32;
     let mut experts = 16u32;
     let mut hbm_bytes = None;
@@ -359,6 +368,23 @@ where
     println!("striped {}", stripe.line());
     println!("colocated {}", colo.line());
     println!("replicas {}", hot.line());
+    Ok(())
+}
+
+fn run_remote<I>(args: I) -> Result<(), String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let cfg = parse_cfg_profile(args, "2node-rdma")?;
+    let trace = load_trace(&cfg.path)?;
+    let profile = load_profile(&cfg.profile)?;
+    let n = u16::try_from(profile.n_gpus()).unwrap_or(1).max(1);
+    let map = striped(&trace, n);
+    let local =
+        sim_placed(&trace, profile.clone(), cfg.expert_bytes, &map).map_err(|e| e.to_string())?;
+    let remote =
+        sim_remote_home(&trace, profile, cfg.expert_bytes, &map).map_err(|e| e.to_string())?;
+    println!("local {} | remote {}", local.line(), remote.line());
     Ok(())
 }
 

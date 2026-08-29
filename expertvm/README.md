@@ -40,6 +40,9 @@ llama-rust routers  →  ExpertAccess JSONL
                          │
                          ▼
                    expertvm ep          static EP vs GPU0 LRU (8-GPU profile)
+                         │
+                         ▼
+                   expertvm remote      GPU0 compute vs remote-home RDMA fetch
 ```
 
 ## Library
@@ -63,7 +66,7 @@ holds `gate` + `up` + `down` bytes.
 | `DirectStore` | Identity catalog. Every acquire hits. Bytes unchanged. |
 | `CachedStore` | Bounded LRU with **leases** so in-use experts cannot be evicted. `prefetch(keys)` skips unknown keys. `pin_hot` / `is_resident` / `take_victim`. |
 | `TieredStore` | Fast RAM LRU in front of slow RAM, a paging **file** (seek+read, not mmap), or synthetic bytes. Only `slots` [`ExpertParts`](crate::ExpertParts) live in the fast map. `WeightStorage::mmap` is parked. |
-| `SimulatedGpuStore` | CachedStore + [`gpu-sim`](../gpu-sim). H2D on a copy stream, GEMM waits that event. Prefetch is H2D without GEMM. `pin_hot` NVLink-replicates to GPU1 when `n_gpus >= 2`. `score()` is wall/HBM/bytes/`energy_uj`/`ns_per_token`. |
+| `SimulatedGpuStore` | CachedStore + [`gpu-sim`](../gpu-sim). H2D on a copy stream, GEMM waits that event. Prefetch is H2D without GEMM. `pin_hot` NVLink-replicates to GPU1 when `n_gpus >= 2`. `migrate(key, dst)` D2D-moves onto `dst` (copy stream; dest compute waits the event; src HBM dropped). `score()` is wall/HBM/bytes/`energy_uj`/`ns_per_token`. |
 | `LiveStore` | Enum over Direct / Cached / Tiered / Simulated. Decode attaches this. |
 
 `sim_replay` runs a policy through gpu-sim: H2D on miss, grouped GEMM on
@@ -78,7 +81,8 @@ on one GPU; `with_hot_replicas` copies hot keys to a second GPU.
 survive restricted HBM by evicting; static EP OOMs if a home GPU cannot
 hold its working set. On `8xh100`, a wide token's H2Ds run on eight PCIe
 roots and beat serial GPU0 copies of the same payload.
-`HardwareProfile::restrict_hbm` is the knob. `topology_suite` /
+`sim_remote_home` keeps compute on GPU0 and fetches remote-home experts
+over the peer link (RDMA on `2node-rdma`). `HardwareProfile::restrict_hbm` is the knob. `topology_suite` /
 `probe_topology` compare H2D and P2P costs across named meshes (PCIe P2P,
 NVLink, bad NUMA, RDMA, asymmetric). `SimulatedGpuStore` can inject GPU
 unavailable, copy-stream cancel, transfer delay, and next-H2D load
@@ -101,6 +105,7 @@ expertvm workload batch --tokens 32 --experts 16 --capacity 4
 expertvm topology --bytes 1048576
 expertvm ep       trace.jsonl --capacity 8 --expert-bytes 1048576 --profile 8xh100
 expertvm ep       trace.jsonl --hbm-bytes 4096 --profile 8xh100
+expertvm remote   trace.jsonl --expert-bytes 1048576 --profile 2node-rdma
 gpu-profile probe 2xh100-pcie --bytes 1048576
 ```
 
@@ -114,9 +119,10 @@ expertvm replay trace.jsonl --capacity 2
 
 ```json
 {"sequence":0,"token":0,"layer":0,"experts":[3,7]}
+{"sequence":0,"token":0,"layer":0,"experts":[3,7],"w":[500,500]}
 ```
 
-is a valid input. Hit-rate tables are **measured** from that file. Do not
+are valid inputs (`w` is optional router mass in permille). Hit-rate tables are **measured** from that file. Do not
 paste fictional percentages into docs.
 
 ## Policies

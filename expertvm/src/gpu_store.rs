@@ -8,6 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 struct GpuPage {
     id: AllocId,
+    device: DeviceId,
     /// Copy-stream event the compute stream must wait on, if not yet consumed.
     ready: Option<EventId>,
 }
@@ -101,6 +102,57 @@ impl SimulatedGpuStore {
         Ok(())
     }
 
+    /// Async D2D move onto `dst`. Compute on `dst` waits the copy-stream event.
+    ///
+    /// Source HBM is released after the copy is stream-ordered; destination HBM
+    /// is charged by the peer memcpy. Dest compute can overlap other GPUs.
+    pub fn migrate(&mut self, key: ExpertKey, dst: DeviceId) -> Result<(), Error> {
+        if self.sim.profile().n_gpus() < 2 {
+            return Err(Error::Store("no peer"));
+        }
+        let _gpu = self.sim.profile().gpu(dst)?;
+        if !self.pages.contains_key(&key) {
+            if !self.cache.is_resident(key) {
+                return Err(Error::Store("not resident"));
+            }
+            self.place(key)?;
+        }
+        let (id, src) = {
+            let page = self.pages.get(&key).ok_or(Error::Store("missing handle"))?;
+            (page.id, page.device)
+        };
+        if src == dst {
+            return Ok(());
+        }
+        let already = self.sim.is_resident(id, dst)?;
+        if !already {
+            let _c =
+                self.sim
+                    .memcpy_device_to_device(src, dst, id, self.bytes_per_expert, self.copy)?;
+        }
+        let ev_copy = EventId(self.next_event);
+        self.next_event = self.next_event.saturating_add(1);
+        let _r = self.sim.record_event(src, ev_copy, self.copy)?;
+        // Copy-engine free must not race a compute-stream lease on src.
+        let ev_compute = EventId(self.next_event);
+        self.next_event = self.next_event.saturating_add(1);
+        let _r2 = self.sim.record_event(src, ev_compute, self.compute)?;
+        let _w = self.sim.wait_event(src, ev_compute, self.copy)?;
+        self.sim.free(src, id, self.copy)?;
+        let _gone = self.replicas.remove(&key);
+        if let Some(page) = self.pages.get_mut(&key) {
+            page.device = dst;
+            page.ready = Some(ev_copy);
+        }
+        Ok(())
+    }
+
+    /// GPU that currently holds `key`, if it has been placed.
+    #[must_use]
+    pub fn device_of(&self, key: ExpertKey) -> Option<DeviceId> {
+        self.pages.get(&key).map(|p| p.device)
+    }
+
     /// Whether `key` is in the fast CPU tier.
     #[must_use]
     pub fn is_resident(&self, key: ExpertKey) -> bool {
@@ -126,6 +178,7 @@ impl SimulatedGpuStore {
             key,
             GpuPage {
                 id,
+                device: self.device,
                 ready: Some(ev),
             },
         );
@@ -133,15 +186,18 @@ impl SimulatedGpuStore {
     }
 
     fn gemm_resident(&mut self, key: ExpertKey) -> Result<(), Error> {
-        let page = self
-            .pages
-            .get_mut(&key)
-            .ok_or(Error::Store("missing handle"))?;
-        if let Some(ev) = page.ready.take() {
-            let _w = self.sim.wait_event(self.device, ev, self.compute)?;
+        let (id, device, ready) = {
+            let page = self
+                .pages
+                .get_mut(&key)
+                .ok_or(Error::Store("missing handle"))?;
+            let ready = page.ready.take();
+            (page.id, page.device, ready)
+        };
+        if let Some(ev) = ready {
+            let _w = self.sim.wait_event(device, ev, self.compute)?;
         }
-        let id = page.id;
-        gemm(&mut self.sim, self.device, self.compute, id)
+        gemm(&mut self.sim, device, self.compute, id)
     }
 
     fn drop_gpu(&mut self, key: ExpertKey) -> Result<(), Error> {
@@ -151,12 +207,12 @@ impl SimulatedGpuStore {
         // Copy-engine free must not race a compute-stream lease on the same page.
         let ev = EventId(self.next_event);
         self.next_event = self.next_event.saturating_add(1);
-        let _r = self.sim.record_event(self.device, ev, self.compute)?;
-        let _w = self.sim.wait_event(self.device, ev, self.copy)?;
+        let _r = self.sim.record_event(page.device, ev, self.compute)?;
+        let _w = self.sim.wait_event(page.device, ev, self.copy)?;
         if self.replicas.remove(&key) {
             self.sim.free(self.replica, page.id, self.copy)?;
         }
-        self.sim.free(self.device, page.id, self.copy)?;
+        self.sim.free(page.device, page.id, self.copy)?;
         Ok(())
     }
 
@@ -167,15 +223,15 @@ impl SimulatedGpuStore {
         if self.replicas.contains(&key) {
             return Ok(());
         }
-        let id = self
-            .pages
-            .get(&key)
-            .ok_or(Error::Store("missing handle"))?
-            .id;
+        let page = self.pages.get(&key).ok_or(Error::Store("missing handle"))?;
+        if page.device == self.replica {
+            let _ins = self.replicas.insert(key);
+            return Ok(());
+        }
         let _c = self.sim.memcpy_device_to_device(
-            self.device,
+            page.device,
             self.replica,
-            id,
+            page.id,
             self.bytes_per_expert,
             self.copy,
         )?;

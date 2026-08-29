@@ -203,7 +203,8 @@ fixed latency and quality.
 **V1:** traffic-aware placement, co-activation placement, adaptive
 replication (`colocated`, `with_hot_replicas`, `expertvm place`).
 
-**V2:** RDMA, multi-node, remote expert residency.
+**V2:** RDMA, multi-node, remote expert residency (`sim_remote_home`,
+`SimulatedGpuStore::migrate`, `expertvm remote`).
 
 **V3:** predictive residency:
 
@@ -281,7 +282,7 @@ For every generated token record:
 ExpertAccess {
     sequence, token, layer,
     experts: Vec<ExpertId>,   // selected
-    // optional: routing probabilities
+    weight_pt: Vec<u32>,      // optional router mass ‰; empty / omit `w` if unknown
 }
 ```
 
@@ -534,7 +535,8 @@ model, do not celebrate the sim.
    + `SimulatedGpuStore` in `expertvm`. Decode's expert inner products
    `acquire` then GEMV `ExpertParts`. Direct/Cached/Simulated bit-match
    the blob path on writer tinies. Shared experts stay on the blob.
-   Prefetch is copy-forward `(layer+1, same experts)`.
+   Prefetch is copy-forward ∪ online [`Markov`] (`MoeTraceBuf` when a store is
+   attached; `sim_replay_cfg` `Prefetch::{None, CopyForward, Markov}`).
 7. [x] `gpu-sim` workspace crate: streams, events, HBM, memcpy, leases,
    virtual clock. No CUDA. `expertvm sim` is the first app.
 8. [x] `infer-bench` crate: adversarial workloads + trace replay scores.

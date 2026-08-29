@@ -206,6 +206,19 @@ pub fn copy_forward(keys: &[ExpertKey]) -> Vec<ExpertKey> {
     out
 }
 
+/// Copy-forward union online [`Markov`] destinations (no future leak).
+#[must_use]
+pub fn prefetch_keys(markov: &Markov, keys: &[ExpertKey]) -> Vec<ExpertKey> {
+    let mut out = copy_forward(keys);
+    let k = keys.len().max(1);
+    for extra in markov.predict(keys, k) {
+        if !out.contains(&extra) {
+            out.push(extra);
+        }
+    }
+    out
+}
+
 /// Hottest `n` keys by acquire count (stable on ties).
 #[must_use]
 pub fn hot_keys(trace: &Trace, n: usize) -> Vec<ExpertKey> {
