@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — chunked prefill + cudaEventQuery
+
+`--prefill-chunk N` advances a sequence's first token by at most N
+layer-events per engine step so a short decode in the same batch is not
+stuck behind a long prefill (`SchedCfg::chunked`). `query_event` is
+`cudaEventQuery` (unknown id is semantic; incomplete is `Ok(false)`).
+Workload `prefill-batch` is four sequences with 4-layer token-0 then
+1-layer decode. `expertvm bench` prints `schedule-chunk1` when a first
+token has more than one layer. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — event elapsed + schedule lines in benches
 
 `Sim::event_elapsed_ns` is `cudaEventElapsedTime` in nanoseconds (both
@@ -184,8 +194,8 @@ off-by-one cannot hide.
 seek+read paging file, or synthetic bytes. Only `slots` `ExpertParts`
 live in the fast map. mmap stays parked (`WeightStorage::mmap` errors).
 Qwen3MoE Tiny identity: TieredStore logits match the blob path.
-Adversarial suite is ten named workloads (coding/chat/long-context,
-prefill-heavy, decode-heavy, batch-8) plus the original four. gpu-sim
+Adversarial suite is eleven named workloads (coding/chat/long-context,
+prefill-heavy, decode-heavy, batch-8, prefill-batch) plus the original four. gpu-sim
 asserts concurrent H2D on two streams cannot finish in one-copy time.
 
 `llama-rust` is the correctness laboratory (GGUF math, oracle + llama.cpp
@@ -331,7 +341,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 ./target/release/infer-bench remote tests/traces/cycling.jsonl --expert-bytes 1048576
 ./target/release/expertvm topology --bytes 1048576
 ./target/release/expertvm remote tests/traces/cycling.jsonl --expert-bytes 1048576
-./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 2 --max-batch 1 --interarrival-ns 1000000
+./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 2 --max-batch 1 --interarrival-ns 1000000 --prefill-chunk 1
+./target/release/expertvm workload prefill-batch
 ./target/release/gpu-profile probe bad-numa --bytes 1048576
 cargo run -p llama-rust --example session
 ```

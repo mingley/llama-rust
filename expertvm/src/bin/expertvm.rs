@@ -17,7 +17,7 @@ usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
   sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N]
-  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N]
+  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
@@ -27,7 +27,7 @@ usage: expertvm <command> [args]
   remote   <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
-      prefill-heavy, decode-heavy, batch
+      prefill-heavy, decode-heavy, batch, prefill-batch
 profiles: h100 (default), h200, 8xh100, cheap, 2xh100-pcie, bad-numa,
           2node-rdma, asymmetric, or a path to a .profile file
 ";
@@ -119,6 +119,7 @@ struct Cfg {
     interarrival_ns: u64,
     ttft_slo_ns: Option<u64>,
     itl_slo_ns: Option<u64>,
+    prefill_chunk: usize,
 }
 
 fn parse_cfg<I>(args: I) -> Result<Cfg, String>
@@ -150,6 +151,7 @@ where
     let mut interarrival_ns = 0u64;
     let mut ttft_slo_ns = None;
     let mut itl_slo_ns = None;
+    let mut prefill_chunk = 0usize;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -216,6 +218,10 @@ where
                     &value("itl-slo-ns", inline, &mut it)?,
                 )?)
             }
+            "--prefill-chunk" => {
+                prefill_chunk =
+                    parse_usize("prefill-chunk", &value("prefill-chunk", inline, &mut it)?)?
+            }
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => {
                 if path.is_some() {
@@ -244,6 +250,7 @@ where
         interarrival_ns,
         ttft_slo_ns,
         itl_slo_ns,
+        prefill_chunk,
     })
 }
 
@@ -503,6 +510,7 @@ where
             interarrival_ns: cfg.interarrival_ns,
             ttft_slo_ns: cfg.ttft_slo_ns,
             itl_slo_ns: cfg.itl_slo_ns,
+            prefill_chunk_layers: cfg.prefill_chunk,
         },
     )
     .map_err(|e| e.to_string())?;

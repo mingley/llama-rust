@@ -86,8 +86,11 @@ does not evict a resident working set). Replay reports `prefetch_hits` /
 `prefetch_waste`. `schedule_replay` / `expertvm schedule` is open-loop
 continuous batching: sequences arrive at `sequence * interarrival_ns`,
 FCFS into a running set of `--max-batch` (`0` = unlimited), one next
-token (layer-major) per engine step, finished sequences retire,
-[`gpu_sim::Sim::idle_until`] waits for the next arrival. TTFT is from
+chunk (layer-major) per engine step, finished sequences retire,
+[`gpu_sim::Sim::idle_until`] waits for the next arrival. A chunk is the
+whole next token unless `--prefill-chunk N` limits a sequence's first
+token to N layer-events so a short decode is not stuck behind a long
+prefill. TTFT is from
 arrival; `--ttft-slo-ns` / `--itl-slo-ns` count misses. `queue_ns` is mean
 first-token wait (`iteration_start - arrival`) so a tight `max_batch`
 shows queueing separately from GPU service. The cache walker
@@ -128,11 +131,13 @@ expertvm sim      trace.jsonl --capacity 8 --profile h100 --prefetch markov --se
 expertvm sim      trace.jsonl --capacity 8 --prefetch copy-forward --plan-window 8 --cuda-graphs
 expertvm sim      trace.jsonl --capacity 8 --seq-streams --max-batch 2
 expertvm schedule trace.jsonl --capacity 8 --max-batch 2 --interarrival-ns 1000000 --ttft-slo-ns 20000000
+expertvm schedule trace.jsonl --capacity 8 --prefill-chunk 1 --seq-streams
 expertvm place    trace.jsonl --gpus 8 --hot-pt 200
 expertvm bench    trace.jsonl --capacity 8 --profile h100
 expertvm bench    adversarial --tokens 64 --experts 16 --capacity 2 --profile cheap
 expertvm workload thrash --tokens 64 --experts 16 --capacity 2
 expertvm workload batch --tokens 32 --experts 16 --capacity 4
+expertvm workload prefill-batch --tokens 8 --experts 16 --capacity 4
 expertvm topology --bytes 1048576
 expertvm ep       trace.jsonl --capacity 8 --expert-bytes 1048576 --profile 8xh100
 expertvm ep       trace.jsonl --hbm-bytes 4096 --profile 8xh100

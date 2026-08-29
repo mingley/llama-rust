@@ -26,11 +26,13 @@ pub enum Workload {
     DecodeHeavy,
     /// Eight interleaved sequences (batch > 1).
     Batch,
+    /// Four sequences: token 0 is 4-layer prefill, later tokens are 1-layer decode.
+    PrefillBatch,
 }
 
 impl Workload {
     /// Every named workload, in CLI order.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Uniform,
         Self::Hotset,
         Self::ShiftingHotset,
@@ -41,6 +43,7 @@ impl Workload {
         Self::PrefillHeavy,
         Self::DecodeHeavy,
         Self::Batch,
+        Self::PrefillBatch,
     ];
 
     /// Name used in benches and CLI.
@@ -57,6 +60,7 @@ impl Workload {
             Self::PrefillHeavy => "prefill-heavy",
             Self::DecodeHeavy => "decode-heavy",
             Self::Batch => "batch",
+            Self::PrefillBatch => "prefill-batch",
         }
     }
 
@@ -85,6 +89,17 @@ pub fn generate(kind: Workload, n_tokens: u32, n_experts: u32, top_k: u32, seed:
                     events.push(ev(seq, tok, 0, pick_uniform(&mut rng, n_ex, k)));
                 }
             }
+            Workload::PrefillBatch => {
+                for seq in 0..4u64 {
+                    if tok == 0 {
+                        for layer in 0..4u32 {
+                            events.push(ev(seq, tok, layer, pick_uniform(&mut rng, n_ex, k)));
+                        }
+                    } else {
+                        events.push(ev(seq, tok, 0, pick_uniform(&mut rng, n_ex, k)));
+                    }
+                }
+            }
             Workload::Uniform
             | Workload::Hotset
             | Workload::ShiftingHotset
@@ -104,7 +119,7 @@ pub fn generate(kind: Workload, n_tokens: u32, n_experts: u32, top_k: u32, seed:
                     Workload::Coding => pick_hotset(&mut rng, n_ex, k, 95, 2),
                     Workload::Chat => pick_hotset(&mut rng, n_ex, k, 70, (n_ex / 4).max(1)),
                     Workload::LongContext => vec![(tok / 4) % n_ex.max(1)],
-                    Workload::PrefillHeavy | Workload::Batch => vec![0],
+                    Workload::PrefillHeavy | Workload::Batch | Workload::PrefillBatch => vec![0],
                 };
                 events.push(ev(0, tok, 0, experts));
             }

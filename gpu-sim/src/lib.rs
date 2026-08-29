@@ -11,6 +11,7 @@
 //! [`Sim::synchronize_event`] is `cudaEventSynchronize`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
+//! [`Sim::query_event`] is `cudaEventQuery` (no wait).
 //! [`Sim::set_stream_priority`] is `cudaStreamCreateWithPriority`.
 
 #![cfg_attr(not(test), deny(missing_docs))]
@@ -1036,5 +1037,23 @@ mod tests {
             Err(SimError::UnknownEvent { event: 99 }) => {}
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn query_event_does_not_wait() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let ev = EventId(4);
+        match sim.query_event(ev) {
+            Err(SimError::UnknownEvent { event: 4 }) => {}
+            other => panic!("{other:?}"),
+        }
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s));
+        enq(sim.record_event(d, ev, s));
+        assert!(!sim.query_event(ev).unwrap());
+        sim.synchronize().unwrap();
+        assert!(sim.query_event(ev).unwrap());
     }
 }

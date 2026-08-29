@@ -563,10 +563,8 @@ fn schedule_open_loop_idles_until_arrival() {
         p,
         SimCfg::lru(2, 4096, 0),
         SchedCfg {
-            max_batch: 1,
             interarrival_ns: gap,
-            ttft_slo_ns: None,
-            itl_slo_ns: None,
+            ..SchedCfg::closed(1)
         },
     )
     .expect("sched");
@@ -624,16 +622,42 @@ fn schedule_ttft_slo_misses_when_tight() {
         p,
         SimCfg::lru(2, 32u64 << 20, 0),
         SchedCfg {
-            max_batch: 0,
-            interarrival_ns: 0,
             ttft_slo_ns: Some(1),
             itl_slo_ns: Some(1),
+            ..SchedCfg::closed(0)
         },
     )
     .expect("sched");
     assert!(row.ttft_slo_miss > 0);
     assert!(row.itl_slo_miss > 0);
     assert_eq!(row.completed, 1);
+}
+
+#[test]
+fn schedule_chunked_prefill_unblocks_short_decode() {
+    let mut events = Vec::new();
+    for layer in 0..8u32 {
+        events.push(ev_seq(0, 0, layer, &[0]));
+    }
+    events.push(ev_seq(1, 0, 0, &[1]));
+    events.push(ev_seq(1, 1, 0, &[1]));
+    let t = Trace { events };
+    let p = HardwareProfile::parse("gpus=1\ncopy_engines=1\n").expect("profile");
+    let cfg = SimCfg {
+        seq_streams: true,
+        bytes_per_expert: 8u64 << 20,
+        ..SimCfg::lru(4, 8u64 << 20, 0)
+    };
+    let fat = schedule_replay(&t, p.clone(), cfg, SchedCfg::closed(0)).expect("fat");
+    let chunk = schedule_replay(&t, p, cfg, SchedCfg::chunked(0, 1)).expect("chunk");
+    assert_eq!(fat.completed, 2);
+    assert_eq!(chunk.completed, 2);
+    let fat_ttft = fat.replay.ttft_ns.expect("fat ttft");
+    let chunk_ttft = chunk.replay.ttft_ns.expect("chunk ttft");
+    assert!(
+        chunk_ttft < fat_ttft,
+        "chunked prefill must let seq1 finish first token earlier; chunk={chunk_ttft} fat={fat_ttft}"
+    );
 }
 
 #[test]
@@ -738,6 +762,9 @@ fn adversarial_workloads_are_named_and_measurable() {
     assert!(batch.schedule.is_some(), "{}", batch.render());
     assert!(batch.render().contains("schedule-all"));
     assert!(batch.render().contains("schedule-1"));
+    let mixed = rows.iter().find(|r| r.name == "prefill-batch").unwrap();
+    assert!(mixed.chunk.is_some(), "{}", mixed.render());
+    assert!(mixed.render().contains("schedule-chunk1"));
 }
 
 #[test]

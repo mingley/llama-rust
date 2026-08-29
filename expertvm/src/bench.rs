@@ -7,6 +7,7 @@ use crate::schedule::{schedule_replay, SchedCfg};
 use crate::sim_replay::{sim_replay_cfg, SimCfg};
 use crate::workload::{generate, Workload};
 use gpu_sim::HardwareProfile;
+use std::collections::BTreeMap;
 
 /// One measured line: policy table plus simulated LRU cost.
 #[derive(Clone, Debug)]
@@ -25,6 +26,8 @@ pub struct BenchReport {
     pub graphs: Option<String>,
     /// Closed-loop `schedule-all` vs `schedule-1` when the trace has >1 sequence.
     pub schedule: Option<String>,
+    /// Unchunked vs `--prefill-chunk 1` when a first token has more than one layer.
+    pub chunk: Option<String>,
 }
 
 impl BenchReport {
@@ -48,6 +51,10 @@ impl BenchReport {
             s.push_str(sch);
             s.push('\n');
         }
+        if let Some(ch) = &self.chunk {
+            s.push_str(ch);
+            s.push('\n');
+        }
         s
     }
 }
@@ -66,12 +73,14 @@ pub fn report(
     let mut overlap = None;
     let mut graphs = None;
     let mut schedule = None;
+    let mut chunk = None;
     if let Some(p) = profile {
         let lines = sim_lines(trace, p, capacity, lookahead, expert_bytes)?;
         sim = Some(lines.serial);
         overlap = lines.overlap;
         graphs = lines.graphs;
         schedule = lines.schedule;
+        chunk = lines.chunk;
     }
     Ok(BenchReport {
         name: name.to_string(),
@@ -81,6 +90,7 @@ pub fn report(
         overlap,
         graphs,
         schedule,
+        chunk,
     })
 }
 
@@ -89,6 +99,7 @@ struct SimLines {
     overlap: Option<String>,
     graphs: Option<String>,
     schedule: Option<String>,
+    chunk: Option<String>,
 }
 
 fn sim_lines(
@@ -108,17 +119,7 @@ fn sim_lines(
     } else {
         None
     };
-    let schedule = if trace.n_sequences() > 1 {
-        let all = schedule_replay(trace, profile.clone(), base, SchedCfg::closed(0))?;
-        let one = schedule_replay(trace, profile.clone(), base, SchedCfg::closed(1))?;
-        Some(format!(
-            "schedule-all {} | schedule-1 {}",
-            all.line(),
-            one.line()
-        ))
-    } else {
-        None
-    };
+    let (schedule, chunk) = schedule_compare(trace, profile.clone(), base)?;
     let mut graphed = base;
     graphed.cuda_graphs = true;
     let g = sim_replay_cfg(trace, profile, graphed)?;
@@ -127,7 +128,56 @@ fn sim_lines(
         overlap,
         graphs: Some(format!("serial {} | graphs {}", serial.line(), g.line())),
         schedule,
+        chunk,
     })
+}
+
+fn schedule_compare(
+    trace: &Trace,
+    profile: HardwareProfile,
+    base: SimCfg,
+) -> Result<(Option<String>, Option<String>), Error> {
+    if trace.n_sequences() <= 1 {
+        return Ok((None, None));
+    }
+    let all = schedule_replay(trace, profile.clone(), base, SchedCfg::closed(0))?;
+    let one = schedule_replay(trace, profile.clone(), base, SchedCfg::closed(1))?;
+    let schedule = Some(format!(
+        "schedule-all {} | schedule-1 {}",
+        all.line(),
+        one.line()
+    ));
+    let chunk = if first_token_events(trace) > 1 {
+        let ch = schedule_replay(trace, profile, base, SchedCfg::chunked(0, 1))?;
+        Some(format!(
+            "schedule-all {} | schedule-chunk1 {}",
+            all.line(),
+            ch.line()
+        ))
+    } else {
+        None
+    };
+    Ok((schedule, chunk))
+}
+
+fn first_token_events(trace: &Trace) -> usize {
+    let mut first: BTreeMap<u64, u32> = BTreeMap::new();
+    let mut n: BTreeMap<u64, usize> = BTreeMap::new();
+    for e in &trace.events {
+        match first.get(&e.sequence).copied() {
+            None => {
+                let _f = first.insert(e.sequence, e.token);
+                let _c = n.insert(e.sequence, 1);
+            }
+            Some(t) if t == e.token => {
+                if let Some(c) = n.get_mut(&e.sequence) {
+                    *c = c.saturating_add(1);
+                }
+            }
+            Some(_) => {}
+        }
+    }
+    n.values().copied().max().unwrap_or(0)
 }
 
 /// Run every named adversarial workload at `capacity`.

@@ -41,6 +41,7 @@ warp scheduler, L1, …   ← do not model
 | `synchronize_event` waits the record only | later ops on that stream keep running |
 | `idle_until` drains, then jumps the clock | GPU idle until the next arrival |
 | `event_elapsed_ns` is record-to-record delta | `cudaEventElapsedTime` (ns) |
+| `query_event` is non-blocking | `cudaEventQuery` |
 | stream[i+1].start ≥ stream[i].finish (`Operation` timestamps) | queue wait vs run |
 | higher `set_stream_priority` starts first under contention | launch overhead |
 | memset requires device residency | HBM write + launch overhead |
@@ -156,6 +157,8 @@ on that device (off by default = `cudaStreamNonBlocking`).
 open-loop arrival can wait without `sleep`.
 `event_elapsed_ns` is `cudaEventElapsedTime` in nanoseconds (both records
 must be complete; end-before-start is invalid).
+`query_event` is `cudaEventQuery` (unknown id is semantic; incomplete is
+`Ok(false)`).
 `set_stream_priority` is `cudaStreamCreateWithPriority` (higher first when
 compute contends). `Operation` carries `submit_ns` / `start_ns` / `done_ns`
 so stream[i+1].start ≥ stream[i].finish is inspectable. `GpuOp` /

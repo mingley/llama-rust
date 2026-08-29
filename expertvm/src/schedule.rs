@@ -24,10 +24,15 @@ pub struct SchedCfg {
     pub ttft_slo_ns: Option<u64>,
     /// Optional ITL SLO. Misses increment [`SchedReplay::itl_slo_miss`].
     pub itl_slo_ns: Option<u64>,
+    /// Prefill chunk: max layer-events of a sequence's first token per engine
+    /// step. `0` runs the whole token (decode-shaped). `N > 0` lets other
+    /// sequences' decode tokens complete while a long prefill is still in flight.
+    pub prefill_chunk_layers: usize,
 }
 
 impl SchedCfg {
-    /// All sequences arrive at t=0. `max_batch` `0` admits everyone.
+    /// All sequences arrive at t=0. Whole first token per step. `max_batch` `0`
+    /// admits everyone.
     #[must_use]
     pub fn closed(max_batch: usize) -> Self {
         Self {
@@ -35,6 +40,16 @@ impl SchedCfg {
             interarrival_ns: 0,
             ttft_slo_ns: None,
             itl_slo_ns: None,
+            prefill_chunk_layers: 0,
+        }
+    }
+
+    /// [`Self::closed`] plus a prefill chunk of `layers` events.
+    #[must_use]
+    pub fn chunked(max_batch: usize, layers: usize) -> Self {
+        Self {
+            prefill_chunk_layers: layers,
+            ..Self::closed(max_batch)
         }
     }
 }
@@ -74,12 +89,15 @@ impl SchedReplay {
 }
 
 /// Iteration-level continuous batching: admit FCFS up to `max_batch`, run one
-/// next token (layer-major across the running set) per engine step, retire
+/// next chunk (layer-major across the running set) per engine step, retire
 /// finished sequences, idle the GPU until the next arrival when the running
 /// set is empty.
 ///
-/// Cache order is demand paging (no precomputed JSONL key list, so no future
-/// leak). Prefetch Stay vs Fetch uses remaining keys of *running* sequences only.
+/// A chunk is the whole next token unless [`SchedCfg::prefill_chunk_layers`]
+/// is set: then a sequence's first token advances at most that many
+/// layer-events so a short decode in the same batch is not stuck behind a
+/// long prefill. Cache order is demand paging (no JSONL future leak).
+/// Prefetch Stay vs Fetch uses remaining keys of *running* sequences only.
 pub fn schedule_replay(
     trace: &Trace,
     profile: HardwareProfile,
@@ -101,9 +119,9 @@ pub fn schedule_replay(
             rt.idle_ns = rt.idle_ns.saturating_add(jumped);
             continue;
         }
-        note_queue(&running, rt.sim.clock_ns(), &mut rec);
-        execute_iteration(&mut rt, &running)?;
-        retire(&mut running, rt.sim.clock_ns(), sched, &mut rec);
+        note_queue(&mut running, rt.sim.clock_ns(), &mut rec);
+        let consumed = execute_iteration(&mut rt, &running, sched)?;
+        retire(&mut running, &consumed, rt.sim.clock_ns(), sched, &mut rec);
     }
     Ok(finish_sched(rt, rec))
 }
@@ -114,6 +132,7 @@ struct Job {
     arrival: u64,
     first_end: Option<u64>,
     prev_end: Option<u64>,
+    queued: bool,
 }
 
 #[derive(Default)]
@@ -258,6 +277,7 @@ fn group_jobs(events: &[ExpertAccess], interarrival_ns: u64) -> VecDeque<Job> {
             arrival: seq.saturating_mul(interarrival_ns),
             first_end: None,
             prev_end: None,
+            queued: false,
         })
         .collect();
     jobs.sort_by_key(|j| (j.arrival, j.seq));
@@ -286,21 +306,39 @@ fn admit(pending: &mut VecDeque<Job>, running: &mut Vec<Job>, cap: usize, now: u
     }
 }
 
-fn note_queue(running: &[Job], now: u64, rec: &mut Rec) {
+fn note_queue(running: &mut [Job], now: u64, rec: &mut Rec) {
     for job in running {
-        if job.first_end.is_none() {
+        if job.first_end.is_none() && !job.queued {
             rec.queues.push(now.saturating_sub(job.arrival));
+            job.queued = true;
         }
     }
 }
 
-fn execute_iteration(rt: &mut SchedRt, running: &[Job]) -> Result<(), Error> {
+fn chunk_events(job: &Job, chunk: usize) -> Vec<ExpertAccess> {
+    let Some((_, evs)) = job.tokens.first() else {
+        return Vec::new();
+    };
+    let prefill = job.first_end.is_none();
+    if chunk == 0 || !prefill {
+        return evs.clone();
+    }
+    evs.iter().take(chunk).cloned().collect()
+}
+
+fn execute_iteration(
+    rt: &mut SchedRt,
+    running: &[Job],
+    sched: SchedCfg,
+) -> Result<Vec<usize>, Error> {
+    let chunks: Vec<Vec<ExpertAccess>> = running
+        .iter()
+        .map(|j| chunk_events(j, sched.prefill_chunk_layers))
+        .collect();
+    let consumed: Vec<usize> = chunks.iter().map(Vec::len).collect();
     let mut by_layer: BTreeMap<u32, Vec<ExpertAccess>> = BTreeMap::new();
-    for job in running {
-        let Some((_, evs)) = job.tokens.first() else {
-            continue;
-        };
-        for ev in evs {
+    for ch in &chunks {
+        for ev in ch {
             by_layer.entry(ev.layer).or_default().push(ev.clone());
         }
     }
@@ -312,18 +350,36 @@ fn execute_iteration(rt: &mut SchedRt, running: &[Job]) -> Result<(), Error> {
         }
     }
     rt.sim.synchronize()?;
-    Ok(())
+    Ok(consumed)
 }
 
-fn retire(running: &mut Vec<Job>, now: u64, sched: SchedCfg, rec: &mut Rec) {
+fn consume_prefix(job: &mut Job, n: usize) -> bool {
+    let Some((_, evs)) = job.tokens.first_mut() else {
+        return false;
+    };
+    let n = n.min(evs.len());
+    let keep: Vec<ExpertAccess> = evs.iter().skip(n).cloned().collect();
+    if keep.is_empty() {
+        let _tok = job.tokens.remove(0);
+        true
+    } else {
+        *evs = keep;
+        false
+    }
+}
+
+fn retire(running: &mut Vec<Job>, consumed: &[usize], now: u64, sched: SchedCfg, rec: &mut Rec) {
     let mut keep = Vec::new();
-    for mut job in running.drain(..) {
-        if job.tokens.is_empty() {
+    for (i, mut job) in running.drain(..).enumerate() {
+        let n = consumed.get(i).copied().unwrap_or(0);
+        if n == 0 {
+            keep.push(job);
             continue;
         }
-        let _tok = job.tokens.remove(0);
-        rec.tokens_done = rec.tokens_done.saturating_add(1);
-        record_latency(&mut job, now, sched, rec);
+        if consume_prefix(&mut job, n) {
+            rec.tokens_done = rec.tokens_done.saturating_add(1);
+            record_latency(&mut job, now, sched, rec);
+        }
         if job.tokens.is_empty() {
             rec.completed = rec.completed.saturating_add(1);
         } else {

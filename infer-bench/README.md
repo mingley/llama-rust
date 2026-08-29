@@ -15,10 +15,12 @@ infer-bench trace tests/traces/cycling.jsonl --capacity 2 --profile h100
 infer-bench workload thrash --capacity 2
 infer-bench workload batch --capacity 4
 infer-bench workload prefill-heavy --tokens 16
+infer-bench workload prefill-batch --tokens 8
 infer-bench topology --bytes 1048576
 infer-bench remote tests/traces/cycling.jsonl --expert-bytes 1048576
 infer-bench remote tests/traces/cycling.jsonl --expert-bytes 1048576 --activation-bytes 128
 infer-bench schedule tests/traces/cycling.jsonl --capacity 2 --max-batch 1 --interarrival-ns 1000000
+infer-bench schedule tests/traces/cycling.jsonl --capacity 2 --prefill-chunk 1
 ```
 
 Same numbers as `expertvm bench` / `expertvm workload`. Timing comes from a

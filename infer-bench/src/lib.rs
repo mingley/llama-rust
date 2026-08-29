@@ -22,7 +22,7 @@ mod tests {
     #[test]
     fn adversarial_suite_covers_named_workloads() {
         let rows = adversarial_suite(8, 4, 2, HardwareProfile::example_cheap_48gb()).unwrap();
-        assert_eq!(rows.len(), 10);
+        assert_eq!(rows.len(), super::Workload::ALL.len());
         assert!(rows.iter().any(|r| r.name == "thrash"));
         assert!(rows.iter().any(|r| r.name == "batch"));
     }

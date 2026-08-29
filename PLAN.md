@@ -483,10 +483,12 @@ is CUDA stream priority (higher starts first when compute contends).
 per engine iteration at a token; `0` admits the whole token).
 `expertvm schedule` is open-loop continuous batching: sequences arrive at
 `sequence * interarrival_ns`, FCFS into a running set of size `max_batch`,
-one next token (layer-major) per engine step, finished sequences leave,
+one next **chunk** (layer-major) per engine step, finished sequences leave,
 `Sim::idle_until` jumps the virtual clock when the GPU would wait.
-TTFT is first-token end minus arrival. Optional `--ttft-slo-ns` /
-`--itl-slo-ns` count misses. Cache order is demand paging (no JSONL future
+A chunk is the whole next token unless `--prefill-chunk N` limits a
+sequence's first token to N layer-events so a short decode is not stuck
+behind a long prefill. TTFT is first-token end minus arrival. Optional
+`--ttft-slo-ns` / `--itl-slo-ns` count misses. Cache order is demand paging (no JSONL future
 leak). This is not a 500k-line vLLM engine.
 
 Agents may aggressively optimize policies. Illegal GPU states are
@@ -511,7 +513,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
 
 - adversarial workloads: uniform, hotset, shifting hotset, cache
   thrash, coding/chat/long-context traces, batch 1 vs 128,
-  prefill-heavy / decode-heavy
+  prefill-heavy / decode-heavy / prefill-batch (4-seq mixed prefill+decode)
 - topologies: 1 GPU, 2 GPU PCIe, 8 GPU NVLink, bad NUMA, 2-node RDMA,
   asymmetric links — named example profiles (`h100`, `2xh100-pcie`,
   `8xh100`, `bad-numa`, `2node-rdma`, `asymmetric`) plus `gpu-profile probe`
@@ -531,16 +533,18 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   (`expertvm sim --cuda-graphs`). Capture after a miss waits with
   `synchronize_stream` so the compute stream is idle (CUDA). `--max-batch N`
   admits N sequences per engine iteration. `expertvm schedule` is the
-  open-loop running set (arrivals, retire, SLO misses, `idle_until`).
+  open-loop running set (arrivals, retire, SLO misses, `idle_until`,
+  `--prefill-chunk N`). `query_event` is `cudaEventQuery`.
   `plan_window` Stay vs Fetch gates prefetch
   in the GPU loop (`--plan-window N`). `prefetch_hits` / `prefetch_waste`
   measure whether those fills were used. `memset`, directed peer enable, and
   the legacy null stream are mechanical CUDA invariants.
   `synchronize_stream` / `synchronize_event` are `cudaStreamSynchronize` /
   `cudaEventSynchronize`. `event_elapsed_ns` is `cudaEventElapsedTime` in
-  nanoseconds. Public `GpuOp` / `Operation` is the compiled DAG
+  nanoseconds. `query_event` is `cudaEventQuery`. Public `GpuOp` / `Operation` is the compiled DAG
   (`Sim::operations`). `expertvm bench` on a multi-sequence trace prints
-  `schedule-all` vs `schedule-1`.
+  `schedule-all` vs `schedule-1`, and `schedule-chunk1` when a first token
+  has more than one layer.
 - performance model must include fixed overhead, size-dependent
   throughput, queueing, concurrency limits, alignment, startup latency
   (`LinkProfile::align_bytes` rounds the billed payload up; a 1-byte DMA

@@ -288,6 +288,16 @@ impl Sim {
             .is_some_and(|id| self.op_done(id))
     }
 
+    /// `cudaEventQuery`: whether `event` is recorded and complete. Does not wait.
+    ///
+    /// Unknown ids are [`SimError::UnknownEvent`]. Incomplete records are `Ok(false)`.
+    pub fn query_event(&self, event: EventId) -> Result<bool, SimError> {
+        if !self.events.contains_key(&event) {
+            return Err(SimError::UnknownEvent { event: event.0 });
+        }
+        Ok(self.event_complete(event))
+    }
+
     /// Drop not-yet-started ops on `(device, stream)`. In-flight ops still complete.
     pub fn cancel_stream(&mut self, device: DeviceId, stream: StreamId) -> Result<u32, SimError> {
         let _gpu = self.profile.gpu(device)?;
