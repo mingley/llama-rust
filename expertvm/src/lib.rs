@@ -34,7 +34,7 @@ pub use gpu_store::{
     store_replay, store_replay_cfg, GpuFill, GpuStoreCfg, SimulatedGpuStore, StoreReplay,
     StoreReplayCfg,
 };
-pub use kv::{cycling_pages, kv_paged, kv_replay, KvCfg, KvFill, KvReplay};
+pub use kv::{cycling_pages, kv_paged, kv_replay, KvCfg, KvFill, KvReplay, KvSimOp};
 pub use live::LiveStore;
 pub use place::{colocated, home_gpu, striped, with_hot_replicas, PlaceMap};
 pub use planner::{

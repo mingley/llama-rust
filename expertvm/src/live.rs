@@ -266,6 +266,40 @@ impl LiveStore {
             Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => Ok(None),
         }
     }
+
+    /// Reserve Engine interned KV on a SimulatedGpuStore. CPU stores are no-ops.
+    pub fn bind_kv(&mut self, n_pages: u32, page_bytes: u64) -> Result<(), Error> {
+        match self {
+            Self::Simulated(s) => s.bind_kv(n_pages, page_bytes),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => Ok(()),
+        }
+    }
+
+    /// Replay intern/alloc events onto the KV VA. CPU stores are no-ops.
+    pub fn apply_kv_ops(&mut self, ops: &[crate::KvSimOp]) -> Result<(), Error> {
+        match self {
+            Self::Simulated(s) => s.apply_kv_ops(ops),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => Ok(()),
+        }
+    }
+
+    /// KV intern-hit kernels. CPU stores are 0.
+    #[must_use]
+    pub fn kv_hits(&self) -> u64 {
+        match self {
+            Self::Simulated(s) => s.kv_hits(),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => 0,
+        }
+    }
+
+    /// KV map+memset fills. CPU stores are 0.
+    #[must_use]
+    pub fn kv_misses(&self) -> u64 {
+        match self {
+            Self::Simulated(s) => s.kv_misses(),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => 0,
+        }
+    }
 }
 
 impl ExpertStore for LiveStore {

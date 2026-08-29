@@ -6,9 +6,10 @@
 //! sequences hit the same completed prefixes. Writing a block with `refs > 1`
 //! copy-on-writes. Logits must bit-match dense decode.
 
-use expertvm::prefix_hash;
+use expertvm::{prefix_hash, KvSimOp};
 use std::cell::{RefCell, RefMut};
 use std::collections::BTreeMap;
+use std::mem;
 use std::rc::Rc;
 
 /// Physical KV blocks plus a prefix-hash intern table.
@@ -23,6 +24,7 @@ pub(crate) struct KvPool {
     refs: Vec<u32>,
     by_hash: BTreeMap<u64, u32>,
     hits: u64,
+    sim_ops: Vec<KvSimOp>,
 }
 
 /// Shared interned-block arena. Clone the handle so two sequences hit the same prefixes.
@@ -69,6 +71,9 @@ impl KvPool {
         let i = usize::try_from(id).unwrap_or(usize::MAX);
         if let Some(r) = self.refs.get_mut(i) {
             *r = r.saturating_sub(1);
+            if *r == 0 {
+                self.sim_ops.push(KvSimOp::Drop(id));
+            }
         }
     }
 
@@ -87,6 +92,7 @@ impl KvPool {
         let id = self.by_hash.get(&hash).copied()?;
         self.retain(id);
         self.hits = self.hits.saturating_add(1);
+        self.sim_ops.push(KvSimOp::Hit(id));
         Some(id)
     }
 
@@ -167,6 +173,7 @@ impl PagedKvPool {
                 refs: Vec::new(),
                 by_hash: BTreeMap::new(),
                 hits: 0,
+                sim_ops: Vec::new(),
             })),
             block_size,
             n_layers,
@@ -183,6 +190,31 @@ impl PagedKvPool {
     #[must_use]
     pub fn hits(&self) -> u64 {
         self.inner.try_borrow().map(|p| p.hits).unwrap_or(0)
+    }
+
+    /// Physical intern capacity (max blocks).
+    #[must_use]
+    pub fn cap(&self) -> usize {
+        self.inner.try_borrow().map(|p| p.cap).unwrap_or(0)
+    }
+
+    /// f32 K+V bytes of one physical block (`stride * 2 * 4`).
+    #[must_use]
+    pub fn kv_bytes_per_block(&self) -> u64 {
+        self.inner
+            .try_borrow()
+            .map(|p| {
+                let elems = p.stride().saturating_mul(2);
+                u64::try_from(elems.saturating_mul(4)).unwrap_or(u64::MAX)
+            })
+            .unwrap_or(0)
+    }
+
+    /// Drain Engine KV-sim ops logged since the last take.
+    pub fn take_sim_ops(&self) -> Vec<KvSimOp> {
+        self.try_mut()
+            .map(|mut p| mem::take(&mut p.sim_ops))
+            .unwrap_or_default()
     }
 
     /// Physical blocks with a positive refcount.
@@ -330,6 +362,7 @@ impl KvPages {
         let bi = pos / bs;
         while self.table.len() <= bi {
             let id = pool.alloc()?;
+            pool.sim_ops.push(KvSimOp::Fault(id));
             self.table.push(id);
         }
         let Some(&id) = self.table.get(bi) else {
@@ -342,6 +375,10 @@ impl KvPages {
         }
         let fresh = pool.alloc()?;
         pool.copy_block(id, fresh)?;
+        pool.sim_ops.push(KvSimOp::Cow {
+            src: id,
+            dst: fresh,
+        });
         pool.release(id);
         if let Some(slot) = self.table.get_mut(bi) {
             *slot = fresh;
@@ -487,5 +524,39 @@ mod tests {
             b.ensure_write(pos).expect("reuse after drop");
         }
         assert_eq!(b.table_ids().len(), 2);
+    }
+
+    #[test]
+    fn intern_logs_kv_sim_ops() {
+        let pool = super::PagedKvPool::create(1, 1, 1, 2, 8).expect("pool");
+        {
+            let mut a = super::KvPages::on(pool.clone());
+            a.ensure_write(0).expect("fault");
+            let ops = pool.take_sim_ops();
+            assert!(
+                ops.iter().any(|o| matches!(o, expertvm::KvSimOp::Fault(_))),
+                "ensure_write of a new page must log Fault, {ops:?}"
+            );
+            a.intern_full(&[1, 2]);
+            a.rewind_tokens(0);
+            let mut b = super::KvPages::on(pool.clone());
+            assert_eq!(b.bind_full_prefix(&[1, 2], 0), 2);
+            let ops = pool.take_sim_ops();
+            assert!(
+                ops.iter().any(|o| matches!(o, expertvm::KvSimOp::Hit(_))),
+                "intern bind must log Hit, {ops:?}"
+            );
+        }
+        let unique = super::PagedKvPool::create(1, 1, 1, 2, 8).expect("unique");
+        {
+            let mut p = super::KvPages::on(unique.clone());
+            p.ensure_write(0).expect("u");
+            let _faults = unique.take_sim_ops();
+        }
+        let ops = unique.take_sim_ops();
+        assert!(
+            ops.iter().any(|o| matches!(o, expertvm::KvSimOp::Drop(_))),
+            "last unique ref must log Drop, {ops:?}"
+        );
     }
 }

@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine `--kv-sim`
+
+`--expert-sim --kv-sim` maps Engine interned KV blocks onto the same
+gpu-sim clock as expert H2D (`va_reserve` + memset on fault, kernel on
+intern hit). Distinct from `expertvm kv`. Default `--expert-sim` stays
+expert-only identity. `--kv-bytes` overrides intern page size so TTFT/ITL
+include KV traffic (`kv_misses>=1`; shared-prefix intern `kv_hits>0`;
+1MiB pages strictly lengthen `wall_ns`). Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine place_hot fail-loud
 
 Managed/VMM `place_hot` waits that expert page's GEMM and copy streams
@@ -1142,8 +1152,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 55 (Engine `place_hot`
-fail-loud managed/VMM migrate). `gguf_gemv serve --engine`
+Next code change is PLAN systems depth after item 56 (Engine `--kv-sim`
+on the SimulatedGpuStore clock). `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover
 is a Llama NORM real-model fixture when a GGUF is on disk. Physical

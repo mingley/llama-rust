@@ -623,6 +623,11 @@ impl KvCache {
         self.expert_store.take()
     }
 
+    /// Mutable borrow of the attached store, if any.
+    pub(crate) fn expert_store_mut(&mut self) -> Option<&mut LiveStore> {
+        self.expert_store.as_mut()
+    }
+
     /// Borrow the attached store, if any.
     #[must_use]
     pub fn attached_store(&self) -> Option<&LiveStore> {

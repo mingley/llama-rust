@@ -951,6 +951,15 @@ model, do not celebrate the sim.
     independent decode on managed and pinned 8×H100 with 64-byte pages
     (`migrates >= 1`). Dual score still has no `$/M tokens`.
 
+56. [x] Engine `--kv-sim`: interned paged KV on the same SimulatedGpuStore
+    clock as expert H2D (`va_reserve` + memset on fault, kernel on intern
+    hit, unmap on Drop). Distinct from `expertvm kv`. Default `--expert-sim`
+    stays expert-only identity. `--kv-bytes N` overrides intern geometry so
+    TTFT/ITL include KV traffic (`kv_misses >= 1`, shared-prefix intern
+    `kv_hits > 0`, large pages strictly lengthen `wall_ns`). Two-sequence
+    greedy ids still match independent decode. Dual score still has no
+    `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

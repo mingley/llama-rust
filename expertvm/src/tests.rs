@@ -3471,3 +3471,44 @@ fn sim_replay_stream_priority_keeps_hits() {
     assert_eq!(plain.hits, pri.hits);
     assert_eq!(plain.misses, pri.misses);
 }
+
+#[test]
+fn simulated_gpu_store_kv_sim_bills_fault_hit_drop() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            kv_sim: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    gpu.bind_kv(4, 1 << 20).expect("bind");
+    gpu.apply_kv_ops(&[KvSimOp::Fault(0)]).expect("fault");
+    gpu.apply_kv_ops(&[KvSimOp::Hit(0)]).expect("hit");
+    gpu.apply_kv_ops(&[KvSimOp::Drop(0)]).expect("drop");
+    assert_eq!(gpu.kv_misses(), 1);
+    assert_eq!(gpu.kv_hits(), 1);
+    assert!(gpu.score().expect("score").wall_ns > 0);
+}
+
+#[test]
+fn simulated_gpu_store_kv_sim_off_ignores_ops() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::new(inner, 1, HardwareProfile::example_h100_sxm(), 4096).expect("gpu");
+    gpu.bind_kv(4, 4096).expect("bind");
+    gpu.apply_kv_ops(&[KvSimOp::Fault(0)]).expect("op");
+    assert_eq!(gpu.kv_misses(), 0);
+    assert_eq!(gpu.kv_hits(), 0);
+}

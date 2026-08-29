@@ -28,11 +28,15 @@
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `vmm_page`, pageable H2D, `SetAccessedBy`, legacy NULL, stream priority,
-//! graph update/clone, timing events, `seq_streams`) are the same mechanical
+//! graph update/clone, timing events, `seq_streams`, `kv_sim`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
 //! GEMM stays on one compute stream.
+//! `--kv-sim` maps interned KV blocks onto the same SimulatedGpuStore clock
+//! (`va_reserve` + memset on fault, kernel on intern hit) so TTFT/ITL include
+//! KV traffic. Default off: scores bill expert H2D/GEMM only. Distinct from
+//! `expertvm kv`.
 //! [`EngineCfg::slo_reject`] drops waiters whose gpu-sim queue wait already
 //! meets [`EngineCfg::ttft_slo_ns`]. [`EngineCfg::itl_slo_ns`] counts later-token
 //! gaps that miss the ITL budget (`Engine::itl_slo_miss`; does not drop).
@@ -464,6 +468,39 @@ impl<'a> Engine<'a> {
         self.hot_reuse.clear();
     }
 
+    /// Map interned KV onto the attached SimulatedGpuStore clock.
+    ///
+    /// No-op unless [`expertvm::GpuStoreCfg::kv_sim`]. `page_bytes` overrides
+    /// [`PagedKvPool::kv_bytes_per_block`] (`--kv-bytes`). Call after
+    /// [`Engine::attach_expert_store`]. Distinct from `expertvm kv`.
+    pub fn enable_kv_sim(&mut self, page_bytes: Option<u64>) -> Result<(), LlamaError> {
+        self.reclaim_parked_stores();
+        let n_pages =
+            u32::try_from(self.pool.cap()).map_err(|_| LlamaError::Store("kv pool cap".into()))?;
+        let bytes = match page_bytes {
+            Some(0) => return Err(LlamaError::Store("kv-bytes must be > 0".into())),
+            Some(b) => b,
+            None => self.pool.kv_bytes_per_block(),
+        };
+        let store = self
+            .expert_store
+            .as_mut()
+            .ok_or_else(|| LlamaError::Store("enable_kv_sim: no expert store".into()))?;
+        store.bind_kv(n_pages, bytes).map_err(LlamaError::from)
+    }
+
+    /// Intern-hit kernels billed on the KV VA (`0` unless `--kv-sim`).
+    #[must_use]
+    pub fn kv_hits(&self) -> u64 {
+        self.live_store().map_or(0, LiveStore::kv_hits)
+    }
+
+    /// Map+memset fills billed on the KV VA (`0` unless `--kv-sim`).
+    #[must_use]
+    pub fn kv_misses(&self) -> u64 {
+        self.live_store().map_or(0, LiveStore::kv_misses)
+    }
+
     /// Remove the attached store, including one parked on a live cache.
     pub fn take_expert_store(&mut self) -> Option<LiveStore> {
         self.reclaim_parked_stores();
@@ -490,6 +527,7 @@ impl<'a> Engine<'a> {
     /// a greedy token. Not `$/M tokens`.
     pub fn expert_store_score(&mut self) -> Result<Option<Score>, LlamaError> {
         self.reclaim_parked_stores();
+        self.flush_kv_sim()?;
         let Some(s) = self.expert_store.as_mut() else {
             return Ok(None);
         };
@@ -596,6 +634,24 @@ impl<'a> Engine<'a> {
         self.prefetch = chain;
     }
 
+    fn flush_kv_sim(&mut self) -> Result<(), LlamaError> {
+        let ops = self.pool.take_sim_ops();
+        if ops.is_empty() {
+            return Ok(());
+        }
+        if let Some(s) = self.expert_store.as_mut() {
+            return s.apply_kv_ops(&ops).map_err(LlamaError::from);
+        }
+        for cell in &mut self.slots {
+            if let Some(slot) = cell.as_mut() {
+                if let Some(s) = slot.cache.expert_store_mut() {
+                    return s.apply_kv_ops(&ops).map_err(LlamaError::from);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn with_store_parked<T, E>(
         &mut self,
         idx: usize,
@@ -606,14 +662,17 @@ impl<'a> Engine<'a> {
     {
         self.park_store_on(idx);
         let out = f(self);
+        let flushed = self.flush_kv_sim();
         self.unpark_store_from(idx);
         match out {
             Ok(v) => {
+                flushed.map_err(E::from)?;
                 self.pin_predicted().map_err(E::from)?;
                 Ok(v)
             }
             Err(e) => {
-                let _keep = self.pin_predicted();
+                let _keep = flushed;
+                let _pin = self.pin_predicted();
                 Err(e)
             }
         }
@@ -940,6 +999,7 @@ impl<'a> Engine<'a> {
             }
             owned.push((i, part, replay));
         }
+        self.flush_kv_sim().map_err(BatchFail::Other)?;
         owned.sort_by_key(|(i, _, _)| *i);
         let order: Vec<usize> = owned.iter().map(|(i, _, _)| *i).collect();
         let first = *order
@@ -1095,6 +1155,7 @@ impl<'a> Engine<'a> {
     }
 
     fn sample_sim_clock(&mut self) -> Result<Option<u64>, LlamaError> {
+        self.flush_kv_sim()?;
         self.reclaim_parked_stores();
         match self.expert_store.as_mut() {
             Some(s) => s.clock_ns().map_err(LlamaError::from),
@@ -1149,6 +1210,7 @@ impl<'a> Engine<'a> {
                 Err(e) => return Err(BatchFail::Other(e)),
             }
         }
+        self.flush_kv_sim().map_err(BatchFail::Other)?;
         let mut order: Vec<(usize, u32)> = items.to_vec();
         order.sort_by_key(|(i, _)| *i);
         let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
@@ -2664,6 +2726,8 @@ mod tests {
         compute_stream: StreamId,
         accessed_peer: bool,
         migrates: u64,
+        kv_hits: u64,
+        kv_misses: u64,
     }
 
     fn two_seq_gpu_on(
@@ -2682,6 +2746,17 @@ mod tests {
         profile: HardwareProfile,
         expert_bytes: u64,
     ) -> GpuKnobOut {
+        two_seq_gpu_run(slots, gpu_cfg, fill, profile, expert_bytes, None)
+    }
+
+    fn two_seq_gpu_run(
+        slots: usize,
+        gpu_cfg: GpuStoreCfg,
+        fill: GpuFill,
+        profile: HardwareProfile,
+        expert_bytes: u64,
+        kv_page: Option<u64>,
+    ) -> GpuKnobOut {
         let tokens_a = [1u32, 2, 3, 4];
         let tokens_b = [5u32, 0, 5, 0];
         let g = load_gguf_owned(tiny_qwen3moe_2layer_gguf()).expect("owned");
@@ -2692,6 +2767,7 @@ mod tests {
         let mut cfg = EngineCfg::tiny();
         cfg.eos = tok.eos;
         let mut eng = Engine::new(&model, cfg).expect("eng");
+        let kv_sim = gpu_cfg.kv_sim;
         let gpu = SimulatedGpuStore::with_cfg(
             model.expert_direct_store().expect("c"),
             slots,
@@ -2702,10 +2778,15 @@ mod tests {
         )
         .expect("gpu");
         eng.attach_expert_store(LiveStore::simulated(gpu));
+        if kv_sim {
+            eng.enable_kv_sim(kv_page).expect("kv");
+        }
         let a = eng.add(&tokens_a, 2).expect("a");
         let b = eng.add(&tokens_b, 2).expect("b");
         eng.run().expect("run");
+        assert!(eng.is_finished(a));
         assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+        assert!(eng.is_finished(b));
         assert_eq!(eng.take(b).expect("tb").generated, exp_b);
         let wall_ns = eng.expert_store_score().expect("sc").expect("sim").wall_ns;
         let compute_stream = eng.gpu_compute_stream().unwrap_or(StreamId(1));
@@ -2725,6 +2806,8 @@ mod tests {
             compute_stream,
             accessed_peer: eng.gpu_any_accessed_by(DeviceId(1)),
             migrates,
+            kv_hits: eng.kv_hits(),
+            kv_misses: eng.kv_misses(),
         }
     }
 
@@ -3095,5 +3178,80 @@ mod tests {
         );
         assert_eq!(out.compute_stream, StreamId(2));
         assert!(out.launches >= 2, "launches={}", out.launches);
+    }
+
+    #[test]
+    fn engine_gpu_kv_sim_lengthens_wall() {
+        let off = two_seq_gpu_knobs(8, GpuStoreCfg::default());
+        assert_eq!(off.kv_misses, 0, "default --expert-sim must not bill KV");
+        assert_eq!(off.kv_hits, 0, "default --expert-sim must not bill KV hits");
+        let on = two_seq_gpu_run(
+            8,
+            GpuStoreCfg {
+                kv_sim: true,
+                ..GpuStoreCfg::default()
+            },
+            GpuFill::Pinned,
+            HardwareProfile::example_h100_sxm(),
+            4096,
+            Some(1 << 20),
+        );
+        assert!(
+            on.kv_misses >= 1,
+            "kv-sim must map+memset interned blocks, misses={}",
+            on.kv_misses
+        );
+        assert!(
+            on.wall_ns > off.wall_ns,
+            "1MiB KV pages must lengthen the shared clock; on={} off={}",
+            on.wall_ns,
+            off.wall_ns
+        );
+    }
+
+    #[test]
+    fn engine_gpu_kv_sim_shared_prefix_hits() {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [1u32, 2, 5, 0];
+        let g = load_gguf_owned(tiny_qwen3moe_2layer_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let exp_a = independent(&model, &tok, &tokens_a, 2);
+        let exp_b = independent(&model, &tok, &tokens_b, 2);
+        let mut cfg = EngineCfg::tiny();
+        cfg.max_seqs = 1;
+        cfg.eos = tok.eos;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        let gpu = SimulatedGpuStore::with_cfg(
+            model.expert_direct_store().expect("c"),
+            8,
+            HardwareProfile::example_h100_sxm(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                kv_sim: true,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        eng.attach_expert_store(LiveStore::simulated(gpu));
+        eng.enable_kv_sim(None).expect("kv");
+        let a = eng.add(&tokens_a, 2).expect("a");
+        let b = eng.add(&tokens_b, 2).expect("b");
+        eng.run().expect("run");
+        assert!(eng.is_finished(a));
+        assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+        assert!(eng.is_finished(b));
+        assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+        assert!(
+            eng.kv_misses() >= 1,
+            "shared-prefix run must still fault unique pages, misses={}",
+            eng.kv_misses()
+        );
+        assert!(
+            eng.kv_hits() > 0,
+            "seq B [1,2] must intern-hit A's completed first page, hits={}",
+            eng.kv_hits()
+        );
     }
 }

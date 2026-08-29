@@ -47,6 +47,28 @@ impl KvReplay {
     }
 }
 
+/// One intern / alloc event the Engine replays onto [`crate::SimulatedGpuStore`].
+///
+/// Distinct from [`kv_paged`] (a standalone VMM walker). Engine paged-KV
+/// logs these so serving scores include KV map / memset / attention traffic
+/// on the same virtual clock as expert H2D.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KvSimOp {
+    /// New physical block: `va_map_range` + `cudaMemsetAsync` (attention write).
+    Fault(u32),
+    /// Intern hit: kernel read of an already-mapped block.
+    Hit(u32),
+    /// Copy-on-write dest: map + memset (CPU already copied f32 K/V).
+    Cow {
+        /// Shared source block (stays mapped).
+        src: u32,
+        /// Unique dest block.
+        dst: u32,
+    },
+    /// Refcount hit 0: `va_unmap_range`.
+    Drop(u32),
+}
+
 /// How [`kv_paged`] fills a newly mapped KV page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KvFill {

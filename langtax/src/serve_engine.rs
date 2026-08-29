@@ -258,6 +258,7 @@ impl<'a> EngineHttp<'a> {
                 expert_bytes: args.expert_bytes,
                 gpu_cfg: args.gpu_cfg,
                 fill: args.fill,
+                kv_bytes: args.kv_bytes,
             },
         )
         .map_err(ServeError::Infer)?;
@@ -547,6 +548,7 @@ mod tests {
             ttft_slo_ns: None,
             itl_slo_ns: None,
             gpu_cfg: GpuStoreCfg::default(),
+            kv_bytes: None,
             fill: GpuFill::Pinned,
             prefetch: Prefetch::Both,
             plan_window: 0,

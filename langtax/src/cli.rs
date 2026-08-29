@@ -49,14 +49,14 @@ usage: gguf_gemv <command> [args]
   infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]
   trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE [--capacity N]
   chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--kv-page N] [--show-prompt]
-  serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--trace-out FILE]
-  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--trace-out FILE]
+  serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--trace-out FILE]
+  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--trace-out FILE]
   write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|write-tiny-qwen3|write-tiny-gemma|write-tiny-llama4|write-tiny-llama-moe|write-tiny-qwen2moe|write-tiny-qwen3moe|write-tiny-qwen3moe-2layer|write-tiny-qwen2vl|write-tiny-qwen3vl|write-tiny-qwen3next|write-tiny-qwen35|write-tiny-phi2 <path>
 ";
 
 /// Usage for the `engine` verb.
 pub const ENGINE_USAGE: &str = "\
-usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
+usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
   -p, --prompt TEXT     prompt (repeatable; default: one `ab`)
   -n, --n-predict N     tokens to generate per sequence (default: 2)
       --n-ctx N         KV capacity (default: longest prompt + n_predict + 1)
@@ -91,6 +91,8 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
       --legacy-null     NULL copy serializes with compute (`--expert-sim`)
       --stream-priority cudaStreamCreateWithPriority on compute (`--expert-sim`)
       --seq-streams     per-sequence copy streams (`--expert-sim`; grouped GEMM stays fused)
+      --kv-sim          interned KV on the SimulatedGpuStore clock (`--expert-sim`; default off)
+      --kv-bytes N      KV page bytes for `--kv-sim` (default: f32 K+V of one intern block)
       --prefetch MODE   none|copy-forward|markov|both (default: both; CachedStore or sim)
       --plan-window N   Stay vs Fetch over N unique predicted keys (`0` = ungated)
       --plan-threshold N  Stay permille of that window already resident (default: 500)
@@ -107,8 +109,10 @@ does not drop). `--expert-sim` captures per-page GEMM graphs (same
 mechanical path as `expertvm sim --cuda-graphs`). `--graph-update` /
 `--graph-clone` / `--timing-events` / `--host-func` / `--blocking-streams` /
 `--sync-alloc` / `--mempool` / `--vmm-page` / `--pageable` / `--accessed-by` /
-`--legacy-null` / `--stream-priority` / `--seq-streams` match `GpuStoreCfg` / `expertvm sim`.
-`--prefetch` / `--plan-window` / `--plan-threshold` match `expertvm sim`
+`--legacy-null` / `--stream-priority` / `--seq-streams` / `--kv-sim` /
+`--kv-bytes` match `GpuStoreCfg` / `expertvm sim`. `--kv-sim` bills interned
+KV map/memset/hits on the same virtual clock as expert H2D (distinct from
+`expertvm kv`; default off keeps decode identity). `--prefetch` / `--plan-window` / `--plan-threshold` match `expertvm sim`
 Stay vs Fetch on the serving path (predicted keys only; no JSONL future
 leak). Default `both` / window `0` / threshold `500` is today's decode
 policy. A tight `--pool-blocks` preempts
@@ -121,7 +125,7 @@ page's GEMM lease first; `place_hot` errors are fail-loud.
 MoE traces stay on that GEMM (per-row
 sequence / token / prefix). Prints each continuation (`n_gen` plus
 decoded text), then intern_hits, preempts, GEMM stats, store metrics,
-graph counters, ITL SLO misses, and a gpu-sim score line when
+graph counters, `kv_miss` / `kv_hit` when `--kv-sim`, ITL SLO misses, and a gpu-sim score line when
 `--expert-sim` is set (`ttft_ns` / `itl_ns` when sequences generate).
 Not `$/M tokens`.
 Not an HTTP server.
@@ -474,6 +478,8 @@ pub struct EngineArgs {
     pub expert_bytes: Option<u64>,
     /// CUDA-like knobs for SimulatedGpuStore. Identity stays default.
     pub gpu_cfg: GpuStoreCfg,
+    /// Simulated KV page bytes with `--kv-sim`. `None` uses intern geometry.
+    pub kv_bytes: Option<u64>,
     /// Miss-page placement (`--expert-sim`). Default is pinned H2D.
     pub fill: GpuFill,
     /// Predictor prefetch. Default [`Prefetch::Both`].
@@ -519,6 +525,9 @@ fn check_engine_sim_opts(n: &EngineSimNeed) -> Result<(), String> {
     }
     if n.has_itl && !n.expert_sim {
         return engine_err("--itl-slo-ns requires --expert-sim");
+    }
+    if n.gpu.kv_bytes.is_some() && !n.gpu.kv_sim {
+        return engine_err("--kv-bytes requires --kv-sim");
     }
     if let Some(flag) = n.gpu.sim_flag() {
         if !n.expert_sim {
@@ -717,6 +726,7 @@ where
         expert_8gpu,
         expert_bytes,
         gpu_cfg,
+        kv_bytes: planner.gpu.kv_bytes,
         fill,
         prefetch: planner.prefetch,
         plan_window: planner.plan_window,
@@ -757,7 +767,7 @@ pub fn run_engine(args: &EngineArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
     writeln!(
         out,
-        "intern_hits={} preempts={} rejected={} itl_slo_miss={} graph_launches={} graph_updates={} graph_clones={} steps={} gemm_tokens={} gemm_peak={} serial_tokens={}",
+        "intern_hits={} preempts={} rejected={} itl_slo_miss={} graph_launches={} graph_updates={} graph_clones={} kv_miss={} kv_hit={} steps={} gemm_tokens={} gemm_peak={} serial_tokens={}",
         eng.pool().hits(),
         eng.preempts(),
         eng.rejected(),
@@ -765,6 +775,8 @@ pub fn run_engine(args: &EngineArgs) -> Result<(), Box<dyn std::error::Error>> {
         eng.graph_launches(),
         eng.graph_updates(),
         eng.graph_clones(),
+        eng.kv_misses(),
+        eng.kv_hits(),
         eng.stats().steps,
         eng.stats().gemm_tokens,
         eng.stats().gemm_peak,
@@ -809,6 +821,7 @@ fn attach_engine_store(
             expert_bytes: args.expert_bytes,
             gpu_cfg: args.gpu_cfg,
             fill: args.fill,
+            kv_bytes: args.kv_bytes,
         },
     )?;
     Ok(())
@@ -1313,6 +1326,8 @@ mod tests {
                 assert!(!a.expert_sim);
                 assert!(!a.expert_8gpu);
                 assert_eq!(a.expert_bytes, None);
+                assert_eq!(a.kv_bytes, None);
+                assert!(!a.gpu_cfg.kv_sim);
                 assert_eq!(a.gpu_cfg, GpuStoreCfg::default());
                 assert_eq!(a.fill, GpuFill::Pinned);
                 assert_eq!(a.prefetch, Prefetch::Both);
@@ -1502,6 +1517,7 @@ mod tests {
             "--legacy-null",
             "--stream-priority",
             "--seq-streams",
+            "--kv-sim",
         ] {
             let err = parse_engine_args(["m.gguf", flag]).unwrap_err();
             assert!(
@@ -1557,6 +1573,42 @@ mod tests {
         assert!(err.contains("--host-func does not take a value"), "{err}");
         let err = parse_engine_args(["m.gguf", "--expert-sim", "--seq-streams=1"]).unwrap_err();
         assert!(err.contains("--seq-streams does not take a value"), "{err}");
+    }
+
+    #[test]
+    fn engine_kv_sim_flags() {
+        let err = parse_engine_args(["m.gguf", "--kv-bytes", "1048576"]).unwrap_err();
+        assert!(err.contains("--kv-bytes requires --kv-sim"), "{err}");
+        let err =
+            parse_engine_args(["m.gguf", "--expert-sim", "--kv-bytes", "1048576"]).unwrap_err();
+        assert!(err.contains("--kv-bytes requires --kv-sim"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--expert-sim", "--kv-sim=1"]).unwrap_err();
+        assert!(err.contains("--kv-sim does not take a value"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--expert-sim", "--kv-sim", "--kv-bytes", "0"])
+            .unwrap_err();
+        assert!(err.contains("kv-bytes must be > 0"), "{err}");
+        match parse_engine_args([
+            "m.gguf",
+            "--expert-sim",
+            "--kv-sim",
+            "--kv-bytes",
+            "1048576",
+        ])
+        .expect("kv")
+        {
+            EngineCmd::Run(a) => {
+                assert!(a.gpu_cfg.kv_sim);
+                assert_eq!(a.kv_bytes, Some(1_048_576));
+            }
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        match parse_engine_args(["m.gguf", "--expert-sim", "--kv-sim"]).expect("on") {
+            EngineCmd::Run(a) => {
+                assert!(a.gpu_cfg.kv_sim);
+                assert_eq!(a.kv_bytes, None);
+            }
+            EngineCmd::Help => panic!("expected Run"),
+        }
     }
 
     #[test]

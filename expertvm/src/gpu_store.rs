@@ -2,6 +2,7 @@
 
 use crate::access::{ExpertKey, Trace};
 use crate::error::Error;
+use crate::kv::KvSimOp;
 use crate::place::home_gpu;
 use crate::planner::{
     plan_placement, plan_window, predicted_keys, window_keys, ChainState, Markov, Placement, Plan,
@@ -10,8 +11,8 @@ use crate::planner::{
 use crate::sim_replay::{replay_streams, stream_of};
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
-    AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelKind, MemAdvise, MemcpyOp,
-    Place, Score, Sim, StreamId,
+    AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelBuf, KernelKind, MemAdvise,
+    MemcpyOp, Place, Score, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -105,6 +106,12 @@ pub struct GpuStoreCfg {
     /// per-sequence compute stream). Default off: copy is NULL (`StreamId(0)`),
     /// compute is `StreamId(1)`. Decode identity stays serial copies.
     pub seq_streams: bool,
+    /// Map Engine interned KV blocks onto this Sim (`va_reserve` + memset).
+    ///
+    /// Default off (decode identity): scores bill expert H2D/GEMM only.
+    /// `--kv-sim` reserves a VA of `pool_blocks` pages so TTFT/ITL include
+    /// KV traffic on the same clock. Distinct from `expertvm kv`.
+    pub kv_sim: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -158,6 +165,18 @@ pub struct SimulatedGpuStore {
     replicates: u64,
     /// [`GpuStoreCfg::seq_streams`]: `bind_sequence` retargets [`Self::copy`].
     seq_streams: bool,
+    /// [`GpuStoreCfg::kv_sim`]: Engine interned KV on this Sim.
+    kv_sim: bool,
+    kv: Option<KvGpu>,
+}
+
+struct KvGpu {
+    va: AllocId,
+    page_bytes: u64,
+    n_pages: u32,
+    mapped: BTreeSet<u32>,
+    hits: u64,
+    misses: u64,
 }
 
 impl SimulatedGpuStore {
@@ -305,6 +324,8 @@ impl SimulatedGpuStore {
             dispatches: 0,
             replicates: 0,
             seq_streams: cfg.seq_streams,
+            kv_sim: cfg.kv_sim,
+            kv: None,
         })
     }
 
@@ -1138,6 +1159,127 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn replica_of(&self, key: ExpertKey) -> Option<DeviceId> {
         self.replicas.get(&key).copied()
+    }
+
+    /// Reserve a VMM VA for Engine interned KV (`pool_blocks` pages).
+    ///
+    /// No-op unless [`GpuStoreCfg::kv_sim`]. Idempotent after the first bind.
+    pub fn bind_kv(&mut self, n_pages: u32, page_bytes: u64) -> Result<(), Error> {
+        if !self.kv_sim {
+            return Ok(());
+        }
+        if self.kv.is_some() {
+            return Ok(());
+        }
+        if n_pages == 0 || page_bytes == 0 {
+            return Err(Error::Store("kv sim pages"));
+        }
+        let va_bytes = u64::from(n_pages).saturating_mul(page_bytes);
+        if va_bytes == 0 {
+            return Err(Error::Store("kv sim pages"));
+        }
+        let va = self.sim.va_reserve(va_bytes)?;
+        self.kv = Some(KvGpu {
+            va,
+            page_bytes,
+            n_pages,
+            mapped: BTreeSet::new(),
+            hits: 0,
+            misses: 0,
+        });
+        Ok(())
+    }
+
+    /// Replay Engine intern/alloc events onto the reserved KV VA.
+    pub fn apply_kv_ops(&mut self, ops: &[KvSimOp]) -> Result<(), Error> {
+        if self.kv.is_none() {
+            return Ok(());
+        }
+        for op in ops {
+            match *op {
+                KvSimOp::Fault(id) => self.kv_fault(id)?,
+                KvSimOp::Hit(id) => self.kv_hit(id)?,
+                KvSimOp::Cow { dst, .. } => self.kv_fault(dst)?,
+                KvSimOp::Drop(id) => self.kv_drop(id)?,
+            }
+        }
+        Ok(())
+    }
+
+    /// Intern-hit kernels billed on the KV VA.
+    #[must_use]
+    pub fn kv_hits(&self) -> u64 {
+        self.kv.as_ref().map_or(0, |k| k.hits)
+    }
+
+    /// Map+memset fills billed on the KV VA.
+    #[must_use]
+    pub fn kv_misses(&self) -> u64 {
+        self.kv.as_ref().map_or(0, |k| k.misses)
+    }
+
+    fn kv_off(&self, id: u32) -> Result<(AllocId, u64, u64), Error> {
+        let kv = self.kv.as_ref().ok_or(Error::Store("kv sim unbound"))?;
+        if id >= kv.n_pages {
+            return Err(Error::Store("kv page id"));
+        }
+        Ok((
+            kv.va,
+            u64::from(id).saturating_mul(kv.page_bytes),
+            kv.page_bytes,
+        ))
+    }
+
+    fn kv_map(&mut self, id: u32) -> Result<(AllocId, u64, u64), Error> {
+        let (va, off, bytes) = self.kv_off(id)?;
+        let already = self.kv.as_ref().is_some_and(|k| k.mapped.contains(&id));
+        if !already {
+            self.sim.synchronize_stream(self.device, self.compute)?;
+            self.sim.va_map_range(va, self.device, off, bytes)?;
+            if let Some(k) = self.kv.as_mut() {
+                let _ins = k.mapped.insert(id);
+            }
+        }
+        Ok((va, off, bytes))
+    }
+
+    fn kv_fault(&mut self, id: u32) -> Result<(), Error> {
+        let (va, off, bytes) = self.kv_map(id)?;
+        let buf = KernelBuf::span(va, off, bytes);
+        let _op = self.sim.memset_buf(self.device, buf, self.compute)?;
+        if let Some(k) = self.kv.as_mut() {
+            k.misses = k.misses.saturating_add(1);
+        }
+        Ok(())
+    }
+
+    fn kv_hit(&mut self, id: u32) -> Result<(), Error> {
+        let (va, off, bytes) = self.kv_map(id)?;
+        let buf = KernelBuf::span(va, off, bytes);
+        let _op = self.sim.kernel_bufs(
+            self.device,
+            KernelKind::other(8, bytes),
+            &[buf],
+            &[buf],
+            self.compute,
+        )?;
+        if let Some(k) = self.kv.as_mut() {
+            k.hits = k.hits.saturating_add(1);
+        }
+        Ok(())
+    }
+
+    fn kv_drop(&mut self, id: u32) -> Result<(), Error> {
+        let mapped = self.kv.as_ref().is_some_and(|k| k.mapped.contains(&id));
+        if !mapped {
+            return Ok(());
+        }
+        let (va, off, bytes) = self.kv_off(id)?;
+        self.sim.va_unmap_range(va, self.device, off, bytes)?;
+        if let Some(k) = self.kv.as_mut() {
+            let _gone = k.mapped.remove(&id);
+        }
+        Ok(())
     }
 }
 

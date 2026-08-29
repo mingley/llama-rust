@@ -21,6 +21,8 @@ pub(crate) struct StoreAttach {
     pub gpu_cfg: GpuStoreCfg,
     /// Miss-page placement. Default is pinned H2D.
     pub fill: GpuFill,
+    /// Simulated KV page bytes when [`GpuStoreCfg::kv_sim`]. `None` uses intern geometry.
+    pub kv_bytes: Option<u64>,
 }
 
 /// CLI switches for [`gpu_knobs`] / [`GpuFill`].
@@ -43,6 +45,10 @@ pub(crate) struct GpuCli {
     pub stream_priority: bool,
     /// Per-sequence copy streams (`GpuStoreCfg::seq_streams`).
     pub seq_streams: bool,
+    /// Engine interned KV on the SimulatedGpuStore clock (`GpuStoreCfg::kv_sim`).
+    pub kv_sim: bool,
+    /// `--kv-bytes` override. `None` uses intern K+V geometry.
+    pub kv_bytes: Option<u64>,
     /// Physical span for [`GpuFill::Vmm`]. `0` maps the whole expert.
     pub vmm_page: u64,
     /// True when `--vmm-page` appeared (even if the value is `0`).
@@ -69,6 +75,7 @@ impl GpuCli {
             "--legacy-null" => &mut self.legacy_null,
             "--stream-priority" => &mut self.stream_priority,
             "--seq-streams" => &mut self.seq_streams,
+            "--kv-sim" => &mut self.kv_sim,
             _ => return Ok(false),
         };
         if inline.is_some() {
@@ -91,6 +98,15 @@ impl GpuCli {
         }
     }
 
+    /// KV page bytes (`--kv-bytes`). `0` is refused.
+    pub(crate) fn set_kv_bytes(&mut self, n: u64) -> Result<(), String> {
+        if n == 0 {
+            return Err("kv-bytes must be > 0".into());
+        }
+        self.kv_bytes = Some(n);
+        Ok(())
+    }
+
     /// First CUDA knob that needs `--expert-sim`, if any.
     #[must_use]
     pub(crate) fn sim_flag(self) -> Option<&'static str> {
@@ -111,6 +127,7 @@ impl GpuCli {
             (self.legacy_null, "--legacy-null"),
             (self.stream_priority, "--stream-priority"),
             (self.seq_streams, "--seq-streams"),
+            (self.kv_sim, "--kv-sim"),
             (self.vmm_page_set, "--vmm-page"),
         ]
         .into_iter()
@@ -164,6 +181,7 @@ enum Dash {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PlanSlot {
     VmmPage,
+    KvBytes,
     Prefetch,
     PlanWindow,
     PlanThreshold,
@@ -173,6 +191,7 @@ impl PlanSlot {
     fn name(self) -> &'static str {
         match self {
             Self::VmmPage => "vmm-page",
+            Self::KvBytes => "kv-bytes",
             Self::Prefetch => "prefetch",
             Self::PlanWindow => "plan-window",
             Self::PlanThreshold => "plan-threshold",
@@ -187,6 +206,7 @@ impl PlannerCli {
         }
         Ok(match key {
             "--vmm-page" => Dash::Need(PlanSlot::VmmPage),
+            "--kv-bytes" => Dash::Need(PlanSlot::KvBytes),
             "--prefetch" => Dash::Need(PlanSlot::Prefetch),
             "--plan-window" => Dash::Need(PlanSlot::PlanWindow),
             "--plan-threshold" => Dash::Need(PlanSlot::PlanThreshold),
@@ -201,6 +221,12 @@ impl PlannerCli {
                     .parse::<u64>()
                     .map_err(|_| format!("invalid vmm-page {raw:?}"))?;
                 self.gpu.set_vmm_page(n);
+            }
+            PlanSlot::KvBytes => {
+                let n = raw
+                    .parse::<u64>()
+                    .map_err(|_| format!("invalid kv-bytes {raw:?}"))?;
+                self.gpu.set_kv_bytes(n)?;
             }
             PlanSlot::Prefetch => {
                 self.prefetch =
@@ -281,6 +307,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         graph_clone: gpu.graph_clone,
         timing_events: gpu.timing_events,
         seq_streams: gpu.seq_streams,
+        kv_sim: gpu.kv_sim,
     }
 }
 
@@ -311,6 +338,10 @@ pub(crate) fn attach_store(
         )
         .map_err(|e| e.to_string())?;
         eng.attach_expert_store(LiveStore::simulated(gpu));
+        if spec.gpu_cfg.kv_sim {
+            eng.enable_kv_sim(spec.kv_bytes)
+                .map_err(|e| e.to_string())?;
+        }
         return Ok(());
     }
     let Some(slots) = spec.expert_slots else {
