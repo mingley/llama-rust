@@ -3543,3 +3543,44 @@ fn simulated_gpu_store_decode_priority_marks_higher_stream() {
         "decode stream must outrank prefill"
     );
 }
+
+#[test]
+fn simulated_gpu_store_token_clock_skips_leftover_prefill() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        2,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let pre = ExpertKey::new(0, 0);
+    let dec = ExpertKey::new(0, 1);
+    gpu.bind_decode_compute(false);
+    let _warm_pre = gpu.acquire(pre).expect("warm pre");
+    gpu.release(pre);
+    let _warm_dec = gpu.acquire(dec).expect("warm dec");
+    gpu.release(dec);
+    let _drained = gpu.clock_ns().expect("drain h2d");
+    gpu.bind_decode_compute(false);
+    let _prefill = gpu.acquire(pre).expect("prefill");
+    gpu.release(pre);
+    gpu.bind_decode_compute(true);
+    let _decode = gpu.acquire(dec).expect("decode");
+    gpu.release(dec);
+    let token = gpu.token_clock_ns().expect("token");
+    let full = gpu.clock_ns().expect("full");
+    assert!(
+        token < full,
+        "decode-stream ITL must leave leftover prefill running; token={token} full={full}"
+    );
+}

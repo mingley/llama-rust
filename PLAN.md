@@ -967,6 +967,15 @@ model, do not celebrate the sim.
     greedy ids still match independent decode. Dual score still has no
     `$/M tokens`.
 
+58. [x] Engine `--decode-priority` ITL: token-boundary samples
+    `synchronize_stream` the decode compute stream so leftover prefill on the
+    lower-priority stream does not inflate ITL (implies `--stream-priority`).
+    `cudaStreamSynchronize` of an already-idle stream does not start leftover
+    kernels on other streams. 1-GPU `pin_hot` skips the GEMM-lease wait (no
+    replica). Default `--expert-sim` keeps one compute stream and a full-device
+    clock. Mixed leftover-prefill ITL is strictly shorter than without the
+    knob; greedy ids still match. Dual score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

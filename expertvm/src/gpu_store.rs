@@ -116,7 +116,10 @@ pub struct GpuStoreCfg {
     ///
     /// Prefill stays on the existing compute stream. [`Self::stream_priority`]
     /// must also be on so decode actually preempts leftover prefill (priority
-    /// equals stream id). Default off: one compute stream (decode identity).
+    /// equals stream id). Engine token-boundary ITL then
+    /// [`SimulatedGpuStore::token_clock_ns`] (decode stream only) so leftover
+    /// prefill does not inflate ITL. Default off: one compute stream (decode
+    /// identity); ITL still [`SimulatedGpuStore::clock_ns`] (full drain).
     pub decode_priority: bool,
 }
 
@@ -434,6 +437,28 @@ impl SimulatedGpuStore {
         Ok(self.sim.clock_ns())
     }
 
+    /// Clock after the decode compute stream is idle (leftover prefill may run).
+    ///
+    /// When [`GpuStoreCfg::decode_priority`] is off this is [`Self::clock_ns`].
+    /// Engine ITL uses this so a mixed leftover-prefill step does not wait the
+    /// prefill stream. `score()` / waiter arrival still drain the whole node.
+    pub fn token_clock_ns(&mut self) -> Result<u64, Error> {
+        if !self.decode_priority {
+            return self.clock_ns();
+        }
+        self.sync_decode()?;
+        self.sweep_evicts();
+        Ok(self.sim.clock_ns())
+    }
+
+    fn sync_decode(&mut self) -> Result<(), Error> {
+        let n = u16::try_from(self.sim.profile().n_gpus()).unwrap_or(1);
+        for g in 0..n {
+            self.sim.synchronize_stream(DeviceId(g), self.decode)?;
+        }
+        Ok(())
+    }
+
     /// Next H2D that starts fails ([`gpu_sim::SimError::TransferFailed`]).
     pub fn fail_next_transfer(&mut self) {
         self.sim.fail_next_memcpy();
@@ -473,6 +498,8 @@ impl SimulatedGpuStore {
     /// Waits this page's GEMM lease before the replica copy so managed
     /// `prefetch` is not [`gpu_sim::SimError::Leased`]. Managed +
     /// [`GpuStoreCfg::accessed_by`] maps the dest without a prefetch.
+    /// 1-GPU profiles skip that wait so leftover prefill GEMMs can overlap
+    /// decode-priority ITL samples.
     pub fn pin_hot(&mut self, keys: &[ExpertKey]) -> Result<(), Error> {
         for key in keys {
             if !self.cache.contains_catalog(*key) {
@@ -485,8 +512,12 @@ impl SimulatedGpuStore {
                 self.place(*key)?;
             }
             self.wait_copy(*key)?;
-            // Replica prefetch / D2D cannot start while a GEMM still leases the page.
-            self.wait_page_idle(*key)?;
+            // Replica prefetch / D2D cannot start while a GEMM still leases the
+            // page. 1-GPU sticky pin does not copy, so leftover prefill GEMMs
+            // stay in flight for decode-priority ITL.
+            if self.sim.profile().n_gpus() >= 2 {
+                self.wait_page_idle(*key)?;
+            }
             self.cache.pin_hot(&[*key])?;
             self.replicate(*key)?;
         }

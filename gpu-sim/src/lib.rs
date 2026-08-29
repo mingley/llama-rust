@@ -7,7 +7,9 @@
 //!
 //! This crate does not model warps, L1 caches, or Tensor Core pipelines.
 //! Submitted work is a [`GpuOp`] compiled into an [`Operation`] DAG
-//! ([`Sim::operations`]). [`Sim::synchronize_stream`] waits one stream.
+//! ([`Sim::operations`]). [`Sim::synchronize_stream`] waits one stream
+//! (`cudaStreamSynchronize`); an already-idle stream returns without starting
+//! leftover kernels on other streams.
 //! [`Sim::synchronize_device`] is `cudaDeviceSynchronize` (one GPU).
 //! [`Sim::synchronize_event`] is `cudaEventSynchronize`.
 //! [`Sim::alloc`] / [`memcpy`](Sim::memcpy) / [`free`](Sim::free) are
@@ -1300,6 +1302,29 @@ mod tests {
             partial < full,
             "stream-0 sync must leave the long H2D running; partial={partial} full={full}"
         );
+    }
+
+    #[test]
+    fn synchronize_idle_stream_does_not_start_other_kernels() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+        sim.synchronize().unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 40, 4096), &[a], &[a], StreamId(1)));
+        sim.synchronize_stream(d, StreamId(0)).unwrap();
+        assert!(sim.stream_is_idle(d, StreamId(0)).unwrap());
+        let started = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.start_ns.is_some())
+            .count();
+        assert_eq!(
+            started, 0,
+            "idle stream-0 sync must not start the leftover kernel"
+        );
+        assert!(!sim.stream_is_idle(d, StreamId(1)).unwrap());
+        sim.synchronize().unwrap();
+        assert!(sim.stream_is_idle(d, StreamId(1)).unwrap());
     }
 
     #[test]

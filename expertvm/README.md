@@ -163,6 +163,9 @@ on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 (distinct from `expertvm kv`; `--kv-bytes` overrides intern geometry).
 `gguf_gemv engine --expert-sim --decode-priority` runs decode GEMMs on a
 second compute stream at higher CUDA priority than leftover prefill.
+Token-boundary ITL samples that decode stream (leftover prefill stays in
+flight). Default `--expert-sim` keeps one compute stream and a full-device
+clock sample.
 `gguf_gemv engine --expert-sim --seq-streams` is the real-KV analog of
 `expertvm sim --seq-streams`: per-sequence copy streams, grouped GEMM
 on one compute stream. `--prefix-cache` skips GPU work for a token whose JSONL `"p"` hash

@@ -2221,9 +2221,10 @@ impl Sim {
 
     /// `cudaStreamSynchronize`: advance the virtual clock until `stream` is idle.
     ///
-    /// Other streams keep running. A stream in an active graph capture is
-    /// [`SimError::Invalid`]. Cancelled ops on *this* stream fail; cancelled
-    /// work on other streams is left for a later [`Self::synchronize`].
+    /// Other streams keep running. An already-idle stream returns without
+    /// starting leftover kernels on other streams. A stream in an active graph
+    /// capture is [`SimError::Invalid`]. Cancelled ops on *this* stream fail;
+    /// cancelled work on other streams is left for a later [`Self::synchronize`].
     pub fn synchronize_stream(
         &mut self,
         device: DeviceId,
@@ -2320,6 +2321,11 @@ impl Sim {
     fn drive_until(&mut self, idle: impl Fn(&Self) -> bool) -> Result<(), SimError> {
         let mut steps = 0u32;
         loop {
+            // An already-idle waited stream must not start leftover work on
+            // other streams (`cudaStreamSynchronize` returns immediately).
+            if idle(self) {
+                return Ok(());
+            }
             self.schedule()?;
             if idle(self) {
                 return Ok(());

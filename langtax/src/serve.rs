@@ -58,7 +58,7 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --seq-streams     per-sequence copy streams (`--expert-sim`; grouped GEMM stays fused)
       --kv-sim          interned KV on the SimulatedGpuStore clock (`--expert-sim`; default off)
       --kv-bytes N      KV page bytes for `--kv-sim` (default: f32 K+V of one intern block)
-      --decode-priority decode GEMMs on a higher-priority compute stream (`--expert-sim`; implies `--stream-priority`)
+      --decode-priority decode GEMMs on a higher-priority compute stream (`--expert-sim`; implies `--stream-priority`; ITL samples that stream)
       --prefetch MODE   none|copy-forward|markov|both (`--engine`; default: both)
       --plan-window N   Stay vs Fetch over N unique predicted keys (`--engine`; `0` ungated)
       --plan-threshold N  Stay permille of that window (`--engine`; default: 500)
@@ -84,7 +84,8 @@ the same SimulatedGpuStore knobs as `gguf_gemv engine`. `--host-func` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` / `--seq-streams` /
 `--kv-sim` / `--kv-bytes` / `--decode-priority` match
 `GpuStoreCfg`. `--kv-sim` bills interned KV on the same clock as expert H2D
-(distinct from `expertvm kv`; default off). `--mapped` / `--managed` / `--vmm` choose miss-page placement
+(distinct from `expertvm kv`; default off). `--decode-priority` ITL samples
+the decode compute stream so leftover prefill does not inflate it. `--mapped` / `--managed` / `--vmm` choose miss-page placement
 (default pinned H2D). `--prefetch` / `--plan-window` / `--plan-threshold`
 match `gguf_gemv engine` (predicted keys only; `--engine`). `--trace-out` writes
 router JSONL as sequences finish. Not a production inference server.

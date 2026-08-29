@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine `--decode-priority` ITL
+
+`--expert-sim --decode-priority` token-boundary ITL samples the decode
+compute stream (`token_clock_ns`) so leftover prefill on the lower-priority
+stream does not inflate it. Mixed leftover-prefill ITL is strictly shorter
+than a full-device sample; greedy identity stays. An already-idle
+`cudaStreamSynchronize` does not start leftover kernels on other streams.
+1-GPU `pin_hot` skips the GEMM-lease wait (no replica). Default
+`--expert-sim` keeps one compute stream and a full-device clock. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine `--decode-priority`
 
 `--expert-sim --decode-priority` runs decode GEMMs on a second compute
@@ -1160,8 +1171,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 57 (Engine `--decode-priority`
-compute stream). `gguf_gemv serve --engine`
+Next code change is PLAN systems depth after item 58 (Engine
+`--decode-priority` ITL samples the decode stream). `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover
 is a Llama NORM real-model fixture when a GGUF is on disk. Physical

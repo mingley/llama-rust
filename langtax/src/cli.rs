@@ -93,7 +93,7 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
       --seq-streams     per-sequence copy streams (`--expert-sim`; grouped GEMM stays fused)
       --kv-sim          interned KV on the SimulatedGpuStore clock (`--expert-sim`; default off)
       --kv-bytes N      KV page bytes for `--kv-sim` (default: f32 K+V of one intern block)
-      --decode-priority decode GEMMs on a higher-priority compute stream (`--expert-sim`; implies `--stream-priority`)
+      --decode-priority decode GEMMs on a higher-priority compute stream (`--expert-sim`; implies `--stream-priority`; ITL samples that stream)
       --prefetch MODE   none|copy-forward|markov|both (default: both; CachedStore or sim)
       --plan-window N   Stay vs Fetch over N unique predicted keys (`0` = ungated)
       --plan-threshold N  Stay permille of that window already resident (default: 500)
@@ -113,7 +113,9 @@ mechanical path as `expertvm sim --cuda-graphs`). `--graph-update` /
 `--legacy-null` / `--stream-priority` / `--seq-streams` / `--kv-sim` /
 `--kv-bytes` / `--decode-priority` match `GpuStoreCfg` / `expertvm sim`. `--kv-sim` bills interned
 KV map/memset/hits on the same virtual clock as expert H2D (distinct from
-`expertvm kv`; default off keeps decode identity). `--prefetch` / `--plan-window` / `--plan-threshold` match `expertvm sim`
+`expertvm kv`; default off keeps decode identity). `--decode-priority` ITL
+samples the decode compute stream so leftover prefill does not inflate it.
+`--prefetch` / `--plan-window` / `--plan-threshold` match `expertvm sim`
 Stay vs Fetch on the serving path (predicted keys only; no JSONL future
 leak). Default `both` / window `0` / threshold `500` is today's decode
 policy. A tight `--pool-blocks` preempts

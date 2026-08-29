@@ -213,6 +213,17 @@ impl LiveStore {
         }
     }
 
+    /// Decode-stream clock for token-boundary ITL (`None` on CPU stores).
+    ///
+    /// [`SimulatedGpuStore::token_clock_ns`] when `--decode-priority`; otherwise
+    /// the same full drain as [`Self::clock_ns`].
+    pub fn token_clock_ns(&mut self) -> Result<Option<u64>, Error> {
+        match self {
+            Self::Simulated(s) => Ok(Some(s.token_clock_ns()?)),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => Ok(None),
+        }
+    }
+
     /// Captured GEMM graph launches. CPU stores are 0.
     #[must_use]
     pub fn graph_launches(&self) -> u64 {

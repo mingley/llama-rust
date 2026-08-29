@@ -38,7 +38,9 @@
 //! KV traffic. Default off: scores bill expert H2D/GEMM only. Distinct from
 //! `expertvm kv`. `--decode-priority` runs decode GEMMs on a second compute
 //! stream at higher CUDA priority than leftover prefill (implies
-//! `--stream-priority`). Default off: one compute stream.
+//! `--stream-priority`). Token-boundary ITL then samples that decode stream
+//! so leftover prefill does not inflate it. Default off: one compute stream
+//! and a full-device clock sample.
 //! [`EngineCfg::slo_reject`] drops waiters whose gpu-sim queue wait already
 //! meets [`EngineCfg::ttft_slo_ns`]. [`EngineCfg::itl_slo_ns`] counts later-token
 //! gaps that miss the ITL budget (`Engine::itl_slo_miss`; does not drop).
@@ -526,7 +528,8 @@ impl<'a> Engine<'a> {
     ///
     /// DirectStore / CachedStore return `Ok(None)`. Token-boundary samples
     /// fill `ttft_ns` / `itl_ns` / `ns_per_token` when any sequence produced
-    /// a greedy token. Not `$/M tokens`.
+    /// a greedy token. With `--decode-priority`, those samples wait the decode
+    /// compute stream only (leftover prefill may still run). Not `$/M tokens`.
     pub fn expert_store_score(&mut self) -> Result<Option<Score>, LlamaError> {
         self.reclaim_parked_stores();
         self.flush_kv_sim()?;
@@ -1144,7 +1147,7 @@ impl<'a> Engine<'a> {
     }
 
     fn record_seq_token(&mut self, id: SeqId) -> Result<(), LlamaError> {
-        let Some(ns) = self.sample_sim_clock()? else {
+        let Some(ns) = self.sample_token_clock()? else {
             return Ok(());
         };
         self.note_itl_slo(id, ns);
@@ -1169,6 +1172,15 @@ impl<'a> Engine<'a> {
         self.reclaim_parked_stores();
         match self.expert_store.as_mut() {
             Some(s) => s.clock_ns().map_err(LlamaError::from),
+            None => Ok(None),
+        }
+    }
+
+    fn sample_token_clock(&mut self) -> Result<Option<u64>, LlamaError> {
+        self.flush_kv_sim()?;
+        self.reclaim_parked_stores();
+        match self.expert_store.as_mut() {
+            Some(s) => s.token_clock_ns().map_err(LlamaError::from),
             None => Ok(None),
         }
     }
@@ -1747,7 +1759,16 @@ mod tests {
         bytes: Vec<u8>,
         decode_first: bool,
         itl_slo_ns: Option<u64>,
-    ) -> (u64, Score, usize, u64) {
+    ) -> (u64, Score, usize, u64, Vec<u32>) {
+        mixed_gpu_decode_itl_on(bytes, decode_first, itl_slo_ns, GpuStoreCfg::default())
+    }
+
+    fn mixed_gpu_decode_itl_on(
+        bytes: Vec<u8>,
+        decode_first: bool,
+        itl_slo_ns: Option<u64>,
+        gpu_cfg: GpuStoreCfg,
+    ) -> (u64, Score, usize, u64, Vec<u32>) {
         let prompt_a = [1u32, 2];
         let prompt_b = [1u32, 2, 3, 4, 5, 0, 1, 2];
         let g = load_gguf_owned(bytes).expect("owned");
@@ -1759,22 +1780,25 @@ mod tests {
         cfg.decode_first = decode_first;
         cfg.itl_slo_ns = itl_slo_ns;
         let mut eng = Engine::new(&model, cfg).expect("eng");
-        let gpu = SimulatedGpuStore::new(
+        let gpu = SimulatedGpuStore::with_cfg(
             model.expert_direct_store().expect("c"),
             n,
             HardwareProfile::example_h100_sxm(),
             4096,
+            GpuFill::Pinned,
+            gpu_cfg,
         )
         .expect("gpu");
         eng.attach_expert_store(LiveStore::simulated(gpu));
         let a = eng.add(&prompt_a, 4).expect("a");
         let _b = eng.add(&prompt_b, 1).expect("b");
         eng.run().expect("run");
-        let n_gen = eng.generated(a).expect("ga").len();
+        let ids = eng.generated(a).expect("ga").to_vec();
+        let n_gen = ids.len();
         let itl = eng.seq_itl_ns(a).expect("A ITL");
         let miss = eng.itl_slo_miss();
         let score = eng.expert_store_score().expect("sc").expect("sim");
-        (itl, score, n_gen, miss)
+        (itl, score, n_gen, miss, ids)
     }
 
     #[test]
@@ -3279,5 +3303,35 @@ mod tests {
         assert_eq!(on.compute_stream, StreamId(2), "decode compute is stream 2");
         assert_eq!(on.compute_pri, 2, "decode stream priority equals stream id");
         assert!(on.launches >= 2, "launches={}", on.launches);
+    }
+
+    #[test]
+    fn engine_gpu_decode_priority_shortens_mixed_itl() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let mixed = mixed_gpu_decode_itl(bytes.clone(), false, None);
+        let prefer = mixed_gpu_decode_itl_on(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                decode_priority: true,
+                stream_priority: true,
+                ..GpuStoreCfg::default()
+            },
+        );
+        assert_eq!(mixed.2, 4);
+        assert_eq!(prefer.2, 4);
+        assert_eq!(
+            prefer.4, mixed.4,
+            "decode-priority ITL must keep greedy identity"
+        );
+        assert!(
+            prefer.0 < mixed.0,
+            "decode-priority ITL must not wait leftover prefill; prefer={} mixed={} prefer_line={} mixed_line={}",
+            prefer.0,
+            mixed.0,
+            prefer.1.line(),
+            mixed.1.line()
+        );
     }
 }
