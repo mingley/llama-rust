@@ -131,8 +131,9 @@ pub struct SimCfg {
     pub mapped: bool,
     /// `cudaMallocManaged` + `cudaMemAdviseSetReadMostly` + prefetch on miss.
     /// Alloc does not charge HBM; prefetch migrates (and replicates if a
-    /// second GPU later prefetches the same page). Hits/misses match H2D.
-    /// [`crate::SimulatedGpuStore`] stays on pinned H2D.
+    /// second GPU later prefetches the same page). `--place replicas` uses
+    /// that dest prefetch; dest eviction is `drop_managed_copy`.
+    /// Hits/misses match H2D. [`crate::SimulatedGpuStore`] stays on pinned H2D.
     pub managed: bool,
     /// `va_acquire` on miss (reuse an unmapped VA, else reserve+map), then
     /// pinned H2D. Evict [`gpu_sim::Sim::va_release`]s so the pointer stays.
@@ -575,7 +576,11 @@ fn drop_replica(
         return Ok(());
     }
     wait_peer(sim, page.device, dst, page.stream, next_event)?;
-    sim.free(dst, page.id, page.stream)?;
+    if page_is_managed(sim, page.id) {
+        sim.drop_managed_copy(page.id, dst)?;
+    } else {
+        sim.free(dst, page.id, page.stream)?;
+    }
     page.replicas.retain(|d| *d != dst);
     Ok(())
 }

@@ -1124,6 +1124,30 @@ fn schedule_hot_replicas_move_more_bytes_than_stripe() {
 }
 
 #[test]
+fn schedule_managed_hot_replicas_prefetch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0]), ev(2, 0, &[0])],
+    };
+    let p = HardwareProfile::example_8xh100_nvlink();
+    let bytes = 1u64 << 20;
+    let cfg = SimCfg {
+        managed: true,
+        ..SimCfg::lru(4, bytes, 0)
+    };
+    let stripe = striped(&t, 8);
+    let hot = with_hot_replicas(stripe.clone(), &t, 8, 200);
+    let a =
+        schedule_placed(&t, p.clone(), cfg, SchedCfg::closed(0), Some(&stripe)).expect("stripe");
+    let b = schedule_placed(&t, p, cfg, SchedCfg::closed(0), Some(&hot)).expect("hot");
+    assert!(
+        b.replay.bytes_moved > a.replay.bytes_moved,
+        "managed hot={} stripe={}",
+        b.replay.bytes_moved,
+        a.replay.bytes_moved
+    );
+}
+
+#[test]
 fn schedule_replica_evict_frees_peer_hbm() {
     let t = Trace {
         events: vec![

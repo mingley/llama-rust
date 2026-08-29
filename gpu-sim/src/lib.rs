@@ -33,6 +33,7 @@
 //! [`MemAdvise::SetAccessedBy`] maps a GPU so a kernel can read without
 //! migrating (billed on the interconnect, not local HBM). A kernel
 //! page-faults managed memory onto that GPU unless AccessedBy covers it.
+//! [`Sim::drop_managed_copy`] refunds one ReadMostly GPU copy (dest eviction).
 //! [`Sim::va_reserve`] / [`va_map`](Sim::va_map) / [`va_unmap`](Sim::va_unmap) /
 //! [`va_free`](Sim::va_free) are `cuMemAddressReserve` / `cuMemMap` /
 //! `cuMemUnmap` / `cuMemAddressFree`. [`Sim::va_map_range`] / [`va_unmap_range`](Sim::va_unmap_range)
@@ -2037,6 +2038,59 @@ mod tests {
         assert!(sim.is_resident(m, d1).unwrap());
         assert_eq!(sim.hbm_used(d0).unwrap(), bytes);
         assert_eq!(sim.hbm_used(d1).unwrap(), bytes);
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn drop_managed_copy_refunds_one_gpu() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        sim.mem_advise(m, MemAdvise::SetReadMostly, d0).unwrap();
+        enq(sim.prefetch(d0, m, s));
+        sim.synchronize().unwrap();
+        enq(sim.prefetch(d1, m, s));
+        sim.synchronize().unwrap();
+        sim.drop_managed_copy(m, d1).unwrap();
+        assert!(sim.is_resident(m, d0).unwrap());
+        assert!(!sim.is_resident(m, d1).unwrap());
+        assert_eq!(sim.hbm_used(d0).unwrap(), bytes);
+        assert_eq!(sim.hbm_used(d1).unwrap(), 0);
+        enq(sim.kernel(d0, KernelKind::other(8, bytes), &[m], &[], s));
+        sim.synchronize().unwrap();
+        let last = sim.drop_managed_copy(m, d0).unwrap_err();
+        match last {
+            SimError::Invalid { why } => assert!(why.contains("last"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn drop_managed_copy_rejects_unmanaged_and_capture() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let err = sim.drop_managed_copy(a, d).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let m = sim.alloc_managed(4096).unwrap();
+        sim.mem_advise(m, MemAdvise::SetReadMostly, d).unwrap();
+        enq(sim.prefetch(d, m, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        let cap = sim.drop_managed_copy(m, d).unwrap_err();
+        match cap {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
         sim.free_sync(m).unwrap();
     }
 

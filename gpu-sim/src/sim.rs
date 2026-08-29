@@ -1129,6 +1129,41 @@ impl Sim {
         Ok(a.live && a.managed && a.accessed_by.contains(&device))
     }
 
+    /// Drop one GPU's copy of a [`MemAdvise::SetReadMostly`] managed alloc.
+    ///
+    /// Host-synchronous. Capture cannot include it. The allocation stays live
+    /// on every other device that still holds a copy. The last copy cannot be
+    /// dropped this way ([`Self::free_sync`] / [`Self::prefetch_host`]).
+    pub fn drop_managed_copy(&mut self, alloc: AllocId, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let _gpu = self.profile.gpu(device)?;
+        let a = self.alloc_ref(alloc)?;
+        if !a.live || !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        if !a.read_mostly {
+            return Err(SimError::Invalid {
+                why: "not read-mostly",
+            });
+        }
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc });
+        }
+        if !a.devices.contains(&device) {
+            return Err(SimError::NotResident { alloc, device });
+        }
+        if a.devices.len() < 2 {
+            return Err(SimError::Invalid {
+                why: "last managed copy",
+            });
+        }
+        let bytes = a.bytes;
+        self.refund_device(device, alloc, bytes)?;
+        self.alloc_mut(alloc)?.devices.retain(|x| *x != device);
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// `cuMemAddressReserve`: a VA with no physical pages. Does not charge HBM.
     ///
     /// [`Self::va_map`] maps the whole VA; [`Self::va_map_range`] maps a span.

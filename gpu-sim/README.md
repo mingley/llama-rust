@@ -37,6 +37,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaHostAllocMapped` / `host_register_mapped`: kernel may read host with no H2D | host PCIe vs HBM |
 | `cudaMallocManaged` (`alloc_managed`) does not charge HBM until migrate | `alloc_overhead_ns` (VA reserve at the call) |
 | `cudaMemAdviseSetReadMostly`: prefetch replicates | same DMA as a move |
+| `drop_managed_copy`: dest eviction of one ReadMostly GPU | other copies stay |
 | `cudaMemAdviseSetAccessedBy`: kernel may read without migrating | interconnect, not local HBM |
 | `cudaMemPrefetchAsync` (`prefetch` / `prefetch_host`) **moves** unless ReadMostly | PCIe / NVLink (1 ns if already local) |
 | `cuMemAddressReserve` (`va_reserve`) is a VA with no physical pages | `alloc_overhead_ns` (at the call) |

@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Managed ReadMostly replicas
+
+`--place replicas` with `--managed` `prefetch`s hot keys onto dest GPUs
+(ReadMostly keeps the home copy). Dest eviction is `Sim::drop_managed_copy`
+(one GPU's HBM, allocation stays). Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — CUDA child graphs from launch during capture
 
 `launch_graph` on a captured stream records `GpuOp::ChildGraph`. The

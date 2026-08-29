@@ -91,7 +91,9 @@ pinned host, kernels run over PCIe, HBM is not charged (`hbm_peak=0`).
 That is the “do not move the expert” alternative to H2D. `--managed` uses
 `cudaMallocManaged`, `cudaMemAdviseSetReadMostly`, and
 `cudaMemPrefetchAsync` on miss: alloc is free of HBM, prefetch migrates
-(and replicates if another GPU later prefetches the same page). `--vmm` uses
+(and replicates if another GPU later prefetches the same page).
+`--place replicas` uses that prefetch onto dest GPUs; dest eviction
+`drop_managed_copy`s one GPU without freeing the allocation. `--vmm` uses
 `va_acquire` (remap an idle VA, else reserve+map) then pinned H2D into that
 VA (evict `va_release`s the pointer so the next miss skips reserve).
 `--vmm-page N` maps each expert in `N`-byte physicals (`va_acquire_paged`,

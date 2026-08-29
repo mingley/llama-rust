@@ -621,7 +621,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   (no H2D, PCIe kernels, HBM unused; walker slots also cap at
   `host_pin_bytes / expert_bytes`). `--managed` is `cudaMallocManaged`
   plus `cudaMemAdviseSetReadMostly` plus `cudaMemPrefetchAsync` on miss
-  (HBM charged on migrate; a second GPU prefetch keeps the copy). `--vmm` is
+  (HBM charged on migrate; a second GPU prefetch keeps the copy).
+  `--place replicas` then `prefetch`s hot keys onto dest GPUs; dest
+  eviction is `drop_managed_copy` (one GPU's copy, allocation stays). `--vmm` is
   `va_acquire` (remap idle VA or reserve+map) then H2D; evict `va_release`s
   the pointer. `--vmm-page N` is `va_acquire_paged` (KV-block physicals;
   implies `--vmm`). `expertvm kv` demand-pages a reserved VA (`kernel_bufs`
