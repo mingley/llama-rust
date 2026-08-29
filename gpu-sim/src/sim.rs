@@ -718,6 +718,34 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphClone`. Host-synchronous. Capture cannot include it.
+    ///
+    /// The clone is an independent graph (`instantiated = false`) with a copy
+    /// of the source steps. Instantiating or updating one id does not change
+    /// the other.
+    pub fn clone_graph(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
+        self.fail_if_capturing("cannot capture graph clone")?;
+        let (steps, device) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let device = g.steps.first().map(|(d, _)| *d).unwrap_or(DeviceId(0));
+            (g.steps.clone(), device)
+        };
+        let ns = self.profile.gpu(device)?.graph_clone_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let id = GraphId(self.next_graph);
+        self.next_graph = self.next_graph.saturating_add(1);
+        let _prev = self.graphs.insert(
+            id,
+            Graph {
+                steps,
+                instantiated: false,
+            },
+        );
+        Ok(id)
+    }
+
     /// Stream-ordered allocation (`cudaMallocAsync`) from the device default pool.
     ///
     /// Capacity is reserved when the op starts. The pointer is not usable until

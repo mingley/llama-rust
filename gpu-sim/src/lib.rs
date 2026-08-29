@@ -56,6 +56,7 @@
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; first
 //! [`launch_graph`](Sim::launch_graph) calls it). [`Sim::update_graph`] is
 //! `cudaGraphExecUpdate` when device sequence and op kinds match.
+//! [`Sim::clone_graph`] is `cudaGraphClone` (independent, not instantiated).
 
 #![cfg_attr(not(test), deny(missing_docs))]
 
@@ -894,7 +895,59 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
+        let cl = sim.clone_graph(exec).unwrap_err();
+        match cl {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn clone_graph_is_independent_and_not_instantiated() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_clone_ns = 9_000;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let src = sim.end_capture().unwrap();
+        sim.instantiate_graph(src).unwrap();
+        let t0 = sim.clock_ns();
+        let clone = sim.clone_graph(src).unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(9_000));
+        assert_ne!(clone, src);
+        assert_eq!(sim.graph_len(clone).unwrap(), 1);
+        assert!(!sim.graph_instantiated(clone).unwrap());
+        assert!(sim.graph_instantiated(src).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
+        let alt = sim.end_capture().unwrap();
+        sim.update_graph(src, alt).unwrap();
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(src, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert!(!sim.graph_instantiated(clone).unwrap());
+        let n2 = sim.launch_graph(clone, s).unwrap();
+        assert_eq!(n2, 1);
+        assert!(sim.graph_instantiated(clone).unwrap());
+        let err = sim.synchronize().unwrap_err();
+        match err {
+            SimError::NotResident { alloc, device } => {
+                assert_eq!(alloc, a);
+                assert_eq!(device, d);
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — CUDA graph clone is an independent copy
+
+`Sim::clone_graph` is `cudaGraphClone` (host-sync, `graph_clone_ns`).
+The clone is not instantiated; instantiate/update of one id does not
+change the other. Capture refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — cudaMemAdvise ReadMostly and AccessedBy
 
 `Sim::mem_advise` is `cudaMemAdvise` (host-sync; capture refused).
