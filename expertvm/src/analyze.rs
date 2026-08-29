@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 
 use crate::access::{ExpertAccess, ExpertKey, Trace};
-use crate::planner::{observe_chain, transition_pair, Markov};
+use crate::planner::{observe_chain, transition_pair, ChainState, Markov};
 
 /// Working-set and predictability summary. All rates are in parts per thousand
 /// so the crate stays integer-only.
@@ -178,25 +178,32 @@ fn working_set_cover(freq: &BTreeMap<ExpertKey, u64>, n_acquires: u64, cover_pt:
 }
 
 fn layer_persist_pt(trace: &Trace) -> u64 {
-    persist_pt(trace, |p, e| {
-        p.sequence == e.sequence && p.token == e.token && e.layer == p.layer.saturating_add(1)
-    })
+    persist_keyed(
+        trace,
+        |e| (e.sequence, e.token),
+        |p, e| {
+            p.sequence == e.sequence && p.token == e.token && e.layer == p.layer.saturating_add(1)
+        },
+    )
 }
 
 fn seq_persist_pt(trace: &Trace) -> u64 {
-    persist_pt(trace, |p, e| {
-        p.sequence == e.sequence && e.token == p.token.saturating_add(1) && e.layer == p.layer
-    })
+    persist_keyed(
+        trace,
+        |e| (e.sequence, e.layer),
+        |p, e| {
+            p.sequence == e.sequence && e.token == p.token.saturating_add(1) && e.layer == p.layer
+        },
+    )
 }
 
 fn order2_persist_pt(trace: &Trace) -> u64 {
     let mut markov = Markov::new();
-    let mut prev: Option<&ExpertAccess> = None;
-    let mut prev2: Option<&ExpertAccess> = None;
+    let mut chain = ChainState::new();
     let mut hit = 0u64;
     let mut n = 0u64;
     for e in &trace.events {
-        if let (Some(p2), Some(p1)) = (prev2, prev) {
+        if let (Some(p2), Some(p1)) = (chain.seq_lookback2(e), chain.seq_predecessor(e)) {
             if transition_pair(p2, p1) && transition_pair(p1, e) {
                 let ek = e.keys();
                 n = n.saturating_add(u64::try_from(ek.len()).unwrap_or(0));
@@ -208,19 +215,27 @@ fn order2_persist_pt(trace: &Trace) -> u64 {
                 }
             }
         }
-        observe_chain(&mut markov, prev2, prev, e);
-        prev2 = prev;
-        prev = Some(e);
+        observe_chain(
+            &mut markov,
+            chain.seq_lookback2(e),
+            chain.seq_predecessor(e),
+            e,
+        );
+        chain.record(e);
     }
     hit.saturating_mul(1000).checked_div(n).unwrap_or(0)
 }
 
-fn persist_pt(trace: &Trace, paired: fn(&ExpertAccess, &ExpertAccess) -> bool) -> u64 {
+fn persist_keyed(
+    trace: &Trace,
+    key: fn(&ExpertAccess) -> (u64, u32),
+    paired: fn(&ExpertAccess, &ExpertAccess) -> bool,
+) -> u64 {
     let mut persist_hit = 0u64;
     let mut persist_n = 0u64;
-    let mut prev: Option<&ExpertAccess> = None;
+    let mut last: BTreeMap<(u64, u32), &ExpertAccess> = BTreeMap::new();
     for e in &trace.events {
-        if let Some(p) = prev {
+        if let Some(p) = last.get(&key(e)).copied() {
             if paired(p, e) {
                 persist_n = persist_n.saturating_add(u64::try_from(e.experts.len()).unwrap_or(0));
                 for x in &e.experts {
@@ -230,7 +245,7 @@ fn persist_pt(trace: &Trace, paired: fn(&ExpertAccess, &ExpertAccess) -> bool) -
                 }
             }
         }
-        prev = Some(e);
+        let _old = last.insert(key(e), e);
     }
     persist_hit
         .saturating_mul(1000)

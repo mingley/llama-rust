@@ -143,6 +143,137 @@ pub fn observe_chain(
     markov.observe(&p.keys(), &to);
 }
 
+/// Last two router events per `(sequence, layer)`.
+///
+/// Layer-major JSONL is `L0,t → L1,t → L0,t+1 → …`. Adjacent lines are the
+/// next-layer pair; same-layer next-token pairs are **not** adjacent.
+/// [`Self::observe`] trains both edges. [`Self::predecessor`] prefers the
+/// previous layer this token (layer-major neighbor) so lookback-2 Markov at
+/// layer `L` still sees layer `L-1`, then falls back to the previous token
+/// this layer.
+#[derive(Clone, Debug, Default)]
+pub struct ChainState {
+    last: BTreeMap<(u64, u32), ExpertAccess>,
+    prev: BTreeMap<(u64, u32), ExpertAccess>,
+    tail: Option<ExpertAccess>,
+    tail_pred: Option<ExpertAccess>,
+}
+
+impl ChainState {
+    /// Empty maps.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Drop last-event maps (Markov counts stay with the caller).
+    pub fn clear(&mut self) {
+        self.last.clear();
+        self.prev.clear();
+        self.tail = None;
+        self.tail_pred = None;
+    }
+
+    /// Most recently observed event.
+    #[must_use]
+    pub fn last_event(&self) -> Option<&ExpertAccess> {
+        self.tail.as_ref()
+    }
+
+    /// Semantic predecessor of [`Self::last_event`] (layer then seq).
+    #[must_use]
+    pub fn last_pred(&self) -> Option<&ExpertAccess> {
+        self.tail_pred.as_ref()
+    }
+
+    /// Previous layer this token, else previous token this layer.
+    #[must_use]
+    pub fn predecessor(&self, event: &ExpertAccess) -> Option<&ExpertAccess> {
+        if event.layer > 0 {
+            if let Some(p) = self
+                .last
+                .get(&(event.sequence, event.layer.saturating_sub(1)))
+            {
+                if transition_pair(p, event) {
+                    return Some(p);
+                }
+            }
+        }
+        if let Some(p) = self.last.get(&(event.sequence, event.layer)) {
+            if transition_pair(p, event) {
+                return Some(p);
+            }
+        }
+        None
+    }
+
+    /// Previous token this layer when that pair is a seq transition.
+    #[must_use]
+    pub fn seq_predecessor(&self, event: &ExpertAccess) -> Option<&ExpertAccess> {
+        let p = self.last.get(&(event.sequence, event.layer))?;
+        if transition_pair(p, event) {
+            Some(p)
+        } else {
+            None
+        }
+    }
+
+    /// Same-layer event two tokens back when that chain is consecutive.
+    #[must_use]
+    pub fn seq_lookback2(&self, event: &ExpertAccess) -> Option<&ExpertAccess> {
+        let p1 = self.last.get(&(event.sequence, event.layer))?;
+        if !transition_pair(p1, event) {
+            return None;
+        }
+        let p2 = self.prev.get(&(event.sequence, event.layer))?;
+        if transition_pair(p2, p1) {
+            Some(p2)
+        } else {
+            None
+        }
+    }
+
+    /// Train seq and layer edges, then record `event`.
+    pub fn observe(&mut self, markov: &mut Markov, event: &ExpertAccess) {
+        let seq_p1 = self.last.get(&(event.sequence, event.layer)).cloned();
+        let seq_p2 = self.prev.get(&(event.sequence, event.layer)).cloned();
+        if let Some(p1) = seq_p1.as_ref() {
+            observe_chain(markov, seq_p2.as_ref(), Some(p1), event);
+        }
+        if event.layer > 0 {
+            let lp1 = self
+                .last
+                .get(&(event.sequence, event.layer.saturating_sub(1)))
+                .cloned();
+            let lp2 = if event.layer >= 2 {
+                self.last
+                    .get(&(event.sequence, event.layer.saturating_sub(2)))
+                    .cloned()
+            } else {
+                None
+            };
+            if let Some(p1) = lp1.as_ref() {
+                observe_chain(markov, lp2.as_ref(), Some(p1), event);
+            }
+        }
+        self.push(event);
+    }
+
+    /// Record `event` without training Markov (analyze seq-only walk).
+    pub fn record(&mut self, event: &ExpertAccess) {
+        self.push(event);
+    }
+
+    fn push(&mut self, event: &ExpertAccess) {
+        self.tail_pred = self.predecessor(event).cloned();
+        let k = (event.sequence, event.layer);
+        if let Some(old) = self.last.insert(k, event.clone()) {
+            let _p = self.prev.insert(k, old);
+        }
+        self.tail = Some(event.clone());
+    }
+}
+
 /// Prefetch policy for [`crate::sim_replay::sim_replay_cfg`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Prefetch {

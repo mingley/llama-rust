@@ -251,6 +251,7 @@ gguf_gemv write-tiny-qwen3moe tiny-qwen3moe.gguf
 gguf_gemv trace tiny-qwen3moe.gguf -p ab -n 8 --out trace.jsonl
 gguf_gemv write-tiny-qwen3moe-2layer tiny-qwen3moe-2layer.gguf
 gguf_gemv trace tiny-qwen3moe-2layer.gguf -p ab -n 8 --out /tmp/tiny-qwen3moe-2layer.jsonl
+expertvm analyze /tmp/tiny-qwen3moe-2layer.jsonl
 expertvm replay trace.jsonl --capacity 2
 ```
 

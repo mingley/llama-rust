@@ -1523,6 +1523,29 @@ mod tests {
     }
 
     #[test]
+    fn engine_moe_trace_two_layer_includes_layer1() {
+        let tokens = [1u32, 2, 3, 4];
+        let g = load_gguf_owned(tiny_qwen3moe_2layer_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let mut cfg = EngineCfg::tiny();
+        cfg.eos = tok.eos;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        eng.enable_moe_trace();
+        let a = eng.add(&tokens, 2).expect("a");
+        eng.run().expect("run");
+        let got = eng.take_moe_trace(a).expect("trace");
+        assert!(
+            got.events.iter().any(|e| e.layer == 0),
+            "Engine 2-layer traces must include layer 0"
+        );
+        assert!(
+            got.events.iter().any(|e| e.layer == 1),
+            "Engine 2-layer traces must include layer 1"
+        );
+    }
+
+    #[test]
     fn engine_cached_store_pins_hot_experts_with_demand_slot() {
         let tokens_a = [1u32, 2, 3, 4];
         let tokens_b = [5u32, 0, 5, 0];

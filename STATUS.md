@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — multi-layer seq persist + 2-layer JSONL
+
+Layer-major MoE JSONL pairs `seq_persist‰` and lookback-2 Markov on the
+**same layer**, not adjacent lines (`L0,t → L1,t → L0,t+1`). Copy-forward
+and layer-forward Markov still train on L→L+1. Checked-in
+`tests/traces/tiny-qwen3moe-2layer.jsonl` (`ab` + 8 tokens) reports
+`layer_persist‰` and `seq_persist‰` both > 0. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — two-layer Qwen3MoE tiny + multi-layer oracle
 
 `tiny_qwen3moe_2layer_gguf` / `gguf_gemv write-tiny-qwen3moe-2layer` writes

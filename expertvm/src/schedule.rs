@@ -3,7 +3,7 @@
 use crate::access::{ExpertAccess, ExpertKey, Trace};
 use crate::error::Error;
 use crate::place::PlaceMap;
-use crate::planner::{observe_chain, plan_keys, predicted_keys, Markov, Plan};
+use crate::planner::{plan_keys, predicted_keys, ChainState, Markov, Plan};
 use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
     apply_touch, drop_remote, fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch,
@@ -255,8 +255,7 @@ struct SchedRt {
     ctr: ReplayCounters,
     prefetched: BTreeSet<ExpertKey>,
     markov: Markov,
-    prev: Option<ExpertAccess>,
-    prev2: Option<ExpertAccess>,
+    chain: ChainState,
     n_streams: u8,
     cfg: SimCfg,
     idle_ns: u64,
@@ -320,8 +319,7 @@ impl SchedRt {
             ctr: ReplayCounters::default(),
             prefetched: BTreeSet::new(),
             markov: Markov::new(),
-            prev: None,
-            prev2: None,
+            chain: ChainState::new(),
             cfg,
             idle_ns: 0,
             place,
@@ -424,7 +422,12 @@ impl SchedRt {
             return self.prefetch_remote(ev, running);
         }
         let ek = ev.keys();
-        let predicted = predicted_keys(self.cfg.prefetch, &self.markov, self.prev.as_ref(), &ek);
+        let predicted = predicted_keys(
+            self.cfg.prefetch,
+            &self.markov,
+            self.chain.predecessor(ev),
+            &ek,
+        );
         let planned = if self.cfg.plan_window > 0 {
             remaining_window(running, self.cfg.plan_window)
         } else {
@@ -462,7 +465,12 @@ impl SchedRt {
 
     fn prefetch_remote(&mut self, ev: &ExpertAccess, running: &[Job]) -> Result<(), Error> {
         let ek = ev.keys();
-        let predicted = predicted_keys(self.cfg.prefetch, &self.markov, self.prev.as_ref(), &ek);
+        let predicted = predicted_keys(
+            self.cfg.prefetch,
+            &self.markov,
+            self.chain.predecessor(ev),
+            &ek,
+        );
         let planned = if self.cfg.plan_window > 0 {
             remaining_window(running, self.cfg.plan_window)
         } else {
@@ -743,14 +751,7 @@ impl SchedRt {
     }
 
     fn observe(&mut self, ev: &ExpertAccess) {
-        observe_chain(
-            &mut self.markov,
-            self.prev2.as_ref(),
-            self.prev.as_ref(),
-            ev,
-        );
-        self.prev2 = self.prev.clone();
-        self.prev = Some(ev.clone());
+        self.chain.observe(&mut self.markov, ev);
     }
 }
 

@@ -74,7 +74,7 @@ use crate::sample::{SampleError, SampleParams, Sampler};
 use crate::tok::{TokError, Tokenizer};
 use crate::{write_gguf_with_kv, GGUF_DEFAULT_ALIGNMENT};
 use expertvm::{
-    observe_chain, predicted_keys, prefetch_keys, prefetch_keys_ctx, prefix_hash, weight_permille,
+    predicted_keys, prefetch_keys, prefetch_keys_ctx, prefix_hash, weight_permille, ChainState,
     DirectStore, ExpertAccess, ExpertKey, ExpertParts, ExpertStore, LiveStore, Markov, Prefetch,
     Trace,
 };
@@ -672,8 +672,7 @@ impl KvCache {
         self.moe_trace.row_prefix.clear();
         let tok_u = u32::try_from(n).unwrap_or(u32::MAX);
         self.moe_trace.events.retain(|e| e.token < tok_u);
-        self.moe_trace.prev = None;
-        self.moe_trace.prev2 = None;
+        self.moe_trace.chain.clear();
         if let Some(p) = self.pages.as_mut() {
             p.rewind_tokens(n);
         }
@@ -807,26 +806,24 @@ struct MoeTraceBuf {
     /// Per-row prefix hash for a batched GEMM (`empty` = [`Self::prefix_at`]).
     row_prefix: Vec<u64>,
     markov: Markov,
-    prev: Option<ExpertAccess>,
-    prev2: Option<ExpertAccess>,
+    chain: ChainState,
 }
 
 /// Online Markov + last two router events, parked on Engine across GEMMs.
 #[derive(Default)]
 pub(crate) struct PrefetchChain {
     markov: Markov,
-    prev: Option<ExpertAccess>,
-    prev2: Option<ExpertAccess>,
+    chain: ChainState,
 }
 
 impl PrefetchChain {
     /// Last selected experts union copy-forward ∪ Markov (no JSONL future leak).
     pub(crate) fn keep_hot_keys(&self) -> Vec<ExpertKey> {
-        let Some(prev) = self.prev.as_ref() else {
+        let Some(prev) = self.chain.last_event() else {
             return Vec::new();
         };
         let mut out = prev.keys();
-        let extra = predicted_keys(Prefetch::Both, &self.markov, self.prev2.as_ref(), &out);
+        let extra = predicted_keys(Prefetch::Both, &self.markov, self.chain.last_pred(), &out);
         for k in extra {
             if !out.contains(&k) {
                 out.push(k);
@@ -837,7 +834,7 @@ impl PrefetchChain {
 
     /// Selected-expert count of the last parked router event (`1` if none).
     pub(crate) fn last_fan_in(&self) -> u64 {
-        let n = self.prev.as_ref().map_or(0, |e| e.experts.len());
+        let n = self.chain.last_event().map_or(0, |e| e.experts.len());
         u64::try_from(n).unwrap_or(1).max(1)
     }
 }
@@ -846,16 +843,14 @@ impl KvCache {
     /// Install Engine-level Markov prefetch state onto this cache.
     pub(crate) fn set_prefetch_chain(&mut self, chain: PrefetchChain) {
         self.moe_trace.markov = chain.markov;
-        self.moe_trace.prev = chain.prev;
-        self.moe_trace.prev2 = chain.prev2;
+        self.moe_trace.chain = chain.chain;
     }
 
     /// Take Markov prefetch state so Engine can park it across GEMMs.
     pub(crate) fn take_prefetch_chain(&mut self) -> PrefetchChain {
         PrefetchChain {
             markov: core::mem::take(&mut self.moe_trace.markov),
-            prev: self.moe_trace.prev.take(),
-            prev2: self.moe_trace.prev2.take(),
+            chain: core::mem::take(&mut self.moe_trace.chain),
         }
     }
 }
@@ -925,7 +920,8 @@ impl MoeTraceBuf {
                 keys.push(ExpertKey::new(self.layer, ex));
             }
         }
-        let planned = match self.prev.as_ref() {
+        let ev = self.event(token_off, selected, &[]);
+        let planned = match self.chain.predecessor(&ev) {
             Some(p) => prefetch_keys_ctx(&self.markov, &p.keys(), &keys),
             None => prefetch_keys(&self.markov, &keys),
         };
@@ -933,15 +929,7 @@ impl MoeTraceBuf {
             Ok(_n) => {}
             Err(_e) => {}
         }
-        let ev = self.event(token_off, selected, &[]);
-        observe_chain(
-            &mut self.markov,
-            self.prev2.as_ref(),
-            self.prev.as_ref(),
-            &ev,
-        );
-        self.prev2 = self.prev.clone();
-        self.prev = Some(ev);
+        self.chain.observe(&mut self.markov, &ev);
     }
 }
 
@@ -11703,6 +11691,19 @@ mod tests {
             &tokens,
         );
         assert_eq!(blob, via_cached, "2-layer CachedStore must match the blob");
+        let n_gpu = m2.expert_direct_store().expect("c4").len().max(1);
+        let gpu = expertvm::SimulatedGpuStore::new(
+            m2.expert_direct_store().expect("c4"),
+            n_gpu,
+            expertvm::HardwareProfile::example_h100_sxm(),
+            4096,
+        )
+        .expect("gpu");
+        let via_gpu = store_prefill(&m2, LiveStore::simulated(gpu), &tokens);
+        assert_eq!(
+            blob, via_gpu,
+            "2-layer SimulatedGpuStore must match the blob"
+        );
         let tok = Tokenizer::from_gguf(&g).expect("tok");
         let (text, trace) = greedy_generate_traced(&m2, &tok, "ab", 4, None, 0).expect("traced");
         assert!(!text.is_empty());

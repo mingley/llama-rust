@@ -38,8 +38,8 @@ pub use live::LiveStore;
 pub use place::{colocated, home_gpu, striped, with_hot_replicas, PlaceMap};
 pub use planner::{
     copy_forward, hot_keys, observe_chain, plan_keys, plan_placement, plan_window, predicted_keys,
-    prefetch_keys, prefetch_keys_ctx, transition_pair, window_keys, Markov, Placement, Plan,
-    Prefetch, DECODE_ACTIVATION_BYTES,
+    prefetch_keys, prefetch_keys_ctx, transition_pair, window_keys, ChainState, Markov, Placement,
+    Plan, Prefetch, DECODE_ACTIVATION_BYTES,
 };
 pub use policy::Policy;
 pub use replay::{compare, format_table, replay, ReplayRow};

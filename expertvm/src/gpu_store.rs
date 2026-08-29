@@ -1,11 +1,11 @@
 //! [`ExpertStore`] backed by [`gpu_sim`]: H2D, mapped host, managed, or VMM on miss.
 
-use crate::access::{ExpertAccess, ExpertKey, Trace};
+use crate::access::{ExpertKey, Trace};
 use crate::error::Error;
 use crate::place::home_gpu;
 use crate::planner::{
-    observe_chain, plan_placement, plan_window, predicted_keys, window_keys, Markov, Placement,
-    Plan, Prefetch, DECODE_ACTIVATION_BYTES,
+    plan_placement, plan_window, predicted_keys, window_keys, ChainState, Markov, Placement, Plan,
+    Prefetch, DECODE_ACTIVATION_BYTES,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -1198,8 +1198,7 @@ pub fn store_replay_cfg(
     )?;
     let catalog: BTreeSet<ExpertKey> = trace.keys().into_iter().collect();
     let mut markov = Markov::new();
-    let mut prev: Option<&ExpertAccess> = None;
-    let mut prev2: Option<&ExpertAccess> = None;
+    let mut chain = ChainState::new();
     for (i, event) in trace.events.iter().enumerate() {
         let ek = event.keys();
         for key in &ek {
@@ -1207,7 +1206,7 @@ pub fn store_replay_cfg(
             store.release(*key);
         }
         if store_should_prefetch(&store, &catalog, &run, trace, i) {
-            let predicted = predicted_keys(run.prefetch, &markov, prev, &ek);
+            let predicted = predicted_keys(run.prefetch, &markov, chain.predecessor(event), &ek);
             let planned = if run.plan_window > 0 {
                 window_keys(trace, i.saturating_add(1), run.plan_window)
             } else {
@@ -1216,9 +1215,7 @@ pub fn store_replay_cfg(
             let fill: Vec<ExpertKey> = predicted.into_iter().chain(planned).collect();
             let _n = store.prefetch(&fill)?;
         }
-        observe_chain(&mut markov, prev2, prev, event);
-        prev2 = prev;
-        prev = Some(event);
+        chain.observe(&mut markov, event);
     }
     let n = u64::try_from(trace.events.len()).unwrap_or(1);
     Ok(StoreReplay {

@@ -4,8 +4,8 @@ use crate::access::{ExpertAccess, ExpertKey, Trace};
 use crate::error::Error;
 use crate::place::PlaceMap;
 use crate::planner::{
-    observe_chain, plan_placement, plan_window, predicted_keys, window_keys, Markov, Placement,
-    Plan, Prefetch,
+    plan_placement, plan_window, predicted_keys, window_keys, ChainState, Markov, Placement, Plan,
+    Prefetch,
 };
 use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
@@ -321,8 +321,7 @@ pub fn sim_replay_cfg(
     let mut token_ends: Vec<u64> = Vec::new();
     let mut ctr = ReplayCounters::default();
     let mut markov = Markov::new();
-    let mut prev: Option<&ExpertAccess> = None;
-    let mut prev2: Option<&ExpertAccess> = None;
+    let mut chain = ChainState::new();
     let mut prefetched: BTreeSet<ExpertKey> = BTreeSet::new();
     let mut graphs = GraphBank::new(cfg.graph_update, cfg.graph_clone);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
@@ -358,7 +357,7 @@ pub fn sim_replay_cfg(
             host_callbacks(&mut sim, &handles, &ek)?;
         }
         if should_prefetch(cfg, &handles, trace, i) {
-            let predicted = predicted_keys(cfg.prefetch, &markov, prev, &ek);
+            let predicted = predicted_keys(cfg.prefetch, &markov, chain.predecessor(event), &ek);
             let planned = if cfg.plan_window > 0 {
                 window_keys(trace, i.saturating_add(1), cfg.plan_window)
             } else {
@@ -384,9 +383,7 @@ pub fn sim_replay_cfg(
                 }
             }
         }
-        observe_chain(&mut markov, prev2, prev, event);
-        prev2 = prev;
-        prev = Some(event);
+        chain.observe(&mut markov, event);
         let _ins = admitted.insert(event.sequence);
         if engine_step(&trace.events, i, cfg.max_batch, admitted.len()) {
             sim.synchronize()?;

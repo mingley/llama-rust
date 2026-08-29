@@ -136,6 +136,82 @@ fn seq_persist_and_reuse_on_repeated_token_expert() {
 }
 
 #[test]
+fn two_layer_jsonl_seq_persist_skips_interleaved_layers() {
+    let t = Trace {
+        events: vec![
+            ev(0, 0, &[1]),
+            ev(0, 1, &[2]),
+            ev(1, 0, &[1]),
+            ev(1, 1, &[2]),
+            ev(2, 0, &[1]),
+            ev(2, 1, &[2]),
+        ],
+    };
+    let s = analyze(&t);
+    assert_eq!(s.n_events, 6);
+    assert_eq!(
+        s.layer_persist_pt, 0,
+        "ids 1→2 at the next layer must not count as layer persist"
+    );
+    assert_eq!(
+        s.seq_persist_pt, 1000,
+        "same-layer next-token pairs are not adjacent in layer-major JSONL, seq_persist‰={}",
+        s.seq_persist_pt
+    );
+    assert_eq!(
+        s.order2_persist_pt, 1000,
+        "same-layer lookback-2 must train across interleaved layers, order2_persist‰={}",
+        s.order2_persist_pt
+    );
+}
+
+#[test]
+fn two_layer_layer_persist_same_ids() {
+    let t = Trace {
+        events: vec![
+            ev(0, 0, &[3]),
+            ev(0, 1, &[3]),
+            ev(1, 0, &[3]),
+            ev(1, 1, &[3]),
+        ],
+    };
+    let s = analyze(&t);
+    assert_eq!(s.layer_persist_pt, 1000);
+    assert_eq!(s.seq_persist_pt, 1000);
+}
+
+#[test]
+fn checked_in_two_layer_qwen3moe_has_honest_persist() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("tests")
+        .join("traces")
+        .join("tiny-qwen3moe-2layer.jsonl");
+    let mut f = std::fs::File::open(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let mut text = String::new();
+    let _n = std::io::Read::read_to_string(&mut f, &mut text).expect("read");
+    let t = Trace::parse(&text).expect("parse");
+    assert!(t.events.iter().any(|e| e.layer == 0));
+    assert!(t.events.iter().any(|e| e.layer == 1));
+    let s = analyze(&t);
+    assert!(
+        s.seq_persist_pt > 0,
+        "seq_persist must see same-layer next-token pairs, {}",
+        s.report()
+    );
+    assert!(
+        s.layer_persist_pt > 0,
+        "layer_persist must see L→L+1 pairs, {}",
+        s.report()
+    );
+    assert!(
+        s.order2_persist_pt > 0,
+        "order2 must train on same-layer lookback-2, {}",
+        s.report()
+    );
+}
+
+#[test]
 fn order2_persist_predicts_a_cycle() {
     let t = cycling_trace();
     let s = analyze(&t);
