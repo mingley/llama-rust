@@ -62,6 +62,8 @@ cargo build --release --bin gguf_gemv
 ./target/release/expertvm bench adversarial --capacity 2 --profile cheap
 ./target/release/infer-bench adversarial --capacity 2 --profile cheap
 ./target/release/infer-bench trace tests/traces/cycling.jsonl --capacity 2
+./target/release/expertvm topology --bytes 1048576
+./target/release/gpu-profile probe bad-numa
 cargo run -p llama-rust --example session
 ./target/release/gguf_gemv write-tiny-qwen2vl tiny-qwen2vl.gguf
 ./target/release/gguf_gemv infer tiny-qwen2vl.gguf -p ab -n 2

@@ -11,6 +11,7 @@
 mod error;
 mod ids;
 mod ops;
+mod probe;
 mod profile;
 mod score;
 mod sim;
@@ -18,6 +19,7 @@ mod sim;
 pub use error::SimError;
 pub use ids::{AllocId, DeviceId, EventId, LinkId, OpId, StreamId};
 pub use ops::{DType, KernelKind, MemcpyOp, Place};
+pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{ns_for_bytes, GpuProfile, HardwareProfile, LinkKind, LinkProfile};
 pub use score::Score;
 pub use sim::Sim;
@@ -269,5 +271,159 @@ mod tests {
         assert!(!sim.is_resident(a, d1).unwrap());
         enq(sim.kernel(d0, KernelKind::other(8, bytes), &[a], &[a], s0));
         sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn gpu_unavailable_rejects_submit() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        sim.set_unavailable(d, true).unwrap();
+        assert!(sim.is_unavailable(d));
+        match sim.alloc(d, 4096, StreamId(0)) {
+            Err(SimError::Unavailable { device }) => assert_eq!(device, d),
+            other => panic!("{other:?}"),
+        }
+        sim.set_unavailable(d, false).unwrap();
+        assert!(sim.alloc(d, 4096, StreamId(0)).is_ok());
+    }
+
+    #[test]
+    fn fail_next_memcpy_is_expert_load_failure() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        sim.fail_next_memcpy();
+        enq(sim.memcpy_host_to_device(d, a, 4096, s));
+        match sim.synchronize() {
+            Err(SimError::TransferFailed { alloc }) => assert_eq!(alloc, a),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn extra_transfer_ns_delays_h2d() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 8u64 << 20;
+        let mut fast = Sim::new(h100());
+        let a = fast.alloc(d, bytes, s).unwrap();
+        enq(fast.memcpy_host_to_device(d, a, bytes, s));
+        fast.synchronize().unwrap();
+        let t0 = fast.clock_ns();
+
+        let mut slow = Sim::new(h100());
+        slow.set_extra_transfer_ns(1_000_000);
+        let b = slow.alloc(d, bytes, s).unwrap();
+        enq(slow.memcpy_host_to_device(d, b, bytes, s));
+        slow.synchronize().unwrap();
+        assert!(
+            slow.clock_ns() >= t0.saturating_add(1_000_000),
+            "fast={t0} delayed={}",
+            slow.clock_ns()
+        );
+    }
+
+    #[test]
+    fn cancel_stream_skips_queued_kernel() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_host_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 40, 4096), &[a], &[a], s));
+        enq(sim.kernel(d, KernelKind::other(8, 4096), &[a], &[a], s));
+        sim.start_ready().unwrap();
+        let n = sim.cancel_stream(d, s).unwrap();
+        assert!(n >= 1);
+        match sim.synchronize() {
+            Err(SimError::Cancelled { n: skipped, .. }) => assert!(skipped >= 1),
+            other => panic!("{other:?}"),
+        }
+        assert!(sim.cancelled_count() >= 1);
+    }
+
+    #[test]
+    fn two_gpu_pcie_d2d_is_slower_than_nvlink() {
+        let bytes = 32u64 << 20;
+        let pcie = probe_topology(HardwareProfile::example_2xh100_pcie(), bytes).unwrap();
+        let nv = probe_topology(HardwareProfile::example_8xh100_nvlink(), bytes).unwrap();
+        let pcie_d2d = pcie.p2p[0].ns.expect("pcie p2p");
+        let nv_d2d = nv.p2p[0].ns.expect("nvlink p2p");
+        assert!(pcie_d2d > nv_d2d, "pcie={pcie_d2d} nvlink={nv_d2d}");
+        assert_eq!(pcie.n_gpus, 2);
+        assert_eq!(nv.n_gpus, 8);
+    }
+
+    #[test]
+    fn bad_numa_far_gpu_h2d_is_slower() {
+        let p = probe_topology(HardwareProfile::example_bad_numa(), 16u64 << 20).unwrap();
+        assert_eq!(p.h2d_ns.len(), 2);
+        assert!(
+            p.h2d_ns[1] > p.h2d_ns[0],
+            "near={} far={}",
+            p.h2d_ns[0],
+            p.h2d_ns[1]
+        );
+        assert!(p.p2p[0].ns.is_none());
+    }
+
+    #[test]
+    fn rdma_peer_exists_and_asymmetric_omits_02() {
+        let rdma = probe_topology(HardwareProfile::example_2node_rdma(), 8u64 << 20).unwrap();
+        assert!(rdma.p2p[0].ns.is_some());
+        let kind = HardwareProfile::example_2node_rdma()
+            .link(Some(DeviceId(0)), Some(DeviceId(1)))
+            .unwrap()
+            .kind;
+        assert_eq!(kind, LinkKind::Rdma);
+        let line = probe_topology(HardwareProfile::example_asymmetric_links(), 4u64 << 20).unwrap();
+        assert_eq!(line.n_gpus, 3);
+        let hop02 = line
+            .p2p
+            .iter()
+            .find(|h| h.src == DeviceId(0) && h.dst == DeviceId(2))
+            .expect("0-2");
+        assert!(hop02.ns.is_none());
+        let hop01 = line
+            .p2p
+            .iter()
+            .find(|h| h.src == DeviceId(0) && h.dst == DeviceId(1))
+            .expect("0-1");
+        assert!(hop01.ns.is_some());
+        assert!(!line.line().is_empty());
+    }
+
+    #[test]
+    fn allreduce_needs_peer_link() {
+        let mut ok = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let a = ok.alloc(DeviceId(0), bytes, s).unwrap();
+        enq(ok.memcpy_host_to_device(DeviceId(0), a, bytes, s));
+        enq(ok.memcpy_device_to_device(DeviceId(0), DeviceId(1), a, bytes, s));
+        ok.synchronize().unwrap();
+        enq(ok.allreduce(&[(DeviceId(0), a), (DeviceId(1), a)], bytes, s));
+        ok.synchronize().unwrap();
+
+        let mut bad = Sim::new(HardwareProfile::example_asymmetric_links());
+        let b = bad.alloc(DeviceId(0), bytes, s).unwrap();
+        enq(bad.memcpy_host_to_device(DeviceId(0), b, bytes, s));
+        enq(bad.memcpy_device_to_device(DeviceId(0), DeviceId(1), b, bytes, s));
+        bad.synchronize().unwrap();
+        enq(bad.memcpy_device_to_device(DeviceId(1), DeviceId(2), b, bytes, s));
+        bad.synchronize().unwrap();
+        enq(bad.allreduce(
+            &[(DeviceId(0), b), (DeviceId(1), b), (DeviceId(2), b)],
+            bytes,
+            s,
+        ));
+        match bad.synchronize() {
+            Err(SimError::NoPeer { src, dst }) => {
+                assert!(src == DeviceId(2) || dst == DeviceId(0) || src == DeviceId(0));
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

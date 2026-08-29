@@ -86,3 +86,32 @@ Adversarial memcpy: many tiny copies cannot beat one large copy of the
 same payload (fixed overhead + size-dependent bandwidth). Two concurrent
 H2D copies on separate streams share PCIe and cannot finish in one-copy
 time.
+
+## Topologies
+
+Named example profiles (order-of-magnitude, **not captures**):
+
+| Name | Mesh |
+| --- | --- |
+| `h100` / `h200` / `cheap` | 1 GPU, host PCIe |
+| `2xh100-pcie` | 2 GPU, PCIe P2P (no NVLink) |
+| `8xh100` | 8 GPU NVLink clique + per-GPU PCIe |
+| `bad-numa` | 2 GPU, GPU1 on a slow far PCIe root, no P2P |
+| `2node-rdma` | 2 GPU, GPU-direct RDMA, no NVLink |
+| `asymmetric` | 3 GPU NVLink chain 0–1–2; 0↔2 is `NoPeer` |
+
+`HardwareProfile::by_name`, `probe_topology`, and `gpu-profile probe NAME`
+measure H2D per GPU and D2D per pair. Missing links print `p2p=0->2:none`.
+
+## Faults
+
+| Inject | Semantic error |
+| --- | --- |
+| `Sim::set_unavailable` | `SimError::Unavailable` |
+| `Sim::cancel_stream` (queued ops) | `SimError::Cancelled` |
+| `Sim::fail_next_memcpy` | `SimError::TransferFailed` (expert load) |
+| `Sim::set_extra_transfer_ns` | longer memcpy / allreduce, still `Ok` |
+| over-capacity alloc | `SimError::Oom` |
+
+In-flight ops are not cancelled. `gpu-profile capture` is refused in this
+crate: someone with a GPU writes a `key=value` file; agents `parse` it.

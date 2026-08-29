@@ -54,6 +54,27 @@ impl SimulatedGpuStore {
         Ok(gpu_sim::Score::from_sim(&self.sim))
     }
 
+    /// Next H2D that starts fails ([`gpu_sim::SimError::TransferFailed`]).
+    pub fn fail_next_transfer(&mut self) {
+        self.sim.fail_next_memcpy();
+    }
+
+    /// Mark the home GPU unavailable (new submits fail).
+    pub fn set_gpu_unavailable(&mut self, yes: bool) -> Result<(), Error> {
+        self.sim.set_unavailable(self.device, yes)?;
+        Ok(())
+    }
+
+    /// Injected extra nanoseconds on every memcpy (transfer delay fault).
+    pub fn set_transfer_delay_ns(&mut self, ns: u64) {
+        self.sim.set_extra_transfer_ns(ns);
+    }
+
+    /// Cancel queued copy-stream ops. In-flight copies still complete.
+    pub fn cancel_copy_stream(&mut self) -> Result<u32, Error> {
+        Ok(self.sim.cancel_stream(self.device, self.copy)?)
+    }
+
     /// Fault `keys` in (H2D, no GEMM). Unknown catalog keys are skipped.
     pub fn prefetch(&mut self, keys: &[ExpertKey]) -> Result<u64, Error> {
         let n = self.cache.prefetch(keys)?;

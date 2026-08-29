@@ -1,8 +1,8 @@
 //! `expertvm analyze | replay | sim` — traces in, measured tables out.
 
 use expertvm::{
-    adversarial_suite, analyze, compare, format_table, generate, report, sim_replay, Policy, Trace,
-    Workload,
+    adversarial_suite, analyze, compare, format_table, generate, report, sim_replay,
+    topology_suite, Policy, Trace, Workload,
 };
 use gpu_sim::HardwareProfile;
 use std::env;
@@ -18,10 +18,12 @@ usage: expertvm <command> [args]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
+  topology [--bytes N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch
-profiles: h100 (default), h200, 8xh100, cheap, or a path to a .profile file
+profiles: h100 (default), h200, 8xh100, cheap, 2xh100-pcie, bad-numa,
+          2node-rdma, asymmetric, or a path to a .profile file
 ";
 
 fn main() -> ExitCode {
@@ -74,6 +76,7 @@ fn run() -> Result<(), String> {
         }
         "bench" => run_bench(args),
         "workload" => run_workload(args),
+        "topology" => run_topology(args),
         other => Err(format!("{USAGE}got {other}")),
     }
 }
@@ -173,20 +176,20 @@ fn load_trace(path: &str) -> Result<Trace, String> {
 }
 
 fn load_profile(name: &str) -> Result<HardwareProfile, String> {
-    match name {
-        "h100" => Ok(HardwareProfile::example_h100_sxm()),
-        "h200" => Ok(HardwareProfile::example_h200_sxm()),
-        "8xh100" => Ok(HardwareProfile::example_8xh100_nvlink()),
-        "cheap" => Ok(HardwareProfile::example_cheap_48gb()),
-        path => {
-            let mut f = File::open(path).map_err(|e| format!("{path}: {e}"))?;
-            let mut buf = String::new();
-            let _n = f
-                .read_to_string(&mut buf)
-                .map_err(|e| format!("{path}: {e}"))?;
-            HardwareProfile::parse(&buf).map_err(|e| e.to_string())
-        }
+    if let Ok(p) = HardwareProfile::by_name(name) {
+        return Ok(p);
     }
+    let mut f = File::open(name).map_err(|e| {
+        format!(
+            "unknown profile {name} ({e}); known: {}",
+            HardwareProfile::example_names().join(", ")
+        )
+    })?;
+    let mut buf = String::new();
+    let _n = f
+        .read_to_string(&mut buf)
+        .map_err(|e| format!("{name}: {e}"))?;
+    HardwareProfile::parse(&buf).map_err(|e| e.to_string())
 }
 
 fn print_replay(trace: &Trace, capacity: usize, lookahead: usize) -> Result<(), String> {
@@ -252,4 +255,29 @@ where
 
 fn parse_workload(name: &str) -> Result<Workload, String> {
     Workload::from_name(name).ok_or_else(|| format!("unknown workload {name}\n{USAGE}"))
+}
+
+fn run_topology<I>(args: I) -> Result<(), String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut bytes = 8u64 << 20;
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        let (key, inline) = match arg.split_once('=') {
+            Some((k, v)) => (k.to_string(), Some(v.to_string())),
+            None => (arg, None),
+        };
+        match key.as_str() {
+            "--bytes" | "--expert-bytes" => {
+                bytes = parse_u64("bytes", &value("bytes", inline, &mut it)?)?
+            }
+            flag => return Err(format!("unknown flag {flag}\n{USAGE}")),
+        }
+    }
+    let rows = topology_suite(bytes).map_err(|e| e.to_string())?;
+    for row in rows {
+        println!("{}", row.line());
+    }
+    Ok(())
 }

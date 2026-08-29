@@ -2,7 +2,7 @@
 
 use core::fmt;
 
-use crate::ids::{AllocId, DeviceId};
+use crate::ids::{AllocId, DeviceId, StreamId};
 
 /// Why the simulator refused an operation or detected an illegal GPU state.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,6 +45,23 @@ pub enum SimError {
         /// Event id.
         event: u32,
     },
+    /// The device was marked unavailable (fault injection / drain).
+    Unavailable {
+        /// GPU that will not accept new work.
+        device: DeviceId,
+    },
+    /// Queued work on a stream was cancelled before it started.
+    Cancelled {
+        /// Stream whose pending ops were dropped.
+        stream: StreamId,
+        /// How many ops were skipped.
+        n: u32,
+    },
+    /// Injected memcpy / expert-load failure (transfer never completed).
+    TransferFailed {
+        /// Allocation that did not move.
+        alloc: AllocId,
+    },
     /// Profile or submit argument that cannot occur on real hardware as modeled.
     Invalid {
         /// Human-readable reason.
@@ -65,6 +82,13 @@ impl fmt::Display for SimError {
             }
             Self::NoPeer { src, dst } => write!(f, "no peer link {src} → {dst}"),
             Self::UnknownEvent { event } => write!(f, "unknown event {event}"),
+            Self::Unavailable { device } => write!(f, "{device} unavailable"),
+            Self::Cancelled { stream, n } => {
+                write!(f, "cancelled {n} queued ops on stream {}", stream.0)
+            }
+            Self::TransferFailed { alloc } => {
+                write!(f, "transfer failed for allocation {}", alloc.0)
+            }
             Self::Invalid { why } => write!(f, "invalid: {why}"),
         }
     }

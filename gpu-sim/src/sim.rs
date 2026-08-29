@@ -1,7 +1,7 @@
 //! Discrete-event GPU-systems simulator.
 
 use std::collections::btree_map::Entry;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::SimError;
 use crate::ids::{AllocId, DeviceId, EventId, OpId, StreamId};
@@ -21,6 +21,7 @@ struct Op {
     kind: Kind,
     deps: Vec<OpId>,
     done: bool,
+    cancelled: bool,
 }
 
 enum Kind {
@@ -42,6 +43,10 @@ enum Kind {
     },
     EventWait {
         event: EventId,
+    },
+    AllReduce {
+        parts: Vec<(DeviceId, AllocId)>,
+        bytes: u64,
     },
 }
 
@@ -81,6 +86,9 @@ pub struct Sim {
     gpus: BTreeMap<DeviceId, GpuRt>,
     bytes_moved: u64,
     hbm_peak: u64,
+    unavailable: BTreeSet<DeviceId>,
+    fail_next_memcpy: bool,
+    extra_transfer_ns: u64,
 }
 
 impl Sim {
@@ -112,6 +120,9 @@ impl Sim {
             gpus,
             bytes_moved: 0,
             hbm_peak: 0,
+            unavailable: BTreeSet::new(),
+            fail_next_memcpy: false,
+            extra_transfer_ns: 0,
         }
     }
 
@@ -154,6 +165,96 @@ impl Sim {
     pub fn is_resident(&self, alloc: AllocId, device: DeviceId) -> Result<bool, SimError> {
         let a = self.alloc_ref(alloc)?;
         Ok(a.live && a.devices.contains(&device))
+    }
+
+    /// Refuse new work (and starting queued work) on `device`.
+    pub fn set_unavailable(&mut self, device: DeviceId, yes: bool) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if yes {
+            let _was = self.unavailable.insert(device);
+        } else {
+            let _was = self.unavailable.remove(&device);
+        }
+        Ok(())
+    }
+
+    /// Whether [`Self::set_unavailable`] is set for `device`.
+    #[must_use]
+    pub fn is_unavailable(&self, device: DeviceId) -> bool {
+        self.unavailable.contains(&device)
+    }
+
+    /// Next memcpy that *starts* fails with [`SimError::TransferFailed`] (expert load failure).
+    pub fn fail_next_memcpy(&mut self) {
+        self.fail_next_memcpy = true;
+    }
+
+    /// Extra nanoseconds added to every memcpy and allreduce (injected transfer delay).
+    pub fn set_extra_transfer_ns(&mut self, ns: u64) {
+        self.extra_transfer_ns = ns;
+    }
+
+    /// Drop not-yet-started ops on `(device, stream)`. In-flight ops still complete.
+    pub fn cancel_stream(&mut self, device: DeviceId, stream: StreamId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        let running: BTreeSet<OpId> = self.running.iter().map(|r| r.op).collect();
+        let mut n = 0u32;
+        let ids: Vec<OpId> = self
+            .ops
+            .iter()
+            .filter(|(id, o)| {
+                o.device == device && o.stream == stream && !o.done && !running.contains(id)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            if let Some(op) = self.ops.get_mut(&id) {
+                op.cancelled = true;
+                op.done = true;
+                n = n.saturating_add(1);
+            }
+        }
+        Ok(n)
+    }
+
+    /// How many submitted ops were skipped by cancel or a failed transfer.
+    #[must_use]
+    pub fn cancelled_count(&self) -> u32 {
+        let n = self.ops.values().filter(|o| o.cancelled).count();
+        u32::try_from(n).unwrap_or(u32::MAX)
+    }
+
+    /// Start every currently ready op without advancing the virtual clock.
+    pub fn start_ready(&mut self) -> Result<(), SimError> {
+        self.schedule()
+    }
+
+    /// Ring allreduce among `parts`. Each alloc must already be resident on its device.
+    pub fn allreduce(
+        &mut self,
+        parts: &[(DeviceId, AllocId)],
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if parts.len() < 2 {
+            return Err(SimError::Invalid {
+                why: "allreduce needs >= 2 ranks",
+            });
+        }
+        let device = parts
+            .first()
+            .ok_or(SimError::Invalid {
+                why: "allreduce needs >= 2 ranks",
+            })?
+            .0;
+        self.submit(
+            device,
+            stream,
+            Kind::AllReduce {
+                parts: parts.to_vec(),
+                bytes,
+            },
+        )
     }
 
     /// Stream-ordered allocation. Capacity is reserved when the op starts.
@@ -300,7 +401,7 @@ impl Sim {
             self.schedule()?;
             if self.running.is_empty() {
                 if self.ops.values().all(|o| o.done) {
-                    return Ok(());
+                    return self.sync_outcome();
                 }
                 return Err(SimError::Invalid {
                     why: "deadlock: waiting ops but nothing running",
@@ -316,7 +417,25 @@ impl Sim {
         }
     }
 
+    fn sync_outcome(&self) -> Result<(), SimError> {
+        let mut n = 0u32;
+        let mut stream = StreamId(0);
+        for o in self.ops.values() {
+            if o.cancelled {
+                n = n.saturating_add(1);
+                stream = o.stream;
+            }
+        }
+        if n > 0 {
+            return Err(SimError::Cancelled { stream, n });
+        }
+        Ok(())
+    }
+
     fn submit(&mut self, device: DeviceId, stream: StreamId, kind: Kind) -> Result<OpId, SimError> {
+        if self.unavailable.contains(&device) {
+            return Err(SimError::Unavailable { device });
+        }
         let _gpu = self.profile.gpu(device)?;
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
@@ -339,6 +458,7 @@ impl Sim {
                 kind,
                 deps,
                 done: false,
+                cancelled: false,
             },
         );
         let _prev_tail = self.tail.insert((device, stream), id);
@@ -406,6 +526,9 @@ impl Sim {
             return Err(SimError::Invalid { why: "unknown op" });
         };
         let device = op.device;
+        if self.unavailable.contains(&device) {
+            return Err(SimError::Unavailable { device });
+        }
         match &op.kind {
             Kind::Alloc { bytes, .. } => {
                 let bytes = *bytes;
@@ -478,6 +601,14 @@ impl Sim {
             }
             Kind::Memcpy(m) => {
                 let m = m.clone();
+                if self.fail_next_memcpy {
+                    self.fail_next_memcpy = false;
+                    if let Some(op) = self.ops.get_mut(&id) {
+                        op.cancelled = true;
+                        op.done = true;
+                    }
+                    return Err(SimError::TransferFailed { alloc: m.alloc });
+                }
                 let gp = self.profile.gpu(device)?;
                 if self.gpu_rt(device)?.copies >= gp.copy_engines {
                     return Ok(false);
@@ -507,10 +638,7 @@ impl Sim {
             }
             Kind::EventWait { event } => {
                 let event = *event;
-                let Some(rec) = self.events.get(&event).and_then(|e| e.recorded_by) else {
-                    return Ok(false);
-                };
-                if !self.op_done(rec) {
+                if self.event_wait_gate(event)?.is_none() {
                     return Ok(false);
                 }
                 self.running.push(Running {
@@ -519,6 +647,14 @@ impl Sim {
                     share: Share::Solo,
                 });
                 Ok(true)
+            }
+            Kind::AllReduce { parts, bytes } => {
+                if self.gpu_rt(device)?.compute_busy {
+                    return Ok(false);
+                }
+                let parts = parts.clone();
+                let bytes = *bytes;
+                self.start_allreduce(id, device, &parts, bytes)
             }
         }
     }
@@ -548,6 +684,111 @@ impl Sim {
         let compute = ns_for_bytes(flops, g.flops(kind.dtype()));
         let memory = ns_for_bytes(bytes, g.hbm_bps);
         Ok(g.launch_overhead_ns.saturating_add(compute.max(memory)))
+    }
+
+    fn event_wait_gate(&self, event: EventId) -> Result<Option<OpId>, SimError> {
+        if let Some(rec) = self.events.get(&event).and_then(|e| e.recorded_by) {
+            if self.ops.get(&rec).is_some_and(|o| o.cancelled) {
+                let stream = self.ops.get(&rec).map(|o| o.stream).unwrap_or(StreamId(0));
+                return Err(SimError::Cancelled { stream, n: 1 });
+            }
+            if !self.op_done(rec) {
+                return Ok(None);
+            }
+            return Ok(Some(rec));
+        }
+        let mut pending = false;
+        let mut cancelled_n = 0u32;
+        let mut stream = StreamId(0);
+        for op in self.ops.values() {
+            if let Kind::EventRecord { event: ev } = &op.kind {
+                if *ev == event {
+                    if op.cancelled {
+                        cancelled_n = cancelled_n.saturating_add(1);
+                        stream = op.stream;
+                    } else if !op.done {
+                        pending = true;
+                    }
+                }
+            }
+        }
+        if pending {
+            return Ok(None);
+        }
+        if cancelled_n > 0 {
+            return Err(SimError::Cancelled {
+                stream,
+                n: cancelled_n,
+            });
+        }
+        Ok(None)
+    }
+
+    fn start_allreduce(
+        &mut self,
+        id: OpId,
+        device: DeviceId,
+        parts: &[(DeviceId, AllocId)],
+        bytes: u64,
+    ) -> Result<bool, SimError> {
+        for (d, a) in parts {
+            let alloc = self.alloc_ref(*a)?;
+            if !alloc.live || !alloc.devices.contains(d) {
+                return Err(SimError::NotResident {
+                    alloc: *a,
+                    device: *d,
+                });
+            }
+        }
+        let ns = self.allreduce_ns(parts, bytes)?;
+        for (_, a) in parts {
+            let alloc = self.alloc_mut(*a)?;
+            alloc.leases = alloc.leases.saturating_add(1);
+        }
+        self.gpu_rt_mut(device)?.compute_busy = true;
+        self.running.push(Running {
+            op: id,
+            remaining_ns: ns.max(1),
+            share: Share::Solo,
+        });
+        Ok(true)
+    }
+
+    fn allreduce_ns(&self, parts: &[(DeviceId, AllocId)], bytes: u64) -> Result<u64, SimError> {
+        let n = parts.len();
+        if n < 2 {
+            return Err(SimError::Invalid {
+                why: "allreduce needs >= 2 ranks",
+            });
+        }
+        let mut worst = 0u64;
+        for i in 0..n {
+            let src = parts
+                .get(i)
+                .ok_or(SimError::Invalid {
+                    why: "allreduce rank",
+                })?
+                .0;
+            let j = if i.saturating_add(1) >= n {
+                0
+            } else {
+                i.saturating_add(1)
+            };
+            let dst = parts
+                .get(j)
+                .ok_or(SimError::Invalid {
+                    why: "allreduce rank",
+                })?
+                .0;
+            let hop = self.profile.link(Some(src), Some(dst))?.copy_ns(bytes);
+            if hop > worst {
+                worst = hop;
+            }
+        }
+        let hops = u64::try_from(n.saturating_sub(1)).unwrap_or(u64::MAX);
+        Ok(worst
+            .saturating_mul(hops)
+            .saturating_add(self.extra_transfer_ns))
     }
 
     fn memcpy_precheck(&self, m: &MemcpyOp) -> Result<(), SimError> {
@@ -621,7 +862,10 @@ impl Sim {
             .links
             .get(idx)
             .ok_or(SimError::Invalid { why: "link index" })?;
-        Ok((link.copy_ns(m.bytes), idx))
+        Ok((
+            link.copy_ns(m.bytes).saturating_add(self.extra_transfer_ns),
+            idx,
+        ))
     }
 
     fn share_n(&self, share: &Share) -> u64 {
@@ -697,6 +941,7 @@ impl Sim {
             Kind::Kernel { reads, writes, .. } => {
                 Some(reads.iter().chain(writes.iter()).copied().collect())
             }
+            Kind::AllReduce { parts, .. } => Some(parts.iter().map(|(_, a)| *a).collect()),
             _ => None,
         });
         let memcpy = self.ops.get(&id).and_then(|op| match &op.kind {

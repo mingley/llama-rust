@@ -6,10 +6,10 @@
 #![deny(missing_docs, unsafe_code)]
 
 pub use expertvm::{
-    adversarial_suite, compare, format_table, generate, report, sim_replay, BenchReport, Policy,
-    Trace, Workload,
+    adversarial_suite, compare, format_table, generate, report, sim_replay, topology_suite,
+    BenchReport, Policy, Trace, Workload,
 };
-pub use gpu_sim::{HardwareProfile, Score};
+pub use gpu_sim::{probe_topology, HardwareProfile, Score, TopologyProbe};
 
 #[cfg(test)]
 mod tests {
@@ -21,5 +21,12 @@ mod tests {
         assert_eq!(rows.len(), 10);
         assert!(rows.iter().any(|r| r.name == "thrash"));
         assert!(rows.iter().any(|r| r.name == "batch"));
+    }
+
+    #[test]
+    fn topology_suite_names_every_example_profile() {
+        let rows = super::topology_suite(1u64 << 20).unwrap();
+        assert_eq!(rows.len(), HardwareProfile::example_names().len());
+        assert!(rows.iter().any(|r| r.line().contains("h2d_ns=")));
     }
 }

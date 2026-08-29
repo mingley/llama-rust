@@ -473,9 +473,16 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   thrash, coding/chat/long-context traces, batch 1 vs 128,
   prefill-heavy / decode-heavy
 - topologies: 1 GPU, 2 GPU PCIe, 8 GPU NVLink, bad NUMA, 2-node RDMA,
-  asymmetric links
-- faults: transfer delay, GPU unavailable, memory pressure, cancel,
-  expert load failure
+  asymmetric links — named example profiles (`h100`, `2xh100-pcie`,
+  `8xh100`, `bad-numa`, `2node-rdma`, `asymmetric`) plus `gpu-profile probe`
+  / `expertvm topology` / `infer-bench topology`. Asymmetric is a 3-GPU
+  NVLink *chain* (0–1–2); 0↔2 is `NoPeer`.
+- faults: transfer delay (`Sim::set_extra_transfer_ns`), GPU unavailable
+  (`SimError::Unavailable`), memory pressure (OOM), cancel
+  (`Sim::cancel_stream` → `SimError::Cancelled`), expert load failure
+  (`Sim::fail_next_memcpy` → `SimError::TransferFailed`).
+- ring `allreduce` as a collective with a real mesh: missing wrap-around
+  links fail `NoPeer`.
 - performance model must include fixed overhead, size-dependent
   throughput, queueing, concurrency limits, alignment, startup latency
 - never let an agent “win” by issuing 8,000 tiny copies that the model

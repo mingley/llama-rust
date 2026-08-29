@@ -233,6 +233,43 @@ fn adversarial_workloads_are_named_and_measurable() {
 }
 
 #[test]
+fn topology_suite_covers_named_meshes() {
+    let rows = topology_suite(1u64 << 20).expect("topo");
+    assert_eq!(rows.len(), HardwareProfile::example_names().len());
+    assert!(rows.iter().any(|r| r.name.contains("bad-numa")));
+    assert!(rows.iter().any(|r| r.line().contains("p2p=")));
+}
+
+#[test]
+fn simulated_gpu_store_transfer_failure_is_load_error() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::new(inner, 1, HardwareProfile::example_h100_sxm(), 4096).expect("gpu");
+    gpu.fail_next_transfer();
+    let k0 = ExpertKey::new(0, 0);
+    let n = gpu.prefetch(&[k0]).expect("enqueue");
+    assert_eq!(n, 1);
+    let err = gpu.score().unwrap_err();
+    assert!(err.to_string().contains("transfer"), "{err}");
+}
+
+#[test]
+fn simulated_gpu_store_unavailable_blocks_acquire() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::new(inner, 1, HardwareProfile::example_h100_sxm(), 4096).expect("gpu");
+    gpu.set_gpu_unavailable(true).expect("fault");
+    let err = gpu.acquire(ExpertKey::new(0, 0)).unwrap_err();
+    assert!(err.to_string().contains("unavailable"), "{err}");
+}
+
+#[test]
 fn tiered_memory_matches_direct_and_evicts() {
     let t = cycling_trace();
     let mut direct = DirectStore::from_trace(&t);

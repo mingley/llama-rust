@@ -81,3 +81,13 @@ pub fn adversarial_suite(
     }
     Ok(out)
 }
+
+/// Probe every named example topology. Same payload, different meshes.
+pub fn topology_suite(bytes: u64) -> Result<Vec<gpu_sim::TopologyProbe>, Error> {
+    let mut out = Vec::new();
+    for name in HardwareProfile::example_names() {
+        let profile = HardwareProfile::by_name(name)?;
+        out.push(gpu_sim::probe_topology(profile, bytes)?);
+    }
+    Ok(out)
+}

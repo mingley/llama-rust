@@ -1,6 +1,6 @@
 //! `infer-bench adversarial | trace` — measured hit rates and sim scores.
 
-use infer_bench::{adversarial_suite, report, HardwareProfile, Trace, Workload};
+use infer_bench::{adversarial_suite, report, topology_suite, HardwareProfile, Trace, Workload};
 use std::env;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -10,11 +10,13 @@ const USAGE: &str = "\
 usage: infer-bench <command> [args]
   adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   trace <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N]
-  workload <NAME> [--tokens N] [--experts N] [--capacity N]
+  workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
+  topology [--bytes N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch
-profiles: h100 (default), h200, 8xh100, cheap
+profiles: h100 (default), h200, 8xh100, cheap, 2xh100-pcie, bad-numa,
+          2node-rdma, asymmetric, or a path to a .profile file
 ";
 
 fn main() -> ExitCode {
@@ -82,6 +84,14 @@ fn run() -> Result<(), String> {
             print!("{}", row.render());
             Ok(())
         }
+        "topology" => {
+            let cfg = parse_flags(args)?;
+            let rows = topology_suite(cfg.expert_bytes).map_err(|e| e.to_string())?;
+            for row in rows {
+                println!("{}", row.line());
+            }
+            Ok(())
+        }
         other => Err(format!("{USAGE}got {other}")),
     }
 }
@@ -121,6 +131,7 @@ where
             "--profile" => profile = value("profile", inline, &mut it)?,
             "--tokens" => tokens = parse_u32("tokens", &value("tokens", inline, &mut it)?)?,
             "--experts" => experts = parse_u32("experts", &value("experts", inline, &mut it)?)?,
+            "--bytes" => expert_bytes = parse_u64("bytes", &value("bytes", inline, &mut it)?)?,
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => {
                 if path.is_some() {
@@ -179,11 +190,18 @@ fn load_trace(path: &str) -> Result<Trace, String> {
 }
 
 fn load_profile(name: &str) -> Result<HardwareProfile, String> {
-    match name {
-        "h100" => Ok(HardwareProfile::example_h100_sxm()),
-        "h200" => Ok(HardwareProfile::example_h200_sxm()),
-        "8xh100" => Ok(HardwareProfile::example_8xh100_nvlink()),
-        "cheap" => Ok(HardwareProfile::example_cheap_48gb()),
-        other => Err(format!("unknown profile {other}")),
+    if let Ok(p) = HardwareProfile::by_name(name) {
+        return Ok(p);
     }
+    let mut f = File::open(name).map_err(|e| {
+        format!(
+            "unknown profile {name} ({e}); known: {}",
+            HardwareProfile::example_names().join(", ")
+        )
+    })?;
+    let mut buf = String::new();
+    let _n = f
+        .read_to_string(&mut buf)
+        .map_err(|e| format!("{name}: {e}"))?;
+    HardwareProfile::parse(&buf).map_err(|e| e.to_string())
 }

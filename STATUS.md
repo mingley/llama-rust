@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — gpu-sim faults + topology matrix
+
+First-class semantic faults: GPU unavailable, stream cancel of queued
+ops, injected memcpy/expert-load failure, extra transfer delay. Named
+meshes: 1 GPU, 2× PCIe P2P, 8× NVLink, bad NUMA (far-root H2D), 2-node
+RDMA, asymmetric NVLink chain. `probe_topology` measures H2D per GPU and
+D2D per pair (`p2p=0->2:none` when the link is missing). CLI:
+`gpu-profile names|example|parse|probe`, `expertvm topology`,
+`infer-bench topology`. Dual score still has no `$/M tokens`. Ring
+`allreduce` requires a real peer path on every hop.
+
 ## Shipped 2026-08-29 — Q4_0 SIMD + oracle-owned f16
 
 Q4_0 row kernels (AVX2+FMA+F16C / NEON) on the f32 GEMV and GEMM path.
@@ -141,8 +152,10 @@ Local: `~/dev/llama-rust-perf`
 ## In progress
 
 PLAN.md Phase 0 leftover: a second real-model fixture when a Llama
-NORM-RoPE GGUF is on disk (NEOX Qwen capture already exists). Phase 3
-faults (GPU unavailable, cancel) without inventing `$/M tokens`.
+NORM-RoPE GGUF is on disk (NEOX Qwen capture already exists). No GGUF is
+in this workspace, so that checkbox stays open. CUDA-graph capture/replay
+is not in gpu-sim yet. Physical Phase 4 stays parked until a real MoE
+trace + sim hypothesis.
 
 ## Still needed (production / researcher bar)
 
@@ -166,11 +179,13 @@ cargo clippy --all-targets --all-features -- -D warnings
 ./target/release/gguf_gemv serve tiny-llama.gguf
 ./target/release/expertvm bench adversarial --capacity 2
 ./target/release/infer-bench trace tests/traces/cycling.jsonl --capacity 2
+./target/release/expertvm topology --bytes 1048576
+./target/release/gpu-profile probe bad-numa --bytes 1048576
 cargo run -p llama-rust --example session
 ```
 
 Next code change is PLAN Phase 0 leftover (Llama NORM real-model fixture
-when a GGUF is on disk). Do not add crates.io
+when a GGUF is on disk). CUDA graphs are still unmodeled. Do not add crates.io
 runtime deps. Do not start Metal-in-crate on Linux. Do not invent a
 `block_iq4_nl_4_4` dequant. Do not invent an arch. Do not list mixtral
 or qwen3vlmoe as an accepted arch. Do not invent `$/M tokens`.

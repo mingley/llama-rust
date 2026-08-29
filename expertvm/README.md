@@ -63,7 +63,10 @@ holds `gate` + `up` + `down` bytes.
 `sim_replay` runs a policy through gpu-sim: H2D on miss, grouped GEMM on
 acquire, stream-ordered free on eviction. Timing comes from a
 `HardwareProfile`, not from the policy. Planner helpers: `copy_forward`,
-`hot_keys`, `plan_window`.
+`hot_keys`, `plan_window`. `topology_suite` / `probe_topology` compare
+H2D and P2P costs across named meshes (PCIe P2P, NVLink, bad NUMA, RDMA,
+asymmetric). `SimulatedGpuStore` can inject GPU unavailable, copy-stream
+cancel, transfer delay, and next-H2D load failure.
 
 Decode identity: `Llama::expert_direct_store` + `KvCache::attach_expert_store`
 must bit-match the blob GEMV path. Shared experts stay on the blob.
@@ -78,6 +81,8 @@ expertvm bench    trace.jsonl --capacity 8 --profile h100
 expertvm bench    adversarial --tokens 64 --experts 16 --capacity 2 --profile cheap
 expertvm workload thrash --tokens 64 --experts 16 --capacity 2
 expertvm workload batch --tokens 32 --experts 16 --capacity 4
+expertvm topology --bytes 1048576
+gpu-profile probe 2xh100-pcie --bytes 1048576
 ```
 
 Traces are produced by `gguf_gemv trace`:

@@ -47,8 +47,12 @@ impl GpuProfile {
 pub enum LinkKind {
     /// Host ↔ GPU.
     Pcie,
-    /// GPU ↔ GPU.
+    /// GPU ↔ GPU over NVLink / NVSwitch.
     Nvlink,
+    /// GPU ↔ GPU over PCIe P2P (no NVLink).
+    PciePeer,
+    /// GPU ↔ GPU over node-to-node RDMA.
+    Rdma,
 }
 
 /// One bidirectional link. Concurrent copies share its bandwidth.
@@ -179,6 +183,121 @@ impl HardwareProfile {
         one_gpu_example("example-cheap-48gb", g, pcie_host(DeviceId(0)))
     }
 
+    /// Two H100s with host PCIe plus GPU↔GPU PCIe P2P (no NVLink). **Not a capture.**
+    #[must_use]
+    pub fn example_2xh100_pcie() -> Self {
+        Self {
+            name: "example-2xh100-pcie".into(),
+            gpus: vec![h100_gpu(DeviceId(0)), h100_gpu(DeviceId(1))],
+            links: vec![
+                pcie_host(DeviceId(0)),
+                pcie_host(DeviceId(1)),
+                pcie_peer(DeviceId(0), DeviceId(1)),
+            ],
+        }
+    }
+
+    /// Two H100s, GPU1 on a slow far-NUMA PCIe root. No GPU↔GPU link. **Not a capture.**
+    #[must_use]
+    pub fn example_bad_numa() -> Self {
+        Self {
+            name: "example-bad-numa".into(),
+            gpus: vec![h100_gpu(DeviceId(0)), h100_gpu(DeviceId(1))],
+            links: vec![pcie_host(DeviceId(0)), pcie_host_slow(DeviceId(1))],
+        }
+    }
+
+    /// Two nodes × one GPU, GPU-direct RDMA between them. **Not a capture.**
+    #[must_use]
+    pub fn example_2node_rdma() -> Self {
+        Self {
+            name: "example-2node-rdma".into(),
+            gpus: vec![h100_gpu(DeviceId(0)), h100_gpu(DeviceId(1))],
+            links: vec![
+                pcie_host(DeviceId(0)),
+                pcie_host(DeviceId(1)),
+                rdma_peer(DeviceId(0), DeviceId(1)),
+            ],
+        }
+    }
+
+    /// Three H100s with NVLink only on the chain 0–1–2 (no 0–2). **Not a capture.**
+    #[must_use]
+    pub fn example_asymmetric_links() -> Self {
+        let mut gpus = Vec::new();
+        let mut links = Vec::new();
+        for i in 0..3u16 {
+            let id = DeviceId(i);
+            gpus.push(h100_gpu(id));
+            links.push(pcie_host(id));
+        }
+        links.push(nvlink(DeviceId(0), DeviceId(1)));
+        links.push(nvlink(DeviceId(1), DeviceId(2)));
+        Self {
+            name: "example-asymmetric".into(),
+            gpus,
+            links,
+        }
+    }
+
+    /// Short names accepted by [`Self::by_name`] and the CLIs.
+    #[must_use]
+    pub fn example_names() -> &'static [&'static str] {
+        &[
+            "h100",
+            "h200",
+            "8xh100",
+            "cheap",
+            "2xh100-pcie",
+            "bad-numa",
+            "2node-rdma",
+            "asymmetric",
+        ]
+    }
+
+    /// Built-in example profile. Unknown names are [`SimError::Invalid`].
+    pub fn by_name(name: &str) -> Result<Self, SimError> {
+        match name {
+            "h100" | "example-h100-sxm" => Ok(Self::example_h100_sxm()),
+            "h200" | "example-h200-sxm" => Ok(Self::example_h200_sxm()),
+            "8xh100" | "example-8xh100-nvlink" => Ok(Self::example_8xh100_nvlink()),
+            "cheap" | "example-cheap-48gb" => Ok(Self::example_cheap_48gb()),
+            "2xh100-pcie" | "example-2xh100-pcie" => Ok(Self::example_2xh100_pcie()),
+            "bad-numa" | "example-bad-numa" => Ok(Self::example_bad_numa()),
+            "2node-rdma" | "example-2node-rdma" => Ok(Self::example_2node_rdma()),
+            "asymmetric" | "example-asymmetric" => Ok(Self::example_asymmetric_links()),
+            _ => Err(SimError::Invalid {
+                why: "unknown profile name",
+            }),
+        }
+    }
+
+    /// Lossy `key=value` dump (GPU0 rates + GPU count). Mesh shape is not round-tripped.
+    #[must_use]
+    pub fn to_profile_text(&self) -> String {
+        let Some(g0) = self.gpus.first() else {
+            return String::from("gpus=0\n");
+        };
+        format!(
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\n",
+            self.name,
+            self.gpus.len(),
+            g0.hbm_bytes,
+            g0.hbm_bps,
+            g0.fp16_flops,
+            self.host_bps(g0.id),
+            g0.copy_engines
+        )
+    }
+
+    fn host_bps(&self, gpu: DeviceId) -> u64 {
+        self.links
+            .iter()
+            .find(|l| l.kind == LinkKind::Pcie && l.connects(None, Some(gpu)))
+            .map(|l| l.bps)
+            .unwrap_or(0)
+    }
+
     /// Parse a `key=value` profile. Unknown keys are errors so captures cannot silently drop fields.
     pub fn parse(text: &str) -> Result<Self, SimError> {
         parse_profile(text)
@@ -250,6 +369,63 @@ fn nvlink(a: DeviceId, b: DeviceId) -> LinkProfile {
     }
 }
 
+fn pcie_peer(a: DeviceId, b: DeviceId) -> LinkProfile {
+    LinkProfile {
+        a: Some(a),
+        b: Some(b),
+        bps: 16u64.saturating_mul(1_000_000_000),
+        fixed_ns: 12_000,
+        ramp_bytes: 256 * 1024,
+        kind: LinkKind::PciePeer,
+    }
+}
+
+fn rdma_peer(a: DeviceId, b: DeviceId) -> LinkProfile {
+    LinkProfile {
+        a: Some(a),
+        b: Some(b),
+        bps: 25u64.saturating_mul(1_000_000_000),
+        fixed_ns: 25_000,
+        ramp_bytes: 512 * 1024,
+        kind: LinkKind::Rdma,
+    }
+}
+
+fn pcie_host_slow(gpu: DeviceId) -> LinkProfile {
+    LinkProfile {
+        a: None,
+        b: Some(gpu),
+        bps: 4u64.saturating_mul(1_000_000_000),
+        fixed_ns: 20_000,
+        ramp_bytes: 256 * 1024,
+        kind: LinkKind::Pcie,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MeshKind {
+    NvlinkClique,
+    PciePeer,
+    Rdma,
+    Isolated,
+    AsymmetricChain,
+    NumaBad,
+}
+
+fn parse_mesh(s: &str) -> Result<MeshKind, SimError> {
+    match s {
+        "nvlink" | "clique" => Ok(MeshKind::NvlinkClique),
+        "pcie" | "pcie-peer" => Ok(MeshKind::PciePeer),
+        "rdma" => Ok(MeshKind::Rdma),
+        "none" | "isolated" => Ok(MeshKind::Isolated),
+        "asymmetric" | "chain" => Ok(MeshKind::AsymmetricChain),
+        "numa-bad" | "bad-numa" => Ok(MeshKind::NumaBad),
+        _ => Err(SimError::Invalid {
+            why: "unknown topology",
+        }),
+    }
+}
+
 fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut name = String::from("parsed");
     let mut n_gpus: u16 = 1;
@@ -258,7 +434,10 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut fp16_flops = 989u64.saturating_mul(1_000_000_000_000);
     let mut pcie_bps = 32u64.saturating_mul(1_000_000_000);
     let mut nvlink_bps = 450u64.saturating_mul(1_000_000_000);
+    let mut pcie_far_bps = 4u64.saturating_mul(1_000_000_000);
     let mut copy_engines: u8 = 2;
+    let mut mesh = MeshKind::NvlinkClique;
+    let mut mesh_set = false;
     for raw in text.lines() {
         let line = raw.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -279,7 +458,12 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             "fp16_flops" => fp16_flops = parse_u64(v)?,
             "pcie_bps" => pcie_bps = parse_u64(v)?,
             "nvlink_bps" => nvlink_bps = parse_u64(v)?,
+            "pcie_far_bps" => pcie_far_bps = parse_u64(v)?,
             "copy_engines" => copy_engines = parse_u8(v)?,
+            "topology" => {
+                mesh = parse_mesh(v)?;
+                mesh_set = true;
+            }
             _ => {
                 return Err(SimError::Invalid {
                     why: "unknown profile key",
@@ -292,6 +476,9 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             why: "gpus must be > 0",
         });
     }
+    if !mesh_set && n_gpus == 1 {
+        mesh = MeshKind::Isolated;
+    }
     let mut gpus = Vec::new();
     let mut links = Vec::new();
     for i in 0..n_gpus {
@@ -302,30 +489,102 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         g.fp16_flops = fp16_flops;
         g.copy_engines = copy_engines;
         gpus.push(g);
+        let far = mesh == MeshKind::NumaBad && i == 1;
         links.push(LinkProfile {
             a: None,
             b: Some(id),
-            bps: pcie_bps,
-            fixed_ns: 8_000,
+            bps: if far { pcie_far_bps } else { pcie_bps },
+            fixed_ns: if far { 20_000 } else { 8_000 },
             ramp_bytes: 256 * 1024,
             kind: LinkKind::Pcie,
         });
     }
-    if n_gpus > 1 {
-        for i in 0..n_gpus {
-            for j in (i + 1)..n_gpus {
-                links.push(LinkProfile {
-                    a: Some(DeviceId(i)),
-                    b: Some(DeviceId(j)),
-                    bps: nvlink_bps,
-                    fixed_ns: 2_000,
-                    ramp_bytes: 64 * 1024,
-                    kind: LinkKind::Nvlink,
+    push_gpu_mesh(&mut links, n_gpus, mesh, nvlink_bps)?;
+    Ok(HardwareProfile { name, gpus, links })
+}
+
+fn push_gpu_mesh(
+    links: &mut Vec<LinkProfile>,
+    n_gpus: u16,
+    mesh: MeshKind,
+    nvlink_bps: u64,
+) -> Result<(), SimError> {
+    match mesh {
+        MeshKind::Isolated | MeshKind::NumaBad => {
+            if mesh == MeshKind::NumaBad && n_gpus != 2 {
+                return Err(SimError::Invalid {
+                    why: "numa-bad topology needs 2 gpus",
                 });
             }
+            Ok(())
+        }
+        MeshKind::NvlinkClique => {
+            clique_links(
+                links,
+                n_gpus,
+                nvlink_bps,
+                2_000,
+                64 * 1024,
+                LinkKind::Nvlink,
+            );
+            Ok(())
+        }
+        MeshKind::PciePeer => {
+            clique_links(
+                links,
+                n_gpus,
+                16u64.saturating_mul(1_000_000_000),
+                12_000,
+                256 * 1024,
+                LinkKind::PciePeer,
+            );
+            Ok(())
+        }
+        MeshKind::Rdma => {
+            clique_links(
+                links,
+                n_gpus,
+                25u64.saturating_mul(1_000_000_000),
+                25_000,
+                512 * 1024,
+                LinkKind::Rdma,
+            );
+            Ok(())
+        }
+        MeshKind::AsymmetricChain => {
+            if n_gpus < 3 {
+                return Err(SimError::Invalid {
+                    why: "asymmetric topology needs >= 3 gpus",
+                });
+            }
+            for i in 0..n_gpus.saturating_sub(1) {
+                links.push(nvlink(DeviceId(i), DeviceId(i.saturating_add(1))));
+            }
+            Ok(())
         }
     }
-    Ok(HardwareProfile { name, gpus, links })
+}
+
+fn clique_links(
+    links: &mut Vec<LinkProfile>,
+    n_gpus: u16,
+    bps: u64,
+    fixed_ns: u64,
+    ramp_bytes: u64,
+    kind: LinkKind,
+) {
+    for i in 0..n_gpus {
+        for j in (i.saturating_add(1))..n_gpus {
+            links.push(LinkProfile {
+                a: Some(DeviceId(i)),
+                b: Some(DeviceId(j)),
+                bps,
+                fixed_ns,
+                ramp_bytes,
+                kind,
+            });
+        }
+    }
 }
 
 fn parse_u64(s: &str) -> Result<u64, SimError> {
@@ -360,5 +619,22 @@ mod tests {
         let p = HardwareProfile::parse("name=lab\ngpus=2\nhbm_bytes=1024\n").unwrap();
         assert_eq!(p.name, "lab");
         assert_eq!(p.n_gpus(), 2);
+        assert!(p.link(Some(DeviceId(0)), Some(DeviceId(1))).is_ok());
+    }
+
+    #[test]
+    fn parse_asymmetric_omits_02() {
+        let p = HardwareProfile::parse("name=line\ngpus=3\ntopology=asymmetric\n").unwrap();
+        assert!(p.link(Some(DeviceId(0)), Some(DeviceId(1))).is_ok());
+        assert!(p.link(Some(DeviceId(0)), Some(DeviceId(2))).is_err());
+    }
+
+    #[test]
+    fn by_name_covers_every_example() {
+        for name in HardwareProfile::example_names() {
+            let p = HardwareProfile::by_name(name).unwrap();
+            assert!(!p.name.is_empty());
+            assert!(p.n_gpus() >= 1);
+        }
     }
 }
