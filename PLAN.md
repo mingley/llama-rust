@@ -814,6 +814,12 @@ model, do not celebrate the sim.
     a no-op; 1-GPU profiles skip). `StoreMetrics::migrates` counts src≠dst
     moves. Greedy ids still match the blob Engine. Dual score still has no
     `$/M tokens`.
+29. [x] Engine `plan_placement`: after `pin_hot`, a multi-GPU SimulatedGpuStore
+    D2Ds pinned experts onto GPU0 only when expert bytes beat
+    `DECODE_ACTIVATION_BYTES * fan_in * reuse` on the GPU0↔GPU1 hop
+    (online reuse, no future leak). Otherwise weights stay on the striped
+    home (`StoreMetrics::dispatches`). `migrate` itself stays unconditional.
+    Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

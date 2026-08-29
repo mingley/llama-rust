@@ -189,6 +189,9 @@ pub enum Placement {
     DispatchActivations,
 }
 
+/// Decode-shaped activation payload: hidden=64 × fp16. [`plan_placement`] input.
+pub const DECODE_ACTIVATION_BYTES: u64 = 128;
+
 /// Volume-crossover: move once vs dispatch `reuse * fan_in` activation payloads.
 ///
 /// `link_bps` is the hop that would carry either transfer (PCIe, NVLink, RDMA).

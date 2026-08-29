@@ -1932,6 +1932,9 @@ fn live_store_dispatches() {
     assert!(live.is_pinned(k));
     live.release(k);
     assert!(live.is_pinned(k));
+    live.place_hot(k, 1, 2);
+    assert_eq!(live.metrics().dispatches, 0);
+    assert_eq!(live.metrics().migrates, 0);
     assert!(live.score().expect("score").is_none());
 }
 
@@ -1976,6 +1979,73 @@ fn migrate_single_gpu_is_no_peer() {
     let _p = gpu.acquire(k0).expect("acq");
     let err = gpu.migrate(k0, DeviceId(1)).unwrap_err();
     assert!(err.to_string().contains("no peer"), "{err}");
+}
+
+#[test]
+fn place_hot_dispatches_when_activations_are_cheaper() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[1])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::new(inner, 1, HardwareProfile::example_2node_rdma(), 4096).expect("gpu");
+    let k = ExpertKey::new(0, 1);
+    let _p = gpu.acquire(k).expect("acq");
+    gpu.pin_hot(&[k]).expect("pin");
+    assert_eq!(gpu.device_of(k), Some(DeviceId(1)));
+    gpu.place_hot(k, 1, 2);
+    assert_eq!(gpu.metrics().dispatches, 1);
+    assert_eq!(gpu.metrics().migrates, 0);
+    assert_eq!(gpu.device_of(k), Some(DeviceId(1)));
+}
+
+#[test]
+fn place_hot_migrates_when_weights_are_cheaper() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[1])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::new(inner, 1, HardwareProfile::example_2node_rdma(), 64).expect("gpu");
+    let k = ExpertKey::new(0, 1);
+    let _p = gpu.acquire(k).expect("acq");
+    gpu.pin_hot(&[k]).expect("pin");
+    gpu.place_hot(k, 1, 2);
+    assert_eq!(gpu.metrics().migrates, 1);
+    assert_eq!(gpu.metrics().dispatches, 0);
+    assert_eq!(gpu.device_of(k), Some(DeviceId(0)));
+}
+
+#[test]
+fn place_hot_migrates_when_reuse_crosses_over() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[1])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::new(inner, 1, HardwareProfile::example_2node_rdma(), 4096).expect("gpu");
+    let k = ExpertKey::new(0, 1);
+    let _p = gpu.acquire(k).expect("acq");
+    gpu.pin_hot(&[k]).expect("pin");
+    gpu.place_hot(k, 16, 2);
+    assert_eq!(gpu.metrics().migrates, 1);
+    assert_eq!(gpu.metrics().dispatches, 0);
+    assert_eq!(gpu.device_of(k), Some(DeviceId(0)));
+}
+
+#[test]
+fn place_hot_single_gpu_is_noop() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::new(inner, 1, HardwareProfile::example_h100_sxm(), 64).expect("gpu");
+    let k = ExpertKey::new(0, 0);
+    let _p = gpu.acquire(k).expect("acq");
+    gpu.place_hot(k, 1, 2);
+    assert_eq!(gpu.metrics().dispatches, 0);
+    assert_eq!(gpu.metrics().migrates, 0);
 }
 
 #[test]

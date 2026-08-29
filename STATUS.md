@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine plan_placement (move vs dispatch)
+
+After each GEMM, Engine sticky-pins last-used ∪ Markov experts and then
+asks `plan_placement` whether those pins should D2D onto GPU0
+(`MoveWeights`) or stay on the striped home (`DispatchActivations`).
+The crossover is `DECODE_ACTIVATION_BYTES * fan_in * reuse` on the
+GPU0↔GPU1 hop. `reuse` is how many GEMMs have keep-hot'd that key so
+far (online, no JSONL future leak). `fan_in` is the last router event's
+expert count. `SimulatedGpuStore::migrate` stays unconditional.
+`StoreMetrics::dispatches` counts the leave-in-place choice. Writer-tiny
+Qwen3MoE greedy ids still match the blob Engine. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — batched router GEMM + Engine pin_hot
 
 `ffn_gate_inp` is one GEMM of every token in the layer, then per-row
@@ -18,9 +31,9 @@ tight cache can still demand-page). SimulatedGpuStore `pin_hot` still
 NVLink-replicates. `StoreMetrics::pins` counts sticky inserts.
 After the router GEMM, unique experts that fit in `slots` prefetch
 before the grouped expert GEMM (H2D can start before compute on
-SimulatedGpuStore). A multi-GPU SimulatedGpuStore then D2Ds pinned
-experts onto GPU0 (`StoreMetrics::migrates`). Dual score still has no
-`$/M tokens`.
+SimulatedGpuStore). A multi-GPU SimulatedGpuStore then
+`plan_placement`s pinned experts (`StoreMetrics::migrates` /
+`dispatches`). Dual score still has no `$/M tokens`.
 
 ## Shipped 2026-08-29 — grouped expert GEMM
 

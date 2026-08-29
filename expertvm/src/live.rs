@@ -142,6 +142,35 @@ impl LiveStore {
         }
     }
 
+    /// Payload bytes billed per expert page. CPU stores are 0.
+    #[must_use]
+    pub fn expert_bytes(&self) -> u64 {
+        match self {
+            Self::Simulated(s) => s.expert_bytes(),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => 0,
+        }
+    }
+
+    /// GPU0↔GPU1 link bandwidth. CPU stores are 0.
+    #[must_use]
+    pub fn peer_bps(&self) -> u64 {
+        match self {
+            Self::Simulated(s) => s.peer_bps(),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => 0,
+        }
+    }
+
+    /// Move pinned weights onto GPU0, or leave them on the striped home.
+    ///
+    /// [`crate::plan_placement`] on the GPU0↔GPU1 hop. CPU stores and 1-GPU
+    /// profiles are no-ops. [`Self::migrate`] stays unconditional.
+    pub fn place_hot(&mut self, key: ExpertKey, reuse: u64, fan_in: u64) {
+        match self {
+            Self::Simulated(s) => s.place_hot(key, reuse, fan_in),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => {}
+        }
+    }
+
     /// Simulated performance vector, if this is a GPU store.
     pub fn score(&mut self) -> Result<Option<gpu_sim::Score>, Error> {
         match self {

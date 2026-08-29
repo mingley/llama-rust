@@ -834,6 +834,12 @@ impl PrefetchChain {
         }
         out
     }
+
+    /// Selected-expert count of the last parked router event (`1` if none).
+    pub(crate) fn last_fan_in(&self) -> u64 {
+        let n = self.prev.as_ref().map_or(0, |e| e.experts.len());
+        u64::try_from(n).unwrap_or(1).max(1)
+    }
 }
 
 impl KvCache {

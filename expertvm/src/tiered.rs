@@ -357,6 +357,7 @@ impl ExpertStore for TieredStore {
             bytes_moved: self.bytes_moved,
             pins: self.pins,
             migrates: 0,
+            dispatches: 0,
         }
     }
 }

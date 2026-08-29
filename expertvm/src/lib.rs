@@ -39,14 +39,14 @@ pub use place::{colocated, home_gpu, striped, with_hot_replicas, PlaceMap};
 pub use planner::{
     copy_forward, hot_keys, observe_chain, plan_keys, plan_placement, plan_window, predicted_keys,
     prefetch_keys, prefetch_keys_ctx, transition_pair, window_keys, Markov, Placement, Plan,
-    Prefetch,
+    Prefetch, DECODE_ACTIVATION_BYTES,
 };
 pub use policy::Policy;
 pub use replay::{compare, format_table, replay, ReplayRow};
 pub use schedule::{schedule_placed, schedule_remote, schedule_replay, SchedCfg, SchedReplay};
 pub use sim_replay::{
     compare_ep, sim_placed, sim_remote_home, sim_remote_home_cfg, sim_replay, sim_replay_cfg,
-    sim_static_ep, EpCompare, SimCfg, SimReplay, DECODE_ACTIVATION_BYTES,
+    sim_static_ep, EpCompare, SimCfg, SimReplay,
 };
 pub use store::{
     replay_accesses, CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics,

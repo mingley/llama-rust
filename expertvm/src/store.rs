@@ -77,6 +77,9 @@ pub struct StoreMetrics {
     pub pins: u64,
     /// D2D [`crate::SimulatedGpuStore::migrate`] moves (src ≠ dst); 0 for CPU stores.
     pub migrates: u64,
+    /// [`crate::plan_placement`] chose [`crate::Placement::DispatchActivations`]
+    /// (leave weights on the striped home); 0 for CPU stores.
+    pub dispatches: u64,
 }
 
 impl StoreMetrics {
@@ -84,14 +87,15 @@ impl StoreMetrics {
     #[must_use]
     pub fn line(&self) -> String {
         format!(
-            "hits={} misses={} evicts={} prefetches={} bytes_moved={} pins={} migrates={}",
+            "hits={} misses={} evicts={} prefetches={} bytes_moved={} pins={} migrates={} dispatches={}",
             self.hits,
             self.misses,
             self.evicts,
             self.prefetches,
             self.bytes_moved,
             self.pins,
-            self.migrates
+            self.migrates,
+            self.dispatches
         )
     }
 }
@@ -418,6 +422,7 @@ impl ExpertStore for CachedStore {
             bytes_moved: 0,
             pins: self.pins,
             migrates: 0,
+            dispatches: 0,
         }
     }
 }

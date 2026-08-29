@@ -1053,8 +1053,7 @@ fn kernel(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Er
     Ok(())
 }
 
-/// Decode-shaped activation payload used by [`sim_remote_home`] (hidden=64 fp16).
-pub const DECODE_ACTIVATION_BYTES: u64 = 128;
+pub(crate) use crate::planner::DECODE_ACTIVATION_BYTES;
 
 /// Place each expert per `map` (home H2D, replica D2D). HBM is the only cap.
 pub fn sim_placed(

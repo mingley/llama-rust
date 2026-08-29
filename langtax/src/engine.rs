@@ -13,14 +13,16 @@
 //! events from those GEMMs (not a sequential fallback). After each GEMM the
 //! parked store sticky-pins last-used ∪ Markov experts (`slots.saturating_sub(1)`;
 //! `slots == 1` pins nothing so demand paging can evict). Multi-GPU SimulatedGpuStore
-//! then migrates those pins onto GPU0. A full pool **preempts** another
-//! sequence (unique blocks drop; intern pins remain) and later re-prefills
+//! then runs [`plan_placement`](expertvm::plan_placement) on those pins: D2D onto GPU0
+//! when weight bytes beat activation volume, otherwise leave them on the striped home.
+//! A full pool **preempts** another sequence (unique blocks drop; intern pins remain)
+//! and later re-prefills
 //! plus replays already sampled greedy tokens. Greedy ids must match
 //! [`crate::greedy_generate_cache`]. Not an HTTP server.
 
 use crate::decode::{KvCache, Llama, LlamaError, PagedKvPool, PrefetchChain};
 use crate::sample::argmax;
-use expertvm::{DeviceId, ExpertStore, LiveStore, Score, StoreMetrics, Trace};
+use expertvm::{ExpertKey, ExpertStore, LiveStore, Score, StoreMetrics, Trace};
 use std::collections::{BTreeMap, VecDeque};
 
 /// Handle for one sequence on an [`Engine`].
@@ -136,8 +138,11 @@ pub struct EngineStats {
 /// [`Engine::enable_moe_trace`] records router events per [`SeqId`].
 /// After each GEMM, [`LiveStore::pin_hot`] keeps last-used ∪ predicted experts
 /// resident (`pin_budget` = `slots - 1`) without blocking demand paging.
-/// A multi-GPU [`LiveStore::Simulated`] then [`LiveStore::migrate`]s those
-/// pins onto GPU0 (no-op when already home; 1-GPU profiles skip).
+/// A multi-GPU [`LiveStore::Simulated`] then calls [`LiveStore::place_hot`] on
+/// those pins: [`expertvm::plan_placement`] D2Ds onto GPU0 when expert bytes beat
+/// [`expertvm::DECODE_ACTIVATION_BYTES`] times fan-in times reuse, else activations
+/// stay on the striped home (`StoreMetrics::dispatches`). [`LiveStore::migrate`]
+/// stays unconditional. 1-GPU profiles skip.
 pub struct Engine<'a> {
     llama: &'a Llama,
     pool: PagedKvPool,
@@ -151,6 +156,8 @@ pub struct Engine<'a> {
     stats: EngineStats,
     expert_store: Option<LiveStore>,
     prefetch: PrefetchChain,
+    /// Online keep-hot counts per key (no JSONL future leak).
+    hot_reuse: BTreeMap<ExpertKey, u64>,
     trace: bool,
 }
 
@@ -174,6 +181,7 @@ impl<'a> Engine<'a> {
             stats: EngineStats::default(),
             expert_store: None,
             prefetch: PrefetchChain::default(),
+            hot_reuse: BTreeMap::new(),
             trace: false,
         })
     }
@@ -287,11 +295,13 @@ impl<'a> Engine<'a> {
     pub fn attach_expert_store(&mut self, store: LiveStore) {
         self.reclaim_parked_stores();
         self.expert_store = Some(store);
+        self.hot_reuse.clear();
     }
 
     /// Remove the attached store, including one parked on a live cache.
     pub fn take_expert_store(&mut self) -> Option<LiveStore> {
         self.reclaim_parked_stores();
+        self.hot_reuse.clear();
         self.expert_store.take()
     }
 
@@ -410,7 +420,7 @@ impl<'a> Engine<'a> {
         out
     }
 
-    /// Sticky-pin last-used ∪ Markov keys. Leave one cache slot for the next miss.
+    /// Sticky-pin last-used ∪ Markov keys, then place them (move vs dispatch).
     fn pin_predicted(&mut self) {
         let budget = match self.expert_store.as_ref() {
             Some(s) => s.pin_budget(),
@@ -419,24 +429,37 @@ impl<'a> Engine<'a> {
         if budget == 0 {
             return;
         }
+        let fan_in = self.prefetch.last_fan_in();
         let keys = self.prefetch.keep_hot_keys();
-        let Some(store) = self.expert_store.as_mut() else {
-            return;
-        };
-        store.unpin_all();
-        let mut n = 0usize;
-        for key in keys {
-            if n >= budget {
-                break;
-            }
-            if let Ok(()) = store.pin_hot(&[key]) {
-                if store.is_pinned(key) {
-                    n = n.saturating_add(1);
-                    if store.n_gpus() >= 2 {
-                        let _moved = store.migrate(key, DeviceId(0));
+        let pinned = {
+            let Some(store) = self.expert_store.as_mut() else {
+                return;
+            };
+            store.unpin_all();
+            let mut pinned = Vec::new();
+            for key in keys {
+                if pinned.len() >= budget {
+                    break;
+                }
+                if let Ok(()) = store.pin_hot(&[key]) {
+                    if store.is_pinned(key) {
+                        pinned.push(key);
                     }
                 }
             }
+            pinned
+        };
+        let mut jobs = Vec::new();
+        for key in pinned {
+            let slot = self.hot_reuse.entry(key).or_insert(0);
+            *slot = slot.saturating_add(1);
+            jobs.push((key, *slot));
+        }
+        let Some(store) = self.expert_store.as_mut() else {
+            return;
+        };
+        for (key, reuse) in jobs {
+            store.place_hot(key, reuse, fan_in);
         }
     }
 
@@ -1296,7 +1319,7 @@ mod tests {
     }
 
     #[test]
-    fn engine_simulated_gpu_store_migrates_pinned_experts_to_gpu0() {
+    fn engine_simulated_gpu_store_dispatches_large_experts() {
         use expertvm::{HardwareProfile, SimulatedGpuStore};
         let tokens_a = [1u32, 2, 3, 4];
         let tokens_b = [5u32, 0, 5, 0];
@@ -1324,13 +1347,58 @@ mod tests {
         assert_eq!(eng.take(b).expect("tb").generated, exp_b);
         assert!(
             eng.stats().gemm_peak >= 8,
+            "dispatch must not force serial GEMM, peak={}",
+            eng.stats().gemm_peak
+        );
+        let m = eng.expert_store_metrics().expect("metrics");
+        assert!(
+            m.dispatches > 0,
+            "4096-byte experts beat a short reuse window, {m:?}"
+        );
+        assert_eq!(
+            m.migrates, 0,
+            "short Engine run must not D2D 4096-byte experts, {m:?}"
+        );
+        let score = eng.expert_store_score().expect("sc").expect("sim");
+        assert!(score.wall_ns > 0, "virtual clock must advance");
+    }
+
+    #[test]
+    fn engine_simulated_gpu_store_moves_tiny_experts_to_gpu0() {
+        use expertvm::{HardwareProfile, SimulatedGpuStore};
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        let g = load_gguf_owned(tiny_qwen3moe_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let exp_a = independent(&model, &tok, &tokens_a, 2);
+        let exp_b = independent(&model, &tok, &tokens_b, 2);
+        let n = model.expert_direct_store().expect("n").len().max(2);
+        let mut cfg = EngineCfg::tiny();
+        cfg.eos = tok.eos;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        let gpu = SimulatedGpuStore::new(
+            model.expert_direct_store().expect("c"),
+            n,
+            HardwareProfile::example_8xh100_nvlink(),
+            64,
+        )
+        .expect("gpu");
+        eng.attach_expert_store(LiveStore::simulated(gpu));
+        let a = eng.add(&tokens_a, 2).expect("a");
+        let b = eng.add(&tokens_b, 2).expect("b");
+        eng.run().expect("run");
+        assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+        assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+        assert!(
+            eng.stats().gemm_peak >= 8,
             "migrate must not force serial GEMM, peak={}",
             eng.stats().gemm_peak
         );
         let m = eng.expert_store_metrics().expect("metrics");
         assert!(
             m.migrates > 0,
-            "Engine must D2D striped-home pins onto GPU0, {m:?}"
+            "tiny experts must D2D striped-home pins onto GPU0, {m:?}"
         );
         let score = eng.expert_store_score().expect("sc").expect("sim");
         assert!(score.wall_ns > 0, "virtual clock must advance");

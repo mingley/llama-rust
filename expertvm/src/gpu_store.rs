@@ -4,7 +4,8 @@ use crate::access::{ExpertAccess, ExpertKey, Trace};
 use crate::error::Error;
 use crate::place::home_gpu;
 use crate::planner::{
-    observe_chain, plan_window, predicted_keys, window_keys, Markov, Plan, Prefetch,
+    observe_chain, plan_placement, plan_window, predicted_keys, window_keys, Markov, Placement,
+    Plan, Prefetch, DECODE_ACTIVATION_BYTES,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -137,6 +138,8 @@ pub struct SimulatedGpuStore {
     accessed_by: bool,
     /// Successful D2D [`Self::migrate`] calls (source device ≠ dest).
     migrates: u64,
+    /// [`plan_placement`] chose [`Placement::DispatchActivations`] (no D2D).
+    dispatches: u64,
 }
 
 impl SimulatedGpuStore {
@@ -282,6 +285,7 @@ impl SimulatedGpuStore {
             pageable: cfg.pageable,
             accessed_by: cfg.accessed_by,
             migrates: 0,
+            dispatches: 0,
         })
     }
 
@@ -433,6 +437,45 @@ impl SimulatedGpuStore {
         }
         self.note_migrate();
         Ok(())
+    }
+
+    /// GPU0↔GPU1 link bandwidth, or a 32 GB/s PCIe-order fallback.
+    #[must_use]
+    pub fn peer_bps(&self) -> u64 {
+        self.sim
+            .profile()
+            .link(Some(DeviceId(0)), Some(DeviceId(1)))
+            .map_or(32_000_000_000, |l| l.bps)
+    }
+
+    /// Payload bytes billed per expert page.
+    #[must_use]
+    pub fn expert_bytes(&self) -> u64 {
+        self.bytes_per_expert
+    }
+
+    /// [`plan_placement`] on the GPU0↔GPU1 hop: D2D weights onto GPU0, or count a dispatch.
+    ///
+    /// 1-GPU profiles skip. [`Self::migrate`] stays unconditional. `reuse` is
+    /// how many times this key has been selected for keep-hot so far (online).
+    pub fn place_hot(&mut self, key: ExpertKey, reuse: u64, fan_in: u64) {
+        if self.sim.profile().n_gpus() < 2 {
+            return;
+        }
+        match plan_placement(
+            self.bytes_per_expert,
+            DECODE_ACTIVATION_BYTES,
+            fan_in,
+            reuse,
+            self.peer_bps(),
+        ) {
+            Placement::MoveWeights => {
+                let _moved = self.migrate(key, DeviceId(0));
+            }
+            Placement::DispatchActivations => {
+                self.dispatches = self.dispatches.saturating_add(1);
+            }
+        }
     }
 
     fn note_migrate(&mut self) {
@@ -1020,6 +1063,7 @@ impl ExpertStore for SimulatedGpuStore {
         let mut m = self.cache.metrics();
         m.bytes_moved = self.sim.bytes_moved();
         m.migrates = self.migrates;
+        m.dispatches = self.dispatches;
         m
     }
 }
