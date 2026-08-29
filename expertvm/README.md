@@ -36,6 +36,9 @@ llama-rust routers  →  ExpertAccess JSONL
                    expertvm sim         gpu-sim wall; --prefetch markov
                          │
                          ▼
+                   expertvm schedule    open-loop batching; --interarrival-ns
+                         │
+                         ▼
                    expertvm bench       replay table + sim score
                          │
                          ▼
@@ -80,8 +83,14 @@ iteration at a token (`0` = the whole token) and still samples TTFT once.
 that stream and replays them (`graph_launch_ns` once per launch). `--plan-window
 N` runs [`plan_window`](crate::plan_window) Stay vs Fetch before prefetch (Stay
 does not evict a resident working set). Replay reports `prefetch_hits` /
-`prefetch_waste`. Planner helpers: `copy_forward`,
-`hot_keys`, `plan_window`, `plan_placement` (move weights vs dispatch
+`prefetch_waste`. `schedule_replay` / `expertvm schedule` is open-loop
+continuous batching: sequences arrive at `sequence * interarrival_ns`,
+FCFS into a running set of `--max-batch` (`0` = unlimited), one next
+token (layer-major) per engine step, finished sequences retire,
+[`gpu_sim::Sim::idle_until`] waits for the next arrival. TTFT is from
+arrival; `--ttft-slo-ns` / `--itl-slo-ns` count misses. The cache walker
+is demand paging (no JSONL future leak). Planner helpers: `copy_forward`,
+`hot_keys`, `plan_keys`, `plan_window`, `plan_placement` (move weights vs dispatch
 activations), `Markov` / `Prefetch` (lookback-2 `P(to|from, from_prev)` with
 order-1 backoff). `colocated` keeps co-fired experts
 on one GPU; `with_hot_replicas` copies hot keys to a second GPU.
@@ -114,6 +123,7 @@ expertvm sim      trace.jsonl --capacity 8 --expert-bytes 188743680 --profile h1
 expertvm sim      trace.jsonl --capacity 8 --profile h100 --prefetch markov --seq-streams
 expertvm sim      trace.jsonl --capacity 8 --prefetch copy-forward --plan-window 8 --cuda-graphs
 expertvm sim      trace.jsonl --capacity 8 --seq-streams --max-batch 2
+expertvm schedule trace.jsonl --capacity 8 --max-batch 2 --interarrival-ns 1000000 --ttft-slo-ns 20000000
 expertvm place    trace.jsonl --gpus 8 --hot-pt 200
 expertvm bench    trace.jsonl --capacity 8 --profile h100
 expertvm bench    adversarial --tokens 64 --experts 16 --capacity 2 --profile cheap

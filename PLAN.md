@@ -100,7 +100,7 @@ layer actually requires a dep.
 | — | `gpu-sim-rs` | deterministic GPU-systems VM for agents without GPUs | **the CI environment**; first killer app is expertvm |
 | 2 | `kv-fabric` | distributed KV/state memory fabric | after expertvm has a result; do not beat Mooncake first |
 | 3 | `moe-runtime` | sparse MoE execution (grouped GEMM, router+dispatch) | *not* the first repo; expertvm is narrower |
-| 4 | `infer-scheduler` | continuous batching + SLO scheduling, engine-independent | hard to get vLLM/SGLang to outsource; later |
+| 4 | `infer-scheduler` | continuous batching + SLO scheduling, engine-independent | hard to get vLLM/SGLang to outsource; **trace-level slice** is `expertvm schedule` |
 | 5 | `quant-rs` | hardware-aware mixed quantization under quality/$ constraints | later |
 | 6 | `attention-rs` | hybrid attention vocabulary (MHA/GQA/MLA/DSA/KDA/GDN, prefill ≠ decode) | later |
 | 7 | `speculate-rs` | reusable speculative decoding | later |
@@ -481,6 +481,13 @@ Transferring/Cold/Evicting is refused. `Operation` timestamps make
 is CUDA stream priority (higher starts first when compute contends).
 `sim_replay` `--max-batch N` is a trace-level admission cap (N sequences
 per engine iteration at a token; `0` admits the whole token).
+`expertvm schedule` is open-loop continuous batching: sequences arrive at
+`sequence * interarrival_ns`, FCFS into a running set of size `max_batch`,
+one next token (layer-major) per engine step, finished sequences leave,
+`Sim::idle_until` jumps the virtual clock when the GPU would wait.
+TTFT is first-token end minus arrival. Optional `--ttft-slo-ns` /
+`--itl-slo-ns` count misses. Cache order is demand paging (no JSONL future
+leak). This is not a 500k-line vLLM engine.
 
 Agents may aggressively optimize policies. Illegal GPU states are
 impossible or immediately fatal.
@@ -523,7 +530,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `sim_replay` / `SimulatedGpuStore` capture repeated expert GEMMs
   (`expertvm sim --cuda-graphs`). Capture after a miss waits with
   `synchronize_stream` so the compute stream is idle (CUDA). `--max-batch N`
-  admits N sequences per engine iteration. `plan_window` Stay vs Fetch gates prefetch
+  admits N sequences per engine iteration. `expertvm schedule` is the
+  open-loop running set (arrivals, retire, SLO misses, `idle_until`).
+  `plan_window` Stay vs Fetch gates prefetch
   in the GPU loop (`--plan-window N`). `prefetch_hits` / `prefetch_waste`
   measure whether those fills were used. `memset`, directed peer enable, and
   the legacy null stream are mechanical CUDA invariants.

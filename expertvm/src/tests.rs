@@ -5,8 +5,12 @@ use gpu_sim::{DeviceId, HardwareProfile};
 use std::collections::BTreeSet;
 
 fn ev(token: u32, layer: u32, experts: &[u32]) -> ExpertAccess {
+    ev_seq(0, token, layer, experts)
+}
+
+fn ev_seq(seq: u64, token: u32, layer: u32, experts: &[u32]) -> ExpertAccess {
     ExpertAccess {
-        sequence: 0,
+        sequence: seq,
         token,
         layer,
         experts: experts.to_vec(),
@@ -512,6 +516,131 @@ fn max_batch_serializes_sequences_at_a_token() {
         one.sim_ns,
         all.sim_ns
     );
+}
+
+#[test]
+fn demand_oracle_cannot_beat_belady() {
+    let t = cycling_trace();
+    let full = replay(&t, 2, Policy::Oracle, 0);
+    let mut w = crate::replay::Walker::demand(2, Policy::Oracle, 0);
+    let mut hits = 0u64;
+    for k in t.keys() {
+        if matches!(w.demand_touch(k), crate::replay::Touch::Hit) {
+            hits = hits.saturating_add(1);
+        }
+    }
+    assert!(
+        hits <= full.hits,
+        "online oracle hits={hits} belady={}",
+        full.hits
+    );
+}
+
+#[test]
+fn schedule_closed_loop_matches_sim_replay_hits() {
+    let t = Trace {
+        events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],
+    };
+    let p = HardwareProfile::parse("gpus=1\ncopy_engines=1\n").expect("profile");
+    let cfg = SimCfg::lru(2, 4096, 0);
+    let sim = sim_replay_cfg(&t, p.clone(), cfg).expect("sim");
+    let sched = schedule_replay(&t, p, cfg, SchedCfg::closed(0)).expect("sched");
+    assert_eq!(sched.replay.hits, sim.hits);
+    assert_eq!(sched.replay.misses, sim.misses);
+    assert_eq!(sched.completed, 2);
+}
+
+#[test]
+fn schedule_open_loop_idles_until_arrival() {
+    let t = Trace {
+        events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],
+    };
+    let p = HardwareProfile::parse("gpus=1\ncopy_engines=1\n").expect("profile");
+    let gap = 50_000_000u64;
+    let row = schedule_replay(
+        &t,
+        p,
+        SimCfg::lru(2, 4096, 0),
+        SchedCfg {
+            max_batch: 1,
+            interarrival_ns: gap,
+            ttft_slo_ns: None,
+            itl_slo_ns: None,
+        },
+    )
+    .expect("sched");
+    assert!(
+        row.replay.sim_ns >= gap,
+        "wall={} gap={gap}",
+        row.replay.sim_ns
+    );
+    assert!(row.idle_ns > 0);
+    let ttft = row.replay.ttft_ns.expect("ttft");
+    assert!(
+        ttft < gap / 2,
+        "TTFT must be from arrival, not t=0; ttft={ttft} gap={gap}"
+    );
+    assert_eq!(row.completed, 2);
+}
+
+#[test]
+fn schedule_max_batch_serializes_running_set() {
+    let t = Trace {
+        events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],
+    };
+    let p = HardwareProfile::parse("gpus=1\ncopy_engines=1\n").expect("profile");
+    let cfg = SimCfg {
+        seq_streams: true,
+        bytes_per_expert: 32u64 << 20,
+        ..SimCfg::lru(2, 32u64 << 20, 0)
+    };
+    let all = schedule_replay(&t, p.clone(), cfg, SchedCfg::closed(0)).expect("all");
+    let one = schedule_replay(&t, p, cfg, SchedCfg::closed(1)).expect("one");
+    assert_eq!(all.replay.hits, one.replay.hits);
+    assert!(
+        one.replay.sim_ns > all.replay.sim_ns,
+        "max_batch=1 must run sequences one at a time; one={} all={}",
+        one.replay.sim_ns,
+        all.replay.sim_ns
+    );
+}
+
+#[test]
+fn schedule_ttft_slo_misses_when_tight() {
+    let t = Trace {
+        events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(0, 1, 0, &[1])],
+    };
+    let p = HardwareProfile::parse("gpus=1\ncopy_engines=1\n").expect("profile");
+    let row = schedule_replay(
+        &t,
+        p,
+        SimCfg::lru(2, 32u64 << 20, 0),
+        SchedCfg {
+            max_batch: 0,
+            interarrival_ns: 0,
+            ttft_slo_ns: Some(1),
+            itl_slo_ns: Some(1),
+        },
+    )
+    .expect("sched");
+    assert!(row.ttft_slo_miss > 0);
+    assert!(row.itl_slo_miss > 0);
+    assert_eq!(row.completed, 1);
+}
+
+#[test]
+fn schedule_retires_finished_sequences() {
+    let t = Trace {
+        events: vec![
+            ev_seq(0, 0, 0, &[0]),
+            ev_seq(0, 1, 0, &[0]),
+            ev_seq(1, 0, 0, &[1]),
+        ],
+    };
+    let p = HardwareProfile::parse("gpus=1\ncopy_engines=1\n").expect("profile");
+    let row = schedule_replay(&t, p, SimCfg::lru(2, 4096, 0), SchedCfg::closed(1)).expect("sched");
+    assert_eq!(row.completed, 2);
+    assert_eq!(row.replay.hits.saturating_add(row.replay.misses), 3);
 }
 
 #[test]

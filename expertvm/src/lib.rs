@@ -1,4 +1,5 @@
-//! Expert virtual memory: traces, policies, stores, GPU-sim replay.
+//! Expert virtual memory: traces, policies, stores, GPU-sim replay,
+//! open-loop continuous batching (`schedule_replay`).
 
 #![deny(missing_docs, unsafe_code)]
 
@@ -12,6 +13,7 @@ mod place;
 mod planner;
 mod policy;
 mod replay;
+mod schedule;
 mod sim_replay;
 mod store;
 mod tiered;
@@ -28,11 +30,12 @@ pub use gpu_store::SimulatedGpuStore;
 pub use live::LiveStore;
 pub use place::{colocated, home_gpu, striped, with_hot_replicas, PlaceMap};
 pub use planner::{
-    copy_forward, hot_keys, observe_chain, plan_placement, plan_window, prefetch_keys,
+    copy_forward, hot_keys, observe_chain, plan_keys, plan_placement, plan_window, prefetch_keys,
     prefetch_keys_ctx, transition_pair, window_keys, Markov, Placement, Plan, Prefetch,
 };
 pub use policy::Policy;
 pub use replay::{compare, format_table, replay, ReplayRow};
+pub use schedule::{schedule_replay, SchedCfg, SchedReplay};
 pub use sim_replay::{
     compare_ep, sim_placed, sim_remote_home, sim_remote_home_cfg, sim_replay, sim_replay_cfg,
     sim_static_ep, EpCompare, SimCfg, SimReplay, DECODE_ACTIVATION_BYTES,

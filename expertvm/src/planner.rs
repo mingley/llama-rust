@@ -233,25 +233,29 @@ pub fn plan_window(
     window: usize,
     threshold_permille: u32,
 ) -> Plan {
-    let end = from.saturating_add(window);
-    let slice = match trace.events.get(from..end) {
-        Some(s) => s,
-        None => return Plan::Stay,
-    };
-    if slice.is_empty() {
-        return Plan::Stay;
-    }
-    let mut upcoming = BTreeSet::new();
-    for a in slice {
-        for k in a.keys() {
-            let _ins = upcoming.insert(k);
-        }
-    }
+    plan_keys(
+        resident,
+        &window_keys(trace, from, window),
+        threshold_permille,
+    )
+}
+
+/// Stay vs Fetch over an explicit upcoming key list (no JSONL index).
+///
+/// Used by the open-loop scheduler, which must not look at unscheduled
+/// future sequences. Empty `upcoming` is Stay.
+#[must_use]
+pub fn plan_keys(
+    resident: &BTreeSet<ExpertKey>,
+    upcoming: &[ExpertKey],
+    threshold_permille: u32,
+) -> Plan {
     if upcoming.is_empty() {
         return Plan::Stay;
     }
-    let hits = upcoming.iter().filter(|k| resident.contains(k)).count();
-    let n = upcoming.len();
+    let uniq: BTreeSet<ExpertKey> = upcoming.iter().copied().collect();
+    let hits = uniq.iter().filter(|k| resident.contains(k)).count();
+    let n = uniq.len();
     let n64 = u64::try_from(n).unwrap_or(1);
     let hits64 = u64::try_from(hits).unwrap_or(0);
     let permille = hits64

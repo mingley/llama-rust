@@ -6,15 +6,18 @@
 #![deny(missing_docs, unsafe_code)]
 
 pub use expertvm::{
-    adversarial_suite, compare, format_table, generate, report, sim_placed, sim_remote_home,
-    sim_remote_home_cfg, sim_replay, striped, topology_suite, BenchReport, Policy, Trace, Workload,
-    DECODE_ACTIVATION_BYTES,
+    adversarial_suite, compare, format_table, generate, report, schedule_replay, sim_placed,
+    sim_remote_home, sim_remote_home_cfg, sim_replay, striped, topology_suite, BenchReport, Policy,
+    SchedCfg, SimCfg, Trace, Workload, DECODE_ACTIVATION_BYTES,
 };
 pub use gpu_sim::{probe_topology, HardwareProfile, Score, TopologyProbe};
 
 #[cfg(test)]
 mod tests {
-    use super::{adversarial_suite, sim_placed, sim_remote_home, striped, HardwareProfile, Trace};
+    use super::{
+        adversarial_suite, schedule_replay, sim_placed, sim_remote_home, striped, HardwareProfile,
+        SchedCfg, SimCfg, Trace,
+    };
 
     #[test]
     fn adversarial_suite_covers_named_workloads() {
@@ -40,5 +43,22 @@ mod tests {
         let local = sim_placed(&t, p.clone(), bytes, &map).unwrap();
         let remote = sim_remote_home(&t, p, bytes, &map).unwrap();
         assert!(remote.bytes_moved > local.bytes_moved);
+    }
+
+    #[test]
+    fn schedule_reexport_completes_sequences() {
+        let t = Trace::parse(
+            "{\"sequence\":0,\"token\":0,\"layer\":0,\"experts\":[0]}\n{\"sequence\":1,\"token\":0,\"layer\":0,\"experts\":[1]}\n",
+        )
+        .unwrap();
+        let row = schedule_replay(
+            &t,
+            HardwareProfile::example_cheap_48gb(),
+            SimCfg::lru(2, 4096, 0),
+            SchedCfg::closed(0),
+        )
+        .unwrap();
+        assert_eq!(row.completed, 2);
+        assert!(row.replay.misses >= 2);
     }
 }

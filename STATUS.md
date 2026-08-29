@@ -5,6 +5,20 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — open-loop continuous batching (`expertvm schedule`)
+
+`Sim::idle_until` drains in-flight work, then jumps the virtual clock
+(GPU idle waiting for the next arrival; never skips queued ops).
+`schedule_replay` / `expertvm schedule` / `infer-bench schedule` admit
+sequences FCFS up to `--max-batch` as they arrive (`--interarrival-ns`,
+sequence `s` at `s * interarrival`). Each engine step runs one next token
+layer-major across the running set, then `synchronize`. Finished
+sequences leave so a later arrival can enter (true continuous batching,
+not a token-0 barrier). TTFT is first-token end minus arrival; ITL is
+the mean later-token gap. `--ttft-slo-ns` / `--itl-slo-ns` count misses.
+The cache walker is demand paging: Oracle/layer-ahead cannot see
+unscheduled JSONL future. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — GpuOp DAG, stream sync, expert phases, max-batch
 
 Public `gpu_sim::GpuOp` / `gpu_sim::Operation` is the compiled
@@ -308,12 +322,13 @@ cargo clippy --all-targets --all-features -- -D warnings
 ./target/release/infer-bench remote tests/traces/cycling.jsonl --expert-bytes 1048576
 ./target/release/expertvm topology --bytes 1048576
 ./target/release/expertvm remote tests/traces/cycling.jsonl --expert-bytes 1048576
+./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 2 --max-batch 1 --interarrival-ns 1000000
 ./target/release/gpu-profile probe bad-numa --bytes 1048576
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth (planner-in-sim, CUDA-graph GEMMs,
-and remaining CUDA-like invariants landed). Phase 0 leftover is a Llama
+Next code change is PLAN systems depth (`expertvm schedule` landed as the
+trace-level infer-scheduler slice). Phase 0 leftover is a Llama
 NORM real-model fixture when a GGUF is on disk. Physical Phase 4 stays
 parked. Do not add crates.io
 runtime deps. Do not start Metal-in-crate on Linux. Do not invent a

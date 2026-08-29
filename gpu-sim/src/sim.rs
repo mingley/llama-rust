@@ -693,6 +693,22 @@ impl Sim {
         self.sync_outcome()
     }
 
+    /// Drain in-flight work, then jump the virtual clock to `ns` if that is still in the future.
+    ///
+    /// Models a GPU sitting idle until the next request arrives. Jumping the clock
+    /// while work is queued would skip in-flight ops, so this always
+    /// [`synchronize`](Self::synchronize)s first. Returns how many nanoseconds the
+    /// clock jumped (0 if `ns` is already behind).
+    pub fn idle_until(&mut self, ns: u64) -> Result<u64, SimError> {
+        self.synchronize()?;
+        if ns > self.clock {
+            let jumped = ns.saturating_sub(self.clock);
+            self.clock = ns;
+            return Ok(jumped);
+        }
+        Ok(0)
+    }
+
     /// `cudaStreamSynchronize`: advance the virtual clock until `stream` is idle.
     ///
     /// Other streams keep running. Cancelled ops on *this* stream fail; cancelled

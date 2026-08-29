@@ -1,8 +1,8 @@
 //! `infer-bench adversarial | trace` — measured hit rates and sim scores.
 
 use infer_bench::{
-    adversarial_suite, report, sim_placed, sim_remote_home_cfg, striped, topology_suite,
-    HardwareProfile, Trace, Workload, DECODE_ACTIVATION_BYTES,
+    adversarial_suite, report, schedule_replay, sim_placed, sim_remote_home_cfg, striped,
+    topology_suite, HardwareProfile, SchedCfg, SimCfg, Trace, Workload, DECODE_ACTIVATION_BYTES,
 };
 use std::env;
 use std::fs::File;
@@ -16,6 +16,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch
@@ -116,6 +117,26 @@ fn run() -> Result<(), String> {
             println!("local {} | remote {}", local.line(), remote.line());
             Ok(())
         }
+        "schedule" => {
+            let cfg = parse_flags(args)?;
+            let path = cfg.path.ok_or("schedule <trace.jsonl>")?;
+            let trace = load_trace(&path)?;
+            let profile = load_profile(&cfg.profile)?;
+            let row = schedule_replay(
+                &trace,
+                profile,
+                SimCfg::lru(cfg.capacity, cfg.expert_bytes, 8),
+                SchedCfg {
+                    max_batch: cfg.max_batch,
+                    interarrival_ns: cfg.interarrival_ns,
+                    ttft_slo_ns: cfg.ttft_slo_ns,
+                    itl_slo_ns: cfg.itl_slo_ns,
+                },
+            )
+            .map_err(|e| e.to_string())?;
+            println!("{}", row.line());
+            Ok(())
+        }
         other => Err(format!("{USAGE}got {other}")),
     }
 }
@@ -128,6 +149,10 @@ struct Cfg {
     profile: String,
     tokens: u32,
     experts: u32,
+    max_batch: usize,
+    interarrival_ns: u64,
+    ttft_slo_ns: Option<u64>,
+    itl_slo_ns: Option<u64>,
 }
 
 fn parse_flags<I>(args: I) -> Result<Cfg, String>
@@ -148,6 +173,10 @@ where
     let mut profile = default_profile.to_string();
     let mut tokens = 64u32;
     let mut experts = 16u32;
+    let mut max_batch = 0usize;
+    let mut interarrival_ns = 0u64;
+    let mut ttft_slo_ns = None;
+    let mut itl_slo_ns = None;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -170,6 +199,27 @@ where
             "--profile" => profile = value("profile", inline, &mut it)?,
             "--tokens" => tokens = parse_u32("tokens", &value("tokens", inline, &mut it)?)?,
             "--experts" => experts = parse_u32("experts", &value("experts", inline, &mut it)?)?,
+            "--max-batch" => {
+                max_batch = parse_usize("max-batch", &value("max-batch", inline, &mut it)?)?
+            }
+            "--interarrival-ns" => {
+                interarrival_ns = parse_u64(
+                    "interarrival-ns",
+                    &value("interarrival-ns", inline, &mut it)?,
+                )?
+            }
+            "--ttft-slo-ns" => {
+                ttft_slo_ns = Some(parse_u64(
+                    "ttft-slo-ns",
+                    &value("ttft-slo-ns", inline, &mut it)?,
+                )?)
+            }
+            "--itl-slo-ns" => {
+                itl_slo_ns = Some(parse_u64(
+                    "itl-slo-ns",
+                    &value("itl-slo-ns", inline, &mut it)?,
+                )?)
+            }
             "--bytes" => expert_bytes = parse_u64("bytes", &value("bytes", inline, &mut it)?)?,
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => {
@@ -188,6 +238,10 @@ where
         profile,
         tokens,
         experts,
+        max_batch,
+        interarrival_ns,
+        ttft_slo_ns,
+        itl_slo_ns,
     })
 }
 

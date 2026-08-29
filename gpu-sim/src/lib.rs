@@ -9,6 +9,7 @@
 //! Submitted work is a [`GpuOp`] compiled into an [`Operation`] DAG
 //! ([`Sim::operations`]). [`Sim::synchronize_stream`] waits one stream.
 //! [`Sim::synchronize_event`] is `cudaEventSynchronize`.
+//! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::set_stream_priority`] is `cudaStreamCreateWithPriority`.
 
 #![cfg_attr(not(test), deny(missing_docs))]
@@ -979,5 +980,32 @@ mod tests {
             Err(SimError::UnknownEvent { event: 99 }) => {}
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn idle_until_jumps_clock_after_drain() {
+        let mut sim = Sim::new(h100());
+        let jumped = sim.idle_until(1_000_000).unwrap();
+        assert_eq!(jumped, 1_000_000);
+        assert_eq!(sim.clock_ns(), 1_000_000);
+        let again = sim.idle_until(500_000).unwrap();
+        assert_eq!(again, 0);
+        assert_eq!(sim.clock_ns(), 1_000_000);
+    }
+
+    #[test]
+    fn idle_until_drains_in_flight_work() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let k = sim
+            .kernel(d, KernelKind::other(8, 8), &[a], &[a], s)
+            .unwrap();
+        assert!(!sim.operation(k).unwrap().done);
+        let jumped = sim.idle_until(0).unwrap();
+        assert_eq!(jumped, 0);
+        assert!(sim.operation(k).unwrap().done);
+        assert!(sim.clock_ns() > 0);
     }
 }

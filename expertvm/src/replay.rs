@@ -138,6 +138,14 @@ impl Walker {
         }
     }
 
+    /// Demand paging with no future key list (open-loop schedule order).
+    ///
+    /// Oracle / layer-ahead see only keys already demanded; Belady without a
+    /// future use is furthest-next-use = never (`usize::MAX`).
+    pub(crate) fn demand(slots: usize, policy: Policy, lookahead: usize) -> Self {
+        Self::new(&[], slots, policy, lookahead)
+    }
+
     pub(crate) fn next_touch(&mut self) -> Option<(ExpertKey, Touch)> {
         let key = *self.keys.get(self.i)?;
         if let Some(q) = self.next_use.get_mut(&key) {
@@ -149,6 +157,15 @@ impl Walker {
         self.last = Some(key);
         self.i = self.i.saturating_add(1);
         Some((key, touch))
+    }
+
+    /// Demand-fault `key` without a precomputed key list (no future leak).
+    pub(crate) fn demand_touch(&mut self, key: ExpertKey) -> Touch {
+        self.keys.push(key);
+        match self.next_touch() {
+            Some((_, touch)) => touch,
+            None => Touch::Miss { evicted: None },
+        }
     }
 
     /// Fill `key` without consuming the demand stream (prefetch).

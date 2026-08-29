@@ -39,6 +39,7 @@ warp scheduler, L1, …   ← do not model
 | graph launch amortizes per-kernel launch overhead | `graph_launch_ns` |
 | `synchronize_stream` waits one stream only | other streams keep running |
 | `synchronize_event` waits the record only | later ops on that stream keep running |
+| `idle_until` drains, then jumps the clock | GPU idle until the next arrival |
 | stream[i+1].start ≥ stream[i].finish (`Operation` timestamps) | queue wait vs run |
 | higher `set_stream_priority` starts first under contention | launch overhead |
 | memset requires device residency | HBM write + launch overhead |
@@ -150,6 +151,8 @@ stream; `set_legacy_null_stream(true)` serializes it with every other stream
 on that device (off by default = `cudaStreamNonBlocking`).
 `synchronize_stream` is `cudaStreamSynchronize`. `synchronize_event` is
 `cudaEventSynchronize` (later ops on that stream keep running).
+`idle_until` drains in-flight work, then jumps the virtual clock so an
+open-loop arrival can wait without `sleep`.
 `set_stream_priority` is `cudaStreamCreateWithPriority` (higher first when
 compute contends). `Operation` carries `submit_ns` / `start_ns` / `done_ns`
 so stream[i+1].start ≥ stream[i].finish is inspectable. `GpuOp` /

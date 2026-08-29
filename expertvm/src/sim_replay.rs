@@ -175,7 +175,7 @@ pub fn sim_replay_cfg(
     let mut graphs: BTreeMap<Vec<AllocId>, GraphId> = BTreeMap::new();
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
     for (i, event) in trace.events.iter().enumerate() {
-        args.s = stream_of(event, n_streams);
+        args.s = stream_of(event.sequence, n_streams);
         let ek = event.keys();
         for key in &ek {
             let (got, touch) = w.next_touch().ok_or(Error::Store("short walker"))?;
@@ -232,29 +232,29 @@ pub fn sim_replay_cfg(
 }
 
 #[derive(Clone, Copy)]
-struct TouchArgs {
-    d: DeviceId,
-    s: StreamId,
-    bytes: u64,
-    slots: usize,
+pub(crate) struct TouchArgs {
+    pub d: DeviceId,
+    pub s: StreamId,
+    pub bytes: u64,
+    pub slots: usize,
 }
 
 #[derive(Clone, Copy, Default)]
-struct ReplayCounters {
-    hits: u64,
-    misses: u64,
-    prefetches: u64,
-    prefetch_hits: u64,
-    prefetch_waste: u64,
-    graph_launches: u64,
+pub(crate) struct ReplayCounters {
+    pub hits: u64,
+    pub misses: u64,
+    pub prefetches: u64,
+    pub prefetch_hits: u64,
+    pub prefetch_waste: u64,
+    pub graph_launches: u64,
 }
 
-struct PageHandle {
+pub(crate) struct PageHandle {
     id: AllocId,
     stream: StreamId,
 }
 
-fn note_touch(
+pub(crate) fn note_touch(
     ctr: &mut ReplayCounters,
     prefetched: &mut BTreeSet<ExpertKey>,
     key: ExpertKey,
@@ -301,7 +301,7 @@ fn should_prefetch(
     )
 }
 
-fn apply_touch(
+pub(crate) fn apply_touch(
     sim: &mut Sim,
     handles: &mut BTreeMap<ExpertKey, PageHandle>,
     graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
@@ -333,7 +333,7 @@ fn drop_graphs(graphs: &mut BTreeMap<Vec<AllocId>, GraphId>, id: AllocId) {
     graphs.retain(|ids, _| !ids.contains(&id));
 }
 
-fn gemm_keys(
+pub(crate) fn gemm_keys(
     sim: &mut Sim,
     handles: &BTreeMap<ExpertKey, PageHandle>,
     graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
@@ -395,7 +395,30 @@ fn gemm_ids(
 }
 
 fn finish(sim: &Sim, token_ends: &[u64], ctr: ReplayCounters) -> SimReplay {
-    let score = serving_score(sim, token_ends);
+    let n = u64::try_from(token_ends.len()).unwrap_or(0);
+    replay_from_sim(
+        sim,
+        n,
+        token_ends.first().copied(),
+        itl_from_ends(token_ends),
+        ctr,
+    )
+}
+
+pub(crate) fn replay_from_sim(
+    sim: &Sim,
+    n_tokens: u64,
+    ttft: Option<u64>,
+    itl: Option<u64>,
+    ctr: ReplayCounters,
+) -> SimReplay {
+    let mut score = Score::from_sim(sim);
+    if n_tokens > 0 {
+        score = score.with_tokens(n_tokens);
+    }
+    if let Some(t) = ttft {
+        score = score.with_latencies(t, itl);
+    }
     SimReplay {
         sim_ns: score.wall_ns,
         bytes_moved: score.bytes_moved,
@@ -410,18 +433,6 @@ fn finish(sim: &Sim, token_ends: &[u64], ctr: ReplayCounters) -> SimReplay {
         prefetch_waste: ctr.prefetch_waste,
         graph_launches: ctr.graph_launches,
     }
-}
-
-fn serving_score(sim: &Sim, token_ends: &[u64]) -> Score {
-    let n = u64::try_from(token_ends.len()).unwrap_or(0);
-    let mut score = Score::from_sim(sim);
-    if n > 0 {
-        score = score.with_tokens(n);
-    }
-    let Some(ttft) = token_ends.first().copied() else {
-        return score;
-    };
-    score.with_latencies(ttft, itl_from_ends(token_ends))
 }
 
 fn last_of_token(events: &[ExpertAccess], i: usize) -> bool {
@@ -454,7 +465,7 @@ fn sequence_done(events: &[ExpertAccess], i: usize) -> bool {
     }
 }
 
-fn replay_streams(profile: &HardwareProfile, seq_streams: bool) -> u8 {
+pub(crate) fn replay_streams(profile: &HardwareProfile, seq_streams: bool) -> u8 {
     if !seq_streams {
         return 1;
     }
@@ -465,16 +476,16 @@ fn replay_streams(profile: &HardwareProfile, seq_streams: bool) -> u8 {
         .unwrap_or(2)
 }
 
-fn stream_of(event: &ExpertAccess, n_streams: u8) -> StreamId {
+pub(crate) fn stream_of(sequence: u64, n_streams: u8) -> StreamId {
     if n_streams <= 1 {
         return StreamId(0);
     }
     let n = u64::from(n_streams);
-    let id = event.sequence % n;
+    let id = sequence % n;
     StreamId(u16::try_from(id).unwrap_or(0))
 }
 
-fn predicted_keys(
+pub(crate) fn predicted_keys(
     prefetch: Prefetch,
     markov: &Markov,
     prev: Option<&ExpertAccess>,
