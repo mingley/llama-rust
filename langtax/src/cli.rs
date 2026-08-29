@@ -48,14 +48,14 @@ usage: gguf_gemv <command> [args]
   infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]
   trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE [--capacity N]
   chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--kv-page N] [--show-prompt]
-  serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--trace-out FILE]
-  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--trace-out FILE]
+  serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--trace-out FILE]
+  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--trace-out FILE]
   write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|write-tiny-qwen3|write-tiny-gemma|write-tiny-llama4|write-tiny-llama-moe|write-tiny-qwen2moe|write-tiny-qwen3moe|write-tiny-qwen3moe-2layer|write-tiny-qwen2vl|write-tiny-qwen3vl|write-tiny-qwen3next|write-tiny-qwen35|write-tiny-phi2 <path>
 ";
 
 /// Usage for the `engine` verb.
 pub const ENGINE_USAGE: &str = "\
-usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--trace-out FILE]
+usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--trace-out FILE]
   -p, --prompt TEXT     prompt (repeatable; default: one `ab`)
   -n, --n-predict N     tokens to generate per sequence (default: 2)
       --n-ctx N         KV capacity (default: longest prompt + n_predict + 1)
@@ -65,6 +65,8 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
                         Engine tests cover 128 waiters at max_seqs=8 (batch-128).
       --prefill-chunk N prefill tokens per step (`0` = the rest; default: 0)
       --decode-first    hold leftover prefill while any live sequence is decoding
+      --slo-reject      drop waiters whose gpu-sim queue wait meets `--ttft-slo-ns`
+      --ttft-slo-ns N   virtual-ns TTFT budget (`--slo-reject`; needs `--expert-sim`)
       --expert-slots N  ExpertStore on the Engine: omit = blob FFN, `0` = DirectStore,
                         N>0 = CachedStore with N slots (`--expert-sim` uses N, default 8)
       --expert-sim      SimulatedGpuStore (example H100, 4096-byte experts)
@@ -75,7 +77,10 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
 Runs Engine continuous batching on one interned pool. Several `--prompt`s
 join the same scheduler. `--decode-first` holds leftover prefill while any
 live sequence is already decoding (ITL over leftover prefill; same policy
-as `expertvm schedule --decode-first`). A tight `--pool-blocks` preempts
+as `expertvm schedule --decode-first`). `--slo-reject` / `--ttft-slo-ns`
+drops a waiter whose gpu-sim queue wait already meets the TTFT budget
+(same policy as `expertvm schedule --slo-reject`; needs `--expert-sim`).
+A tight `--pool-blocks` preempts
 (recompute + replay). One ExpertStore is parked on each batched GEMM so
 MoE serving stays on the shared-pool path. After each GEMM the store
 sticky-pins last-used ∪ Markov experts (`slots - 1`; `slots == 1` pins
@@ -416,6 +421,10 @@ pub struct EngineArgs {
     pub prefill_chunk: usize,
     /// Hold leftover prefill while any live sequence is already decoding.
     pub decode_first: bool,
+    /// Drop waiters whose gpu-sim queue wait meets `ttft_slo_ns`.
+    pub slo_reject: bool,
+    /// Virtual-ns TTFT budget with `--slo-reject`. `None` never drops.
+    pub ttft_slo_ns: Option<u64>,
     /// ExpertStore slots. `None` keeps blob FFN. `Some(0)` is DirectStore.
     pub expert_slots: Option<usize>,
     /// Attach [`SimulatedGpuStore`] (example H100) instead of Direct/Cached.
@@ -451,6 +460,8 @@ where
     let mut max_seqs = None;
     let mut prefill_chunk = 0usize;
     let mut decode_first = false;
+    let mut slo_reject = false;
+    let mut ttft_slo_ns = None;
     let mut expert_slots = None;
     let mut expert_sim = false;
     let mut expert_8gpu = false;
@@ -515,6 +526,22 @@ where
                 }
                 decode_first = true;
             }
+            "--slo-reject" => {
+                if inline.is_some() {
+                    return engine_err("--slo-reject does not take a value");
+                }
+                slo_reject = true;
+            }
+            "--ttft-slo-ns" => {
+                let n = engine_u64(
+                    "ttft-slo-ns",
+                    &engine_value("ttft-slo-ns", inline, &mut it)?,
+                )?;
+                if n == 0 {
+                    return engine_err("ttft-slo-ns must be > 0");
+                }
+                ttft_slo_ns = Some(n);
+            }
             "--expert-slots" => {
                 expert_slots = Some(engine_usize(
                     "expert-slots",
@@ -569,6 +596,15 @@ where
     if expert_bytes.is_some() && !expert_sim {
         return engine_err("--expert-bytes requires --expert-sim");
     }
+    if slo_reject && ttft_slo_ns.is_none() {
+        return engine_err("--slo-reject requires --ttft-slo-ns");
+    }
+    if ttft_slo_ns.is_some() && !slo_reject {
+        return engine_err("--ttft-slo-ns requires --slo-reject");
+    }
+    if (slo_reject || ttft_slo_ns.is_some()) && !expert_sim {
+        return engine_err("--slo-reject requires --expert-sim");
+    }
     Ok(EngineCmd::Run(EngineArgs {
         path,
         prompts,
@@ -579,6 +615,8 @@ where
         max_seqs,
         prefill_chunk,
         decode_first,
+        slo_reject,
+        ttft_slo_ns,
         expert_slots,
         expert_sim,
         expert_8gpu,
@@ -619,9 +657,10 @@ pub fn run_engine(args: &EngineArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
     writeln!(
         out,
-        "intern_hits={} preempts={} steps={} gemm_tokens={} gemm_peak={} serial_tokens={}",
+        "intern_hits={} preempts={} rejected={} steps={} gemm_tokens={} gemm_peak={} serial_tokens={}",
         eng.pool().hits(),
         eng.preempts(),
+        eng.rejected(),
         eng.stats().steps,
         eng.stats().gemm_tokens,
         eng.stats().gemm_peak,
@@ -710,6 +749,8 @@ fn engine_cfg(tok: &Tokenizer, args: &EngineArgs) -> Result<EngineCfg, Box<dyn s
         prefill_chunk: args.prefill_chunk,
         eos: tok.eos,
         decode_first: args.decode_first,
+        slo_reject: args.slo_reject,
+        ttft_slo_ns: args.ttft_slo_ns,
     })
 }
 
@@ -1155,6 +1196,8 @@ mod tests {
                 assert_eq!(a.pool_blocks, None);
                 assert_eq!(a.prefill_chunk, 0);
                 assert!(!a.decode_first);
+                assert!(!a.slo_reject);
+                assert_eq!(a.ttft_slo_ns, None);
                 assert_eq!(a.expert_slots, None);
                 assert!(!a.expert_sim);
                 assert!(!a.expert_8gpu);
@@ -1224,6 +1267,29 @@ mod tests {
             err.contains("--decode-first does not take a value"),
             "{err}"
         );
+        match parse_engine_args([
+            "m.gguf",
+            "--expert-sim",
+            "--slo-reject",
+            "--ttft-slo-ns",
+            "1",
+        ])
+        .expect("slo")
+        {
+            EngineCmd::Run(a) => {
+                assert!(a.slo_reject);
+                assert_eq!(a.ttft_slo_ns, Some(1));
+            }
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        let err = parse_engine_args(["m.gguf", "--slo-reject"]).unwrap_err();
+        assert!(err.contains("--slo-reject requires --ttft-slo-ns"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--ttft-slo-ns", "1"]).unwrap_err();
+        assert!(err.contains("--ttft-slo-ns requires --slo-reject"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--slo-reject", "--ttft-slo-ns=1"]).unwrap_err();
+        assert!(err.contains("--slo-reject requires --expert-sim"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--slo-reject=1"]).unwrap_err();
+        assert!(err.contains("--slo-reject does not take a value"), "{err}");
         assert_eq!(parse_engine_args(["--help"]).unwrap(), EngineCmd::Help);
         let err = parse_engine_args(["--n-predict", "2"]).unwrap_err();
         assert!(err.contains("missing GGUF path"), "{err}");

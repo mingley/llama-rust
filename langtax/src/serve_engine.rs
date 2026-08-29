@@ -86,6 +86,8 @@ fn engine_cfg(tok: &Tokenizer, args: &ServeArgs) -> EngineCfg {
         prefill_chunk: args.prefill_chunk,
         eos: tok.eos,
         decode_first: args.decode_first,
+        slo_reject: args.slo_reject,
+        ttft_slo_ns: args.ttft_slo_ns,
     }
 }
 
@@ -532,6 +534,8 @@ mod tests {
             expert_bytes: None,
             prefill_chunk: 0,
             decode_first: false,
+            slo_reject: false,
+            ttft_slo_ns: None,
             trace_out: None,
         }
     }

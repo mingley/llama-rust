@@ -143,6 +143,8 @@ sequence is already in decode. `llama-rust` `EngineCfg::decode_first` /
 `gguf_gemv engine --decode-first` is the same hold on real KV, not this
 trace walker. `--slo-reject` drops a waiter whose queue
 wait already meets `--ttft-slo-ns` (`rejected=` on the schedule line).
+`llama-rust` `EngineCfg::slo_reject` / `gguf_gemv engine --slo-reject`
+is the same drop on real KV waiters, using the SimulatedGpuStore clock.
 `--prefix-cache` skips GPU work for a token whose JSONL `"p"` hash
 already completed on another sequence (`prefix_hits=` on the schedule
 line). `"p"` is `prefix_hash` of the token ids, not a prompt class.

@@ -20,7 +20,7 @@ use crate::tok::Tokenizer;
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--trace-out FILE]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
@@ -34,6 +34,8 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --expert-bytes N  simulated expert page bytes (`--expert-sim`; default: 4096)
       --prefill-chunk N prefill tokens per Engine step (`--engine`; `0` = the rest)
       --decode-first    hold leftover prefill while any live sequence is decoding (`--engine`)
+      --slo-reject      drop waiters whose gpu-sim queue wait meets `--ttft-slo-ns` (`--engine`)
+      --ttft-slo-ns N   virtual-ns TTFT budget (`--slo-reject`; needs `--expert-sim`)
       --trace-out FILE  append batched MoE ExpertAccess JSONL (`--engine`)
 
 POST /generate takes {\"prompt\": TEXT} or, to render the model's own
@@ -47,7 +49,9 @@ completed blocks so a later prompt can hit them after a rewind (`page_hits`).
 `--engine` JSON `page_hits` is the intern-hit delta for that sequence.
 `--expert-slots` / `--expert-sim` park the same ExpertStore as `gguf_gemv engine`.
 `--prefill-chunk` interleaves long prefills with decode. `--decode-first` holds
-leftover prefill while any live sequence is already decoding. `--trace-out` writes
+leftover prefill while any live sequence is already decoding. `--slo-reject` /
+`--ttft-slo-ns` drop a waiter whose gpu-sim queue wait meets the TTFT budget
+(`--expert-sim`). `--trace-out` writes
 router JSONL as sequences finish. Not a production inference server.
 ";
 
@@ -93,6 +97,10 @@ pub struct ServeArgs {
     pub prefill_chunk: usize,
     /// Hold leftover prefill while any live sequence is decoding. `--engine` only.
     pub decode_first: bool,
+    /// Drop waiters whose gpu-sim queue wait meets `ttft_slo_ns`. `--engine` only.
+    pub slo_reject: bool,
+    /// Virtual-ns TTFT budget with `--slo-reject`. `None` never drops.
+    pub ttft_slo_ns: Option<u64>,
     /// Append Engine MoE traces as JSONL (`--engine`). `None` leaves tracing off.
     pub trace_out: Option<String>,
 }
@@ -138,7 +146,7 @@ impl From<std::io::Error> for ServeError {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--trace-out FILE]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--trace-out FILE]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -158,6 +166,8 @@ where
     let mut expert_bytes = None;
     let mut prefill_chunk = 0usize;
     let mut decode_first = false;
+    let mut slo_reject = false;
+    let mut ttft_slo_ns = None;
     let mut trace_out = None;
     let mut it = args.into_iter();
     while let Some(raw) = it.next() {
@@ -241,6 +251,19 @@ where
                 }
                 decode_first = true;
             }
+            "--slo-reject" => {
+                if inline.is_some() {
+                    return usage_err("--slo-reject does not take a value");
+                }
+                slo_reject = true;
+            }
+            "--ttft-slo-ns" => {
+                let n = parse_u64("ttft-slo-ns", &opt_value("ttft-slo-ns", inline, &mut it)?)?;
+                if n == 0 {
+                    return usage_err("ttft-slo-ns must be > 0");
+                }
+                ttft_slo_ns = Some(n);
+            }
             "--trace-out" => {
                 trace_out = Some(opt_value("trace-out", inline, &mut it)?);
             }
@@ -285,6 +308,21 @@ where
     if decode_first && !engine {
         return usage_err("--decode-first requires --engine");
     }
+    if slo_reject && !engine {
+        return usage_err("--slo-reject requires --engine");
+    }
+    if ttft_slo_ns.is_some() && !engine {
+        return usage_err("--ttft-slo-ns requires --engine");
+    }
+    if slo_reject && ttft_slo_ns.is_none() {
+        return usage_err("--slo-reject requires --ttft-slo-ns");
+    }
+    if ttft_slo_ns.is_some() && !slo_reject {
+        return usage_err("--ttft-slo-ns requires --slo-reject");
+    }
+    if (slo_reject || ttft_slo_ns.is_some()) && !expert_sim {
+        return usage_err("--slo-reject requires --expert-sim");
+    }
     if trace_out.is_some() && !engine {
         return usage_err("--trace-out requires --engine");
     }
@@ -302,6 +340,8 @@ where
         expert_bytes,
         prefill_chunk,
         decode_first,
+        slo_reject,
+        ttft_slo_ns,
         trace_out,
     }))
 }
@@ -1011,6 +1051,8 @@ mod tests {
             expert_bytes: None,
             prefill_chunk: 0,
             decode_first: false,
+            slo_reject: false,
+            ttft_slo_ns: None,
             trace_out: None,
         }
     }
@@ -1082,6 +1124,8 @@ mod tests {
         assert_eq!(a.max_seqs, None);
         assert_eq!(a.prefill_chunk, 0);
         assert!(!a.decode_first);
+        assert!(!a.slo_reject);
+        assert_eq!(a.ttft_slo_ns, None);
         assert_eq!(a.trace_out, None);
     }
 
@@ -1112,6 +1156,8 @@ mod tests {
                 expert_bytes: None,
                 prefill_chunk: 0,
                 decode_first: false,
+                slo_reject: false,
+                ttft_slo_ns: None,
                 trace_out: None,
             }
         );
@@ -1187,6 +1233,8 @@ mod tests {
                 expert_bytes: None,
                 prefill_chunk: 0,
                 decode_first: false,
+                slo_reject: false,
+                ttft_slo_ns: None,
                 trace_out: None,
             }
         );
@@ -1246,6 +1294,22 @@ mod tests {
         assert_eq!(a.prefill_chunk, 1);
         assert!(a.decode_first);
         assert_eq!(a.trace_out.as_deref(), Some("t.jsonl"));
+        let err = parse_serve_args(["m.gguf", "--slo-reject"]).unwrap_err();
+        assert!(err.contains("--slo-reject requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--slo-reject"]).unwrap_err();
+        assert!(err.contains("--slo-reject requires --ttft-slo-ns"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--slo-reject", "--ttft-slo-ns=1"])
+            .unwrap_err();
+        assert!(err.contains("--slo-reject requires --expert-sim"), "{err}");
+        let a = run(&[
+            "m.gguf",
+            "--engine",
+            "--expert-sim",
+            "--slo-reject",
+            "--ttft-slo-ns=8",
+        ]);
+        assert!(a.slo_reject);
+        assert_eq!(a.ttft_slo_ns, Some(8));
     }
 
     #[test]

@@ -21,6 +21,8 @@
 //! when weight bytes beat activation volume, otherwise leave them on the striped home.
 //! SimulatedGpuStore scores sample the virtual clock at each generated token
 //! (`ttft_ns` / `itl_ns` / `ns_per_token`; not `$/M tokens`).
+//! [`EngineCfg::slo_reject`] drops waiters whose gpu-sim queue wait already
+//! meets [`EngineCfg::ttft_slo_ns`].
 //! A full pool **preempts** another sequence (unique blocks drop; intern pins remain)
 //! and later re-prefills
 //! plus replays already sampled greedy tokens. Greedy ids must match
@@ -69,6 +71,11 @@ pub struct EngineCfg {
     /// until every in-flight decode finishes. Default `false` interleaves
     /// chunked prefill with decode in the same step.
     pub decode_first: bool,
+    /// Drop waiting sequences whose gpu-sim queue wait already meets
+    /// [`EngineCfg::ttft_slo_ns`]. No-op without a SimulatedGpuStore clock.
+    pub slo_reject: bool,
+    /// Virtual-ns TTFT budget for [`EngineCfg::slo_reject`]. `None` never drops.
+    pub ttft_slo_ns: Option<u64>,
 }
 
 impl EngineCfg {
@@ -83,6 +90,8 @@ impl EngineCfg {
             prefill_chunk: 0,
             eos: None,
             decode_first: false,
+            slo_reject: false,
+            ttft_slo_ns: None,
         }
     }
 }
@@ -111,6 +120,7 @@ struct Waiter {
     id: SeqId,
     prompt: Vec<u32>,
     n_predict: usize,
+    arrival_ns: Option<u64>,
 }
 
 impl Slot {
@@ -168,6 +178,7 @@ pub struct Engine<'a> {
     traces: BTreeMap<SeqId, Trace>,
     next_id: u32,
     preempts: u64,
+    rejected: u64,
     stats: EngineStats,
     expert_store: Option<LiveStore>,
     prefetch: PrefetchChain,
@@ -195,6 +206,7 @@ impl<'a> Engine<'a> {
             traces: BTreeMap::new(),
             next_id: 0,
             preempts: 0,
+            rejected: 0,
             stats: EngineStats::default(),
             expert_store: None,
             prefetch: PrefetchChain::default(),
@@ -224,10 +236,12 @@ impl<'a> Engine<'a> {
         }
         let id = self.alloc_id()?;
         if self.active() >= self.cfg.max_seqs {
+            let arrival_ns = self.sample_sim_clock()?;
             self.wait.push_back(Waiter {
                 id,
                 prompt: prompt.to_vec(),
                 n_predict,
+                arrival_ns,
             });
             return Ok(id);
         }
@@ -301,6 +315,12 @@ impl<'a> Engine<'a> {
     #[must_use]
     pub fn preempts(&self) -> u64 {
         self.preempts
+    }
+
+    /// Waiters dropped by [`EngineCfg::slo_reject`] (gpu-sim TTFT budget).
+    #[must_use]
+    pub fn rejected(&self) -> u64 {
+        self.rejected
     }
 
     /// Cross-sequence GEMM counters for this engine.
@@ -639,10 +659,38 @@ impl<'a> Engine<'a> {
             let Some(w) = self.wait.pop_front() else {
                 break;
             };
+            if self.slo_late(&w)? {
+                let _prev = self.finished.insert(
+                    w.id,
+                    SeqOutput {
+                        prompt: w.prompt,
+                        generated: Vec::new(),
+                    },
+                );
+                self.rejected = self.rejected.saturating_add(1);
+                n = n.saturating_add(1);
+                continue;
+            }
             self.install(w.id, w.prompt, w.n_predict)?;
             n = n.saturating_add(1);
         }
         Ok(n)
+    }
+
+    fn slo_late(&mut self, w: &Waiter) -> Result<bool, LlamaError> {
+        if !self.cfg.slo_reject {
+            return Ok(false);
+        }
+        let Some(slo) = self.cfg.ttft_slo_ns else {
+            return Ok(false);
+        };
+        let Some(arrival) = w.arrival_ns else {
+            return Ok(false);
+        };
+        let Some(now) = self.sample_sim_clock()? else {
+            return Ok(false);
+        };
+        Ok(now.saturating_sub(arrival) >= slo)
     }
 
     fn slot_by_id(&self, id: SeqId) -> Option<&Slot> {
@@ -1424,6 +1472,59 @@ mod tests {
             assert_eq!(eng.take(a).expect("ta").generated, exp_a);
             assert_eq!(eng.take(b).expect("tb").generated, exp_b);
         }
+    }
+
+    #[test]
+    fn engine_slo_reject_drops_waiting_sequence() {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        let g = load_gguf_owned(tiny_qwen3moe_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let exp_a = independent(&model, &tok, &tokens_a, 2);
+        let exp_b = independent(&model, &tok, &tokens_b, 2);
+        let n = model.expert_direct_store().expect("n").len().max(1);
+        let mut cfg = EngineCfg::tiny();
+        cfg.max_seqs = 1;
+        cfg.eos = tok.eos;
+        cfg.slo_reject = true;
+        cfg.ttft_slo_ns = Some(1);
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        let gpu = SimulatedGpuStore::new(
+            model.expert_direct_store().expect("c"),
+            n,
+            HardwareProfile::example_h100_sxm(),
+            4096,
+        )
+        .expect("gpu");
+        eng.attach_expert_store(LiveStore::simulated(gpu));
+        let a = eng.add(&tokens_a, 2).expect("a");
+        let b = eng.add(&tokens_b, 2).expect("queued");
+        assert_eq!(eng.waiting(), 1);
+        eng.run().expect("run");
+        assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+        assert!(eng.is_finished(b));
+        assert!(eng.take(b).expect("tb").generated.is_empty());
+        assert_eq!(eng.rejected(), 1);
+
+        let mut cfg = EngineCfg::tiny();
+        cfg.max_seqs = 1;
+        cfg.eos = tok.eos;
+        let mut eng = Engine::new(&model, cfg).expect("open");
+        let gpu = SimulatedGpuStore::new(
+            model.expert_direct_store().expect("c2"),
+            n,
+            HardwareProfile::example_h100_sxm(),
+            4096,
+        )
+        .expect("gpu2");
+        eng.attach_expert_store(LiveStore::simulated(gpu));
+        let a = eng.add(&tokens_a, 2).expect("a");
+        let b = eng.add(&tokens_b, 2).expect("queued");
+        eng.run().expect("run");
+        assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+        assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+        assert_eq!(eng.rejected(), 0);
     }
 
     fn mixed_gpu_decode_itl(bytes: Vec<u8>, decode_first: bool) -> (u64, Score, usize) {

@@ -890,6 +890,12 @@ model, do not celebrate the sim.
     decode: `decode_first` shortens the decode sequence's ITL (same
     policy as `expertvm schedule --decode-first`). Dual score still has
     no `$/M tokens`.
+46. [x] Engine `slo_reject`: drop waiters whose gpu-sim queue wait
+    already meets `ttft_slo_ns` (same policy as
+    `expertvm schedule --slo-reject`). Needs SimulatedGpuStore.
+    `gguf_gemv engine --slo-reject --ttft-slo-ns N --expert-sim` /
+    `serve --engine --expert-sim --slo-reject`. Dual score still has no
+    `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
