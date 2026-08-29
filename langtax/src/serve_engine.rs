@@ -581,14 +581,15 @@ mod tests {
         let s = std::str::from_utf8(buf).ok()?;
         let (head, body) = s.split_once("\r\n\r\n")?;
         let status: u16 = head.split_whitespace().nth(1)?.parse().ok()?;
-        let mut cl = 0usize;
+        let mut cl = None;
         for line in head.lines().skip(1) {
             if let Some((k, v)) = line.split_once(':') {
                 if k.eq_ignore_ascii_case("content-length") {
-                    cl = v.trim().parse().ok()?;
+                    cl = Some(v.trim().parse().ok()?);
                 }
             }
         }
+        let cl = cl?;
         if body.len() < cl {
             return None;
         }
