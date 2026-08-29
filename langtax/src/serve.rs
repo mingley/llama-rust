@@ -40,6 +40,7 @@ Default serve keeps one KV cache across requests (`prefix_hit` in the JSON).
 `--engine` admits several connections onto one interned pool so they GEMM
 together (`gguf_gemv engine` is the same scheduler). `--kv-page N` interned
 completed blocks so a later prompt can hit them after a rewind (`page_hits`).
+`--engine` JSON `page_hits` is the intern-hit delta for that sequence.
 `--expert-slots` / `--expert-sim` park the same ExpertStore as `gguf_gemv engine`.
 Not a production inference server.
 ";

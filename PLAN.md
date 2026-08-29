@@ -837,6 +837,10 @@ model, do not celebrate the sim.
     CachedStore / SimulatedGpuStore as `gguf_gemv engine`. Writer-tiny
     Qwen3MoE concurrent posts acquire from DirectStore and GEMM together.
     Dual score still has no `$/M tokens`.
+34. [x] `serve --engine` JSON `page_hits` is the intern-hit delta on the
+    shared `PagedKvPool` for that sequence. A later identical prompt
+    intern-hits completed pages after the first `take`. Dual score still
+    has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

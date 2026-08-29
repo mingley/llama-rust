@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — serve `--engine` intern `page_hits`
+
+`--engine` JSON `page_hits` is how many intern hits that sequence took
+on the shared `PagedKvPool` (not a persistent per-connection cache).
+`prefix_hit` stays 0. A later identical prompt intern-hits completed
+pages after `Engine::take`. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — serve `--engine` ExpertStore
 
 `gguf_gemv serve --engine --expert-slots N` parks DirectStore (`0`) or
@@ -19,8 +26,8 @@ the store and still GEMM together. Dual score still has no `$/M tokens`.
 onto one `Engine` so prefills and decodes GEMM together (`gemm_peak`).
 `--max-seqs N` is the in-flight cap (default 4). `--n-ctx` defaults to
 64 and `--kv-page` to 16. JSON `generated` matches
-`greedy_generate_ctx`. `prefix_hit` / `page_hits` stay 0 (shared intern
-pool, not a persistent per-connection cache). Default serve without
+`greedy_generate_ctx`. `prefix_hit` stays 0; `page_hits` is the intern
+delta on the shared pool. Default serve without
 `--engine` is still one HTTP request at a time. No Tokio, no
 OpenAI-compat. Dual score still has no `$/M tokens`.
 

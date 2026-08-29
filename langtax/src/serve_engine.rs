@@ -46,6 +46,7 @@ struct Conn {
     write: Vec<u8>,
     write_at: usize,
     done: bool,
+    intern_hits_at_add: u64,
 }
 
 enum AdmitOut {
@@ -94,6 +95,7 @@ impl Conn {
             write: Vec::new(),
             write_at: 0,
             done: false,
+            intern_hits_at_add: 0,
         }
     }
 
@@ -278,8 +280,10 @@ impl<'a> EngineHttp<'a> {
             };
             match self.admit_req(&req) {
                 AdmitOut::Seq(id) => {
+                    let hits = self.engine.pool().hits();
                     if let Some(c) = self.conns.get_mut(i) {
                         c.seq = Some(id);
+                        c.intern_hits_at_add = hits;
                     }
                 }
                 AdmitOut::Bytes(bytes) => {
@@ -351,13 +355,18 @@ impl<'a> EngineHttp<'a> {
             }
         }
         for i in ready {
-            let Some(id) = self.conns.get(i).and_then(|c| c.seq) else {
-                continue;
+            let (id, at) = match self.conns.get(i) {
+                Some(c) => match c.seq {
+                    Some(id) => (id, c.intern_hits_at_add),
+                    None => continue,
+                },
+                None => continue,
             };
+            let pages = self.engine.pool().hits().saturating_sub(at);
             let bytes = match self.engine.take(id) {
                 Some(out) => {
                     let text = decode_seq(self.tok, &out);
-                    http_json_bytes(200, "OK", &json_generated(&text, 0, 0))
+                    http_json_bytes(200, "OK", &json_generated(&text, 0, pages))
                 }
                 None => http_json_bytes(
                     500,
@@ -488,6 +497,14 @@ mod tests {
         rest.get(..end).expect("slice").to_string()
     }
 
+    fn json_u64(body: &str, key: &str) -> u64 {
+        let pat = format!("\"{key}\":");
+        let i = body.find(&pat).expect("key");
+        let rest = body.get(i.saturating_add(pat.len())..).expect("rest");
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        digits.parse().expect("u64")
+    }
+
     fn drive(http: &mut EngineHttp<'_>, streams: &mut [TcpStream], bufs: &mut [Vec<u8>]) {
         assert_eq!(streams.len(), bufs.len());
         for _ in 0..50_000 {
@@ -584,6 +601,37 @@ mod tests {
         assert!(
             http.store_hits() > 0,
             "HTTP Engine must acquire from DirectStore"
+        );
+    }
+
+    #[test]
+    fn second_engine_http_prompt_interns_completed_pages() {
+        let (model, tok) = tiny_model();
+        let mut args = engine_args();
+        args.kv_page = Some(2);
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nb");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let expect = greedy_generate_ctx(&model, &tok, "ab", 2, Some(64)).expect("g");
+        let mut streams = [connect_nb(addr)];
+        write_all_nb(&mut streams[0], &post_json(r#"{"prompt":"ab"}"#));
+        let mut bufs = [Vec::new()];
+        drive(&mut http, &mut streams, &mut bufs);
+        let (s1, b1) = response_parts(&bufs[0]).expect("first");
+        assert_eq!(s1, 200, "{b1}");
+        assert_eq!(generated_field(&b1), expect);
+        assert_eq!(json_u64(&b1, "page_hits"), 0, "{b1}");
+        let mut streams = [connect_nb(addr)];
+        write_all_nb(&mut streams[0], &post_json(r#"{"prompt":"ab"}"#));
+        let mut bufs = [Vec::new()];
+        drive(&mut http, &mut streams, &mut bufs);
+        let (s2, b2) = response_parts(&bufs[0]).expect("second");
+        assert_eq!(s2, 200, "{b2}");
+        assert_eq!(generated_field(&b2), expect);
+        assert!(
+            json_u64(&b2, "page_hits") > 0,
+            "second identical prompt must intern-hit completed pages: {b2}"
         );
     }
 }
