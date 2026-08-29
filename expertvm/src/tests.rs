@@ -2756,3 +2756,109 @@ fn schedule_managed_accessed_by_replicas_skip_dest_prefetch() {
     );
     assert_eq!(mapped.replay.bytes_moved, plain.replay.bytes_moved);
 }
+
+#[test]
+fn simulated_gpu_store_stream_priority_marks_compute() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            stream_priority: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    assert_eq!(gpu.stream_priority(DeviceId(0), gpu_sim::StreamId(0)), 0);
+    assert_eq!(gpu.stream_priority(DeviceId(0), gpu_sim::StreamId(1)), 1);
+}
+
+#[test]
+fn seq_stream_priority_starts_higher_stream_first() {
+    use crate::replay::Touch;
+    use crate::sim_replay::{apply_touch, gemm_keys, PageHandle, ReplayCounters, TouchArgs};
+    use gpu_sim::{GpuOp, Sim, StreamId};
+    use std::collections::BTreeMap;
+
+    let p = HardwareProfile::parse("gpus=1\ncopy_engines=2\n").expect("profile");
+    let first = |priority: bool| {
+        let mut sim = Sim::new(p.clone());
+        if priority {
+            sim.set_created_streams_priority(2).expect("pri");
+        }
+        let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
+        let mut graphs = BTreeMap::new();
+        let mut args = TouchArgs {
+            d: DeviceId(0),
+            s: StreamId(0),
+            bytes: 4096,
+            slots: 2,
+            sync_alloc: false,
+            mapped: false,
+            managed: false,
+            vmm: false,
+            vmm_page: 0,
+            pageable: false,
+            accessed_by: false,
+        };
+        let mut next_event = 1u32;
+        let k0 = ExpertKey::new(0, 0);
+        let k1 = ExpertKey::new(0, 1);
+        apply_touch(
+            &mut sim,
+            &mut handles,
+            &mut graphs,
+            args,
+            k0,
+            Touch::Miss { evicted: None },
+            &mut next_event,
+        )
+        .expect("k0");
+        args.s = StreamId(1);
+        apply_touch(
+            &mut sim,
+            &mut handles,
+            &mut graphs,
+            args,
+            k1,
+            Touch::Miss { evicted: None },
+            &mut next_event,
+        )
+        .expect("k1");
+        sim.synchronize().expect("h2d");
+        let mut ctr = ReplayCounters::default();
+        gemm_keys(&mut sim, &handles, &mut graphs, &[k0, k1], false, &mut ctr).expect("gemm");
+        sim.start_ready().expect("start");
+        let started: Vec<StreamId> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.start_ns.is_some())
+            .map(|o| o.stream)
+            .collect();
+        started.first().copied()
+    };
+    assert_eq!(first(false), Some(StreamId(0)));
+    assert_eq!(first(true), Some(StreamId(1)));
+}
+
+#[test]
+fn sim_replay_stream_priority_keeps_hits() {
+    let t = Trace {
+        events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let cfg = |stream_priority: bool| SimCfg {
+        seq_streams: true,
+        stream_priority,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let plain = sim_replay_cfg(&t, p.clone(), cfg(false)).expect("plain");
+    let pri = sim_replay_cfg(&t, p, cfg(true)).expect("pri");
+    assert_eq!(plain.hits, pri.hits);
+    assert_eq!(plain.misses, pri.misses);
+}

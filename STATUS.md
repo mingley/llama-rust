@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — seq-stream CUDA priority
+
+`Sim::set_created_streams_priority` is `cudaStreamCreateWithPriority`
+for streams `1 .. n` (priority = id). `SimCfg::stream_priority` /
+`GpuStoreCfg::stream_priority` and `expertvm --stream-priority` opt in
+so a later sequence wins when compute contends. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — AccessedBy and legacy NULL on the store seam
 
 `GpuStoreCfg::accessed_by` / `SimCfg::accessed_by` is

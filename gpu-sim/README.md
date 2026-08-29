@@ -262,7 +262,8 @@ stream (NULL serializes with every stream).
 `host_pin_bytes` caps page-locked host (`cudaMallocHost` / `cudaHostRegister`);
 overflow is `PinOom`. Example default is unlimited.
 `set_stream_priority` is `cudaStreamCreateWithPriority` (higher first when
-compute contends). `Operation` carries `submit_ns` / `start_ns` / `done_ns`
+compute contends). `set_created_streams_priority` assigns created streams
+their id. `Operation` carries `submit_ns` / `start_ns` / `done_ns`
 so stream[i+1].start ≥ stream[i].finish is inspectable. `GpuOp` /
 `Operation` is the compiled submit DAG (`Sim::operations`).
 

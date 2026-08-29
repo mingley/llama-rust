@@ -58,6 +58,7 @@
 //! [`Sim::query_stream`] is `cudaStreamQuery` (no wait).
 //! [`Sim::mem_info`] is `cudaMemGetInfo` `(free, total)`.
 //! [`Sim::set_stream_priority`] is `cudaStreamCreateWithPriority`.
+//! [`Sim::set_created_streams_priority`] assigns created streams their id.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; first
 //! [`launch_graph`](Sim::launch_graph) calls it). [`Sim::upload_graph`] is
 //! `cudaGraphUpload` (host-sync; first launch after instantiate calls it).
@@ -1267,6 +1268,14 @@ mod tests {
         assert_eq!(low_submitted_first, vec![StreamId(1)]);
         let high_submitted_first = run(true);
         assert_eq!(high_submitted_first, vec![StreamId(1)]);
+    }
+
+    #[test]
+    fn created_stream_priority_helper_matches_manual() {
+        let mut sim = Sim::new(h100());
+        sim.set_created_streams_priority(2).unwrap();
+        assert_eq!(sim.stream_priority(DeviceId(0), StreamId(0)), 0);
+        assert_eq!(sim.stream_priority(DeviceId(0), StreamId(1)), 1);
     }
 
     #[test]

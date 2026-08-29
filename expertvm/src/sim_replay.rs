@@ -192,6 +192,12 @@ pub struct SimCfg {
     /// with every other stream. Off by default. [`crate::GpuStoreCfg::legacy_null`]
     /// is the store path (copy NULL vs compute `StreamId(1)`).
     pub legacy_null: bool,
+    /// `cudaStreamCreateWithPriority` for seq-streams (`set_created_streams_priority`).
+    ///
+    /// Created streams get priority equal to their id, so a later sequence
+    /// wins when compute contends. A no-op unless [`Self::seq_streams`].
+    /// [`crate::GpuStoreCfg::stream_priority`] marks the store compute stream.
+    pub stream_priority: bool,
 }
 
 impl SimCfg {
@@ -220,6 +226,7 @@ impl SimCfg {
             pageable: false,
             accessed_by: false,
             legacy_null: false,
+            stream_priority: false,
         }
     }
 }
@@ -270,6 +277,9 @@ pub fn sim_replay_cfg(
     }
     if cfg.legacy_null {
         sim.set_legacy_null_stream(true);
+    }
+    if cfg.stream_priority {
+        sim.set_created_streams_priority(n_streams)?;
     }
     let mut args = TouchArgs {
         d,

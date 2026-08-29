@@ -70,6 +70,10 @@ pub struct GpuStoreCfg {
     /// Off by default (`cudaStreamNonBlocking` compute). Decode identity stays
     /// overlapping.
     pub legacy_null: bool,
+    /// `cudaStreamCreateWithPriority` on the compute stream (`StreamId(1)`).
+    ///
+    /// Copy stays NULL at priority 0. Decode identity stays default priority.
+    pub stream_priority: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -208,6 +212,9 @@ impl SimulatedGpuStore {
         }
         if cfg.legacy_null {
             sim.set_legacy_null_stream(true);
+        }
+        if cfg.stream_priority {
+            sim.set_created_streams_priority(2)?;
         }
         let cache_slots = mapped_occupancy(slots, fill, sim.pin_budget(), bytes);
         // Mapped expert pages already charge the pin budget. Pageable H2D
@@ -487,6 +494,12 @@ impl SimulatedGpuStore {
             .get(&key)
             .and_then(|p| self.sim.is_accessed_by(p.id, device).ok())
             .unwrap_or(false)
+    }
+
+    /// [`gpu_sim::Sim::stream_priority`] for `(device, stream)`.
+    #[must_use]
+    pub fn stream_priority(&self, device: DeviceId, stream: StreamId) -> i32 {
+        self.sim.stream_priority(device, stream)
     }
 
     /// How many times a captured GEMM graph was launched.

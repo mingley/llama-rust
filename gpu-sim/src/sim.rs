@@ -425,6 +425,20 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaStreamCreateWithPriority` for streams `1 .. n_streams` on every GPU.
+    ///
+    /// Priority equals the stream id (higher id runs first when compute
+    /// contends). [`StreamId::NULL`] stays `0`. `n_streams <= 1` is a no-op.
+    pub fn set_created_streams_priority(&mut self, n_streams: u8) -> Result<(), SimError> {
+        let devices: Vec<DeviceId> = self.profile.gpus.iter().map(|g| g.id).collect();
+        for d in devices {
+            for s in 1..n_streams {
+                self.set_stream_priority(d, StreamId(u16::from(s)), i32::from(s))?;
+            }
+        }
+        Ok(())
+    }
+
     /// `cudaDeviceEnablePeerAccess(dst)` from `src`. No-op if `src == dst`.
     pub fn enable_peer(&mut self, src: DeviceId, dst: DeviceId) -> Result<(), SimError> {
         if src == dst {

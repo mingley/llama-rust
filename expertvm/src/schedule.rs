@@ -291,6 +291,9 @@ impl SchedRt {
         if cfg.legacy_null {
             sim.set_legacy_null_stream(true);
         }
+        if cfg.stream_priority {
+            sim.set_created_streams_priority(n_streams)?;
+        }
         let n_gpus = u16::try_from(sim.profile().n_gpus()).unwrap_or(1).max(1);
         let bytes = cfg.bytes_per_expert.max(1);
         let mut cfg = cfg;

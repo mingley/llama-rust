@@ -365,7 +365,7 @@ Backends:
 | `DirectStore` | today’s blob range; bit-identical to current decode |
 | `CachedStore` | bounded “fast memory” of N experts; rest fault in |
 | `TieredStore` | fast RAM / slow RAM / disk |
-| `SimulatedGpuStore` | fake HBM capacity, PCIe/NVLink bandwidth, DMA concurrency; `with_managed` is UM prefetch, `with_mapped` is zero-copy host (and `host_pin_bytes` occupancy), `with_vmm` is `va_acquire`; `with_cfg` is `host_func` / blocking streams / `sync_alloc` / mempool / `vmm_page` / pageable H2D / `SetAccessedBy` / legacy NULL; `expertvm store` / `store_replay_cfg` is the CLI (Markov prefetch) |
+| `SimulatedGpuStore` | fake HBM capacity, PCIe/NVLink bandwidth, DMA concurrency; `with_managed` is UM prefetch, `with_mapped` is zero-copy host (and `host_pin_bytes` occupancy), `with_vmm` is `va_acquire`; `with_cfg` is `host_func` / blocking streams / `sync_alloc` / mempool / `vmm_page` / pageable H2D / `SetAccessedBy` / legacy NULL / stream priority; `expertvm store` / `store_replay_cfg` is the CLI (Markov prefetch) |
 
 `DirectStore` must keep every existing oracle / real-model test green.
 The dense/common weights stay resident. Only expert tensors go through
@@ -625,8 +625,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `cudaMalloc`/`cudaMemcpy`/`cudaFree` on miss (`Sim::malloc`); default
   `sim`/`schedule` / `SimulatedGpuStore::new` stay on `cudaMallocAsync`.
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
-  `--host-func`, blocking compute, `--pageable`, `--accessed-by`, and
-  `--legacy-null`. `--mempool` sets the default
+  `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
+  `--legacy-null`, and `--stream-priority`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--mapped` is `cudaHostAllocMapped`
   (no H2D, PCIe kernels, HBM unused; walker slots also cap at
@@ -646,7 +646,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `cudaStreamCreate` on seq-streams (serialize with NULL); default is
   `cudaStreamNonBlocking`. `--legacy-null` is `set_legacy_null_stream`
   (NULL serializes with every stream). `--pageable` is host-sync
-  `memcpy_host_to_device` (`pageable_permille`). `memset` / `memset_buf` of a mapped span, directed peer enable, and
+  `memcpy_host_to_device` (`pageable_permille`). `--stream-priority` is
+  `cudaStreamCreateWithPriority` on seq-streams (priority = stream id). `memset` / `memset_buf` of a mapped span, directed peer enable, and
   the legacy null stream are mechanical CUDA invariants.
   `synchronize_stream` / `synchronize_event` / `synchronize_device` are
   `cudaStreamSynchronize` / `cudaEventSynchronize` / `cudaDeviceSynchronize`. `event_elapsed_ns` is `cudaEventElapsedTime` in
