@@ -643,6 +643,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   launch uploads if needed.   `update_graph` replaces an instantiated exec's
   steps when device, stream, op kinds, and dependency edges match (`graph_update_ns`).
   Graphs with mem alloc/free nodes cannot be updated.
+  `graph_exec_kernel_set_params` is `cudaGraphExecKernelNodeSetParams`
+  (`graph_set_params_ns`): patch one kernel node's pointers / kind; mem nodes
+  are legal. Capture cannot include it.
   `clone_graph` is an independent uninstantiated copy (`graph_clone_ns`);
   child-graph nodes are cloned recursively (shared children cloned once);
   graph mem alloc nodes get new ids (independent HBM).
@@ -681,7 +684,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `sim`/`schedule` / `SimulatedGpuStore::new` stay on `cudaMallocAsync`.
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-clone`, `--graph-build`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--cooperative`, and `--multicast`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--cooperative`, and `--multicast`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--mapped` is `cudaHostAllocMapped`
   (no H2D, PCIe kernels, HBM unused; walker slots also cap at
@@ -705,7 +708,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `memcpy_host_to_device` (`pageable_permille`). `--stream-priority` is
   `cudaStreamCreateWithPriority` on seq-streams (priority = stream id). `--graph-update`
   is `cudaGraphExecUpdate` of a parked leaf (store and `--cuda-graphs`
-  walker). `--graph-clone` is `cudaGraphClone` of a leaf capture before
+  walker). `--graph-set-params` is `cudaGraphExecKernelNodeSetParams` of a
+  parked leaf (no second capture; legal with mem nodes). `--graph-clone` is `cudaGraphClone` of a leaf capture before
   instantiate (graph vs exec). `--graph-build` is `cudaGraphCreate` /
   `cudaGraphAddKernelNode` (and child add for combo parents; independent
   children may Hyper-Q overlap).   `--graph-mem`
@@ -1186,6 +1190,17 @@ model, do not celebrate the sim.
     `infer-bench schedule` implies `--vmm` and uses NVLS for `--place replicas`
     / `pin_hot`. Illegal with `--accessed-by` or `--vmm-page`. Decode identity
     stays copy-engine D2D. Dual score still has no `$/M tokens`.
+
+81. [x] `cudaGraphExecKernelNodeSetParams`: `Sim::graph_exec_kernel_set_params`
+    patches one instantiated kernel node's pointers / `KernelKind` without a
+    second graph (`graph_set_params_ns`, cheaper than `cudaGraphExecUpdate`).
+    Cooperative flag and edges stay (topology). Works on graphs with mem
+    alloc/free nodes (CUDA cannot `cudaGraphExecUpdate` those). Capture cannot
+    include it. `--graph-set-params` on `expertvm sim` / `schedule` / `store`,
+    `gguf_gemv engine` / `serve --engine --expert-sim` parks leaf execs on
+    evict and retargets the unique kernel (implies `--cuda-graphs` on the
+    walker). Illegal with `--graph-update`. Decode identity stays
+    destroy+instantiate. Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

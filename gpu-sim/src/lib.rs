@@ -106,6 +106,11 @@
 //! `cudaGraphUpload` (host-sync; first launch after instantiate calls it).
 //! [`Sim::update_graph`] is
 //! `cudaGraphExecUpdate` when device, stream, and op kinds match.
+//! [`Sim::graph_exec_kernel_set_params`] is `cudaGraphExecKernelNodeSetParams`:
+//! patch one instantiated kernel node's pointers / [`KernelKind`] without a
+//! second graph (`graph_set_params_ns`). Cooperative flag and edges stay.
+//! Works on graphs with mem alloc/free nodes (CUDA cannot `cudaGraphExecUpdate`
+//! those). Capture cannot include it.
 //! [`Sim::clone_graph`] is `cudaGraphClone` (independent, not instantiated;
 //! child-graph nodes are cloned recursively).
 //! [`Sim::create_graph`] is `cudaGraphCreate` (empty, not instantiated).
@@ -143,6 +148,8 @@
 //! (`cudaGraphInstantiateFlagAutoFreeOnLaunch`). [`clone_graph`](Sim::clone_graph)
 //! forks those ids. [`destroy_graph`](Sim::destroy_graph) refunds remaining graph
 //! mem. [`update_graph`](Sim::update_graph) of mem nodes is Invalid.
+//! [`graph_exec_kernel_set_params`](Sim::graph_exec_kernel_set_params) may still
+//! retarget a kernel node in those graphs.
 
 #![cfg_attr(not(test), deny(missing_docs))]
 
@@ -156,11 +163,12 @@ mod sim;
 
 pub use error::SimError;
 pub use ids::{
-    AllocId, DeviceId, EventId, GraphId, IpcHandleId, LinkId, MemHandleId, MulticastId, OpId, PoolId,
-    StreamId,
+    AllocId, DeviceId, EventId, GraphId, IpcHandleId, LinkId, MemHandleId, MulticastId, OpId,
+    PoolId, StreamId,
 };
 pub use ops::{
-    DType, GpuOp, KernelBuf, KernelKind, MemAdvise, MemAttach, MemcpyOp, Operation, Place,
+    DType, GpuOp, KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp,
+    Operation, Place,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -1198,6 +1206,204 @@ mod tests {
     }
 
     #[test]
+    fn graph_exec_kernel_set_params_swaps_allocs_without_second_graph() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_set_params_ns = 400;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let exec = sim.end_capture().unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        sim.upload_graph(exec).unwrap();
+        assert!(sim.graph_uploaded(exec).unwrap());
+        let (node, mut params) = sim.graph_unique_kernel(exec).unwrap();
+        assert_eq!(node, 0);
+        params.reads = vec![KernelBuf::whole(b)];
+        params.writes = vec![KernelBuf::whole(b)];
+        let t0 = sim.clock_ns();
+        sim.graph_exec_kernel_set_params(exec, node, &params)
+            .unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(400));
+        assert!(!sim.graph_uploaded(exec).unwrap());
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn graph_exec_kernel_set_params_beats_exec_update_wall() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_instantiate_ns = 80_000;
+            g.graph_update_ns = 9_000;
+            g.graph_set_params_ns = 300;
+            g.graph_upload_ns = 1_000;
+            g.graph_launch_ns = 1_000;
+        }
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let run_update = {
+            let mut sim = Sim::new(p.clone());
+            let a = sim.alloc(d, 4096, s).unwrap();
+            let b = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+            enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+            sim.synchronize().unwrap();
+            sim.begin_capture(d, s).unwrap();
+            enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+            let exec = sim.end_capture().unwrap();
+            sim.instantiate_graph(exec).unwrap();
+            sim.upload_graph(exec).unwrap();
+            sim.begin_capture(d, s).unwrap();
+            enq(sim.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
+            let src = sim.end_capture().unwrap();
+            let t0 = sim.clock_ns();
+            sim.update_graph(exec, src).unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let run_set = {
+            let mut sim = Sim::new(p);
+            let a = sim.alloc(d, 4096, s).unwrap();
+            let b = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+            enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+            sim.synchronize().unwrap();
+            sim.begin_capture(d, s).unwrap();
+            enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+            let exec = sim.end_capture().unwrap();
+            sim.instantiate_graph(exec).unwrap();
+            sim.upload_graph(exec).unwrap();
+            let (node, mut params) = sim.graph_unique_kernel(exec).unwrap();
+            params.reads = vec![KernelBuf::whole(b)];
+            params.writes = vec![KernelBuf::whole(b)];
+            let t0 = sim.clock_ns();
+            sim.graph_exec_kernel_set_params(exec, node, &params)
+                .unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        assert!(
+            run_set < run_update,
+            "set_params={run_set} update={run_update}"
+        );
+    }
+
+    #[test]
+    fn graph_exec_kernel_set_params_allows_mem_nodes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+        sim.synchronize().unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        let scratch = sim.graph_add_alloc(exec, 4096).unwrap();
+        sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[scratch])
+            .unwrap();
+        sim.graph_add_dependencies(exec, 0, 1).unwrap();
+        sim.graph_add_free(exec, scratch).unwrap();
+        sim.graph_add_dependencies(exec, 1, 2).unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        let scratch2 = sim.graph_add_alloc(src, 4096).unwrap();
+        sim.graph_add_kernel(src, KernelKind::other(8, 8), &[b], &[scratch2])
+            .unwrap();
+        sim.graph_add_dependencies(src, 0, 1).unwrap();
+        sim.graph_add_free(src, scratch2).unwrap();
+        sim.graph_add_dependencies(src, 1, 2).unwrap();
+        let err = sim.update_graph(exec, src).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("mem"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let (node, mut params) = sim.graph_unique_kernel(exec).unwrap();
+        assert_eq!(node, 1);
+        let owned = sim.graph_mem_allocs(exec).unwrap();
+        assert_eq!(owned, vec![scratch]);
+        params.reads = vec![KernelBuf::whole(b)];
+        sim.graph_exec_kernel_set_params(exec, node, &params)
+            .unwrap();
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 3);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn graph_exec_kernel_set_params_rejects_uninstantiated_and_topology() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let exec = sim.end_capture().unwrap();
+        let params = KernelNodeParams {
+            kind: KernelKind::other(8, 8),
+            reads: vec![KernelBuf::whole(a)],
+            writes: vec![KernelBuf::whole(a)],
+            cooperative: false,
+        };
+        let err = sim
+            .graph_exec_kernel_set_params(exec, 0, &params)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.instantiate_graph(exec).unwrap();
+        let err = sim
+            .graph_exec_kernel_set_params(
+                exec,
+                0,
+                &KernelNodeParams {
+                    cooperative: true,
+                    ..params.clone()
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("cooperative"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        let memcpy_g = sim.end_capture().unwrap();
+        sim.instantiate_graph(memcpy_g).unwrap();
+        let err = sim
+            .graph_exec_kernel_set_params(memcpy_g, 0, &params)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not a kernel"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        let err = sim
+            .graph_exec_kernel_set_params(exec, 0, &params)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
     fn update_graph_rejects_topology_and_uninstantiated() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
@@ -1737,9 +1943,15 @@ mod tests {
         let n = cap.launch_graph(g, s).unwrap();
         assert_eq!(n, 1);
         cap.synchronize().unwrap();
-        let coop = cap
-            .operations()
-            .any(|o| matches!(o.kind, GpuOp::Kernel { cooperative: true, .. }));
+        let coop = cap.operations().any(|o| {
+            matches!(
+                o.kind,
+                GpuOp::Kernel {
+                    cooperative: true,
+                    ..
+                }
+            )
+        });
         assert!(coop, "captured cooperative kernel");
 
         let mut built = Sim::new(h100());
@@ -5359,7 +5571,8 @@ mod tests {
 
         let (ba, bb) = setup(&mut bld);
         let l0 = bld.create_graph(d, s).unwrap();
-        bld.graph_add_kernel(l0, kind.clone(), &[ba], &[ba]).unwrap();
+        bld.graph_add_kernel(l0, kind.clone(), &[ba], &[ba])
+            .unwrap();
         bld.instantiate_graph(l0).unwrap();
         let l1 = bld.create_graph(d, s).unwrap();
         bld.graph_add_kernel(l1, kind, &[bb], &[bb]).unwrap();
@@ -5449,9 +5662,8 @@ mod tests {
 
     #[test]
     fn multicast_granularity_and_capture_refused() {
-        let mut sim = Sim::new(
-            HardwareProfile::example_8xh100_nvlink().with_multicast_granularity(1 << 21),
-        );
+        let mut sim =
+            Sim::new(HardwareProfile::example_8xh100_nvlink().with_multicast_granularity(1 << 21));
         let err = sim.multicast_create(4096, 2).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("unaligned"), "{why}"),

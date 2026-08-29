@@ -324,7 +324,8 @@ impl SchedRt {
                 cfg.graph_build,
                 LeafMem::from_flags(cfg.graph_mem, cfg.graph_auto_free)?,
             )
-            .with_cooperative(cfg.cooperative),
+            .with_cooperative(cfg.cooperative)
+            .with_set_params(cfg.graph_set_params),
             ctr: ReplayCounters::default(),
             prefetched: BTreeSet::new(),
             markov: Markov::new(),
@@ -1056,6 +1057,7 @@ fn finish_sched(mut rt: SchedRt, rec: Rec) -> Result<SchedReplay, Error> {
     rt.sim.synchronize()?;
     rt.ctr.graph_updates = rt.graphs.updates;
     rt.ctr.graph_clones = rt.graphs.clones;
+    rt.ctr.graph_set_params = rt.graphs.kernel_sets;
     let replay = replay_from_sim(
         &rt.sim,
         rec.tokens_done,

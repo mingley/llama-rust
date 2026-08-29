@@ -251,6 +251,15 @@ impl LiveStore {
         }
     }
 
+    /// [`gpu_sim::Sim::graph_exec_kernel_set_params`] count. CPU stores are 0.
+    #[must_use]
+    pub fn graph_set_params(&self) -> u64 {
+        match self {
+            Self::Simulated(s) => s.graph_set_params(),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => 0,
+        }
+    }
+
     /// Timing-on copy elapsed ns. CPU stores and disable-timing GPU stores are 0.
     #[must_use]
     pub fn copy_elapsed_ns(&self) -> u64 {

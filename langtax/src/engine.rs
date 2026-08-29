@@ -28,7 +28,7 @@
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `vmm_page`, pageable H2D, `SetAccessedBy`, legacy NULL, stream priority,
-//! graph update/clone, timing events, `seq_streams`, `kv_sim`, `decode_priority`,
+//! graph update/clone/set-params, timing events, `seq_streams`, `kv_sim`, `decode_priority`,
 //! `compute_slots`, `decode_sm_permille`, `cooperative`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
@@ -404,6 +404,12 @@ impl<'a> Engine<'a> {
     #[must_use]
     pub fn graph_clones(&self) -> u64 {
         self.live_store().map_or(0, LiveStore::graph_clones)
+    }
+
+    /// Parked-exec kernel SetParams on an attached SimulatedGpuStore.
+    #[must_use]
+    pub fn graph_set_params(&self) -> u64 {
+        self.live_store().map_or(0, LiveStore::graph_set_params)
     }
 
     /// Timing-on copy elapsed ns on an attached SimulatedGpuStore.
@@ -2782,6 +2788,7 @@ mod tests {
         launches: u64,
         updates: u64,
         clones: u64,
+        set_params: u64,
         copy_elapsed_ns: u64,
         wall_ns: u64,
         copy_pri: i32,
@@ -2858,6 +2865,7 @@ mod tests {
             launches: eng.graph_launches(),
             updates: eng.graph_updates(),
             clones: eng.graph_clones(),
+            set_params: eng.graph_set_params(),
             copy_elapsed_ns: eng.copy_elapsed_ns(),
             wall_ns,
             copy_pri: eng
@@ -2897,6 +2905,45 @@ mod tests {
             out.updates,
             out.launches
         );
+        assert!(out.launches >= 2, "launches={}", out.launches);
+    }
+
+    #[test]
+    fn engine_gpu_graph_set_params_after_tight_slots() {
+        let out = two_seq_gpu_knobs(
+            2,
+            GpuStoreCfg {
+                graph_set_params: true,
+                ..GpuStoreCfg::default()
+            },
+        );
+        assert!(
+            out.set_params > 0,
+            "tight slots must park+SetParams GEMM graphs, set_params={} launches={}",
+            out.set_params,
+            out.launches
+        );
+        assert_eq!(out.updates, 0, "updates={}", out.updates);
+        assert!(out.launches >= 2, "launches={}", out.launches);
+    }
+
+    #[test]
+    fn engine_gpu_graph_set_params_with_mem() {
+        let out = two_seq_gpu_knobs(
+            2,
+            GpuStoreCfg {
+                graph_set_params: true,
+                graph_mem: true,
+                ..GpuStoreCfg::default()
+            },
+        );
+        assert!(
+            out.set_params > 0,
+            "graph_mem must still SetParams, set_params={} launches={}",
+            out.set_params,
+            out.launches
+        );
+        assert_eq!(out.updates, 0, "updates={}", out.updates);
         assert!(out.launches >= 2, "launches={}", out.launches);
     }
 

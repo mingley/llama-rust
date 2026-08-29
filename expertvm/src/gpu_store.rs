@@ -8,7 +8,9 @@ use crate::planner::{
     plan_placement, plan_window, predicted_keys, window_keys, ChainState, Markov, Placement, Plan,
     Prefetch, DECODE_ACTIVATION_BYTES,
 };
-use crate::sim_replay::{replay_streams, stream_of, LeafMem, GRAPH_SCRATCH_BYTES};
+use crate::sim_replay::{
+    replay_streams, retarget_parked_kernel, stream_of, LeafMem, GRAPH_SCRATCH_BYTES,
+};
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
     AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelBuf, KernelKind, MemAdvise,
@@ -93,6 +95,13 @@ pub struct GpuStoreCfg {
     /// The next capture on that GPU updates it (`graph_update_ns`) instead of
     /// instantiate. Decode identity stays destroy+instantiate.
     pub graph_update: bool,
+    /// `cudaGraphExecKernelNodeSetParams` a parked exec onto the next miss.
+    ///
+    /// Evict parks the instantiated GEMM graph. The next miss retargets the
+    /// unique kernel node (`graph_set_params_ns`) without recapture. Works with
+    /// [`Self::graph_mem`] / [`Self::graph_auto_free`]. Illegal with
+    /// [`Self::graph_update`]. Decode identity stays destroy+instantiate.
+    pub graph_set_params: bool,
     /// `cudaGraphClone` the capture before instantiate (graph vs exec).
     ///
     /// Clone, destroy the src, then instantiate the copy. A parked-exec
@@ -108,11 +117,13 @@ pub struct GpuStoreCfg {
     /// Leaf GEMM graphs include a scratch `cudaMallocAsync` + free.
     ///
     /// CUDA cannot `cudaGraphExecUpdate` mem nodes, so [`Self::graph_update`]
-    /// is skipped. Decode identity stays kernel-only graphs.
+    /// is skipped. [`Self::graph_set_params`] still retargets the kernel.
+    /// Decode identity stays kernel-only graphs.
     pub graph_mem: bool,
     /// Scratch alloc without a matching free; AutoFreeOnLaunch instantiate.
     ///
-    /// Illegal with [`Self::graph_mem`]. `--graph-update` is skipped. Decode
+    /// Illegal with [`Self::graph_mem`]. `--graph-update` is skipped;
+    /// [`Self::graph_set_params`] still retargets. Decode
     /// identity stays kernel-only graphs.
     pub graph_auto_free: bool,
     /// `cudaLaunchCooperativeKernel` for grouped GEMMs.
@@ -206,7 +217,9 @@ pub struct SimulatedGpuStore {
     graph_launches: u64,
     graph_updates: u64,
     graph_clones: u64,
+    graph_set_params_n: u64,
     graph_update: bool,
+    graph_set_params: bool,
     graph_clone: bool,
     graph_build: bool,
     leaf: LeafMem,
@@ -329,7 +342,8 @@ impl SimulatedGpuStore {
     /// destroy+instantiate graphs (stream capture; [`GpuStoreCfg::graph_build`]
     /// is `cudaGraphCreate` / `cudaGraphAdd*`; [`GpuStoreCfg::graph_mem`]
     /// records in-graph scratch with a matching free;
-    /// [`GpuStoreCfg::graph_auto_free`] is AutoFreeOnLaunch without a free),
+    /// [`GpuStoreCfg::graph_auto_free`] is AutoFreeOnLaunch without a free;
+    /// [`GpuStoreCfg::graph_set_params`] retargets a parked kernel node),
     /// disable-timing copy events.
     /// [`GpuStoreCfg::cooperative`] launches GEMMs with
     /// `cudaLaunchCooperativeKernel` (exclusive compute).
@@ -347,6 +361,9 @@ impl SimulatedGpuStore {
         fill: GpuFill,
         cfg: GpuStoreCfg,
     ) -> Result<Self, Error> {
+        if cfg.graph_update && cfg.graph_set_params {
+            return Err(Error::Store("choose one of graph-update, graph-set-params"));
+        }
         if cfg.multicast {
             if fill != GpuFill::Vmm {
                 return Err(Error::Store("multicast requires vmm"));
@@ -428,7 +445,9 @@ impl SimulatedGpuStore {
             graph_launches: 0,
             graph_updates: 0,
             graph_clones: 0,
+            graph_set_params_n: 0,
             graph_update: cfg.graph_update,
+            graph_set_params: cfg.graph_set_params,
             graph_clone: cfg.graph_clone,
             graph_build: cfg.graph_build,
             leaf,
@@ -903,6 +922,12 @@ impl SimulatedGpuStore {
         self.graph_clones
     }
 
+    /// How many times [`gpu_sim::Sim::graph_exec_kernel_set_params`] reused a parked exec.
+    #[must_use]
+    pub fn graph_set_params(&self) -> u64 {
+        self.graph_set_params_n
+    }
+
     /// Sum of [`gpu_sim::Sim::event_elapsed_ns`] on copy start/end events.
     ///
     /// Zero unless [`GpuStoreCfg::timing_events`] and a copy was waited.
@@ -1188,6 +1213,17 @@ impl SimulatedGpuStore {
             let _n = self.sim.launch_graph(g, self.compute)?;
             return Ok(());
         }
+        if self.graph_set_params {
+            if let Some(exec) = self.idle_execs.get_mut(&device).and_then(Vec::pop) {
+                retarget_parked_kernel(&mut self.sim, exec, id)?;
+                self.graph_set_params_n = self.graph_set_params_n.saturating_add(1);
+                self.sim.upload_graph(exec)?;
+                let _prev = self.graphs.insert(id, exec);
+                self.graph_launches = self.graph_launches.saturating_add(1);
+                let _n = self.sim.launch_graph(exec, self.compute)?;
+                return Ok(());
+            }
+        }
         if self.graph_build {
             let src = self.build_gemm_graph(device, id)?;
             let g = self.bind_graph(device, src)?;
@@ -1286,7 +1322,7 @@ impl SimulatedGpuStore {
 
     fn finish_drop(&mut self, key: ExpertKey, page: GpuPage) -> Result<(), Error> {
         if let Some(g) = self.graphs.remove(&page.id) {
-            if self.graph_update && self.leaf == LeafMem::None {
+            if self.graph_set_params || (self.graph_update && self.leaf == LeafMem::None) {
                 self.idle_execs.entry(page.device).or_default().push(g);
             } else {
                 self.sim.destroy_graph(g)?;
@@ -1379,12 +1415,7 @@ impl SimulatedGpuStore {
                     if !self.sim.is_resident(id, dst)? {
                         self.sim.va_map(id, dst)?;
                     }
-                    let _c = self.sim.multicast_store(
-                        src,
-                        id,
-                        &[dst],
-                        self.copy,
-                    )?;
+                    let _c = self.sim.multicast_store(src, id, &[dst], self.copy)?;
                     self.note_replicate();
                 } else if !self.sim.is_resident(id, dst)? {
                     self.sim.va_map(id, dst)?;
@@ -1620,6 +1651,8 @@ pub struct StoreReplay {
     pub graph_updates: u64,
     /// [`SimulatedGpuStore::graph_clones`] after the walk.
     pub graph_clones: u64,
+    /// [`SimulatedGpuStore::graph_set_params`] after the walk.
+    pub graph_set_params: u64,
     /// [`SimulatedGpuStore::copy_elapsed_ns`] after the walk.
     pub copy_elapsed_ns: u64,
 }
@@ -1629,11 +1662,12 @@ impl StoreReplay {
     #[must_use]
     pub fn line(&self) -> String {
         format!(
-            "store {} {} graph_updates={} graph_clones={} copy_elapsed_ns={}",
+            "store {} {} graph_updates={} graph_clones={} graph_set_params={} copy_elapsed_ns={}",
             self.metrics.line(),
             self.score.line(),
             self.graph_updates,
             self.graph_clones,
+            self.graph_set_params,
             self.copy_elapsed_ns
         )
     }
@@ -1741,6 +1775,7 @@ pub fn store_replay_cfg(
         metrics: store.metrics(),
         graph_updates: store.graph_updates(),
         graph_clones: store.graph_clones(),
+        graph_set_params: store.graph_set_params(),
         copy_elapsed_ns: store.copy_elapsed_ns(),
         score: store.score()?.with_tokens(n),
     })

@@ -2614,6 +2614,110 @@ fn cuda_graphs_graph_update_reuses_parked_leaves() {
 }
 
 #[test]
+fn cuda_graphs_graph_set_params_reuses_parked_leaves() {
+    let t = Trace {
+        events: vec![
+            ev(0, 0, &[0]),
+            ev(1, 0, &[1]),
+            ev(2, 0, &[0]),
+            ev(3, 0, &[1]),
+        ],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_instantiate_ns=100000\ngraph_update_ns=1000\ngraph_set_params_ns=100\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let base = SimCfg {
+        cuda_graphs: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let inst = sim_replay_cfg(&t, p.clone(), base).expect("inst");
+    let upd = sim_replay_cfg(
+        &t,
+        p.clone(),
+        SimCfg {
+            graph_update: true,
+            ..base
+        },
+    )
+    .expect("upd");
+    let set = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            graph_set_params: true,
+            ..base
+        },
+    )
+    .expect("set");
+    assert_eq!(inst.hits, set.hits);
+    assert_eq!(inst.misses, set.misses);
+    assert_eq!(inst.graph_set_params, 0);
+    assert_eq!(set.graph_updates, 0);
+    assert_eq!(set.graph_set_params, 3);
+    assert!(
+        set.sim_ns < upd.sim_ns,
+        "set_params={} update={}",
+        set.sim_ns,
+        upd.sim_ns
+    );
+    assert!(set.line().contains("graph_set_params="));
+}
+
+#[test]
+fn cuda_graphs_graph_set_params_works_with_mem_nodes() {
+    let t = Trace {
+        events: vec![
+            ev(0, 0, &[0]),
+            ev(1, 0, &[1]),
+            ev(2, 0, &[0]),
+            ev(3, 0, &[1]),
+        ],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_instantiate_ns=100000\ngraph_update_ns=1000\ngraph_set_params_ns=100\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let set = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            cuda_graphs: true,
+            graph_set_params: true,
+            graph_mem: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    )
+    .expect("set");
+    assert_eq!(set.graph_updates, 0);
+    assert_eq!(set.graph_set_params, 3);
+    assert!(set.graph_launches > 0, "line={}", set.line());
+}
+
+#[test]
+fn graph_update_and_graph_set_params_conflict() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            cuda_graphs: true,
+            graph_update: true,
+            graph_set_params: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    )
+    .expect_err("conflict");
+    assert!(
+        err.to_string()
+            .contains("choose one of graph-update, graph-set-params"),
+        "{err}"
+    );
+}
+
+#[test]
 fn simulated_gpu_store_graph_update_reuses_parked_exec() {
     let t = Trace {
         events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
@@ -2662,6 +2766,126 @@ fn simulated_gpu_store_graph_update_reuses_parked_exec() {
     assert_eq!(h0, h1);
     assert_eq!(m0, m1);
     assert!(wall_u < wall_i, "update={wall_u} instantiate={wall_i}");
+}
+
+#[test]
+fn simulated_gpu_store_graph_set_params_reuses_parked_exec() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_instantiate_ns=100000\ngraph_update_ns=1000\ngraph_set_params_ns=100\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let run = |graph_set_params: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            1,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                graph_set_params,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let k0 = ExpertKey::new(0, 0);
+        let k1 = ExpertKey::new(0, 1);
+        let _n = gpu.prefetch(&[k0]).expect("p0");
+        let _s = gpu.score().expect("d0");
+        let _a = gpu.acquire(k0).expect("a0");
+        let _s = gpu.score().expect("drain0");
+        gpu.evict(k0).expect("evict");
+        let _s = gpu.score().expect("free");
+        let _n = gpu.prefetch(&[k1]).expect("p1");
+        let _s = gpu.score().expect("d1");
+        let _b = gpu.acquire(k1).expect("a1");
+        let score = gpu.score().expect("final");
+        (
+            gpu.graph_set_params(),
+            gpu.graph_updates(),
+            gpu.metrics().hits,
+            gpu.metrics().misses,
+            score.wall_ns,
+        )
+    };
+    let (sets, upd, h0, m0, wall_s) = run(true);
+    let (none, none_u, h1, m1, wall_i) = run(false);
+    assert_eq!(sets, 1);
+    assert_eq!(upd, 0);
+    assert_eq!(none, 0);
+    assert_eq!(none_u, 0);
+    assert_eq!(h0, h1);
+    assert_eq!(m0, m1);
+    assert!(wall_s < wall_i, "set_params={wall_s} instantiate={wall_i}");
+}
+
+#[test]
+fn simulated_gpu_store_graph_set_params_with_mem() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_instantiate_ns=100000\ngraph_update_ns=1000\ngraph_set_params_ns=100\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        p,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_set_params: true,
+            graph_mem: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    let k1 = ExpertKey::new(0, 1);
+    let _n = gpu.prefetch(&[k0]).expect("p0");
+    let _s = gpu.score().expect("d0");
+    let _a = gpu.acquire(k0).expect("a0");
+    let _s = gpu.score().expect("drain0");
+    gpu.evict(k0).expect("evict");
+    let _s = gpu.score().expect("free");
+    let _n = gpu.prefetch(&[k1]).expect("p1");
+    let _s = gpu.score().expect("d1");
+    let _b = gpu.acquire(k1).expect("a1");
+    let _s = gpu.score().expect("final");
+    assert_eq!(gpu.graph_updates(), 0);
+    assert_eq!(gpu.graph_set_params(), 1);
+}
+
+#[test]
+fn simulated_gpu_store_graph_update_and_set_params_conflict() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_update: true,
+            graph_set_params: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("both flags"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string()
+            .contains("choose one of graph-update, graph-set-params"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -4298,10 +4522,9 @@ fn schedule_vmm_multicast_replicas_beat_sequential_d2d() {
         ..d2d
     };
     let mut hot = striped(&t, 8);
-    let _prev = hot.replicas.insert(
-        ExpertKey::new(0, 0),
-        (1..8u16).map(DeviceId).collect(),
-    );
+    let _prev = hot
+        .replicas
+        .insert(ExpertKey::new(0, 0), (1..8u16).map(DeviceId).collect());
     let a = schedule_placed(&t, p.clone(), d2d, SchedCfg::closed(0), Some(&hot)).expect("d2d");
     let b = schedule_placed(&t, p, nvls, SchedCfg::closed(0), Some(&hot)).expect("nvls");
     assert!(

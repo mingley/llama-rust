@@ -10,7 +10,8 @@ use crate::ids::{
     StreamId,
 };
 use crate::ops::{
-    GpuOp as Kind, KernelBuf, KernelKind, MemAdvise, MemAttach, MemcpyOp, Operation, Place,
+    GpuOp as Kind, KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp,
+    Operation, Place,
 };
 use crate::profile::{ns_for_bytes, HardwareProfile, LinkKind};
 
@@ -1149,10 +1150,7 @@ impl Sim {
                 why: "unknown graph",
             })?;
             let device = g.steps.first().map(|s| s.device).unwrap_or(DeviceId(0));
-            let has_free = g
-                .steps
-                .iter()
-                .any(|s| matches!(&s.kind, Kind::Free { .. }));
+            let has_free = g.steps.iter().any(|s| matches!(&s.kind, Kind::Free { .. }));
             (device, g.instantiated, g.auto_free_on_launch, has_free)
         };
         if already {
@@ -1258,6 +1256,117 @@ impl Sim {
         exec.steps = src_steps;
         exec.uploaded = false;
         Ok(())
+    }
+
+    /// `cudaGraphExecKernelNodeSetParams` on an instantiated exec.
+    ///
+    /// Node `node` must already be a kernel. [`KernelNodeParams::cooperative`]
+    /// must match the existing node (cooperative vs `cudaLaunchKernel` is
+    /// topology). Pointers and [`KernelKind`] may change. Pays
+    /// `graph_set_params_ns` and clears the upload flag. Capture cannot include
+    /// it. Graphs with mem alloc/free nodes are legal (unlike
+    /// [`Self::update_graph`]).
+    pub fn graph_exec_kernel_set_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        params: &KernelNodeParams,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel set params")?;
+        let (instantiated, device, cooperative) = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            let Kind::Kernel { cooperative, .. } = &step.kind else {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            };
+            if *cooperative != params.cooperative {
+                return Err(SimError::Invalid {
+                    why: "cooperative is topology",
+                });
+            }
+            (g.instantiated, step.device, *cooperative)
+        };
+        if !instantiated {
+            return Err(SimError::Invalid {
+                why: "graph not instantiated",
+            });
+        }
+        let reads = self.resolve_bufs(&params.reads)?;
+        let writes = self.resolve_bufs(&params.writes)?;
+        let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.kind = Kind::Kernel {
+            kind: params.kind.clone(),
+            reads,
+            writes,
+            cooperative,
+        };
+        g.uploaded = false;
+        Ok(())
+    }
+
+    /// Unique kernel node on `graph` plus its current [`KernelNodeParams`].
+    ///
+    /// Zero or more than one kernel node is Invalid. Used by
+    /// `cudaGraphExecKernelNodeSetParams` callers that parked a leaf GEMM.
+    pub fn graph_unique_kernel(
+        &self,
+        graph: GraphId,
+    ) -> Result<(usize, KernelNodeParams), SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut found = None;
+        for (i, step) in g.steps.iter().enumerate() {
+            let Kind::Kernel {
+                kind,
+                reads,
+                writes,
+                cooperative,
+            } = &step.kind
+            else {
+                continue;
+            };
+            if found.is_some() {
+                return Err(SimError::Invalid {
+                    why: "not unique kernel node",
+                });
+            }
+            found = Some((
+                i,
+                KernelNodeParams {
+                    kind: kind.clone(),
+                    reads: reads.clone(),
+                    writes: writes.clone(),
+                    cooperative: *cooperative,
+                },
+            ));
+        }
+        found.ok_or(SimError::Invalid {
+            why: "not a kernel node",
+        })
+    }
+
+    /// Graph mem alloc node ids (`cudaMallocAsync` / `cudaGraphAddMemAllocNode`).
+    pub fn graph_mem_allocs(&self, graph: GraphId) -> Result<Vec<AllocId>, SimError> {
+        if !self.graphs.contains_key(&graph) {
+            return Err(SimError::Invalid {
+                why: "unknown graph",
+            });
+        }
+        Ok(self.graph_allocs.get(&graph).cloned().unwrap_or_default())
     }
 
     /// `cudaGraphClone`. Host-synchronous. Capture cannot include it.
@@ -5668,23 +5777,22 @@ impl Sim {
                 a.devices.push(device);
             }
         }
-        let kernel_work: Option<(Vec<AllocId>, bool)> =
-            self.ops.get(&id).and_then(|op| match &op.kind {
-                Kind::Kernel {
-                    reads,
-                    writes,
-                    cooperative,
-                    ..
-                } => Some((
-                    reads.iter().chain(writes.iter()).map(|b| b.id).collect(),
-                    *cooperative,
-                )),
-                Kind::Memset { id: alloc, .. } => Some((vec![*alloc], false)),
-                Kind::AllReduce { parts, .. } => {
-                    Some((parts.iter().map(|(_, a)| *a).collect(), false))
-                }
-                _ => None,
-            });
+        let kernel_work: Option<(Vec<AllocId>, bool)> = self.ops.get(&id).and_then(|op| match &op
+            .kind
+        {
+            Kind::Kernel {
+                reads,
+                writes,
+                cooperative,
+                ..
+            } => Some((
+                reads.iter().chain(writes.iter()).map(|b| b.id).collect(),
+                *cooperative,
+            )),
+            Kind::Memset { id: alloc, .. } => Some((vec![*alloc], false)),
+            Kind::AllReduce { parts, .. } => Some((parts.iter().map(|(_, a)| *a).collect(), false)),
+            _ => None,
+        });
         let memcpy = self.ops.get(&id).and_then(|op| match &op.kind {
             Kind::Memcpy(m) => Some(m.clone()),
             _ => None,
@@ -5938,10 +6046,7 @@ fn graph_topology_eq(a: &[GraphStep], b: &[GraphStep]) -> bool {
         return false;
     }
     a.iter().zip(b.iter()).all(|(x, y)| {
-        x.device == y.device
-            && x.stream == y.stream
-            && op_eq(&x.kind, &y.kind)
-            && x.deps == y.deps
+        x.device == y.device && x.stream == y.stream && op_eq(&x.kind, &y.kind) && x.deps == y.deps
     })
 }
 

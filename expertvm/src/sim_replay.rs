@@ -75,6 +75,8 @@ pub struct SimReplay {
     pub graph_updates: u64,
     /// [`gpu_sim::Sim::clone_graph`] calls that copied a leaf before instantiate.
     pub graph_clones: u64,
+    /// [`gpu_sim::Sim::graph_exec_kernel_set_params`] calls that reused a parked leaf.
+    pub graph_set_params: u64,
 }
 
 impl SimReplay {
@@ -93,7 +95,7 @@ impl SimReplay {
         }
         let _w = write!(
             s,
-            " hits={} misses={} prefetches={} prefetch_hits={} prefetch_waste={} graph_launches={} child_graphs={} graph_updates={} graph_clones={}",
+            " hits={} misses={} prefetches={} prefetch_hits={} prefetch_waste={} graph_launches={} child_graphs={} graph_updates={} graph_clones={} graph_set_params={}",
             self.hits,
             self.misses,
             self.prefetches,
@@ -102,7 +104,8 @@ impl SimReplay {
             self.graph_launches,
             self.child_graphs,
             self.graph_updates,
-            self.graph_clones
+            self.graph_clones,
+            self.graph_set_params
         );
         s
     }
@@ -244,6 +247,15 @@ pub struct SimCfg {
     /// destroy+instantiate. [`crate::GpuStoreCfg::graph_update`] is the store
     /// path (always captures when compute is idle).
     pub graph_update: bool,
+    /// `cudaGraphExecKernelNodeSetParams` a parked leaf onto the next miss alloc.
+    ///
+    /// Evict parks the instantiated GEMM graph. The next miss retargets the
+    /// unique kernel node (`graph_set_params_ns`) without a second capture.
+    /// Works with [`Self::graph_mem`] / [`Self::graph_auto_free`] (CUDA cannot
+    /// `cudaGraphExecUpdate` mem nodes). Illegal with [`Self::graph_update`].
+    /// Implies [`Self::cuda_graphs`]. Decode identity stays destroy+instantiate.
+    /// [`crate::GpuStoreCfg::graph_set_params`] is the store path.
+    pub graph_set_params: bool,
     /// `cudaGraphClone` a leaf capture before instantiate (graph vs exec).
     ///
     /// Parent combo graphs still instantiate in place so child ids stay the
@@ -343,6 +355,7 @@ impl SimCfg {
             legacy_null: false,
             stream_priority: false,
             graph_update: false,
+            graph_set_params: false,
             graph_clone: false,
             graph_build: false,
             graph_mem: false,
@@ -357,6 +370,9 @@ impl SimCfg {
 }
 
 pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Result<(), Error> {
+    if cfg.graph_update && cfg.graph_set_params {
+        return Err(Error::Store("choose one of graph-update, graph-set-params"));
+    }
     if !cfg.multicast {
         return Ok(());
     }
@@ -448,7 +464,8 @@ pub fn sim_replay_cfg(
     let mut prefetched: BTreeSet<ExpertKey> = BTreeSet::new();
     let leaf = LeafMem::from_flags(cfg.graph_mem, cfg.graph_auto_free)?;
     let mut graphs = GraphBank::new(cfg.graph_update, cfg.graph_clone, cfg.graph_build, leaf)
-        .with_cooperative(cfg.cooperative);
+        .with_cooperative(cfg.cooperative)
+        .with_set_params(cfg.graph_set_params);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
     let mut next_event = 1u32;
     for (i, event) in trace.events.iter().enumerate() {
@@ -529,6 +546,7 @@ pub fn sim_replay_cfg(
     }
     ctr.graph_updates = graphs.updates;
     ctr.graph_clones = graphs.clones;
+    ctr.graph_set_params = graphs.kernel_sets;
     Ok(finish(&sim, &token_ends, ctr))
 }
 
@@ -653,6 +671,7 @@ pub(crate) struct ReplayCounters {
     pub child_graphs: u64,
     pub graph_updates: u64,
     pub graph_clones: u64,
+    pub graph_set_params: u64,
 }
 
 /// Instantiated CUDA graph execs, optionally parked for `update_graph`.
@@ -664,8 +683,10 @@ pub(crate) struct GraphBank {
     build: bool,
     mem: LeafMem,
     cooperative: bool,
+    set_params: bool,
     pub updates: u64,
     pub clones: u64,
+    pub kernel_sets: u64,
 }
 
 impl GraphBank {
@@ -678,8 +699,10 @@ impl GraphBank {
             build,
             mem,
             cooperative: false,
+            set_params: false,
             updates: 0,
             clones: 0,
+            kernel_sets: 0,
         }
     }
 
@@ -688,11 +711,16 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_set_params(mut self, yes: bool) -> Self {
+        self.set_params = yes;
+        self
+    }
+
     pub(crate) fn get(&self, ids: &[AllocId]) -> Option<GraphId> {
         self.graphs.get(ids).map(|(g, _)| *g)
     }
 
-    /// Instantiate `src`, or `update_graph` a parked leaf on `origin`.
+    /// Instantiate `src`, or `update_graph` / SetParams a parked leaf on `origin`.
     pub(crate) fn bind(
         &mut self,
         sim: &mut Sim,
@@ -703,6 +731,18 @@ impl GraphBank {
         if let Some(gid) = self.get(&ids) {
             sim.destroy_graph(src)?;
             return Ok(gid);
+        }
+        if self.set_params {
+            if let Some(id) = ids.first().copied().filter(|_| ids.len() == 1) {
+                if let Some(exec) = self.idle.entry(origin).or_default().pop() {
+                    retarget_parked_kernel(sim, exec, id)?;
+                    sim.destroy_graph(src)?;
+                    self.kernel_sets = self.kernel_sets.saturating_add(1);
+                    sim.upload_graph(exec)?;
+                    let _prev = self.graphs.insert(ids, (exec, origin));
+                    return Ok(exec);
+                }
+            }
         }
         let gid = if self.update && self.mem == LeafMem::None && ids.len() == 1 {
             if let Some(exec) = self.idle.entry(origin).or_default().pop() {
@@ -719,6 +759,26 @@ impl GraphBank {
         };
         let _prev = self.graphs.insert(ids, (gid, origin));
         Ok(gid)
+    }
+
+    /// Retarget a parked leaf without capturing a second graph.
+    pub(crate) fn try_retarget(
+        &mut self,
+        sim: &mut Sim,
+        origin: (DeviceId, StreamId),
+        id: AllocId,
+    ) -> Result<Option<GraphId>, Error> {
+        if !self.set_params {
+            return Ok(None);
+        }
+        let Some(exec) = self.idle.entry(origin).or_default().pop() else {
+            return Ok(None);
+        };
+        retarget_parked_kernel(sim, exec, id)?;
+        self.kernel_sets = self.kernel_sets.saturating_add(1);
+        sim.upload_graph(exec)?;
+        let _prev = self.graphs.insert(vec![id], (exec, origin));
+        Ok(Some(exec))
     }
 
     fn instantiate_leaf(
@@ -738,6 +798,10 @@ impl GraphBank {
         instantiate_src(sim, exec, self.mem == LeafMem::AutoFree)
     }
 
+    fn parks_leaf(&self, n_ids: usize) -> bool {
+        n_ids == 1 && (self.set_params || (self.update && self.mem == LeafMem::None))
+    }
+
     pub(crate) fn drop_alloc(&mut self, sim: &mut Sim, id: AllocId) -> Result<(), Error> {
         let victims: Vec<(Vec<AllocId>, GraphId, (DeviceId, StreamId))> = self
             .graphs
@@ -747,7 +811,7 @@ impl GraphBank {
             .collect();
         for (ids, gid, origin) in victims {
             let _gone = self.graphs.remove(&ids);
-            if self.update && self.mem == LeafMem::None && ids.len() == 1 {
+            if self.parks_leaf(ids.len()) {
                 self.idle.entry(origin).or_default().push(gid);
             } else {
                 sim.destroy_graph(gid)?;
@@ -765,6 +829,23 @@ fn instantiate_src(sim: &mut Sim, src: GraphId, auto_free: bool) -> Result<Graph
     }
     sim.upload_graph(src)?;
     Ok(src)
+}
+
+/// Patch a parked leaf GEMM so it reads/writes `expert` instead of the evicted alloc.
+pub(crate) fn retarget_parked_kernel(
+    sim: &mut Sim,
+    exec: GraphId,
+    expert: AllocId,
+) -> Result<(), Error> {
+    let (node, mut params) = sim.graph_unique_kernel(exec)?;
+    let owned = sim.graph_mem_allocs(exec)?;
+    for buf in params.reads.iter_mut().chain(params.writes.iter_mut()) {
+        if !owned.contains(&buf.id) {
+            buf.id = expert;
+        }
+    }
+    sim.graph_exec_kernel_set_params(exec, node, &params)?;
+    Ok(())
 }
 
 pub(crate) struct PageHandle {
@@ -1046,7 +1127,16 @@ fn gemm_ids(
         ctr.graph_launches = ctr.graph_launches.saturating_add(1);
         return Ok(());
     }
-    if cuda_graphs || graphs.build || graphs.mem != LeafMem::None {
+    if ids.len() == 1 {
+        if let Some(id) = ids.first().copied() {
+            if let Some(g) = graphs.try_retarget(sim, (d, stream), id)? {
+                let _n = sim.launch_graph(g, stream)?;
+                ctr.graph_launches = ctr.graph_launches.saturating_add(1);
+                return Ok(());
+            }
+        }
+    }
+    if cuda_graphs || graphs.build || graphs.mem != LeafMem::None || graphs.set_params {
         if let Some(g) = capture_expert_graph(sim, graphs, d, stream, &ids)? {
             if ids.len() > 1 {
                 ctr.child_graphs = ctr.child_graphs.saturating_add(1);
@@ -1056,9 +1146,9 @@ fn gemm_ids(
             return Ok(());
         }
     }
-        for id in ids {
-            kernel_leaf(sim, d, stream, id, LeafMem::None, graphs.cooperative)?;
-        }
+    for id in ids {
+        kernel_leaf(sim, d, stream, id, LeafMem::None, graphs.cooperative)?;
+    }
     Ok(())
 }
 
@@ -1083,6 +1173,10 @@ fn capture_expert_graph(
     for id in ids {
         let key = vec![*id];
         if let Some(g) = graphs.get(&key) {
+            leaves.push(g);
+            continue;
+        }
+        if let Some(g) = graphs.try_retarget(sim, origin, *id)? {
             leaves.push(g);
             continue;
         }
@@ -1114,6 +1208,10 @@ fn build_expert_graph(
     for id in ids {
         let key = vec![*id];
         if let Some(g) = graphs.get(&key) {
+            leaves.push(g);
+            continue;
+        }
+        if let Some(g) = graphs.try_retarget(sim, origin, *id)? {
             leaves.push(g);
             continue;
         }
@@ -1172,6 +1270,7 @@ pub(crate) fn replay_from_sim(
         child_graphs: ctr.child_graphs,
         graph_updates: ctr.graph_updates,
         graph_clones: ctr.graph_clones,
+        graph_set_params: ctr.graph_set_params,
     }
 }
 

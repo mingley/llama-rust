@@ -215,6 +215,23 @@ impl KernelBuf {
     }
 }
 
+/// `cudaKernelNodeParams` for [`crate::Sim::graph_exec_kernel_set_params`].
+///
+/// Topology (node index, cooperative flag, dependency edges) stays. Pointers
+/// and [`KernelKind`] may change. Capture cannot include SetParams.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct KernelNodeParams {
+    /// Structural work (roofline inputs / kernel function analog).
+    pub kind: KernelKind,
+    /// Buffers the kernel reads.
+    pub reads: Vec<KernelBuf>,
+    /// Buffers the kernel writes.
+    pub writes: Vec<KernelBuf>,
+    /// Must match the existing node (`cudaLaunchCooperativeKernel` vs
+    /// `cudaLaunchKernel`). Changing it is topology, not params.
+    pub cooperative: bool,
+}
+
 /// `cudaStreamAttachMemAsync` flags (`cudaMemAttachGlobal` / `Host` / `Single`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemAttach {

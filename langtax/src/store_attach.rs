@@ -30,6 +30,7 @@ pub(crate) struct StoreAttach {
 pub(crate) struct GpuCli {
     pub cuda_graphs: bool,
     pub graph_update: bool,
+    pub graph_set_params: bool,
     pub graph_clone: bool,
     pub graph_build: bool,
     pub graph_mem: bool,
@@ -78,6 +79,7 @@ impl GpuCli {
         let slot = match key {
             "--cuda-graphs" => &mut self.cuda_graphs,
             "--graph-update" => &mut self.graph_update,
+            "--graph-set-params" => &mut self.graph_set_params,
             "--graph-clone" => &mut self.graph_clone,
             "--graph-build" => &mut self.graph_build,
             "--graph-mem" => &mut self.graph_mem,
@@ -167,6 +169,7 @@ impl GpuCli {
         [
             (self.cuda_graphs, "--cuda-graphs"),
             (self.graph_update, "--graph-update"),
+            (self.graph_set_params, "--graph-set-params"),
             (self.graph_clone, "--graph-clone"),
             (self.graph_build, "--graph-build"),
             (self.graph_mem, "--graph-mem"),
@@ -384,6 +387,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         legacy_null: gpu.legacy_null,
         stream_priority: gpu.stream_priority,
         graph_update: gpu.graph_update,
+        graph_set_params: gpu.graph_set_params,
         graph_clone: gpu.graph_clone,
         graph_build: gpu.graph_build,
         graph_mem: gpu.graph_mem,

@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — `cudaGraphExecKernelNodeSetParams`
+
+`Sim::graph_exec_kernel_set_params` is `cudaGraphExecKernelNodeSetParams`:
+patch one instantiated kernel node's pointers / kind without a second graph.
+Cheaper than `cudaGraphExecUpdate`. Legal with mem alloc/free nodes.
+`--graph-set-params` parks leaf execs on evict and retargets the unique kernel.
+Illegal with `--graph-update`. Decode identity stays destroy+instantiate.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Hopper `cuMulticastCreate` NVLS replica fanout
 
 `Sim::multicast_create` / `multicast_add_device` / `multicast_bind_mem` /
