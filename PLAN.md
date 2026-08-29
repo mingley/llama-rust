@@ -1042,6 +1042,12 @@ model, do not celebrate the sim.
     D2D). `cudaMalloc` / `--sync-alloc` still D2Ds. Dual score still has no
     `$/M tokens`.
 
+67. [x] VMM `cuMemCreate` / `cuMemMap` split: `Sim::va_create` charges HBM with
+    no VA; `va_map_handle` maps that handle into a reserved VA without a
+    second charge (two VAs may share one physical). `va_release_handle` is
+    `cuMemRelease` when maps are 0. `va_map` still Create+Maps in one call.
+    Dual score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

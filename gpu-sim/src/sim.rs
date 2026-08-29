@@ -5,7 +5,7 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::SimError;
-use crate::ids::{AllocId, DeviceId, EventId, GraphId, OpId, PoolId, StreamId};
+use crate::ids::{AllocId, DeviceId, EventId, GraphId, MemHandleId, OpId, PoolId, StreamId};
 use crate::ops::{GpuOp as Kind, KernelBuf, KernelKind, MemAdvise, MemcpyOp, Operation, Place};
 use crate::profile::{ns_for_bytes, HardwareProfile};
 
@@ -74,6 +74,13 @@ struct Pool {
     release_threshold: u64,
     /// GPUs granted [`Sim::pool_set_access`] (`cudaMemPoolSetAccess` ReadWrite).
     accessed_by: BTreeSet<DeviceId>,
+}
+
+struct MemHandle {
+    device: DeviceId,
+    bytes: u64,
+    live: bool,
+    maps: u32,
 }
 
 struct Op {
@@ -178,6 +185,10 @@ pub struct Sim {
     next_pool: u32,
     pools: BTreeMap<PoolId, Pool>,
     default_pools: BTreeMap<DeviceId, PoolId>,
+    next_handle: u64,
+    mem_handles: BTreeMap<MemHandleId, MemHandle>,
+    /// Explicit [`Sim::va_map_handle`] maps. Missing is combined Create+Map.
+    vmm_handle_at: BTreeMap<(AllocId, DeviceId, u64, u64), MemHandleId>,
     pinned_used: u64,
     /// Unmapped live VAs waiting for [`Self::va_acquire`].
     vmm_idle: Vec<AllocId>,
@@ -229,6 +240,9 @@ impl Sim {
             next_pool,
             pools,
             default_pools,
+            next_handle: 1,
+            mem_handles: BTreeMap::new(),
+            vmm_handle_at: BTreeMap::new(),
             pinned_used: 0,
             vmm_idle: Vec::new(),
         }
@@ -1502,9 +1516,135 @@ impl Sim {
     ///
     /// Peer [`Self::va_set_access`] is separate (`cuMemSetAccess` PROT_READ).
     /// Equivalent to [`Self::va_map_range`] of `[0, bytes)`. Capture cannot include it.
+    /// Split create/map is [`Self::va_create`] then [`Self::va_map_handle`].
     pub fn va_map(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
         let bytes = self.alloc_ref(id)?.bytes;
         self.va_map_range(id, device, 0, bytes)
+    }
+
+    /// `cuMemCreate`: a device physical. Charges HBM. Does not map a VA.
+    ///
+    /// Host-synchronous. Capture cannot include it. Size must be granularity-aligned.
+    /// [`Self::va_map_handle`] maps this handle into a reserved VA without a second
+    /// HBM charge. [`Self::va_release_handle`] refunds when no maps remain.
+    pub fn va_create(&mut self, device: DeviceId, bytes: u64) -> Result<MemHandleId, SimError> {
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        self.check_va_align(bytes)?;
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let _gpu = self.profile.gpu(device)?;
+        self.reserve_hbm(device, bytes)?;
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let id = MemHandleId(self.next_handle);
+        self.next_handle = self.next_handle.saturating_add(1);
+        let _prev = self.mem_handles.insert(
+            id,
+            MemHandle {
+                device,
+                bytes,
+                live: true,
+                maps: 0,
+            },
+        );
+        Ok(id)
+    }
+
+    /// `cuMemMap` of an existing [`Self::va_create`] handle into a reserved VA.
+    ///
+    /// Host-synchronous. Does not charge HBM (the handle already holds the
+    /// physicals). `device` must be the handle's device. Capture cannot include it.
+    pub fn va_map_handle(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        handle: MemHandleId,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let h = self.handle_ref(handle)?;
+        if !h.live {
+            return Err(SimError::Invalid {
+                why: "handle released",
+            });
+        }
+        if h.device != device {
+            return Err(SimError::Invalid {
+                why: "handle device mismatch",
+            });
+        }
+        let bytes = h.bytes;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        let end = offset.saturating_add(bytes);
+        if end > a.bytes {
+            return Err(SimError::Invalid {
+                why: "range past VA",
+            });
+        }
+        self.check_va_align(offset)?;
+        if vmm_overlap(&a.vmm_maps, device, offset, bytes) {
+            return Err(SimError::Invalid {
+                why: "already mapped",
+            });
+        }
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let a = self.alloc_mut(id)?;
+        a.vmm_maps.push((device, offset, bytes));
+        if !a.devices.contains(&device) {
+            a.devices.push(device);
+        }
+        self.vmm_idle.retain(|&x| x != id);
+        {
+            let h = self.handle_mut(handle)?;
+            h.maps = h.maps.saturating_add(1);
+        }
+        let _prev = self
+            .vmm_handle_at
+            .insert((id, device, offset, bytes), handle);
+        Ok(())
+    }
+
+    /// `cuMemRelease`. The handle must not still be mapped into a VA.
+    pub fn va_release_handle(&mut self, handle: MemHandleId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let h = self.handle_ref(handle)?;
+        if !h.live {
+            return Err(SimError::Invalid {
+                why: "handle released",
+            });
+        }
+        if h.maps > 0 {
+            return Err(SimError::Invalid {
+                why: "handle still mapped",
+            });
+        }
+        let device = h.device;
+        let bytes = h.bytes;
+        let used = self.gpu_rt(device)?.used;
+        self.gpu_rt_mut(device)?.used = used.saturating_sub(bytes);
+        self.handle_mut(handle)?.live = false;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// Whether `handle` is live ([`Self::va_create`] and not [`Self::va_release_handle`]).
+    pub fn is_handle_live(&self, handle: MemHandleId) -> Result<bool, SimError> {
+        Ok(self.handle_ref(handle)?.live)
+    }
+
+    /// How many VA maps currently hold `handle`.
+    pub fn handle_maps(&self, handle: MemHandleId) -> Result<u32, SimError> {
+        Ok(self.handle_ref(handle)?.maps)
     }
 
     /// Map `[offset, offset+bytes)` of a reserved VA onto `device`.
@@ -1577,8 +1717,8 @@ impl Sim {
         if maps.is_empty() {
             return Err(SimError::Invalid { why: "not mapped" });
         }
-        for (d, _, n) in maps {
-            self.refund_device(d, id, n)?;
+        for (d, o, n) in maps {
+            self.drop_vmm_physical(id, d, o, n)?;
         }
         let a = self.alloc_mut(id)?;
         a.vmm_maps.clear();
@@ -1611,7 +1751,7 @@ impl Sim {
         let Some(i) = pos else {
             return Err(SimError::Invalid { why: "no such map" });
         };
-        self.refund_device(device, id, bytes)?;
+        self.drop_vmm_physical(id, device, offset, bytes)?;
         let a = self.alloc_mut(id)?;
         let _gone = a.vmm_maps.remove(i);
         if !a.vmm_maps.iter().any(|&(d, _, _)| d == device) {
@@ -3151,6 +3291,34 @@ impl Sim {
         self.pools.get_mut(&id).ok_or(SimError::Invalid {
             why: "unknown pool",
         })
+    }
+
+    fn handle_ref(&self, id: MemHandleId) -> Result<&MemHandle, SimError> {
+        self.mem_handles.get(&id).ok_or(SimError::Invalid {
+            why: "unknown handle",
+        })
+    }
+
+    fn handle_mut(&mut self, id: MemHandleId) -> Result<&mut MemHandle, SimError> {
+        self.mem_handles.get_mut(&id).ok_or(SimError::Invalid {
+            why: "unknown handle",
+        })
+    }
+
+    /// Unmap one VMM span: refund HBM unless it is an explicit [`Self::va_map_handle`].
+    fn drop_vmm_physical(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        if let Some(h) = self.vmm_handle_at.remove(&(id, device, offset, bytes)) {
+            let maps = self.handle_ref(h)?.maps;
+            self.handle_mut(h)?.maps = maps.saturating_sub(1);
+            return Ok(());
+        }
+        self.refund_device(device, id, bytes)
     }
 
     fn bump_hbm_peak(&mut self, device: DeviceId) -> Result<(), SimError> {

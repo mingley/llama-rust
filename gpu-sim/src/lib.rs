@@ -52,6 +52,10 @@
 //! [`HardwareProfile::va_granularity_bytes`] (`0`/`1` = any size; example
 //! default `1` keeps 4096-byte expert pages legal). [`Sim::va_map_range`] / [`va_unmap_range`](Sim::va_unmap_range)
 //! map sparse physicals (vLLM KV-block analog); HBM is the mapped span.
+//! [`Sim::va_create`] is `cuMemCreate` (charges HBM). [`Sim::va_map_handle`] is
+//! `cuMemMap` of that handle (no second HBM charge; two VAs may share it).
+//! [`Sim::va_release_handle`] is `cuMemRelease` when no maps remain.
+//! [`Sim::va_map`] still Create+Maps in one call.
 //! [`Sim::va_set_access`] is `cuMemSetAccess` PROT_READ on a peer (no dest HBM;
 //! interconnect). Writes still need a local map. [`Sim::va_unset_access`] drops it.
 //! [`Sim::va_acquire`] remaps an idle VA of the same size (or reserves);
@@ -96,7 +100,7 @@ mod score;
 mod sim;
 
 pub use error::SimError;
-pub use ids::{AllocId, DeviceId, EventId, GraphId, LinkId, OpId, PoolId, StreamId};
+pub use ids::{AllocId, DeviceId, EventId, GraphId, LinkId, MemHandleId, OpId, PoolId, StreamId};
 pub use ops::{DType, GpuOp, KernelBuf, KernelKind, MemAdvise, MemcpyOp, Operation, Place};
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -1832,6 +1836,10 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
             other => panic!("{other:?}"),
         }
+        match sim.va_create(d, 4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -3005,11 +3013,78 @@ mod tests {
     }
 
     #[test]
+    fn va_create_map_handle_shares_hbm_across_vas() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 4096u64;
+        let h = sim.va_create(d, bytes).unwrap();
+        assert!(sim.is_handle_live(h).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        let a = sim.va_reserve(bytes).unwrap();
+        let b = sim.va_reserve(bytes).unwrap();
+        sim.va_map_handle(a, d, 0, h).unwrap();
+        sim.va_map_handle(b, d, 0, h).unwrap();
+        assert_eq!(sim.handle_maps(h).unwrap(), 2);
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        assert!(sim.is_resident(a, d).unwrap());
+        assert!(sim.is_resident(b, d).unwrap());
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
+        sim.synchronize().unwrap();
+        sim.va_unmap(a).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        assert_eq!(sim.handle_maps(h).unwrap(), 1);
+        sim.va_unmap(b).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        assert_eq!(sim.handle_maps(h).unwrap(), 0);
+        sim.va_release_handle(h).unwrap();
+        assert!(!sim.is_handle_live(h).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        sim.va_free(a).unwrap();
+        sim.va_free(b).unwrap();
+    }
+
+    #[test]
+    fn va_map_handle_rejects_mismatch_mapped_and_release() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let bytes = 4096u64;
+        let h = sim.va_create(d0, bytes).unwrap();
+        let va = sim.va_reserve(bytes).unwrap();
+        match sim.va_map_handle(va, d1, 0, h).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.va_map_handle(va, d0, 0, h).unwrap();
+        match sim.va_release_handle(h).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("mapped"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.va_unmap(va).unwrap();
+        sim.va_release_handle(h).unwrap();
+        match sim.va_map_handle(va, d0, 0, h).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("released"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.va_free(va).unwrap();
+        match sim.va_create(d0, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("zero"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn va_granularity_rejects_unaligned_reserve_and_map() {
         let gran = 2u64 << 20;
         let mut sim = Sim::new(h100().with_va_granularity(gran));
         let d = DeviceId(0);
         match sim.va_reserve(4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unaligned"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.va_create(d, 4096) {
             Err(SimError::Invalid { why }) => assert!(why.contains("unaligned"), "{why}"),
             other => panic!("{other:?}"),
         }

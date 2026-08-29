@@ -59,3 +59,15 @@ impl fmt::Display for PoolId {
         write!(f, "pool{}", self.0)
     }
 }
+
+/// Physical VMM allocation (`CUmemGenericAllocationHandle`). [`crate::Sim::va_create`]
+/// charges HBM; [`crate::Sim::va_map_handle`] maps it into a reserved VA without a
+/// second charge. [`crate::Sim::va_map`] still Create+Maps in one call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MemHandleId(pub u64);
+
+impl fmt::Display for MemHandleId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "handle{}", self.0)
+    }
+}
