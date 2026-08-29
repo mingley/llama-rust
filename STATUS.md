@@ -27,8 +27,10 @@ rows, every nibble in every lane, every finite binary16 scale, GEMV/GEMM
 entry points, and all-zero blocks.
 
 Decode, quant, and GGUF oracles convert binary16 through
-`oracle_f16_to_f32` (IEEE arithmetic) instead of production bit-surgery
-`f16_to_f32`, so a repeat of the subnormal off-by-one cannot hide.
+`oracle_f16_to_f32` (IEEE arithmetic, repeated `*2`/`*0.5` for powers of
+two — not libm `powi`, which is 1 ULP off under Miri) instead of
+production bit-surgery `f16_to_f32`, so a repeat of the subnormal
+off-by-one cannot hide.
 
 ## Shipped 2026-08-29 — TieredStore + adversarial shapes
 

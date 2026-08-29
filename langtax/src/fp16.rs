@@ -80,13 +80,17 @@ pub(crate) fn load_f16_le(bytes: &[u8]) -> Option<f32> {
 /// Decode and quant oracles must call this. A production bug in
 /// [`f16_to_f32`] (the subnormal off-by-one that halved real Q4_K / Q6_K
 /// scales) is invisible if the oracle shares that primitive.
+///
+/// Powers of two are repeated `* 2` / `* 0.5`, not [`f32::powi`]: libm `powi`
+/// is 1 ULP off under Miri, which made
+/// `f16_matches_scalar_over_length_sweep` fail while native stayed green.
 #[cfg(test)]
 pub(crate) fn oracle_f16_to_f32(h: u16) -> f32 {
     let sign = if h & 0x8000 == 0 { 1.0f32 } else { -1.0f32 };
     let exp = i32::from((h >> 10) & 0x1f);
     let man = f32::from(h & 0x3ff);
     if exp == 0 {
-        sign * man * 2.0f32.powi(-24)
+        sign * man * pow2_exact(-24)
     } else if exp == 31 {
         if h & 0x3ff == 0 {
             sign * f32::INFINITY
@@ -94,8 +98,26 @@ pub(crate) fn oracle_f16_to_f32(h: u16) -> f32 {
             f32::NAN
         }
     } else {
-        sign * (1.0 + man / 1024.0) * 2.0f32.powi(exp - 15)
+        sign * (1.0 + man / 1024.0) * pow2_exact(exp - 15)
     }
+}
+
+/// `2^e` by doubling / halving. Exact on every IEEE `f32`, including Miri.
+#[cfg(test)]
+fn pow2_exact(e: i32) -> f32 {
+    let mut v = 1.0f32;
+    if e >= 0 {
+        let n = u32::try_from(e).unwrap_or(0);
+        for _ in 0..n {
+            v *= 2.0;
+        }
+    } else {
+        let n = u32::try_from(e.saturating_neg()).unwrap_or(0);
+        for _ in 0..n {
+            v *= 0.5;
+        }
+    }
+    v
 }
 
 /// Load a little-endian binary16 through [`oracle_f16_to_f32`].
@@ -201,7 +223,7 @@ mod tests {
     fn f16_subnormal_scale_from_real_gguf() {
         let bits = 0x8000u16 | 299;
         let got = f16_to_f32(bits);
-        let want = -299.0f32 * 2.0f32.powi(-24);
+        let want = -299.0f32 * pow2_exact(-24);
         assert_eq!(got.to_bits(), want.to_bits());
         assert!((got - -1.782_178_9e-5).abs() < 1e-12, "{got:e}");
         // The old off-by-one produced exactly half.
