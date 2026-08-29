@@ -417,6 +417,10 @@ Exact (mechanical invariants agents may rely on):
   `cudaMemPoolAttrReleaseThreshold` / `cudaMemPoolTrimTo`); default
   threshold `0` returns unused bytes on free; `u64::MAX` holds them so
   `malloc` can OOM until trim; `cudaMalloc` cannot consume pool cache
+- `cudaHostRegister` / mapped host (`alloc_host`, `host_register`,
+  `host_register_mapped`, `alloc_host_mapped`): pin existing pageable
+  memory; mapped pointers are kernel-readable over PCIe with no H2D and
+  no HBM charge
 - stream ordering, events, barriers
 - kernel enqueue, async copies
 - copy-engine availability, peer accessibility
@@ -479,7 +483,8 @@ most important architectural choice in the simulator.
 ### Invariants (encode in types where possible)
 
 - lease_count > 0 ⇒ allocation cannot be freed
-- kernel reads are resident on that device
+- kernel reads are resident on that device **or** mapped host
+  (`alloc_host_mapped` / `host_register_mapped`)
 - completed transfer ⇒ destination contains the object
 - stream[i+1].start ≥ stream[i].finish
 - hbm.used_bytes ≤ hbm.capacity
@@ -573,7 +578,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `cudaMalloc`/`cudaMemcpy`/`cudaFree` on miss (`Sim::malloc`); default
   `sim`/`schedule` stay on `cudaMallocAsync`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
-  cached page pays `pool_reuse_ns`. `memset`, directed peer enable, and
+  cached page pays `pool_reuse_ns`. `--mapped` is `cudaHostAllocMapped`
+  (no H2D, PCIe kernels, HBM unused). `memset`, directed peer enable, and
   the legacy null stream are mechanical CUDA invariants.
   `synchronize_stream` / `synchronize_event` / `synchronize_device` are
   `cudaStreamSynchronize` / `cudaEventSynchronize` / `cudaDeviceSynchronize`. `event_elapsed_ns` is `cudaEventElapsedTime` in

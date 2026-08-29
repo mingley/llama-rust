@@ -24,6 +24,9 @@
 //! `cudaMemPoolTrimTo`. Unused pool bytes stay in `cudaMemGetInfo` used until
 //! trim when the release threshold is high (`u64::MAX`, vLLM-style).
 //! [`Sim::malloc`] cannot consume another pool's cache.
+//! [`Sim::alloc_host`] is pageable; [`Sim::host_register`] / [`host_register_mapped`](Sim::host_register_mapped)
+//! are `cudaHostRegister` (host-synchronous mlock). [`Sim::alloc_host_mapped`] is
+//! `cudaHostAllocMapped`: a kernel may read it without H2D, billed at host PCIe.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
 //! [`Sim::query_event`] is `cudaEventQuery` (no wait).
@@ -1301,6 +1304,14 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
             other => panic!("{other:?}"),
         }
+        match sim.alloc_host(4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
+        match sim.host_register(a) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -1517,5 +1528,128 @@ mod tests {
         sim.synchronize().unwrap();
         assert_eq!(sim.pool_cached(p1).unwrap(), 0);
         assert_eq!(sim.hbm_used(d1).unwrap(), 0);
+    }
+
+    #[test]
+    fn host_register_pins_pageable_for_dma() {
+        let mut sim = Sim::new(h100());
+        let bytes = 8u64 << 20;
+        let h = sim.alloc_host(bytes).unwrap();
+        assert!(sim.is_host_pageable(h).unwrap());
+        assert!(!sim.is_host_pinned(h).unwrap());
+        sim.host_register(h).unwrap();
+        assert!(sim.is_host_pinned(h).unwrap());
+        assert!(!sim.is_host_pageable(h).unwrap());
+        let err = sim.free_host(h).unwrap_err();
+        match err {
+            SimError::UnknownAlloc { alloc } => assert_eq!(alloc, h),
+            other => panic!("{other:?}"),
+        }
+        let err = sim.free_host_pinned(h).unwrap_err();
+        match err {
+            SimError::UnknownAlloc { alloc } => assert_eq!(alloc, h),
+            other => panic!("{other:?}"),
+        }
+        sim.host_unregister(h).unwrap();
+        sim.free_host(h).unwrap();
+    }
+
+    #[test]
+    fn pageable_host_kernel_is_not_resident() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let h = sim.alloc_host(4096).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[h], &[h], StreamId(0)));
+        match sim.synchronize() {
+            Err(SimError::NotResident { alloc, device }) => {
+                assert_eq!(alloc, h);
+                assert_eq!(device, d);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn host_register_rejects_already_pinned() {
+        let mut sim = Sim::new(h100());
+        let h = sim.alloc_host_pinned(4096).unwrap();
+        match sim.host_register(h) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pageable")),
+            other => panic!("{other:?}"),
+        }
+        match sim.host_unregister(h) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("registered")),
+            other => panic!("{other:?}"),
+        }
+        sim.free_host_pinned(h).unwrap();
+    }
+
+    #[test]
+    fn mapped_host_kernel_skips_h2d_and_hbm() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 8u64 << 20;
+        let h = sim.alloc_host_mapped(bytes).unwrap();
+        assert!(sim.is_host_mapped(h).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        enq(sim.kernel(d, KernelKind::other(1 << 20, bytes), &[h], &[h], s));
+        sim.synchronize().unwrap();
+        assert!(sim.clock_ns() > 0);
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        assert!(!sim.is_resident(h, d).unwrap());
+        sim.free_host_pinned(h).unwrap();
+    }
+
+    #[test]
+    fn mapped_host_kernel_is_slower_than_hbm_resident() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 32u64 << 20;
+        let mut mapped = Sim::new(h100());
+        let h = mapped.alloc_host_mapped(bytes).unwrap();
+        enq(mapped.kernel(d, KernelKind::other(1 << 20, bytes), &[h], &[h], s));
+        mapped.synchronize().unwrap();
+        let map_ns = mapped.clock_ns();
+
+        let mut hbm = Sim::new(h100());
+        let a = hbm.malloc(d, bytes).unwrap();
+        enq(hbm.kernel(d, KernelKind::other(1 << 20, bytes), &[a], &[a], s));
+        hbm.synchronize().unwrap();
+        let hbm_ns = hbm.clock_ns();
+        assert!(
+            map_ns > hbm_ns,
+            "mapped zero-copy is PCIe; HBM-resident is faster; mapped={map_ns} hbm={hbm_ns}"
+        );
+    }
+
+    #[test]
+    fn host_register_mapped_then_kernel() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let h = sim.alloc_host(4096).unwrap();
+        sim.host_register_mapped(h).unwrap();
+        assert!(sim.is_host_mapped(h).unwrap());
+        enq(sim.kernel(d, KernelKind::other(8, 4096), &[h], &[h], s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        sim.host_unregister(h).unwrap();
+        sim.free_host(h).unwrap();
+    }
+
+    #[test]
+    fn free_host_pinned_waits_queued_mapped_kernel() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 8u64 << 20;
+        let h = sim.alloc_host_mapped(bytes).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, bytes), &[h], &[h], s));
+        assert!(!sim.query_stream(d, s).unwrap());
+        sim.free_host_pinned(h).unwrap();
+        assert!(sim.query_stream(d, s).unwrap());
+        assert!(sim.clock_ns() > 0);
+        assert!(!sim.is_host_mapped(h).unwrap());
     }
 }

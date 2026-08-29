@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — mapped host is the no-H2D expert path
+
+`Sim::alloc_host` / `host_register` / `host_register_mapped` /
+`alloc_host_mapped` are pageable malloc, `cudaHostRegister`,
+`cudaHostRegisterMapped`, and `cudaHostAllocMapped`. A mapped pointer is
+kernel-readable over host PCIe with no device copy and no HBM charge.
+Unregister is only for registered ids (`cudaMallocHost` still uses
+`free_host_pinned`). Capture refuses host alloc/register.
+`expertvm sim --mapped` / `expertvm bench` `sim-mapped` skip H2D.
+`SimulatedGpuStore` stays on pinned H2D. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — CUDA memory pools hold unused HBM until trim
 
 `Sim::create_pool` / `alloc_from_pool` / `set_pool_release_threshold` /

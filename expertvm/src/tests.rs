@@ -562,6 +562,25 @@ fn mempool_reuse_beats_first_touch_on_thrash() {
 }
 
 #[test]
+fn mapped_host_skips_hbm_and_h2d() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let cfg = |mapped: bool| SimCfg {
+        slots: 1,
+        mapped,
+        ..SimCfg::lru(1, 1u64 << 20, 0)
+    };
+    let h2d = sim_replay_cfg(&t, p.clone(), cfg(false)).expect("h2d");
+    let mapped = sim_replay_cfg(&t, p, cfg(true)).expect("mapped");
+    assert_eq!(h2d.hits, mapped.hits);
+    assert_eq!(h2d.misses, mapped.misses);
+    assert_eq!(mapped.hbm_peak, 0);
+    assert_eq!(mapped.bytes_moved, 0);
+    assert!(h2d.hbm_peak > 0);
+    assert!(h2d.bytes_moved > 0);
+}
+
+#[test]
 fn max_batch_serializes_sequences_at_a_token() {
     let t = Trace {
         events: vec![

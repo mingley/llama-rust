@@ -123,6 +123,10 @@ pub struct SimCfg {
     /// raise the threshold so `cudaMalloc` can OOM while the pool still holds
     /// cache. Hits/misses stay the same; reuse pays `pool_reuse_ns`.
     pub mempool: bool,
+    /// `cudaHostAllocMapped`: miss pages are mapped host, not HBM. Kernels run
+    /// over PCIe with no H2D. Hits/misses follow the same walker; `hbm_peak`
+    /// stays near zero. [`crate::SimulatedGpuStore`] stays on the H2D path.
+    pub mapped: bool,
 }
 
 impl SimCfg {
@@ -142,6 +146,7 @@ impl SimCfg {
             max_batch: 0,
             sync_alloc: false,
             mempool: false,
+            mapped: false,
         }
     }
 }
@@ -192,6 +197,7 @@ pub fn sim_replay_cfg(
         bytes,
         slots: cfg.slots,
         sync_alloc: cfg.sync_alloc,
+        mapped: cfg.mapped,
     };
     let mut token_ends: Vec<u64> = Vec::new();
     let mut ctr = ReplayCounters::default();
@@ -282,6 +288,8 @@ pub(crate) struct TouchArgs {
     pub slots: usize,
     /// [`SimCfg::sync_alloc`]: `malloc` / `memcpy_sync` / `free_sync`.
     pub sync_alloc: bool,
+    /// [`SimCfg::mapped`]: `alloc_host_mapped`, no H2D.
+    pub mapped: bool,
 }
 
 fn hbm_alloc(
@@ -406,8 +414,14 @@ pub(crate) fn apply_touch(
             if args.slots == 0 {
                 return Ok(());
             }
-            let id = hbm_alloc(sim, args.d, args.bytes, args.s, args.sync_alloc)?;
-            hbm_h2d_pinned(sim, args.d, id, args.bytes, args.s, args.sync_alloc)?;
+            let id = if args.mapped {
+                sim.alloc_host_mapped(args.bytes)?
+            } else {
+                hbm_alloc(sim, args.d, args.bytes, args.s, args.sync_alloc)?
+            };
+            if !args.mapped {
+                hbm_h2d_pinned(sim, args.d, id, args.bytes, args.s, args.sync_alloc)?;
+            }
             let _prev = handles.insert(
                 key,
                 PageHandle {
@@ -457,6 +471,12 @@ fn drop_handle(
     sync: bool,
 ) -> Result<(), Error> {
     drop_graphs(graphs, page.id);
+    if page_is_mapped(sim, page.id) {
+        // cudaFreeHost waits GPU work on this pointer, then the mapping is gone.
+        sim.synchronize_stream(page.device, page.stream)?;
+        sim.free_host_pinned(page.id)?;
+        return Ok(());
+    }
     if sync {
         // cudaFree: one host call, every device copy is gone.
         sim.free_sync(page.id)?;
@@ -490,6 +510,10 @@ fn drop_replica(
 
 fn drop_graphs(graphs: &mut BTreeMap<Vec<AllocId>, GraphId>, id: AllocId) {
     graphs.retain(|ids, _| !ids.contains(&id));
+}
+
+fn page_is_mapped(sim: &Sim, id: AllocId) -> bool {
+    sim.is_host_mapped(id).unwrap_or(false)
 }
 
 pub(crate) fn gemm_keys(

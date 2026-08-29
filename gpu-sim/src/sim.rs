@@ -15,6 +15,12 @@ struct Alloc {
     leases: u32,
     live: bool,
     host_pinned: bool,
+    /// `cudaHostAlloc` / `cudaHostRegister` of pageable host memory (not yet pinned).
+    host_pageable: bool,
+    /// Mapped into the device VA (`cudaHostAllocMapped` / `cudaHostRegisterMapped`).
+    host_mapped: bool,
+    /// Came from `cudaHostRegister`, not `cudaMallocHost`.
+    host_registered: bool,
     /// `None` is `cudaMalloc` / host-pinned. `Some` is `cudaMallocAsync` from that pool.
     pool: Option<PoolId>,
 }
@@ -535,6 +541,9 @@ impl Sim {
                 leases: 0,
                 live: false,
                 host_pinned: false,
+                host_pageable: false,
+                host_mapped: false,
+                host_registered: false,
                 pool: Some(pool),
             },
         );
@@ -615,32 +624,21 @@ impl Sim {
     /// Immediate page-locked host allocation. Does not charge HBM.
     ///
     /// A kernel may not read this object until a copy has placed it on a
-    /// device. Capture cannot include host alloc.
+    /// device (or [`Self::alloc_host_mapped`] / [`Self::host_register_mapped`]).
+    /// Capture cannot include host alloc.
     pub fn alloc_host_pinned(&mut self, bytes: u64) -> Result<AllocId, SimError> {
-        if bytes == 0 {
-            return Err(SimError::Invalid {
-                why: "zero-byte alloc",
-            });
-        }
-        if self.capturing.is_some() {
-            return Err(SimError::Invalid {
-                why: "cannot capture alloc/free",
-            });
-        }
-        let id = AllocId(self.next_alloc);
-        self.next_alloc = self.next_alloc.saturating_add(1);
-        let _prev = self.allocs.insert(
-            id,
-            Alloc {
-                bytes,
-                devices: Vec::new(),
-                leases: 0,
-                live: true,
-                host_pinned: true,
-                pool: None,
-            },
-        );
-        Ok(id)
+        self.insert_host(bytes, false, true, false, false)
+    }
+
+    /// Pageable host allocation (`malloc`). Pin it with [`Self::host_register`].
+    pub fn alloc_host(&mut self, bytes: u64) -> Result<AllocId, SimError> {
+        self.insert_host(bytes, true, false, false, false)
+    }
+
+    /// `cudaHostAllocMapped`: pinned, mapped, no HBM. A kernel may read it
+    /// immediately; the memory term is host PCIe, not HBM.
+    pub fn alloc_host_mapped(&mut self, bytes: u64) -> Result<AllocId, SimError> {
+        self.insert_host(bytes, false, true, true, false)
     }
 
     /// Whether `alloc` is live in page-locked host memory.
@@ -649,18 +647,97 @@ impl Sim {
         Ok(a.live && a.host_pinned)
     }
 
+    /// Whether `alloc` is live pageable host memory (not yet [`Self::host_register`]).
+    pub fn is_host_pageable(&self, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.host_pageable)
+    }
+
+    /// Whether `alloc` is mapped into the device VA (zero-copy host).
+    pub fn is_host_mapped(&self, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.host_mapped)
+    }
+
+    /// `cudaHostRegister`: pin pageable host for DMA. Host-synchronous (mlock).
+    ///
+    /// Capture cannot include it. Already-pinned ids fail. [`Self::host_register_mapped`]
+    /// also maps the pointer so a kernel can read it without H2D.
+    pub fn host_register(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.host_register_flags(id, false)
+    }
+
+    /// `cudaHostRegisterMapped`: pin and map pageable host. Kernels may read it
+    /// over PCIe without a device copy.
+    pub fn host_register_mapped(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.host_register_flags(id, true)
+    }
+
+    /// `cudaHostUnregister`. Only ids from [`Self::host_register`]. Must not be leased
+    /// or resident on a device.
+    pub fn host_unregister(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture host register")?;
+        self.synchronize()?;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.host_registered {
+            return Err(SimError::Invalid {
+                why: "not registered",
+            });
+        }
+        if !a.devices.is_empty() {
+            return Err(SimError::Invalid {
+                why: "host-registered still resident on a device",
+            });
+        }
+        let a = self.alloc_mut(id)?;
+        a.host_pinned = false;
+        a.host_mapped = false;
+        a.host_registered = false;
+        a.host_pageable = true;
+        Ok(())
+    }
+
+    /// Drop pageable host memory from [`Self::alloc_host`]. Unregister first if pinned.
+    pub fn free_host(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        self.synchronize()?;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.host_pageable || a.host_pinned {
+            return Err(SimError::UnknownAlloc { alloc: id });
+        }
+        if !a.devices.is_empty() {
+            return Err(SimError::Invalid {
+                why: "host still resident on a device",
+            });
+        }
+        let a = self.alloc_mut(id)?;
+        a.live = false;
+        a.host_pageable = false;
+        Ok(())
+    }
+
     /// Drop a host-pinned allocation that is not resident on any GPU.
+    ///
+    /// Host-synchronous (`cudaFreeHost`): in-flight kernels using this pointer
+    /// complete first. Registered ids need [`Self::host_unregister`].
     pub fn free_host_pinned(&mut self, id: AllocId) -> Result<(), SimError> {
         if self.capturing.is_some() {
             return Err(SimError::Invalid {
                 why: "cannot capture alloc/free",
             });
         }
+        self.synchronize()?;
         let a = self.alloc_ref(id)?;
         if a.leases > 0 {
             return Err(SimError::Leased { alloc: id });
         }
-        if !a.live || !a.host_pinned {
+        if !a.live || !a.host_pinned || a.host_registered {
             return Err(SimError::UnknownAlloc { alloc: id });
         }
         if !a.devices.is_empty() {
@@ -671,6 +748,8 @@ impl Sim {
         let a = self.alloc_mut(id)?;
         a.live = false;
         a.host_pinned = false;
+        a.host_mapped = false;
+        a.host_pageable = false;
         Ok(())
     }
 
@@ -695,7 +774,7 @@ impl Sim {
             });
         }
         let a = self.alloc_ref(id)?;
-        if a.host_pinned {
+        if a.host_pinned || a.host_pageable {
             return Err(SimError::UnknownAlloc { alloc: id });
         }
         let holders = a.devices.clone();
@@ -1268,6 +1347,66 @@ impl Sim {
         }
     }
 
+    fn insert_host(
+        &mut self,
+        bytes: u64,
+        pageable: bool,
+        pinned: bool,
+        mapped: bool,
+        registered: bool,
+    ) -> Result<AllocId, SimError> {
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let id = AllocId(self.next_alloc);
+        self.next_alloc = self.next_alloc.saturating_add(1);
+        let _prev = self.allocs.insert(
+            id,
+            Alloc {
+                bytes,
+                devices: Vec::new(),
+                leases: 0,
+                live: true,
+                host_pinned: pinned,
+                host_pageable: pageable,
+                host_mapped: mapped,
+                host_registered: registered,
+                pool: None,
+            },
+        );
+        Ok(id)
+    }
+
+    fn host_register_flags(&mut self, id: AllocId, mapped: bool) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture host register")?;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.host_pageable || a.host_pinned {
+            return Err(SimError::Invalid {
+                why: "not pageable host",
+            });
+        }
+        let ns = self
+            .profile
+            .gpus
+            .first()
+            .map(|g| g.alloc_overhead_ns)
+            .unwrap_or(1)
+            .max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let a = self.alloc_mut(id)?;
+        a.host_pageable = false;
+        a.host_pinned = true;
+        a.host_mapped = mapped;
+        a.host_registered = true;
+        Ok(())
+    }
+
     fn pool_ref(&self, id: PoolId) -> Result<&Pool, SimError> {
         self.pools.get(&id).ok_or(SimError::Invalid {
             why: "unknown pool",
@@ -1429,6 +1568,9 @@ impl Sim {
                 leases: 0,
                 live: true,
                 host_pinned: false,
+                host_pageable: false,
+                host_mapped: false,
+                host_registered: false,
                 pool: None,
             },
         );
@@ -1498,8 +1640,9 @@ impl Sim {
                 let reads = reads.clone();
                 let writes = writes.clone();
                 let kind = kind.clone();
-                self.lease_kernel(device, &reads, &writes)?;
-                let ns = self.kernel_ns(device, &kind, launch)?;
+                let mapped = self.uses_mapped_host(device, &reads, &writes)?;
+                self.lease_kernel(device, &reads, &writes, true)?;
+                let ns = self.kernel_ns(device, &kind, launch, mapped)?;
                 self.gpu_rt_mut(device)?.compute_busy = true;
                 self.running.push(Running {
                     op: id,
@@ -1514,7 +1657,7 @@ impl Sim {
                 }
                 let alloc = *alloc;
                 let bytes = *bytes;
-                self.lease_kernel(device, &[], &[alloc])?;
+                self.lease_kernel(device, &[], &[alloc], false)?;
                 let ns = self.memset_ns(device, bytes, launch)?;
                 self.gpu_rt_mut(device)?.compute_busy = true;
                 self.running.push(Running {
@@ -1586,15 +1729,33 @@ impl Sim {
         }
     }
 
+    fn uses_mapped_host(
+        &self,
+        device: DeviceId,
+        reads: &[AllocId],
+        writes: &[AllocId],
+    ) -> Result<bool, SimError> {
+        for id in reads.iter().chain(writes.iter()) {
+            let a = self.alloc_ref(*id)?;
+            if a.host_mapped && !a.devices.contains(&device) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn lease_kernel(
         &mut self,
         device: DeviceId,
         reads: &[AllocId],
         writes: &[AllocId],
+        mapped_ok: bool,
     ) -> Result<(), SimError> {
         for id in reads.iter().chain(writes.iter()) {
             let a = self.alloc_ref(*id)?;
-            if !a.live || !a.devices.contains(&device) {
+            let on_device = a.live && a.devices.contains(&device);
+            let mapped = mapped_ok && a.live && a.host_mapped;
+            if !on_device && !mapped {
                 return Err(SimError::NotResident { alloc: *id, device });
             }
         }
@@ -1610,11 +1771,17 @@ impl Sim {
         device: DeviceId,
         kind: &KernelKind,
         launch: LaunchCost,
+        mapped_host: bool,
     ) -> Result<u64, SimError> {
         let g = self.profile.gpu(device)?;
         let (flops, bytes) = kind.flops_and_bytes();
         let compute = ns_for_bytes(flops, g.flops(kind.dtype()));
-        let memory = ns_for_bytes(bytes, g.hbm_bps);
+        let mem_bps = if mapped_host {
+            self.profile.link(None, Some(device))?.bps
+        } else {
+            g.hbm_bps
+        };
+        let memory = ns_for_bytes(bytes, mem_bps);
         let overhead = match launch {
             LaunchCost::Kernel => g.launch_overhead_ns,
             LaunchCost::GraphHead => g.graph_launch_ns,

@@ -296,6 +296,7 @@ impl SchedRt {
                 bytes,
                 slots: cfg.slots,
                 sync_alloc: cfg.sync_alloc,
+                mapped: cfg.mapped,
             },
             sim,
             handles: BTreeMap::new(),
@@ -563,6 +564,9 @@ impl SchedRt {
     }
 
     fn replicate_key(&mut self, key: ExpertKey) -> Result<(), Error> {
+        if self.args.mapped {
+            return Ok(());
+        }
         let Some(map) = &self.place else {
             return Ok(());
         };

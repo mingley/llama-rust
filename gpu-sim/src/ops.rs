@@ -114,6 +114,8 @@ pub enum Place {
     /// [`crate::LinkProfile::pageable_permille`].
     Host,
     /// Page-locked host memory (`cudaMallocHost`). DMA at full link rate.
+    /// Mapped host (`cudaHostAllocMapped`) is still this place for memcpy; a
+    /// kernel may read it without a device copy.
     HostPinned,
     /// A GPU's HBM.
     Device(DeviceId),
