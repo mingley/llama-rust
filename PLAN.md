@@ -440,6 +440,10 @@ Exact (mechanical invariants agents may rely on):
   GPU or [`MemAdvise::SetPreferredLocation`] already holds the page at
   another GPU (remote read, interconnect billing; writes still migrate;
   host preferred does not skip first-touch)
+- `cudaStreamAttachMemAsync` (`stream_attach`, `alloc_managed_host`):
+  Global / Host / Single visibility; Host and other-stream Single fail
+  device kernels / memset / device prefetch (`not attached`); Single
+  cannot use the NULL stream; capture is refused
 - CUDA VMM (`va_reserve` / `va_map` / `va_unmap` / `va_free`,
   `va_create` / `va_map_handle` / `va_retain_handle` / `va_release_handle`,
   `va_acquire` / `va_release`, `va_map_range` / `va_unmap_range`):
@@ -1086,6 +1090,13 @@ model, do not celebrate the sim.
     HBM (interconnect billed), same class as `pool_set_access`. Default
     `va_set_access` stays PROT_READ (writes still need a local map). Dual
     score still has no `$/M tokens`.
+72. [x] `cudaStreamAttachMemAsync`: `Sim::stream_attach` is stream-ordered
+    visibility (`MemAttach::{Global,Host,Single}`). Default `alloc_managed`
+    is Global. `alloc_managed_host` is `cudaMallocManaged(..., cudaMemAttachHost)`.
+    Device kernels / memset / device prefetch fail `not attached` when Host
+    or a different Single stream. Single cannot use the NULL stream. Capture
+    is refused (`cudaErrorStreamCaptureUnsupported`). Dual score still has no
+    `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

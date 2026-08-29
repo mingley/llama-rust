@@ -215,9 +215,23 @@ impl KernelBuf {
     }
 }
 
+/// `cudaStreamAttachMemAsync` flags (`cudaMemAttachGlobal` / `Host` / `Single`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemAttach {
+    /// Accessible from every stream (`cudaMemAttachGlobal`). Default for
+    /// [`crate::Sim::alloc_managed`].
+    Global,
+    /// CPU-exclusive until a later attach (`cudaMemAttachHost`). Device kernels
+    /// and device prefetch fail [`crate::SimError::Invalid`].
+    Host,
+    /// Only the attach stream may use it from the device (`cudaMemAttachSingle`).
+    /// Illegal on [`crate::StreamId::NULL`].
+    Single,
+}
+
 /// One submitted GPU primitive. PLAN's Kernel / Memcpy / Collective / Event /
-/// Alloc / Free, plus `cudaMemsetAsync`, `cudaLaunchHostFunc`, and nested
-/// [`Self::ChildGraph`]. Timing is not stored here.
+/// Alloc / Free, plus `cudaMemsetAsync`, `cudaLaunchHostFunc`, stream attach,
+/// and nested [`Self::ChildGraph`]. Timing is not stored here.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GpuOp {
     /// Stream-ordered device allocation (`cudaMallocAsync`). Capacity is
@@ -258,6 +272,13 @@ pub enum GpuOp {
     /// Host callback (`cudaLaunchHostFunc`). Stream-ordered; does not occupy
     /// compute or copy engines.
     HostFunc,
+    /// `cudaStreamAttachMemAsync`. Stream-ordered; cannot be captured.
+    Attach {
+        /// Managed allocation.
+        id: AllocId,
+        /// Global / Host / Single (Single uses this op's stream).
+        flags: MemAttach,
+    },
     /// Record `event` after prior ops on this stream.
     EventRecord {
         /// Event id.

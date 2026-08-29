@@ -6,7 +6,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::SimError;
 use crate::ids::{AllocId, DeviceId, EventId, GraphId, MemHandleId, OpId, PoolId, StreamId};
-use crate::ops::{GpuOp as Kind, KernelBuf, KernelKind, MemAdvise, MemcpyOp, Operation, Place};
+use crate::ops::{
+    GpuOp as Kind, KernelBuf, KernelKind, MemAdvise, MemAttach, MemcpyOp, Operation, Place,
+};
 use crate::profile::{ns_for_bytes, HardwareProfile};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -14,6 +16,13 @@ enum Preferred {
     None,
     Host,
     Gpu(DeviceId),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Attach {
+    Global,
+    Host,
+    Single(StreamId),
 }
 
 struct Alloc {
@@ -30,6 +39,8 @@ struct Alloc {
     host_registered: bool,
     /// `cudaMallocManaged`: one location; [`Sim::prefetch`] migrates it.
     managed: bool,
+    /// Stream visibility for managed memory ([`Sim::stream_attach`]).
+    attach: Attach,
     /// `cudaMemAdviseSetReadMostly`: prefetch replicates instead of moving.
     read_mostly: bool,
     /// GPUs that may read this alloc without a local copy (`SetAccessedBy` /
@@ -66,6 +77,17 @@ impl Alloc {
 
     fn vmm_home(&self) -> Option<DeviceId> {
         self.vmm_maps.first().map(|(d, _, _)| *d)
+    }
+
+    fn device_attach_ok(&self, stream: StreamId) -> bool {
+        if !self.managed {
+            return true;
+        }
+        match self.attach {
+            Attach::Global => true,
+            Attach::Host => false,
+            Attach::Single(s) => s == stream,
+        }
     }
 }
 
@@ -1195,6 +1217,7 @@ impl Sim {
                 host_mapped: false,
                 host_registered: false,
                 managed: false,
+                attach: Attach::Global,
                 read_mostly: false,
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
@@ -1348,6 +1371,7 @@ impl Sim {
                 host_mapped: false,
                 host_registered: false,
                 managed: false,
+                attach: Attach::Global,
                 read_mostly: false,
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
@@ -1497,7 +1521,8 @@ impl Sim {
     }
 
     /// `cudaMallocManaged`: pointer is live immediately, no HBM until a
-    /// device first-touch or [`Self::prefetch`].
+    /// device first-touch or [`Self::prefetch`]. Default attach is
+    /// [`MemAttach::Global`]. [`Self::alloc_managed_host`] is Host.
     ///
     /// Does not [`Self::synchronize_device`] (`cudaMalloc` does). Capture
     /// cannot include it. [`Self::free_sync`] is `cudaFree`.
@@ -1523,6 +1548,7 @@ impl Sim {
                 host_mapped: false,
                 host_registered: false,
                 managed: true,
+                attach: Attach::Global,
                 read_mostly: false,
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
@@ -1533,6 +1559,35 @@ impl Sim {
             },
         );
         Ok(id)
+    }
+
+    /// `cudaMallocManaged(..., cudaMemAttachHost)`: CPU-exclusive until a later
+    /// [`Self::stream_attach`].
+    pub fn alloc_managed_host(&mut self, bytes: u64) -> Result<AllocId, SimError> {
+        let id = self.alloc_managed(bytes)?;
+        self.alloc_mut(id)?.attach = Attach::Host;
+        Ok(id)
+    }
+
+    /// Current `cudaMemAttach*` visibility of a live managed allocation.
+    pub fn mem_attach(&self, id: AllocId) -> Result<MemAttach, SimError> {
+        let a = self.alloc_ref(id)?;
+        if !a.live {
+            return Err(SimError::Invalid { why: "freed" });
+        }
+        if !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        Ok(match a.attach {
+            Attach::Global => MemAttach::Global,
+            Attach::Host => MemAttach::Host,
+            Attach::Single(_) => MemAttach::Single,
+        })
+    }
+
+    /// Whether a kernel on `stream` may touch `id` under the current attach.
+    pub fn is_attached_to(&self, id: AllocId, stream: StreamId) -> Result<bool, SimError> {
+        Ok(self.alloc_ref(id)?.device_attach_ok(stream))
     }
 
     /// Whether `alloc` is live unified memory (`cudaMallocManaged`).
@@ -1690,6 +1745,7 @@ impl Sim {
                 host_mapped: false,
                 host_registered: false,
                 managed: false,
+                attach: Attach::Global,
                 read_mostly: false,
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
@@ -2655,7 +2711,9 @@ impl Sim {
     /// the kernel starts (page fault after stream deps). Capture does not
     /// record that migrate; graph replay fails [`SimError::NotResident`] if
     /// the graph omitted it. Prefetch before [`Self::begin_capture`], or
-    /// record [`Self::prefetch`] in the graph.
+    /// record [`Self::prefetch`] in the graph. Host attach and Single attach
+    /// on another stream fail [`SimError::Invalid`] (`not attached`) instead
+    /// of paging.
     pub fn kernel(
         &mut self,
         device: DeviceId,
@@ -2679,6 +2737,7 @@ impl Sim {
     /// the end of the allocation. A range past the reservation is `Invalid`.
     /// A live kernel (not a graph replay) page-faults managed memory when it
     /// *starts*, after stream deps, so a waited prefetch is visible.
+    /// Host attach and Single attach on another stream fail `not attached`.
     pub fn kernel_bufs(
         &mut self,
         device: DeviceId,
@@ -2754,6 +2813,33 @@ impl Sim {
     /// time. Capture records a graph host node.
     pub fn host_func(&mut self, device: DeviceId, stream: StreamId) -> Result<OpId, SimError> {
         self.submit(device, stream, Kind::HostFunc)
+    }
+
+    /// `cudaStreamAttachMemAsync`. Stream-ordered visibility change; later ops
+    /// on `stream` see the new attach. Illegal under stream capture (CUDA
+    /// `cudaErrorStreamCaptureUnsupported`). `MemAttach::Single` cannot use the
+    /// NULL stream.
+    pub fn stream_attach(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        stream: StreamId,
+        flags: MemAttach,
+    ) -> Result<OpId, SimError> {
+        self.fail_if_capturing("cannot capture stream attach")?;
+        let a = self.alloc_ref(id)?;
+        if !a.live {
+            return Err(SimError::Invalid { why: "freed" });
+        }
+        if !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        if flags == MemAttach::Single && stream == StreamId::NULL {
+            return Err(SimError::Invalid {
+                why: "cannot attach single to null stream",
+            });
+        }
+        self.submit(device, stream, Kind::Attach { id, flags })
     }
 
     /// Record `event` after prior ops on `stream`.
@@ -3232,6 +3318,7 @@ impl Sim {
                 host_mapped: mapped,
                 host_registered: registered,
                 managed: false,
+                attach: Attach::Global,
                 read_mostly: false,
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
@@ -3307,6 +3394,35 @@ impl Sim {
                 .unwrap_or(Place::HostPinned),
         };
         Ok((a.bytes, src))
+    }
+
+    fn require_device_attach(&self, id: AllocId, stream: StreamId) -> Result<(), SimError> {
+        if self.alloc_ref(id)?.device_attach_ok(stream) {
+            Ok(())
+        } else {
+            Err(SimError::Invalid {
+                why: "not attached",
+            })
+        }
+    }
+
+    fn require_bufs_attached(
+        &self,
+        stream: StreamId,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+    ) -> Result<(), SimError> {
+        for b in reads.iter().chain(writes.iter()) {
+            self.require_device_attach(b.id, stream)?;
+        }
+        Ok(())
+    }
+
+    fn require_memcpy_attach(&self, stream: StreamId, m: &MemcpyOp) -> Result<(), SimError> {
+        match m.dst {
+            Place::Device(_) => self.require_device_attach(m.alloc, stream),
+            Place::Host | Place::HostPinned => Ok(()),
+        }
     }
 
     /// Live kernels page-fault at start. Returns true if a prefetch was
@@ -3423,6 +3539,7 @@ impl Sim {
                 }
             }
         };
+        self.require_bufs_attached(stream, &reads, &writes)?;
         if matches!(launch, LaunchCost::Kernel)
             && self.inject_managed_faults(id, device, &reads, &writes)?
         {
@@ -3456,7 +3573,7 @@ impl Sim {
     }
 
     fn start_memset(&mut self, id: OpId) -> Result<bool, SimError> {
-        let (device, launch, alloc, offset, bytes) = {
+        let (device, stream, launch, alloc, offset, bytes) = {
             let op = self
                 .ops
                 .get(&id)
@@ -3466,7 +3583,7 @@ impl Sim {
                     id: alloc,
                     offset,
                     bytes,
-                } => (op.device, op.launch, *alloc, *offset, *bytes),
+                } => (op.device, op.stream, op.launch, *alloc, *offset, *bytes),
                 _ => {
                     return Err(SimError::Invalid {
                         why: "not a memset",
@@ -3474,6 +3591,7 @@ impl Sim {
                 }
             }
         };
+        self.require_device_attach(alloc, stream)?;
         if !self.take_compute(device)? {
             return Ok(false);
         }
@@ -3794,6 +3912,7 @@ impl Sim {
                 host_mapped: false,
                 host_registered: false,
                 managed: false,
+                attach: Attach::Global,
                 read_mostly: false,
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
@@ -3854,6 +3973,7 @@ impl Sim {
         };
         let device = op.device;
         let launch = op.launch;
+        let stream = op.stream;
         if self.unavailable.contains(&device) {
             return Err(SimError::Unavailable { device });
         }
@@ -3871,6 +3991,14 @@ impl Sim {
                 });
                 Ok(true)
             }
+            Kind::Attach { .. } => {
+                self.running.push(Running {
+                    op: id,
+                    remaining_ns: 1,
+                    share: Share::Solo,
+                });
+                Ok(true)
+            }
             Kind::Memcpy(m) => {
                 let m = m.clone();
                 if self.fail_next_memcpy {
@@ -3882,6 +4010,7 @@ impl Sim {
                     }
                     return Err(SimError::TransferFailed { alloc: m.alloc });
                 }
+                self.require_memcpy_attach(stream, &m)?;
                 self.memcpy_precheck(&m)?;
                 if self.managed_local_copy(&m)? {
                     self.running.push(Running {
@@ -4450,6 +4579,13 @@ impl Sim {
             Kind::Memcpy(m) => Some(m.clone()),
             _ => None,
         });
+        let attach = self.ops.get(&id).and_then(|op| match &op.kind {
+            Kind::Attach { id: alloc, flags } => Some((*alloc, *flags, op.stream)),
+            _ => None,
+        });
+        if let Some((alloc, flags, stream)) = attach {
+            self.alloc_mut(alloc)?.attach = attach_state(flags, stream);
+        }
         if let Some(ids) = kernel_ids {
             self.drop_compute(device)?;
             for a in ids {
@@ -4590,6 +4726,10 @@ fn remap_alloc_kind(kind: Kind, map: &BTreeMap<AllocId, AllocId>) -> Kind {
             offset,
             bytes,
         },
+        Kind::Attach { id, flags } => Kind::Attach {
+            id: remap_alloc_id(id, map),
+            flags,
+        },
         Kind::AllReduce { bytes, parts } => Kind::AllReduce {
             bytes,
             parts: parts
@@ -4649,6 +4789,15 @@ fn op_tag(k: &Kind) -> u8 {
         Kind::EventWait { .. } => 7,
         Kind::AllReduce { .. } => 8,
         Kind::ChildGraph { .. } => 9,
+        Kind::Attach { .. } => 10,
+    }
+}
+
+fn attach_state(flags: MemAttach, stream: StreamId) -> Attach {
+    match flags {
+        MemAttach::Global => Attach::Global,
+        MemAttach::Host => Attach::Host,
+        MemAttach::Single => Attach::Single(stream),
     }
 }
 

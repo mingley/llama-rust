@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — `cudaStreamAttachMemAsync`
+
+`Sim::stream_attach` is stream-ordered managed-memory visibility
+(`MemAttach::{Global,Host,Single}`). Default `alloc_managed` is Global.
+`alloc_managed_host` is `cudaMemAttachHost`. Device kernels, memset, and
+device prefetch fail when Host-attached or Single-attached to another
+stream. Single cannot use the NULL stream. Capture is refused. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — VMM `cuMemSetAccess` PROT_READWRITE
 
 `Sim::va_set_access_write` is PROT_READWRITE: a kernel on a peer may read

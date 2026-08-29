@@ -37,6 +37,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaHostRegister` pins pageable host for DMA (`host_register`) | `alloc_overhead_ns` (mlock, host-sync) |
 | `cudaHostAllocMapped` / `host_register_mapped`: kernel may read host with no H2D | host PCIe vs HBM |
 | `cudaMallocManaged` (`alloc_managed`) does not charge HBM until migrate | `alloc_overhead_ns` (VA reserve at the call) |
+| `cudaStreamAttachMemAsync` (`stream_attach`) Host/Single visibility | 1 ns stream-ordered |
 | `cudaMemAdviseSetReadMostly`: prefetch replicates | same DMA as a move |
 | `drop_managed_copy`: dest eviction of one ReadMostly GPU | other copies stay |
 | `cudaMemAdviseSetAccessedBy`: kernel may read without migrating | interconnect, not local HBM |
@@ -258,13 +259,17 @@ until trim. Capture cannot include pool create/trim/set-attribute.
 `cudaHostAllocMapped`: a kernel may read it with no H2D, billed at host
 PCIe, and it does not charge HBM. Capture cannot include host
 alloc/register. `alloc_managed` is `cudaMallocManaged` (no HBM until
-`prefetch` / first-touch at kernel start). `mem_advise` is `cudaMemAdvise` (host-sync).
+`prefetch` / first-touch at kernel start). Default attach is Global.
+`alloc_managed_host` is `cudaMemAttachHost`. `stream_attach` is
+`cudaStreamAttachMemAsync` (stream-ordered; Host and other-stream Single
+fail device kernels / memset / device prefetch; Single cannot use the NULL
+stream; capture is refused). `mem_advise` is `cudaMemAdvise` (host-sync).
 `SetReadMostly` makes prefetch replicate; `SetAccessedBy` lets a kernel
 read without migrating. `SetPreferredLocation` keeps a page already at
 that GPU there on a remote read (writes still migrate; host preferred
 does not skip kernel first-touch). `prefetch` / `prefetch_host` are
 `cudaMemPrefetchAsync` and **move** unless ReadMostly. Capture of
-`alloc_managed` / `mem_advise` is refused; a graph must record prefetch
+`alloc_managed` / `mem_advise` / `stream_attach` is refused; a graph must record prefetch
 before the kernel unless AccessedBy or PreferredLocation covers that GPU.
 `va_reserve` / `va_map` / `va_unmap` / `va_free` are CUDA virtual memory.
 `va_granularity_bytes` is `cuMemGetAllocationGranularity` (`0`/`1` accepts

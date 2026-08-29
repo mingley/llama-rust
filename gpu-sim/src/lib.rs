@@ -36,7 +36,12 @@
 //! are `cudaHostRegister` (host-synchronous mlock). [`Sim::alloc_host_mapped`] is
 //! `cudaHostAllocMapped`: a kernel may read it without H2D, billed at host PCIe.
 //! [`Sim::alloc_managed`] is `cudaMallocManaged` (no HBM until first-touch or
-//! [`Sim::prefetch`] / [`prefetch_host`](Sim::prefetch_host)). Prefetch migrates;
+//! [`Sim::prefetch`] / [`prefetch_host`](Sim::prefetch_host)). Default attach is
+//! [`MemAttach::Global`]. [`Sim::alloc_managed_host`] is `cudaMemAttachHost`.
+//! [`Sim::stream_attach`] is `cudaStreamAttachMemAsync` (stream-ordered;
+//! Host and other-stream Single fail device kernels / memset / device prefetch
+//! with `not attached`; Single cannot use [`StreamId::NULL`]; capture is
+//! refused). Prefetch migrates;
 //! it does not replicate unless [`Sim::mem_advise`] [`MemAdvise::SetReadMostly`].
 //! [`MemAdvise::SetAccessedBy`] maps a GPU so a kernel can read without
 //! migrating (billed on the interconnect, not local HBM). A kernel
@@ -114,7 +119,9 @@ mod sim;
 
 pub use error::SimError;
 pub use ids::{AllocId, DeviceId, EventId, GraphId, LinkId, MemHandleId, OpId, PoolId, StreamId};
-pub use ops::{DType, GpuOp, KernelBuf, KernelKind, MemAdvise, MemcpyOp, Operation, Place};
+pub use ops::{
+    DType, GpuOp, KernelBuf, KernelKind, MemAdvise, MemAttach, MemcpyOp, Operation, Place,
+};
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
     align_up, ns_for_bytes, scale_ns_permille, GpuProfile, HardwareProfile, LinkKind, LinkProfile,
@@ -2428,6 +2435,144 @@ mod tests {
         assert_eq!(sim.bytes_moved(), bytes);
         sim.free_sync(m).unwrap();
         assert_eq!(sim.hbm_used(d).unwrap(), 0);
+    }
+
+    #[test]
+    fn attach_single_blocks_other_stream() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s0 = StreamId(1);
+        let s1 = StreamId(2);
+        let bytes = 8u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        enq(sim.prefetch(d, m, s0));
+        enq(sim.stream_attach(d, m, s0, MemAttach::Single));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.mem_attach(m).unwrap(), MemAttach::Single);
+        assert!(sim.is_attached_to(m, s0).unwrap());
+        assert!(!sim.is_attached_to(m, s1).unwrap());
+        enq(sim.kernel(d, KernelKind::other(1 << 20, bytes), &[m], &[m], s1));
+        match sim.synchronize() {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not attached")),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn attach_single_same_stream_kernel_ok() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(1);
+        let bytes = 8u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        enq(sim.prefetch(d, m, s));
+        enq(sim.stream_attach(d, m, s, MemAttach::Single));
+        enq(sim.kernel(d, KernelKind::other(1 << 20, bytes), &[m], &[m], s));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(m, d).unwrap());
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn attach_host_blocks_kernel_and_device_prefetch() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 8u64 << 20;
+        {
+            let mut sim = Sim::new(h100());
+            let m = sim.alloc_managed(bytes).unwrap();
+            enq(sim.prefetch(d, m, s));
+            enq(sim.stream_attach(d, m, s, MemAttach::Host));
+            sim.synchronize().unwrap();
+            assert_eq!(sim.mem_attach(m).unwrap(), MemAttach::Host);
+            enq(sim.kernel(d, KernelKind::other(1 << 20, bytes), &[m], &[m], s));
+            match sim.synchronize() {
+                Err(SimError::Invalid { why }) => assert!(why.contains("not attached")),
+                other => panic!("{other:?}"),
+            }
+        }
+        {
+            let mut sim = Sim::new(h100());
+            let m = sim.alloc_managed(bytes).unwrap();
+            enq(sim.prefetch(d, m, s));
+            enq(sim.stream_attach(d, m, s, MemAttach::Host));
+            sim.synchronize().unwrap();
+            enq(sim.memset(d, m, bytes, s));
+            match sim.synchronize() {
+                Err(SimError::Invalid { why }) => assert!(why.contains("not attached")),
+                other => panic!("{other:?}"),
+            }
+        }
+        {
+            let mut sim = Sim::new(h100());
+            let m = sim.alloc_managed_host(bytes).unwrap();
+            assert_eq!(sim.mem_attach(m).unwrap(), MemAttach::Host);
+            enq(sim.prefetch(d, m, s));
+            match sim.synchronize() {
+                Err(SimError::Invalid { why }) => assert!(why.contains("not attached")),
+                other => panic!("{other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn attach_host_then_global_kernel_on_stream() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 8u64 << 20;
+        let m = sim.alloc_managed_host(bytes).unwrap();
+        enq(sim.stream_attach(d, m, s, MemAttach::Global));
+        enq(sim.kernel(d, KernelKind::other(1 << 20, bytes), &[m], &[m], s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.mem_attach(m).unwrap(), MemAttach::Global);
+        assert!(sim.is_resident(m, d).unwrap());
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn attach_host_allows_prefetch_host() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 8u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        enq(sim.prefetch(d, m, s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        enq(sim.stream_attach(d, m, s, MemAttach::Host));
+        enq(sim.prefetch_host(d, m, s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn stream_attach_rejects_null_single_device_alloc_and_capture() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        match sim.stream_attach(d, a, s, MemAttach::Global) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not managed")),
+            other => panic!("{other:?}"),
+        }
+        let m = sim.alloc_managed(4096).unwrap();
+        match sim.stream_attach(d, m, StreamId::NULL, MemAttach::Single) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("null stream")),
+            other => panic!("{other:?}"),
+        }
+        enq(sim.stream_attach(d, m, StreamId::NULL, MemAttach::Global));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.stream_attach(d, m, s, MemAttach::Host) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 0);
+        sim.free_sync(m).unwrap();
+        sim.free_sync(a).unwrap();
     }
 
     #[test]
