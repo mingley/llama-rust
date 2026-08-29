@@ -38,7 +38,7 @@ pub use decode::{
     tiny_q6k_embd_gguf, tiny_q80_gguf, tiny_q81_gguf, tiny_qwen2_gguf, tiny_qwen2moe_gguf,
     tiny_qwen2vl_gguf, tiny_qwen35_gguf, tiny_qwen3_gguf, tiny_qwen3moe_gguf, tiny_qwen3next_gguf,
     tiny_qwen3vl_gguf, tiny_tied_copy_gguf, tiny_tied_gguf, tiny_tq10_gguf, tiny_tq20_gguf,
-    KvCache, Llama, LlamaError,
+    KvCache, Llama, LlamaError, PagedKvPool,
 };
 pub use expertvm::{
     CachedStore, DirectStore, ExpertAccess, ExpertKey, ExpertParts, ExpertPhase, ExpertStore,

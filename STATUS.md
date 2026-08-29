@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — shared paged-KV intern pool
+
+`PagedKvPool` is a cloneable interned-block arena. Two `KvCache`s built with
+`Llama::new_paged_cache_on` / `Model::session_on_pool` intern-hit each
+other's completed prefixes (vLLM-style prefix cache across sequences).
+`Llama::new_paged_cache` still owns a private pool. Logits bit-match dense.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — paged KV on the decode engine
 
 `Llama::new_paged_cache` / `Model::session_paged` store K/V in fixed-size

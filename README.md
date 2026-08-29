@@ -29,6 +29,10 @@ let logits = sess.prompt(&ids)?;
 // Opt-in paged KV (vLLM-style blocks + intern). Logits bit-match dense.
 let mut paged = model.session_paged(4096, 16)?;
 let logits = paged.prefill(&ids)?;
+// Two sequences sharing interned prefixes:
+let pool = model.paged_pool(16, 256)?;
+let mut a = model.session_on_pool(4096, &pool)?;
+let mut b = model.session_on_pool(4096, &pool)?;
 ```
 
 Default decode stays on the GGUF blob (`expert_store == None`). Attaching DirectStore, CachedStore, TieredStore, or SimulatedGpuStore GEMVs routed expert copies; identity tests require bit-equal logits vs the blob path. Shared experts stay on the blob. `TieredStore::memory` / `on_path` keep only `slots` experts in fast RAM (`WeightStorage::mmap` is parked).

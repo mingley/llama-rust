@@ -1,6 +1,6 @@
 //! Layered `Model` / `Session` API over the reference engine.
 
-use crate::decode::{KvCache, Llama, LlamaError};
+use crate::decode::{KvCache, Llama, LlamaError, PagedKvPool};
 use crate::gguf::{load_gguf_owned, Gguf};
 use crate::tok::Tokenizer;
 use expertvm::{LiveStore, StoreMetrics};
@@ -59,6 +59,24 @@ impl Model {
         Ok(Session {
             llama: &self.llama,
             cache: self.llama.new_paged_cache(n_ctx, block_size)?,
+        })
+    }
+
+    /// Shared interned-block arena for [`Model::session_on_pool`].
+    pub fn paged_pool(&self, block_size: usize, cap: usize) -> Result<PagedKvPool, LlamaError> {
+        self.llama.new_paged_pool(block_size, cap)
+    }
+
+    /// Session on a shared [`PagedKvPool`] so interned prefixes are visible
+    /// to other sessions on the same pool.
+    pub fn session_on_pool(
+        &self,
+        n_ctx: usize,
+        pool: &PagedKvPool,
+    ) -> Result<Session<'_>, LlamaError> {
+        Ok(Session {
+            llama: &self.llama,
+            cache: self.llama.new_paged_cache_on(pool, n_ctx)?,
         })
     }
 }
@@ -212,5 +230,24 @@ mod tests {
             paged.page_hits() > 0,
             "prompt after a rewind must hit interned prefix blocks"
         );
+    }
+
+    #[test]
+    fn session_on_pool_interns_across_sessions() {
+        let model = Model::from_bytes(tiny_llama_gguf()).expect("model");
+        let tokens = [1u32, 2, 3, 4];
+        let dense = {
+            let mut s = model.session(16).expect("dense");
+            s.prefill(&tokens).expect("d").to_vec()
+        };
+        let pool = model.paged_pool(2, 16).expect("pool");
+        let mut a = model.session_on_pool(16, &pool).expect("a");
+        let mut b = model.session_on_pool(16, &pool).expect("b");
+        let got = a.prefill(&tokens).expect("a").to_vec();
+        assert_eq!(got, dense);
+        let hit = b.prompt(&tokens).expect("b").to_vec();
+        assert_eq!(hit, dense);
+        assert!(b.page_hits() > 0);
+        assert!(pool.hits() > 0);
     }
 }

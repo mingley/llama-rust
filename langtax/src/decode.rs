@@ -36,6 +36,7 @@
 //! bias. Not Mixtral, not `qwen3vlmoe`, not linear-attn. Not a phi3 redo.
 
 use crate::gguf::{GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
+pub use crate::kv_page::PagedKvPool;
 use crate::kv_page::{KvGeom, KvPages};
 use crate::pool::{Pool, RowKernel};
 use crate::quant::{
@@ -1079,6 +1080,41 @@ impl Llama {
         })
     }
 
+    /// Shared interned-block arena (`cap` physical blocks).
+    ///
+    /// Clone the handle into [`Llama::new_paged_cache_on`] so two sequences
+    /// intern-hit the same prefixes. Distinct from `expertvm kv`.
+    pub fn new_paged_pool(&self, block_size: usize, cap: usize) -> Result<PagedKvPool, LlamaError> {
+        let hd = self.head_dim()?;
+        let n_layers = self.layers.len();
+        let bs = block_size.max(1);
+        PagedKvPool::create(n_layers, self.n_head_kv, hd, bs, cap.max(2))
+            .map_err(|e| LlamaError::Shape(e.into()))
+    }
+
+    /// Paged KV cache on an existing [`PagedKvPool`].
+    pub fn new_paged_cache_on(
+        &self,
+        pool: &PagedKvPool,
+        max_seq: usize,
+    ) -> Result<KvCache, LlamaError> {
+        if max_seq == 0 || pool.block_size() == 0 {
+            return Err(LlamaError::Shape("kv page".into()));
+        }
+        Ok(KvCache {
+            k: Vec::new(),
+            v: Vec::new(),
+            n_past: 0,
+            max_seq,
+            scratch: Scratch::default(),
+            pool: None,
+            moe_trace: MoeTraceBuf::default(),
+            expert_store: None,
+            last_prefix_hit: 0,
+            pages: Some(KvPages::on(pool.clone())),
+        })
+    }
+
     /// Size or reuse `slot` so `needed` tokens fit.
     ///
     /// `Some(n_ctx)` allocates once at that capacity (error if `needed > n`).
@@ -1355,8 +1391,12 @@ impl Llama {
         } else {
             KvGeom::dense(self.n_head_kv, hd, max_seq)
         };
-        let (cache_k, cache_v): (&mut [f32], &mut [f32]) = match pages.as_mut() {
-            Some(p) => p.kv_mut(),
+        let mut pool_guard = match pages.as_ref() {
+            Some(p) => Some(p.try_pool_mut().map_err(|e| LlamaError::Shape(e.into()))?),
+            None => None,
+        };
+        let (cache_k, cache_v): (&mut [f32], &mut [f32]) = match pool_guard.as_mut() {
+            Some(g) => g.kv_mut(),
             None => (dense_k.as_mut_slice(), dense_v.as_mut_slice()),
         };
         for (li, layer) in self.layers.iter().enumerate() {
@@ -1574,6 +1614,7 @@ impl Llama {
         }
         self.gemv_into(&self.output, &s.xn, &mut s.logits, pool)?;
         add_bias_rows(&mut s.logits, self.n_vocab, self.output_b.as_deref())?;
+        drop(pool_guard);
         *n_past = end;
         moe_trace.ids.extend_from_slice(&moe_trace.batch);
         if let Some(p) = pages.as_mut() {
@@ -9835,6 +9876,27 @@ mod tests {
             let paged = greedy_generate_slot(&model, &tok, &mut None, "ab", 2, Some(16), Some(2))
                 .expect("p");
             assert_eq!(dense, paged, "paged greedy must match dense");
+        }
+    }
+
+    #[test]
+    fn shared_paged_pool_interns_across_sequences() {
+        let tokens = [1u32, 2, 3, 4];
+        for bytes in [tiny_llama_gguf(), tiny_qwen3moe_gguf(), tiny_llama4_gguf()] {
+            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("m");
+            let mut dense = model.new_cache(16).expect("d");
+            let exp = model.prefill(&mut dense, &tokens).expect("dense");
+            let pool = model.new_paged_pool(2, 16).expect("pool");
+            let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+            let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+            let got = model.prefill(&mut a, &tokens).expect("a prefill");
+            assert_logits_match(&got, &exp);
+            let hit = model.prompt(&mut b, &tokens).expect("b intern");
+            assert_logits_match(&hit, &exp);
+            assert!(
+                b.page_hits() > 0 && pool.hits() > 0,
+                "second sequence must intern-hit the first sequence's full blocks"
+            );
         }
     }
 

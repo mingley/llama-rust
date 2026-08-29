@@ -2,12 +2,14 @@
 //!
 //! Dense layout stays the default (`KvCache::new` via [`crate::decode::Llama::new_cache`]).
 //! [`KvPages`] stores K/V in fixed-size blocks addressed by a sequence's block
-//! table. Completed blocks are interned by [`expertvm::prefix_hash`] of the
-//! token prefix so a later sequence on the same pool can hit them. Writing a
-//! block with `refs > 1` copy-on-writes. Logits must bit-match dense decode.
+//! table. [`PagedKvPool`] is the interned arena: clone the handle so two
+//! sequences hit the same completed prefixes. Writing a block with `refs > 1`
+//! copy-on-writes. Logits must bit-match dense decode.
 
 use expertvm::prefix_hash;
+use std::cell::{RefCell, RefMut};
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 /// Physical KV blocks plus a prefix-hash intern table.
 pub(crate) struct KvPool {
@@ -23,9 +25,19 @@ pub(crate) struct KvPool {
     hits: u64,
 }
 
-/// One sequence's block table on a [`KvPool`].
+/// Shared interned-block arena. Clone the handle so two sequences hit the same prefixes.
+///
+/// Distinct from `expertvm kv` (simulated VMM pages). This is decode K/V.
+#[derive(Clone)]
+pub struct PagedKvPool {
+    inner: Rc<RefCell<KvPool>>,
+    block_size: usize,
+    n_layers: usize,
+}
+
+/// One sequence's block table on a [`PagedKvPool`].
 pub(crate) struct KvPages {
-    pool: KvPool,
+    pool: PagedKvPool,
     table: Vec<u32>,
 }
 
@@ -126,6 +138,65 @@ impl KvPool {
         copy_nonoverlapping_range(&mut self.v, s, d, stride)?;
         Ok(())
     }
+
+    pub(crate) fn kv_mut(&mut self) -> (&mut [f32], &mut [f32]) {
+        (&mut self.k, &mut self.v)
+    }
+}
+
+impl PagedKvPool {
+    pub(crate) fn create(
+        n_layers: usize,
+        n_head_kv: usize,
+        hd: usize,
+        block_size: usize,
+        cap: usize,
+    ) -> Result<Self, &'static str> {
+        if block_size == 0 || cap == 0 || n_layers == 0 || n_head_kv == 0 || hd == 0 {
+            return Err("kv page geom");
+        }
+        Ok(Self {
+            inner: Rc::new(RefCell::new(KvPool {
+                k: Vec::new(),
+                v: Vec::new(),
+                block_size,
+                n_layers,
+                n_head_kv,
+                hd,
+                cap,
+                refs: Vec::new(),
+                by_hash: BTreeMap::new(),
+                hits: 0,
+            })),
+            block_size,
+            n_layers,
+        })
+    }
+
+    /// Tokens per physical block.
+    #[must_use]
+    pub fn block_size(&self) -> usize {
+        self.block_size
+    }
+
+    /// Intern-lookup hits across every sequence on this pool.
+    #[must_use]
+    pub fn hits(&self) -> u64 {
+        self.inner.try_borrow().map(|p| p.hits).unwrap_or(0)
+    }
+
+    /// Physical blocks with a positive refcount.
+    #[must_use]
+    pub fn occupied(&self) -> usize {
+        self.inner
+            .try_borrow()
+            .map(|p| p.refs.iter().filter(|r| **r > 0).count())
+            .unwrap_or(0)
+    }
+
+    fn try_mut(&self) -> Result<RefMut<'_, KvPool>, &'static str> {
+        self.inner.try_borrow_mut().map_err(|_| "kv page borrow")
+    }
 }
 
 impl KvPages {
@@ -137,28 +208,20 @@ impl KvPages {
         block_size: usize,
         cap: usize,
     ) -> Result<Self, &'static str> {
-        if block_size == 0 || cap == 0 || n_layers == 0 || n_head_kv == 0 || hd == 0 {
-            return Err("kv page geom");
-        }
-        Ok(Self {
-            pool: KvPool {
-                k: Vec::new(),
-                v: Vec::new(),
-                block_size,
-                n_layers,
-                n_head_kv,
-                hd,
-                cap,
-                refs: Vec::new(),
-                by_hash: BTreeMap::new(),
-                hits: 0,
-            },
+        Ok(Self::on(PagedKvPool::create(
+            n_layers, n_head_kv, hd, block_size, cap,
+        )?))
+    }
+
+    pub(crate) fn on(pool: PagedKvPool) -> Self {
+        Self {
+            pool,
             table: Vec::new(),
-        })
+        }
     }
 
     pub(crate) fn block_size(&self) -> usize {
-        self.pool.block_size
+        self.pool.block_size()
     }
 
     pub(crate) fn n_layers(&self) -> usize {
@@ -170,18 +233,26 @@ impl KvPages {
     }
 
     pub(crate) fn hits(&self) -> u64 {
-        self.pool.hits
+        self.pool.hits()
     }
 
     pub(crate) fn occupied(&self) -> usize {
-        self.pool.refs.iter().filter(|r| **r > 0).count()
+        self.pool.occupied()
+    }
+
+    pub(crate) fn try_pool_mut(&self) -> Result<RefMut<'_, KvPool>, &'static str> {
+        self.pool.try_mut()
     }
 
     pub(crate) fn rewind_tokens(&mut self, n: usize) {
         let keep = n.div_ceil(self.pool.block_size);
+        let Ok(mut pool) = self.pool.try_mut() else {
+            self.table.truncate(keep);
+            return;
+        };
         while self.table.len() > keep {
             if let Some(id) = self.table.pop() {
-                self.pool.release(id);
+                pool.release(id);
             }
         }
     }
@@ -194,7 +265,10 @@ impl KvPages {
     /// Returns how many tokens are covered (a multiple of `block_size` when
     /// intern hits, otherwise `n_past`).
     pub(crate) fn bind_full_prefix(&mut self, tokens: &[u32], n_past: usize) -> usize {
-        let bs = self.pool.block_size;
+        let Ok(mut pool) = self.pool.try_mut() else {
+            return n_past;
+        };
+        let bs = pool.block_size;
         if !n_past.is_multiple_of(bs) {
             return n_past;
         }
@@ -211,7 +285,7 @@ impl KvPages {
                 break;
             };
             let h = prefix_hash(chunk);
-            match self.pool.lookup(h) {
+            match pool.lookup(h) {
                 Some(id) => {
                     self.table.push(id);
                     pos = end;
@@ -223,7 +297,10 @@ impl KvPages {
     }
 
     pub(crate) fn intern_full(&mut self, ids: &[u32]) {
-        let bs = self.pool.block_size;
+        let Ok(mut pool) = self.pool.try_mut() else {
+            return;
+        };
+        let bs = pool.block_size;
         let n_full = ids.len() / bs;
         for i in 0..n_full {
             let end = i.saturating_add(1).saturating_mul(bs);
@@ -233,15 +310,16 @@ impl KvPages {
             let Some(&id) = self.table.get(i) else {
                 break;
             };
-            self.pool.intern(prefix_hash(chunk), id);
+            pool.intern(prefix_hash(chunk), id);
         }
     }
 
     pub(crate) fn ensure_write(&mut self, pos: usize) -> Result<(), &'static str> {
-        let bs = self.pool.block_size;
+        let mut pool = self.pool.try_mut()?;
+        let bs = pool.block_size;
         let bi = pos / bs;
         if self.table.len() == bi {
-            let id = self.pool.alloc()?;
+            let id = pool.alloc()?;
             self.table.push(id);
             return Ok(());
         }
@@ -252,21 +330,17 @@ impl KvPages {
             return Err("kv page table");
         };
         let i = usize::try_from(id).unwrap_or(usize::MAX);
-        let refs = self.pool.refs.get(i).copied().unwrap_or(0);
+        let refs = pool.refs.get(i).copied().unwrap_or(0);
         if refs <= 1 {
             return Ok(());
         }
-        let fresh = self.pool.alloc()?;
-        self.pool.copy_block(id, fresh)?;
-        self.pool.release(id);
+        let fresh = pool.alloc()?;
+        pool.copy_block(id, fresh)?;
+        pool.release(id);
         if let Some(slot) = self.table.get_mut(bi) {
             *slot = fresh;
         }
         Ok(())
-    }
-
-    pub(crate) fn kv_mut(&mut self) -> (&mut [f32], &mut [f32]) {
-        (&mut self.pool.k, &mut self.pool.v)
     }
 }
 
@@ -370,5 +444,19 @@ mod tests {
         let g = super::KvGeom::dense(2, 4, 8);
         assert_eq!(g.offset(1, 1, 3), Some(108));
         assert_eq!(g.offset(0, 0, 0), Some(0));
+    }
+
+    #[test]
+    fn two_tables_on_one_pool_intern_hit() {
+        let pool = super::PagedKvPool::create(1, 1, 1, 2, 8).expect("pool");
+        let mut a = super::KvPages::on(pool.clone());
+        let mut b = super::KvPages::on(pool.clone());
+        for pos in 0..4 {
+            a.ensure_write(pos).expect("a");
+        }
+        a.intern_full(&[1, 2, 3, 4]);
+        assert_eq!(b.bind_full_prefix(&[1, 2, 3, 4], 0), 4);
+        assert!(pool.hits() > 0);
+        assert_eq!(b.table_ids().len(), 2);
     }
 }

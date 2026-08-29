@@ -739,6 +739,10 @@ model, do not celebrate the sim.
     COW on `refs > 1`). `Llama::new_paged_cache` / `Model::session_paged` /
     `serve --kv-page` / `chat --kv-page`. Logits and greedy bit-match dense.
     Distinct from `expertvm kv` (sim VMM pages).
+12. [x] Shared `PagedKvPool`: two sequences intern-hit the same full-block
+    prefixes (`Llama::new_paged_pool` / `new_paged_cache_on` /
+    `Model::session_on_pool`). Default `new_paged_cache` still owns a private
+    pool.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
