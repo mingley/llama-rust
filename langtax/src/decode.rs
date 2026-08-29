@@ -78,7 +78,7 @@ use expertvm::{
     DirectStore, ExpertAccess, ExpertKey, ExpertParts, ExpertStore, LiveStore, Markov, Prefetch,
     Trace,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 const TINY_N_EMBD: usize = 256;
@@ -5871,6 +5871,7 @@ impl Llama {
             store,
         } = run;
         self.route_softmax_tokens(&spec, n_tokens, s, pool, moe_trace)?;
+        prefetch_routed(store, moe_trace.layer, &s.moe.sel_e);
         self.grouped_routed_ffn(
             &spec,
             n_tokens,
@@ -6235,6 +6236,7 @@ impl Llama {
         }
         self.gemm_into(&moe.down_shexp, n_tokens, &s.gate, &mut s.ffn_out, pool)?;
         self.route_llama4_tokens(moe, n_tokens, s, pool, moe_trace)?;
+        prefetch_routed(store, moe_trace.layer, &s.moe.sel_e);
         let spec = SoftmaxMoE {
             gate_inp: &moe.gate_inp,
             gate: &moe.gate_exps,
@@ -6836,6 +6838,39 @@ fn prefetch_selected(
             .get(start..start.saturating_add(n_used))
             .unwrap_or(&[]);
         moe_trace.prefetch_experts(store, t, experts);
+    }
+}
+
+/// Fault in this layer's unique routed experts before grouped GEMM.
+///
+/// Skipped when the unique set is larger than the cache (`slots`) so a tight
+/// LRU still demand-pages one expert at a time.
+fn prefetch_routed(store: &mut Option<LiveStore>, layer: u32, sel_e: &[usize]) {
+    let Some(s) = store.as_mut() else {
+        return;
+    };
+    let mut seen = BTreeSet::new();
+    let mut keys = Vec::new();
+    for e in sel_e {
+        let Ok(ex) = u32::try_from(*e) else {
+            continue;
+        };
+        let k = ExpertKey::new(layer, ex);
+        if seen.insert(k) {
+            keys.push(k);
+        }
+    }
+    if keys.is_empty() {
+        return;
+    }
+    if let Some(slots) = s.slots() {
+        if keys.len() > slots {
+            return;
+        }
+    }
+    match s.prefetch(&keys) {
+        Ok(_n) => {}
+        Err(_e) => {}
     }
 }
 

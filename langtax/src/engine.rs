@@ -1317,6 +1317,10 @@ mod tests {
         );
         let m = eng.expert_store_metrics().expect("metrics");
         assert!(m.hits > 0 || m.misses > 0, "CachedStore must be used");
+        assert!(
+            m.prefetches > 0,
+            "routed experts that fit in slots must prefetch before grouped GEMM, {m:?}"
+        );
     }
 
     #[test]

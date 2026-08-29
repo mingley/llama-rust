@@ -806,6 +806,9 @@ model, do not celebrate the sim.
     last-used ∪ Markov keys up to `slots.saturating_sub(1)` (`slots == 1`
     pins nothing). SimulatedGpuStore `pin_hot` still NVLink-replicates.
     Dual score still has no `$/M tokens`.
+27. [x] Prefetch this layer's unique routed experts after the router GEMM and
+    before grouped expert GEMM, when that set fits in `slots`. Tight caches
+    still demand-page. Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

@@ -16,7 +16,9 @@ Llama4 stay bit-equal to the serial GEMV router.
 after each GEMM, at most `slots - 1` (`slots == 1` pins nothing so a
 tight cache can still demand-page). SimulatedGpuStore `pin_hot` still
 NVLink-replicates. `StoreMetrics::pins` counts sticky inserts.
-Dual score still has no `$/M tokens`.
+After the router GEMM, unique experts that fit in `slots` prefetch
+before the grouped expert GEMM (H2D can start before compute on
+SimulatedGpuStore). Dual score still has no `$/M tokens`.
 
 ## Shipped 2026-08-29 — grouped expert GEMM
 
