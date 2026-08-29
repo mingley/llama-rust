@@ -762,7 +762,8 @@ model, do not celebrate the sim.
 17. [x] Batched decode GEMM: `Llama::forward_batch` GEMMs Q/K/V, FFN, and
     lm_head across sequences that share one `PagedKvPool`. Attention stays
     per sequence. Engine decode (replay and sample) uses it. Logits
-    bit-match sequential `forward`. Mixed dense/two-store/trace falls back.
+    bit-match sequential `forward`. Mixed dense/two-store falls back.
+    MoE traces stay on the GEMM (per-row sequence / token / prefix).
     One attached store is used for the whole GEMM.
 18. [x] Batched prefill GEMM: `Llama::prefill_batch` GEMMs the same matrices
     across sequences with equal or ragged chunk lengths. Engine prefills
@@ -784,6 +785,13 @@ model, do not celebrate the sim.
     dual performance vector (`wall_ns`, HBM, bytes, `energy_uj`) after a
     batched MoE run. `gguf_gemv engine --expert-sim` attaches an example-H100
     store. Greedy ids still match the blob Engine. Not `$/M tokens`.
+23. [x] Engine batched MoE traces: `Llama::prefill_batch` / `forward_batch`
+    record per-row sequence / token / prefix so Engine serving traces
+    without falling back sequential. `Engine::enable_moe_trace` /
+    `take_moe_trace` banks events on retire and `take`.
+    `gguf_gemv engine --trace-out FILE` writes JSONL. Events bit-match
+    sequential traced prefill/forward and dense `greedy_generate_cache`.
+    GEMM peak stays on the batched path. Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

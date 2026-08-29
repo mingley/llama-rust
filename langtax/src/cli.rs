@@ -6,7 +6,7 @@ use std::io::{BufRead, Read, Write};
 use std::path::Path;
 
 use crate::decode::{prompt_ids, KvCache, Llama};
-use crate::engine::{Engine, EngineCfg};
+use crate::engine::{Engine, EngineCfg, SeqId};
 use crate::gguf::load_gguf_owned;
 use crate::sample::argmax;
 use crate::template::ChatMessage;
@@ -49,13 +49,13 @@ usage: gguf_gemv <command> [args]
   trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE [--capacity N]
   chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--kv-page N] [--show-prompt]
   serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT]
-  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--expert-slots N] [--expert-sim]
+  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--expert-slots N] [--expert-sim] [--trace-out FILE]
   write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|write-tiny-qwen3|write-tiny-gemma|write-tiny-llama4|write-tiny-llama-moe|write-tiny-qwen2moe|write-tiny-qwen3moe|write-tiny-qwen2vl|write-tiny-qwen3vl|write-tiny-qwen3next|write-tiny-qwen35|write-tiny-phi2 <path>
 ";
 
 /// Usage for the `engine` verb.
 pub const ENGINE_USAGE: &str = "\
-usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--expert-slots N] [--expert-sim]
+usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--expert-slots N] [--expert-sim] [--trace-out FILE]
   -p, --prompt TEXT     prompt (repeatable; default: one `ab`)
   -n, --n-predict N     tokens to generate per sequence (default: 2)
       --n-ctx N         KV capacity (default: longest prompt + n_predict + 1)
@@ -66,11 +66,13 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
       --expert-slots N  ExpertStore on the Engine: omit = blob FFN, `0` = DirectStore,
                         N>0 = CachedStore with N slots (`--expert-sim` uses N, default 8)
       --expert-sim      SimulatedGpuStore (example H100 profile, 4096-byte experts)
+      --trace-out FILE  write batched MoE ExpertAccess JSONL (all sequences)
 
 Runs Engine continuous batching on one interned pool. Several `--prompt`s
 join the same scheduler. A tight `--pool-blocks` preempts (recompute +
 replay). One ExpertStore is parked on each batched GEMM so MoE serving
-stays on the shared-pool path. Prints each continuation (`n_gen` plus
+stays on the shared-pool path. MoE traces stay on that GEMM (per-row
+sequence / token / prefix). Prints each continuation (`n_gen` plus
 decoded text), then intern_hits, preempts, GEMM stats, store metrics,
 and a gpu-sim score line when `--expert-sim` is set. Not `$/M tokens`.
 Not an HTTP server.
@@ -405,6 +407,8 @@ pub struct EngineArgs {
     pub expert_slots: Option<usize>,
     /// Attach [`SimulatedGpuStore`] (example H100) instead of Direct/Cached.
     pub expert_sim: bool,
+    /// Write Engine MoE traces as JSONL. `None` leaves tracing off.
+    pub trace_out: Option<String>,
 }
 
 impl EngineArgs {
@@ -431,6 +435,7 @@ where
     let mut prefill_chunk = 0usize;
     let mut expert_slots = None;
     let mut expert_sim = false;
+    let mut trace_out = None;
     let mut it = args.into_iter();
     while let Some(raw) = it.next() {
         let arg = raw.as_ref();
@@ -496,6 +501,9 @@ where
                 }
                 expert_sim = true;
             }
+            "--trace-out" => {
+                trace_out = Some(engine_value("trace-out", inline, &mut it)?);
+            }
             flag if flag.starts_with('-') => {
                 return engine_err(&format!("unknown flag {flag}"));
             }
@@ -524,6 +532,7 @@ where
         prefill_chunk,
         expert_slots,
         expert_sim,
+        trace_out,
     }))
 }
 
@@ -536,11 +545,17 @@ pub fn run_engine(args: &EngineArgs) -> Result<(), Box<dyn std::error::Error>> {
     let cfg = engine_cfg(&tok, args)?;
     let mut eng = Engine::new(&model, cfg)?;
     attach_engine_store(&mut eng, &model, args)?;
+    if args.trace_out.is_some() {
+        eng.enable_moe_trace();
+    }
     let mut handles = Vec::new();
     for ids in engine_prompts(&tok, args)? {
         handles.push(eng.add(&ids, args.n_predict)?);
     }
     eng.run()?;
+    if let Some(path) = args.trace_out.as_ref() {
+        write_engine_traces(&mut eng, &handles, path)?;
+    }
     let mut out = std::io::stdout();
     for (i, id) in handles.iter().enumerate() {
         let seq = eng.take(*id).ok_or("engine take")?;
@@ -567,6 +582,21 @@ pub fn run_engine(args: &EngineArgs) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(score) = eng.expert_store_score()? {
         writeln!(out, "{}", score.line())?;
     }
+    Ok(())
+}
+
+fn write_engine_traces(
+    eng: &mut Engine<'_>,
+    ids: &[SeqId],
+    path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut buf = String::new();
+    for id in ids {
+        if let Some(t) = eng.take_moe_trace(*id) {
+            buf.push_str(&t.to_jsonl());
+        }
+    }
+    write_file(Path::new(path), buf.as_bytes())?;
     Ok(())
 }
 
@@ -772,6 +802,12 @@ fn ends_turn(tok: &Tokenizer, id: u32) -> bool {
 }
 
 /// Read a file with `File` + `Read`, not `std::fs::read`.
+fn write_file(path: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
+    let mut f = File::create(path)?;
+    f.write_all(bytes)?;
+    Ok(())
+}
+
 fn read_file(path: &Path) -> Result<Vec<u8>, std::io::Error> {
     let mut f = File::open(path)?;
     let mut buf = Vec::new();
@@ -1078,6 +1114,7 @@ mod tests {
                 assert_eq!(a.prefill_chunk, 0);
                 assert_eq!(a.expert_slots, None);
                 assert!(!a.expert_sim);
+                assert_eq!(a.trace_out, None);
             }
             EngineCmd::Help => panic!("expected Run"),
         }
@@ -1103,6 +1140,14 @@ mod tests {
             }
             EngineCmd::Help => panic!("expected Run"),
         }
+        match parse_engine_args(["m.gguf", "--trace-out", "t.jsonl"]).expect("trace") {
+            EngineCmd::Run(a) => assert_eq!(a.trace_out.as_deref(), Some("t.jsonl")),
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        match parse_engine_args(["m.gguf", "--trace-out=out.jsonl"]).expect("eq") {
+            EngineCmd::Run(a) => assert_eq!(a.trace_out.as_deref(), Some("out.jsonl")),
+            EngineCmd::Help => panic!("expected Run"),
+        }
         assert_eq!(parse_engine_args(["--help"]).unwrap(), EngineCmd::Help);
         let err = parse_engine_args(["--n-predict", "2"]).unwrap_err();
         assert!(err.contains("missing GGUF path"), "{err}");
@@ -1112,5 +1157,44 @@ mod tests {
         assert!(err.contains("max-seqs must be > 0"), "{err}");
         let err = parse_engine_args(["m.gguf", "--nope"]).unwrap_err();
         assert!(err.contains("unknown flag"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--trace-out"]).unwrap_err();
+        assert!(err.contains("missing --trace-out value"), "{err}");
+    }
+
+    #[test]
+    fn engine_trace_out_writes_parseable_jsonl() {
+        let pid = std::process::id();
+        let dir = std::env::temp_dir();
+        let gguf = dir.join(format!("llama-rust-eng-trace-{pid}.gguf"));
+        let jsonl = dir.join(format!("llama-rust-eng-trace-{pid}.jsonl"));
+        write_file(&gguf, &crate::decode::tiny_qwen3moe_gguf()).expect("gguf");
+        let args = match parse_engine_args([
+            gguf.to_str().expect("utf8 gguf"),
+            "-p",
+            "a",
+            "-p",
+            "b",
+            "--kv-page",
+            "2",
+            "--trace-out",
+            jsonl.to_str().expect("utf8 jsonl"),
+        ])
+        .expect("parse")
+        {
+            EngineCmd::Run(a) => a,
+            EngineCmd::Help => panic!("expected Run"),
+        };
+        run_engine(&args).expect("run");
+        let bytes = read_file(&jsonl).expect("read");
+        let text = String::from_utf8(bytes).expect("utf8");
+        let t = expertvm::Trace::parse(&text).expect("jsonl");
+        assert!(
+            !t.events.is_empty(),
+            "engine --trace-out must emit MoE events"
+        );
+        assert!(t.events.iter().any(|e| e.sequence == 0));
+        assert!(t.events.iter().any(|e| e.sequence == 1));
+        let _rm_g = std::fs::remove_file(&gguf);
+        let _rm_j = std::fs::remove_file(&jsonl);
     }
 }

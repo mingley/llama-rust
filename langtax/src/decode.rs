@@ -619,6 +619,9 @@ impl KvCache {
         self.n_past = n;
         self.moe_trace.ids.truncate(n);
         self.moe_trace.batch.clear();
+        self.moe_trace.row_seq.clear();
+        self.moe_trace.row_tok.clear();
+        self.moe_trace.row_prefix.clear();
         let tok_u = u32::try_from(n).unwrap_or(u32::MAX);
         self.moe_trace.events.retain(|e| e.token < tok_u);
         self.moe_trace.prev = None;
@@ -749,6 +752,12 @@ struct MoeTraceBuf {
     ids: Vec<u32>,
     /// Token ids of the in-flight forward.
     batch: Vec<u32>,
+    /// Per-row sequence id for a batched GEMM (`empty` = [`Self::sequence`]).
+    row_seq: Vec<u64>,
+    /// Per-row token index for a batched GEMM (`empty` = `token0 + off`).
+    row_tok: Vec<u32>,
+    /// Per-row prefix hash for a batched GEMM (`empty` = [`Self::prefix_at`]).
+    row_prefix: Vec<u64>,
     markov: Markov,
     prev: Option<ExpertAccess>,
     prev2: Option<ExpertAccess>,
@@ -782,9 +791,20 @@ impl KvCache {
 
 impl MoeTraceBuf {
     fn event(&self, token_off: usize, experts: &[usize], weights: &[f32]) -> ExpertAccess {
-        let token = self
-            .token0
-            .saturating_add(u32::try_from(token_off).unwrap_or(u32::MAX));
+        let token = self.row_tok.get(token_off).copied().unwrap_or_else(|| {
+            self.token0
+                .saturating_add(u32::try_from(token_off).unwrap_or(u32::MAX))
+        });
+        let sequence = self
+            .row_seq
+            .get(token_off)
+            .copied()
+            .unwrap_or(self.sequence);
+        let prefix = self
+            .row_prefix
+            .get(token_off)
+            .copied()
+            .unwrap_or_else(|| self.prefix_at(token_off));
         let mut ids = Vec::new();
         let mut weight_pt = Vec::new();
         for (i, e) in experts.iter().enumerate() {
@@ -795,12 +815,12 @@ impl MoeTraceBuf {
             }
         }
         ExpertAccess {
-            sequence: self.sequence,
+            sequence,
             token,
             layer: self.layer,
             experts: ids,
             weight_pt,
-            prefix: Some(self.prefix_at(token_off)),
+            prefix: Some(prefix),
         }
     }
 
@@ -1056,6 +1076,86 @@ fn restore_batch_store(caches: &mut [&mut KvCache], idx: Option<usize>, store: O
     if let Some(i) = idx {
         if let Some(c) = caches.get_mut(i) {
             c.expert_store = store;
+        }
+    }
+}
+
+fn collect_batch_trace_rows(
+    caches: &[&mut KvCache],
+    groups: &[&[u32]],
+) -> (Vec<u64>, Vec<u32>, Vec<u64>) {
+    let mut row_seq = Vec::new();
+    let mut row_tok = Vec::new();
+    let mut row_prefix = Vec::new();
+    for (cache, group) in caches.iter().zip(groups.iter()) {
+        let sequence = cache.moe_trace.sequence;
+        let t0 = u32::try_from(cache.n_past).unwrap_or(u32::MAX);
+        for t in 0..group.len() {
+            row_seq.push(sequence);
+            row_tok.push(t0.saturating_add(u32::try_from(t).unwrap_or(u32::MAX)));
+            let take = t.saturating_add(1);
+            let mut buf = Vec::with_capacity(cache.moe_trace.ids.len().saturating_add(take));
+            buf.extend_from_slice(&cache.moe_trace.ids);
+            if let Some(part) = group.get(..take) {
+                buf.extend_from_slice(part);
+            }
+            row_prefix.push(prefix_hash(&buf));
+        }
+    }
+    (row_seq, row_tok, row_prefix)
+}
+
+fn apply_batch_trace_rows(
+    caches: &mut [&mut KvCache],
+    rows: (Vec<u64>, Vec<u32>, Vec<u64>),
+    flat: &[u32],
+    any_trace: bool,
+) -> Result<(), LlamaError> {
+    let first = caches
+        .first_mut()
+        .ok_or_else(|| LlamaError::Shape("empty batch".into()))?;
+    first.moe_trace.token0 = u32::try_from(first.n_past).unwrap_or(u32::MAX);
+    first.moe_trace.batch.clear();
+    first.moe_trace.batch.extend(flat.iter().copied());
+    first.moe_trace.row_seq = rows.0;
+    first.moe_trace.row_tok = rows.1;
+    first.moe_trace.row_prefix = rows.2;
+    if any_trace {
+        first.moe_trace.enabled = true;
+    }
+    Ok(())
+}
+
+fn finish_batch_trace(caches: &mut [&mut KvCache], enabled: &[bool], first_was: bool) {
+    scatter_trace_events(caches, enabled);
+    if let Some(first) = caches.first_mut() {
+        first.moe_trace.enabled = first_was;
+        first.moe_trace.batch.clear();
+        first.moe_trace.row_seq.clear();
+        first.moe_trace.row_tok.clear();
+        first.moe_trace.row_prefix.clear();
+    }
+}
+
+fn scatter_trace_events(caches: &mut [&mut KvCache], enabled: &[bool]) {
+    let events = {
+        let Some(first) = caches.first_mut() else {
+            return;
+        };
+        core::mem::take(&mut first.moe_trace.events)
+    };
+    for e in events {
+        let Some(i) = caches
+            .iter()
+            .position(|c| c.moe_trace.sequence == e.sequence)
+        else {
+            continue;
+        };
+        if !enabled.get(i).copied().unwrap_or(false) {
+            continue;
+        }
+        if let Some(c) = caches.get_mut(i) {
+            c.moe_trace.events.push(e);
         }
     }
 }
@@ -1521,7 +1621,8 @@ impl Llama {
     /// two attached stores, or MoE traces fall back to one-at-a-time
     /// forwards. A single [`KvCache::attach_expert_store`] is used for the
     /// whole GEMM (Engine parks one store on the first cache). Markov
-    /// prefetch state lives on that first cache across GEMMs.
+    /// prefetch state lives on that first cache across GEMMs. Enabled MoE
+    /// traces record per-row sequence and token (not a sequential fallback).
     pub fn forward_batch(
         &self,
         caches: &mut [&mut KvCache],
@@ -1553,8 +1654,8 @@ impl Llama {
     /// Attention stays per sequence. Returns last-token logits of each group,
     /// bit-matching sequential [`Llama::prefill`]. Prefix reuse / intern bind
     /// is the caller's job ([`Llama::prompt_chunk`], Engine). Mixed
-    /// dense/two-store/trace falls back to one-at-a-time prefills. One
-    /// attached store is used for the whole GEMM.
+    /// dense/two-store falls back to one-at-a-time prefills. One attached
+    /// store is used for the whole GEMM. Enabled MoE traces stay on this path.
     pub fn prefill_batch(
         &self,
         caches: &mut [&mut KvCache],
@@ -1588,9 +1689,9 @@ impl Llama {
         };
         let stores = caches.iter().filter(|c| c.expert_store.is_some()).count();
         stores <= 1
-            && caches.iter().all(|c| {
-                !c.moe_trace.enabled && c.pages.as_ref().is_some_and(|p| p.pool().same_as(home))
-            })
+            && caches
+                .iter()
+                .all(|c| c.pages.as_ref().is_some_and(|p| p.pool().same_as(home)))
     }
 
     fn run_paged_batch(
@@ -1617,7 +1718,12 @@ impl Llama {
         let store_idx = caches.iter().position(|c| c.expert_store.is_some());
         let mut parked_store =
             store_idx.and_then(|i| caches.get_mut(i).and_then(|c| c.expert_store.take()));
+        let any_trace = caches.iter().any(|c| c.moe_trace.enabled);
+        let enabled: Vec<bool> = caches.iter().map(|c| c.moe_trace.enabled).collect();
+        let first_was = enabled.first().copied().unwrap_or(false);
+        let rows = collect_batch_trace_rows(caches, groups);
         let result = (|| {
+            apply_batch_trace_rows(caches, rows, &flat, any_trace)?;
             let Some(first) = caches.first_mut() else {
                 return Ok(Vec::new());
             };
@@ -1629,9 +1735,6 @@ impl Llama {
                 .try_pool_mut()
                 .map_err(|e| LlamaError::Shape(e.into()))?;
             let (cache_k, cache_v) = pool_guard.kv_mut();
-            first.moe_trace.token0 = u32::try_from(first.n_past).unwrap_or(u32::MAX);
-            first.moe_trace.batch.clear();
-            first.moe_trace.batch.extend(flat.iter().copied());
             let s = &mut first.scratch;
             let pool = &mut first.pool;
             let moe_trace = &mut first.moe_trace;
@@ -1663,9 +1766,6 @@ impl Llama {
                 LogitsKind::All,
             )?;
             drop(pool_guard);
-            if let Some(first) = caches.first_mut() {
-                first.moe_trace.batch.clear();
-            }
             let out = {
                 let Some(first) = caches.first_mut() else {
                     return Ok(Vec::new());
@@ -1681,6 +1781,7 @@ impl Llama {
             }
             Ok(out)
         })();
+        finish_batch_trace(caches, &enabled, first_was);
         restore_batch_store(caches, store_idx, parked_store);
         result
     }
@@ -1996,6 +2097,9 @@ impl Llama {
         moe_trace.token0 = u32::try_from(n0).unwrap_or(u32::MAX);
         moe_trace.batch.clear();
         moe_trace.batch.extend(tokens.iter().copied());
+        moe_trace.row_seq.clear();
+        moe_trace.row_tok.clear();
+        moe_trace.row_prefix.clear();
         // Single-token steps are the only ones the pool serves: GEMM lays `y`
         // out token-major, so a row range there is not a contiguous slice.
         if n == 1 && pool.is_none() && self.wants_pool() {
@@ -10595,6 +10699,101 @@ mod tests {
         assert_eq!(got.len(), 2);
         assert_logits_match(&got[0], &exp_a);
         assert_logits_match(&got[1], &exp_b);
+    }
+
+    #[test]
+    fn prefill_batch_traced_qwen3moe_matches_sequential() {
+        let a_tok = [1u32, 2, 3, 4];
+        let b_tok = [5u32, 0, 5, 0];
+        let model =
+            Llama::from_gguf(load_gguf_owned(tiny_qwen3moe_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 16).expect("pool");
+        let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+        let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+        a_seq.enable_moe_trace(1);
+        b_seq.enable_moe_trace(2);
+        let exp_a = model.prefill(&mut a_seq, &a_tok).expect("fa");
+        let exp_b = model.prefill(&mut b_seq, &b_tok).expect("fb");
+        let tr_a = a_seq.take_moe_trace();
+        let tr_b = b_seq.take_moe_trace();
+        assert!(!tr_a.events.is_empty(), "sequential A must emit MoE events");
+        assert!(!tr_b.events.is_empty(), "sequential B must emit MoE events");
+        let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+        let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+        a.enable_moe_trace(1);
+        b.enable_moe_trace(2);
+        let got = {
+            let mut pair = [&mut a, &mut b];
+            let groups: [&[u32]; 2] = [&a_tok, &b_tok];
+            model.prefill_batch(&mut pair, &groups).expect("batch")
+        };
+        assert_eq!(got.len(), 2);
+        assert_logits_match(&got[0], &exp_a);
+        assert_logits_match(&got[1], &exp_b);
+        assert_eq!(a.take_moe_trace(), tr_a);
+        assert_eq!(b.take_moe_trace(), tr_b);
+    }
+
+    #[test]
+    fn prefill_batch_trace_does_not_dump_on_untraced_first() {
+        let a_tok = [1u32, 2, 3, 4];
+        let b_tok = [5u32, 0, 5, 0];
+        let model =
+            Llama::from_gguf(load_gguf_owned(tiny_qwen3moe_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 16).expect("pool");
+        let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+        b_seq.enable_moe_trace(2);
+        let _exp_b = model.prefill(&mut b_seq, &b_tok).expect("fb");
+        let tr_b = b_seq.take_moe_trace();
+        let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+        let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+        b.enable_moe_trace(2);
+        let _got = {
+            let mut pair = [&mut a, &mut b];
+            let groups: [&[u32]; 2] = [&a_tok, &b_tok];
+            model.prefill_batch(&mut pair, &groups).expect("batch")
+        };
+        assert!(
+            a.take_moe_trace().events.is_empty(),
+            "untraced first cache must not receive the GEMM-local log"
+        );
+        assert_eq!(b.take_moe_trace(), tr_b);
+    }
+
+    #[test]
+    fn forward_batch_traced_qwen3moe_matches_sequential() {
+        let prompt_a = [1u32, 2, 3, 4];
+        let prompt_b = [5u32, 0, 5, 0];
+        let model =
+            Llama::from_gguf(load_gguf_owned(tiny_qwen3moe_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 16).expect("pool");
+        let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+        let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+        let _pa = model.prefill(&mut a_seq, &prompt_a).expect("pas");
+        let _pb = model.prefill(&mut b_seq, &prompt_b).expect("pbs");
+        a_seq.enable_moe_trace(1);
+        b_seq.enable_moe_trace(2);
+        let exp_a = model.forward(&mut a_seq, 1).expect("fa");
+        let exp_b = model.forward(&mut b_seq, 2).expect("fb");
+        let tr_a = a_seq.take_moe_trace();
+        let tr_b = b_seq.take_moe_trace();
+        assert!(!tr_a.events.is_empty());
+        assert!(!tr_b.events.is_empty());
+        let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+        let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+        let _pa = model.prefill(&mut a, &prompt_a).expect("pa");
+        let _pb = model.prefill(&mut b, &prompt_b).expect("pb");
+        a.enable_moe_trace(1);
+        b.enable_moe_trace(2);
+        let got = {
+            let mut pair = [&mut a, &mut b];
+            model.forward_batch(&mut pair, &[1, 2]).expect("batch")
+        };
+        assert_eq!(got.len(), 2);
+        assert_logits_match(&got[0], &exp_a);
+        assert_logits_match(&got[1], &exp_b);
+        assert_eq!(a.take_moe_trace(), tr_a);
+        assert_eq!(b.take_moe_trace(), tr_b);
     }
 
     #[test]

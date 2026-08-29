@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine batched MoE traces
+
+`Llama::prefill_batch` / `forward_batch` record `ExpertAccess` with
+per-row sequence, token, and prefix hash so two paged sequences GEMM
+together while tracing. Events scatter back onto the cache that owns
+the sequence (an untraced first cache does not keep the GEMM-local
+log). `Engine::enable_moe_trace` / `take_moe_trace` banks traces on
+retire and `take`. `gguf_gemv engine --trace-out FILE` writes JSONL for
+every sequence. Writer-tiny Qwen3MoE events bit-match sequential
+traced prefill/forward and dense `greedy_generate_cache`. `gemm_peak`
+stays on the batched path. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine ExpertStore on batched GEMM
 
 `Engine::attach_expert_store` parks one `LiveStore` on the first cache of

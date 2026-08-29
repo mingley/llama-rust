@@ -9,14 +9,15 @@
 //! batched GEMM (`Llama::prefill_batch`); new greedy tokens share
 //! `Llama::forward_batch`. One attached [`expertvm::LiveStore`] is parked on
 //! the first cache of each GEMM so MoE serving stays on the batched path.
-//! A full pool **preempts** another
+//! Opt-in [`Engine::enable_moe_trace`] records per-sequence [`expertvm::Trace`]
+//! events from those GEMMs (not a sequential fallback). A full pool **preempts** another
 //! sequence (unique blocks drop; intern pins remain) and later re-prefills
 //! plus replays already sampled greedy tokens. Greedy ids must match
 //! [`crate::greedy_generate_cache`]. Not an HTTP server.
 
 use crate::decode::{KvCache, Llama, LlamaError, PagedKvPool, PrefetchChain};
 use crate::sample::argmax;
-use expertvm::{ExpertStore, LiveStore, Score, StoreMetrics};
+use expertvm::{ExpertStore, LiveStore, Score, StoreMetrics, Trace};
 use std::collections::{BTreeMap, VecDeque};
 
 /// Handle for one sequence on an [`Engine`].
@@ -129,6 +130,7 @@ pub struct EngineStats {
 /// batched GEMM so routed experts come from DirectStore / CachedStore /
 /// SimulatedGpuStore instead of the GGUF blob. DirectStore ids match the blob
 /// Engine. Two per-cache stores still fall back inside `forward_batch`.
+/// [`Engine::enable_moe_trace`] records router events per [`SeqId`].
 pub struct Engine<'a> {
     llama: &'a Llama,
     pool: PagedKvPool,
@@ -136,11 +138,13 @@ pub struct Engine<'a> {
     slots: Vec<Option<Slot>>,
     wait: VecDeque<Waiter>,
     finished: BTreeMap<SeqId, SeqOutput>,
+    traces: BTreeMap<SeqId, Trace>,
     next_id: u32,
     preempts: u64,
     stats: EngineStats,
     expert_store: Option<LiveStore>,
     prefetch: PrefetchChain,
+    trace: bool,
 }
 
 impl<'a> Engine<'a> {
@@ -157,11 +161,13 @@ impl<'a> Engine<'a> {
             slots: Vec::new(),
             wait: VecDeque::new(),
             finished: BTreeMap::new(),
+            traces: BTreeMap::new(),
             next_id: 0,
             preempts: 0,
             stats: EngineStats::default(),
             expert_store: None,
             prefetch: PrefetchChain::default(),
+            trace: false,
         })
     }
 
@@ -305,6 +311,43 @@ impl<'a> Engine<'a> {
         }
     }
 
+    /// Record MoE router events on every live and later-admitted sequence.
+    ///
+    /// [`expertvm::ExpertAccess::sequence`] is the [`SeqId`] integer. Call
+    /// before the first [`Engine::step`]. [`Engine::take_moe_trace`] returns
+    /// the events after run, including after [`Engine::take`]. Does not change
+    /// [`SeqOutput`].
+    pub fn enable_moe_trace(&mut self) {
+        self.trace = true;
+        for slot in self.slots.iter_mut().flatten() {
+            slot.cache.enable_moe_trace(u64::from(slot.id.0));
+        }
+    }
+
+    /// Take recorded router events for `id`.
+    ///
+    /// Live caches are drained first; retired / taken sequences use the bank
+    /// filled by [`Engine::take`] and slot retirement.
+    pub fn take_moe_trace(&mut self, id: SeqId) -> Option<Trace> {
+        if let Some(i) = self.slot_index(id) {
+            if let Ok(slot) = self.slot_mut(i) {
+                let t = slot.cache.take_moe_trace();
+                if !t.events.is_empty() {
+                    return Some(t);
+                }
+            }
+        }
+        self.traces.remove(&id)
+    }
+
+    fn bank_trace(&mut self, id: SeqId, cache: &mut KvCache) {
+        let t = cache.take_moe_trace();
+        if t.events.is_empty() {
+            return;
+        }
+        let _prev = self.traces.insert(id, t);
+    }
+
     fn reclaim_parked_stores(&mut self) {
         for cell in &mut self.slots {
             if let Some(slot) = cell.as_mut() {
@@ -379,6 +422,7 @@ impl<'a> Engine<'a> {
         if let Some(i) = self.slot_index(id) {
             let mut slot = self.slots.get_mut(i).and_then(Option::take)?;
             self.reclaim_from(&mut slot.cache);
+            self.bank_trace(slot.id, &mut slot.cache);
             return Some(SeqOutput {
                 prompt: slot.prompt,
                 generated: slot.generated,
@@ -405,7 +449,10 @@ impl<'a> Engine<'a> {
     }
 
     fn install(&mut self, id: SeqId, prompt: Vec<u32>, n_predict: usize) -> Result<(), LlamaError> {
-        let cache = self.llama.new_paged_cache_on(&self.pool, self.cfg.n_ctx)?;
+        let mut cache = self.llama.new_paged_cache_on(&self.pool, self.cfg.n_ctx)?;
+        if self.trace {
+            cache.enable_moe_trace(u64::from(id.0));
+        }
         let slot = Slot {
             id,
             cache,
@@ -432,6 +479,7 @@ impl<'a> Engine<'a> {
     fn retire_done(&mut self) -> usize {
         let mut n = 0usize;
         let mut reclaimed = None;
+        let mut banked = Vec::new();
         for cell in &mut self.slots {
             let Some(slot) = cell.as_ref() else {
                 continue;
@@ -445,6 +493,7 @@ impl<'a> Engine<'a> {
             if let Some(store) = slot.cache.take_expert_store() {
                 reclaimed = Some(store);
             }
+            banked.push((slot.id, slot.cache.take_moe_trace()));
             let _prev = self.finished.insert(
                 slot.id,
                 SeqOutput {
@@ -456,6 +505,12 @@ impl<'a> Engine<'a> {
         }
         if let Some(store) = reclaimed {
             self.expert_store = Some(store);
+        }
+        for (id, t) in banked {
+            if t.events.is_empty() {
+                continue;
+            }
+            let _prev = self.traces.insert(id, t);
         }
         n
     }
@@ -905,13 +960,50 @@ mod tests {
     };
     use crate::gguf::load_gguf_owned;
     use crate::tok::Tokenizer;
-    use expertvm::{CachedStore, LiveStore};
+    use expertvm::{CachedStore, LiveStore, Trace};
 
     fn independent(model: &Llama, tok: &Tokenizer, prompt: &[u32], n: usize) -> Vec<u32> {
         let mut cache = model.new_cache(16).expect("d");
         let mut ids = prompt.to_vec();
         let _s = greedy_generate_cache(model, tok, &mut cache, &mut ids, n).expect("g");
         ids.split_off(prompt.len())
+    }
+
+    fn traced_independent(
+        model: &Llama,
+        tok: &Tokenizer,
+        prompt: &[u32],
+        n: usize,
+        sequence: u64,
+    ) -> (Vec<u32>, Trace) {
+        let mut cache = model.new_cache(16).expect("d");
+        cache.enable_moe_trace(sequence);
+        let mut ids = prompt.to_vec();
+        let _s = greedy_generate_cache(model, tok, &mut cache, &mut ids, n).expect("g");
+        (ids.split_off(prompt.len()), cache.take_moe_trace())
+    }
+
+    /// Engine does not forward the last sampled token; greedy `forward`s it.
+    fn assert_engine_trace_prefix(
+        engine: &Trace,
+        greedy: &Trace,
+        generated: usize,
+        n_predict: usize,
+    ) {
+        let extra = usize::from(n_predict > 0 && generated == n_predict);
+        assert!(
+            !engine.events.is_empty(),
+            "Engine MoE trace must record router events"
+        );
+        assert_eq!(
+            engine.events.len().saturating_add(extra),
+            greedy.events.len(),
+            "Engine should omit only the unused last greedy forward"
+        );
+        assert!(
+            greedy.events.starts_with(&engine.events),
+            "Engine events must bit-match greedy for every forwarded token"
+        );
     }
 
     #[test]
@@ -1219,6 +1311,39 @@ mod tests {
         assert!(
             eng.stats().gemm_peak >= 8,
             "prefetch must not force serial GEMM, peak={}",
+            eng.stats().gemm_peak
+        );
+    }
+
+    #[test]
+    fn engine_moe_trace_two_sequences_match_dense_and_gemm() {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        let g = load_gguf_owned(tiny_qwen3moe_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let (exp_a, tr_a) = traced_independent(&model, &tok, &tokens_a, 2, 0);
+        let (exp_b, tr_b) = traced_independent(&model, &tok, &tokens_b, 2, 1);
+        let mut cfg = EngineCfg::tiny();
+        cfg.eos = tok.eos;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        eng.enable_moe_trace();
+        let a = eng.add(&tokens_a, 2).expect("a");
+        let b = eng.add(&tokens_b, 2).expect("b");
+        eng.run().expect("run");
+        let got_a = eng.take_moe_trace(a).expect("live a");
+        assert_engine_trace_prefix(&got_a, &tr_a, exp_a.len(), 2);
+        assert_eq!(Trace::parse(&got_a.to_jsonl()).expect("jsonl"), got_a);
+        let out_a = eng.take(a).expect("ta");
+        let out_b = eng.take(b).expect("tb");
+        assert_eq!(out_a.generated, exp_a);
+        assert_eq!(out_b.generated, exp_b);
+        let got_b = eng.take_moe_trace(b).expect("banked b");
+        assert_engine_trace_prefix(&got_b, &tr_b, exp_b.len(), 2);
+        assert!(eng.take_moe_trace(a).is_none());
+        assert!(
+            eng.stats().gemm_peak >= 8,
+            "traced Engine must GEMM together, peak={}",
             eng.stats().gemm_peak
         );
     }
