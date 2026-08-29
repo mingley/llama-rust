@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — decode-first, SLO reject, cudaStreamQuery
+
+`--decode-first` holds leftover prefill while any running sequence is
+already in decode, so ITL is not waiting on the rest of a long first
+token (`SchedCfg::decode_first`). `--slo-reject` drops a waiting sequence
+whose queue wait already meets `--ttft-slo-ns` instead of keeping hopeless
+FCFS head-of-line work (`rejected=` on the schedule line). `query_stream`
+is `cudaStreamQuery`; `mem_info` is `cudaMemGetInfo` `(free, total)`.
+`expertvm bench` prints `schedule-decode-first` when a first token has
+more than one layer and a later token exists. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — chunked prefill + cudaEventQuery
 
 `--prefill-chunk N` advances a sequence's first token by at most N
@@ -341,7 +353,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 ./target/release/infer-bench remote tests/traces/cycling.jsonl --expert-bytes 1048576
 ./target/release/expertvm topology --bytes 1048576
 ./target/release/expertvm remote tests/traces/cycling.jsonl --expert-bytes 1048576
-./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 2 --max-batch 1 --interarrival-ns 1000000 --prefill-chunk 1
+./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 2 --max-batch 1 --interarrival-ns 1000000 --prefill-chunk 1 --decode-first --slo-reject --ttft-slo-ns 1
 ./target/release/expertvm workload prefill-batch
 ./target/release/gpu-profile probe bad-numa --bytes 1048576
 cargo run -p llama-rust --example session

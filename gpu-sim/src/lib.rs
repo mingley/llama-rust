@@ -12,6 +12,8 @@
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
 //! [`Sim::query_event`] is `cudaEventQuery` (no wait).
+//! [`Sim::query_stream`] is `cudaStreamQuery` (no wait).
+//! [`Sim::mem_info`] is `cudaMemGetInfo` `(free, total)`.
 //! [`Sim::set_stream_priority`] is `cudaStreamCreateWithPriority`.
 
 #![cfg_attr(not(test), deny(missing_docs))]
@@ -1055,5 +1057,44 @@ mod tests {
         assert!(!sim.query_event(ev).unwrap());
         sim.synchronize().unwrap();
         assert!(sim.query_event(ev).unwrap());
+    }
+
+    #[test]
+    fn query_stream_does_not_wait() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.query_stream(DeviceId(99), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s));
+        let t0 = sim.clock_ns();
+        assert!(!sim.query_stream(d, s).unwrap());
+        assert_eq!(sim.clock_ns(), t0);
+        sim.synchronize().unwrap();
+        assert!(sim.query_stream(d, s).unwrap());
+    }
+
+    #[test]
+    fn mem_info_tracks_free_and_total() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (free0, total) = sim.mem_info(d).unwrap();
+        assert_eq!(total, sim.profile().gpu(d).unwrap().hbm_bytes);
+        assert_eq!(free0, total);
+        let bytes = 1u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        sim.synchronize().unwrap();
+        let (free1, total1) = sim.mem_info(d).unwrap();
+        assert_eq!(total1, total);
+        assert_eq!(free1, total.saturating_sub(sim.hbm_used(d).unwrap()));
+        assert!(free1 < free0);
+        sim.free(d, a, s).unwrap();
+        sim.synchronize().unwrap();
+        let (free2, _) = sim.mem_info(d).unwrap();
+        assert_eq!(free2, total);
     }
 }

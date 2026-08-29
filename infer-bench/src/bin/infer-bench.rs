@@ -16,7 +16,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch, prefill-batch
@@ -132,6 +132,8 @@ fn run() -> Result<(), String> {
                     ttft_slo_ns: cfg.ttft_slo_ns,
                     itl_slo_ns: cfg.itl_slo_ns,
                     prefill_chunk_layers: cfg.prefill_chunk,
+                    decode_first: cfg.decode_first,
+                    slo_reject: cfg.slo_reject,
                 },
             )
             .map_err(|e| e.to_string())?;
@@ -155,6 +157,8 @@ struct Cfg {
     ttft_slo_ns: Option<u64>,
     itl_slo_ns: Option<u64>,
     prefill_chunk: usize,
+    decode_first: bool,
+    slo_reject: bool,
 }
 
 fn parse_flags<I>(args: I) -> Result<Cfg, String>
@@ -180,6 +184,8 @@ where
     let mut ttft_slo_ns = None;
     let mut itl_slo_ns = None;
     let mut prefill_chunk = 0usize;
+    let mut decode_first = false;
+    let mut slo_reject = false;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -227,6 +233,12 @@ where
                 prefill_chunk =
                     parse_usize("prefill-chunk", &value("prefill-chunk", inline, &mut it)?)?
             }
+            "--decode-first" => {
+                decode_first = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
+            "--slo-reject" => {
+                slo_reject = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
             "--bytes" => expert_bytes = parse_u64("bytes", &value("bytes", inline, &mut it)?)?,
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => {
@@ -250,6 +262,8 @@ where
         ttft_slo_ns,
         itl_slo_ns,
         prefill_chunk,
+        decode_first,
+        slo_reject,
     })
 }
 

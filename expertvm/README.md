@@ -90,7 +90,10 @@ chunk (layer-major) per engine step, finished sequences retire,
 [`gpu_sim::Sim::idle_until`] waits for the next arrival. A chunk is the
 whole next token unless `--prefill-chunk N` limits a sequence's first
 token to N layer-events so a short decode is not stuck behind a long
-prefill. TTFT is from
+prefill. `--decode-first` holds leftover prefill while any running
+sequence is already in decode. `--slo-reject` drops a waiter whose queue
+wait already meets `--ttft-slo-ns` (`rejected=` on the schedule line).
+TTFT is from
 arrival; `--ttft-slo-ns` / `--itl-slo-ns` count misses. `queue_ns` is mean
 first-token wait (`iteration_start - arrival`) so a tight `max_batch`
 shows queueing separately from GPU service. The cache walker
@@ -114,7 +117,8 @@ not count toward HBM. `HardwareProfile::restrict_hbm` is the knob. `topology_sui
 `probe_topology` compare H2D and P2P costs across named meshes (PCIe P2P,
 NVLink, bad NUMA, RDMA, asymmetric). `expertvm bench` on a multi-sequence
 trace prints `schedule-all` vs `schedule-1` (open-loop running set of
-unlimited vs 1). `SimulatedGpuStore` can inject GPU
+unlimited vs 1) and `schedule-decode-first` when a mixed prefill/decode
+trace has a wide first token. `SimulatedGpuStore` can inject GPU
 unavailable, copy-stream cancel, transfer delay, and next-H2D load
 failure.
 
@@ -131,7 +135,8 @@ expertvm sim      trace.jsonl --capacity 8 --profile h100 --prefetch markov --se
 expertvm sim      trace.jsonl --capacity 8 --prefetch copy-forward --plan-window 8 --cuda-graphs
 expertvm sim      trace.jsonl --capacity 8 --seq-streams --max-batch 2
 expertvm schedule trace.jsonl --capacity 8 --max-batch 2 --interarrival-ns 1000000 --ttft-slo-ns 20000000
-expertvm schedule trace.jsonl --capacity 8 --prefill-chunk 1 --seq-streams
+expertvm schedule trace.jsonl --capacity 8 --prefill-chunk 1 --seq-streams --decode-first
+expertvm schedule trace.jsonl --capacity 8 --max-batch 1 --ttft-slo-ns 1 --slo-reject
 expertvm place    trace.jsonl --gpus 8 --hot-pt 200
 expertvm bench    trace.jsonl --capacity 8 --profile h100
 expertvm bench    adversarial --tokens 64 --experts 16 --capacity 2 --profile cheap

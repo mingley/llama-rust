@@ -487,7 +487,9 @@ one next **chunk** (layer-major) per engine step, finished sequences leave,
 `Sim::idle_until` jumps the virtual clock when the GPU would wait.
 A chunk is the whole next token unless `--prefill-chunk N` limits a
 sequence's first token to N layer-events so a short decode is not stuck
-behind a long prefill. TTFT is first-token end minus arrival. Optional
+behind a long prefill. `--decode-first` holds leftover prefill while any
+running sequence is already in decode. `--slo-reject` drops a waiter whose
+queue wait already meets `--ttft-slo-ns`. TTFT is first-token end minus arrival. Optional
 `--ttft-slo-ns` / `--itl-slo-ns` count misses. Cache order is demand paging (no JSONL future
 leak). This is not a 500k-line vLLM engine.
 
@@ -534,17 +536,20 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `synchronize_stream` so the compute stream is idle (CUDA). `--max-batch N`
   admits N sequences per engine iteration. `expertvm schedule` is the
   open-loop running set (arrivals, retire, SLO misses, `idle_until`,
-  `--prefill-chunk N`). `query_event` is `cudaEventQuery`.
+  `--prefill-chunk N`, `--decode-first`, `--slo-reject`). `query_event` is `cudaEventQuery`.
+  `query_stream` is `cudaStreamQuery`. `mem_info` is `cudaMemGetInfo`.
   `plan_window` Stay vs Fetch gates prefetch
   in the GPU loop (`--plan-window N`). `prefetch_hits` / `prefetch_waste`
   measure whether those fills were used. `memset`, directed peer enable, and
   the legacy null stream are mechanical CUDA invariants.
   `synchronize_stream` / `synchronize_event` are `cudaStreamSynchronize` /
   `cudaEventSynchronize`. `event_elapsed_ns` is `cudaEventElapsedTime` in
-  nanoseconds. `query_event` is `cudaEventQuery`. Public `GpuOp` / `Operation` is the compiled DAG
+  nanoseconds. `query_event` is `cudaEventQuery`. `query_stream` is `cudaStreamQuery`.
+  `mem_info` is `cudaMemGetInfo` `(free, total)`. Public `GpuOp` / `Operation` is the compiled DAG
   (`Sim::operations`). `expertvm bench` on a multi-sequence trace prints
-  `schedule-all` vs `schedule-1`, and `schedule-chunk1` when a first token
-  has more than one layer.
+  `schedule-all` vs `schedule-1`, `schedule-chunk1` when a first token
+  has more than one layer, and `schedule-decode-first` when a later token
+  exists too.
 - performance model must include fixed overhead, size-dependent
   throughput, queueing, concurrency limits, alignment, startup latency
   (`LinkProfile::align_bytes` rounds the billed payload up; a 1-byte DMA

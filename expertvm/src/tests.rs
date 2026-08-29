@@ -661,6 +661,79 @@ fn schedule_chunked_prefill_unblocks_short_decode() {
 }
 
 #[test]
+fn schedule_decode_first_shortens_mixed_itl() {
+    let mut events = Vec::new();
+    for layer in 0..16u32 {
+        events.push(ev_seq(0, 0, layer, &[0]));
+    }
+    events.push(ev_seq(1, 0, 0, &[1]));
+    for token in 1..5u32 {
+        events.push(ev_seq(1, token, 0, &[1]));
+    }
+    let t = Trace { events };
+    let p = HardwareProfile::parse("gpus=1\ncopy_engines=1\n").expect("profile");
+    let cfg = SimCfg {
+        seq_streams: true,
+        bytes_per_expert: 8u64 << 20,
+        ..SimCfg::lru(4, 8u64 << 20, 0)
+    };
+    let mixed = schedule_replay(&t, p.clone(), cfg, SchedCfg::chunked(0, 1)).expect("mixed");
+    let prefer = schedule_replay(
+        &t,
+        p,
+        cfg,
+        SchedCfg {
+            decode_first: true,
+            ..SchedCfg::chunked(0, 1)
+        },
+    )
+    .expect("prefer");
+    assert_eq!(mixed.completed, 2);
+    assert_eq!(prefer.completed, 2);
+    let mixed_itl = mixed.replay.itl_ns.expect("mixed itl");
+    let prefer_itl = prefer.replay.itl_ns.expect("prefer itl");
+    assert!(
+        prefer_itl < mixed_itl,
+        "decode-first must not wait ITL on leftover prefill; prefer={prefer_itl} mixed={mixed_itl}"
+    );
+}
+
+#[test]
+fn schedule_slo_reject_drops_late_head_of_line() {
+    let t = Trace {
+        events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],
+    };
+    let p = HardwareProfile::parse("gpus=1\ncopy_engines=1\n").expect("profile");
+    let cfg = SimCfg::lru(2, 8u64 << 20, 0);
+    let keep = schedule_replay(
+        &t,
+        p.clone(),
+        cfg,
+        SchedCfg {
+            ttft_slo_ns: Some(1),
+            ..SchedCfg::closed(1)
+        },
+    )
+    .expect("keep");
+    let drop = schedule_replay(
+        &t,
+        p,
+        cfg,
+        SchedCfg {
+            ttft_slo_ns: Some(1),
+            slo_reject: true,
+            ..SchedCfg::closed(1)
+        },
+    )
+    .expect("drop");
+    assert_eq!(keep.completed, 2);
+    assert_eq!(keep.rejected, 0);
+    assert!(keep.ttft_slo_miss > 0);
+    assert_eq!(drop.completed, 1);
+    assert_eq!(drop.rejected, 1);
+}
+
+#[test]
 fn schedule_retires_finished_sequences() {
     let t = Trace {
         events: vec![

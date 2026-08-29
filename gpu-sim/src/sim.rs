@@ -182,6 +182,13 @@ impl Sim {
         Ok(self.gpu_rt(device)?.used)
     }
 
+    /// `cudaMemGetInfo`: `(free, total)` HBM bytes on `device`.
+    pub fn mem_info(&self, device: DeviceId) -> Result<(u64, u64), SimError> {
+        let total = self.profile.gpu(device)?.hbm_bytes;
+        let used = self.hbm_used(device)?;
+        Ok((total.saturating_sub(used), total))
+    }
+
     /// Whether `alloc` currently has a copy on `device`.
     pub fn is_resident(&self, alloc: AllocId, device: DeviceId) -> Result<bool, SimError> {
         let a = self.alloc_ref(alloc)?;
@@ -275,6 +282,13 @@ impl Sim {
 
     /// No unfinished ops on `(device, stream)`, including in-flight.
     pub fn stream_is_idle(&self, device: DeviceId, stream: StreamId) -> Result<bool, SimError> {
+        self.query_stream(device, stream)
+    }
+
+    /// `cudaStreamQuery`: whether `(device, stream)` has no unfinished ops. Does not wait.
+    ///
+    /// Unknown devices are [`SimError::Invalid`]. A busy stream is `Ok(false)`.
+    pub fn query_stream(&self, device: DeviceId, stream: StreamId) -> Result<bool, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.stream_idle(device, stream))
     }

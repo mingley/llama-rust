@@ -28,6 +28,9 @@ pub struct BenchReport {
     pub schedule: Option<String>,
     /// Unchunked vs `--prefill-chunk 1` when a first token has more than one layer.
     pub chunk: Option<String>,
+    /// Chunked vs `--decode-first` when a first token has more than one layer
+    /// and a later token exists in the trace.
+    pub decode: Option<String>,
 }
 
 impl BenchReport {
@@ -55,6 +58,10 @@ impl BenchReport {
             s.push_str(ch);
             s.push('\n');
         }
+        if let Some(df) = &self.decode {
+            s.push_str(df);
+            s.push('\n');
+        }
         s
     }
 }
@@ -74,6 +81,7 @@ pub fn report(
     let mut graphs = None;
     let mut schedule = None;
     let mut chunk = None;
+    let mut decode = None;
     if let Some(p) = profile {
         let lines = sim_lines(trace, p, capacity, lookahead, expert_bytes)?;
         sim = Some(lines.serial);
@@ -81,6 +89,7 @@ pub fn report(
         graphs = lines.graphs;
         schedule = lines.schedule;
         chunk = lines.chunk;
+        decode = lines.decode;
     }
     Ok(BenchReport {
         name: name.to_string(),
@@ -91,6 +100,7 @@ pub fn report(
         graphs,
         schedule,
         chunk,
+        decode,
     })
 }
 
@@ -100,6 +110,7 @@ struct SimLines {
     graphs: Option<String>,
     schedule: Option<String>,
     chunk: Option<String>,
+    decode: Option<String>,
 }
 
 fn sim_lines(
@@ -119,7 +130,7 @@ fn sim_lines(
     } else {
         None
     };
-    let (schedule, chunk) = schedule_compare(trace, profile.clone(), base)?;
+    let lines = schedule_compare(trace, profile.clone(), base)?;
     let mut graphed = base;
     graphed.cuda_graphs = true;
     let g = sim_replay_cfg(trace, profile, graphed)?;
@@ -127,18 +138,29 @@ fn sim_lines(
         serial: serial.line(),
         overlap,
         graphs: Some(format!("serial {} | graphs {}", serial.line(), g.line())),
-        schedule,
-        chunk,
+        schedule: lines.schedule,
+        chunk: lines.chunk,
+        decode: lines.decode,
     })
+}
+
+struct ScheduleLines {
+    schedule: Option<String>,
+    chunk: Option<String>,
+    decode: Option<String>,
 }
 
 fn schedule_compare(
     trace: &Trace,
     profile: HardwareProfile,
     base: SimCfg,
-) -> Result<(Option<String>, Option<String>), Error> {
+) -> Result<ScheduleLines, Error> {
     if trace.n_sequences() <= 1 {
-        return Ok((None, None));
+        return Ok(ScheduleLines {
+            schedule: None,
+            chunk: None,
+            decode: None,
+        });
     }
     let all = schedule_replay(trace, profile.clone(), base, SchedCfg::closed(0))?;
     let one = schedule_replay(trace, profile.clone(), base, SchedCfg::closed(1))?;
@@ -147,17 +169,48 @@ fn schedule_compare(
         all.line(),
         one.line()
     ));
-    let chunk = if first_token_events(trace) > 1 {
-        let ch = schedule_replay(trace, profile, base, SchedCfg::chunked(0, 1))?;
-        Some(format!(
-            "schedule-all {} | schedule-chunk1 {}",
-            all.line(),
-            ch.line()
-        ))
+    let wide = first_token_events(trace) > 1;
+    let chunked = if wide {
+        Some(schedule_replay(
+            trace,
+            profile.clone(),
+            base,
+            SchedCfg::chunked(0, 1),
+        )?)
     } else {
         None
     };
-    Ok((schedule, chunk))
+    let chunk = chunked.as_ref().map(|ch| {
+        format!(
+            "schedule-all {} | schedule-chunk1 {}",
+            all.line(),
+            ch.line()
+        )
+    });
+    let decode = match (has_later_token(trace), chunked.as_ref()) {
+        (true, Some(ch)) => {
+            let df = schedule_replay(
+                trace,
+                profile,
+                base,
+                SchedCfg {
+                    decode_first: true,
+                    ..SchedCfg::chunked(0, 1)
+                },
+            )?;
+            Some(format!(
+                "schedule-chunk1 {} | schedule-decode-first {}",
+                ch.line(),
+                df.line()
+            ))
+        }
+        _ => None,
+    };
+    Ok(ScheduleLines {
+        schedule,
+        chunk,
+        decode,
+    })
 }
 
 fn first_token_events(trace: &Trace) -> usize {
@@ -178,6 +231,20 @@ fn first_token_events(trace: &Trace) -> usize {
         }
     }
     n.values().copied().max().unwrap_or(0)
+}
+
+fn has_later_token(trace: &Trace) -> bool {
+    let mut first: BTreeMap<u64, u32> = BTreeMap::new();
+    for e in &trace.events {
+        match first.get(&e.sequence).copied() {
+            None => {
+                let _f = first.insert(e.sequence, e.token);
+            }
+            Some(t) if e.token > t => return true,
+            Some(_) => {}
+        }
+    }
+    false
 }
 
 /// Run every named adversarial workload at `capacity`.

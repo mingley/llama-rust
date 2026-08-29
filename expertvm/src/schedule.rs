@@ -28,6 +28,12 @@ pub struct SchedCfg {
     /// step. `0` runs the whole token (decode-shaped). `N > 0` lets other
     /// sequences' decode tokens complete while a long prefill is still in flight.
     pub prefill_chunk_layers: usize,
+    /// When mixed with in-flight decode, skip prefill sequences this iteration
+    /// so decode ITL does not wait on the rest of a long first token.
+    pub decode_first: bool,
+    /// Drop a waiting sequence instead of admitting it when queue wait already
+    /// meets [`Self::ttft_slo_ns`] (Mooncake-style early rejection).
+    pub slo_reject: bool,
 }
 
 impl SchedCfg {
@@ -41,6 +47,8 @@ impl SchedCfg {
             ttft_slo_ns: None,
             itl_slo_ns: None,
             prefill_chunk_layers: 0,
+            decode_first: false,
+            slo_reject: false,
         }
     }
 
@@ -61,6 +69,8 @@ pub struct SchedReplay {
     pub replay: SimReplay,
     /// Sequences that finished every token.
     pub completed: u64,
+    /// Waiting sequences dropped by [`SchedCfg::slo_reject`].
+    pub rejected: u64,
     /// First-token latency samples that missed [`SchedCfg::ttft_slo_ns`].
     pub ttft_slo_miss: u64,
     /// Later-token gaps that missed [`SchedCfg::itl_slo_ns`].
@@ -78,8 +88,8 @@ impl SchedReplay {
         let mut s = self.replay.line();
         let _w = write!(
             s,
-            " completed={} ttft_slo_miss={} itl_slo_miss={} idle_ns={}",
-            self.completed, self.ttft_slo_miss, self.itl_slo_miss, self.idle_ns
+            " completed={} rejected={} ttft_slo_miss={} itl_slo_miss={} idle_ns={}",
+            self.completed, self.rejected, self.ttft_slo_miss, self.itl_slo_miss, self.idle_ns
         );
         if let Some(n) = self.queue_ns {
             let _w = write!(s, " queue_ns={n}");
@@ -96,8 +106,12 @@ impl SchedReplay {
 /// A chunk is the whole next token unless [`SchedCfg::prefill_chunk_layers`]
 /// is set: then a sequence's first token advances at most that many
 /// layer-events so a short decode in the same batch is not stuck behind a
-/// long prefill. Cache order is demand paging (no JSONL future leak).
-/// Prefetch Stay vs Fetch uses remaining keys of *running* sequences only.
+/// long prefill. [`SchedCfg::decode_first`] further holds prefill while any
+/// running sequence is already in decode. Cache order is demand paging (no
+/// JSONL future leak). Prefetch Stay vs Fetch uses remaining keys of
+/// *running* sequences only. [`SchedCfg::slo_reject`] drops a waiting
+/// sequence whose queue wait already meets the TTFT SLO so a later arrival
+/// is not stuck behind hopeless FCFS head-of-line work.
 pub fn schedule_replay(
     trace: &Trace,
     profile: HardwareProfile,
@@ -110,7 +124,14 @@ pub fn schedule_replay(
     let mut rec = Rec::default();
     let cap = batch_cap(sched.max_batch);
     loop {
-        admit(&mut pending, &mut running, cap, rt.sim.clock_ns());
+        admit(
+            &mut pending,
+            &mut running,
+            cap,
+            rt.sim.clock_ns(),
+            sched,
+            &mut rec,
+        );
         if running.is_empty() {
             let Some(next) = pending.front() else {
                 break;
@@ -144,6 +165,7 @@ struct Rec {
     completed: u64,
     tokens_done: u64,
     queues: Vec<u64>,
+    rejected: u64,
 }
 
 struct SchedRt {
@@ -292,13 +314,25 @@ fn batch_cap(max_batch: usize) -> usize {
     }
 }
 
-fn admit(pending: &mut VecDeque<Job>, running: &mut Vec<Job>, cap: usize, now: u64) {
+fn admit(
+    pending: &mut VecDeque<Job>,
+    running: &mut Vec<Job>,
+    cap: usize,
+    now: u64,
+    sched: SchedCfg,
+    rec: &mut Rec,
+) {
     while running.len() < cap {
         let Some(front) = pending.front() else {
             break;
         };
         if front.arrival > now {
             break;
+        }
+        if late_for_ttft_slo(front, now, sched) {
+            let _drop = pending.pop_front();
+            rec.rejected = rec.rejected.saturating_add(1);
+            continue;
         }
         if let Some(job) = pending.pop_front() {
             running.push(job);
@@ -313,6 +347,21 @@ fn note_queue(running: &mut [Job], now: u64, rec: &mut Rec) {
             job.queued = true;
         }
     }
+}
+
+fn late_for_ttft_slo(job: &Job, now: u64, sched: SchedCfg) -> bool {
+    match (sched.slo_reject, sched.ttft_slo_ns) {
+        (true, Some(slo)) => now.saturating_sub(job.arrival) >= slo,
+        _ => false,
+    }
+}
+
+fn hold_prefill(running: &[Job], job: &Job, sched: SchedCfg) -> bool {
+    sched.decode_first
+        && job.first_end.is_none()
+        && running
+            .iter()
+            .any(|j| j.first_end.is_some() && !j.tokens.is_empty())
 }
 
 fn chunk_events(job: &Job, chunk: usize) -> Vec<ExpertAccess> {
@@ -333,7 +382,13 @@ fn execute_iteration(
 ) -> Result<Vec<usize>, Error> {
     let chunks: Vec<Vec<ExpertAccess>> = running
         .iter()
-        .map(|j| chunk_events(j, sched.prefill_chunk_layers))
+        .map(|j| {
+            if hold_prefill(running, j, sched) {
+                Vec::new()
+            } else {
+                chunk_events(j, sched.prefill_chunk_layers)
+            }
+        })
         .collect();
     let consumed: Vec<usize> = chunks.iter().map(Vec::len).collect();
     let mut by_layer: BTreeMap<u32, Vec<ExpertAccess>> = BTreeMap::new();
@@ -464,6 +519,7 @@ fn finish_sched(rt: SchedRt, rec: Rec) -> SchedReplay {
     SchedReplay {
         replay,
         completed: rec.completed,
+        rejected: rec.rejected,
         ttft_slo_miss: rec.ttft_slo_miss,
         itl_slo_miss: rec.itl_slo_miss,
         idle_ns: rt.idle_ns,
