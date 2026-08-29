@@ -35,6 +35,8 @@ pub struct GpuStoreCfg {
     pub sync_alloc: bool,
     /// Hold unused `cudaMallocAsync` bytes in the default pool (`u64::MAX` threshold).
     pub mempool: bool,
+    /// Physical span for [`GpuFill::Vmm`]. `0` maps the whole expert (`va_acquire`).
+    pub vmm_page: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -64,6 +66,8 @@ pub struct SimulatedGpuStore {
     mode: GpuFill,
     host_func: bool,
     sync_alloc: bool,
+    /// [`GpuStoreCfg::vmm_page`]: KV-sized physicals when [`GpuFill::Vmm`].
+    vmm_page: u64,
 }
 
 impl SimulatedGpuStore {
@@ -191,6 +195,7 @@ impl SimulatedGpuStore {
             mode: fill,
             host_func: cfg.host_func,
             sync_alloc: cfg.sync_alloc,
+            vmm_page: cfg.vmm_page,
         })
     }
 
@@ -503,7 +508,7 @@ impl SimulatedGpuStore {
             }
             GpuFill::Mapped => Ok(self.sim.alloc_host_mapped(bytes)?),
             GpuFill::Vmm => {
-                let id = self.sim.va_acquire(d, bytes)?;
+                let id = self.vmm_alloc(d)?;
                 self.fill_hbm(d, id)?;
                 Ok(id)
             }
@@ -512,6 +517,15 @@ impl SimulatedGpuStore {
                 self.fill_hbm(d, id)?;
                 Ok(id)
             }
+        }
+    }
+
+    fn vmm_alloc(&mut self, d: DeviceId) -> Result<AllocId, Error> {
+        let bytes = self.bytes_per_expert;
+        if self.vmm_page > 0 && self.vmm_page < bytes {
+            Ok(self.sim.va_acquire_paged(d, bytes, self.vmm_page)?)
+        } else {
+            Ok(self.sim.va_acquire(d, bytes)?)
         }
     }
 

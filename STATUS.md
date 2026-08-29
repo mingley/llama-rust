@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — SimulatedGpuStore paged VMM
+
+`GpuStoreCfg::vmm_page` uses `va_acquire_paged` so a KV-sized physical
+pays map overhead per block. Hits/misses/HBM match whole-VA `with_vmm`.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — SimulatedGpuStore mapped pin occupancy
 
 `with_mapped` caps cache slots at `host_pin_bytes / expert_bytes` so a

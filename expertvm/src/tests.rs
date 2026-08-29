@@ -2320,6 +2320,45 @@ fn simulated_gpu_store_mempool_holds_after_evict() {
 }
 
 #[test]
+fn simulated_gpu_store_vmm_page_pays_map_overhead() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let bytes = 1u64 << 20;
+    let run = |page: u64| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            1,
+            p.clone(),
+            bytes,
+            GpuFill::Vmm,
+            GpuStoreCfg {
+                vmm_page: page,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        for k in t.keys() {
+            let _p = gpu.acquire(k).expect("acq");
+        }
+        let metrics = gpu.metrics();
+        let score = gpu.score().expect("score");
+        (metrics, score)
+    };
+    let (full_m, full_s) = run(0);
+    let (paged_m, paged_s) = run(bytes / 4);
+    assert_eq!(full_m.hits, paged_m.hits);
+    assert_eq!(full_m.misses, paged_m.misses);
+    assert_eq!(full_s.hbm_peak, paged_s.hbm_peak);
+    assert!(
+        paged_s.wall_ns > full_s.wall_ns,
+        "paged maps must pay per-block map overhead; paged={} full={}",
+        paged_s.wall_ns,
+        full_s.wall_ns
+    );
+}
+
+#[test]
 fn simulated_gpu_store_mapped_pin_budget_caps_occupancy() {
     let mut events = Vec::new();
     for tok in 0..16u32 {

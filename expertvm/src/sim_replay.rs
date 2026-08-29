@@ -158,6 +158,8 @@ pub struct SimCfg {
     /// physicals (`0` is one `cuMemMap` for the whole expert).
     pub vmm: bool,
     /// Page size for [`Self::vmm`]. `0` maps the whole expert in one physical.
+    /// [`crate::SimulatedGpuStore::with_vmm`] stays whole-VA;
+    /// [`crate::GpuStoreCfg::vmm_page`] is the store path.
     pub vmm_page: u64,
     /// `cudaLaunchHostFunc` after each event's GEMMs (CPU scheduler roundtrip).
     ///
