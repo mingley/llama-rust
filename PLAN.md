@@ -262,7 +262,7 @@ The reference engine has to be something researchers will actually load.
 - [ ] More than one real-model fixture (NEOX Qwen + NORM Llama control)
 - [ ] Oracle-owned f16 conversion (oracle must not call production `fp16`)
 - [ ] Q4_0 SIMD (loadable; still scalar)
-- [ ] Expert FFN on Scratch (Llama4 is on Scratch; llama/qwen2moe/qwen3moe/qwen3next still build row vectors)
+- [x] Expert FFN on Scratch (llama / qwen2moe / qwen3moe / qwen3next / Llama4)
 
 Push each of these to `main` as they land. Do not open PRs.
 

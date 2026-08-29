@@ -118,9 +118,8 @@ Local: `~/dev/llama-rust-perf`
 
 ## In progress
 
-PLAN.md Phase 0 leftovers: Q4_0 SIMD, oracle-owned f16, Expert FFN on
-Scratch for llama/qwen2moe/qwen3moe/qwen3next, a second real-model
-fixture when one is on disk. Phase 2 `TieredStore`. Phase 3 more
+PLAN.md Phase 0 leftovers: Q4_0 SIMD, oracle-owned f16, a second
+real-model fixture when one is on disk. Phase 2 `TieredStore`. Phase 3 more
 adversarial shapes (batch, prefill-heavy) without inventing `$/M tokens`.
 
 ## Still needed (production / researcher bar)
