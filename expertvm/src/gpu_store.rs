@@ -80,6 +80,11 @@ pub struct GpuStoreCfg {
     /// The next capture on that GPU updates it (`graph_update_ns`) instead of
     /// instantiate. Decode identity stays destroy+instantiate.
     pub graph_update: bool,
+    /// `cudaGraphClone` the capture before instantiate (graph vs exec).
+    ///
+    /// Clone, destroy the src, then instantiate the copy. A parked-exec
+    /// update skips clone. Decode identity stays instantiate-in-place.
+    pub graph_clone: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -109,7 +114,9 @@ pub struct SimulatedGpuStore {
     idle_execs: BTreeMap<DeviceId, Vec<GraphId>>,
     graph_launches: u64,
     graph_updates: u64,
+    graph_clones: u64,
     graph_update: bool,
+    graph_clone: bool,
     mode: GpuFill,
     host_func: bool,
     sync_alloc: bool,
@@ -252,7 +259,9 @@ impl SimulatedGpuStore {
             idle_execs: BTreeMap::new(),
             graph_launches: 0,
             graph_updates: 0,
+            graph_clones: 0,
             graph_update: cfg.graph_update,
+            graph_clone: cfg.graph_clone,
             mode: fill,
             host_func: cfg.host_func,
             sync_alloc: cfg.sync_alloc,
@@ -528,6 +537,12 @@ impl SimulatedGpuStore {
         self.graph_updates
     }
 
+    /// How many times [`gpu_sim::Sim::clone_graph`] copied a capture before instantiate.
+    #[must_use]
+    pub fn graph_clones(&self) -> u64 {
+        self.graph_clones
+    }
+
     /// Whether `key` is in the fast CPU tier.
     #[must_use]
     pub fn is_resident(&self, key: ExpertKey) -> bool {
@@ -733,9 +748,17 @@ impl SimulatedGpuStore {
                 return Ok(exec);
             }
         }
-        self.sim.instantiate_graph(src)?;
-        self.sim.upload_graph(src)?;
-        Ok(src)
+        let exec = if self.graph_clone {
+            let cloned = self.sim.clone_graph(src)?;
+            self.sim.destroy_graph(src)?;
+            self.graph_clones = self.graph_clones.saturating_add(1);
+            cloned
+        } else {
+            src
+        };
+        self.sim.instantiate_graph(exec)?;
+        self.sim.upload_graph(exec)?;
+        Ok(exec)
     }
 
     fn drop_gpu(&mut self, key: ExpertKey) -> Result<(), Error> {
@@ -909,6 +932,8 @@ pub struct StoreReplay {
     pub score: Score,
     /// [`SimulatedGpuStore::graph_updates`] after the walk.
     pub graph_updates: u64,
+    /// [`SimulatedGpuStore::graph_clones`] after the walk.
+    pub graph_clones: u64,
 }
 
 impl StoreReplay {
@@ -916,10 +941,11 @@ impl StoreReplay {
     #[must_use]
     pub fn line(&self) -> String {
         format!(
-            "store {} {} graph_updates={}",
+            "store {} {} graph_updates={} graph_clones={}",
             self.metrics.line(),
             self.score.line(),
-            self.graph_updates
+            self.graph_updates,
+            self.graph_clones
         )
     }
 }
@@ -1026,6 +1052,7 @@ pub fn store_replay_cfg(
     Ok(StoreReplay {
         metrics: store.metrics(),
         graph_updates: store.graph_updates(),
+        graph_clones: store.graph_clones(),
         score: store.score()?.with_tokens(n),
     })
 }

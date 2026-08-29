@@ -704,7 +704,7 @@ fn vmm_evict_reacquires_same_va() {
 
     let mut sim = Sim::new(HardwareProfile::example_h100_sxm());
     let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
-    let mut graphs = GraphBank::new(false);
+    let mut graphs = GraphBank::new(false, false);
     let args = TouchArgs {
         d: DeviceId(0),
         s: StreamId(0),
@@ -2205,6 +2205,80 @@ fn simulated_gpu_store_graph_update_reuses_parked_exec() {
 }
 
 #[test]
+fn cuda_graphs_graph_clone_copies_leaf_before_instantiate() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_clone_ns=80000\ngraph_instantiate_ns=1000\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let base = SimCfg {
+        cuda_graphs: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let plain = sim_replay_cfg(&t, p.clone(), base).expect("plain");
+    let cloned = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            graph_clone: true,
+            ..base
+        },
+    )
+    .expect("clone");
+    assert_eq!(plain.hits, cloned.hits);
+    assert_eq!(plain.misses, cloned.misses);
+    assert_eq!(plain.graph_clones, 0);
+    assert_eq!(cloned.graph_clones, 1);
+    assert!(
+        cloned.sim_ns > plain.sim_ns,
+        "clone={} plain={}",
+        cloned.sim_ns,
+        plain.sim_ns
+    );
+    assert!(cloned.line().contains("graph_clones="));
+}
+
+#[test]
+fn simulated_gpu_store_graph_clone_copies_capture() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_clone_ns=80000\ngraph_instantiate_ns=1000\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let run = |graph_clone: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            1,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                graph_clone,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let k0 = ExpertKey::new(0, 0);
+        let _n = gpu.prefetch(&[k0]).expect("prefetch");
+        let _s = gpu.score().expect("drain");
+        let _a = gpu.acquire(k0).expect("acq");
+        let score = gpu.score().expect("final");
+        (gpu.graph_clones(), gpu.metrics().hits, score.wall_ns)
+    };
+    let (n_clone, h0, wall_c) = run(true);
+    let (n_plain, h1, wall_p) = run(false);
+    assert_eq!(n_clone, 1);
+    assert_eq!(n_plain, 0);
+    assert_eq!(h0, h1);
+    assert!(wall_c > wall_p, "clone={wall_c} plain={wall_p}");
+}
+
+#[test]
 fn simulated_gpu_store_captures_gemm_after_drain() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],
@@ -2712,7 +2786,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
 
     let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
     let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
-    let mut graphs = GraphBank::new(false);
+    let mut graphs = GraphBank::new(false, false);
     let args = TouchArgs {
         d: DeviceId(0),
         s: StreamId(0),
@@ -2887,7 +2961,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             sim.set_created_streams_priority(2).expect("pri");
         }
         let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
-        let mut graphs = GraphBank::new(false);
+        let mut graphs = GraphBank::new(false, false);
         let mut args = TouchArgs {
             d: DeviceId(0),
             s: StreamId(0),

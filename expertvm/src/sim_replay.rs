@@ -47,6 +47,8 @@ pub struct SimReplay {
     pub child_graphs: u64,
     /// [`gpu_sim::Sim::update_graph`] calls that reused a parked leaf exec.
     pub graph_updates: u64,
+    /// [`gpu_sim::Sim::clone_graph`] calls that copied a leaf before instantiate.
+    pub graph_clones: u64,
 }
 
 impl SimReplay {
@@ -65,7 +67,7 @@ impl SimReplay {
         }
         let _w = write!(
             s,
-            " hits={} misses={} prefetches={} prefetch_hits={} prefetch_waste={} graph_launches={} child_graphs={} graph_updates={}",
+            " hits={} misses={} prefetches={} prefetch_hits={} prefetch_waste={} graph_launches={} child_graphs={} graph_updates={} graph_clones={}",
             self.hits,
             self.misses,
             self.prefetches,
@@ -73,7 +75,8 @@ impl SimReplay {
             self.prefetch_waste,
             self.graph_launches,
             self.child_graphs,
-            self.graph_updates
+            self.graph_updates,
+            self.graph_clones
         );
         s
     }
@@ -210,6 +213,13 @@ pub struct SimCfg {
     /// destroy+instantiate. [`crate::GpuStoreCfg::graph_update`] is the store
     /// path (always captures when compute is idle).
     pub graph_update: bool,
+    /// `cudaGraphClone` a leaf capture before instantiate (graph vs exec).
+    ///
+    /// Parent combo graphs still instantiate in place so child ids stay the
+    /// GraphBank leaves. A no-op unless [`Self::cuda_graphs`]. Decode identity
+    /// stays instantiate-in-place. [`crate::GpuStoreCfg::graph_clone`] is the
+    /// store path.
+    pub graph_clone: bool,
 }
 
 impl SimCfg {
@@ -240,6 +250,7 @@ impl SimCfg {
             legacy_null: false,
             stream_priority: false,
             graph_update: false,
+            graph_clone: false,
         }
     }
 }
@@ -313,7 +324,7 @@ pub fn sim_replay_cfg(
     let mut prev: Option<&ExpertAccess> = None;
     let mut prev2: Option<&ExpertAccess> = None;
     let mut prefetched: BTreeSet<ExpertKey> = BTreeSet::new();
-    let mut graphs = GraphBank::new(cfg.graph_update);
+    let mut graphs = GraphBank::new(cfg.graph_update, cfg.graph_clone);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
     let mut next_event = 1u32;
     for (i, event) in trace.events.iter().enumerate() {
@@ -389,6 +400,7 @@ pub fn sim_replay_cfg(
         sim.synchronize()?;
     }
     ctr.graph_updates = graphs.updates;
+    ctr.graph_clones = graphs.clones;
     Ok(finish(&sim, &token_ends, ctr))
 }
 
@@ -481,6 +493,7 @@ pub(crate) struct ReplayCounters {
     pub graph_launches: u64,
     pub child_graphs: u64,
     pub graph_updates: u64,
+    pub graph_clones: u64,
 }
 
 /// Instantiated CUDA graph execs, optionally parked for `update_graph`.
@@ -488,16 +501,20 @@ pub(crate) struct GraphBank {
     graphs: BTreeMap<Vec<AllocId>, (GraphId, (DeviceId, StreamId))>,
     idle: BTreeMap<(DeviceId, StreamId), Vec<GraphId>>,
     update: bool,
+    clone: bool,
     pub updates: u64,
+    pub clones: u64,
 }
 
 impl GraphBank {
-    pub(crate) fn new(update: bool) -> Self {
+    pub(crate) fn new(update: bool, clone: bool) -> Self {
         Self {
             graphs: BTreeMap::new(),
             idle: BTreeMap::new(),
             update,
+            clone,
             updates: 0,
+            clones: 0,
         }
     }
 
@@ -525,13 +542,30 @@ impl GraphBank {
                 sim.upload_graph(exec)?;
                 exec
             } else {
-                instantiate_src(sim, src)?
+                self.instantiate_leaf(sim, &ids, src)?
             }
         } else {
-            instantiate_src(sim, src)?
+            self.instantiate_leaf(sim, &ids, src)?
         };
         let _prev = self.graphs.insert(ids, (gid, origin));
         Ok(gid)
+    }
+
+    fn instantiate_leaf(
+        &mut self,
+        sim: &mut Sim,
+        ids: &[AllocId],
+        src: GraphId,
+    ) -> Result<GraphId, Error> {
+        let exec = if self.clone && ids.len() == 1 {
+            let cloned = sim.clone_graph(src)?;
+            sim.destroy_graph(src)?;
+            self.clones = self.clones.saturating_add(1);
+            cloned
+        } else {
+            src
+        };
+        instantiate_src(sim, exec)
     }
 
     pub(crate) fn drop_alloc(&mut self, sim: &mut Sim, id: AllocId) -> Result<(), Error> {
@@ -921,6 +955,7 @@ pub(crate) fn replay_from_sim(
         graph_launches: ctr.graph_launches,
         child_graphs: ctr.child_graphs,
         graph_updates: ctr.graph_updates,
+        graph_clones: ctr.graph_clones,
     }
 }
 

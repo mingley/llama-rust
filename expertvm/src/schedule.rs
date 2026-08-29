@@ -316,7 +316,7 @@ impl SchedRt {
             },
             sim,
             handles: BTreeMap::new(),
-            graphs: GraphBank::new(cfg.graph_update),
+            graphs: GraphBank::new(cfg.graph_update, cfg.graph_clone),
             ctr: ReplayCounters::default(),
             prefetched: BTreeSet::new(),
             markov: Markov::new(),
@@ -1021,6 +1021,7 @@ fn mean_u64(xs: &[u64]) -> Option<u64> {
 
 fn finish_sched(mut rt: SchedRt, rec: Rec) -> SchedReplay {
     rt.ctr.graph_updates = rt.graphs.updates;
+    rt.ctr.graph_clones = rt.graphs.clones;
     let replay = replay_from_sim(
         &rt.sim,
         rec.tokens_done,

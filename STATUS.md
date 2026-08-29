@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — cudaGraphClone before instantiate
+
+`GpuStoreCfg::graph_clone` / `SimCfg::graph_clone` clones a leaf capture
+(`graph_clone_ns`), destroys the src, then instantiates the copy so the
+graph and exec are distinct ids. Parent combo graphs still instantiate
+in place. `expertvm sim|schedule|store --graph-clone` opts in; decode
+identity stays instantiate-in-place. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — cudaGraphExecUpdate on store and walker
 
 `GpuStoreCfg::graph_update` / `SimCfg::graph_update` parks a captured
