@@ -13,7 +13,9 @@ shared-pool GEMM (not a sequential fallback). DirectStore and CachedStore
 greedy ids match the blob Engine on writer-tiny Qwen3MoE. Two per-cache
 stores still fall back sequential. `gguf_gemv engine --expert-slots N`
 (`0` = DirectStore, `N>0` = CachedStore) prints `StoreMetrics::line()`.
-Dual score still has no `$/M tokens`.
+Markov prefetch state is parked with the store so a tight CachedStore
+can prefetch across GEMMs (copy-forward ∪ lookback-2). Dual score still
+has no `$/M tokens`.
 
 ## Shipped 2026-08-29 — Engine GEMM stats
 

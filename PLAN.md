@@ -777,7 +777,9 @@ model, do not celebrate the sim.
     first cache of each batched GEMM so MoE serving stays on
     `prefill_batch` / `forward_batch`. DirectStore and CachedStore greedy ids
     match the blob Engine. `gguf_gemv engine --expert-slots N` (`0` = DirectStore).
-    Two per-cache stores still fall back sequential.
+    Two per-cache stores still fall back sequential. Markov prefetch
+    (copy-forward ∪ lookback-2) is parked on the same cache across GEMMs
+    so a tight CachedStore can prefetch.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

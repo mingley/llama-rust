@@ -754,6 +754,32 @@ struct MoeTraceBuf {
     prev2: Option<ExpertAccess>,
 }
 
+/// Online Markov + last two router events, parked on Engine across GEMMs.
+#[derive(Default)]
+pub(crate) struct PrefetchChain {
+    markov: Markov,
+    prev: Option<ExpertAccess>,
+    prev2: Option<ExpertAccess>,
+}
+
+impl KvCache {
+    /// Install Engine-level Markov prefetch state onto this cache.
+    pub(crate) fn set_prefetch_chain(&mut self, chain: PrefetchChain) {
+        self.moe_trace.markov = chain.markov;
+        self.moe_trace.prev = chain.prev;
+        self.moe_trace.prev2 = chain.prev2;
+    }
+
+    /// Take Markov prefetch state so Engine can park it across GEMMs.
+    pub(crate) fn take_prefetch_chain(&mut self) -> PrefetchChain {
+        PrefetchChain {
+            markov: core::mem::take(&mut self.moe_trace.markov),
+            prev: self.moe_trace.prev.take(),
+            prev2: self.moe_trace.prev2.take(),
+        }
+    }
+}
+
 impl MoeTraceBuf {
     fn event(&self, token_off: usize, experts: &[usize], weights: &[f32]) -> ExpertAccess {
         let token = self
@@ -1494,7 +1520,8 @@ impl Llama {
     /// row bit-match a sequential [`Llama::forward`]. Mixed dense/paged,
     /// two attached stores, or MoE traces fall back to one-at-a-time
     /// forwards. A single [`KvCache::attach_expert_store`] is used for the
-    /// whole GEMM (Engine parks one store on the first cache).
+    /// whole GEMM (Engine parks one store on the first cache). Markov
+    /// prefetch state lives on that first cache across GEMMs.
     pub fn forward_batch(
         &self,
         caches: &mut [&mut KvCache],
@@ -1602,8 +1629,12 @@ impl Llama {
                 .try_pool_mut()
                 .map_err(|e| LlamaError::Shape(e.into()))?;
             let (cache_k, cache_v) = pool_guard.kv_mut();
+            first.moe_trace.token0 = u32::try_from(first.n_past).unwrap_or(u32::MAX);
+            first.moe_trace.batch.clear();
+            first.moe_trace.batch.extend(flat.iter().copied());
             let s = &mut first.scratch;
             let pool = &mut first.pool;
+            let moe_trace = &mut first.moe_trace;
             if s.scores.capacity() < max_seq {
                 fit(&mut s.scores, max_seq);
             }
@@ -1615,13 +1646,11 @@ impl Llama {
                     *v *= self.embed_scale;
                 }
             }
-            let mut moe_trace = MoeTraceBuf::default();
-            moe_trace.batch.extend(flat.iter().copied());
             self.transformer(
                 &mut TransformerRun {
                     s,
                     pool,
-                    moe_trace: &mut moe_trace,
+                    moe_trace,
                     expert_store: &mut parked_store,
                     cache_k,
                     cache_v,
@@ -1634,6 +1663,9 @@ impl Llama {
                 LogitsKind::All,
             )?;
             drop(pool_guard);
+            if let Some(first) = caches.first_mut() {
+                first.moe_trace.batch.clear();
+            }
             let out = {
                 let Some(first) = caches.first_mut() else {
                     return Ok(Vec::new());

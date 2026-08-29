@@ -14,7 +14,7 @@
 //! plus replays already sampled greedy tokens. Greedy ids must match
 //! [`crate::greedy_generate_cache`]. Not an HTTP server.
 
-use crate::decode::{KvCache, Llama, LlamaError, PagedKvPool};
+use crate::decode::{KvCache, Llama, LlamaError, PagedKvPool, PrefetchChain};
 use crate::sample::argmax;
 use expertvm::{ExpertStore, LiveStore, StoreMetrics};
 use std::collections::{BTreeMap, VecDeque};
@@ -140,6 +140,7 @@ pub struct Engine<'a> {
     preempts: u64,
     stats: EngineStats,
     expert_store: Option<LiveStore>,
+    prefetch: PrefetchChain,
 }
 
 impl<'a> Engine<'a> {
@@ -160,6 +161,7 @@ impl<'a> Engine<'a> {
             preempts: 0,
             stats: EngineStats::default(),
             expert_store: None,
+            prefetch: PrefetchChain::default(),
         })
     }
 
@@ -266,7 +268,9 @@ impl<'a> Engine<'a> {
     ///
     /// The store is parked on the first cache of each batched prefill/decode
     /// so [`Llama::prefill_batch`] / [`Llama::forward_batch`] stay on the
-    /// shared-pool path. Omit this to keep the GGUF blob FFN.
+    /// shared-pool path. Markov prefetch (copy-forward ∪ lookback-2) is parked
+    /// on the same cache so CachedStore can prefetch across GEMMs. Omit this
+    /// to keep the GGUF blob FFN.
     pub fn attach_expert_store(&mut self, store: LiveStore) {
         self.reclaim_parked_stores();
         self.expert_store = Some(store);
@@ -307,21 +311,34 @@ impl<'a> Engine<'a> {
     }
 
     fn park_store_on(&mut self, idx: usize) {
-        let Some(store) = self.expert_store.take() else {
-            return;
-        };
+        let store = self.expert_store.take();
+        let chain = core::mem::take(&mut self.prefetch);
         match self.slot_mut(idx) {
-            Ok(slot) => slot.cache.attach_expert_store(store),
-            Err(_) => self.expert_store = Some(store),
+            Ok(slot) => {
+                if let Some(store) = store {
+                    slot.cache.attach_expert_store(store);
+                }
+                slot.cache.set_prefetch_chain(chain);
+            }
+            Err(_) => {
+                self.expert_store = store;
+                self.prefetch = chain;
+            }
         }
     }
 
     fn unpark_store_from(&mut self, idx: usize) {
-        if let Ok(slot) = self.slot_mut(idx) {
-            if let Some(store) = slot.cache.take_expert_store() {
-                self.expert_store = Some(store);
-            }
+        let (store, chain) = match self.slot_mut(idx) {
+            Ok(slot) => (
+                slot.cache.take_expert_store(),
+                slot.cache.take_prefetch_chain(),
+            ),
+            Err(_) => return,
+        };
+        if let Some(store) = store {
+            self.expert_store = Some(store);
         }
+        self.prefetch = chain;
     }
 
     fn with_store_parked<T>(&mut self, idx: usize, f: impl FnOnce(&mut Self) -> T) -> T {
@@ -1120,5 +1137,37 @@ mod tests {
         );
         let m = eng.expert_store_metrics().expect("metrics");
         assert!(m.hits > 0 || m.misses > 0, "CachedStore must be used");
+    }
+
+    #[test]
+    fn engine_cached_store_prefetches_across_gemm_steps() {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        let g = load_gguf_owned(tiny_qwen3moe_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let exp_a = independent(&model, &tok, &tokens_a, 2);
+        let exp_b = independent(&model, &tok, &tokens_b, 2);
+        let mut cfg = EngineCfg::tiny();
+        cfg.eos = tok.eos;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        eng.attach_expert_store(LiveStore::Cached(
+            CachedStore::new(model.expert_direct_store().expect("c"), 1).expect("cached"),
+        ));
+        let a = eng.add(&tokens_a, 2).expect("a");
+        let b = eng.add(&tokens_b, 2).expect("b");
+        eng.run().expect("run");
+        assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+        assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+        let m = eng.expert_store_metrics().expect("metrics");
+        assert!(
+            m.prefetches > 0,
+            "Engine Markov must prefetch across GEMMs, {m:?}"
+        );
+        assert!(
+            eng.stats().gemm_peak >= 8,
+            "prefetch must not force serial GEMM, peak={}",
+            eng.stats().gemm_peak
+        );
     }
 }
