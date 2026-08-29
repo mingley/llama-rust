@@ -75,7 +75,10 @@ impl SimReplay {
 /// Cache size, policy, expert payload, lookahead, and prefetch mode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SimCfg {
-    /// Resident expert slots on GPU0.
+    /// Resident expert slots per home GPU (`GPU0` when unplaced).
+    ///
+    /// [`crate::schedule_placed`] / [`crate::schedule_remote`] keep one walker
+    /// per home so a miss cannot evict a peer GPU's resident expert.
     pub slots: usize,
     /// Victim policy.
     pub policy: Policy,

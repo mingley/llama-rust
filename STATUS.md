@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — per-home LRU inside `schedule`
+
+`--capacity` is slots on the expert's home GPU, not one cluster-wide
+walker. A miss on GPU1 cannot evict a resident expert on GPU0.
+`schedule_placed` and `schedule_remote` share that rule. Dual score still
+has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — remote-home inside `schedule`
 
 `schedule_remote` / `expertvm schedule --place remote` keeps compute on

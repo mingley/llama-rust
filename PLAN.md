@@ -492,7 +492,8 @@ behind a long prefill. `--decode-first` holds leftover prefill while any
 running sequence is already in decode. `--slo-reject` drops a waiter whose
 queue wait already meets `--ttft-slo-ns`. TTFT is first-token end minus arrival. Optional
 `--ttft-slo-ns` / `--itl-slo-ns` count misses. Cache order is demand paging (no JSONL future
-leak). This is not a 500k-line vLLM engine.
+leak). `--place striped|remote` keeps one walker per home GPU so `--capacity`
+is that device's slots, not a cluster-wide LRU. This is not a 500k-line vLLM engine.
 
 Agents may aggressively optimize policies. Illegal GPU states are
 impossible or immediately fatal.

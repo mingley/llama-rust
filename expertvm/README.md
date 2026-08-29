@@ -99,7 +99,7 @@ first-token wait (`iteration_start - arrival`) so a tight `max_batch`
 shows queueing separately from GPU service. The cache walker
 is demand paging (no JSONL future leak). [`schedule_placed`] H2Ds a miss onto the expert's [`PlaceMap`](crate::PlaceMap)
 home (`--place striped|colocated|replicas`) so a wide token can use every GPU's copy
-engines. [`schedule_replay`] is GPU0. [`schedule_remote`] / `--place remote`
+engines. `--capacity` is slots **on that home**. [`schedule_replay`] is GPU0. [`schedule_remote`] / `--place remote`
 keeps compute on GPU0: a miss H2Ds onto the striped home, then
 `plan_placement` either D2Ds weights onto GPU0 or ships `--activation-bytes`
 to home (pair with `--profile 2node-rdma`; prefetch is skipped). Planner helpers: `copy_forward`,

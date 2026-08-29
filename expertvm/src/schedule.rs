@@ -116,7 +116,7 @@ impl SchedReplay {
 /// is not stuck behind hopeless FCFS head-of-line work.
 /// [`schedule_placed`] H2Ds a miss onto the expert's [`PlaceMap`] home so a
 /// wide token can use every GPU's copy engines; [`schedule_replay`] is GPU0.
-/// [`schedule_remote`] keeps compute on GPU0 and uses [`crate::plan_placement`]
+/// Capacity is per home GPU. [`schedule_remote`] keeps compute on GPU0 and uses [`crate::plan_placement`]
 /// on the home hop (move weights vs dispatch activations).
 pub fn schedule_replay(
     trace: &Trace,
@@ -129,6 +129,7 @@ pub fn schedule_replay(
 
 /// [`schedule_replay`] with expert-parallel homes. `None` is GPU0 (same as
 /// [`schedule_replay`]). A miss copies onto `map.home_of`; GEMM runs there.
+/// `--capacity` is slots **on that home**, not a cluster-wide LRU.
 pub fn schedule_placed(
     trace: &Trace,
     profile: HardwareProfile,
@@ -230,7 +231,6 @@ struct SchedRt {
     markov: Markov,
     prev: Option<ExpertAccess>,
     prev2: Option<ExpertAccess>,
-    walker: Walker,
     n_streams: u8,
     cfg: SimCfg,
     idle_ns: u64,
@@ -240,6 +240,9 @@ struct SchedRt {
     remotes: BTreeMap<ExpertKey, RemotePage>,
     seen: BTreeMap<ExpertKey, u64>,
     next_event: u32,
+    /// One demand walker per home GPU. `--capacity` is slots on that device,
+    /// not a cluster-wide LRU that can evict a peer's resident expert.
+    walkers: BTreeMap<DeviceId, Walker>,
 }
 
 impl SchedRt {
@@ -255,7 +258,7 @@ impl SchedRt {
         let bytes = cfg.bytes_per_expert.max(1);
         Ok(Self {
             n_streams,
-            walker: Walker::demand(cfg.slots, cfg.policy, cfg.lookahead),
+            walkers: BTreeMap::new(),
             args: TouchArgs {
                 d: DeviceId(0),
                 s: StreamId(0),
@@ -294,6 +297,15 @@ impl SchedRt {
         a
     }
 
+    fn walker_mut(&mut self, device: DeviceId) -> &mut Walker {
+        let slots = self.cfg.slots;
+        let policy = self.cfg.policy;
+        let lookahead = self.cfg.lookahead;
+        self.walkers
+            .entry(device)
+            .or_insert_with(|| Walker::demand(slots, policy, lookahead))
+    }
+
     fn touch_event(&mut self, ev: &ExpertAccess) -> Result<(), Error> {
         if self.remote_act.is_some() {
             return self.touch_remote(ev);
@@ -301,7 +313,8 @@ impl SchedRt {
         self.args.s = stream_of(ev.sequence, self.n_streams);
         let ek = ev.keys();
         for key in &ek {
-            let touch = self.walker.demand_touch(*key);
+            let home = self.home(*key);
+            let touch = self.walker_mut(home).demand_touch(*key);
             note_touch(&mut self.ctr, &mut self.prefetched, *key, touch);
             let args = self.args_for(*key);
             apply_touch(
@@ -341,7 +354,8 @@ impl SchedRt {
             Vec::new()
         };
         for key in predicted.into_iter().chain(planned) {
-            match self.walker.prefetch_touch(key) {
+            let home = self.home(key);
+            match self.walker_mut(home).prefetch_touch(key) {
                 Touch::Hit => {}
                 miss @ Touch::Miss { .. } => {
                     self.ctr.prefetches = self.ctr.prefetches.saturating_add(1);
@@ -372,7 +386,8 @@ impl SchedRt {
             let n = self.seen.entry(*key).or_insert(0);
             *n = n.saturating_add(1);
             let reuse = *n;
-            let touch = self.walker.demand_touch(*key);
+            let home = self.home(*key);
+            let touch = self.walker_mut(home).demand_touch(*key);
             note_touch(&mut self.ctr, &mut self.prefetched, *key, touch);
             match touch {
                 Touch::Hit => {
@@ -399,7 +414,6 @@ impl SchedRt {
                     if self.args.slots == 0 {
                         continue;
                     }
-                    let home = self.home(*key);
                     let stream = self.args.s;
                     let bytes = self.args.bytes;
                     let page = fetch_remote(

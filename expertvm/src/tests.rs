@@ -720,6 +720,33 @@ fn schedule_striped_homes_beat_gpu0_on_wide_token() {
 }
 
 #[test]
+fn schedule_placed_evicts_per_home_not_cluster() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1]), ev(2, 0, &[0])],
+    };
+    let p = HardwareProfile::example_2node_rdma();
+    let cfg = SimCfg::lru(1, 4096, 0);
+    let map = striped(&t, 2);
+    let gpu0 = schedule_replay(&t, p.clone(), cfg, SchedCfg::closed(0)).expect("gpu0");
+    let ep = schedule_placed(&t, p.clone(), cfg, SchedCfg::closed(0), Some(&map)).expect("ep");
+    let remote = schedule_remote(
+        &t,
+        p,
+        cfg,
+        SchedCfg::closed(0),
+        &map,
+        DECODE_ACTIVATION_BYTES,
+    )
+    .expect("remote");
+    assert_eq!(gpu0.replay.hits, 0);
+    assert_eq!(gpu0.replay.misses, 3);
+    assert_eq!(ep.replay.hits, 1);
+    assert_eq!(ep.replay.misses, 2);
+    assert_eq!(remote.replay.hits, 1);
+    assert_eq!(remote.replay.misses, 2);
+}
+
+#[test]
 fn schedule_hot_replicas_move_more_bytes_than_stripe() {
     let t = Trace {
         events: vec![ev(0, 0, &[0]), ev(1, 0, &[0]), ev(2, 0, &[0])],
