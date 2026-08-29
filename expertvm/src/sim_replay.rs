@@ -225,6 +225,14 @@ pub struct SimCfg {
     /// stays instantiate-in-place. [`crate::GpuStoreCfg::graph_clone`] is the
     /// store path.
     pub graph_clone: bool,
+    /// `cudaGraphCreate` / `cudaGraphAdd*` instead of stream capture.
+    ///
+    /// Leaves and parents are built with [`gpu_sim::Sim::create_graph`] and
+    /// [`gpu_sim::Sim::graph_add_kernel`] / [`gpu_sim::Sim::graph_add_child`].
+    /// Does not require an idle stream. Implies [`Self::cuda_graphs`]. Decode
+    /// identity stays stream capture. [`crate::GpuStoreCfg::graph_build`] is
+    /// the store path.
+    pub graph_build: bool,
     /// Hyper-Q occupancy override (`0` keeps the profile).
     ///
     /// `1` is exclusive compute. `>=2` lets independent sequence GEMMs overlap
@@ -276,6 +284,7 @@ impl SimCfg {
             stream_priority: false,
             graph_update: false,
             graph_clone: false,
+            graph_build: false,
             compute_slots: 0,
             decode_sm_permille: 0,
             decode_priority: false,
@@ -353,7 +362,7 @@ pub fn sim_replay_cfg(
     let mut markov = Markov::new();
     let mut chain = ChainState::new();
     let mut prefetched: BTreeSet<ExpertKey> = BTreeSet::new();
-    let mut graphs = GraphBank::new(cfg.graph_update, cfg.graph_clone);
+    let mut graphs = GraphBank::new(cfg.graph_update, cfg.graph_clone, cfg.graph_build);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
     let mut next_event = 1u32;
     for (i, event) in trace.events.iter().enumerate() {
@@ -566,17 +575,19 @@ pub(crate) struct GraphBank {
     idle: BTreeMap<(DeviceId, StreamId), Vec<GraphId>>,
     update: bool,
     clone: bool,
+    build: bool,
     pub updates: u64,
     pub clones: u64,
 }
 
 impl GraphBank {
-    pub(crate) fn new(update: bool, clone: bool) -> Self {
+    pub(crate) fn new(update: bool, clone: bool, build: bool) -> Self {
         Self {
             graphs: BTreeMap::new(),
             idle: BTreeMap::new(),
             update,
             clone,
+            build,
             updates: 0,
             clones: 0,
         }
@@ -936,7 +947,7 @@ fn gemm_ids(
         ctr.graph_launches = ctr.graph_launches.saturating_add(1);
         return Ok(());
     }
-    if cuda_graphs {
+    if cuda_graphs || graphs.build {
         if let Some(g) = capture_expert_graph(sim, graphs, d, stream, &ids)? {
             if ids.len() > 1 {
                 ctr.child_graphs = ctr.child_graphs.saturating_add(1);
@@ -959,6 +970,9 @@ fn capture_expert_graph(
     stream: StreamId,
     ids: &[AllocId],
 ) -> Result<Option<GraphId>, Error> {
+    if graphs.build {
+        return build_expert_graph(sim, graphs, d, stream, ids);
+    }
     if !sim.stream_is_idle(d, stream)? {
         sim.synchronize_stream(d, stream)?;
     }
@@ -987,6 +1001,35 @@ fn capture_expert_graph(
     }
     let src = sim.end_capture()?;
     Ok(Some(graphs.bind(sim, origin, ids.to_vec(), src)?))
+}
+
+fn build_expert_graph(
+    sim: &mut Sim,
+    graphs: &mut GraphBank,
+    d: DeviceId,
+    stream: StreamId,
+    ids: &[AllocId],
+) -> Result<Option<GraphId>, Error> {
+    let origin = (d, stream);
+    let mut leaves = Vec::new();
+    for id in ids {
+        let key = vec![*id];
+        if let Some(g) = graphs.get(&key) {
+            leaves.push(g);
+            continue;
+        }
+        let src = sim.create_graph(d, stream)?;
+        sim.graph_add_kernel(src, gemm_kind(), &[*id], &[])?;
+        leaves.push(graphs.bind(sim, origin, key, src)?);
+    }
+    if ids.len() == 1 {
+        return Ok(leaves.first().copied());
+    }
+    let parent = sim.create_graph(d, stream)?;
+    for g in leaves {
+        sim.graph_add_child(parent, g)?;
+    }
+    Ok(Some(graphs.bind(sim, origin, ids.to_vec(), parent)?))
 }
 
 fn finish(sim: &Sim, token_ends: &[u64], ctr: ReplayCounters) -> SimReplay {
@@ -1216,20 +1259,18 @@ fn itl_from_ends(ends: &[u64]) -> Option<u64> {
     last.saturating_sub(first).checked_div(n.max(1))
 }
 
+fn gemm_kind() -> KernelKind {
+    KernelKind::GroupedMoeGemm {
+        experts: 1,
+        tokens_per_expert: 1,
+        hidden: 64,
+        ff: 64,
+        dtype: DType::Fp16,
+    }
+}
+
 fn kernel(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Error> {
-    let _k = sim.kernel(
-        d,
-        KernelKind::GroupedMoeGemm {
-            experts: 1,
-            tokens_per_expert: 1,
-            hidden: 64,
-            ff: 64,
-            dtype: DType::Fp16,
-        },
-        &[id],
-        &[],
-        s,
-    )?;
+    let _k = sim.kernel(d, gemm_kind(), &[id], &[], s)?;
     Ok(())
 }
 

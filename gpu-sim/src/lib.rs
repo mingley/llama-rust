@@ -95,6 +95,15 @@
 //! `cudaGraphExecUpdate` when device, stream, and op kinds match.
 //! [`Sim::clone_graph`] is `cudaGraphClone` (independent, not instantiated;
 //! child-graph nodes are cloned recursively).
+//! [`Sim::create_graph`] is `cudaGraphCreate` (empty, not instantiated).
+//! [`Sim::graph_add_kernel`] / [`graph_add_memcpy`](Sim::graph_add_memcpy) /
+//! [`graph_add_memset`](Sim::graph_add_memset) /
+//! [`graph_add_host_func`](Sim::graph_add_host_func) /
+//! [`graph_add_event_record`](Sim::graph_add_event_record) /
+//! [`graph_add_event_wait`](Sim::graph_add_event_wait) /
+//! [`graph_add_child`](Sim::graph_add_child) are `cudaGraphAdd*` on that id.
+//! Illegal after instantiate and during capture. Mem alloc/free add nodes are
+//! still capture-only (`cudaMallocAsync` during stream capture).
 //! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`.
 //! Capture records every stream that [`wait_event`](Sim::wait_event)s an
 //! event recorded in this capture (CUDA forked capture). [`record_event_external`](Sim::record_event_external)
@@ -4792,5 +4801,229 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("topology"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn create_graph_add_kernel_launch_matches_capture() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let captured = sim.end_capture().unwrap();
+        sim.instantiate_graph(captured).unwrap();
+        sim.upload_graph(captured).unwrap();
+        let built = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(built, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph(built).unwrap();
+        sim.upload_graph(built).unwrap();
+        assert_eq!(
+            sim.graph_len(captured).unwrap(),
+            sim.graph_len(built).unwrap()
+        );
+        let t0 = sim.clock_ns();
+        let n0 = sim.launch_graph(captured, s).unwrap();
+        sim.synchronize().unwrap();
+        let cap_ns = sim.clock_ns().saturating_sub(t0);
+        let t1 = sim.clock_ns();
+        let n1 = sim.launch_graph(built, s).unwrap();
+        sim.synchronize().unwrap();
+        let bld_ns = sim.clock_ns().saturating_sub(t1);
+        assert_eq!(n0, 1);
+        assert_eq!(n1, 1);
+        assert_eq!(cap_ns, bld_ns);
+    }
+
+    #[test]
+    fn graph_add_after_instantiate_is_invalid() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.instantiate_graph(g).unwrap();
+        let err = sim
+            .graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn empty_created_graph_launch_is_zero_ops() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 0);
+        assert!(!sim.graph_instantiated(g).unwrap());
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 0);
+        assert!(sim.graph_instantiated(g).unwrap());
+    }
+
+    #[test]
+    fn create_graph_during_capture_is_invalid() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        let err = sim.create_graph(d, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim.graph_add_host_func(g).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_add_memcpy_then_kernel_moves_bytes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memcpy(
+            g,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(d),
+                alloc: a,
+                bytes: 4096,
+                offset: 0,
+            },
+        )
+        .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(a, d).unwrap());
+        assert!(sim.bytes_moved() >= 4096);
+        let g2 = sim.create_graph(d, s).unwrap();
+        let err = sim
+            .graph_add_memcpy(
+                g2,
+                MemcpyOp {
+                    src: Place::Host,
+                    dst: Place::Device(d),
+                    alloc: a,
+                    bytes: 4096,
+                    offset: 0,
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("pageable"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_add_memset_host_and_event_nodes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        sim.create_event(EventId(1)).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset(g, KernelBuf::whole(a)).unwrap();
+        sim.graph_add_host_func(g).unwrap();
+        sim.graph_add_event_record(g, EventId(1), false).unwrap();
+        sim.graph_add_event_wait(g, EventId(1), false).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 4);
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn update_graph_from_explicit_create() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+        sim.synchronize().unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(src, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        sim.update_graph(exec, src).unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn graph_add_child_expands_at_parent_launch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let leaf = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(leaf, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph(leaf).unwrap();
+        let parent = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(parent, leaf).unwrap();
+        let err = sim.graph_add_child(parent, parent).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("self"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let raw = sim.create_graph(d, s).unwrap();
+        let err = sim.graph_add_child(parent, raw).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.instantiate_graph(parent).unwrap();
+        let n = sim.launch_graph(parent, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn create_graph_does_not_require_idle_stream() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s));
+        assert!(!sim.query_stream(d, s).unwrap());
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph(g).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
     }
 }

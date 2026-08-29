@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — `cudaGraphCreate` / `cudaGraphAdd*`
+
+`Sim::create_graph` is `cudaGraphCreate` (empty, uninstantiated).
+`graph_add_kernel` / `graph_add_memcpy` / `graph_add_memset` /
+`graph_add_host_func` / `graph_add_event_record` / `graph_add_event_wait` /
+`graph_add_child` are `cudaGraphAdd*` (illegal after instantiate and
+during capture). `--graph-build` uses this path in SimulatedGpuStore and
+the `--cuda-graphs` walker. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — CUDA IPC mem handles
 
 `Sim::ipc_get` / `ipc_open` / `ipc_close` are `cudaIpcGetMemHandle` /

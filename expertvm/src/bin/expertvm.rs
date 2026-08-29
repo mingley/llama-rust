@@ -17,8 +17,8 @@ const USAGE: &str = "\
 usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
-  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-clone] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--compute-slots N] [--decode-sms N]
-  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-clone] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--compute-slots N] [--decode-sms N]
+  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-clone] [--graph-build] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-clone] [--graph-build] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--compute-slots N] [--decode-sms N]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
@@ -27,7 +27,7 @@ usage: expertvm <command> [args]
   place    <trace.jsonl> [--gpus N] [--hot-pt N]
   remote   <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
   kv       [--pages N] [--page-bytes B] [--capacity C] [--tokens T] [--profile NAME] [--fill h2d|memset] [--sequences N]
-  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-clone] [--timing-events] [--decode-priority] [--compute-slots N] [--decode-sms N]
+  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-clone] [--graph-build] [--timing-events] [--decode-priority] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -121,6 +121,7 @@ struct Cfg {
     stream_priority: bool,
     graph_update: bool,
     graph_clone: bool,
+    graph_build: bool,
     timing_events: bool,
     compute_slots: u8,
     decode_sm_permille: u16,
@@ -172,6 +173,7 @@ where
     let mut stream_priority = false;
     let mut graph_update = false;
     let mut graph_clone = false;
+    let mut graph_build = false;
     let mut timing_events = false;
     let mut compute_slots = 0u8;
     let mut decode_sm_permille = 0u16;
@@ -236,6 +238,7 @@ where
             "--decode-priority" => decode_priority = switch(&inline),
             "--graph-update" => graph_update = switch(&inline),
             "--graph-clone" => graph_clone = switch(&inline),
+            "--graph-build" => graph_build = switch(&inline),
             "--timing-events" => timing_events = switch(&inline),
             "--compute-slots" => {
                 compute_slots = parse_compute_slots(&value("compute-slots", inline, &mut it)?)?
@@ -324,6 +327,7 @@ where
         stream_priority,
         graph_update,
         graph_clone,
+        graph_build,
         timing_events,
         compute_slots,
         decode_sm_permille,
@@ -347,7 +351,7 @@ fn sim_cfg_from(cfg: &Cfg, prefetch: Prefetch, max_batch: usize) -> SimCfg {
         lookahead: cfg.lookahead,
         prefetch,
         seq_streams: cfg.seq_streams,
-        cuda_graphs: cfg.cuda_graphs,
+        cuda_graphs: cfg.cuda_graphs || cfg.graph_build,
         plan_window: cfg.plan_window,
         plan_threshold: cfg.plan_threshold,
         max_batch,
@@ -365,6 +369,7 @@ fn sim_cfg_from(cfg: &Cfg, prefetch: Prefetch, max_batch: usize) -> SimCfg {
         stream_priority: cfg.stream_priority,
         graph_update: cfg.graph_update,
         graph_clone: cfg.graph_clone,
+        graph_build: cfg.graph_build,
         compute_slots: cfg.compute_slots,
         decode_sm_permille: cfg.decode_sm_permille,
         decode_priority: cfg.decode_priority,
@@ -645,6 +650,7 @@ where
                 stream_priority: cfg.stream_priority,
                 graph_update: cfg.graph_update,
                 graph_clone: cfg.graph_clone,
+                graph_build: cfg.graph_build,
                 timing_events: cfg.timing_events,
                 seq_streams: cfg.seq_streams,
                 kv_sim: false,

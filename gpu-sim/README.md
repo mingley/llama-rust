@@ -75,6 +75,8 @@ warp scheduler, L1, …   ← do not model
 | graph update replaces steps when topology matches (device, stream, kind); mem nodes are Invalid | `graph_update_ns` |
 | graph mem alloc/free nodes (`cudaMallocAsync` / `cudaFreeAsync` during capture) | `pool_reuse_ns` on relaunch without free |
 | graph clone is an independent uninstantiated copy; child graphs cloned recursively; mem alloc nodes get new ids | `graph_clone_ns` |
+| `cudaGraphCreate` (`create_graph`) is an empty uninstantiated graph | 1 ns host-sync |
+| `cudaGraphAddKernelNode` / memcpy / memset / host / event / child (`graph_add_*`) | not timed (host-side topology) |
 | graph destroy drops the id (`cudaGraphDestroy`); remaining graph mem is refunded | 1 ns host-sync |
 | graph launch amortizes per-kernel launch overhead | `graph_launch_ns` |
 | `synchronize_stream` waits one stream only | other streams keep running |
@@ -226,7 +228,8 @@ then uploads if needed (`graph_upload_ns`). `upload_graph` is `cudaGraphUpload`.
 device, stream, and op kinds match (`graph_update_ns`); a topology
 mismatch is `Invalid`. Graphs with mem alloc/free nodes cannot be updated. `expertvm --graph-update` parks a leaf GEMM on
 evict and updates the next miss instead of instantiate. `--graph-clone`
-copies the capture (`cudaGraphClone`) before instantiate. Launch pays `graph_launch_ns` once; recorded
+copies the capture (`cudaGraphClone`) before instantiate. `--graph-build` is
+`cudaGraphCreate` / `cudaGraphAdd*` (no idle stream). Launch pays `graph_launch_ns` once; recorded
 kernels skip per-kernel launch overhead.
 `memset` is an HBM-write kernel on a resident alloc. `host_func` is
 `cudaLaunchHostFunc`: stream-ordered host work that does not occupy compute

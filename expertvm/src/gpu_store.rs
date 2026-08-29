@@ -98,6 +98,11 @@ pub struct GpuStoreCfg {
     /// Clone, destroy the src, then instantiate the copy. A parked-exec
     /// update skips clone. Decode identity stays instantiate-in-place.
     pub graph_clone: bool,
+    /// `cudaGraphCreate` / `cudaGraphAddKernelNode` instead of stream capture.
+    ///
+    /// Does not require an idle compute stream (`cudaStreamBeginCapture` does).
+    /// Decode identity stays `begin_capture` / `end_capture`.
+    pub graph_build: bool,
     /// Timing-on copy events (`cudaEventCreate`) and [`gpu_sim::Sim::event_elapsed_ns`].
     ///
     /// Default is `cudaEventDisableTiming` (vLLM wait events). Decode identity
@@ -176,6 +181,7 @@ pub struct SimulatedGpuStore {
     graph_clones: u64,
     graph_update: bool,
     graph_clone: bool,
+    graph_build: bool,
     timing_events: bool,
     copy_elapsed_ns: u64,
     mode: GpuFill,
@@ -292,7 +298,8 @@ impl SimulatedGpuStore {
     ///
     /// Defaults keep decode identity: async alloc, overlapping copy/compute,
     /// no `host_func`, default pool threshold 0, no AccessedBy, per-thread NULL,
-    /// destroy+instantiate graphs, disable-timing copy events.
+    /// destroy+instantiate graphs (stream capture; [`GpuStoreCfg::graph_build`]
+    /// is `cudaGraphCreate` / `cudaGraphAdd*`), disable-timing copy events.
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
     /// exclusive compute). [`GpuStoreCfg::decode_sm_permille`] `0` keeps a
     /// full chip. `1..=1000` without [`GpuStoreCfg::decode_priority`] caps the
@@ -371,6 +378,7 @@ impl SimulatedGpuStore {
             graph_clones: 0,
             graph_update: cfg.graph_update,
             graph_clone: cfg.graph_clone,
+            graph_build: cfg.graph_build,
             timing_events: cfg.timing_events,
             copy_elapsed_ns: 0,
             mode: fill,
@@ -1125,6 +1133,14 @@ impl SimulatedGpuStore {
             let _n = self.sim.launch_graph(g, self.compute)?;
             return Ok(());
         }
+        if self.graph_build {
+            let src = self.build_gemm_graph(device, id)?;
+            let g = self.bind_graph(device, src)?;
+            let _prev = self.graphs.insert(id, g);
+            self.graph_launches = self.graph_launches.saturating_add(1);
+            let _n = self.sim.launch_graph(g, self.compute)?;
+            return Ok(());
+        }
         if !self.sim.query_stream(device, self.compute)? {
             self.sim.synchronize_stream(device, self.compute)?;
         }
@@ -1139,6 +1155,12 @@ impl SimulatedGpuStore {
             return Ok(());
         }
         gemm(&mut self.sim, device, self.compute, id)
+    }
+
+    fn build_gemm_graph(&mut self, device: DeviceId, id: AllocId) -> Result<GraphId, Error> {
+        let g = self.sim.create_graph(device, self.compute)?;
+        self.sim.graph_add_kernel(g, gemm_kind(), &[id], &[])?;
+        Ok(g)
     }
 
     fn bind_graph(&mut self, device: DeviceId, src: GraphId) -> Result<GraphId, Error> {
@@ -1667,20 +1689,18 @@ fn store_should_prefetch(
     )
 }
 
+fn gemm_kind() -> KernelKind {
+    KernelKind::GroupedMoeGemm {
+        experts: 1,
+        tokens_per_expert: 1,
+        hidden: 64,
+        ff: 64,
+        dtype: DType::Fp16,
+    }
+}
+
 fn gemm(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Error> {
-    let _k = sim.kernel(
-        d,
-        KernelKind::GroupedMoeGemm {
-            experts: 1,
-            tokens_per_expert: 1,
-            hidden: 64,
-            ff: 64,
-            dtype: DType::Fp16,
-        },
-        &[id],
-        &[],
-        s,
-    )?;
+    let _k = sim.kernel(d, gemm_kind(), &[id], &[], s)?;
     Ok(())
 }
 

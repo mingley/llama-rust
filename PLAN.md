@@ -621,8 +621,12 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   (`Sim::fail_next_memcpy` → `SimError::TransferFailed`).
 - ring `allreduce` as a collective with a real mesh: missing wrap-around
   links fail `NoPeer`.
-- CUDA-graph capture: `begin_capture` / `end_capture` / `instantiate_graph`
+  - CUDA-graph capture: `begin_capture` / `end_capture` / `instantiate_graph`
   / `update_graph` / `clone_graph` / `destroy_graph` / `launch_graph`.
+  `create_graph` / `graph_add_kernel` / `graph_add_memcpy` / `graph_add_memset`
+  / `graph_add_host_func` / `graph_add_event_record` / `graph_add_event_wait`
+  / `graph_add_child` are `cudaGraphCreate` / `cudaGraphAdd*` (empty graph,
+  then nodes; illegal after instantiate and during capture).
   Recorded kernels and copies do not run until launch; `cudaMallocAsync` /
   `cudaFreeAsync` (`alloc` / `free`) **can** be captured as graph mem nodes.
   Host-sync `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device` /
@@ -659,7 +663,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   parks a leaf exec on evict and `update_graph`s the next miss on that
   `(device, stream)` (`graph_update_ns` instead of instantiate; parent
   combos still destroy). `--graph-clone` clones a leaf capture before
-  instantiate (`graph_clone_ns`; the src is destroyed). Capture after a miss waits with
+  instantiate (`graph_clone_ns`; the src is destroyed). `--graph-build`
+  is `cudaGraphCreate` / `cudaGraphAdd*` instead of stream capture (no idle
+  stream; implies `--cuda-graphs` on the walker). Capture after a miss waits with
   `synchronize_stream` so the compute stream is idle (CUDA). `--max-batch N`
   admits N sequences per engine iteration. `expertvm schedule` is the
   open-loop running set (arrivals, retire, SLO misses, `idle_until`,
@@ -672,7 +678,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `sim`/`schedule` / `SimulatedGpuStore::new` stay on `cudaMallocAsync`.
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-clone`, and `--timing-events`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-clone`, `--graph-build`, and `--timing-events`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--mapped` is `cudaHostAllocMapped`
   (no H2D, PCIe kernels, HBM unused; walker slots also cap at
@@ -697,7 +703,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `cudaStreamCreateWithPriority` on seq-streams (priority = stream id). `--graph-update`
   is `cudaGraphExecUpdate` of a parked leaf (store and `--cuda-graphs`
   walker). `--graph-clone` is `cudaGraphClone` of a leaf capture before
-  instantiate (graph vs exec). `--timing-events` is timing-on copy events
+  instantiate (graph vs exec). `--graph-build` is `cudaGraphCreate` /
+  `cudaGraphAddKernelNode` (and child add for combo parents). `--timing-events` is timing-on copy events
   plus `event_elapsed_ns` (`cudaEventElapsedTime`); default wait events stay
   `cudaEventDisableTiming`. `memset` / `memset_buf` of a mapped span, directed peer enable, and
   the legacy null stream are mechanical CUDA invariants.
@@ -934,7 +941,7 @@ model, do not celebrate the sim.
     Dual score still has no `$/M tokens`.
 48. [x] Engine SimulatedGpuStore CUDA graphs: default `--expert-sim` captures
     per-page GEMM graphs (`Engine::graph_launches`). `--graph-update` /
-    `--graph-clone` / `--timing-events` / `--cuda-graphs` match
+    `--graph-clone` / `--graph-build` / `--timing-events` / `--cuda-graphs` match
     `GpuStoreCfg` / `expertvm sim`. Tight slots park+update. Identity stays.
     Dual score still has no `$/M tokens`.
 49. [x] Engine `itl_slo_ns`: count later-token gaps over a virtual-ns budget
@@ -1117,6 +1124,14 @@ model, do not celebrate the sim.
     The import aliases source physicals (no extra HBM). Free of the source
     while imports are live is Invalid. Capture is refused. Dual score still
     has no `$/M tokens`.
+75. [x] `cudaGraphCreate` / `cudaGraphAdd*`: `Sim::create_graph` is an empty
+    uninstantiated graph. `graph_add_kernel` / `graph_add_memcpy` /
+    `graph_add_memset` / `graph_add_host_func` / `graph_add_event_record` /
+    `graph_add_event_wait` / `graph_add_child` append nodes (illegal after
+    instantiate and during capture). `--graph-build` uses this path in
+    `SimulatedGpuStore` and the `--cuda-graphs` walker (combo parents are
+    `graph_add_child` of instantiated leaves; no idle-stream wait). Dual
+    score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

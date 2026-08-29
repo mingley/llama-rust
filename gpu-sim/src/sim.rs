@@ -1311,6 +1311,190 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphCreate`. Host-synchronous empty graph (`instantiated = false`).
+    ///
+    /// Capture cannot include it. The origin `(device, stream)` is the capture
+    /// analog: [`Self::launch_graph`] remaps those nodes onto the launch stream.
+    /// Add nodes with [`Self::graph_add_kernel`] and friends, then instantiate.
+    pub fn create_graph(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<GraphId, SimError> {
+        self.fail_if_capturing("cannot create graph during capture")?;
+        let _gpu = self.profile.gpu(device)?;
+        let id = GraphId(self.next_graph);
+        self.next_graph = self.next_graph.saturating_add(1);
+        let _prev = self.graphs.insert(
+            id,
+            Graph {
+                steps: Vec::new(),
+                origin: (device, stream),
+                instantiated: false,
+                uploaded: false,
+                auto_free_on_launch: false,
+            },
+        );
+        let _old = self.graph_allocs.insert(id, Vec::new());
+        self.clock = self.clock.saturating_add(1);
+        Ok(id)
+    }
+
+    /// `cudaGraphAddKernelNode` on an uninstantiated [`Self::create_graph`] id.
+    ///
+    /// Capture cannot include it. Illegal after [`Self::instantiate_graph`].
+    /// Does not run the kernel; [`Self::launch_graph`] does.
+    pub fn graph_add_kernel(
+        &mut self,
+        graph: GraphId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+    ) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
+        let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
+        let reads = self.resolve_bufs(&reads)?;
+        let writes = self.resolve_bufs(&writes)?;
+        self.graph_push(
+            graph,
+            device,
+            stream,
+            Kind::Kernel {
+                kind,
+                reads,
+                writes,
+            },
+        )
+    }
+
+    /// `cudaGraphAddMemcpyNode`. Pageable copies cannot be graph nodes.
+    pub fn graph_add_memcpy(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        let _a = self.alloc_ref(op.alloc)?;
+        if op.src.is_pageable() || op.dst.is_pageable() {
+            return Err(SimError::Invalid {
+                why: "cannot add pageable memcpy",
+            });
+        }
+        self.graph_push(graph, device, stream, Kind::Memcpy(op))
+    }
+
+    /// `cudaGraphAddMemsetNode` of a [`KernelBuf`] span.
+    pub fn graph_add_memset(&mut self, graph: GraphId, buf: KernelBuf) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        let total = self.alloc_ref(buf.id)?.bytes;
+        let (offset, bytes) = kernel_span(total, &buf)?;
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte memset",
+            });
+        }
+        self.graph_push(
+            graph,
+            device,
+            stream,
+            Kind::Memset {
+                id: buf.id,
+                offset,
+                bytes,
+            },
+        )
+    }
+
+    /// `cudaGraphAddHostNode` (`cudaLaunchHostFunc`).
+    pub fn graph_add_host_func(&mut self, graph: GraphId) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.graph_push(graph, device, stream, Kind::HostFunc)
+    }
+
+    /// `cudaGraphAddEventRecordNode`. `external` is `cudaEventRecordExternal`.
+    pub fn graph_add_event_record(
+        &mut self,
+        graph: GraphId,
+        event: EventId,
+        external: bool,
+    ) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        if !self.events.contains_key(&event) {
+            return Err(SimError::UnknownEvent { event: event.0 });
+        }
+        self.graph_push(
+            graph,
+            device,
+            stream,
+            Kind::EventRecord { event, external },
+        )
+    }
+
+    /// `cudaGraphAddEventWaitNode`. `external` is `cudaEventWaitExternal`.
+    pub fn graph_add_event_wait(
+        &mut self,
+        graph: GraphId,
+        event: EventId,
+        external: bool,
+    ) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        if !self.events.contains_key(&event) {
+            return Err(SimError::UnknownEvent { event: event.0 });
+        }
+        self.graph_push(graph, device, stream, Kind::EventWait { event, external })
+    }
+
+    /// `cudaGraphAddChildGraphNode`. `child` must already be instantiated.
+    pub fn graph_add_child(&mut self, graph: GraphId, child: GraphId) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        if child == graph {
+            return Err(SimError::Invalid {
+                why: "graph child is self",
+            });
+        }
+        let (instantiated, origin) = {
+            let c = self.graphs.get(&child).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            (c.instantiated, c.origin.0)
+        };
+        if !instantiated {
+            return Err(SimError::Invalid {
+                why: "child graph not instantiated",
+            });
+        }
+        if origin != device {
+            return Err(SimError::Invalid {
+                why: "graph child gpu mismatch",
+            });
+        }
+        self.graph_push(graph, device, stream, Kind::ChildGraph { graph: child })
+    }
+
+    fn graph_origin_for_add(&self, graph: GraphId) -> Result<(DeviceId, StreamId), SimError> {
+        self.fail_if_capturing("cannot add graph node during capture")?;
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if g.instantiated {
+            return Err(SimError::Invalid {
+                why: "graph instantiated",
+            });
+        }
+        Ok(g.origin)
+    }
+
+    fn graph_push(
+        &mut self,
+        graph: GraphId,
+        device: DeviceId,
+        stream: StreamId,
+        kind: Kind,
+    ) -> Result<(), SimError> {
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        g.steps.push((device, stream, kind));
+        Ok(())
+    }
+
     /// Stream-ordered allocation (`cudaMallocAsync`) from the device default pool.
     ///
     /// Capacity is reserved when the op starts. The pointer is not usable until
