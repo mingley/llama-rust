@@ -57,6 +57,8 @@
 //! [`launch_graph`](Sim::launch_graph) calls it). [`Sim::update_graph`] is
 //! `cudaGraphExecUpdate` when device sequence and op kinds match.
 //! [`Sim::clone_graph`] is `cudaGraphClone` (independent, not instantiated).
+//! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`.
+//! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`.
 
 #![cfg_attr(not(test), deny(missing_docs))]
 
@@ -946,6 +948,42 @@ mod tests {
                 assert_eq!(alloc, a);
                 assert_eq!(device, d);
             }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn destroy_graph_forbids_later_launch_and_spares_clones() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let g = sim.end_capture().unwrap();
+        let clone = sim.clone_graph(g).unwrap();
+        sim.destroy_graph(g).unwrap();
+        let err = sim.launch_graph(g, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let n = sim.launch_graph(clone, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        let cap = sim.destroy_graph(clone).unwrap_err();
+        match cap {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        sim.destroy_graph(clone).unwrap();
+        let gone = sim.graph_len(clone).unwrap_err();
+        match gone {
+            SimError::Invalid { why } => assert!(why.contains("unknown graph"), "{why}"),
             other => panic!("{other:?}"),
         }
     }

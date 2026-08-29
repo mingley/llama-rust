@@ -746,6 +746,21 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cudaGraphDestroy` / `cudaGraphExecDestroy`. Host-synchronous.
+    ///
+    /// Capture cannot include it. Later [`Self::launch_graph`] of this id is
+    /// `unknown graph`. Clones are independent.
+    pub fn destroy_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture graph destroy")?;
+        let g = self.graphs.remove(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let device = g.steps.first().map(|(d, _)| *d).unwrap_or(DeviceId(0));
+        let _gpu = self.profile.gpu(device)?;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// Stream-ordered allocation (`cudaMallocAsync`) from the device default pool.
     ///
     /// Capacity is reserved when the op starts. The pointer is not usable until

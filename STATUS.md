@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — CUDA graph destroy frees the id
+
+`Sim::destroy_graph` is `cudaGraphDestroy` / `cudaGraphExecDestroy`
+(host-sync, 1 ns). Capture refused. `sim_replay` / `SimulatedGpuStore`
+destroy captured GEMM graphs when a page is evicted or migrated.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — CUDA graph clone is an independent copy
 
 `Sim::clone_graph` is `cudaGraphClone` (host-sync, `graph_clone_ns`).

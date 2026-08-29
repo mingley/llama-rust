@@ -151,7 +151,9 @@ impl SimulatedGpuStore {
         if src == dst {
             return Ok(());
         }
-        let _gone = self.graphs.remove(&id);
+        if let Some(g) = self.graphs.remove(&id) {
+            self.sim.destroy_graph(g)?;
+        }
         let already = self.sim.is_resident(id, dst)?;
         if !already {
             let _c =
@@ -339,7 +341,9 @@ impl SimulatedGpuStore {
     }
 
     fn finish_drop(&mut self, key: ExpertKey, page: GpuPage) -> Result<(), Error> {
-        let _g = self.graphs.remove(&page.id);
+        if let Some(g) = self.graphs.remove(&page.id) {
+            self.sim.destroy_graph(g)?;
+        }
         // Copy-engine free must not race a compute-stream lease on the same page.
         let ev = EventId(self.next_event);
         self.next_event = self.next_event.saturating_add(1);

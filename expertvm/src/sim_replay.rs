@@ -534,7 +534,7 @@ fn drop_handle(
     next_event: &mut u32,
     sync: bool,
 ) -> Result<(), Error> {
-    drop_graphs(graphs, page.id);
+    drop_graphs(sim, graphs, page.id)?;
     if page_is_mapped(sim, page.id) {
         // cudaFreeHost waits GPU work on this pointer, then the mapping is gone.
         sim.synchronize_stream(page.device, page.stream)?;
@@ -580,8 +580,21 @@ fn drop_replica(
     Ok(())
 }
 
-fn drop_graphs(graphs: &mut BTreeMap<Vec<AllocId>, GraphId>, id: AllocId) {
+fn drop_graphs(
+    sim: &mut Sim,
+    graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
+    id: AllocId,
+) -> Result<(), Error> {
+    let victims: Vec<GraphId> = graphs
+        .iter()
+        .filter(|(ids, _)| ids.contains(&id))
+        .map(|(_, g)| *g)
+        .collect();
     graphs.retain(|ids, _| !ids.contains(&id));
+    for g in victims {
+        sim.destroy_graph(g)?;
+    }
+    Ok(())
 }
 
 fn page_is_mapped(sim: &Sim, id: AllocId) -> bool {
