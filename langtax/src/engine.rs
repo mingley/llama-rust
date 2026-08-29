@@ -5,6 +5,8 @@
 //! one token for every sequence whose prompt is in KV. Sequences may be added
 //! while others are already decoding. Sequences that do not fit in
 //! `max_seqs` wait and are admitted when a finished sequence is retired.
+//! Prefill chunks that are ready in the same step share one batched GEMM
+//! (`Llama::prefill_batch`); decode tokens share `Llama::forward_batch`.
 //! A full pool **preempts** another
 //! sequence (unique blocks drop; intern pins remain) and later re-prefills
 //! plus replays already sampled greedy tokens. Greedy ids must match
@@ -326,9 +328,20 @@ impl<'a> Engine<'a> {
 
     /// Prefill every sequence that still has prompt tokens outside KV.
     ///
+    /// Two or more ready sequences share one [`Llama::prefill_batch`] GEMM.
     /// A `kv page cap` error drops another sequence's unique pages and retries
-    /// the same cell. A sequence that cannot fit alone still fails.
+    /// the remaining set. A sequence that cannot fit alone still fails.
     fn prefill_ready(&mut self) -> Result<usize, LlamaError> {
+        let idxs: Vec<usize> = (0..self.slots.len())
+            .filter(|&i| self.slot(i).is_some_and(Slot::is_prefill))
+            .collect();
+        if idxs.len() <= 1 {
+            return self.prefill_one_at_a_time();
+        }
+        self.prefill_batch_items(&idxs)
+    }
+
+    fn prefill_one_at_a_time(&mut self) -> Result<usize, LlamaError> {
         let mut n = 0usize;
         for i in 0..self.slots.len() {
             loop {
@@ -340,11 +353,72 @@ impl<'a> Engine<'a> {
                         n = n.saturating_add(1);
                         break;
                     }
-                    Err(e) => self.on_cap(i, e)?,
+                    Err(e) => {
+                        let _victim = self.on_cap(i, e)?;
+                    }
                 }
             }
         }
         Ok(n)
+    }
+
+    fn prefill_batch_items(&mut self, indices: &[usize]) -> Result<usize, LlamaError> {
+        let mut rest = indices.to_vec();
+        loop {
+            if rest.len() <= 1 {
+                return self.prefill_one_at_a_time();
+            }
+            match self.try_prefill_batch(&rest) {
+                Ok(n) => return Ok(n),
+                Err(BatchFail::Other(e)) => return Err(e),
+                Err(BatchFail::Cap(except, e)) => {
+                    let victim = self.on_cap(except, e)?;
+                    rest.retain(|&i| i != victim && self.slot(i).is_some_and(Slot::is_prefill));
+                    if rest.is_empty() {
+                        return Ok(1);
+                    }
+                }
+            }
+        }
+    }
+
+    fn try_prefill_batch(&mut self, indices: &[usize]) -> Result<usize, BatchFail> {
+        let chunk = self.cfg.prefill_chunk;
+        let mut owned: Vec<Vec<u32>> = Vec::new();
+        for &i in indices {
+            let slot = self.slot_mut(i).map_err(BatchFail::Other)?;
+            let part = slot
+                .cache
+                .prompt_suffix(&slot.prompt, chunk)
+                .map_err(BatchFail::Other)?;
+            match slot.cache.prepare_append(part.len()) {
+                Ok(()) => {}
+                Err(e) if is_kv_cap(&e) => return Err(BatchFail::Cap(i, e)),
+                Err(e) => return Err(BatchFail::Other(e)),
+            }
+            owned.push(part.to_vec());
+        }
+        let mut jobs: Vec<(usize, Vec<u32>)> = indices.iter().copied().zip(owned).collect();
+        jobs.sort_by_key(|(i, _)| *i);
+        let order: Vec<usize> = jobs.iter().map(|(i, _)| *i).collect();
+        let mut slots = borrow_slots_mut(&mut self.slots, &order).map_err(BatchFail::Other)?;
+        let mut caches: Vec<&mut KvCache> = slots.iter_mut().map(|s| &mut s.cache).collect();
+        let groups: Vec<&[u32]> = jobs.iter().map(|(_, t)| t.as_slice()).collect();
+        let rows = match self.llama.prefill_batch(&mut caches, &groups) {
+            Ok(r) => r,
+            Err(e) if is_kv_cap(&e) => {
+                let except = indices.first().copied().unwrap_or(0);
+                return Err(BatchFail::Cap(except, e));
+            }
+            Err(e) => return Err(BatchFail::Other(e)),
+        };
+        if rows.len() != slots.len() {
+            return Err(BatchFail::Other(LlamaError::Shape("prefill batch".into())));
+        }
+        for (slot, row) in slots.iter_mut().zip(rows) {
+            slot.last = row;
+        }
+        Ok(order.len())
     }
 
     fn prompt_chunk_at(&mut self, i: usize) -> Result<(), LlamaError> {
@@ -445,8 +519,8 @@ impl<'a> Engine<'a> {
                 Ok(n) => return Ok(n),
                 Err(BatchFail::Other(e)) => return Err(e),
                 Err(BatchFail::Cap(except, e)) => {
-                    self.on_cap(except, e)?;
-                    rest.retain(|(i, _)| self.slot_batchable(*i));
+                    let victim = self.on_cap(except, e)?;
+                    rest.retain(|(i, _)| *i != victim && self.slot_batchable(*i));
                     if rest.is_empty() {
                         return Ok(1);
                     }
@@ -518,15 +592,15 @@ impl<'a> Engine<'a> {
     }
 
     /// Retry after dropping a victim, or propagate a non-cap / unpreemptable error.
-    fn on_cap(&mut self, except: usize, err: LlamaError) -> Result<(), LlamaError> {
+    ///
+    /// Returns the preempted slot index so a batched retry can drop that
+    /// sequence. Prefill victims stay `is_prefill` (n_past is 0) and would
+    /// otherwise re-enter the same batch forever.
+    fn on_cap(&mut self, except: usize, err: LlamaError) -> Result<usize, LlamaError> {
         if !is_kv_cap(&err) {
             return Err(err);
         }
-        if self.preempt_except(except) {
-            Ok(())
-        } else {
-            Err(err)
-        }
+        self.preempt_except(except).ok_or(err)
     }
 
     /// Drop unique KV for the occupant with the most tokens, not `except`.
@@ -534,8 +608,8 @@ impl<'a> Engine<'a> {
     /// Finished sequences still hold pages until `take`, so they are valid
     /// victims. A failed `ensure_write` can leave `n_past == 0` with a
     /// non-empty table; those rows count too. Interned prefixes stay in the
-    /// pool. Returns whether a victim was found.
-    fn preempt_except(&mut self, except: usize) -> bool {
+    /// pool. Returns the victim index when one was found.
+    fn preempt_except(&mut self, except: usize) -> Option<usize> {
         let best = self
             .slots
             .iter()
@@ -553,17 +627,15 @@ impl<'a> Engine<'a> {
                 Some((idx, n, pages))
             })
             .max_by_key(|(_, n, pages)| (*n, *pages));
-        let Some((idx, _, _)) = best else {
-            return false;
-        };
+        let (idx, _, _) = best?;
         let Ok(cell) = self.slot_mut(idx) else {
-            return false;
+            return None;
         };
         cell.cache.preempt();
         cell.last.clear();
         cell.replay = 0;
         self.preempts = self.preempts.saturating_add(1);
-        true
+        Some(idx)
     }
 }
 

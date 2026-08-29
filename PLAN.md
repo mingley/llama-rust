@@ -763,6 +763,10 @@ model, do not celebrate the sim.
     lm_head across sequences that share one `PagedKvPool`. Attention stays
     per sequence. Engine decode (replay and sample) uses it. Logits
     bit-match sequential `forward`. Mixed dense/store/trace falls back.
+18. [x] Batched prefill GEMM: `Llama::prefill_batch` GEMMs the same matrices
+    across sequences with equal or ragged chunk lengths. Engine prefills
+    that are ready in the same step use it. Logits bit-match sequential
+    `prefill`. Prefix intern bind stays per sequence before the GEMM.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

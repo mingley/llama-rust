@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — batched prefill GEMM
+
+`Llama::prefill_batch` runs Q/K/V, FFN, and lm_head as one GEMM of all
+tokens in the step when the caches share a `PagedKvPool`, including
+ragged chunk lengths. Attention stays per sequence. `Engine` prefills
+that are ready together use this path after per-sequence intern bind.
+Logits bit-match sequential `prefill` on writer tinies. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — batched decode GEMM
 
 `Llama::forward_batch` runs Q/K/V, FFN, and lm_head as one GEMM of N

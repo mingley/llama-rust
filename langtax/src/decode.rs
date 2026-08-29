@@ -636,6 +636,54 @@ impl KvCache {
         self.rewind(0);
     }
 
+    /// Bind interned prefixes / LCP, then return the suffix still to forward.
+    ///
+    /// A full-prefix hit rewinds one token so the caller recomputes the last
+    /// prompt token. `max_suffix` caps newly forwarded tokens (`0` = the rest).
+    /// Used by [`Llama::prompt_chunk`] and Engine batched prefill.
+    pub(crate) fn prompt_suffix<'a>(
+        &mut self,
+        tokens: &'a [u32],
+        max_suffix: usize,
+    ) -> Result<&'a [u32], LlamaError> {
+        if tokens.is_empty() {
+            return Err(LlamaError::Shape("prefill tokens".into()));
+        }
+        let lcp = self.reuse_prefix(tokens);
+        let mut hit = lcp;
+        let bound = if let Some(p) = self.pages.as_mut() {
+            p.bind_full_prefix(tokens, self.n_past)
+        } else {
+            lcp
+        };
+        if bound > self.n_past {
+            if let Some(extra) = tokens.get(self.n_past..bound) {
+                self.moe_trace.ids.extend_from_slice(extra);
+            }
+            self.n_past = bound;
+            hit = bound;
+        }
+        self.last_prefix_hit = hit;
+        if hit == tokens.len() {
+            let keep = tokens.len().saturating_sub(1);
+            self.rewind(keep);
+            return tokens
+                .get(keep..)
+                .ok_or_else(|| LlamaError::Shape("prefill tokens".into()));
+        }
+        let suffix = tokens
+            .get(hit..)
+            .ok_or_else(|| LlamaError::Shape("prefill tokens".into()))?;
+        let cap = if max_suffix == 0 {
+            suffix.len()
+        } else {
+            suffix.len().min(max_suffix)
+        };
+        suffix
+            .get(..cap)
+            .ok_or_else(|| LlamaError::Shape("prefill tokens".into()))
+    }
+
     /// Ensure `n_past + extra` KV positions exist so a later write cannot fail
     /// the page cap. Paged block allocation is idempotent: a second call with
     /// the same `extra` before advancing `n_past` does not take another block.
@@ -925,6 +973,57 @@ fn token_pos(pos: &[usize], t: usize) -> Result<usize, LlamaError> {
     pos.get(t)
         .copied()
         .ok_or_else(|| LlamaError::Shape("kv pos".into()))
+}
+
+fn batch_kv_layout(
+    caches: &[&mut KvCache],
+    groups: &[&[u32]],
+) -> Result<(Vec<KvAddr>, Vec<usize>, usize), LlamaError> {
+    let mut addrs = Vec::new();
+    let mut positions = Vec::new();
+    let mut max_seq = 0usize;
+    for (cache, group) in caches.iter().zip(groups.iter()) {
+        max_seq = max_seq.max(cache.max_seq);
+        let Some(p) = cache.pages.as_ref() else {
+            return Err(LlamaError::Shape("kv page".into()));
+        };
+        let table = p.table_ids().to_vec();
+        let block_size = p.block_size();
+        let n_layers = p.n_layers();
+        let n0 = cache.n_past;
+        for t in 0..group.len() {
+            positions.push(n0.saturating_add(t));
+            addrs.push(KvAddr {
+                table: table.clone(),
+                block_size,
+                n_layers,
+                dense_max: 0,
+            });
+        }
+    }
+    Ok((addrs, positions, max_seq))
+}
+
+fn last_group_logits(
+    logits: &[f32],
+    n_vocab: usize,
+    groups: &[&[u32]],
+) -> Result<Vec<Vec<f32>>, LlamaError> {
+    let mut out = Vec::new();
+    let mut start = 0usize;
+    for group in groups {
+        if group.is_empty() {
+            return Err(LlamaError::Shape("prefill tokens".into()));
+        }
+        let last = start.saturating_add(group.len().saturating_sub(1));
+        let off = last.saturating_mul(n_vocab);
+        let row = logits
+            .get(off..off.saturating_add(n_vocab))
+            .ok_or_else(|| LlamaError::Shape("forward batch logits".into()))?;
+        out.push(row.to_vec());
+        start = start.saturating_add(group.len());
+    }
+    Ok(out)
 }
 
 enum LogitsKind {
@@ -1404,7 +1503,42 @@ impl Llama {
             }
             return Ok(out);
         }
-        self.forward_paged_batch(caches, tokens)
+        let mut groups: Vec<&[u32]> = Vec::new();
+        for tok in tokens {
+            groups.push(std::slice::from_ref(tok));
+        }
+        self.run_paged_batch(caches, &groups)
+    }
+
+    /// Prefill each cache with its token group. Shared-pool paged caches GEMM
+    /// together even when the groups have different lengths.
+    ///
+    /// Attention stays per sequence. Returns last-token logits of each group,
+    /// bit-matching sequential [`Llama::prefill`]. Prefix reuse / intern bind
+    /// is the caller's job ([`Llama::prompt_chunk`], Engine). Mixed
+    /// dense/store/trace falls back to one-at-a-time prefills.
+    pub fn prefill_batch(
+        &self,
+        caches: &mut [&mut KvCache],
+        groups: &[&[u32]],
+    ) -> Result<Vec<Vec<f32>>, LlamaError> {
+        if caches.len() != groups.len() {
+            return Err(LlamaError::Shape("prefill batch".into()));
+        }
+        if caches.is_empty() {
+            return Ok(Vec::new());
+        }
+        if groups.iter().any(|g| g.is_empty()) {
+            return Err(LlamaError::Shape("prefill tokens".into()));
+        }
+        if caches.len() == 1 || !self.can_batch_paged(caches) {
+            let mut out = Vec::new();
+            for (cache, group) in caches.iter_mut().zip(groups.iter()) {
+                out.push(self.prefill(cache, group)?);
+            }
+            return Ok(out);
+        }
+        self.run_paged_batch(caches, groups)
     }
 
     fn can_batch_paged(&self, caches: &[&mut KvCache]) -> bool {
@@ -1421,35 +1555,27 @@ impl Llama {
         })
     }
 
-    fn forward_paged_batch(
+    fn run_paged_batch(
         &self,
         caches: &mut [&mut KvCache],
-        tokens: &[u32],
+        groups: &[&[u32]],
     ) -> Result<Vec<Vec<f32>>, LlamaError> {
         let hd = self.head_dim()?;
-        let n = tokens.len();
+        for (cache, group) in caches.iter_mut().zip(groups.iter()) {
+            cache.prepare_append(group.len())?;
+        }
+        let mut flat = Vec::new();
+        for group in groups {
+            flat.extend_from_slice(group);
+        }
+        let n = flat.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
         let width = n
             .checked_mul(self.n_embd)
             .ok_or_else(|| LlamaError::Shape("prefill embed".into()))?;
-        for cache in caches.iter_mut() {
-            cache.prepare_append(1)?;
-        }
-        let mut addrs = Vec::new();
-        let mut positions = Vec::new();
-        let mut max_seq = 0usize;
-        for cache in caches.iter() {
-            positions.push(cache.n_past);
-            max_seq = max_seq.max(cache.max_seq);
-            let Some(p) = cache.pages.as_ref() else {
-                return Err(LlamaError::Shape("kv page".into()));
-            };
-            addrs.push(KvAddr {
-                table: p.table_ids().to_vec(),
-                block_size: p.block_size(),
-                n_layers: p.n_layers(),
-                dense_max: 0,
-            });
-        }
+        let (addrs, positions, max_seq) = batch_kv_layout(caches, groups)?;
         let Some(first) = caches.first_mut() else {
             return Ok(Vec::new());
         };
@@ -1467,7 +1593,7 @@ impl Llama {
             fit(&mut s.scores, max_seq);
         }
         fit(&mut s.x, width);
-        for (t, tok) in tokens.iter().enumerate() {
+        for (t, tok) in flat.iter().enumerate() {
             let row = token_row_mut(&mut s.x, t, self.n_embd, "prefill embed")?;
             self.embed_into(*tok, row)?;
             for v in row.iter_mut() {
@@ -1476,7 +1602,7 @@ impl Llama {
         }
         let mut moe_trace = MoeTraceBuf::default();
         let mut expert_store = None;
-        moe_trace.batch.extend(tokens.iter().copied());
+        moe_trace.batch.extend(flat.iter().copied());
         self.transformer(
             &mut TransformerRun {
                 s,
@@ -1494,25 +1620,15 @@ impl Llama {
             LogitsKind::All,
         )?;
         drop(pool_guard);
-        let n_vocab = self.n_vocab;
-        let mut out = Vec::new();
-        {
+        let out = {
             let Some(first) = caches.first_mut() else {
                 return Ok(Vec::new());
             };
-            for t in 0..n {
-                let off = t.saturating_mul(n_vocab);
-                let row = first
-                    .scratch
-                    .logits
-                    .get(off..off.saturating_add(n_vocab))
-                    .ok_or_else(|| LlamaError::Shape("forward batch logits".into()))?;
-                out.push(row.to_vec());
-            }
-        }
-        for (cache, tok) in caches.iter_mut().zip(tokens.iter()) {
-            cache.n_past = cache.n_past.saturating_add(1);
-            cache.moe_trace.ids.push(*tok);
+            last_group_logits(&first.scratch.logits, self.n_vocab, groups)?
+        };
+        for (cache, group) in caches.iter_mut().zip(groups.iter()) {
+            cache.n_past = cache.n_past.saturating_add(group.len());
+            cache.moe_trace.ids.extend_from_slice(group);
             if let Some(p) = cache.pages.as_mut() {
                 p.intern_full(&cache.moe_trace.ids);
             }
@@ -1937,43 +2053,7 @@ impl Llama {
         tokens: &[u32],
         max_suffix: usize,
     ) -> Result<&'c [f32], LlamaError> {
-        if tokens.is_empty() {
-            return Err(LlamaError::Shape("prefill tokens".into()));
-        }
-        let lcp = cache.reuse_prefix(tokens);
-        let mut hit = lcp;
-        let bound = if let Some(p) = cache.pages.as_mut() {
-            p.bind_full_prefix(tokens, cache.n_past)
-        } else {
-            lcp
-        };
-        if bound > cache.n_past {
-            if let Some(extra) = tokens.get(cache.n_past..bound) {
-                cache.moe_trace.ids.extend_from_slice(extra);
-            }
-            cache.n_past = bound;
-            hit = bound;
-        }
-        cache.last_prefix_hit = hit;
-        if hit == tokens.len() {
-            let keep = tokens.len().saturating_sub(1);
-            cache.rewind(keep);
-            let last = tokens
-                .get(keep..)
-                .ok_or_else(|| LlamaError::Shape("prefill tokens".into()))?;
-            return self.prefill_logits(cache, last);
-        }
-        let suffix = tokens
-            .get(hit..)
-            .ok_or_else(|| LlamaError::Shape("prefill tokens".into()))?;
-        let cap = if max_suffix == 0 {
-            suffix.len()
-        } else {
-            suffix.len().min(max_suffix)
-        };
-        let part = suffix
-            .get(..cap)
-            .ok_or_else(|| LlamaError::Shape("prefill tokens".into()))?;
+        let part = cache.prompt_suffix(tokens, max_suffix)?;
         self.prefill_logits(cache, part)
     }
 
@@ -10341,6 +10421,50 @@ mod tests {
         let exp_b = model.forward(&mut b_seq, 2).expect("fb");
         let mut pair = [&mut a, &mut b];
         let got = model.forward_batch(&mut pair, &[1, 2]).expect("batch");
+        assert_eq!(got.len(), 2);
+        assert_logits_match(&got[0], &exp_a);
+        assert_logits_match(&got[1], &exp_b);
+    }
+
+    #[test]
+    fn prefill_batch_ragged_paged_matches_sequential() {
+        let a_tok = [1u32, 2];
+        let b_tok = [5u32, 0, 5, 0];
+        for bytes in [tiny_llama_gguf(), tiny_qwen3moe_gguf(), tiny_llama4_gguf()] {
+            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("m");
+            let pool = model.new_paged_pool(2, 16).expect("pool");
+            let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+            let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+            let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+            let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+            let exp_a = model.prefill(&mut a_seq, &a_tok).expect("fa");
+            let exp_b = model.prefill(&mut b_seq, &b_tok).expect("fb");
+            let mut pair = [&mut a, &mut b];
+            let groups: [&[u32]; 2] = [&a_tok, &b_tok];
+            let got = model.prefill_batch(&mut pair, &groups).expect("batch");
+            assert_eq!(got.len(), 2);
+            assert_eq!(a.n_past, a_tok.len());
+            assert_eq!(b.n_past, b_tok.len());
+            assert_logits_match(&got[0], &exp_a);
+            assert_logits_match(&got[1], &exp_b);
+        }
+    }
+
+    #[test]
+    fn prefill_batch_equal_length_paged_matches_sequential() {
+        let prompt = [1u32, 2, 3, 4];
+        let other = [5u32, 0, 5, 0];
+        let model = Llama::from_gguf(load_gguf_owned(tiny_llama_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 16).expect("pool");
+        let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+        let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+        let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+        let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+        let exp_a = model.prefill(&mut a_seq, &prompt).expect("fa");
+        let exp_b = model.prefill(&mut b_seq, &other).expect("fb");
+        let mut pair = [&mut a, &mut b];
+        let groups: [&[u32]; 2] = [&prompt, &other];
+        let got = model.prefill_batch(&mut pair, &groups).expect("batch");
         assert_eq!(got.len(), 2);
         assert_logits_match(&got[0], &exp_a);
         assert_logits_match(&got[1], &exp_b);
