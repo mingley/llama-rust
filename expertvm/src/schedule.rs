@@ -6,8 +6,8 @@ use crate::place::PlaceMap;
 use crate::planner::{observe_chain, plan_keys, Markov, Plan};
 use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
-    apply_touch, drop_remote, fetch_remote, gemm_keys, note_touch, predicted_keys, remote_hit,
-    replay_from_sim, replay_streams, stream_of, PageHandle, RemoteFetch, RemotePage,
+    apply_touch, drop_remote, fetch_remote, gemm_keys, note_touch, predicted_keys, reclaim_victim,
+    remote_hit, replay_from_sim, replay_streams, stream_of, PageHandle, RemoteFetch, RemotePage,
     ReplayCounters, SimCfg, SimReplay, TouchArgs,
 };
 use gpu_sim::{AllocId, DeviceId, GraphId, HardwareProfile, Sim, StreamId};
@@ -324,7 +324,11 @@ impl SchedRt {
                 args,
                 *key,
                 touch,
+                &mut self.next_event,
             )?;
+            if let Touch::Miss { evicted: Some(v) } = touch {
+                self.forget_peer_if_home_dropped(v);
+            }
             if matches!(touch, Touch::Miss { .. }) {
                 self.replicate_key(*key)?;
             }
@@ -368,7 +372,11 @@ impl SchedRt {
                         args,
                         key,
                         miss,
+                        &mut self.next_event,
                     )?;
+                    if let Touch::Miss { evicted: Some(v) } = miss {
+                        self.forget_peer_if_home_dropped(v);
+                    }
                     self.replicate_key(key)?;
                 }
             }
@@ -454,11 +462,51 @@ impl SchedRt {
             if dst == src {
                 continue;
             }
+            if self
+                .handles
+                .get(&key)
+                .is_some_and(|p| p.replicas.contains(&dst))
+            {
+                continue;
+            }
+            let touch = self.walker_mut(dst).prefetch_touch(key);
+            if let Touch::Miss { evicted: Some(v) } = touch {
+                reclaim_victim(
+                    &mut self.sim,
+                    &mut self.handles,
+                    &mut self.graphs,
+                    dst,
+                    v,
+                    &mut self.next_event,
+                )?;
+                self.forget_peer_if_home_dropped(v);
+            }
             let _c = self
                 .sim
                 .memcpy_device_to_device(src, dst, id, bytes, stream)?;
+            if let Some(held) = self.handles.get_mut(&key) {
+                held.replicas.push(dst);
+            }
         }
         Ok(())
+    }
+
+    fn forget_peer_if_home_dropped(&mut self, key: ExpertKey) {
+        if self.handles.contains_key(&key) {
+            return;
+        }
+        let home = self.home(key);
+        let devices: Vec<DeviceId> = self
+            .walkers
+            .keys()
+            .copied()
+            .filter(|d| *d != home)
+            .collect();
+        for d in devices {
+            if let Some(w) = self.walkers.get_mut(&d) {
+                w.forget(key);
+            }
+        }
     }
 
     fn observe(&mut self, ev: &ExpertAccess) {

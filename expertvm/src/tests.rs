@@ -768,6 +768,31 @@ fn schedule_hot_replicas_move_more_bytes_than_stripe() {
 }
 
 #[test]
+fn schedule_replica_evict_frees_peer_hbm() {
+    let t = Trace {
+        events: vec![
+            ev(0, 0, &[0]),
+            ev(1, 0, &[0]),
+            ev(2, 0, &[0]),
+            ev(3, 0, &[0]),
+            ev(4, 0, &[1]),
+        ],
+    };
+    let p = HardwareProfile::example_2xh100_pcie().restrict_hbm(4096);
+    let cfg = SimCfg::lru(1, 4096, 0);
+    let stripe = striped(&t, 2);
+    let hot = with_hot_replicas(stripe, &t, 2, 250);
+    assert!(
+        hot.replicas.contains_key(&ExpertKey::new(0, 0)),
+        "{}",
+        hot.line()
+    );
+    let row = schedule_placed(&t, p, cfg, SchedCfg::closed(0), Some(&hot)).expect("hbm");
+    assert_eq!(row.completed, 1);
+    assert!(row.replay.misses >= 2);
+}
+
+#[test]
 fn schedule_remote_pays_peer_copy_on_rdma() {
     let t = Trace {
         events: vec![ev(0, 0, &[1])],

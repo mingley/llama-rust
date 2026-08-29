@@ -106,7 +106,8 @@ to home (pair with `--profile 2node-rdma`; prefetch is skipped). Planner helpers
 `hot_keys`, `plan_keys`, `plan_window`, `plan_placement` (move weights vs dispatch
 activations), `Markov` / `Prefetch` (lookback-2 `P(to|from, from_prev)` with
 order-1 backoff). `colocated` keeps co-fired experts
-on one GPU; `with_hot_replicas` copies hot keys to a second GPU.
+on one GPU; `with_hot_replicas` copies hot keys to a second GPU and those
+replicas occupy dest `--capacity` (evict frees replica HBM).
 `compare_ep` / `sim_static_ep` place each expert on
 `home_gpu` (`expert_id % n_gpus`) with no eviction. LRU-on-GPU0 can
 survive restricted HBM by evicting; static EP OOMs if a home GPU cannot

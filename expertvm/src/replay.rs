@@ -173,6 +173,15 @@ impl Walker {
         self.fault_in(key)
     }
 
+    /// Drop `key` from this device's resident set without a demand acquire.
+    ///
+    /// Used when a home eviction frees peer replicas that this walker still
+    /// counted as occupying a slot.
+    pub(crate) fn forget(&mut self, key: ExpertKey) {
+        let _r = self.resident.remove(&key);
+        self.recency.retain(|k| *k != key);
+    }
+
     fn fault_in(&mut self, key: ExpertKey) -> Touch {
         if self.resident.contains(&key) {
             self.touch_recency(key);

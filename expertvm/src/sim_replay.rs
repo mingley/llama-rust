@@ -177,6 +177,7 @@ pub fn sim_replay_cfg(
     let mut prefetched: BTreeSet<ExpertKey> = BTreeSet::new();
     let mut graphs: BTreeMap<Vec<AllocId>, GraphId> = BTreeMap::new();
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
+    let mut next_event = 1u32;
     for (i, event) in trace.events.iter().enumerate() {
         args.s = stream_of(event.sequence, n_streams);
         let ek = event.keys();
@@ -186,7 +187,15 @@ pub fn sim_replay_cfg(
                 return Err(Error::Store("walker key mismatch"));
             }
             note_touch(&mut ctr, &mut prefetched, *key, touch);
-            apply_touch(&mut sim, &mut handles, &mut graphs, args, *key, touch)?;
+            apply_touch(
+                &mut sim,
+                &mut handles,
+                &mut graphs,
+                args,
+                *key,
+                touch,
+                &mut next_event,
+            )?;
         }
         gemm_keys(
             &mut sim,
@@ -210,7 +219,15 @@ pub fn sim_replay_cfg(
                     miss @ Touch::Miss { .. } => {
                         ctr.prefetches = ctr.prefetches.saturating_add(1);
                         let _ins = prefetched.insert(key);
-                        apply_touch(&mut sim, &mut handles, &mut graphs, fill, key, miss)?;
+                        apply_touch(
+                            &mut sim,
+                            &mut handles,
+                            &mut graphs,
+                            fill,
+                            key,
+                            miss,
+                            &mut next_event,
+                        )?;
                     }
                 }
             }
@@ -255,6 +272,8 @@ pub(crate) struct PageHandle {
     pub(crate) id: AllocId,
     pub(crate) stream: StreamId,
     pub(crate) device: DeviceId,
+    /// Extra devices that hold a D2D replica of `id`.
+    pub(crate) replicas: Vec<DeviceId>,
 }
 
 pub(crate) fn note_touch(
@@ -311,15 +330,13 @@ pub(crate) fn apply_touch(
     args: TouchArgs,
     key: ExpertKey,
     touch: Touch,
+    next_event: &mut u32,
 ) -> Result<(), Error> {
     match touch {
         Touch::Hit => Ok(()),
         Touch::Miss { evicted } => {
             if let Some(v) = evicted {
-                if let Some(page) = handles.remove(&v) {
-                    drop_graphs(graphs, page.id);
-                    sim.free(page.device, page.id, page.stream)?;
-                }
+                reclaim_victim(sim, handles, graphs, args.d, v, next_event)?;
             }
             if args.slots == 0 {
                 return Ok(());
@@ -332,11 +349,72 @@ pub(crate) fn apply_touch(
                     id,
                     stream: args.s,
                     device: args.d,
+                    replicas: Vec::new(),
                 },
             );
             Ok(())
         }
     }
+}
+
+/// Free `victim` on `device` only (replica) or the whole page (home).
+pub(crate) fn reclaim_victim(
+    sim: &mut Sim,
+    handles: &mut BTreeMap<ExpertKey, PageHandle>,
+    graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
+    device: DeviceId,
+    victim: ExpertKey,
+    next_event: &mut u32,
+) -> Result<(), Error> {
+    let home = handles.get(&victim).map(|p| p.device);
+    match home {
+        None => Ok(()),
+        Some(h) if h == device => {
+            let Some(page) = handles.remove(&victim) else {
+                return Ok(());
+            };
+            drop_handle(sim, graphs, page, next_event)
+        }
+        Some(_) => {
+            let Some(page) = handles.get_mut(&victim) else {
+                return Ok(());
+            };
+            drop_replica(sim, page, device, next_event)
+        }
+    }
+}
+
+fn drop_handle(
+    sim: &mut Sim,
+    graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
+    page: PageHandle,
+    next_event: &mut u32,
+) -> Result<(), Error> {
+    drop_graphs(graphs, page.id);
+    for dst in &page.replicas {
+        if *dst == page.device {
+            continue;
+        }
+        wait_peer(sim, page.device, *dst, page.stream, next_event)?;
+        sim.free(*dst, page.id, page.stream)?;
+    }
+    sim.free(page.device, page.id, page.stream)?;
+    Ok(())
+}
+
+fn drop_replica(
+    sim: &mut Sim,
+    page: &mut PageHandle,
+    dst: DeviceId,
+    next_event: &mut u32,
+) -> Result<(), Error> {
+    if !page.replicas.contains(&dst) {
+        return Ok(());
+    }
+    wait_peer(sim, page.device, dst, page.stream, next_event)?;
+    sim.free(dst, page.id, page.stream)?;
+    page.replicas.retain(|d| *d != dst);
+    Ok(())
 }
 
 fn drop_graphs(graphs: &mut BTreeMap<Vec<AllocId>, GraphId>, id: AllocId) {

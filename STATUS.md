@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — replica HBM is dest-capacity
+
+Hot replicas occupy the destination GPU's `--capacity` slots. Evicting a
+home page stream-orders a free of every replica; a dest miss frees only
+that replica so the home copy can stay. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — per-home LRU inside `schedule`
 
 `--capacity` is slots on the expert's home GPU, not one cluster-wide
