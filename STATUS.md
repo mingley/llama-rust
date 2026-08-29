@@ -14,7 +14,10 @@ does not charge HBM, and a kernel on it is `NotResident` until a copy places
 the object on a device. `probe_topology` / expert loads use pinned DMA.
 `sim_remote_home` runs `plan_placement` on the home↔GPU0 hop (online reuse,
 no future leak): large experts dispatch activations; equal volume moves
-weights. CLI: `expertvm remote --activation-bytes N`. Dual score still has
+weights. CLI: `expertvm remote --activation-bytes N`. Decode leases each
+routed expert for the GEMV and releases before the next (`slots=1` still
+matches blob logits). `SimulatedGpuStore` holds a host-pinned staging
+alloc that does not count toward HBM. Dual score still has
 no `$/M tokens`.
 
 ## Shipped 2026-08-29 — router permille, decode Markov, RDMA remote-home

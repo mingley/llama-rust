@@ -26,6 +26,7 @@ pub struct SimulatedGpuStore {
     pages: BTreeMap<ExpertKey, GpuPage>,
     replicas: BTreeSet<ExpertKey>,
     bytes_per_expert: u64,
+    staging: AllocId,
 }
 
 impl SimulatedGpuStore {
@@ -36,9 +37,12 @@ impl SimulatedGpuStore {
         profile: HardwareProfile,
         bytes_per_expert: u64,
     ) -> Result<Self, Error> {
+        let bytes = bytes_per_expert.max(1);
+        let mut sim = Sim::new(profile);
+        let staging = sim.alloc_host_pinned(bytes)?;
         Ok(Self {
             cache: CachedStore::new(inner, slots)?,
-            sim: Sim::new(profile),
+            sim,
             device: DeviceId(0),
             replica: DeviceId(1),
             copy: StreamId(0),
@@ -46,8 +50,15 @@ impl SimulatedGpuStore {
             next_event: 1,
             pages: BTreeMap::new(),
             replicas: BTreeSet::new(),
-            bytes_per_expert: bytes_per_expert.max(1),
+            bytes_per_expert: bytes,
+            staging,
         })
+    }
+
+    /// Page-locked staging buffer from construction; does not count toward HBM.
+    #[must_use]
+    pub fn staging_is_pinned(&self) -> bool {
+        self.sim.is_host_pinned(self.staging).unwrap_or(false)
     }
 
     /// Drain the simulator and return its performance vector.

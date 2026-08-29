@@ -537,7 +537,8 @@ model, do not celebrate the sim.
    (`gguf_gemv trace`, `KvCache::enable_moe_trace`, identity vs untraced greedy).
 6. [x] `ExpertStore` trait + `DirectStore` (identity) + `CachedStore` (leases)
    + `SimulatedGpuStore` in `expertvm`. Decode's expert inner products
-   `acquire` then GEMV `ExpertParts`. Direct/Cached/Simulated bit-match
+   `acquire` then GEMV `ExpertParts`, then `release` (one expert at a time so
+   `slots < top-k` still works). Direct/Cached/Simulated bit-match
    the blob path on writer tinies. Shared experts stay on the blob.
    Prefetch is copy-forward ∪ online [`Markov`] (`MoeTraceBuf` when a store is
    attached; `sim_replay_cfg` `Prefetch::{None, CopyForward, Markov}`).

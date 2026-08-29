@@ -4877,12 +4877,21 @@ impl Llama {
         store: &mut Option<LiveStore>,
         layer: u32,
         expert: usize,
-    ) -> Result<Option<ExpertParts>, LlamaError> {
+    ) -> Result<(Option<ExpertParts>, Option<ExpertKey>), LlamaError> {
         let Some(store) = store.as_mut() else {
-            return Ok(None);
+            return Ok((None, None));
         };
         let e = u32::try_from(expert).map_err(|_| LlamaError::Shape("expert id".into()))?;
-        Ok(Some(store.acquire(ExpertKey::new(layer, e))?))
+        let key = ExpertKey::new(layer, e);
+        let parts = store.acquire(key)?;
+        store.lease(key)?;
+        Ok((Some(parts), Some(key)))
+    }
+
+    fn put_expert(store: &mut Option<LiveStore>, held: Option<ExpertKey>) {
+        if let (Some(store), Some(key)) = (store.as_mut(), held) {
+            store.release(key);
+        }
     }
 
     fn route_softmax(
@@ -4919,8 +4928,10 @@ impl Llama {
                 continue;
             };
             let w = s.moe.weights.get(i).copied().unwrap_or(0.0);
-            let parts = Self::take_expert(store, moe_trace.layer, e)?;
-            self.routed_swiglu_into(exps, e, xt, &mut s.moe, pool, parts.as_ref())?;
+            let (parts, held) = Self::take_expert(store, moe_trace.layer, e)?;
+            let r = self.routed_swiglu_into(exps, e, xt, &mut s.moe, pool, parts.as_ref());
+            Self::put_expert(store, held);
+            r?;
             for (o, v) in s.moe.routed.iter_mut().zip(s.moe.y.iter()) {
                 *o += *v * w;
             }
@@ -5083,35 +5094,41 @@ impl Llama {
                 for (d, v) in s.moe.xw.iter_mut().zip(xt.iter()) {
                     *d = *v * w;
                 }
-                let parts = Self::take_expert(store, moe_trace.layer, e)?;
-                self.gemv_part_bytes_into(
+                let (parts, held) = Self::take_expert(store, moe_trace.layer, e)?;
+                let r = self.gemv_part_bytes_into(
                     &moe.gate_exps,
                     e,
                     &s.moe.xw,
                     &mut s.moe.g,
                     pool,
                     parts.as_ref().map(|p| p.gate.as_slice()),
-                )?;
-                self.gemv_part_bytes_into(
-                    &moe.up_exps,
-                    e,
-                    &s.moe.xw,
-                    &mut s.moe.u,
-                    pool,
-                    parts.as_ref().map(|p| p.up.as_slice()),
-                )?;
-                silu_inplace(&mut s.moe.g);
-                for (a, b) in s.moe.g.iter_mut().zip(s.moe.u.iter()) {
-                    *a *= *b;
-                }
-                self.gemv_part_bytes_into(
-                    &moe.down_exps,
-                    e,
-                    &s.moe.g,
-                    &mut s.moe.y,
-                    pool,
-                    parts.as_ref().map(|p| p.down.as_slice()),
-                )?;
+                );
+                let r = r.and_then(|()| {
+                    self.gemv_part_bytes_into(
+                        &moe.up_exps,
+                        e,
+                        &s.moe.xw,
+                        &mut s.moe.u,
+                        pool,
+                        parts.as_ref().map(|p| p.up.as_slice()),
+                    )
+                });
+                let r = r.and_then(|()| {
+                    silu_inplace(&mut s.moe.g);
+                    for (a, b) in s.moe.g.iter_mut().zip(s.moe.u.iter()) {
+                        *a *= *b;
+                    }
+                    self.gemv_part_bytes_into(
+                        &moe.down_exps,
+                        e,
+                        &s.moe.g,
+                        &mut s.moe.y,
+                        pool,
+                        parts.as_ref().map(|p| p.down.as_slice()),
+                    )
+                });
+                Self::put_expert(store, held);
+                r?;
                 for (o, v) in s.moe.routed.iter_mut().zip(s.moe.y.iter()) {
                     *o += *v;
                 }
@@ -9827,6 +9844,13 @@ mod tests {
             .expect("tier");
         let via_tier = store_prefill(&model, LiveStore::tiered(tier), &tokens);
         assert_eq!(blob, via_tier, "TieredStore copies must match DirectStore");
+        let one = expertvm::CachedStore::new(model.expert_direct_store().expect("c1"), 1)
+            .expect("one slot");
+        let via_one = store_prefill(&model, LiveStore::Cached(one), &tokens);
+        assert_eq!(
+            blob, via_one,
+            "slots=1 sequential lease/release must still match the blob"
+        );
         let mut store = c.take_expert_store().expect("store");
         let score = store.score().expect("score");
         assert!(score.is_some());

@@ -364,6 +364,9 @@ fn simulated_gpu_store_evicts_and_scores() {
     let inner = DirectStore::from_trace(&t);
     let mut gpu =
         SimulatedGpuStore::new(inner, 2, HardwareProfile::example_h100_sxm(), 4096).expect("gpu");
+    assert!(gpu.staging_is_pinned());
+    let before = gpu.score().expect("idle");
+    assert_eq!(before.hbm_peak, 0);
     for k in t.keys() {
         let parts = gpu.acquire(k).expect("acq");
         assert_eq!(parts.gate, vec![1]);
