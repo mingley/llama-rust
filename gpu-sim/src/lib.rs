@@ -182,6 +182,29 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_h2d_on_two_streams_share_pcie() {
+        let d = DeviceId(0);
+        let bytes = 32u64 << 20;
+        let mut one = Sim::new(h100());
+        let a = one.alloc(d, bytes, StreamId(0)).unwrap();
+        enq(one.memcpy_host_to_device(d, a, bytes, StreamId(0)));
+        one.synchronize().unwrap();
+        let t1 = one.clock_ns();
+
+        let mut two = Sim::new(h100());
+        let b = two.alloc(d, bytes, StreamId(0)).unwrap();
+        let c = two.alloc(d, bytes, StreamId(1)).unwrap();
+        enq(two.memcpy_host_to_device(d, b, bytes, StreamId(0)));
+        enq(two.memcpy_host_to_device(d, c, bytes, StreamId(1)));
+        two.synchronize().unwrap();
+        let t2 = two.clock_ns();
+        assert!(
+            t2 > t1,
+            "two concurrent H2D must not finish in one-copy time (shared PCIe); t1={t1} t2={t2}"
+        );
+    }
+
+    #[test]
     fn determinism() {
         let run = || {
             let mut sim = Sim::new(h100());

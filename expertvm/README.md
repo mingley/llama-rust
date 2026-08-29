@@ -56,8 +56,9 @@ holds `gate` + `up` + `down` bytes.
 | --- | --- |
 | `DirectStore` | Identity catalog. Every acquire hits. Bytes unchanged. |
 | `CachedStore` | Bounded LRU with **leases** so in-use experts cannot be evicted. `prefetch(keys)` skips unknown keys. `pin_hot` / `is_resident` / `take_victim`. |
+| `TieredStore` | Fast RAM LRU in front of slow RAM, a paging **file** (seek+read, not mmap), or synthetic bytes. Only `slots` [`ExpertParts`](crate::ExpertParts) live in the fast map. `WeightStorage::mmap` is parked. |
 | `SimulatedGpuStore` | CachedStore + [`gpu-sim`](../gpu-sim). H2D on a copy stream, GEMM waits that event. Prefetch is H2D without GEMM. `pin_hot` NVLink-replicates to GPU1 when `n_gpus >= 2`. `score()` is wall/HBM/bytes/`ns_per_token`. |
-| `LiveStore` | Enum over the three. Decode attaches this. |
+| `LiveStore` | Enum over Direct / Cached / Tiered / Simulated. Decode attaches this. |
 
 `sim_replay` runs a policy through gpu-sim: H2D on miss, grouped GEMM on
 acquire, stream-ordered free on eviction. Timing comes from a
@@ -76,6 +77,7 @@ expertvm sim      trace.jsonl --capacity 8 --expert-bytes 188743680 --profile h1
 expertvm bench    trace.jsonl --capacity 8 --profile h100
 expertvm bench    adversarial --tokens 64 --experts 16 --capacity 2 --profile cheap
 expertvm workload thrash --tokens 64 --experts 16 --capacity 2
+expertvm workload batch --tokens 32 --experts 16 --capacity 4
 ```
 
 Traces are produced by `gguf_gemv trace`:

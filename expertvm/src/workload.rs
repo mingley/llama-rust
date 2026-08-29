@@ -14,9 +14,35 @@ pub enum Workload {
     ShiftingHotset,
     /// Cyclic thrash (Belady's anomaly case).
     Thrash,
+    /// Copilot-shaped: tiny hot set, ~95% reuse.
+    Coding,
+    /// Chat-shaped: medium hot set, ~70% reuse.
+    Chat,
+    /// Long context: expert id walks slowly with token.
+    LongContext,
+    /// Prefill: each token touches four layers.
+    PrefillHeavy,
+    /// Decode: one layer, one expert, cycling.
+    DecodeHeavy,
+    /// Eight interleaved sequences (batch > 1).
+    Batch,
 }
 
 impl Workload {
+    /// Every named workload, in CLI order.
+    pub const ALL: [Self; 10] = [
+        Self::Uniform,
+        Self::Hotset,
+        Self::ShiftingHotset,
+        Self::Thrash,
+        Self::Coding,
+        Self::Chat,
+        Self::LongContext,
+        Self::PrefillHeavy,
+        Self::DecodeHeavy,
+        Self::Batch,
+    ];
+
     /// Name used in benches and CLI.
     #[must_use]
     pub fn name(self) -> &'static str {
@@ -25,11 +51,22 @@ impl Workload {
             Self::Hotset => "hotset",
             Self::ShiftingHotset => "shifting-hotset",
             Self::Thrash => "thrash",
+            Self::Coding => "coding",
+            Self::Chat => "chat",
+            Self::LongContext => "long-context",
+            Self::PrefillHeavy => "prefill-heavy",
+            Self::DecodeHeavy => "decode-heavy",
+            Self::Batch => "batch",
         }
+    }
+
+    /// Parse a CLI workload name.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|w| w.name() == name)
     }
 }
 
-/// Build `n_tokens` events, one layer, `top_k` experts from `n_experts`.
+/// Build `n_tokens` (per sequence) events from `n_experts`.
 #[must_use]
 pub fn generate(kind: Workload, n_tokens: u32, n_experts: u32, top_k: u32, seed: u64) -> Trace {
     let mut rng = seed | 1;
@@ -37,26 +74,52 @@ pub fn generate(kind: Workload, n_tokens: u32, n_experts: u32, top_k: u32, seed:
     let k = top_k.max(1);
     let n_ex = n_experts.max(k);
     for tok in 0..n_tokens {
-        let experts = match kind {
-            Workload::Uniform => pick_uniform(&mut rng, n_ex, k),
-            Workload::Hotset => pick_hotset(&mut rng, n_ex, k, 80),
-            Workload::ShiftingHotset => {
-                let shift = (tok / 16) % n_ex;
-                pick_shifted(&mut rng, n_ex, k, shift)
+        match kind {
+            Workload::PrefillHeavy => {
+                for layer in 0..4u32 {
+                    events.push(ev(0, tok, layer, pick_uniform(&mut rng, n_ex, k)));
+                }
             }
-            Workload::Thrash => {
-                let e = tok % n_ex.max(1);
-                vec![e]
+            Workload::Batch => {
+                for seq in 0..8u64 {
+                    events.push(ev(seq, tok, 0, pick_uniform(&mut rng, n_ex, k)));
+                }
             }
-        };
-        events.push(ExpertAccess {
-            sequence: 0,
-            token: tok,
-            layer: 0,
-            experts,
-        });
+            Workload::Uniform
+            | Workload::Hotset
+            | Workload::ShiftingHotset
+            | Workload::Thrash
+            | Workload::Coding
+            | Workload::Chat
+            | Workload::LongContext
+            | Workload::DecodeHeavy => {
+                let experts = match kind {
+                    Workload::Uniform => pick_uniform(&mut rng, n_ex, k),
+                    Workload::Hotset => pick_hotset(&mut rng, n_ex, k, 80, n_ex / 5),
+                    Workload::ShiftingHotset => {
+                        let shift = (tok / 16) % n_ex;
+                        pick_shifted(&mut rng, n_ex, k, shift)
+                    }
+                    Workload::Thrash | Workload::DecodeHeavy => vec![tok % n_ex.max(1)],
+                    Workload::Coding => pick_hotset(&mut rng, n_ex, k, 95, 2),
+                    Workload::Chat => pick_hotset(&mut rng, n_ex, k, 70, (n_ex / 4).max(1)),
+                    Workload::LongContext => vec![(tok / 4) % n_ex.max(1)],
+                    Workload::PrefillHeavy | Workload::Batch => vec![0],
+                };
+                events.push(ev(0, tok, 0, experts));
+            }
+        }
     }
     Trace { events }
+}
+
+fn ev(sequence: u64, token: u32, layer: u32, experts: Vec<u32>) -> ExpertAccess {
+    ExpertAccess {
+        sequence,
+        token,
+        layer,
+        experts,
+    }
 }
 
 fn next_u32(rng: &mut u64) -> u32 {
@@ -78,8 +141,8 @@ fn pick_uniform(rng: &mut u64, n_ex: u32, k: u32) -> Vec<u32> {
     out
 }
 
-fn pick_hotset(rng: &mut u64, n_ex: u32, k: u32, hot_pt: u32) -> Vec<u32> {
-    let hot_n = (n_ex / 5).max(1);
+fn pick_hotset(rng: &mut u64, n_ex: u32, k: u32, hot_pt: u32, hot_n: u32) -> Vec<u32> {
+    let hot_n = hot_n.max(1).min(n_ex.max(1));
     let mut out = Vec::new();
     for _ in 0..k {
         let roll = next_u32(rng) % 100;
@@ -100,7 +163,7 @@ fn pick_hotset(rng: &mut u64, n_ex: u32, k: u32, hot_pt: u32) -> Vec<u32> {
 }
 
 fn pick_shifted(rng: &mut u64, n_ex: u32, k: u32, shift: u32) -> Vec<u32> {
-    let mut out = pick_hotset(rng, n_ex, k, 80);
+    let mut out = pick_hotset(rng, n_ex, k, 80, n_ex / 5);
     for e in &mut out {
         *e = (*e).saturating_add(shift) % n_ex.max(1);
     }

@@ -17,6 +17,16 @@ Decode, quant, and GGUF oracles convert binary16 through
 `oracle_f16_to_f32` (IEEE arithmetic) instead of production bit-surgery
 `f16_to_f32`, so a repeat of the subnormal off-by-one cannot hide.
 
+## Shipped 2026-08-29 — TieredStore + adversarial shapes
+
+`TieredStore` pages experts through fast RAM in front of slow RAM, a
+seek+read paging file, or synthetic bytes. Only `slots` `ExpertParts`
+live in the fast map. mmap stays parked (`WeightStorage::mmap` errors).
+Qwen3MoE Tiny identity: TieredStore logits match the blob path.
+Adversarial suite is ten named workloads (coding/chat/long-context,
+prefill-heavy, decode-heavy, batch-8) plus the original four. gpu-sim
+asserts concurrent H2D on two streams cannot finish in one-copy time.
+
 `llama-rust` is the correctness laboratory (GGUF math, oracle + llama.cpp
 greedy). `expertvm` is expert residency / virtual memory. `gpu-sim` is the
 GPU-systems VM (exact invariants, profiled timing). `infer-bench` is
@@ -30,7 +40,7 @@ invent `$/M tokens`.
   `KvCache.expert_store = None` keeps the blob path (allocation-free
   dense decode unchanged). `Llama::expert_direct_store` catalogs every
   MoE layer’s gate/up/down part bytes. Identity: DirectStore, CachedStore
-  (full slots), and SimulatedGpuStore bit-match blob logits on writer
+  (full slots), SimulatedGpuStore, and TieredStore bit-match blob logits on writer
   tinies (Qwen3MoE, llama MoE, Qwen2MoE, Llama4, Qwen3Next). Shared
   experts stay on the blob. After routing, copy-forward prefetch of
   `(layer+1, same experts)`.
@@ -130,9 +140,9 @@ Local: `~/dev/llama-rust-perf`
 
 ## In progress
 
-PLAN.md Phase 0 leftover: a second real-model fixture when one is on disk.
-Phase 2 `TieredStore`. Phase 3 more adversarial shapes (batch, prefill-heavy)
-without inventing `$/M tokens`.
+PLAN.md Phase 0 leftover: a second real-model fixture when a Llama
+NORM-RoPE GGUF is on disk (NEOX Qwen capture already exists). Phase 3
+faults (GPU unavailable, cancel) without inventing `$/M tokens`.
 
 ## Still needed (production / researcher bar)
 
@@ -159,8 +169,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN Phase 0 leftover (a second real-model fixture)
-and Phase 2 `TieredStore`. Do not add crates.io
+Next code change is PLAN Phase 0 leftover (Llama NORM real-model fixture
+when a GGUF is on disk). Do not add crates.io
 runtime deps. Do not start Metal-in-crate on Linux. Do not invent a
 `block_iq4_nl_4_4` dequant. Do not invent an arch. Do not list mixtral
 or qwen3vlmoe as an accepted arch. Do not invent `$/M tokens`.

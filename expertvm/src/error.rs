@@ -9,6 +9,8 @@ pub enum Error {
     Trace(&'static str),
     /// Store invariant (lease, capacity, unknown key).
     Store(&'static str),
+    /// Slow-tier I/O (file-backed [`crate::WeightStorage`]).
+    Io(String),
     /// Wrapped gpu-sim semantic failure.
     Sim(String),
 }
@@ -17,6 +19,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Trace(s) | Self::Store(s) => write!(f, "{s}"),
+            Self::Io(s) => write!(f, "io: {s}"),
             Self::Sim(s) => write!(f, "sim: {s}"),
         }
     }

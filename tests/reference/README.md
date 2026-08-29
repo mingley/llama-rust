@@ -52,6 +52,20 @@ LLAMA_RUST_REAL_MODEL_DIR="$PWD/models" cargo test --release --lib real_model --
 When it really runs it prints the resolved model path and takes seconds, not
 milliseconds. A 0.00 s pass means it skipped.
 
+## Second fixture (Llama NORM control)
+
+The Qwen2.5-0.5B capture is **NEOX** RoPE. PLAN.md also wants a **NORM**
+Llama control so the two official pairing conventions cannot silently
+swap. Intended file once someone has it on disk:
+
+`Llama-3.2-1B-Instruct-Q4_K_M.gguf` (or another small official `llama`
+GGUF whose `rope.scaling` / `rope.type` is the Llama NORM walk).
+
+Capture with the same `ref.cpp` command below, write
+`llama-3.2-1b-instruct-q4_k_m.json` next to this README, and point
+`LLAMA_RUST_REAL_MODEL_DIR` at the directory. Do not download Hugging Face
+checkpoints in CI.
+
 ## Regenerating the reference
 
 Build llama.cpp and dump the reference with `tests/reference/ref.cpp`, which

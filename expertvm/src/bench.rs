@@ -60,21 +60,15 @@ pub fn report(
     })
 }
 
-/// Run the four adversarial workloads at `capacity`.
+/// Run every named adversarial workload at `capacity`.
 pub fn adversarial_suite(
     n_tokens: u32,
     n_experts: u32,
     capacity: usize,
     profile: HardwareProfile,
 ) -> Result<Vec<BenchReport>, Error> {
-    let kinds = [
-        Workload::Uniform,
-        Workload::Hotset,
-        Workload::ShiftingHotset,
-        Workload::Thrash,
-    ];
     let mut out = Vec::new();
-    for kind in kinds {
+    for kind in Workload::ALL {
         let trace = generate(kind, n_tokens, n_experts, 1, 1);
         out.push(report(
             kind.name(),

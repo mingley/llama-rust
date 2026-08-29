@@ -353,11 +353,12 @@ Backends:
 `DirectStore` must keep every existing oracle / real-model test green.
 The dense/common weights stay resident. Only expert tensors go through
 the store. Decode wiring is on `main`: `KvCache::attach_expert_store`
-takes a `LiveStore::{Direct, Cached, Simulated}`. Default `None` keeps
+takes a `LiveStore::{Direct, Cached, Tiered, Simulated}`. Default `None` keeps
 the blob GEMV path (allocation-free tests unchanged). Identity tests
-cover Qwen3MoE (Direct + Cached + SimulatedGpuStore), llama MoE,
-Qwen2MoE, Llama4, and Qwen3Next. `TieredStore` and mmap `WeightStorage`
-are still open.
+cover Qwen3MoE (Direct + Cached + SimulatedGpuStore + TieredStore), llama MoE,
+Qwen2MoE, Llama4, and Qwen3Next. `WeightStorage::{InMemory, File, Synthetic}`
+page experts into a bounded fast tier. mmap stays parked
+(`WeightStorage::mmap` returns an error); File seek+read is the disk path.
 
 Artificially constrain the cache (e.g. 64 experts total, 8 resident)
 and execute a real trace.

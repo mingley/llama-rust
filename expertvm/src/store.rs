@@ -127,6 +127,11 @@ impl DirectStore {
         self.blobs.len()
     }
 
+    /// Catalog keys in sorted order.
+    pub fn keys(&self) -> impl Iterator<Item = ExpertKey> + '_ {
+        self.blobs.keys().copied()
+    }
+
     /// Empty catalog.
     #[must_use]
     pub fn is_empty(&self) -> bool {

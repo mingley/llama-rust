@@ -13,6 +13,7 @@ mod policy;
 mod replay;
 mod sim_replay;
 mod store;
+mod tiered;
 mod workload;
 
 pub use access::{ExpertAccess, ExpertKey, Trace};
@@ -29,6 +30,7 @@ pub use sim_replay::{sim_replay, SimReplay};
 pub use store::{
     replay_accesses, CachedStore, DirectStore, ExpertParts, ExpertStore, StoreMetrics,
 };
+pub use tiered::{TieredStore, WeightStorage};
 pub use workload::{generate, unique_keys, Workload};
 
 #[cfg(test)]

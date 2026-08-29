@@ -17,8 +17,10 @@ usage: expertvm <command> [args]
   sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
-  workload <uniform|hotset|shifting-hotset|thrash> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
+  workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
 
+NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
+      prefill-heavy, decode-heavy, batch
 profiles: h100 (default), h200, 8xh100, cheap, or a path to a .profile file
 ";
 
@@ -249,11 +251,5 @@ where
 }
 
 fn parse_workload(name: &str) -> Result<Workload, String> {
-    match name {
-        "uniform" => Ok(Workload::Uniform),
-        "hotset" => Ok(Workload::Hotset),
-        "shifting-hotset" => Ok(Workload::ShiftingHotset),
-        "thrash" => Ok(Workload::Thrash),
-        other => Err(format!("unknown workload {other}\n{USAGE}")),
-    }
+    Workload::from_name(name).ok_or_else(|| format!("unknown workload {name}\n{USAGE}"))
 }

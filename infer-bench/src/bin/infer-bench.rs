@@ -10,8 +10,10 @@ const USAGE: &str = "\
 usage: infer-bench <command> [args]
   adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   trace <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N]
-  workload <uniform|hotset|shifting-hotset|thrash> [--tokens N] [--experts N] [--capacity N]
+  workload <NAME> [--tokens N] [--experts N] [--capacity N]
 
+NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
+      prefill-heavy, decode-heavy, batch
 profiles: h100 (default), h200, 8xh100, cheap
 ";
 
@@ -164,13 +166,7 @@ fn parse_u32(name: &str, s: &str) -> Result<u32, String> {
 }
 
 fn parse_workload(name: &str) -> Result<Workload, String> {
-    match name {
-        "uniform" => Ok(Workload::Uniform),
-        "hotset" => Ok(Workload::Hotset),
-        "shifting-hotset" => Ok(Workload::ShiftingHotset),
-        "thrash" => Ok(Workload::Thrash),
-        other => Err(format!("unknown workload {other}")),
-    }
+    Workload::from_name(name).ok_or_else(|| format!("unknown workload {name}"))
 }
 
 fn load_trace(path: &str) -> Result<Trace, String> {

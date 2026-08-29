@@ -26,7 +26,7 @@ sess.attach_expert_store(LiveStore::Cached(CachedStore::new(direct, 8)?));
 let logits = sess.prefill(&ids)?;
 ```
 
-Default decode stays on the GGUF blob (`expert_store == None`). Attaching DirectStore, CachedStore, or SimulatedGpuStore GEMVs routed expert copies; identity tests require bit-equal logits vs the blob path. Shared experts stay on the blob.
+Default decode stays on the GGUF blob (`expert_store == None`). Attaching DirectStore, CachedStore, TieredStore, or SimulatedGpuStore GEMVs routed expert copies; identity tests require bit-equal logits vs the blob path. Shared experts stay on the blob. `TieredStore::memory` / `on_path` keep only `slots` experts in fast RAM (`WeightStorage::mmap` is parked).
 
 `cargo run -p llama-rust --example session` runs the writer-built Qwen3MoE tiny through CachedStore.
 

@@ -220,20 +220,73 @@ fn simulated_gpu_store_pin_hot_replicates_on_nvlink() {
 
 #[test]
 fn adversarial_workloads_are_named_and_measurable() {
-    let kinds = [
-        Workload::Uniform,
-        Workload::Hotset,
-        Workload::ShiftingHotset,
-        Workload::Thrash,
-    ];
-    for kind in kinds {
+    for kind in Workload::ALL {
         let t = generate(kind, 32, 8, 1, 1);
         assert!(!t.events.is_empty(), "{}", kind.name());
         assert!(!unique_keys(&t).is_empty());
     }
     let rows = adversarial_suite(16, 6, 2, HardwareProfile::example_cheap_48gb()).expect("suite");
-    assert_eq!(rows.len(), 4);
+    assert_eq!(rows.len(), Workload::ALL.len());
     assert!(rows[0].render().contains("uniform"));
+    assert!(rows.iter().any(|r| r.name == "prefill-heavy"));
+    assert!(rows.iter().any(|r| r.name == "batch"));
+}
+
+#[test]
+fn tiered_memory_matches_direct_and_evicts() {
+    let t = cycling_trace();
+    let mut direct = DirectStore::from_trace(&t);
+    let mut tier = TieredStore::memory(DirectStore::from_trace(&t), 2).expect("tier");
+    assert_eq!(tier.storage(), WeightStorage::InMemory);
+    let k0 = ExpertKey::new(0, 0);
+    let k1 = ExpertKey::new(0, 1);
+    let k2 = ExpertKey::new(0, 2);
+    let a = tier.acquire(k0).expect("k0");
+    let b = direct.acquire(k0).expect("d0");
+    assert_eq!(a, b);
+    let _k1 = tier.acquire(k1).expect("k1");
+    let _k2 = tier.acquire(k2).expect("k2");
+    assert_eq!(tier.fast_len(), 2);
+    assert!(tier.metrics().evicts >= 1);
+    assert!(tier.metrics().bytes_moved > 0);
+    assert!(WeightStorage::mmap().is_err());
+}
+
+#[test]
+fn tiered_file_pages_identity_bytes() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let k0 = ExpertKey::new(0, 0);
+    let want = inner.get(k0).expect("want");
+    let mut path = std::env::temp_dir();
+    path.push(format!(
+        "expertvm-tiered-{}-{}.bin",
+        std::process::id(),
+        inner.len()
+    ));
+    let mut tier = TieredStore::on_path(inner, 1, &path).expect("file store");
+    assert_eq!(tier.storage(), WeightStorage::File);
+    let got = tier.acquire(k0).expect("page in");
+    assert_eq!(got, want);
+    let k1 = ExpertKey::new(0, 1);
+    let _k1 = tier.acquire(k1).expect("evict k0");
+    assert!(!tier.is_resident(k0));
+    let again = tier.acquire(k0).expect("page back");
+    assert_eq!(again, want);
+    let _removed = std::fs::remove_file(&path);
+}
+
+#[test]
+fn tiered_synthetic_faults_fill_bytes() {
+    let mut keys = BTreeSet::new();
+    let _i0 = keys.insert(ExpertKey::new(0, 0));
+    let _i1 = keys.insert(ExpertKey::new(0, 1));
+    let mut tier = TieredStore::synthetic(keys, 4, 7, 1).expect("syn");
+    let p = tier.acquire(ExpertKey::new(0, 0)).expect("syn acq");
+    assert_eq!(p.gate, vec![7, 7, 7, 7]);
+    assert_eq!(tier.storage(), WeightStorage::Synthetic);
 }
 
 #[test]

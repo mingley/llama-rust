@@ -9781,6 +9781,10 @@ mod tests {
         c.attach_expert_store(LiveStore::simulated(gpu));
         let via_gpu = model.prefill(&mut c, &tokens).expect("gpu prefill");
         assert_eq!(blob, via_gpu, "SimulatedGpuStore CPU copies must match");
+        let tier = expertvm::TieredStore::memory(model.expert_direct_store().expect("t"), n)
+            .expect("tier");
+        let via_tier = store_prefill(&model, LiveStore::tiered(tier), &tokens);
+        assert_eq!(blob, via_tier, "TieredStore copies must match DirectStore");
         let mut store = c.take_expert_store().expect("store");
         let score = store.score().expect("score");
         assert!(score.is_some());

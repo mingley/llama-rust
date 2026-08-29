@@ -83,4 +83,6 @@ destination HBM at memcpy start and OOM if that GPU is full. `free` of a
 replicated allocation only drops `live` when no device still holds it.
 
 Adversarial memcpy: many tiny copies cannot beat one large copy of the
-same payload (fixed overhead + size-dependent bandwidth).
+same payload (fixed overhead + size-dependent bandwidth). Two concurrent
+H2D copies on separate streams share PCIe and cannot finish in one-copy
+time.
