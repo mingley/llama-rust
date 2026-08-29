@@ -1023,6 +1023,13 @@ model, do not celebrate the sim.
     migrate (retarget GEMM, keep home physicals). Dual score still has no
     `$/M tokens`.
 
+64. [x] VMM `cuMemGetAllocationGranularity`: `HardwareProfile::va_granularity_bytes`
+    (`0`/`1` = any size, example default `1` so 4096-byte expert pages stay
+    legal). `va_reserve` / `va_map_range` reject unaligned sizes
+    (`unaligned VA`). A 2 MiB profile is opt-in (`with_va_granularity` /
+    `va_granularity_bytes=` in a `.profile` file). Dual score still has no
+    `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

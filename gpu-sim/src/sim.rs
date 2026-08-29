@@ -1405,6 +1405,8 @@ impl Sim {
     /// `cuMemAddressReserve`: a VA with no physical pages. Does not charge HBM.
     ///
     /// [`Self::va_map`] maps the whole VA; [`Self::va_map_range`] maps a span.
+    /// Size and map offsets must be multiples of
+    /// [`HardwareProfile::va_granularity_bytes`] (`0`/`1` = any size).
     /// Capture cannot include it.
     pub fn va_reserve(&mut self, bytes: u64) -> Result<AllocId, SimError> {
         if bytes == 0 {
@@ -1412,6 +1414,7 @@ impl Sim {
                 why: "zero-byte alloc",
             });
         }
+        self.check_va_align(bytes)?;
         self.fail_if_capturing("cannot capture alloc/free")?;
         self.clock = self.clock.saturating_add(self.first_alloc_ns());
         let id = AllocId(self.next_alloc);
@@ -1457,7 +1460,8 @@ impl Sim {
     /// Map `[offset, offset+bytes)` of a reserved VA onto `device`.
     ///
     /// Host-synchronous. Charges `bytes` of HBM. Overlapping maps on the same
-    /// device fail. [`Self::kernel`] needs the full VA covered; [`Self::kernel_bufs`]
+    /// device fail. Offset and `bytes` must be granularity-aligned.
+    /// [`Self::kernel`] needs the full VA covered; [`Self::kernel_bufs`]
     /// may run on this span. A hole is [`SimError::NotResident`] for that API.
     /// Capture cannot include it.
     pub fn va_map_range(
@@ -1487,6 +1491,8 @@ impl Sim {
                 why: "range past VA",
             });
         }
+        self.check_va_align(offset)?;
+        self.check_va_align(bytes)?;
         if vmm_overlap(&a.vmm_maps, device, offset, bytes) {
             return Err(SimError::Invalid {
                 why: "already mapped",
@@ -1757,6 +1763,16 @@ impl Sim {
             .map(|g| g.alloc_overhead_ns)
             .unwrap_or(1)
             .max(1)
+    }
+
+    fn check_va_align(&self, n: u64) -> Result<(), SimError> {
+        if self.profile.va_aligned(n) {
+            Ok(())
+        } else {
+            Err(SimError::Invalid {
+                why: "unaligned VA",
+            })
+        }
     }
 
     /// `cudaMemPrefetchAsync` onto `device`. Stream-ordered; migrates, does not

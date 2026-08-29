@@ -45,7 +45,9 @@
 //! [`Sim::drop_managed_copy`] refunds one ReadMostly GPU copy (dest eviction).
 //! [`Sim::va_reserve`] / [`va_map`](Sim::va_map) / [`va_unmap`](Sim::va_unmap) /
 //! [`va_free`](Sim::va_free) are `cuMemAddressReserve` / `cuMemMap` /
-//! `cuMemUnmap` / `cuMemAddressFree`. [`Sim::va_map_range`] / [`va_unmap_range`](Sim::va_unmap_range)
+//! `cuMemUnmap` / `cuMemAddressFree`. Size and map offsets must be multiples of
+//! [`HardwareProfile::va_granularity_bytes`] (`0`/`1` = any size; example
+//! default `1` keeps 4096-byte expert pages legal). [`Sim::va_map_range`] / [`va_unmap_range`](Sim::va_unmap_range)
 //! map sparse physicals (vLLM KV-block analog); HBM is the mapped span.
 //! [`Sim::va_set_access`] is `cuMemSetAccess` PROT_READ on a peer (no dest HBM;
 //! interconnect). Writes still need a local map. [`Sim::va_unset_access`] drops it.
@@ -2873,6 +2875,41 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("not mapped")),
             other => panic!("{other:?}"),
         }
+        sim.va_free(va).unwrap();
+    }
+
+    #[test]
+    fn va_granularity_rejects_unaligned_reserve_and_map() {
+        let gran = 2u64 << 20;
+        let mut sim = Sim::new(h100().with_va_granularity(gran));
+        let d = DeviceId(0);
+        match sim.va_reserve(4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unaligned"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let va = sim.va_reserve(gran.saturating_mul(2)).unwrap();
+        match sim.va_map_range(va, d, 4096, gran) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unaligned"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.va_map_range(va, d, 0, 4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unaligned"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.va_map_range(va, d, 0, gran).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), gran);
+        sim.va_unmap(va).unwrap();
+        sim.va_free(va).unwrap();
+    }
+
+    #[test]
+    fn va_granularity_default_allows_4096() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let va = sim.va_reserve(4096).unwrap();
+        sim.va_map(va, d).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+        sim.va_unmap(va).unwrap();
         sim.va_free(va).unwrap();
     }
 

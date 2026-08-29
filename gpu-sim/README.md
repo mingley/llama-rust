@@ -43,6 +43,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemPrefetchAsync` (`prefetch` / `prefetch_host`) **moves** unless ReadMostly | PCIe / NVLink (1 ns if already local) |
 | `cuMemAddressReserve` (`va_reserve`) is a VA with no physical pages | `alloc_overhead_ns` (at the call) |
 | `cuMemMap` (`va_map`) charges HBM; `va_unmap` refunds; the VA is reusable | `alloc_overhead_ns` (map) |
+| `cuMemGetAllocationGranularity` (`va_granularity_bytes`): reserve/map sizes align (`0`/`1` = any) | not timed |
 | `cuMemSetAccess` (`va_set_access`) PROT_READ on a peer; dest HBM stays 0 | interconnect, not local HBM |
 | `va_map_range` / `va_unmap_range` map a span; `kernel()` needs the whole VA; `kernel_bufs` / `memset_buf` / `MemcpyOp::offset` touch a mapped span | HBM = mapped bytes |
 | `va_release` parks an unmapped VA; `va_acquire` remaps same size | map only on reuse (no second reserve) |
@@ -256,6 +257,8 @@ does not skip kernel first-touch). `prefetch` / `prefetch_host` are
 `alloc_managed` / `mem_advise` is refused; a graph must record prefetch
 before the kernel unless AccessedBy or PreferredLocation covers that GPU.
 `va_reserve` / `va_map` / `va_unmap` / `va_free` are CUDA virtual memory.
+`va_granularity_bytes` is `cuMemGetAllocationGranularity` (`0`/`1` accepts
+any size; a 2 MiB profile rejects unaligned reserve/map).
 `va_map_range` / `va_unmap_range` map sparse physicals (HBM is the mapped
 span). `va_set_access` is `cuMemSetAccess` PROT_READ on a peer (no dest HBM;
 writes still need a local map). `kernel()` needs the whole VA covered; `kernel_bufs`, `memset_buf`, and

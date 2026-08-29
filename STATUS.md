@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — VMM allocation granularity
+
+`HardwareProfile::va_granularity_bytes` is `cuMemGetAllocationGranularity`.
+Example default is `1` (any size), so 4096-byte expert VMM pages stay legal.
+A 2 MiB profile (`with_va_granularity` / `.profile` `va_granularity_bytes=`)
+rejects unaligned `va_reserve` / `va_map_range`. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — VMM `cuMemSetAccess` peer maps
 
 `Sim::va_set_access` is `cuMemSetAccess` PROT_READ on a mapped VMM VA so a
@@ -1222,8 +1230,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 63 (VMM `cuMemSetAccess`
-peer maps). `gguf_gemv serve --engine`
+Next code change is PLAN systems depth after item 64 (VMM allocation
+granularity). `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover
 is a Llama NORM real-model fixture when a GGUF is on disk. Physical
