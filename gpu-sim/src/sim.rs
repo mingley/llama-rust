@@ -1303,6 +1303,13 @@ impl Sim {
         self.submit(device, stream, Kind::Memset { id: alloc, bytes })
     }
 
+    /// `cudaLaunchHostFunc`. Stream-ordered host work; does not occupy compute
+    /// or copy engines. Other streams can run GPU kernels at the same virtual
+    /// time. Capture records a graph host node.
+    pub fn host_func(&mut self, device: DeviceId, stream: StreamId) -> Result<OpId, SimError> {
+        self.submit(device, stream, Kind::HostFunc)
+    }
+
     /// Record `event` after prior ops on `stream`.
     pub fn record_event(
         &mut self,
@@ -2106,6 +2113,15 @@ impl Sim {
                 });
                 Ok(true)
             }
+            Kind::HostFunc => {
+                let ns = self.host_func_ns(device, launch)?;
+                self.running.push(Running {
+                    op: id,
+                    remaining_ns: ns.max(1),
+                    share: Share::Solo,
+                });
+                Ok(true)
+            }
             Kind::Memcpy(m) => {
                 let m = m.clone();
                 if self.fail_next_memcpy {
@@ -2255,6 +2271,15 @@ impl Sim {
             LaunchCost::GraphBody => 0,
         };
         Ok(overhead.saturating_add(ns_for_bytes(bytes, g.hbm_bps)))
+    }
+
+    fn host_func_ns(&self, device: DeviceId, launch: LaunchCost) -> Result<u64, SimError> {
+        let g = self.profile.gpu(device)?;
+        let head = match launch {
+            LaunchCost::GraphHead => g.graph_launch_ns,
+            LaunchCost::Kernel | LaunchCost::GraphBody => 0,
+        };
+        Ok(head.saturating_add(g.host_func_ns.max(1)))
     }
 
     fn graph_head_ns(&self, device: DeviceId, launch: LaunchCost) -> Result<u64, SimError> {

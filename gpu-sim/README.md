@@ -40,6 +40,7 @@ warp scheduler, L1, …   ← do not model
 | `cuMemAddressReserve` (`va_reserve`) is a VA with no physical pages | `alloc_overhead_ns` (at the call) |
 | `cuMemMap` (`va_map`) charges HBM; `va_unmap` refunds; the VA is reusable | `alloc_overhead_ns` (map) |
 | `va_release` parks an unmapped VA; `va_acquire` remaps same size | map only on reuse (no second reserve) |
+| `cudaLaunchHostFunc` (`host_func`) is stream-ordered host work | `host_func_ns` (no compute / copy occupancy) |
 | host pin / `mlock` budget (`host_pin_bytes`) | `SimError::PinOom` |
 | `cudaFree` (`free_sync`) waits owning GPU(s), then every copy is gone | stream-ordered `free` refunds when that stream runs |
 | `cudaMemcpyAsync` of pageable host memory is host-synchronous | `pageable_permille` (bounce + DMA) |
@@ -168,7 +169,9 @@ CUDA graphs: `begin_capture` / `end_capture` / `launch_graph`. Capture does
 not advance the virtual clock. Alloc/free cannot be captured, including
 host-sync `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device`.
 Launch pays `graph_launch_ns` once; recorded kernels skip per-kernel launch overhead.
-`memset` is an HBM-write kernel on a resident alloc. Peer D2D requires a
+`memset` is an HBM-write kernel on a resident alloc. `host_func` is
+`cudaLaunchHostFunc`: stream-ordered host work that does not occupy compute
+or copy engines (other streams may GEMM). Peer D2D requires a
 topology link **and** directed `enable_peer` (seeded on for every GPU↔GPU
 link; `disable_peer` → `PeerDisabled`). [`StreamId::NULL`] is the CUDA null
 stream; `set_legacy_null_stream(true)` serializes it with every other stream
@@ -204,6 +207,7 @@ alloc/register. `alloc_managed` is `cudaMallocManaged` (no HBM until
 (one physical per reserved VA). `va_acquire` remaps an idle VA of the same
 size (or reserves); `va_release` unmaps into that pool. Capture cannot
 include them.
+`host_func` is `cudaLaunchHostFunc` (stream-ordered; other streams can compute).
 `host_pin_bytes` caps page-locked host (`cudaMallocHost` / `cudaHostRegister`);
 overflow is `PinOom`. Example default is unlimited.
 `set_stream_priority` is `cudaStreamCreateWithPriority` (higher first when

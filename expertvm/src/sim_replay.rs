@@ -135,6 +135,11 @@ pub struct SimCfg {
     /// pinned H2D. Evict [`gpu_sim::Sim::va_release`]s so the pointer stays.
     /// Hits/misses match H2D.
     pub vmm: bool,
+    /// `cudaLaunchHostFunc` after each event's GEMMs (CPU scheduler roundtrip).
+    ///
+    /// Does not change hits/misses. Lengthens wall by `host_func_ns` per
+    /// stream that ran a GEMM. [`crate::SimulatedGpuStore`] does not enqueue it.
+    pub host_func: bool,
 }
 
 impl SimCfg {
@@ -157,6 +162,7 @@ impl SimCfg {
             mapped: false,
             managed: false,
             vmm: false,
+            host_func: false,
         }
     }
 }
@@ -247,6 +253,9 @@ pub fn sim_replay_cfg(
             cfg.cuda_graphs,
             &mut ctr,
         )?;
+        if cfg.host_func {
+            host_callbacks(&mut sim, &handles, &ek)?;
+        }
         if should_prefetch(cfg, &handles, trace, i) {
             let predicted = predicted_keys(cfg.prefetch, &markov, prev, &ek);
             let planned = if cfg.plan_window > 0 {
@@ -578,6 +587,23 @@ pub(crate) fn gemm_keys(
     }
     for ((d, stream), ids) in by_dev {
         gemm_ids(sim, graphs, d, stream, ids, cuda_graphs, ctr)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn host_callbacks(
+    sim: &mut Sim,
+    handles: &BTreeMap<ExpertKey, PageHandle>,
+    keys: &[ExpertKey],
+) -> Result<(), Error> {
+    let mut seen: BTreeSet<(DeviceId, StreamId)> = BTreeSet::new();
+    for key in keys {
+        let Some(page) = handles.get(key) else {
+            continue;
+        };
+        if seen.insert((page.device, page.stream)) {
+            let _id = sim.host_func(page.device, page.stream)?;
+        }
     }
     Ok(())
 }

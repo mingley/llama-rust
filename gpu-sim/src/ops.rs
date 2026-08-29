@@ -152,7 +152,7 @@ pub struct MemcpyOp {
 }
 
 /// One submitted GPU primitive. PLAN's Kernel / Memcpy / Collective / Event /
-/// Alloc / Free, plus `cudaMemsetAsync`. Timing is not stored here.
+/// Alloc / Free, plus `cudaMemsetAsync` and `cudaLaunchHostFunc`. Timing is not stored here.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GpuOp {
     /// Stream-ordered device allocation. Capacity is reserved when the op starts.
@@ -185,6 +185,9 @@ pub enum GpuOp {
         /// Bytes billed as an HBM write.
         bytes: u64,
     },
+    /// Host callback (`cudaLaunchHostFunc`). Stream-ordered; does not occupy
+    /// compute or copy engines.
+    HostFunc,
     /// Record `event` after prior ops on this stream.
     EventRecord {
         /// Event id.

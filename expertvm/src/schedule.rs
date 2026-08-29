@@ -6,9 +6,9 @@ use crate::place::PlaceMap;
 use crate::planner::{observe_chain, plan_keys, Markov, Plan};
 use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
-    apply_touch, drop_remote, fetch_remote, fill_remote, gemm_keys, note_touch, predicted_keys,
-    reclaim_victim, remote_hit, replay_from_sim, replay_streams, stream_of, PageHandle,
-    RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, TouchArgs,
+    apply_touch, drop_remote, fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch,
+    predicted_keys, reclaim_victim, remote_hit, replay_from_sim, replay_streams, stream_of,
+    PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, TouchArgs,
 };
 use gpu_sim::{AllocId, DeviceId, GraphId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -351,7 +351,11 @@ impl SchedRt {
 
     fn touch_event(&mut self, ev: &ExpertAccess) -> Result<(), Error> {
         if self.remote_act.is_some() {
-            return self.touch_remote(ev);
+            self.touch_remote(ev)?;
+            if self.cfg.host_func {
+                let _id = self.sim.host_func(DeviceId(0), self.args.s)?;
+            }
+            return Ok(());
         }
         self.args.s = stream_of(ev.sequence, self.n_streams);
         let ek = ev.keys();
@@ -386,7 +390,11 @@ impl SchedRt {
             &ek,
             self.cfg.cuda_graphs,
             &mut self.ctr,
-        )
+        )?;
+        if self.cfg.host_func {
+            host_callbacks(&mut self.sim, &self.handles, &ek)?;
+        }
+        Ok(())
     }
 
     fn prefetch_event(&mut self, ev: &ExpertAccess, running: &[Job]) -> Result<(), Error> {

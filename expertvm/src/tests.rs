@@ -676,6 +676,31 @@ fn vmm_evict_reacquires_same_va() {
 }
 
 #[test]
+fn host_func_lengthens_wall_not_hits() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let base = SimCfg::lru(2, 4096, 0);
+    let plain = sim_replay_cfg(&t, p.clone(), base).expect("plain");
+    let cb = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            host_func: true,
+            ..base
+        },
+    )
+    .expect("host");
+    assert_eq!(plain.hits, cb.hits);
+    assert_eq!(plain.misses, cb.misses);
+    assert!(
+        cb.sim_ns > plain.sim_ns,
+        "host={} plain={}",
+        cb.sim_ns,
+        plain.sim_ns
+    );
+}
+
+#[test]
 fn mapped_host_respects_pin_budget() {
     let t = cycling_trace();
     let p = HardwareProfile::example_h100_sxm().restrict_pin(1u64 << 20);
@@ -1377,6 +1402,7 @@ fn adversarial_workloads_are_named_and_measurable() {
     assert!(batch.render().contains("schedule-1"));
     assert!(batch.render().contains("sim-managed"), "{}", batch.render());
     assert!(batch.render().contains("sim-vmm"), "{}", batch.render());
+    assert!(batch.render().contains("sim-hostfn"), "{}", batch.render());
     let mixed = rows.iter().find(|r| r.name == "prefill-batch").unwrap();
     assert!(mixed.chunk.is_some(), "{}", mixed.render());
     assert!(mixed.render().contains("schedule-chunk1"));

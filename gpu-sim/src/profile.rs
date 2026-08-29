@@ -34,6 +34,10 @@ pub struct GpuProfile {
     ///
     /// Example default is cheaper than [`Self::alloc_overhead_ns`]. Not a capture.
     pub pool_reuse_ns: u64,
+    /// `cudaLaunchHostFunc` duration, nanoseconds. Does not occupy the GPU.
+    ///
+    /// Example default, not a capture.
+    pub host_func_ns: u64,
     /// Board TDP, milliwatts. Energy estimate is `tdp_mw * wall_ns / 1e6` µJ.
     pub tdp_mw: u64,
     /// Achieved GEMM / peak, ‰ (`1000` = full roofline). Duration scales `1000 / util`.
@@ -345,7 +349,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_pin_bytes={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -361,6 +365,7 @@ impl HardwareProfile {
             self.host_pageable_permille(g0.id),
             self.host_align_bytes(g0.id),
             g0.pool_reuse_ns,
+            g0.host_func_ns,
             self.host_pin_bytes
         )
     }
@@ -456,6 +461,7 @@ fn h100_gpu(id: DeviceId) -> GpuProfile {
         graph_launch_ns: 3_000,
         alloc_overhead_ns: 2_000,
         pool_reuse_ns: 200,
+        host_func_ns: 10_000,
         tdp_mw: 700_000,
         gemm_util_permille: 1000,
         grouped_moe_permille: 1000,
@@ -584,6 +590,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut pageable_permille: u16 = 500;
     let mut align_bytes: u64 = 128;
     let mut pool_reuse_ns: Option<u64> = None;
+    let mut host_func_ns: Option<u64> = None;
     let mut host_pin_bytes = u64::MAX;
     let mut mesh = MeshKind::NvlinkClique;
     let mut mesh_set = false;
@@ -617,6 +624,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             "pageable_permille" => pageable_permille = parse_u16(v)?,
             "align_bytes" => align_bytes = parse_u64(v)?,
             "pool_reuse_ns" => pool_reuse_ns = Some(parse_u64(v)?),
+            "host_func_ns" => host_func_ns = Some(parse_u64(v)?),
             "host_pin_bytes" => host_pin_bytes = parse_u64(v)?,
             "topology" => {
                 mesh = parse_mesh(v)?;
@@ -653,6 +661,9 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         g.grouped_moe_permille = grouped_moe_permille;
         if let Some(ns) = pool_reuse_ns {
             g.pool_reuse_ns = ns;
+        }
+        if let Some(ns) = host_func_ns {
+            g.host_func_ns = ns;
         }
         gpus.push(g);
         let far = mesh == MeshKind::NumaBad && i == 1;
@@ -857,6 +868,13 @@ mod tests {
         assert!(p.to_profile_text().contains("host_pin_bytes=4096"));
         let open = HardwareProfile::parse("gpus=1\n").unwrap();
         assert_eq!(open.host_pin_bytes, u64::MAX);
+    }
+
+    #[test]
+    fn parse_host_func_ns() {
+        let p = HardwareProfile::parse("gpus=1\nhost_func_ns=42\n").unwrap();
+        assert_eq!(p.gpu(DeviceId(0)).unwrap().host_func_ns, 42);
+        assert!(p.to_profile_text().contains("host_func_ns=42"));
     }
 
     #[test]

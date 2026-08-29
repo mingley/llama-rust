@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — cudaLaunchHostFunc is host work, not a kernel
+
+`Sim::host_func` is `cudaLaunchHostFunc`: stream-ordered, billed at
+`GpuProfile::host_func_ns`, and it does not occupy compute or copy
+engines so another stream can GEMM at the same virtual time. Graphs may
+record it. `expertvm sim --host-func` / `expertvm bench` `sim-hostfn`
+enqueue one callback after each event's GEMMs (CPU scheduler roundtrip).
+Hits/misses unchanged. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — VMM VA pool remaps instead of re-reserving
 
 `Sim::va_acquire` / `va_release` / `vmm_idle_len` keep unmapped VAs.

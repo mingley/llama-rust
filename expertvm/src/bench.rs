@@ -35,6 +35,8 @@ pub struct BenchReport {
     pub managed: Option<String>,
     /// Pinned H2D vs `cuMemMap` expert pages on the same LRU config.
     pub vmm: Option<String>,
+    /// Pinned H2D vs a `cudaLaunchHostFunc` after each event's GEMMs.
+    pub host_func: Option<String>,
     /// Closed-loop `schedule-all` vs `schedule-1` when the trace has >1 sequence.
     pub schedule: Option<String>,
     /// Unchunked vs `--prefill-chunk 1` when a first token has more than one layer.
@@ -86,6 +88,10 @@ impl BenchReport {
             s.push_str(vmm);
             s.push('\n');
         }
+        if let Some(hf) = &self.host_func {
+            s.push_str(hf);
+            s.push('\n');
+        }
         if let Some(sch) = &self.schedule {
             s.push_str(sch);
             s.push('\n');
@@ -128,6 +134,7 @@ pub fn report(
     let mut mapped = None;
     let mut managed = None;
     let mut vmm = None;
+    let mut host_func = None;
     let mut schedule = None;
     let mut chunk = None;
     let mut decode = None;
@@ -143,6 +150,7 @@ pub fn report(
         mapped = lines.mapped;
         managed = lines.managed;
         vmm = lines.vmm;
+        host_func = lines.host_func;
         schedule = lines.schedule;
         chunk = lines.chunk;
         decode = lines.decode;
@@ -161,6 +169,7 @@ pub fn report(
         mapped,
         managed,
         vmm,
+        host_func,
         schedule,
         chunk,
         decode,
@@ -178,6 +187,7 @@ struct SimLines {
     mapped: Option<String>,
     managed: Option<String>,
     vmm: Option<String>,
+    host_func: Option<String>,
     schedule: Option<String>,
     chunk: Option<String>,
     decode: Option<String>,
@@ -220,7 +230,10 @@ fn sim_lines(
     let um_row = sim_replay_cfg(trace, profile.clone(), um)?;
     let mut vmm = base;
     vmm.vmm = true;
-    let vmm_row = sim_replay_cfg(trace, profile, vmm)?;
+    let vmm_row = sim_replay_cfg(trace, profile.clone(), vmm)?;
+    let mut hf = base;
+    hf.host_func = true;
+    let hf_row = sim_replay_cfg(trace, profile, hf)?;
     Ok(SimLines {
         serial: serial.line(),
         overlap,
@@ -249,6 +262,11 @@ fn sim_lines(
             "sim-async {} | sim-vmm {}",
             serial.line(),
             vmm_row.line()
+        )),
+        host_func: Some(format!(
+            "sim-async {} | sim-hostfn {}",
+            serial.line(),
+            hf_row.line()
         )),
         schedule: lines.schedule,
         chunk: lines.chunk,

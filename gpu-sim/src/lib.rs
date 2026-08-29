@@ -35,6 +35,7 @@
 //! `cuMemUnmap` / `cuMemAddressFree` (one physical per VA; HBM charged while mapped).
 //! [`Sim::va_acquire`] remaps an idle VA of the same size (or reserves);
 //! [`va_release`](Sim::va_release) unmaps into that pool instead of freeing the VA.
+//! [`Sim::host_func`] is `cudaLaunchHostFunc` (stream-ordered host work; no GPU occupancy).
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -2048,6 +2049,90 @@ mod tests {
             other => panic!("{other:?}"),
         }
         sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn host_func_duration_matches_profile() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let t0 = sim.clock_ns();
+        enq(sim.host_func(d, StreamId(0)));
+        sim.synchronize().unwrap();
+        assert_eq!(
+            sim.clock_ns().saturating_sub(t0),
+            h100().gpu(d).unwrap().host_func_ns.max(1)
+        );
+        assert!(sim.operations().any(|o| matches!(o.kind, GpuOp::HostFunc)));
+    }
+
+    #[test]
+    fn host_func_does_not_occupy_compute() {
+        let d = DeviceId(0);
+        let bytes = 8u64 << 20;
+        let k = KernelKind::GroupedMoeGemm {
+            experts: 8,
+            tokens_per_expert: 16,
+            hidden: 2048,
+            ff: 2048,
+            dtype: DType::Fp16,
+        };
+        let wall = |same: bool| {
+            let mut sim = Sim::new(h100());
+            let a = sim.alloc(d, bytes, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, bytes, StreamId(0)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, k.clone(), &[a], &[a], StreamId(0)));
+            let hs = if same { StreamId(0) } else { StreamId(1) };
+            enq(sim.host_func(d, hs));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let serial = wall(true);
+        let overlap = wall(false);
+        assert!(
+            serial > overlap,
+            "host callback must not take the compute engine; serial={serial} overlap={overlap}"
+        );
+    }
+
+    #[test]
+    fn host_func_waits_for_prior_kernel_on_same_stream() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s));
+        enq(sim.host_func(d, s));
+        sim.synchronize().unwrap();
+        let ops: Vec<Operation> = sim.operations().collect();
+        let k = ops
+            .iter()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.start_ns.is_some())
+            .expect("kernel");
+        let h = ops
+            .iter()
+            .find(|o| matches!(o.kind, GpuOp::HostFunc))
+            .expect("host");
+        assert!(k.done_ns.unwrap() <= h.start_ns.unwrap());
+    }
+
+    #[test]
+    fn graph_can_capture_host_func() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.host_func(d, s));
+        let g = sim.end_capture().unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert!(sim
+            .operations()
+            .any(|o| matches!(o.kind, GpuOp::HostFunc) && o.done));
     }
 
     #[test]

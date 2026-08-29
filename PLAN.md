@@ -430,6 +430,8 @@ Exact (mechanical invariants agents may rely on):
   one physical per VA; HBM charged only while mapped; the pointer survives
   unmap; `va_release` parks the VA so `va_acquire` remaps without another
   reserve
+- `cudaLaunchHostFunc` (`host_func`): stream-ordered host work; does not
+  occupy compute or copy engines; graphs may record it
 - stream ordering, events, barriers
 - kernel enqueue, async copies
 - copy-engine availability, peer accessibility
@@ -591,7 +593,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   (no H2D, PCIe kernels, HBM unused). `--managed` is `cudaMallocManaged`
   plus `cudaMemPrefetchAsync` on miss (HBM charged on migrate). `--vmm` is
   `va_acquire` (remap idle VA or reserve+map) then H2D; evict `va_release`s
-  the pointer. `memset`, directed peer enable, and
+  the pointer. `--host-func` is `cudaLaunchHostFunc` after each event's
+  GEMMs (`host_func_ns`; no GPU occupancy). `memset`, directed peer enable, and
   the legacy null stream are mechanical CUDA invariants.
   `synchronize_stream` / `synchronize_event` / `synchronize_device` are
   `cudaStreamSynchronize` / `cudaEventSynchronize` / `cudaDeviceSynchronize`. `event_elapsed_ns` is `cudaEventElapsedTime` in
