@@ -1,6 +1,6 @@
 //! Structural GPU operations. Timing is derived from a [`crate::HardwareProfile`].
 
-use crate::ids::{AllocId, DeviceId, EventId, OpId, StreamId};
+use crate::ids::{AllocId, DeviceId, EventId, GraphId, OpId, StreamId};
 
 /// `cudaMemAdvise` hint on a [`crate::Sim::alloc_managed`] pointer.
 ///
@@ -209,7 +209,8 @@ impl KernelBuf {
 }
 
 /// One submitted GPU primitive. PLAN's Kernel / Memcpy / Collective / Event /
-/// Alloc / Free, plus `cudaMemsetAsync` and `cudaLaunchHostFunc`. Timing is not stored here.
+/// Alloc / Free, plus `cudaMemsetAsync`, `cudaLaunchHostFunc`, and nested
+/// [`Self::ChildGraph`]. Timing is not stored here.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GpuOp {
     /// Stream-ordered device allocation. Capacity is reserved when the op starts.
@@ -263,6 +264,12 @@ pub enum GpuOp {
         parts: Vec<(DeviceId, AllocId)>,
         /// Payload bytes per hop.
         bytes: u64,
+    },
+    /// Nested graph (`cudaGraphLaunch` while capturing). Expanded at parent
+    /// launch; never a live [`crate::Sim::operations`] node.
+    ChildGraph {
+        /// Instantiated exec launched as a child node.
+        graph: GraphId,
     },
 }
 

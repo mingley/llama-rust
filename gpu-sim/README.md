@@ -59,6 +59,7 @@ warp scheduler, L1, …   ← do not model
 | peer accessibility | size-dependent efficiency |
 | graph capture does not execute; launch replays | GEMM util / grouped-MoE ‰ |
 | forked capture: `wait_event` on a captured record joins that stream | copy/compute overlap inside one launch |
+| `launch_graph` during capture is a child-graph node | nested exec expanded at parent launch |
 | independent streams stay live during capture | query/sync of a capturing stream is Invalid |
 | graph instantiate is host-sync; first launch pays it once | `graph_instantiate_ns` |
 | graph update replaces steps when topology matches (device, stream, kind) | `graph_update_ns` |
@@ -184,7 +185,9 @@ not advance the virtual clock. Independent streams stay live. A stream that
 `wait_event`s an event recorded in this capture joins (CUDA forked capture);
 `launch_graph` remaps origin-stream nodes onto the launch stream so copy and
 compute can overlap. Query or `synchronize_stream` of a capturing stream, and
-node `synchronize`, are `Invalid`. Alloc/free cannot be captured, including
+node `synchronize`, are `Invalid`. `launch_graph` during capture records a
+child-graph node if the child is already instantiated; parent launch expands
+it. Independent streams still launch live. Alloc/free cannot be captured, including
 host-sync `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device`.
 Instantiate and update are host-synchronous and cannot run during capture.
 `clone_graph` is `cudaGraphClone` (`graph_clone_ns`): an independent

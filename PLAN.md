@@ -599,7 +599,10 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   copy and compute can overlap in one `launch_graph`. Launch remaps
   origin-stream nodes onto the launch stream; forked streams keep their
   ids. Query/sync of a capturing stream, and node `synchronize`, are
-  Invalid. Graph launch pays `graph_launch_ns` once; recorded kernels skip
+  Invalid. `launch_graph` during capture records a child-graph node
+  (`GpuOp::ChildGraph`) when the child is already instantiated; parent
+  launch expands the child. Independent streams still launch live.
+  Graph launch pays `graph_launch_ns` once; recorded kernels skip
   per-launch overhead.
   `sim_replay` / `SimulatedGpuStore` capture repeated expert GEMMs
   (`expertvm sim --cuda-graphs`). Capture after a miss waits with

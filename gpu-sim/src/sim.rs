@@ -615,22 +615,53 @@ impl Sim {
     /// streams keep the ids they joined with, so copy and compute can overlap.
     ///
     /// First launch [`Self::instantiate_graph`]s if needed (`cudaGraphInstantiate`
-    /// then `cudaGraphLaunch`). Later launches skip instantiate.
+    /// then `cudaGraphLaunch`). Later launches skip instantiate. During capture
+    /// on a captured stream this records a child-graph node (the child must
+    /// already be instantiated). Independent streams still launch live.
     pub fn launch_graph(&mut self, graph: GraphId, stream: StreamId) -> Result<u32, SimError> {
-        if self.capturing.is_some() {
-            return Err(SimError::Invalid {
-                why: "cannot launch during capture",
-            });
-        }
-        let instantiated = self
-            .graphs
-            .get(&graph)
-            .ok_or(SimError::Invalid {
+        let (origin, instantiated) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
-            })?
-            .instantiated;
+            })?;
+            (g.origin, g.instantiated)
+        };
+        if self.in_capture(origin.0, stream) {
+            return self.capture_child_graph(graph, origin.0, stream, instantiated);
+        }
         if !instantiated {
             self.instantiate_graph(graph)?;
+        }
+        let mut stack = BTreeSet::new();
+        self.enqueue_graph(graph, stream, true, &mut stack)
+    }
+
+    fn capture_child_graph(
+        &mut self,
+        graph: GraphId,
+        device: DeviceId,
+        stream: StreamId,
+        instantiated: bool,
+    ) -> Result<u32, SimError> {
+        if !instantiated {
+            return Err(SimError::Invalid {
+                why: "child graph not instantiated",
+            });
+        }
+        let _id = self.submit_captured(device, stream, Kind::ChildGraph { graph })?;
+        Ok(1)
+    }
+
+    fn enqueue_graph(
+        &mut self,
+        graph: GraphId,
+        stream: StreamId,
+        head: bool,
+        stack: &mut BTreeSet<GraphId>,
+    ) -> Result<u32, SimError> {
+        if !stack.insert(graph) {
+            return Err(SimError::Invalid {
+                why: "cyclic child graph",
+            });
         }
         let (origin, steps) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
@@ -640,7 +671,7 @@ impl Sim {
         };
         let launch_tail = self.tail.get(&(origin.0, stream)).copied();
         let mut n = 0u32;
-        let mut head = true;
+        let mut head = head;
         let mut seen = BTreeSet::new();
         let mut rec_ops: BTreeMap<EventId, OpId> = BTreeMap::new();
         for (device, rec_stream, kind) in steps {
@@ -649,6 +680,11 @@ impl Sim {
             } else {
                 rec_stream
             };
+            if let Kind::ChildGraph { graph: child } = kind {
+                n = n.saturating_add(self.enqueue_graph(child, s, head, stack)?);
+                head = false;
+                continue;
+            }
             let rec = match &kind {
                 Kind::EventRecord { event } => Some(*event),
                 _ => None,
@@ -669,25 +705,26 @@ impl Sim {
             }
             if let Some(event) = wait {
                 if let Some(rec_id) = rec_ops.get(&event).copied() {
-                    if let Some(op) = self.ops.get_mut(&id) {
-                        if !op.deps.contains(&rec_id) {
-                            op.deps.push(rec_id);
-                        }
-                    }
+                    self.add_op_dep(id, rec_id);
                 }
             }
             if seen.insert((device, s)) {
                 if let Some(tail) = launch_tail {
-                    if let Some(op) = self.ops.get_mut(&id) {
-                        if !op.deps.contains(&tail) {
-                            op.deps.push(tail);
-                        }
-                    }
+                    self.add_op_dep(id, tail);
                 }
             }
             n = n.saturating_add(1);
         }
+        let _gone = stack.remove(&graph);
         Ok(n)
+    }
+
+    fn add_op_dep(&mut self, id: OpId, dep: OpId) {
+        if let Some(op) = self.ops.get_mut(&id) {
+            if !op.deps.contains(&dep) {
+                op.deps.push(dep);
+            }
+        }
     }
 
     /// Recorded op count.
@@ -2891,6 +2928,9 @@ impl Sim {
                 let bytes = *bytes;
                 self.start_allreduce(id, device, &parts, bytes)
             }
+            Kind::ChildGraph { .. } => Err(SimError::Invalid {
+                why: "child graph must be expanded",
+            }),
         }
     }
 
@@ -3446,7 +3486,14 @@ fn graph_topology_eq(a: &[(DeviceId, StreamId, Kind)], b: &[(DeviceId, StreamId,
     }
     a.iter()
         .zip(b.iter())
-        .all(|((d0, s0, k0), (d1, s1, k1))| *d0 == *d1 && *s0 == *s1 && op_tag(k0) == op_tag(k1))
+        .all(|((d0, s0, k0), (d1, s1, k1))| *d0 == *d1 && *s0 == *s1 && op_eq(k0, k1))
+}
+
+fn op_eq(a: &Kind, b: &Kind) -> bool {
+    match (a, b) {
+        (Kind::ChildGraph { graph: x }, Kind::ChildGraph { graph: y }) => x == y,
+        _ => op_tag(a) == op_tag(b),
+    }
 }
 
 fn op_tag(k: &Kind) -> u8 {
@@ -3460,6 +3507,7 @@ fn op_tag(k: &Kind) -> u8 {
         Kind::EventRecord { .. } => 6,
         Kind::EventWait { .. } => 7,
         Kind::AllReduce { .. } => 8,
+        Kind::ChildGraph { .. } => 9,
     }
 }
 
