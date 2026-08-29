@@ -686,6 +686,30 @@ impl Sim {
         self.stream_sync_outcome(device, stream)
     }
 
+    /// `cudaEventSynchronize`: wait until `event` is recorded and complete.
+    ///
+    /// Work after the record on the same stream, and work on other streams,
+    /// keeps running. An event with no record and no running ops is a deadlock.
+    pub fn synchronize_event(&mut self, event: EventId) -> Result<(), SimError> {
+        if !self.events.contains_key(&event) {
+            return Err(SimError::UnknownEvent { event: event.0 });
+        }
+        self.drive_until(|sim| sim.event_complete(event))?;
+        if !self.event_complete(event) {
+            return Err(SimError::Invalid {
+                why: "deadlock: event not complete but nothing running",
+            });
+        }
+        let rec = self.events.get(&event).and_then(|e| e.recorded_by);
+        if let Some(id) = rec {
+            if self.ops.get(&id).is_some_and(|o| o.cancelled) {
+                let stream = self.ops.get(&id).map(|o| o.stream).unwrap_or(StreamId(0));
+                return Err(SimError::Cancelled { stream, n: 1 });
+            }
+        }
+        Ok(())
+    }
+
     fn drive_until(&mut self, idle: impl Fn(&Self) -> bool) -> Result<(), SimError> {
         let mut steps = 0u32;
         loop {

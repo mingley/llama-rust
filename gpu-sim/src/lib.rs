@@ -8,6 +8,7 @@
 //! This crate does not model warps, L1 caches, or Tensor Core pipelines.
 //! Submitted work is a [`GpuOp`] compiled into an [`Operation`] DAG
 //! ([`Sim::operations`]). [`Sim::synchronize_stream`] waits one stream.
+//! [`Sim::synchronize_event`] is `cudaEventSynchronize`.
 
 #![cfg_attr(not(test), deny(missing_docs))]
 
@@ -881,6 +882,41 @@ mod tests {
         sim.synchronize_stream(d, StreamId(0)).unwrap();
         match sim.synchronize() {
             Err(SimError::Cancelled { n: skipped, .. }) => assert!(skipped >= 1),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn synchronize_event_does_not_drain_the_rest_of_the_stream() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let ev = EventId(3);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let t0 = sim.clock_ns();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        enq(sim.record_event(d, ev, s));
+        let bytes = 64u64 << 20;
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+        sim.synchronize_event(ev).unwrap();
+        let partial = sim.clock_ns().saturating_sub(t0);
+        assert!(sim.event_complete(ev));
+        assert!(!sim.stream_is_idle(d, s).unwrap());
+        sim.synchronize().unwrap();
+        let full = sim.clock_ns().saturating_sub(t0);
+        assert!(
+            partial < full,
+            "event sync must not wait for the later H2D; partial={partial} full={full}"
+        );
+    }
+
+    #[test]
+    fn synchronize_event_unknown_is_semantic() {
+        let mut sim = Sim::new(h100());
+        match sim.synchronize_event(EventId(99)) {
+            Err(SimError::UnknownEvent { event: 99 }) => {}
             other => panic!("{other:?}"),
         }
     }

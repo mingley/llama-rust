@@ -432,7 +432,7 @@ Event record+wait / Alloc / Free / Memset) compiled into a
 Contention is real: three transfers to GPU0 cannot each get the full
 PCIe x16. `Sim::synchronize_stream` is `cudaStreamSynchronize`: the
 virtual clock advances until that stream is idle; other streams keep
-running.
+running. `synchronize_event` waits only until the record completes.
 
 Kernels are structural (`Matmul {m,n,k,dtypes}`, `GroupedMoeGemm {…}`),
 costed by a hardware profile (roofline first; `gemm_util_permille` and
@@ -523,7 +523,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   in the GPU loop (`--plan-window N`). `prefetch_hits` / `prefetch_waste`
   measure whether those fills were used. `memset`, directed peer enable, and
   the legacy null stream are mechanical CUDA invariants.
-  Public `GpuOp` / `Operation` is the compiled DAG (`Sim::operations`).
+  `synchronize_stream` / `synchronize_event` are `cudaStreamSynchronize` /
+  `cudaEventSynchronize`. Public `GpuOp` / `Operation` is the compiled DAG
+  (`Sim::operations`).
 - performance model must include fixed overhead, size-dependent
   throughput, queueing, concurrency limits, alignment, startup latency
   (`LinkProfile::align_bytes` rounds the billed payload up; a 1-byte DMA

@@ -38,6 +38,7 @@ warp scheduler, L1, …   ← do not model
 | graph capture does not execute; launch replays | GEMM util / grouped-MoE ‰ |
 | graph launch amortizes per-kernel launch overhead | `graph_launch_ns` |
 | `synchronize_stream` waits one stream only | other streams keep running |
+| `synchronize_event` waits the record only | later ops on that stream keep running |
 | memset requires device residency | HBM write + launch overhead |
 | peer D2D needs topology + `enable_peer` | link bandwidth |
 | legacy null stream serializes (opt-in) | copy/compute overlap |
@@ -145,8 +146,9 @@ topology link **and** directed `enable_peer` (seeded on for every GPU↔GPU
 link; `disable_peer` → `PeerDisabled`). [`StreamId::NULL`] is the CUDA null
 stream; `set_legacy_null_stream(true)` serializes it with every other stream
 on that device (off by default = `cudaStreamNonBlocking`).
-`synchronize_stream` is `cudaStreamSynchronize`. `GpuOp` / `Operation` is the
-compiled submit DAG (`Sim::operations`).
+`synchronize_stream` is `cudaStreamSynchronize`. `synchronize_event` is
+`cudaEventSynchronize` (later ops on that stream keep running). `GpuOp` /
+`Operation` is the compiled submit DAG (`Sim::operations`).
 
 In-flight ops are not cancelled. `gpu-profile capture` is refused in this
 crate: someone with a GPU writes a `key=value` file; agents `parse` it.

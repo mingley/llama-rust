@@ -11,7 +11,8 @@ Public `gpu_sim::GpuOp` / `gpu_sim::Operation` is the compiled
 dependency DAG (`Sim::operations`, `Sim::operation`). `synchronize_stream`
 is `cudaStreamSynchronize`: the virtual clock waits until that stream is
 idle while other streams keep running; cancelled ops on *other* streams do
-not fail a stream sync. `sim_replay --cuda-graphs` and `SimulatedGpuStore`
+not fail a stream sync. `synchronize_event` is `cudaEventSynchronize` (later
+ops on that stream keep running). `sim_replay --cuda-graphs` and `SimulatedGpuStore`
 call it before capture so a miss-path H2D can still record a GEMM graph.
 `ExpertPhase` is Cold → Transferring → Resident → Leased → Evicting → Cold
 (`CachedStore` / `TieredStore` are instant; GPU copies are Transferring until
