@@ -637,4 +637,24 @@ mod tests {
             assert!(p.n_gpus() >= 1);
         }
     }
+
+    #[test]
+    fn checked_in_profile_files_parse() {
+        use std::io::Read;
+        let dir = format!("{}/profiles", env!("CARGO_MANIFEST_DIR"));
+        for file in [
+            "h100-sxm.profile",
+            "2xh100-pcie.profile",
+            "bad-numa.profile",
+            "2node-rdma.profile",
+            "asymmetric.profile",
+        ] {
+            let path = format!("{dir}/{file}");
+            let mut f = std::fs::File::open(&path).unwrap();
+            let mut buf = String::new();
+            let _n = f.read_to_string(&mut buf).unwrap();
+            let p = HardwareProfile::parse(&buf).unwrap();
+            assert!(p.n_gpus() >= 1, "{file}");
+        }
+    }
 }

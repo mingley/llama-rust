@@ -270,6 +270,23 @@ fn simulated_gpu_store_unavailable_blocks_acquire() {
 }
 
 #[test]
+fn simulated_gpu_store_cancel_copy_stream() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::new(inner, 1, HardwareProfile::example_h100_sxm(), 4096).expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    let n = gpu.prefetch(&[k0]).expect("enqueue");
+    assert_eq!(n, 1);
+    let skipped = gpu.cancel_copy_stream().expect("cancel");
+    assert!(skipped >= 1);
+    let err = gpu.score().unwrap_err();
+    assert!(err.to_string().contains("cancelled"), "{err}");
+}
+
+#[test]
 fn tiered_memory_matches_direct_and_evicts() {
     let t = cycling_trace();
     let mut direct = DirectStore::from_trace(&t);
