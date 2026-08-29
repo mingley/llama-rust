@@ -49,14 +49,14 @@ usage: gguf_gemv <command> [args]
   infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]
   trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE [--capacity N]
   chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--kv-page N] [--show-prompt]
-  serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--compute-slots N] [--decode-sms N] [--trace-out FILE]
-  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--compute-slots N] [--decode-sms N] [--trace-out FILE]
+  serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--trace-out FILE]
+  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--trace-out FILE]
   write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|write-tiny-qwen3|write-tiny-gemma|write-tiny-llama4|write-tiny-llama-moe|write-tiny-qwen2moe|write-tiny-qwen3moe|write-tiny-qwen3moe-2layer|write-tiny-qwen2vl|write-tiny-qwen3vl|write-tiny-qwen3next|write-tiny-qwen35|write-tiny-phi2 <path>
 ";
 
 /// Usage for the `engine` verb.
 pub const ENGINE_USAGE: &str = "\
-usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
+usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
   -p, --prompt TEXT     prompt (repeatable; default: one `ab`)
   -n, --n-predict N     tokens to generate per sequence (default: 2)
       --n-ctx N         KV capacity (default: longest prompt + n_predict + 1)
@@ -98,6 +98,7 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
       --kv-bytes N      KV page bytes for `--kv-sim` (default: f32 K+V of one intern block)
       --decode-priority decode GEMMs on a higher-priority compute stream (`--expert-sim`; implies `--stream-priority`; ITL samples that stream)
       --cooperative     cudaLaunchCooperativeKernel for grouped GEMMs (`--expert-sim`; exclusive compute; no Hyper-Q overlap)
+      --multicast       cuMulticastCreate NVLS replica fanout (`--expert-sim`; implies `--vmm`; needs NVLink)
       --compute-slots N Hyper-Q occupancy (`--expert-sim`; `1` exclusive, `>=2` overlaps leftover prefill with decode on two streams; default profile `1`)
       --decode-sms N    decode-stream SM permille (`--expert-sim`; `1..=1000`; leftover prefill gets the remainder; implies `--decode-priority`; default full chip)
       --prefetch MODE   none|copy-forward|markov|both (default: both; CachedStore or sim)
@@ -117,14 +118,16 @@ mechanical path as `expertvm sim --cuda-graphs`). `--graph-update` /
 `--graph-clone` / `--graph-build` / `--graph-mem` / `--graph-auto-free` / `--timing-events` / `--host-func` / `--blocking-streams` /
 `--sync-alloc` / `--mempool` / `--vmm-page` / `--pageable` / `--accessed-by` /
 `--legacy-null` / `--stream-priority` / `--seq-streams` / `--kv-sim` /
-`--kv-bytes` / `--decode-priority` / `--cooperative` / `--compute-slots` / `--decode-sms` match `GpuStoreCfg` / `expertvm sim`. `--kv-sim` bills interned
+`--kv-bytes` / `--decode-priority` / `--cooperative` / `--multicast` / `--compute-slots` / `--decode-sms` match `GpuStoreCfg` / `expertvm sim`. `--kv-sim` bills interned
 KV map/memset/hits on the same virtual clock as expert H2D (distinct from
 `expertvm kv`; default off keeps decode identity). `--decode-priority` ITL
 samples the decode compute stream so leftover prefill does not inflate it.
 `--compute-slots N` (`N>=2`, with `--decode-priority`) lets leftover prefill
 and decode GEMMs overlap at full issue rate. `--cooperative` is
 `cudaLaunchCooperativeKernel`: those GEMMs occupy every Hyper-Q slot, so
-leftover prefill cannot overlap even with `--compute-slots 2`. Default
+leftover prefill cannot overlap even with `--compute-slots 2`. `--multicast`
+is Hopper NVLS replica fanout (`cuMulticastCreate`; implies `--vmm`; needs
+NVLink / `--expert-8gpu`). Decode identity stays copy-engine D2D. Default
 profile occupancy is exclusive (`1`). `--decode-sms N` (`1..=1000`) reserves that permille of
 peak FLOP/s for decode GEMMs (green-context; leftover prefill gets the
 remainder). Default unset is a full chip.
@@ -1563,6 +1566,7 @@ mod tests {
             "--kv-sim",
             "--decode-priority",
             "--cooperative",
+            "--multicast",
         ] {
             let err = parse_engine_args(["m.gguf", flag]).unwrap_err();
             assert!(
@@ -1675,6 +1679,15 @@ mod tests {
         assert!(err.contains("--cooperative requires --expert-sim"), "{err}");
         match parse_engine_args(["m.gguf", "--expert-sim", "--cooperative"]).expect("coop") {
             EngineCmd::Run(a) => assert!(a.gpu_cfg.cooperative),
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        let err = parse_engine_args(["m.gguf", "--multicast"]).unwrap_err();
+        assert!(err.contains("--multicast requires --expert-sim"), "{err}");
+        match parse_engine_args(["m.gguf", "--expert-sim", "--multicast"]).expect("mc") {
+            EngineCmd::Run(a) => {
+                assert!(a.gpu_cfg.multicast);
+                assert!(a.fill == GpuFill::Vmm);
+            }
             EngineCmd::Help => panic!("expected Run"),
         }
         let err = parse_engine_args(["m.gguf", "--compute-slots", "2"]).unwrap_err();

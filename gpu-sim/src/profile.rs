@@ -170,6 +170,10 @@ pub struct HardwareProfile {
     /// identity; 4096-byte expert pages stay legal). A 2 MiB profile rejects
     /// unaligned `va_reserve` / `va_map_range`. Not a capture.
     pub va_granularity_bytes: u64,
+    /// `cuMulticastGetGranularity`. `0` or `1` accepts any size (decode
+    /// identity; 4096-byte expert pages stay legal). A 2 MiB profile rejects
+    /// unaligned `cuMulticastCreate`. Not a capture. Example H100 is `1`.
+    pub multicast_granularity_bytes: u64,
 }
 
 impl HardwareProfile {
@@ -207,6 +211,29 @@ impl HardwareProfile {
     pub fn va_aligned(&self, n: u64) -> bool {
         let g = self.va_granularity_bytes;
         g <= 1 || n.is_multiple_of(g)
+    }
+
+    /// `cuMulticastGetGranularity` for [`crate::Sim::multicast_create`]. `0` or `1` is off.
+    #[must_use]
+    pub fn with_multicast_granularity(mut self, bytes: u64) -> Self {
+        self.multicast_granularity_bytes = bytes;
+        self
+    }
+
+    /// Whether `n` is a legal multicast object size for this profile.
+    #[must_use]
+    pub fn multicast_aligned(&self, n: u64) -> bool {
+        let g = self.multicast_granularity_bytes;
+        g <= 1 || n.is_multiple_of(g)
+    }
+
+    /// Whether any GPU↔GPU link is NVLink (`CU_DEVICE_ATTRIBUTE_MULTICAST_SUPPORTED`).
+    ///
+    /// PCIe P2P and RDMA are not NVLS. A team still needs an NVLink clique
+    /// among the bound devices (`cuMulticastAddDevice`).
+    #[must_use]
+    pub fn has_nvlink(&self) -> bool {
+        self.links.iter().any(|l| l.kind == LinkKind::Nvlink)
     }
 
     /// Hyper-Q occupancy on every GPU (`1` is exclusive compute).
@@ -302,6 +329,7 @@ impl HardwareProfile {
             links,
             host_pin_bytes: u64::MAX,
             va_granularity_bytes: 1,
+            multicast_granularity_bytes: 1,
         }
     }
 
@@ -327,6 +355,7 @@ impl HardwareProfile {
             ],
             host_pin_bytes: u64::MAX,
             va_granularity_bytes: 1,
+            multicast_granularity_bytes: 1,
         }
     }
 
@@ -339,6 +368,7 @@ impl HardwareProfile {
             links: vec![pcie_host(DeviceId(0)), pcie_host_slow(DeviceId(1))],
             host_pin_bytes: u64::MAX,
             va_granularity_bytes: 1,
+            multicast_granularity_bytes: 1,
         }
     }
 
@@ -355,6 +385,7 @@ impl HardwareProfile {
             ],
             host_pin_bytes: u64::MAX,
             va_granularity_bytes: 1,
+            multicast_granularity_bytes: 1,
         }
     }
 
@@ -376,6 +407,7 @@ impl HardwareProfile {
             links,
             host_pin_bytes: u64::MAX,
             va_granularity_bytes: 1,
+            multicast_granularity_bytes: 1,
         }
     }
 
@@ -418,7 +450,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -442,7 +474,8 @@ impl HardwareProfile {
             g0.pool_reuse_ns,
             g0.host_func_ns,
             self.host_pin_bytes,
-            self.va_granularity_bytes
+            self.va_granularity_bytes,
+            self.multicast_granularity_bytes
         )
     }
 
@@ -521,6 +554,7 @@ fn one_gpu_example(name: &str, gpu: GpuProfile, pcie: LinkProfile) -> HardwarePr
         links: vec![pcie],
         host_pin_bytes: u64::MAX,
         va_granularity_bytes: 1,
+        multicast_granularity_bytes: 1,
     }
 }
 
@@ -682,6 +716,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut host_func_ns: Option<u64> = None;
     let mut host_pin_bytes = u64::MAX;
     let mut va_granularity_bytes = 1u64;
+    let mut multicast_granularity_bytes = 1u64;
     let mut mesh = MeshKind::NvlinkClique;
     let mut mesh_set = false;
     for raw in text.lines() {
@@ -738,6 +773,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             "host_func_ns" => host_func_ns = Some(parse_u64(v)?),
             "host_pin_bytes" => host_pin_bytes = parse_u64(v)?,
             "va_granularity_bytes" => va_granularity_bytes = parse_u64(v)?,
+            "multicast_granularity_bytes" => multicast_granularity_bytes = parse_u64(v)?,
             "topology" => {
                 mesh = parse_mesh(v)?;
                 mesh_set = true;
@@ -811,6 +847,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         links,
         host_pin_bytes,
         va_granularity_bytes,
+        multicast_granularity_bytes,
     })
 }
 
@@ -1059,6 +1096,25 @@ mod tests {
         assert!(open.va_aligned(4096));
         assert!(!p.va_aligned(4096));
         assert!(p.va_aligned(2u64 << 20));
+    }
+
+    #[test]
+    fn parse_multicast_granularity_bytes() {
+        let p = HardwareProfile::parse("gpus=2\nmulticast_granularity_bytes=2097152\n").unwrap();
+        assert_eq!(p.multicast_granularity_bytes, 2u64 << 20);
+        assert!(p.has_nvlink());
+        assert!(p
+            .to_profile_text()
+            .contains("multicast_granularity_bytes=2097152"));
+        let open = HardwareProfile::parse("gpus=1\n").unwrap();
+        assert_eq!(open.multicast_granularity_bytes, 1);
+        assert!(!open.has_nvlink());
+        assert!(open.multicast_aligned(4096));
+        assert!(!p.multicast_aligned(4096));
+        assert!(p.multicast_aligned(2u64 << 20));
+        let pcie = HardwareProfile::example_2xh100_pcie();
+        assert!(!pcie.has_nvlink());
+        assert!(HardwareProfile::example_8xh100_nvlink().has_nvlink());
     }
 
     #[test]

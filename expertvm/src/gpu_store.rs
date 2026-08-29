@@ -121,6 +121,13 @@ pub struct GpuStoreCfg {
     /// even when [`Self::compute_slots`] is `>=2`. Decode identity stays
     /// `cudaLaunchKernel`.
     pub cooperative: bool,
+    /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
+    ///
+    /// [`Self::pin_hot`] and walker `--place replicas` map dest VMM physicals
+    /// then one NVLS kernel instead of sequential D2D. Occupies compute, not a
+    /// copy engine. Requires [`GpuFill::Vmm`]. Illegal with [`Self::accessed_by`]
+    /// or [`Self::vmm_page`]. Needs NVLink. Decode identity stays D2D.
+    pub multicast: bool,
     /// Timing-on copy events (`cudaEventCreate`) and [`gpu_sim::Sim::event_elapsed_ns`].
     ///
     /// Default is `cudaEventDisableTiming` (vLLM wait events). Decode identity
@@ -185,6 +192,7 @@ pub struct SimulatedGpuStore {
     decode: StreamId,
     decode_priority: bool,
     cooperative: bool,
+    multicast: bool,
     next_event: u32,
     pages: BTreeMap<ExpertKey, GpuPage>,
     /// Peer copy dest per pinned key (`(home + 1) % n_gpus`).
@@ -325,6 +333,8 @@ impl SimulatedGpuStore {
     /// disable-timing copy events.
     /// [`GpuStoreCfg::cooperative`] launches GEMMs with
     /// `cudaLaunchCooperativeKernel` (exclusive compute).
+    /// [`GpuStoreCfg::multicast`] is Hopper NVLS replica fanout (requires
+    /// [`GpuFill::Vmm`] and NVLink).
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
     /// exclusive compute). [`GpuStoreCfg::decode_sm_permille`] `0` keeps a
     /// full chip. `1..=1000` without [`GpuStoreCfg::decode_priority`] caps the
@@ -337,6 +347,20 @@ impl SimulatedGpuStore {
         fill: GpuFill,
         cfg: GpuStoreCfg,
     ) -> Result<Self, Error> {
+        if cfg.multicast {
+            if fill != GpuFill::Vmm {
+                return Err(Error::Store("multicast requires vmm"));
+            }
+            if cfg.accessed_by {
+                return Err(Error::Store("choose one of multicast, accessed-by"));
+            }
+            if cfg.vmm_page > 0 {
+                return Err(Error::Store("multicast needs whole-VA maps"));
+            }
+            if profile.n_gpus() < 2 || !profile.has_nvlink() {
+                return Err(Error::Store("multicast needs NVLink"));
+            }
+        }
         let leaf = LeafMem::from_flags(cfg.graph_mem, cfg.graph_auto_free)?;
         let bytes = bytes_per_expert.max(1);
         let (copy, prefill, decode, mark) =
@@ -392,6 +416,7 @@ impl SimulatedGpuStore {
             decode,
             decode_priority: cfg.decode_priority,
             cooperative: cfg.cooperative,
+            multicast: cfg.multicast,
             next_event: 1,
             pages: BTreeMap::new(),
             replicas: BTreeMap::new(),
@@ -579,6 +604,8 @@ impl SimulatedGpuStore {
     /// `prefetch` is not [`gpu_sim::SimError::Leased`]. Managed +
     /// `cudaMemAdviseSetAccessedBy` / VMM `cuMemSetAccess` / pinned
     /// `cudaMemPoolSetAccess` maps the dest without a prefetch or D2D.
+    /// [`GpuStoreCfg::multicast`] maps dest VMM physicals then one NVLS kernel
+    /// (`cuMulticastCreate`) instead of copy-engine D2D.
     /// 1-GPU profiles skip that wait so leftover prefill GEMMs can overlap
     /// decode-priority ITL samples.
     pub fn pin_hot(&mut self, keys: &[ExpertKey]) -> Result<(), Error> {
@@ -1348,6 +1375,17 @@ impl SimulatedGpuStore {
                     if !self.sim.is_accessed_by(id, dst)? {
                         self.sim.va_set_access(id, dst)?;
                     }
+                } else if self.multicast {
+                    if !self.sim.is_resident(id, dst)? {
+                        self.sim.va_map(id, dst)?;
+                    }
+                    let _c = self.sim.multicast_store(
+                        src,
+                        id,
+                        &[dst],
+                        self.copy,
+                    )?;
+                    self.note_replicate();
                 } else if !self.sim.is_resident(id, dst)? {
                     self.sim.va_map(id, dst)?;
                     let _c = self.sim.memcpy_device_to_device(

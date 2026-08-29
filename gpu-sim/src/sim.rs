@@ -6,12 +6,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::SimError;
 use crate::ids::{
-    AllocId, DeviceId, EventId, GraphId, IpcHandleId, MemHandleId, OpId, PoolId, StreamId,
+    AllocId, DeviceId, EventId, GraphId, IpcHandleId, MemHandleId, MulticastId, OpId, PoolId,
+    StreamId,
 };
 use crate::ops::{
     GpuOp as Kind, KernelBuf, KernelKind, MemAdvise, MemAttach, MemcpyOp, Operation, Place,
 };
-use crate::profile::{ns_for_bytes, HardwareProfile};
+use crate::profile::{ns_for_bytes, HardwareProfile, LinkKind};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Preferred {
@@ -114,6 +115,14 @@ struct MemHandle {
     maps: u32,
     /// HBM still charged for this physical.
     charged: bool,
+}
+
+struct Multicast {
+    bytes: u64,
+    n_dev: u32,
+    devices: Vec<DeviceId>,
+    binds: BTreeMap<DeviceId, MemHandleId>,
+    maps: u32,
 }
 
 struct Op {
@@ -245,6 +254,10 @@ pub struct Sim {
     ipc_handles: BTreeMap<IpcHandleId, AllocId>,
     /// Explicit [`Sim::va_map_handle`] maps. Missing is combined Create+Map.
     vmm_handle_at: BTreeMap<(AllocId, DeviceId, u64, u64), MemHandleId>,
+    next_mc: u32,
+    multicasts: BTreeMap<MulticastId, Multicast>,
+    /// Reserved VAs mapped with [`Sim::va_map_multicast`].
+    mc_vas: BTreeMap<AllocId, MulticastId>,
     pinned_used: u64,
     /// Unmapped live VAs waiting for [`Self::va_acquire`].
     vmm_idle: Vec<AllocId>,
@@ -303,6 +316,9 @@ impl Sim {
             next_ipc: 1,
             ipc_handles: BTreeMap::new(),
             vmm_handle_at: BTreeMap::new(),
+            next_mc: 1,
+            multicasts: BTreeMap::new(),
+            mc_vas: BTreeMap::new(),
             pinned_used: 0,
             vmm_idle: Vec::new(),
         }
@@ -2408,6 +2424,296 @@ impl Sim {
         Ok(self.handle_ref(handle)?.refs)
     }
 
+    /// `cuMulticastCreate`: an NVLS multicast object. Does not charge HBM.
+    ///
+    /// Host-synchronous. Capture cannot include it. `bytes` must be
+    /// [`HardwareProfile::multicast_aligned`]. `num_devices` is the team size
+    /// (`cuMulticastAddDevice` must fill it before bind/map). PCIe-only and
+    /// 1-GPU profiles still create; bind/map fail without an NVLink clique.
+    pub fn multicast_create(
+        &mut self,
+        bytes: u64,
+        num_devices: u32,
+    ) -> Result<MulticastId, SimError> {
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        if num_devices < 2 {
+            return Err(SimError::Invalid {
+                why: "multicast needs NVLink",
+            });
+        }
+        self.check_mc_align(bytes)?;
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        self.clock = self.clock.saturating_add(self.first_alloc_ns());
+        let id = MulticastId(self.next_mc);
+        self.next_mc = self.next_mc.saturating_add(1);
+        let _prev = self.multicasts.insert(
+            id,
+            Multicast {
+                bytes,
+                n_dev: num_devices,
+                devices: Vec::new(),
+                binds: BTreeMap::new(),
+                maps: 0,
+            },
+        );
+        Ok(id)
+    }
+
+    /// `cuMulticastAddDevice`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Must run before bind/map. Duplicate add is Invalid. The completed team
+    /// must be an NVLink clique.
+    pub fn multicast_add_device(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let _gpu = self.profile.gpu(device)?;
+        let done = {
+            let obj = self.mc_mut(mc)?;
+            if !obj.binds.is_empty() || obj.maps > 0 {
+                return Err(SimError::Invalid {
+                    why: "add all devices first",
+                });
+            }
+            if obj.devices.contains(&device) {
+                return Err(SimError::Invalid {
+                    why: "already added",
+                });
+            }
+            if u32::try_from(obj.devices.len()).unwrap_or(u32::MAX) >= obj.n_dev {
+                return Err(SimError::Invalid { why: "team full" });
+            }
+            obj.devices.push(device);
+            u32::try_from(obj.devices.len()).unwrap_or(0) == obj.n_dev
+        };
+        self.clock = self.clock.saturating_add(1);
+        if done {
+            let team = self.mc_ref(mc)?.devices.clone();
+            nvlink_clique(&self.profile, &team)?;
+        }
+        Ok(())
+    }
+
+    /// `cuMulticastBindMem` of a [`Self::va_create`] handle on `device`.
+    ///
+    /// Host-synchronous. Capture cannot include it. The handle's device and
+    /// size must match. All devices must already be added. Dest HBM is the
+    /// handle (already charged); bind does not charge again.
+    pub fn multicast_bind_mem(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        handle: MemHandleId,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let h = self.handle_ref(handle)?;
+        if h.refs == 0 {
+            return Err(SimError::Invalid {
+                why: "handle released",
+            });
+        }
+        if h.device != device {
+            return Err(SimError::Invalid {
+                why: "handle device mismatch",
+            });
+        }
+        let h_bytes = h.bytes;
+        let (n_dev, n_added, in_team, already, size, team) = {
+            let obj = self.mc_ref(mc)?;
+            (
+                obj.n_dev,
+                u32::try_from(obj.devices.len()).unwrap_or(0),
+                obj.devices.contains(&device),
+                obj.binds.contains_key(&device),
+                obj.bytes,
+                obj.devices.clone(),
+            )
+        };
+        if n_added != n_dev {
+            return Err(SimError::Invalid {
+                why: "add all devices first",
+            });
+        }
+        if !in_team {
+            return Err(SimError::Invalid {
+                why: "device not in team",
+            });
+        }
+        if already {
+            return Err(SimError::Invalid {
+                why: "already bound",
+            });
+        }
+        if h_bytes != size {
+            return Err(SimError::Invalid {
+                why: "handle size mismatch",
+            });
+        }
+        nvlink_clique(&self.profile, &team)?;
+        let _prev = self.mc_mut(mc)?.binds.insert(device, handle);
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cuMemMap` of a multicast object into a reserved VA (no extra HBM).
+    ///
+    /// Host-synchronous. Capture cannot include it. Every team device must
+    /// already be bound. Kernel writes to this VA are billed as one NVLS hop
+    /// and occupy compute (not a copy engine).
+    pub fn va_map_multicast(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        mc: MulticastId,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let (bytes, n_dev, n_binds, in_team, team) = {
+            let obj = self.mc_ref(mc)?;
+            (
+                obj.bytes,
+                obj.n_dev,
+                u32::try_from(obj.binds.len()).unwrap_or(0),
+                obj.devices.contains(&device),
+                obj.devices.clone(),
+            )
+        };
+        if n_binds != n_dev {
+            return Err(SimError::Invalid {
+                why: "bind all devices first",
+            });
+        }
+        if !in_team {
+            return Err(SimError::Invalid {
+                why: "device not in team",
+            });
+        }
+        nvlink_clique(&self.profile, &team)?;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        let end = offset.saturating_add(bytes);
+        if end > a.bytes {
+            return Err(SimError::Invalid {
+                why: "range past VA",
+            });
+        }
+        self.check_va_align(offset)?;
+        if vmm_overlap(&a.vmm_maps, device, offset, bytes) {
+            return Err(SimError::Invalid {
+                why: "already mapped",
+            });
+        }
+        if self.mc_vas.contains_key(&id) {
+            return Err(SimError::Invalid {
+                why: "already mapped",
+            });
+        }
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let a = self.alloc_mut(id)?;
+        a.vmm_maps.push((device, offset, bytes));
+        if !a.devices.contains(&device) {
+            a.devices.push(device);
+        }
+        self.vmm_idle.retain(|&x| x != id);
+        let maps = self.mc_ref(mc)?.maps;
+        self.mc_mut(mc)?.maps = maps.saturating_add(1);
+        let _prev = self.mc_vas.insert(id, mc);
+        Ok(())
+    }
+
+    /// Whether `id` is a reserved VA mapped with [`Self::va_map_multicast`].
+    #[must_use]
+    pub fn is_multicast_va(&self, id: AllocId) -> bool {
+        self.mc_vas.contains_key(&id)
+    }
+
+    /// How many devices currently have [`Self::multicast_bind_mem`] on `mc`.
+    pub fn multicast_binds(&self, mc: MulticastId) -> Result<u32, SimError> {
+        let n = self.mc_ref(mc)?.binds.len();
+        Ok(u32::try_from(n).unwrap_or(u32::MAX))
+    }
+
+    /// NVLS kernel store: bind `id`'s VMM maps on `src` and `dests`, then write.
+    ///
+    /// Each device must already have a whole-VA [`Self::va_map`] / handle map
+    /// (dest HBM is that physical). Enqueues a compute kernel whose duration is
+    /// one NVLink hop of `id`'s bytes, not `dests.len()` sequential D2Ds.
+    /// Capture cannot include the create/bind/map; the kernel may be captured
+    /// later. `dests` must be nonempty and not include `src`.
+    pub fn multicast_store(
+        &mut self,
+        src: DeviceId,
+        id: AllocId,
+        dests: &[DeviceId],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let bytes = self.alloc_ref(id)?.bytes;
+        let team = multicast_team(src, dests)?;
+        nvlink_clique(&self.profile, &team)?;
+        self.require_whole_maps(id, &team)?;
+        let n = u32::try_from(team.len()).unwrap_or(0);
+        let mc = self.multicast_create(bytes, n)?;
+        for d in &team {
+            self.multicast_add_device(mc, *d)?;
+        }
+        for d in team {
+            let h = self.handle_for_bind(id, d)?;
+            self.multicast_bind_mem(mc, d, h)?;
+        }
+        let va = self.va_reserve(bytes)?;
+        self.va_map_multicast(va, src, 0, mc)?;
+        self.kernel(src, KernelKind::other(0, bytes), &[id], &[va], stream)
+    }
+
+    fn require_whole_maps(&self, id: AllocId, team: &[DeviceId]) -> Result<(), SimError> {
+        let a = self.alloc_ref(id)?;
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        let bytes = a.bytes;
+        for &d in team {
+            if !vmm_covers(&a.vmm_maps, d, 0, bytes) {
+                return Err(SimError::NotResident {
+                    alloc: id,
+                    device: d,
+                });
+            }
+            let page = a
+                .vmm_maps
+                .iter()
+                .find(|&&(dev, off, _)| dev == d && off == 0)
+                .map(|&(_, _, n)| n);
+            if page != Some(bytes) {
+                return Err(SimError::Invalid {
+                    why: "multicast needs whole-VA maps",
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_for_bind(&mut self, id: AllocId, device: DeviceId) -> Result<MemHandleId, SimError> {
+        let bytes = self.alloc_ref(id)?.bytes;
+        let key = (id, device, 0, bytes);
+        if let Some(&h) = self.vmm_handle_at.get(&key) {
+            return Ok(h);
+        }
+        self.va_retain_handle(id, device, 0)
+    }
+
     /// Map `[offset, offset+bytes)` of a reserved VA onto `device`.
     ///
     /// Host-synchronous. Charges `bytes` of HBM. Overlapping maps on the same
@@ -2486,6 +2792,7 @@ impl Sim {
         a.devices.clear();
         a.accessed_by.clear();
         a.vmm_write_by.clear();
+        let _gone = self.mc_vas.remove(&id);
         Ok(())
     }
 
@@ -2522,6 +2829,7 @@ impl Sim {
         if a.vmm_maps.is_empty() {
             a.accessed_by.clear();
             a.vmm_write_by.clear();
+            let _gone = self.mc_vas.remove(&id);
         }
         Ok(())
     }
@@ -2766,6 +3074,16 @@ impl Sim {
         } else {
             Err(SimError::Invalid {
                 why: "unaligned VA",
+            })
+        }
+    }
+
+    fn check_mc_align(&self, n: u64) -> Result<(), SimError> {
+        if self.profile.multicast_aligned(n) {
+            Ok(())
+        } else {
+            Err(SimError::Invalid {
+                why: "unaligned multicast",
             })
         }
     }
@@ -4402,6 +4720,18 @@ impl Sim {
         })
     }
 
+    fn mc_ref(&self, id: MulticastId) -> Result<&Multicast, SimError> {
+        self.multicasts.get(&id).ok_or(SimError::Invalid {
+            why: "unknown multicast",
+        })
+    }
+
+    fn mc_mut(&mut self, id: MulticastId) -> Result<&mut Multicast, SimError> {
+        self.multicasts.get_mut(&id).ok_or(SimError::Invalid {
+            why: "unknown multicast",
+        })
+    }
+
     /// Unmap one VMM span: refund HBM unless it is an explicit [`Self::va_map_handle`].
     fn drop_vmm_physical(
         &mut self,
@@ -4896,6 +5226,11 @@ impl Sim {
         let mut bps = hbm;
         let mut remote = false;
         for b in reads.iter().chain(writes.iter()) {
+            if let Some(&mc) = self.mc_vas.get(&b.id) {
+                bps = bps.min(self.nvls_bps(device, mc)?);
+                remote = true;
+                continue;
+            }
             let a = self.alloc_ref(b.id)?;
             if a.devices.contains(&device) {
                 continue;
@@ -4931,6 +5266,40 @@ impl Sim {
             }
         }
         Ok(if remote { bps } else { hbm })
+    }
+
+    fn nvls_bps(&self, src: DeviceId, mc: MulticastId) -> Result<u64, SimError> {
+        let team = self.mc_ref(mc)?;
+        let mut bps = u64::MAX;
+        let mut any = false;
+        for &d in &team.devices {
+            if d == src {
+                continue;
+            }
+            any = true;
+            bps = bps.min(self.peer_or_host_bps(src, d)?);
+        }
+        if !any {
+            return Ok(self.profile.gpu(src)?.hbm_bps);
+        }
+        Ok(bps)
+    }
+
+    fn multicast_write_bytes(&self, writes: &[KernelBuf]) -> u64 {
+        let mut n = 0u64;
+        for w in writes {
+            if !self.mc_vas.contains_key(&w.id) {
+                continue;
+            }
+            let Ok(a) = self.alloc_ref(w.id) else {
+                continue;
+            };
+            let Ok((_, m)) = kernel_span(a.bytes, w) else {
+                continue;
+            };
+            n = n.saturating_add(m);
+        }
+        n
     }
 
     fn kernel_ns(
@@ -5324,6 +5693,10 @@ impl Sim {
             Kind::Attach { id: alloc, flags } => Some((*alloc, *flags, op.stream)),
             _ => None,
         });
+        let mc_bytes = self.ops.get(&id).and_then(|op| match &op.kind {
+            Kind::Kernel { writes, .. } => Some(self.multicast_write_bytes(writes)),
+            _ => None,
+        });
         if let Some((alloc, flags, stream)) = attach {
             self.alloc_mut(alloc)?.attach = attach_state(flags, stream);
         }
@@ -5334,6 +5707,9 @@ impl Sim {
                 let cur = self.alloc_mut(a)?;
                 cur.leases = cur.leases.saturating_sub(1);
             }
+        }
+        if let Some(n) = mc_bytes {
+            self.bytes_moved = self.bytes_moved.saturating_add(n);
         }
         if let Some(m) = memcpy {
             self.finish_memcpy(device, m, dma)?;
@@ -5363,6 +5739,53 @@ fn kernel_span(total: u64, buf: &KernelBuf) -> Result<(u64, u64), SimError> {
         });
     }
     Ok((buf.offset, n))
+}
+
+fn nvlink_clique(profile: &HardwareProfile, devices: &[DeviceId]) -> Result<(), SimError> {
+    if devices.len() < 2 {
+        return Err(SimError::Invalid {
+            why: "multicast needs NVLink",
+        });
+    }
+    for (i, a) in devices.iter().enumerate() {
+        for b in devices.iter().skip(i.saturating_add(1)) {
+            match profile.link(Some(*a), Some(*b)) {
+                Ok(l) if l.kind == LinkKind::Nvlink => {}
+                _ => {
+                    return Err(SimError::Invalid {
+                        why: "multicast needs NVLink",
+                    });
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn multicast_team(src: DeviceId, dests: &[DeviceId]) -> Result<Vec<DeviceId>, SimError> {
+    if dests.is_empty() {
+        return Err(SimError::Invalid {
+            why: "multicast needs NVLink",
+        });
+    }
+    let mut team = vec![src];
+    for &d in dests {
+        if d == src {
+            return Err(SimError::Invalid {
+                why: "multicast src is dest",
+            });
+        }
+        if team.contains(&d) {
+            continue;
+        }
+        team.push(d);
+    }
+    if team.len() < 2 {
+        return Err(SimError::Invalid {
+            why: "multicast needs NVLink",
+        });
+    }
+    Ok(team)
 }
 
 fn snapshot_op(id: OpId, o: &Op) -> Operation {

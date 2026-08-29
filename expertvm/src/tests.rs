@@ -1903,6 +1903,33 @@ fn simulated_gpu_store_pin_hot_replicates_on_nvlink() {
 }
 
 #[test]
+fn simulated_gpu_store_multicast_pin_hot_nvls() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        2,
+        HardwareProfile::example_8xh100_nvlink(),
+        4096,
+        GpuFill::Vmm,
+        GpuStoreCfg {
+            multicast: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    gpu.pin_hot(&[k0]).expect("pin");
+    assert_eq!(gpu.replica_of(k0), Some(DeviceId(1)));
+    assert!(gpu.page_resident(k0, DeviceId(1)));
+    assert_eq!(gpu.metrics().replicates, 1);
+    let score = gpu.score().expect("score");
+    assert!(score.bytes_moved >= 4096, "{}", score.bytes_moved);
+}
+
+#[test]
 fn simulated_gpu_store_pin_hot_replicates_onto_next_home() {
     let t = Trace {
         events: vec![ev(0, 0, &[3])],
@@ -4253,6 +4280,85 @@ fn schedule_vmm_hot_replicas_d2d() {
         b.replay.bytes_moved,
         a.replay.bytes_moved
     );
+}
+
+#[test]
+fn schedule_vmm_multicast_replicas_beat_sequential_d2d() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0]), ev(2, 0, &[0])],
+    };
+    let p = HardwareProfile::example_8xh100_nvlink();
+    let bytes = 1u64 << 20;
+    let d2d = SimCfg {
+        vmm: true,
+        ..SimCfg::lru(8, bytes, 0)
+    };
+    let nvls = SimCfg {
+        multicast: true,
+        ..d2d
+    };
+    let mut hot = striped(&t, 8);
+    let _prev = hot.replicas.insert(
+        ExpertKey::new(0, 0),
+        (1..8u16).map(DeviceId).collect(),
+    );
+    let a = schedule_placed(&t, p.clone(), d2d, SchedCfg::closed(0), Some(&hot)).expect("d2d");
+    let b = schedule_placed(&t, p, nvls, SchedCfg::closed(0), Some(&hot)).expect("nvls");
+    assert!(
+        b.replay.sim_ns < a.replay.sim_ns,
+        "nvls={} d2d={}",
+        b.replay.sim_ns,
+        a.replay.sim_ns
+    );
+    assert!(
+        b.replay.bytes_moved < a.replay.bytes_moved,
+        "NVLS counts one fabric hop; nvls={} d2d={}",
+        b.replay.bytes_moved,
+        a.replay.bytes_moved
+    );
+}
+
+#[test]
+fn multicast_cfg_requires_vmm_and_nvlink() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            multicast: true,
+            vmm: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    )
+    .expect_err("1gpu");
+    assert!(err.to_string().contains("NVLink"), "{err}");
+    let err = sim_replay_cfg(
+        &t,
+        HardwareProfile::example_8xh100_nvlink(),
+        SimCfg {
+            multicast: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    )
+    .expect_err("no vmm");
+    assert!(err.to_string().contains("vmm"), "{err}");
+    let err = match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        2,
+        HardwareProfile::example_8xh100_nvlink(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            multicast: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("pinned multicast"),
+        Err(e) => e,
+    };
+    assert!(err.to_string().contains("vmm"), "{err}");
 }
 
 #[test]

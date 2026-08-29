@@ -8,8 +8,8 @@ use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
     advise_pool_access_if_pinned, apply_stream_sms, apply_touch, drop_remote, fetch_remote,
     fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots, reclaim_victim,
-    remote_hit, replay_from_sim, sim_profile, sync_work, GraphBank, LeafMem, PageHandle,
-    RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, StreamPlan, TouchArgs,
+    remote_hit, replay_from_sim, sim_profile, sync_work, validate_sim_cfg, GraphBank, LeafMem,
+    PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, StreamPlan, TouchArgs,
 };
 use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -280,6 +280,7 @@ impl SchedRt {
         place: Option<PlaceMap>,
         remote_act: Option<u64>,
     ) -> Result<Self, Error> {
+        validate_sim_cfg(&cfg, &profile)?;
         let mut sim = Sim::new(sim_profile(profile, &cfg));
         if cfg.mempool {
             sim.set_default_pool_release_threshold(u64::MAX)?;
@@ -635,6 +636,7 @@ impl SchedRt {
         let id = page.id;
         let stream = page.stream;
         let bytes = self.args.bytes;
+        let mut nvls = Vec::new();
         for dst in dsts {
             if dst == src {
                 continue;
@@ -663,9 +665,13 @@ impl SchedRt {
             if self.args.vmm {
                 if !self.sim.is_resident(id, dst)? {
                     self.sim.va_map(id, dst)?;
-                    let _c = self
-                        .sim
-                        .memcpy_device_to_device(src, dst, id, bytes, stream)?;
+                    if self.cfg.multicast {
+                        nvls.push(dst);
+                    } else {
+                        let _c = self
+                            .sim
+                            .memcpy_device_to_device(src, dst, id, bytes, stream)?;
+                    }
                 }
             } else if self.args.managed {
                 let _p = self.sim.prefetch(dst, id, stream)?;
@@ -677,6 +683,9 @@ impl SchedRt {
             if let Some(held) = self.handles.get_mut(&key) {
                 held.replicas.push(dst);
             }
+        }
+        if !nvls.is_empty() {
+            let _c = self.sim.multicast_store(src, id, &nvls, stream)?;
         }
         Ok(())
     }

@@ -285,6 +285,14 @@ pub struct SimCfg {
     /// `cudaLaunchKernel`. [`crate::GpuStoreCfg::cooperative`] is the store
     /// path.
     pub cooperative: bool,
+    /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
+    ///
+    /// `--place replicas` maps dest VMM physicals then one NVLS kernel instead
+    /// of N sequential D2Ds. Occupies compute, not a copy engine. Implies
+    /// [`Self::vmm`]. Illegal with [`Self::accessed_by`], [`Self::mapped`],
+    /// [`Self::managed`], or [`Self::vmm_page`]. Needs an NVLink clique.
+    /// Decode identity stays copy-engine D2D.
+    pub multicast: bool,
     /// Hyper-Q occupancy override (`0` keeps the profile).
     ///
     /// `1` is exclusive compute. `>=2` lets independent sequence GEMMs overlap
@@ -340,11 +348,31 @@ impl SimCfg {
             graph_mem: false,
             graph_auto_free: false,
             cooperative: false,
+            multicast: false,
             compute_slots: 0,
             decode_sm_permille: 0,
             decode_priority: false,
         }
     }
+}
+
+pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Result<(), Error> {
+    if !cfg.multicast {
+        return Ok(());
+    }
+    if !cfg.vmm || cfg.mapped || cfg.managed {
+        return Err(Error::Store("multicast requires vmm"));
+    }
+    if cfg.accessed_by {
+        return Err(Error::Store("choose one of multicast, accessed-by"));
+    }
+    if cfg.vmm_page > 0 {
+        return Err(Error::Store("multicast needs whole-VA maps"));
+    }
+    if profile.n_gpus() < 2 || !profile.has_nvlink() {
+        return Err(Error::Store("multicast needs NVLink"));
+    }
+    Ok(())
 }
 
 /// Replay `trace` on `profile` with a `slots`-entry expert cache.
@@ -376,6 +404,7 @@ pub fn sim_replay_cfg(
     profile: HardwareProfile,
     cfg: SimCfg,
 ) -> Result<SimReplay, Error> {
+    validate_sim_cfg(&cfg, &profile)?;
     let keys = trace.keys();
     let mut sim = Sim::new(sim_profile(profile, &cfg));
     if cfg.mempool {

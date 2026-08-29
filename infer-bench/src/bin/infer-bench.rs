@@ -17,7 +17,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -130,6 +130,10 @@ fn run() -> Result<(), String> {
             sim_cfg.decode_sm_permille = cfg.decode_sm_permille;
             sim_cfg.decode_priority = cfg.decode_priority;
             sim_cfg.cooperative = cfg.cooperative;
+            sim_cfg.multicast = cfg.multicast;
+            if cfg.multicast {
+                sim_cfg.vmm = true;
+            }
             if cfg.decode_priority {
                 sim_cfg.stream_priority = true;
             }
@@ -194,6 +198,7 @@ struct Cfg {
     decode_sm_permille: u16,
     decode_priority: bool,
     cooperative: bool,
+    multicast: bool,
 }
 
 fn parse_flags<I>(args: I) -> Result<Cfg, String>
@@ -227,6 +232,7 @@ where
     let mut decode_sm_permille = 0u16;
     let mut decode_priority = false;
     let mut cooperative = false;
+    let mut multicast = false;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -282,6 +288,9 @@ where
             }
             "--cooperative" => {
                 cooperative = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
+            "--multicast" => {
+                multicast = !matches!(inline.as_deref(), Some("0" | "false"));
             }
             "--slo-reject" => {
                 slo_reject = !matches!(inline.as_deref(), Some("0" | "false"));
@@ -341,6 +350,7 @@ where
         decode_sm_permille,
         decode_priority,
         cooperative,
+        multicast,
     })
 }
 

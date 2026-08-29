@@ -47,6 +47,8 @@
 //! exclusive (`1`), which keeps decode identity and stream-priority contention.
 //! `--cooperative` is `cudaLaunchCooperativeKernel`: GEMMs occupy every Hyper-Q
 //! slot, so leftover prefill cannot overlap even with `--compute-slots 2`.
+//! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
+//! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode
 //! stream (compute-bound kernels scale; memory-bound keep full HBM). Leftover
 //! prefill gets the remainder. Implies `--decode-priority`. Default unset is a
@@ -3104,6 +3106,20 @@ mod tests {
         );
         assert!(out.launches >= 2, "launches={}", out.launches);
         assert!(!out.accessed_peer, "default managed must not SetAccessedBy");
+    }
+
+    #[test]
+    fn engine_gpu_multicast_8gpu_keeps_decode_identity() {
+        let out = two_seq_gpu_on(
+            2,
+            GpuStoreCfg {
+                multicast: true,
+                ..GpuStoreCfg::default()
+            },
+            GpuFill::Vmm,
+            HardwareProfile::example_8xh100_nvlink(),
+        );
+        assert!(out.launches >= 2, "launches={}", out.launches);
     }
 
     #[test]

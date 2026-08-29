@@ -681,7 +681,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `sim`/`schedule` / `SimulatedGpuStore::new` stay on `cudaMallocAsync`.
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-clone`, `--graph-build`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, and `--cooperative`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-clone`, `--graph-build`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--cooperative`, and `--multicast`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--mapped` is `cudaHostAllocMapped`
   (no H2D, PCIe kernels, HBM unused; walker slots also cap at
@@ -1172,6 +1172,20 @@ model, do not celebrate the sim.
     edges as topology. Leaf `--graph-mem` / `--graph-auto-free` chains
     alloc→kernel→free. Decode identity stays stream capture. Dual score still
     has no `$/M tokens`.
+
+80. [x] Hopper `cuMulticastCreate` NVLS replica fanout: `Sim::multicast_create` /
+    `multicast_add_device` / `multicast_bind_mem` / `va_map_multicast` are
+    `cuMulticastCreate` / `cuMulticastAddDevice` / `cuMulticastBindMem` /
+    `cuMemMap` of a multicast handle. The team must be an NVLink clique
+    (PCIe P2P and RDMA refuse). Bind uses existing VMM physicals (dest HBM is
+    already charged). A kernel write to the multicast VA is one NVLS hop on
+    compute, not N sequential copy-engine D2Ds. Capture cannot include
+    create/add/bind/map. `Sim::multicast_store` binds whole-VA maps and
+    enqueues that kernel. `--multicast` on `expertvm sim` / `schedule` /
+    `store`, `gguf_gemv engine` / `serve --engine --expert-sim`, and
+    `infer-bench schedule` implies `--vmm` and uses NVLS for `--place replicas`
+    / `pin_hot`. Illegal with `--accessed-by` or `--vmm-page`. Decode identity
+    stays copy-engine D2D. Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

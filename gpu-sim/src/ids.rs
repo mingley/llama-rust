@@ -84,3 +84,18 @@ impl fmt::Display for IpcHandleId {
         write!(f, "ipc{}", self.0)
     }
 }
+
+/// Hopper multicast object (`CUmemGenericAllocationHandle` from
+/// [`crate::Sim::multicast_create`] / `cuMulticastCreate`).
+///
+/// [`crate::Sim::multicast_bind_mem`] binds a [`MemHandleId`] per device.
+/// [`crate::Sim::va_map_multicast`] maps the object into a reserved VA so a
+/// kernel write fans out over NVLink (NVLS), not N sequential P2P copies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MulticastId(pub u32);
+
+impl fmt::Display for MulticastId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "mc{}", self.0)
+    }
+}

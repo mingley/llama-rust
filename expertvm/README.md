@@ -87,7 +87,9 @@ so independent sequence GEMMs on those streams overlap at full issue rate
 independent sequences cannot overlap even with `--compute-slots 2`.
 `--decode-sms N` (`1..=1000`) is a
 green-context SM fraction on every replay stream (compute-bound kernels
-scale; memory-bound keep full HBM; default unset is a full chip). `--sync-alloc` uses host-sync `cudaMalloc` /
+scale; memory-bound keep full HBM; default unset is a full chip). `--multicast`
+is Hopper NVLS replica fanout (implies `--vmm`; illegal with `--accessed-by`
+/ `--vmm-page`; needs an NVLink clique). `--sync-alloc` uses host-sync `cudaMalloc` /
 `cudaMemcpy` / `cudaFree` on every miss (`Sim::malloc`); the default is
 stream-ordered `alloc` so a miss can overlap other streams. `--mempool`
 sets the default pool release threshold to `u64::MAX` so unused
@@ -103,7 +105,9 @@ That is the “do not move the expert” alternative to H2D. `--managed` uses
 kernel read can keep the page at the preferred GPU.
 `--place replicas` uses that prefetch onto dest GPUs; dest eviction
 `drop_managed_copy`s one GPU without freeing the allocation. `--place replicas
---vmm` maps dest then D2D (`va_unmap_range` on dest eviction). `--accessed-by`
+--vmm` maps dest then D2D (`va_unmap_range` on dest eviction). `--multicast`
+(implies `--vmm`) replaces that dest D2D with one Hopper NVLS kernel so N
+dests pay one fabric hop on compute. Needs NVLink. `--accessed-by`
 is `cudaMemAdviseSetAccessedBy` on every GPU at a managed fill, or
 `cuMemSetAccess` PROT_READ at a VMM fill, or `cudaMemPoolSetAccess` ReadWrite
 on every default pool for pinned `cudaMallocAsync`: dest GEMMs
@@ -183,10 +187,10 @@ on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` /
 `--seq-streams` / `--kv-sim` / `--kv-bytes` / `--decode-priority` /
-`--cooperative` / `--compute-slots` / `--decode-sms` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
+`--cooperative` / `--compute-slots` / `--decode-sms` / `--multicast` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
 `expertvm sim` / `schedule` / `store` take `--compute-slots` / `--decode-sms`
-/ `--decode-priority` / `--cooperative` (Hyper-Q occupancy, green-context SM fraction,
-decode-stream ITL, and exclusive cooperative GEMMs on the trace walker). Walker `--decode-sms` does **not**
+/ `--decode-priority` / `--cooperative` / `--multicast` (Hyper-Q occupancy, green-context SM fraction,
+decode-stream ITL, exclusive cooperative GEMMs, and NVLS replica fanout on the trace walker). Walker `--decode-sms` does **not**
 imply `--decode-priority` (token 0 is prefill). `--decode-priority` implies
 `--stream-priority` so leftover prefill does not inflate decode ITL.
 `gguf_gemv engine --expert-sim --kv-sim` maps interned KV onto that Sim
@@ -315,6 +319,7 @@ expertvm store    trace.jsonl --capacity 2 --accessed-by --profile 8xh100
 expertvm store    trace.jsonl --capacity 2 --legacy-null
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --stream-priority
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 2 --cooperative
+expertvm schedule trace.jsonl --capacity 8 --place replicas --multicast --profile 8xh100
 expertvm schedule trace.jsonl --capacity 8 --prefill-chunk 1 --decode-priority --compute-slots 2
 expertvm sim      trace.jsonl --capacity 2 --managed --accessed-by --profile 2xh100-pcie
 gpu-profile probe 2xh100-pcie --bytes 1048576

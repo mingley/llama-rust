@@ -71,6 +71,15 @@
 //! combined `va_map` spans are promoted). [`Sim::va_release_handle`] is
 //! `cuMemRelease` (allowed while mapped; HBM refunds when refs and maps are 0).
 //! [`Sim::va_map`] still Create+Maps in one call.
+//! [`Sim::multicast_create`] / [`multicast_add_device`](Sim::multicast_add_device) /
+//! [`multicast_bind_mem`](Sim::multicast_bind_mem) / [`va_map_multicast`](Sim::va_map_multicast)
+//! are `cuMulticastCreate` / `cuMulticastAddDevice` / `cuMulticastBindMem` /
+//! `cuMemMap` of a multicast handle. The team must be an NVLink clique (PCIe P2P
+//! and RDMA refuse). Bind uses existing [`MemHandleId`] physicals (dest HBM is
+//! already charged). A kernel write to the multicast VA is one NVLS hop on
+//! compute, not N sequential copy-engine D2Ds. Capture cannot include
+//! create/add/bind/map. [`Sim::multicast_store`] binds whole-VA maps of one
+//! alloc and enqueues that kernel.
 //! [`Sim::va_set_access`] is `cuMemSetAccess` PROT_READ on a peer (no dest HBM;
 //! interconnect). [`va_set_access_write`](Sim::va_set_access_write) is
 //! PROT_READWRITE (peer writes, no dest HBM). [`Sim::va_unset_access`] drops it.
@@ -147,7 +156,8 @@ mod sim;
 
 pub use error::SimError;
 pub use ids::{
-    AllocId, DeviceId, EventId, GraphId, IpcHandleId, LinkId, MemHandleId, OpId, PoolId, StreamId,
+    AllocId, DeviceId, EventId, GraphId, IpcHandleId, LinkId, MemHandleId, MulticastId, OpId, PoolId,
+    StreamId,
 };
 pub use ops::{
     DType, GpuOp, KernelBuf, KernelKind, MemAdvise, MemAttach, MemcpyOp, Operation, Place,
@@ -5403,5 +5413,147 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("topology"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    fn map_whole(sim: &mut Sim, device: DeviceId, bytes: u64) -> AllocId {
+        let va = sim.va_reserve(bytes).unwrap();
+        sim.va_map(va, device).unwrap();
+        va
+    }
+
+    #[test]
+    fn multicast_pcie_team_is_invalid() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let bytes = 4096u64;
+        let mc = sim.multicast_create(bytes, 2).unwrap();
+        sim.multicast_add_device(mc, DeviceId(0)).unwrap();
+        let err = sim.multicast_add_device(mc, DeviceId(1)).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("NVLink"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mut one = Sim::new(h100());
+        let mc = one.multicast_create(bytes, 2).unwrap();
+        one.multicast_add_device(mc, DeviceId(0)).unwrap();
+        let err = one.multicast_add_device(mc, DeviceId(1)).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = one.multicast_create(bytes, 1).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("NVLink"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn multicast_granularity_and_capture_refused() {
+        let mut sim = Sim::new(
+            HardwareProfile::example_8xh100_nvlink().with_multicast_granularity(1 << 21),
+        );
+        let err = sim.multicast_create(4096, 2).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unaligned"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.begin_capture(d, s).unwrap();
+        let err = sim.multicast_create(4096, 2).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn multicast_bind_map_kernel_is_one_nvls_hop() {
+        let p = HardwareProfile::example_8xh100_nvlink();
+        let bytes = 1u64 << 20;
+        let src = DeviceId(0);
+        let s = StreamId(0);
+        let dests: Vec<DeviceId> = (1..8u16).map(DeviceId).collect();
+        let mut d2d = Sim::new(p.clone());
+        let mut nvls = Sim::new(p);
+        let setup = |sim: &mut Sim| {
+            let va = map_whole(sim, src, bytes);
+            for &d in &dests {
+                sim.va_map(va, d).unwrap();
+            }
+            enq(sim.memcpy_pinned_to_device(src, va, bytes, s));
+            sim.synchronize().unwrap();
+            va
+        };
+        let a = setup(&mut d2d);
+        let b = setup(&mut nvls);
+        let t0 = d2d.clock_ns();
+        let moved0 = d2d.bytes_moved();
+        for &d in &dests {
+            enq(d2d.memcpy_device_to_device(src, d, a, bytes, s));
+        }
+        d2d.synchronize().unwrap();
+        let d2d_ns = d2d.clock_ns().saturating_sub(t0);
+        let d2d_moved = d2d.bytes_moved().saturating_sub(moved0);
+        let t1 = nvls.clock_ns();
+        let moved1 = nvls.bytes_moved();
+        enq(nvls.multicast_store(src, b, &dests, s));
+        nvls.synchronize().unwrap();
+        let nvls_ns = nvls.clock_ns().saturating_sub(t1);
+        let nvls_moved = nvls.bytes_moved().saturating_sub(moved1);
+        assert!(
+            nvls_ns < d2d_ns,
+            "nvls={nvls_ns} d2d={d2d_ns} (NVLS must beat 7 sequential D2Ds)"
+        );
+        assert_eq!(d2d_moved, bytes.saturating_mul(7));
+        assert_eq!(nvls_moved, bytes);
+        assert!(nvls.operations().any(|o| matches!(
+            o.kind,
+            GpuOp::Kernel {
+                kind: KernelKind::Other { flops: 0, bytes: n },
+                ..
+            } if n == bytes
+        )));
+        assert_eq!(nvls.hbm_used(DeviceId(7)).unwrap(), bytes);
+        assert_eq!(d2d.hbm_used(DeviceId(7)).unwrap(), bytes);
+    }
+
+    #[test]
+    fn multicast_kernel_blocks_compute_unlike_d2d() {
+        let p = HardwareProfile::parse(
+            "gpus=2\nfp16_flops=1000000\nhbm_bps=1000000000000\ncompute_slots=1\nlaunch_overhead_ns=1\n",
+        )
+        .unwrap();
+        assert!(p.has_nvlink());
+        let bytes = 4096u64;
+        let src = DeviceId(0);
+        let dst = DeviceId(1);
+        let copy = StreamId(0);
+        let compute = StreamId(1);
+        let gemm = KernelKind::other(1_000_000_000, 8);
+        let run = |nvls: bool| {
+            let mut sim = Sim::new(p.clone());
+            let va = map_whole(&mut sim, src, bytes);
+            sim.va_map(va, dst).unwrap();
+            enq(sim.memcpy_pinned_to_device(src, va, bytes, copy));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(src, gemm.clone(), &[va], &[va], compute));
+            if nvls {
+                enq(sim.multicast_store(src, va, &[dst], copy));
+            } else {
+                enq(sim.memcpy_device_to_device(src, dst, va, bytes, copy));
+            }
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let d2d_ns = run(false);
+        let nvls_ns = run(true);
+        assert!(
+            nvls_ns > d2d_ns,
+            "exclusive compute: NVLS kernel must serialize with GEMM, nvls={nvls_ns} d2d={d2d_ns}"
+        );
     }
 }
