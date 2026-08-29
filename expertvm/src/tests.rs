@@ -807,6 +807,27 @@ fn schedule_hbm_evicts_when_slots_are_loose() {
 }
 
 #[test]
+fn schedule_remote_hbm_evicts_when_slots_are_loose() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[2]), ev(2, 0, &[0])],
+    };
+    let p = HardwareProfile::example_2xh100_pcie().restrict_hbm(4096);
+    let cfg = SimCfg::lru(8, 4096, 0);
+    let map = striped(&t, 2);
+    let row = schedule_remote(
+        &t,
+        p,
+        cfg,
+        SchedCfg::closed(0),
+        &map,
+        DECODE_ACTIVATION_BYTES,
+    )
+    .expect("hbm");
+    assert_eq!(row.completed, 1);
+    assert_eq!(row.replay.misses, 3);
+}
+
+#[test]
 fn schedule_remote_pays_peer_copy_on_rdma() {
     let t = Trace {
         events: vec![ev(0, 0, &[1])],

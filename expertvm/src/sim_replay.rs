@@ -80,7 +80,8 @@ pub struct SimCfg {
     /// [`crate::schedule_placed`] / [`crate::schedule_remote`] keep one walker
     /// per home so a miss cannot evict a peer GPU's resident expert. When
     /// `restrict_hbm` holds fewer pages than `slots`, the scheduler still
-    /// evicts so the next alloc cannot OOM.
+    /// evicts so the next alloc cannot OOM. [`crate::schedule_remote`] uses the
+    /// same page budget on the expert home.
     pub slots: usize,
     /// Victim policy.
     pub policy: Policy,

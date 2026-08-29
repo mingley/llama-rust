@@ -428,6 +428,7 @@ impl SchedRt {
                     }
                     let stream = self.args.s;
                     let bytes = self.args.bytes;
+                    self.make_room_remote(home, bytes, compute, stream)?;
                     let page = fetch_remote(
                         &mut self.sim,
                         RemoteFetch {
@@ -543,6 +544,42 @@ impl SchedRt {
                 &mut self.next_event,
             )?;
             self.forget_peer_if_home_dropped(v);
+            steps = steps.saturating_add(1);
+            if steps > cap {
+                return Ok(());
+            }
+        }
+    }
+
+    fn make_room_remote(
+        &mut self,
+        device: DeviceId,
+        need: u64,
+        compute: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), Error> {
+        if need == 0 {
+            return Ok(());
+        }
+        let total = self.sim.profile().gpu(device)?.hbm_bytes;
+        let max_pages = usize::try_from(total / need).unwrap_or(0);
+        let mut steps = 0usize;
+        let cap = self.cfg.slots.saturating_add(1);
+        loop {
+            let n = self
+                .walkers
+                .get(&device)
+                .map(Walker::resident_len)
+                .unwrap_or(0);
+            if n <= max_pages {
+                return Ok(());
+            }
+            let Some(v) = self.walker_mut(device).evict_one() else {
+                return Ok(());
+            };
+            if let Some(page) = self.remotes.remove(&v) {
+                drop_remote(&mut self.sim, page, compute, stream)?;
+            }
             steps = steps.saturating_add(1);
             if steps > cap {
                 return Ok(());
