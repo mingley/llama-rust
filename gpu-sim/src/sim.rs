@@ -224,6 +224,31 @@ impl Sim {
         )
     }
 
+    /// Peer copy `src` → `dst` of an existing allocation (hot replica).
+    ///
+    /// Submitted on `src`'s copy engine so it is stream-ordered with the
+    /// producing alloc/H2D. Completion adds `dst` to the object's residency
+    /// set and charges `dst` HBM; it does not drop `src`.
+    pub fn memcpy_device_to_device(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy(
+            src,
+            MemcpyOp {
+                src: Place::Device(src),
+                dst: Place::Device(dst),
+                alloc,
+                bytes,
+            },
+            stream,
+        )
+    }
+
     /// Enqueue a kernel. Reads/writes are leased until it completes.
     pub fn kernel(
         &mut self,
@@ -413,14 +438,16 @@ impl Sim {
                 if a.leases > 0 {
                     return Err(SimError::Leased { alloc });
                 }
-                if !a.live {
+                if !a.live || !a.devices.contains(&device) {
                     return Err(SimError::UnknownAlloc { alloc });
                 }
                 let bytes = a.bytes;
                 self.gpu_rt_mut(device)?.used = self.gpu_rt(device)?.used.saturating_sub(bytes);
                 let a = self.alloc_mut(alloc)?;
-                a.live = false;
                 a.devices.retain(|d| *d != device);
+                if a.devices.is_empty() {
+                    a.live = false;
+                }
                 self.running.push(Running {
                     op: id,
                     remaining_ns: 1,
@@ -456,6 +483,7 @@ impl Sim {
                     return Ok(false);
                 }
                 self.memcpy_precheck(&m)?;
+                self.charge_replica_hbm(&m)?;
                 let (ns, link_idx) = self.memcpy_ns(&m)?;
                 self.gpu_rt_mut(device)?.copies = self.gpu_rt(device)?.copies.saturating_add(1);
                 self.running.push(Running {
@@ -540,6 +568,34 @@ impl Sim {
                 }
             }
         }
+    }
+
+    /// Replication onto a GPU that does not yet hold `m.alloc` charges that GPU's HBM.
+    fn charge_replica_hbm(&mut self, m: &MemcpyOp) -> Result<(), SimError> {
+        let Place::Device(dst) = m.dst else {
+            return Ok(());
+        };
+        let a = self.alloc_ref(m.alloc)?;
+        if a.devices.contains(&dst) {
+            return Ok(());
+        }
+        let bytes = a.bytes;
+        let cap = self.profile.gpu(dst)?.hbm_bytes;
+        let used = self.gpu_rt(dst)?.used;
+        let free = cap.saturating_sub(used);
+        if bytes > free {
+            return Err(SimError::Oom {
+                device: dst,
+                need: bytes,
+                free,
+            });
+        }
+        self.gpu_rt_mut(dst)?.used = used.saturating_add(bytes);
+        let peak = self.gpu_rt(dst)?.used;
+        if peak > self.hbm_peak {
+            self.hbm_peak = peak;
+        }
+        Ok(())
     }
 
     fn memcpy_ns(&self, m: &MemcpyOp) -> Result<(u64, usize), SimError> {

@@ -1,7 +1,7 @@
 //! Move-weights vs already-resident: a cheap planner over a trace window.
 
 use crate::access::{ExpertKey, Trace};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Decision for one window of future expert uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -72,4 +72,27 @@ pub fn window_keys(trace: &Trace, from: usize, window: usize) -> Vec<ExpertKey> 
         }
     }
     out
+}
+
+/// Copy-forward: same expert ids one layer ahead (predictor prefetch).
+#[must_use]
+pub fn copy_forward(keys: &[ExpertKey]) -> Vec<ExpertKey> {
+    let mut out = Vec::with_capacity(keys.len());
+    for k in keys {
+        out.push(ExpertKey::new(k.layer.saturating_add(1), k.expert));
+    }
+    out
+}
+
+/// Hottest `n` keys by acquire count (stable on ties).
+#[must_use]
+pub fn hot_keys(trace: &Trace, n: usize) -> Vec<ExpertKey> {
+    let mut freq: BTreeMap<ExpertKey, u64> = BTreeMap::new();
+    for k in trace.keys() {
+        let slot = freq.entry(k).or_insert(0);
+        *slot = slot.saturating_add(1);
+    }
+    let mut pairs: Vec<(ExpertKey, u64)> = freq.into_iter().collect();
+    pairs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    pairs.into_iter().take(n).map(|(k, _)| k).collect()
 }

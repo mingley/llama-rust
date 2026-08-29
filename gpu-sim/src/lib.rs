@@ -214,7 +214,37 @@ mod tests {
             wall_ns: 10,
             hbm_peak: 20,
             bytes_moved: 30,
+            ns_per_token: None,
         };
         assert_eq!(s.line(), "wall_ns=10 hbm_peak=20 bytes_moved=30");
+        assert_eq!(
+            s.clone().with_tokens(2).line(),
+            "wall_ns=10 hbm_peak=20 bytes_moved=30 ns_per_token=5"
+        );
+    }
+
+    #[test]
+    fn d2d_replica_charges_peer_hbm_and_survives_src_free() {
+        let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s0 = StreamId(0);
+        let bytes = 8u64 << 20;
+        let a = sim.alloc(d0, bytes, s0).unwrap();
+        enq(sim.memcpy_host_to_device(d0, a, bytes, s0));
+        enq(sim.memcpy_device_to_device(d0, d1, a, bytes, s0));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(a, d0).unwrap());
+        assert!(sim.is_resident(a, d1).unwrap());
+        let used0 = sim.hbm_used(d0).unwrap();
+        let used1 = sim.hbm_used(d1).unwrap();
+        assert!(used0 >= bytes);
+        assert!(used1 >= bytes);
+        sim.free(d1, a, s0).unwrap();
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(a, d0).unwrap());
+        assert!(!sim.is_resident(a, d1).unwrap());
+        enq(sim.kernel(d0, KernelKind::other(8, bytes), &[a], &[a], s0));
+        sim.synchronize().unwrap();
     }
 }

@@ -96,7 +96,9 @@ fn direct_store_is_identity() {
         let a = store.acquire(k).expect("blob");
         let b = store.get(k).expect("get");
         assert_eq!(a, b);
-        assert_eq!(a, vec![1]);
+        assert_eq!(a.gate, vec![1]);
+        assert_eq!(a.up, vec![1]);
+        assert_eq!(a.down, vec![1]);
     }
     assert_eq!(store.misses(), 0);
 }
@@ -122,6 +124,23 @@ fn cached_store_lease_blocks_eviction() {
 }
 
 #[test]
+fn cached_store_prefetch_skips_unknown_and_counts() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let mut cache = CachedStore::new(DirectStore::from_trace(&t), 2).expect("cache");
+    let known = ExpertKey::new(0, 0);
+    let ghost = ExpertKey::new(9, 9);
+    let n = cache.prefetch(&[ghost, known]).expect("prefetch");
+    assert_eq!(n, 1);
+    assert!(cache.is_resident(known));
+    assert_eq!(cache.metrics().prefetches, 1);
+    let _hit = cache.acquire(known).expect("hit after prefetch");
+    assert_eq!(cache.hits(), 1);
+    assert_eq!(cache.misses(), 0);
+}
+
+#[test]
 fn planner_stays_when_window_is_resident() {
     let t = cycling_trace();
     let mut resident = BTreeSet::new();
@@ -131,6 +150,10 @@ fn planner_stays_when_window_is_resident() {
     assert_eq!(plan_window(&resident, &t, 0, 8, 500), Plan::Stay);
     assert_eq!(plan_window(&BTreeSet::new(), &t, 0, 8, 500), Plan::Fetch);
     assert!(!window_keys(&t, 0, 3).is_empty());
+    let fwd = copy_forward(&[ExpertKey::new(0, 7)]);
+    assert_eq!(fwd[0], ExpertKey::new(1, 7));
+    let hot = hot_keys(&t, 1);
+    assert_eq!(hot.len(), 1);
 }
 
 #[test]
@@ -157,6 +180,71 @@ fn sim_replay_moves_bytes_on_miss() {
     assert!(missy.bytes_moved > hitty.bytes_moved);
     assert!(missy.sim_ns > 0);
     assert!(hitty.hits > missy.hits);
+}
+
+#[test]
+fn simulated_gpu_store_evicts_and_scores() {
+    let t = cycling_trace();
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::new(inner, 2, HardwareProfile::example_h100_sxm(), 4096).expect("gpu");
+    for k in t.keys() {
+        let parts = gpu.acquire(k).expect("acq");
+        assert_eq!(parts.gate, vec![1]);
+    }
+    let m = gpu.metrics();
+    assert!(m.misses >= 3);
+    assert!(m.evicts >= 1);
+    let score = gpu.score().expect("score");
+    assert!(score.wall_ns > 0);
+    assert!(score.bytes_moved > 0);
+    assert!(gpu.metrics().bytes_moved > 0);
+    assert!(score.with_tokens(24).ns_per_token.is_some());
+}
+
+#[test]
+fn simulated_gpu_store_pin_hot_replicates_on_nvlink() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::new(inner, 2, HardwareProfile::example_8xh100_nvlink(), 4096)
+        .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    gpu.pin_hot(&[k0]).expect("pin");
+    let _p = gpu.acquire(k0).expect("hit");
+    assert!(gpu.is_resident(k0));
+    let score = gpu.score().expect("score");
+    assert!(score.bytes_moved >= 4096);
+}
+
+#[test]
+fn adversarial_workloads_are_named_and_measurable() {
+    let kinds = [
+        Workload::Uniform,
+        Workload::Hotset,
+        Workload::ShiftingHotset,
+        Workload::Thrash,
+    ];
+    for kind in kinds {
+        let t = generate(kind, 32, 8, 1, 1);
+        assert!(!t.events.is_empty(), "{}", kind.name());
+        assert!(!unique_keys(&t).is_empty());
+    }
+    let rows = adversarial_suite(16, 6, 2, HardwareProfile::example_cheap_48gb()).expect("suite");
+    assert_eq!(rows.len(), 4);
+    assert!(rows[0].render().contains("uniform"));
+}
+
+#[test]
+fn live_store_dispatches() {
+    let t = cycling_trace();
+    let mut live = LiveStore::Cached(CachedStore::new(DirectStore::from_trace(&t), 2).unwrap());
+    let k = ExpertKey::new(0, 0);
+    let _p = live.acquire(k).expect("acq");
+    live.pin_hot(&[k]).expect("pin");
+    assert!(live.is_resident(k));
+    assert!(live.score().expect("score").is_none());
 }
 
 #[test]

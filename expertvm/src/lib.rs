@@ -4,21 +4,31 @@
 
 mod access;
 mod analyze;
+mod bench;
 mod error;
+mod gpu_store;
+mod live;
 mod planner;
 mod policy;
 mod replay;
 mod sim_replay;
 mod store;
+mod workload;
 
 pub use access::{ExpertAccess, ExpertKey, Trace};
 pub use analyze::{analyze, TraceStats};
+pub use bench::{adversarial_suite, report, BenchReport};
 pub use error::Error;
-pub use planner::{plan_window, window_keys, Plan};
+pub use gpu_store::SimulatedGpuStore;
+pub use live::LiveStore;
+pub use planner::{copy_forward, hot_keys, plan_window, window_keys, Plan};
 pub use policy::Policy;
 pub use replay::{compare, format_table, replay, ReplayRow};
 pub use sim_replay::{sim_replay, SimReplay};
-pub use store::{replay_accesses, CachedStore, DirectStore, ExpertBlob, ExpertStore};
+pub use store::{
+    replay_accesses, CachedStore, DirectStore, ExpertParts, ExpertStore, StoreMetrics,
+};
+pub use workload::{generate, unique_keys, Workload};
 
 #[cfg(test)]
 mod tests;

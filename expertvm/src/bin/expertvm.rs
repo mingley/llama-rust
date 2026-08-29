@@ -1,6 +1,9 @@
 //! `expertvm analyze | replay | sim` — traces in, measured tables out.
 
-use expertvm::{analyze, compare, format_table, sim_replay, Policy, Trace};
+use expertvm::{
+    adversarial_suite, analyze, compare, format_table, generate, report, sim_replay, Policy, Trace,
+    Workload,
+};
 use gpu_sim::HardwareProfile;
 use std::env;
 use std::fs::File;
@@ -9,9 +12,12 @@ use std::process::ExitCode;
 
 const USAGE: &str = "\
 usage: expertvm <command> [args]
-  analyze <trace.jsonl>
-  replay  <trace.jsonl> [--capacity N] [--lookahead N]
-  sim     <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
+  analyze  <trace.jsonl>
+  replay   <trace.jsonl> [--capacity N] [--lookahead N]
+  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
+  bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
+  bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
+  workload <uniform|hotset|shifting-hotset|thrash> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
 
 profiles: h100 (default), h200, 8xh100, cheap, or a path to a .profile file
 ";
@@ -64,6 +70,8 @@ fn run() -> Result<(), String> {
             println!("{}", row.line());
             Ok(())
         }
+        "bench" => run_bench(args),
+        "workload" => run_workload(args),
         other => Err(format!("{USAGE}got {other}")),
     }
 }
@@ -74,6 +82,8 @@ struct Cfg {
     lookahead: usize,
     expert_bytes: u64,
     profile: String,
+    tokens: u32,
+    experts: u32,
 }
 
 fn parse_cfg<I>(args: I) -> Result<Cfg, String>
@@ -85,6 +95,8 @@ where
     let mut lookahead = 8usize;
     let mut expert_bytes = 4096u64;
     let mut profile = "h100".to_string();
+    let mut tokens = 64u32;
+    let mut experts = 16u32;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -102,6 +114,8 @@ where
                 expert_bytes = parse_u64("expert-bytes", &value("expert-bytes", inline, &mut it)?)?
             }
             "--profile" => profile = value("profile", inline, &mut it)?,
+            "--tokens" => tokens = parse_u32("tokens", &value("tokens", inline, &mut it)?)?,
+            "--experts" => experts = parse_u32("experts", &value("experts", inline, &mut it)?)?,
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => {
                 if path.is_some() {
@@ -112,11 +126,13 @@ where
         }
     }
     Ok(Cfg {
-        path: path.ok_or("missing trace.jsonl")?,
+        path: path.ok_or("missing trace.jsonl or workload name")?,
         capacity,
         lookahead,
         expert_bytes,
         profile,
+        tokens,
+        experts,
     })
 }
 
@@ -137,6 +153,11 @@ fn parse_usize(name: &str, s: &str) -> Result<usize, String> {
 
 fn parse_u64(name: &str, s: &str) -> Result<u64, String> {
     s.parse::<u64>()
+        .map_err(|_| format!("invalid {name} {s:?}"))
+}
+
+fn parse_u32(name: &str, s: &str) -> Result<u32, String> {
+    s.parse::<u32>()
         .map_err(|_| format!("invalid {name} {s:?}"))
 }
 
@@ -175,4 +196,64 @@ fn print_replay(trace: &Trace, capacity: usize, lookahead: usize) -> Result<(), 
 fn print_usage() -> Result<(), String> {
     let mut out = std::io::stdout();
     out.write_all(USAGE.as_bytes()).map_err(|e| e.to_string())
+}
+
+fn run_bench<I>(args: I) -> Result<(), String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let cfg = parse_cfg(args)?;
+    if cfg.path == "adversarial" {
+        let profile = load_profile(&cfg.profile)?;
+        let rows = adversarial_suite(cfg.tokens, cfg.experts, cfg.capacity, profile)
+            .map_err(|e| e.to_string())?;
+        for row in rows {
+            print!("{}", row.render());
+        }
+        return Ok(());
+    }
+    let trace = load_trace(&cfg.path)?;
+    let profile = load_profile(&cfg.profile)?;
+    let row = report(
+        &cfg.path,
+        &trace,
+        cfg.capacity,
+        cfg.lookahead,
+        Some(profile),
+        cfg.expert_bytes,
+    )
+    .map_err(|e| e.to_string())?;
+    print!("{}", row.render());
+    Ok(())
+}
+
+fn run_workload<I>(args: I) -> Result<(), String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let cfg = parse_cfg(args)?;
+    let kind = parse_workload(&cfg.path)?;
+    let trace = generate(kind, cfg.tokens, cfg.experts, 1, 1);
+    let profile = load_profile(&cfg.profile)?;
+    let row = report(
+        kind.name(),
+        &trace,
+        cfg.capacity,
+        cfg.lookahead,
+        Some(profile),
+        cfg.expert_bytes,
+    )
+    .map_err(|e| e.to_string())?;
+    print!("{}", row.render());
+    Ok(())
+}
+
+fn parse_workload(name: &str) -> Result<Workload, String> {
+    match name {
+        "uniform" => Ok(Workload::Uniform),
+        "hotset" => Ok(Workload::Hotset),
+        "shifting-hotset" => Ok(Workload::ShiftingHotset),
+        "thrash" => Ok(Workload::Thrash),
+        other => Err(format!("unknown workload {other}\n{USAGE}")),
+    }
 }
