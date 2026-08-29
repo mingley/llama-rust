@@ -58,8 +58,10 @@ warp scheduler, L1, …   ← do not model
 | copy-engine occupancy | launch overhead |
 | peer accessibility | size-dependent efficiency |
 | graph capture does not execute; launch replays | GEMM util / grouped-MoE ‰ |
+| forked capture: `wait_event` on a captured record joins that stream | copy/compute overlap inside one launch |
+| independent streams stay live during capture | query/sync of a capturing stream is Invalid |
 | graph instantiate is host-sync; first launch pays it once | `graph_instantiate_ns` |
-| graph update replaces steps when topology matches | `graph_update_ns` |
+| graph update replaces steps when topology matches (device, stream, kind) | `graph_update_ns` |
 | graph clone is an independent uninstantiated copy | `graph_clone_ns` |
 | graph destroy drops the id (`cudaGraphDestroy`) | 1 ns host-sync |
 | graph launch amortizes per-kernel launch overhead | `graph_launch_ns` |
@@ -178,14 +180,18 @@ kernel on it fails `NotResident` until a copy places it on a device.
 
 CUDA graphs: `begin_capture` / `end_capture` / `instantiate_graph` /
 `update_graph` / `clone_graph` / `destroy_graph` / `launch_graph`. Capture does
-not advance the virtual clock. Alloc/free cannot be captured, including
+not advance the virtual clock. Independent streams stay live. A stream that
+`wait_event`s an event recorded in this capture joins (CUDA forked capture);
+`launch_graph` remaps origin-stream nodes onto the launch stream so copy and
+compute can overlap. Query or `synchronize_stream` of a capturing stream, and
+node `synchronize`, are `Invalid`. Alloc/free cannot be captured, including
 host-sync `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device`.
 Instantiate and update are host-synchronous and cannot run during capture.
 `clone_graph` is `cudaGraphClone` (`graph_clone_ns`): an independent
 uninstantiated copy. `destroy_graph` is `cudaGraphDestroy` (1 ns;
 later launch is unknown). First launch instantiates if needed (`graph_instantiate_ns` once).
 `update_graph` copies source steps into an instantiated exec when the
-device sequence and op kinds match (`graph_update_ns`); a topology
+device, stream, and op kinds match (`graph_update_ns`); a topology
 mismatch is `Invalid`. Launch pays `graph_launch_ns` once; recorded
 kernels skip per-kernel launch overhead.
 `memset` is an HBM-write kernel on a resident alloc. `host_func` is

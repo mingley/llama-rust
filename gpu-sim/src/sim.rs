@@ -90,8 +90,15 @@ struct Ev {
     timing: bool,
 }
 
+struct Capture {
+    origin: (DeviceId, StreamId),
+    streams: BTreeSet<(DeviceId, StreamId)>,
+    events: BTreeSet<EventId>,
+}
+
 struct Graph {
-    steps: Vec<(DeviceId, Kind)>,
+    steps: Vec<(DeviceId, StreamId, Kind)>,
+    origin: (DeviceId, StreamId),
     /// `cudaGraphInstantiate` has run (explicit or first launch).
     instantiated: bool,
 }
@@ -108,8 +115,8 @@ pub struct Sim {
     tail: BTreeMap<(DeviceId, StreamId), OpId>,
     events: BTreeMap<EventId, Ev>,
     graphs: BTreeMap<GraphId, Graph>,
-    capturing: Option<(DeviceId, StreamId)>,
-    capture_buf: Vec<(DeviceId, Kind)>,
+    capturing: Option<Capture>,
+    capture_buf: Vec<(DeviceId, StreamId, Kind)>,
     running: Vec<Running>,
     gpus: BTreeMap<DeviceId, GpuRt>,
     bytes_moved: u64,
@@ -413,6 +420,8 @@ impl Sim {
     }
 
     /// No unfinished ops on `(device, stream)`, including in-flight.
+    ///
+    /// Same as [`Self::query_stream`]: a capturing stream is [`SimError::Invalid`].
     pub fn stream_is_idle(&self, device: DeviceId, stream: StreamId) -> Result<bool, SimError> {
         self.query_stream(device, stream)
     }
@@ -420,8 +429,14 @@ impl Sim {
     /// `cudaStreamQuery`: whether `(device, stream)` has no unfinished ops. Does not wait.
     ///
     /// Unknown devices are [`SimError::Invalid`]. A busy stream is `Ok(false)`.
+    /// A stream in an active graph capture is [`SimError::Invalid`].
     pub fn query_stream(&self, device: DeviceId, stream: StreamId) -> Result<bool, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        if self.in_capture(device, stream) {
+            return Err(SimError::Invalid {
+                why: "cannot query stream during capture",
+            });
+        }
         Ok(self.stream_idle(device, stream))
     }
 
@@ -548,6 +563,10 @@ impl Sim {
     }
 
     /// Start recording later submits on `(device, stream)`. Recorded ops do not run.
+    ///
+    /// Other streams keep running. A stream that [`Self::wait_event`]s an
+    /// event recorded in this capture **joins** (CUDA forked capture) so copy
+    /// and compute can overlap inside one [`Self::launch_graph`].
     pub fn begin_capture(&mut self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         if self.capturing.is_some() {
@@ -560,14 +579,20 @@ impl Sim {
                 why: "capture requires idle stream",
             });
         }
-        self.capturing = Some((device, stream));
+        let mut streams = BTreeSet::new();
+        let _ins = streams.insert((device, stream));
+        self.capturing = Some(Capture {
+            origin: (device, stream),
+            streams,
+            events: BTreeSet::new(),
+        });
         self.capture_buf.clear();
         Ok(())
     }
 
     /// Finish capture. The graph is empty of side effects until [`Self::launch_graph`].
     pub fn end_capture(&mut self) -> Result<GraphId, SimError> {
-        let Some(_) = self.capturing.take() else {
+        let Some(cap) = self.capturing.take() else {
             return Err(SimError::Invalid {
                 why: "end_capture without begin_capture",
             });
@@ -579,13 +604,15 @@ impl Sim {
             id,
             Graph {
                 steps,
+                origin: cap.origin,
                 instantiated: false,
             },
         );
         Ok(id)
     }
 
-    /// Enqueue every recorded op, stream-ordered, on `stream` of each step's device.
+    /// Enqueue every recorded op. Origin-stream nodes use `stream`; forked
+    /// streams keep the ids they joined with, so copy and compute can overlap.
     ///
     /// First launch [`Self::instantiate_graph`]s if needed (`cudaGraphInstantiate`
     /// then `cudaGraphLaunch`). Later launches skip instantiate.
@@ -605,24 +632,59 @@ impl Sim {
         if !instantiated {
             self.instantiate_graph(graph)?;
         }
-        let steps = self
-            .graphs
-            .get(&graph)
-            .ok_or(SimError::Invalid {
+        let (origin, steps) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
-            })?
-            .steps
-            .clone();
+            })?;
+            (g.origin, g.steps.clone())
+        };
+        let launch_tail = self.tail.get(&(origin.0, stream)).copied();
         let mut n = 0u32;
         let mut head = true;
-        for (device, kind) in steps {
+        let mut seen = BTreeSet::new();
+        let mut rec_ops: BTreeMap<EventId, OpId> = BTreeMap::new();
+        for (device, rec_stream, kind) in steps {
+            let s = if (device, rec_stream) == origin {
+                stream
+            } else {
+                rec_stream
+            };
+            let rec = match &kind {
+                Kind::EventRecord { event } => Some(*event),
+                _ => None,
+            };
+            let wait = match &kind {
+                Kind::EventWait { event } => Some(*event),
+                _ => None,
+            };
             let launch = if head {
                 LaunchCost::GraphHead
             } else {
                 LaunchCost::GraphBody
             };
             head = false;
-            let _op = self.submit_launch(device, stream, kind, launch)?;
+            let id = self.submit_launch(device, s, kind, launch)?;
+            if let Some(event) = rec {
+                let _prev = rec_ops.insert(event, id);
+            }
+            if let Some(event) = wait {
+                if let Some(rec_id) = rec_ops.get(&event).copied() {
+                    if let Some(op) = self.ops.get_mut(&id) {
+                        if !op.deps.contains(&rec_id) {
+                            op.deps.push(rec_id);
+                        }
+                    }
+                }
+            }
+            if seen.insert((device, s)) {
+                if let Some(tail) = launch_tail {
+                    if let Some(op) = self.ops.get_mut(&id) {
+                        if !op.deps.contains(&tail) {
+                            op.deps.push(tail);
+                        }
+                    }
+                }
+            }
             n = n.saturating_add(1);
         }
         Ok(n)
@@ -658,7 +720,7 @@ impl Sim {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            let device = g.steps.first().map(|(d, _)| *d).unwrap_or(DeviceId(0));
+            let device = g.steps.first().map(|(d, _, _)| *d).unwrap_or(DeviceId(0));
             (device, g.instantiated)
         };
         if already {
@@ -677,7 +739,7 @@ impl Sim {
 
     /// `cudaGraphExecUpdate`: replace `exec` steps with `src` when topology matches.
     ///
-    /// Same device sequence and op kinds; KernelBuf / memcpy sizes may change.
+    /// Same device, stream, and op kinds; KernelBuf / memcpy sizes may change.
     /// Pays `graph_update_ns`. Recapture if topology differs. Capture cannot
     /// include it. `exec` must already be instantiated.
     pub fn update_graph(&mut self, exec: GraphId, src: GraphId) -> Result<(), SimError> {
@@ -694,7 +756,7 @@ impl Sim {
             let s = self.graphs.get(&src).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            let device = e.steps.first().map(|(d, _)| *d).unwrap_or(DeviceId(0));
+            let device = e.steps.first().map(|(d, _, _)| *d).unwrap_or(DeviceId(0));
             (e.instantiated, e.steps.clone(), s.steps.clone(), device)
         };
         if !instantiated {
@@ -725,12 +787,12 @@ impl Sim {
     /// the other.
     pub fn clone_graph(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
         self.fail_if_capturing("cannot capture graph clone")?;
-        let (steps, device) = {
+        let (steps, origin, device) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            let device = g.steps.first().map(|(d, _)| *d).unwrap_or(DeviceId(0));
-            (g.steps.clone(), device)
+            let device = g.origin.0;
+            (g.steps.clone(), g.origin, device)
         };
         let ns = self.profile.gpu(device)?.graph_clone_ns.max(1);
         self.clock = self.clock.saturating_add(ns);
@@ -740,6 +802,7 @@ impl Sim {
             id,
             Graph {
                 steps,
+                origin,
                 instantiated: false,
             },
         );
@@ -755,7 +818,7 @@ impl Sim {
         let g = self.graphs.remove(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        let device = g.steps.first().map(|(d, _)| *d).unwrap_or(DeviceId(0));
+        let device = g.origin.0;
         let _gpu = self.profile.gpu(device)?;
         self.clock = self.clock.saturating_add(1);
         Ok(())
@@ -1572,7 +1635,7 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         let pageable = op.src.is_pageable() || op.dst.is_pageable();
-        if pageable && self.capturing.is_some() {
+        if pageable && self.in_capture(device, stream) {
             return Err(SimError::Invalid {
                 why: "cannot capture pageable memcpy",
             });
@@ -1852,8 +1915,11 @@ impl Sim {
 
     /// Run until every submitted op is complete (`cudaDeviceSynchronize` on every GPU).
     ///
-    /// [`Self::synchronize_device`] waits one GPU.
+    /// Capture cannot include it. [`Self::synchronize_device`] waits one GPU.
+    /// [`Self::synchronize_stream`] can still wait a stream that is not in the
+    /// capture.
     pub fn synchronize(&mut self) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot synchronize during capture")?;
         self.drive_until(|sim| sim.running.is_empty() && sim.ops.values().all(|o| o.done))?;
         if self.running.is_empty() && !self.ops.values().all(|o| o.done) {
             return Err(SimError::Invalid {
@@ -1902,7 +1968,8 @@ impl Sim {
 
     /// `cudaStreamSynchronize`: advance the virtual clock until `stream` is idle.
     ///
-    /// Other streams keep running. Cancelled ops on *this* stream fail; cancelled
+    /// Other streams keep running. A stream in an active graph capture is
+    /// [`SimError::Invalid`]. Cancelled ops on *this* stream fail; cancelled
     /// work on other streams is left for a later [`Self::synchronize`].
     pub fn synchronize_stream(
         &mut self,
@@ -1910,6 +1977,11 @@ impl Sim {
         stream: StreamId,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        if self.in_capture(device, stream) {
+            return Err(SimError::Invalid {
+                why: "cannot synchronize stream during capture",
+            });
+        }
         self.drive_until(|sim| sim.stream_idle(device, stream))?;
         if !self.stream_idle(device, stream) {
             return Err(SimError::Invalid {
@@ -2054,24 +2126,75 @@ impl Sim {
         if self.unavailable.contains(&device) {
             return Err(SimError::Unavailable { device });
         }
-        if let Some((cd, cs)) = self.capturing {
-            if device == cd && stream != cs {
-                return Err(SimError::Invalid {
-                    why: "other stream active during capture",
-                });
-            }
-            if device == cd && stream == cs {
-                if matches!(kind, Kind::Alloc { .. } | Kind::Free { .. }) {
+        if self.capturing.is_some() {
+            return self.submit_captured(device, stream, kind);
+        }
+        self.submit_live(device, stream, kind, launch)
+    }
+
+    fn in_capture(&self, device: DeviceId, stream: StreamId) -> bool {
+        self.capturing
+            .as_ref()
+            .is_some_and(|c| c.streams.contains(&(device, stream)))
+    }
+
+    fn submit_captured(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        kind: Kind,
+    ) -> Result<OpId, SimError> {
+        if let Kind::EventWait { event } = &kind {
+            let join = self
+                .capturing
+                .as_ref()
+                .is_some_and(|c| c.events.contains(event));
+            if join && !self.in_capture(device, stream) {
+                let same = self
+                    .capturing
+                    .as_ref()
+                    .is_some_and(|c| c.origin.0 == device);
+                if !same {
                     return Err(SimError::Invalid {
-                        why: "cannot capture alloc/free",
+                        why: "capture fork requires same device",
                     });
                 }
-                self.capture_buf.push((device, kind));
-                let id = OpId(self.next_op);
-                self.next_op = self.next_op.saturating_add(1);
-                return Ok(id);
+                if !self.stream_idle(device, stream) {
+                    return Err(SimError::Invalid {
+                        why: "capture fork requires idle stream",
+                    });
+                }
+                if let Some(cap) = self.capturing.as_mut() {
+                    let _ins = cap.streams.insert((device, stream));
+                }
             }
         }
+        if !self.in_capture(device, stream) {
+            return self.submit_live(device, stream, kind, LaunchCost::Kernel);
+        }
+        if matches!(kind, Kind::Alloc { .. } | Kind::Free { .. }) {
+            return Err(SimError::Invalid {
+                why: "cannot capture alloc/free",
+            });
+        }
+        if let Kind::EventRecord { event } = &kind {
+            if let Some(cap) = self.capturing.as_mut() {
+                let _ins = cap.events.insert(*event);
+            }
+        }
+        self.capture_buf.push((device, stream, kind));
+        let id = OpId(self.next_op);
+        self.next_op = self.next_op.saturating_add(1);
+        Ok(id)
+    }
+
+    fn submit_live(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        kind: Kind,
+        launch: LaunchCost,
+    ) -> Result<OpId, SimError> {
         let _gpu = self.profile.gpu(device)?;
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
@@ -3317,13 +3440,13 @@ fn seed_peers(profile: &HardwareProfile) -> BTreeSet<(DeviceId, DeviceId)> {
     out
 }
 
-fn graph_topology_eq(a: &[(DeviceId, Kind)], b: &[(DeviceId, Kind)]) -> bool {
+fn graph_topology_eq(a: &[(DeviceId, StreamId, Kind)], b: &[(DeviceId, StreamId, Kind)]) -> bool {
     if a.len() != b.len() {
         return false;
     }
     a.iter()
         .zip(b.iter())
-        .all(|((d0, k0), (d1, k1))| *d0 == *d1 && op_tag(k0) == op_tag(k1))
+        .all(|((d0, s0, k0), (d1, s1, k1))| *d0 == *d1 && *s0 == *s1 && op_tag(k0) == op_tag(k1))
 }
 
 fn op_tag(k: &Kind) -> u8 {

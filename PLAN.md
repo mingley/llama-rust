@@ -591,10 +591,15 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   instantiate/update/clone/destroy cannot be captured; capture requires an idle stream.
   Instantiate is host-sync (`graph_instantiate_ns`); the first launch
   instantiates if needed. `update_graph` replaces an instantiated exec's
-  steps when device sequence and op kinds match (`graph_update_ns`).
+  steps when device, stream, and op kinds match (`graph_update_ns`).
   `clone_graph` is an independent uninstantiated copy (`graph_clone_ns`).
   `destroy_graph` is `cudaGraphDestroy` (later launch is unknown).
-  Graph launch pays `graph_launch_ns` once; recorded kernels skip
+  Independent streams stay live during capture. A `wait_event` on an
+  event recorded in this capture **joins** (CUDA forked capture) so
+  copy and compute can overlap in one `launch_graph`. Launch remaps
+  origin-stream nodes onto the launch stream; forked streams keep their
+  ids. Query/sync of a capturing stream, and node `synchronize`, are
+  Invalid. Graph launch pays `graph_launch_ns` once; recorded kernels skip
   per-launch overhead.
   `sim_replay` / `SimulatedGpuStore` capture repeated expert GEMMs
   (`expertvm sim --cuda-graphs`). Capture after a miss waits with

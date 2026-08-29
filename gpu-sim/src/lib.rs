@@ -55,10 +55,12 @@
 //! [`Sim::set_stream_priority`] is `cudaStreamCreateWithPriority`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; first
 //! [`launch_graph`](Sim::launch_graph) calls it). [`Sim::update_graph`] is
-//! `cudaGraphExecUpdate` when device sequence and op kinds match.
+//! `cudaGraphExecUpdate` when device, stream, and op kinds match.
 //! [`Sim::clone_graph`] is `cudaGraphClone` (independent, not instantiated).
 //! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`.
-//! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`.
+//! Capture records every stream that [`wait_event`](Sim::wait_event)s an
+//! event recorded in this capture (CUDA forked capture). Independent streams
+//! stay live. Launch remaps origin-stream nodes onto the launch stream.
 
 #![cfg_attr(not(test), deny(missing_docs))]
 
@@ -2990,5 +2992,220 @@ mod tests {
             other => panic!("{other:?}"),
         }
         sim.free_host(h).unwrap();
+    }
+
+    #[test]
+    fn independent_stream_runs_during_capture() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let cap = StreamId(0);
+        let live = StreamId(1);
+        let a = sim.alloc(d, 4096, cap).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, cap));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, cap).unwrap();
+        let t0 = sim.clock_ns();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], live));
+        sim.synchronize_stream(d, live).unwrap();
+        assert!(sim.clock_ns() > t0);
+        assert!(sim.query_stream(d, live).unwrap());
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 0);
+    }
+
+    #[test]
+    fn capturing_stream_cannot_query_or_sync() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.begin_capture(d, s).unwrap();
+        let q = sim.query_stream(d, s).unwrap_err();
+        match q {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let sy = sim.synchronize_stream(d, s).unwrap_err();
+        match sy {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let node = sim.synchronize().unwrap_err();
+        match node {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn event_wait_joins_capture_on_idle_stream() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let copy = StreamId(0);
+        let compute = StreamId(1);
+        let ev = EventId(1);
+        let bytes = 4096u64;
+        let resident = sim.alloc(d, bytes, copy).unwrap();
+        let extra = sim.alloc(d, bytes, copy).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, resident, bytes, copy));
+        sim.synchronize().unwrap();
+        sim.create_event(ev).unwrap();
+        sim.begin_capture(d, copy).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, extra, bytes, copy));
+        enq(sim.record_event(d, ev, copy));
+        enq(sim.wait_event(d, ev, compute));
+        enq(sim.kernel(
+            d,
+            KernelKind::other(8, bytes),
+            &[resident],
+            &[resident],
+            compute,
+        ));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 4);
+        sim.instantiate_graph(g).unwrap();
+        let n = sim.launch_graph(g, copy).unwrap();
+        assert_eq!(n, 4);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(extra, d).unwrap());
+    }
+
+    #[test]
+    fn capture_fork_requires_idle_stream() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let copy = StreamId(0);
+        let compute = StreamId(1);
+        let ev = EventId(1);
+        let a = sim.alloc(d, 4096, copy).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, copy));
+        sim.synchronize().unwrap();
+        sim.create_event(ev).unwrap();
+        sim.begin_capture(d, copy).unwrap();
+        enq(sim.record_event(d, ev, copy));
+        enq(sim.kernel(d, KernelKind::other(1 << 30, 4096), &[a], &[a], compute));
+        let err = sim.wait_event(d, ev, compute).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("idle"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn wait_on_live_event_does_not_join_capture() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let copy = StreamId(0);
+        let live = StreamId(1);
+        let ev = EventId(7);
+        sim.create_event(ev).unwrap();
+        enq(sim.record_event(d, ev, live));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, copy).unwrap();
+        enq(sim.wait_event(d, ev, live));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 0);
+    }
+
+    #[test]
+    fn capture_fork_rejects_other_device() {
+        let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let ev = EventId(1);
+        sim.create_event(ev).unwrap();
+        sim.begin_capture(d0, s).unwrap();
+        enq(sim.record_event(d0, ev, s));
+        let err = sim.wait_event(d1, ev, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("same device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn forked_graph_launch_overlaps_copy_and_compute() {
+        let d = DeviceId(0);
+        let copy = StreamId(0);
+        let compute = StreamId(1);
+        let bytes = 32u64 << 20;
+        let k = KernelKind::other(1 << 40, bytes);
+        let serial = {
+            let mut sim = Sim::new(h100());
+            let resident = sim.alloc(d, bytes, copy).unwrap();
+            let extra = sim.alloc(d, bytes, copy).unwrap();
+            let extra2 = sim.alloc(d, bytes, copy).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, resident, bytes, copy));
+            sim.synchronize().unwrap();
+            sim.begin_capture(d, copy).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, extra, bytes, copy));
+            enq(sim.kernel(d, k.clone(), &[resident], &[resident], copy));
+            enq(sim.memcpy_pinned_to_device(d, extra2, bytes, copy));
+            let g = sim.end_capture().unwrap();
+            sim.instantiate_graph(g).unwrap();
+            let t0 = sim.clock_ns();
+            let n = sim.launch_graph(g, copy).unwrap();
+            assert_eq!(n, 3);
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let forked = {
+            let mut sim = Sim::new(h100());
+            let resident = sim.alloc(d, bytes, copy).unwrap();
+            let extra = sim.alloc(d, bytes, copy).unwrap();
+            let extra2 = sim.alloc(d, bytes, copy).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, resident, bytes, copy));
+            sim.synchronize().unwrap();
+            sim.create_event(EventId(1)).unwrap();
+            sim.begin_capture(d, copy).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, extra, bytes, copy));
+            enq(sim.record_event(d, EventId(1), copy));
+            enq(sim.wait_event(d, EventId(1), compute));
+            enq(sim.kernel(d, k, &[resident], &[resident], compute));
+            enq(sim.memcpy_pinned_to_device(d, extra2, bytes, copy));
+            let g = sim.end_capture().unwrap();
+            sim.instantiate_graph(g).unwrap();
+            let t0 = sim.clock_ns();
+            let n = sim.launch_graph(g, copy).unwrap();
+            assert_eq!(n, 5);
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        assert!(
+            serial > forked,
+            "forked graph must overlap copy+compute; serial={serial} forked={forked}"
+        );
+    }
+
+    #[test]
+    fn update_graph_treats_stream_as_topology() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s0 = StreamId(0);
+        let s1 = StreamId(1);
+        let a = sim.alloc(d, 4096, s0).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s0));
+        sim.synchronize().unwrap();
+        sim.create_event(EventId(1)).unwrap();
+        sim.begin_capture(d, s0).unwrap();
+        enq(sim.record_event(d, EventId(1), s0));
+        enq(sim.wait_event(d, EventId(1), s1));
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s1));
+        let exec = sim.end_capture().unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        sim.begin_capture(d, s0).unwrap();
+        enq(sim.record_event(d, EventId(1), s0));
+        enq(sim.wait_event(d, EventId(1), s0));
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s0));
+        let src = sim.end_capture().unwrap();
+        let err = sim.update_graph(exec, src).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("topology"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 }
