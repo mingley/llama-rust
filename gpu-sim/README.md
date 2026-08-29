@@ -46,7 +46,7 @@ warp scheduler, L1, …   ← do not model
 | `cuMemMap` (`va_map`) charges HBM; `va_unmap` refunds; the VA is reusable | `alloc_overhead_ns` (map) |
 | `cuMemCreate` (`va_create`) charges HBM with no VA; `va_map_handle` maps it without a second charge; `va_retain_handle` increments refs; `va_release_handle` refunds when refs and maps are 0 | `alloc_overhead_ns` (create, map, retain) |
 | `cuMemGetAllocationGranularity` (`va_granularity_bytes`): reserve/map sizes align (`0`/`1` = any) | not timed |
-| `cuMemSetAccess` (`va_set_access`) PROT_READ on a peer; dest HBM stays 0 | interconnect, not local HBM |
+| `cuMemSetAccess` (`va_set_access`) PROT_READ on a peer; dest HBM stays 0; `va_set_access_write` is PROT_READWRITE | interconnect, not local HBM |
 | `va_map_range` / `va_unmap_range` map a span; `kernel()` needs the whole VA; `kernel_bufs` / `memset_buf` / `MemcpyOp::offset` touch a mapped span | HBM = mapped bytes |
 | `va_release` parks an unmapped VA; `va_acquire` remaps same size | map only on reuse (no second reserve) |
 | `va_acquire_paged` maps the VA in `page` physicals | `alloc_overhead_ns` per block |
@@ -59,7 +59,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemcpy` (`memcpy_sync`) waits that stream | pinned `memcpy` does not |
 | `synchronize_device` waits one GPU | other GPUs keep running |
 | stream order, event dependencies | memcpy microseconds |
-| residency: a kernel may only read **device**, **mapped-host**, VMM peer `va_set_access` (reads), or mempool peer `pool_set_access` (read/write) allocations; managed first-touch at kernel start | PCIe / NVLink / HBM bandwidth |
+| residency: a kernel may only read **device**, **mapped-host**, VMM peer `va_set_access` (reads) / `va_set_access_write` (read/write), or mempool peer `pool_set_access` (read/write) allocations; managed first-touch at kernel start | PCIe / NVLink / HBM bandwidth |
 | HBM vs host-pinned: `alloc_host_pinned` does not charge HBM | pageable vs pinned H2D (`pageable_permille`) |
 | copy-engine occupancy | launch overhead |
 | peer accessibility | size-dependent efficiency |
@@ -276,7 +276,8 @@ is `cuMemRetainAllocationHandle` (combined `va_map` spans are promoted).
 `va_release_handle` is `cuMemRelease` while mapped; HBM refunds when refs and
 maps are 0. `va_map` still Create+Maps in one call.
 `va_set_access` is `cuMemSetAccess` PROT_READ on a peer (no dest HBM;
-writes still need a local map). `pool_set_access` is `cudaMemPoolSetAccess`
+writes still need a local map). `va_set_access_write` is PROT_READWRITE
+(peer writes, no dest HBM). `pool_set_access` is `cudaMemPoolSetAccess`
 ReadWrite on a peer (no dest HBM; kernels may write). `kernel()` needs the whole VA covered; `kernel_bufs`, `memset_buf`, and
 `MemcpyOp::offset` touch a mapped page (paged KV). `va_acquire` remaps an idle VA of the same
 size (or reserves); `va_acquire_paged` maps KV-block physicals covering the VA;

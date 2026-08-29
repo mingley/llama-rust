@@ -451,6 +451,8 @@ Exact (mechanical invariants agents may rely on):
   `va_release` parks the VA so `va_acquire` remaps without another reserve;
   sparse sub-range maps (vLLM KV-block analog) charge only the mapped span;
   two VAs may `va_map_handle` the same physical;
+  `va_set_access` is PROT_READ; `va_set_access_write` is PROT_READWRITE
+  (peer writes without dest HBM);
   [`Sim::kernel`] needs the whole VA covered; [`Sim::kernel_bufs`] /
   [`Sim::memset_buf`] / [`MemcpyOp::offset`] touch a mapped span so a paged
   KV working set need not cover the pointer; `va_acquire_paged` maps a VA in
@@ -1079,6 +1081,11 @@ model, do not celebrate the sim.
     before a later launch so relaunch recharges HBM instead of reusing the
     pointer. Illegal with mem free nodes and after a default instantiate.
     Dual score still has no `$/M tokens`.
+71. [x] VMM `cuMemSetAccess` PROT_READWRITE: `Sim::va_set_access_write` lets
+    a kernel on a peer read **and write** mapped VMM physicals without dest
+    HBM (interconnect billed), same class as `pool_set_access`. Default
+    `va_set_access` stays PROT_READ (writes still need a local map). Dual
+    score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — VMM `cuMemSetAccess` PROT_READWRITE
+
+`Sim::va_set_access_write` is PROT_READWRITE: a kernel on a peer may read
+and write home VMM physicals without dest HBM (interconnect billed).
+Default `va_set_access` stays PROT_READ. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — CUDA-graph AutoFreeOnLaunch
 
 `Sim::instantiate_graph_auto_free` is `cudaGraphInstantiateFlagAutoFreeOnLaunch`:

@@ -35,6 +35,8 @@ struct Alloc {
     /// GPUs that may read this alloc without a local copy (`SetAccessedBy` /
     /// VMM `cuMemSetAccess` PROT_READ). Mempool peer access lives on [`Pool`].
     accessed_by: BTreeSet<DeviceId>,
+    /// VMM `cuMemSetAccess` PROT_READWRITE peers (writes without a local map).
+    vmm_write_by: BTreeSet<DeviceId>,
     /// `cudaMemAdviseSetPreferredLocation` (host or one GPU).
     preferred: Preferred,
     /// `cuMemAddressReserve` VA. HBM is charged only while mapped (possibly sparse).
@@ -1195,6 +1197,7 @@ impl Sim {
                 managed: false,
                 read_mostly: false,
                 accessed_by: BTreeSet::new(),
+                vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
                 vmm: false,
                 vmm_maps: Vec::new(),
@@ -1347,6 +1350,7 @@ impl Sim {
                 managed: false,
                 read_mostly: false,
                 accessed_by: BTreeSet::new(),
+                vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
                 vmm: false,
                 vmm_maps: Vec::new(),
@@ -1521,6 +1525,7 @@ impl Sim {
                 managed: true,
                 read_mostly: false,
                 accessed_by: BTreeSet::new(),
+                vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
                 vmm: false,
                 vmm_maps: Vec::new(),
@@ -1687,6 +1692,7 @@ impl Sim {
                 managed: false,
                 read_mostly: false,
                 accessed_by: BTreeSet::new(),
+                vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
                 vmm: true,
                 vmm_maps: Vec::new(),
@@ -1704,7 +1710,8 @@ impl Sim {
 
     /// `cuMemCreate` + `cuMemMap` for the whole VA (local ReadWrite).
     ///
-    /// Peer [`Self::va_set_access`] is separate (`cuMemSetAccess` PROT_READ).
+    /// Peer [`Self::va_set_access`] / [`Self::va_set_access_write`] is
+    /// `cuMemSetAccess` PROT_READ / PROT_READWRITE.
     /// Equivalent to [`Self::va_map_range`] of `[0, bytes)`. Capture cannot include it.
     /// Split create/map is [`Self::va_create`] then [`Self::va_map_handle`].
     pub fn va_map(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
@@ -1969,6 +1976,7 @@ impl Sim {
         a.vmm_maps.clear();
         a.devices.clear();
         a.accessed_by.clear();
+        a.vmm_write_by.clear();
         Ok(())
     }
 
@@ -2004,6 +2012,7 @@ impl Sim {
         }
         if a.vmm_maps.is_empty() {
             a.accessed_by.clear();
+            a.vmm_write_by.clear();
         }
         Ok(())
     }
@@ -2012,9 +2021,28 @@ impl Sim {
     ///
     /// Host-synchronous. Does not charge dest HBM. A kernel on `device` may
     /// read physicals that live on another GPU (interconnect). Writes still
-    /// need a local map. Capture cannot include it. Needs a topology link and
-    /// directed peer access from the home GPU, same as D2D.
+    /// need a local map unless [`Self::va_set_access_write`]. Capture cannot
+    /// include it. Needs a topology link and directed peer access from the
+    /// home GPU, same as D2D. Downgrades a prior PROT_READWRITE on `device`.
     pub fn va_set_access(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
+        self.va_set_access_inner(id, device, false)
+    }
+
+    /// `cuMemSetAccess` PROT_READWRITE on `device` for a mapped VMM VA.
+    ///
+    /// Host-synchronous. Does not charge dest HBM. A kernel on `device` may
+    /// read **and write** home physicals (interconnect), same class as
+    /// [`Self::pool_set_access`]. Capture cannot include it.
+    pub fn va_set_access_write(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
+        self.va_set_access_inner(id, device, true)
+    }
+
+    fn va_set_access_inner(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        write: bool,
+    ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let _gpu = self.profile.gpu(device)?;
         let a = self.alloc_ref(id)?;
@@ -2033,12 +2061,21 @@ impl Sim {
                 });
             }
         }
-        let _ins = self.alloc_mut(id)?.accessed_by.insert(device);
+        {
+            let a = self.alloc_mut(id)?;
+            let _ins = a.accessed_by.insert(device);
+            if write {
+                let _w = a.vmm_write_by.insert(device);
+            } else {
+                let _gone = a.vmm_write_by.remove(&device);
+            }
+        }
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
     }
 
-    /// Drop [`Self::va_set_access`] for `device`. Host-synchronous.
+    /// Drop [`Self::va_set_access`] / [`Self::va_set_access_write`] for `device`.
+    /// Host-synchronous.
     pub fn va_unset_access(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let _gpu = self.profile.gpu(device)?;
@@ -2046,9 +2083,23 @@ impl Sim {
         if !a.live || !a.vmm {
             return Err(SimError::Invalid { why: "not a VA" });
         }
-        let _was = self.alloc_mut(id)?.accessed_by.remove(&device);
+        {
+            let a = self.alloc_mut(id)?;
+            let _was = a.accessed_by.remove(&device);
+            let _w = a.vmm_write_by.remove(&device);
+        }
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
+    }
+
+    /// Whether `device` has [`Self::va_set_access_write`] on this VMM VA.
+    pub fn is_va_write_accessed_by(
+        &self,
+        alloc: AllocId,
+        device: DeviceId,
+    ) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.vmm && a.vmm_write_by.contains(&device))
     }
 
     /// Mapped bytes of `alloc` currently charged on `device`.
@@ -2595,9 +2646,10 @@ impl Sim {
     /// Enqueue a kernel on whole allocations. Reads/writes are leased until it completes.
     ///
     /// A VMM VA must be fully mapped ([`Self::is_resident`]) or peer-readable
-    /// via [`Self::va_set_access`] (reads only). A mempool alloc may be read
-    /// **and written** on a peer after [`Self::pool_set_access`]. For a mapped
-    /// page of a larger VA, use [`Self::kernel_bufs`].
+    /// via [`Self::va_set_access`] (reads) / [`Self::va_set_access_write`]
+    /// (read and write). A mempool alloc may be read **and written** on a
+    /// peer after [`Self::pool_set_access`]. For a mapped page of a larger
+    /// VA, use [`Self::kernel_bufs`].
     ///
     /// A managed allocation not yet on `device` is [`Self::prefetch`]'d when
     /// the kernel starts (page fault after stream deps). Capture does not
@@ -2621,7 +2673,8 @@ impl Sim {
     ///
     /// Each [`KernelBuf`] must be mapped-host, device-resident, a VMM span
     /// covered by [`Self::va_map_range`], a VMM peer [`Self::va_set_access`]
-    /// read, or a mempool peer [`Self::pool_set_access`] (read and write).
+    /// read, a VMM peer [`Self::va_set_access_write`] (read and write), or a
+    /// mempool peer [`Self::pool_set_access`] (read and write).
     /// `bytes == 0` means from `offset` to
     /// the end of the allocation. A range past the reservation is `Invalid`.
     /// A live kernel (not a graph replay) page-faults managed memory when it
@@ -3181,6 +3234,7 @@ impl Sim {
                 managed: false,
                 read_mostly: false,
                 accessed_by: BTreeSet::new(),
+                vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
                 vmm: false,
                 vmm_maps: Vec::new(),
@@ -3742,6 +3796,7 @@ impl Sim {
                 managed: false,
                 read_mostly: false,
                 accessed_by: BTreeSet::new(),
+                vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
                 vmm: false,
                 vmm_maps: Vec::new(),
@@ -3955,7 +4010,8 @@ impl Sim {
         let accessed =
             mapped_ok && allow_remote && a.remote_read_ok(device) && (!a.vmm || home_span);
         let pool_ok = self.pool_peer_ok(a, device);
-        Ok(on_device || mapped || accessed || pool_ok)
+        let vmm_rw = a.vmm && a.vmm_write_by.contains(&device) && home_span;
+        Ok(on_device || mapped || accessed || pool_ok || vmm_rw)
     }
 
     /// Peer ReadWrite via [`Self::pool_set_access`]. Physicals stay on the pool GPU.
@@ -3999,7 +4055,10 @@ impl Sim {
                 remote = true;
                 continue;
             }
-            if a.remote_read_ok(device) || self.pool_peer_ok(a, device) {
+            if a.remote_read_ok(device)
+                || self.pool_peer_ok(a, device)
+                || (a.vmm && a.vmm_write_by.contains(&device))
+            {
                 let src = if a.vmm {
                     a.vmm_home()
                 } else if self.pool_peer_ok(a, device) {

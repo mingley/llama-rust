@@ -59,7 +59,8 @@
 //! `cuMemRelease` (allowed while mapped; HBM refunds when refs and maps are 0).
 //! [`Sim::va_map`] still Create+Maps in one call.
 //! [`Sim::va_set_access`] is `cuMemSetAccess` PROT_READ on a peer (no dest HBM;
-//! interconnect). Writes still need a local map. [`Sim::va_unset_access`] drops it.
+//! interconnect). [`va_set_access_write`](Sim::va_set_access_write) is
+//! PROT_READWRITE (peer writes, no dest HBM). [`Sim::va_unset_access`] drops it.
 //! [`Sim::va_acquire`] remaps an idle VA of the same size (or reserves);
 //! [`va_acquire_paged`](Sim::va_acquire_paged) maps it in KV-block spans;
 //! [`va_release`](Sim::va_release) unmaps into that pool instead of freeing the VA.
@@ -2756,6 +2757,53 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn va_set_access_write_kernel_skips_dest_hbm() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let bytes = 32u64 << 20;
+        let va = sim.va_reserve(bytes).unwrap();
+        sim.va_map(va, d0).unwrap();
+        enq(sim.memcpy_pinned_to_device(d0, va, bytes, s));
+        sim.synchronize().unwrap();
+        sim.va_set_access_write(va, d1).unwrap();
+        assert!(sim.is_accessed_by(va, d1).unwrap());
+        assert!(sim.is_va_write_accessed_by(va, d1).unwrap());
+        assert!(!sim.is_resident(va, d1).unwrap());
+        let t0 = sim.clock_ns();
+        enq(sim.kernel(d1, KernelKind::other(8, bytes), &[va], &[va], s));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(va, d0).unwrap());
+        assert!(!sim.is_resident(va, d1).unwrap());
+        assert_eq!(sim.hbm_used(d1).unwrap(), 0);
+        let remote = sim.clock_ns().saturating_sub(t0);
+        enq(sim.memset(d1, va, 4096, s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d1).unwrap(), 0);
+        sim.va_set_access(va, d1).unwrap();
+        assert!(!sim.is_va_write_accessed_by(va, d1).unwrap());
+        enq(sim.kernel(d1, KernelKind::other(8, 8), &[va], &[va], s));
+        match sim.synchronize() {
+            Err(SimError::NotResident { alloc, device }) => {
+                assert_eq!(alloc, va);
+                assert_eq!(device, d1);
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut local = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let a = local.va_reserve(bytes).unwrap();
+        local.va_map(a, d0).unwrap();
+        enq(local.memcpy_pinned_to_device(d0, a, bytes, s));
+        local.synchronize().unwrap();
+        let t1 = local.clock_ns();
+        enq(local.kernel(d0, KernelKind::other(8, bytes), &[a], &[a], s));
+        local.synchronize().unwrap();
+        let hbm = local.clock_ns().saturating_sub(t1);
+        assert!(remote > hbm, "remote={remote} hbm={hbm}");
     }
 
     #[test]
