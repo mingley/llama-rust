@@ -529,4 +529,26 @@ mod tests {
             other => panic!("{other}"),
         }
     }
+
+    #[test]
+    fn engine_take_releases_blocks_for_the_next_sequence() {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        let g = load_gguf_owned(tiny_llama_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let exp_b = independent(&model, &tok, &tokens_b, 0);
+        let mut cfg = EngineCfg::tiny();
+        cfg.pool_blocks = 2;
+        cfg.max_seqs = 1;
+        cfg.eos = tok.eos;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        let a = eng.add(&tokens_a, 0).expect("a");
+        eng.run().expect("a run");
+        let _out_a = eng.take(a).expect("ta");
+        let b = eng.add(&tokens_b, 0).expect("b after take");
+        eng.run().expect("b run");
+        assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+        assert_eq!(eng.preempts(), 0);
+    }
 }

@@ -8,13 +8,14 @@ use std::time::Instant;
 
 use llama_rust::{
     gemv_q4_k, gemv_q8_0, greedy_generate_ctx, greedy_generate_traced, load_gguf_owned,
-    pack_q4_k_block, pack_q8_0_block, pack_q8_k_block, parse_chat_args, parse_infer_args,
-    parse_serve_args, parse_trace_args, run_chat, run_serve, tiny_gemma_gguf, tiny_llama4_gguf,
-    tiny_llama_gguf, tiny_llama_moe_gguf, tiny_phi2_gguf, tiny_qwen2_gguf, tiny_qwen2moe_gguf,
-    tiny_qwen2vl_gguf, tiny_qwen35_gguf, tiny_qwen3_gguf, tiny_qwen3moe_gguf, tiny_qwen3next_gguf,
-    tiny_qwen3vl_gguf, write_gguf, write_gguf_with_kv, ChatCmd, GgmlType, InferArgs, InferCmd, Kv,
-    Llama, ServeCmd, TensorWrite, Tokenizer, TraceCmd, BIN_USAGE, CHAT_USAGE, INFER_USAGE, QK8_0,
-    QK_K, SERVE_USAGE, TRACE_USAGE,
+    pack_q4_k_block, pack_q8_0_block, pack_q8_k_block, parse_chat_args, parse_engine_args,
+    parse_infer_args, parse_serve_args, parse_trace_args, run_chat, run_engine, run_serve,
+    tiny_gemma_gguf, tiny_llama4_gguf, tiny_llama_gguf, tiny_llama_moe_gguf, tiny_phi2_gguf,
+    tiny_qwen2_gguf, tiny_qwen2moe_gguf, tiny_qwen2vl_gguf, tiny_qwen35_gguf, tiny_qwen3_gguf,
+    tiny_qwen3moe_gguf, tiny_qwen3next_gguf, tiny_qwen3vl_gguf, write_gguf, write_gguf_with_kv,
+    ChatCmd, EngineCmd, GgmlType, InferArgs, InferCmd, Kv, Llama, ServeCmd, TensorWrite, Tokenizer,
+    TraceCmd, BIN_USAGE, CHAT_USAGE, ENGINE_USAGE, INFER_USAGE, QK8_0, QK_K, SERVE_USAGE,
+    TRACE_USAGE,
 };
 
 fn y_checksum(y: &[f32]) -> u64 {
@@ -405,6 +406,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(())
             }
             ServeCmd::Run(opts) => Ok(run_serve(&opts)?),
+        },
+        "engine" => match parse_engine_args(args)? {
+            EngineCmd::Help => {
+                print!("{ENGINE_USAGE}");
+                Ok(())
+            }
+            EngineCmd::Run(opts) => run_engine(&opts),
         },
         other => Err(format!("{BIN_USAGE}got {other}").into()),
     }

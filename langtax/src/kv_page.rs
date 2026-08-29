@@ -344,6 +344,12 @@ impl KvPages {
     }
 }
 
+impl Drop for KvPages {
+    fn drop(&mut self) {
+        self.rewind_tokens(0);
+    }
+}
+
 impl<'a> KvGeom<'a> {
     /// Dense head-major layout: `((layer * n_head_kv + head) * max_seq + t) * hd`.
     #[must_use]
@@ -457,6 +463,23 @@ mod tests {
         a.intern_full(&[1, 2, 3, 4]);
         assert_eq!(b.bind_full_prefix(&[1, 2, 3, 4], 0), 4);
         assert!(pool.hits() > 0);
+        assert_eq!(b.table_ids().len(), 2);
+    }
+
+    #[test]
+    fn drop_releases_unique_blocks_so_the_next_table_can_alloc() {
+        let pool = super::PagedKvPool::create(1, 1, 1, 2, 2).expect("pool");
+        {
+            let mut a = super::KvPages::on(pool.clone());
+            for pos in 0..4 {
+                a.ensure_write(pos).expect("a");
+            }
+            assert_eq!(pool.occupied(), 2);
+        }
+        let mut b = super::KvPages::on(pool.clone());
+        for pos in 0..4 {
+            b.ensure_write(pos).expect("reuse after drop");
+        }
         assert_eq!(b.table_ids().len(), 2);
     }
 }

@@ -5,7 +5,8 @@ use std::fs::File;
 use std::io::{BufRead, Read, Write};
 use std::path::Path;
 
-use crate::decode::{KvCache, Llama};
+use crate::decode::{prompt_ids, KvCache, Llama};
+use crate::engine::{Engine, EngineCfg};
 use crate::gguf::load_gguf_owned;
 use crate::sample::argmax;
 use crate::template::ChatMessage;
@@ -47,7 +48,25 @@ usage: gguf_gemv <command> [args]
   trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE [--capacity N]
   chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--kv-page N] [--show-prompt]
   serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT]
+  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N]
   write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|write-tiny-qwen3|write-tiny-gemma|write-tiny-llama4|write-tiny-llama-moe|write-tiny-qwen2moe|write-tiny-qwen3moe|write-tiny-qwen2vl|write-tiny-qwen3vl|write-tiny-qwen3next|write-tiny-qwen35|write-tiny-phi2 <path>
+";
+
+/// Usage for the `engine` verb.
+pub const ENGINE_USAGE: &str = "\
+usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N]
+  -p, --prompt TEXT     prompt (repeatable; default: one `ab`)
+  -n, --n-predict N     tokens to generate per sequence (default: 2)
+      --n-ctx N         KV capacity (default: longest prompt + n_predict + 1)
+      --kv-page N       paged KV block size in tokens (default: 16)
+      --pool-blocks N   physical intern blocks (default: max_seqs * pages)
+      --max-seqs N      in-flight sequences (default: number of prompts)
+      --prefill-chunk N prefill tokens per step (`0` = the rest; default: 0)
+
+Runs Engine continuous batching on one interned pool. Several `--prompt`s
+join the same scheduler. A tight `--pool-blocks` preempts (recompute +
+replay). Prints each continuation (`n_gen` plus decoded text), then
+intern_hits and preempts. Not an HTTP server.
 ";
 
 /// Parsed `infer` invocation.
@@ -347,6 +366,218 @@ where
     }))
 }
 
+/// Parsed `engine` invocation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EngineCmd {
+    /// `--help` / `-h`.
+    Help,
+    /// Run continuous batching with these arguments.
+    Run(EngineArgs),
+}
+
+/// Arguments for `gguf_gemv engine`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EngineArgs {
+    /// GGUF path.
+    pub path: String,
+    /// Prompts, one sequence each. Empty is replaced with a single `ab`.
+    pub prompts: Vec<String>,
+    /// Tokens to generate after each prompt.
+    pub n_predict: usize,
+    /// Optional KV capacity. `None` sizes to the longest prompt + `n_predict` + 1.
+    pub n_ctx: Option<usize>,
+    /// Paged KV block size in tokens.
+    pub block_size: usize,
+    /// Physical intern blocks. `None` sizes to `max_seqs` times pages per sequence.
+    pub pool_blocks: Option<usize>,
+    /// In-flight sequences. `None` is the number of prompts.
+    pub max_seqs: Option<usize>,
+    /// Prefill tokens per sequence per step (`0` = the rest of the prompt).
+    pub prefill_chunk: usize,
+}
+
+impl EngineArgs {
+    /// Default `--kv-page` when omitted.
+    pub const DEFAULT_BLOCK_SIZE: usize = 16;
+}
+
+/// Parse operands after the `engine` verb.
+///
+/// Path may appear before or after flags. `--flag=value` is accepted.
+/// `--prompt` / `-p` may be repeated.
+pub fn parse_engine_args<I, S>(args: I) -> Result<EngineCmd, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut path = None;
+    let mut prompts = Vec::new();
+    let mut n_predict = InferArgs::DEFAULT_N_PREDICT;
+    let mut n_ctx = None;
+    let mut block_size = EngineArgs::DEFAULT_BLOCK_SIZE;
+    let mut pool_blocks = None;
+    let mut max_seqs = None;
+    let mut prefill_chunk = 0usize;
+    let mut it = args.into_iter();
+    while let Some(raw) = it.next() {
+        let arg = raw.as_ref();
+        if arg == "--help" || arg == "-h" {
+            return Ok(EngineCmd::Help);
+        }
+        let (key, inline) = match arg.split_once('=') {
+            Some((k, v)) => (k, Some(v)),
+            None => (arg, None),
+        };
+        match key {
+            "--prompt" | "-p" => prompts.push(engine_value("prompt", inline, &mut it)?),
+            "--n-predict" | "-n" => {
+                n_predict =
+                    engine_usize("n-predict", &engine_value("n-predict", inline, &mut it)?)?;
+            }
+            "--n-ctx" => {
+                let n = engine_usize("n-ctx", &engine_value("n-ctx", inline, &mut it)?)?;
+                if n == 0 {
+                    return engine_err("n-ctx must be > 0");
+                }
+                n_ctx = Some(n);
+            }
+            "--kv-page" => {
+                let n = engine_usize("kv-page", &engine_value("kv-page", inline, &mut it)?)?;
+                if n == 0 {
+                    return engine_err("kv-page must be > 0");
+                }
+                block_size = n;
+            }
+            "--pool-blocks" => {
+                let n = engine_usize(
+                    "pool-blocks",
+                    &engine_value("pool-blocks", inline, &mut it)?,
+                )?;
+                if n == 0 {
+                    return engine_err("pool-blocks must be > 0");
+                }
+                pool_blocks = Some(n);
+            }
+            "--max-seqs" => {
+                let n = engine_usize("max-seqs", &engine_value("max-seqs", inline, &mut it)?)?;
+                if n == 0 {
+                    return engine_err("max-seqs must be > 0");
+                }
+                max_seqs = Some(n);
+            }
+            "--prefill-chunk" => {
+                prefill_chunk = engine_usize(
+                    "prefill-chunk",
+                    &engine_value("prefill-chunk", inline, &mut it)?,
+                )?;
+            }
+            flag if flag.starts_with('-') => {
+                return engine_err(&format!("unknown flag {flag}"));
+            }
+            other => {
+                if path.is_some() {
+                    return engine_err(&format!("unexpected argument {other}"));
+                }
+                path = Some(other.to_string());
+            }
+        }
+    }
+    let Some(path) = path else {
+        return engine_err("missing GGUF path");
+    };
+    if prompts.is_empty() {
+        prompts.push(InferArgs::DEFAULT_PROMPT.to_string());
+    }
+    Ok(EngineCmd::Run(EngineArgs {
+        path,
+        prompts,
+        n_predict,
+        n_ctx,
+        block_size,
+        pool_blocks,
+        max_seqs,
+        prefill_chunk,
+    }))
+}
+
+/// Continuous batching: several prompts on one interned [`Engine`] pool.
+pub fn run_engine(args: &EngineArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let bytes = read_file(Path::new(&args.path))?;
+    let g = load_gguf_owned(bytes)?;
+    let tok = Tokenizer::from_gguf(&g)?;
+    let model = Llama::from_gguf(g)?;
+    let cfg = engine_cfg(&tok, args)?;
+    let mut eng = Engine::new(&model, cfg)?;
+    let mut handles = Vec::new();
+    for ids in engine_prompts(&tok, args)? {
+        handles.push(eng.add(&ids, args.n_predict)?);
+    }
+    eng.run()?;
+    let mut out = std::io::stdout();
+    for (i, id) in handles.iter().enumerate() {
+        let seq = eng.take(*id).ok_or("engine take")?;
+        let text = tok.decode(&seq.generated);
+        writeln!(
+            out,
+            "seq={i} n_gen={} generated={text}",
+            seq.generated.len()
+        )?;
+    }
+    writeln!(
+        out,
+        "intern_hits={} preempts={}",
+        eng.pool().hits(),
+        eng.preempts()
+    )?;
+    Ok(())
+}
+
+fn engine_prompts(
+    tok: &Tokenizer,
+    args: &EngineArgs,
+) -> Result<Vec<Vec<u32>>, Box<dyn std::error::Error>> {
+    let mut encoded = Vec::new();
+    for p in &args.prompts {
+        let ids = prompt_ids(tok, p)?;
+        if ids.is_empty() {
+            return Err("empty prompt tokens".into());
+        }
+        encoded.push(ids);
+    }
+    Ok(encoded)
+}
+
+fn engine_cfg(tok: &Tokenizer, args: &EngineArgs) -> Result<EngineCfg, Box<dyn std::error::Error>> {
+    let encoded = engine_prompts(tok, args)?;
+    let mut max_needed = 0usize;
+    for ids in &encoded {
+        max_needed = max_needed.max(ids.len().saturating_add(args.n_predict));
+    }
+    let n_ctx = match args.n_ctx {
+        Some(n) if n < max_needed => {
+            return Err(format!("--n-ctx {n} is below the {max_needed} tokens needed").into());
+        }
+        Some(n) => n,
+        None => max_needed.saturating_add(1),
+    };
+    let max_seqs = args.max_seqs.unwrap_or(encoded.len());
+    if encoded.len() > max_seqs {
+        return Err(format!("{} prompts exceed --max-seqs {max_seqs}", encoded.len()).into());
+    }
+    let pages = n_ctx.div_ceil(args.block_size).saturating_add(1);
+    let pool_blocks = args
+        .pool_blocks
+        .unwrap_or(max_seqs.saturating_mul(pages).max(2));
+    Ok(EngineCfg {
+        n_ctx,
+        block_size: args.block_size,
+        pool_blocks,
+        max_seqs,
+        prefill_chunk: args.prefill_chunk,
+        eos: tok.eos,
+    })
+}
+
 /// Hold a conversation using the model's own `tokenizer.chat_template`.
 ///
 /// With `--prompt` this is one turn and exits. Otherwise each line of stdin is
@@ -496,6 +727,29 @@ where
         Some(s) => Ok(s.as_ref().to_string()),
         None => chat_usage_err(&format!("missing --{name} value")),
     }
+}
+
+fn engine_err<T>(msg: &str) -> Result<T, String> {
+    Err(format!("{msg}\n{ENGINE_USAGE}"))
+}
+
+fn engine_value<I, S>(name: &str, inline: Option<&str>, it: &mut I) -> Result<String, String>
+where
+    I: Iterator<Item = S>,
+    S: AsRef<str>,
+{
+    if let Some(v) = inline {
+        return Ok(v.to_string());
+    }
+    match it.next() {
+        Some(s) => Ok(s.as_ref().to_string()),
+        None => engine_err(&format!("missing --{name} value")),
+    }
+}
+
+fn engine_usize(name: &str, s: &str) -> Result<usize, String> {
+    s.parse::<usize>()
+        .map_err(|_| format!("invalid {name} {s:?}\n{ENGINE_USAGE}"))
 }
 
 fn usage_err<T>(msg: &str) -> Result<T, String> {
@@ -743,5 +997,35 @@ mod tests {
             TraceCmd::Run(a) => assert_eq!(a.capacity, 2),
             TraceCmd::Help => panic!("expected Run"),
         }
+    }
+
+    #[test]
+    fn engine_repeatable_prompts_and_rejects_bad_flags() {
+        match parse_engine_args(["m.gguf"]).expect("def") {
+            EngineCmd::Run(a) => {
+                assert_eq!(a.prompts, vec![String::from("ab")]);
+                assert_eq!(a.n_predict, 2);
+                assert_eq!(a.block_size, EngineArgs::DEFAULT_BLOCK_SIZE);
+                assert_eq!(a.pool_blocks, None);
+                assert_eq!(a.prefill_chunk, 0);
+            }
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        match parse_engine_args(["-p", "a", "-p", "b", "m.gguf", "--kv-page", "2"]).expect("two") {
+            EngineCmd::Run(a) => {
+                assert_eq!(a.prompts, vec![String::from("a"), String::from("b")]);
+                assert_eq!(a.block_size, 2);
+            }
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        assert_eq!(parse_engine_args(["--help"]).unwrap(), EngineCmd::Help);
+        let err = parse_engine_args(["--n-predict", "2"]).unwrap_err();
+        assert!(err.contains("missing GGUF path"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--pool-blocks", "0"]).unwrap_err();
+        assert!(err.contains("pool-blocks must be > 0"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--max-seqs", "0"]).unwrap_err();
+        assert!(err.contains("max-seqs must be > 0"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--nope"]).unwrap_err();
+        assert!(err.contains("unknown flag"), "{err}");
     }
 }

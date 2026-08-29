@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — paged-KV Drop and `gguf_gemv engine`
+
+`KvPages` Drop rewinds the block table so unique refs return to the
+intern pool (`Engine::take` can admit the next sequence on a tight cap).
+Intern pins stay. `gguf_gemv engine` runs several `--prompt`s through
+`Engine` (chunked prefill, intern hits, recompute preemption) and prints
+`intern_hits` / `preempts`. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine recompute preemption
 
 When `PagedKvPool` alloc returns `kv page cap`, `Engine` drops unique KV

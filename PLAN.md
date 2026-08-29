@@ -753,6 +753,9 @@ model, do not celebrate the sim.
     tokens (intern pins remain). Re-prefill and replay already sampled
     greedy ids so output still matches `greedy_generate_cache`. Distinct
     from intern eviction (`refs==1` in `by_hash`). Not an HTTP server.
+15. [x] `KvPages` Drop releases unique table refs so `Engine::take` (and
+    cache drop) can reuse a tight intern pool. `gguf_gemv engine` runs
+    several `--prompt`s through `Engine` and prints intern_hits / preempts.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

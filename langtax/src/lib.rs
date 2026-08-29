@@ -24,8 +24,9 @@ mod tok;
 mod ucd;
 
 pub use cli::{
-    parse_chat_args, parse_infer_args, parse_trace_args, run_chat, ChatArgs, ChatCmd, InferArgs,
-    InferCmd, TraceArgs, TraceCmd, BIN_USAGE, CHAT_USAGE, INFER_USAGE, TRACE_USAGE,
+    parse_chat_args, parse_engine_args, parse_infer_args, parse_trace_args, run_chat, run_engine,
+    ChatArgs, ChatCmd, EngineArgs, EngineCmd, InferArgs, InferCmd, TraceArgs, TraceCmd, BIN_USAGE,
+    CHAT_USAGE, ENGINE_USAGE, INFER_USAGE, TRACE_USAGE,
 };
 pub use decode::{
     generate, generate_ctx, greedy_generate, greedy_generate_cache, greedy_generate_ctx,
