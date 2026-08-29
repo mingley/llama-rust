@@ -20,6 +20,8 @@ pub struct BenchReport {
     pub sim: Option<String>,
     /// Serial vs `--seq-streams` when the trace has more than one sequence.
     pub overlap: Option<String>,
+    /// Serial vs `--cuda-graphs` on the same LRU config.
+    pub graphs: Option<String>,
 }
 
 impl BenchReport {
@@ -33,6 +35,10 @@ impl BenchReport {
         }
         if let Some(ov) = &self.overlap {
             s.push_str(ov);
+            s.push('\n');
+        }
+        if let Some(g) = &self.graphs {
+            s.push_str(g);
             s.push('\n');
         }
         s
@@ -49,17 +55,29 @@ pub fn report(
     expert_bytes: u64,
 ) -> Result<BenchReport, Error> {
     let table = format_table(&compare(trace, capacity, lookahead));
-    let (sim, overlap) = match profile {
-        Some(p) => sim_lines(trace, p, capacity, lookahead, expert_bytes)?,
-        None => (None, None),
-    };
+    let mut sim = None;
+    let mut overlap = None;
+    let mut graphs = None;
+    if let Some(p) = profile {
+        let lines = sim_lines(trace, p, capacity, lookahead, expert_bytes)?;
+        sim = Some(lines.serial);
+        overlap = lines.overlap;
+        graphs = lines.graphs;
+    }
     Ok(BenchReport {
         name: name.to_string(),
         capacity,
         table,
         sim,
         overlap,
+        graphs,
     })
+}
+
+struct SimLines {
+    serial: String,
+    overlap: Option<String>,
+    graphs: Option<String>,
 }
 
 fn sim_lines(
@@ -68,18 +86,25 @@ fn sim_lines(
     capacity: usize,
     lookahead: usize,
     expert_bytes: u64,
-) -> Result<(Option<String>, Option<String>), Error> {
+) -> Result<SimLines, Error> {
     let base = SimCfg::lru(capacity, expert_bytes, lookahead);
     let serial = sim_replay_cfg(trace, profile.clone(), base)?;
     let overlap = if trace.n_sequences() > 1 {
         let mut streamed = base;
         streamed.seq_streams = true;
-        let ov = sim_replay_cfg(trace, profile, streamed)?;
+        let ov = sim_replay_cfg(trace, profile.clone(), streamed)?;
         Some(format!("serial {} | overlap {}", serial.line(), ov.line()))
     } else {
         None
     };
-    Ok((Some(serial.line()), overlap))
+    let mut graphed = base;
+    graphed.cuda_graphs = true;
+    let g = sim_replay_cfg(trace, profile, graphed)?;
+    Ok(SimLines {
+        serial: serial.line(),
+        overlap,
+        graphs: Some(format!("serial {} | graphs {}", serial.line(), g.line())),
+    })
 }
 
 /// Run every named adversarial workload at `capacity`.

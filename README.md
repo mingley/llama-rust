@@ -7,8 +7,8 @@ This is the **correctness laboratory** for the research stack in [PLAN.md](PLAN.
 | Crate | Job |
 | --- | --- |
 | `llama-rust` | Model semantics. Oracle + llama.cpp greedy identity. |
-| [`expertvm`](expertvm/) | Expert residency / virtual memory (leases, prefetch, replication). |
-| [`gpu-sim`](gpu-sim/) | Deterministic GPU-systems VM. Exact CUDA-like invariants, calibrated timing. |
+| [`expertvm`](expertvm/) | Expert residency / virtual memory (leases, `ExpertPhase`, prefetch, replication). |
+| [`gpu-sim`](gpu-sim/) | Deterministic GPU-systems VM. Exact CUDA-like invariants (`GpuOp` DAG, stream sync), calibrated timing. |
 | [`infer-bench`](infer-bench/) | Serving-shaped measurement over traces. No invented `$/M tokens`. |
 
 See [STATUS.md](STATUS.md) for what shipped. Full ChatGPT share extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).

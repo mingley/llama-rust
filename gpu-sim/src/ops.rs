@@ -1,6 +1,6 @@
 //! Structural GPU operations. Timing is derived from a [`crate::HardwareProfile`].
 
-use crate::ids::{AllocId, DeviceId};
+use crate::ids::{AllocId, DeviceId, EventId, OpId, StreamId};
 
 /// Element type for roofline math. Maps onto a peak-FLOP field in the profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,4 +146,76 @@ pub struct MemcpyOp {
     pub alloc: AllocId,
     /// Payload bytes. Cost uses this, not a free full-link assumption.
     pub bytes: u64,
+}
+
+/// One submitted GPU primitive. PLAN's Kernel / Memcpy / Collective / Event /
+/// Alloc / Free, plus `cudaMemsetAsync`. Timing is not stored here.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GpuOp {
+    /// Stream-ordered device allocation. Capacity is reserved when the op starts.
+    Alloc {
+        /// Object created by this op.
+        id: AllocId,
+        /// Reserved bytes.
+        bytes: u64,
+    },
+    /// Stream-ordered free. Illegal while a kernel lease is held.
+    Free {
+        /// Object dropped on this device.
+        id: AllocId,
+    },
+    /// Asynchronous copy. Completion moves or replicates residency.
+    Memcpy(MemcpyOp),
+    /// Compute kernel. Reads/writes are leased until it completes.
+    Kernel {
+        /// Structural work (roofline inputs).
+        kind: KernelKind,
+        /// Allocations the kernel reads.
+        reads: Vec<AllocId>,
+        /// Allocations the kernel writes.
+        writes: Vec<AllocId>,
+    },
+    /// Device-side fill (`cudaMemsetAsync`).
+    Memset {
+        /// Resident allocation to fill.
+        id: AllocId,
+        /// Bytes billed as an HBM write.
+        bytes: u64,
+    },
+    /// Record `event` after prior ops on this stream.
+    EventRecord {
+        /// Event id.
+        event: EventId,
+    },
+    /// Later ops on this stream wait until `event` is recorded and complete.
+    EventWait {
+        /// Event id.
+        event: EventId,
+    },
+    /// Ring allreduce (PLAN Collective). Each alloc must already be resident.
+    AllReduce {
+        /// Rank → allocation.
+        parts: Vec<(DeviceId, AllocId)>,
+        /// Payload bytes per hop.
+        bytes: u64,
+    },
+}
+
+/// One node in the compiled dependency DAG ([`GpuOp`] + stream + deps).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Operation {
+    /// Submit id.
+    pub id: OpId,
+    /// Device the op was submitted on.
+    pub device: DeviceId,
+    /// Stream the op was submitted on.
+    pub stream: StreamId,
+    /// Primitive.
+    pub kind: GpuOp,
+    /// Stream-order and event-wait predecessors that must finish first.
+    pub deps: Vec<OpId>,
+    /// Whether the discrete-event engine has completed this op.
+    pub done: bool,
+    /// Cancelled before start, or failed transfer.
+    pub cancelled: bool,
 }

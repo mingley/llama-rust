@@ -200,6 +200,23 @@ fn cached_store_prefetch_skips_unknown_and_counts() {
 }
 
 #[test]
+fn cached_store_phase_is_cold_resident_leased() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let mut cache = CachedStore::new(DirectStore::from_trace(&t), 1).expect("cache");
+    let k = ExpertKey::new(0, 0);
+    assert_eq!(cache.phase(k), ExpertPhase::Cold);
+    let _p = cache.acquire(k).expect("acq");
+    assert_eq!(cache.phase(k), ExpertPhase::Resident);
+    cache.lease(k).expect("lease");
+    assert_eq!(cache.phase(k), ExpertPhase::Leased);
+    assert!(cache.is_leased(k));
+    cache.release(k);
+    assert_eq!(cache.phase(k), ExpertPhase::Resident);
+}
+
+#[test]
 fn planner_stays_when_window_is_resident() {
     let t = cycling_trace();
     let mut resident = BTreeSet::new();
@@ -436,6 +453,50 @@ fn seq_streams_overlap_beats_serial_on_batch_token() {
 }
 
 #[test]
+fn max_batch_serializes_sequences_at_a_token() {
+    let t = Trace {
+        events: vec![
+            ExpertAccess {
+                sequence: 0,
+                token: 0,
+                layer: 0,
+                experts: vec![0],
+                weight_pt: Vec::new(),
+            },
+            ExpertAccess {
+                sequence: 1,
+                token: 0,
+                layer: 0,
+                experts: vec![1],
+                weight_pt: Vec::new(),
+            },
+        ],
+    };
+    let p = HardwareProfile::parse("gpus=1\ncopy_engines=1\n").expect("profile");
+    let cfg = |max_batch: usize| SimCfg {
+        slots: 2,
+        bytes_per_expert: 32u64 << 20,
+        lookahead: 0,
+        seq_streams: true,
+        max_batch,
+        ..SimCfg::lru(2, 32u64 << 20, 0)
+    };
+    let all = sim_replay_cfg(&t, p.clone(), cfg(0)).expect("admit all");
+    let one = sim_replay_cfg(&t, p, cfg(1)).expect("admit one");
+    assert_eq!(all.hits, one.hits);
+    assert_eq!(all.misses, one.misses);
+    assert_eq!(all.ttft_ns.is_some(), one.ttft_ns.is_some());
+    assert!(all.itl_ns.is_none());
+    assert!(one.itl_ns.is_none());
+    assert!(
+        one.sim_ns > all.sim_ns,
+        "max_batch=1 must drain before the next sequence; one={} all={}",
+        one.sim_ns,
+        all.sim_ns
+    );
+}
+
+#[test]
 fn colocated_keeps_coactivated_pair_on_one_gpu() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1]), ev(1, 0, &[0, 1]), ev(2, 0, &[0, 1])],
@@ -517,6 +578,8 @@ fn adversarial_workloads_are_named_and_measurable() {
     let batch = rows.iter().find(|r| r.name == "batch").unwrap();
     assert!(batch.overlap.is_some(), "{}", batch.render());
     assert!(batch.render().contains("overlap"));
+    assert!(batch.graphs.is_some(), "{}", batch.render());
+    assert!(batch.render().contains("graphs"));
 }
 
 #[test]
@@ -870,4 +933,27 @@ fn simulated_gpu_store_captures_gemm_after_drain() {
         "launches={}",
         gpu.graph_launches()
     );
+}
+
+#[test]
+fn simulated_gpu_store_phase_tracks_copy() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::new(inner, 1, HardwareProfile::example_h100_sxm(), 4096).expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    assert_eq!(gpu.phase(k0), ExpertPhase::Cold);
+    let n = gpu.prefetch(&[k0]).expect("prefetch");
+    assert_eq!(n, 1);
+    assert_eq!(gpu.phase(k0), ExpertPhase::Transferring);
+    let err = gpu.lease(k0).unwrap_err();
+    assert!(matches!(err, Error::Store(_)));
+    let _score = gpu.score().expect("drain");
+    assert_eq!(gpu.phase(k0), ExpertPhase::Resident);
+    gpu.lease(k0).expect("lease after copy");
+    assert_eq!(gpu.phase(k0), ExpertPhase::Leased);
+    gpu.release(k0);
+    assert_eq!(gpu.phase(k0), ExpertPhase::Resident);
 }

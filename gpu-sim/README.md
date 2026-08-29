@@ -37,6 +37,7 @@ warp scheduler, L1, …   ← do not model
 | peer accessibility | size-dependent efficiency |
 | graph capture does not execute; launch replays | GEMM util / grouped-MoE ‰ |
 | graph launch amortizes per-kernel launch overhead | `graph_launch_ns` |
+| `synchronize_stream` waits one stream only | other streams keep running |
 | memset requires device residency | HBM write + launch overhead |
 | peer D2D needs topology + `enable_peer` | link bandwidth |
 | legacy null stream serializes (opt-in) | copy/compute overlap |
@@ -69,7 +70,7 @@ once someone with a GPU runs one.
 ## Library
 
 ```rust
-use gpu_sim::{DeviceId, HardwareProfile, KernelKind, Sim, StreamId};
+use gpu_sim::{DeviceId, GpuOp, HardwareProfile, KernelKind, Sim, StreamId};
 
 let mut sim = Sim::new(HardwareProfile::example_h100_sxm());
 let d0 = DeviceId(0);
@@ -80,6 +81,8 @@ sim.kernel(d0, KernelKind::other(1 << 30, 8 << 20), &[a], &[a], s0)
     .expect("k");
 sim.synchronize().expect("sync");
 assert!(sim.clock_ns() > 0);
+let dag: Vec<_> = sim.operations().collect();
+assert!(dag.iter().any(|op| matches!(op.kind, GpuOp::Kernel { .. })));
 ```
 
 ## Scores
@@ -142,6 +145,8 @@ topology link **and** directed `enable_peer` (seeded on for every GPU↔GPU
 link; `disable_peer` → `PeerDisabled`). [`StreamId::NULL`] is the CUDA null
 stream; `set_legacy_null_stream(true)` serializes it with every other stream
 on that device (off by default = `cudaStreamNonBlocking`).
+`synchronize_stream` is `cudaStreamSynchronize`. `GpuOp` / `Operation` is the
+compiled submit DAG (`Sim::operations`).
 
 In-flight ops are not cancelled. `gpu-profile capture` is refused in this
 crate: someone with a GPU writes a `key=value` file; agents `parse` it.

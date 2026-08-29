@@ -31,6 +31,35 @@ impl ExpertParts {
     }
 }
 
+/// PLAN expert residency: Cold → Transferring → Resident → Leased → Evicting → Cold.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExpertPhase {
+    /// Not in the fast tier and not in flight.
+    Cold,
+    /// Copy onto the fast tier has been submitted and has not completed.
+    Transferring,
+    /// Fast-tier resident and not leased.
+    Resident,
+    /// Pinned against eviction (in-use).
+    Leased,
+    /// Victim copy-out / free in flight.
+    Evicting,
+}
+
+impl ExpertPhase {
+    /// CPU caches fault in on the calling thread: Resident or Leased, else Cold.
+    #[must_use]
+    pub fn cpu(resident: bool, leased: bool) -> Self {
+        if leased {
+            Self::Leased
+        } else if resident {
+            Self::Resident
+        } else {
+            Self::Cold
+        }
+    }
+}
+
 /// Hit / miss / movement counters. Hits are cache-layer, not DirectStore.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct StoreMetrics {
@@ -227,6 +256,18 @@ impl CachedStore {
     #[must_use]
     pub fn is_resident(&self, key: ExpertKey) -> bool {
         self.resident.contains(&key)
+    }
+
+    /// Whether `key` is pinned against eviction.
+    #[must_use]
+    pub fn is_leased(&self, key: ExpertKey) -> bool {
+        self.leased.contains(&key)
+    }
+
+    /// PLAN state for `key`. CPU fault-in is instantaneous (no Transferring).
+    #[must_use]
+    pub fn phase(&self, key: ExpertKey) -> ExpertPhase {
+        ExpertPhase::cpu(self.resident.contains(&key), self.leased.contains(&key))
     }
 
     /// Whether `key` exists in the backing catalog.

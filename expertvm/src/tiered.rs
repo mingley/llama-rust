@@ -2,7 +2,7 @@
 
 use crate::access::ExpertKey;
 use crate::error::Error;
-use crate::store::{DirectStore, ExpertParts, ExpertStore, StoreMetrics};
+use crate::store::{DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -166,6 +166,12 @@ impl TieredStore {
     #[must_use]
     pub fn is_resident(&self, key: ExpertKey) -> bool {
         self.fast.contains_key(&key)
+    }
+
+    /// PLAN state. Fault-in is a blocking read (no Transferring).
+    #[must_use]
+    pub fn phase(&self, key: ExpertKey) -> ExpertPhase {
+        ExpertPhase::cpu(self.fast.contains_key(&key), self.leased.contains(&key))
     }
 
     /// Whether `key` exists in the slow catalog.

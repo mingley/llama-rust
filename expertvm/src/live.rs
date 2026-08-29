@@ -63,6 +63,17 @@ impl LiveStore {
         }
     }
 
+    /// PLAN expert state machine. Direct catalogs are Resident when present.
+    #[must_use]
+    pub fn phase(&self, key: ExpertKey) -> crate::ExpertPhase {
+        match self {
+            Self::Direct(s) => crate::ExpertPhase::cpu(s.contains(key), false),
+            Self::Cached(s) => s.phase(key),
+            Self::Tiered(s) => s.phase(key),
+            Self::Simulated(s) => s.phase(key),
+        }
+    }
+
     /// D2D migrate on the simulated GPU; no-op for CPU stores.
     pub fn migrate(&mut self, key: ExpertKey, dst: DeviceId) -> Result<(), Error> {
         match self {

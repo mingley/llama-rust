@@ -99,6 +99,9 @@ pub struct SimCfg {
     pub plan_window: usize,
     /// Stay vs Fetch threshold, permille of upcoming unique keys already resident.
     pub plan_threshold: u32,
+    /// Sequences admitted per engine iteration at a token. `0` admits every
+    /// sequence that shares the current token (one drain at the token boundary).
+    pub max_batch: usize,
 }
 
 impl SimCfg {
@@ -115,6 +118,7 @@ impl SimCfg {
             cuda_graphs: false,
             plan_window: 0,
             plan_threshold: 500,
+            max_batch: 0,
         }
     }
 }
@@ -169,6 +173,7 @@ pub fn sim_replay_cfg(
     let mut prev2: Option<&ExpertAccess> = None;
     let mut prefetched: BTreeSet<ExpertKey> = BTreeSet::new();
     let mut graphs: BTreeMap<Vec<AllocId>, GraphId> = BTreeMap::new();
+    let mut admitted: BTreeSet<u64> = BTreeSet::new();
     for (i, event) in trace.events.iter().enumerate() {
         args.s = stream_of(event, n_streams);
         let ek = event.keys();
@@ -211,9 +216,13 @@ pub fn sim_replay_cfg(
         observe_chain(&mut markov, prev2, prev, event);
         prev2 = prev;
         prev = Some(event);
-        if last_of_token(&trace.events, i) {
+        let _ins = admitted.insert(event.sequence);
+        if engine_step(&trace.events, i, cfg.max_batch, admitted.len()) {
             sim.synchronize()?;
-            token_ends.push(sim.clock_ns());
+            if last_of_token(&trace.events, i) {
+                token_ends.push(sim.clock_ns());
+            }
+            admitted.clear();
         }
     }
     if token_ends.is_empty() {
@@ -358,16 +367,22 @@ fn gemm_ids(
     if ids.is_empty() {
         return Ok(());
     }
-    if cuda_graphs && sim.stream_is_idle(d, stream)? {
-        if !graphs.contains_key(&ids) {
+    if let Some(g) = graphs.get(&ids).copied() {
+        let _n = sim.launch_graph(g, stream)?;
+        ctr.graph_launches = ctr.graph_launches.saturating_add(1);
+        return Ok(());
+    }
+    if cuda_graphs {
+        if !sim.stream_is_idle(d, stream)? {
+            sim.synchronize_stream(d, stream)?;
+        }
+        if sim.stream_is_idle(d, stream)? {
             sim.begin_capture(d, stream)?;
             for id in &ids {
                 kernel(sim, d, stream, *id)?;
             }
             let g = sim.end_capture()?;
             let _prev = graphs.insert(ids.clone(), g);
-        }
-        if let Some(g) = graphs.get(&ids).copied() {
             let _n = sim.launch_graph(g, stream)?;
             ctr.graph_launches = ctr.graph_launches.saturating_add(1);
             return Ok(());
@@ -415,6 +430,26 @@ fn last_of_token(events: &[ExpertAccess], i: usize) -> bool {
     };
     match events.get(i.saturating_add(1)) {
         Some(n) => n.token != cur.token,
+        None => true,
+    }
+}
+
+fn engine_step(events: &[ExpertAccess], i: usize, max_batch: usize, admitted: usize) -> bool {
+    if last_of_token(events, i) {
+        return true;
+    }
+    if max_batch == 0 || admitted < max_batch {
+        return false;
+    }
+    sequence_done(events, i)
+}
+
+fn sequence_done(events: &[ExpertAccess], i: usize) -> bool {
+    let Some(cur) = events.get(i) else {
+        return true;
+    };
+    match events.get(i.saturating_add(1)) {
+        Some(n) => n.token != cur.token || n.sequence != cur.sequence,
         None => true,
     }
 }

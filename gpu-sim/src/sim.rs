@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::SimError;
 use crate::ids::{AllocId, DeviceId, EventId, GraphId, OpId, StreamId};
-use crate::ops::{KernelKind, MemcpyOp, Place};
+use crate::ops::{GpuOp as Kind, KernelKind, MemcpyOp, Operation, Place};
 use crate::profile::{ns_for_bytes, HardwareProfile};
 
 struct Alloc {
@@ -35,37 +35,6 @@ enum LaunchCost {
     GraphHead,
     /// Later recorded ops of a graph launch: no extra launch overhead.
     GraphBody,
-}
-
-#[derive(Clone)]
-enum Kind {
-    Alloc {
-        id: AllocId,
-        bytes: u64,
-    },
-    Free {
-        id: AllocId,
-    },
-    Memcpy(MemcpyOp),
-    Kernel {
-        kind: KernelKind,
-        reads: Vec<AllocId>,
-        writes: Vec<AllocId>,
-    },
-    Memset {
-        id: AllocId,
-        bytes: u64,
-    },
-    EventRecord {
-        event: EventId,
-    },
-    EventWait {
-        event: EventId,
-    },
-    AllReduce {
-        parts: Vec<(DeviceId, AllocId)>,
-        bytes: u64,
-    },
 }
 
 struct Running {
@@ -189,6 +158,17 @@ impl Sim {
     #[must_use]
     pub fn op_stream(&self, id: OpId) -> Option<StreamId> {
         self.ops.get(&id).map(|o| o.stream)
+    }
+
+    /// Compiled DAG node for a submitted op. Capture-only ids are absent until launch.
+    #[must_use]
+    pub fn operation(&self, id: OpId) -> Option<Operation> {
+        self.ops.get(&id).map(|o| snapshot_op(id, o))
+    }
+
+    /// Submitted ops in id order (the dependency DAG plus completion flags).
+    pub fn operations(&self) -> impl Iterator<Item = Operation> + '_ {
+        self.ops.iter().map(|(id, o)| snapshot_op(*id, o))
     }
 
     /// Bytes currently reserved on `device`.
@@ -678,16 +658,43 @@ impl Sim {
 
     /// Run until every submitted op is complete.
     pub fn synchronize(&mut self) -> Result<(), SimError> {
+        self.drive_until(|sim| sim.running.is_empty() && sim.ops.values().all(|o| o.done))?;
+        if self.running.is_empty() && !self.ops.values().all(|o| o.done) {
+            return Err(SimError::Invalid {
+                why: "deadlock: waiting ops but nothing running",
+            });
+        }
+        self.sync_outcome()
+    }
+
+    /// `cudaStreamSynchronize`: advance the virtual clock until `stream` is idle.
+    ///
+    /// Other streams keep running. Cancelled ops on *this* stream fail; cancelled
+    /// work on other streams is left for a later [`Self::synchronize`].
+    pub fn synchronize_stream(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.drive_until(|sim| sim.stream_idle(device, stream))?;
+        if !self.stream_idle(device, stream) {
+            return Err(SimError::Invalid {
+                why: "deadlock: stream busy but nothing running",
+            });
+        }
+        self.stream_sync_outcome(device, stream)
+    }
+
+    fn drive_until(&mut self, idle: impl Fn(&Self) -> bool) -> Result<(), SimError> {
         let mut steps = 0u32;
         loop {
             self.schedule()?;
+            if idle(self) {
+                return Ok(());
+            }
             if self.running.is_empty() {
-                if self.ops.values().all(|o| o.done) {
-                    return self.sync_outcome();
-                }
-                return Err(SimError::Invalid {
-                    why: "deadlock: waiting ops but nothing running",
-                });
+                return Ok(());
             }
             self.advance_to_next_completion()?;
             steps = steps.saturating_add(1);
@@ -706,6 +713,19 @@ impl Sim {
             if o.cancelled {
                 n = n.saturating_add(1);
                 stream = o.stream;
+            }
+        }
+        if n > 0 {
+            return Err(SimError::Cancelled { stream, n });
+        }
+        Ok(())
+    }
+
+    fn stream_sync_outcome(&self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
+        let mut n = 0u32;
+        for o in self.ops.values() {
+            if o.cancelled && o.device == device && o.stream == stream {
+                n = n.saturating_add(1);
             }
         }
         if n > 0 {
@@ -1372,6 +1392,18 @@ impl Sim {
             op.done = true;
         }
         Ok(())
+    }
+}
+
+fn snapshot_op(id: OpId, o: &Op) -> Operation {
+    Operation {
+        id,
+        device: o.device,
+        stream: o.stream,
+        kind: o.kind.clone(),
+        deps: o.deps.clone(),
+        done: o.done,
+        cancelled: o.cancelled,
     }
 }
 

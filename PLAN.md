@@ -426,10 +426,13 @@ llama-rust / expertvm
         → virtual clock
 ```
 
-Primitive: `GpuOp` (Kernel / Memcpy / Collective / Event / Alloc / Free)
-with reads/writes and a stream id, compiled into a dependency DAG.
+Primitive: `gpu_sim::GpuOp` (Kernel / Memcpy / Collective=`AllReduce` /
+Event record+wait / Alloc / Free / Memset) compiled into a
+`gpu_sim::Operation` dependency DAG (`Sim::operations`).
 Contention is real: three transfers to GPU0 cannot each get the full
-PCIe x16.
+PCIe x16. `Sim::synchronize_stream` is `cudaStreamSynchronize`: the
+virtual clock advances until that stream is idle; other streams keep
+running.
 
 Kernels are structural (`Matmul {m,n,k,dtypes}`, `GroupedMoeGemm {…}`),
 costed by a hardware profile (roofline first; `gemm_util_permille` and
@@ -462,11 +465,18 @@ most important architectural choice in the simulator.
 - hbm.used_bytes ≤ hbm.capacity
 - an expert cannot be Evicted and in-use
 
-Preferred state machine:
+Preferred state machine (encoded as `expertvm::ExpertPhase`, fatal on
+illegal lease/evict):
 
 ```
 Cold → Transferring → Resident → Leased → Resident → Evicting → Cold
 ```
+
+CPU `CachedStore` / `TieredStore` fault-in is instantaneous (Resident
+or Leased). `SimulatedGpuStore` is Transferring until the copy-stream
+event completes; lease of Transferring/Cold/Evicting is refused.
+`sim_replay` `--max-batch N` is a trace-level admission cap (N sequences
+per engine iteration at a token; `0` admits the whole token).
 
 Agents may aggressively optimize policies. Illegal GPU states are
 impossible or immediately fatal.
@@ -507,10 +517,13 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   be captured; capture requires an idle stream. Graph launch pays
   `graph_launch_ns` once; recorded kernels skip per-launch overhead.
   `sim_replay` / `SimulatedGpuStore` capture repeated expert GEMMs
-  (`expertvm sim --cuda-graphs`). `plan_window` Stay vs Fetch gates prefetch
+  (`expertvm sim --cuda-graphs`). Capture after a miss waits with
+  `synchronize_stream` so the compute stream is idle (CUDA). `--max-batch N`
+  admits N sequences per engine iteration. `plan_window` Stay vs Fetch gates prefetch
   in the GPU loop (`--plan-window N`). `prefetch_hits` / `prefetch_waste`
   measure whether those fills were used. `memset`, directed peer enable, and
   the legacy null stream are mechanical CUDA invariants.
+  Public `GpuOp` / `Operation` is the compiled DAG (`Sim::operations`).
 - performance model must include fixed overhead, size-dependent
   throughput, queueing, concurrency limits, alignment, startup latency
   (`LinkProfile::align_bytes` rounds the billed payload up; a 1-byte DMA

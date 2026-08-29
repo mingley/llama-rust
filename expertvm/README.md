@@ -64,9 +64,9 @@ holds `gate` + `up` + `down` bytes.
 | Store | Meaning |
 | --- | --- |
 | `DirectStore` | Identity catalog. Every acquire hits. Bytes unchanged. |
-| `CachedStore` | Bounded LRU with **leases** so in-use experts cannot be evicted. `prefetch(keys)` skips unknown keys. `pin_hot` / `is_resident` / `take_victim`. |
+| `CachedStore` | Bounded LRU with **leases** so in-use experts cannot be evicted. `prefetch(keys)` skips unknown keys. `pin_hot` / `is_resident` / `is_leased` / `phase` / `take_victim`. CPU `ExpertPhase` is Cold / Resident / Leased (fault-in is instant). |
 | `TieredStore` | Fast RAM LRU in front of slow RAM, a paging **file** (seek+read, not mmap), or synthetic bytes. Only `slots` [`ExpertParts`](crate::ExpertParts) live in the fast map. `WeightStorage::mmap` is parked. |
-| `SimulatedGpuStore` | CachedStore + [`gpu-sim`](../gpu-sim). **Pinned** H2D on a copy stream onto the striped home (`expert_id % n_gpus`); GEMM waits that event. A host-pinned staging alloc is created at construction and does not charge HBM. Prefetch is H2D without GEMM. After a drain, an idle compute stream captures a per-page GEMM graph and later acquires `launch_graph`. `pin_hot` NVLink-replicates to GPU1 when `n_gpus >= 2`. `migrate(key, dst)` D2D-moves onto `dst` (copy stream; dest compute waits the event; src HBM dropped). `score()` is wall/HBM/bytes/`energy_uj`/`ns_per_token`. |
+| `SimulatedGpuStore` | CachedStore + [`gpu-sim`](../gpu-sim). **Pinned** H2D on a copy stream onto the striped home (`expert_id % n_gpus`); GEMM waits that event. A host-pinned staging alloc is created at construction and does not charge HBM. Prefetch is H2D without GEMM (`ExpertPhase::Transferring` until the copy event completes). After a drain or `synchronize_stream` on compute, an idle stream captures a per-page GEMM graph and later acquires `launch_graph`. Lease of Transferring/Cold/Evicting is refused. `pin_hot` waits the copy, then NVLink-replicates to GPU1 when `n_gpus >= 2`. `migrate(key, dst)` D2D-moves onto `dst` (copy stream; dest compute waits the event; src HBM dropped). `score()` is wall/HBM/bytes/`energy_uj`/`ns_per_token`. |
 | `LiveStore` | Enum over Direct / Cached / Tiered / Simulated. Decode attaches this. |
 
 `sim_replay` runs a policy through gpu-sim: pinned H2D on miss, grouped GEMM on
@@ -74,8 +74,10 @@ acquire, stream-ordered free on eviction. Timing comes from a
 `HardwareProfile`, not from the policy. The clock is sampled after each
 token (`ttft_ns`, mean `itl_ns`); a batch of sequences at the same token is
 one sample. `--seq-streams` maps `sequence % n_streams` onto CUDA streams so
-those copies can overlap. `--cuda-graphs` captures grouped expert GEMMs on an
-idle stream and replays them (`graph_launch_ns` once per launch). `--plan-window
+those copies can overlap. `--max-batch N` admits N sequences per engine
+iteration at a token (`0` = the whole token) and still samples TTFT once.
+`--cuda-graphs` captures grouped expert GEMMs after `synchronize_stream` on
+that stream and replays them (`graph_launch_ns` once per launch). `--plan-window
 N` runs [`plan_window`](crate::plan_window) Stay vs Fetch before prefetch (Stay
 does not evict a resident working set). Replay reports `prefetch_hits` /
 `prefetch_waste`. Planner helpers: `copy_forward`,
@@ -111,6 +113,7 @@ expertvm replay   trace.jsonl --capacity 8
 expertvm sim      trace.jsonl --capacity 8 --expert-bytes 188743680 --profile h100 --prefetch both
 expertvm sim      trace.jsonl --capacity 8 --profile h100 --prefetch markov --seq-streams
 expertvm sim      trace.jsonl --capacity 8 --prefetch copy-forward --plan-window 8 --cuda-graphs
+expertvm sim      trace.jsonl --capacity 8 --seq-streams --max-batch 2
 expertvm place    trace.jsonl --gpus 8 --hot-pt 200
 expertvm bench    trace.jsonl --capacity 8 --profile h100
 expertvm bench    adversarial --tokens 64 --experts 16 --capacity 2 --profile cheap

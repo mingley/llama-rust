@@ -3,7 +3,7 @@
 use crate::access::ExpertKey;
 use crate::error::Error;
 use crate::place::home_gpu;
-use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertStore, StoreMetrics};
+use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
     AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelKind, Sim, StreamId,
 };
@@ -27,6 +27,7 @@ pub struct SimulatedGpuStore {
     next_event: u32,
     pages: BTreeMap<ExpertKey, GpuPage>,
     replicas: BTreeSet<ExpertKey>,
+    evicting: BTreeSet<ExpertKey>,
     bytes_per_expert: u64,
     staging: AllocId,
     graphs: BTreeMap<AllocId, GraphId>,
@@ -54,6 +55,7 @@ impl SimulatedGpuStore {
             next_event: 1,
             pages: BTreeMap::new(),
             replicas: BTreeSet::new(),
+            evicting: BTreeSet::new(),
             bytes_per_expert: bytes,
             staging,
             graphs: BTreeMap::new(),
@@ -107,14 +109,18 @@ impl SimulatedGpuStore {
 
     /// Pin against eviction and, on multi-GPU profiles, NVLink-replicate to GPU1.
     pub fn pin_hot(&mut self, keys: &[ExpertKey]) -> Result<(), Error> {
-        self.cache.pin_hot(keys)?;
         for key in keys {
-            if !self.cache.is_resident(*key) {
+            if !self.cache.contains_catalog(*key) {
                 continue;
+            }
+            if !self.cache.is_resident(*key) {
+                let _n = self.cache.prefetch(&[*key])?;
             }
             if !self.pages.contains_key(key) {
                 self.place(*key)?;
             }
+            self.wait_copy(*key)?;
+            self.cache.lease(*key)?;
             self.replicate(*key)?;
         }
         Ok(())
@@ -184,6 +190,39 @@ impl SimulatedGpuStore {
         self.cache.is_resident(key)
     }
 
+    /// PLAN state: GPU copies are Transferring until the copy-stream event completes.
+    #[must_use]
+    pub fn phase(&self, key: ExpertKey) -> ExpertPhase {
+        if self.evicting.contains(&key) {
+            return ExpertPhase::Evicting;
+        }
+        if let Some(page) = self.pages.get(&key) {
+            if let Some(ev) = page.ready {
+                if !self.sim.event_complete(ev) {
+                    return ExpertPhase::Transferring;
+                }
+            }
+        }
+        ExpertPhase::cpu(self.cache.is_resident(key), self.cache.is_leased(key))
+    }
+
+    fn wait_copy(&mut self, key: ExpertKey) -> Result<(), Error> {
+        let (device, ready) = {
+            let page = self.pages.get(&key).ok_or(Error::Store("missing handle"))?;
+            (page.device, page.ready)
+        };
+        if let Some(ev) = ready {
+            if !self.sim.event_complete(ev) {
+                let _w = self.sim.wait_event(device, ev, self.compute)?;
+                self.sim.synchronize_stream(device, self.compute)?;
+            }
+            if let Some(page) = self.pages.get_mut(&key) {
+                page.ready = None;
+            }
+        }
+        Ok(())
+    }
+
     fn place(&mut self, key: ExpertKey) -> Result<(), Error> {
         if let Some(v) = self.cache.take_victim() {
             self.drop_gpu(v)?;
@@ -239,6 +278,9 @@ impl SimulatedGpuStore {
             let _n = self.sim.launch_graph(g, self.compute)?;
             return Ok(());
         }
+        if !self.sim.stream_is_idle(device, self.compute)? {
+            self.sim.synchronize_stream(device, self.compute)?;
+        }
         if self.sim.stream_is_idle(device, self.compute)? {
             self.sim.begin_capture(device, self.compute)?;
             gemm(&mut self.sim, device, self.compute, id)?;
@@ -255,6 +297,13 @@ impl SimulatedGpuStore {
         let Some(page) = self.pages.remove(&key) else {
             return Ok(());
         };
+        let _was = self.evicting.insert(key);
+        let out = self.finish_drop(key, page);
+        let _gone = self.evicting.remove(&key);
+        out
+    }
+
+    fn finish_drop(&mut self, key: ExpertKey, page: GpuPage) -> Result<(), Error> {
         let _g = self.graphs.remove(&page.id);
         // Copy-engine free must not race a compute-stream lease on the same page.
         let ev = EventId(self.next_event);
@@ -304,7 +353,12 @@ impl ExpertStore for SimulatedGpuStore {
     }
 
     fn lease(&mut self, key: ExpertKey) -> Result<(), Error> {
-        self.cache.lease(key)
+        match self.phase(key) {
+            ExpertPhase::Resident | ExpertPhase::Leased => self.cache.lease(key),
+            ExpertPhase::Transferring => Err(Error::Store("lease of transferring expert")),
+            ExpertPhase::Evicting => Err(Error::Store("lease of evicting expert")),
+            ExpertPhase::Cold => Err(Error::Store("lease of non-resident expert")),
+        }
     }
 
     fn release(&mut self, key: ExpertKey) {

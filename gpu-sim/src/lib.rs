@@ -6,6 +6,8 @@
 //! hardware numbers inside policy code.
 //!
 //! This crate does not model warps, L1 caches, or Tensor Core pipelines.
+//! Submitted work is a [`GpuOp`] compiled into an [`Operation`] DAG
+//! ([`Sim::operations`]). [`Sim::synchronize_stream`] waits one stream.
 
 #![cfg_attr(not(test), deny(missing_docs))]
 
@@ -19,7 +21,7 @@ mod sim;
 
 pub use error::SimError;
 pub use ids::{AllocId, DeviceId, EventId, GraphId, LinkId, OpId, StreamId};
-pub use ops::{DType, KernelKind, MemcpyOp, Place};
+pub use ops::{DType, GpuOp, KernelKind, MemcpyOp, Operation, Place};
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
     align_up, ns_for_bytes, scale_ns_permille, GpuProfile, HardwareProfile, LinkKind, LinkProfile,
@@ -817,5 +819,69 @@ mod tests {
         sim.synchronize().unwrap();
         assert!(sim.event_complete(ev));
         assert!(sim.stream_is_idle(d, s).unwrap());
+    }
+
+    #[test]
+    fn operations_are_a_stream_ordered_dag() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.kernel(d, KernelKind::other(8, 4096), &[a], &[a], s));
+        sim.synchronize().unwrap();
+        let ops: Vec<Operation> = sim.operations().collect();
+        assert!(ops.iter().any(|o| matches!(o.kind, GpuOp::Alloc { .. })));
+        assert!(ops.iter().any(|o| matches!(o.kind, GpuOp::Memcpy(_))));
+        let kernel = ops
+            .iter()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .expect("kernel");
+        assert!(kernel.done);
+        assert!(!kernel.deps.is_empty());
+        assert_eq!(sim.operation(kernel.id).unwrap().kind, kernel.kind);
+    }
+
+    #[test]
+    fn synchronize_stream_does_not_wait_for_other_streams() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let bytes = 64u64 << 20;
+        let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+        sim.synchronize().unwrap();
+        let t0 = sim.clock_ns();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], StreamId(0)));
+        let b = sim.alloc(d, bytes, StreamId(1)).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, b, bytes, StreamId(1)));
+        sim.synchronize_stream(d, StreamId(0)).unwrap();
+        let partial = sim.clock_ns().saturating_sub(t0);
+        assert!(sim.stream_is_idle(d, StreamId(0)).unwrap());
+        assert!(!sim.stream_is_idle(d, StreamId(1)).unwrap());
+        sim.synchronize().unwrap();
+        let full = sim.clock_ns().saturating_sub(t0);
+        assert!(
+            partial < full,
+            "stream-0 sync must leave the long H2D running; partial={partial} full={full}"
+        );
+    }
+
+    #[test]
+    fn synchronize_stream_ignores_cancel_on_other_stream() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+        sim.synchronize().unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 40, 4096), &[a], &[a], StreamId(1)));
+        enq(sim.kernel(d, KernelKind::other(8, 4096), &[a], &[a], StreamId(1)));
+        sim.start_ready().unwrap();
+        let n = sim.cancel_stream(d, StreamId(1)).unwrap();
+        assert!(n >= 1);
+        sim.synchronize_stream(d, StreamId(0)).unwrap();
+        match sim.synchronize() {
+            Err(SimError::Cancelled { n: skipped, .. }) => assert!(skipped >= 1),
+            other => panic!("{other:?}"),
+        }
     }
 }
