@@ -2041,7 +2041,7 @@ mod tests {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
         let s = StreamId(0);
-        let a = sim.alloc(d, 4096, s).unwrap();
+        let a = sim.malloc(d, 4096).unwrap();
         let err = sim.mem_advise(a, MemAdvise::SetReadMostly, d).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("managed"), "{why}"),
