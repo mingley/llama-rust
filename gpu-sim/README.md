@@ -34,6 +34,7 @@ warp scheduler, L1, …   ← do not model
 | residency: a kernel may only read local allocations | PCIe / NVLink bandwidth |
 | copy-engine occupancy | launch overhead |
 | peer accessibility | size-dependent efficiency |
+| graph capture does not execute; launch replays | — |
 
 ## Anti-Goodhart timing
 
@@ -112,6 +113,9 @@ measure H2D per GPU and D2D per pair. Missing links print `p2p=0->2:none`.
 | `Sim::fail_next_memcpy` | `SimError::TransferFailed` (expert load) |
 | `Sim::set_extra_transfer_ns` | longer memcpy / allreduce, still `Ok` |
 | over-capacity alloc | `SimError::Oom` |
+
+CUDA graphs: `begin_capture` / `end_capture` / `launch_graph`. Capture does
+not advance the virtual clock. Alloc/free cannot be captured.
 
 In-flight ops are not cancelled. `gpu-profile capture` is refused in this
 crate: someone with a GPU writes a `key=value` file; agents `parse` it.

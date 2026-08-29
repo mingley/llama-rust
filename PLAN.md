@@ -483,6 +483,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   (`Sim::fail_next_memcpy` → `SimError::TransferFailed`).
 - ring `allreduce` as a collective with a real mesh: missing wrap-around
   links fail `NoPeer`.
+- CUDA-graph capture: `begin_capture` / `end_capture` / `launch_graph`.
+  Recorded kernels and copies do not run until launch; alloc/free cannot
+  be captured; capture requires an idle stream.
 - performance model must include fixed overhead, size-dependent
   throughput, queueing, concurrency limits, alignment, startup latency
 - never let an agent “win” by issuing 8,000 tiny copies that the model

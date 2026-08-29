@@ -4,7 +4,7 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::SimError;
-use crate::ids::{AllocId, DeviceId, EventId, OpId, StreamId};
+use crate::ids::{AllocId, DeviceId, EventId, GraphId, OpId, StreamId};
 use crate::ops::{KernelKind, MemcpyOp, Place};
 use crate::profile::{ns_for_bytes, HardwareProfile};
 
@@ -24,6 +24,7 @@ struct Op {
     cancelled: bool,
 }
 
+#[derive(Clone)]
 enum Kind {
     Alloc {
         id: AllocId,
@@ -72,16 +73,24 @@ struct Ev {
     recorded_by: Option<OpId>,
 }
 
+struct Graph {
+    steps: Vec<(DeviceId, Kind)>,
+}
+
 /// Deterministic GPU node.
 pub struct Sim {
     profile: HardwareProfile,
     clock: u64,
     next_op: u64,
     next_alloc: u64,
+    next_graph: u32,
     allocs: BTreeMap<AllocId, Alloc>,
     ops: BTreeMap<OpId, Op>,
     tail: BTreeMap<(DeviceId, StreamId), OpId>,
     events: BTreeMap<EventId, Ev>,
+    graphs: BTreeMap<GraphId, Graph>,
+    capturing: Option<(DeviceId, StreamId)>,
+    capture_buf: Vec<(DeviceId, Kind)>,
     running: Vec<Running>,
     gpus: BTreeMap<DeviceId, GpuRt>,
     bytes_moved: u64,
@@ -112,10 +121,14 @@ impl Sim {
             clock: 0,
             next_op: 1,
             next_alloc: 1,
+            next_graph: 1,
             allocs: BTreeMap::new(),
             ops: BTreeMap::new(),
             tail: BTreeMap::new(),
             events: BTreeMap::new(),
+            graphs: BTreeMap::new(),
+            capturing: None,
+            capture_buf: Vec::new(),
             running: Vec::new(),
             gpus,
             bytes_moved: 0,
@@ -255,6 +268,80 @@ impl Sim {
                 bytes,
             },
         )
+    }
+
+    /// Start recording later submits on `(device, stream)`. Recorded ops do not run.
+    pub fn begin_capture(&mut self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "nested graph capture",
+            });
+        }
+        let busy = self
+            .ops
+            .values()
+            .any(|o| o.device == device && o.stream == stream && !o.done)
+            || self.running.iter().any(|r| {
+                self.ops
+                    .get(&r.op)
+                    .is_some_and(|o| o.device == device && o.stream == stream)
+            });
+        if busy {
+            return Err(SimError::Invalid {
+                why: "capture requires idle stream",
+            });
+        }
+        self.capturing = Some((device, stream));
+        self.capture_buf.clear();
+        Ok(())
+    }
+
+    /// Finish capture. The graph is empty of side effects until [`Self::launch_graph`].
+    pub fn end_capture(&mut self) -> Result<GraphId, SimError> {
+        let Some(_) = self.capturing.take() else {
+            return Err(SimError::Invalid {
+                why: "end_capture without begin_capture",
+            });
+        };
+        let id = GraphId(self.next_graph);
+        self.next_graph = self.next_graph.saturating_add(1);
+        let steps = core::mem::take(&mut self.capture_buf);
+        let _prev = self.graphs.insert(id, Graph { steps });
+        Ok(id)
+    }
+
+    /// Enqueue every recorded op, stream-ordered, on `stream` of each step's device.
+    pub fn launch_graph(&mut self, graph: GraphId, stream: StreamId) -> Result<u32, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot launch during capture",
+            });
+        }
+        let steps = self
+            .graphs
+            .get(&graph)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .steps
+            .clone();
+        let mut n = 0u32;
+        for (device, kind) in steps {
+            let _op = self.submit(device, stream, kind)?;
+            n = n.saturating_add(1);
+        }
+        Ok(n)
+    }
+
+    /// Recorded op count.
+    pub fn graph_len(&self, graph: GraphId) -> Result<usize, SimError> {
+        self.graphs
+            .get(&graph)
+            .map(|g| g.steps.len())
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })
     }
 
     /// Stream-ordered allocation. Capacity is reserved when the op starts.
@@ -435,6 +522,24 @@ impl Sim {
     fn submit(&mut self, device: DeviceId, stream: StreamId, kind: Kind) -> Result<OpId, SimError> {
         if self.unavailable.contains(&device) {
             return Err(SimError::Unavailable { device });
+        }
+        if let Some((cd, cs)) = self.capturing {
+            if device == cd && stream != cs {
+                return Err(SimError::Invalid {
+                    why: "other stream active during capture",
+                });
+            }
+            if device == cd && stream == cs {
+                if matches!(kind, Kind::Alloc { .. } | Kind::Free { .. }) {
+                    return Err(SimError::Invalid {
+                        why: "cannot capture alloc/free",
+                    });
+                }
+                self.capture_buf.push((device, kind));
+                let id = OpId(self.next_op);
+                self.next_op = self.next_op.saturating_add(1);
+                return Ok(id);
+            }
         }
         let _gpu = self.profile.gpu(device)?;
         let id = OpId(self.next_op);

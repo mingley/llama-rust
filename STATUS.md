@@ -14,7 +14,9 @@ RDMA, asymmetric NVLink chain. `probe_topology` measures H2D per GPU and
 D2D per pair (`p2p=0->2:none` when the link is missing). CLI:
 `gpu-profile names|example|parse|probe`, `expertvm topology`,
 `infer-bench topology`. Dual score still has no `$/M tokens`. Ring
-`allreduce` requires a real peer path on every hop.
+`allreduce` requires a real peer path on every hop. CUDA-graph capture
+(`begin_capture` / `end_capture` / `launch_graph`) records kernels and
+copies without running them; launch replays the graph stream-ordered.
 
 ## Shipped 2026-08-29 — Q4_0 SIMD + oracle-owned f16
 
@@ -153,9 +155,8 @@ Local: `~/dev/llama-rust-perf`
 
 PLAN.md Phase 0 leftover: a second real-model fixture when a Llama
 NORM-RoPE GGUF is on disk (NEOX Qwen capture already exists). No GGUF is
-in this workspace, so that checkbox stays open. CUDA-graph capture/replay
-is not in gpu-sim yet. Physical Phase 4 stays parked until a real MoE
-trace + sim hypothesis.
+in this workspace, so that checkbox stays open. Physical Phase 4 stays
+parked until a real MoE trace + sim hypothesis.
 
 ## Still needed (production / researcher bar)
 
@@ -185,7 +186,7 @@ cargo run -p llama-rust --example session
 ```
 
 Next code change is PLAN Phase 0 leftover (Llama NORM real-model fixture
-when a GGUF is on disk). CUDA graphs are still unmodeled. Do not add crates.io
+when a GGUF is on disk). Physical Phase 4 stays parked. Do not add crates.io
 runtime deps. Do not start Metal-in-crate on Linux. Do not invent a
 `block_iq4_nl_4_4` dequant. Do not invent an arch. Do not list mixtral
 or qwen3vlmoe as an accepted arch. Do not invent `$/M tokens`.

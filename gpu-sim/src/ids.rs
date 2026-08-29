@@ -31,3 +31,7 @@ pub struct OpId(pub u64);
 /// Bidirectional interconnect between two places.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LinkId(pub u16);
+
+/// Captured CUDA-like graph. Launch replays the recorded ops; capture does not execute them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GraphId(pub u32);

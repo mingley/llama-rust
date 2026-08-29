@@ -1,6 +1,7 @@
 //! Deterministic GPU-systems VM for inference.
 //!
-//! Mechanical invariants (streams, events, residency, OOM, topology) are exact.
+//! Mechanical invariants (streams, events, residency, OOM, topology,
+//! CUDA-graph capture/replay) are exact.
 //! Operation durations come from a [`HardwareProfile`], so agents cannot invent
 //! hardware numbers inside policy code.
 //!
@@ -17,7 +18,7 @@ mod score;
 mod sim;
 
 pub use error::SimError;
-pub use ids::{AllocId, DeviceId, EventId, LinkId, OpId, StreamId};
+pub use ids::{AllocId, DeviceId, EventId, GraphId, LinkId, OpId, StreamId};
 pub use ops::{DType, KernelKind, MemcpyOp, Place};
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{ns_for_bytes, GpuProfile, HardwareProfile, LinkKind, LinkProfile};
@@ -423,6 +424,43 @@ mod tests {
             Err(SimError::NoPeer { src, dst }) => {
                 assert!(src == DeviceId(2) || dst == DeviceId(0) || src == DeviceId(0));
             }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_capture_does_not_run_until_launch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_host_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let t0 = sim.clock_ns();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 30, 4096), &[a], &[a], s));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.clock_ns(), t0);
+        assert_eq!(sim.graph_len(g).unwrap(), 1);
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        let t1 = sim.clock_ns();
+        assert!(t1 > t0);
+        let n2 = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n2, 1);
+        sim.synchronize().unwrap();
+        assert!(sim.clock_ns() > t1);
+    }
+
+    #[test]
+    fn graph_cannot_capture_alloc() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.begin_capture(d, s).unwrap();
+        match sim.alloc(d, 4096, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("alloc")),
             other => panic!("{other:?}"),
         }
     }
