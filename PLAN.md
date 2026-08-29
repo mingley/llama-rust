@@ -798,6 +798,14 @@ model, do not celebrate the sim.
     `weight_before_ffn` stay bit-equal to the serial GEMV path. Engine
     DirectStore hits drop below one-acquire-per-token-expert. Dual score
     still has no `$/M tokens`.
+25. [x] Batched router GEMM: `ffn_gate_inp` is one GEMM of all tokens in the
+    layer, then per-row softmax (or Llama4 sigmoid top-k). Bit-equal to the
+    serial GEMV router. Dual score still has no `$/M tokens`.
+26. [x] Engine `pin_hot`: sticky pins are distinct from in-flight leases so a
+    decode `release` cannot drop keep-hot. After each GEMM, Engine pins
+    last-used ∪ Markov keys up to `slots.saturating_sub(1)` (`slots == 1`
+    pins nothing). SimulatedGpuStore `pin_hot` still NVLink-replicates.
+    Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

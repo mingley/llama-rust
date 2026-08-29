@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — batched router GEMM + Engine pin_hot
+
+`ffn_gate_inp` is one GEMM of every token in the layer, then per-row
+softmax (Llama4: sigmoid top-k on the GEMM rows). Softmax MoE walks and
+Llama4 stay bit-equal to the serial GEMV router.
+
+`CachedStore::pin_hot` is a sticky pin, not an in-flight lease: decode
+`release` cannot drop keep-hot. Engine parks last-used ∪ Markov keys
+after each GEMM, at most `slots - 1` (`slots == 1` pins nothing so a
+tight cache can still demand-page). SimulatedGpuStore `pin_hot` still
+NVLink-replicates. `StoreMetrics::pins` counts sticky inserts.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — grouped expert GEMM
 
 Routed experts in a multi-token forward gather tokens that selected the

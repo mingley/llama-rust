@@ -74,8 +74,9 @@ use crate::sample::{SampleError, SampleParams, Sampler};
 use crate::tok::{TokError, Tokenizer};
 use crate::{write_gguf_with_kv, GGUF_DEFAULT_ALIGNMENT};
 use expertvm::{
-    observe_chain, prefetch_keys, prefetch_keys_ctx, prefix_hash, weight_permille, DirectStore,
-    ExpertAccess, ExpertKey, ExpertParts, ExpertStore, LiveStore, Markov, Trace,
+    observe_chain, predicted_keys, prefetch_keys, prefetch_keys_ctx, prefix_hash, weight_permille,
+    DirectStore, ExpertAccess, ExpertKey, ExpertParts, ExpertStore, LiveStore, Markov, Prefetch,
+    Trace,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -818,6 +819,23 @@ pub(crate) struct PrefetchChain {
     prev2: Option<ExpertAccess>,
 }
 
+impl PrefetchChain {
+    /// Last selected experts union copy-forward ∪ Markov (no JSONL future leak).
+    pub(crate) fn keep_hot_keys(&self) -> Vec<ExpertKey> {
+        let Some(prev) = self.prev.as_ref() else {
+            return Vec::new();
+        };
+        let mut out = prev.keys();
+        let extra = predicted_keys(Prefetch::Both, &self.markov, self.prev2.as_ref(), &out);
+        for k in extra {
+            if !out.contains(&k) {
+                out.push(k);
+            }
+        }
+        out
+    }
+}
+
 impl KvCache {
     /// Install Engine-level Markov prefetch state onto this cache.
     pub(crate) fn set_prefetch_chain(&mut self, chain: PrefetchChain) {
@@ -966,7 +984,7 @@ struct Scratch {
 /// Working buffers for MoE expert FFNs (Llama4 and the other official walks).
 #[derive(Default)]
 struct MoeScratch {
-    /// Router logits, `n_expert`.
+    /// Router logits, `n_tokens * n_expert` after a batched router GEMM.
     logits: Vec<f32>,
     /// Router top-k expert indices, `n_expert_used`.
     order: Vec<usize>,
@@ -5838,7 +5856,8 @@ impl Llama {
         }
     }
 
-    /// Route every token, then one GEMM per expert that at least one token selected.
+    /// Route every token with one `ffn_gate_inp` GEMM, then one expert GEMM per
+    /// selected expert.
     fn softmax_routed_layer(
         &self,
         spec: SoftmaxMoE<'_>,
@@ -5851,22 +5870,7 @@ impl Llama {
             moe_trace,
             store,
         } = run;
-        s.moe.sel_e.clear();
-        s.moe.sel_w.clear();
-        for t in 0..n_tokens {
-            let xt = token_row(&s.x, t, spec.n_embd, spec.err)?;
-            self.route_softmax(
-                (spec.gate_inp, spec.n_expert, spec.n_used),
-                xt,
-                &mut s.moe,
-                pool,
-                spec.err,
-            )?;
-            fill_router_weights(&s.moe.logits, &s.moe.order, &mut s.moe.weights, spec.norm_w);
-            moe_trace.record(t, &s.moe.order, &s.moe.weights);
-            s.moe.sel_e.extend_from_slice(&s.moe.order);
-            s.moe.sel_w.extend_from_slice(&s.moe.weights);
-        }
+        self.route_softmax_tokens(&spec, n_tokens, s, pool, moe_trace)?;
         self.grouped_routed_ffn(
             &spec,
             n_tokens,
@@ -5877,14 +5881,33 @@ impl Llama {
                 layer: moe_trace.layer,
             },
         )?;
+        prefetch_selected(moe_trace, store, n_tokens, spec.n_used, &s.moe.sel_e);
+        Ok(())
+    }
+
+    /// `ffn_gate_inp` GEMM then per-row softmax + top-k. Bit-equal to serial GEMV.
+    fn route_softmax_tokens(
+        &self,
+        spec: &SoftmaxMoE<'_>,
+        n_tokens: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+        moe_trace: &mut MoeTraceBuf,
+    ) -> Result<(), LlamaError> {
+        self.gemm_into(spec.gate_inp, n_tokens, &s.x, &mut s.moe.logits, pool)?;
+        s.moe.sel_e.clear();
+        s.moe.sel_w.clear();
         for t in 0..n_tokens {
-            let start = t.saturating_mul(spec.n_used);
-            let experts = s
-                .moe
-                .sel_e
-                .get(start..start.saturating_add(spec.n_used))
-                .unwrap_or(&[]);
-            moe_trace.prefetch_experts(store, t, experts);
+            {
+                let row = token_row_mut(&mut s.moe.logits, t, spec.n_expert, spec.err)?;
+                softmax(row);
+            }
+            let row = token_row(&s.moe.logits, t, spec.n_expert, spec.err)?;
+            topk_into(row, spec.n_used, &mut s.moe.order)?;
+            fill_router_weights(row, &s.moe.order, &mut s.moe.weights, spec.norm_w);
+            moe_trace.record(t, &s.moe.order, &s.moe.weights);
+            s.moe.sel_e.extend_from_slice(&s.moe.order);
+            s.moe.sel_w.extend_from_slice(&s.moe.weights);
         }
         Ok(())
     }
@@ -5993,6 +6016,36 @@ impl Llama {
         Self::scatter_expert_rows(spec, job.expert, job.toks, s)
     }
 
+    fn route_llama4_tokens(
+        &self,
+        moe: &Llama4Moe,
+        n_tokens: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+        moe_trace: &mut MoeTraceBuf,
+    ) -> Result<(), LlamaError> {
+        self.gemm_into(&moe.gate_inp, n_tokens, &s.x, &mut s.moe.logits, pool)?;
+        s.moe.sel_e.clear();
+        s.moe.sel_w.clear();
+        for t in 0..n_tokens {
+            let row = token_row(&s.moe.logits, t, moe.n_expert, "llama4 ffn_gate_inp")?;
+            topk_into(row, moe.n_expert_used, &mut s.moe.order)?;
+            s.moe.weights.clear();
+            for i in 0..s.moe.order.len() {
+                let Some(e) = s.moe.order.get(i).copied() else {
+                    continue;
+                };
+                s.moe
+                    .weights
+                    .push(sigmoid_f32(row.get(e).copied().unwrap_or(0.0)));
+            }
+            moe_trace.record(t, &s.moe.order, &s.moe.weights);
+            s.moe.sel_e.extend_from_slice(&s.moe.order);
+            s.moe.sel_w.extend_from_slice(&s.moe.weights);
+        }
+        Ok(())
+    }
+
     fn swiglu_expert_gemm(
         &self,
         spec: &SoftmaxMoE<'_>,
@@ -6070,23 +6123,6 @@ impl Llama {
             }
         }
         Ok(())
-    }
-
-    fn route_softmax(
-        &self,
-        gate: (&QuantMat, usize, usize),
-        xt: &[f32],
-        moe: &mut MoeScratch,
-        pool: &mut GemvPool,
-        err: &'static str,
-    ) -> Result<(), LlamaError> {
-        let (gate_inp, n_expert, n_used) = gate;
-        self.gemv_into(gate_inp, xt, &mut moe.logits, pool)?;
-        if moe.logits.len() != n_expert {
-            return Err(LlamaError::Shape(err.into()));
-        }
-        softmax(&mut moe.logits);
-        topk_into(&moe.logits, n_used, &mut moe.order)
     }
 
     fn shexp_silu_into(
@@ -6198,28 +6234,7 @@ impl Llama {
             *hv *= *uv;
         }
         self.gemm_into(&moe.down_shexp, n_tokens, &s.gate, &mut s.ffn_out, pool)?;
-        s.moe.sel_e.clear();
-        s.moe.sel_w.clear();
-        for t in 0..n_tokens {
-            let xt = token_row(&s.x, t, n_embd, "llama4 moe x")?;
-            self.gemv_into(&moe.gate_inp, xt, &mut s.moe.logits, pool)?;
-            if s.moe.logits.len() != moe.n_expert {
-                return Err(LlamaError::Shape("llama4 ffn_gate_inp".into()));
-            }
-            topk_into(&s.moe.logits, moe.n_expert_used, &mut s.moe.order)?;
-            s.moe.weights.clear();
-            for i in 0..s.moe.order.len() {
-                let Some(e) = s.moe.order.get(i).copied() else {
-                    continue;
-                };
-                s.moe
-                    .weights
-                    .push(sigmoid_f32(s.moe.logits.get(e).copied().unwrap_or(0.0)));
-            }
-            moe_trace.record(t, &s.moe.order, &s.moe.weights);
-            s.moe.sel_e.extend_from_slice(&s.moe.order);
-            s.moe.sel_w.extend_from_slice(&s.moe.weights);
-        }
+        self.route_llama4_tokens(moe, n_tokens, s, pool, moe_trace)?;
         let spec = SoftmaxMoE {
             gate_inp: &moe.gate_inp,
             gate: &moe.gate_exps,
@@ -6242,15 +6257,7 @@ impl Llama {
                 layer: moe_trace.layer,
             },
         )?;
-        for t in 0..n_tokens {
-            let start = t.saturating_mul(moe.n_expert_used);
-            let experts = s
-                .moe
-                .sel_e
-                .get(start..start.saturating_add(moe.n_expert_used))
-                .unwrap_or(&[]);
-            moe_trace.prefetch_experts(store, t, experts);
-        }
+        prefetch_selected(moe_trace, store, n_tokens, moe.n_expert_used, &s.moe.sel_e);
         Ok(())
     }
 
@@ -6813,6 +6820,22 @@ fn fill_router_weights(logits: &[f32], order: &[usize], weights: &mut Vec<f32>, 
     }
     for w in weights.iter_mut() {
         *w /= wsum;
+    }
+}
+
+fn prefetch_selected(
+    moe_trace: &mut MoeTraceBuf,
+    store: &mut Option<LiveStore>,
+    n_tokens: usize,
+    n_used: usize,
+    sel_e: &[usize],
+) {
+    for t in 0..n_tokens {
+        let start = t.saturating_mul(n_used);
+        let experts = sel_e
+            .get(start..start.saturating_add(n_used))
+            .unwrap_or(&[]);
+        moe_trace.prefetch_experts(store, t, experts);
     }
 }
 

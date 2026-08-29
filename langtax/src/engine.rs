@@ -10,7 +10,9 @@
 //! `Llama::forward_batch`. One attached [`expertvm::LiveStore`] is parked on
 //! the first cache of each GEMM so MoE serving stays on the batched path.
 //! Opt-in [`Engine::enable_moe_trace`] records per-sequence [`expertvm::Trace`]
-//! events from those GEMMs (not a sequential fallback). A full pool **preempts** another
+//! events from those GEMMs (not a sequential fallback). After each GEMM the
+//! parked store sticky-pins last-used ∪ Markov experts (`slots.saturating_sub(1)`;
+//! `slots == 1` pins nothing so demand paging can evict). A full pool **preempts** another
 //! sequence (unique blocks drop; intern pins remain) and later re-prefills
 //! plus replays already sampled greedy tokens. Greedy ids must match
 //! [`crate::greedy_generate_cache`]. Not an HTTP server.
@@ -131,6 +133,8 @@ pub struct EngineStats {
 /// SimulatedGpuStore instead of the GGUF blob. DirectStore ids match the blob
 /// Engine. Two per-cache stores still fall back inside `forward_batch`.
 /// [`Engine::enable_moe_trace`] records router events per [`SeqId`].
+/// After each GEMM, [`LiveStore::pin_hot`] keeps last-used ∪ predicted experts
+/// resident (`pin_budget` = `slots - 1`) without blocking demand paging.
 pub struct Engine<'a> {
     llama: &'a Llama,
     pool: PagedKvPool,
@@ -399,7 +403,35 @@ impl<'a> Engine<'a> {
         self.park_store_on(idx);
         let out = f(self);
         self.unpark_store_from(idx);
+        self.pin_predicted();
         out
+    }
+
+    /// Sticky-pin last-used ∪ Markov keys. Leave one cache slot for the next miss.
+    fn pin_predicted(&mut self) {
+        let budget = match self.expert_store.as_ref() {
+            Some(s) => s.pin_budget(),
+            None => return,
+        };
+        if budget == 0 {
+            return;
+        }
+        let keys = self.prefetch.keep_hot_keys();
+        let Some(store) = self.expert_store.as_mut() else {
+            return;
+        };
+        store.unpin_all();
+        let mut n = 0usize;
+        for key in keys {
+            if n >= budget {
+                break;
+            }
+            if let Ok(()) = store.pin_hot(&[key]) {
+                if store.is_pinned(key) {
+                    n = n.saturating_add(1);
+                }
+            }
+        }
     }
 
     fn note_gemm(&mut self, n: usize) {
@@ -1312,9 +1344,39 @@ mod tests {
             m.prefetches > 0,
             "Engine Markov must prefetch across GEMMs, {m:?}"
         );
+        assert_eq!(m.pins, 0, "slots=1 must not sticky-pin (demand paging)");
         assert!(
             eng.stats().gemm_peak >= 8,
             "prefetch must not force serial GEMM, peak={}",
+            eng.stats().gemm_peak
+        );
+    }
+
+    #[test]
+    fn engine_cached_store_pins_hot_experts_with_demand_slot() {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        let g = load_gguf_owned(tiny_qwen3moe_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let exp_a = independent(&model, &tok, &tokens_a, 2);
+        let exp_b = independent(&model, &tok, &tokens_b, 2);
+        let mut cfg = EngineCfg::tiny();
+        cfg.eos = tok.eos;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        eng.attach_expert_store(LiveStore::Cached(
+            CachedStore::new(model.expert_direct_store().expect("c"), 2).expect("cached"),
+        ));
+        let a = eng.add(&tokens_a, 2).expect("a");
+        let b = eng.add(&tokens_b, 2).expect("b");
+        eng.run().expect("run");
+        assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+        assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+        let m = eng.expert_store_metrics().expect("metrics");
+        assert!(m.pins > 0, "Engine must pin_hot last-used experts, {m:?}");
+        assert!(
+            eng.stats().gemm_peak >= 8,
+            "pin_hot must not force serial GEMM, peak={}",
             eng.stats().gemm_peak
         );
     }

@@ -71,7 +71,9 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
 Runs Engine continuous batching on one interned pool. Several `--prompt`s
 join the same scheduler. A tight `--pool-blocks` preempts (recompute +
 replay). One ExpertStore is parked on each batched GEMM so MoE serving
-stays on the shared-pool path. MoE traces stay on that GEMM (per-row
+stays on the shared-pool path. After each GEMM the store sticky-pins
+last-used ∪ Markov experts (`slots - 1`; `slots == 1` pins nothing).
+MoE traces stay on that GEMM (per-row
 sequence / token / prefix). Prints each continuation (`n_gen` plus
 decoded text), then intern_hits, preempts, GEMM stats, store metrics,
 and a gpu-sim score line when `--expert-sim` is set. Not `$/M tokens`.
