@@ -220,6 +220,15 @@ pub struct SimCfg {
     /// stays instantiate-in-place. [`crate::GpuStoreCfg::graph_clone`] is the
     /// store path.
     pub graph_clone: bool,
+    /// Hyper-Q occupancy override (`0` keeps the profile).
+    ///
+    /// `1` is exclusive compute. `>=2` lets independent sequence GEMMs overlap
+    /// at full issue rate when [`Self::seq_streams`] puts them on different
+    /// streams. Default `0` keeps decode identity.
+    pub compute_slots: u8,
+    /// Green-context SM fraction (‰) on every replay stream. `0` keeps a full
+    /// chip. Compute-bound kernels scale; memory-bound keep full HBM.
+    pub decode_sm_permille: u16,
 }
 
 impl SimCfg {
@@ -251,6 +260,8 @@ impl SimCfg {
             stream_priority: false,
             graph_update: false,
             graph_clone: false,
+            compute_slots: 0,
+            decode_sm_permille: 0,
         }
     }
 }
@@ -285,7 +296,7 @@ pub fn sim_replay_cfg(
     cfg: SimCfg,
 ) -> Result<SimReplay, Error> {
     let keys = trace.keys();
-    let mut sim = Sim::new(profile);
+    let mut sim = Sim::new(sim_profile(profile, &cfg));
     if cfg.mempool {
         sim.set_default_pool_release_threshold(u64::MAX)?;
     }
@@ -305,6 +316,7 @@ pub fn sim_replay_cfg(
     if cfg.stream_priority {
         sim.set_created_streams_priority(n_streams)?;
     }
+    apply_stream_sms(&mut sim, n_streams, cfg.decode_sm_permille)?;
     let mut args = TouchArgs {
         d,
         s,
@@ -1001,6 +1013,27 @@ pub(crate) fn occupancy_slots(cfg: &SimCfg, pin_bytes: u64) -> usize {
     } else {
         cfg.slots.min(fit)
     }
+}
+
+pub(crate) fn sim_profile(profile: HardwareProfile, cfg: &SimCfg) -> HardwareProfile {
+    if cfg.compute_slots > 0 {
+        profile.with_compute_slots(cfg.compute_slots)
+    } else {
+        profile
+    }
+}
+
+pub(crate) fn apply_stream_sms(sim: &mut Sim, n_streams: u8, permille: u16) -> Result<(), Error> {
+    if permille == 0 {
+        return Ok(());
+    }
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        for s in 0..n_streams.max(1) {
+            sim.set_stream_sm_permille(DeviceId(g), StreamId(u16::from(s)), permille)?;
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn replay_streams(profile: &HardwareProfile, seq_streams: bool) -> u8 {

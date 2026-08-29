@@ -17,8 +17,8 @@ const USAGE: &str = "\
 usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
-  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-clone] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority]
-  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-clone] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority]
+  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-clone] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-clone] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--compute-slots N] [--decode-sms N]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
@@ -27,7 +27,7 @@ usage: expertvm <command> [args]
   place    <trace.jsonl> [--gpus N] [--hot-pt N]
   remote   <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
   kv       [--pages N] [--page-bytes B] [--capacity C] [--tokens T] [--profile NAME] [--fill h2d|memset]
-  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-clone] [--timing-events]
+  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-clone] [--timing-events] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -122,6 +122,8 @@ struct Cfg {
     graph_update: bool,
     graph_clone: bool,
     timing_events: bool,
+    compute_slots: u8,
+    decode_sm_permille: u16,
     interarrival_ns: u64,
     ttft_slo_ns: Option<u64>,
     itl_slo_ns: Option<u64>,
@@ -170,6 +172,8 @@ where
     let mut graph_update = false;
     let mut graph_clone = false;
     let mut timing_events = false;
+    let mut compute_slots = 0u8;
+    let mut decode_sm_permille = 0u16;
     let mut plan_window = 0usize;
     let mut plan_threshold = 500u32;
     let mut max_batch = 0usize;
@@ -230,6 +234,12 @@ where
             "--graph-update" => graph_update = switch(&inline),
             "--graph-clone" => graph_clone = switch(&inline),
             "--timing-events" => timing_events = switch(&inline),
+            "--compute-slots" => {
+                compute_slots = parse_compute_slots(&value("compute-slots", inline, &mut it)?)?
+            }
+            "--decode-sms" => {
+                decode_sm_permille = parse_decode_sms(&value("decode-sms", inline, &mut it)?)?
+            }
             "--plan-window" => {
                 plan_window = parse_usize("plan-window", &value("plan-window", inline, &mut it)?)?
             }
@@ -309,6 +319,8 @@ where
         graph_update,
         graph_clone,
         timing_events,
+        compute_slots,
+        decode_sm_permille,
         interarrival_ns,
         ttft_slo_ns,
         itl_slo_ns,
@@ -346,6 +358,8 @@ fn sim_cfg_from(cfg: &Cfg, prefetch: Prefetch, max_batch: usize) -> SimCfg {
         stream_priority: cfg.stream_priority,
         graph_update: cfg.graph_update,
         graph_clone: cfg.graph_clone,
+        compute_slots: cfg.compute_slots,
+        decode_sm_permille: cfg.decode_sm_permille,
     }
 }
 
@@ -376,6 +390,26 @@ fn parse_u64(name: &str, s: &str) -> Result<u64, String> {
 fn parse_u32(name: &str, s: &str) -> Result<u32, String> {
     s.parse::<u32>()
         .map_err(|_| format!("invalid {name} {s:?}"))
+}
+
+fn parse_compute_slots(s: &str) -> Result<u8, String> {
+    let n = s
+        .parse::<u8>()
+        .map_err(|_| format!("invalid compute-slots {s:?}"))?;
+    if n == 0 {
+        return Err("compute-slots must be > 0".into());
+    }
+    Ok(n)
+}
+
+fn parse_decode_sms(s: &str) -> Result<u16, String> {
+    let n = s
+        .parse::<u16>()
+        .map_err(|_| format!("invalid decode-sms {s:?}"))?;
+    if n == 0 || n > 1000 {
+        return Err("decode-sms must be 1..=1000".into());
+    }
+    Ok(n)
 }
 
 fn load_trace(path: &str) -> Result<Trace, String> {
@@ -607,8 +641,8 @@ where
                 seq_streams: cfg.seq_streams,
                 kv_sim: false,
                 decode_priority: false,
-                compute_slots: 0,
-                decode_sm_permille: 0,
+                compute_slots: cfg.compute_slots,
+                decode_sm_permille: cfg.decode_sm_permille,
             },
             prefetch,
             plan_window: cfg.plan_window,

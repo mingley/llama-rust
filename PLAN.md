@@ -999,6 +999,14 @@ model, do not celebrate the sim.
     on a GEMM-bound profile; greedy ids still match. Dual score still has no
     `$/M tokens`.
 
+61. [x] Trace-walker Hyper-Q + green-context: `expertvm sim` / `schedule` /
+    `store` and `infer-bench schedule` take `--compute-slots N` and
+    `--decode-sms N`. `SimCfg::compute_slots` overrides profile occupancy so
+    independent `--seq-streams` GEMMs overlap when `N>=2`. `decode_sm_permille`
+    caps every replay stream (compute-bound kernels scale; memory-bound keep
+    full HBM). Default unset keeps exclusive compute and a full chip. Dual
+    score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

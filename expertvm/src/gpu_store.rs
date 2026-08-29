@@ -131,8 +131,8 @@ pub struct GpuStoreCfg {
     /// Decode-stream green-context SM fraction (‰). `0` keeps a full chip.
     ///
     /// `1..=1000` calls [`gpu_sim::Sim::set_stream_sm_permille`] on the decode
-    /// stream; leftover prefill gets the remainder. Implies two compute streams
-    /// ([`Self::decode_priority`]). Default `0` keeps decode identity.
+    /// stream; leftover prefill gets the remainder when
+    /// [`Self::decode_priority`] is on. Default `0` keeps decode identity.
     pub decode_sm_permille: u16,
 }
 
@@ -289,7 +289,8 @@ impl SimulatedGpuStore {
     /// destroy+instantiate graphs, disable-timing copy events.
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
     /// exclusive compute). [`GpuStoreCfg::decode_sm_permille`] `0` keeps a
-    /// full chip; `1..=1000` implies two compute streams.
+    /// full chip. `1..=1000` without [`GpuStoreCfg::decode_priority`] caps the
+    /// single compute stream.
     pub fn with_cfg(
         inner: DirectStore,
         slots: usize,
@@ -299,9 +300,8 @@ impl SimulatedGpuStore {
         cfg: GpuStoreCfg,
     ) -> Result<Self, Error> {
         let bytes = bytes_per_expert.max(1);
-        let decode_priority = cfg.decode_priority || cfg.decode_sm_permille > 0;
         let (copy, prefill, decode, mark) =
-            copy_compute_streams(&profile, cfg.seq_streams, decode_priority);
+            copy_compute_streams(&profile, cfg.seq_streams, cfg.decode_priority);
         let profile = if cfg.compute_slots > 0 {
             profile.with_compute_slots(cfg.compute_slots)
         } else {
@@ -348,7 +348,7 @@ impl SimulatedGpuStore {
             compute: prefill,
             prefill,
             decode,
-            decode_priority,
+            decode_priority: cfg.decode_priority,
             next_event: 1,
             pages: BTreeMap::new(),
             replicas: BTreeMap::new(),

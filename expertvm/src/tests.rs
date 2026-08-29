@@ -3725,3 +3725,49 @@ fn simulated_gpu_store_decode_sms_lengthens_token_clock() {
         "250‰ decode SMs must lengthen compute-bound ITL; quarter={quarter} full={full}"
     );
 }
+
+#[test]
+fn sim_replay_compute_slots_overlap_seq_streams() {
+    let t = Trace {
+        events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("slow gemm profile");
+    let cfg = |slots: u8| SimCfg {
+        seq_streams: true,
+        compute_slots: slots,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let serial = sim_replay_cfg(&t, profile.clone(), cfg(1)).expect("serial");
+    let overlap = sim_replay_cfg(&t, profile, cfg(2)).expect("overlap");
+    assert_eq!(serial.hits, overlap.hits);
+    assert_eq!(serial.misses, overlap.misses);
+    assert!(
+        overlap.sim_ns < serial.sim_ns,
+        "two compute slots must overlap independent sequence GEMMs; overlap={} serial={}",
+        overlap.sim_ns,
+        serial.sim_ns
+    );
+}
+
+#[test]
+fn sim_replay_decode_sms_lengthens_compute_bound() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("slow gemm profile");
+    let cfg = |sms: u16| SimCfg {
+        decode_sm_permille: sms,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let full = sim_replay_cfg(&t, profile.clone(), cfg(0)).expect("full");
+    let quarter = sim_replay_cfg(&t, profile, cfg(250)).expect("quarter");
+    assert_eq!(full.misses, quarter.misses);
+    assert!(
+        quarter.sim_ns > full.sim_ns,
+        "250‰ SMs must lengthen a compute-bound replay; quarter={} full={}",
+        quarter.sim_ns,
+        full.sim_ns
+    );
+}

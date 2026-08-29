@@ -6,9 +6,10 @@ use crate::place::PlaceMap;
 use crate::planner::{plan_keys, predicted_keys, ChainState, Markov, Plan};
 use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
-    apply_touch, drop_remote, fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch,
-    occupancy_slots, reclaim_victim, remote_hit, replay_from_sim, replay_streams, stream_of,
-    GraphBank, PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, TouchArgs,
+    apply_stream_sms, apply_touch, drop_remote, fetch_remote, fill_remote, gemm_keys,
+    host_callbacks, note_touch, occupancy_slots, reclaim_victim, remote_hit, replay_from_sim,
+    replay_streams, sim_profile, stream_of, GraphBank, PageHandle, RemoteFetch, RemotePage,
+    ReplayCounters, SimCfg, SimReplay, TouchArgs,
 };
 use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -279,7 +280,7 @@ impl SchedRt {
         place: Option<PlaceMap>,
         remote_act: Option<u64>,
     ) -> Result<Self, Error> {
-        let mut sim = Sim::new(profile);
+        let mut sim = Sim::new(sim_profile(profile, &cfg));
         if cfg.mempool {
             sim.set_default_pool_release_threshold(u64::MAX)?;
         }
@@ -293,6 +294,7 @@ impl SchedRt {
         if cfg.stream_priority {
             sim.set_created_streams_priority(n_streams)?;
         }
+        apply_stream_sms(&mut sim, n_streams, cfg.decode_sm_permille)?;
         let n_gpus = u16::try_from(sim.profile().n_gpus()).unwrap_or(1).max(1);
         let bytes = cfg.bytes_per_expert.max(1);
         let mut cfg = cfg;

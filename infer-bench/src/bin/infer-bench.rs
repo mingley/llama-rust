@@ -17,7 +17,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -125,7 +125,9 @@ fn run() -> Result<(), String> {
             let trace = load_trace(&path)?;
             let profile = load_profile(&cfg.profile)?;
             let n_gpus = u16::try_from(profile.n_gpus()).unwrap_or(1).max(1);
-            let sim_cfg = SimCfg::lru(cfg.capacity, cfg.expert_bytes, 8);
+            let mut sim_cfg = SimCfg::lru(cfg.capacity, cfg.expert_bytes, 8);
+            sim_cfg.compute_slots = cfg.compute_slots;
+            sim_cfg.decode_sm_permille = cfg.decode_sm_permille;
             let sched = SchedCfg {
                 max_batch: cfg.max_batch,
                 interarrival_ns: cfg.interarrival_ns,
@@ -183,6 +185,8 @@ struct Cfg {
     slo_reject: bool,
     prefix_cache: bool,
     place: String,
+    compute_slots: u8,
+    decode_sm_permille: u16,
 }
 
 fn parse_flags<I>(args: I) -> Result<Cfg, String>
@@ -212,6 +216,8 @@ where
     let mut slo_reject = false;
     let mut prefix_cache = false;
     let mut place = String::from("none");
+    let mut compute_slots = 0u8;
+    let mut decode_sm_permille = 0u16;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -270,6 +276,26 @@ where
             }
             "--place" => place = value("place", inline, &mut it)?,
             "--bytes" => expert_bytes = parse_u64("bytes", &value("bytes", inline, &mut it)?)?,
+            "--compute-slots" => {
+                let n = value("compute-slots", inline, &mut it)?;
+                let n = n
+                    .parse::<u8>()
+                    .map_err(|_| format!("invalid compute-slots {n:?}"))?;
+                if n == 0 {
+                    return Err("compute-slots must be > 0".into());
+                }
+                compute_slots = n;
+            }
+            "--decode-sms" => {
+                let n = value("decode-sms", inline, &mut it)?;
+                let n = n
+                    .parse::<u16>()
+                    .map_err(|_| format!("invalid decode-sms {n:?}"))?;
+                if n == 0 || n > 1000 {
+                    return Err("decode-sms must be 1..=1000".into());
+                }
+                decode_sm_permille = n;
+            }
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => {
                 if path.is_some() {
@@ -296,6 +322,8 @@ where
         slo_reject,
         prefix_cache,
         place,
+        compute_slots,
+        decode_sm_permille,
     })
 }
 

@@ -80,7 +80,11 @@ acquire, stream-ordered free on eviction. Timing comes from a
 `HardwareProfile`, not from the policy. The clock is sampled after each
 token (`ttft_ns`, mean `itl_ns`); a batch of sequences at the same token is
 one sample. `--seq-streams` maps `sequence % n_streams` onto CUDA streams so
-those copies can overlap. `--sync-alloc` uses host-sync `cudaMalloc` /
+those copies can overlap. `--compute-slots N` (`N>=2`) is Hyper-Q occupancy
+so independent sequence GEMMs on those streams overlap at full issue rate
+(default profile `1` is exclusive). `--decode-sms N` (`1..=1000`) is a
+green-context SM fraction on every replay stream (compute-bound kernels
+scale; memory-bound keep full HBM; default unset is a full chip). `--sync-alloc` uses host-sync `cudaMalloc` /
 `cudaMemcpy` / `cudaFree` on every miss (`Sim::malloc`); the default is
 stream-ordered `alloc` so a miss can overlap other streams. `--mempool`
 sets the default pool release threshold to `u64::MAX` so unused
@@ -159,9 +163,9 @@ on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` /
 `--seq-streams` / `--kv-sim` / `--kv-bytes` / `--decode-priority` /
-`--compute-slots` / `--decode-sms` are `GpuStoreCfg` knobs on `gguf_gemv engine`
-(`expertvm sim` does not take `--decode-priority` / `--compute-slots` /
-`--decode-sms`).
+`--compute-slots` / `--decode-sms` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
+`expertvm sim` / `schedule` / `store` take `--compute-slots` / `--decode-sms`
+(Hyper-Q occupancy and green-context SM fraction on the trace walker).
 `gguf_gemv engine --expert-sim --kv-sim` maps interned KV onto that Sim
 (distinct from `expertvm kv`; `--kv-bytes` overrides intern geometry).
 `gguf_gemv engine --expert-sim --decode-priority` runs decode GEMMs on a
@@ -276,6 +280,7 @@ expertvm store    trace.jsonl --capacity 1 --timing-events
 expertvm store    trace.jsonl --capacity 2 --managed --accessed-by --profile 2node-rdma
 expertvm store    trace.jsonl --capacity 2 --legacy-null
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --stream-priority
+expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 2 --decode-sms 250
 expertvm sim      trace.jsonl --capacity 2 --managed --accessed-by --profile 2xh100-pcie
 gpu-profile probe 2xh100-pcie --bytes 1048576
 ```
