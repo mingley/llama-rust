@@ -16,7 +16,7 @@
 
 use crate::decode::{KvCache, Llama, LlamaError, PagedKvPool, PrefetchChain};
 use crate::sample::argmax;
-use expertvm::{ExpertStore, LiveStore, StoreMetrics};
+use expertvm::{ExpertStore, LiveStore, Score, StoreMetrics};
 use std::collections::{BTreeMap, VecDeque};
 
 /// Handle for one sequence on an [`Engine`].
@@ -292,6 +292,17 @@ impl<'a> Engine<'a> {
             .iter()
             .flatten()
             .find_map(|s| s.cache.expert_store_metrics())
+    }
+
+    /// gpu-sim score when the attached store is [`LiveStore::Simulated`].
+    ///
+    /// DirectStore / CachedStore return `Ok(None)`. Not `$/M tokens`.
+    pub fn expert_store_score(&mut self) -> Result<Option<Score>, LlamaError> {
+        self.reclaim_parked_stores();
+        match self.expert_store.as_mut() {
+            Some(s) => s.score().map_err(Into::into),
+            None => Ok(None),
+        }
     }
 
     fn reclaim_parked_stores(&mut self) {
@@ -1107,6 +1118,47 @@ mod tests {
         assert!(hits > 0, "batched MoE must acquire from the Engine store");
         assert!(eng.take_expert_store().is_some());
         assert!(eng.expert_store_metrics().is_none());
+    }
+
+    #[test]
+    fn engine_simulated_gpu_store_matches_blob_and_scores() {
+        use expertvm::{HardwareProfile, SimulatedGpuStore};
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        let g = load_gguf_owned(tiny_qwen3moe_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let exp_a = independent(&model, &tok, &tokens_a, 2);
+        let exp_b = independent(&model, &tok, &tokens_b, 2);
+        let n = model.expert_direct_store().expect("n").len().max(1);
+        let mut cfg = EngineCfg::tiny();
+        cfg.eos = tok.eos;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        let gpu = SimulatedGpuStore::new(
+            model.expert_direct_store().expect("c"),
+            n,
+            HardwareProfile::example_h100_sxm(),
+            4096,
+        )
+        .expect("gpu");
+        eng.attach_expert_store(LiveStore::simulated(gpu));
+        let a = eng.add(&tokens_a, 2).expect("a");
+        let b = eng.add(&tokens_b, 2).expect("b");
+        eng.run().expect("run");
+        assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+        assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+        assert!(
+            eng.stats().gemm_peak >= 8,
+            "SimulatedGpuStore must GEMM together, peak={}",
+            eng.stats().gemm_peak
+        );
+        let score = eng.expert_store_score().expect("sc").expect("sim");
+        assert!(score.wall_ns > 0, "virtual clock must advance");
+        assert!(
+            score.bytes_moved > 0 || score.hbm_peak > 0,
+            "H2D / HBM must be billed, {}",
+            score.line()
+        );
     }
 
     #[test]

@@ -14,8 +14,11 @@ greedy ids match the blob Engine on writer-tiny Qwen3MoE. Two per-cache
 stores still fall back sequential. `gguf_gemv engine --expert-slots N`
 (`0` = DirectStore, `N>0` = CachedStore) prints `StoreMetrics::line()`.
 Markov prefetch state is parked with the store so a tight CachedStore
-can prefetch across GEMMs (copy-forward ∪ lookback-2). Dual score still
-has no `$/M tokens`.
+can prefetch across GEMMs (copy-forward ∪ lookback-2).
+`Engine::expert_store_score` / `gguf_gemv engine --expert-sim` runs the
+same scheduler through SimulatedGpuStore and prints the gpu-sim score
+line (`wall_ns`, HBM, bytes, `energy_uj`). Dual score still has no
+`$/M tokens`.
 
 ## Shipped 2026-08-29 — Engine GEMM stats
 

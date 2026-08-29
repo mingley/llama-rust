@@ -780,6 +780,10 @@ model, do not celebrate the sim.
     Two per-cache stores still fall back sequential. Markov prefetch
     (copy-forward ∪ lookback-2) is parked on the same cache across GEMMs
     so a tight CachedStore can prefetch.
+22. [x] Engine SimulatedGpuStore: `Engine::expert_store_score` is the gpu-sim
+    dual performance vector (`wall_ns`, HBM, bytes, `energy_uj`) after a
+    batched MoE run. `gguf_gemv engine --expert-sim` attaches an example-H100
+    store. Greedy ids still match the blob Engine. Not `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

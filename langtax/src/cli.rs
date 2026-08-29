@@ -11,7 +11,7 @@ use crate::gguf::load_gguf_owned;
 use crate::sample::argmax;
 use crate::template::ChatMessage;
 use crate::tok::Tokenizer;
-use expertvm::{CachedStore, LiveStore};
+use expertvm::{CachedStore, HardwareProfile, LiveStore, SimulatedGpuStore};
 
 /// Usage for the `infer` verb.
 pub const INFER_USAGE: &str = "\
@@ -49,13 +49,13 @@ usage: gguf_gemv <command> [args]
   trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE [--capacity N]
   chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--kv-page N] [--show-prompt]
   serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT]
-  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--expert-slots N]
+  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--expert-slots N] [--expert-sim]
   write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|write-tiny-qwen3|write-tiny-gemma|write-tiny-llama4|write-tiny-llama-moe|write-tiny-qwen2moe|write-tiny-qwen3moe|write-tiny-qwen2vl|write-tiny-qwen3vl|write-tiny-qwen3next|write-tiny-qwen35|write-tiny-phi2 <path>
 ";
 
 /// Usage for the `engine` verb.
 pub const ENGINE_USAGE: &str = "\
-usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--expert-slots N]
+usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--expert-slots N] [--expert-sim]
   -p, --prompt TEXT     prompt (repeatable; default: one `ab`)
   -n, --n-predict N     tokens to generate per sequence (default: 2)
       --n-ctx N         KV capacity (default: longest prompt + n_predict + 1)
@@ -64,14 +64,16 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
       --max-seqs N      in-flight sequences (default: number of prompts; extras wait)
       --prefill-chunk N prefill tokens per step (`0` = the rest; default: 0)
       --expert-slots N  ExpertStore on the Engine: omit = blob FFN, `0` = DirectStore,
-                        N>0 = CachedStore with N slots
+                        N>0 = CachedStore with N slots (`--expert-sim` uses N, default 8)
+      --expert-sim      SimulatedGpuStore (example H100 profile, 4096-byte experts)
 
 Runs Engine continuous batching on one interned pool. Several `--prompt`s
 join the same scheduler. A tight `--pool-blocks` preempts (recompute +
-replay). One `--expert-slots` store is parked on each batched GEMM so MoE
-serving stays on the shared-pool path. Prints each continuation (`n_gen`
-plus decoded text), then intern_hits, preempts, GEMM stats, and store
-metrics when a store is attached. Not an HTTP server.
+replay). One ExpertStore is parked on each batched GEMM so MoE serving
+stays on the shared-pool path. Prints each continuation (`n_gen` plus
+decoded text), then intern_hits, preempts, GEMM stats, store metrics,
+and a gpu-sim score line when `--expert-sim` is set. Not `$/M tokens`.
+Not an HTTP server.
 ";
 
 /// Parsed `infer` invocation.
@@ -401,6 +403,8 @@ pub struct EngineArgs {
     pub prefill_chunk: usize,
     /// ExpertStore slots. `None` keeps blob FFN. `Some(0)` is DirectStore.
     pub expert_slots: Option<usize>,
+    /// Attach [`SimulatedGpuStore`] (example H100) instead of Direct/Cached.
+    pub expert_sim: bool,
 }
 
 impl EngineArgs {
@@ -426,6 +430,7 @@ where
     let mut max_seqs = None;
     let mut prefill_chunk = 0usize;
     let mut expert_slots = None;
+    let mut expert_sim = false;
     let mut it = args.into_iter();
     while let Some(raw) = it.next() {
         let arg = raw.as_ref();
@@ -485,6 +490,12 @@ where
                     &engine_value("expert-slots", inline, &mut it)?,
                 )?);
             }
+            "--expert-sim" => {
+                if inline.is_some() {
+                    return engine_err("--expert-sim does not take a value");
+                }
+                expert_sim = true;
+            }
             flag if flag.starts_with('-') => {
                 return engine_err(&format!("unknown flag {flag}"));
             }
@@ -512,6 +523,7 @@ where
         max_seqs,
         prefill_chunk,
         expert_slots,
+        expert_sim,
     }))
 }
 
@@ -523,15 +535,7 @@ pub fn run_engine(args: &EngineArgs) -> Result<(), Box<dyn std::error::Error>> {
     let model = Llama::from_gguf(g)?;
     let cfg = engine_cfg(&tok, args)?;
     let mut eng = Engine::new(&model, cfg)?;
-    if let Some(slots) = args.expert_slots {
-        let direct = model.expert_direct_store()?;
-        let store = if slots == 0 {
-            LiveStore::Direct(direct)
-        } else {
-            LiveStore::Cached(CachedStore::new(direct, slots)?)
-        };
-        eng.attach_expert_store(store);
-    }
+    attach_engine_store(&mut eng, &model, args)?;
     let mut handles = Vec::new();
     for ids in engine_prompts(&tok, args)? {
         handles.push(eng.add(&ids, args.n_predict)?);
@@ -560,6 +564,42 @@ pub fn run_engine(args: &EngineArgs) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(m) = eng.expert_store_metrics() {
         writeln!(out, "{}", m.line())?;
     }
+    if let Some(score) = eng.expert_store_score()? {
+        writeln!(out, "{}", score.line())?;
+    }
+    Ok(())
+}
+
+fn attach_engine_store(
+    eng: &mut Engine<'_>,
+    llama: &Llama,
+    args: &EngineArgs,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if args.expert_sim {
+        let slots = match args.expert_slots {
+            Some(0) => return Err("--expert-sim needs --expert-slots > 0".into()),
+            Some(n) => n,
+            None => 8,
+        };
+        let gpu = SimulatedGpuStore::new(
+            llama.expert_direct_store()?,
+            slots,
+            HardwareProfile::example_h100_sxm(),
+            4096,
+        )?;
+        eng.attach_expert_store(LiveStore::simulated(gpu));
+        return Ok(());
+    }
+    let Some(slots) = args.expert_slots else {
+        return Ok(());
+    };
+    let direct = llama.expert_direct_store()?;
+    let store = if slots == 0 {
+        LiveStore::Direct(direct)
+    } else {
+        LiveStore::Cached(CachedStore::new(direct, slots)?)
+    };
+    eng.attach_expert_store(store);
     Ok(())
 }
 
@@ -1037,6 +1077,7 @@ mod tests {
                 assert_eq!(a.pool_blocks, None);
                 assert_eq!(a.prefill_chunk, 0);
                 assert_eq!(a.expert_slots, None);
+                assert!(!a.expert_sim);
             }
             EngineCmd::Help => panic!("expected Run"),
         }
@@ -1053,6 +1094,13 @@ mod tests {
         }
         match parse_engine_args(["m.gguf", "--expert-slots=8"]).expect("cached") {
             EngineCmd::Run(a) => assert_eq!(a.expert_slots, Some(8)),
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        match parse_engine_args(["m.gguf", "--expert-sim"]).expect("sim") {
+            EngineCmd::Run(a) => {
+                assert!(a.expert_sim);
+                assert_eq!(a.expert_slots, None);
+            }
             EngineCmd::Help => panic!("expected Run"),
         }
         assert_eq!(parse_engine_args(["--help"]).unwrap(), EngineCmd::Help);
