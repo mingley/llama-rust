@@ -101,9 +101,13 @@
 //! [`graph_add_host_func`](Sim::graph_add_host_func) /
 //! [`graph_add_event_record`](Sim::graph_add_event_record) /
 //! [`graph_add_event_wait`](Sim::graph_add_event_wait) /
-//! [`graph_add_child`](Sim::graph_add_child) are `cudaGraphAdd*` on that id.
-//! Illegal after instantiate and during capture. Mem alloc/free add nodes are
-//! still capture-only (`cudaMallocAsync` during stream capture).
+//! [`graph_add_child`](Sim::graph_add_child) /
+//! [`graph_add_alloc`](Sim::graph_add_alloc) /
+//! [`graph_add_free`](Sim::graph_add_free) are `cudaGraphAdd*` on that id.
+//! Illegal after instantiate and during capture.
+//! [`Sim::graph_add_alloc`] / [`graph_add_free`](Sim::graph_add_free) are
+//! `cudaGraphAddMemAllocNode` / `cudaGraphAddMemFreeNode` (same reuse /
+//! AutoFreeOnLaunch rules as captured `cudaMallocAsync`).
 //! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`.
 //! Capture records every stream that [`wait_event`](Sim::wait_event)s an
 //! event recorded in this capture (CUDA forked capture). [`record_event_external`](Sim::record_event_external)
@@ -5025,5 +5029,100 @@ mod tests {
         let n = sim.launch_graph(g, s).unwrap();
         assert_eq!(n, 1);
         sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn graph_add_alloc_kernel_free_matches_capture() {
+        let mut cap = Sim::new(h100());
+        let mut bld = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        cap.begin_capture(d, s).unwrap();
+        let a = cap.alloc(d, 4096, s).unwrap();
+        enq(cap.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        cap.free(d, a, s).unwrap();
+        let captured = cap.end_capture().unwrap();
+        cap.instantiate_graph(captured).unwrap();
+        cap.upload_graph(captured).unwrap();
+        let built = bld.create_graph(d, s).unwrap();
+        let b = bld.graph_add_alloc(built, 4096).unwrap();
+        bld.graph_add_kernel(built, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        bld.graph_add_free(built, b).unwrap();
+        bld.instantiate_graph(built).unwrap();
+        bld.upload_graph(built).unwrap();
+        assert_eq!(cap.graph_len(captured).unwrap(), 3);
+        assert_eq!(bld.graph_len(built).unwrap(), 3);
+        let n0 = cap.launch_graph(captured, s).unwrap();
+        cap.synchronize().unwrap();
+        let n1 = bld.launch_graph(built, s).unwrap();
+        bld.synchronize().unwrap();
+        assert_eq!(n0, 3);
+        assert_eq!(n1, 3);
+        assert_eq!(cap.hbm_used(d).unwrap(), 0);
+        assert_eq!(bld.hbm_used(d).unwrap(), 0);
+        assert_eq!(cap.hbm_peak(), 4096);
+        assert_eq!(bld.hbm_peak(), 4096);
+    }
+
+    #[test]
+    fn graph_add_alloc_reuses_hbm_on_relaunch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        let a = sim.graph_add_alloc(g, 4096).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(a, d).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+        let n2 = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n2, 2);
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+        assert_eq!(sim.hbm_peak(), 4096);
+    }
+
+    #[test]
+    fn update_graph_rejects_explicit_mem_nodes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let exec = sim.create_graph(d, s).unwrap();
+        let a = sim.graph_add_alloc(exec, 4096).unwrap();
+        sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        let b = sim.graph_add_alloc(src, 4096).unwrap();
+        sim.graph_add_kernel(src, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        let err = sim.update_graph(exec, src).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("mem"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_add_alloc_zero_and_after_instantiate() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        let err = sim.graph_add_alloc(g, 0).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("zero-byte"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.instantiate_graph(g).unwrap();
+        let err = sim.graph_add_alloc(g, 4096).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 }

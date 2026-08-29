@@ -8,7 +8,7 @@ use crate::planner::{
     plan_placement, plan_window, predicted_keys, window_keys, ChainState, Markov, Placement, Plan,
     Prefetch, DECODE_ACTIVATION_BYTES,
 };
-use crate::sim_replay::{replay_streams, stream_of};
+use crate::sim_replay::{replay_streams, stream_of, GRAPH_SCRATCH_BYTES};
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
     AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelBuf, KernelKind, MemAdvise,
@@ -103,6 +103,11 @@ pub struct GpuStoreCfg {
     /// Does not require an idle compute stream (`cudaStreamBeginCapture` does).
     /// Decode identity stays `begin_capture` / `end_capture`.
     pub graph_build: bool,
+    /// Leaf GEMM graphs include a scratch `cudaMallocAsync` + free.
+    ///
+    /// CUDA cannot `cudaGraphExecUpdate` mem nodes, so [`Self::graph_update`]
+    /// is skipped. Decode identity stays kernel-only graphs.
+    pub graph_mem: bool,
     /// Timing-on copy events (`cudaEventCreate`) and [`gpu_sim::Sim::event_elapsed_ns`].
     ///
     /// Default is `cudaEventDisableTiming` (vLLM wait events). Decode identity
@@ -182,6 +187,7 @@ pub struct SimulatedGpuStore {
     graph_update: bool,
     graph_clone: bool,
     graph_build: bool,
+    graph_mem: bool,
     timing_events: bool,
     copy_elapsed_ns: u64,
     mode: GpuFill,
@@ -299,7 +305,8 @@ impl SimulatedGpuStore {
     /// Defaults keep decode identity: async alloc, overlapping copy/compute,
     /// no `host_func`, default pool threshold 0, no AccessedBy, per-thread NULL,
     /// destroy+instantiate graphs (stream capture; [`GpuStoreCfg::graph_build`]
-    /// is `cudaGraphCreate` / `cudaGraphAdd*`), disable-timing copy events.
+    /// is `cudaGraphCreate` / `cudaGraphAdd*`; [`GpuStoreCfg::graph_mem`]
+    /// records in-graph scratch), disable-timing copy events.
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
     /// exclusive compute). [`GpuStoreCfg::decode_sm_permille`] `0` keeps a
     /// full chip. `1..=1000` without [`GpuStoreCfg::decode_priority`] caps the
@@ -379,6 +386,7 @@ impl SimulatedGpuStore {
             graph_update: cfg.graph_update,
             graph_clone: cfg.graph_clone,
             graph_build: cfg.graph_build,
+            graph_mem: cfg.graph_mem,
             timing_events: cfg.timing_events,
             copy_elapsed_ns: 0,
             mode: fill,
@@ -1146,7 +1154,7 @@ impl SimulatedGpuStore {
         }
         if self.sim.query_stream(device, self.compute)? {
             self.sim.begin_capture(device, self.compute)?;
-            gemm(&mut self.sim, device, self.compute, id)?;
+            gemm_leaf(&mut self.sim, device, self.compute, id, self.graph_mem)?;
             let src = self.sim.end_capture()?;
             let g = self.bind_graph(device, src)?;
             let _prev = self.graphs.insert(id, g);
@@ -1159,12 +1167,12 @@ impl SimulatedGpuStore {
 
     fn build_gemm_graph(&mut self, device: DeviceId, id: AllocId) -> Result<GraphId, Error> {
         let g = self.sim.create_graph(device, self.compute)?;
-        self.sim.graph_add_kernel(g, gemm_kind(), &[id], &[])?;
+        add_leaf_gemm(&mut self.sim, g, id, self.graph_mem)?;
         Ok(g)
     }
 
     fn bind_graph(&mut self, device: DeviceId, src: GraphId) -> Result<GraphId, Error> {
-        if self.graph_update {
+        if self.graph_update && !self.graph_mem {
             if let Some(exec) = self.idle_execs.get_mut(&device).and_then(Vec::pop) {
                 self.sim.update_graph(exec, src)?;
                 self.sim.destroy_graph(src)?;
@@ -1213,7 +1221,7 @@ impl SimulatedGpuStore {
 
     fn finish_drop(&mut self, key: ExpertKey, page: GpuPage) -> Result<(), Error> {
         if let Some(g) = self.graphs.remove(&page.id) {
-            if self.graph_update {
+            if self.graph_update && !self.graph_mem {
                 self.idle_execs.entry(page.device).or_default().push(g);
             } else {
                 self.sim.destroy_graph(g)?;
@@ -1700,8 +1708,27 @@ fn gemm_kind() -> KernelKind {
 }
 
 fn gemm(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Error> {
-    let _k = sim.kernel(d, gemm_kind(), &[id], &[], s)?;
-    Ok(())
+    gemm_leaf(sim, d, s, id, false)
+}
+
+fn gemm_leaf(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId, mem: bool) -> Result<(), Error> {
+    if !mem {
+        let _k = sim.kernel(d, gemm_kind(), &[id], &[], s)?;
+        return Ok(());
+    }
+    let scratch = sim.alloc(d, GRAPH_SCRATCH_BYTES, s)?;
+    let _k = sim.kernel(d, gemm_kind(), &[id], &[scratch], s)?;
+    sim.free(d, scratch, s).map_err(Error::from)
+}
+
+fn add_leaf_gemm(sim: &mut Sim, graph: GraphId, id: AllocId, mem: bool) -> Result<(), Error> {
+    if mem {
+        let scratch = sim.graph_add_alloc(graph, GRAPH_SCRATCH_BYTES)?;
+        sim.graph_add_kernel(graph, gemm_kind(), &[id], &[scratch])?;
+        return sim.graph_add_free(graph, scratch).map_err(Error::from);
+    }
+    sim.graph_add_kernel(graph, gemm_kind(), &[id], &[])
+        .map_err(Error::from)
 }
 
 /// Copy is NULL; prefill compute is stream 1. Seq-streams: copy `0 .. n_copy-1`,

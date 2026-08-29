@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — `cudaGraphAddMemAllocNode` / `--graph-mem`
+
+`Sim::graph_add_alloc` / `graph_add_free` are `cudaGraphAddMemAllocNode` /
+`cudaGraphAddMemFreeNode`. `--graph-mem` records leaf GEMM graphs with
+in-graph scratch workspace. Hits/misses stay the same; HBM peak includes
+the scratch. `--graph-update` is skipped (CUDA cannot
+`cudaGraphExecUpdate` mem nodes). Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — `cudaGraphCreate` / `cudaGraphAdd*`
 
 `Sim::create_graph` is `cudaGraphCreate` (empty, uninstantiated).

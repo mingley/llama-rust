@@ -829,7 +829,7 @@ fn vmm_evict_reacquires_same_va() {
 
     let mut sim = Sim::new(HardwareProfile::example_h100_sxm());
     let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
-    let mut graphs = GraphBank::new(false, false, false);
+    let mut graphs = GraphBank::new(false, false, false, false);
     let args = TouchArgs {
         d: DeviceId(0),
         s: StreamId(0),
@@ -2781,6 +2781,245 @@ fn simulated_gpu_store_graph_build_update_reuses_parked_exec() {
 }
 
 #[test]
+fn cuda_graphs_graph_mem_matches_capture_hits() {
+    use crate::sim_replay::GRAPH_SCRATCH_BYTES;
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_instantiate_ns=1000\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let base = SimCfg {
+        cuda_graphs: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let cap = sim_replay_cfg(&t, p.clone(), base).expect("cap");
+    let mem = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            graph_mem: true,
+            ..base
+        },
+    )
+    .expect("mem");
+    assert_eq!(cap.hits, mem.hits);
+    assert_eq!(cap.misses, mem.misses);
+    assert_eq!(cap.graph_launches, mem.graph_launches);
+    assert!(mem.graph_launches > 0, "line={}", mem.line());
+    assert_eq!(cap.hbm_peak, 4096);
+    assert_eq!(mem.hbm_peak, 4096 + GRAPH_SCRATCH_BYTES);
+}
+
+#[test]
+fn graph_mem_implies_cuda_graphs() {
+    use crate::sim_replay::GRAPH_SCRATCH_BYTES;
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_instantiate_ns=1000\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let mem = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            graph_mem: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    )
+    .expect("mem");
+    assert!(mem.graph_launches > 0, "line={}", mem.line());
+    assert_eq!(mem.hbm_peak, 4096 + GRAPH_SCRATCH_BYTES);
+}
+
+#[test]
+fn cuda_graphs_graph_mem_build_matches_capture() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1]), ev(1, 0, &[0, 2])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_instantiate_ns=1000\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let cap = sim_replay_cfg(
+        &t,
+        p.clone(),
+        SimCfg {
+            cuda_graphs: true,
+            graph_mem: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    )
+    .expect("cap");
+    let bld = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            graph_build: true,
+            graph_mem: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    )
+    .expect("bld");
+    assert_eq!(cap.hits, bld.hits);
+    assert_eq!(cap.misses, bld.misses);
+    assert_eq!(cap.graph_launches, bld.graph_launches);
+    assert_eq!(cap.child_graphs, bld.child_graphs);
+    assert_eq!(cap.hbm_peak, bld.hbm_peak);
+    assert!(bld.child_graphs > 0, "line={}", bld.line());
+}
+
+#[test]
+fn cuda_graphs_graph_mem_skips_update() {
+    let t = Trace {
+        events: vec![
+            ev(0, 0, &[0]),
+            ev(1, 0, &[1]),
+            ev(2, 0, &[0]),
+            ev(3, 0, &[1]),
+        ],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_instantiate_ns=100000\ngraph_update_ns=1000\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let mem = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            cuda_graphs: true,
+            graph_update: true,
+            graph_mem: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    )
+    .expect("mem");
+    assert_eq!(mem.graph_updates, 0);
+    assert!(mem.graph_launches > 0, "line={}", mem.line());
+}
+
+#[test]
+fn simulated_gpu_store_graph_mem_scratch_peak() {
+    use crate::sim_replay::GRAPH_SCRATCH_BYTES;
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_instantiate_ns=1000\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let run = |graph_mem: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            1,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                graph_mem,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let k0 = ExpertKey::new(0, 0);
+        let _n = gpu.prefetch(&[k0]).expect("prefetch");
+        let _s = gpu.score().expect("drain");
+        let _a = gpu.acquire(k0).expect("acq");
+        let score = gpu.score().expect("final");
+        (gpu.graph_launches(), gpu.metrics().hits, score.hbm_peak)
+    };
+    let (n_mem, h0, peak_m) = run(true);
+    let (n_cap, h1, peak_c) = run(false);
+    assert!(n_mem > 0);
+    assert_eq!(n_mem, n_cap);
+    assert_eq!(h0, h1);
+    assert_eq!(peak_c, 4096);
+    assert_eq!(peak_m, 4096 + GRAPH_SCRATCH_BYTES);
+}
+
+#[test]
+fn simulated_gpu_store_graph_mem_build_matches_capture() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_instantiate_ns=1000\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let run = |graph_build: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            1,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                graph_mem: true,
+                graph_build,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let k0 = ExpertKey::new(0, 0);
+        let _n = gpu.prefetch(&[k0]).expect("prefetch");
+        let _s = gpu.score().expect("drain");
+        let _a = gpu.acquire(k0).expect("acq");
+        let score = gpu.score().expect("final");
+        (gpu.graph_launches(), gpu.metrics().hits, score.hbm_peak)
+    };
+    let (n_build, h0, peak_b) = run(true);
+    let (n_cap, h1, peak_c) = run(false);
+    assert!(n_build > 0);
+    assert_eq!(n_build, n_cap);
+    assert_eq!(h0, h1);
+    assert_eq!(peak_b, peak_c);
+}
+
+#[test]
+fn simulated_gpu_store_graph_mem_skips_update() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_instantiate_ns=100000\ngraph_update_ns=1000\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        p,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_update: true,
+            graph_mem: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    let k1 = ExpertKey::new(0, 1);
+    let _n = gpu.prefetch(&[k0]).expect("p0");
+    let _s = gpu.score().expect("d0");
+    let _a = gpu.acquire(k0).expect("a0");
+    let _s = gpu.score().expect("drain0");
+    gpu.evict(k0).expect("evict");
+    let _s = gpu.score().expect("free");
+    let _n = gpu.prefetch(&[k1]).expect("p1");
+    let _s = gpu.score().expect("d1");
+    let _b = gpu.acquire(k1).expect("a1");
+    let _score = gpu.score().expect("final");
+    assert_eq!(gpu.graph_updates(), 0);
+    assert!(gpu.graph_launches() >= 2);
+}
+
+#[test]
 fn simulated_gpu_store_graph_clone_copies_capture() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],
@@ -3486,7 +3725,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
 
     let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
     let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
-    let mut graphs = GraphBank::new(false, false, false);
+    let mut graphs = GraphBank::new(false, false, false, false);
     let args = TouchArgs {
         d: DeviceId(0),
         s: StreamId(0),
@@ -3545,7 +3784,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
 
     let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
     let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
-    let mut graphs = GraphBank::new(false, false, false);
+    let mut graphs = GraphBank::new(false, false, false, false);
     let args = TouchArgs {
         d: DeviceId(0),
         s: StreamId(0),
@@ -3605,7 +3844,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
     let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
     advise_pool_access(&mut sim).expect("pool access");
     let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
-    let mut graphs = GraphBank::new(false, false, false);
+    let mut graphs = GraphBank::new(false, false, false, false);
     let args = TouchArgs {
         d: DeviceId(0),
         s: StreamId(0),
@@ -3898,7 +4137,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             sim.set_created_streams_priority(2).expect("pri");
         }
         let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
-        let mut graphs = GraphBank::new(false, false, false);
+        let mut graphs = GraphBank::new(false, false, false, false);
         let mut args = TouchArgs {
             d: DeviceId(0),
             s: StreamId(0),

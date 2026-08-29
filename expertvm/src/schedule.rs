@@ -317,7 +317,12 @@ impl SchedRt {
             },
             sim,
             handles: BTreeMap::new(),
-            graphs: GraphBank::new(cfg.graph_update, cfg.graph_clone, cfg.graph_build),
+            graphs: GraphBank::new(
+                cfg.graph_update,
+                cfg.graph_clone,
+                cfg.graph_build,
+                cfg.graph_mem,
+            ),
             ctr: ReplayCounters::default(),
             prefetched: BTreeSet::new(),
             markov: Markov::new(),

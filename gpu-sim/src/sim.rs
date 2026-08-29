@@ -1419,12 +1419,7 @@ impl Sim {
         if !self.events.contains_key(&event) {
             return Err(SimError::UnknownEvent { event: event.0 });
         }
-        self.graph_push(
-            graph,
-            device,
-            stream,
-            Kind::EventRecord { event, external },
-        )
+        self.graph_push(graph, device, stream, Kind::EventRecord { event, external })
     }
 
     /// `cudaGraphAddEventWaitNode`. `external` is `cudaEventWaitExternal`.
@@ -1466,6 +1461,32 @@ impl Sim {
             });
         }
         self.graph_push(graph, device, stream, Kind::ChildGraph { graph: child })
+    }
+
+    /// `cudaGraphAddMemAllocNode`. Returns a pending `cudaMallocAsync` id.
+    ///
+    /// The pointer is not resident until [`Self::launch_graph`]. Capture cannot
+    /// include it (use [`Self::alloc`] during stream capture). Illegal after
+    /// instantiate. [`Self::update_graph`] of mem nodes is Invalid.
+    pub fn graph_add_alloc(&mut self, graph: GraphId, bytes: u64) -> Result<AllocId, SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        let pool = self.default_pool(device)?;
+        let id = self.insert_pool_alloc(pool, bytes)?;
+        self.graph_push(graph, device, stream, Kind::Alloc { id, bytes })?;
+        self.graph_allocs.entry(graph).or_default().push(id);
+        Ok(id)
+    }
+
+    /// `cudaGraphAddMemFreeNode` of a pending or live allocation.
+    pub fn graph_add_free(&mut self, graph: GraphId, id: AllocId) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        let _a = self.alloc_ref(id)?;
+        self.graph_push(graph, device, stream, Kind::Free { id })
     }
 
     fn graph_origin_for_add(&self, graph: GraphId) -> Result<(DeviceId, StreamId), SimError> {
@@ -1559,6 +1580,17 @@ impl Sim {
                 why: "pool device mismatch",
             });
         }
+        let id = self.insert_pool_alloc(pool, bytes)?;
+        let _op = self.submit(device, stream, Kind::Alloc { id, bytes })?;
+        if self.in_capture(device, stream) {
+            if let Some(cap) = self.capturing.as_mut() {
+                cap.mem_allocs.push(id);
+            }
+        }
+        Ok(id)
+    }
+
+    fn insert_pool_alloc(&mut self, pool: PoolId, bytes: u64) -> Result<AllocId, SimError> {
         let id = AllocId(self.next_alloc);
         self.next_alloc = self.next_alloc.saturating_add(1);
         let _prev = self.allocs.insert(
@@ -1585,12 +1617,6 @@ impl Sim {
                 ipc_opens: 0,
             },
         );
-        let _op = self.submit(device, stream, Kind::Alloc { id, bytes })?;
-        if self.in_capture(device, stream) {
-            if let Some(cap) = self.capturing.as_mut() {
-                cap.mem_allocs.push(id);
-            }
-        }
         Ok(id)
     }
 

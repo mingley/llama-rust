@@ -22,7 +22,7 @@ use expertvm::{GpuFill, GpuStoreCfg, Prefetch};
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--graph-build] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--graph-build] [--graph-mem] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
@@ -43,6 +43,7 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --graph-update    cudaGraphExecUpdate parked leaves (`--expert-sim`)
       --graph-clone     cudaGraphClone before instantiate (`--expert-sim`)
       --graph-build     cudaGraphCreate / cudaGraphAdd* instead of capture (`--expert-sim`)
+      --graph-mem       in-graph scratch cudaMallocAsync (`--expert-sim`; skips `--graph-update`)
       --timing-events   cudaEventElapsedTime on copy start/end (`--expert-sim`)
       --mapped          cudaHostAllocMapped miss pages (`--expert-sim`)
       --managed         cudaMallocManaged miss pages (`--expert-sim`)
@@ -81,7 +82,7 @@ completed blocks so a later prompt can hit them after a rewind (`page_hits`).
 leftover prefill while any live sequence is already decoding. `--slo-reject` /
 `--ttft-slo-ns` drop a waiter whose gpu-sim queue wait meets the TTFT budget
 (`--expert-sim`). `--itl-slo-ns` counts later-token ITL misses (does not drop).
-`--cuda-graphs` / `--graph-update` / `--graph-clone` / `--graph-build` / `--timing-events` are
+`--cuda-graphs` / `--graph-update` / `--graph-clone` / `--graph-build` / `--graph-mem` / `--timing-events` are
 the same SimulatedGpuStore knobs as `gguf_gemv engine`. `--host-func` /
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` / `--seq-streams` /
@@ -296,7 +297,7 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--graph-build] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--graph-build] [--graph-mem] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -1517,10 +1518,11 @@ mod tests {
         let err = parse_serve_args(["m.gguf", "--graph-build"]).unwrap_err();
         assert!(err.contains("--graph-build requires --engine"), "{err}");
         let err = parse_serve_args(["m.gguf", "--engine", "--graph-build"]).unwrap_err();
-        assert!(
-            err.contains("--graph-build requires --expert-sim"),
-            "{err}"
-        );
+        assert!(err.contains("--graph-build requires --expert-sim"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--graph-mem"]).unwrap_err();
+        assert!(err.contains("--graph-mem requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--graph-mem"]).unwrap_err();
+        assert!(err.contains("--graph-mem requires --expert-sim"), "{err}");
         let a = run(&[
             "m.gguf",
             "--engine",
@@ -1529,12 +1531,14 @@ mod tests {
             "--graph-update",
             "--graph-clone",
             "--graph-build",
+            "--graph-mem",
             "--timing-events",
             "--itl-slo-ns=4",
         ]);
         assert!(a.gpu_cfg.graph_update);
         assert!(a.gpu_cfg.graph_clone);
         assert!(a.gpu_cfg.graph_build);
+        assert!(a.gpu_cfg.graph_mem);
         assert!(a.gpu_cfg.timing_events);
         assert_eq!(a.itl_slo_ns, Some(4));
         let err = parse_serve_args(["m.gguf", "--managed"]).unwrap_err();
