@@ -90,6 +90,13 @@
 //! stay live. Launch remaps origin-stream nodes onto the launch stream.
 //! [`launch_graph`](Sim::launch_graph) during capture records a child graph
 //! ([`GpuOp::ChildGraph`]) if the child is already instantiated.
+//! [`Sim::alloc`] / [`free`](Sim::free) during capture are graph mem alloc/free
+//! nodes (`cudaMallocAsync` / `cudaFreeAsync`). Host-sync [`malloc`](Sim::malloc)
+//! / [`free_sync`](Sim::free_sync) / VMM / [`create_pool`](Sim::create_pool) cannot
+//! be captured. A graph that allocates without a matching free reuses the pointer
+//! on later launches (no second HBM charge). [`clone_graph`](Sim::clone_graph)
+//! forks those ids. [`destroy_graph`](Sim::destroy_graph) refunds remaining graph
+//! mem. [`update_graph`](Sim::update_graph) of mem nodes is Invalid.
 
 #![cfg_attr(not(test), deny(missing_docs))]
 
@@ -618,13 +625,140 @@ mod tests {
     }
 
     #[test]
-    fn graph_cannot_capture_alloc() {
+    fn graph_cannot_capture_sync_malloc() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
         let s = StreamId(0);
         sim.begin_capture(d, s).unwrap();
-        match sim.alloc(d, 4096, s) {
-            Err(SimError::Invalid { why }) => assert!(why.contains("alloc")),
+        match sim.malloc(d, 4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.alloc(d, 4096, s).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 1);
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(a, d).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+    }
+
+    #[test]
+    fn graph_captures_malloc_async_kernel_and_free() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.begin_capture(d, s).unwrap();
+        let a = sim.alloc(d, 4096, s).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        sim.free(d, a, s).unwrap();
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 3);
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 3);
+        sim.synchronize().unwrap();
+        assert!(!sim.is_resident(a, d).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        let n2 = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n2, 3);
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        assert_eq!(sim.hbm_peak(), 4096);
+    }
+
+    #[test]
+    fn graph_mem_alloc_reuses_hbm_on_relaunch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.begin_capture(d, s).unwrap();
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let g = sim.end_capture().unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(a, d).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+        let n2 = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n2, 2);
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+        assert_eq!(sim.hbm_peak(), 4096);
+    }
+
+    #[test]
+    fn graph_clone_mem_alloc_is_independent_hbm() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.begin_capture(d, s).unwrap();
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let src = sim.end_capture().unwrap();
+        let clone = sim.clone_graph(src).unwrap();
+        let n = sim.launch_graph(src, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+        let n2 = sim.launch_graph(clone, s).unwrap();
+        assert_eq!(n2, 2);
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 8192);
+        sim.destroy_graph(src).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+        let n3 = sim.launch_graph(clone, s).unwrap();
+        assert_eq!(n3, 2);
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+    }
+
+    #[test]
+    fn graph_destroy_refunds_mem_alloc() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.begin_capture(d, s).unwrap();
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let g = sim.end_capture().unwrap();
+        sim.destroy_graph(g).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+
+        sim.begin_capture(d, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
+        let live = sim.end_capture().unwrap();
+        let n = sim.launch_graph(live, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+        sim.destroy_graph(live).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        assert!(!sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn update_graph_rejects_mem_nodes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.begin_capture(d, s).unwrap();
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let exec = sim.end_capture().unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
+        let src = sim.end_capture().unwrap();
+        let err = sim.update_graph(exec, src).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("mem"), "{why}"),
             other => panic!("{other:?}"),
         }
     }

@@ -139,6 +139,8 @@ struct Capture {
     origin: (DeviceId, StreamId),
     streams: BTreeSet<(DeviceId, StreamId)>,
     events: BTreeSet<EventId>,
+    /// `cudaMallocAsync` ids recorded as graph mem alloc nodes.
+    mem_allocs: Vec<AllocId>,
 }
 
 struct Graph {
@@ -171,6 +173,8 @@ pub struct Sim {
     graphs: BTreeMap<GraphId, Graph>,
     capturing: Option<Capture>,
     capture_buf: Vec<(DeviceId, StreamId, Kind)>,
+    /// Graph-owned mem alloc node ids (`cudaMallocAsync` captured into a graph).
+    graph_allocs: BTreeMap<GraphId, Vec<AllocId>>,
     running: Vec<Running>,
     gpus: BTreeMap<DeviceId, GpuRt>,
     bytes_moved: u64,
@@ -228,6 +232,7 @@ impl Sim {
             graphs: BTreeMap::new(),
             capturing: None,
             capture_buf: Vec::new(),
+            graph_allocs: BTreeMap::new(),
             running: Vec::new(),
             gpus,
             bytes_moved: 0,
@@ -712,6 +717,7 @@ impl Sim {
             origin: (device, stream),
             streams,
             events: BTreeSet::new(),
+            mem_allocs: Vec::new(),
         });
         self.capture_buf.clear();
         Ok(())
@@ -727,6 +733,7 @@ impl Sim {
         let id = GraphId(self.next_graph);
         self.next_graph = self.next_graph.saturating_add(1);
         let steps = core::mem::take(&mut self.capture_buf);
+        let mem_allocs = cap.mem_allocs;
         let _prev = self.graphs.insert(
             id,
             Graph {
@@ -736,6 +743,7 @@ impl Sim {
                 uploaded: false,
             },
         );
+        let _old = self.graph_allocs.insert(id, mem_allocs);
         Ok(id)
     }
 
@@ -955,7 +963,8 @@ impl Sim {
     ///
     /// Same device, stream, and op kinds; KernelBuf / memcpy sizes may change.
     /// Pays `graph_update_ns`. Recapture if topology differs. Capture cannot
-    /// include it. `exec` must already be instantiated.
+    /// include it. `exec` must already be instantiated. Graphs with mem alloc
+    /// or mem free nodes cannot be updated (`cudaGraphExecUpdate` of mem nodes).
     pub fn update_graph(&mut self, exec: GraphId, src: GraphId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph update")?;
         if exec == src {
@@ -983,6 +992,11 @@ impl Sim {
                 why: "graph update topology",
             });
         }
+        if self.graph_has_mem_nodes(exec) || self.graph_has_mem_nodes(src) {
+            return Err(SimError::Invalid {
+                why: "cannot update graph mem nodes",
+            });
+        }
         let ns = self.profile.gpu(device)?.graph_update_ns.max(1);
         self.clock = self.clock.saturating_add(ns);
         let exec = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
@@ -997,7 +1011,8 @@ impl Sim {
     ///
     /// The clone is an independent graph (`instantiated = false`). Child-graph
     /// nodes are cloned recursively so the copy names new ids; a diamond of
-    /// shared children becomes one cloned child. Instantiating or updating one
+    /// shared children becomes one cloned child. Graph mem alloc nodes get new
+    /// `cudaMallocAsync` ids (independent HBM). Instantiating or updating one
     /// id does not change the other. Cycles among child ids fail.
     pub fn clone_graph(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
         self.fail_if_capturing("cannot capture graph clone")?;
@@ -1015,22 +1030,26 @@ impl Sim {
         }
         let mut built = Vec::new();
         for &src in &walk.order {
-            let g = self.graphs.get(&src).ok_or(SimError::Invalid {
-                why: "unknown graph",
-            })?;
-            let steps = remap_child_graphs(&g.steps, &remap)?;
+            let (origin, raw) = {
+                let g = self.graphs.get(&src).ok_or(SimError::Invalid {
+                    why: "unknown graph",
+                })?;
+                (g.origin, g.steps.clone())
+            };
+            let steps = remap_child_graphs(&raw, &remap)?;
             let cloned = remap.get(&src).copied().ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
+            let steps = self.clone_mem_alloc_nodes(src, cloned, steps)?;
             built.push((
                 cloned,
                 Graph {
                     steps,
-                    origin: g.origin,
+                    origin,
                     instantiated: false,
                     uploaded: false,
                 },
-                g.origin.0,
+                origin.0,
             ));
         }
         for (id, cloned, device) in built {
@@ -1072,10 +1091,98 @@ impl Sim {
         Ok(())
     }
 
+    fn graph_has_mem_nodes(&self, graph: GraphId) -> bool {
+        if self.graph_allocs.get(&graph).is_some_and(|v| !v.is_empty()) {
+            return true;
+        }
+        self.graphs.get(&graph).is_some_and(|g| {
+            g.steps
+                .iter()
+                .any(|(_, _, k)| matches!(k, Kind::Alloc { .. } | Kind::Free { .. }))
+        })
+    }
+
+    fn fork_alloc(&mut self, src: AllocId) -> Result<AllocId, SimError> {
+        let (bytes, pool) = {
+            let a = self.alloc_ref(src)?;
+            (a.bytes, a.pool)
+        };
+        let id = AllocId(self.next_alloc);
+        self.next_alloc = self.next_alloc.saturating_add(1);
+        let _prev = self.allocs.insert(
+            id,
+            Alloc {
+                bytes,
+                devices: Vec::new(),
+                leases: 0,
+                live: false,
+                host_pinned: false,
+                host_pageable: false,
+                host_mapped: false,
+                host_registered: false,
+                managed: false,
+                read_mostly: false,
+                accessed_by: BTreeSet::new(),
+                preferred: Preferred::None,
+                vmm: false,
+                vmm_maps: Vec::new(),
+                pool,
+            },
+        );
+        Ok(id)
+    }
+
+    fn clone_mem_alloc_nodes(
+        &mut self,
+        src: GraphId,
+        dst: GraphId,
+        steps: Vec<(DeviceId, StreamId, Kind)>,
+    ) -> Result<Vec<(DeviceId, StreamId, Kind)>, SimError> {
+        let src_ids = self.graph_allocs.get(&src).cloned().unwrap_or_default();
+        if src_ids.is_empty() {
+            return Ok(steps);
+        }
+        let mut map = BTreeMap::new();
+        let mut dst_ids = Vec::new();
+        for old in src_ids {
+            let new = self.fork_alloc(old)?;
+            let _prev = map.insert(old, new);
+            dst_ids.push(new);
+        }
+        let _old = self.graph_allocs.insert(dst, dst_ids);
+        Ok(steps
+            .into_iter()
+            .map(|(d, s, k)| (d, s, remap_alloc_kind(k, &map)))
+            .collect())
+    }
+
+    fn release_graph_allocs(&mut self, graph: GraphId) -> Result<(), SimError> {
+        let ids = self.graph_allocs.remove(&graph).unwrap_or_default();
+        for id in ids {
+            let (live, bytes, devices) = {
+                let Ok(a) = self.alloc_ref(id) else {
+                    continue;
+                };
+                (a.live, a.bytes, a.devices.clone())
+            };
+            if !live {
+                continue;
+            }
+            for d in devices {
+                self.refund_device(d, id, bytes)?;
+            }
+            let a = self.alloc_mut(id)?;
+            a.devices.clear();
+            a.live = false;
+        }
+        Ok(())
+    }
+
     /// `cudaGraphDestroy` / `cudaGraphExecDestroy`. Host-synchronous.
     ///
     /// Capture cannot include it. Later [`Self::launch_graph`] of this id is
-    /// `unknown graph`. Clones are independent.
+    /// `unknown graph`. Clones are independent. Remaining graph mem allocs are
+    /// freed (`cudaGraphDestroy` of a graph with mem nodes).
     pub fn destroy_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph destroy")?;
         let g = self.graphs.remove(&graph).ok_or(SimError::Invalid {
@@ -1083,6 +1190,7 @@ impl Sim {
         })?;
         let device = g.origin.0;
         let _gpu = self.profile.gpu(device)?;
+        self.release_graph_allocs(graph)?;
         self.clock = self.clock.saturating_add(1);
         Ok(())
     }
@@ -1090,7 +1198,9 @@ impl Sim {
     /// Stream-ordered allocation (`cudaMallocAsync`) from the device default pool.
     ///
     /// Capacity is reserved when the op starts. The pointer is not usable until
-    /// this stream catches up. [`Self::malloc`] is host-synchronous `cudaMalloc`.
+    /// this stream catches up. Capture records a graph mem alloc node
+    /// (`cudaMallocAsync` during stream capture). [`Self::malloc`] is
+    /// host-synchronous `cudaMalloc` and cannot be captured.
     pub fn alloc(
         &mut self,
         device: DeviceId,
@@ -1172,6 +1282,11 @@ impl Sim {
             },
         );
         let _op = self.submit(device, stream, Kind::Alloc { id, bytes })?;
+        if self.in_capture(device, stream) {
+            if let Some(cap) = self.capturing.as_mut() {
+                cap.mem_allocs.push(id);
+            }
+        }
         Ok(id)
     }
 
@@ -2194,6 +2309,8 @@ impl Sim {
     }
 
     /// Stream-ordered free (`cudaFreeAsync`). Illegal while a kernel lease is held.
+    ///
+    /// Capture records a graph mem free node.
     pub fn free(
         &mut self,
         device: DeviceId,
@@ -2462,7 +2579,8 @@ impl Sim {
     ///
     /// A VMM destination must have that span mapped ([`Self::is_range_resident`]).
     /// [`Self::kernel`] still needs the whole VA. [`Self::memset_buf`] names an
-    /// interior page. Capture is allowed; alloc/free still are not.
+    /// interior page. Capture is allowed. Host-sync `cudaMalloc` / VMM / mempool
+    /// create still cannot be captured; [`Self::alloc`] may be a mem alloc node.
     pub fn memset(
         &mut self,
         device: DeviceId,
@@ -2807,11 +2925,6 @@ impl Sim {
         }
         if !self.in_capture(device, stream) {
             return self.submit_live(device, stream, kind, LaunchCost::Kernel);
-        }
-        if matches!(kind, Kind::Alloc { .. } | Kind::Free { .. }) {
-            return Err(SimError::Invalid {
-                why: "cannot capture alloc/free",
-            });
         }
         if let Kind::EventRecord { event } = &kind {
             if let Some(cap) = self.capturing.as_mut() {
@@ -3486,7 +3599,16 @@ impl Sim {
         bytes: u64,
     ) -> Result<bool, SimError> {
         let pool = self.alloc_ref(alloc)?.pool;
-        let ns = if let Some(p) = pool {
+        let already = {
+            let a = self.alloc_ref(alloc)?;
+            a.live && a.devices.contains(&device)
+        };
+        let ns = if already {
+            match pool {
+                Some(_) => self.profile.gpu(device)?.pool_reuse_ns.max(1),
+                None => 1,
+            }
+        } else if let Some(p) = pool {
             if self.pool_ref(p)?.device != device {
                 return Err(SimError::Invalid {
                     why: "pool device mismatch",
@@ -4291,6 +4413,61 @@ fn seed_peers(profile: &HardwareProfile) -> BTreeSet<(DeviceId, DeviceId)> {
         let _ba = out.insert((b, a));
     }
     out
+}
+
+fn remap_alloc_id(id: AllocId, map: &BTreeMap<AllocId, AllocId>) -> AllocId {
+    map.get(&id).copied().unwrap_or(id)
+}
+
+fn remap_buf(buf: KernelBuf, map: &BTreeMap<AllocId, AllocId>) -> KernelBuf {
+    KernelBuf {
+        id: remap_alloc_id(buf.id, map),
+        offset: buf.offset,
+        bytes: buf.bytes,
+    }
+}
+
+/// Rewrite alloc ids in captured ops after [`Sim::clone_graph`].
+/// Unmapped ids stay (external pointers, not mem-alloc nodes).
+fn remap_alloc_kind(kind: Kind, map: &BTreeMap<AllocId, AllocId>) -> Kind {
+    match kind {
+        Kind::Alloc { id, bytes } => Kind::Alloc {
+            id: remap_alloc_id(id, map),
+            bytes,
+        },
+        Kind::Free { id } => Kind::Free {
+            id: remap_alloc_id(id, map),
+        },
+        Kind::Memcpy(op) => Kind::Memcpy(MemcpyOp {
+            alloc: remap_alloc_id(op.alloc, map),
+            src: op.src,
+            dst: op.dst,
+            bytes: op.bytes,
+            offset: op.offset,
+        }),
+        Kind::Kernel {
+            kind,
+            reads,
+            writes,
+        } => Kind::Kernel {
+            kind,
+            reads: reads.into_iter().map(|b| remap_buf(b, map)).collect(),
+            writes: writes.into_iter().map(|b| remap_buf(b, map)).collect(),
+        },
+        Kind::Memset { id, offset, bytes } => Kind::Memset {
+            id: remap_alloc_id(id, map),
+            offset,
+            bytes,
+        },
+        Kind::AllReduce { bytes, parts } => Kind::AllReduce {
+            bytes,
+            parts: parts
+                .into_iter()
+                .map(|(d, a)| (d, remap_alloc_id(a, map)))
+                .collect(),
+        },
+        other => other,
+    }
 }
 
 fn remap_child_graphs(

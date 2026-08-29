@@ -608,18 +608,22 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   links fail `NoPeer`.
 - CUDA-graph capture: `begin_capture` / `end_capture` / `instantiate_graph`
   / `update_graph` / `clone_graph` / `destroy_graph` / `launch_graph`.
-  Recorded kernels and copies do not run until launch; alloc/free cannot
-  be captured (`malloc` / `free_sync` / `memcpy_sync` / `synchronize_device`
-  included); mempool create/trim/set-attribute cannot be captured;
+  Recorded kernels and copies do not run until launch; `cudaMallocAsync` /
+  `cudaFreeAsync` (`alloc` / `free`) **can** be captured as graph mem nodes.
+  Host-sync `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device` /
+  VMM / mempool create/trim/set-attribute cannot be captured;
   instantiate/update/upload/clone/destroy cannot be captured; capture requires an idle stream.
   Instantiate is host-sync (`graph_instantiate_ns`); the first launch
   instantiates if needed. `cudaGraphUpload` (`Sim::upload_graph`,
   `graph_upload_ns`) is a separate host-sync after instantiate; the first
-  launch uploads if needed. `update_graph` replaces an instantiated exec's
+  launch uploads if needed.   `update_graph` replaces an instantiated exec's
   steps when device, stream, and op kinds match (`graph_update_ns`).
+  Graphs with mem alloc/free nodes cannot be updated.
   `clone_graph` is an independent uninstantiated copy (`graph_clone_ns`);
-  child-graph nodes are cloned recursively (shared children cloned once).
-  `destroy_graph` is `cudaGraphDestroy` (later launch is unknown).
+  child-graph nodes are cloned recursively (shared children cloned once);
+  graph mem alloc nodes get new ids (independent HBM).
+  `destroy_graph` is `cudaGraphDestroy` (later launch is unknown; remaining
+  graph mem is refunded).
   Independent streams stay live during capture. A `wait_event` on an
   event recorded in this capture **joins** (CUDA forked capture) so
   copy and compute can overlap in one `launch_graph`. Launch remaps
@@ -1058,6 +1062,14 @@ model, do not celebrate the sim.
     is `cuMemRelease` while mapped; HBM refunds when refs and maps are both
     0. `expertvm kv --sequences N` and Engine `--kv-sim` interned blocks
     are `cuMemCreate` + `cuMemMap` so sequence VAs share one physical.
+    Dual score still has no `$/M tokens`.
+69. [x] CUDA-graph mem alloc/free nodes: `cudaMallocAsync` / `cudaFreeAsync`
+    (`Sim::alloc` / `free`) during stream capture record graph mem nodes.
+    Host-sync `malloc` / `free_sync` / VMM / mempool create still cannot be
+    captured. Relaunch without a matching free reuses the pointer (no second
+    HBM charge). `clone_graph` forks those ids. `destroy_graph` refunds
+    remaining graph mem. `update_graph` of mem nodes is Invalid. `expertvm
+    --cuda-graphs` stays kernel-only (alloc on miss, then capture GEMM).
     Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

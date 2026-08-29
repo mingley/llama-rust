@@ -220,14 +220,17 @@ impl KernelBuf {
 /// [`Self::ChildGraph`]. Timing is not stored here.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GpuOp {
-    /// Stream-ordered device allocation. Capacity is reserved when the op starts.
+    /// Stream-ordered device allocation (`cudaMallocAsync`). Capacity is
+    /// reserved when the op starts. During stream capture this is a graph mem
+    /// alloc node.
     Alloc {
         /// Object created by this op.
         id: AllocId,
         /// Reserved bytes.
         bytes: u64,
     },
-    /// Stream-ordered free. Illegal while a kernel lease is held.
+    /// Stream-ordered free (`cudaFreeAsync`). Illegal while a kernel lease is
+    /// held. During stream capture this is a graph mem free node.
     Free {
         /// Object dropped on this device.
         id: AllocId,

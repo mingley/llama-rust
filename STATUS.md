@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — CUDA-graph mem alloc/free nodes
+
+`cudaMallocAsync` / `cudaFreeAsync` (`Sim::alloc` / `free`) during stream
+capture record graph mem nodes. Host-sync `malloc` / `free_sync` / VMM /
+mempool create still cannot be captured. Relaunch without a matching free
+reuses the pointer (no second HBM charge). `clone_graph` forks those ids.
+`destroy_graph` refunds remaining graph mem. `update_graph` of mem nodes is
+Invalid. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — VMM `cuMemRetainAllocationHandle`
 
 `Sim::va_retain_handle` is `cuMemRetainAllocationHandle` (handle refs;
