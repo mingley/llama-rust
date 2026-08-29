@@ -310,7 +310,12 @@ numbers. Prompt/domain class is not in the JSONL (no fake labels).
 Optional `"p"` is a content-addressed hash of the token ids in the
 prefix (`prefix_hash`), not a prompt class. `KvCache` emits `"p"` when
 tracing; `--prefix-cache` on `expertvm schedule` skips GPU work for a
-token whose hash already completed on another sequence.
+token whose hash already completed on another sequence. That is a
+**trace-level** skip of expert GEMMs, not KV. The reference engine also
+does Automatic Prefix Caching on real KV: `KvCache::reuse_prefix` plus
+`Llama::prompt` (Session / `serve` / `chat`). `prefill` / `forward` still
+append so decode identity is unchanged. A full-prefix hit recomputes the
+last prompt token for logits. Prompt/domain class is not in the JSONL.
 
 The research question, before any CUDA:
 
@@ -724,6 +729,9 @@ model, do not celebrate the sim.
    `ttft_ns`, `itl_ns`). No invented `$/M tokens`. Energy is profile TDP ×
    virtual wall. `sim_replay` reports TTFT / mean ITL at token boundaries.
 9. [x] `Model` / `Session` layered API with `attach_expert_store`.
+10. [x] Engine-level prefix KV reuse (`KvCache::reuse_prefix`, `Llama::prompt`,
+    persistent `serve` / `chat` cache). Greedy tokens and logits bit-match a
+    cold prefill. Distinct from JSONL `"p"` / `--prefix-cache`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

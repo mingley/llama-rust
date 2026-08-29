@@ -64,8 +64,19 @@ impl Session<'_> {
     }
 
     /// Prompt tokens in one causal pass. Logits of the last token.
+    ///
+    /// Appends to the cache. Use [`Session::prompt`] to treat `tokens` as a
+    /// full prompt and reuse a matching KV prefix.
     pub fn prefill(&mut self, tokens: &[u32]) -> Result<&[f32], LlamaError> {
         self.llama.prefill_logits(&mut self.cache, tokens)
+    }
+
+    /// Full-prompt prefill with Automatic Prefix Caching.
+    ///
+    /// Longest common prefix of `tokens` and [`Session::cached_ids`] keeps its
+    /// KV; only the suffix is forwarded. [`Session::prefill`] still appends.
+    pub fn prompt(&mut self, tokens: &[u32]) -> Result<&[f32], LlamaError> {
+        self.llama.prompt_logits(&mut self.cache, tokens)
     }
 
     /// One generated token.
@@ -77,6 +88,18 @@ impl Session<'_> {
     #[must_use]
     pub fn n_past(&self) -> usize {
         self.cache.n_past
+    }
+
+    /// Token ids occupying KV slots `0 .. n_past`.
+    #[must_use]
+    pub fn cached_ids(&self) -> &[u32] {
+        self.cache.cached_ids()
+    }
+
+    /// Prefix length reused by the last [`Session::prompt`].
+    #[must_use]
+    pub fn last_prefix_hit(&self) -> usize {
+        self.cache.last_prefix_hit()
     }
 
     /// Store counters, if a store is attached.
@@ -122,5 +145,26 @@ mod tests {
         let via = sess.prefill(&ids).expect("store").to_vec();
         assert_eq!(blob, via, "Session DirectStore must match the blob path");
         assert!(sess.expert_metrics().is_some());
+    }
+
+    #[test]
+    fn session_prompt_reuses_prefix_and_prefill_still_appends() {
+        let model = Model::from_bytes(tiny_llama_gguf()).expect("model");
+        let mut sess = model.session(16).expect("sess");
+        let first = sess.prefill(&[1, 2, 3]).expect("append").to_vec();
+        assert_eq!(sess.n_past(), 3);
+        let _more = sess.prefill(&[4]).expect("still append");
+        assert_eq!(sess.n_past(), 4);
+        assert_eq!(sess.cached_ids(), &[1, 2, 3, 4]);
+        let reused = sess.prompt(&[1, 2, 3]).expect("prompt").to_vec();
+        assert_eq!(sess.n_past(), 3);
+        assert_eq!(sess.cached_ids(), &[1, 2, 3]);
+        assert_eq!(sess.last_prefix_hit(), 3);
+        assert_eq!(first, reused);
+        let mut cold = model.session(16).expect("cold");
+        let exp = cold.prefill(&[1, 2, 0]).expect("cold").to_vec();
+        let got = sess.prompt(&[1, 2, 0]).expect("partial").to_vec();
+        assert_eq!(got, exp);
+        assert_eq!(sess.last_prefix_hit(), 2);
     }
 }

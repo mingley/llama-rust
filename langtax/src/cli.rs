@@ -5,7 +5,7 @@ use std::fs::File;
 use std::io::{BufRead, Read, Write};
 use std::path::Path;
 
-use crate::decode::Llama;
+use crate::decode::{KvCache, Llama};
 use crate::gguf::load_gguf_owned;
 use crate::sample::argmax;
 use crate::template::ChatMessage;
@@ -35,7 +35,7 @@ usage: gguf_gemv chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--
   -s, --system TEXT   system message placed before the conversation
   -p, --prompt TEXT   send one user turn and exit; omit to read turns from stdin
   -n, --n-predict N   tokens to generate per reply (default: 64)
-      --n-ctx N       KV capacity (default: prompt + n_predict + 1)
+      --n-ctx N       persistent KV capacity (default: grow per turn)
       --show-prompt   print the rendered chat template before each reply
 ";
 
@@ -336,9 +336,10 @@ where
 ///
 /// With `--prompt` this is one turn and exits. Otherwise each line of stdin is
 /// a user turn, and replies accumulate so the model sees the whole history.
-/// Every turn re-renders the template and re-prefills from scratch, which is
-/// the honest thing to do while there is no prefix cache: templates are free to
-/// rewrite earlier turns, so a KV cache keyed on turn count would be wrong.
+/// Every turn re-renders the template. Prefill uses [`crate::decode::Llama::prompt`]
+/// so a matching token prefix keeps its KV. Templates that rewrite earlier
+/// turns simply get a shorter hit. `--n-ctx` sizes the persistent cache;
+/// omit it and the cache is reallocated when a turn no longer fits.
 pub fn run_chat(args: &ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = read_file(Path::new(&args.path))?;
     let g = load_gguf_owned(bytes)?;
@@ -356,8 +357,9 @@ pub fn run_chat(args: &ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         history.push(ChatMessage::system(s));
     }
     let mut out = std::io::stdout();
+    let mut cache = None;
     if let Some(p) = &args.prompt {
-        return chat_turn(&model, &tok, args, &mut history, p, &mut out);
+        return chat_turn(&model, &tok, args, &mut history, p, &mut out, &mut cache);
     }
     let stdin = std::io::stdin();
     let mut line = String::new();
@@ -373,7 +375,7 @@ pub fn run_chat(args: &ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
         if turn.is_empty() {
             continue;
         }
-        chat_turn(&model, &tok, args, &mut history, turn, &mut out)?;
+        chat_turn(&model, &tok, args, &mut history, turn, &mut out, &mut cache)?;
     }
 }
 
@@ -384,13 +386,14 @@ fn chat_turn<W: Write>(
     history: &mut Vec<ChatMessage>,
     turn: &str,
     out: &mut W,
+    cache: &mut Option<KvCache>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     history.push(ChatMessage::user(turn));
     let prompt = tok.apply_chat_template(history, true)?;
     if args.show_prompt {
         writeln!(out, "--- rendered prompt ---\n{prompt}\n--- end ---")?;
     }
-    let reply = generate_reply(model, tok, &prompt, args)?;
+    let reply = generate_reply(model, tok, &prompt, args, cache)?;
     writeln!(out, "{}", reply.trim())?;
     history.push(ChatMessage::assistant(reply.trim()));
     Ok(())
@@ -407,6 +410,7 @@ fn generate_reply(
     tok: &Tokenizer,
     prompt: &str,
     args: &ChatArgs,
+    cache: &mut Option<KvCache>,
 ) -> Result<String, Box<dyn std::error::Error>> {
     let mut ids = tok.encode(prompt)?;
     if tok.add_bos {
@@ -420,15 +424,13 @@ fn generate_reply(
         return Err("the chat template rendered an empty prompt".into());
     }
     let needed = ids.len().saturating_add(args.n_predict);
-    let max_seq = match args.n_ctx {
-        Some(n) if n < needed => {
-            return Err(format!("--n-ctx {n} is below the {needed} tokens this turn needs").into())
+    if let Some(n) = args.n_ctx {
+        if n < needed {
+            return Err(format!("--n-ctx {n} is below the {needed} tokens this turn needs").into());
         }
-        Some(n) => n,
-        None => needed.saturating_add(1),
-    };
-    let mut cache = model.new_cache(max_seq)?;
-    let mut logits = model.prefill(&mut cache, &ids)?;
+    }
+    let kv = model.ensure_cache(cache, needed, args.n_ctx)?;
+    let mut logits = model.prompt(kv, &ids)?;
     let mut reply = Vec::new();
     for _ in 0..args.n_predict {
         let next = argmax(&logits);
@@ -436,7 +438,7 @@ fn generate_reply(
             break;
         }
         reply.push(next);
-        logits = model.forward(&mut cache, next)?;
+        logits = model.forward(kv, next)?;
     }
     Ok(tok.decode(&reply))
 }

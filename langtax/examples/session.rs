@@ -27,10 +27,15 @@ fn run() -> Result<(), String> {
         CachedStore::new(direct, slots).map_err(|e| e.to_string())?,
     ));
     let n_logits = sess.prefill(&ids).map_err(|e| e.to_string())?.len();
+    let reused = sess.prompt(&ids).map_err(|e| e.to_string())?.len();
     let n_past = sess.n_past();
+    let hit = sess.last_prefix_hit();
     let hits = sess.expert_metrics().map_or(0, |m| m.hits);
     let mut out = io::stdout();
-    out.write_all(format!("n_past={n_past} vocab_logits={n_logits} hits={hits}\n").as_bytes())
-        .map_err(|e| e.to_string())?;
+    out.write_all(
+        format!("n_past={n_past} vocab_logits={n_logits} reused_logits={reused} prefix_hit={hit} hits={hits}\n")
+            .as_bytes(),
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }

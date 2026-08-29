@@ -142,6 +142,8 @@ wait already meets `--ttft-slo-ns` (`rejected=` on the schedule line).
 `--prefix-cache` skips GPU work for a token whose JSONL `"p"` hash
 already completed on another sequence (`prefix_hits=` on the schedule
 line). `"p"` is `prefix_hash` of the token ids, not a prompt class.
+That is not the engine's KV prefix cache: `llama-rust` `Llama::prompt` /
+`Session::prompt` reuses real K/V for a matching token prefix.
 TTFT is from
 arrival; `--ttft-slo-ns` / `--itl-slo-ns` count misses. `queue_ns` is mean
 first-token wait (`iteration_start - arrival`) so a tight `max_batch`

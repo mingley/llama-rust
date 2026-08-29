@@ -527,18 +527,20 @@ pub struct KvCache {
     moe_trace: MoeTraceBuf,
     /// Opt-in expert residency. `None` keeps the default blob GEMV path.
     expert_store: Option<LiveStore>,
+    /// Longest common prefix of the last [`Llama::prompt_logits`] vs cached ids.
+    last_prefix_hit: usize,
 }
 
 impl KvCache {
     /// Record MoE router decisions into an [`expertvm::Trace`].
     ///
     /// Off by default: the events vec stays empty and decode does not allocate
-    /// for tracing. Must be enabled before prefill/decode of the sequence.
+    /// for tracing. Cached token ids are kept so [`KvCache::reuse_prefix`] still
+    /// sees the sequence. Enable before the first prefill of a traced run.
     pub fn enable_moe_trace(&mut self, sequence: u64) {
         self.moe_trace.enabled = true;
         self.moe_trace.sequence = sequence;
         self.moe_trace.events.clear();
-        self.moe_trace.ids.clear();
         self.moe_trace.batch.clear();
     }
 
@@ -565,6 +567,58 @@ impl KvCache {
     #[must_use]
     pub fn expert_store_metrics(&self) -> Option<expertvm::StoreMetrics> {
         self.expert_store.as_ref().map(ExpertStore::metrics)
+    }
+
+    /// Token ids occupying KV slots `0 .. n_past`.
+    #[must_use]
+    pub fn cached_ids(&self) -> &[u32] {
+        &self.moe_trace.ids
+    }
+
+    /// KV capacity in tokens (the `max_seq` stride).
+    #[must_use]
+    pub fn max_seq(&self) -> usize {
+        self.max_seq
+    }
+
+    /// Longest common prefix reused by the last [`Llama::prompt_logits`].
+    ///
+    /// Zero until a prompt call. A full-prefix hit still recomputes the last
+    /// prompt token so the returned logits belong to that token.
+    #[must_use]
+    pub fn last_prefix_hit(&self) -> usize {
+        self.last_prefix_hit
+    }
+
+    /// Rewind `n_past` to the longest common prefix of `tokens` and the cached
+    /// ids. Positions `0..lcp` stay valid (head-major KV). Markov lookback is
+    /// cleared; the tables stay. Does **not** run inside [`Llama::prefill_logits`]
+    /// (`forward` is that path and would otherwise LCP to 0).
+    pub fn reuse_prefix(&mut self, tokens: &[u32]) -> usize {
+        if self.moe_trace.ids.len() != self.n_past {
+            self.rewind(0);
+            return 0;
+        }
+        let lcp = self
+            .moe_trace
+            .ids
+            .iter()
+            .zip(tokens.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+        self.rewind(lcp);
+        lcp
+    }
+
+    fn rewind(&mut self, n: usize) {
+        let n = n.min(self.n_past).min(self.moe_trace.ids.len());
+        self.n_past = n;
+        self.moe_trace.ids.truncate(n);
+        self.moe_trace.batch.clear();
+        let tok_u = u32::try_from(n).unwrap_or(u32::MAX);
+        self.moe_trace.events.retain(|e| e.token < tok_u);
+        self.moe_trace.prev = None;
+        self.moe_trace.prev2 = None;
     }
 }
 
@@ -963,7 +1017,36 @@ impl Llama {
             pool: None,
             moe_trace: MoeTraceBuf::default(),
             expert_store: None,
+            last_prefix_hit: 0,
         })
+    }
+
+    /// Size or reuse `slot` so `needed` tokens fit.
+    ///
+    /// `Some(n_ctx)` allocates once at that capacity (error if `needed > n`).
+    /// `None` keeps a cache whose `max_seq >= needed`, else allocates
+    /// `needed + 1` (drops the previous KV layout; the stride is `max_seq`).
+    pub fn ensure_cache<'a>(
+        &self,
+        slot: &'a mut Option<KvCache>,
+        needed: usize,
+        n_ctx: Option<usize>,
+    ) -> Result<&'a mut KvCache, LlamaError> {
+        let max_seq = match n_ctx {
+            Some(n) if n < needed => return Err(LlamaError::Shape("n_ctx".into())),
+            Some(n) => n,
+            None => needed.saturating_add(1),
+        };
+        let keep = match (slot.as_ref(), n_ctx) {
+            (Some(c), Some(n)) => c.max_seq == n,
+            (Some(c), None) => c.max_seq >= needed,
+            (None, _) => false,
+        };
+        if !keep {
+            *slot = Some(self.new_cache(max_seq)?);
+        }
+        slot.as_mut()
+            .ok_or_else(|| LlamaError::Shape("kv cache".into()))
     }
 
     /// Catalog every routed expert's gate/up/down part bytes. Identity oracle
@@ -1132,6 +1215,7 @@ impl Llama {
             pool,
             moe_trace,
             expert_store,
+            last_prefix_hit: _,
         } = cache;
         let max_seq = *max_seq;
         moe_trace.token0 = u32::try_from(n0).unwrap_or(u32::MAX);
@@ -1381,6 +1465,42 @@ impl Llama {
         moe_trace.ids.extend_from_slice(&moe_trace.batch);
         Ok(&s.logits)
     }
+
+    /// [`Llama::prompt_logits`] copying logits out of the cache.
+    pub fn prompt(&self, cache: &mut KvCache, tokens: &[u32]) -> Result<Vec<f32>, LlamaError> {
+        self.prompt_logits(cache, tokens).map(<[f32]>::to_vec)
+    }
+
+    /// Prefill `tokens` as a full prompt, reusing cached KV for the longest
+    /// matching prefix (vLLM Automatic Prefix Caching on this engine).
+    ///
+    /// Not used by [`Llama::forward`] / append [`Llama::prefill_logits`]. A
+    /// full-prefix hit rewinds one token and recomputes it so the logits are
+    /// of the last prompt token (scratch otherwise still holds the last
+    /// generated token).
+    pub fn prompt_logits<'c>(
+        &self,
+        cache: &'c mut KvCache,
+        tokens: &[u32],
+    ) -> Result<&'c [f32], LlamaError> {
+        if tokens.is_empty() {
+            return Err(LlamaError::Shape("prefill tokens".into()));
+        }
+        let lcp = cache.reuse_prefix(tokens);
+        cache.last_prefix_hit = lcp;
+        if lcp == tokens.len() {
+            let keep = tokens.len().saturating_sub(1);
+            cache.rewind(keep);
+            let last = tokens
+                .get(keep..)
+                .ok_or_else(|| LlamaError::Shape("prefill tokens".into()))?;
+            return self.prefill_logits(cache, last);
+        }
+        let suffix = tokens
+            .get(lcp..)
+            .ok_or_else(|| LlamaError::Shape("prefill tokens".into()))?;
+        self.prefill_logits(cache, suffix)
+    }
 }
 
 /// Greedy generate: encode prompt, decode `n_predict` tokens, return decoded string.
@@ -1405,6 +1525,19 @@ pub fn greedy_generate_ctx(
     n_predict: usize,
     n_ctx: Option<usize>,
 ) -> Result<String, LlamaError> {
+    let mut slot = None;
+    greedy_generate_slot(model, tok, &mut slot, prompt, n_predict, n_ctx)
+}
+
+/// [`greedy_generate_ctx`] on a persistent KV slot (Automatic Prefix Caching).
+pub fn greedy_generate_slot(
+    model: &Llama,
+    tok: &Tokenizer,
+    slot: &mut Option<KvCache>,
+    prompt: &str,
+    n_predict: usize,
+    n_ctx: Option<usize>,
+) -> Result<String, LlamaError> {
     if prompt.is_empty() {
         return Err(LlamaError::EmptyPrompt);
     }
@@ -1413,21 +1546,36 @@ pub fn greedy_generate_ctx(
         return Err(LlamaError::EmptyPrompt);
     }
     let needed = ids.len().saturating_add(n_predict);
-    let max_seq = match n_ctx {
-        Some(n) if n < needed => return Err(LlamaError::Shape("n_ctx".into())),
-        Some(n) => n,
-        None => needed.saturating_add(1),
-    };
-    let mut cache = model.new_cache(max_seq)?;
-    let mut next = argmax(model.prefill_logits(&mut cache, &ids)?);
+    let cache = model.ensure_cache(slot, needed, n_ctx)?;
+    greedy_generate_cache(model, tok, cache, &mut ids, n_predict)
+}
+
+/// Seedless greedy on an existing KV cache. Prefills with [`Llama::prompt_logits`]
+/// so a shared prefix is not recomputed. `cache.max_seq` must fit prompt +
+/// `n_predict`. `ids` is the encoded prompt (mutated to include generated tokens).
+pub fn greedy_generate_cache(
+    model: &Llama,
+    tok: &Tokenizer,
+    cache: &mut KvCache,
+    ids: &mut Vec<u32>,
+    n_predict: usize,
+) -> Result<String, LlamaError> {
+    if ids.is_empty() {
+        return Err(LlamaError::EmptyPrompt);
+    }
+    let needed = ids.len().saturating_add(n_predict);
+    if cache.max_seq < needed {
+        return Err(LlamaError::Shape("n_ctx".into()));
+    }
+    let mut next = argmax(model.prompt_logits(cache, ids)?);
     for _ in 0..n_predict {
         if tok.eos == Some(next) {
             break;
         }
         ids.push(next);
-        next = argmax(model.forward_logits(&mut cache, next)?);
+        next = argmax(model.forward_logits(cache, next)?);
     }
-    Ok(tok.decode(&ids))
+    Ok(tok.decode(ids))
 }
 
 /// [`greedy_generate_ctx`] plus an [`expertvm::Trace`] of every MoE router decision.
@@ -1456,16 +1604,9 @@ pub fn greedy_generate_traced(
     };
     let mut cache = model.new_cache(max_seq)?;
     cache.enable_moe_trace(sequence);
-    let mut next = argmax(model.prefill_logits(&mut cache, &ids)?);
-    for _ in 0..n_predict {
-        if tok.eos == Some(next) {
-            break;
-        }
-        ids.push(next);
-        next = argmax(model.forward_logits(&mut cache, next)?);
-    }
+    let text = greedy_generate_cache(model, tok, &mut cache, &mut ids, n_predict)?;
     let trace = cache.take_moe_trace();
-    Ok((tok.decode(&ids), trace))
+    Ok((text, trace))
 }
 
 /// Generate with [`SampleParams`]. [`SampleParams::greedy`] is the seedless path.
@@ -1505,7 +1646,7 @@ pub fn generate_ctx(
     // The sampler needs `ids` while it reads the logits, so keep one reusable
     // copy here rather than borrowing the cache across the call.
     let mut last = Vec::new();
-    copy_buf(&mut last, model.prefill_logits(&mut cache, &ids)?);
+    copy_buf(&mut last, model.prompt_logits(&mut cache, &ids)?);
     let mut sampler = Sampler::new(*params)?;
     for _ in 0..n_predict {
         let next = sampler.sample(&last, &ids)?;
@@ -1518,7 +1659,7 @@ pub fn generate_ctx(
     Ok(tok.decode(&ids))
 }
 
-fn prompt_ids(tok: &Tokenizer, prompt: &str) -> Result<Vec<u32>, LlamaError> {
+pub(crate) fn prompt_ids(tok: &Tokenizer, prompt: &str) -> Result<Vec<u32>, LlamaError> {
     let mut ids = tok.encode(prompt)?;
     if tok.add_bos {
         if let Some(bos) = tok.bos {
@@ -9476,6 +9617,66 @@ mod tests {
         assert_eq!(batched.n_past, step.n_past);
         let exp = oracle_forward_seq(&g, &tokens);
         assert_logits_match(&pref, &exp);
+    }
+
+    #[test]
+    fn reuse_prefix_rewinds_n_past_and_keeps_lcp_ids() {
+        let model = Llama::from_gguf(load_gguf_owned(tiny_llama_gguf()).expect("load")).expect("m");
+        let mut cache = model.new_cache(16).expect("c");
+        let _l = model.prefill(&mut cache, &[1, 2, 3, 4]).expect("p");
+        assert_eq!(cache.reuse_prefix(&[1, 2, 0]), 2);
+        assert_eq!(cache.n_past, 2);
+        assert_eq!(cache.cached_ids(), &[1, 2]);
+        let _f = model.forward(&mut cache, 5).expect("append");
+        assert_eq!(cache.n_past, 3);
+        assert_eq!(cache.cached_ids(), &[1, 2, 5]);
+    }
+
+    #[test]
+    fn prompt_reuse_logits_match_cold_prefill() {
+        let tokens = [1u32, 2, 3, 4];
+        for bytes in [tiny_llama_gguf(), tiny_qwen3moe_gguf(), tiny_llama4_gguf()] {
+            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("m");
+            let mut cold = model.new_cache(16).expect("cold");
+            let exp = model.prefill(&mut cold, &tokens).expect("cold");
+            let mut hot = model.new_cache(16).expect("hot");
+            let _p = model.prefill(&mut hot, &[1, 2, 3, 0]).expect("warm");
+            let _d = model.forward(&mut hot, 5).expect("dec");
+            let got = model.prompt(&mut hot, &tokens).expect("prompt");
+            assert_logits_match(&got, &exp);
+            assert_eq!(hot.n_past, tokens.len());
+            assert_eq!(hot.cached_ids(), tokens.as_slice());
+            assert_eq!(hot.last_prefix_hit(), 3);
+            let _d2 = model.forward(&mut hot, 5).expect("dec2");
+            let full = model.prompt(&mut hot, &tokens).expect("full");
+            assert_logits_match(&full, &exp);
+            assert_eq!(hot.last_prefix_hit(), tokens.len());
+        }
+    }
+
+    #[test]
+    fn prompt_reuse_greedy_matches_cold_and_store() {
+        let bytes = tiny_qwen3moe_gguf();
+        let g = load_gguf_owned(bytes).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let cold = greedy_generate(&model, &tok, "ab", 2).expect("cold");
+        let mut slot = None;
+        let a = greedy_generate_slot(&model, &tok, &mut slot, "ab", 2, Some(16)).expect("a");
+        let hit = slot.as_ref().expect("slot").last_prefix_hit();
+        let b = greedy_generate_slot(&model, &tok, &mut slot, "ab", 2, Some(16)).expect("b");
+        assert_eq!(a, cold);
+        assert_eq!(b, cold);
+        assert_eq!(hit, 0);
+        let hit2 = slot.as_ref().expect("slot").last_prefix_hit();
+        assert!(hit2 > 0, "second prompt must reuse the first prompt prefix");
+        let mut held = model.new_cache(16).expect("store cache");
+        held.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog"),
+        ));
+        let mut store_s = Some(held);
+        let via = greedy_generate_slot(&model, &tok, &mut store_s, "ab", 2, Some(16)).expect("st");
+        assert_eq!(via, cold);
     }
 
     #[test]

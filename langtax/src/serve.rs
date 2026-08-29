@@ -11,7 +11,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::cli::InferArgs;
-use crate::decode::{greedy_generate_ctx, Llama, LlamaError};
+use crate::decode::{greedy_generate_slot, KvCache, Llama, LlamaError};
 use crate::gguf::load_gguf_owned;
 use crate::template::ChatMessage;
 use crate::tok::Tokenizer;
@@ -20,12 +20,16 @@ use crate::tok::Tokenizer;
 pub const SERVE_USAGE: &str = "\
 usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--bind HOST:PORT]
   -n, --n-predict N   tokens to generate (default: 2)
-      --n-ctx N       KV capacity (default: prompt + n_predict + 1)
+      --n-ctx N       persistent KV capacity (default: grow per request)
       --bind ADDR     loopback listen address (default: 127.0.0.1:8080)
 
 POST /generate takes {\"prompt\": TEXT} or, to render the model's own
 tokenizer.chat_template, {\"messages\": [{\"role\": R, \"content\": C}, ...]}
 with optional \"add_generation_prompt\" (default true) and \"n_predict\".
+The listener keeps one KV cache across requests and reuses a matching
+token prefix (`prefix_hit` in the JSON). `--n-ctx` sizes that cache;
+omit it to allocate `prompt + n_predict + 1` and keep the cache while
+later requests fit. Not a production inference server.
 ";
 
 const MAX_REQ: u64 = 65_536;
@@ -47,7 +51,8 @@ pub struct ServeArgs {
     pub path: String,
     /// Tokens to generate when the JSON body omits `n_predict`.
     pub n_predict: usize,
-    /// Optional KV capacity. `None` sizes to prompt + `n_predict` + 1.
+    /// Optional persistent KV capacity. `None` grows to prompt + `n_predict` + 1
+    /// on the first request that does not fit the current cache.
     pub n_ctx: Option<usize>,
     /// Loopback `HOST:PORT`. Host must be `127.0.0.1` or `localhost`.
     pub bind: String,
@@ -198,12 +203,13 @@ pub fn run_serve(args: &ServeArgs) -> Result<(), ServeError> {
     let addr = listener.local_addr()?;
     println!("listening {addr}");
     println!("model={} n_predict={}", args.path, args.n_predict);
-    println!("one request at a time; loopback only; not a production server");
+    println!("one request at a time; loopback only; persistent KV prefix reuse");
+    let mut cache = None;
     loop {
         let (mut stream, _peer) = listener.accept()?;
         stream.set_read_timeout(Some(Duration::from_secs(IO_TIMEOUT_SECS)))?;
         stream.set_write_timeout(Some(Duration::from_secs(IO_TIMEOUT_SECS)))?;
-        if let Err(e) = handle_connection(&mut stream, &model, &tok, args) {
+        if let Err(e) = handle_connection(&mut stream, &model, &tok, args, &mut cache) {
             eprintln!("{e}");
         }
     }
@@ -249,10 +255,11 @@ fn handle_connection<S: Read + Write>(
     model: &Llama,
     tok: &Tokenizer,
     args: &ServeArgs,
+    cache: &mut Option<KvCache>,
 ) -> Result<(), ServeError> {
     match read_request(stream) {
         Ok(req) => {
-            let (status, reason, body) = dispatch(&req, model, tok, args);
+            let (status, reason, body) = dispatch(&req, model, tok, args, cache);
             write_http_json(stream, status, reason, &body)
         }
         Err(ServeError::Io(_)) => Ok(()),
@@ -279,6 +286,7 @@ fn dispatch(
     model: &Llama,
     tok: &Tokenizer,
     args: &ServeArgs,
+    cache: &mut Option<KvCache>,
 ) -> (u16, &'static str, String) {
     if req.method != "POST" {
         return (405, "Method Not Allowed", json_error("method must be POST"));
@@ -302,8 +310,11 @@ fn dispatch(
         return (400, "Bad Request", json_error("empty prompt"));
     }
     let n_predict = gen.n_predict.unwrap_or(args.n_predict);
-    match greedy_generate_ctx(model, tok, &prompt, n_predict, args.n_ctx) {
-        Ok(text) => (200, "OK", json_generated(&text)),
+    match greedy_generate_slot(model, tok, cache, &prompt, n_predict, args.n_ctx) {
+        Ok(text) => {
+            let hit = cache.as_ref().map_or(0, KvCache::last_prefix_hit);
+            (200, "OK", json_generated(&text, hit))
+        }
         Err(LlamaError::EmptyPrompt) => (400, "Bad Request", json_error("empty prompt")),
         Err(e) => (500, "Internal Server Error", json_error(&e.to_string())),
     }
@@ -440,9 +451,11 @@ fn write_http_json<W: Write>(
     Ok(())
 }
 
-fn json_generated(text: &str) -> String {
+fn json_generated(text: &str, prefix_hit: usize) -> String {
     let mut s = String::from("{\"generated\":");
     append_json_string(&mut s, text);
+    s.push_str(",\"prefix_hit\":");
+    s.push_str(&prefix_hit.to_string());
     s.push('}');
     s
 }
@@ -736,7 +749,7 @@ fn parse_usize(name: &str, s: &str) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decode::tiny_llama_gguf;
+    use crate::decode::{greedy_generate_ctx, tiny_llama_gguf};
     use std::io::Cursor;
     use std::net::{IpAddr, Ipv4Addr};
 
@@ -785,11 +798,22 @@ mod tests {
     }
 
     fn exchange(raw: &str, model: &Llama, tok: &Tokenizer, args: &ServeArgs) -> (String, String) {
+        let mut cache = None;
+        exchange_on(raw, model, tok, args, &mut cache)
+    }
+
+    fn exchange_on(
+        raw: &str,
+        model: &Llama,
+        tok: &Tokenizer,
+        args: &ServeArgs,
+        cache: &mut Option<KvCache>,
+    ) -> (String, String) {
         let mut sock = RwBuf {
             input: Cursor::new(raw.as_bytes().to_vec()),
             output: Vec::new(),
         };
-        handle_connection(&mut sock, model, tok, args).expect("handle");
+        handle_connection(&mut sock, model, tok, args, cache).expect("handle");
         let (head, body) = header_body_split(&sock.output).expect("split");
         let head = std::str::from_utf8(head).expect("head utf8").to_string();
         let body = std::str::from_utf8(body).expect("body utf8").to_string();
@@ -1119,12 +1143,21 @@ mod tests {
 
     #[test]
     fn json_response_shape_escapes() {
-        assert_eq!(json_generated("ab"), r#"{"generated":"ab"}"#);
-        assert_eq!(json_generated("a\"b"), r#"{"generated":"a\"b"}"#);
-        assert_eq!(json_generated("a\nb"), r#"{"generated":"a\nb"}"#);
+        assert_eq!(
+            json_generated("ab", 0),
+            r#"{"generated":"ab","prefix_hit":0}"#
+        );
+        assert_eq!(
+            json_generated("a\"b", 0),
+            r#"{"generated":"a\"b","prefix_hit":0}"#
+        );
+        assert_eq!(
+            json_generated("a\nb", 2),
+            r#"{"generated":"a\nb","prefix_hit":2}"#
+        );
         assert_eq!(json_error("empty prompt"), r#"{"error":"empty prompt"}"#);
         assert_eq!(
-            json_field_string(&json_generated("a\"b\n"), "generated").unwrap(),
+            json_field_string(&json_generated("a\"b\n", 0), "generated").unwrap(),
             "a\"b\n"
         );
     }
@@ -1166,5 +1199,39 @@ mod tests {
             "POST /v1/completions HTTP/1.1\r\nContent-Length: 15\r\n\r\n{\"prompt\":\"ab\"}";
         let (head, _body) = exchange(openai, &model, &tok, &args);
         assert!(head.starts_with("HTTP/1.1 404 "), "{head}");
+    }
+
+    #[test]
+    fn serve_reuses_kv_prefix_across_requests() {
+        let (model, tok) = tiny_model();
+        let args = ServeArgs {
+            n_ctx: Some(16),
+            ..defaults()
+        };
+        let expect = greedy_generate_ctx(&model, &tok, "ab", 2, Some(16)).expect("greedy");
+        let mut cache = None;
+        let (head, body) = exchange_on(
+            &post_json(r#"{"prompt":"ab"}"#),
+            &model,
+            &tok,
+            &args,
+            &mut cache,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(json_field_string(&body, "generated").unwrap(), expect);
+        assert!(body.contains("\"prefix_hit\":0"), "{body}");
+        let (head2, body2) = exchange_on(
+            &post_json(r#"{"prompt":"ab"}"#),
+            &model,
+            &tok,
+            &args,
+            &mut cache,
+        );
+        assert!(head2.starts_with("HTTP/1.1 200 OK"), "{head2}");
+        assert_eq!(json_field_string(&body2, "generated").unwrap(), expect);
+        assert!(
+            !body2.contains("\"prefix_hit\":0"),
+            "second request must reuse the prompt prefix: {body2}"
+        );
     }
 }

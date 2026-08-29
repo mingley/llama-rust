@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — prefix KV reuse on the decode engine
+
+`KvCache::reuse_prefix` rewinds `n_past` to the longest common prefix of
+the new token ids and the ids already in KV. `Llama::prompt` prefills
+only the suffix (a full hit recomputes the last prompt token so logits
+are of that token). `forward` / `prefill` still append. `Session::prompt`,
+`gguf_gemv serve`, and `gguf_gemv chat` keep one cache across requests /
+turns. Serve JSON includes `prefix_hit`. Greedy text and logits match a
+cold prefill. Distinct from JSONL `"p"` / `expertvm schedule --prefix-cache`
+(that skips expert GEMMs on a hash, not KV). Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — timing copy events and cudaEventQuery on the store
 
 `GpuStoreCfg::timing_events` creates timing-on copy start/end events and
