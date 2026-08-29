@@ -23,7 +23,8 @@ sequence `s` at `s * interarrival`). Each engine step runs one next token
 layer-major across the running set, then `synchronize`. Finished
 sequences leave so a later arrival can enter (true continuous batching,
 not a token-0 barrier). TTFT is first-token end minus arrival; ITL is
-the mean later-token gap. `--ttft-slo-ns` / `--itl-slo-ns` count misses.
+the mean later-token gap; `queue_ns` is mean first-token wait before the
+iteration starts. `--ttft-slo-ns` / `--itl-slo-ns` count misses.
 The cache walker is demand paging: Oracle/layer-ahead cannot see
 unscheduled JSONL future. Dual score still has no `$/M tokens`.
 

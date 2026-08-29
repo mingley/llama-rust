@@ -88,7 +88,9 @@ continuous batching: sequences arrive at `sequence * interarrival_ns`,
 FCFS into a running set of `--max-batch` (`0` = unlimited), one next
 token (layer-major) per engine step, finished sequences retire,
 [`gpu_sim::Sim::idle_until`] waits for the next arrival. TTFT is from
-arrival; `--ttft-slo-ns` / `--itl-slo-ns` count misses. The cache walker
+arrival; `--ttft-slo-ns` / `--itl-slo-ns` count misses. `queue_ns` is mean
+first-token wait (`iteration_start - arrival`) so a tight `max_batch`
+shows queueing separately from GPU service. The cache walker
 is demand paging (no JSONL future leak). Planner helpers: `copy_forward`,
 `hot_keys`, `plan_keys`, `plan_window`, `plan_placement` (move weights vs dispatch
 activations), `Markov` / `Prefetch` (lookback-2 `P(to|from, from_prev)` with

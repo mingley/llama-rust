@@ -52,6 +52,8 @@ pub struct SchedReplay {
     pub itl_slo_miss: u64,
     /// Nanoseconds the virtual clock jumped while waiting for arrivals.
     pub idle_ns: u64,
+    /// Mean first-token queue wait (`iteration_start - arrival`) when sampled.
+    pub queue_ns: Option<u64>,
 }
 
 impl SchedReplay {
@@ -64,6 +66,9 @@ impl SchedReplay {
             " completed={} ttft_slo_miss={} itl_slo_miss={} idle_ns={}",
             self.completed, self.ttft_slo_miss, self.itl_slo_miss, self.idle_ns
         );
+        if let Some(n) = self.queue_ns {
+            let _w = write!(s, " queue_ns={n}");
+        }
         s
     }
 }
@@ -96,6 +101,7 @@ pub fn schedule_replay(
             rt.idle_ns = rt.idle_ns.saturating_add(jumped);
             continue;
         }
+        note_queue(&running, rt.sim.clock_ns(), &mut rec);
         execute_iteration(&mut rt, &running)?;
         retire(&mut running, rt.sim.clock_ns(), sched, &mut rec);
     }
@@ -118,6 +124,7 @@ struct Rec {
     itl_slo_miss: u64,
     completed: u64,
     tokens_done: u64,
+    queues: Vec<u64>,
 }
 
 struct SchedRt {
@@ -279,6 +286,14 @@ fn admit(pending: &mut VecDeque<Job>, running: &mut Vec<Job>, cap: usize, now: u
     }
 }
 
+fn note_queue(running: &[Job], now: u64, rec: &mut Rec) {
+    for job in running {
+        if job.first_end.is_none() {
+            rec.queues.push(now.saturating_sub(job.arrival));
+        }
+    }
+}
+
 fn execute_iteration(rt: &mut SchedRt, running: &[Job]) -> Result<(), Error> {
     let mut by_layer: BTreeMap<u32, Vec<ExpertAccess>> = BTreeMap::new();
     for job in running {
@@ -396,5 +411,6 @@ fn finish_sched(rt: SchedRt, rec: Rec) -> SchedReplay {
         ttft_slo_miss: rec.ttft_slo_miss,
         itl_slo_miss: rec.itl_slo_miss,
         idle_ns: rt.idle_ns,
+        queue_ns: mean_u64(&rec.queues),
     }
 }

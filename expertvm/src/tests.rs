@@ -548,6 +548,7 @@ fn schedule_closed_loop_matches_sim_replay_hits() {
     assert_eq!(sched.replay.hits, sim.hits);
     assert_eq!(sched.replay.misses, sim.misses);
     assert_eq!(sched.completed, 2);
+    assert_eq!(sched.queue_ns, Some(0));
 }
 
 #[test]
@@ -581,6 +582,7 @@ fn schedule_open_loop_idles_until_arrival() {
         "TTFT must be from arrival, not t=0; ttft={ttft} gap={gap}"
     );
     assert_eq!(row.completed, 2);
+    assert_eq!(row.queue_ns, Some(0));
 }
 
 #[test]
@@ -602,6 +604,12 @@ fn schedule_max_batch_serializes_running_set() {
         "max_batch=1 must run sequences one at a time; one={} all={}",
         one.replay.sim_ns,
         all.replay.sim_ns
+    );
+    assert_eq!(all.queue_ns, Some(0));
+    assert!(
+        one.queue_ns.expect("queue") > 0,
+        "max_batch=1 must queue the second sequence; queue={:?}",
+        one.queue_ns
     );
 }
 
