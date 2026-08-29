@@ -595,6 +595,12 @@ impl SimulatedGpuStore {
             .unwrap_or(false)
     }
 
+    /// True when any placed page is [`gpu_sim::MemAdvise::SetAccessedBy`] on `device`.
+    #[must_use]
+    pub fn any_page_accessed_by(&self, device: DeviceId) -> bool {
+        self.pages.keys().any(|k| self.page_accessed_by(*k, device))
+    }
+
     /// [`gpu_sim::Sim::stream_priority`] for `(device, stream)`.
     #[must_use]
     pub fn stream_priority(&self, device: DeviceId, stream: StreamId) -> i32 {

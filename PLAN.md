@@ -915,11 +915,17 @@ model, do not celebrate the sim.
     3-grams (`max_seqs=8`). Greedy ids still match independent decode.
     Distinct from JSONL `"p"` / `--prefix-cache`. Dual score still has no
     `$/M tokens`.
-51. [x] Engine SimulatedGpuStore fill modes: `--mapped` / `--managed` /
+    51. [x] Engine SimulatedGpuStore fill modes: `--mapped` / `--managed` /
     `--vmm` select `GpuFill` on the serving path (`cudaHostAllocMapped`,
     `cudaMallocManaged`, `va_acquire`). Default `--expert-sim` stays pinned
     H2D identity. Two-sequence greedy ids still match independent decode.
     Dual score still has no `$/M tokens`.
+52. [x] Engine SimulatedGpuStore CUDA knobs: `--host-func` /
+    `--blocking-streams` / `--sync-alloc` / `--mempool` / `--vmm-page` /
+    `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority`
+    match `GpuStoreCfg` / `expertvm sim` on `gguf_gemv engine` and
+    `serve --engine --expert-sim`. Default pinned async stays decode
+    identity. Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

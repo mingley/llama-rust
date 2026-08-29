@@ -4,9 +4,9 @@
 //! several `POST /generate` bodies onto one interned pool so prefills and
 //! decodes GEMM together. `"stream": true` is HTTP/1.1 chunked NDJSON token
 //! lines then a final `generated` object. `--prefill-chunk`, `--decode-first`,
-//! `--slo-reject`, `--itl-slo-ns`, graph knobs, and `--trace-out` match
-//! `gguf_gemv engine`. No Tokio, no keep-alive, no
-//! OpenAI SDK surface.
+//! `--slo-reject`, `--itl-slo-ns`, graph knobs, fill modes, `GpuStoreCfg`
+//! CUDA knobs, and `--trace-out` match `gguf_gemv engine`. No Tokio, no
+//! keep-alive, no OpenAI SDK surface.
 
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Read, Write};
@@ -19,7 +19,7 @@ use crate::serve::{
     json_generated, json_token, normalize_path, parse_gen_req, try_parse_http_request, HttpRequest,
     ServeArgs, ServeError, MAX_REQ,
 };
-use crate::store_attach::{attach_store, gpu_knobs, StoreAttach};
+use crate::store_attach::{attach_store, StoreAttach};
 use crate::tok::Tokenizer;
 
 /// Poll until the process exits. Listener must already be non-blocking.
@@ -252,7 +252,7 @@ impl<'a> EngineHttp<'a> {
                 expert_sim: args.expert_sim,
                 expert_8gpu: args.expert_8gpu,
                 expert_bytes: args.expert_bytes,
-                gpu_cfg: gpu_knobs(args.graph_update, args.graph_clone, args.timing_events),
+                gpu_cfg: args.gpu_cfg,
                 fill: args.fill,
             },
         )
@@ -512,7 +512,7 @@ mod tests {
     use crate::decode::{greedy_generate_ctx, tiny_llama_gguf, tiny_qwen3moe_gguf};
     use crate::gguf::load_gguf_owned;
     use crate::serve::bind_loopback;
-    use expertvm::GpuFill;
+    use expertvm::{GpuFill, GpuStoreCfg};
     use std::fs::File;
     use std::net::SocketAddr;
     use std::time::Duration;
@@ -542,9 +542,7 @@ mod tests {
             slo_reject: false,
             ttft_slo_ns: None,
             itl_slo_ns: None,
-            graph_update: false,
-            graph_clone: false,
-            timing_events: false,
+            gpu_cfg: GpuStoreCfg::default(),
             fill: GpuFill::Pinned,
             trace_out: None,
         }

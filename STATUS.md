@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine GpuStoreCfg CUDA knobs
+
+`--expert-sim --host-func` / `--blocking-streams` / `--sync-alloc` /
+`--mempool` / `--vmm-page N` / `--pageable` / `--accessed-by` /
+`--legacy-null` / `--stream-priority` park the same `GpuStoreCfg` as
+`expertvm sim` on Engine serving (`gguf_gemv engine` and
+`serve --engine`). `--vmm-page N` with `N>0` implies `--vmm`. Default
+pinned async stays decode identity. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine GpuFill mapped / managed / vmm
 
 `--expert-sim --mapped` / `--managed` / `--vmm` park SimulatedGpuStore

@@ -5,7 +5,7 @@ use crate::error::Error;
 use crate::gpu_store::SimulatedGpuStore;
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertStore, StoreMetrics};
 use crate::tiered::TieredStore;
-use gpu_sim::DeviceId;
+use gpu_sim::{DeviceId, StreamId};
 
 /// Runtime backend for [`crate::ExpertStore`] on a decode session.
 pub enum LiveStore {
@@ -220,6 +220,32 @@ impl LiveStore {
         match self {
             Self::Simulated(s) => s.copy_elapsed_ns(),
             Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => 0,
+        }
+    }
+
+    /// [`gpu_sim::Sim::stream_priority`] on a SimulatedGpuStore. CPU stores are `None`.
+    #[must_use]
+    pub fn stream_priority(&self, device: DeviceId, stream: StreamId) -> Option<i32> {
+        match self {
+            Self::Simulated(s) => Some(s.stream_priority(device, stream)),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => None,
+        }
+    }
+
+    /// True when any resident page has [`gpu_sim::MemAdvise::SetAccessedBy`] on `device`.
+    #[must_use]
+    pub fn any_page_accessed_by(&self, device: DeviceId) -> bool {
+        match self {
+            Self::Simulated(s) => s.any_page_accessed_by(device),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => false,
+        }
+    }
+
+    /// Unused bytes in GPU0's default mempool. CPU stores are `None`.
+    pub fn default_pool_cached(&mut self) -> Result<Option<u64>, Error> {
+        match self {
+            Self::Simulated(s) => Ok(Some(s.default_pool_cached()?)),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => Ok(None),
         }
     }
 }

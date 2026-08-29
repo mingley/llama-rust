@@ -12,7 +12,7 @@ use crate::sample::argmax;
 use crate::store_attach::{attach_store, gpu_knobs, GpuCli, StoreAttach};
 use crate::template::ChatMessage;
 use crate::tok::Tokenizer;
-use expertvm::GpuFill;
+use expertvm::{GpuFill, GpuStoreCfg};
 
 /// Usage for the `infer` verb.
 pub const INFER_USAGE: &str = "\
@@ -49,14 +49,14 @@ usage: gguf_gemv <command> [args]
   infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]
   trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE [--capacity N]
   chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--kv-page N] [--show-prompt]
-  serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--trace-out FILE]
-  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--trace-out FILE]
+  serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--trace-out FILE]
+  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--trace-out FILE]
   write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|write-tiny-qwen3|write-tiny-gemma|write-tiny-llama4|write-tiny-llama-moe|write-tiny-qwen2moe|write-tiny-qwen3moe|write-tiny-qwen3moe-2layer|write-tiny-qwen2vl|write-tiny-qwen3vl|write-tiny-qwen3next|write-tiny-qwen35|write-tiny-phi2 <path>
 ";
 
 /// Usage for the `engine` verb.
 pub const ENGINE_USAGE: &str = "\
-usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--trace-out FILE]
+usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--trace-out FILE]
   -p, --prompt TEXT     prompt (repeatable; default: one `ab`)
   -n, --n-predict N     tokens to generate per sequence (default: 2)
       --n-ctx N         KV capacity (default: longest prompt + n_predict + 1)
@@ -81,6 +81,15 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
       --mapped          cudaHostAllocMapped miss pages (`--expert-sim`; not pinned identity)
       --managed         cudaMallocManaged miss pages (`--expert-sim`; not pinned identity)
       --vmm             va_acquire miss pages (`--expert-sim`; not pinned identity)
+      --vmm-page N      va_acquire_paged span (`--expert-sim`; `N>0` implies `--vmm`)
+      --host-func       cudaLaunchHostFunc after acquire GEMM (`--expert-sim`)
+      --blocking-streams  blocking compute stream (`--expert-sim`)
+      --sync-alloc      host-sync malloc/memcpy/free (`--expert-sim`)
+      --mempool         hold unused cudaMallocAsync bytes (`--expert-sim`)
+      --pageable        pageable H2D (`--expert-sim`; slower than pinned)
+      --accessed-by     SetAccessedBy on managed fills (`--expert-sim`)
+      --legacy-null     NULL copy serializes with compute (`--expert-sim`)
+      --stream-priority cudaStreamCreateWithPriority on compute (`--expert-sim`)
       --trace-out FILE  write batched MoE ExpertAccess JSONL (all sequences)
 
 Runs Engine continuous batching on one interned pool. Several `--prompt`s
@@ -92,8 +101,10 @@ drops a waiter whose gpu-sim queue wait already meets the TTFT budget
 `--itl-slo-ns` counts later-token gaps over the budget (`itl_slo_miss=`;
 does not drop). `--expert-sim` captures per-page GEMM graphs (same
 mechanical path as `expertvm sim --cuda-graphs`). `--graph-update` /
-`--graph-clone` / `--timing-events` match `GpuStoreCfg`. A tight
-`--pool-blocks` preempts
+`--graph-clone` / `--timing-events` / `--host-func` / `--blocking-streams` /
+`--sync-alloc` / `--mempool` / `--vmm-page` / `--pageable` / `--accessed-by` /
+`--legacy-null` / `--stream-priority` match `GpuStoreCfg` / `expertvm sim`.
+A tight `--pool-blocks` preempts
 (recompute + replay). One ExpertStore is parked on each batched GEMM so
 MoE serving stays on the shared-pool path. After each GEMM the store
 sticky-pins last-used ∪ Markov experts (`slots - 1`; `slots == 1` pins
@@ -453,12 +464,8 @@ pub struct EngineArgs {
     pub expert_8gpu: bool,
     /// Simulated expert page bytes with `--expert-sim`. `None` is 4096.
     pub expert_bytes: Option<u64>,
-    /// `cudaGraphExecUpdate` parked GEMM leaves (`--expert-sim`).
-    pub graph_update: bool,
-    /// `cudaGraphClone` before instantiate (`--expert-sim`).
-    pub graph_clone: bool,
-    /// Timing-on copy events (`--expert-sim`).
-    pub timing_events: bool,
+    /// CUDA-like knobs for SimulatedGpuStore. Identity stays default.
+    pub gpu_cfg: GpuStoreCfg,
     /// Miss-page placement (`--expert-sim`). Default is pinned H2D.
     pub fill: GpuFill,
     /// Write Engine MoE traces as JSONL. `None` leaves tracing off.
@@ -499,26 +506,10 @@ fn check_engine_sim_opts(n: &EngineSimNeed) -> Result<(), String> {
     if n.has_itl && !n.expert_sim {
         return engine_err("--itl-slo-ns requires --expert-sim");
     }
-    if n.gpu.cuda_graphs && !n.expert_sim {
-        return engine_err("--cuda-graphs requires --expert-sim");
-    }
-    if n.gpu.graph_update && !n.expert_sim {
-        return engine_err("--graph-update requires --expert-sim");
-    }
-    if n.gpu.graph_clone && !n.expert_sim {
-        return engine_err("--graph-clone requires --expert-sim");
-    }
-    if n.gpu.timing_events && !n.expert_sim {
-        return engine_err("--timing-events requires --expert-sim");
-    }
-    if n.gpu.mapped && !n.expert_sim {
-        return engine_err("--mapped requires --expert-sim");
-    }
-    if n.gpu.managed && !n.expert_sim {
-        return engine_err("--managed requires --expert-sim");
-    }
-    if n.gpu.vmm && !n.expert_sim {
-        return engine_err("--vmm requires --expert-sim");
+    if let Some(flag) = n.gpu.sim_flag() {
+        if !n.expert_sim {
+            return engine_err(&format!("{flag} requires --expert-sim"));
+        }
     }
     Ok(())
 }
@@ -626,10 +617,7 @@ where
                 ttft_slo_ns = Some(n);
             }
             "--itl-slo-ns" => {
-                let n = engine_u64(
-                    "itl-slo-ns",
-                    &engine_value("itl-slo-ns", inline, &mut it)?,
-                )?;
+                let n = engine_u64("itl-slo-ns", &engine_value("itl-slo-ns", inline, &mut it)?)?;
                 if n == 0 {
                     return engine_err("itl-slo-ns must be > 0");
                 }
@@ -663,18 +651,20 @@ where
                 }
                 expert_bytes = Some(n);
             }
-            "--cuda-graphs" | "--graph-update" | "--graph-clone" | "--timing-events"
-            | "--mapped" | "--managed" | "--vmm" => {
-                if let Err(e) = gpu.apply(key, inline) {
-                    return engine_err(&e);
-                }
-            }
             "--trace-out" => {
                 trace_out = Some(engine_value("trace-out", inline, &mut it)?);
             }
-            flag if flag.starts_with('-') => {
-                return engine_err(&format!("unknown flag {flag}"));
-            }
+            flag if flag.starts_with('-') => match gpu.apply(key, inline) {
+                Ok(true) => {}
+                Err(e) => return engine_err(&e),
+                Ok(false) if key == "--vmm-page" => {
+                    gpu.set_vmm_page(engine_u64(
+                        "vmm-page",
+                        &engine_value("vmm-page", inline, &mut it)?,
+                    )?);
+                }
+                Ok(false) => return engine_err(&format!("unknown flag {flag}")),
+            },
             other => {
                 if path.is_some() {
                     return engine_err(&format!("unexpected argument {other}"));
@@ -698,7 +688,9 @@ where
         has_itl: itl_slo_ns.is_some(),
         gpu,
     })?;
+    gpu.imply_vmm();
     let fill = gpu.fill()?;
+    let gpu_cfg = gpu_knobs(gpu);
     Ok(EngineCmd::Run(EngineArgs {
         path,
         prompts,
@@ -716,9 +708,7 @@ where
         expert_sim,
         expert_8gpu,
         expert_bytes,
-        graph_update: gpu.graph_update,
-        graph_clone: gpu.graph_clone,
-        timing_events: gpu.timing_events,
+        gpu_cfg,
         fill,
         trace_out,
     }))
@@ -806,7 +796,7 @@ fn attach_engine_store(
             expert_sim: args.expert_sim,
             expert_8gpu: args.expert_8gpu,
             expert_bytes: args.expert_bytes,
-            gpu_cfg: gpu_knobs(args.graph_update, args.graph_clone, args.timing_events),
+            gpu_cfg: args.gpu_cfg,
             fill: args.fill,
         },
     )?;
@@ -1309,9 +1299,7 @@ mod tests {
                 assert!(!a.expert_sim);
                 assert!(!a.expert_8gpu);
                 assert_eq!(a.expert_bytes, None);
-                assert!(!a.graph_update);
-                assert!(!a.graph_clone);
-                assert!(!a.timing_events);
+                assert_eq!(a.gpu_cfg, GpuStoreCfg::default());
                 assert_eq!(a.fill, GpuFill::Pinned);
                 assert_eq!(a.trace_out, None);
             }
@@ -1439,9 +1427,9 @@ mod tests {
         {
             EngineCmd::Run(a) => {
                 assert!(a.expert_sim);
-                assert!(a.graph_update);
-                assert!(a.graph_clone);
-                assert!(a.timing_events);
+                assert!(a.gpu_cfg.graph_update);
+                assert!(a.gpu_cfg.graph_clone);
+                assert!(a.gpu_cfg.timing_events);
                 assert_eq!(a.itl_slo_ns, Some(8));
             }
             EngineCmd::Help => panic!("expected Run"),
@@ -1451,11 +1439,17 @@ mod tests {
         let err = parse_engine_args(["m.gguf", "--cuda-graphs"]).unwrap_err();
         assert!(err.contains("--cuda-graphs requires --expert-sim"), "{err}");
         let err = parse_engine_args(["m.gguf", "--graph-update"]).unwrap_err();
-        assert!(err.contains("--graph-update requires --expert-sim"), "{err}");
+        assert!(
+            err.contains("--graph-update requires --expert-sim"),
+            "{err}"
+        );
         let err = parse_engine_args(["m.gguf", "--graph-clone"]).unwrap_err();
         assert!(err.contains("--graph-clone requires --expert-sim"), "{err}");
         let err = parse_engine_args(["m.gguf", "--timing-events"]).unwrap_err();
-        assert!(err.contains("--timing-events requires --expert-sim"), "{err}");
+        assert!(
+            err.contains("--timing-events requires --expert-sim"),
+            "{err}"
+        );
         let err = parse_engine_args(["m.gguf", "--expert-sim", "--graph-update=1"]).unwrap_err();
         assert!(
             err.contains("--graph-update does not take a value"),
@@ -1476,10 +1470,71 @@ mod tests {
         let err = parse_engine_args(["m.gguf", "--managed"]).unwrap_err();
         assert!(err.contains("--managed requires --expert-sim"), "{err}");
         let err = parse_engine_args(["m.gguf", "--expert-sim", "--mapped", "--vmm"]).unwrap_err();
-        assert!(
-            err.contains("choose one of mapped, managed, vmm"),
-            "{err}"
-        );
+        assert!(err.contains("choose one of mapped, managed, vmm"), "{err}");
+    }
+
+    #[test]
+    fn engine_gpu_cfg_flags_need_expert_sim() {
+        for flag in [
+            "--host-func",
+            "--blocking-streams",
+            "--sync-alloc",
+            "--mempool",
+            "--pageable",
+            "--accessed-by",
+            "--legacy-null",
+            "--stream-priority",
+        ] {
+            let err = parse_engine_args(["m.gguf", flag]).unwrap_err();
+            assert!(
+                err.contains(&format!("{flag} requires --expert-sim")),
+                "{flag}: {err}"
+            );
+        }
+        let err = parse_engine_args(["m.gguf", "--vmm-page", "1024"]).unwrap_err();
+        assert!(err.contains("--vmm-page requires --expert-sim"), "{err}");
+        match parse_engine_args([
+            "m.gguf",
+            "--expert-sim",
+            "--host-func",
+            "--blocking-streams",
+            "--sync-alloc",
+            "--mempool",
+            "--pageable",
+            "--legacy-null",
+            "--stream-priority",
+            "--vmm-page",
+            "1024",
+        ])
+        .expect("cfg")
+        {
+            EngineCmd::Run(a) => {
+                assert!(a.gpu_cfg.host_func);
+                assert!(a.gpu_cfg.blocking_streams);
+                assert!(a.gpu_cfg.sync_alloc);
+                assert!(a.gpu_cfg.mempool);
+                assert!(a.gpu_cfg.pageable);
+                assert!(a.gpu_cfg.legacy_null);
+                assert!(a.gpu_cfg.stream_priority);
+                assert_eq!(a.gpu_cfg.vmm_page, 1024);
+                assert_eq!(a.fill, GpuFill::Vmm);
+            }
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        match parse_engine_args(["m.gguf", "--expert-sim", "--managed", "--accessed-by"])
+            .expect("um")
+        {
+            EngineCmd::Run(a) => {
+                assert!(a.gpu_cfg.accessed_by);
+                assert_eq!(a.fill, GpuFill::Managed);
+            }
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        let err = parse_engine_args(["m.gguf", "--expert-sim", "--mapped", "--vmm-page", "1024"])
+            .unwrap_err();
+        assert!(err.contains("choose one of mapped, managed, vmm"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--expert-sim", "--host-func=1"]).unwrap_err();
+        assert!(err.contains("--host-func does not take a value"), "{err}");
     }
 
     #[test]

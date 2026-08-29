@@ -22,6 +22,10 @@
 //! SimulatedGpuStore scores sample the virtual clock at each generated token
 //! (`ttft_ns` / `itl_ns` / `ns_per_token`; not `$/M tokens`). Default GPU
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
+//! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
+//! `vmm_page`, pageable H2D, `SetAccessedBy`, legacy NULL, stream priority,
+//! graph update/clone, timing events) are the same mechanical CUDA surface as
+//! `expertvm sim`. Default pinned async stays decode identity.
 //! [`EngineCfg::slo_reject`] drops waiters whose gpu-sim queue wait already
 //! meets [`EngineCfg::ttft_slo_ns`]. [`EngineCfg::itl_slo_ns`] counts later-token
 //! gaps that miss the ITL budget (`Engine::itl_slo_miss`; does not drop).
@@ -33,7 +37,7 @@
 
 use crate::decode::{KvCache, Llama, LlamaError, PagedKvPool, PrefetchChain};
 use crate::sample::argmax;
-use expertvm::{ExpertKey, ExpertStore, LiveStore, Score, StoreMetrics, Trace};
+use expertvm::{DeviceId, ExpertKey, ExpertStore, LiveStore, Score, StoreMetrics, StreamId, Trace};
 use std::collections::{BTreeMap, VecDeque};
 
 /// Handle for one sequence on an [`Engine`].
@@ -362,6 +366,29 @@ impl<'a> Engine<'a> {
     #[must_use]
     pub fn copy_elapsed_ns(&self) -> u64 {
         self.live_store().map_or(0, LiveStore::copy_elapsed_ns)
+    }
+
+    /// Stream priority on an attached SimulatedGpuStore (`None` unless GPU).
+    #[must_use]
+    pub fn gpu_stream_priority(&self, device: DeviceId, stream: StreamId) -> Option<i32> {
+        self.live_store()
+            .and_then(|s| s.stream_priority(device, stream))
+    }
+
+    /// True when any SimulatedGpuStore page has `SetAccessedBy` on `device`.
+    #[must_use]
+    pub fn gpu_any_accessed_by(&self, device: DeviceId) -> bool {
+        self.live_store()
+            .is_some_and(|s| s.any_page_accessed_by(device))
+    }
+
+    /// Unused bytes in GPU0's default mempool (`None` unless SimulatedGpuStore).
+    pub fn gpu_pool_cached(&mut self) -> Result<Option<u64>, LlamaError> {
+        self.reclaim_parked_stores();
+        match self.expert_store.as_mut() {
+            Some(s) => s.default_pool_cached().map_err(LlamaError::from),
+            None => Ok(None),
+        }
     }
 
     fn live_store(&self) -> Option<&LiveStore> {
@@ -1264,8 +1291,8 @@ mod tests {
     use crate::gguf::load_gguf_owned;
     use crate::tok::Tokenizer;
     use expertvm::{
-        CachedStore, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore, Score, SimulatedGpuStore,
-        StoreMetrics, TieredStore, Trace,
+        CachedStore, DeviceId, ExpertKey, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore, Score,
+        SimulatedGpuStore, StoreMetrics, StreamId, TieredStore, Trace,
     };
 
     struct GpuEngineOut {
@@ -2372,9 +2399,28 @@ mod tests {
         updates: u64,
         clones: u64,
         copy_elapsed_ns: u64,
+        wall_ns: u64,
+        copy_pri: i32,
+        compute_pri: i32,
+        accessed_peer: bool,
     }
 
-    fn two_seq_gpu_store(slots: usize, gpu_cfg: GpuStoreCfg, fill: GpuFill) -> GpuKnobOut {
+    fn two_seq_gpu_on(
+        slots: usize,
+        gpu_cfg: GpuStoreCfg,
+        fill: GpuFill,
+        profile: HardwareProfile,
+    ) -> GpuKnobOut {
+        two_seq_gpu_bytes(slots, gpu_cfg, fill, profile, 4096)
+    }
+
+    fn two_seq_gpu_bytes(
+        slots: usize,
+        gpu_cfg: GpuStoreCfg,
+        fill: GpuFill,
+        profile: HardwareProfile,
+        expert_bytes: u64,
+    ) -> GpuKnobOut {
         let tokens_a = [1u32, 2, 3, 4];
         let tokens_b = [5u32, 0, 5, 0];
         let g = load_gguf_owned(tiny_qwen3moe_2layer_gguf()).expect("owned");
@@ -2388,8 +2434,8 @@ mod tests {
         let gpu = SimulatedGpuStore::with_cfg(
             model.expert_direct_store().expect("c"),
             slots,
-            HardwareProfile::example_h100_sxm(),
-            4096,
+            profile,
+            expert_bytes,
             fill,
             gpu_cfg,
         )
@@ -2400,12 +2446,25 @@ mod tests {
         eng.run().expect("run");
         assert_eq!(eng.take(a).expect("ta").generated, exp_a);
         assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+        let wall_ns = eng.expert_store_score().expect("sc").expect("sim").wall_ns;
         GpuKnobOut {
             launches: eng.graph_launches(),
             updates: eng.graph_updates(),
             clones: eng.graph_clones(),
             copy_elapsed_ns: eng.copy_elapsed_ns(),
+            wall_ns,
+            copy_pri: eng
+                .gpu_stream_priority(DeviceId(0), StreamId(0))
+                .unwrap_or(0),
+            compute_pri: eng
+                .gpu_stream_priority(DeviceId(0), StreamId(1))
+                .unwrap_or(0),
+            accessed_peer: eng.gpu_any_accessed_by(DeviceId(1)),
         }
+    }
+
+    fn two_seq_gpu_store(slots: usize, gpu_cfg: GpuStoreCfg, fill: GpuFill) -> GpuKnobOut {
+        two_seq_gpu_on(slots, gpu_cfg, fill, HardwareProfile::example_h100_sxm())
     }
 
     fn two_seq_gpu_knobs(slots: usize, gpu_cfg: GpuStoreCfg) -> GpuKnobOut {
@@ -2457,11 +2516,174 @@ mod tests {
     fn engine_gpu_fill_modes_match_independent() {
         for fill in [GpuFill::Managed, GpuFill::Mapped, GpuFill::Vmm] {
             let out = two_seq_gpu_store(8, GpuStoreCfg::default(), fill);
-            assert!(
-                out.launches >= 2,
-                "fill={fill:?} launches={}",
-                out.launches
-            );
+            assert!(out.launches >= 2, "fill={fill:?} launches={}", out.launches);
         }
+    }
+
+    #[test]
+    fn engine_gpu_cfg_knobs_lengthen_wall() {
+        let base = two_seq_gpu_knobs(8, GpuStoreCfg::default()).wall_ns;
+        let knobs = [
+            (
+                "host_func",
+                GpuStoreCfg {
+                    host_func: true,
+                    ..GpuStoreCfg::default()
+                },
+            ),
+            (
+                "pageable",
+                GpuStoreCfg {
+                    pageable: true,
+                    ..GpuStoreCfg::default()
+                },
+            ),
+            (
+                "legacy_null",
+                GpuStoreCfg {
+                    legacy_null: true,
+                    ..GpuStoreCfg::default()
+                },
+            ),
+            (
+                "blocking_streams",
+                GpuStoreCfg {
+                    blocking_streams: true,
+                    ..GpuStoreCfg::default()
+                },
+            ),
+            (
+                "sync_alloc",
+                GpuStoreCfg {
+                    sync_alloc: true,
+                    ..GpuStoreCfg::default()
+                },
+            ),
+        ];
+        for (name, cfg) in knobs {
+            let out = two_seq_gpu_knobs(8, cfg);
+            assert!(
+                out.wall_ns > base,
+                "{name} must lengthen wall; knob={} base={base}",
+                out.wall_ns
+            );
+            assert!(out.launches >= 2, "{name} launches={}", out.launches);
+        }
+    }
+
+    #[test]
+    fn engine_gpu_stream_priority_marks_compute() {
+        let off = two_seq_gpu_knobs(8, GpuStoreCfg::default());
+        assert_eq!(off.copy_pri, 0);
+        assert_eq!(off.compute_pri, 0);
+        let on = two_seq_gpu_knobs(
+            8,
+            GpuStoreCfg {
+                stream_priority: true,
+                ..GpuStoreCfg::default()
+            },
+        );
+        assert_eq!(on.copy_pri, 0, "copy stays NULL priority 0");
+        assert_eq!(on.compute_pri, 1, "compute is stream 1 at priority 1");
+        assert!(on.launches >= 2, "launches={}", on.launches);
+    }
+
+    #[test]
+    fn engine_gpu_accessed_by_maps_peer_on_8gpu() {
+        let off = two_seq_gpu_store(8, GpuStoreCfg::default(), GpuFill::Managed);
+        assert!(!off.accessed_peer, "1-GPU managed must not map a peer");
+        let on = two_seq_gpu_on(
+            8,
+            GpuStoreCfg {
+                accessed_by: true,
+                ..GpuStoreCfg::default()
+            },
+            GpuFill::Managed,
+            HardwareProfile::example_8xh100_nvlink(),
+        );
+        assert!(on.accessed_peer, "accessed_by must map a peer GPU");
+        assert!(on.launches >= 2, "launches={}", on.launches);
+    }
+
+    #[test]
+    fn engine_gpu_mempool_holds_after_evict() {
+        let cached = |mempool: bool| {
+            let tokens_a = [1u32, 2, 3, 4];
+            let tokens_b = [5u32, 0, 5, 0];
+            let g = load_gguf_owned(tiny_qwen3moe_2layer_gguf()).expect("owned");
+            let tok = Tokenizer::from_gguf(&g).expect("tok");
+            let model = Llama::from_gguf(g).expect("m");
+            let exp_a = independent(&model, &tok, &tokens_a, 2);
+            let exp_b = independent(&model, &tok, &tokens_b, 2);
+            let mut cfg = EngineCfg::tiny();
+            cfg.eos = tok.eos;
+            let mut eng = Engine::new(&model, cfg).expect("eng");
+            let gpu = SimulatedGpuStore::with_cfg(
+                model.expert_direct_store().expect("c"),
+                2,
+                HardwareProfile::example_h100_sxm(),
+                4096,
+                GpuFill::Pinned,
+                GpuStoreCfg {
+                    mempool,
+                    ..GpuStoreCfg::default()
+                },
+            )
+            .expect("gpu");
+            eng.attach_expert_store(LiveStore::simulated(gpu));
+            let a = eng.add(&tokens_a, 2).expect("a");
+            let b = eng.add(&tokens_b, 2).expect("b");
+            eng.run().expect("run");
+            assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+            assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+            let mut store = eng.take_expert_store().expect("store");
+            store.unpin_all();
+            for layer in 0..2u32 {
+                for expert in 0..4u32 {
+                    let k = ExpertKey::new(layer, expert);
+                    if store.is_resident(k) {
+                        store.evict(k).expect("evict");
+                    }
+                }
+            }
+            store.default_pool_cached().expect("pool").unwrap_or(0)
+        };
+        assert_eq!(cached(false), 0, "default pool must release");
+        let held = cached(true);
+        assert!(
+            held >= 4096,
+            "mempool must hold an evicted expert page, cached={held}"
+        );
+    }
+
+    #[test]
+    fn engine_gpu_vmm_page_pays_map_overhead() {
+        let bytes = 1u64 << 16;
+        let page = bytes / 4;
+        let profile = HardwareProfile::example_h100_sxm();
+        let full = two_seq_gpu_bytes(
+            8,
+            GpuStoreCfg::default(),
+            GpuFill::Vmm,
+            profile.clone(),
+            bytes,
+        );
+        let paged = two_seq_gpu_bytes(
+            8,
+            GpuStoreCfg {
+                vmm_page: page,
+                ..GpuStoreCfg::default()
+            },
+            GpuFill::Vmm,
+            profile,
+            bytes,
+        );
+        assert_eq!(full.launches, paged.launches);
+        assert!(
+            paged.wall_ns > full.wall_ns,
+            "paged VMM must pay per-block map overhead; paged={} full={}",
+            paged.wall_ns,
+            full.wall_ns
+        );
     }
 }

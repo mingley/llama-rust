@@ -151,7 +151,10 @@ is the same counter on real generated tokens. `--expert-sim` captures
 per-page GEMM graphs (`graph_launches=`; `--cuda-graphs` documents that).
 `--graph-update` / `--graph-clone` / `--timing-events` are `GpuStoreCfg`
 on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
-(`gguf_gemv engine --expert-sim --managed`). `--prefix-cache` skips GPU work for a token whose JSONL `"p"` hash
+(`gguf_gemv engine --expert-sim --managed`). `--host-func` /
+`--blocking-streams` / `--sync-alloc` / `--mempool` / `--vmm-page` /
+`--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority`
+are the same `GpuStoreCfg` knobs as `expertvm sim`. `--prefix-cache` skips GPU work for a token whose JSONL `"p"` hash
 already completed on another sequence (`prefix_hits=` on the schedule
 line). `"p"` is `prefix_hash` of the token ids, not a prompt class.
 That is not the engine's KV prefix cache: `llama-rust` `Llama::prompt` /
