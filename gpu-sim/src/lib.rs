@@ -33,6 +33,9 @@
 //! [`MemAdvise::SetAccessedBy`] maps a GPU so a kernel can read without
 //! migrating (billed on the interconnect, not local HBM). A kernel
 //! page-faults managed memory onto that GPU unless AccessedBy covers it.
+//! [`MemAdvise::SetPreferredLocation`] keeps a page already at that GPU
+//! there on a remote read (same interconnect billing; writes still migrate).
+//! Host preferred does not skip a kernel first-touch.
 //! [`Sim::drop_managed_copy`] refunds one ReadMostly GPU copy (dest eviction).
 //! [`Sim::va_reserve`] / [`va_map`](Sim::va_map) / [`va_unmap`](Sim::va_unmap) /
 //! [`va_free`](Sim::va_free) are `cuMemAddressReserve` / `cuMemMap` /
@@ -2186,6 +2189,114 @@ mod tests {
     }
 
     #[test]
+    fn preferred_location_kernel_reads_without_migrating() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let bytes = 32u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        enq(sim.prefetch(d0, m, s));
+        sim.synchronize().unwrap();
+        sim.mem_advise(m, MemAdvise::SetPreferredLocation, d0)
+            .unwrap();
+        assert!(sim.is_preferred_location(m, d0).unwrap());
+        assert!(!sim.is_preferred_location(m, d1).unwrap());
+        let t0 = sim.clock_ns();
+        enq(sim.kernel(d1, KernelKind::other(8, bytes), &[m], &[], s));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(m, d0).unwrap());
+        assert!(!sim.is_resident(m, d1).unwrap());
+        assert_eq!(sim.hbm_used(d1).unwrap(), 0);
+        let remote = sim.clock_ns().saturating_sub(t0);
+        let mut local = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let a = local.alloc_managed(bytes).unwrap();
+        enq(local.prefetch(d0, a, s));
+        local.synchronize().unwrap();
+        let t1 = local.clock_ns();
+        enq(local.kernel(d0, KernelKind::other(8, bytes), &[a], &[], s));
+        local.synchronize().unwrap();
+        let hbm = local.clock_ns().saturating_sub(t1);
+        assert!(remote > hbm, "remote={remote} hbm={hbm}");
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn preferred_location_write_still_migrates() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        enq(sim.prefetch(d0, m, s));
+        sim.synchronize().unwrap();
+        sim.mem_advise(m, MemAdvise::SetPreferredLocation, d0)
+            .unwrap();
+        enq(sim.kernel(d1, KernelKind::other(8, 8), &[m], &[m], s));
+        sim.synchronize().unwrap();
+        assert!(!sim.is_resident(m, d0).unwrap());
+        assert!(sim.is_resident(m, d1).unwrap());
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn unset_preferred_location_then_kernel_migrates() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        enq(sim.prefetch(d0, m, s));
+        sim.synchronize().unwrap();
+        sim.mem_advise(m, MemAdvise::SetPreferredLocation, d0)
+            .unwrap();
+        sim.mem_advise(m, MemAdvise::UnsetPreferredLocation, d0)
+            .unwrap();
+        assert!(!sim.is_preferred_location(m, d0).unwrap());
+        enq(sim.kernel(d1, KernelKind::other(8, 8), &[m], &[], s));
+        sim.synchronize().unwrap();
+        assert!(!sim.is_resident(m, d0).unwrap());
+        assert!(sim.is_resident(m, d1).unwrap());
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn preferred_location_host_kernel_first_touch_still_migrates() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        sim.mem_advise(m, MemAdvise::SetPreferredLocationHost, d)
+            .unwrap();
+        assert!(sim.is_preferred_host(m).unwrap());
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[m], &[], s));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(m, d).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn preferred_location_without_residency_still_faults() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        sim.mem_advise(m, MemAdvise::SetPreferredLocation, d0)
+            .unwrap();
+        enq(sim.kernel(d1, KernelKind::other(8, 8), &[m], &[], s));
+        sim.synchronize().unwrap();
+        assert!(!sim.is_resident(m, d0).unwrap());
+        assert!(sim.is_resident(m, d1).unwrap());
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
     fn mem_advise_rejects_unmanaged_and_capture() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
@@ -2196,10 +2307,24 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("managed"), "{why}"),
             other => panic!("{other:?}"),
         }
+        let pref = sim
+            .mem_advise(a, MemAdvise::SetPreferredLocation, d)
+            .unwrap_err();
+        match pref {
+            SimError::Invalid { why } => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         let m = sim.alloc_managed(4096).unwrap();
         sim.begin_capture(d, s).unwrap();
         let cap = sim.mem_advise(m, MemAdvise::SetReadMostly, d).unwrap_err();
         match cap {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let cap_pref = sim
+            .mem_advise(m, MemAdvise::SetPreferredLocation, d)
+            .unwrap_err();
+        match cap_pref {
             SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }

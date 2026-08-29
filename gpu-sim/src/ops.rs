@@ -5,7 +5,8 @@ use crate::ids::{AllocId, DeviceId, EventId, GraphId, OpId, StreamId};
 /// `cudaMemAdvise` hint on a [`crate::Sim::alloc_managed`] pointer.
 ///
 /// Host-synchronous. Capture cannot include it. [`Self::SetReadMostly`] /
-/// [`Self::UnsetReadMostly`] ignore `device` (CUDA `cudaCpuDeviceId`).
+/// [`Self::UnsetReadMostly`] / [`Self::SetPreferredLocationHost`] ignore
+/// `device` (CUDA `cudaCpuDeviceId`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemAdvise {
     /// Prefetch onto a second GPU keeps the first copy (read-only replicas).
@@ -16,6 +17,12 @@ pub enum MemAdvise {
     SetAccessedBy,
     /// Drop the remote mapping. The next kernel on `device` page-faults.
     UnsetAccessedBy,
+    /// Keep the page at `device` on remote reads (`cudaMemAdviseSetPreferredLocation`).
+    SetPreferredLocation,
+    /// Prefer host; a kernel first-touch still migrates to the accessing GPU.
+    SetPreferredLocationHost,
+    /// Clear the preferred-location hint.
+    UnsetPreferredLocation,
 }
 
 /// Element type for roofline math. Maps onto a peak-FLOP field in the profile.

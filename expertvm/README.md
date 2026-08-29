@@ -89,9 +89,11 @@ reuse of a same-size page pays `pool_reuse_ns` instead of
 `alloc_overhead_ns`. `--mapped` uses `cudaHostAllocMapped`: experts stay in
 pinned host, kernels run over PCIe, HBM is not charged (`hbm_peak=0`).
 That is the “do not move the expert” alternative to H2D. `--managed` uses
-`cudaMallocManaged`, `cudaMemAdviseSetReadMostly`, and
+`cudaMallocManaged`, `cudaMemAdviseSetReadMostly`,
+`cudaMemAdviseSetPreferredLocation` on the home GPU, and
 `cudaMemPrefetchAsync` on miss: alloc is free of HBM, prefetch migrates
-(and replicates if another GPU later prefetches the same page).
+(and replicates if another GPU later prefetches the same page). A remote
+kernel read can keep the page at the preferred GPU.
 `--place replicas` uses that prefetch onto dest GPUs; dest eviction
 `drop_managed_copy`s one GPU without freeing the allocation. `--vmm` uses
 `va_acquire` (remap an idle VA, else reserve+map) then pinned H2D into that
@@ -111,9 +113,12 @@ mapped experts (`PinOom` only when even one expert cannot lock). `SimulatedGpuSt
 path with CUDA's default threshold (`0`), non-blocking streams, and
 `cudaEventDisableTiming` copy events. `--max-batch N` admits N sequences per engine
 iteration at a token (`0` = the whole token) and still samples TTFT once.
-`--cuda-graphs` captures grouped expert GEMMs after `synchronize_stream` on
-that stream and replays them (first launch pays `graph_instantiate_ns`,
-then `graph_launch_ns` once per launch). `--plan-window
+`--cuda-graphs` captures a leaf GEMM per resident expert alloc, instantiates
+it, then a parent of `launch_graph` child nodes for a grouped launch
+(combos reuse leaves when one expert is evicted). Capture waits with
+`synchronize_stream` so the compute stream is idle (CUDA). First launch of
+a new graph pays `graph_instantiate_ns`, then `graph_launch_ns` once per
+launch. `--plan-window
 N` runs [`plan_window`](crate::plan_window) Stay vs Fetch before prefetch (Stay
 does not evict a resident working set). Replay reports `prefetch_hits` /
 `prefetch_waste`. `schedule_replay` / `expertvm schedule` is open-loop

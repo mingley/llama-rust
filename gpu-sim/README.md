@@ -39,6 +39,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemAdviseSetReadMostly`: prefetch replicates | same DMA as a move |
 | `drop_managed_copy`: dest eviction of one ReadMostly GPU | other copies stay |
 | `cudaMemAdviseSetAccessedBy`: kernel may read without migrating | interconnect, not local HBM |
+| `cudaMemAdviseSetPreferredLocation`: stay if already there | interconnect on remote read; writes migrate |
 | `cudaMemPrefetchAsync` (`prefetch` / `prefetch_host`) **moves** unless ReadMostly | PCIe / NVLink (1 ns if already local) |
 | `cuMemAddressReserve` (`va_reserve`) is a VA with no physical pages | `alloc_overhead_ns` (at the call) |
 | `cuMemMap` (`va_map`) charges HBM; `va_unmap` refunds; the VA is reusable | `alloc_overhead_ns` (map) |
@@ -235,10 +236,12 @@ PCIe, and it does not charge HBM. Capture cannot include host
 alloc/register. `alloc_managed` is `cudaMallocManaged` (no HBM until
 `prefetch` / first-touch). `mem_advise` is `cudaMemAdvise` (host-sync).
 `SetReadMostly` makes prefetch replicate; `SetAccessedBy` lets a kernel
-read without migrating. `prefetch` / `prefetch_host` are
+read without migrating. `SetPreferredLocation` keeps a page already at
+that GPU there on a remote read (writes still migrate; host preferred
+does not skip kernel first-touch). `prefetch` / `prefetch_host` are
 `cudaMemPrefetchAsync` and **move** unless ReadMostly. Capture of
 `alloc_managed` / `mem_advise` is refused; a graph must record prefetch
-before the kernel unless AccessedBy covers that GPU.
+before the kernel unless AccessedBy or PreferredLocation covers that GPU.
 `va_reserve` / `va_map` / `va_unmap` / `va_free` are CUDA virtual memory.
 `va_map_range` / `va_unmap_range` map sparse physicals (HBM is the mapped
 span). `kernel()` needs the whole VA covered; `kernel_bufs`, `memset_buf`, and

@@ -9,6 +9,13 @@ use crate::ids::{AllocId, DeviceId, EventId, GraphId, OpId, PoolId, StreamId};
 use crate::ops::{GpuOp as Kind, KernelBuf, KernelKind, MemAdvise, MemcpyOp, Operation, Place};
 use crate::profile::{ns_for_bytes, HardwareProfile};
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Preferred {
+    None,
+    Host,
+    Gpu(DeviceId),
+}
+
 struct Alloc {
     bytes: u64,
     devices: Vec<DeviceId>,
@@ -27,12 +34,29 @@ struct Alloc {
     read_mostly: bool,
     /// GPUs that may map this managed alloc without migrating (`SetAccessedBy`).
     accessed_by: BTreeSet<DeviceId>,
+    /// `cudaMemAdviseSetPreferredLocation` (host or one GPU).
+    preferred: Preferred,
     /// `cuMemAddressReserve` VA. HBM is charged only while mapped (possibly sparse).
     vmm: bool,
     /// Physical maps `(device, offset, bytes)` into a VMM VA.
     vmm_maps: Vec<(DeviceId, u64, u64)>,
     /// `None` is `cudaMalloc` / host-pinned. `Some` is `cudaMallocAsync` from that pool.
     pool: Option<PoolId>,
+}
+
+impl Alloc {
+    fn remote_read_ok(&self, device: DeviceId) -> bool {
+        if !self.live || !self.managed {
+            return false;
+        }
+        if self.accessed_by.contains(&device) {
+            return true;
+        }
+        match self.preferred {
+            Preferred::Gpu(p) => self.devices.contains(&p) && p != device,
+            Preferred::None | Preferred::Host => false,
+        }
+    }
 }
 
 struct Pool {
@@ -938,6 +962,7 @@ impl Sim {
                 managed: false,
                 read_mostly: false,
                 accessed_by: BTreeSet::new(),
+                preferred: Preferred::None,
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: Some(pool),
@@ -1066,6 +1091,7 @@ impl Sim {
                 managed: true,
                 read_mostly: false,
                 accessed_by: BTreeSet::new(),
+                preferred: Preferred::None,
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: None,
@@ -1086,6 +1112,9 @@ impl Sim {
     /// keeps the first copy. A kernel write invalidates the extra copies.
     /// [`MemAdvise::SetAccessedBy`]: a kernel on `device` may read without
     /// migrating (interconnect, not local HBM). Writes still migrate.
+    /// [`MemAdvise::SetPreferredLocation`]: a page already at that GPU stays
+    /// there on a remote read (same interconnect billing; writes still migrate).
+    /// [`MemAdvise::SetPreferredLocationHost`] does not skip kernel first-touch.
     pub fn mem_advise(
         &mut self,
         alloc: AllocId,
@@ -1112,6 +1141,16 @@ impl Sim {
                 let _gpu = self.profile.gpu(device)?;
                 let _was = self.alloc_mut(alloc)?.accessed_by.remove(&device);
             }
+            MemAdvise::SetPreferredLocation => {
+                let _gpu = self.profile.gpu(device)?;
+                self.alloc_mut(alloc)?.preferred = Preferred::Gpu(device);
+            }
+            MemAdvise::SetPreferredLocationHost => {
+                self.alloc_mut(alloc)?.preferred = Preferred::Host;
+            }
+            MemAdvise::UnsetPreferredLocation => {
+                self.alloc_mut(alloc)?.preferred = Preferred::None;
+            }
         }
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
@@ -1127,6 +1166,22 @@ impl Sim {
     pub fn is_accessed_by(&self, alloc: AllocId, device: DeviceId) -> Result<bool, SimError> {
         let a = self.alloc_ref(alloc)?;
         Ok(a.live && a.managed && a.accessed_by.contains(&device))
+    }
+
+    /// Whether [`MemAdvise::SetPreferredLocation`] names `device`.
+    pub fn is_preferred_location(
+        &self,
+        alloc: AllocId,
+        device: DeviceId,
+    ) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.managed && matches!(a.preferred, Preferred::Gpu(p) if p == device))
+    }
+
+    /// Whether [`MemAdvise::SetPreferredLocationHost`] is set.
+    pub fn is_preferred_host(&self, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.managed && matches!(a.preferred, Preferred::Host))
     }
 
     /// Drop one GPU's copy of a [`MemAdvise::SetReadMostly`] managed alloc.
@@ -1192,6 +1247,7 @@ impl Sim {
                 managed: false,
                 read_mostly: false,
                 accessed_by: BTreeSet::new(),
+                preferred: Preferred::None,
                 vmm: true,
                 vmm_maps: Vec::new(),
                 pool: None,
@@ -2432,6 +2488,7 @@ impl Sim {
                 managed: false,
                 read_mostly: false,
                 accessed_by: BTreeSet::new(),
+                preferred: Preferred::None,
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: None,
@@ -2515,11 +2572,7 @@ impl Sim {
         let mut wait = BTreeSet::new();
         for b in reads {
             let a = self.alloc_ref(b.id)?;
-            if a.live
-                && a.managed
-                && !a.devices.contains(&device)
-                && !a.accessed_by.contains(&device)
-            {
+            if a.live && a.managed && !a.devices.contains(&device) && !a.remote_read_ok(device) {
                 let _ins = wait.insert(b.id);
             }
         }
@@ -2781,6 +2834,7 @@ impl Sim {
                 managed: false,
                 read_mostly: false,
                 accessed_by: BTreeSet::new(),
+                preferred: Preferred::None,
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: None,
@@ -3023,7 +3077,7 @@ impl Sim {
             a.live && a.devices.contains(&device)
         };
         let mapped = mapped_ok && a.live && a.host_mapped;
-        let accessed = mapped_ok && a.live && a.managed && a.accessed_by.contains(&device);
+        let accessed = mapped_ok && a.remote_read_ok(device);
         Ok(on_device || mapped || accessed)
     }
 
@@ -3054,8 +3108,12 @@ impl Sim {
                 remote = true;
                 continue;
             }
-            if a.managed && a.accessed_by.contains(&device) {
-                let link = if let Some(src) = a.devices.first().copied() {
+            if a.managed && a.remote_read_ok(device) {
+                let src = match a.preferred {
+                    Preferred::Gpu(p) if a.devices.contains(&p) => Some(p),
+                    _ => a.devices.first().copied(),
+                };
+                let link = if let Some(src) = src {
                     self.peer_or_host_bps(src, device)?
                 } else {
                     self.profile.link(None, Some(device))?.bps

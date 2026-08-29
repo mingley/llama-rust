@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — PreferredLocation and grouped child graphs
+
+`MemAdvise::SetPreferredLocation` keeps a managed page already at that
+GPU there on a remote kernel read (interconnect, not dest HBM). Writes
+still migrate. Host preferred does not skip first-touch. `--cuda-graphs`
+captures a leaf GEMM per expert, instantiates it, then a parent of
+child-graph nodes so grouped launches reuse leaves. Dual score still
+has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Managed ReadMostly replicas
 
 `--place replicas` with `--managed` `prefetch`s hot keys onto dest GPUs

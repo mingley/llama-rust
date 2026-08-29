@@ -426,7 +426,9 @@ Exact (mechanical invariants agents may rely on):
   (does not replicate) unless `cudaMemAdviseSetReadMostly`
   ([`Sim::mem_advise`] [`MemAdvise::SetReadMostly`]); a kernel first-touch
   prefetches on that stream unless [`MemAdvise::SetAccessedBy`] maps that
-  GPU (remote read, interconnect billing; writes still migrate)
+  GPU or [`MemAdvise::SetPreferredLocation`] already holds the page at
+  another GPU (remote read, interconnect billing; writes still migrate;
+  host preferred does not skip first-touch)
 - CUDA VMM (`va_reserve` / `va_map` / `va_unmap` / `va_free`,
   `va_acquire` / `va_release`, `va_map_range` / `va_unmap_range`):
   `cuMemAddressReserve` / `cuMemMap` / `cuMemUnmap` / `cuMemAddressFree`;
@@ -605,7 +607,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   Graph launch pays `graph_launch_ns` once; recorded kernels skip
   per-launch overhead.
   `sim_replay` / `SimulatedGpuStore` capture repeated expert GEMMs
-  (`expertvm sim --cuda-graphs`). Capture after a miss waits with
+  (`expertvm sim --cuda-graphs`). Grouped launches capture a leaf graph
+  per alloc, instantiate it, then a parent of `GpuOp::ChildGraph` nodes
+  so combos reuse leaves after one expert is evicted. Capture after a miss waits with
   `synchronize_stream` so the compute stream is idle (CUDA). `--max-batch N`
   admits N sequences per engine iteration. `expertvm schedule` is the
   open-loop running set (arrivals, retire, SLO misses, `idle_until`,
@@ -620,8 +624,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   cached page pays `pool_reuse_ns`. `--mapped` is `cudaHostAllocMapped`
   (no H2D, PCIe kernels, HBM unused; walker slots also cap at
   `host_pin_bytes / expert_bytes`). `--managed` is `cudaMallocManaged`
-  plus `cudaMemAdviseSetReadMostly` plus `cudaMemPrefetchAsync` on miss
-  (HBM charged on migrate; a second GPU prefetch keeps the copy).
+  plus `cudaMemAdviseSetReadMostly` plus `SetPreferredLocation` plus
+  `cudaMemPrefetchAsync` on miss (HBM charged on migrate; a second GPU
+  prefetch keeps the copy; a remote read can keep the page on the preferred GPU).
   `--place replicas` then `prefetch`s hot keys onto dest GPUs; dest
   eviction is `drop_managed_copy` (one GPU's copy, allocation stays). `--vmm` is
   `va_acquire` (remap idle VA or reserve+map) then H2D; evict `va_release`s

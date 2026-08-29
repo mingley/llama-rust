@@ -1904,7 +1904,25 @@ fn cuda_graphs_amortize_repeated_expert_gemms() {
         g.sim_ns,
         serial.sim_ns
     );
+    assert!(g.child_graphs > 0, "expected parent child-graph capture");
     assert!(g.line().contains("graph_launches="));
+    assert!(g.line().contains("child_graphs="));
+}
+
+#[test]
+fn cuda_graphs_reuse_leaf_graphs_across_combos() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1]), ev(1, 0, &[0, 2])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nlaunch_overhead_ns=50000\ngraph_launch_ns=4000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let mut cfg = SimCfg::lru(4, 4096, 0);
+    cfg.cuda_graphs = true;
+    let g = sim_replay_cfg(&t, p, cfg).expect("graphs");
+    assert_eq!(g.graph_launches, 2);
+    assert_eq!(g.child_graphs, 2);
 }
 
 #[test]

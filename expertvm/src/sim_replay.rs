@@ -43,6 +43,8 @@ pub struct SimReplay {
     pub prefetch_waste: u64,
     /// [`gpu_sim::Sim::launch_graph`] calls (0 unless [`SimCfg::cuda_graphs`]).
     pub graph_launches: u64,
+    /// Grouped captures that recorded a parent of leaf child graphs.
+    pub child_graphs: u64,
 }
 
 impl SimReplay {
@@ -61,13 +63,14 @@ impl SimReplay {
         }
         let _w = write!(
             s,
-            " hits={} misses={} prefetches={} prefetch_hits={} prefetch_waste={} graph_launches={}",
+            " hits={} misses={} prefetches={} prefetch_hits={} prefetch_waste={} graph_launches={} child_graphs={}",
             self.hits,
             self.misses,
             self.prefetches,
             self.prefetch_hits,
             self.prefetch_waste,
-            self.graph_launches
+            self.graph_launches,
+            self.child_graphs
         );
         s
     }
@@ -102,7 +105,9 @@ pub struct SimCfg {
     /// Capture grouped expert GEMMs and replay them with [`gpu_sim::Sim::launch_graph`].
     ///
     /// Capture requires an idle stream (CUDA). After a token drain, a sticky
-    /// resident set launches one graph instead of N kernel launches.
+    /// resident set launches one parent graph. Each expert alloc is a
+    /// captured leaf; a multi-expert launch records those leaves as child
+    /// graphs so a later combo can reuse them.
     pub cuda_graphs: bool,
     /// Upcoming-event window for [`plan_window`]. `0` leaves prefetch ungated.
     pub plan_window: usize,
@@ -131,7 +136,9 @@ pub struct SimCfg {
     pub mapped: bool,
     /// `cudaMallocManaged` + `cudaMemAdviseSetReadMostly` + prefetch on miss.
     /// Alloc does not charge HBM; prefetch migrates (and replicates if a
-    /// second GPU later prefetches the same page). `--place replicas` uses
+    /// second GPU later prefetches the same page). Home also sets
+    /// [`gpu_sim::MemAdvise::SetPreferredLocation`] so a remote read can
+    /// keep the page on that GPU. `--place replicas` uses
     /// that dest prefetch; dest eviction is `drop_managed_copy`.
     /// Hits/misses match H2D. [`crate::SimulatedGpuStore`] stays on pinned H2D.
     pub managed: bool,
@@ -388,6 +395,7 @@ pub(crate) struct ReplayCounters {
     pub prefetch_hits: u64,
     pub prefetch_waste: u64,
     pub graph_launches: u64,
+    pub child_graphs: u64,
 }
 
 pub(crate) struct PageHandle {
@@ -468,6 +476,7 @@ pub(crate) fn apply_touch(
             } else if args.managed {
                 let id = sim.alloc_managed(args.bytes)?;
                 sim.mem_advise(id, gpu_sim::MemAdvise::SetReadMostly, args.d)?;
+                sim.mem_advise(id, gpu_sim::MemAdvise::SetPreferredLocation, args.d)?;
                 id
             } else if args.vmm {
                 if args.vmm_page > 0 && args.vmm_page < args.bytes {
@@ -673,16 +682,10 @@ fn gemm_ids(
         return Ok(());
     }
     if cuda_graphs {
-        if !sim.stream_is_idle(d, stream)? {
-            sim.synchronize_stream(d, stream)?;
-        }
-        if sim.stream_is_idle(d, stream)? {
-            sim.begin_capture(d, stream)?;
-            for id in &ids {
-                kernel(sim, d, stream, *id)?;
+        if let Some(g) = capture_expert_graph(sim, graphs, d, stream, &ids)? {
+            if ids.len() > 1 {
+                ctr.child_graphs = ctr.child_graphs.saturating_add(1);
             }
-            let g = sim.end_capture()?;
-            let _prev = graphs.insert(ids.clone(), g);
             let _n = sim.launch_graph(g, stream)?;
             ctr.graph_launches = ctr.graph_launches.saturating_add(1);
             return Ok(());
@@ -692,6 +695,46 @@ fn gemm_ids(
         kernel(sim, d, stream, id)?;
     }
     Ok(())
+}
+
+fn capture_expert_graph(
+    sim: &mut Sim,
+    graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
+    d: DeviceId,
+    stream: StreamId,
+    ids: &[AllocId],
+) -> Result<Option<GraphId>, Error> {
+    if !sim.stream_is_idle(d, stream)? {
+        sim.synchronize_stream(d, stream)?;
+    }
+    if !sim.stream_is_idle(d, stream)? {
+        return Ok(None);
+    }
+    let mut leaves = Vec::new();
+    for id in ids {
+        let key = vec![*id];
+        if let Some(g) = graphs.get(&key).copied() {
+            leaves.push(g);
+            continue;
+        }
+        sim.begin_capture(d, stream)?;
+        kernel(sim, d, stream, *id)?;
+        let g = sim.end_capture()?;
+        sim.instantiate_graph(g)?;
+        let _prev = graphs.insert(key, g);
+        leaves.push(g);
+    }
+    if ids.len() == 1 {
+        return Ok(leaves.first().copied());
+    }
+    sim.begin_capture(d, stream)?;
+    for g in leaves {
+        let _n = sim.launch_graph(g, stream)?;
+    }
+    let parent = sim.end_capture()?;
+    sim.instantiate_graph(parent)?;
+    let _prev = graphs.insert(ids.to_vec(), parent);
+    Ok(Some(parent))
 }
 
 fn finish(sim: &Sim, token_ends: &[u64], ctr: ReplayCounters) -> SimReplay {
@@ -732,6 +775,7 @@ pub(crate) fn replay_from_sim(
         prefetch_hits: ctr.prefetch_hits,
         prefetch_waste: ctr.prefetch_waste,
         graph_launches: ctr.graph_launches,
+        child_graphs: ctr.child_graphs,
     }
 }
 
