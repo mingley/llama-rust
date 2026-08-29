@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — mempool shareable-handle IPC
+
+`Sim::create_shareable_pool` is `cudaMemPoolCreate` with a POSIX-FD handle
+type. `pool_export` / `pool_import` are `cudaMemPoolExportToShareableHandle`
+/ `ImportFromShareableHandle`: the import shares live/cached/threshold
+(no extra HBM). `pool_export_ptr` / `pool_import_ptr` alias a live pool
+alloc. `set_device_mempool` is `cudaDeviceSetMemPool`. Default and
+`create_pool` pools cannot be exported. `ipc_get` of a mempool alloc is
+Invalid. `--shareable` implies `--mempool` and rebinds `cudaMallocAsync`.
+Decode identity stays the device default pool. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — `cudaGraphExecKernelNodeSetParams`
 
 `Sim::graph_exec_kernel_set_params` is `cudaGraphExecKernelNodeSetParams`:

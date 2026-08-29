@@ -37,7 +37,7 @@ use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
 use gpu_sim::{
     AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelKind, MemcpyOp, Place,
-    Score, Sim, StreamId,
+    PoolId, Score, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -171,6 +171,15 @@ pub struct SimCfg {
     /// [`crate::SimulatedGpuStore::with_cfg`] with [`crate::GpuStoreCfg::mempool`]
     /// raises it.
     pub mempool: bool,
+    /// POSIX-FD shareable mempool IPC (`cudaMemPoolExportToShareableHandle`).
+    ///
+    /// Creates a shareable pool, exports it, imports a sibling that shares
+    /// live/cached, and `cudaDeviceSetMemPool`s so `cudaMallocAsync` draws
+    /// from it. Implies [`Self::mempool`] (`u64::MAX` hold). Illegal with
+    /// [`Self::sync_alloc`], [`Self::mapped`], [`Self::managed`], or
+    /// [`Self::vmm`]. Decode identity stays the device default pool.
+    /// [`crate::GpuStoreCfg::shareable`] is the store path.
+    pub shareable: bool,
     /// `cudaHostAllocMapped`: miss pages are mapped host, not HBM. Kernels run
     /// over PCIe with no H2D. Hits/misses follow the same walker; `hbm_peak`
     /// stays near zero. [`crate::SimulatedGpuStore::new`] stays on the H2D path;
@@ -344,6 +353,7 @@ impl SimCfg {
             max_batch: 0,
             sync_alloc: false,
             mempool: false,
+            shareable: false,
             mapped: false,
             managed: false,
             vmm: false,
@@ -372,6 +382,9 @@ impl SimCfg {
 pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Result<(), Error> {
     if cfg.graph_update && cfg.graph_set_params {
         return Err(Error::Store("choose one of graph-update, graph-set-params"));
+    }
+    if cfg.shareable && (cfg.sync_alloc || cfg.mapped || cfg.managed || cfg.vmm) {
+        return Err(Error::Store("shareable needs cudaMallocAsync"));
     }
     if !cfg.multicast {
         return Ok(());
@@ -423,7 +436,10 @@ pub fn sim_replay_cfg(
     validate_sim_cfg(&cfg, &profile)?;
     let keys = trace.keys();
     let mut sim = Sim::new(sim_profile(profile, &cfg));
-    if cfg.mempool {
+    if cfg.shareable {
+        let _imported = bind_shareable_mempools(&mut sim)?;
+    }
+    if cfg.mempool || cfg.shareable {
         sim.set_default_pool_release_threshold(u64::MAX)?;
     }
     advise_pool_access_if_pinned(&mut sim, &cfg)?;
@@ -637,6 +653,21 @@ pub(crate) fn advise_vmm_access(sim: &mut Sim, id: AllocId) -> Result<(), Error>
         sim.va_set_access(id, DeviceId(g))?;
     }
     Ok(())
+}
+
+/// POSIX-FD shareable pool per GPU, export, import sibling, `cudaDeviceSetMemPool`.
+pub(crate) fn bind_shareable_mempools(sim: &mut Sim) -> Result<BTreeMap<DeviceId, PoolId>, Error> {
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    let mut imported = BTreeMap::new();
+    for g in 0..n {
+        let d = DeviceId(g);
+        let pool = sim.create_shareable_pool(d)?;
+        let h = sim.pool_export(pool)?;
+        let imp = sim.pool_import(d, h)?;
+        sim.set_device_mempool(d, pool)?;
+        let _prev = imported.insert(d, imp);
+    }
+    Ok(imported)
 }
 
 /// `cudaMemPoolSetAccess` ReadWrite on every default pool for every GPU.

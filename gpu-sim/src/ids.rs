@@ -85,6 +85,33 @@ impl fmt::Display for IpcHandleId {
     }
 }
 
+/// `cudaMemPoolExportToShareableHandle` token.
+///
+/// [`crate::Sim::pool_export`] exports a POSIX-FD shareable pool;
+/// [`crate::Sim::pool_import`] is a new [`PoolId`] that shares live/cached
+/// bytes with the exporter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ShareableHandleId(pub u64);
+
+impl fmt::Display for ShareableHandleId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "share{}", self.0)
+    }
+}
+
+/// `cudaMemPoolExportPointer` token.
+///
+/// [`crate::Sim::pool_export_ptr`] exports a live pool allocation;
+/// [`crate::Sim::pool_import_ptr`] imports an alias into an imported pool.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PtrExportId(pub u64);
+
+impl fmt::Display for PtrExportId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ptr{}", self.0)
+    }
+}
+
 /// Hopper multicast object (`CUmemGenericAllocationHandle` from
 /// [`crate::Sim::multicast_create`] / `cuMulticastCreate`).
 ///

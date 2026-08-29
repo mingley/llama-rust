@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::SimError;
 use crate::ids::{
     AllocId, DeviceId, EventId, GraphId, IpcHandleId, MemHandleId, MulticastId, OpId, PoolId,
-    StreamId,
+    PtrExportId, ShareableHandleId, StreamId,
 };
 use crate::ops::{
     GpuOp as Kind, KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp,
@@ -64,6 +64,10 @@ struct Alloc {
     ipc_src: Option<AllocId>,
     /// Live [`Sim::ipc_open`] mappings of this allocation.
     ipc_opens: u32,
+    /// Import from [`Sim::pool_import_ptr`] (`cudaMemPoolImportPointer`).
+    share_src: Option<AllocId>,
+    /// Live [`Sim::pool_import_ptr`] mappings of this allocation.
+    share_opens: u32,
 }
 
 impl Alloc {
@@ -106,6 +110,24 @@ struct Pool {
     release_threshold: u64,
     /// GPUs granted [`Sim::pool_set_access`] (`cudaMemPoolSetAccess` ReadWrite).
     accessed_by: BTreeSet<DeviceId>,
+    /// Created with `cudaMemAllocationHandleTypePosixFileDescriptor`.
+    shareable: bool,
+    /// Imported pools share live/cached/threshold with this root.
+    share_root: Option<PoolId>,
+}
+
+impl Pool {
+    fn new(device: DeviceId) -> Self {
+        Self {
+            device,
+            live: 0,
+            cached: 0,
+            release_threshold: 0,
+            accessed_by: BTreeSet::new(),
+            shareable: false,
+            share_root: None,
+        }
+    }
 }
 
 struct MemHandle {
@@ -253,6 +275,10 @@ pub struct Sim {
     mem_handles: BTreeMap<MemHandleId, MemHandle>,
     next_ipc: u64,
     ipc_handles: BTreeMap<IpcHandleId, AllocId>,
+    next_share: u64,
+    share_handles: BTreeMap<ShareableHandleId, PoolId>,
+    next_ptr: u64,
+    ptr_exports: BTreeMap<PtrExportId, AllocId>,
     /// Explicit [`Sim::va_map_handle`] maps. Missing is combined Create+Map.
     vmm_handle_at: BTreeMap<(AllocId, DeviceId, u64, u64), MemHandleId>,
     next_mc: u32,
@@ -316,6 +342,10 @@ impl Sim {
             mem_handles: BTreeMap::new(),
             next_ipc: 1,
             ipc_handles: BTreeMap::new(),
+            next_share: 1,
+            share_handles: BTreeMap::new(),
+            next_ptr: 1,
+            ptr_exports: BTreeMap::new(),
             vmm_handle_at: BTreeMap::new(),
             next_mc: 1,
             multicasts: BTreeMap::new(),
@@ -1494,6 +1524,8 @@ impl Sim {
                 pool,
                 ipc_src: None,
                 ipc_opens: 0,
+                share_src: None,
+                share_opens: 0,
             },
         );
         Ok(id)
@@ -1887,22 +1919,44 @@ impl Sim {
             })
     }
 
+    /// `cudaDeviceSetMemPool`. Later [`Self::alloc`] draws from `pool`.
+    ///
+    /// Capture cannot include it. `pool` must belong to `device` (an imported
+    /// sibling is legal). Does not change live/cached bytes.
+    pub fn set_device_mempool(&mut self, device: DeviceId, pool: PoolId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let _gpu = self.profile.gpu(device)?;
+        if self.pool_ref(pool)?.device != device {
+            return Err(SimError::Invalid {
+                why: "pool device mismatch",
+            });
+        }
+        let _prev = self.default_pools.insert(device, pool);
+        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+        Ok(())
+    }
+
     /// `cudaMemPoolCreate` for `device`. Release threshold starts at 0.
+    ///
+    /// Not shareable (`cudaMemHandleTypeNone`). Use
+    /// [`Self::create_shareable_pool`] for POSIX-FD export.
     pub fn create_pool(&mut self, device: DeviceId) -> Result<PoolId, SimError> {
+        self.insert_pool(device, false)
+    }
+
+    /// `cudaMemPoolCreate` with `cudaMemAllocationHandleTypePosixFileDescriptor`.
+    pub fn create_shareable_pool(&mut self, device: DeviceId) -> Result<PoolId, SimError> {
+        self.insert_pool(device, true)
+    }
+
+    fn insert_pool(&mut self, device: DeviceId, shareable: bool) -> Result<PoolId, SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         let _gpu = self.profile.gpu(device)?;
         let id = PoolId(self.next_pool);
         self.next_pool = self.next_pool.saturating_add(1);
-        let _prev = self.pools.insert(
-            id,
-            Pool {
-                device,
-                live: 0,
-                cached: 0,
-                release_threshold: 0,
-                accessed_by: BTreeSet::new(),
-            },
-        );
+        let mut p = Pool::new(device);
+        p.shareable = shareable;
+        let _prev = self.pools.insert(id, p);
         Ok(id)
     }
 
@@ -1959,6 +2013,8 @@ impl Sim {
                 pool: Some(pool),
                 ipc_src: None,
                 ipc_opens: 0,
+                share_src: None,
+                share_opens: 0,
             },
         );
         Ok(id)
@@ -1971,7 +2027,8 @@ impl Sim {
     /// them used until [`Self::pool_trim_to`].
     pub fn set_pool_release_threshold(&mut self, pool: PoolId, bytes: u64) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
-        self.pool_mut(pool)?.release_threshold = bytes;
+        let root = self.pool_root(pool)?;
+        self.pool_mut(root)?.release_threshold = bytes;
         Ok(())
     }
 
@@ -1990,28 +2047,33 @@ impl Sim {
     /// the pool yet. Applied immediately to `mem_info` (no extra device sync).
     pub fn pool_trim_to(&mut self, pool: PoolId, min_bytes: u64) -> Result<u64, SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
+        let root = self.pool_root(pool)?;
         let (device, cached) = {
-            let p = self.pool_ref(pool)?;
+            let p = self.pool_ref(root)?;
             (p.device, p.cached)
         };
         let drop = cached.saturating_sub(min_bytes);
         if drop == 0 {
             return Ok(0);
         }
-        self.pool_mut(pool)?.cached = cached.saturating_sub(drop);
+        self.pool_mut(root)?.cached = cached.saturating_sub(drop);
         let used = self.gpu_rt(device)?.used;
         self.gpu_rt_mut(device)?.used = used.saturating_sub(drop);
         Ok(drop)
     }
 
     /// Unused bytes held by `pool` (`cudaMemGetInfo` still counts them used).
+    ///
+    /// An imported pool reports the exporter's cache.
     pub fn pool_cached(&self, pool: PoolId) -> Result<u64, SimError> {
-        Ok(self.pool_ref(pool)?.cached)
+        Ok(self.pool_ref(self.pool_root(pool)?)?.cached)
     }
 
     /// Live bytes allocated from `pool` and not yet freed.
+    ///
+    /// An imported pool reports the exporter's live bytes.
     pub fn pool_live(&self, pool: PoolId) -> Result<u64, SimError> {
-        Ok(self.pool_ref(pool)?.live)
+        Ok(self.pool_ref(self.pool_root(pool)?)?.live)
     }
 
     /// `cudaMemPoolSetAccess` ReadWrite on `device` for allocations from `pool`.
@@ -2052,6 +2114,202 @@ impl Sim {
     /// Whether `device` has [`Self::pool_set_access`] on `pool`.
     pub fn is_pool_accessed_by(&self, pool: PoolId, device: DeviceId) -> Result<bool, SimError> {
         Ok(self.pool_ref(pool)?.accessed_by.contains(&device))
+    }
+
+    /// Whether `pool` was created with a POSIX-FD shareable handle type.
+    pub fn is_pool_shareable(&self, pool: PoolId) -> Result<bool, SimError> {
+        Ok(self.pool_ref(pool)?.shareable)
+    }
+
+    /// Whether `pool` came from [`Self::pool_import`].
+    pub fn is_pool_imported(&self, pool: PoolId) -> Result<bool, SimError> {
+        Ok(self.pool_ref(pool)?.share_root.is_some())
+    }
+
+    /// `cudaMemPoolExportToShareableHandle`. Host-synchronous.
+    ///
+    /// Only [`Self::create_shareable_pool`] pools export. Default and
+    /// [`Self::create_pool`] pools are `not shareable`. The same pool returns
+    /// the same handle. Capture cannot include it.
+    pub fn pool_export(&mut self, pool: PoolId) -> Result<ShareableHandleId, SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let (device, shareable) = {
+            let p = self.pool_ref(pool)?;
+            (p.device, p.shareable)
+        };
+        if !shareable {
+            return Err(SimError::Invalid {
+                why: "not shareable",
+            });
+        }
+        if let Some(h) = self
+            .share_handles
+            .iter()
+            .find_map(|(&h, src)| (*src == pool).then_some(h))
+        {
+            return Ok(h);
+        }
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let h = ShareableHandleId(self.next_share);
+        self.next_share = self.next_share.saturating_add(1);
+        let _prev = self.share_handles.insert(h, pool);
+        Ok(h)
+    }
+
+    /// `cudaMemPoolImportFromShareableHandle` on `device`.
+    ///
+    /// Returns a new [`PoolId`] that shares live/cached/threshold with the
+    /// exporter (no extra HBM). `device` must match the exporter. Capture
+    /// cannot include it.
+    pub fn pool_import(
+        &mut self,
+        device: DeviceId,
+        handle: ShareableHandleId,
+    ) -> Result<PoolId, SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let src = *self.share_handles.get(&handle).ok_or(SimError::Invalid {
+            why: "unknown shareable",
+        })?;
+        let root = self.pool_root(src)?;
+        if self.pool_ref(root)?.device != device {
+            return Err(SimError::Invalid {
+                why: "pool device mismatch",
+            });
+        }
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let id = PoolId(self.next_pool);
+        self.next_pool = self.next_pool.saturating_add(1);
+        let mut p = Pool::new(device);
+        p.share_root = Some(root);
+        let _prev = self.pools.insert(id, p);
+        Ok(id)
+    }
+
+    /// `cudaMemPoolExportPointer` of a live allocation from a shareable pool.
+    ///
+    /// The same alloc returns the same handle. [`Self::ipc_get`] of a pool
+    /// alloc is Invalid. Capture cannot include it.
+    pub fn pool_export_ptr(&mut self, id: AllocId) -> Result<PtrExportId, SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let (pool, device) = {
+            let a = self.alloc_ref(id)?;
+            if !a.live
+                || a.managed
+                || a.vmm
+                || a.host_pinned
+                || a.host_pageable
+                || a.ipc_src.is_some()
+                || a.share_src.is_some()
+                || a.devices.is_empty()
+            {
+                return Err(SimError::Invalid {
+                    why: "not shareable ptr",
+                });
+            }
+            let pool = a.pool.ok_or(SimError::Invalid {
+                why: "not shareable ptr",
+            })?;
+            let d = a.devices.first().copied().ok_or(SimError::Invalid {
+                why: "not shareable ptr",
+            })?;
+            (pool, d)
+        };
+        if !self.pool_ref(self.pool_root(pool)?)?.shareable {
+            return Err(SimError::Invalid {
+                why: "not shareable ptr",
+            });
+        }
+        if let Some(h) = self
+            .ptr_exports
+            .iter()
+            .find_map(|(&h, src)| (*src == id).then_some(h))
+        {
+            return Ok(h);
+        }
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let h = PtrExportId(self.next_ptr);
+        self.next_ptr = self.next_ptr.saturating_add(1);
+        let _prev = self.ptr_exports.insert(h, id);
+        Ok(h)
+    }
+
+    /// `cudaMemPoolImportPointer` into an imported pool. Alias shares the
+    /// source physicals (no extra HBM). Capture cannot include it.
+    pub fn pool_import_ptr(
+        &mut self,
+        pool: PoolId,
+        export: PtrExportId,
+    ) -> Result<AllocId, SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let src = *self.ptr_exports.get(&export).ok_or(SimError::Invalid {
+            why: "unknown ptr export",
+        })?;
+        let root = self.pool_root(pool)?;
+        if self.pool_ref(pool)?.share_root.is_none() {
+            return Err(SimError::Invalid {
+                why: "not imported pool",
+            });
+        }
+        let (bytes, devices, opens, src_root, device) = {
+            let a = self.alloc_ref(src)?;
+            if !a.live {
+                return Err(SimError::Invalid { why: "freed" });
+            }
+            let src_pool = a.pool.ok_or(SimError::Invalid {
+                why: "not shareable ptr",
+            })?;
+            let src_root = self.pool_root(src_pool)?;
+            let d = a.devices.first().copied().ok_or(SimError::Invalid {
+                why: "not shareable ptr",
+            })?;
+            (a.bytes, a.devices.clone(), a.share_opens, src_root, d)
+        };
+        if src_root != root {
+            return Err(SimError::Invalid {
+                why: "pool mismatch",
+            });
+        }
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        self.alloc_mut(src)?.share_opens = opens.saturating_add(1);
+        let id = AllocId(self.next_alloc);
+        self.next_alloc = self.next_alloc.saturating_add(1);
+        let _prev = self.allocs.insert(
+            id,
+            Alloc {
+                bytes,
+                devices,
+                leases: 0,
+                live: true,
+                host_pinned: false,
+                host_pageable: false,
+                host_mapped: false,
+                host_registered: false,
+                managed: false,
+                attach: Attach::Global,
+                read_mostly: false,
+                accessed_by: BTreeSet::new(),
+                vmm_write_by: BTreeSet::new(),
+                preferred: Preferred::None,
+                vmm: false,
+                vmm_maps: Vec::new(),
+                pool: Some(pool),
+                ipc_src: None,
+                ipc_opens: 0,
+                share_src: Some(src),
+                share_opens: 0,
+            },
+        );
+        Ok(id)
+    }
+
+    /// Whether `id` is a live [`Self::pool_import_ptr`] alias.
+    pub fn is_share_import(&self, id: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(id)?;
+        Ok(a.live && a.share_src.is_some())
     }
 
     /// `cudaMalloc`: [`Self::synchronize_device`] then the pointer is usable.
@@ -2132,6 +2390,8 @@ impl Sim {
                 pool: None,
                 ipc_src: None,
                 ipc_opens: 0,
+                share_src: None,
+                share_opens: 0,
             },
         );
         Ok(id)
@@ -2331,6 +2591,8 @@ impl Sim {
                 pool: None,
                 ipc_src: None,
                 ipc_opens: 0,
+                share_src: None,
+                share_opens: 0,
             },
         );
         Ok(id)
@@ -3392,6 +3654,8 @@ impl Sim {
                 || a.host_pinned
                 || a.host_pageable
                 || a.ipc_src.is_some()
+                || a.share_src.is_some()
+                || a.pool.is_some()
                 || a.devices.is_empty()
             {
                 return Err(SimError::Invalid {
@@ -3464,6 +3728,8 @@ impl Sim {
                 pool: None,
                 ipc_src: Some(src),
                 ipc_opens: 0,
+                share_src: None,
+                share_opens: 0,
             },
         );
         Ok(id)
@@ -3511,8 +3777,16 @@ impl Sim {
         if a.ipc_src.is_some() {
             return self.drop_ipc_import(id);
         }
+        if a.share_src.is_some() {
+            return self.drop_share_import(id);
+        }
         if a.ipc_opens > 0 {
             return Err(SimError::Invalid { why: "ipc mapped" });
+        }
+        if a.share_opens > 0 {
+            return Err(SimError::Invalid {
+                why: "share mapped",
+            });
         }
         if !a.live || a.host_pinned {
             return Err(SimError::UnknownAlloc { alloc: id });
@@ -4432,6 +4706,8 @@ impl Sim {
                 pool: None,
                 ipc_src: None,
                 ipc_opens: 0,
+                share_src: None,
+                share_opens: 0,
             },
         );
         Ok(id)
@@ -4817,6 +5093,10 @@ impl Sim {
         })
     }
 
+    fn pool_root(&self, pool: PoolId) -> Result<PoolId, SimError> {
+        Ok(self.pool_ref(pool)?.share_root.unwrap_or(pool))
+    }
+
     fn handle_ref(&self, id: MemHandleId) -> Result<&MemHandle, SimError> {
         self.mem_handles.get(&id).ok_or(SimError::Invalid {
             why: "unknown handle",
@@ -4895,6 +5175,7 @@ impl Sim {
     }
 
     fn pool_acquire(&mut self, pool: PoolId, bytes: u64) -> Result<u64, SimError> {
+        let pool = self.pool_root(pool)?;
         let (device, cached) = {
             let p = self.pool_ref(pool)?;
             (p.device, p.cached)
@@ -4916,6 +5197,7 @@ impl Sim {
     }
 
     fn pool_release(&mut self, pool: PoolId, bytes: u64) -> Result<(), SimError> {
+        let pool = self.pool_root(pool)?;
         let (device, threshold, cached, live) = {
             let p = self.pool_ref(pool)?;
             (p.device, p.release_threshold, p.cached, p.live)
@@ -5006,8 +5288,22 @@ impl Sim {
             });
             return Ok(true);
         }
+        if a.share_src.is_some() {
+            self.drop_share_import(alloc)?;
+            self.running.push(Running {
+                op,
+                remaining_ns: 1,
+                share: Share::Solo,
+            });
+            return Ok(true);
+        }
         if a.ipc_opens > 0 {
             return Err(SimError::Invalid { why: "ipc mapped" });
+        }
+        if a.share_opens > 0 {
+            return Err(SimError::Invalid {
+                why: "share mapped",
+            });
         }
         if !a.live || !a.devices.contains(&device) {
             return Err(SimError::UnknownAlloc { alloc });
@@ -5048,6 +5344,27 @@ impl Sim {
         Ok(())
     }
 
+    fn drop_share_import(&mut self, id: AllocId) -> Result<(), SimError> {
+        let (src, leases) = {
+            let a = self.alloc_ref(id)?;
+            (
+                a.share_src.ok_or(SimError::Invalid {
+                    why: "not share import",
+                })?,
+                a.leases,
+            )
+        };
+        if leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        let opens = self.alloc_ref(src)?.share_opens;
+        self.alloc_mut(src)?.share_opens = opens.saturating_sub(1);
+        let a = self.alloc_mut(id)?;
+        a.live = false;
+        a.devices.clear();
+        Ok(())
+    }
+
     fn reserve_now(&mut self, device: DeviceId, bytes: u64) -> Result<AllocId, SimError> {
         self.reserve_hbm(device, bytes)?;
         let overhead = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
@@ -5076,6 +5393,8 @@ impl Sim {
                 pool: None,
                 ipc_src: None,
                 ipc_opens: 0,
+                share_src: None,
+                share_opens: 0,
             },
         );
         Ok(id)
@@ -5284,7 +5603,7 @@ impl Sim {
     ) -> Result<bool, SimError> {
         let root = {
             let a = self.alloc_ref(buf.id)?;
-            a.ipc_src.unwrap_or(buf.id)
+            a.share_src.or(a.ipc_src).unwrap_or(buf.id)
         };
         let a = self.alloc_ref(root)?;
         let (off, n) = kernel_span(a.bytes, buf)?;
@@ -5312,10 +5631,20 @@ impl Sim {
         let Some(pid) = a.pool else {
             return false;
         };
-        let Some(p) = self.pools.get(&pid) else {
+        let Ok(root_id) = self.pool_root(pid) else {
             return false;
         };
-        p.device != device && p.accessed_by.contains(&device) && a.devices.contains(&p.device)
+        let Some(root) = self.pools.get(&root_id) else {
+            return false;
+        };
+        if root.device == device || !a.devices.contains(&root.device) {
+            return false;
+        }
+        let local_ok = self
+            .pools
+            .get(&pid)
+            .is_some_and(|p| p.accessed_by.contains(&device));
+        local_ok || root.accessed_by.contains(&device)
     }
 
     fn peer_or_host_bps(&self, src: DeviceId, dst: DeviceId) -> Result<u64, SimError> {
@@ -6220,16 +6549,7 @@ fn seed_pools(
     for g in &profile.gpus {
         let id = PoolId(next_pool);
         next_pool = next_pool.saturating_add(1);
-        let replaced = pools.insert(
-            id,
-            Pool {
-                device: g.id,
-                live: 0,
-                cached: 0,
-                release_threshold: 0,
-                accessed_by: BTreeSet::new(),
-            },
-        );
+        let replaced = pools.insert(id, Pool::new(g.id));
         let _dup = replaced.is_some();
         let replaced = default_pools.insert(g.id, id);
         let _dup = replaced.is_some();

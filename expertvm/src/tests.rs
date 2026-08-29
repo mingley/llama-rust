@@ -3806,6 +3806,93 @@ fn simulated_gpu_store_mempool_holds_after_evict() {
 }
 
 #[test]
+fn simulated_gpu_store_shareable_imported_pool_reuses_cache() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let bytes = 4096u64;
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        p,
+        bytes,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            shareable: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("share");
+    assert!(gpu.share_imported_pool().is_some());
+    let k0 = ExpertKey::new(0, 0);
+    let _a = gpu.acquire(k0).expect("acq");
+    gpu.evict(k0).expect("evict");
+    assert!(
+        gpu.default_pool_cached().expect("cached") >= bytes,
+        "shareable implies mempool hold"
+    );
+    let used0 = gpu.hbm_used(DeviceId(0)).expect("used0");
+    let _imp = gpu.alloc_from_imported_pool(bytes).expect("import alloc");
+    assert_eq!(gpu.hbm_used(DeviceId(0)).expect("used1"), used0);
+}
+
+#[test]
+fn shareable_needs_cuda_malloc_async() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let err = sim_replay_cfg(
+        &t,
+        p.clone(),
+        SimCfg {
+            shareable: true,
+            sync_alloc: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    )
+    .expect_err("sync");
+    assert!(
+        err.to_string().contains("shareable needs cudaMallocAsync"),
+        "{err}"
+    );
+    let inner = DirectStore::from_trace(&t);
+    match SimulatedGpuStore::with_cfg(
+        inner,
+        2,
+        p,
+        4096,
+        GpuFill::Vmm,
+        GpuStoreCfg {
+            shareable: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("vmm shareable must fail"),
+        Err(e) => assert!(
+            e.to_string().contains("shareable needs cudaMallocAsync"),
+            "{e}"
+        ),
+    }
+}
+
+#[test]
+fn sim_replay_shareable_holds_like_mempool() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let held = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            shareable: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    )
+    .expect("share");
+    assert!(held.hbm_peak >= 4096);
+}
+
+#[test]
 fn simulated_gpu_store_vmm_page_pays_map_overhead() {
     let t = cycling_trace();
     let p = HardwareProfile::example_h100_sxm();

@@ -6,10 +6,11 @@ use crate::place::PlaceMap;
 use crate::planner::{plan_keys, predicted_keys, ChainState, Markov, Plan};
 use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
-    advise_pool_access_if_pinned, apply_stream_sms, apply_touch, drop_remote, fetch_remote,
-    fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots, reclaim_victim,
-    remote_hit, replay_from_sim, sim_profile, sync_work, validate_sim_cfg, GraphBank, LeafMem,
-    PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, StreamPlan, TouchArgs,
+    advise_pool_access_if_pinned, apply_stream_sms, apply_touch, bind_shareable_mempools,
+    drop_remote, fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots,
+    reclaim_victim, remote_hit, replay_from_sim, sim_profile, sync_work, validate_sim_cfg,
+    GraphBank, LeafMem, PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay,
+    StreamPlan, TouchArgs,
 };
 use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -282,7 +283,10 @@ impl SchedRt {
     ) -> Result<Self, Error> {
         validate_sim_cfg(&cfg, &profile)?;
         let mut sim = Sim::new(sim_profile(profile, &cfg));
-        if cfg.mempool {
+        if cfg.shareable {
+            let _imported = bind_shareable_mempools(&mut sim)?;
+        }
+        if cfg.mempool || cfg.shareable {
             sim.set_default_pool_release_threshold(u64::MAX)?;
         }
         advise_pool_access_if_pinned(&mut sim, &cfg)?;

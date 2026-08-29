@@ -27,7 +27,7 @@
 //! (`ttft_ns` / `itl_ns` / `ns_per_token`; not `$/M tokens`). Default GPU
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
-//! `vmm_page`, pageable H2D, `SetAccessedBy`, legacy NULL, stream priority,
+//! shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params, timing events, `seq_streams`, `kv_sim`, `decode_priority`,
 //! `compute_slots`, `decode_sm_permille`, `cooperative`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
@@ -3165,6 +3165,18 @@ mod tests {
             },
             GpuFill::Vmm,
             HardwareProfile::example_8xh100_nvlink(),
+        );
+        assert!(out.launches >= 2, "launches={}", out.launches);
+    }
+
+    #[test]
+    fn engine_gpu_shareable_keeps_decode_identity() {
+        let out = two_seq_gpu_knobs(
+            8,
+            GpuStoreCfg {
+                shareable: true,
+                ..GpuStoreCfg::default()
+            },
         );
         assert!(out.launches >= 2, "launches={}", out.launches);
     }

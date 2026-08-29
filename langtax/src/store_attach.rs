@@ -43,6 +43,8 @@ pub(crate) struct GpuCli {
     pub blocking_streams: bool,
     pub sync_alloc: bool,
     pub mempool: bool,
+    /// POSIX-FD shareable mempool IPC (`GpuStoreCfg::shareable`). Implies mempool.
+    pub shareable: bool,
     pub pageable: bool,
     pub accessed_by: bool,
     pub legacy_null: bool,
@@ -92,6 +94,7 @@ impl GpuCli {
             "--blocking-streams" => &mut self.blocking_streams,
             "--sync-alloc" => &mut self.sync_alloc,
             "--mempool" => &mut self.mempool,
+            "--shareable" => &mut self.shareable,
             "--pageable" => &mut self.pageable,
             "--accessed-by" => &mut self.accessed_by,
             "--legacy-null" => &mut self.legacy_null,
@@ -120,6 +123,13 @@ impl GpuCli {
     pub(crate) fn imply_vmm(&mut self) {
         if self.vmm_page > 0 || self.multicast {
             self.vmm = true;
+        }
+    }
+
+    /// `--shareable` implies [`Self::mempool`]. Call after sim-flag checks.
+    pub(crate) fn imply_shareable(&mut self) {
+        if self.shareable {
+            self.mempool = true;
         }
     }
 
@@ -182,6 +192,7 @@ impl GpuCli {
             (self.blocking_streams, "--blocking-streams"),
             (self.sync_alloc, "--sync-alloc"),
             (self.mempool, "--mempool"),
+            (self.shareable, "--shareable"),
             (self.pageable, "--pageable"),
             (self.accessed_by, "--accessed-by"),
             (self.legacy_null, "--legacy-null"),
@@ -381,6 +392,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         blocking_streams: gpu.blocking_streams,
         sync_alloc: gpu.sync_alloc,
         mempool: gpu.mempool,
+        shareable: gpu.shareable,
         vmm_page: gpu.vmm_page,
         pageable: gpu.pageable,
         accessed_by: gpu.accessed_by,

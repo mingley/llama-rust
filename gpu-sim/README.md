@@ -35,6 +35,9 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemPoolSetAccess` (`pool_set_access`) ReadWrite on a peer; dest HBM stays 0; writes allowed | interconnect, not local HBM |
 | `cudaMalloc` (`malloc`) device-syncs that GPU, then the pointer is usable; it cannot consume another pool's cache | `alloc_overhead_ns` (charged at the call) |
 | `cudaIpcGetMemHandle` / `ipc_open` / `ipc_close` share physicals | `alloc_overhead_ns` (export/import) |
+| `cudaMemPoolExportToShareableHandle` / `pool_import` share live/cached | `alloc_overhead_ns` (export/import) |
+| `cudaMemPoolExportPointer` / `pool_import_ptr` alias pool allocs | `alloc_overhead_ns` (export/import) |
+| `cudaDeviceSetMemPool` rebinds `alloc` (`set_device_mempool`) | `alloc_overhead_ns` |
 | `cudaHostRegister` pins pageable host for DMA (`host_register`) | `alloc_overhead_ns` (mlock, host-sync) |
 | `cudaHostAllocMapped` / `host_register_mapped`: kernel may read host with no H2D | host PCIe vs HBM |
 | `cudaMallocManaged` (`alloc_managed`) does not charge HBM until migrate | `alloc_overhead_ns` (VA reserve at the call) |
@@ -276,7 +279,15 @@ until trim. Capture cannot include pool create/trim/set-attribute.
 `ipc_get` / `ipc_open` / `ipc_close` are `cudaIpcGetMemHandle` /
 `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`: the import aliases the
 source physicals (no extra HBM). Free of the source while imports are live
-is Invalid. Capture cannot include IPC.
+is Invalid. `ipc_get` of a mempool alloc is Invalid. Capture cannot include IPC.
+`create_shareable_pool` is `cudaMemPoolCreate` with a POSIX-FD handle type.
+`pool_export` / `pool_import` are `cudaMemPoolExportToShareableHandle` /
+`ImportFromShareableHandle`: the import is a new pool id that shares
+live/cached/threshold with the exporter. `pool_export_ptr` /
+`pool_import_ptr` are `cudaMemPoolExportPointer` / `ImportPointer` (alias,
+no extra HBM). `set_device_mempool` is `cudaDeviceSetMemPool`. Default and
+`create_pool` pools cannot be exported. Capture cannot include shareable
+export/import.
 `alloc_host` is pageable; `host_register` / `host_register_mapped` are
 `cudaHostRegister` (host-synchronous). `alloc_host_mapped` is
 `cudaHostAllocMapped`: a kernel may read it with no H2D, billed at host

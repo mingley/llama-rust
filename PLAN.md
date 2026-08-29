@@ -421,15 +421,20 @@ Exact (mechanical invariants agents may rely on):
   `cudaMallocAsync` / `cudaFreeAsync` / `cudaMemcpyAsync`
   (`alloc` / `free` / `memcpy`); `malloc` OOM is at the call;
   `cudaDeviceSynchronize` (`synchronize_device`) waits one GPU
-- memory pools: `create_pool` / `alloc_from_pool` /
-  `set_pool_release_threshold` / `pool_trim_to`
+- memory pools: `create_pool` / `create_shareable_pool` / `alloc_from_pool` /
+  `set_pool_release_threshold` / `pool_trim_to` / `set_device_mempool`
   (`cudaMemPoolCreate` / `cudaMallocFromPoolAsync` /
-  `cudaMemPoolAttrReleaseThreshold` / `cudaMemPoolTrimTo`); default
+  `cudaMemPoolAttrReleaseThreshold` / `cudaMemPoolTrimTo` / `cudaDeviceSetMemPool`); default
   threshold `0` returns unused bytes on free; `u64::MAX` holds them so
   `malloc` can OOM until trim; `cudaMalloc` cannot consume pool cache
 - `cudaIpcGetMemHandle` / `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`
   (`ipc_get` / `ipc_open` / `ipc_close`): import aliases source physicals
   (no extra HBM); free of the source while imports are live is Invalid;
+  `ipc_get` of a mempool alloc is Invalid; capture is refused
+- `cudaMemPoolExportToShareableHandle` / `ImportFromShareableHandle` /
+  `ExportPointer` / `ImportPointer` (`pool_export` / `pool_import` /
+  `pool_export_ptr` / `pool_import_ptr`): imported pool shares live/cached;
+  pointer import aliases physicals; default/`create_pool` cannot export;
   capture is refused
 - `cudaHostRegister` / mapped host (`alloc_host`, `host_register`,
   `host_register_mapped`, `alloc_host_mapped`): pin existing pageable
@@ -683,10 +688,12 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `cudaMalloc`/`cudaMemcpy`/`cudaFree` on miss (`Sim::malloc`); default
   `sim`/`schedule` / `SimulatedGpuStore::new` stay on `cudaMallocAsync`.
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
+  `--shareable`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
   `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--cooperative`, and `--multicast`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
-  cached page pays `pool_reuse_ns`. `--mapped` is `cudaHostAllocMapped`
+  cached page pays `pool_reuse_ns`. `--shareable` is POSIX-FD mempool IPC
+  (implies `--mempool`; illegal with `--sync-alloc` / mapped / managed / vmm). `--mapped` is `cudaHostAllocMapped`
   (no H2D, PCIe kernels, HBM unused; walker slots also cap at
   `host_pin_bytes / expert_bytes`). `--managed` is `cudaMallocManaged`
   plus `cudaMemAdviseSetReadMostly` plus `SetPreferredLocation` plus
@@ -1200,7 +1207,23 @@ model, do not celebrate the sim.
     `gguf_gemv engine` / `serve --engine --expert-sim` parks leaf execs on
     evict and retargets the unique kernel (implies `--cuda-graphs` on the
     walker). Illegal with `--graph-update`. Decode identity stays
-    destroy+instantiate. Dual score still has no `$/M tokens`.
+    destroy+instantiate.     Dual score still has no `$/M tokens`.
+
+82. [x] Mempool shareable-handle IPC: `Sim::create_shareable_pool` is
+    `cudaMemPoolCreate` with a POSIX-FD handle type. `Sim::pool_export` /
+    `pool_import` are `cudaMemPoolExportToShareableHandle` /
+    `ImportFromShareableHandle` (new `PoolId` shares live/cached/threshold;
+    no extra HBM). `Sim::pool_export_ptr` / `pool_import_ptr` are
+    `cudaMemPoolExportPointer` / `ImportPointer` (alias, no extra HBM).
+    `Sim::set_device_mempool` is `cudaDeviceSetMemPool`. Default and
+    `create_pool` pools cannot be exported. `ipc_get` of a mempool alloc is
+    Invalid. Capture cannot include export/import. `--shareable` on
+    `expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve
+    --engine --expert-sim` implies `--mempool`, rebinds `cudaMallocAsync` to
+    the shareable pool, and keeps an imported sibling so a later
+    `alloc_from_pool` hits cache without extra HBM. Illegal with
+    `--sync-alloc` / mapped / managed / vmm. Decode identity stays the
+    device default pool. Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

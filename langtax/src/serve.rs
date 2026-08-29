@@ -22,7 +22,7 @@ use expertvm::{GpuFill, GpuStoreCfg, Prefetch};
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
@@ -55,6 +55,7 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --blocking-streams  blocking compute stream (`--expert-sim`)
       --sync-alloc      host-sync malloc/memcpy/free (`--expert-sim`)
       --mempool         hold unused cudaMallocAsync bytes (`--expert-sim`)
+      --shareable       POSIX-FD mempool IPC (`--expert-sim`; implies `--mempool`; needs cudaMallocAsync)
       --pageable        pageable H2D (`--expert-sim`)
       --accessed-by     SetAccessedBy / VMM SetAccess / mempool SetAccess (`--expert-sim`; no dest HBM)
       --legacy-null     NULL copy serializes with compute (`--expert-sim`)
@@ -88,7 +89,7 @@ leftover prefill while any live sequence is already decoding. `--slo-reject` /
 (`--expert-sim`). `--itl-slo-ns` counts later-token ITL misses (does not drop).
 `--cuda-graphs` / `--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-mem` / `--graph-auto-free` / `--timing-events` are
 the same SimulatedGpuStore knobs as `gguf_gemv engine`. `--host-func` /
-`--blocking-streams` / `--sync-alloc` / `--mempool` / `--vmm-page` /
+`--blocking-streams` / `--sync-alloc` / `--mempool` / `--shareable` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` / `--seq-streams` /
 `--kv-sim` / `--kv-bytes` / `--decode-priority` / `--cooperative` / `--multicast` /
 `--compute-slots` / `--decode-sms` match
@@ -298,6 +299,11 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
     if n.plan.gpu.graph_update && n.plan.gpu.graph_set_params {
         return usage_err("choose one of --graph-update, --graph-set-params");
     }
+    if n.plan.gpu.shareable
+        && (n.plan.gpu.sync_alloc || n.plan.gpu.mapped || n.plan.gpu.managed || n.plan.gpu.vmm)
+    {
+        return usage_err("shareable needs cudaMallocAsync");
+    }
     if let Some(flag) = n.plan.serve_engine_flag() {
         if !n.engine {
             return usage_err(&format!("{flag} requires --engine"));
@@ -311,7 +317,7 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -473,6 +479,7 @@ where
         plan: planner,
     })?;
     planner.gpu.imply_vmm();
+    planner.gpu.imply_shareable();
     planner.gpu.imply_decode_priority();
     let fill = planner.gpu.fill()?;
     let gpu_cfg = gpu_knobs(planner.gpu);
@@ -1677,6 +1684,22 @@ mod tests {
         let a = run(&["m.gguf", "--engine", "--expert-sim", "--multicast"]);
         assert!(a.gpu_cfg.multicast);
         assert!(a.fill == GpuFill::Vmm);
+        let err = parse_serve_args(["m.gguf", "--shareable"]).unwrap_err();
+        assert!(err.contains("--shareable requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--shareable"]).unwrap_err();
+        assert!(err.contains("--shareable requires --expert-sim"), "{err}");
+        let a = run(&["m.gguf", "--engine", "--expert-sim", "--shareable"]);
+        assert!(a.gpu_cfg.shareable);
+        assert!(a.gpu_cfg.mempool);
+        let err = parse_serve_args([
+            "m.gguf",
+            "--engine",
+            "--expert-sim",
+            "--shareable",
+            "--sync-alloc",
+        ])
+        .unwrap_err();
+        assert!(err.contains("shareable needs cudaMallocAsync"), "{err}");
         let err = parse_serve_args(["m.gguf", "--compute-slots", "2"]).unwrap_err();
         assert!(err.contains("--compute-slots requires --engine"), "{err}");
         let err = parse_serve_args(["m.gguf", "--engine", "--compute-slots", "2"]).unwrap_err();

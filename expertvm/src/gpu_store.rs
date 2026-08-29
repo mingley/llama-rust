@@ -9,12 +9,13 @@ use crate::planner::{
     Prefetch, DECODE_ACTIVATION_BYTES,
 };
 use crate::sim_replay::{
-    replay_streams, retarget_parked_kernel, stream_of, LeafMem, GRAPH_SCRATCH_BYTES,
+    bind_shareable_mempools, replay_streams, retarget_parked_kernel, stream_of, LeafMem,
+    GRAPH_SCRATCH_BYTES,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
     AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelBuf, KernelKind, MemAdvise,
-    MemHandleId, MemcpyOp, Place, Score, Sim, StreamId,
+    MemHandleId, MemcpyOp, Place, PoolId, Score, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -60,6 +61,13 @@ pub struct GpuStoreCfg {
     pub sync_alloc: bool,
     /// Hold unused `cudaMallocAsync` bytes in the default pool (`u64::MAX` threshold).
     pub mempool: bool,
+    /// POSIX-FD shareable mempool IPC (`cudaMemPoolExportToShareableHandle`).
+    ///
+    /// Creates a shareable pool, exports it, imports a sibling that shares
+    /// live/cached, and `cudaDeviceSetMemPool`s so miss pages draw from it.
+    /// Implies [`Self::mempool`]. Illegal with [`Self::sync_alloc`] or
+    /// mapped/managed/vmm fills. Decode identity stays the device default pool.
+    pub shareable: bool,
     /// Physical span for [`GpuFill::Vmm`]. `0` maps the whole expert (`va_acquire`).
     pub vmm_page: u64,
     /// Pageable `cudaMemcpyAsync` (`memcpy_host_to_device`) instead of pinned DMA.
@@ -245,6 +253,8 @@ pub struct SimulatedGpuStore {
     /// [`GpuStoreCfg::kv_sim`]: Engine interned KV on this Sim.
     kv_sim: bool,
     kv: Option<KvGpu>,
+    /// Imported sibling of GPU0's shareable device mempool.
+    share_import: Option<PoolId>,
 }
 
 struct KvGpu {
@@ -364,6 +374,9 @@ impl SimulatedGpuStore {
         if cfg.graph_update && cfg.graph_set_params {
             return Err(Error::Store("choose one of graph-update, graph-set-params"));
         }
+        if cfg.shareable && (cfg.sync_alloc || fill != GpuFill::Pinned) {
+            return Err(Error::Store("shareable needs cudaMallocAsync"));
+        }
         if cfg.multicast {
             if fill != GpuFill::Vmm {
                 return Err(Error::Store("multicast requires vmm"));
@@ -388,7 +401,14 @@ impl SimulatedGpuStore {
             profile
         };
         let mut sim = Sim::new(profile);
-        if cfg.mempool {
+        let share_import = if cfg.shareable {
+            bind_shareable_mempools(&mut sim)?
+                .get(&DeviceId(0))
+                .copied()
+        } else {
+            None
+        };
+        if cfg.mempool || cfg.shareable {
             sim.set_default_pool_release_threshold(u64::MAX)?;
         }
         if cfg.accessed_by && fill == GpuFill::Pinned && !cfg.sync_alloc {
@@ -465,6 +485,7 @@ impl SimulatedGpuStore {
             seq_streams: cfg.seq_streams,
             kv_sim: cfg.kv_sim,
             kv: None,
+            share_import,
         })
     }
 
@@ -497,6 +518,28 @@ impl SimulatedGpuStore {
         self.sim.synchronize()?;
         self.sweep_evicts();
         Ok(self.sim.pool_cached(self.sim.default_pool(self.device)?)?)
+    }
+
+    /// Imported sibling of the shareable device mempool (`None` unless
+    /// [`GpuStoreCfg::shareable`]).
+    #[must_use]
+    pub fn share_imported_pool(&self) -> Option<PoolId> {
+        self.share_import
+    }
+
+    /// `cudaMallocFromPoolAsync` from the imported shareable sibling.
+    ///
+    /// After an evict with mempool hold, this reuses cached bytes (no extra
+    /// HBM). Illegal unless [`GpuStoreCfg::shareable`].
+    pub fn alloc_from_imported_pool(&mut self, bytes: u64) -> Result<AllocId, Error> {
+        let pool = self
+            .share_import
+            .ok_or(Error::Store("no shareable import"))?;
+        let id = self
+            .sim
+            .alloc_from_pool(self.device, pool, bytes, self.copy)?;
+        self.sim.synchronize_stream(self.device, self.copy)?;
+        Ok(id)
     }
 
     /// Bind H2D / alloc / free to the copy stream for `sequence`.

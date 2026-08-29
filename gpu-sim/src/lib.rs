@@ -29,6 +29,16 @@
 //! are `cudaIpcGetMemHandle` / `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`:
 //! the import is an alias of the same physicals (no extra HBM). Free of the
 //! source while imports are live is Invalid. Capture cannot include IPC.
+//! [`Sim::ipc_get`] of a `cudaMallocAsync` pointer is Invalid (`not device ipc`).
+//! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
+//! type. [`Sim::pool_export`] / [`pool_import`](Sim::pool_import) are
+//! `cudaMemPoolExportToShareableHandle` / `ImportFromShareableHandle`: the
+//! import is a new [`PoolId`] that shares live/cached/threshold with the
+//! exporter (no extra HBM). [`Sim::pool_export_ptr`] /
+//! [`pool_import_ptr`](Sim::pool_import_ptr) are `cudaMemPoolExportPointer` /
+//! `ImportPointer` (alias, no extra HBM). [`Sim::set_device_mempool`] is
+//! `cudaDeviceSetMemPool`. Default and [`create_pool`](Sim::create_pool) pools
+//! cannot be exported. Capture cannot include shareable export/import.
 //! [`Sim::alloc`] draws from the device default mempool (`cudaMallocAsync`).
 //! [`Sim::create_pool`] / [`alloc_from_pool`](Sim::alloc_from_pool) /
 //! [`set_pool_release_threshold`](Sim::set_pool_release_threshold) /
@@ -164,7 +174,7 @@ mod sim;
 pub use error::SimError;
 pub use ids::{
     AllocId, DeviceId, EventId, GraphId, IpcHandleId, LinkId, MemHandleId, MulticastId, OpId,
-    PoolId, StreamId,
+    PoolId, PtrExportId, ShareableHandleId, StreamId,
 };
 pub use ops::{
     DType, GpuOp, KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp,
@@ -2636,6 +2646,126 @@ mod tests {
         assert_eq!(sim.pool_cached(p1).unwrap(), 4096);
         assert_eq!(sim.pool_cached(p2).unwrap(), 0);
         assert!(sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn shareable_import_shares_pool_cache() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let p = sim.create_shareable_pool(d).unwrap();
+        sim.set_pool_release_threshold(p, u64::MAX).unwrap();
+        let h = sim.pool_export(p).unwrap();
+        assert_eq!(sim.pool_export(p).unwrap(), h);
+        let imp = sim.pool_import(d, h).unwrap();
+        assert!(sim.is_pool_shareable(p).unwrap());
+        assert!(!sim.is_pool_shareable(imp).unwrap());
+        assert!(sim.is_pool_imported(imp).unwrap());
+        let a = sim.alloc_from_pool(d, p, 4096, s).unwrap();
+        sim.synchronize().unwrap();
+        sim.free(d, a, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.pool_cached(p).unwrap(), 4096);
+        assert_eq!(sim.pool_cached(imp).unwrap(), 4096);
+        let used0 = sim.hbm_used(d).unwrap();
+        let b = sim.alloc_from_pool(d, imp, 4096, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), used0);
+        assert_eq!(sim.pool_cached(p).unwrap(), 0);
+        assert!(sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn shareable_ptr_import_kernel_shares_hbm() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 8u64 << 20;
+        let p = sim.create_shareable_pool(d).unwrap();
+        let h = sim.pool_export(p).unwrap();
+        let imp = sim.pool_import(d, h).unwrap();
+        let a = sim.alloc_from_pool(d, p, bytes, s).unwrap();
+        sim.synchronize().unwrap();
+        let e = sim.pool_export_ptr(a).unwrap();
+        assert_eq!(sim.pool_export_ptr(a).unwrap(), e);
+        let alias = sim.pool_import_ptr(imp, e).unwrap();
+        assert!(sim.is_share_import(alias).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        enq(sim.kernel(d, KernelKind::other(1 << 20, bytes), &[alias], &[alias], s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        sim.free_sync(alias).unwrap();
+        sim.free_sync(a).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+    }
+
+    #[test]
+    fn shareable_free_source_while_mapped_and_rejects() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let p = sim.create_shareable_pool(d).unwrap();
+        let h = sim.pool_export(p).unwrap();
+        let imp = sim.pool_import(d, h).unwrap();
+        let a = sim.alloc_from_pool(d, p, 4096, s).unwrap();
+        sim.synchronize().unwrap();
+        let e = sim.pool_export_ptr(a).unwrap();
+        let alias = sim.pool_import_ptr(imp, e).unwrap();
+        match sim.free_sync(a) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("share mapped")),
+            other => panic!("{other:?}"),
+        }
+        sim.free_sync(alias).unwrap();
+        sim.free_sync(a).unwrap();
+        match sim.pool_import_ptr(imp, e) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("freed")),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_export(sim.default_pool(d).unwrap()) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not shareable")),
+            other => panic!("{other:?}"),
+        }
+        let none = sim.create_pool(d).unwrap();
+        match sim.pool_export(none) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not shareable")),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_import_ptr(p, e) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not imported pool")),
+            other => panic!("{other:?}"),
+        }
+        sim.set_device_mempool(d, p).unwrap();
+        let async_id = sim.alloc(d, 4096, s).unwrap();
+        sim.synchronize().unwrap();
+        match sim.ipc_get(async_id) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not device ipc")),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.pool_export(p) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn shareable_set_device_mempool_redirects_alloc() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let p = sim.create_shareable_pool(d).unwrap();
+        sim.set_pool_release_threshold(p, u64::MAX).unwrap();
+        sim.set_device_mempool(d, p).unwrap();
+        assert_eq!(sim.default_pool(d).unwrap(), p);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        sim.synchronize().unwrap();
+        let e = sim.pool_export_ptr(a).unwrap();
+        let h = sim.pool_export(p).unwrap();
+        let imp = sim.pool_import(d, h).unwrap();
+        let alias = sim.pool_import_ptr(imp, e).unwrap();
+        assert!(sim.is_share_import(alias).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
     }
 
     #[test]
