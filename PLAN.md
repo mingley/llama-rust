@@ -423,7 +423,10 @@ Exact (mechanical invariants agents may rely on):
   no HBM charge; `host_pin_bytes` is the `mlock` cap (`PinOom`)
 - `cudaMallocManaged` / `cudaMemPrefetchAsync` (`alloc_managed`,
   `prefetch`, `prefetch_host`): no HBM until migrate; prefetch **moves**
-  (does not replicate); a kernel first-touch prefetches on that stream
+  (does not replicate) unless `cudaMemAdviseSetReadMostly`
+  ([`Sim::mem_advise`] [`MemAdvise::SetReadMostly`]); a kernel first-touch
+  prefetches on that stream unless [`MemAdvise::SetAccessedBy`] maps that
+  GPU (remote read, interconnect billing; writes still migrate)
 - CUDA VMM (`va_reserve` / `va_map` / `va_unmap` / `va_free`,
   `va_acquire` / `va_release`, `va_map_range` / `va_unmap_range`):
   `cuMemAddressReserve` / `cuMemMap` / `cuMemUnmap` / `cuMemAddressFree`;
@@ -607,7 +610,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   cached page pays `pool_reuse_ns`. `--mapped` is `cudaHostAllocMapped`
   (no H2D, PCIe kernels, HBM unused; walker slots also cap at
   `host_pin_bytes / expert_bytes`). `--managed` is `cudaMallocManaged`
-  plus `cudaMemPrefetchAsync` on miss (HBM charged on migrate). `--vmm` is
+  plus `cudaMemAdviseSetReadMostly` plus `cudaMemPrefetchAsync` on miss
+  (HBM charged on migrate; a second GPU prefetch keeps the copy). `--vmm` is
   `va_acquire` (remap idle VA or reserve+map) then H2D; evict `va_release`s
   the pointer. `--vmm-page N` is `va_acquire_paged` (KV-block physicals;
   implies `--vmm`). `expertvm kv` demand-pages a reserved VA (`kernel_bufs`

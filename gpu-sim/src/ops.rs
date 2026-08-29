@@ -2,6 +2,22 @@
 
 use crate::ids::{AllocId, DeviceId, EventId, OpId, StreamId};
 
+/// `cudaMemAdvise` hint on a [`crate::Sim::alloc_managed`] pointer.
+///
+/// Host-synchronous. Capture cannot include it. [`Self::SetReadMostly`] /
+/// [`Self::UnsetReadMostly`] ignore `device` (CUDA `cudaCpuDeviceId`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemAdvise {
+    /// Prefetch onto a second GPU keeps the first copy (read-only replicas).
+    SetReadMostly,
+    /// Later prefetch migrates again (unique location).
+    UnsetReadMostly,
+    /// Kernel on `device` may read without migrating (remote map).
+    SetAccessedBy,
+    /// Drop the remote mapping. The next kernel on `device` page-faults.
+    UnsetAccessedBy,
+}
+
 /// Element type for roofline math. Maps onto a peak-FLOP field in the profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DType {

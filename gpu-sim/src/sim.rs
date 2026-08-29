@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::SimError;
 use crate::ids::{AllocId, DeviceId, EventId, GraphId, OpId, PoolId, StreamId};
-use crate::ops::{GpuOp as Kind, KernelBuf, KernelKind, MemcpyOp, Operation, Place};
+use crate::ops::{GpuOp as Kind, KernelBuf, KernelKind, MemAdvise, MemcpyOp, Operation, Place};
 use crate::profile::{ns_for_bytes, HardwareProfile};
 
 struct Alloc {
@@ -23,6 +23,10 @@ struct Alloc {
     host_registered: bool,
     /// `cudaMallocManaged`: one location; [`Sim::prefetch`] migrates it.
     managed: bool,
+    /// `cudaMemAdviseSetReadMostly`: prefetch replicates instead of moving.
+    read_mostly: bool,
+    /// GPUs that may map this managed alloc without migrating (`SetAccessedBy`).
+    accessed_by: BTreeSet<DeviceId>,
     /// `cuMemAddressReserve` VA. HBM is charged only while mapped (possibly sparse).
     vmm: bool,
     /// Physical maps `(device, offset, bytes)` into a VMM VA.
@@ -789,6 +793,8 @@ impl Sim {
                 host_mapped: false,
                 host_registered: false,
                 managed: false,
+                read_mostly: false,
+                accessed_by: BTreeSet::new(),
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: Some(pool),
@@ -915,6 +921,8 @@ impl Sim {
                 host_mapped: false,
                 host_registered: false,
                 managed: true,
+                read_mostly: false,
+                accessed_by: BTreeSet::new(),
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: None,
@@ -927,6 +935,55 @@ impl Sim {
     pub fn is_managed(&self, alloc: AllocId) -> Result<bool, SimError> {
         let a = self.alloc_ref(alloc)?;
         Ok(a.live && a.managed)
+    }
+
+    /// `cudaMemAdvise`. Host-synchronous. Capture cannot include it.
+    ///
+    /// [`MemAdvise::SetReadMostly`]: later [`Self::prefetch`] onto a second GPU
+    /// keeps the first copy. A kernel write invalidates the extra copies.
+    /// [`MemAdvise::SetAccessedBy`]: a kernel on `device` may read without
+    /// migrating (interconnect, not local HBM). Writes still migrate.
+    pub fn mem_advise(
+        &mut self,
+        alloc: AllocId,
+        advice: MemAdvise,
+        device: DeviceId,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mem advise")?;
+        let a = self.alloc_ref(alloc)?;
+        if !a.live || !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        match advice {
+            MemAdvise::SetReadMostly => {
+                self.alloc_mut(alloc)?.read_mostly = true;
+            }
+            MemAdvise::UnsetReadMostly => {
+                self.alloc_mut(alloc)?.read_mostly = false;
+            }
+            MemAdvise::SetAccessedBy => {
+                let _gpu = self.profile.gpu(device)?;
+                let _ins = self.alloc_mut(alloc)?.accessed_by.insert(device);
+            }
+            MemAdvise::UnsetAccessedBy => {
+                let _gpu = self.profile.gpu(device)?;
+                let _was = self.alloc_mut(alloc)?.accessed_by.remove(&device);
+            }
+        }
+        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+        Ok(())
+    }
+
+    /// Whether [`MemAdvise::SetReadMostly`] is set.
+    pub fn is_read_mostly(&self, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.managed && a.read_mostly)
+    }
+
+    /// Whether `device` has [`MemAdvise::SetAccessedBy`] on `alloc`.
+    pub fn is_accessed_by(&self, alloc: AllocId, device: DeviceId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.managed && a.accessed_by.contains(&device))
     }
 
     /// `cuMemAddressReserve`: a VA with no physical pages. Does not charge HBM.
@@ -955,6 +1012,8 @@ impl Sim {
                 host_mapped: false,
                 host_registered: false,
                 managed: false,
+                read_mostly: false,
+                accessed_by: BTreeSet::new(),
                 vmm: true,
                 vmm_maps: Vec::new(),
                 pool: None,
@@ -1236,7 +1295,8 @@ impl Sim {
     }
 
     /// `cudaMemPrefetchAsync` onto `device`. Stream-ordered; migrates, does not
-    /// replicate. Already-local pages pay 1 ns and skip the copy engine.
+    /// replicate unless [`MemAdvise::SetReadMostly`]. Already-local pages pay
+    /// 1 ns and skip the copy engine.
     ///
     /// Capture may record it (it is a memcpy). A kernel that first-touches
     /// managed memory calls this on the same stream before the GEMM.
@@ -2132,6 +2192,8 @@ impl Sim {
                 host_mapped: mapped,
                 host_registered: registered,
                 managed: false,
+                read_mostly: false,
+                accessed_by: BTreeSet::new(),
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: None,
@@ -2212,15 +2274,21 @@ impl Sim {
         writes: &[KernelBuf],
         stream: StreamId,
     ) -> Result<(), SimError> {
-        let mut seen = BTreeSet::new();
-        let mut wait = Vec::new();
-        for b in reads.iter().chain(writes.iter()) {
-            if !seen.insert(b.id) {
-                continue;
+        let mut wait = BTreeSet::new();
+        for b in reads {
+            let a = self.alloc_ref(b.id)?;
+            if a.live
+                && a.managed
+                && !a.devices.contains(&device)
+                && !a.accessed_by.contains(&device)
+            {
+                let _ins = wait.insert(b.id);
             }
+        }
+        for b in writes {
             let a = self.alloc_ref(b.id)?;
             if a.live && a.managed && !a.devices.contains(&device) {
-                wait.push(b.id);
+                let _ins = wait.insert(b.id);
             }
         }
         if wait.is_empty() {
@@ -2291,12 +2359,13 @@ impl Sim {
             self.bytes_moved = self.bytes_moved.saturating_add(m.bytes);
         }
         let managed = self.alloc_ref(m.alloc)?.managed;
+        let read_mostly = self.alloc_ref(m.alloc)?.read_mostly;
         if let Place::Device(dst) = m.dst {
             let a = self.alloc_mut(m.alloc)?;
             if !a.devices.contains(&dst) {
                 a.devices.push(dst);
             }
-            if managed {
+            if managed && !read_mostly {
                 self.migrate_off_except(m.alloc, dst)?;
             }
         } else if managed {
@@ -2472,6 +2541,8 @@ impl Sim {
                 host_mapped: false,
                 host_registered: false,
                 managed: false,
+                read_mostly: false,
+                accessed_by: BTreeSet::new(),
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: None,
@@ -2543,9 +2614,10 @@ impl Sim {
                 let reads = reads.clone();
                 let writes = writes.clone();
                 let kind = kind.clone();
-                let mapped = self.uses_mapped_host(device, &reads, &writes)?;
+                let mem_bps = self.kernel_mem_bps(device, &reads, &writes)?;
                 self.lease_kernel(device, &reads, &writes, true)?;
-                let ns = self.kernel_ns(device, &kind, launch, mapped)?;
+                self.invalidate_read_mostly_writes(device, &writes)?;
+                let ns = self.kernel_ns(device, &kind, launch, mem_bps)?;
                 self.gpu_rt_mut(device)?.compute_busy = true;
                 self.running.push(Running {
                     op: id,
@@ -2565,7 +2637,9 @@ impl Sim {
                 let alloc = *alloc;
                 let offset = *offset;
                 let bytes = *bytes;
-                self.lease_kernel(device, &[], &[KernelBuf::span(alloc, offset, bytes)], false)?;
+                let writes = [KernelBuf::span(alloc, offset, bytes)];
+                self.lease_kernel(device, &[], &writes, false)?;
+                self.invalidate_read_mostly_writes(device, &writes)?;
                 let ns = self.memset_ns(device, bytes, launch)?;
                 self.gpu_rt_mut(device)?.compute_busy = true;
                 self.running.push(Running {
@@ -2654,19 +2728,22 @@ impl Sim {
         }
     }
 
-    fn uses_mapped_host(
-        &self,
+    fn invalidate_read_mostly_writes(
+        &mut self,
         device: DeviceId,
-        reads: &[KernelBuf],
         writes: &[KernelBuf],
-    ) -> Result<bool, SimError> {
-        for b in reads.iter().chain(writes.iter()) {
+    ) -> Result<(), SimError> {
+        let mut ids = BTreeSet::new();
+        for b in writes {
             let a = self.alloc_ref(b.id)?;
-            if a.host_mapped && !a.devices.contains(&device) {
-                return Ok(true);
+            if a.live && a.managed && a.read_mostly {
+                let _ins = ids.insert(b.id);
             }
         }
-        Ok(false)
+        for id in ids {
+            self.migrate_off_except(id, device)?;
+        }
+        Ok(())
     }
 
     fn lease_kernel(
@@ -2705,7 +2782,48 @@ impl Sim {
             a.live && a.devices.contains(&device)
         };
         let mapped = mapped_ok && a.live && a.host_mapped;
-        Ok(on_device || mapped)
+        let accessed = mapped_ok && a.live && a.managed && a.accessed_by.contains(&device);
+        Ok(on_device || mapped || accessed)
+    }
+
+    fn peer_or_host_bps(&self, src: DeviceId, dst: DeviceId) -> Result<u64, SimError> {
+        if let Ok(link) = self.profile.link(Some(src), Some(dst)) {
+            return Ok(link.bps);
+        }
+        Ok(self.profile.link(None, Some(dst))?.bps)
+    }
+
+    fn kernel_mem_bps(
+        &self,
+        device: DeviceId,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+    ) -> Result<u64, SimError> {
+        let hbm = self.profile.gpu(device)?.hbm_bps;
+        let mut bps = hbm;
+        let mut remote = false;
+        for b in reads.iter().chain(writes.iter()) {
+            let a = self.alloc_ref(b.id)?;
+            if a.devices.contains(&device) {
+                continue;
+            }
+            if a.host_mapped {
+                let pcie = self.profile.link(None, Some(device))?.bps;
+                bps = bps.min(pcie);
+                remote = true;
+                continue;
+            }
+            if a.managed && a.accessed_by.contains(&device) {
+                let link = if let Some(src) = a.devices.first().copied() {
+                    self.peer_or_host_bps(src, device)?
+                } else {
+                    self.profile.link(None, Some(device))?.bps
+                };
+                bps = bps.min(link);
+                remote = true;
+            }
+        }
+        Ok(if remote { bps } else { hbm })
     }
 
     fn kernel_ns(
@@ -2713,17 +2831,12 @@ impl Sim {
         device: DeviceId,
         kind: &KernelKind,
         launch: LaunchCost,
-        mapped_host: bool,
+        mem_bps: u64,
     ) -> Result<u64, SimError> {
         let g = self.profile.gpu(device)?;
         let (flops, bytes) = kind.flops_and_bytes();
         let compute = ns_for_bytes(flops, g.flops(kind.dtype()));
-        let mem_bps = if mapped_host {
-            self.profile.link(None, Some(device))?.bps
-        } else {
-            g.hbm_bps
-        };
-        let memory = ns_for_bytes(bytes, mem_bps);
+        let memory = ns_for_bytes(bytes, mem_bps.max(1));
         let overhead = match launch {
             LaunchCost::Kernel => g.launch_overhead_ns,
             LaunchCost::GraphHead => g.graph_launch_ns,

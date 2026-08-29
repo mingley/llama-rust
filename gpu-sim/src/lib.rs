@@ -29,7 +29,10 @@
 //! `cudaHostAllocMapped`: a kernel may read it without H2D, billed at host PCIe.
 //! [`Sim::alloc_managed`] is `cudaMallocManaged` (no HBM until first-touch or
 //! [`Sim::prefetch`] / [`prefetch_host`](Sim::prefetch_host)). Prefetch migrates;
-//! it does not replicate. A kernel page-faults managed memory onto that GPU.
+//! it does not replicate unless [`Sim::mem_advise`] [`MemAdvise::SetReadMostly`].
+//! [`MemAdvise::SetAccessedBy`] maps a GPU so a kernel can read without
+//! migrating (billed on the interconnect, not local HBM). A kernel
+//! page-faults managed memory onto that GPU unless AccessedBy covers it.
 //! [`Sim::va_reserve`] / [`va_map`](Sim::va_map) / [`va_unmap`](Sim::va_unmap) /
 //! [`va_free`](Sim::va_free) are `cuMemAddressReserve` / `cuMemMap` /
 //! `cuMemUnmap` / `cuMemAddressFree`. [`Sim::va_map_range`] / [`va_unmap_range`](Sim::va_unmap_range)
@@ -66,7 +69,7 @@ mod sim;
 
 pub use error::SimError;
 pub use ids::{AllocId, DeviceId, EventId, GraphId, LinkId, OpId, PoolId, StreamId};
-pub use ops::{DType, GpuOp, KernelBuf, KernelKind, MemcpyOp, Operation, Place};
+pub use ops::{DType, GpuOp, KernelBuf, KernelKind, MemAdvise, MemcpyOp, Operation, Place};
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
     align_up, ns_for_bytes, scale_ns_permille, GpuProfile, HardwareProfile, LinkKind, LinkProfile,
@@ -1919,6 +1922,139 @@ mod tests {
         assert_eq!(sim.hbm_used(d0).unwrap(), 0);
         assert_eq!(sim.hbm_used(d1).unwrap(), bytes);
         sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn read_mostly_prefetch_replicates() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        sim.mem_advise(m, MemAdvise::SetReadMostly, d0).unwrap();
+        assert!(sim.is_read_mostly(m).unwrap());
+        enq(sim.prefetch(d0, m, s));
+        sim.synchronize().unwrap();
+        enq(sim.prefetch(d1, m, s));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(m, d0).unwrap());
+        assert!(sim.is_resident(m, d1).unwrap());
+        assert_eq!(sim.hbm_used(d0).unwrap(), bytes);
+        assert_eq!(sim.hbm_used(d1).unwrap(), bytes);
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn unset_read_mostly_then_prefetch_moves() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        sim.mem_advise(m, MemAdvise::SetReadMostly, d0).unwrap();
+        enq(sim.prefetch(d0, m, s));
+        sim.synchronize().unwrap();
+        enq(sim.prefetch(d1, m, s));
+        sim.synchronize().unwrap();
+        sim.mem_advise(m, MemAdvise::UnsetReadMostly, d0).unwrap();
+        assert!(!sim.is_read_mostly(m).unwrap());
+        assert!(sim.is_resident(m, d0).unwrap());
+        enq(sim.prefetch(d0, m, s));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(m, d0).unwrap());
+        assert!(!sim.is_resident(m, d1).unwrap());
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn write_kernel_invalidates_read_mostly_copies() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        sim.mem_advise(m, MemAdvise::SetReadMostly, d0).unwrap();
+        enq(sim.prefetch(d0, m, s));
+        enq(sim.prefetch(d1, m, s));
+        sim.synchronize().unwrap();
+        enq(sim.kernel(d1, KernelKind::other(8, 8), &[m], &[m], s));
+        sim.synchronize().unwrap();
+        assert!(!sim.is_resident(m, d0).unwrap());
+        assert!(sim.is_resident(m, d1).unwrap());
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn accessed_by_kernel_reads_without_migrating() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let bytes = 32u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        enq(sim.prefetch(d0, m, s));
+        sim.synchronize().unwrap();
+        sim.mem_advise(m, MemAdvise::SetAccessedBy, d1).unwrap();
+        assert!(sim.is_accessed_by(m, d1).unwrap());
+        let t0 = sim.clock_ns();
+        enq(sim.kernel(d1, KernelKind::other(8, bytes), &[m], &[], s));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(m, d0).unwrap());
+        assert!(!sim.is_resident(m, d1).unwrap());
+        assert_eq!(sim.hbm_used(d1).unwrap(), 0);
+        let remote = sim.clock_ns().saturating_sub(t0);
+        let mut local = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let a = local.alloc_managed(bytes).unwrap();
+        enq(local.prefetch(d0, a, s));
+        local.synchronize().unwrap();
+        let t1 = local.clock_ns();
+        enq(local.kernel(d0, KernelKind::other(8, bytes), &[a], &[], s));
+        local.synchronize().unwrap();
+        let hbm = local.clock_ns().saturating_sub(t1);
+        assert!(remote > hbm, "remote={remote} hbm={hbm}");
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn accessed_by_write_still_migrates() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        enq(sim.prefetch(d0, m, s));
+        sim.synchronize().unwrap();
+        sim.mem_advise(m, MemAdvise::SetAccessedBy, d1).unwrap();
+        enq(sim.kernel(d1, KernelKind::other(8, 8), &[m], &[m], s));
+        sim.synchronize().unwrap();
+        assert!(!sim.is_resident(m, d0).unwrap());
+        assert!(sim.is_resident(m, d1).unwrap());
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn mem_advise_rejects_unmanaged_and_capture() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let err = sim.mem_advise(a, MemAdvise::SetReadMostly, d).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let m = sim.alloc_managed(4096).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        let cap = sim.mem_advise(m, MemAdvise::SetReadMostly, d).unwrap_err();
+        match cap {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

@@ -129,8 +129,9 @@ pub struct SimCfg {
     /// over PCIe with no H2D. Hits/misses follow the same walker; `hbm_peak`
     /// stays near zero. [`crate::SimulatedGpuStore`] stays on the H2D path.
     pub mapped: bool,
-    /// `cudaMallocManaged` + `cudaMemPrefetchAsync` on miss. Alloc does not
-    /// charge HBM; prefetch migrates the page. Hits/misses match H2D.
+    /// `cudaMallocManaged` + `cudaMemAdviseSetReadMostly` + prefetch on miss.
+    /// Alloc does not charge HBM; prefetch migrates (and replicates if a
+    /// second GPU later prefetches the same page). Hits/misses match H2D.
     /// [`crate::SimulatedGpuStore`] stays on pinned H2D.
     pub managed: bool,
     /// `va_acquire` on miss (reuse an unmapped VA, else reserve+map), then
@@ -330,7 +331,7 @@ pub(crate) struct TouchArgs {
     pub sync_alloc: bool,
     /// [`SimCfg::mapped`]: `alloc_host_mapped`, no H2D.
     pub mapped: bool,
-    /// [`SimCfg::managed`]: `alloc_managed` + [`gpu_sim::Sim::prefetch`].
+    /// [`SimCfg::managed`]: `alloc_managed` + ReadMostly + prefetch.
     pub managed: bool,
     /// [`SimCfg::vmm`]: `va_acquire` / `va_acquire_paged` + H2D.
     pub vmm: bool,
@@ -464,7 +465,9 @@ pub(crate) fn apply_touch(
             let id = if args.mapped {
                 sim.alloc_host_mapped(args.bytes)?
             } else if args.managed {
-                sim.alloc_managed(args.bytes)?
+                let id = sim.alloc_managed(args.bytes)?;
+                sim.mem_advise(id, gpu_sim::MemAdvise::SetReadMostly, args.d)?;
+                id
             } else if args.vmm {
                 if args.vmm_page > 0 && args.vmm_page < args.bytes {
                     sim.va_acquire_paged(args.d, args.bytes, args.vmm_page)?

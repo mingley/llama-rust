@@ -36,7 +36,9 @@ warp scheduler, L1, …   ← do not model
 | `cudaHostRegister` pins pageable host for DMA (`host_register`) | `alloc_overhead_ns` (mlock, host-sync) |
 | `cudaHostAllocMapped` / `host_register_mapped`: kernel may read host with no H2D | host PCIe vs HBM |
 | `cudaMallocManaged` (`alloc_managed`) does not charge HBM until migrate | `alloc_overhead_ns` (VA reserve at the call) |
-| `cudaMemPrefetchAsync` (`prefetch` / `prefetch_host`) **moves** the unique location | PCIe / NVLink (1 ns if already local) |
+| `cudaMemAdviseSetReadMostly`: prefetch replicates | same DMA as a move |
+| `cudaMemAdviseSetAccessedBy`: kernel may read without migrating | interconnect, not local HBM |
+| `cudaMemPrefetchAsync` (`prefetch` / `prefetch_host`) **moves** unless ReadMostly | PCIe / NVLink (1 ns if already local) |
 | `cuMemAddressReserve` (`va_reserve`) is a VA with no physical pages | `alloc_overhead_ns` (at the call) |
 | `cuMemMap` (`va_map`) charges HBM; `va_unmap` refunds; the VA is reusable | `alloc_overhead_ns` (map) |
 | `va_map_range` / `va_unmap_range` map a span; `kernel()` needs the whole VA; `kernel_bufs` / `memset_buf` / `MemcpyOp::offset` touch a mapped span | HBM = mapped bytes |
@@ -217,9 +219,12 @@ until trim. Capture cannot include pool create/trim/set-attribute.
 `cudaHostAllocMapped`: a kernel may read it with no H2D, billed at host
 PCIe, and it does not charge HBM. Capture cannot include host
 alloc/register. `alloc_managed` is `cudaMallocManaged` (no HBM until
-`prefetch` / first-touch). `prefetch` / `prefetch_host` are
-`cudaMemPrefetchAsync` and **move** the unique location. Capture of
-`alloc_managed` is refused; a graph must record prefetch before the kernel.
+`prefetch` / first-touch). `mem_advise` is `cudaMemAdvise` (host-sync).
+`SetReadMostly` makes prefetch replicate; `SetAccessedBy` lets a kernel
+read without migrating. `prefetch` / `prefetch_host` are
+`cudaMemPrefetchAsync` and **move** unless ReadMostly. Capture of
+`alloc_managed` / `mem_advise` is refused; a graph must record prefetch
+before the kernel unless AccessedBy covers that GPU.
 `va_reserve` / `va_map` / `va_unmap` / `va_free` are CUDA virtual memory.
 `va_map_range` / `va_unmap_range` map sparse physicals (HBM is the mapped
 span). `kernel()` needs the whole VA covered; `kernel_bufs`, `memset_buf`, and

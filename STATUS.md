@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — cudaMemAdvise ReadMostly and AccessedBy
+
+`Sim::mem_advise` is `cudaMemAdvise` (host-sync; capture refused).
+`SetReadMostly`: prefetch onto a second GPU keeps the first copy; a
+kernel write invalidates extras. `SetAccessedBy`: a kernel may read
+without migrating (interconnect, not local HBM); writes still migrate.
+`--managed` sets ReadMostly on expert pages (weights are read-only).
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — CUDA graph instantiate and exec update
 
 `Sim::instantiate_graph` is `cudaGraphInstantiate` (host-sync,
