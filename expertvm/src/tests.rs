@@ -901,6 +901,47 @@ fn schedule_remote_pays_peer_copy_on_rdma() {
 }
 
 #[test]
+fn schedule_remote_prefetch_hits_copy_forward_layer() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[1]), ev(0, 1, &[1])],
+    };
+    let p = HardwareProfile::example_2node_rdma();
+    let bytes = 1u64 << 20;
+    let map = striped(&t, 2);
+    let none = schedule_remote(
+        &t,
+        p.clone(),
+        SimCfg::lru(4, bytes, 0),
+        SchedCfg::closed(0),
+        &map,
+        DECODE_ACTIVATION_BYTES,
+    )
+    .expect("none");
+    let fwd = schedule_remote(
+        &t,
+        p,
+        SimCfg {
+            prefetch: Prefetch::CopyForward,
+            ..SimCfg::lru(4, bytes, 0)
+        },
+        SchedCfg::closed(0),
+        &map,
+        DECODE_ACTIVATION_BYTES,
+    )
+    .expect("fwd");
+    assert_eq!(none.replay.prefetches, 0);
+    assert_eq!(none.replay.misses, 2);
+    assert!(fwd.replay.prefetches >= 1, "{}", fwd.replay.line());
+    assert!(fwd.replay.prefetch_hits >= 1, "{}", fwd.replay.line());
+    assert!(
+        fwd.replay.misses < none.replay.misses,
+        "fwd misses={} none={}",
+        fwd.replay.misses,
+        none.replay.misses
+    );
+}
+
+#[test]
 fn schedule_remote_hit_reuses_resident_page() {
     let t = Trace {
         events: vec![ev(0, 0, &[1]), ev(1, 0, &[1])],

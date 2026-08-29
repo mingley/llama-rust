@@ -205,7 +205,8 @@ replication (`colocated`, `with_hot_replicas`, `expertvm place`).
 
 **V2:** RDMA, multi-node, remote expert residency (`sim_remote_home` +
 `plan_placement` on the home↔compute hop, `schedule_remote` /
-`expertvm schedule --place remote`, `SimulatedGpuStore::migrate`,
+`expertvm schedule --place remote --prefetch copy-forward`,
+`SimulatedGpuStore::migrate`,
 `expertvm remote`).
 
 **V3:** predictive residency:

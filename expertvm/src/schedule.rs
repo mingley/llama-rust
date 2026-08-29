@@ -6,9 +6,9 @@ use crate::place::PlaceMap;
 use crate::planner::{observe_chain, plan_keys, Markov, Plan};
 use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
-    apply_touch, drop_remote, fetch_remote, gemm_keys, note_touch, predicted_keys, reclaim_victim,
-    remote_hit, replay_from_sim, replay_streams, stream_of, PageHandle, RemoteFetch, RemotePage,
-    ReplayCounters, SimCfg, SimReplay, TouchArgs,
+    apply_touch, drop_remote, fetch_remote, fill_remote, gemm_keys, note_touch, predicted_keys,
+    reclaim_victim, remote_hit, replay_from_sim, replay_streams, stream_of, PageHandle,
+    RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, TouchArgs,
 };
 use gpu_sim::{AllocId, DeviceId, GraphId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -134,6 +134,8 @@ impl SchedReplay {
 /// [`SchedCfg::prefix_cache`] skips GPU work for a token whose `"p"` hash
 /// already completed on another sequence (insert after the computing token
 /// finishes; a hit consumes the whole remaining token, not one prefill chunk).
+/// Remote prefetch fills home-GPU weight pages without mixing local handles
+/// into the remote map.
 pub fn schedule_replay(
     trace: &Trace,
     profile: HardwareProfile,
@@ -159,8 +161,8 @@ pub fn schedule_placed(
 /// [`schedule_placed`] with compute pinned on GPU0. A miss H2Ds onto the
 /// expert home, then [`crate::plan_placement`] either D2Ds weights onto GPU0
 /// or ships a small activation payload to home. Hits GEMM where the first
-/// fetch left the weights. Demand paging (no JSONL future leak). Prefetch is
-/// skipped so a predicted fill cannot mix local pages with remote ones.
+/// fetch left the weights. Demand paging (no JSONL future leak). Prefetch
+/// fills remote weight pages only (no GEMM, no local handles mixed in).
 pub fn schedule_remote(
     trace: &Trace,
     profile: HardwareProfile,
@@ -375,11 +377,16 @@ impl SchedRt {
     }
 
     fn prefetch_event(&mut self, ev: &ExpertAccess, running: &[Job]) -> Result<(), Error> {
-        if self.remote_act.is_some() {
+        let resident: BTreeSet<ExpertKey> = if self.remote_act.is_some() {
+            self.remotes.keys().copied().collect()
+        } else {
+            self.handles.keys().copied().collect()
+        };
+        if !want_prefetch(self.cfg, &resident, running) {
             return Ok(());
         }
-        if !want_prefetch(self.cfg, &self.handles, running) {
-            return Ok(());
+        if self.remote_act.is_some() {
+            return self.prefetch_remote(ev, running);
         }
         let ek = ev.keys();
         let predicted = predicted_keys(self.cfg.prefetch, &self.markov, self.prev.as_ref(), &ek);
@@ -416,6 +423,56 @@ impl SchedRt {
         Ok(())
     }
 
+    fn prefetch_remote(&mut self, ev: &ExpertAccess, running: &[Job]) -> Result<(), Error> {
+        let ek = ev.keys();
+        let predicted = predicted_keys(self.cfg.prefetch, &self.markov, self.prev.as_ref(), &ek);
+        let planned = if self.cfg.plan_window > 0 {
+            remaining_window(running, self.cfg.plan_window)
+        } else {
+            Vec::new()
+        };
+        let compute = DeviceId(0);
+        let act = self.remote_act.unwrap_or(1);
+        let fan_in = u64::try_from(ev.experts.len()).unwrap_or(1).max(1);
+        for key in predicted.into_iter().chain(planned) {
+            let home = self.home(key);
+            match self.walker_mut(home).prefetch_touch(key) {
+                Touch::Hit => {}
+                Touch::Miss { evicted } => {
+                    self.ctr.prefetches = self.ctr.prefetches.saturating_add(1);
+                    let _ins = self.prefetched.insert(key);
+                    if let Some(v) = evicted {
+                        if let Some(page) = self.remotes.remove(&v) {
+                            drop_remote(&mut self.sim, page, compute, self.args.s)?;
+                        }
+                    }
+                    if self.args.slots == 0 {
+                        continue;
+                    }
+                    let stream = self.args.s;
+                    let bytes = self.args.bytes;
+                    self.make_room_remote(home, bytes, compute, stream)?;
+                    let reuse = self.seen.get(&key).copied().unwrap_or(1);
+                    let page = fill_remote(
+                        &mut self.sim,
+                        RemoteFetch {
+                            home,
+                            compute,
+                            expert_bytes: bytes,
+                            act_bytes: act,
+                            stream,
+                        },
+                        reuse,
+                        fan_in,
+                        &mut self.next_event,
+                    )?;
+                    let _prev = self.remotes.insert(key, page);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn touch_remote(&mut self, ev: &ExpertAccess) -> Result<(), Error> {
         self.args.s = stream_of(ev.sequence, self.n_streams);
         let ek = ev.keys();
@@ -436,7 +493,7 @@ impl SchedRt {
                         .get(key)
                         .copied()
                         .ok_or(Error::Store("remote hit without page"))?;
-                    remote_hit(
+                    let page = remote_hit(
                         &mut self.sim,
                         page,
                         compute,
@@ -444,6 +501,7 @@ impl SchedRt {
                         self.args.s,
                         &mut self.next_event,
                     )?;
+                    let _prev = self.remotes.insert(*key, page);
                 }
                 Touch::Miss { evicted } => {
                     if let Some(v) = evicted {
@@ -847,14 +905,13 @@ fn record_latency(job: &mut Job, now: u64, sched: SchedCfg, rec: &mut Rec) {
     job.prev_end = Some(now);
 }
 
-fn want_prefetch(cfg: SimCfg, handles: &BTreeMap<ExpertKey, PageHandle>, running: &[Job]) -> bool {
+fn want_prefetch(cfg: SimCfg, resident: &BTreeSet<ExpertKey>, running: &[Job]) -> bool {
     if cfg.plan_window == 0 {
         return true;
     }
-    let resident: BTreeSet<ExpertKey> = handles.keys().copied().collect();
     let upcoming = remaining_window(running, cfg.plan_window);
     !matches!(
-        plan_keys(&resident, &upcoming, cfg.plan_threshold),
+        plan_keys(resident, &upcoming, cfg.plan_threshold),
         Plan::Stay
     )
 }

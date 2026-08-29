@@ -734,7 +734,8 @@ pub fn sim_remote_home_cfg(
             let reuse = *n;
             if let Some(page) = pages.get(&key).copied() {
                 hits = hits.saturating_add(1);
-                remote_hit(&mut sim, page, compute, act, s, &mut next_event)?;
+                let page = remote_hit(&mut sim, page, compute, act, s, &mut next_event)?;
+                let _prev = pages.insert(key, page);
             } else {
                 misses = misses.saturating_add(1);
                 let home = map.home_of(key, n_gpus);
@@ -796,17 +797,27 @@ pub(crate) fn remote_hit(
     act_bytes: u64,
     stream: StreamId,
     next_event: &mut u32,
-) -> Result<(), Error> {
-    if let Some(act) = page.act {
+) -> Result<RemotePage, Error> {
+    if page.home != compute && page.gemm == page.home {
+        let act = match page.act {
+            Some(a) => a,
+            None => sim.alloc(compute, act_bytes, stream)?,
+        };
         ship_act(sim, compute, page.home, act, act_bytes, stream, next_event)?;
         kernel(sim, page.home, stream, page.id)?;
         ship_act(sim, page.home, compute, act, act_bytes, stream, next_event)?;
-        return Ok(());
+        return Ok(RemotePage {
+            act: Some(act),
+            ..page
+        });
     }
-    kernel(sim, page.gemm, stream, page.id)
+    kernel(sim, page.gemm, stream, page.id)?;
+    Ok(page)
 }
 
-pub(crate) fn fetch_remote(
+/// Pin weights on home (and D2D them onto compute when
+/// [`Placement::MoveWeights`]). No GEMM — that is [`remote_hit`] / demand.
+pub(crate) fn fill_remote(
     sim: &mut Sim,
     fetch: RemoteFetch,
     reuse: u64,
@@ -816,7 +827,6 @@ pub(crate) fn fetch_remote(
     let id = sim.alloc(fetch.home, fetch.expert_bytes, fetch.stream)?;
     let _c = sim.memcpy_pinned_to_device(fetch.home, id, fetch.expert_bytes, fetch.stream)?;
     if fetch.home == fetch.compute {
-        kernel(sim, fetch.compute, fetch.stream, id)?;
         return Ok(RemotePage {
             id,
             gemm: fetch.compute,
@@ -838,7 +848,6 @@ pub(crate) fn fetch_remote(
                 fetch.stream,
             )?;
             wait_peer(sim, fetch.home, fetch.compute, fetch.stream, next_event)?;
-            kernel(sim, fetch.compute, fetch.stream, id)?;
             Ok(RemotePage {
                 id,
                 gemm: fetch.compute,
@@ -846,35 +855,27 @@ pub(crate) fn fetch_remote(
                 act: None,
             })
         }
-        Placement::DispatchActivations => {
-            let act = sim.alloc(fetch.compute, fetch.act_bytes, fetch.stream)?;
-            ship_act(
-                sim,
-                fetch.compute,
-                fetch.home,
-                act,
-                fetch.act_bytes,
-                fetch.stream,
-                next_event,
-            )?;
-            kernel(sim, fetch.home, fetch.stream, id)?;
-            ship_act(
-                sim,
-                fetch.home,
-                fetch.compute,
-                act,
-                fetch.act_bytes,
-                fetch.stream,
-                next_event,
-            )?;
-            Ok(RemotePage {
-                id,
-                gemm: fetch.home,
-                home: fetch.home,
-                act: Some(act),
-            })
-        }
+        Placement::DispatchActivations => Ok(RemotePage {
+            id,
+            gemm: fetch.home,
+            home: fetch.home,
+            act: None,
+        }),
     }
+}
+
+pub(crate) fn fetch_remote(
+    sim: &mut Sim,
+    fetch: RemoteFetch,
+    reuse: u64,
+    fan_in: u64,
+    next_event: &mut u32,
+) -> Result<RemotePage, Error> {
+    let compute = fetch.compute;
+    let act = fetch.act_bytes;
+    let stream = fetch.stream;
+    let page = fill_remote(sim, fetch, reuse, fan_in, next_event)?;
+    remote_hit(sim, page, compute, act, stream, next_event)
 }
 
 /// Stream-ordered free of a remote expert page (weights on home/compute, optional act).
