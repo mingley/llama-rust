@@ -753,13 +753,48 @@ fn host_func_lengthens_wall_not_hits() {
 }
 
 #[test]
-fn mapped_host_respects_pin_budget() {
-    let t = cycling_trace();
-    let p = HardwareProfile::example_h100_sxm().restrict_pin(1u64 << 20);
-    let cfg = SimCfg {
+fn mapped_pin_budget_caps_occupancy() {
+    let mut events = Vec::new();
+    for tok in 0..16u32 {
+        events.push(ev(tok, 0, &[tok % 2]));
+    }
+    let t = Trace { events };
+    let bytes = 1u64 << 20;
+    let tight = HardwareProfile::example_h100_sxm().restrict_pin(bytes);
+    let open = HardwareProfile::example_h100_sxm();
+    let two = SimCfg {
         slots: 2,
         mapped: true,
-        ..SimCfg::lru(2, 1u64 << 20, 0)
+        ..SimCfg::lru(2, bytes, 0)
+    };
+    let one = SimCfg {
+        slots: 1,
+        mapped: true,
+        ..SimCfg::lru(1, bytes, 0)
+    };
+    let capped = sim_replay_cfg(&t, tight.clone(), two).expect("cap");
+    let slim = sim_replay_cfg(&t, open.clone(), one).expect("one");
+    let fat = sim_replay_cfg(&t, open, two).expect("two");
+    assert_eq!(capped.hits, slim.hits);
+    assert_eq!(capped.misses, slim.misses);
+    assert!(
+        fat.hits > capped.hits,
+        "uncapped two-slot mapped must hit; fat={} cap={}",
+        fat.hits,
+        capped.hits
+    );
+    let sched_capped = schedule_replay(&t, tight, two, SchedCfg::closed(0)).expect("sched cap");
+    assert_eq!(sched_capped.replay.hits, capped.hits);
+}
+
+#[test]
+fn mapped_pin_budget_zero_fit_is_pin_oom() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm().restrict_pin(1);
+    let cfg = SimCfg {
+        slots: 1,
+        mapped: true,
+        ..SimCfg::lru(1, 1u64 << 20, 0)
     };
     let err = sim_replay_cfg(&t, p, cfg).unwrap_err();
     assert!(err.to_string().contains("pin"), "{err}");

@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — mapped occupancy respects the pin budget
+
+`--mapped` walker slots are `min(capacity, host_pin_bytes / expert_bytes)`
+so a pin cap of one expert pages one expert instead of `PinOom` on the
+second. Zero fit (pin smaller than one expert) is still `PinOom`. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — cudaStreamCreate serializes with the default stream
 
 `Sim::set_stream_blocking` / `set_created_streams_blocking` model
@@ -47,9 +54,9 @@ A different size does not share the pool. Map OOM parks the reserved VA.
 `HardwareProfile::host_pin_bytes` / `restrict_pin` cap `cudaMallocHost`
 and `cudaHostRegister` (`SimError::PinOom`). Pageable `alloc_host` does
 not charge; register does. Example default is `u64::MAX`. Mapped expert
-replay OOMs when slots × expert bytes exceed the pin cap.
-`SimulatedGpuStore` still pins without a tight cap. Dual score still has
-no `$/M tokens`.
+replay now caps occupancy at `pin / expert_bytes` (see the mapped
+occupancy note). `SimulatedGpuStore` still pins without a tight cap.
+Dual score still has no `$/M tokens`.
 
 ## Shipped 2026-08-29 — CUDA VMM keeps a VA while HBM is mapped
 

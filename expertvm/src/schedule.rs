@@ -7,8 +7,8 @@ use crate::planner::{observe_chain, plan_keys, Markov, Plan};
 use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
     apply_touch, drop_remote, fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch,
-    predicted_keys, reclaim_victim, remote_hit, replay_from_sim, replay_streams, stream_of,
-    PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, TouchArgs,
+    occupancy_slots, predicted_keys, reclaim_victim, remote_hit, replay_from_sim, replay_streams,
+    stream_of, PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, TouchArgs,
 };
 use gpu_sim::{AllocId, DeviceId, GraphId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -290,6 +290,8 @@ impl SchedRt {
         }
         let n_gpus = u16::try_from(sim.profile().n_gpus()).unwrap_or(1).max(1);
         let bytes = cfg.bytes_per_expert.max(1);
+        let mut cfg = cfg;
+        cfg.slots = occupancy_slots(&cfg, sim.pin_budget());
         Ok(Self {
             n_streams,
             walkers: BTreeMap::new(),

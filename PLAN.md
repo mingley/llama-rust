@@ -595,7 +595,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `sim`/`schedule` stay on `cudaMallocAsync`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--mapped` is `cudaHostAllocMapped`
-  (no H2D, PCIe kernels, HBM unused). `--managed` is `cudaMallocManaged`
+  (no H2D, PCIe kernels, HBM unused; walker slots also cap at
+  `host_pin_bytes / expert_bytes`). `--managed` is `cudaMallocManaged`
   plus `cudaMemPrefetchAsync` on miss (HBM charged on migrate). `--vmm` is
   `va_acquire` (remap idle VA or reserve+map) then H2D; evict `va_release`s
   the pointer. `--host-func` is `cudaLaunchHostFunc` after each event's

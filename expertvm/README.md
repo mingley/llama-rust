@@ -96,8 +96,8 @@ marks created seq-streams as `cudaStreamCreate` (they serialize with the
 default/null stream). Default is `cudaStreamNonBlocking`, so `--seq-streams`
 can overlap a miss with another sequence's GEMM. Pair with `--seq-streams`
 or it is a no-op (`n_streams = 1`). A
-profile `host_pin_bytes` cap makes `--mapped` `PinOom` when slots × expert
-bytes exceed the lock budget. `SimulatedGpuStore` stays on the async H2D
+profile `host_pin_bytes` cap pages `min(capacity, pin / expert_bytes)`
+mapped experts (`PinOom` only when even one expert cannot lock). `SimulatedGpuStore` stays on the async H2D
 path with CUDA's default threshold (`0`) and non-blocking streams. `--max-batch N` admits N sequences per engine
 iteration at a token (`0` = the whole token) and still samples TTFT once.
 `--cuda-graphs` captures grouped expert GEMMs after `synchronize_stream` on

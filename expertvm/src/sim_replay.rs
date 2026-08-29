@@ -82,7 +82,9 @@ pub struct SimCfg {
     /// per home so a miss cannot evict a peer GPU's resident expert. When
     /// `restrict_hbm` holds fewer pages than `slots`, the scheduler still
     /// evicts so the next alloc cannot OOM. [`crate::schedule_remote`] uses the
-    /// same page budget on the expert home.
+    /// same page budget on the expert home. `--mapped` also caps occupancy at
+    /// `host_pin_bytes / expert_bytes` so a pin budget of one expert pages
+    /// one expert instead of `PinOom` on the second.
     pub slots: usize,
     /// Victim policy.
     pub policy: Policy,
@@ -211,9 +213,10 @@ pub fn sim_replay_cfg(
     }
     let d = DeviceId(0);
     let s = StreamId(0);
-    let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
-    let mut w = Walker::new(&keys, cfg.slots, cfg.policy, cfg.lookahead);
     let bytes = cfg.bytes_per_expert.max(1);
+    let slots = occupancy_slots(&cfg, sim.pin_budget());
+    let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
+    let mut w = Walker::new(&keys, slots, cfg.policy, cfg.lookahead);
     let n_streams = replay_streams(sim.profile(), cfg.seq_streams);
     if cfg.blocking_streams {
         sim.set_created_streams_blocking(n_streams)?;
@@ -222,7 +225,7 @@ pub fn sim_replay_cfg(
         d,
         s,
         bytes,
-        slots: cfg.slots,
+        slots,
         sync_alloc: cfg.sync_alloc,
         mapped: cfg.mapped,
         managed: cfg.managed,
@@ -726,6 +729,23 @@ fn sequence_done(events: &[ExpertAccess], i: usize) -> bool {
     match events.get(i.saturating_add(1)) {
         Some(n) => n.token != cur.token || n.sequence != cur.sequence,
         None => true,
+    }
+}
+
+/// `--mapped` occupancy: `min(slots, pin / expert_bytes)`.
+///
+/// When the pin budget cannot hold one expert (`fit == 0`), returns the
+/// requested slots so the first `alloc_host_mapped` is [`gpu_sim::SimError::PinOom`].
+pub(crate) fn occupancy_slots(cfg: &SimCfg, pin_bytes: u64) -> usize {
+    if !cfg.mapped {
+        return cfg.slots;
+    }
+    let bytes = cfg.bytes_per_expert.max(1);
+    let fit = usize::try_from(pin_bytes / bytes).unwrap_or(usize::MAX);
+    if fit == 0 {
+        cfg.slots
+    } else {
+        cfg.slots.min(fit)
     }
 }
 
