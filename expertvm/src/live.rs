@@ -186,6 +186,42 @@ impl LiveStore {
             Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => Ok(None),
         }
     }
+
+    /// Captured GEMM graph launches. CPU stores are 0.
+    #[must_use]
+    pub fn graph_launches(&self) -> u64 {
+        match self {
+            Self::Simulated(s) => s.graph_launches(),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => 0,
+        }
+    }
+
+    /// Parked-exec [`gpu_sim::Sim::update_graph`] count. CPU stores are 0.
+    #[must_use]
+    pub fn graph_updates(&self) -> u64 {
+        match self {
+            Self::Simulated(s) => s.graph_updates(),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => 0,
+        }
+    }
+
+    /// [`gpu_sim::Sim::clone_graph`] count before instantiate. CPU stores are 0.
+    #[must_use]
+    pub fn graph_clones(&self) -> u64 {
+        match self {
+            Self::Simulated(s) => s.graph_clones(),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => 0,
+        }
+    }
+
+    /// Timing-on copy elapsed ns. CPU stores and disable-timing GPU stores are 0.
+    #[must_use]
+    pub fn copy_elapsed_ns(&self) -> u64 {
+        match self {
+            Self::Simulated(s) => s.copy_elapsed_ns(),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => 0,
+        }
+    }
 }
 
 impl ExpertStore for LiveStore {

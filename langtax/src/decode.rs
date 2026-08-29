@@ -615,6 +615,12 @@ impl KvCache {
         self.expert_store.take()
     }
 
+    /// Borrow the attached store, if any.
+    #[must_use]
+    pub fn attached_store(&self) -> Option<&LiveStore> {
+        self.expert_store.as_ref()
+    }
+
     /// Counters from the attached store, if any.
     #[must_use]
     pub fn expert_store_metrics(&self) -> Option<expertvm::StoreMetrics> {

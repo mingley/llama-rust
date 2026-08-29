@@ -9,7 +9,7 @@ use crate::decode::{prompt_ids, KvCache, Llama};
 use crate::engine::{Engine, EngineCfg, SeqId};
 use crate::gguf::load_gguf_owned;
 use crate::sample::argmax;
-use crate::store_attach::{attach_store, StoreAttach};
+use crate::store_attach::{attach_store, gpu_knobs, GpuCli, StoreAttach};
 use crate::template::ChatMessage;
 use crate::tok::Tokenizer;
 
@@ -48,14 +48,14 @@ usage: gguf_gemv <command> [args]
   infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]
   trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE [--capacity N]
   chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--kv-page N] [--show-prompt]
-  serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--trace-out FILE]
-  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--trace-out FILE]
+  serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--trace-out FILE]
+  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--trace-out FILE]
   write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|write-tiny-qwen3|write-tiny-gemma|write-tiny-llama4|write-tiny-llama-moe|write-tiny-qwen2moe|write-tiny-qwen3moe|write-tiny-qwen3moe-2layer|write-tiny-qwen2vl|write-tiny-qwen3vl|write-tiny-qwen3next|write-tiny-qwen35|write-tiny-phi2 <path>
 ";
 
 /// Usage for the `engine` verb.
 pub const ENGINE_USAGE: &str = "\
-usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--trace-out FILE]
+usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--trace-out FILE]
   -p, --prompt TEXT     prompt (repeatable; default: one `ab`)
   -n, --n-predict N     tokens to generate per sequence (default: 2)
       --n-ctx N         KV capacity (default: longest prompt + n_predict + 1)
@@ -67,11 +67,16 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
       --decode-first    hold leftover prefill while any live sequence is decoding
       --slo-reject      drop waiters whose gpu-sim queue wait meets `--ttft-slo-ns`
       --ttft-slo-ns N   virtual-ns TTFT budget (`--slo-reject`; needs `--expert-sim`)
+      --itl-slo-ns N    count later-token gaps over this budget (needs `--expert-sim`)
       --expert-slots N  ExpertStore on the Engine: omit = blob FFN, `0` = DirectStore,
                         N>0 = CachedStore with N slots (`--expert-sim` uses N, default 8)
       --expert-sim      SimulatedGpuStore (example H100, 4096-byte experts)
       --expert-8gpu     8×H100 NVLink profile (`--expert-sim`; enables plan_placement)
       --expert-bytes N  simulated expert page bytes (`--expert-sim`; default: 4096)
+      --cuda-graphs     document default GEMM graph capture (`--expert-sim`; always on)
+      --graph-update    cudaGraphExecUpdate parked leaves (`--expert-sim`)
+      --graph-clone     cudaGraphClone before instantiate (`--expert-sim`)
+      --timing-events   cudaEventElapsedTime on copy start/end (`--expert-sim`)
       --trace-out FILE  write batched MoE ExpertAccess JSONL (all sequences)
 
 Runs Engine continuous batching on one interned pool. Several `--prompt`s
@@ -80,7 +85,11 @@ live sequence is already decoding (ITL over leftover prefill; same policy
 as `expertvm schedule --decode-first`). `--slo-reject` / `--ttft-slo-ns`
 drops a waiter whose gpu-sim queue wait already meets the TTFT budget
 (same policy as `expertvm schedule --slo-reject`; needs `--expert-sim`).
-A tight `--pool-blocks` preempts
+`--itl-slo-ns` counts later-token gaps over the budget (`itl_slo_miss=`;
+does not drop). `--expert-sim` captures per-page GEMM graphs (same
+mechanical path as `expertvm sim --cuda-graphs`). `--graph-update` /
+`--graph-clone` / `--timing-events` match `GpuStoreCfg`. A tight
+`--pool-blocks` preempts
 (recompute + replay). One ExpertStore is parked on each batched GEMM so
 MoE serving stays on the shared-pool path. After each GEMM the store
 sticky-pins last-used ∪ Markov experts (`slots - 1`; `slots == 1` pins
@@ -89,8 +98,9 @@ nothing). A multi-GPU SimulatedGpuStore then `plan_placement`s those pins
 MoE traces stay on that GEMM (per-row
 sequence / token / prefix). Prints each continuation (`n_gen` plus
 decoded text), then intern_hits, preempts, GEMM stats, store metrics,
-and a gpu-sim score line when `--expert-sim` is set (`ttft_ns` / `itl_ns`
-when sequences generate). Not `$/M tokens`.
+graph counters, ITL SLO misses, and a gpu-sim score line when
+`--expert-sim` is set (`ttft_ns` / `itl_ns` when sequences generate).
+Not `$/M tokens`.
 Not an HTTP server.
 ";
 
@@ -393,6 +403,10 @@ where
 
 /// Parsed `engine` invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "EngineArgs is the parsed CLI record; boxing would churn every match"
+)]
 pub enum EngineCmd {
     /// `--help` / `-h`.
     Help,
@@ -425,6 +439,8 @@ pub struct EngineArgs {
     pub slo_reject: bool,
     /// Virtual-ns TTFT budget with `--slo-reject`. `None` never drops.
     pub ttft_slo_ns: Option<u64>,
+    /// Later-token gap budget. Misses print `itl_slo_miss`. `None` does not count.
+    pub itl_slo_ns: Option<u64>,
     /// ExpertStore slots. `None` keeps blob FFN. `Some(0)` is DirectStore.
     pub expert_slots: Option<usize>,
     /// Attach [`SimulatedGpuStore`] (example H100) instead of Direct/Cached.
@@ -433,6 +449,12 @@ pub struct EngineArgs {
     pub expert_8gpu: bool,
     /// Simulated expert page bytes with `--expert-sim`. `None` is 4096.
     pub expert_bytes: Option<u64>,
+    /// `cudaGraphExecUpdate` parked GEMM leaves (`--expert-sim`).
+    pub graph_update: bool,
+    /// `cudaGraphClone` before instantiate (`--expert-sim`).
+    pub graph_clone: bool,
+    /// Timing-on copy events (`--expert-sim`).
+    pub timing_events: bool,
     /// Write Engine MoE traces as JSONL. `None` leaves tracing off.
     pub trace_out: Option<String>,
 }
@@ -440,6 +462,50 @@ pub struct EngineArgs {
 impl EngineArgs {
     /// Default `--kv-page` when omitted.
     pub const DEFAULT_BLOCK_SIZE: usize = 16;
+}
+
+struct EngineSimNeed {
+    expert_sim: bool,
+    expert_8gpu: bool,
+    has_bytes: bool,
+    slo_reject: bool,
+    has_ttft: bool,
+    has_itl: bool,
+    gpu: GpuCli,
+}
+
+fn check_engine_sim_opts(n: &EngineSimNeed) -> Result<(), String> {
+    if n.expert_8gpu && !n.expert_sim {
+        return engine_err("--expert-8gpu requires --expert-sim");
+    }
+    if n.has_bytes && !n.expert_sim {
+        return engine_err("--expert-bytes requires --expert-sim");
+    }
+    if n.slo_reject && !n.has_ttft {
+        return engine_err("--slo-reject requires --ttft-slo-ns");
+    }
+    if n.has_ttft && !n.slo_reject {
+        return engine_err("--ttft-slo-ns requires --slo-reject");
+    }
+    if (n.slo_reject || n.has_ttft) && !n.expert_sim {
+        return engine_err("--slo-reject requires --expert-sim");
+    }
+    if n.has_itl && !n.expert_sim {
+        return engine_err("--itl-slo-ns requires --expert-sim");
+    }
+    if n.gpu.cuda_graphs && !n.expert_sim {
+        return engine_err("--cuda-graphs requires --expert-sim");
+    }
+    if n.gpu.graph_update && !n.expert_sim {
+        return engine_err("--graph-update requires --expert-sim");
+    }
+    if n.gpu.graph_clone && !n.expert_sim {
+        return engine_err("--graph-clone requires --expert-sim");
+    }
+    if n.gpu.timing_events && !n.expert_sim {
+        return engine_err("--timing-events requires --expert-sim");
+    }
+    Ok(())
 }
 
 /// Parse operands after the `engine` verb.
@@ -462,10 +528,12 @@ where
     let mut decode_first = false;
     let mut slo_reject = false;
     let mut ttft_slo_ns = None;
+    let mut itl_slo_ns = None;
     let mut expert_slots = None;
     let mut expert_sim = false;
     let mut expert_8gpu = false;
     let mut expert_bytes = None;
+    let mut gpu = GpuCli::default();
     let mut trace_out = None;
     let mut it = args.into_iter();
     while let Some(raw) = it.next() {
@@ -542,6 +610,16 @@ where
                 }
                 ttft_slo_ns = Some(n);
             }
+            "--itl-slo-ns" => {
+                let n = engine_u64(
+                    "itl-slo-ns",
+                    &engine_value("itl-slo-ns", inline, &mut it)?,
+                )?;
+                if n == 0 {
+                    return engine_err("itl-slo-ns must be > 0");
+                }
+                itl_slo_ns = Some(n);
+            }
             "--expert-slots" => {
                 expert_slots = Some(engine_usize(
                     "expert-slots",
@@ -570,6 +648,11 @@ where
                 }
                 expert_bytes = Some(n);
             }
+            "--cuda-graphs" | "--graph-update" | "--graph-clone" | "--timing-events" => {
+                if let Err(e) = gpu.apply(key, inline) {
+                    return engine_err(&e);
+                }
+            }
             "--trace-out" => {
                 trace_out = Some(engine_value("trace-out", inline, &mut it)?);
             }
@@ -590,21 +673,15 @@ where
     if prompts.is_empty() {
         prompts.push(InferArgs::DEFAULT_PROMPT.to_string());
     }
-    if expert_8gpu && !expert_sim {
-        return engine_err("--expert-8gpu requires --expert-sim");
-    }
-    if expert_bytes.is_some() && !expert_sim {
-        return engine_err("--expert-bytes requires --expert-sim");
-    }
-    if slo_reject && ttft_slo_ns.is_none() {
-        return engine_err("--slo-reject requires --ttft-slo-ns");
-    }
-    if ttft_slo_ns.is_some() && !slo_reject {
-        return engine_err("--ttft-slo-ns requires --slo-reject");
-    }
-    if (slo_reject || ttft_slo_ns.is_some()) && !expert_sim {
-        return engine_err("--slo-reject requires --expert-sim");
-    }
+    check_engine_sim_opts(&EngineSimNeed {
+        expert_sim,
+        expert_8gpu,
+        has_bytes: expert_bytes.is_some(),
+        slo_reject,
+        has_ttft: ttft_slo_ns.is_some(),
+        has_itl: itl_slo_ns.is_some(),
+        gpu,
+    })?;
     Ok(EngineCmd::Run(EngineArgs {
         path,
         prompts,
@@ -617,10 +694,14 @@ where
         decode_first,
         slo_reject,
         ttft_slo_ns,
+        itl_slo_ns,
         expert_slots,
         expert_sim,
         expert_8gpu,
         expert_bytes,
+        graph_update: gpu.graph_update,
+        graph_clone: gpu.graph_clone,
+        timing_events: gpu.timing_events,
         trace_out,
     }))
 }
@@ -657,10 +738,14 @@ pub fn run_engine(args: &EngineArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
     writeln!(
         out,
-        "intern_hits={} preempts={} rejected={} steps={} gemm_tokens={} gemm_peak={} serial_tokens={}",
+        "intern_hits={} preempts={} rejected={} itl_slo_miss={} graph_launches={} graph_updates={} graph_clones={} steps={} gemm_tokens={} gemm_peak={} serial_tokens={}",
         eng.pool().hits(),
         eng.preempts(),
         eng.rejected(),
+        eng.itl_slo_miss(),
+        eng.graph_launches(),
+        eng.graph_updates(),
+        eng.graph_clones(),
         eng.stats().steps,
         eng.stats().gemm_tokens,
         eng.stats().gemm_peak,
@@ -703,6 +788,7 @@ fn attach_engine_store(
             expert_sim: args.expert_sim,
             expert_8gpu: args.expert_8gpu,
             expert_bytes: args.expert_bytes,
+            gpu_cfg: gpu_knobs(args.graph_update, args.graph_clone, args.timing_events),
         },
     )?;
     Ok(())
@@ -751,6 +837,7 @@ fn engine_cfg(tok: &Tokenizer, args: &EngineArgs) -> Result<EngineCfg, Box<dyn s
         decode_first: args.decode_first,
         slo_reject: args.slo_reject,
         ttft_slo_ns: args.ttft_slo_ns,
+        itl_slo_ns: args.itl_slo_ns,
     })
 }
 
@@ -1198,10 +1285,14 @@ mod tests {
                 assert!(!a.decode_first);
                 assert!(!a.slo_reject);
                 assert_eq!(a.ttft_slo_ns, None);
+                assert_eq!(a.itl_slo_ns, None);
                 assert_eq!(a.expert_slots, None);
                 assert!(!a.expert_sim);
                 assert!(!a.expert_8gpu);
                 assert_eq!(a.expert_bytes, None);
+                assert!(!a.graph_update);
+                assert!(!a.graph_clone);
+                assert!(!a.timing_events);
                 assert_eq!(a.trace_out, None);
             }
             EngineCmd::Help => panic!("expected Run"),
@@ -1310,6 +1401,46 @@ mod tests {
         );
         let err = parse_engine_args(["m.gguf", "--expert-sim", "--expert-bytes", "0"]).unwrap_err();
         assert!(err.contains("expert-bytes must be > 0"), "{err}");
+    }
+
+    #[test]
+    fn engine_graph_and_itl_flags_need_expert_sim() {
+        match parse_engine_args([
+            "m.gguf",
+            "--expert-sim",
+            "--cuda-graphs",
+            "--graph-update",
+            "--graph-clone",
+            "--timing-events",
+            "--itl-slo-ns",
+            "8",
+        ])
+        .expect("graphs")
+        {
+            EngineCmd::Run(a) => {
+                assert!(a.expert_sim);
+                assert!(a.graph_update);
+                assert!(a.graph_clone);
+                assert!(a.timing_events);
+                assert_eq!(a.itl_slo_ns, Some(8));
+            }
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        let err = parse_engine_args(["m.gguf", "--itl-slo-ns", "1"]).unwrap_err();
+        assert!(err.contains("--itl-slo-ns requires --expert-sim"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--cuda-graphs"]).unwrap_err();
+        assert!(err.contains("--cuda-graphs requires --expert-sim"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--graph-update"]).unwrap_err();
+        assert!(err.contains("--graph-update requires --expert-sim"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--graph-clone"]).unwrap_err();
+        assert!(err.contains("--graph-clone requires --expert-sim"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--timing-events"]).unwrap_err();
+        assert!(err.contains("--timing-events requires --expert-sim"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--expert-sim", "--graph-update=1"]).unwrap_err();
+        assert!(
+            err.contains("--graph-update does not take a value"),
+            "{err}"
+        );
     }
 
     #[test]

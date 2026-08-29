@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine CUDA graphs, ITL SLO, shared-prefix intern
+
+`--expert-sim` captures per-page GEMM graphs on the Engine path
+(`graph_launches=`). `--graph-update` parks a leaf on evict and
+`cudaGraphExecUpdate`s the next miss; `--graph-clone` clones before
+instantiate; `--timing-events` records copy elapsed. `--cuda-graphs` is
+the discoverable no-op (graphs are on by default). `--itl-slo-ns` counts
+later-token misses (`itl_slo_miss=`; does not drop). Batch-128 sequences
+that share a `[1, 2]` first KV page intern more than disjoint 3-grams.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine `TieredStore`
 
 Engine parks `LiveStore::Tiered` the same way as CachedStore. Two

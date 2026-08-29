@@ -15,12 +15,13 @@ use crate::cli::InferArgs;
 use crate::decode::{greedy_generate_slot, KvCache, Llama, LlamaError};
 use crate::gguf::load_gguf_owned;
 use crate::serve_engine;
+use crate::store_attach::GpuCli;
 use crate::template::ChatMessage;
 use crate::tok::Tokenizer;
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--trace-out FILE]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
@@ -36,6 +37,11 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --decode-first    hold leftover prefill while any live sequence is decoding (`--engine`)
       --slo-reject      drop waiters whose gpu-sim queue wait meets `--ttft-slo-ns` (`--engine`)
       --ttft-slo-ns N   virtual-ns TTFT budget (`--slo-reject`; needs `--expert-sim`)
+      --itl-slo-ns N    count later-token gaps over this budget (`--engine`; `--expert-sim`)
+      --cuda-graphs     document default GEMM graph capture (`--expert-sim`; always on)
+      --graph-update    cudaGraphExecUpdate parked leaves (`--expert-sim`)
+      --graph-clone     cudaGraphClone before instantiate (`--expert-sim`)
+      --timing-events   cudaEventElapsedTime on copy start/end (`--expert-sim`)
       --trace-out FILE  append batched MoE ExpertAccess JSONL (`--engine`)
 
 POST /generate takes {\"prompt\": TEXT} or, to render the model's own
@@ -51,7 +57,9 @@ completed blocks so a later prompt can hit them after a rewind (`page_hits`).
 `--prefill-chunk` interleaves long prefills with decode. `--decode-first` holds
 leftover prefill while any live sequence is already decoding. `--slo-reject` /
 `--ttft-slo-ns` drop a waiter whose gpu-sim queue wait meets the TTFT budget
-(`--expert-sim`). `--trace-out` writes
+(`--expert-sim`). `--itl-slo-ns` counts later-token ITL misses (does not drop).
+`--cuda-graphs` / `--graph-update` / `--graph-clone` / `--timing-events` are
+the same SimulatedGpuStore knobs as `gguf_gemv engine`. `--trace-out` writes
 router JSONL as sequences finish. Not a production inference server.
 ";
 
@@ -60,6 +68,10 @@ const IO_TIMEOUT_SECS: u64 = 30;
 
 /// Parsed `serve` invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "ServeArgs is the parsed CLI record; boxing would churn every match"
+)]
 pub enum ServeCmd {
     /// `--help` / `-h`.
     Help,
@@ -101,6 +113,14 @@ pub struct ServeArgs {
     pub slo_reject: bool,
     /// Virtual-ns TTFT budget with `--slo-reject`. `None` never drops.
     pub ttft_slo_ns: Option<u64>,
+    /// Later-token gap budget. Misses increment `Engine::itl_slo_miss`.
+    pub itl_slo_ns: Option<u64>,
+    /// `cudaGraphExecUpdate` parked GEMM leaves (`--expert-sim`).
+    pub graph_update: bool,
+    /// `cudaGraphClone` before instantiate (`--expert-sim`).
+    pub graph_clone: bool,
+    /// Timing-on copy events (`--expert-sim`).
+    pub timing_events: bool,
     /// Append Engine MoE traces as JSONL (`--engine`). `None` leaves tracing off.
     pub trace_out: Option<String>,
 }
@@ -144,9 +164,104 @@ impl From<std::io::Error> for ServeError {
     }
 }
 
+struct ServeNeed {
+    engine: bool,
+    expert_sim: bool,
+    expert_8gpu: bool,
+    has_slots: bool,
+    has_bytes: bool,
+    has_max: bool,
+    prefill_chunk: usize,
+    decode_first: bool,
+    slo_reject: bool,
+    has_ttft: bool,
+    has_itl: bool,
+    has_trace: bool,
+    gpu: GpuCli,
+}
+
+fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
+    if n.has_max && !n.engine {
+        return usage_err("--max-seqs requires --engine");
+    }
+    if n.has_slots && !n.engine {
+        return usage_err("--expert-slots requires --engine");
+    }
+    if n.expert_sim && !n.engine {
+        return usage_err("--expert-sim requires --engine");
+    }
+    if n.expert_8gpu && !n.engine {
+        return usage_err("--expert-8gpu requires --engine");
+    }
+    if n.has_bytes && !n.engine {
+        return usage_err("--expert-bytes requires --engine");
+    }
+    if n.expert_8gpu && !n.expert_sim {
+        return usage_err("--expert-8gpu requires --expert-sim");
+    }
+    if n.has_bytes && !n.expert_sim {
+        return usage_err("--expert-bytes requires --expert-sim");
+    }
+    if n.prefill_chunk > 0 && !n.engine {
+        return usage_err("--prefill-chunk requires --engine");
+    }
+    if n.decode_first && !n.engine {
+        return usage_err("--decode-first requires --engine");
+    }
+    if n.slo_reject && !n.engine {
+        return usage_err("--slo-reject requires --engine");
+    }
+    if n.has_ttft && !n.engine {
+        return usage_err("--ttft-slo-ns requires --engine");
+    }
+    if n.slo_reject && !n.has_ttft {
+        return usage_err("--slo-reject requires --ttft-slo-ns");
+    }
+    if n.has_ttft && !n.slo_reject {
+        return usage_err("--ttft-slo-ns requires --slo-reject");
+    }
+    if (n.slo_reject || n.has_ttft) && !n.expert_sim {
+        return usage_err("--slo-reject requires --expert-sim");
+    }
+    if n.has_itl && !n.engine {
+        return usage_err("--itl-slo-ns requires --engine");
+    }
+    if n.has_itl && !n.expert_sim {
+        return usage_err("--itl-slo-ns requires --expert-sim");
+    }
+    if n.gpu.cuda_graphs && !n.engine {
+        return usage_err("--cuda-graphs requires --engine");
+    }
+    if n.gpu.cuda_graphs && !n.expert_sim {
+        return usage_err("--cuda-graphs requires --expert-sim");
+    }
+    if n.gpu.graph_update && !n.engine {
+        return usage_err("--graph-update requires --engine");
+    }
+    if n.gpu.graph_update && !n.expert_sim {
+        return usage_err("--graph-update requires --expert-sim");
+    }
+    if n.gpu.graph_clone && !n.engine {
+        return usage_err("--graph-clone requires --engine");
+    }
+    if n.gpu.graph_clone && !n.expert_sim {
+        return usage_err("--graph-clone requires --expert-sim");
+    }
+    if n.gpu.timing_events && !n.engine {
+        return usage_err("--timing-events requires --engine");
+    }
+    if n.gpu.timing_events && !n.expert_sim {
+        return usage_err("--timing-events requires --expert-sim");
+    }
+    if n.has_trace && !n.engine {
+        return usage_err("--trace-out requires --engine");
+    }
+    Ok(())
+}
+
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--trace-out FILE]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--trace-out FILE]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -168,6 +283,8 @@ where
     let mut decode_first = false;
     let mut slo_reject = false;
     let mut ttft_slo_ns = None;
+    let mut itl_slo_ns = None;
+    let mut gpu = GpuCli::default();
     let mut trace_out = None;
     let mut it = args.into_iter();
     while let Some(raw) = it.next() {
@@ -264,6 +381,18 @@ where
                 }
                 ttft_slo_ns = Some(n);
             }
+            "--itl-slo-ns" => {
+                let n = parse_u64("itl-slo-ns", &opt_value("itl-slo-ns", inline, &mut it)?)?;
+                if n == 0 {
+                    return usage_err("itl-slo-ns must be > 0");
+                }
+                itl_slo_ns = Some(n);
+            }
+            "--cuda-graphs" | "--graph-update" | "--graph-clone" | "--timing-events" => {
+                if let Err(e) = gpu.apply(key, inline) {
+                    return usage_err(&e);
+                }
+            }
             "--trace-out" => {
                 trace_out = Some(opt_value("trace-out", inline, &mut it)?);
             }
@@ -281,51 +410,21 @@ where
     let Some(path) = path else {
         return usage_err("missing GGUF path");
     };
-    if max_seqs.is_some() && !engine {
-        return usage_err("--max-seqs requires --engine");
-    }
-    if expert_slots.is_some() && !engine {
-        return usage_err("--expert-slots requires --engine");
-    }
-    if expert_sim && !engine {
-        return usage_err("--expert-sim requires --engine");
-    }
-    if expert_8gpu && !engine {
-        return usage_err("--expert-8gpu requires --engine");
-    }
-    if expert_bytes.is_some() && !engine {
-        return usage_err("--expert-bytes requires --engine");
-    }
-    if expert_8gpu && !expert_sim {
-        return usage_err("--expert-8gpu requires --expert-sim");
-    }
-    if expert_bytes.is_some() && !expert_sim {
-        return usage_err("--expert-bytes requires --expert-sim");
-    }
-    if prefill_chunk > 0 && !engine {
-        return usage_err("--prefill-chunk requires --engine");
-    }
-    if decode_first && !engine {
-        return usage_err("--decode-first requires --engine");
-    }
-    if slo_reject && !engine {
-        return usage_err("--slo-reject requires --engine");
-    }
-    if ttft_slo_ns.is_some() && !engine {
-        return usage_err("--ttft-slo-ns requires --engine");
-    }
-    if slo_reject && ttft_slo_ns.is_none() {
-        return usage_err("--slo-reject requires --ttft-slo-ns");
-    }
-    if ttft_slo_ns.is_some() && !slo_reject {
-        return usage_err("--ttft-slo-ns requires --slo-reject");
-    }
-    if (slo_reject || ttft_slo_ns.is_some()) && !expert_sim {
-        return usage_err("--slo-reject requires --expert-sim");
-    }
-    if trace_out.is_some() && !engine {
-        return usage_err("--trace-out requires --engine");
-    }
+    check_serve_need(&ServeNeed {
+        engine,
+        expert_sim,
+        expert_8gpu,
+        has_slots: expert_slots.is_some(),
+        has_bytes: expert_bytes.is_some(),
+        has_max: max_seqs.is_some(),
+        prefill_chunk,
+        decode_first,
+        slo_reject,
+        has_ttft: ttft_slo_ns.is_some(),
+        has_itl: itl_slo_ns.is_some(),
+        has_trace: trace_out.is_some(),
+        gpu,
+    })?;
     Ok(ServeCmd::Run(ServeArgs {
         path,
         n_predict,
@@ -342,6 +441,10 @@ where
         decode_first,
         slo_reject,
         ttft_slo_ns,
+        itl_slo_ns,
+        graph_update: gpu.graph_update,
+        graph_clone: gpu.graph_clone,
+        timing_events: gpu.timing_events,
         trace_out,
     }))
 }
@@ -1053,6 +1156,10 @@ mod tests {
             decode_first: false,
             slo_reject: false,
             ttft_slo_ns: None,
+            itl_slo_ns: None,
+            graph_update: false,
+            graph_clone: false,
+            timing_events: false,
             trace_out: None,
         }
     }
@@ -1126,6 +1233,8 @@ mod tests {
         assert!(!a.decode_first);
         assert!(!a.slo_reject);
         assert_eq!(a.ttft_slo_ns, None);
+        assert_eq!(a.itl_slo_ns, None);
+        assert!(!a.graph_update);
         assert_eq!(a.trace_out, None);
     }
 
@@ -1158,6 +1267,10 @@ mod tests {
                 decode_first: false,
                 slo_reject: false,
                 ttft_slo_ns: None,
+                itl_slo_ns: None,
+                graph_update: false,
+                graph_clone: false,
+                timing_events: false,
                 trace_out: None,
             }
         );
@@ -1235,6 +1348,10 @@ mod tests {
                 decode_first: false,
                 slo_reject: false,
                 ttft_slo_ns: None,
+                itl_slo_ns: None,
+                graph_update: false,
+                graph_clone: false,
+                timing_events: false,
                 trace_out: None,
             }
         );
@@ -1310,6 +1427,28 @@ mod tests {
         ]);
         assert!(a.slo_reject);
         assert_eq!(a.ttft_slo_ns, Some(8));
+        let err = parse_serve_args(["m.gguf", "--itl-slo-ns", "1"]).unwrap_err();
+        assert!(err.contains("--itl-slo-ns requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--itl-slo-ns", "1"]).unwrap_err();
+        assert!(err.contains("--itl-slo-ns requires --expert-sim"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--graph-update"]).unwrap_err();
+        assert!(err.contains("--graph-update requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--graph-update"]).unwrap_err();
+        assert!(err.contains("--graph-update requires --expert-sim"), "{err}");
+        let a = run(&[
+            "m.gguf",
+            "--engine",
+            "--expert-sim",
+            "--cuda-graphs",
+            "--graph-update",
+            "--graph-clone",
+            "--timing-events",
+            "--itl-slo-ns=4",
+        ]);
+        assert!(a.graph_update);
+        assert!(a.graph_clone);
+        assert!(a.timing_events);
+        assert_eq!(a.itl_slo_ns, Some(4));
     }
 
     #[test]

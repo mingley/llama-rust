@@ -4,7 +4,8 @@
 //! several `POST /generate` bodies onto one interned pool so prefills and
 //! decodes GEMM together. `"stream": true` is HTTP/1.1 chunked NDJSON token
 //! lines then a final `generated` object. `--prefill-chunk`, `--decode-first`,
-//! and `--trace-out` match `gguf_gemv engine`. No Tokio, no keep-alive, no
+//! `--slo-reject`, `--itl-slo-ns`, graph knobs, and `--trace-out` match
+//! `gguf_gemv engine`. No Tokio, no keep-alive, no
 //! OpenAI SDK surface.
 
 use std::fs::OpenOptions;
@@ -18,7 +19,7 @@ use crate::serve::{
     json_generated, json_token, normalize_path, parse_gen_req, try_parse_http_request, HttpRequest,
     ServeArgs, ServeError, MAX_REQ,
 };
-use crate::store_attach::{attach_store, StoreAttach};
+use crate::store_attach::{attach_store, gpu_knobs, StoreAttach};
 use crate::tok::Tokenizer;
 
 /// Poll until the process exits. Listener must already be non-blocking.
@@ -88,6 +89,7 @@ fn engine_cfg(tok: &Tokenizer, args: &ServeArgs) -> EngineCfg {
         decode_first: args.decode_first,
         slo_reject: args.slo_reject,
         ttft_slo_ns: args.ttft_slo_ns,
+        itl_slo_ns: args.itl_slo_ns,
     }
 }
 
@@ -250,6 +252,7 @@ impl<'a> EngineHttp<'a> {
                 expert_sim: args.expert_sim,
                 expert_8gpu: args.expert_8gpu,
                 expert_bytes: args.expert_bytes,
+                gpu_cfg: gpu_knobs(args.graph_update, args.graph_clone, args.timing_events),
             },
         )
         .map_err(ServeError::Infer)?;
@@ -536,6 +539,10 @@ mod tests {
             decode_first: false,
             slo_reject: false,
             ttft_slo_ns: None,
+            itl_slo_ns: None,
+            graph_update: false,
+            graph_clone: false,
+            timing_events: false,
             trace_out: None,
         }
     }

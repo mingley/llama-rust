@@ -20,9 +20,11 @@
 //! then runs [`plan_placement`](expertvm::plan_placement) on those pins: D2D onto GPU0
 //! when weight bytes beat activation volume, otherwise leave them on the striped home.
 //! SimulatedGpuStore scores sample the virtual clock at each generated token
-//! (`ttft_ns` / `itl_ns` / `ns_per_token`; not `$/M tokens`).
+//! (`ttft_ns` / `itl_ns` / `ns_per_token`; not `$/M tokens`). Default GPU
+//! stores capture per-page GEMM graphs (`Engine::graph_launches`).
 //! [`EngineCfg::slo_reject`] drops waiters whose gpu-sim queue wait already
-//! meets [`EngineCfg::ttft_slo_ns`].
+//! meets [`EngineCfg::ttft_slo_ns`]. [`EngineCfg::itl_slo_ns`] counts later-token
+//! gaps that miss the ITL budget (`Engine::itl_slo_miss`; does not drop).
 //! A full pool **preempts** another sequence (unique blocks drop; intern pins remain)
 //! and later re-prefills
 //! plus replays already sampled greedy tokens. Greedy ids must match
@@ -76,6 +78,10 @@ pub struct EngineCfg {
     pub slo_reject: bool,
     /// Virtual-ns TTFT budget for [`EngineCfg::slo_reject`]. `None` never drops.
     pub ttft_slo_ns: Option<u64>,
+    /// Later-token gap budget. Misses increment [`Engine::itl_slo_miss`].
+    ///
+    /// Does not drop sequences. No-op without a SimulatedGpuStore clock.
+    pub itl_slo_ns: Option<u64>,
 }
 
 impl EngineCfg {
@@ -92,6 +98,7 @@ impl EngineCfg {
             decode_first: false,
             slo_reject: false,
             ttft_slo_ns: None,
+            itl_slo_ns: None,
         }
     }
 }
@@ -168,6 +175,8 @@ pub struct EngineStats {
 /// stay on the striped home (`StoreMetrics::dispatches`). [`LiveStore::migrate`]
 /// stays unconditional. 1-GPU profiles skip. SimulatedGpuStore token samples
 /// fill [`Engine::seq_ttft_ns`] / [`Engine::seq_itl_ns`] and the score line.
+/// Default GPU GEMMs capture graphs ([`Engine::graph_launches`]).
+/// [`EngineCfg::itl_slo_ns`] counts later-token misses ([`Engine::itl_slo_miss`]).
 pub struct Engine<'a> {
     llama: &'a Llama,
     pool: PagedKvPool,
@@ -179,6 +188,7 @@ pub struct Engine<'a> {
     next_id: u32,
     preempts: u64,
     rejected: u64,
+    itl_slo_miss: u64,
     stats: EngineStats,
     expert_store: Option<LiveStore>,
     prefetch: PrefetchChain,
@@ -207,6 +217,7 @@ impl<'a> Engine<'a> {
             next_id: 0,
             preempts: 0,
             rejected: 0,
+            itl_slo_miss: 0,
             stats: EngineStats::default(),
             expert_store: None,
             prefetch: PrefetchChain::default(),
@@ -321,6 +332,45 @@ impl<'a> Engine<'a> {
     #[must_use]
     pub fn rejected(&self) -> u64 {
         self.rejected
+    }
+
+    /// Later-token gaps that missed [`EngineCfg::itl_slo_ns`].
+    #[must_use]
+    pub fn itl_slo_miss(&self) -> u64 {
+        self.itl_slo_miss
+    }
+
+    /// Captured GEMM graph launches on an attached SimulatedGpuStore.
+    #[must_use]
+    pub fn graph_launches(&self) -> u64 {
+        self.live_store().map_or(0, LiveStore::graph_launches)
+    }
+
+    /// Parked-exec graph updates on an attached SimulatedGpuStore.
+    #[must_use]
+    pub fn graph_updates(&self) -> u64 {
+        self.live_store().map_or(0, LiveStore::graph_updates)
+    }
+
+    /// Graph clones before instantiate on an attached SimulatedGpuStore.
+    #[must_use]
+    pub fn graph_clones(&self) -> u64 {
+        self.live_store().map_or(0, LiveStore::graph_clones)
+    }
+
+    /// Timing-on copy elapsed ns on an attached SimulatedGpuStore.
+    #[must_use]
+    pub fn copy_elapsed_ns(&self) -> u64 {
+        self.live_store().map_or(0, LiveStore::copy_elapsed_ns)
+    }
+
+    fn live_store(&self) -> Option<&LiveStore> {
+        self.expert_store.as_ref().or_else(|| {
+            self.slots
+                .iter()
+                .flatten()
+                .find_map(|s| s.cache.attached_store())
+        })
     }
 
     /// Cross-sequence GEMM counters for this engine.
@@ -954,8 +1004,21 @@ impl<'a> Engine<'a> {
         let Some(ns) = self.sample_sim_clock()? else {
             return Ok(());
         };
+        self.note_itl_slo(id, ns);
         self.seq_token_ns.entry(id).or_default().push(ns);
         Ok(())
+    }
+
+    fn note_itl_slo(&mut self, id: SeqId, ns: u64) {
+        let Some(slo) = self.cfg.itl_slo_ns else {
+            return;
+        };
+        let Some(prev) = self.seq_token_ns.get(&id).and_then(|v| v.last()).copied() else {
+            return;
+        };
+        if ns.saturating_sub(prev) > slo {
+            self.itl_slo_miss = self.itl_slo_miss.saturating_add(1);
+        }
     }
 
     fn sample_sim_clock(&mut self) -> Result<Option<u64>, LlamaError> {
@@ -1201,8 +1264,8 @@ mod tests {
     use crate::gguf::load_gguf_owned;
     use crate::tok::Tokenizer;
     use expertvm::{
-        CachedStore, HardwareProfile, LiveStore, Score, SimulatedGpuStore, StoreMetrics,
-        TieredStore, Trace,
+        CachedStore, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore, Score, SimulatedGpuStore,
+        StoreMetrics, TieredStore, Trace,
     };
 
     struct GpuEngineOut {
@@ -1528,7 +1591,11 @@ mod tests {
         assert_eq!(eng.rejected(), 0);
     }
 
-    fn mixed_gpu_decode_itl(bytes: Vec<u8>, decode_first: bool) -> (u64, Score, usize) {
+    fn mixed_gpu_decode_itl(
+        bytes: Vec<u8>,
+        decode_first: bool,
+        itl_slo_ns: Option<u64>,
+    ) -> (u64, Score, usize, u64) {
         let prompt_a = [1u32, 2];
         let prompt_b = [1u32, 2, 3, 4, 5, 0, 1, 2];
         let g = load_gguf_owned(bytes).expect("owned");
@@ -1538,6 +1605,7 @@ mod tests {
         cfg.max_seqs = 2;
         cfg.prefill_chunk = 1;
         cfg.decode_first = decode_first;
+        cfg.itl_slo_ns = itl_slo_ns;
         let mut eng = Engine::new(&model, cfg).expect("eng");
         let gpu = SimulatedGpuStore::new(
             model.expert_direct_store().expect("c"),
@@ -1552,14 +1620,15 @@ mod tests {
         eng.run().expect("run");
         let n_gen = eng.generated(a).expect("ga").len();
         let itl = eng.seq_itl_ns(a).expect("A ITL");
+        let miss = eng.itl_slo_miss();
         let score = eng.expert_store_score().expect("sc").expect("sim");
-        (itl, score, n_gen)
+        (itl, score, n_gen, miss)
     }
 
     #[test]
     fn engine_decode_first_shortens_mixed_gpu_itl() {
-        let mixed = mixed_gpu_decode_itl(tiny_qwen3moe_2layer_gguf(), false);
-        let prefer = mixed_gpu_decode_itl(tiny_qwen3moe_2layer_gguf(), true);
+        let mixed = mixed_gpu_decode_itl(tiny_qwen3moe_2layer_gguf(), false, None);
+        let prefer = mixed_gpu_decode_itl(tiny_qwen3moe_2layer_gguf(), true, None);
         assert_eq!(mixed.2, 4);
         assert_eq!(prefer.2, 4);
         assert!(prefer.1.ttft_ns.is_some(), "{}", prefer.1.line());
@@ -1572,6 +1641,26 @@ mod tests {
             mixed.0,
             prefer.1.line(),
             mixed.1.line()
+        );
+    }
+
+    #[test]
+    fn engine_itl_slo_miss_counts_mixed_prefill() {
+        let mixed = mixed_gpu_decode_itl(tiny_qwen3moe_2layer_gguf(), false, None);
+        let prefer = mixed_gpu_decode_itl(tiny_qwen3moe_2layer_gguf(), true, None);
+        let slo = prefer
+            .0
+            .saturating_add(mixed.0)
+            .checked_div(2)
+            .unwrap_or(1)
+            .max(1);
+        let mixed_miss = mixed_gpu_decode_itl(tiny_qwen3moe_2layer_gguf(), false, Some(slo)).3;
+        let prefer_miss = mixed_gpu_decode_itl(tiny_qwen3moe_2layer_gguf(), true, Some(slo)).3;
+        assert!(
+            mixed_miss > prefer_miss,
+            "leftover prefill must miss a mid ITL SLO more than decode_first; mixed={mixed_miss} prefer={prefer_miss} slo={slo} mixed_itl={} prefer_itl={}",
+            mixed.0,
+            prefer.0
         );
     }
 
@@ -1692,6 +1781,56 @@ mod tests {
     fn engine_batch_128_tiered_matches_independent() {
         run_batch_128(tiny_qwen3moe_gguf(), Batch128Store::Tiered);
         run_batch_128(tiny_qwen3moe_2layer_gguf(), Batch128Store::Tiered);
+    }
+
+    fn shared_prefix(i: u32) -> Vec<u32> {
+        vec![1, 2, i % 6]
+    }
+
+    fn disjoint_prefix(i: u32) -> Vec<u32> {
+        vec![i % 6, (i / 6) % 6, (i / 36) % 6]
+    }
+
+    fn intern_hits_128(prompt: fn(u32) -> Vec<u32>) -> u64 {
+        let g = load_gguf_owned(tiny_llama_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let n = 128u32;
+        let n_predict = 1usize;
+        let mut expected = Vec::new();
+        for i in 0..n {
+            expected.push(independent(&model, &tok, &prompt(i), n_predict));
+        }
+        let mut cfg = EngineCfg::tiny();
+        cfg.max_seqs = 8;
+        cfg.pool_blocks = 256;
+        cfg.eos = tok.eos;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        let mut ids = Vec::new();
+        for i in 0..n {
+            ids.push(eng.add(&prompt(i), n_predict).expect("add"));
+        }
+        eng.run().expect("run");
+        for (i, id) in ids.iter().copied().enumerate() {
+            let got = eng.take(id).expect("take").generated;
+            let exp = expected.get(i).expect("exp");
+            assert_eq!(&got, exp, "seq {i}");
+        }
+        eng.pool().hits()
+    }
+
+    #[test]
+    fn engine_batch_128_shared_prefix_interns_more_than_disjoint() {
+        let shared = intern_hits_128(shared_prefix);
+        let disjoint = intern_hits_128(disjoint_prefix);
+        assert!(
+            shared > disjoint,
+            "shared [1,2] first page must intern more than disjoint 3-grams; shared={shared} disjoint={disjoint}"
+        );
+        assert!(
+            shared > 8,
+            "128 sequences sharing a completed page must intern-hit, hits={shared}"
+        );
     }
 
     #[test]
@@ -1835,6 +1974,11 @@ mod tests {
             score.bytes_moved > 0 || score.hbm_peak > 0,
             "H2D / HBM must be billed, {}",
             score.line()
+        );
+        assert!(
+            eng.graph_launches() >= 2,
+            "default SimulatedGpuStore captures GEMM graphs, launches={}",
+            eng.graph_launches()
         );
     }
 
@@ -2221,5 +2365,87 @@ mod tests {
             "traced Engine must GEMM together, peak={}",
             eng.stats().gemm_peak
         );
+    }
+
+    struct GpuKnobOut {
+        launches: u64,
+        updates: u64,
+        clones: u64,
+        copy_elapsed_ns: u64,
+    }
+
+    fn two_seq_gpu_knobs(slots: usize, gpu_cfg: GpuStoreCfg) -> GpuKnobOut {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        let g = load_gguf_owned(tiny_qwen3moe_2layer_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let exp_a = independent(&model, &tok, &tokens_a, 2);
+        let exp_b = independent(&model, &tok, &tokens_b, 2);
+        let mut cfg = EngineCfg::tiny();
+        cfg.eos = tok.eos;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        let gpu = SimulatedGpuStore::with_cfg(
+            model.expert_direct_store().expect("c"),
+            slots,
+            HardwareProfile::example_h100_sxm(),
+            4096,
+            GpuFill::Pinned,
+            gpu_cfg,
+        )
+        .expect("gpu");
+        eng.attach_expert_store(LiveStore::simulated(gpu));
+        let a = eng.add(&tokens_a, 2).expect("a");
+        let b = eng.add(&tokens_b, 2).expect("b");
+        eng.run().expect("run");
+        assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+        assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+        GpuKnobOut {
+            launches: eng.graph_launches(),
+            updates: eng.graph_updates(),
+            clones: eng.graph_clones(),
+            copy_elapsed_ns: eng.copy_elapsed_ns(),
+        }
+    }
+
+    #[test]
+    fn engine_gpu_graph_update_after_tight_slots() {
+        let out = two_seq_gpu_knobs(
+            2,
+            GpuStoreCfg {
+                graph_update: true,
+                ..GpuStoreCfg::default()
+            },
+        );
+        assert!(
+            out.updates > 0,
+            "tight slots must park+update GEMM graphs, updates={} launches={}",
+            out.updates,
+            out.launches
+        );
+        assert!(out.launches >= 2, "launches={}", out.launches);
+    }
+
+    #[test]
+    fn engine_gpu_graph_clone_and_timing_events() {
+        let out = two_seq_gpu_knobs(
+            8,
+            GpuStoreCfg {
+                graph_clone: true,
+                timing_events: true,
+                ..GpuStoreCfg::default()
+            },
+        );
+        assert!(
+            out.clones > 0,
+            "graph_clone must copy captures, clones={}",
+            out.clones
+        );
+        assert!(
+            out.copy_elapsed_ns > 0,
+            "timing_events must record copy elapsed, ns={}",
+            out.copy_elapsed_ns
+        );
+        assert!(out.launches >= 2, "launches={}", out.launches);
     }
 }

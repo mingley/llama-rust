@@ -900,6 +900,21 @@ model, do not celebrate the sim.
     writer-tiny Qwen3MoE (1-layer and 2-layer) with in-memory paging
     (`WeightStorage::mmap` still parked). Store hits, GEMM together.
     Dual score still has no `$/M tokens`.
+48. [x] Engine SimulatedGpuStore CUDA graphs: default `--expert-sim` captures
+    per-page GEMM graphs (`Engine::graph_launches`). `--graph-update` /
+    `--graph-clone` / `--timing-events` / `--cuda-graphs` match
+    `GpuStoreCfg` / `expertvm sim`. Tight slots park+update. Identity stays.
+    Dual score still has no `$/M tokens`.
+49. [x] Engine `itl_slo_ns`: count later-token gaps over a virtual-ns budget
+    (`Engine::itl_slo_miss`; does not drop). Mixed leftover prefill misses
+    a mid SLO more than `decode_first`. `gguf_gemv engine --itl-slo-ns N
+    --expert-sim` / `serve --engine --expert-sim --itl-slo-ns`. Dual score
+    still has no `$/M tokens`.
+50. [x] Engine batch-128 shared-prefix intern: 128 sequences with a shared
+    `[1, 2]` first page intern-hit more completed KV pages than disjoint
+    3-grams (`max_seqs=8`). Greedy ids still match independent decode.
+    Distinct from JSONL `"p"` / `--prefix-cache`. Dual score still has no
+    `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
