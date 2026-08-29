@@ -715,6 +715,8 @@ fn vmm_evict_reacquires_same_va() {
         managed: false,
         vmm: true,
         vmm_page: 0,
+        pageable: false,
+        accessed_by: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -2511,4 +2513,246 @@ fn store_replay_markov_prefetch_beats_demand() {
         none.metrics.hits
     );
     assert!(mk.metrics.prefetches > 0);
+}
+
+#[test]
+fn simulated_gpu_store_accessed_by_migrate_keeps_home() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::example_2node_rdma();
+    let bytes = 4096u64;
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        p,
+        bytes,
+        GpuFill::Managed,
+        GpuStoreCfg {
+            accessed_by: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    let _p = gpu.acquire(k0).expect("acq");
+    assert!(gpu.page_accessed_by(k0, DeviceId(1)));
+    gpu.migrate(k0, DeviceId(1)).expect("mig");
+    assert_eq!(gpu.device_of(k0), Some(DeviceId(1)));
+    let _p = gpu.acquire(k0).expect("gemm dest");
+    let score = gpu.score().expect("score");
+    assert_eq!(score.bytes_moved, bytes);
+    assert_eq!(score.hbm_peak, bytes);
+    assert!(gpu.page_resident(k0, DeviceId(0)));
+    assert!(!gpu.page_resident(k0, DeviceId(1)));
+    assert_eq!(gpu.hbm_used(DeviceId(1)).expect("d1"), 0);
+}
+
+#[test]
+fn simulated_gpu_store_accessed_by_pin_skips_dest_hbm() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        2,
+        HardwareProfile::example_8xh100_nvlink(),
+        4096,
+        GpuFill::Managed,
+        GpuStoreCfg {
+            accessed_by: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    gpu.pin_hot(&[k0]).expect("pin");
+    let _p = gpu.acquire(k0).expect("hit");
+    let score = gpu.score().expect("score");
+    assert_eq!(score.bytes_moved, 4096);
+    assert_eq!(gpu.hbm_used(DeviceId(1)).expect("d1"), 0);
+    assert!(gpu.page_accessed_by(k0, DeviceId(1)));
+}
+
+#[test]
+fn simulated_gpu_store_legacy_null_serializes_copy_and_compute() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let bytes = 32u64 << 20;
+    let run = |legacy_null: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            bytes,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                legacy_null,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let _a = gpu.acquire(ExpertKey::new(0, 0)).expect("k0");
+        let _b = gpu.acquire(ExpertKey::new(0, 1)).expect("k1");
+        gpu.score().expect("score")
+    };
+    let def = run(false);
+    let legacy = run(true);
+    assert!(
+        legacy.wall_ns > def.wall_ns,
+        "legacy={} default={}",
+        legacy.wall_ns,
+        def.wall_ns
+    );
+}
+
+#[test]
+fn sim_replay_accessed_by_maps_peer_without_migrating() {
+    use crate::replay::Touch;
+    use crate::sim_replay::{apply_touch, PageHandle, TouchArgs};
+    use gpu_sim::{DType, KernelKind, Sim, StreamId};
+    use std::collections::BTreeMap;
+
+    let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+    let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
+    let mut graphs = BTreeMap::new();
+    let args = TouchArgs {
+        d: DeviceId(0),
+        s: StreamId(0),
+        bytes: 4096,
+        slots: 1,
+        sync_alloc: false,
+        mapped: false,
+        managed: true,
+        vmm: false,
+        vmm_page: 0,
+        pageable: false,
+        accessed_by: true,
+    };
+    let mut next_event = 1u32;
+    let k0 = ExpertKey::new(0, 0);
+    apply_touch(
+        &mut sim,
+        &mut handles,
+        &mut graphs,
+        args,
+        k0,
+        Touch::Miss { evicted: None },
+        &mut next_event,
+    )
+    .expect("miss");
+    let id = handles.get(&k0).expect("page").id;
+    sim.synchronize().expect("prefetch");
+    assert!(sim.is_accessed_by(id, DeviceId(1)).expect("advise"));
+    let _k = sim
+        .kernel(
+            DeviceId(1),
+            KernelKind::GroupedMoeGemm {
+                experts: 1,
+                tokens_per_expert: 1,
+                hidden: 64,
+                ff: 64,
+                dtype: DType::Fp16,
+            },
+            &[id],
+            &[],
+            StreamId(0),
+        )
+        .expect("remote gemm");
+    sim.synchronize().expect("gemm");
+    assert!(sim.is_resident(id, DeviceId(0)).expect("home"));
+    assert!(!sim.is_resident(id, DeviceId(1)).expect("dest"));
+    assert_eq!(sim.hbm_used(DeviceId(1)).expect("d1"), 0);
+}
+
+#[test]
+fn sim_replay_pageable_h2d_is_slower_than_pinned() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let bytes = 32u64 << 20;
+    let run = |pageable: bool| {
+        sim_replay_cfg(
+            &t,
+            p.clone(),
+            SimCfg {
+                pageable,
+                ..SimCfg::lru(2, bytes, 0)
+            },
+        )
+        .expect("sim")
+    };
+    let pin = run(false);
+    let page = run(true);
+    assert_eq!(pin.hits, page.hits);
+    assert_eq!(pin.misses, page.misses);
+    assert!(
+        page.sim_ns > pin.sim_ns,
+        "pageable={} pinned={}",
+        page.sim_ns,
+        pin.sim_ns
+    );
+}
+
+#[test]
+fn sim_replay_legacy_null_serializes_seq_streams() {
+    let t = Trace {
+        events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],
+    };
+    let p = HardwareProfile::parse("gpus=1\ncopy_engines=1\n").expect("profile");
+    let cfg = |legacy_null: bool| SimCfg {
+        slots: 2,
+        bytes_per_expert: 32u64 << 20,
+        lookahead: 0,
+        seq_streams: true,
+        legacy_null,
+        ..SimCfg::lru(2, 32u64 << 20, 0)
+    };
+    let def = sim_replay_cfg(&t, p.clone(), cfg(false)).expect("def");
+    let legacy = sim_replay_cfg(&t, p, cfg(true)).expect("legacy");
+    assert_eq!(def.hits, legacy.hits);
+    assert_eq!(def.misses, legacy.misses);
+    assert!(
+        legacy.sim_ns > def.sim_ns,
+        "legacy={} default={}",
+        legacy.sim_ns,
+        def.sim_ns
+    );
+}
+
+#[test]
+fn schedule_managed_accessed_by_replicas_skip_dest_prefetch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0]), ev(2, 0, &[0])],
+    };
+    let p = HardwareProfile::example_8xh100_nvlink();
+    let bytes = 1u64 << 20;
+    let um = SimCfg {
+        managed: true,
+        ..SimCfg::lru(4, bytes, 0)
+    };
+    let ab = SimCfg {
+        accessed_by: true,
+        ..um
+    };
+    let stripe = striped(&t, 8);
+    let hot = with_hot_replicas(stripe.clone(), &t, 8, 200);
+    let plain =
+        schedule_placed(&t, p.clone(), um, SchedCfg::closed(0), Some(&stripe)).expect("stripe");
+    let prefetch =
+        schedule_placed(&t, p.clone(), um, SchedCfg::closed(0), Some(&hot)).expect("prefetch");
+    let mapped = schedule_placed(&t, p, ab, SchedCfg::closed(0), Some(&hot)).expect("accessed");
+    assert!(
+        prefetch.replay.bytes_moved > plain.replay.bytes_moved,
+        "prefetch={} stripe={}",
+        prefetch.replay.bytes_moved,
+        plain.replay.bytes_moved
+    );
+    assert_eq!(mapped.replay.bytes_moved, plain.replay.bytes_moved);
 }

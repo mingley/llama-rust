@@ -147,7 +147,8 @@ pub struct SimCfg {
     /// [`gpu_sim::MemAdvise::SetPreferredLocation`] so a remote read can
     /// keep the page on that GPU. `--place remote` GEMMs on GPU0 without a
     /// dest HBM copy. `--place replicas` uses
-    /// that dest prefetch; dest eviction is `drop_managed_copy`.
+    /// that dest prefetch; dest eviction is `drop_managed_copy`. [`Self::accessed_by`]
+    /// maps every GPU at fill so dest GEMMs read without a second copy.
     /// Hits/misses match H2D. [`crate::SimulatedGpuStore::new`] stays on pinned
     /// H2D; [`crate::SimulatedGpuStore::with_managed`] uses this path.
     pub managed: bool,
@@ -176,6 +177,21 @@ pub struct SimCfg {
     /// stays non-blocking; [`crate::SimulatedGpuStore::with_cfg`] with
     /// [`crate::GpuStoreCfg::blocking_streams`] marks the compute stream blocking.
     pub blocking_streams: bool,
+    /// Pageable `cudaMemcpyAsync` (`memcpy_host_to_device`) instead of pinned DMA.
+    ///
+    /// Host-synchronous (`pageable_permille`). [`crate::SimulatedGpuStore::new`]
+    /// stays pinned; [`crate::GpuStoreCfg::pageable`] is the store path.
+    pub pageable: bool,
+    /// [`gpu_sim::MemAdvise::SetAccessedBy`] on every GPU at a managed fill.
+    ///
+    /// Dest GEMMs may read without migrating. `--place replicas` skips dest
+    /// prefetch (no extra HBM). No-op unless [`Self::managed`].
+    /// [`crate::GpuStoreCfg::accessed_by`] is the store path.
+    pub accessed_by: bool,
+    /// CUDA legacy null stream (`set_legacy_null_stream`): NULL serializes
+    /// with every other stream. Off by default. [`crate::GpuStoreCfg::legacy_null`]
+    /// is the store path (copy NULL vs compute `StreamId(1)`).
+    pub legacy_null: bool,
 }
 
 impl SimCfg {
@@ -201,6 +217,9 @@ impl SimCfg {
             vmm_page: 0,
             host_func: false,
             blocking_streams: false,
+            pageable: false,
+            accessed_by: false,
+            legacy_null: false,
         }
     }
 }
@@ -249,6 +268,9 @@ pub fn sim_replay_cfg(
     if cfg.blocking_streams {
         sim.set_created_streams_blocking(n_streams)?;
     }
+    if cfg.legacy_null {
+        sim.set_legacy_null_stream(true);
+    }
     let mut args = TouchArgs {
         d,
         s,
@@ -259,6 +281,8 @@ pub fn sim_replay_cfg(
         managed: cfg.managed,
         vmm: cfg.vmm,
         vmm_page: cfg.vmm_page,
+        pageable: cfg.pageable,
+        accessed_by: cfg.accessed_by,
     };
     let mut token_ends: Vec<u64> = Vec::new();
     let mut ctr = ReplayCounters::default();
@@ -360,6 +384,10 @@ pub(crate) struct TouchArgs {
     pub vmm: bool,
     /// [`SimCfg::vmm_page`]: physical span for paged VMM (`0` = whole expert).
     pub vmm_page: u64,
+    /// [`SimCfg::pageable`]: host-sync pageable H2D.
+    pub pageable: bool,
+    /// [`SimCfg::accessed_by`]: `SetAccessedBy` on every GPU at a managed fill.
+    pub accessed_by: bool,
 }
 
 fn hbm_alloc(
@@ -398,6 +426,23 @@ fn hbm_h2d_pinned(
         )?;
     } else {
         let _c = sim.memcpy_pinned_to_device(device, alloc, bytes, stream)?;
+    }
+    Ok(())
+}
+
+fn hbm_h2d(sim: &mut Sim, args: TouchArgs, alloc: AllocId) -> Result<(), Error> {
+    if args.pageable {
+        let _id = sim.memcpy_host_to_device(args.d, alloc, args.bytes, args.s)?;
+        return Ok(());
+    }
+    hbm_h2d_pinned(sim, args.d, alloc, args.bytes, args.s, args.sync_alloc)
+}
+
+/// `cudaMemAdviseSetAccessedBy` on every GPU so a remote read does not migrate.
+pub(crate) fn advise_accessed_by(sim: &mut Sim, id: AllocId) -> Result<(), Error> {
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        sim.mem_advise(id, gpu_sim::MemAdvise::SetAccessedBy, DeviceId(g))?;
     }
     Ok(())
 }
@@ -492,6 +537,9 @@ pub(crate) fn apply_touch(
                 let id = sim.alloc_managed(args.bytes)?;
                 sim.mem_advise(id, gpu_sim::MemAdvise::SetReadMostly, args.d)?;
                 sim.mem_advise(id, gpu_sim::MemAdvise::SetPreferredLocation, args.d)?;
+                if args.accessed_by {
+                    advise_accessed_by(sim, id)?;
+                }
                 id
             } else if args.vmm {
                 if args.vmm_page > 0 && args.vmm_page < args.bytes {
@@ -508,7 +556,7 @@ pub(crate) fn apply_touch(
                     let _p = sim.prefetch(args.d, id, args.s)?;
                 }
                 (false, false) => {
-                    hbm_h2d_pinned(sim, args.d, id, args.bytes, args.s, args.sync_alloc)?;
+                    hbm_h2d(sim, args, id)?;
                 }
             }
             let _prev = handles.insert(
@@ -1011,6 +1059,7 @@ pub fn sim_remote_home_cfg(
                         stream: s,
                         sync_alloc: false,
                         managed: false,
+                        accessed_by: false,
                     },
                     reuse,
                     fan_in,
@@ -1055,6 +1104,8 @@ pub(crate) struct RemoteFetch {
     pub(crate) sync_alloc: bool,
     /// `cudaMallocManaged` + PreferredLocation on home; compute GEMM reads remotely.
     pub(crate) managed: bool,
+    /// [`SimCfg::accessed_by`]: map compute without a dest migrate.
+    pub(crate) accessed_by: bool,
 }
 
 pub(crate) fn remote_hit(
@@ -1158,6 +1209,9 @@ fn fill_remote_managed(
     let id = sim.alloc_managed(fetch.expert_bytes)?;
     sim.mem_advise(id, gpu_sim::MemAdvise::SetReadMostly, fetch.home)?;
     sim.mem_advise(id, gpu_sim::MemAdvise::SetPreferredLocation, fetch.home)?;
+    if fetch.accessed_by {
+        advise_accessed_by(sim, id)?;
+    }
     let _p = sim.prefetch(fetch.home, id, fetch.stream)?;
     if fetch.home != fetch.compute {
         wait_peer(sim, fetch.home, fetch.compute, fetch.stream, next_event)?;

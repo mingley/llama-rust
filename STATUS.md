@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — AccessedBy and legacy NULL on the store seam
+
+`GpuStoreCfg::accessed_by` / `SimCfg::accessed_by` is
+`cudaMemAdviseSetAccessedBy` on every GPU at a managed fill. Expert GEMMs
+are reads-only, so migrate retargets compute without dest prefetch or
+`drop_managed_copy` (home residency, dest HBM 0). Pin / `--place replicas`
+skip the dest copy. `legacy_null` is `set_legacy_null_stream` (copy NULL
+serializes with compute). `SimCfg::pageable` is the walker H2D path.
+`expertvm sim|schedule|store` take `--accessed-by`, `--legacy-null`, and
+`--pageable`. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — store_replay prefetch and pageable H2D
 
 `store_replay_cfg` runs copy-forward / Markov / `plan_window` on

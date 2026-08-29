@@ -58,6 +58,18 @@ pub struct GpuStoreCfg {
     /// Host-synchronous and slower (`pageable_permille`). Decode identity stays
     /// on pinned H2D.
     pub pageable: bool,
+    /// [`gpu_sim::MemAdvise::SetAccessedBy`] on every GPU at a managed fill.
+    ///
+    /// Expert GEMMs are reads-only, so a dest acquire does not migrate. Migrate
+    /// retargets compute (no dest prefetch, no `drop_managed_copy`). Pin skips
+    /// the replica prefetch. No-op unless [`GpuFill::Managed`]. Decode identity
+    /// stays off.
+    pub accessed_by: bool,
+    /// CUDA legacy null stream: copy (`StreamId(0)`) serializes with compute.
+    ///
+    /// Off by default (`cudaStreamNonBlocking` compute). Decode identity stays
+    /// overlapping.
+    pub legacy_null: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -91,6 +103,8 @@ pub struct SimulatedGpuStore {
     vmm_page: u64,
     /// Pageable H2D (`memcpy_host_to_device`) instead of pinned DMA.
     pageable: bool,
+    /// [`GpuStoreCfg::accessed_by`]: managed pages stay on the home GPU.
+    accessed_by: bool,
 }
 
 impl SimulatedGpuStore {
@@ -174,7 +188,7 @@ impl SimulatedGpuStore {
     /// Construct with an explicit fill and [`GpuStoreCfg`] (`SimCfg` subset).
     ///
     /// Defaults keep decode identity: async alloc, overlapping copy/compute,
-    /// no `host_func`, default pool threshold 0.
+    /// no `host_func`, default pool threshold 0, no AccessedBy, per-thread NULL.
     pub fn with_cfg(
         inner: DirectStore,
         slots: usize,
@@ -191,6 +205,9 @@ impl SimulatedGpuStore {
         if cfg.blocking_streams {
             // Compute is `StreamId(1)`. Copy stays NULL (`StreamId(0)`).
             sim.set_created_streams_blocking(2)?;
+        }
+        if cfg.legacy_null {
+            sim.set_legacy_null_stream(true);
         }
         let cache_slots = mapped_occupancy(slots, fill, sim.pin_budget(), bytes);
         // Mapped expert pages already charge the pin budget. Pageable H2D
@@ -220,6 +237,7 @@ impl SimulatedGpuStore {
             sync_alloc: cfg.sync_alloc,
             vmm_page: cfg.vmm_page,
             pageable: cfg.pageable,
+            accessed_by: cfg.accessed_by,
         })
     }
 
@@ -295,6 +313,8 @@ impl SimulatedGpuStore {
     }
 
     /// Pin against eviction and, on multi-GPU profiles, NVLink-replicate to GPU1.
+    ///
+    /// Managed + [`GpuStoreCfg::accessed_by`] maps GPU1 without a dest prefetch.
     pub fn pin_hot(&mut self, keys: &[ExpertKey]) -> Result<(), Error> {
         for key in keys {
             if !self.cache.contains_catalog(*key) {
@@ -313,7 +333,7 @@ impl SimulatedGpuStore {
         Ok(())
     }
 
-    /// Move `key` onto `dst`. Pinned/VMM pages D2D; managed pages prefetch then drop the source copy; mapped pages retarget GEMM.
+    /// Move `key` onto `dst`. Pinned/VMM pages D2D; managed pages prefetch then drop the source copy unless [`GpuStoreCfg::accessed_by`] (retarget GEMM, keep home residency); mapped pages retarget GEMM.
     ///
     /// Source HBM is released after the copy is stream-ordered; destination HBM
     /// is charged by the peer memcpy. Dest compute can overlap other GPUs.
@@ -370,6 +390,8 @@ impl SimulatedGpuStore {
     }
 
     /// Prefetch `dst` (ReadMostly keeps extras) then drop the source copy.
+    ///
+    /// [`Self::accessed_by`]: GEMM retarget only — AccessedBy already maps `dst`.
     fn migrate_managed(
         &mut self,
         key: ExpertKey,
@@ -378,6 +400,14 @@ impl SimulatedGpuStore {
         dst: DeviceId,
     ) -> Result<(), Error> {
         self.sim.synchronize_stream(src, self.compute)?;
+        if self.accessed_by {
+            let _gone = self.replicas.remove(&key);
+            if let Some(page) = self.pages.get_mut(&key) {
+                page.device = dst;
+                page.ready = None;
+            }
+            return Ok(());
+        }
         if !self.sim.is_resident(id, dst)? {
             let _p = self.sim.prefetch(dst, id, self.copy)?;
             self.sim.synchronize_stream(dst, self.copy)?;
@@ -434,6 +464,29 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn device_of(&self, key: ExpertKey) -> Option<DeviceId> {
         self.pages.get(&key).map(|p| p.device)
+    }
+
+    /// Live HBM bytes on `device` (does not drain).
+    pub fn hbm_used(&self, device: DeviceId) -> Result<u64, Error> {
+        Ok(self.sim.hbm_used(device)?)
+    }
+
+    /// Whether the GPU page for `key` is resident on `device`.
+    #[must_use]
+    pub fn page_resident(&self, key: ExpertKey, device: DeviceId) -> bool {
+        self.pages
+            .get(&key)
+            .and_then(|p| self.sim.is_resident(p.id, device).ok())
+            .unwrap_or(false)
+    }
+
+    /// Whether `device` has [`gpu_sim::MemAdvise::SetAccessedBy`] on `key`.
+    #[must_use]
+    pub fn page_accessed_by(&self, key: ExpertKey, device: DeviceId) -> bool {
+        self.pages
+            .get(&key)
+            .and_then(|p| self.sim.is_accessed_by(p.id, device).ok())
+            .unwrap_or(false)
     }
 
     /// How many times a captured GEMM graph was launched.
@@ -524,6 +577,9 @@ impl SimulatedGpuStore {
                 self.sim.mem_advise(id, MemAdvise::SetReadMostly, d)?;
                 self.sim
                     .mem_advise(id, MemAdvise::SetPreferredLocation, d)?;
+                if self.accessed_by {
+                    advise_accessed_by(&mut self.sim, id)?;
+                }
                 let _p = self.sim.prefetch(d, id, self.copy)?;
                 if self.sync_alloc {
                     self.sim.synchronize_stream(d, self.copy)?;
@@ -724,7 +780,9 @@ impl SimulatedGpuStore {
         }
         match self.mode {
             GpuFill::Managed => {
-                let _p = self.sim.prefetch(self.replica, id, self.copy)?;
+                if !self.accessed_by {
+                    let _p = self.sim.prefetch(self.replica, id, self.copy)?;
+                }
                 let _ins = self.replicas.insert(key);
                 return Ok(());
             }
@@ -954,6 +1012,15 @@ fn gemm(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Erro
         &[],
         s,
     )?;
+    Ok(())
+}
+
+/// `cudaMemAdviseSetAccessedBy` on every GPU so a remote read does not migrate.
+fn advise_accessed_by(sim: &mut Sim, id: AllocId) -> Result<(), Error> {
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        sim.mem_advise(id, MemAdvise::SetAccessedBy, DeviceId(g))?;
+    }
     Ok(())
 }
 

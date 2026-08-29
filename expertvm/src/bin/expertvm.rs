@@ -17,8 +17,8 @@ const USAGE: &str = "\
 usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
-  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams]
-  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams]
+  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null]
+  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
@@ -27,7 +27,7 @@ usage: expertvm <command> [args]
   place    <trace.jsonl> [--gpus N] [--hot-pt N]
   remote   <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
   kv       [--pages N] [--page-bytes B] [--capacity C] [--tokens T] [--profile NAME] [--fill h2d|memset]
-  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--host-func] [--blocking-streams] [--pageable]
+  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch, prefill-batch, shared-prefix
@@ -115,6 +115,8 @@ struct Cfg {
     host_func: bool,
     blocking_streams: bool,
     pageable: bool,
+    accessed_by: bool,
+    legacy_null: bool,
     interarrival_ns: u64,
     ttft_slo_ns: Option<u64>,
     itl_slo_ns: Option<u64>,
@@ -157,6 +159,8 @@ where
     let mut host_func = false;
     let mut blocking_streams = false;
     let mut pageable = false;
+    let mut accessed_by = false;
+    let mut legacy_null = false;
     let mut plan_window = 0usize;
     let mut plan_threshold = 500u32;
     let mut max_batch = 0usize;
@@ -200,37 +204,19 @@ where
                 )?)
             }
             "--prefetch" => prefetch = value("prefetch", inline, &mut it)?,
-            "--seq-streams" => {
-                seq_streams = !matches!(inline.as_deref(), Some("0" | "false"));
-            }
-            "--cuda-graphs" => {
-                cuda_graphs = !matches!(inline.as_deref(), Some("0" | "false"));
-            }
-            "--sync-alloc" => {
-                sync_alloc = !matches!(inline.as_deref(), Some("0" | "false"));
-            }
-            "--mempool" => {
-                mempool = !matches!(inline.as_deref(), Some("0" | "false"));
-            }
-            "--mapped" => {
-                mapped = !matches!(inline.as_deref(), Some("0" | "false"));
-            }
-            "--managed" => {
-                managed = !matches!(inline.as_deref(), Some("0" | "false"));
-            }
-            "--vmm" => {
-                vmm = !matches!(inline.as_deref(), Some("0" | "false"));
-            }
+            "--seq-streams" => seq_streams = switch(&inline),
+            "--cuda-graphs" => cuda_graphs = switch(&inline),
+            "--sync-alloc" => sync_alloc = switch(&inline),
+            "--mempool" => mempool = switch(&inline),
+            "--mapped" => mapped = switch(&inline),
+            "--managed" => managed = switch(&inline),
+            "--vmm" => vmm = switch(&inline),
             "--vmm-page" => vmm_page = parse_u64("vmm-page", &value("vmm-page", inline, &mut it)?)?,
-            "--host-func" => {
-                host_func = !matches!(inline.as_deref(), Some("0" | "false"));
-            }
-            "--blocking-streams" => {
-                blocking_streams = !matches!(inline.as_deref(), Some("0" | "false"));
-            }
-            "--pageable" => {
-                pageable = !matches!(inline.as_deref(), Some("0" | "false"));
-            }
+            "--host-func" => host_func = switch(&inline),
+            "--blocking-streams" => blocking_streams = switch(&inline),
+            "--pageable" => pageable = switch(&inline),
+            "--accessed-by" => accessed_by = switch(&inline),
+            "--legacy-null" => legacy_null = switch(&inline),
             "--plan-window" => {
                 plan_window = parse_usize("plan-window", &value("plan-window", inline, &mut it)?)?
             }
@@ -263,15 +249,9 @@ where
                 prefill_chunk =
                     parse_usize("prefill-chunk", &value("prefill-chunk", inline, &mut it)?)?
             }
-            "--decode-first" => {
-                decode_first = !matches!(inline.as_deref(), Some("0" | "false"));
-            }
-            "--slo-reject" => {
-                slo_reject = !matches!(inline.as_deref(), Some("0" | "false"));
-            }
-            "--prefix-cache" => {
-                prefix_cache = !matches!(inline.as_deref(), Some("0" | "false"));
-            }
+            "--decode-first" => decode_first = switch(&inline),
+            "--slo-reject" => slo_reject = switch(&inline),
+            "--prefix-cache" => prefix_cache = switch(&inline),
             "--place" => place = value("place", inline, &mut it)?,
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => {
@@ -310,6 +290,8 @@ where
         host_func,
         blocking_streams,
         pageable,
+        accessed_by,
+        legacy_null,
         interarrival_ns,
         ttft_slo_ns,
         itl_slo_ns,
@@ -341,7 +323,14 @@ fn sim_cfg_from(cfg: &Cfg, prefetch: Prefetch, max_batch: usize) -> SimCfg {
         vmm_page: cfg.vmm_page,
         host_func: cfg.host_func,
         blocking_streams: cfg.blocking_streams,
+        pageable: cfg.pageable,
+        accessed_by: cfg.accessed_by,
+        legacy_null: cfg.legacy_null,
     }
+}
+
+fn switch(inline: &Option<String>) -> bool {
+    !matches!(inline.as_deref(), Some("0" | "false"))
 }
 
 fn value<I>(name: &str, inline: Option<String>, it: &mut I) -> Result<String, String>
@@ -589,6 +578,8 @@ where
                 mempool: cfg.mempool,
                 vmm_page: cfg.vmm_page,
                 pageable: cfg.pageable,
+                accessed_by: cfg.accessed_by,
+                legacy_null: cfg.legacy_null,
             },
             prefetch,
             plan_window: cfg.plan_window,

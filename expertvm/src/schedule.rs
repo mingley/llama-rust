@@ -288,6 +288,9 @@ impl SchedRt {
         if cfg.blocking_streams {
             sim.set_created_streams_blocking(n_streams)?;
         }
+        if cfg.legacy_null {
+            sim.set_legacy_null_stream(true);
+        }
         let n_gpus = u16::try_from(sim.profile().n_gpus()).unwrap_or(1).max(1);
         let bytes = cfg.bytes_per_expert.max(1);
         let mut cfg = cfg;
@@ -305,6 +308,8 @@ impl SchedRt {
                 managed: cfg.managed,
                 vmm: cfg.vmm,
                 vmm_page: cfg.vmm_page,
+                pageable: cfg.pageable,
+                accessed_by: cfg.accessed_by,
             },
             sim,
             handles: BTreeMap::new(),
@@ -498,6 +503,7 @@ impl SchedRt {
                             stream,
                             sync_alloc: self.cfg.sync_alloc,
                             managed: self.cfg.managed,
+                            accessed_by: self.cfg.accessed_by,
                         },
                         reuse,
                         fan_in,
@@ -569,6 +575,7 @@ impl SchedRt {
                             stream,
                             sync_alloc: self.cfg.sync_alloc,
                             managed: self.cfg.managed,
+                            accessed_by: self.cfg.accessed_by,
                         },
                         reuse,
                         fan_in,
@@ -583,6 +590,10 @@ impl SchedRt {
 
     fn replicate_key(&mut self, key: ExpertKey) -> Result<(), Error> {
         if self.args.mapped || self.args.vmm {
+            return Ok(());
+        }
+        if self.args.managed && self.cfg.accessed_by {
+            // SetAccessedBy already maps dest GPUs; no dest HBM replica.
             return Ok(());
         }
         let Some(map) = &self.place else {
