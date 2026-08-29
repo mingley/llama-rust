@@ -249,6 +249,7 @@ impl SimulatedGpuStore {
         // Stream-ordered `cudaMallocAsync`. `malloc` (`cudaMalloc`) would
         // device-sync this GPU on every miss and serialize with GEMM.
         let id = self.sim.alloc(d, bytes, self.copy)?;
+        // Pinned DMA. Pageable `memcpy_host_to_device` would wait this stream.
         let _c = self.sim.memcpy_pinned_to_device(d, id, bytes, self.copy)?;
         let ev = EventId(self.next_event);
         self.next_event = self.next_event.saturating_add(1);

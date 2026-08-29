@@ -33,7 +33,9 @@ warp scheduler, L1, …   ← do not model
 | `cudaMallocAsync` (`alloc`) is stream-ordered; pointer not usable until the stream catches up | `alloc_overhead_ns` |
 | `cudaMalloc` (`malloc`) device-syncs that GPU, then the pointer is usable | `alloc_overhead_ns` (charged at the call) |
 | `cudaFree` (`free_sync`) waits owning GPU(s), then every copy is gone | stream-ordered `free` refunds when that stream runs |
-| `cudaMemcpy` (`memcpy_sync`) waits that stream | `cudaMemcpyAsync` (`memcpy`) does not |
+| `cudaMemcpyAsync` of pageable host memory is host-synchronous | `pageable_permille` (bounce + DMA) |
+| `cudaMemcpyAsync` of pinned / device memory is stream-ordered | PCIe / NVLink bandwidth |
+| `cudaMemcpy` (`memcpy_sync`) waits that stream | pinned `memcpy` does not |
 | `synchronize_device` waits one GPU | other GPUs keep running |
 | stream order, event dependencies | memcpy microseconds |
 | residency: a kernel may only read **device** allocations | PCIe / NVLink bandwidth |
@@ -116,8 +118,9 @@ replicated allocation only drops `live` when no device still holds it.
 
 Adversarial memcpy: many tiny copies cannot beat one large copy of the
 same payload (fixed overhead + size-dependent bandwidth). Two concurrent
-H2D copies on separate streams share PCIe and cannot finish in one-copy
-time.
+**pinned** H2D copies on separate streams share PCIe and cannot finish in
+one-copy time. Pageable `memcpy_host_to_device` waits the stream (CUDA
+staging bounce); two pageable copies from the host cannot DMA together.
 
 ## Topologies
 
@@ -136,7 +139,9 @@ Named example profiles (order-of-magnitude, **not captures**):
 measure **pinned** H2D per GPU and D2D per pair. Missing links print
 `p2p=0->2:none`. `restrict_hbm(bytes)` caps every GPU for the static-EP vs
 cache experiment. `Place::{Host, HostPinned, Device}`: pageable H2D is
-`memcpy_host_to_device`; DMA is `memcpy_pinned_to_device`.
+`memcpy_host_to_device` and is **host-synchronous** (real
+`cudaMemcpyAsync` of pageable memory); DMA is `memcpy_pinned_to_device`.
+Pageable D2H is `memcpy_device_to_host`. Capture cannot include a pageable copy.
 `alloc_host_pinned` is live immediately, does not count toward HBM, and a
 kernel on it fails `NotResident` until a copy places it on a device.
 

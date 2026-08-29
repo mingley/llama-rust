@@ -415,8 +415,10 @@ Exact (mechanical invariants agents may rely on):
 - kernel enqueue, async copies
 - copy-engine availability, peer accessibility
 - HBM vs host-pinned residency (`Place::{Host, HostPinned, Device}`,
-  `alloc_host_pinned`, `memcpy_pinned_to_device`; pageable timing is a
-  profile knob, `pageable_permille`)
+  `alloc_host_pinned`, `memcpy_pinned_to_device`; pageable
+  `cudaMemcpyAsync` is host-synchronous — `memcpy_host_to_device` /
+  `memcpy_device_to_host` wait the stream; timing still uses
+  `pageable_permille`)
 - P2P / NVLink / PCIe topology
 - concurrent transfer limits
 - OOM, data dependencies, collective / CUDA-graph dependencies

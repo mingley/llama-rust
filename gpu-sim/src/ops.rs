@@ -110,7 +110,8 @@ impl KernelKind {
 /// Where a buffer lives for memcpy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Place {
-    /// Pageable host memory. H2D/D2H pays [`crate::LinkProfile::pageable_permille`].
+    /// Pageable host memory. H2D/D2H is host-synchronous and pays
+    /// [`crate::LinkProfile::pageable_permille`].
     Host,
     /// Page-locked host memory (`cudaMallocHost`). DMA at full link rate.
     HostPinned,

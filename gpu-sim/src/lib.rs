@@ -11,7 +11,9 @@
 //! [`Sim::synchronize_device`] is `cudaDeviceSynchronize` (one GPU).
 //! [`Sim::synchronize_event`] is `cudaEventSynchronize`.
 //! [`Sim::alloc`] / [`memcpy`](Sim::memcpy) / [`free`](Sim::free) are
-//! stream-ordered (`cudaMallocAsync` / `cudaMemcpyAsync` / `cudaFreeAsync`).
+//! stream-ordered (`cudaMallocAsync` / `cudaMemcpyAsync` / `cudaFreeAsync`)
+//! except pageable [`Place::Host`] copies, which wait the stream (CUDA bounce
+//! buffer). [`Sim::memcpy_pinned_to_device`] is the overlapping DMA path.
 //! [`Sim::malloc`] / [`memcpy_sync`](Sim::memcpy_sync) / [`free_sync`](Sim::free_sync)
 //! are host-synchronous (`cudaMalloc` / `cudaMemcpy` / `cudaFree`).
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
@@ -155,19 +157,19 @@ mod tests {
         };
 
         let a = serial.alloc(d, bytes, StreamId(0)).unwrap();
-        enq(serial.memcpy_host_to_device(d, a, bytes, StreamId(0)));
+        enq(serial.memcpy_pinned_to_device(d, a, bytes, StreamId(0)));
         enq(serial.kernel(d, k.clone(), &[a], &[a], StreamId(0)));
         serial.synchronize().unwrap();
 
         let b = overlapped.alloc(d, bytes, StreamId(0)).unwrap();
         enq(overlapped.record_event(d, EventId(1), StreamId(0)));
-        enq(overlapped.memcpy_host_to_device(d, b, bytes, StreamId(0)));
+        enq(overlapped.memcpy_pinned_to_device(d, b, bytes, StreamId(0)));
         // Same stream still serializes copy then compute. True overlap needs
         // the kernel on a buffer already resident while a *different* buffer copies.
         let c = overlapped.alloc(d, bytes, StreamId(1)).unwrap();
         enq(overlapped.wait_event(d, EventId(1), StreamId(1)));
         enq(overlapped.kernel(d, k, &[b], &[b], StreamId(1)));
-        enq(overlapped.memcpy_host_to_device(d, c, bytes, StreamId(0)));
+        enq(overlapped.memcpy_pinned_to_device(d, c, bytes, StreamId(0)));
         overlapped.synchronize().unwrap();
         assert!(overlapped.clock_ns() > 0);
         assert!(serial.clock_ns() > 0);
@@ -206,15 +208,15 @@ mod tests {
         let bytes = 32u64 << 20;
         let mut one = Sim::new(h100());
         let a = one.alloc(d, bytes, StreamId(0)).unwrap();
-        enq(one.memcpy_host_to_device(d, a, bytes, StreamId(0)));
+        enq(one.memcpy_pinned_to_device(d, a, bytes, StreamId(0)));
         one.synchronize().unwrap();
         let t1 = one.clock_ns();
 
         let mut two = Sim::new(h100());
         let b = two.alloc(d, bytes, StreamId(0)).unwrap();
         let c = two.alloc(d, bytes, StreamId(1)).unwrap();
-        enq(two.memcpy_host_to_device(d, b, bytes, StreamId(0)));
-        enq(two.memcpy_host_to_device(d, c, bytes, StreamId(1)));
+        enq(two.memcpy_pinned_to_device(d, b, bytes, StreamId(0)));
+        enq(two.memcpy_pinned_to_device(d, c, bytes, StreamId(1)));
         two.synchronize().unwrap();
         let t2 = two.clock_ns();
         assert!(
@@ -390,8 +392,7 @@ mod tests {
         let s = StreamId(0);
         let a = sim.alloc(d, 4096, s).unwrap();
         sim.fail_next_memcpy();
-        enq(sim.memcpy_host_to_device(d, a, 4096, s));
-        match sim.synchronize() {
+        match sim.memcpy_host_to_device(d, a, 4096, s) {
             Err(SimError::TransferFailed { alloc }) => assert_eq!(alloc, a),
             other => panic!("{other:?}"),
         }
@@ -1275,6 +1276,76 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
             other => panic!("{other:?}"),
         }
+        match sim.memcpy_host_to_device(d, a, 4096, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn pageable_h2d_is_host_synchronous_pinned_is_not() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 8u64 << 20;
+        let mut pinned = Sim::new(h100());
+        let a = pinned.alloc(d, bytes, s).unwrap();
+        pinned.synchronize_stream(d, s).unwrap();
+        let t0 = pinned.clock_ns();
+        enq(pinned.memcpy_pinned_to_device(d, a, bytes, s));
+        assert!(!pinned.query_stream(d, s).unwrap());
+        assert_eq!(pinned.clock_ns(), t0);
+        pinned.synchronize_stream(d, s).unwrap();
+        assert!(pinned.is_resident(a, d).unwrap());
+
+        let mut pageable = Sim::new(h100());
+        let b = pageable.alloc(d, bytes, s).unwrap();
+        pageable.synchronize_stream(d, s).unwrap();
+        let t1 = pageable.clock_ns();
+        enq(pageable.memcpy_host_to_device(d, b, bytes, s));
+        assert!(pageable.query_stream(d, s).unwrap());
+        assert!(pageable.clock_ns() > t1);
+        assert!(pageable.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn pageable_h2d_cannot_share_pcie_the_way_pinned_can() {
+        let d = DeviceId(0);
+        let bytes = 32u64 << 20;
+        let mut pinned = Sim::new(h100());
+        let a = pinned.alloc(d, bytes, StreamId(0)).unwrap();
+        let b = pinned.alloc(d, bytes, StreamId(1)).unwrap();
+        enq(pinned.memcpy_pinned_to_device(d, a, bytes, StreamId(0)));
+        enq(pinned.memcpy_pinned_to_device(d, b, bytes, StreamId(1)));
+        pinned.synchronize().unwrap();
+        let pin_ns = pinned.clock_ns();
+
+        let mut pageable = Sim::new(h100());
+        let c = pageable.alloc(d, bytes, StreamId(0)).unwrap();
+        let e = pageable.alloc(d, bytes, StreamId(1)).unwrap();
+        enq(pageable.memcpy_host_to_device(d, c, bytes, StreamId(0)));
+        enq(pageable.memcpy_host_to_device(d, e, bytes, StreamId(1)));
+        pageable.synchronize().unwrap();
+        let page_ns = pageable.clock_ns();
+        assert!(
+            page_ns > pin_ns,
+            "pageable cudaMemcpyAsync is host-sync so two copies cannot DMA together; pageable={page_ns} pinned={pin_ns}"
+        );
+    }
+
+    #[test]
+    fn pageable_d2h_is_host_synchronous() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 4096u64;
+        let a = sim.malloc(d, bytes).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+        sim.synchronize_stream(d, s).unwrap();
+        let t0 = sim.clock_ns();
+        enq(sim.memcpy_device_to_host(d, a, bytes, s));
+        assert!(sim.query_stream(d, s).unwrap());
+        assert!(sim.clock_ns() > t0);
+        assert!(sim.is_resident(a, d).unwrap());
     }
 
     #[test]

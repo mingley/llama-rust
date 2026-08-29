@@ -612,14 +612,29 @@ impl Sim {
         Ok(())
     }
 
-    /// Asynchronous copy (`cudaMemcpyAsync`). Completion moves/replicates residency.
+    /// Asynchronous copy (`cudaMemcpyAsync`) when both ends are device or pinned.
+    ///
+    /// Pageable host (`Place::Host`) is host-synchronous: the driver bounces
+    /// through pinned staging, so this call waits [`Self::synchronize_stream`]
+    /// before returning. Capture cannot include a pageable copy. Pinned DMA
+    /// ([`Self::memcpy_pinned_to_device`]) stays stream-ordered.
     pub fn memcpy(
         &mut self,
         device: DeviceId,
         op: MemcpyOp,
         stream: StreamId,
     ) -> Result<OpId, SimError> {
-        self.submit(device, stream, Kind::Memcpy(op))
+        let pageable = op.src.is_pageable() || op.dst.is_pageable();
+        if pageable && self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture pageable memcpy",
+            });
+        }
+        let id = self.submit(device, stream, Kind::Memcpy(op))?;
+        if pageable {
+            self.synchronize_stream(device, stream)?;
+        }
+        Ok(id)
     }
 
     /// `cudaMemcpy`: enqueue then wait for that stream (host-synchronous).
@@ -641,7 +656,11 @@ impl Sim {
         Ok(id)
     }
 
-    /// Pageable host → `device`. Slower than [`Self::memcpy_pinned_to_device`].
+    /// Pageable host → `device`. Host-synchronous and slower than pinned DMA.
+    ///
+    /// Real `cudaMemcpyAsync` of pageable memory bounces through a driver
+    /// staging buffer; the host does not return until this stream has finished
+    /// the copy. [`Self::memcpy_pinned_to_device`] is the overlapping path.
     pub fn memcpy_host_to_device(
         &mut self,
         device: DeviceId,
@@ -674,6 +693,26 @@ impl Sim {
             MemcpyOp {
                 src: Place::HostPinned,
                 dst: Place::Device(device),
+                alloc,
+                bytes,
+            },
+            stream,
+        )
+    }
+
+    /// `device` → pageable host. Host-synchronous; source HBM residency is kept.
+    pub fn memcpy_device_to_host(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy(
+            device,
+            MemcpyOp {
+                src: Place::Device(device),
+                dst: Place::Host,
                 alloc,
                 bytes,
             },

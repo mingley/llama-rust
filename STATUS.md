@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — pageable `cudaMemcpyAsync` waits the stream
+
+`memcpy_host_to_device` / `memcpy_device_to_host` (`Place::Host`) are
+host-synchronous: the call does not return until that stream finishes
+the copy, matching CUDA's pinned staging bounce. Pinned DMA
+(`memcpy_pinned_to_device`) stays stream-ordered so two streams can
+share PCIe. Capture refuses pageable copies. `SimulatedGpuStore` still
+pins. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — `--sync-alloc` measures naive cudaMalloc
 
 `SimCfg::sync_alloc` / `expertvm sim --sync-alloc` uses `malloc` /
