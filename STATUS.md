@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — VMM VA pool remaps instead of re-reserving
+
+`Sim::va_acquire` / `va_release` / `vmm_idle_len` keep unmapped VAs.
+A later acquire of the same size remaps that pointer (map overhead only).
+A different size does not share the pool. Map OOM parks the reserved VA.
+`va_free` drops an idle entry. Capture still refuses reserve/map.
+`expertvm sim --vmm` acquires on miss and releases on evict (no
+`va_free` per miss). Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — host pin budget is mlock, not unlimited
 
 `HardwareProfile::host_pin_bytes` / `restrict_pin` cap `cudaMallocHost`

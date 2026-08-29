@@ -39,6 +39,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemPrefetchAsync` (`prefetch` / `prefetch_host`) **moves** the unique location | PCIe / NVLink (1 ns if already local) |
 | `cuMemAddressReserve` (`va_reserve`) is a VA with no physical pages | `alloc_overhead_ns` (at the call) |
 | `cuMemMap` (`va_map`) charges HBM; `va_unmap` refunds; the VA is reusable | `alloc_overhead_ns` (map) |
+| `va_release` parks an unmapped VA; `va_acquire` remaps same size | map only on reuse (no second reserve) |
 | host pin / `mlock` budget (`host_pin_bytes`) | `SimError::PinOom` |
 | `cudaFree` (`free_sync`) waits owning GPU(s), then every copy is gone | stream-ordered `free` refunds when that stream runs |
 | `cudaMemcpyAsync` of pageable host memory is host-synchronous | `pageable_permille` (bounce + DMA) |
@@ -200,7 +201,9 @@ alloc/register. `alloc_managed` is `cudaMallocManaged` (no HBM until
 `cudaMemPrefetchAsync` and **move** the unique location. Capture of
 `alloc_managed` is refused; a graph must record prefetch before the kernel.
 `va_reserve` / `va_map` / `va_unmap` / `va_free` are CUDA virtual memory
-(one physical per reserved VA). Capture cannot include them.
+(one physical per reserved VA). `va_acquire` remaps an idle VA of the same
+size (or reserves); `va_release` unmaps into that pool. Capture cannot
+include them.
 `host_pin_bytes` caps page-locked host (`cudaMallocHost` / `cudaHostRegister`);
 overflow is `PinOom`. Example default is unlimited.
 `set_stream_priority` is `cudaStreamCreateWithPriority` (higher first when

@@ -617,6 +617,65 @@ fn vmm_map_matches_h2d_hits() {
 }
 
 #[test]
+fn vmm_evict_reacquires_same_va() {
+    use crate::replay::Touch;
+    use crate::sim_replay::{apply_touch, PageHandle, TouchArgs};
+    use gpu_sim::{Sim, StreamId};
+    use std::collections::BTreeMap;
+
+    let mut sim = Sim::new(HardwareProfile::example_h100_sxm());
+    let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
+    let mut graphs = BTreeMap::new();
+    let args = TouchArgs {
+        d: DeviceId(0),
+        s: StreamId(0),
+        bytes: 4096,
+        slots: 1,
+        sync_alloc: false,
+        mapped: false,
+        managed: false,
+        vmm: true,
+    };
+    let mut next_event = 1u32;
+    let k0 = ExpertKey::new(0, 0);
+    let k1 = ExpertKey::new(0, 1);
+    apply_touch(
+        &mut sim,
+        &mut handles,
+        &mut graphs,
+        args,
+        k0,
+        Touch::Miss { evicted: None },
+        &mut next_event,
+    )
+    .expect("k0");
+    let id0 = handles.get(&k0).expect("h0").id;
+    apply_touch(
+        &mut sim,
+        &mut handles,
+        &mut graphs,
+        args,
+        k1,
+        Touch::Miss { evicted: Some(k0) },
+        &mut next_event,
+    )
+    .expect("k1");
+    assert_eq!(handles.get(&k1).expect("h1").id, id0);
+    assert_eq!(sim.vmm_idle_len(), 0);
+    apply_touch(
+        &mut sim,
+        &mut handles,
+        &mut graphs,
+        args,
+        k0,
+        Touch::Miss { evicted: Some(k1) },
+        &mut next_event,
+    )
+    .expect("k0 again");
+    assert_eq!(handles.get(&k0).expect("h0b").id, id0);
+}
+
+#[test]
 fn mapped_host_respects_pin_budget() {
     let t = cycling_trace();
     let p = HardwareProfile::example_h100_sxm().restrict_pin(1u64 << 20);

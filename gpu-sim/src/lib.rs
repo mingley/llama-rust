@@ -33,6 +33,8 @@
 //! [`Sim::va_reserve`] / [`va_map`](Sim::va_map) / [`va_unmap`](Sim::va_unmap) /
 //! [`va_free`](Sim::va_free) are `cuMemAddressReserve` / `cuMemMap` /
 //! `cuMemUnmap` / `cuMemAddressFree` (one physical per VA; HBM charged while mapped).
+//! [`Sim::va_acquire`] remaps an idle VA of the same size (or reserves);
+//! [`va_release`](Sim::va_release) unmaps into that pool instead of freeing the VA.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -1946,6 +1948,106 @@ mod tests {
             other => panic!("{other:?}"),
         }
         sim.va_free(va).unwrap();
+    }
+
+    #[test]
+    fn va_acquire_reuses_released_pointer() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let a = sim.va_acquire(d, 4096).unwrap();
+        assert_eq!(sim.vmm_idle_len(), 0);
+        sim.va_release(a).unwrap();
+        assert_eq!(sim.vmm_idle_len(), 1);
+        sim.va_release(a).unwrap();
+        assert_eq!(sim.vmm_idle_len(), 1);
+        let b = sim.va_acquire(d, 4096).unwrap();
+        assert_eq!(a, b);
+        assert_eq!(sim.vmm_idle_len(), 0);
+        assert!(sim.is_resident(a, d).unwrap());
+        sim.va_release(a).unwrap();
+        sim.va_free(a).unwrap();
+        assert_eq!(sim.vmm_idle_len(), 0);
+        let c = sim.va_acquire(d, 4096).unwrap();
+        assert_ne!(a, c);
+        sim.va_release(c).unwrap();
+    }
+
+    #[test]
+    fn va_acquire_reuse_skips_reserve_overhead() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let a = sim.va_acquire(d, 4096).unwrap();
+        let fresh = sim.clock_ns();
+        sim.va_release(a).unwrap();
+        let after_rel = sim.clock_ns();
+        let b = sim.va_acquire(d, 4096).unwrap();
+        assert_eq!(a, b);
+        let reuse = sim.clock_ns().saturating_sub(after_rel);
+        let map_ns = h100().gpu(d).unwrap().alloc_overhead_ns.max(1);
+        assert_eq!(reuse, map_ns);
+        assert!(reuse < fresh);
+        sim.va_release(a).unwrap();
+    }
+
+    #[test]
+    fn va_acquire_does_not_share_sizes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let a = sim.va_acquire(d, 4096).unwrap();
+        sim.va_release(a).unwrap();
+        let b = sim.va_acquire(d, 8192).unwrap();
+        assert_ne!(a, b);
+        assert_eq!(sim.vmm_idle_len(), 1);
+        sim.va_release(b).unwrap();
+        let c = sim.va_acquire(d, 4096).unwrap();
+        assert_eq!(a, c);
+        assert_eq!(sim.vmm_idle_len(), 1);
+        sim.va_release(c).unwrap();
+        sim.va_free(b).unwrap();
+        sim.va_free(c).unwrap();
+    }
+
+    #[test]
+    fn va_acquire_oom_parks_reserved_va() {
+        let mut sim = Sim::new(h100().restrict_hbm(4096));
+        let d = DeviceId(0);
+        let blocker = sim.malloc(d, 4096).unwrap();
+        match sim.va_acquire(d, 4096) {
+            Err(SimError::Oom { device, need, free }) => {
+                assert_eq!(device, d);
+                assert_eq!(need, 4096);
+                assert_eq!(free, 0);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.vmm_idle_len(), 1);
+        sim.free_sync(blocker).unwrap();
+        let va = sim.va_acquire(d, 4096).unwrap();
+        assert_eq!(sim.vmm_idle_len(), 0);
+        sim.va_release(va).unwrap();
+    }
+
+    #[test]
+    fn va_acquire_rejects_capture() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.begin_capture(d, s).unwrap();
+        match sim.va_acquire(d, 4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn va_release_rejects_malloc() {
+        let mut sim = Sim::new(h100());
+        let a = sim.malloc(DeviceId(0), 4096).unwrap();
+        match sim.va_release(a) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("VA")),
+            other => panic!("{other:?}"),
+        }
+        sim.free_sync(a).unwrap();
     }
 
     #[test]

@@ -114,6 +114,8 @@ pub struct Sim {
     pools: BTreeMap<PoolId, Pool>,
     default_pools: BTreeMap<DeviceId, PoolId>,
     pinned_used: u64,
+    /// Unmapped live VAs waiting for [`Self::va_acquire`].
+    vmm_idle: Vec<AllocId>,
 }
 
 impl Sim {
@@ -161,6 +163,7 @@ impl Sim {
             pools,
             default_pools,
             pinned_used: 0,
+            vmm_idle: Vec::new(),
         }
     }
 
@@ -764,6 +767,7 @@ impl Sim {
         let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
         self.clock = self.clock.saturating_add(ns);
         self.alloc_mut(id)?.devices.push(device);
+        self.vmm_idle.retain(|&x| x != id);
         Ok(())
     }
 
@@ -807,8 +811,71 @@ impl Sim {
                 why: "VA still mapped",
             });
         }
+        self.vmm_idle.retain(|&x| x != id);
         self.alloc_mut(id)?.live = false;
         Ok(())
+    }
+
+    fn take_idle_va(&mut self, bytes: u64) -> Option<AllocId> {
+        self.vmm_idle.retain(|&id| {
+            self.allocs
+                .get(&id)
+                .is_some_and(|a| a.live && a.vmm && a.devices.is_empty())
+        });
+        let pos = self
+            .vmm_idle
+            .iter()
+            .position(|&id| self.allocs.get(&id).is_some_and(|a| a.bytes == bytes))?;
+        Some(self.vmm_idle.remove(pos))
+    }
+
+    fn park_idle_va(&mut self, id: AllocId) {
+        if !self.vmm_idle.contains(&id) {
+            self.vmm_idle.push(id);
+        }
+    }
+
+    /// Map a previously [`Self::va_release`]d VA of `bytes`, or [`Self::va_reserve`].
+    ///
+    /// Unmap keeps the pointer (vLLM-style). The next miss remaps without another
+    /// `cuMemAddressReserve`. Capture cannot include it.
+    pub fn va_acquire(&mut self, device: DeviceId, bytes: u64) -> Result<AllocId, SimError> {
+        if let Some(id) = self.take_idle_va(bytes) {
+            if let Err(e) = self.va_map(id, device) {
+                self.park_idle_va(id);
+                return Err(e);
+            }
+            return Ok(id);
+        }
+        let id = self.va_reserve(bytes)?;
+        if let Err(e) = self.va_map(id, device) {
+            self.park_idle_va(id);
+            return Err(e);
+        }
+        Ok(id)
+    }
+
+    /// [`Self::va_unmap`] then keep the VA for [`Self::va_acquire`]. Does not
+    /// [`Self::va_free`]. Already-idle ids are a no-op. Capture cannot include it.
+    pub fn va_release(&mut self, id: AllocId) -> Result<(), SimError> {
+        if self.vmm_idle.contains(&id) {
+            return Ok(());
+        }
+        let a = self.alloc_ref(id)?;
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        if !a.devices.is_empty() {
+            self.va_unmap(id)?;
+        }
+        self.park_idle_va(id);
+        Ok(())
+    }
+
+    /// Unmapped live VAs waiting for [`Self::va_acquire`].
+    #[must_use]
+    pub fn vmm_idle_len(&self) -> usize {
+        self.vmm_idle.len()
     }
 
     fn first_alloc_ns(&self) -> u64 {

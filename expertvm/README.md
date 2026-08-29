@@ -88,10 +88,11 @@ pinned host, kernels run over PCIe, HBM is not charged (`hbm_peak=0`).
 That is the “do not move the expert” alternative to H2D. `--managed` uses
 `cudaMallocManaged` and `cudaMemPrefetchAsync` on miss: alloc is free of
 HBM, prefetch migrates the page (same hits/misses as H2D). `--vmm` uses
-`cuMemAddressReserve` + `cuMemMap` then pinned H2D into that VA (evict
-unmaps). A profile `host_pin_bytes` cap makes `--mapped` `PinOom` when
-slots × expert bytes exceed the lock budget. `SimulatedGpuStore` stays on the async H2D path with CUDA's default
-threshold (`0`). `--max-batch N` admits N sequences per engine
+`va_acquire` (remap an idle VA, else reserve+map) then pinned H2D into that
+VA (evict `va_release`s the pointer so the next miss skips reserve). A
+profile `host_pin_bytes` cap makes `--mapped` `PinOom` when slots × expert
+bytes exceed the lock budget. `SimulatedGpuStore` stays on the async H2D
+path with CUDA's default threshold (`0`). `--max-batch N` admits N sequences per engine
 iteration at a token (`0` = the whole token) and still samples TTFT once.
 `--cuda-graphs` captures grouped expert GEMMs after `synchronize_stream` on
 that stream and replays them (`graph_launch_ns` once per launch). `--plan-window

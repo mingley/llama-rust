@@ -131,8 +131,9 @@ pub struct SimCfg {
     /// charge HBM; prefetch migrates the page. Hits/misses match H2D.
     /// [`crate::SimulatedGpuStore`] stays on pinned H2D.
     pub managed: bool,
-    /// `cuMemAddressReserve` + `cuMemMap` on miss, then pinned H2D into the VA.
-    /// Evict unmaps and frees the VA. Hits/misses match H2D.
+    /// `va_acquire` on miss (reuse an unmapped VA, else reserve+map), then
+    /// pinned H2D. Evict [`gpu_sim::Sim::va_release`]s so the pointer stays.
+    /// Hits/misses match H2D.
     pub vmm: bool,
 }
 
@@ -303,7 +304,7 @@ pub(crate) struct TouchArgs {
     pub mapped: bool,
     /// [`SimCfg::managed`]: `alloc_managed` + [`gpu_sim::Sim::prefetch`].
     pub managed: bool,
-    /// [`SimCfg::vmm`]: `va_reserve` + `va_map` + H2D.
+    /// [`SimCfg::vmm`]: `va_acquire` + H2D.
     pub vmm: bool,
 }
 
@@ -434,9 +435,7 @@ pub(crate) fn apply_touch(
             } else if args.managed {
                 sim.alloc_managed(args.bytes)?
             } else if args.vmm {
-                let va = sim.va_reserve(args.bytes)?;
-                sim.va_map(va, args.d)?;
-                va
+                sim.va_acquire(args.d, args.bytes)?
             } else {
                 hbm_alloc(sim, args.d, args.bytes, args.s, args.sync_alloc)?
             };
@@ -509,8 +508,7 @@ fn drop_handle(
         return Ok(());
     }
     if page_is_vmm(sim, page.id) {
-        sim.va_unmap(page.id)?;
-        sim.va_free(page.id)?;
+        sim.va_release(page.id)?;
         return Ok(());
     }
     if sync {
