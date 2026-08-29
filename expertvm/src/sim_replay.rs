@@ -133,7 +133,8 @@ pub struct SimCfg {
     pub mempool: bool,
     /// `cudaHostAllocMapped`: miss pages are mapped host, not HBM. Kernels run
     /// over PCIe with no H2D. Hits/misses follow the same walker; `hbm_peak`
-    /// stays near zero. [`crate::SimulatedGpuStore`] stays on the H2D path.
+    /// stays near zero. [`crate::SimulatedGpuStore::new`] stays on the H2D path;
+    /// [`crate::SimulatedGpuStore::with_mapped`] uses this path.
     pub mapped: bool,
     /// `cudaMallocManaged` + `cudaMemAdviseSetReadMostly` + prefetch on miss.
     /// Alloc does not charge HBM; prefetch migrates (and replicates if a
@@ -147,7 +148,8 @@ pub struct SimCfg {
     pub managed: bool,
     /// `va_acquire` on miss (reuse an unmapped VA, else reserve+map), then
     /// pinned H2D. Evict [`gpu_sim::Sim::va_release`]s so the pointer stays.
-    /// Hits/misses match H2D. [`Self::vmm_page`] splits each map into KV-sized
+    /// Hits/misses match H2D. [`crate::SimulatedGpuStore::new`] stays on pinned
+    /// H2D; [`crate::SimulatedGpuStore::with_vmm`] uses this path. [`Self::vmm_page`] splits each map into KV-sized
     /// physicals (`0` is one `cuMemMap` for the whole expert).
     pub vmm: bool,
     /// Page size for [`Self::vmm`]. `0` maps the whole expert in one physical.

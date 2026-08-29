@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — SimulatedGpuStore mapped host and VMM
+
+`with_mapped` is `cudaHostAllocMapped` (PCIe kernel, no H2D, `hbm_peak`
+0). `with_vmm` is `va_acquire` + pinned H2D; evict `va_release`s.
+Migrate mapped retargets GEMM; VMM maps dest then D2D. Default `new`
+stays pinned H2D. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Managed page faults at kernel start
 
 Live kernels prefetch managed pages when they start, after stream deps.

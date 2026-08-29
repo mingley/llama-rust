@@ -10010,6 +10010,37 @@ mod tests {
             blob, via_um,
             "managed SimulatedGpuStore CPU copies must match"
         );
+        let via_mapped = store_prefill(
+            &model,
+            LiveStore::simulated(
+                expertvm::SimulatedGpuStore::with_mapped(
+                    model.expert_direct_store().expect("cmap"),
+                    n,
+                    expertvm::HardwareProfile::example_h100_sxm(),
+                    4096,
+                )
+                .expect("gpu mapped"),
+            ),
+            &tokens,
+        );
+        assert_eq!(
+            blob, via_mapped,
+            "mapped SimulatedGpuStore CPU copies must match"
+        );
+        let via_vmm = store_prefill(
+            &model,
+            LiveStore::simulated(
+                expertvm::SimulatedGpuStore::with_vmm(
+                    model.expert_direct_store().expect("cvmm"),
+                    n,
+                    expertvm::HardwareProfile::example_h100_sxm(),
+                    4096,
+                )
+                .expect("gpu vmm"),
+            ),
+            &tokens,
+        );
+        assert_eq!(blob, via_vmm, "VMM SimulatedGpuStore CPU copies must match");
         let tier = expertvm::TieredStore::memory(model.expert_direct_store().expect("t"), n)
             .expect("tier");
         let via_tier = store_prefill(&model, LiveStore::tiered(tier), &tokens);
