@@ -2401,3 +2401,38 @@ fn simulated_gpu_store_mapped_pin_budget_zero_fit_is_pin_oom() {
     let err = gpu.acquire(ExpertKey::new(0, 0)).unwrap_err();
     assert!(err.to_string().contains("pin"), "{err}");
 }
+
+#[test]
+fn gpu_fill_from_flags_is_exclusive() {
+    assert_eq!(
+        GpuFill::from_flags(false, false, false).expect("pin"),
+        GpuFill::Pinned
+    );
+    assert_eq!(
+        GpuFill::from_flags(true, false, false).expect("map"),
+        GpuFill::Mapped
+    );
+    assert_eq!(
+        GpuFill::from_flags(false, true, false).expect("um"),
+        GpuFill::Managed
+    );
+    assert_eq!(
+        GpuFill::from_flags(false, false, true).expect("vmm"),
+        GpuFill::Vmm
+    );
+    let err = GpuFill::from_flags(true, true, false).unwrap_err();
+    assert!(matches!(err, Error::Store(_)));
+}
+
+#[test]
+fn store_replay_demand_pages_the_trace() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let row =
+        store_replay(&t, p, 2, 4096, GpuFill::Pinned, GpuStoreCfg::default()).expect("replay");
+    assert!(row.metrics.misses >= 3);
+    assert!(row.score.wall_ns > 0);
+    assert!(row.line().starts_with("store "));
+    assert!(row.line().contains("hits="));
+    assert!(row.line().contains("wall_ns="));
+}

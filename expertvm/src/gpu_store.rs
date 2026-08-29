@@ -1,12 +1,12 @@
 //! [`ExpertStore`] backed by [`gpu_sim`]: H2D, mapped host, managed, or VMM on miss.
 
-use crate::access::ExpertKey;
+use crate::access::{ExpertKey, Trace};
 use crate::error::Error;
 use crate::place::home_gpu;
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
     AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelKind, MemAdvise, MemcpyOp,
-    Place, Sim, StreamId,
+    Place, Score, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -22,6 +22,19 @@ pub enum GpuFill {
     Mapped,
     /// `va_acquire` + pinned H2D; evict [`gpu_sim::Sim::va_release`].
     Vmm,
+}
+
+impl GpuFill {
+    /// Pinned when every flag is off; otherwise exactly one of mapped/managed/vmm.
+    pub fn from_flags(mapped: bool, managed: bool, vmm: bool) -> Result<Self, Error> {
+        match (mapped, managed, vmm) {
+            (false, false, false) => Ok(Self::Pinned),
+            (true, false, false) => Ok(Self::Mapped),
+            (false, true, false) => Ok(Self::Managed),
+            (false, false, true) => Ok(Self::Vmm),
+            _ => Err(Error::Store("choose one of mapped, managed, vmm")),
+        }
+    }
 }
 
 /// CUDA knobs [`SimulatedGpuStore::new`] leaves off so decode identity stays async.
@@ -764,6 +777,45 @@ impl ExpertStore for SimulatedGpuStore {
         m.bytes_moved = self.sim.bytes_moved();
         m
     }
+}
+
+/// Demand-page a trace through [`SimulatedGpuStore`] and drain the virtual clock.
+pub struct StoreReplay {
+    /// Cache hits/misses/evicts after every routed expert.
+    pub metrics: StoreMetrics,
+    /// Virtual wall after a device drain. No `$/M tokens`.
+    pub score: Score,
+}
+
+impl StoreReplay {
+    /// Single-line agent / CLI log.
+    #[must_use]
+    pub fn line(&self) -> String {
+        format!("store {} {}", self.metrics.line(), self.score.line())
+    }
+}
+
+/// Walk `trace.keys()` on a store, then [`SimulatedGpuStore::score`].
+pub fn store_replay(
+    trace: &Trace,
+    profile: HardwareProfile,
+    slots: usize,
+    bytes_per_expert: u64,
+    fill: GpuFill,
+    cfg: GpuStoreCfg,
+) -> Result<StoreReplay, Error> {
+    let inner = DirectStore::from_trace(trace);
+    let mut store =
+        SimulatedGpuStore::with_cfg(inner, slots, profile, bytes_per_expert, fill, cfg)?;
+    for key in trace.keys() {
+        let _p = store.acquire(key)?;
+        store.release(key);
+    }
+    let n = u64::try_from(trace.events.len()).unwrap_or(1);
+    Ok(StoreReplay {
+        metrics: store.metrics(),
+        score: store.score()?.with_tokens(n),
+    })
 }
 
 fn gemm(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Error> {

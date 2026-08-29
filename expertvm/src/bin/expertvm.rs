@@ -1,10 +1,10 @@
-//! `expertvm analyze | replay | sim` — traces in, measured tables out.
+//! `expertvm analyze | replay | sim | store` — traces in, measured tables out.
 
 use expertvm::{
     adversarial_suite, analyze, colocated, compare, compare_ep, cycling_pages, format_table,
     generate, kv_paged, report, schedule_placed, schedule_remote, sim_placed, sim_remote_home_cfg,
-    sim_replay_cfg, striped, topology_suite, with_hot_replicas, KvCfg, KvFill, Policy, Prefetch,
-    SchedCfg, SimCfg, Trace, Workload, DECODE_ACTIVATION_BYTES,
+    sim_replay_cfg, store_replay, striped, topology_suite, with_hot_replicas, GpuFill, GpuStoreCfg,
+    KvCfg, KvFill, Policy, Prefetch, SchedCfg, SimCfg, Trace, Workload, DECODE_ACTIVATION_BYTES,
 };
 use gpu_sim::HardwareProfile;
 use std::env;
@@ -26,6 +26,7 @@ usage: expertvm <command> [args]
   place    <trace.jsonl> [--gpus N] [--hot-pt N]
   remote   <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
   kv       [--pages N] [--page-bytes B] [--capacity C] [--tokens T] [--profile NAME] [--fill h2d|memset]
+  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--host-func] [--blocking-streams]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch, prefill-batch, shared-prefix
@@ -83,6 +84,7 @@ fn run() -> Result<(), String> {
         "place" => run_place(args),
         "remote" => run_remote(args),
         "kv" => run_kv(args),
+        "store" => run_store(args),
         other => Err(format!("{USAGE}got {other}")),
     }
 }
@@ -554,6 +556,33 @@ where
     )
     .map_err(|e| e.to_string())?;
     println!("local {} | remote {}", local.line(), remote.line());
+    Ok(())
+}
+
+fn run_store<I>(args: I) -> Result<(), String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let cfg = parse_cfg(args)?;
+    let trace = load_trace(&cfg.path)?;
+    let profile = load_profile(&cfg.profile)?;
+    let fill = GpuFill::from_flags(cfg.mapped, cfg.managed, cfg.vmm).map_err(|e| e.to_string())?;
+    let row = store_replay(
+        &trace,
+        profile,
+        cfg.capacity,
+        cfg.expert_bytes,
+        fill,
+        GpuStoreCfg {
+            host_func: cfg.host_func,
+            blocking_streams: cfg.blocking_streams,
+            sync_alloc: cfg.sync_alloc,
+            mempool: cfg.mempool,
+            vmm_page: cfg.vmm_page,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    println!("{}", row.line());
     Ok(())
 }
 

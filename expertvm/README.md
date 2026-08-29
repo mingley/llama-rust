@@ -219,6 +219,8 @@ expertvm remote   trace.jsonl --expert-bytes 1048576 --profile 2node-rdma
 expertvm remote   trace.jsonl --expert-bytes 1048576 --activation-bytes 128
 expertvm kv       --pages 8 --page-bytes 4096 --capacity 2 --tokens 64
 expertvm kv       --pages 8 --capacity 2 --fill memset
+expertvm store    trace.jsonl --capacity 2 --expert-bytes 4096 --profile h100
+expertvm store    trace.jsonl --capacity 2 --managed --host-func
 gpu-profile probe 2xh100-pcie --bytes 1048576
 ```
 
