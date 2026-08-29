@@ -5,6 +5,22 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — serve `--engine` stream / prefill-chunk / trace-out
+
+`"stream": true` on `--engine` `POST /generate` is HTTP/1.1 chunked NDJSON
+token lines then a final `generated` object (greedy identity). Concurrent
+streams still GEMM together. Default serve ignores `stream`.
+`--prefill-chunk N` is the same Engine knob as `gguf_gemv engine`.
+`--trace-out FILE` appends batched MoE JSONL as sequences finish.
+Dual score still has no `$/M tokens`.
+
+## Shipped 2026-08-29 — Markov prefetch before grouped expert GEMM
+
+Copy-forward ∪ lookback-2 prefetch runs after the router GEMM and
+**before** grouped expert GEMM so H2D of L+1 can overlap this layer's
+compute. `CachedStore` skips unknown catalog keys. Dual score still has
+no `$/M tokens`.
+
 ## Shipped 2026-08-29 — serve `--engine` intern `page_hits`
 
 `--engine` JSON `page_hits` is how many intern hits that sequence took
@@ -993,7 +1009,8 @@ cargo run -p llama-rust --example session
 ```
 
 Next code change is PLAN systems depth. `gguf_gemv serve --engine`
-continuous-batches HTTP onto the same Engine scheduler. Phase 0 leftover
+streams NDJSON, chunks prefill, and appends MoE JSONL on the same
+Engine scheduler. Phase 0 leftover
 is a Llama NORM real-model fixture when a GGUF is on disk. Physical
 Phase 4 stays parked. Do not add crates.io
 runtime deps. Do not start Metal-in-crate on Linux. Do not invent a

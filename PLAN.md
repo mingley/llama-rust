@@ -841,6 +841,18 @@ model, do not celebrate the sim.
     shared `PagedKvPool` for that sequence. A later identical prompt
     intern-hits completed pages after the first `take`. Dual score still
     has no `$/M tokens`.
+35. [x] Prefetch copy-forward ∪ Markov destinations **before** grouped
+    expert GEMM so H2D of L+1 can overlap this layer's compute.
+    `CachedStore::prefetch` skips unknown catalog keys. Dual score still
+    has no `$/M tokens`.
+36. [x] `serve --engine --prefill-chunk N` / `--trace-out FILE`: the HTTP
+    Engine uses the same chunked prefill as `gguf_gemv engine` and appends
+    batched MoE JSONL as sequences finish. Dual score still has no
+    `$/M tokens`.
+37. [x] `serve --engine` `"stream": true` is HTTP/1.1 chunked NDJSON token
+    lines then a final `generated` object. Concurrent streams still GEMM
+    together. Default serve ignores `stream`. Dual score still has no
+    `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

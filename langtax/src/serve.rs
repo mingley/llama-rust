@@ -20,7 +20,7 @@ use crate::tok::Tokenizer;
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
@@ -32,17 +32,21 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --expert-sim      SimulatedGpuStore (`--engine`; example H100, 4096-byte experts)
       --expert-8gpu     8×H100 NVLink profile (`--expert-sim`; enables plan_placement)
       --expert-bytes N  simulated expert page bytes (`--expert-sim`; default: 4096)
+      --prefill-chunk N prefill tokens per Engine step (`--engine`; `0` = the rest)
+      --trace-out FILE  append batched MoE ExpertAccess JSONL (`--engine`)
 
 POST /generate takes {\"prompt\": TEXT} or, to render the model's own
 tokenizer.chat_template, {\"messages\": [{\"role\": R, \"content\": C}, ...]}
-with optional \"add_generation_prompt\" (default true) and \"n_predict\".
+with optional \"add_generation_prompt\" (default true), \"n_predict\", and
+\"stream\" (NDJSON token lines then a final generated object; `--engine` only).
 Default serve keeps one KV cache across requests (`prefix_hit` in the JSON).
 `--engine` admits several connections onto one interned pool so they GEMM
 together (`gguf_gemv engine` is the same scheduler). `--kv-page N` interned
 completed blocks so a later prompt can hit them after a rewind (`page_hits`).
 `--engine` JSON `page_hits` is the intern-hit delta for that sequence.
 `--expert-slots` / `--expert-sim` park the same ExpertStore as `gguf_gemv engine`.
-Not a production inference server.
+`--prefill-chunk` interleaves long prefills with decode. `--trace-out` writes
+router JSONL as sequences finish. Not a production inference server.
 ";
 
 pub(crate) const MAX_REQ: u64 = 65_536;
@@ -83,6 +87,10 @@ pub struct ServeArgs {
     pub expert_8gpu: bool,
     /// Simulated expert page bytes (`--expert-sim`). `None` is 4096.
     pub expert_bytes: Option<u64>,
+    /// Prefill tokens per Engine step (`0` = the rest). `--engine` only.
+    pub prefill_chunk: usize,
+    /// Append Engine MoE traces as JSONL (`--engine`). `None` leaves tracing off.
+    pub trace_out: Option<String>,
 }
 
 impl ServeArgs {
@@ -126,7 +134,7 @@ impl From<std::io::Error> for ServeError {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--trace-out FILE]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -144,6 +152,8 @@ where
     let mut expert_sim = false;
     let mut expert_8gpu = false;
     let mut expert_bytes = None;
+    let mut prefill_chunk = 0usize;
+    let mut trace_out = None;
     let mut it = args.into_iter();
     while let Some(raw) = it.next() {
         let arg = raw.as_ref();
@@ -214,6 +224,15 @@ where
                 }
                 expert_bytes = Some(n);
             }
+            "--prefill-chunk" => {
+                prefill_chunk = parse_usize(
+                    "prefill-chunk",
+                    &opt_value("prefill-chunk", inline, &mut it)?,
+                )?;
+            }
+            "--trace-out" => {
+                trace_out = Some(opt_value("trace-out", inline, &mut it)?);
+            }
             flag if flag.starts_with('-') => {
                 return usage_err(&format!("unknown flag {flag}"));
             }
@@ -249,6 +268,12 @@ where
     if expert_bytes.is_some() && !expert_sim {
         return usage_err("--expert-bytes requires --expert-sim");
     }
+    if prefill_chunk > 0 && !engine {
+        return usage_err("--prefill-chunk requires --engine");
+    }
+    if trace_out.is_some() && !engine {
+        return usage_err("--trace-out requires --engine");
+    }
     Ok(ServeCmd::Run(ServeArgs {
         path,
         n_predict,
@@ -261,6 +286,8 @@ where
         expert_sim,
         expert_8gpu,
         expert_bytes,
+        prefill_chunk,
+        trace_out,
     }))
 }
 
@@ -340,6 +367,7 @@ pub(crate) struct GenReq {
     messages: Option<Vec<ChatMessage>>,
     add_generation_prompt: bool,
     pub(crate) n_predict: Option<usize>,
+    pub(crate) stream: bool,
 }
 
 impl GenReq {
@@ -589,6 +617,34 @@ pub(crate) fn json_generated(text: &str, prefix_hit: usize, page_hits: u64) -> S
     s
 }
 
+/// One NDJSON token object plus a trailing newline.
+pub(crate) fn json_token(token: &str) -> String {
+    let mut s = String::from("{\"token\":");
+    append_json_string(&mut s, token);
+    s.push_str("}\n");
+    s
+}
+
+/// HTTP/1.1 chunked NDJSON headers (`Connection: close`).
+pub(crate) fn http_chunked_headers() -> Vec<u8> {
+    b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
+        .to_vec()
+}
+
+/// One HTTP/1.1 chunk: hex size, payload, CRLF.
+pub(crate) fn http_chunk(payload: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(format!("{:x}\r\n", payload.len()).as_bytes());
+    out.extend_from_slice(payload);
+    out.extend_from_slice(b"\r\n");
+    out
+}
+
+/// Last HTTP/1.1 chunk (`0` + CRLF + trailer CRLF).
+pub(crate) fn http_chunk_end() -> Vec<u8> {
+    b"0\r\n\r\n".to_vec()
+}
+
 pub(crate) fn json_error(msg: &str) -> String {
     let mut s = String::from("{\"error\":");
     append_json_string(&mut s, msg);
@@ -813,6 +869,7 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
     let mut messages = None;
     let mut add_generation_prompt = None;
     let mut n_predict = None;
+    let mut stream = None;
     let mut need_comma = false;
     loop {
         scan.skip_ws();
@@ -834,6 +891,7 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
             "messages" => messages = Some(scan.parse_messages()?),
             "add_generation_prompt" => add_generation_prompt = Some(scan.parse_bool()?),
             "n_predict" => n_predict = Some(scan.parse_usize()?),
+            "stream" => stream = Some(scan.parse_bool()?),
             _ => scan.skip_value()?,
         }
         need_comma = true;
@@ -849,6 +907,7 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
         // prompt is on unless the caller says otherwise.
         add_generation_prompt: add_generation_prompt.unwrap_or(true),
         n_predict,
+        stream: stream.unwrap_or(false),
     })
 }
 
@@ -935,6 +994,8 @@ mod tests {
             expert_sim: false,
             expert_8gpu: false,
             expert_bytes: None,
+            prefill_chunk: 0,
+            trace_out: None,
         }
     }
 
@@ -1003,6 +1064,8 @@ mod tests {
         assert_eq!(a.bind, "127.0.0.1:8080");
         assert!(!a.engine);
         assert_eq!(a.max_seqs, None);
+        assert_eq!(a.prefill_chunk, 0);
+        assert_eq!(a.trace_out, None);
     }
 
     #[test]
@@ -1030,6 +1093,8 @@ mod tests {
                 expert_sim: false,
                 expert_8gpu: false,
                 expert_bytes: None,
+                prefill_chunk: 0,
+                trace_out: None,
             }
         );
     }
@@ -1102,6 +1167,8 @@ mod tests {
                 expert_sim: false,
                 expert_8gpu: false,
                 expert_bytes: None,
+                prefill_chunk: 0,
+                trace_out: None,
             }
         );
         let a = run(&["m.gguf", "--engine", "--max-seqs=2"]);
@@ -1135,6 +1202,22 @@ mod tests {
         );
         let err = parse_serve_args(["m.gguf", "--engine", "--expert-bytes", "0"]).unwrap_err();
         assert!(err.contains("expert-bytes must be > 0"), "{err}");
+    }
+
+    #[test]
+    fn prefill_chunk_and_trace_out_need_engine() {
+        let err = parse_serve_args(["m.gguf", "--prefill-chunk", "1"]).unwrap_err();
+        assert!(err.contains("--prefill-chunk requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--trace-out", "t.jsonl"]).unwrap_err();
+        assert!(err.contains("--trace-out requires --engine"), "{err}");
+        let a = run(&[
+            "m.gguf",
+            "--engine",
+            "--prefill-chunk=1",
+            "--trace-out=t.jsonl",
+        ]);
+        assert_eq!(a.prefill_chunk, 1);
+        assert_eq!(a.trace_out.as_deref(), Some("t.jsonl"));
     }
 
     #[test]
@@ -1223,7 +1306,12 @@ mod tests {
         let a = parse_gen_req(r#"{"prompt":"ab"}"#).unwrap();
         assert_eq!(a.prompt.as_deref(), Some("ab"));
         assert_eq!(a.n_predict, None);
+        assert!(!a.stream);
         assert_eq!(a.resolve(&tok).unwrap(), "ab");
+        let streamed = parse_gen_req(r#"{"prompt":"ab","stream":true}"#).unwrap();
+        assert!(streamed.stream);
+        let unstreamed = parse_gen_req(r#"{"prompt":"ab","stream":false}"#).unwrap();
+        assert!(!unstreamed.stream);
         let b = parse_gen_req(r#"{ "prompt" : "ab", "n_predict" : 4 }"#).unwrap();
         assert_eq!(b.prompt.as_deref(), Some("ab"));
         assert_eq!(b.n_predict, Some(4));
@@ -1381,6 +1469,10 @@ mod tests {
             json_field_string(&json_generated("a\"b\n", 0, 0), "generated").unwrap(),
             "a\"b\n"
         );
+        assert_eq!(json_token("ab"), "{\"token\":\"ab\"}\n");
+        assert_eq!(json_token("a\"b"), "{\"token\":\"a\\\"b\"}\n");
+        assert_eq!(http_chunk(b"hi"), b"2\r\nhi\r\n");
+        assert_eq!(http_chunk_end(), b"0\r\n\r\n");
     }
 
     #[test]
@@ -1395,6 +1487,16 @@ mod tests {
         let cl = header_value(&head, "content-length").expect("cl");
         assert_eq!(cl.parse::<usize>().unwrap(), body.len());
         assert_eq!(json_field_string(&body, "generated").unwrap(), expect);
+        let (head_s, body_s) = exchange(
+            &post_json(r#"{"prompt":"ab","stream":true}"#),
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head_s.starts_with("HTTP/1.1 200 OK"), "{head_s}");
+        assert!(head_s.contains("Content-Length"), "{head_s}");
+        assert!(!head_s.to_ascii_lowercase().contains("chunked"), "{head_s}");
+        assert_eq!(json_field_string(&body_s, "generated").unwrap(), expect);
         let zero = greedy_generate_ctx(&model, &tok, "ab", 0, None).expect("zero");
         let (_h, body0) = exchange(
             &post_json(r#"{"prompt":"ab","n_predict":0}"#),

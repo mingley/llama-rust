@@ -10,7 +10,9 @@
 //! `Llama::forward_batch`. One attached [`expertvm::LiveStore`] is parked on
 //! the first cache of each GEMM so MoE serving stays on the batched path.
 //! Opt-in [`Engine::enable_moe_trace`] records per-sequence [`expertvm::Trace`]
-//! events from those GEMMs (not a sequential fallback). After each GEMM the
+//! events from those GEMMs (not a sequential fallback). Markov copy-forward ∪
+//! lookback-2 prefetch runs **before** grouped expert GEMM so H2D of L+1 can
+//! overlap this layer's compute. After each GEMM the
 //! parked store sticky-pins last-used ∪ Markov experts (`slots.saturating_sub(1)`;
 //! `slots == 1` pins nothing so demand paging can evict). Multi-GPU SimulatedGpuStore
 //! then runs [`plan_placement`](expertvm::plan_placement) on those pins: D2D onto GPU0

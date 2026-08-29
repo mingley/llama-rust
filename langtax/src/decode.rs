@@ -5878,6 +5878,7 @@ impl Llama {
         } = run;
         self.route_softmax_tokens(&spec, n_tokens, s, pool, moe_trace)?;
         prefetch_routed(store, moe_trace.layer, &s.moe.sel_e);
+        prefetch_selected(moe_trace, store, n_tokens, spec.n_used, &s.moe.sel_e);
         self.grouped_routed_ffn(
             &spec,
             n_tokens,
@@ -5888,7 +5889,6 @@ impl Llama {
                 layer: moe_trace.layer,
             },
         )?;
-        prefetch_selected(moe_trace, store, n_tokens, spec.n_used, &s.moe.sel_e);
         Ok(())
     }
 
@@ -6243,6 +6243,7 @@ impl Llama {
         self.gemm_into(&moe.down_shexp, n_tokens, &s.gate, &mut s.ffn_out, pool)?;
         self.route_llama4_tokens(moe, n_tokens, s, pool, moe_trace)?;
         prefetch_routed(store, moe_trace.layer, &s.moe.sel_e);
+        prefetch_selected(moe_trace, store, n_tokens, moe.n_expert_used, &s.moe.sel_e);
         let spec = SoftmaxMoE {
             gate_inp: &moe.gate_inp,
             gate: &moe.gate_exps,
@@ -6265,7 +6266,6 @@ impl Llama {
                 layer: moe_trace.layer,
             },
         )?;
-        prefetch_selected(moe_trace, store, n_tokens, moe.n_expert_used, &s.moe.sel_e);
         Ok(())
     }
 
@@ -6831,6 +6831,9 @@ fn fill_router_weights(logits: &[f32], order: &[usize], weights: &mut Vec<f32>, 
     }
 }
 
+/// Observe this layer's router events and prefetch copy-forward ∪ Markov
+/// destinations **before** grouped expert GEMM so H2D of L+1 can overlap
+/// this layer's compute. Unknown catalog keys are skipped.
 fn prefetch_selected(
     moe_trace: &mut MoeTraceBuf,
     store: &mut Option<LiveStore>,
