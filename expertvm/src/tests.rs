@@ -2705,6 +2705,37 @@ fn cuda_graphs_graph_build_matches_capture_hits() {
 }
 
 #[test]
+fn cuda_graphs_graph_build_independent_children_overlap() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000\nhbm_bps=1000000000000\ngraph_instantiate_ns=1\ngraph_upload_ns=1\ngraph_launch_ns=1\nlaunch_overhead_ns=1\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let run = |graph_build: bool| {
+        sim_replay_cfg(
+            &t,
+            p.clone(),
+            SimCfg {
+                cuda_graphs: true,
+                graph_build,
+                compute_slots: 2,
+                ..SimCfg::lru(2, 4096, 0)
+            },
+        )
+        .expect("replay")
+        .sim_ns
+    };
+    let cap = run(false);
+    let bld = run(true);
+    assert!(
+        bld < cap,
+        "graph-build combo children must Hyper-Q overlap capture; build={bld} capture={cap}"
+    );
+}
+
+#[test]
 fn simulated_gpu_store_graph_build_launches() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],
@@ -2868,7 +2899,12 @@ fn cuda_graphs_graph_mem_build_matches_capture() {
     assert_eq!(cap.misses, bld.misses);
     assert_eq!(cap.graph_launches, bld.graph_launches);
     assert_eq!(cap.child_graphs, bld.child_graphs);
-    assert_eq!(cap.hbm_peak, bld.hbm_peak);
+    assert!(
+        bld.hbm_peak > cap.hbm_peak,
+        "independent graph-mem children overlap scratch; build={} capture={}",
+        bld.hbm_peak,
+        cap.hbm_peak
+    );
     assert!(bld.child_graphs > 0, "line={}", bld.line());
 }
 

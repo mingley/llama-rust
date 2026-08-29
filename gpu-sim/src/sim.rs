@@ -173,8 +173,18 @@ struct Capture {
     mem_allocs: Vec<AllocId>,
 }
 
+/// One `cudaGraphAdd*` / captured node plus [`Sim::graph_add_dependencies`] edges.
+#[derive(Clone, Debug)]
+struct GraphStep {
+    device: DeviceId,
+    stream: StreamId,
+    kind: Kind,
+    /// Predecessor node indices (`cudaGraphAddDependencies`). Empty is independent.
+    deps: Vec<usize>,
+}
+
 struct Graph {
-    steps: Vec<(DeviceId, StreamId, Kind)>,
+    steps: Vec<GraphStep>,
     origin: (DeviceId, StreamId),
     /// `cudaGraphInstantiate` has run (explicit or first launch).
     instantiated: bool,
@@ -204,9 +214,14 @@ pub struct Sim {
     events: BTreeMap<EventId, Ev>,
     graphs: BTreeMap<GraphId, Graph>,
     capturing: Option<Capture>,
-    capture_buf: Vec<(DeviceId, StreamId, Kind)>,
+    capture_buf: Vec<GraphStep>,
     /// Graph-owned mem alloc node ids (`cudaMallocAsync` captured into a graph).
     graph_allocs: BTreeMap<GraphId, Vec<AllocId>>,
+    /// Worker-stream ops that [`cudaGraphLaunch`] folded into the launch stream.
+    ///
+    /// Independent graph nodes run on internal streams (Hyper-Q). The launch
+    /// stream still waits for them (`cudaStreamSynchronize` / later submits).
+    graph_joins: BTreeMap<(DeviceId, StreamId), Vec<OpId>>,
     running: Vec<Running>,
     gpus: BTreeMap<DeviceId, GpuRt>,
     bytes_moved: u64,
@@ -267,6 +282,7 @@ impl Sim {
             capturing: None,
             capture_buf: Vec::new(),
             graph_allocs: BTreeMap::new(),
+            graph_joins: BTreeMap::new(),
             running: Vec::new(),
             gpus,
             bytes_moved: 0,
@@ -819,6 +835,9 @@ impl Sim {
 
     /// Enqueue every recorded op. Origin-stream nodes use `stream`; forked
     /// streams keep the ids they joined with, so copy and compute can overlap.
+    /// Independent nodes (empty [`GraphStep::deps`]) use internal streams so
+    /// Hyper-Q can overlap them; the launch stream still waits for the whole
+    /// graph (`cudaGraphLaunch`).
     ///
     /// First launch [`Self::instantiate_graph`]s if needed (`cudaGraphInstantiate`
     /// then [`Self::upload_graph`] then `cudaGraphLaunch`). Later launches skip
@@ -845,7 +864,7 @@ impl Sim {
             self.upload_graph(graph)?;
         }
         let mut stack = BTreeSet::new();
-        self.enqueue_graph(graph, stream, true, &mut stack)
+        self.enqueue_graph(graph, stream, true, &mut stack, &[])
     }
 
     fn capture_child_graph(
@@ -896,6 +915,7 @@ impl Sim {
         stream: StreamId,
         head: bool,
         stack: &mut BTreeSet<GraphId>,
+        extra_wait: &[OpId],
     ) -> Result<u32, SimError> {
         if !stack.insert(graph) {
             return Err(SimError::Invalid {
@@ -909,27 +929,48 @@ impl Sim {
             })?;
             (g.origin, g.steps.clone())
         };
+        let order = graph_topo_order(&steps)?;
         let launch_tail = self.tail.get(&(origin.0, stream)).copied();
         let mut n = 0u32;
         let mut head = head;
-        let mut seen = BTreeSet::new();
         let mut rec_ops: BTreeMap<EventId, OpId> = BTreeMap::new();
-        for (device, rec_stream, kind) in steps {
-            let s = if (device, rec_stream) == origin {
-                stream
-            } else {
-                rec_stream
-            };
-            if let Kind::ChildGraph { graph: child } = kind {
-                n = n.saturating_add(self.enqueue_graph(child, s, head, stack)?);
+        let mut node_ops: Vec<Vec<OpId>> = vec![Vec::new(); steps.len()];
+        let mut node_stream: Vec<Option<StreamId>> = vec![None; steps.len()];
+        let mut worker = 0u16;
+        let mut pending_joins = Vec::new();
+        for idx in order {
+            let step = steps.get(idx).ok_or(SimError::Invalid {
+                why: "graph dependency",
+            })?;
+            let wait = graph_node_waits(step, extra_wait, launch_tail, &node_ops)?;
+            let s = self.graph_exec_stream(origin, stream, step, &node_stream, &mut worker);
+            if let Some(slot) = node_stream.get_mut(idx) {
+                *slot = Some(s);
+            }
+            if let Kind::ChildGraph { graph: child } = &step.kind {
+                let add = self.enqueue_graph(*child, s, head, stack, &wait)?;
                 head = false;
+                n = n.saturating_add(add);
+                if let Some(id) = self.tail.get(&(step.device, s)).copied() {
+                    if let Some(ops) = node_ops.get_mut(idx) {
+                        ops.push(id);
+                    }
+                    if s != stream {
+                        pending_joins.push(id);
+                    }
+                }
+                if s != stream {
+                    if let Some(ids) = self.graph_joins.get(&(step.device, s)).cloned() {
+                        pending_joins.extend(ids);
+                    }
+                }
                 continue;
             }
-            let rec = match &kind {
+            let rec = match &step.kind {
                 Kind::EventRecord { event, .. } => Some(*event),
                 _ => None,
             };
-            let wait = match &kind {
+            let wait_ev = match &step.kind {
                 Kind::EventWait { event, external } => Some((*event, *external)),
                 _ => None,
             };
@@ -939,11 +980,14 @@ impl Sim {
                 LaunchCost::GraphBody
             };
             head = false;
-            let id = self.submit_launch(device, s, kind, launch)?;
+            let id = self.submit_launch(step.device, s, step.kind.clone(), launch)?;
+            for dep in wait {
+                self.add_op_dep(id, dep);
+            }
             if let Some(event) = rec {
                 let _prev = rec_ops.insert(event, id);
             }
-            if let Some((event, external)) = wait {
+            if let Some((event, external)) = wait_ev {
                 if external {
                     if let Some(rec_id) = self.events.get(&event).and_then(|e| e.recorded_by) {
                         self.add_op_dep(id, rec_id);
@@ -952,15 +996,65 @@ impl Sim {
                     self.add_op_dep(id, rec_id);
                 }
             }
-            if seen.insert((device, s)) {
-                if let Some(tail) = launch_tail {
-                    self.add_op_dep(id, tail);
-                }
+            if let Some(ops) = node_ops.get_mut(idx) {
+                ops.push(id);
+            }
+            if s != stream {
+                pending_joins.push(id);
             }
             n = n.saturating_add(1);
         }
+        if !pending_joins.is_empty() {
+            self.graph_joins
+                .entry((origin.0, stream))
+                .or_default()
+                .extend(pending_joins);
+        }
         let _gone = stack.remove(&graph);
         Ok(n)
+    }
+
+    /// Internal stream for an origin-stream graph node. Chains stay on the
+    /// predecessor stream; independent nodes get a Hyper-Q worker.
+    fn graph_exec_stream(
+        &mut self,
+        origin: (DeviceId, StreamId),
+        launch: StreamId,
+        step: &GraphStep,
+        node_stream: &[Option<StreamId>],
+        worker: &mut u16,
+    ) -> StreamId {
+        if (step.device, step.stream) != origin {
+            return step.stream;
+        }
+        if step.deps.len() == 1 {
+            if let Some(pred) = step.deps.first().copied() {
+                if let Some(s) = node_stream.get(pred).copied().flatten() {
+                    self.bind_graph_worker(step.device, launch, s);
+                    return s;
+                }
+            }
+        }
+        let taken = node_stream.iter().any(Option::is_some);
+        let s = if !taken && step.deps.is_empty() {
+            launch
+        } else {
+            alloc_graph_worker(launch, worker)
+        };
+        self.bind_graph_worker(step.device, launch, s);
+        s
+    }
+
+    fn bind_graph_worker(&mut self, device: DeviceId, launch: StreamId, worker: StreamId) {
+        if worker == launch {
+            return;
+        }
+        if let Some(p) = self.priority.get(&(device, launch)).copied() {
+            let _prev = self.priority.insert((device, worker), p);
+        }
+        if let Some(sm) = self.sm_permille.get(&(device, launch)).copied() {
+            let _prev = self.sm_permille.insert((device, worker), sm);
+        }
     }
 
     fn add_op_dep(&mut self, id: OpId, dep: OpId) {
@@ -1038,11 +1132,11 @@ impl Sim {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            let device = g.steps.first().map(|(d, _, _)| *d).unwrap_or(DeviceId(0));
+            let device = g.steps.first().map(|s| s.device).unwrap_or(DeviceId(0));
             let has_free = g
                 .steps
                 .iter()
-                .any(|(_, _, k)| matches!(k, Kind::Free { .. }));
+                .any(|s| matches!(&s.kind, Kind::Free { .. }));
             (device, g.instantiated, g.auto_free_on_launch, has_free)
         };
         if already {
@@ -1079,7 +1173,7 @@ impl Sim {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            let device = g.steps.first().map(|(d, _, _)| *d).unwrap_or(DeviceId(0));
+            let device = g.steps.first().map(|s| s.device).unwrap_or(DeviceId(0));
             (device, g.instantiated, g.uploaded)
         };
         if !instantiated {
@@ -1103,10 +1197,11 @@ impl Sim {
 
     /// `cudaGraphExecUpdate`: replace `exec` steps with `src` when topology matches.
     ///
-    /// Same device, stream, and op kinds; KernelBuf / memcpy sizes may change.
-    /// Pays `graph_update_ns`. Recapture if topology differs. Capture cannot
-    /// include it. `exec` must already be instantiated. Graphs with mem alloc
-    /// or mem free nodes cannot be updated (`cudaGraphExecUpdate` of mem nodes).
+    /// Same device, stream, op kinds, cooperative flag, and dependency edges;
+    /// KernelBuf / memcpy sizes may change. Pays `graph_update_ns`. Recapture
+    /// if topology differs. Capture cannot include it. `exec` must already be
+    /// instantiated. Graphs with mem alloc or mem free nodes cannot be updated
+    /// (`cudaGraphExecUpdate` of mem nodes).
     pub fn update_graph(&mut self, exec: GraphId, src: GraphId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph update")?;
         if exec == src {
@@ -1121,7 +1216,7 @@ impl Sim {
             let s = self.graphs.get(&src).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            let device = e.steps.first().map(|(d, _, _)| *d).unwrap_or(DeviceId(0));
+            let device = e.steps.first().map(|s| s.device).unwrap_or(DeviceId(0));
             (e.instantiated, e.steps.clone(), s.steps.clone(), device)
         };
         if !instantiated {
@@ -1223,8 +1318,8 @@ impl Sim {
             g.steps.clone()
         };
         walk.stack.push(graph);
-        for (_, _, kind) in &steps {
-            if let Kind::ChildGraph { graph: child } = kind {
+        for step in &steps {
+            if let Kind::ChildGraph { graph: child } = &step.kind {
                 self.collect_clone_tree(*child, walk)?;
             }
         }
@@ -1241,7 +1336,7 @@ impl Sim {
         self.graphs.get(&graph).is_some_and(|g| {
             g.steps
                 .iter()
-                .any(|(_, _, k)| matches!(k, Kind::Alloc { .. } | Kind::Free { .. }))
+                .any(|s| matches!(&s.kind, Kind::Alloc { .. } | Kind::Free { .. }))
         })
     }
 
@@ -1283,8 +1378,8 @@ impl Sim {
         &mut self,
         src: GraphId,
         dst: GraphId,
-        steps: Vec<(DeviceId, StreamId, Kind)>,
-    ) -> Result<Vec<(DeviceId, StreamId, Kind)>, SimError> {
+        steps: Vec<GraphStep>,
+    ) -> Result<Vec<GraphStep>, SimError> {
         let src_ids = self.graph_allocs.get(&src).cloned().unwrap_or_default();
         if src_ids.is_empty() {
             return Ok(steps);
@@ -1299,7 +1394,10 @@ impl Sim {
         let _old = self.graph_allocs.insert(dst, dst_ids);
         Ok(steps
             .into_iter()
-            .map(|(d, s, k)| (d, s, remap_alloc_kind(k, &map)))
+            .map(|mut step| {
+                step.kind = remap_alloc_kind(step.kind, &map);
+                step
+            })
             .collect())
     }
 
@@ -1373,8 +1471,11 @@ impl Sim {
 
     /// `cudaGraphAddKernelNode` on an uninstantiated [`Self::create_graph`] id.
     ///
-    /// Capture cannot include it. Illegal after [`Self::instantiate_graph`].
-    /// Does not run the kernel; [`Self::launch_graph`] does.
+    /// Nodes start with no dependencies (CUDA). Use
+    /// [`Self::graph_add_dependencies`] so a later node waits. Independent
+    /// kernels may Hyper-Q overlap at [`Self::launch_graph`]. Capture cannot
+    /// include it. Illegal after [`Self::instantiate_graph`]. Does not run the
+    /// kernel; [`Self::launch_graph`] does.
     pub fn graph_add_kernel(
         &mut self,
         graph: GraphId,
@@ -1498,6 +1599,9 @@ impl Sim {
     }
 
     /// `cudaGraphAddChildGraphNode`. `child` must already be instantiated.
+    ///
+    /// Sibling children have no dependency until [`Self::graph_add_dependencies`].
+    /// Independent children may Hyper-Q overlap at parent launch.
     pub fn graph_add_child(&mut self, graph: GraphId, child: GraphId) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         if child == graph {
@@ -1550,6 +1654,55 @@ impl Sim {
         self.graph_push(graph, device, stream, Kind::Free { id })
     }
 
+    /// `cudaGraphAddDependencies`: `from` must complete before `to` starts.
+    ///
+    /// Capture cannot include it. Illegal after instantiate. Indices are
+    /// 0-based in add order. A cycle is Invalid. Independent nodes (no edge)
+    /// may Hyper-Q overlap at [`Self::launch_graph`].
+    pub fn graph_add_dependencies(
+        &mut self,
+        graph: GraphId,
+        from: usize,
+        to: usize,
+    ) -> Result<(), SimError> {
+        let _origin = self.graph_origin_for_add(graph)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let n = g.steps.len();
+        if from == to || from >= n || to >= n {
+            return Err(SimError::Invalid {
+                why: "graph dependency",
+            });
+        }
+        if graph_reaches(&g.steps, to, from) {
+            return Err(SimError::Invalid {
+                why: "cyclic graph dependencies",
+            });
+        }
+        let step = g.steps.get_mut(to).ok_or(SimError::Invalid {
+            why: "graph dependency",
+        })?;
+        if !step.deps.contains(&from) {
+            step.deps.push(from);
+            step.deps.sort_unstable();
+        }
+        Ok(())
+    }
+
+    /// Predecessor indices of node `i` (`cudaGraphAddDependencies`).
+    pub fn graph_node_deps(&self, graph: GraphId, i: usize) -> Result<Vec<usize>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        g.steps
+            .get(i)
+            .map(|s| s.deps.clone())
+            .ok_or(SimError::Invalid {
+                why: "graph dependency",
+            })
+    }
+
     fn graph_origin_for_add(&self, graph: GraphId) -> Result<(DeviceId, StreamId), SimError> {
         self.fail_if_capturing("cannot add graph node during capture")?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
@@ -1573,7 +1726,12 @@ impl Sim {
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        g.steps.push((device, stream, kind));
+        g.steps.push(GraphStep {
+            device,
+            stream,
+            kind,
+            deps: Vec::new(),
+        });
         Ok(())
     }
 
@@ -3642,7 +3800,13 @@ impl Sim {
                 }
             }
         }
-        self.capture_buf.push((device, stream, kind));
+        let deps = capture_step_deps(&self.capture_buf, device, stream, &kind);
+        self.capture_buf.push(GraphStep {
+            device,
+            stream,
+            kind,
+            deps,
+        });
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
         Ok(id)
@@ -3689,6 +3853,13 @@ impl Sim {
         let mut deps = Vec::new();
         if let Some(prev) = self.tail.get(&(device, stream)) {
             deps.push(*prev);
+        }
+        if let Some(joins) = self.graph_joins.get(&(device, stream)) {
+            for id in joins {
+                if !deps.contains(id) {
+                    deps.push(*id);
+                }
+            }
         }
         self.add_null_stream_deps(device, stream, &mut deps);
         deps
@@ -3744,7 +3915,7 @@ impl Sim {
     }
 
     fn stream_idle(&self, device: DeviceId, stream: StreamId) -> bool {
-        !self
+        let local = !self
             .ops
             .values()
             .any(|o| o.device == device && o.stream == stream && !o.done)
@@ -3752,7 +3923,13 @@ impl Sim {
                 self.ops
                     .get(&r.op)
                     .is_some_and(|o| o.device == device && o.stream == stream)
-            })
+            });
+        if !local {
+            return false;
+        }
+        self.graph_joins
+            .get(&(device, stream))
+            .is_none_or(|ids| ids.iter().all(|id| self.op_done(*id)))
     }
 
     fn gpu_rt(&self, device: DeviceId) -> Result<&GpuRt, SimError> {
@@ -5309,12 +5486,12 @@ fn remap_alloc_kind(kind: Kind, map: &BTreeMap<AllocId, AllocId>) -> Kind {
 }
 
 fn remap_child_graphs(
-    steps: &[(DeviceId, StreamId, Kind)],
+    steps: &[GraphStep],
     remap: &BTreeMap<GraphId, GraphId>,
-) -> Result<Vec<(DeviceId, StreamId, Kind)>, SimError> {
+) -> Result<Vec<GraphStep>, SimError> {
     let mut out = Vec::with_capacity(steps.len());
-    for (device, stream, kind) in steps {
-        let kind = match kind {
+    for step in steps {
+        let kind = match &step.kind {
             Kind::ChildGraph { graph } => {
                 let cloned = remap.get(graph).copied().ok_or(SimError::Invalid {
                     why: "unknown graph",
@@ -5323,18 +5500,153 @@ fn remap_child_graphs(
             }
             other => other.clone(),
         };
-        out.push((*device, *stream, kind));
+        out.push(GraphStep {
+            device: step.device,
+            stream: step.stream,
+            kind,
+            deps: step.deps.clone(),
+        });
     }
     Ok(out)
 }
 
-fn graph_topology_eq(a: &[(DeviceId, StreamId, Kind)], b: &[(DeviceId, StreamId, Kind)]) -> bool {
+fn graph_topology_eq(a: &[GraphStep], b: &[GraphStep]) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    a.iter()
-        .zip(b.iter())
-        .all(|((d0, s0, k0), (d1, s1, k1))| *d0 == *d1 && *s0 == *s1 && op_eq(k0, k1))
+    a.iter().zip(b.iter()).all(|(x, y)| {
+        x.device == y.device
+            && x.stream == y.stream
+            && op_eq(&x.kind, &y.kind)
+            && x.deps == y.deps
+    })
+}
+
+fn capture_step_deps(
+    buf: &[GraphStep],
+    device: DeviceId,
+    stream: StreamId,
+    kind: &Kind,
+) -> Vec<usize> {
+    let mut deps = Vec::new();
+    if let Some(i) = buf
+        .iter()
+        .rposition(|s| s.device == device && s.stream == stream)
+    {
+        deps.push(i);
+    }
+    if let Kind::EventWait { event, external } = kind {
+        if !*external {
+            if let Some(i) = buf.iter().rposition(|s| {
+                matches!(
+                    &s.kind,
+                    Kind::EventRecord {
+                        event: e,
+                        external: false
+                    } if e == event
+                )
+            }) {
+                if !deps.contains(&i) {
+                    deps.push(i);
+                }
+            }
+        }
+    }
+    deps
+}
+
+fn graph_topo_order(steps: &[GraphStep]) -> Result<Vec<usize>, SimError> {
+    let n = steps.len();
+    let mut indeg = vec![0u32; n];
+    for (i, step) in steps.iter().enumerate() {
+        let mut seen = BTreeSet::new();
+        for d in &step.deps {
+            if *d >= n || *d == i || !seen.insert(*d) {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+            let slot = indeg.get_mut(i).ok_or(SimError::Invalid {
+                why: "graph dependency",
+            })?;
+            *slot = slot.saturating_add(1);
+        }
+    }
+    let mut ready: BTreeSet<usize> = (0..n)
+        .filter(|i| indeg.get(*i).copied() == Some(0))
+        .collect();
+    let mut order = Vec::with_capacity(n);
+    while let Some(i) = ready.pop_first() {
+        order.push(i);
+        for (j, step) in steps.iter().enumerate() {
+            if step.deps.contains(&i) {
+                let slot = indeg.get_mut(j).ok_or(SimError::Invalid {
+                    why: "graph dependency",
+                })?;
+                *slot = slot.saturating_sub(1);
+                if *slot == 0 {
+                    let _ins = ready.insert(j);
+                }
+            }
+        }
+    }
+    if order.len() != n {
+        return Err(SimError::Invalid {
+            why: "cyclic graph dependencies",
+        });
+    }
+    Ok(order)
+}
+
+fn graph_node_waits(
+    step: &GraphStep,
+    extra_wait: &[OpId],
+    launch_tail: Option<OpId>,
+    node_ops: &[Vec<OpId>],
+) -> Result<Vec<OpId>, SimError> {
+    let mut wait = Vec::new();
+    if step.deps.is_empty() {
+        wait.extend(extra_wait.iter().copied());
+        if let Some(t) = launch_tail {
+            wait.push(t);
+        }
+    }
+    for d in &step.deps {
+        let ops = node_ops.get(*d).ok_or(SimError::Invalid {
+            why: "graph dependency",
+        })?;
+        wait.extend(ops.iter().copied());
+    }
+    Ok(wait)
+}
+
+fn graph_reaches(steps: &[GraphStep], start: usize, goal: usize) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![start];
+    while let Some(i) = stack.pop() {
+        if i == goal {
+            return true;
+        }
+        if !seen.insert(i) {
+            continue;
+        }
+        for (j, step) in steps.iter().enumerate() {
+            if step.deps.contains(&i) {
+                stack.push(j);
+            }
+        }
+    }
+    false
+}
+
+fn alloc_graph_worker(launch: StreamId, worker: &mut u16) -> StreamId {
+    loop {
+        let s = StreamId(u16::MAX.saturating_sub(*worker));
+        *worker = worker.saturating_add(1);
+        if s != launch {
+            return s;
+        }
+    }
 }
 
 fn op_eq(a: &Kind, b: &Kind) -> bool {

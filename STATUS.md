@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — `cudaGraphAddDependencies`
+
+`Sim::graph_add_dependencies` is `cudaGraphAddDependencies`. Independent
+graph nodes (empty deps) run on internal streams so Hyper-Q can overlap
+them; the launch stream still waits for the whole graph. Stream capture
+records same-stream edges. `--graph-build` combo parents leave sibling
+`graph_add_child` nodes independent. `cudaGraphExecUpdate` treats those
+edges as topology. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — `cudaLaunchCooperativeKernel`
 
 `Sim::cooperative_kernel` / `graph_add_cooperative_kernel` are

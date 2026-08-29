@@ -139,7 +139,9 @@ that leaf on evict and `cudaGraphExecUpdate`s the next miss on the same
 clones a leaf capture before instantiate (`graph_clone_ns`; the src is
 destroyed). `--graph-build` is `cudaGraphCreate` / `cudaGraphAdd*` instead of
 stream capture (no idle-stream wait; implies `--cuda-graphs` on the walker;
-combo parents are `graph_add_child` of instantiated leaves). `--graph-mem`
+combo parents are `graph_add_child` of instantiated leaves with no
+`graph_add_dependencies` edge, so independent expert GEMMs may Hyper-Q
+overlap). `--graph-mem`
 records a scratch `cudaMallocAsync` + free in each leaf GEMM graph (HBM peak
 includes the workspace; `--graph-update` is skipped). `--graph-auto-free` is
 the same scratch without a matching free, instantiated

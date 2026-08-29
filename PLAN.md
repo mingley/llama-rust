@@ -627,6 +627,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   / `graph_add_host_func` / `graph_add_event_record` / `graph_add_event_wait`
   / `graph_add_child` are `cudaGraphCreate` / `cudaGraphAdd*` (empty graph,
   then nodes; illegal after instantiate and during capture).
+  `graph_add_dependencies` is `cudaGraphAddDependencies` (independent nodes
+  may Hyper-Q overlap at launch; capture records same-stream edges).
   Recorded kernels and copies do not run until launch; `cudaMallocAsync` /
   `cudaFreeAsync` (`alloc` / `free`) **can** be captured as graph mem nodes.
   Host-sync `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device` /
@@ -638,8 +640,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   (stream-ordered free before a later launch's alloc nodes; illegal with mem
   free nodes). `cudaGraphUpload` (`Sim::upload_graph`,
   `graph_upload_ns`) is a separate host-sync after instantiate; the first
-  launch uploads if needed. `update_graph` replaces an instantiated exec's
-  steps when device, stream, and op kinds match (`graph_update_ns`).
+  launch uploads if needed.   `update_graph` replaces an instantiated exec's
+  steps when device, stream, op kinds, and dependency edges match (`graph_update_ns`).
   Graphs with mem alloc/free nodes cannot be updated.
   `clone_graph` is an independent uninstantiated copy (`graph_clone_ns`);
   child-graph nodes are cloned recursively (shared children cloned once);
@@ -663,9 +665,10 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   parks a leaf exec on evict and `update_graph`s the next miss on that
   `(device, stream)` (`graph_update_ns` instead of instantiate; parent
   combos still destroy). `--graph-clone` clones a leaf capture before
-  instantiate (`graph_clone_ns`; the src is destroyed). `--graph-build`
+  instantiate (`graph_clone_ns`; the src is destroyed).   `--graph-build`
   is `cudaGraphCreate` / `cudaGraphAdd*` instead of stream capture (no idle
-  stream; implies `--cuda-graphs` on the walker). Capture after a miss waits with
+  stream; implies `--cuda-graphs` on the walker; combo children have no
+  `graph_add_dependencies` edge so they may Hyper-Q overlap). Capture after a miss waits with
   `synchronize_stream` so the compute stream is idle (CUDA). `--max-batch N`
   admits N sequences per engine iteration. `expertvm schedule` is the
   open-loop running set (arrivals, retire, SLO misses, `idle_until`,
@@ -704,7 +707,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   is `cudaGraphExecUpdate` of a parked leaf (store and `--cuda-graphs`
   walker). `--graph-clone` is `cudaGraphClone` of a leaf capture before
   instantiate (graph vs exec). `--graph-build` is `cudaGraphCreate` /
-  `cudaGraphAddKernelNode` (and child add for combo parents).   `--graph-mem`
+  `cudaGraphAddKernelNode` (and child add for combo parents; independent
+  children may Hyper-Q overlap).   `--graph-mem`
   is in-graph scratch (`cudaGraphAddMemAllocNode` / capture `cudaMallocAsync`);
   `--graph-update` is skipped because CUDA cannot update mem nodes.
   `--graph-auto-free` is AutoFreeOnLaunch scratch without a matching free
@@ -1159,6 +1163,15 @@ model, do not celebrate the sim.
     `gguf_gemv engine` / `serve --engine --expert-sim`, and `infer-bench
     schedule` launches grouped GEMMs that way. Decode identity stays
     `cudaLaunchKernel`. Dual score still has no `$/M tokens`.
+79. [x] `cudaGraphAddDependencies`: `Sim::graph_add_dependencies` records
+    predecessor edges on `create_graph` nodes (illegal after instantiate and
+    during capture). Independent nodes (empty deps) launch on internal streams
+    so Hyper-Q can overlap them; the launch stream still waits for the graph.
+    Stream capture records same-stream edges. `--graph-build` combo parents
+    leave sibling `graph_add_child` nodes independent. `update_graph` treats
+    edges as topology. Leaf `--graph-mem` / `--graph-auto-free` chains
+    alloc→kernel→free. Decode identity stays stream capture. Dual score still
+    has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

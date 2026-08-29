@@ -255,6 +255,8 @@ pub struct SimCfg {
     ///
     /// Leaves and parents are built with [`gpu_sim::Sim::create_graph`] and
     /// [`gpu_sim::Sim::graph_add_kernel`] / [`gpu_sim::Sim::graph_add_child`].
+    /// Combo children have no [`gpu_sim::Sim::graph_add_dependencies`] edge, so
+    /// independent expert GEMMs may Hyper-Q overlap (`compute_slots >= 2`).
     /// Does not require an idle stream. Implies [`Self::cuda_graphs`]. Decode
     /// identity stays stream capture. [`crate::GpuStoreCfg::graph_build`] is
     /// the store path.
@@ -1389,8 +1391,10 @@ fn add_leaf_gemm(
     }
     let scratch = sim.graph_add_alloc(graph, GRAPH_SCRATCH_BYTES)?;
     add_gemm_kernel(sim, graph, id, &[scratch], cooperative)?;
+    sim.graph_add_dependencies(graph, 0, 1)?;
     if mem == LeafMem::Free {
         sim.graph_add_free(graph, scratch)?;
+        sim.graph_add_dependencies(graph, 1, 2)?;
     }
     Ok(())
 }

@@ -42,7 +42,7 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --cuda-graphs     document default GEMM graph capture (`--expert-sim`; always on)
       --graph-update    cudaGraphExecUpdate parked leaves (`--expert-sim`)
       --graph-clone     cudaGraphClone before instantiate (`--expert-sim`)
-      --graph-build     cudaGraphCreate / cudaGraphAdd* instead of capture (`--expert-sim`)
+      --graph-build     cudaGraphCreate / cudaGraphAdd* instead of capture (`--expert-sim`; independent children may Hyper-Q overlap)
       --graph-mem       in-graph scratch cudaMallocAsync (`--expert-sim`; skips `--graph-update`)
       --graph-auto-free AutoFreeOnLaunch scratch without in-graph free (`--expert-sim`; not with `--graph-mem`)
       --timing-events   cudaEventElapsedTime on copy start/end (`--expert-sim`)

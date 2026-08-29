@@ -108,12 +108,16 @@
 //! [`graph_add_child`](Sim::graph_add_child) /
 //! [`graph_add_alloc`](Sim::graph_add_alloc) /
 //! [`graph_add_free`](Sim::graph_add_free) /
-//! [`graph_add_cooperative_kernel`](Sim::graph_add_cooperative_kernel) are
+//! [`graph_add_cooperative_kernel`](Sim::graph_add_cooperative_kernel) /
+//! [`graph_add_dependencies`](Sim::graph_add_dependencies) are
 //! `cudaGraphAdd*` on that id.
 //! Illegal after instantiate and during capture.
 //! [`Sim::graph_add_alloc`] / [`graph_add_free`](Sim::graph_add_free) are
 //! `cudaGraphAddMemAllocNode` / `cudaGraphAddMemFreeNode` (same reuse /
 //! AutoFreeOnLaunch rules as captured `cudaMallocAsync`).
+//! [`Sim::graph_add_dependencies`] is `cudaGraphAddDependencies` (node indices;
+//! independent nodes may Hyper-Q overlap at launch; capture records same-stream
+//! edges). `cudaGraphExecUpdate` treats those edges as topology.
 //! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`.
 //! Capture records every stream that [`wait_event`](Sim::wait_event)s an
 //! event recorded in this capture (CUDA forked capture). [`record_event_external`](Sim::record_event_external)
@@ -5138,7 +5142,9 @@ mod tests {
         let b = bld.graph_add_alloc(built, 4096).unwrap();
         bld.graph_add_kernel(built, KernelKind::other(8, 8), &[b], &[b])
             .unwrap();
+        bld.graph_add_dependencies(built, 0, 1).unwrap();
         bld.graph_add_free(built, b).unwrap();
+        bld.graph_add_dependencies(built, 1, 2).unwrap();
         bld.instantiate_graph(built).unwrap();
         bld.upload_graph(built).unwrap();
         assert_eq!(cap.graph_len(captured).unwrap(), 3);
@@ -5164,6 +5170,7 @@ mod tests {
         let a = sim.graph_add_alloc(g, 4096).unwrap();
         sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
         let n = sim.launch_graph(g, s).unwrap();
         assert_eq!(n, 2);
         sim.synchronize().unwrap();
@@ -5212,6 +5219,188 @@ mod tests {
         let err = sim.graph_add_alloc(g, 4096).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_add_dependencies_orders_alloc_before_kernel() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        let a = sim.graph_add_alloc(g, 4096).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        assert_eq!(sim.graph_node_deps(g, 1).unwrap(), vec![0]);
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(a, d).unwrap());
+        let err = sim.graph_add_dependencies(g, 0, 1).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_add_dependencies_rejects_cycles() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        let err = sim.graph_add_dependencies(g, 1, 0).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("cyclic"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim.graph_add_dependencies(g, 0, 0).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("graph dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_add_independent_kernels_hyperq_overlap() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |slots: u8, chain: bool| {
+            let mut sim = Sim::new(h100().with_compute_slots(slots));
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let a = sim.alloc(d, 4096, s).unwrap();
+            let b = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+            enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+            sim.synchronize().unwrap();
+            let g = sim.create_graph(d, s).unwrap();
+            sim.graph_add_kernel(g, kind.clone(), &[a], &[a]).unwrap();
+            sim.graph_add_kernel(g, kind.clone(), &[b], &[b]).unwrap();
+            if chain {
+                sim.graph_add_dependencies(g, 0, 1).unwrap();
+            }
+            sim.instantiate_graph(g).unwrap();
+            sim.upload_graph(g).unwrap();
+            let t0 = sim.clock_ns();
+            let n = sim.launch_graph(g, s).unwrap();
+            sim.synchronize().unwrap();
+            assert_eq!(n, 2);
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let serial = run(2, true);
+        let overlap = run(2, false);
+        assert!(
+            overlap < serial,
+            "independent graph nodes must Hyper-Q overlap; overlap={overlap} serial={serial}"
+        );
+        let exclusive = run(1, false);
+        assert!(
+            exclusive > overlap,
+            "one compute slot must serialize independent nodes; exclusive={exclusive} overlap={overlap}"
+        );
+    }
+
+    #[test]
+    fn graph_add_independent_children_overlap_capture_chain() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let mut cap = Sim::new(h100().with_compute_slots(2));
+        let mut bld = Sim::new(h100().with_compute_slots(2));
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let setup = |sim: &mut Sim| {
+            let a = sim.alloc(d, 4096, s).unwrap();
+            let b = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+            enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+            sim.synchronize().unwrap();
+            (a, b)
+        };
+        let (ca, cb) = setup(&mut cap);
+        let leaf0 = {
+            cap.begin_capture(d, s).unwrap();
+            enq(cap.kernel(d, kind.clone(), &[ca], &[ca], s));
+            let g = cap.end_capture().unwrap();
+            cap.instantiate_graph(g).unwrap();
+            g
+        };
+        let leaf1 = {
+            cap.begin_capture(d, s).unwrap();
+            enq(cap.kernel(d, kind.clone(), &[cb], &[cb], s));
+            let g = cap.end_capture().unwrap();
+            cap.instantiate_graph(g).unwrap();
+            g
+        };
+        cap.begin_capture(d, s).unwrap();
+        let _n0 = cap.launch_graph(leaf0, s).unwrap();
+        let _n1 = cap.launch_graph(leaf1, s).unwrap();
+        let captured = cap.end_capture().unwrap();
+        cap.instantiate_graph(captured).unwrap();
+        cap.upload_graph(captured).unwrap();
+
+        let (ba, bb) = setup(&mut bld);
+        let l0 = bld.create_graph(d, s).unwrap();
+        bld.graph_add_kernel(l0, kind.clone(), &[ba], &[ba]).unwrap();
+        bld.instantiate_graph(l0).unwrap();
+        let l1 = bld.create_graph(d, s).unwrap();
+        bld.graph_add_kernel(l1, kind, &[bb], &[bb]).unwrap();
+        bld.instantiate_graph(l1).unwrap();
+        let parent = bld.create_graph(d, s).unwrap();
+        bld.graph_add_child(parent, l0).unwrap();
+        bld.graph_add_child(parent, l1).unwrap();
+        bld.instantiate_graph(parent).unwrap();
+        bld.upload_graph(parent).unwrap();
+
+        let t0 = cap.clock_ns();
+        let n0 = cap.launch_graph(captured, s).unwrap();
+        cap.synchronize().unwrap();
+        let cap_ns = cap.clock_ns().saturating_sub(t0);
+        let t1 = bld.clock_ns();
+        let n1 = bld.launch_graph(parent, s).unwrap();
+        bld.synchronize().unwrap();
+        let bld_ns = bld.clock_ns().saturating_sub(t1);
+        assert_eq!(n0, 2);
+        assert_eq!(n1, 2);
+        assert!(
+            bld_ns < cap_ns,
+            "graph_add_child without deps must overlap; build={bld_ns} capture={cap_ns}"
+        );
+    }
+
+    #[test]
+    fn update_graph_treats_dependencies_as_topology() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+        sim.synchronize().unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(src, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(src, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        sim.graph_add_dependencies(src, 0, 1).unwrap();
+        let err = sim.update_graph(exec, src).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("topology"), "{why}"),
             other => panic!("{other:?}"),
         }
     }

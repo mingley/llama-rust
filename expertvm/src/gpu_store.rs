@@ -101,7 +101,9 @@ pub struct GpuStoreCfg {
     /// `cudaGraphCreate` / `cudaGraphAddKernelNode` instead of stream capture.
     ///
     /// Does not require an idle compute stream (`cudaStreamBeginCapture` does).
-    /// Decode identity stays `begin_capture` / `end_capture`.
+    /// Combo parents add children without [`gpu_sim::Sim::graph_add_dependencies`]
+    /// so independent expert GEMMs may Hyper-Q overlap. Decode identity stays
+    /// `begin_capture` / `end_capture`.
     pub graph_build: bool,
     /// Leaf GEMM graphs include a scratch `cudaMallocAsync` + free.
     ///
@@ -1791,8 +1793,10 @@ fn add_leaf_gemm(
     }
     let scratch = sim.graph_add_alloc(graph, GRAPH_SCRATCH_BYTES)?;
     add_store_gemm(sim, graph, id, &[scratch], cooperative)?;
+    sim.graph_add_dependencies(graph, 0, 1)?;
     if mem == LeafMem::Free {
         sim.graph_add_free(graph, scratch)?;
+        sim.graph_add_dependencies(graph, 1, 2)?;
     }
     Ok(())
 }

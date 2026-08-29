@@ -72,11 +72,11 @@ warp scheduler, L1, …   ← do not model
 | independent streams stay live during capture | query/sync of a capturing stream is Invalid |
 | graph instantiate is host-sync; first launch pays it once; `instantiate_graph_auto_free` is AutoFreeOnLaunch | `graph_instantiate_ns` |
 | graph upload is host-sync after instantiate; first launch pays it once | `graph_upload_ns` |
-| graph update replaces steps when topology matches (device, stream, kind); mem nodes are Invalid | `graph_update_ns` |
+| graph update replaces steps when topology matches (device, stream, kind, deps); mem nodes are Invalid | `graph_update_ns` |
 | graph mem alloc/free nodes (`cudaMallocAsync` / `cudaFreeAsync` during capture, or `graph_add_alloc` / `graph_add_free`) | `pool_reuse_ns` on relaunch without free |
 | graph clone is an independent uninstantiated copy; child graphs cloned recursively; mem alloc nodes get new ids | `graph_clone_ns` |
 | `cudaGraphCreate` (`create_graph`) is an empty uninstantiated graph | 1 ns host-sync |
-| `cudaGraphAddKernelNode` / memcpy / memset / host / event / child / mem alloc/free / cooperative kernel (`graph_add_*`) | not timed (host-side topology) |
+| `cudaGraphAddKernelNode` / memcpy / memset / host / event / child / mem alloc/free / cooperative kernel / dependencies (`graph_add_*`) | not timed (host-side topology) |
 | graph destroy drops the id (`cudaGraphDestroy`); remaining graph mem is refunded | 1 ns host-sync |
 | graph launch amortizes per-kernel launch overhead | `graph_launch_ns` |
 | `synchronize_stream` waits one stream only | other streams keep running |
@@ -211,7 +211,9 @@ child-graph node if the child is already instantiated; parent launch expands
 it. Independent streams still launch live. `cudaMallocAsync` / `cudaFreeAsync`
 (`alloc` / `free`) during capture are graph mem alloc/free nodes.
 `graph_add_alloc` / `graph_add_free` are `cudaGraphAddMemAllocNode` /
-`cudaGraphAddMemFreeNode` (same reuse / AutoFreeOnLaunch rules). Host-sync
+`cudaGraphAddMemFreeNode` (same reuse / AutoFreeOnLaunch rules).
+`graph_add_dependencies` is `cudaGraphAddDependencies` (independent nodes
+may Hyper-Q overlap at launch; capture records same-stream edges). Host-sync
 `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device` / VMM / mempool
 create cannot be captured. A graph that allocates without a matching free
 reuses the pointer on later launches (no second HBM charge) unless
@@ -228,11 +230,12 @@ parent keeps working. `destroy_graph` is `cudaGraphDestroy` (1 ns;
 later launch is unknown; remaining graph mem is refunded). First launch instantiates if needed (`graph_instantiate_ns` once)
 then uploads if needed (`graph_upload_ns`). `upload_graph` is `cudaGraphUpload`.
 `update_graph` copies source steps into an instantiated exec when the
-device, stream, and op kinds match (`graph_update_ns`); a topology
+device, stream, op kinds, and dependency edges match (`graph_update_ns`); a topology
 mismatch is `Invalid`. Graphs with mem alloc/free nodes cannot be updated. `expertvm --graph-update` parks a leaf GEMM on
 evict and updates the next miss instead of instantiate. `--graph-clone`
 copies the capture (`cudaGraphClone`) before instantiate. `--graph-build` is
-`cudaGraphCreate` / `cudaGraphAdd*` (no idle stream). `--graph-mem` is in-graph
+`cudaGraphCreate` / `cudaGraphAdd*` (no idle stream; combo children may
+Hyper-Q overlap unless `graph_add_dependencies` chains them). `--graph-mem` is in-graph
 scratch (`graph_add_alloc` / capture `alloc`). `--graph-auto-free` is
 AutoFreeOnLaunch (relaunch recharges HBM; not with `--graph-mem`).
 `cooperative_kernel` / `graph_add_cooperative_kernel` are
