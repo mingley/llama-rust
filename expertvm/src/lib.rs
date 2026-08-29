@@ -29,7 +29,7 @@ pub use error::Error;
 pub use gpu_sim::{
     probe_topology, DeviceId, GpuOp, HardwareProfile, Operation, PoolId, Score, TopologyProbe,
 };
-pub use gpu_store::SimulatedGpuStore;
+pub use gpu_store::{GpuFill, GpuStoreCfg, SimulatedGpuStore};
 pub use kv::{cycling_pages, kv_paged, kv_replay, KvCfg, KvFill, KvReplay};
 pub use live::LiveStore;
 pub use place::{colocated, home_gpu, striped, with_hot_replicas, PlaceMap};

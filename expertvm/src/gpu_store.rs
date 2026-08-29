@@ -5,17 +5,36 @@ use crate::error::Error;
 use crate::place::home_gpu;
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
-    AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelKind, MemAdvise, Sim,
-    StreamId,
+    AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelKind, MemAdvise, MemcpyOp,
+    Place, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum FillMode {
+/// How [`SimulatedGpuStore`] places a miss page.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GpuFill {
+    /// `cudaMallocAsync` + pinned H2D (decode identity).
+    #[default]
     Pinned,
+    /// `cudaMallocManaged` + ReadMostly + PreferredLocation + prefetch.
     Managed,
+    /// `cudaHostAllocMapped` (PCIe kernel, no H2D).
     Mapped,
+    /// `va_acquire` + pinned H2D; evict [`gpu_sim::Sim::va_release`].
     Vmm,
+}
+
+/// CUDA knobs [`SimulatedGpuStore::new`] leaves off so decode identity stays async.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GpuStoreCfg {
+    /// [`gpu_sim::Sim::host_func`] after each acquire GEMM (CPU scheduler roundtrip).
+    pub host_func: bool,
+    /// Blocking `cudaStreamCreate` for the compute stream (`StreamId(1)`).
+    pub blocking_streams: bool,
+    /// Host-sync `cudaMalloc` / `cudaMemcpy` / `cudaFree` on pinned/VMM misses.
+    pub sync_alloc: bool,
+    /// Hold unused `cudaMallocAsync` bytes in the default pool (`u64::MAX` threshold).
+    pub mempool: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -42,19 +61,110 @@ pub struct SimulatedGpuStore {
     staging: AllocId,
     graphs: BTreeMap<AllocId, GraphId>,
     graph_launches: u64,
-    mode: FillMode,
+    mode: GpuFill,
+    host_func: bool,
+    sync_alloc: bool,
 }
 
 impl SimulatedGpuStore {
-    /// `slots` HBM expert pages of `bytes_per_expert` each.
+    /// `slots` HBM expert pages of `bytes_per_expert` each (pinned H2D).
     pub fn new(
         inner: DirectStore,
         slots: usize,
         profile: HardwareProfile,
         bytes_per_expert: u64,
     ) -> Result<Self, Error> {
+        Self::with_cfg(
+            inner,
+            slots,
+            profile,
+            bytes_per_expert,
+            GpuFill::Pinned,
+            GpuStoreCfg::default(),
+        )
+    }
+
+    /// Same as [`Self::new`], but miss pages are `cudaMallocManaged`.
+    ///
+    /// ReadMostly + PreferredLocation on the striped home, then prefetch
+    /// (no pinned H2D). Decode identity stays on [`Self::new`].
+    pub fn with_managed(
+        inner: DirectStore,
+        slots: usize,
+        profile: HardwareProfile,
+        bytes_per_expert: u64,
+    ) -> Result<Self, Error> {
+        Self::with_cfg(
+            inner,
+            slots,
+            profile,
+            bytes_per_expert,
+            GpuFill::Managed,
+            GpuStoreCfg::default(),
+        )
+    }
+
+    /// Same as [`Self::new`], but miss pages are `cudaHostAllocMapped`.
+    ///
+    /// Kernels read over PCIe with no H2D and no HBM. Decode identity stays
+    /// on [`Self::new`].
+    pub fn with_mapped(
+        inner: DirectStore,
+        slots: usize,
+        profile: HardwareProfile,
+        bytes_per_expert: u64,
+    ) -> Result<Self, Error> {
+        Self::with_cfg(
+            inner,
+            slots,
+            profile,
+            bytes_per_expert,
+            GpuFill::Mapped,
+            GpuStoreCfg::default(),
+        )
+    }
+
+    /// Same as [`Self::new`], but miss pages are `va_acquire` then pinned H2D.
+    ///
+    /// Evict [`gpu_sim::Sim::va_release`]s so the VA can be remapped. Decode
+    /// identity stays on [`Self::new`].
+    pub fn with_vmm(
+        inner: DirectStore,
+        slots: usize,
+        profile: HardwareProfile,
+        bytes_per_expert: u64,
+    ) -> Result<Self, Error> {
+        Self::with_cfg(
+            inner,
+            slots,
+            profile,
+            bytes_per_expert,
+            GpuFill::Vmm,
+            GpuStoreCfg::default(),
+        )
+    }
+
+    /// Construct with an explicit fill and [`GpuStoreCfg`] (`SimCfg` subset).
+    ///
+    /// Defaults keep decode identity: async alloc, overlapping copy/compute,
+    /// no `host_func`, default pool threshold 0.
+    pub fn with_cfg(
+        inner: DirectStore,
+        slots: usize,
+        profile: HardwareProfile,
+        bytes_per_expert: u64,
+        fill: GpuFill,
+        cfg: GpuStoreCfg,
+    ) -> Result<Self, Error> {
         let bytes = bytes_per_expert.max(1);
         let mut sim = Sim::new(profile);
+        if cfg.mempool {
+            sim.set_default_pool_release_threshold(u64::MAX)?;
+        }
+        if cfg.blocking_streams {
+            // Compute is `StreamId(1)`. Copy stays NULL (`StreamId(0)`).
+            sim.set_created_streams_blocking(2)?;
+        }
         let staging = sim.alloc_host_pinned(bytes)?;
         Ok(Self {
             cache: CachedStore::new(inner, slots)?,
@@ -71,77 +181,41 @@ impl SimulatedGpuStore {
             staging,
             graphs: BTreeMap::new(),
             graph_launches: 0,
-            mode: FillMode::Pinned,
+            mode: fill,
+            host_func: cfg.host_func,
+            sync_alloc: cfg.sync_alloc,
         })
-    }
-
-    /// Same as [`Self::new`], but miss pages are `cudaMallocManaged`.
-    ///
-    /// ReadMostly + PreferredLocation on the striped home, then prefetch
-    /// (no pinned H2D). Decode identity stays on [`Self::new`].
-    pub fn with_managed(
-        inner: DirectStore,
-        slots: usize,
-        profile: HardwareProfile,
-        bytes_per_expert: u64,
-    ) -> Result<Self, Error> {
-        let mut store = Self::new(inner, slots, profile, bytes_per_expert)?;
-        store.mode = FillMode::Managed;
-        Ok(store)
-    }
-
-    /// Same as [`Self::new`], but miss pages are `cudaHostAllocMapped`.
-    ///
-    /// Kernels read over PCIe with no H2D and no HBM. Decode identity stays
-    /// on [`Self::new`].
-    pub fn with_mapped(
-        inner: DirectStore,
-        slots: usize,
-        profile: HardwareProfile,
-        bytes_per_expert: u64,
-    ) -> Result<Self, Error> {
-        let mut store = Self::new(inner, slots, profile, bytes_per_expert)?;
-        store.mode = FillMode::Mapped;
-        Ok(store)
-    }
-
-    /// Same as [`Self::new`], but miss pages are `va_acquire` then pinned H2D.
-    ///
-    /// Evict [`gpu_sim::Sim::va_release`]s so the VA can be remapped. Decode
-    /// identity stays on [`Self::new`].
-    pub fn with_vmm(
-        inner: DirectStore,
-        slots: usize,
-        profile: HardwareProfile,
-        bytes_per_expert: u64,
-    ) -> Result<Self, Error> {
-        let mut store = Self::new(inner, slots, profile, bytes_per_expert)?;
-        store.mode = FillMode::Vmm;
-        Ok(store)
     }
 
     /// Whether miss pages use unified memory (`cudaMallocManaged`).
     #[must_use]
     pub fn uses_managed(&self) -> bool {
-        matches!(self.mode, FillMode::Managed)
+        matches!(self.mode, GpuFill::Managed)
     }
 
     /// Whether miss pages use mapped host (`cudaHostAllocMapped`).
     #[must_use]
     pub fn uses_mapped(&self) -> bool {
-        matches!(self.mode, FillMode::Mapped)
+        matches!(self.mode, GpuFill::Mapped)
     }
 
     /// Whether miss pages use CUDA VMM (`va_acquire`).
     #[must_use]
     pub fn uses_vmm(&self) -> bool {
-        matches!(self.mode, FillMode::Vmm)
+        matches!(self.mode, GpuFill::Vmm)
     }
 
     /// Page-locked staging buffer from construction; does not count toward HBM.
     #[must_use]
     pub fn staging_is_pinned(&self) -> bool {
         self.sim.is_host_pinned(self.staging).unwrap_or(false)
+    }
+
+    /// Unused bytes in GPU0's default mempool after a device drain.
+    pub fn default_pool_cached(&mut self) -> Result<u64, Error> {
+        self.sim.synchronize()?;
+        self.sweep_evicts();
+        Ok(self.sim.pool_cached(self.sim.default_pool(self.device)?)?)
     }
 
     /// Drain the simulator and return its performance vector.
@@ -229,10 +303,10 @@ impl SimulatedGpuStore {
             self.sim.destroy_graph(g)?;
         }
         match self.mode {
-            FillMode::Managed => return self.migrate_managed(key, id, src, dst),
-            FillMode::Mapped => return self.migrate_mapped(key, dst),
-            FillMode::Vmm => return self.migrate_vmm(key, id, src, dst),
-            FillMode::Pinned => {}
+            GpuFill::Managed => return self.migrate_managed(key, id, src, dst),
+            GpuFill::Mapped => return self.migrate_mapped(key, dst),
+            GpuFill::Vmm => return self.migrate_vmm(key, id, src, dst),
+            GpuFill::Pinned => {}
         }
         let already = self.sim.is_resident(id, dst)?;
         if !already {
@@ -409,29 +483,58 @@ impl SimulatedGpuStore {
     fn fill_page(&mut self, d: DeviceId) -> Result<AllocId, Error> {
         let bytes = self.bytes_per_expert;
         match self.mode {
-            FillMode::Managed => {
+            GpuFill::Managed => {
                 let id = self.sim.alloc_managed(bytes)?;
                 self.sim.mem_advise(id, MemAdvise::SetReadMostly, d)?;
                 self.sim
                     .mem_advise(id, MemAdvise::SetPreferredLocation, d)?;
                 let _p = self.sim.prefetch(d, id, self.copy)?;
+                if self.sync_alloc {
+                    self.sim.synchronize_stream(d, self.copy)?;
+                }
                 Ok(id)
             }
-            FillMode::Mapped => Ok(self.sim.alloc_host_mapped(bytes)?),
-            FillMode::Vmm => {
+            GpuFill::Mapped => Ok(self.sim.alloc_host_mapped(bytes)?),
+            GpuFill::Vmm => {
                 let id = self.sim.va_acquire(d, bytes)?;
-                let _c = self.sim.memcpy_pinned_to_device(d, id, bytes, self.copy)?;
+                self.fill_hbm(d, id)?;
                 Ok(id)
             }
-            FillMode::Pinned => {
-                // Stream-ordered `cudaMallocAsync`. `malloc` (`cudaMalloc`) would
-                // device-sync this GPU on every miss and serialize with GEMM.
-                let id = self.sim.alloc(d, bytes, self.copy)?;
-                // Pinned DMA. Pageable `memcpy_host_to_device` would wait this stream.
-                let _c = self.sim.memcpy_pinned_to_device(d, id, bytes, self.copy)?;
+            GpuFill::Pinned => {
+                let id = self.hbm_alloc(d)?;
+                self.fill_hbm(d, id)?;
                 Ok(id)
             }
         }
+    }
+
+    fn hbm_alloc(&mut self, d: DeviceId) -> Result<AllocId, Error> {
+        if self.sync_alloc {
+            Ok(self.sim.malloc(d, self.bytes_per_expert)?)
+        } else {
+            // Stream-ordered `cudaMallocAsync`. `malloc` would device-sync.
+            Ok(self.sim.alloc(d, self.bytes_per_expert, self.copy)?)
+        }
+    }
+
+    fn fill_hbm(&mut self, d: DeviceId, id: AllocId) -> Result<(), Error> {
+        let bytes = self.bytes_per_expert;
+        if self.sync_alloc {
+            let _id = self.sim.memcpy_sync(
+                d,
+                MemcpyOp {
+                    src: Place::HostPinned,
+                    dst: Place::Device(d),
+                    alloc: id,
+                    bytes,
+                    offset: 0,
+                },
+                self.copy,
+            )?;
+        } else {
+            let _c = self.sim.memcpy_pinned_to_device(d, id, bytes, self.copy)?;
+        }
+        Ok(())
     }
 
     fn home(&self, key: ExpertKey) -> DeviceId {
@@ -455,7 +558,11 @@ impl SimulatedGpuStore {
                 let _w = self.sim.wait_event(device, ev, self.compute)?;
             }
         }
-        self.launch_or_gemm(device, id)
+        self.launch_or_gemm(device, id)?;
+        if self.host_func {
+            let _id = self.sim.host_func(device, self.compute)?;
+        }
+        Ok(())
     }
 
     fn launch_or_gemm(&mut self, device: DeviceId, id: AllocId) -> Result<(), Error> {
@@ -511,7 +618,7 @@ impl SimulatedGpuStore {
             self.sim.destroy_graph(g)?;
         }
         match self.mode {
-            FillMode::Managed => {
+            GpuFill::Managed => {
                 self.sim.synchronize_stream(page.device, self.compute)?;
                 self.sim.synchronize_stream(page.device, self.copy)?;
                 if self.replicas.remove(&key) {
@@ -520,19 +627,25 @@ impl SimulatedGpuStore {
                 self.sim.free_sync(page.id)?;
                 return Ok(());
             }
-            FillMode::Mapped => {
+            GpuFill::Mapped => {
                 self.sim.synchronize_stream(page.device, self.compute)?;
                 self.sim.free_host_pinned(page.id)?;
                 let _gone = self.replicas.remove(&key);
                 return Ok(());
             }
-            FillMode::Vmm => {
+            GpuFill::Vmm => {
                 self.sim.synchronize_stream(page.device, self.compute)?;
                 self.sim.va_release(page.id)?;
                 let _gone = self.replicas.remove(&key);
                 return Ok(());
             }
-            FillMode::Pinned => {}
+            GpuFill::Pinned if self.sync_alloc => {
+                self.sim.synchronize_stream(page.device, self.compute)?;
+                self.sim.free_sync(page.id)?;
+                let _gone = self.replicas.remove(&key);
+                return Ok(());
+            }
+            GpuFill::Pinned => {}
         }
         // Copy-engine free must not race a compute-stream lease on the same page.
         let ev = EventId(self.next_event);
@@ -563,16 +676,16 @@ impl SimulatedGpuStore {
             return Ok(());
         }
         match self.mode {
-            FillMode::Managed => {
+            GpuFill::Managed => {
                 let _p = self.sim.prefetch(self.replica, id, self.copy)?;
                 let _ins = self.replicas.insert(key);
                 return Ok(());
             }
-            FillMode::Mapped => {
+            GpuFill::Mapped => {
                 let _ins = self.replicas.insert(key);
                 return Ok(());
             }
-            FillMode::Vmm => {
+            GpuFill::Vmm => {
                 if !self.sim.is_resident(id, self.replica)? {
                     self.sim.va_map(id, self.replica)?;
                     let _c = self.sim.memcpy_device_to_device(
@@ -586,7 +699,7 @@ impl SimulatedGpuStore {
                 let _ins = self.replicas.insert(key);
                 return Ok(());
             }
-            FillMode::Pinned => {}
+            GpuFill::Pinned => {}
         }
         let _c = self.sim.memcpy_device_to_device(
             src,

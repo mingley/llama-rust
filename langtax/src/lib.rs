@@ -40,7 +40,8 @@ pub use decode::{
 };
 pub use expertvm::{
     CachedStore, DirectStore, ExpertAccess, ExpertKey, ExpertParts, ExpertPhase, ExpertStore,
-    LiveStore, SimulatedGpuStore, StoreMetrics, TieredStore, Trace, WeightStorage,
+    GpuFill, GpuStoreCfg, LiveStore, SimulatedGpuStore, StoreMetrics, TieredStore, Trace,
+    WeightStorage,
 };
 pub use gguf::{
     load_gguf, load_gguf_owned, write_gguf, write_gguf_with_kv, GgmlType, Gguf, GgufError, Kv,

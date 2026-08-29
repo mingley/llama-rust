@@ -365,7 +365,7 @@ Backends:
 | `DirectStore` | today’s blob range; bit-identical to current decode |
 | `CachedStore` | bounded “fast memory” of N experts; rest fault in |
 | `TieredStore` | fast RAM / slow RAM / disk |
-| `SimulatedGpuStore` | fake HBM capacity, PCIe/NVLink bandwidth, DMA concurrency; `with_managed` is UM prefetch, `with_mapped` is zero-copy host, `with_vmm` is `va_acquire` |
+| `SimulatedGpuStore` | fake HBM capacity, PCIe/NVLink bandwidth, DMA concurrency; `with_managed` is UM prefetch, `with_mapped` is zero-copy host, `with_vmm` is `va_acquire`; `with_cfg` is `host_func` / blocking streams / `sync_alloc` / mempool |
 
 `DirectStore` must keep every existing oracle / real-model test green.
 The dense/common weights stay resident. Only expert tensors go through
@@ -623,7 +623,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   in the GPU loop (`--plan-window N`). `prefetch_hits` / `prefetch_waste`
   measure whether those fills were used. `--sync-alloc` is host-sync
   `cudaMalloc`/`cudaMemcpy`/`cudaFree` on miss (`Sim::malloc`); default
-  `sim`/`schedule` stay on `cudaMallocAsync`. `--mempool` sets the default
+  `sim`/`schedule` / `SimulatedGpuStore::new` stay on `cudaMallocAsync`.
+  `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
+  `--host-func`, and blocking compute. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--mapped` is `cudaHostAllocMapped`
   (no H2D, PCIe kernels, HBM unused; walker slots also cap at

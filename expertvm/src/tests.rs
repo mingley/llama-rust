@@ -2179,3 +2179,142 @@ fn simulated_gpu_store_evict_is_observable_until_free_completes() {
     assert_eq!(gpu.phase(k0), ExpertPhase::Evicting);
     assert_eq!(gpu.phase(k1), ExpertPhase::Transferring);
 }
+
+#[test]
+fn simulated_gpu_store_host_func_lengthens_wall() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let inner = DirectStore::from_trace(&t);
+    let mut plain = SimulatedGpuStore::new(inner, 2, p.clone(), 4096).expect("plain");
+    let inner = DirectStore::from_trace(&t);
+    let mut cb = SimulatedGpuStore::with_cfg(
+        inner,
+        2,
+        p,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            host_func: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("host");
+    for k in t.keys() {
+        let _p = plain.acquire(k).expect("plain acq");
+        let _c = cb.acquire(k).expect("cb acq");
+    }
+    let a = plain.score().expect("plain score");
+    let b = cb.score().expect("cb score");
+    assert_eq!(plain.metrics().hits, cb.metrics().hits);
+    assert_eq!(plain.metrics().misses, cb.metrics().misses);
+    assert!(
+        b.wall_ns > a.wall_ns,
+        "host={} plain={}",
+        b.wall_ns,
+        a.wall_ns
+    );
+}
+
+#[test]
+fn simulated_gpu_store_blocking_streams_serialize_copy_and_compute() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let bytes = 32u64 << 20;
+    let run = |blocking_streams: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            bytes,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                blocking_streams,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let _a = gpu.acquire(ExpertKey::new(0, 0)).expect("k0");
+        let _b = gpu.acquire(ExpertKey::new(0, 1)).expect("k1");
+        gpu.score().expect("score")
+    };
+    let nb = run(false);
+    let block = run(true);
+    assert!(
+        block.wall_ns > nb.wall_ns,
+        "block={} nonblock={}",
+        block.wall_ns,
+        nb.wall_ns
+    );
+}
+
+#[test]
+fn simulated_gpu_store_sync_alloc_cannot_overlap_miss() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let bytes = 32u64 << 20;
+    let run = |sync_alloc: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            bytes,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                sync_alloc,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let _a = gpu.acquire(ExpertKey::new(0, 0)).expect("k0");
+        let _b = gpu.acquire(ExpertKey::new(0, 1)).expect("k1");
+        gpu.score().expect("score")
+    };
+    let async_row = run(false);
+    let sync_row = run(true);
+    assert!(
+        sync_row.wall_ns > async_row.wall_ns,
+        "sync={} async={}",
+        sync_row.wall_ns,
+        async_row.wall_ns
+    );
+}
+
+#[test]
+fn simulated_gpu_store_mempool_holds_after_evict() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let bytes = 4096u64;
+    let inner = DirectStore::from_trace(&t);
+    let mut plain = SimulatedGpuStore::new(inner, 1, p.clone(), bytes).expect("plain");
+    let inner = DirectStore::from_trace(&t);
+    let mut pooled = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        p,
+        bytes,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            mempool: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("pool");
+    let k0 = ExpertKey::new(0, 0);
+    let _a = plain.acquire(k0).expect("plain acq");
+    let _b = pooled.acquire(k0).expect("pool acq");
+    plain.evict(k0).expect("plain evict");
+    pooled.evict(k0).expect("pool evict");
+    assert_eq!(plain.default_pool_cached().expect("plain cached"), 0);
+    assert!(
+        pooled.default_pool_cached().expect("pool cached") >= bytes,
+        "mempool must hold the expert page"
+    );
+}

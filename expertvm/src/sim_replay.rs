@@ -121,7 +121,9 @@ pub struct SimCfg {
     ///
     /// Default is stream-ordered `alloc` / `memcpy` / `free` (`cudaMallocAsync`).
     /// A naive engine that uses the sync path cannot overlap a miss with other
-    /// streams on that GPU. [`crate::SimulatedGpuStore`] stays on the async path.
+    /// streams on that GPU. [`crate::SimulatedGpuStore::new`] stays async;
+    /// [`crate::SimulatedGpuStore::with_cfg`] with [`crate::GpuStoreCfg::sync_alloc`]
+    /// uses this path.
     pub sync_alloc: bool,
     /// Hold unused `cudaMallocAsync` bytes in the default mempool (`u64::MAX`
     /// release threshold) until [`gpu_sim::Sim::pool_trim_to`].
@@ -130,6 +132,9 @@ pub struct SimCfg {
     /// returns HBM when the stream-ordered free completes). Serving engines
     /// raise the threshold so `cudaMalloc` can OOM while the pool still holds
     /// cache. Hits/misses stay the same; reuse pays `pool_reuse_ns`.
+    /// [`crate::SimulatedGpuStore::new`] stays on threshold 0;
+    /// [`crate::SimulatedGpuStore::with_cfg`] with [`crate::GpuStoreCfg::mempool`]
+    /// raises it.
     pub mempool: bool,
     /// `cudaHostAllocMapped`: miss pages are mapped host, not HBM. Kernels run
     /// over PCIe with no H2D. Hits/misses follow the same walker; `hbm_peak`
@@ -157,14 +162,17 @@ pub struct SimCfg {
     /// `cudaLaunchHostFunc` after each event's GEMMs (CPU scheduler roundtrip).
     ///
     /// Does not change hits/misses. Lengthens wall by `host_func_ns` per
-    /// stream that ran a GEMM. [`crate::SimulatedGpuStore`] does not enqueue it.
+    /// stream that ran a GEMM. [`crate::SimulatedGpuStore::new`] does not
+    /// enqueue it; [`crate::SimulatedGpuStore::with_cfg`] with
+    /// [`crate::GpuStoreCfg::host_func`] does.
     pub host_func: bool,
     /// `cudaStreamCreate` (blocking) for streams `1 .. n_streams`.
     ///
     /// They serialize with [`gpu_sim::StreamId::NULL`]. Default is
     /// `cudaStreamNonBlocking` (vLLM-style overlap). A no-op unless
-    /// [`Self::seq_streams`] creates extra streams. [`crate::SimulatedGpuStore`]
-    /// stays non-blocking.
+    /// [`Self::seq_streams`] creates extra streams. [`crate::SimulatedGpuStore::new`]
+    /// stays non-blocking; [`crate::SimulatedGpuStore::with_cfg`] with
+    /// [`crate::GpuStoreCfg::blocking_streams`] marks the compute stream blocking.
     pub blocking_streams: bool,
 }
 
