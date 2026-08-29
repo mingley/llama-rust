@@ -35,7 +35,7 @@
 //! (`attn` and `LLM_FFN_GELU`/`LLM_FFN_SEQ` both from `attn_norm`), output
 //! bias. Not Mixtral, not `qwen3vlmoe`, not linear-attn. Not a phi3 redo.
 
-use crate::gguf::{GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
+use crate::gguf::{load_gguf_owned, GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 pub use crate::kv_page::PagedKvPool;
 use crate::kv_page::{KvGeom, KvPages};
 use crate::pool::{Pool, RowKernel};
@@ -2680,6 +2680,47 @@ pub fn tiny_qwen3moe_gguf() -> Vec<u8> {
         add_bos_token: Some(false),
         llama_moe: false,
     })
+}
+
+/// Writer-built two-layer Qwen3MoE tiny (`qwen3moe.block_count=2`).
+///
+/// Layer 1 is a clone of layer 0 tensor bytes so copy-forward L+1 keys exist
+/// in the ExpertStore catalog. 1-layer tinies skip those keys as unknown.
+pub fn tiny_qwen3moe_2layer_gguf() -> Vec<u8> {
+    clone_tiny_blk0_as_next_layer(tiny_qwen3moe_gguf()).unwrap_or_else(|_| Vec::new())
+}
+
+/// Clone every `blk.0.*` tensor as `blk.1.*` and set `*.block_count` to 2.
+fn clone_tiny_blk0_as_next_layer(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
+    let g = load_gguf_owned(bytes)?;
+    let mut kv: Vec<(String, Kv)> = g.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    for (k, v) in &mut kv {
+        if k.ends_with(".block_count") {
+            *v = Kv::U32(2);
+        }
+    }
+    let mut tensors = Vec::new();
+    let mut extra = Vec::new();
+    for t in g.tensors() {
+        let shape = t.shape.to_vec();
+        let data = t.data.to_vec();
+        if let Some(rest) = t.name.strip_prefix("blk.0.") {
+            extra.push(TensorWrite {
+                name: format!("blk.1.{rest}"),
+                ty: t.ty,
+                shape: shape.clone(),
+                data: data.clone(),
+            });
+        }
+        tensors.push(TensorWrite {
+            name: t.name.to_string(),
+            ty: t.ty,
+            shape,
+            data,
+        });
+    }
+    tensors.extend(extra);
+    Ok(write_gguf_with_kv(&kv, &tensors))
 }
 
 /// Writer-built official Qwen2VL GGUF: `architecture=qwen2vl` with `qwen2vl.*` KV.
@@ -8603,13 +8644,17 @@ mod tests {
         oracle_gemv(g.tensor("e").expect("e"), x)
     }
 
+    fn tname(layer: usize, suffix: &str) -> String {
+        format!("blk.{layer}.{suffix}")
+    }
+
     /// Official `build_moe_ffn` on one token: softmax, then top-k; SwiGLU;
     /// weights after the expert with `norm_w` clamp `2^-14`. Used by official
     /// llama MoE and official qwen3moe.cpp (`norm_w=true`).
-    fn oracle_softmax_norm_w_moe(g: &Gguf, arch: &str, xn: &[f32]) -> Vec<f32> {
+    fn oracle_softmax_norm_w_moe(g: &Gguf, arch: &str, xn: &[f32], layer: usize) -> Vec<f32> {
         let n_expert = arch_u32(g, arch, "expert_count").unwrap() as usize;
         let n_used = arch_u32(g, arch, "expert_used_count").unwrap() as usize;
-        let logits = oracle_gemv(g.tensor("blk.0.ffn_gate_inp.weight").unwrap(), xn);
+        let logits = oracle_gemv(g.tensor(&tname(layer, "ffn_gate_inp.weight")).unwrap(), xn);
         assert_eq!(logits.len(), n_expert);
         let m = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         let mut probs: Vec<f32> = logits.iter().map(|v| (v - m).exp()).collect();
@@ -8638,9 +8683,9 @@ mod tests {
         for w in &mut weights {
             *w /= wsum;
         }
-        let gate_exps = g.tensor("blk.0.ffn_gate_exps.weight").unwrap();
-        let up_exps = g.tensor("blk.0.ffn_up_exps.weight").unwrap();
-        let down_exps = g.tensor("blk.0.ffn_down_exps.weight").unwrap();
+        let gate_exps = g.tensor(&tname(layer, "ffn_gate_exps.weight")).unwrap();
+        let up_exps = g.tensor(&tname(layer, "ffn_up_exps.weight")).unwrap();
+        let down_exps = g.tensor(&tname(layer, "ffn_down_exps.weight")).unwrap();
         let mut routed = vec![0.0f32; xn.len()];
         for (e, w) in idx.iter().zip(weights.iter()) {
             let gate = oracle_gemv_expert(gate_exps, *e, xn);
@@ -8660,29 +8705,39 @@ mod tests {
 
     /// Official llama.cpp `build_moe_ffn` on one token: softmax, then top-k;
     /// SwiGLU; weights after the expert with `norm_w` clamp `2^-14`.
-    fn oracle_llama_moe(g: &Gguf, xn: &[f32]) -> Vec<f32> {
-        oracle_softmax_norm_w_moe(g, "llama", xn)
+    fn oracle_llama_moe(g: &Gguf, xn: &[f32], layer: usize) -> Vec<f32> {
+        oracle_softmax_norm_w_moe(g, "llama", xn, layer)
     }
 
     /// Official qwen3moe.cpp on one token: same `build_moe_ffn` as llama MoE
     /// (`SOFTMAX` + `norm_w`). QK-Norm is applied on Q/K in `oracle_forward_seq`.
-    fn oracle_qwen3moe(g: &Gguf, xn: &[f32]) -> Vec<f32> {
-        oracle_softmax_norm_w_moe(g, "qwen3moe", xn)
+    fn oracle_qwen3moe(g: &Gguf, xn: &[f32], layer: usize) -> Vec<f32> {
+        oracle_softmax_norm_w_moe(g, "qwen3moe", xn, layer)
     }
 
     /// Official qwen3next.cpp on one token: softmax then top-k with `norm_w`,
     /// plus shared expert * sigmoid(`ffn_gate_inp_shexp`).
-    fn oracle_qwen3next(g: &Gguf, xn: &[f32]) -> Vec<f32> {
-        let mut routed = oracle_softmax_norm_w_moe(g, "qwen3next", xn);
-        let gate_s = oracle_gemv(g.tensor("blk.0.ffn_gate_shexp.weight").unwrap(), xn);
-        let up_s = oracle_gemv(g.tensor("blk.0.ffn_up_shexp.weight").unwrap(), xn);
+    fn oracle_qwen3next(g: &Gguf, xn: &[f32], layer: usize) -> Vec<f32> {
+        let mut routed = oracle_softmax_norm_w_moe(g, "qwen3next", xn, layer);
+        let gate_s = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_gate_shexp.weight")).unwrap(),
+            xn,
+        );
+        let up_s = oracle_gemv(g.tensor(&tname(layer, "ffn_up_shexp.weight")).unwrap(), xn);
         let h_s: Vec<f32> = gate_s
             .iter()
             .zip(up_s.iter())
             .map(|(gv, u)| (gv / (1.0 + (-gv).exp())) * u)
             .collect();
-        let mut shexp = oracle_gemv(g.tensor("blk.0.ffn_down_shexp.weight").unwrap(), &h_s);
-        let gate_inp_s = oracle_gemv(g.tensor("blk.0.ffn_gate_inp_shexp.weight").unwrap(), xn);
+        let mut shexp = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_down_shexp.weight")).unwrap(),
+            &h_s,
+        );
+        let gate_inp_s = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_gate_inp_shexp.weight"))
+                .unwrap(),
+            xn,
+        );
         assert_eq!(gate_inp_s.len(), 1);
         let sw = 1.0 / (1.0 + (-gate_inp_s[0]).exp());
         for v in &mut shexp {
@@ -8696,10 +8751,10 @@ mod tests {
 
     /// Official llama4.cpp MoE on one token: top-k raw logits, sigmoid weight
     /// before SwiGLU, plus shared expert.
-    fn oracle_llama4_moe(g: &Gguf, xn: &[f32]) -> Vec<f32> {
+    fn oracle_llama4_moe(g: &Gguf, xn: &[f32], layer: usize) -> Vec<f32> {
         let n_expert = arch_u32(g, "llama4", "expert_count").unwrap() as usize;
         let n_used = arch_u32(g, "llama4", "expert_used_count").unwrap() as usize;
-        let logits = oracle_gemv(g.tensor("blk.0.ffn_gate_inp.weight").unwrap(), xn);
+        let logits = oracle_gemv(g.tensor(&tname(layer, "ffn_gate_inp.weight")).unwrap(), xn);
         assert_eq!(logits.len(), n_expert);
         let mut idx: Vec<usize> = (0..n_expert).collect();
         idx.sort_by(|&a, &b| match logits[b].partial_cmp(&logits[a]) {
@@ -8707,9 +8762,9 @@ mod tests {
             Some(ord) => ord,
         });
         idx.truncate(n_used);
-        let gate_exps = g.tensor("blk.0.ffn_gate_exps.weight").unwrap();
-        let up_exps = g.tensor("blk.0.ffn_up_exps.weight").unwrap();
-        let down_exps = g.tensor("blk.0.ffn_down_exps.weight").unwrap();
+        let gate_exps = g.tensor(&tname(layer, "ffn_gate_exps.weight")).unwrap();
+        let up_exps = g.tensor(&tname(layer, "ffn_up_exps.weight")).unwrap();
+        let down_exps = g.tensor(&tname(layer, "ffn_down_exps.weight")).unwrap();
         let mut routed = vec![0.0f32; xn.len()];
         for e in idx {
             let w = 1.0 / (1.0 + (-logits[e]).exp());
@@ -8726,14 +8781,20 @@ mod tests {
                 *o += *v;
             }
         }
-        let gate_s = oracle_gemv(g.tensor("blk.0.ffn_gate_shexp.weight").unwrap(), xn);
-        let up_s = oracle_gemv(g.tensor("blk.0.ffn_up_shexp.weight").unwrap(), xn);
+        let gate_s = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_gate_shexp.weight")).unwrap(),
+            xn,
+        );
+        let up_s = oracle_gemv(g.tensor(&tname(layer, "ffn_up_shexp.weight")).unwrap(), xn);
         let h_s: Vec<f32> = gate_s
             .iter()
             .zip(up_s.iter())
             .map(|(gv, u)| (gv / (1.0 + (-gv).exp())) * u)
             .collect();
-        let shexp = oracle_gemv(g.tensor("blk.0.ffn_down_shexp.weight").unwrap(), &h_s);
+        let shexp = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_down_shexp.weight")).unwrap(),
+            &h_s,
+        );
         routed
             .iter()
             .zip(shexp.iter())
@@ -8743,10 +8804,10 @@ mod tests {
 
     /// Official qwen2moe.cpp on one token: softmax then top-k, weights after
     /// SwiGLU without `norm_w`, plus shared expert * sigmoid(`ffn_gate_inp_shexp`).
-    fn oracle_qwen2moe(g: &Gguf, xn: &[f32]) -> Vec<f32> {
+    fn oracle_qwen2moe(g: &Gguf, xn: &[f32], layer: usize) -> Vec<f32> {
         let n_expert = arch_u32(g, "qwen2moe", "expert_count").unwrap() as usize;
         let n_used = arch_u32(g, "qwen2moe", "expert_used_count").unwrap() as usize;
-        let logits = oracle_gemv(g.tensor("blk.0.ffn_gate_inp.weight").unwrap(), xn);
+        let logits = oracle_gemv(g.tensor(&tname(layer, "ffn_gate_inp.weight")).unwrap(), xn);
         assert_eq!(logits.len(), n_expert);
         let m = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         let mut probs: Vec<f32> = logits.iter().map(|v| (v - m).exp()).collect();
@@ -8762,9 +8823,9 @@ mod tests {
             Some(ord) => ord,
         });
         idx.truncate(n_used);
-        let gate_exps = g.tensor("blk.0.ffn_gate_exps.weight").unwrap();
-        let up_exps = g.tensor("blk.0.ffn_up_exps.weight").unwrap();
-        let down_exps = g.tensor("blk.0.ffn_down_exps.weight").unwrap();
+        let gate_exps = g.tensor(&tname(layer, "ffn_gate_exps.weight")).unwrap();
+        let up_exps = g.tensor(&tname(layer, "ffn_up_exps.weight")).unwrap();
+        let down_exps = g.tensor(&tname(layer, "ffn_down_exps.weight")).unwrap();
         let mut routed = vec![0.0f32; xn.len()];
         for e in idx {
             let w = probs[e];
@@ -8780,15 +8841,25 @@ mod tests {
                 *o += *v * w;
             }
         }
-        let gate_s = oracle_gemv(g.tensor("blk.0.ffn_gate_shexp.weight").unwrap(), xn);
-        let up_s = oracle_gemv(g.tensor("blk.0.ffn_up_shexp.weight").unwrap(), xn);
+        let gate_s = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_gate_shexp.weight")).unwrap(),
+            xn,
+        );
+        let up_s = oracle_gemv(g.tensor(&tname(layer, "ffn_up_shexp.weight")).unwrap(), xn);
         let h_s: Vec<f32> = gate_s
             .iter()
             .zip(up_s.iter())
             .map(|(gv, u)| (gv / (1.0 + (-gv).exp())) * u)
             .collect();
-        let mut shexp = oracle_gemv(g.tensor("blk.0.ffn_down_shexp.weight").unwrap(), &h_s);
-        let gate_inp_s = oracle_gemv(g.tensor("blk.0.ffn_gate_inp_shexp.weight").unwrap(), xn);
+        let mut shexp = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_down_shexp.weight")).unwrap(),
+            &h_s,
+        );
+        let gate_inp_s = oracle_gemv(
+            g.tensor(&tname(layer, "ffn_gate_inp_shexp.weight"))
+                .unwrap(),
+            xn,
+        );
         assert_eq!(gate_inp_s.len(), 1);
         let sw = 1.0 / (1.0 + (-gate_inp_s[0]).exp());
         for v in &mut shexp {
@@ -8948,6 +9019,7 @@ mod tests {
         let n_embd = arch_u32(g, arch, "embedding_length").unwrap() as usize;
         let n_head = arch_u32(g, arch, "attention.head_count").unwrap() as usize;
         let n_kv = arch_u32(g, arch, "attention.head_count_kv").unwrap() as usize;
+        let n_layer = arch_u32(g, arch, "block_count").unwrap() as usize;
         let n_rot = oracle_n_rot(g, arch, n_embd, n_head);
         let phi2 = arch == "phi2";
         let eps = if phi2 {
@@ -8965,230 +9037,240 @@ mod tests {
         } else {
             1.0
         };
-        let mut k_cache: Vec<Vec<Vec<f32>>> = vec![Vec::new(); n_kv];
-        let mut v_cache: Vec<Vec<Vec<f32>>> = vec![Vec::new(); n_kv];
+        let mut k_cache: Vec<Vec<Vec<Vec<f32>>>> = vec![vec![Vec::new(); n_kv]; n_layer];
+        let mut v_cache: Vec<Vec<Vec<Vec<f32>>>> = vec![vec![Vec::new(); n_kv]; n_layer];
         let mut last = Vec::new();
         for (pos, &token) in tokens.iter().enumerate() {
             let mut residual = oracle_embed(emb, token);
             for v in &mut residual {
                 *v *= embed_scale;
             }
-            let an = f32s(g.tensor("blk.0.attn_norm.weight").unwrap()).unwrap();
-            let an_b = g.tensor("blk.0.attn_norm.bias").and_then(|t| f32s(t).ok());
-            let x = if phi2 {
-                oracle_layernorm(&residual, &an, an_b.as_deref(), eps)
-            } else {
-                oracle_rmsnorm(&residual, &an, eps)
-            };
-            let attn_norm_output = x.clone();
-            let q_full = oracle_add_bias(
-                oracle_gemv(g.tensor("blk.0.attn_q.weight").unwrap(), &x),
-                g.tensor("blk.0.attn_q.bias"),
-            );
-            let k = oracle_add_bias(
-                oracle_gemv(g.tensor("blk.0.attn_k.weight").unwrap(), &x),
-                g.tensor("blk.0.attn_k.bias"),
-            );
-            let v = oracle_add_bias(
-                oracle_gemv(g.tensor("blk.0.attn_v.weight").unwrap(), &x),
-                g.tensor("blk.0.attn_v.bias"),
-            );
-            let qwen3next = arch == "qwen3next";
-            let qwen35 = arch == "qwen35";
-            let (q, attn_gate) = if qwen3next || qwen35 {
-                let mut q = Vec::new();
-                let mut gate = Vec::new();
-                for chunk in q_full.chunks(hd * 2) {
-                    q.extend_from_slice(&chunk[..hd]);
-                    gate.extend_from_slice(&chunk[hd..]);
-                }
-                (q, Some(gate))
-            } else {
-                (q_full, None)
-            };
-            let mut qh: Vec<Vec<f32>> = q.chunks(hd).map(<[f32]>::to_vec).collect();
-            let mut kh: Vec<Vec<f32>> = k.chunks(hd).map(<[f32]>::to_vec).collect();
-            let vh: Vec<Vec<f32>> = v.chunks(hd).map(<[f32]>::to_vec).collect();
-            // Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 QK-Norm (`LLM_NORM_RMS` on each head) before RoPE.
-            if let Some(qn) = g.tensor("blk.0.attn_q_norm.weight") {
-                let w = f32s(qn).unwrap();
-                for h in &mut qh {
-                    *h = oracle_rmsnorm(h, &w, eps);
-                }
-            }
-            if let Some(kn) = g.tensor("blk.0.attn_k_norm.weight") {
-                let w = f32s(kn).unwrap();
-                for h in &mut kh {
-                    *h = oracle_rmsnorm(h, &w, eps);
-                }
-            }
-            // Official llama4.cpp: iRoPE when `(il+1) % n_no_rope_layer_step != 0`.
-            // Writer-built tiny is 1 layer with default step 4, so layer 0 uses RoPE.
-            let llama4 = arch == "llama4";
-            let n_no_rope = if llama4 { LLAMA4_NO_ROPE_LAYER_STEP } else { 0 };
-            let use_rope = !llama4 || (n_no_rope > 0 && 1 % n_no_rope != 0);
-            let n_expert = arch_u32(g, arch, "expert_count").unwrap_or(0) as usize;
-            let qk_l2 = llama4 && use_rope && n_expert != 128;
-            if use_rope {
-                let sections = if arch == "qwen2vl" || arch == "qwen3vl" || arch == "qwen35" {
-                    oracle_rope_sections(g, arch)
+            let mut x = residual.clone();
+            for li in 0..n_layer {
+                let an = f32s(g.tensor(&tname(li, "attn_norm.weight")).unwrap()).unwrap();
+                let an_b = g
+                    .tensor(&tname(li, "attn_norm.bias"))
+                    .and_then(|t| f32s(t).ok());
+                let xn_attn = if phi2 {
+                    oracle_layernorm(&residual, &an, an_b.as_deref(), eps)
                 } else {
-                    None
+                    oracle_rmsnorm(&residual, &an, eps)
                 };
-                let is_imrope = arch == "qwen3vl" || arch == "qwen35";
-                let neox = oracle_rope_is_neox(arch);
-                for h in &mut qh {
-                    *h = match sections {
-                        Some(s) => oracle_rope_multi(
-                            h.clone(),
-                            [pos, pos, pos, 0],
-                            n_rot,
-                            base,
-                            s,
-                            is_imrope,
-                        ),
-                        None if neox => oracle_rope_neox(h.clone(), pos, n_rot, base),
-                        None => oracle_rope(h.clone(), pos, n_rot, base),
-                    };
-                }
-                for h in &mut kh {
-                    *h = match sections {
-                        Some(s) => oracle_rope_multi(
-                            h.clone(),
-                            [pos, pos, pos, 0],
-                            n_rot,
-                            base,
-                            s,
-                            is_imrope,
-                        ),
-                        None if neox => oracle_rope_neox(h.clone(), pos, n_rot, base),
-                        None => oracle_rope(h.clone(), pos, n_rot, base),
-                    };
-                }
-                if qk_l2 {
+                let attn_norm_output = xn_attn.clone();
+                let q_full = oracle_add_bias(
+                    oracle_gemv(g.tensor(&tname(li, "attn_q.weight")).unwrap(), &xn_attn),
+                    g.tensor(&tname(li, "attn_q.bias")),
+                );
+                let k = oracle_add_bias(
+                    oracle_gemv(g.tensor(&tname(li, "attn_k.weight")).unwrap(), &xn_attn),
+                    g.tensor(&tname(li, "attn_k.bias")),
+                );
+                let v = oracle_add_bias(
+                    oracle_gemv(g.tensor(&tname(li, "attn_v.weight")).unwrap(), &xn_attn),
+                    g.tensor(&tname(li, "attn_v.bias")),
+                );
+                let qwen3next = arch == "qwen3next";
+                let qwen35 = arch == "qwen35";
+                let (q, attn_gate) = if qwen3next || qwen35 {
+                    let mut q = Vec::new();
+                    let mut gate = Vec::new();
+                    for chunk in q_full.chunks(hd * 2) {
+                        q.extend_from_slice(&chunk[..hd]);
+                        gate.extend_from_slice(&chunk[hd..]);
+                    }
+                    (q, Some(gate))
+                } else {
+                    (q_full, None)
+                };
+                let mut qh: Vec<Vec<f32>> = q.chunks(hd).map(<[f32]>::to_vec).collect();
+                let mut kh: Vec<Vec<f32>> = k.chunks(hd).map(<[f32]>::to_vec).collect();
+                let vh: Vec<Vec<f32>> = v.chunks(hd).map(<[f32]>::to_vec).collect();
+                // Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 QK-Norm (`LLM_NORM_RMS` on each head) before RoPE.
+                if let Some(qn) = g.tensor(&tname(li, "attn_q_norm.weight")) {
+                    let w = f32s(qn).unwrap();
                     for h in &mut qh {
-                        *h = oracle_rmsnorm_unweighted(h, eps);
+                        *h = oracle_rmsnorm(h, &w, eps);
+                    }
+                }
+                if let Some(kn) = g.tensor(&tname(li, "attn_k_norm.weight")) {
+                    let w = f32s(kn).unwrap();
+                    for h in &mut kh {
+                        *h = oracle_rmsnorm(h, &w, eps);
+                    }
+                }
+                // Official llama4.cpp: iRoPE when `(il+1) % n_no_rope_layer_step != 0`.
+                let llama4 = arch == "llama4";
+                let n_no_rope = if llama4 { LLAMA4_NO_ROPE_LAYER_STEP } else { 0 };
+                let use_rope = !llama4 || (n_no_rope > 0 && (li + 1) % n_no_rope != 0);
+                let n_expert = arch_u32(g, arch, "expert_count").unwrap_or(0) as usize;
+                let qk_l2 = llama4 && use_rope && n_expert != 128;
+                if use_rope {
+                    let sections = if arch == "qwen2vl" || arch == "qwen3vl" || arch == "qwen35" {
+                        oracle_rope_sections(g, arch)
+                    } else {
+                        None
+                    };
+                    let is_imrope = arch == "qwen3vl" || arch == "qwen35";
+                    let neox = oracle_rope_is_neox(arch);
+                    for h in &mut qh {
+                        *h = match sections {
+                            Some(s) => oracle_rope_multi(
+                                h.clone(),
+                                [pos, pos, pos, 0],
+                                n_rot,
+                                base,
+                                s,
+                                is_imrope,
+                            ),
+                            None if neox => oracle_rope_neox(h.clone(), pos, n_rot, base),
+                            None => oracle_rope(h.clone(), pos, n_rot, base),
+                        };
                     }
                     for h in &mut kh {
-                        *h = oracle_rmsnorm_unweighted(h, eps);
+                        *h = match sections {
+                            Some(s) => oracle_rope_multi(
+                                h.clone(),
+                                [pos, pos, pos, 0],
+                                n_rot,
+                                base,
+                                s,
+                                is_imrope,
+                            ),
+                            None if neox => oracle_rope_neox(h.clone(), pos, n_rot, base),
+                            None => oracle_rope(h.clone(), pos, n_rot, base),
+                        };
+                    }
+                    if qk_l2 {
+                        for h in &mut qh {
+                            *h = oracle_rmsnorm_unweighted(h, eps);
+                        }
+                        for h in &mut kh {
+                            *h = oracle_rmsnorm_unweighted(h, eps);
+                        }
+                    }
+                } else {
+                    let scale = llama4_attn_temp_scale(pos);
+                    for h in &mut qh {
+                        for v in h.iter_mut() {
+                            *v *= scale;
+                        }
                     }
                 }
-            } else {
-                let scale = llama4_attn_temp_scale(pos);
-                for h in &mut qh {
-                    for v in h.iter_mut() {
-                        *v *= scale;
+                for (hkv, khv) in kh.iter().enumerate() {
+                    k_cache[li][hkv].push(khv.clone());
+                    v_cache[li][hkv].push(vh[hkv].clone());
+                }
+                if phi2 && use_rope {
+                    let q_scale = 1.0 / (hd as f32).sqrt();
+                    for h in &mut qh {
+                        for v in h.iter_mut() {
+                            *v *= q_scale;
+                        }
                     }
                 }
-            }
-            for (hkv, khv) in kh.iter().enumerate() {
-                k_cache[hkv].push(khv.clone());
-                v_cache[hkv].push(vh[hkv].clone());
-            }
-            if phi2 && use_rope {
-                let q_scale = 1.0 / (hd as f32).sqrt();
-                for h in &mut qh {
-                    for v in h.iter_mut() {
-                        *v *= q_scale;
+                let seq = pos + 1;
+                let inv = if phi2 { 1.0 } else { 1.0 / (hd as f32).sqrt() };
+                let mut attn = vec![0.0f32; n_embd];
+                for (hq, qvec) in qh.iter().enumerate() {
+                    let hkv = hq / gqa;
+                    let mut scores = vec![0.0f32; seq];
+                    for t in 0..seq {
+                        let kv = &k_cache[li][hkv][t];
+                        scores[t] =
+                            qvec.iter().zip(kv.iter()).map(|(a, b)| a * b).sum::<f32>() * inv;
                     }
-                }
-            }
-            let seq = pos + 1;
-            let inv = if phi2 { 1.0 } else { 1.0 / (hd as f32).sqrt() };
-            let mut attn = vec![0.0f32; n_embd];
-            for (hq, qvec) in qh.iter().enumerate() {
-                let hkv = hq / gqa;
-                let mut scores = vec![0.0f32; seq];
-                for t in 0..seq {
-                    let kv = &k_cache[hkv][t];
-                    scores[t] = qvec.iter().zip(kv.iter()).map(|(a, b)| a * b).sum::<f32>() * inv;
-                }
-                let m = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
-                let mut s = 0.0f32;
-                for v in &mut scores {
-                    *v = (*v - m).exp();
-                    s += *v;
-                }
-                if s > 0.0 {
+                    let m = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                    let mut s = 0.0f32;
                     for v in &mut scores {
-                        *v /= s;
+                        *v = (*v - m).exp();
+                        s += *v;
+                    }
+                    if s > 0.0 {
+                        for v in &mut scores {
+                            *v /= s;
+                        }
+                    }
+                    let mut acc = vec![0.0f32; hd];
+                    for t in 0..seq {
+                        let st = scores[t];
+                        for (a, b) in acc.iter_mut().zip(v_cache[li][hkv][t].iter()) {
+                            *a += st * *b;
+                        }
+                    }
+                    let off = hq * hd;
+                    attn[off..off + hd].copy_from_slice(&acc);
+                }
+                if let Some(gate) = attn_gate.as_ref() {
+                    for (a, gv) in attn.iter_mut().zip(gate.iter()) {
+                        *a *= 1.0 / (1.0 + (-gv).exp());
                     }
                 }
-                let mut acc = vec![0.0f32; hd];
-                for t in 0..seq {
-                    let st = scores[t];
-                    for (a, b) in acc.iter_mut().zip(v_cache[hkv][t].iter()) {
-                        *a += st * *b;
-                    }
-                }
-                let off = hq * hd;
-                attn[off..off + hd].copy_from_slice(&acc);
-            }
-            if let Some(gate) = attn_gate.as_ref() {
-                for (a, gv) in attn.iter_mut().zip(gate.iter()) {
-                    *a *= 1.0 / (1.0 + (-gv).exp());
-                }
-            }
-            let mut x = oracle_add_bias(
-                oracle_gemv(g.tensor("blk.0.attn_output.weight").unwrap(), &attn),
-                g.tensor("blk.0.attn_output.bias"),
-            );
-            if phi2 {
-                let up = oracle_add_bias(
-                    oracle_gemv(g.tensor("blk.0.ffn_up.weight").unwrap(), &attn_norm_output),
-                    g.tensor("blk.0.ffn_up.bias"),
+                x = oracle_add_bias(
+                    oracle_gemv(g.tensor(&tname(li, "attn_output.weight")).unwrap(), &attn),
+                    g.tensor(&tname(li, "attn_output.bias")),
                 );
-                let h: Vec<f32> = up.iter().map(|u| oracle_gelu(*u)).collect();
-                let down = oracle_add_bias(
-                    oracle_gemv(g.tensor("blk.0.ffn_down.weight").unwrap(), &h),
-                    g.tensor("blk.0.ffn_down.bias"),
-                );
-                x = x
-                    .iter()
-                    .zip(down.iter())
-                    .zip(residual.iter())
-                    .map(|((a, d), r)| a + d + r)
-                    .collect();
-            } else {
-                x = x.iter().zip(residual.iter()).map(|(a, b)| a + b).collect();
-                let fnorm = if qwen3next || qwen35 {
-                    f32s(g.tensor("blk.0.post_attention_norm.weight").unwrap()).unwrap()
-                } else {
-                    f32s(g.tensor("blk.0.ffn_norm.weight").unwrap()).unwrap()
-                };
-                let xn = oracle_rmsnorm(&x, &fnorm, eps);
-                let llama_moe =
-                    arch == "llama" && arch_u32(g, arch, "expert_count").unwrap_or(0) > 0;
-                let qwen2moe = arch == "qwen2moe";
-                let qwen3moe = arch == "qwen3moe";
-                let down = if llama4 {
-                    oracle_llama4_moe(g, &xn)
-                } else if llama_moe {
-                    oracle_llama_moe(g, &xn)
-                } else if qwen2moe {
-                    oracle_qwen2moe(g, &xn)
-                } else if qwen3moe {
-                    oracle_qwen3moe(g, &xn)
-                } else if qwen3next {
-                    oracle_qwen3next(g, &xn)
-                } else {
-                    let gate = oracle_gemv(g.tensor("blk.0.ffn_gate.weight").unwrap(), &xn);
-                    let up = oracle_gemv(g.tensor("blk.0.ffn_up.weight").unwrap(), &xn);
-                    let h: Vec<f32> = gate
+                if phi2 {
+                    let up = oracle_add_bias(
+                        oracle_gemv(
+                            g.tensor(&tname(li, "ffn_up.weight")).unwrap(),
+                            &attn_norm_output,
+                        ),
+                        g.tensor(&tname(li, "ffn_up.bias")),
+                    );
+                    let h: Vec<f32> = up.iter().map(|u| oracle_gelu(*u)).collect();
+                    let down = oracle_add_bias(
+                        oracle_gemv(g.tensor(&tname(li, "ffn_down.weight")).unwrap(), &h),
+                        g.tensor(&tname(li, "ffn_down.bias")),
+                    );
+                    x = x
                         .iter()
-                        .zip(up.iter())
-                        .map(|(gv, u)| {
-                            let act = if gemma {
-                                oracle_gelu(*gv)
-                            } else {
-                                gv / (1.0 + (-gv).exp())
-                            };
-                            act * u
-                        })
+                        .zip(down.iter())
+                        .zip(residual.iter())
+                        .map(|((a, d), r)| a + d + r)
                         .collect();
-                    oracle_gemv(g.tensor("blk.0.ffn_down.weight").unwrap(), &h)
-                };
-                x = down.iter().zip(x.iter()).map(|(a, b)| a + b).collect();
+                } else {
+                    x = x.iter().zip(residual.iter()).map(|(a, b)| a + b).collect();
+                    let fnorm = if qwen3next || qwen35 {
+                        f32s(g.tensor(&tname(li, "post_attention_norm.weight")).unwrap()).unwrap()
+                    } else {
+                        f32s(g.tensor(&tname(li, "ffn_norm.weight")).unwrap()).unwrap()
+                    };
+                    let xn = oracle_rmsnorm(&x, &fnorm, eps);
+                    let llama_moe =
+                        arch == "llama" && arch_u32(g, arch, "expert_count").unwrap_or(0) > 0;
+                    let qwen2moe = arch == "qwen2moe";
+                    let qwen3moe = arch == "qwen3moe";
+                    let down = if llama4 {
+                        oracle_llama4_moe(g, &xn, li)
+                    } else if llama_moe {
+                        oracle_llama_moe(g, &xn, li)
+                    } else if qwen2moe {
+                        oracle_qwen2moe(g, &xn, li)
+                    } else if qwen3moe {
+                        oracle_qwen3moe(g, &xn, li)
+                    } else if qwen3next {
+                        oracle_qwen3next(g, &xn, li)
+                    } else {
+                        let gate =
+                            oracle_gemv(g.tensor(&tname(li, "ffn_gate.weight")).unwrap(), &xn);
+                        let up = oracle_gemv(g.tensor(&tname(li, "ffn_up.weight")).unwrap(), &xn);
+                        let h: Vec<f32> = gate
+                            .iter()
+                            .zip(up.iter())
+                            .map(|(gv, u)| {
+                                let act = if gemma {
+                                    oracle_gelu(*gv)
+                                } else {
+                                    gv / (1.0 + (-gv).exp())
+                                };
+                                act * u
+                            })
+                            .collect();
+                        oracle_gemv(g.tensor(&tname(li, "ffn_down.weight")).unwrap(), &h)
+                    };
+                    x = down.iter().zip(x.iter()).map(|(a, b)| a + b).collect();
+                }
+                residual = x.clone();
             }
             let on = f32s(g.tensor("output_norm.weight").unwrap()).unwrap();
             let on_b = g.tensor("output_norm.bias").and_then(|t| f32s(t).ok());
@@ -10466,6 +10548,7 @@ mod tests {
             tiny_llama_moe_gguf(),
             tiny_qwen2moe_gguf(),
             tiny_qwen3moe_gguf(),
+            tiny_qwen3moe_2layer_gguf(),
             tiny_qwen2vl_gguf(),
             tiny_qwen3vl_gguf(),
             tiny_qwen3next_gguf(),
@@ -11557,6 +11640,86 @@ mod tests {
             .find(|r| r.policy == expertvm::Policy::Lru)
             .expect("lru");
         assert!(oracle.hits >= lru.hits);
+    }
+
+    fn moe_cached_prefetches(bytes: Vec<u8>, tokens: &[u32]) -> u64 {
+        let g = load_gguf_owned(bytes).expect("owned");
+        let model = Llama::from_gguf(g).expect("m");
+        let catalog = model.expert_direct_store().expect("catalog");
+        let n = catalog.len().max(1);
+        let cached = expertvm::CachedStore::new(catalog, n).expect("cached");
+        let mut c = model
+            .new_cache(tokens.len().saturating_add(2))
+            .expect("cache");
+        c.attach_expert_store(LiveStore::Cached(cached));
+        let _l = model.prefill(&mut c, tokens).expect("prefill");
+        c.expert_store_metrics().expect("metrics").prefetches
+    }
+
+    #[test]
+    fn tiny_qwen3moe_2layer_oracle_store_trace_and_copy_forward() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let g = load_gguf(&bytes).expect("load 2layer");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("qwen3moe".into()))
+        );
+        assert_eq!(g.kv_u32("qwen3moe.block_count"), Some(2));
+        assert!(g.tensor("blk.1.ffn_gate_exps.weight").is_some());
+        assert!(g.tensor("blk.1.ffn_up_exps.weight").is_some());
+        assert!(g.tensor("blk.1.ffn_down_exps.weight").is_some());
+        assert!(g.tensor("blk.1.attn_q.weight").is_some());
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let one = tiny_qwen3moe_gguf();
+        let g1 = load_gguf(&one).expect("1layer");
+        let m1 = Llama::from_gguf(g1).expect("m1");
+        let m2 = Llama::from_gguf(g.clone()).expect("m2");
+        let tokens = [1u32, 2, 3];
+        let l1 = {
+            let mut c = m1.new_cache(8).expect("c1");
+            m1.prefill(&mut c, &tokens).expect("p1")
+        };
+        let l2 = {
+            let mut c = m2.new_cache(8).expect("c2");
+            m2.prefill(&mut c, &tokens).expect("p2")
+        };
+        assert_ne!(
+            l1, l2,
+            "cloned layer 1 must still change logits vs the 1-layer tiny"
+        );
+        let catalog = m2.expert_direct_store().expect("catalog");
+        assert!(
+            catalog.keys().any(|k| k.layer == 1),
+            "ExpertStore catalog must include L+1 keys"
+        );
+        let blob = l2.clone();
+        let via_direct = store_prefill(&m2, LiveStore::Direct(catalog.clone()), &tokens);
+        assert_eq!(blob, via_direct, "2-layer DirectStore must match the blob");
+        let n = catalog.len().max(1);
+        let via_cached = store_prefill(
+            &m2,
+            LiveStore::Cached(expertvm::CachedStore::new(catalog, n).expect("cached")),
+            &tokens,
+        );
+        assert_eq!(blob, via_cached, "2-layer CachedStore must match the blob");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let (text, trace) = greedy_generate_traced(&m2, &tok, "ab", 4, None, 0).expect("traced");
+        assert!(!text.is_empty());
+        assert!(
+            trace.events.iter().any(|e| e.layer == 0),
+            "2-layer traces must include layer 0"
+        );
+        assert!(
+            trace.events.iter().any(|e| e.layer == 1),
+            "2-layer traces must include layer 1"
+        );
+        let p1 = moe_cached_prefetches(one, &tokens);
+        let p2 = moe_cached_prefetches(bytes, &tokens);
+        assert!(
+            p2 > p1,
+            "copy-forward L+1 must prefetch on 2-layer (1-layer skips unknown keys), 1={p1} 2={p2}"
+        );
     }
 
     #[test]

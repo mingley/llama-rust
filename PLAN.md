@@ -344,8 +344,10 @@ Writer-built tiny Qwen3MoE `tests/traces/tiny-qwen3moe.jsonl` (`ab`, 8
 predicted tokens, 1 layer, 4 experts, top-2). Working set is **2 experts**,
 so `--capacity 2` is ~888‰ for every policy (2 compulsory misses) and
 `--capacity 1` is 0‰ for every policy including oracle. That is a toy
-router, not a 320B result. A real Qwen3MoE GGUF is required before the
-kill-switch (“best non-oracle ≈ random ≈ 18% → stop”).
+router, not a 320B result. A writer-built **two-layer** Qwen3MoE tiny
+(`tiny_qwen3moe_2layer_gguf`) exists so copy-forward L+1 keys are in the
+catalog; the checked-in JSONL stays 1-layer. A real Qwen3MoE GGUF is
+required before the kill-switch (“best non-oracle ≈ random ≈ 18% → stop”).
 
 If the best realistic policy on a **real** trace is ~18% hit, stop. If a
 1-layer predictor is ~80% with oracle ~94%, there is a paper and a crate.
@@ -853,6 +855,10 @@ model, do not celebrate the sim.
     lines then a final `generated` object. Concurrent streams still GEMM
     together. Default serve ignores `stream`. Dual score still has no
     `$/M tokens`.
+38. [x] Writer-built two-layer Qwen3MoE tiny (`qwen3moe.block_count=2`,
+    `blk.1.*` cloned from `blk.0.*`) so copy-forward L+1 catalog keys exist.
+    The independent oracle walks every `block_count` layer. Dual score still
+    has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

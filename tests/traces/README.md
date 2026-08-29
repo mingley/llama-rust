@@ -21,6 +21,8 @@ is a no-op when every event has `p` missing.
 ```
 gguf_gemv write-tiny-qwen3moe tiny-qwen3moe.gguf
 gguf_gemv trace tiny-qwen3moe.gguf -p ab -n 8 --out tests/traces/tiny-qwen3moe.jsonl
+gguf_gemv write-tiny-qwen3moe-2layer tiny-qwen3moe-2layer.gguf
+gguf_gemv trace tiny-qwen3moe-2layer.gguf -p ab -n 8 --out /tmp/tiny-qwen3moe-2layer.jsonl
 gguf_gemv engine tiny-qwen3moe.gguf -p a -p b --kv-page 2 --trace-out /tmp/engine.jsonl
 expertvm replay tests/traces/tiny-qwen3moe.jsonl --capacity 2
 expertvm replay tests/traces/cycling.jsonl --capacity 2

@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — two-layer Qwen3MoE tiny + multi-layer oracle
+
+`tiny_qwen3moe_2layer_gguf` / `gguf_gemv write-tiny-qwen3moe-2layer` writes
+`qwen3moe.block_count=2` with `blk.1.*` cloned from `blk.0.*` so ExpertStore
+copy-forward L+1 keys exist (1-layer tinies skip those as unknown). The
+independent oracle walks every `block_count` layer; 2-layer logits match
+and differ from the 1-layer tiny. CachedStore prefetches more on 2-layer
+than on 1-layer. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — serve `--engine` stream / prefill-chunk / trace-out
 
 `"stream": true` on `--engine` `POST /generate` is HTTP/1.1 chunked NDJSON

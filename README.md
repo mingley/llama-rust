@@ -85,6 +85,8 @@ cargo build --release --bin gguf_gemv
 ./target/release/gguf_gemv infer tiny-qwen2moe.gguf -p ab -n 2
 ./target/release/gguf_gemv write-tiny-qwen3moe tiny-qwen3moe.gguf
 ./target/release/gguf_gemv infer tiny-qwen3moe.gguf -p ab -n 2
+./target/release/gguf_gemv write-tiny-qwen3moe-2layer tiny-qwen3moe-2layer.gguf
+./target/release/gguf_gemv infer tiny-qwen3moe-2layer.gguf -p ab -n 2
 ./target/release/gguf_gemv trace tiny-qwen3moe.gguf -p ab -n 8 --out tests/traces/tiny-qwen3moe.jsonl --capacity 2
 ./target/release/expertvm replay tests/traces/tiny-qwen3moe.jsonl --capacity 2
 ./target/release/expertvm replay tests/traces/cycling.jsonl --capacity 2

@@ -1034,8 +1034,8 @@ fn borrow_slots_mut<'a>(
 mod tests {
     use super::{Engine, EngineCfg};
     use crate::decode::{
-        greedy_generate_cache, tiny_llama4_gguf, tiny_llama_gguf, tiny_qwen3moe_gguf, Llama,
-        LlamaError,
+        greedy_generate_cache, tiny_llama4_gguf, tiny_llama_gguf, tiny_qwen3moe_2layer_gguf,
+        tiny_qwen3moe_gguf, Llama, LlamaError,
     };
     use crate::gguf::load_gguf_owned;
     use crate::tok::Tokenizer;
@@ -1486,6 +1486,39 @@ mod tests {
             eng.stats().gemm_peak >= 8,
             "prefetch must not force serial GEMM, peak={}",
             eng.stats().gemm_peak
+        );
+    }
+
+    #[test]
+    fn engine_cached_store_copy_forward_prefetches_layer1() {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        fn run(bytes: Vec<u8>, tokens_a: &[u32], tokens_b: &[u32]) -> u64 {
+            let g = load_gguf_owned(bytes).expect("owned");
+            let tok = Tokenizer::from_gguf(&g).expect("tok");
+            let model = Llama::from_gguf(g).expect("m");
+            let exp_a = independent(&model, &tok, tokens_a, 2);
+            let exp_b = independent(&model, &tok, tokens_b, 2);
+            let mut cfg = EngineCfg::tiny();
+            cfg.eos = tok.eos;
+            let mut eng = Engine::new(&model, cfg).expect("eng");
+            let catalog = model.expert_direct_store().expect("c");
+            let n = catalog.len().max(1);
+            eng.attach_expert_store(LiveStore::Cached(
+                CachedStore::new(catalog, n).expect("cached"),
+            ));
+            let a = eng.add(tokens_a, 2).expect("a");
+            let b = eng.add(tokens_b, 2).expect("b");
+            eng.run().expect("run");
+            assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+            assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+            eng.expert_store_metrics().expect("metrics").prefetches
+        }
+        let p1 = run(tiny_qwen3moe_gguf(), &tokens_a, &tokens_b);
+        let p2 = run(tiny_qwen3moe_2layer_gguf(), &tokens_a, &tokens_b);
+        assert!(
+            p2 > p1,
+            "Engine copy-forward L+1 must prefetch on 2-layer, 1={p1} 2={p2}"
         );
     }
 
