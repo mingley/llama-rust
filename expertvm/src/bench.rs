@@ -2,8 +2,9 @@
 
 use crate::access::Trace;
 use crate::error::Error;
+use crate::place::striped;
 use crate::replay::{compare, format_table};
-use crate::schedule::{schedule_replay, SchedCfg};
+use crate::schedule::{schedule_placed, schedule_replay, SchedCfg};
 use crate::sim_replay::{sim_replay_cfg, SimCfg};
 use crate::workload::{generate, Workload};
 use gpu_sim::HardwareProfile;
@@ -31,6 +32,8 @@ pub struct BenchReport {
     /// Chunked vs `--decode-first` when a first token has more than one layer
     /// and a later token exists in the trace.
     pub decode: Option<String>,
+    /// GPU0 vs striped homes when the profile has more than one GPU.
+    pub ep: Option<String>,
 }
 
 impl BenchReport {
@@ -62,6 +65,10 @@ impl BenchReport {
             s.push_str(df);
             s.push('\n');
         }
+        if let Some(ep) = &self.ep {
+            s.push_str(ep);
+            s.push('\n');
+        }
         s
     }
 }
@@ -82,6 +89,7 @@ pub fn report(
     let mut schedule = None;
     let mut chunk = None;
     let mut decode = None;
+    let mut ep = None;
     if let Some(p) = profile {
         let lines = sim_lines(trace, p, capacity, lookahead, expert_bytes)?;
         sim = Some(lines.serial);
@@ -90,6 +98,7 @@ pub fn report(
         schedule = lines.schedule;
         chunk = lines.chunk;
         decode = lines.decode;
+        ep = lines.ep;
     }
     Ok(BenchReport {
         name: name.to_string(),
@@ -101,6 +110,7 @@ pub fn report(
         schedule,
         chunk,
         decode,
+        ep,
     })
 }
 
@@ -111,6 +121,7 @@ struct SimLines {
     schedule: Option<String>,
     chunk: Option<String>,
     decode: Option<String>,
+    ep: Option<String>,
 }
 
 fn sim_lines(
@@ -141,6 +152,7 @@ fn sim_lines(
         schedule: lines.schedule,
         chunk: lines.chunk,
         decode: lines.decode,
+        ep: lines.ep,
     })
 }
 
@@ -148,6 +160,7 @@ struct ScheduleLines {
     schedule: Option<String>,
     chunk: Option<String>,
     decode: Option<String>,
+    ep: Option<String>,
 }
 
 fn schedule_compare(
@@ -155,11 +168,13 @@ fn schedule_compare(
     profile: HardwareProfile,
     base: SimCfg,
 ) -> Result<ScheduleLines, Error> {
+    let ep = ep_line(trace, profile.clone(), base)?;
     if trace.n_sequences() <= 1 {
         return Ok(ScheduleLines {
             schedule: None,
             chunk: None,
             decode: None,
+            ep,
         });
     }
     let all = schedule_replay(trace, profile.clone(), base, SchedCfg::closed(0))?;
@@ -191,7 +206,7 @@ fn schedule_compare(
         (true, Some(ch)) => {
             let df = schedule_replay(
                 trace,
-                profile,
+                profile.clone(),
                 base,
                 SchedCfg {
                     decode_first: true,
@@ -210,7 +225,23 @@ fn schedule_compare(
         schedule,
         chunk,
         decode,
+        ep,
     })
+}
+
+fn ep_line(trace: &Trace, profile: HardwareProfile, base: SimCfg) -> Result<Option<String>, Error> {
+    if profile.n_gpus() <= 1 {
+        return Ok(None);
+    }
+    let n = u16::try_from(profile.n_gpus()).unwrap_or(1).max(1);
+    let map = striped(trace, n);
+    let gpu0 = schedule_replay(trace, profile.clone(), base, SchedCfg::closed(0))?;
+    let placed = schedule_placed(trace, profile, base, SchedCfg::closed(0), Some(&map))?;
+    Ok(Some(format!(
+        "schedule-gpu0 {} | schedule-striped {}",
+        gpu0.line(),
+        placed.line()
+    )))
 }
 
 fn first_token_events(trace: &Trace) -> usize {

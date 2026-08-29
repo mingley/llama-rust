@@ -699,6 +699,27 @@ fn schedule_decode_first_shortens_mixed_itl() {
 }
 
 #[test]
+fn schedule_striped_homes_beat_gpu0_on_wide_token() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1, 2, 3, 4, 5, 6, 7])],
+    };
+    let p = HardwareProfile::example_8xh100_nvlink();
+    let bytes = 4u64 << 20;
+    let cfg = SimCfg::lru(8, bytes, 0);
+    let gpu0 = schedule_replay(&t, p.clone(), cfg, SchedCfg::closed(0)).expect("gpu0");
+    let map = striped(&t, 8);
+    let ep = schedule_placed(&t, p, cfg, SchedCfg::closed(0), Some(&map)).expect("ep");
+    assert_eq!(gpu0.completed, 1);
+    assert_eq!(ep.completed, 1);
+    assert!(
+        ep.replay.sim_ns < gpu0.replay.sim_ns,
+        "striped={} gpu0={}",
+        ep.replay.sim_ns,
+        gpu0.replay.sim_ns
+    );
+}
+
+#[test]
 fn schedule_slo_reject_drops_late_head_of_line() {
     let t = Trace {
         events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],

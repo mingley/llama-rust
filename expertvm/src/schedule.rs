@@ -2,6 +2,7 @@
 
 use crate::access::{ExpertAccess, ExpertKey, Trace};
 use crate::error::Error;
+use crate::place::PlaceMap;
 use crate::planner::{observe_chain, plan_keys, Markov, Plan};
 use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
@@ -112,15 +113,29 @@ impl SchedReplay {
 /// *running* sequences only. [`SchedCfg::slo_reject`] drops a waiting
 /// sequence whose queue wait already meets the TTFT SLO so a later arrival
 /// is not stuck behind hopeless FCFS head-of-line work.
+/// [`schedule_placed`] H2Ds a miss onto the expert's [`PlaceMap`] home so a
+/// wide token can use every GPU's copy engines; [`schedule_replay`] is GPU0.
 pub fn schedule_replay(
     trace: &Trace,
     profile: HardwareProfile,
     cfg: SimCfg,
     sched: SchedCfg,
 ) -> Result<SchedReplay, Error> {
+    schedule_placed(trace, profile, cfg, sched, None)
+}
+
+/// [`schedule_replay`] with expert-parallel homes. `None` is GPU0 (same as
+/// [`schedule_replay`]). A miss copies onto `map.home_of`; GEMM runs there.
+pub fn schedule_placed(
+    trace: &Trace,
+    profile: HardwareProfile,
+    cfg: SimCfg,
+    sched: SchedCfg,
+    place: Option<&PlaceMap>,
+) -> Result<SchedReplay, Error> {
     let mut pending = group_jobs(&trace.events, sched.interarrival_ns);
     let mut running: Vec<Job> = Vec::new();
-    let mut rt = SchedRt::new(profile, cfg)?;
+    let mut rt = SchedRt::new(profile, cfg, place.cloned())?;
     let mut rec = Rec::default();
     let cap = batch_cap(sched.max_batch);
     loop {
@@ -182,12 +197,15 @@ struct SchedRt {
     n_streams: u8,
     cfg: SimCfg,
     idle_ns: u64,
+    place: Option<PlaceMap>,
+    n_gpus: u16,
 }
 
 impl SchedRt {
-    fn new(profile: HardwareProfile, cfg: SimCfg) -> Result<Self, Error> {
+    fn new(profile: HardwareProfile, cfg: SimCfg, place: Option<PlaceMap>) -> Result<Self, Error> {
         let sim = Sim::new(profile);
         let n_streams = replay_streams(sim.profile(), cfg.seq_streams);
+        let n_gpus = u16::try_from(sim.profile().n_gpus()).unwrap_or(1).max(1);
         let bytes = cfg.bytes_per_expert.max(1);
         Ok(Self {
             n_streams,
@@ -208,7 +226,22 @@ impl SchedRt {
             prev2: None,
             cfg,
             idle_ns: 0,
+            place,
+            n_gpus,
         })
+    }
+
+    fn home(&self, key: ExpertKey) -> DeviceId {
+        self.place
+            .as_ref()
+            .map(|m| m.home_of(key, self.n_gpus))
+            .unwrap_or(DeviceId(0))
+    }
+
+    fn args_for(&self, key: ExpertKey) -> TouchArgs {
+        let mut a = self.args;
+        a.d = self.home(key);
+        a
     }
 
     fn touch_event(&mut self, ev: &ExpertAccess) -> Result<(), Error> {
@@ -217,11 +250,12 @@ impl SchedRt {
         for key in &ek {
             let touch = self.walker.demand_touch(*key);
             note_touch(&mut self.ctr, &mut self.prefetched, *key, touch);
+            let args = self.args_for(*key);
             apply_touch(
                 &mut self.sim,
                 &mut self.handles,
                 &mut self.graphs,
-                self.args,
+                args,
                 *key,
                 touch,
             )?;
@@ -230,7 +264,6 @@ impl SchedRt {
             &mut self.sim,
             &self.handles,
             &mut self.graphs,
-            self.args.d,
             &ek,
             self.cfg.cuda_graphs,
             &mut self.ctr,
@@ -248,18 +281,18 @@ impl SchedRt {
         } else {
             Vec::new()
         };
-        let fill = self.args;
         for key in predicted.into_iter().chain(planned) {
             match self.walker.prefetch_touch(key) {
                 Touch::Hit => {}
                 miss @ Touch::Miss { .. } => {
                     self.ctr.prefetches = self.ctr.prefetches.saturating_add(1);
                     let _ins = self.prefetched.insert(key);
+                    let args = self.args_for(key);
                     apply_touch(
                         &mut self.sim,
                         &mut self.handles,
                         &mut self.graphs,
-                        fill,
+                        args,
                         key,
                         miss,
                     )?;

@@ -2,7 +2,7 @@
 
 use expertvm::{
     adversarial_suite, analyze, colocated, compare, compare_ep, format_table, generate, report,
-    schedule_replay, sim_placed, sim_remote_home_cfg, sim_replay_cfg, striped, topology_suite,
+    schedule_placed, sim_placed, sim_remote_home_cfg, sim_replay_cfg, striped, topology_suite,
     with_hot_replicas, Policy, Prefetch, SchedCfg, SimCfg, Trace, Workload,
     DECODE_ACTIVATION_BYTES,
 };
@@ -17,7 +17,7 @@ usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
   sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N]
-  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject]
+  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--place none|striped|colocated]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
@@ -122,6 +122,7 @@ struct Cfg {
     prefill_chunk: usize,
     decode_first: bool,
     slo_reject: bool,
+    place: String,
 }
 
 fn parse_cfg<I>(args: I) -> Result<Cfg, String>
@@ -156,6 +157,7 @@ where
     let mut prefill_chunk = 0usize;
     let mut decode_first = false;
     let mut slo_reject = false;
+    let mut place = String::from("none");
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -232,6 +234,7 @@ where
             "--slo-reject" => {
                 slo_reject = !matches!(inline.as_deref(), Some("0" | "false"));
             }
+            "--place" => place = value("place", inline, &mut it)?,
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => {
                 if path.is_some() {
@@ -263,6 +266,7 @@ where
         prefill_chunk,
         decode_first,
         slo_reject,
+        place,
     })
 }
 
@@ -502,7 +506,14 @@ where
     println!("{}", analyze(&trace).report());
     let profile = load_profile(&cfg.profile)?;
     let prefetch = Prefetch::parse(&cfg.prefetch).map_err(|e| e.to_string())?;
-    let row = schedule_replay(
+    let n_gpus = u16::try_from(profile.n_gpus()).unwrap_or(1).max(1);
+    let map = match cfg.place.as_str() {
+        "none" => None,
+        "striped" => Some(striped(&trace, n_gpus)),
+        "colocated" => Some(colocated(&trace, n_gpus)),
+        other => return Err(format!("unknown --place {other} (none|striped|colocated)")),
+    };
+    let row = schedule_placed(
         &trace,
         profile,
         SimCfg {
@@ -526,6 +537,7 @@ where
             decode_first: cfg.decode_first,
             slo_reject: cfg.slo_reject,
         },
+        map.as_ref(),
     )
     .map_err(|e| e.to_string())?;
     println!("{}", row.line());

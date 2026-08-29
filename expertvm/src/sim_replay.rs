@@ -189,7 +189,6 @@ pub fn sim_replay_cfg(
             &mut sim,
             &handles,
             &mut graphs,
-            d,
             &ek,
             cfg.cuda_graphs,
             &mut ctr,
@@ -252,6 +251,7 @@ pub(crate) struct ReplayCounters {
 pub(crate) struct PageHandle {
     id: AllocId,
     stream: StreamId,
+    device: DeviceId,
 }
 
 pub(crate) fn note_touch(
@@ -315,7 +315,7 @@ pub(crate) fn apply_touch(
             if let Some(v) = evicted {
                 if let Some(page) = handles.remove(&v) {
                     drop_graphs(graphs, page.id);
-                    sim.free(args.d, page.id, page.stream)?;
+                    sim.free(page.device, page.id, page.stream)?;
                 }
             }
             if args.slots == 0 {
@@ -323,7 +323,14 @@ pub(crate) fn apply_touch(
             }
             let id = sim.alloc(args.d, args.bytes, args.s)?;
             let _c = sim.memcpy_pinned_to_device(args.d, id, args.bytes, args.s)?;
-            let _prev = handles.insert(key, PageHandle { id, stream: args.s });
+            let _prev = handles.insert(
+                key,
+                PageHandle {
+                    id,
+                    stream: args.s,
+                    device: args.d,
+                },
+            );
             Ok(())
         }
     }
@@ -337,19 +344,21 @@ pub(crate) fn gemm_keys(
     sim: &mut Sim,
     handles: &BTreeMap<ExpertKey, PageHandle>,
     graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
-    d: DeviceId,
     keys: &[ExpertKey],
     cuda_graphs: bool,
     ctr: &mut ReplayCounters,
 ) -> Result<(), Error> {
-    let mut by_stream: BTreeMap<StreamId, Vec<AllocId>> = BTreeMap::new();
+    let mut by_dev: BTreeMap<(DeviceId, StreamId), Vec<AllocId>> = BTreeMap::new();
     for key in keys {
         let Some(page) = handles.get(key) else {
             continue;
         };
-        by_stream.entry(page.stream).or_default().push(page.id);
+        by_dev
+            .entry((page.device, page.stream))
+            .or_default()
+            .push(page.id);
     }
-    for (stream, ids) in by_stream {
+    for ((d, stream), ids) in by_dev {
         gemm_ids(sim, graphs, d, stream, ids, cuda_graphs, ctr)?;
     }
     Ok(())

@@ -97,7 +97,9 @@ TTFT is from
 arrival; `--ttft-slo-ns` / `--itl-slo-ns` count misses. `queue_ns` is mean
 first-token wait (`iteration_start - arrival`) so a tight `max_batch`
 shows queueing separately from GPU service. The cache walker
-is demand paging (no JSONL future leak). Planner helpers: `copy_forward`,
+is demand paging (no JSONL future leak). [`schedule_placed`] H2Ds a miss onto the expert's [`PlaceMap`](crate::PlaceMap)
+home (`--place striped|colocated`) so a wide token can use every GPU's copy
+engines. [`schedule_replay`] is GPU0. Planner helpers: `copy_forward`,
 `hot_keys`, `plan_keys`, `plan_window`, `plan_placement` (move weights vs dispatch
 activations), `Markov` / `Prefetch` (lookback-2 `P(to|from, from_prev)` with
 order-1 backoff). `colocated` keeps co-fired experts
@@ -135,6 +137,7 @@ expertvm sim      trace.jsonl --capacity 8 --profile h100 --prefetch markov --se
 expertvm sim      trace.jsonl --capacity 8 --prefetch copy-forward --plan-window 8 --cuda-graphs
 expertvm sim      trace.jsonl --capacity 8 --seq-streams --max-batch 2
 expertvm schedule trace.jsonl --capacity 8 --max-batch 2 --interarrival-ns 1000000 --ttft-slo-ns 20000000
+expertvm schedule trace.jsonl --capacity 8 --place striped --profile 8xh100 --expert-bytes 1048576
 expertvm schedule trace.jsonl --capacity 8 --prefill-chunk 1 --seq-streams --decode-first
 expertvm schedule trace.jsonl --capacity 8 --max-batch 1 --ttft-slo-ns 1 --slo-reject
 expertvm place    trace.jsonl --gpus 8 --hot-pt 200

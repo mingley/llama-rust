@@ -1,8 +1,9 @@
 //! `infer-bench adversarial | trace` — measured hit rates and sim scores.
 
 use infer_bench::{
-    adversarial_suite, report, schedule_replay, sim_placed, sim_remote_home_cfg, striped,
-    topology_suite, HardwareProfile, SchedCfg, SimCfg, Trace, Workload, DECODE_ACTIVATION_BYTES,
+    adversarial_suite, colocated, report, schedule_placed, sim_placed, sim_remote_home_cfg,
+    striped, topology_suite, HardwareProfile, SchedCfg, SimCfg, Trace, Workload,
+    DECODE_ACTIVATION_BYTES,
 };
 use std::env;
 use std::fs::File;
@@ -16,7 +17,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--place none|striped|colocated]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch, prefill-batch
@@ -122,7 +123,14 @@ fn run() -> Result<(), String> {
             let path = cfg.path.ok_or("schedule <trace.jsonl>")?;
             let trace = load_trace(&path)?;
             let profile = load_profile(&cfg.profile)?;
-            let row = schedule_replay(
+            let n_gpus = u16::try_from(profile.n_gpus()).unwrap_or(1).max(1);
+            let map = match cfg.place.as_str() {
+                "none" => None,
+                "striped" => Some(striped(&trace, n_gpus)),
+                "colocated" => Some(colocated(&trace, n_gpus)),
+                other => return Err(format!("unknown --place {other} (none|striped|colocated)")),
+            };
+            let row = schedule_placed(
                 &trace,
                 profile,
                 SimCfg::lru(cfg.capacity, cfg.expert_bytes, 8),
@@ -135,6 +143,7 @@ fn run() -> Result<(), String> {
                     decode_first: cfg.decode_first,
                     slo_reject: cfg.slo_reject,
                 },
+                map.as_ref(),
             )
             .map_err(|e| e.to_string())?;
             println!("{}", row.line());
@@ -159,6 +168,7 @@ struct Cfg {
     prefill_chunk: usize,
     decode_first: bool,
     slo_reject: bool,
+    place: String,
 }
 
 fn parse_flags<I>(args: I) -> Result<Cfg, String>
@@ -186,6 +196,7 @@ where
     let mut prefill_chunk = 0usize;
     let mut decode_first = false;
     let mut slo_reject = false;
+    let mut place = String::from("none");
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -239,6 +250,7 @@ where
             "--slo-reject" => {
                 slo_reject = !matches!(inline.as_deref(), Some("0" | "false"));
             }
+            "--place" => place = value("place", inline, &mut it)?,
             "--bytes" => expert_bytes = parse_u64("bytes", &value("bytes", inline, &mut it)?)?,
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => {
@@ -264,6 +276,7 @@ where
         prefill_chunk,
         decode_first,
         slo_reject,
+        place,
     })
 }
 
