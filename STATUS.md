@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — cudaGraphExecUpdate on store and walker
+
+`GpuStoreCfg::graph_update` / `SimCfg::graph_update` parks a captured
+leaf GEMM on evict and `Sim::update_graph`s the next miss on that GPU
+(or `(device, stream)` in `sim_replay`). Pays `graph_update_ns` instead
+of instantiate. Parent combo graphs still destroy (child ids are
+topology). `expertvm sim|schedule|store --graph-update` opts in; decode
+identity stays destroy+instantiate. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — seq-stream CUDA priority
 
 `Sim::set_created_streams_priority` is `cudaStreamCreateWithPriority`

@@ -8,9 +8,9 @@ use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
     apply_touch, drop_remote, fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch,
     occupancy_slots, reclaim_victim, remote_hit, replay_from_sim, replay_streams, stream_of,
-    PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, TouchArgs,
+    GraphBank, PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, TouchArgs,
 };
-use gpu_sim::{AllocId, DeviceId, GraphId, HardwareProfile, Sim, StreamId};
+use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::Write;
 
@@ -250,7 +250,7 @@ struct Rec {
 struct SchedRt {
     sim: Sim,
     handles: BTreeMap<ExpertKey, PageHandle>,
-    graphs: BTreeMap<Vec<AllocId>, GraphId>,
+    graphs: GraphBank,
     args: TouchArgs,
     ctr: ReplayCounters,
     prefetched: BTreeSet<ExpertKey>,
@@ -316,7 +316,7 @@ impl SchedRt {
             },
             sim,
             handles: BTreeMap::new(),
-            graphs: BTreeMap::new(),
+            graphs: GraphBank::new(cfg.graph_update),
             ctr: ReplayCounters::default(),
             prefetched: BTreeSet::new(),
             markov: Markov::new(),
@@ -1019,7 +1019,8 @@ fn mean_u64(xs: &[u64]) -> Option<u64> {
     Some(sum / n.max(1))
 }
 
-fn finish_sched(rt: SchedRt, rec: Rec) -> SchedReplay {
+fn finish_sched(mut rt: SchedRt, rec: Rec) -> SchedReplay {
+    rt.ctr.graph_updates = rt.graphs.updates;
     let replay = replay_from_sim(
         &rt.sim,
         rec.tokens_done,

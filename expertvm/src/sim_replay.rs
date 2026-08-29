@@ -45,6 +45,8 @@ pub struct SimReplay {
     pub graph_launches: u64,
     /// Grouped captures that recorded a parent of leaf child graphs.
     pub child_graphs: u64,
+    /// [`gpu_sim::Sim::update_graph`] calls that reused a parked leaf exec.
+    pub graph_updates: u64,
 }
 
 impl SimReplay {
@@ -63,14 +65,15 @@ impl SimReplay {
         }
         let _w = write!(
             s,
-            " hits={} misses={} prefetches={} prefetch_hits={} prefetch_waste={} graph_launches={} child_graphs={}",
+            " hits={} misses={} prefetches={} prefetch_hits={} prefetch_waste={} graph_launches={} child_graphs={} graph_updates={}",
             self.hits,
             self.misses,
             self.prefetches,
             self.prefetch_hits,
             self.prefetch_waste,
             self.graph_launches,
-            self.child_graphs
+            self.child_graphs,
+            self.graph_updates
         );
         s
     }
@@ -198,6 +201,15 @@ pub struct SimCfg {
     /// wins when compute contends. A no-op unless [`Self::seq_streams`].
     /// [`crate::GpuStoreCfg::stream_priority`] marks the store compute stream.
     pub stream_priority: bool,
+    /// `cudaGraphExecUpdate` a parked leaf exec onto the next miss alloc.
+    ///
+    /// Evict parks a one-expert graph instead of `destroy_graph`. The next
+    /// leaf capture on that `(device, stream)` pays `graph_update_ns` instead
+    /// of instantiate. Parent combo graphs still destroy (child ids are
+    /// topology). A no-op unless [`Self::cuda_graphs`]. Decode identity stays
+    /// destroy+instantiate. [`crate::GpuStoreCfg::graph_update`] is the store
+    /// path (always captures when compute is idle).
+    pub graph_update: bool,
 }
 
 impl SimCfg {
@@ -227,6 +239,7 @@ impl SimCfg {
             accessed_by: false,
             legacy_null: false,
             stream_priority: false,
+            graph_update: false,
         }
     }
 }
@@ -300,7 +313,7 @@ pub fn sim_replay_cfg(
     let mut prev: Option<&ExpertAccess> = None;
     let mut prev2: Option<&ExpertAccess> = None;
     let mut prefetched: BTreeSet<ExpertKey> = BTreeSet::new();
-    let mut graphs: BTreeMap<Vec<AllocId>, GraphId> = BTreeMap::new();
+    let mut graphs = GraphBank::new(cfg.graph_update);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
     let mut next_event = 1u32;
     for (i, event) in trace.events.iter().enumerate() {
@@ -375,6 +388,7 @@ pub fn sim_replay_cfg(
     if token_ends.is_empty() {
         sim.synchronize()?;
     }
+    ctr.graph_updates = graphs.updates;
     Ok(finish(&sim, &token_ends, ctr))
 }
 
@@ -466,6 +480,83 @@ pub(crate) struct ReplayCounters {
     pub prefetch_waste: u64,
     pub graph_launches: u64,
     pub child_graphs: u64,
+    pub graph_updates: u64,
+}
+
+/// Instantiated CUDA graph execs, optionally parked for `update_graph`.
+pub(crate) struct GraphBank {
+    graphs: BTreeMap<Vec<AllocId>, (GraphId, (DeviceId, StreamId))>,
+    idle: BTreeMap<(DeviceId, StreamId), Vec<GraphId>>,
+    update: bool,
+    pub updates: u64,
+}
+
+impl GraphBank {
+    pub(crate) fn new(update: bool) -> Self {
+        Self {
+            graphs: BTreeMap::new(),
+            idle: BTreeMap::new(),
+            update,
+            updates: 0,
+        }
+    }
+
+    pub(crate) fn get(&self, ids: &[AllocId]) -> Option<GraphId> {
+        self.graphs.get(ids).map(|(g, _)| *g)
+    }
+
+    /// Instantiate `src`, or `update_graph` a parked leaf on `origin`.
+    pub(crate) fn bind(
+        &mut self,
+        sim: &mut Sim,
+        origin: (DeviceId, StreamId),
+        ids: Vec<AllocId>,
+        src: GraphId,
+    ) -> Result<GraphId, Error> {
+        if let Some(gid) = self.get(&ids) {
+            sim.destroy_graph(src)?;
+            return Ok(gid);
+        }
+        let gid = if self.update && ids.len() == 1 {
+            if let Some(exec) = self.idle.entry(origin).or_default().pop() {
+                sim.update_graph(exec, src)?;
+                sim.destroy_graph(src)?;
+                self.updates = self.updates.saturating_add(1);
+                sim.upload_graph(exec)?;
+                exec
+            } else {
+                instantiate_src(sim, src)?
+            }
+        } else {
+            instantiate_src(sim, src)?
+        };
+        let _prev = self.graphs.insert(ids, (gid, origin));
+        Ok(gid)
+    }
+
+    pub(crate) fn drop_alloc(&mut self, sim: &mut Sim, id: AllocId) -> Result<(), Error> {
+        let victims: Vec<(Vec<AllocId>, GraphId, (DeviceId, StreamId))> = self
+            .graphs
+            .iter()
+            .filter(|(ids, _)| ids.contains(&id))
+            .map(|(ids, (g, o))| (ids.clone(), *g, *o))
+            .collect();
+        for (ids, gid, origin) in victims {
+            let _gone = self.graphs.remove(&ids);
+            if self.update && ids.len() == 1 {
+                self.idle.entry(origin).or_default().push(gid);
+            } else {
+                sim.destroy_graph(gid)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn instantiate_src(sim: &mut Sim, src: GraphId) -> Result<GraphId, Error> {
+    sim.instantiate_graph(src)?;
+    sim.upload_graph(src)?;
+    Ok(src)
 }
 
 pub(crate) struct PageHandle {
@@ -526,7 +617,7 @@ fn should_prefetch(
 pub(crate) fn apply_touch(
     sim: &mut Sim,
     handles: &mut BTreeMap<ExpertKey, PageHandle>,
-    graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
+    graphs: &mut GraphBank,
     args: TouchArgs,
     key: ExpertKey,
     touch: Touch,
@@ -587,7 +678,7 @@ pub(crate) fn apply_touch(
 pub(crate) fn reclaim_victim(
     sim: &mut Sim,
     handles: &mut BTreeMap<ExpertKey, PageHandle>,
-    graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
+    graphs: &mut GraphBank,
     args: TouchArgs,
     victim: ExpertKey,
     next_event: &mut u32,
@@ -612,12 +703,12 @@ pub(crate) fn reclaim_victim(
 
 fn drop_handle(
     sim: &mut Sim,
-    graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
+    graphs: &mut GraphBank,
     page: PageHandle,
     next_event: &mut u32,
     sync: bool,
 ) -> Result<(), Error> {
-    drop_graphs(sim, graphs, page.id)?;
+    graphs.drop_alloc(sim, page.id)?;
     if page_is_mapped(sim, page.id) {
         // cudaFreeHost waits GPU work on this pointer, then the mapping is gone.
         sim.synchronize_stream(page.device, page.stream)?;
@@ -667,23 +758,6 @@ fn drop_replica(
     Ok(())
 }
 
-fn drop_graphs(
-    sim: &mut Sim,
-    graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
-    id: AllocId,
-) -> Result<(), Error> {
-    let victims: Vec<GraphId> = graphs
-        .iter()
-        .filter(|(ids, _)| ids.contains(&id))
-        .map(|(_, g)| *g)
-        .collect();
-    graphs.retain(|ids, _| !ids.contains(&id));
-    for g in victims {
-        sim.destroy_graph(g)?;
-    }
-    Ok(())
-}
-
 fn page_is_mapped(sim: &Sim, id: AllocId) -> bool {
     sim.is_host_mapped(id).unwrap_or(false)
 }
@@ -699,7 +773,7 @@ fn page_is_vmm(sim: &Sim, id: AllocId) -> bool {
 pub(crate) fn gemm_keys(
     sim: &mut Sim,
     handles: &BTreeMap<ExpertKey, PageHandle>,
-    graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
+    graphs: &mut GraphBank,
     keys: &[ExpertKey],
     cuda_graphs: bool,
     ctr: &mut ReplayCounters,
@@ -739,7 +813,7 @@ pub(crate) fn host_callbacks(
 
 fn gemm_ids(
     sim: &mut Sim,
-    graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
+    graphs: &mut GraphBank,
     d: DeviceId,
     stream: StreamId,
     ids: Vec<AllocId>,
@@ -749,7 +823,7 @@ fn gemm_ids(
     if ids.is_empty() {
         return Ok(());
     }
-    if let Some(g) = graphs.get(&ids).copied() {
+    if let Some(g) = graphs.get(&ids) {
         let _n = sim.launch_graph(g, stream)?;
         ctr.graph_launches = ctr.graph_launches.saturating_add(1);
         return Ok(());
@@ -772,7 +846,7 @@ fn gemm_ids(
 
 fn capture_expert_graph(
     sim: &mut Sim,
-    graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
+    graphs: &mut GraphBank,
     d: DeviceId,
     stream: StreamId,
     ids: &[AllocId],
@@ -783,20 +857,18 @@ fn capture_expert_graph(
     if !sim.stream_is_idle(d, stream)? {
         return Ok(None);
     }
+    let origin = (d, stream);
     let mut leaves = Vec::new();
     for id in ids {
         let key = vec![*id];
-        if let Some(g) = graphs.get(&key).copied() {
+        if let Some(g) = graphs.get(&key) {
             leaves.push(g);
             continue;
         }
         sim.begin_capture(d, stream)?;
         kernel(sim, d, stream, *id)?;
-        let g = sim.end_capture()?;
-        sim.instantiate_graph(g)?;
-        sim.upload_graph(g)?;
-        let _prev = graphs.insert(key, g);
-        leaves.push(g);
+        let src = sim.end_capture()?;
+        leaves.push(graphs.bind(sim, origin, key, src)?);
     }
     if ids.len() == 1 {
         return Ok(leaves.first().copied());
@@ -805,11 +877,8 @@ fn capture_expert_graph(
     for g in leaves {
         let _n = sim.launch_graph(g, stream)?;
     }
-    let parent = sim.end_capture()?;
-    sim.instantiate_graph(parent)?;
-    sim.upload_graph(parent)?;
-    let _prev = graphs.insert(ids.to_vec(), parent);
-    Ok(Some(parent))
+    let src = sim.end_capture()?;
+    Ok(Some(graphs.bind(sim, origin, ids.to_vec(), src)?))
 }
 
 fn finish(sim: &Sim, token_ends: &[u64], ctr: ReplayCounters) -> SimReplay {
@@ -851,6 +920,7 @@ pub(crate) fn replay_from_sim(
         prefetch_waste: ctr.prefetch_waste,
         graph_launches: ctr.graph_launches,
         child_graphs: ctr.child_graphs,
+        graph_updates: ctr.graph_updates,
     }
 }
 

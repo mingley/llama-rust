@@ -202,7 +202,8 @@ later launch is unknown). First launch instantiates if needed (`graph_instantiat
 then uploads if needed (`graph_upload_ns`). `upload_graph` is `cudaGraphUpload`.
 `update_graph` copies source steps into an instantiated exec when the
 device, stream, and op kinds match (`graph_update_ns`); a topology
-mismatch is `Invalid`. Launch pays `graph_launch_ns` once; recorded
+mismatch is `Invalid`. `expertvm --graph-update` parks a leaf GEMM on
+evict and updates the next miss instead of instantiate. Launch pays `graph_launch_ns` once; recorded
 kernels skip per-kernel launch overhead.
 `memset` is an HBM-write kernel on a resident alloc. `host_func` is
 `cudaLaunchHostFunc`: stream-ordered host work that does not occupy compute

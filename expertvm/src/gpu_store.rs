@@ -74,6 +74,12 @@ pub struct GpuStoreCfg {
     ///
     /// Copy stays NULL at priority 0. Decode identity stays default priority.
     pub stream_priority: bool,
+    /// `cudaGraphExecUpdate` a parked exec onto the next miss alloc.
+    ///
+    /// Evict parks the instantiated GEMM graph instead of `destroy_graph`.
+    /// The next capture on that GPU updates it (`graph_update_ns`) instead of
+    /// instantiate. Decode identity stays destroy+instantiate.
+    pub graph_update: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -99,7 +105,11 @@ pub struct SimulatedGpuStore {
     bytes_per_expert: u64,
     staging: AllocId,
     graphs: BTreeMap<AllocId, GraphId>,
+    /// Instantiated GEMM execs parked on evict, keyed by the capture GPU.
+    idle_execs: BTreeMap<DeviceId, Vec<GraphId>>,
     graph_launches: u64,
+    graph_updates: u64,
+    graph_update: bool,
     mode: GpuFill,
     host_func: bool,
     sync_alloc: bool,
@@ -192,7 +202,8 @@ impl SimulatedGpuStore {
     /// Construct with an explicit fill and [`GpuStoreCfg`] (`SimCfg` subset).
     ///
     /// Defaults keep decode identity: async alloc, overlapping copy/compute,
-    /// no `host_func`, default pool threshold 0, no AccessedBy, per-thread NULL.
+    /// no `host_func`, default pool threshold 0, no AccessedBy, per-thread NULL,
+    /// destroy+instantiate graphs.
     pub fn with_cfg(
         inner: DirectStore,
         slots: usize,
@@ -238,7 +249,10 @@ impl SimulatedGpuStore {
             bytes_per_expert: bytes,
             staging,
             graphs: BTreeMap::new(),
+            idle_execs: BTreeMap::new(),
             graph_launches: 0,
+            graph_updates: 0,
+            graph_update: cfg.graph_update,
             mode: fill,
             host_func: cfg.host_func,
             sync_alloc: cfg.sync_alloc,
@@ -508,6 +522,12 @@ impl SimulatedGpuStore {
         self.graph_launches
     }
 
+    /// How many times [`gpu_sim::Sim::update_graph`] reused a parked exec.
+    #[must_use]
+    pub fn graph_updates(&self) -> u64 {
+        self.graph_updates
+    }
+
     /// Whether `key` is in the fast CPU tier.
     #[must_use]
     pub fn is_resident(&self, key: ExpertKey) -> bool {
@@ -693,15 +713,29 @@ impl SimulatedGpuStore {
         if self.sim.stream_is_idle(device, self.compute)? {
             self.sim.begin_capture(device, self.compute)?;
             gemm(&mut self.sim, device, self.compute, id)?;
-            let g = self.sim.end_capture()?;
-            self.sim.instantiate_graph(g)?;
-            self.sim.upload_graph(g)?;
+            let src = self.sim.end_capture()?;
+            let g = self.bind_graph(device, src)?;
             let _prev = self.graphs.insert(id, g);
             self.graph_launches = self.graph_launches.saturating_add(1);
             let _n = self.sim.launch_graph(g, self.compute)?;
             return Ok(());
         }
         gemm(&mut self.sim, device, self.compute, id)
+    }
+
+    fn bind_graph(&mut self, device: DeviceId, src: GraphId) -> Result<GraphId, Error> {
+        if self.graph_update {
+            if let Some(exec) = self.idle_execs.get_mut(&device).and_then(Vec::pop) {
+                self.sim.update_graph(exec, src)?;
+                self.sim.destroy_graph(src)?;
+                self.graph_updates = self.graph_updates.saturating_add(1);
+                self.sim.upload_graph(exec)?;
+                return Ok(exec);
+            }
+        }
+        self.sim.instantiate_graph(src)?;
+        self.sim.upload_graph(src)?;
+        Ok(src)
     }
 
     fn drop_gpu(&mut self, key: ExpertKey) -> Result<(), Error> {
@@ -731,7 +765,11 @@ impl SimulatedGpuStore {
 
     fn finish_drop(&mut self, key: ExpertKey, page: GpuPage) -> Result<(), Error> {
         if let Some(g) = self.graphs.remove(&page.id) {
-            self.sim.destroy_graph(g)?;
+            if self.graph_update {
+                self.idle_execs.entry(page.device).or_default().push(g);
+            } else {
+                self.sim.destroy_graph(g)?;
+            }
         }
         match self.mode {
             GpuFill::Managed => {
@@ -869,13 +907,20 @@ pub struct StoreReplay {
     pub metrics: StoreMetrics,
     /// Virtual wall after a device drain. No `$/M tokens`.
     pub score: Score,
+    /// [`SimulatedGpuStore::graph_updates`] after the walk.
+    pub graph_updates: u64,
 }
 
 impl StoreReplay {
     /// Single-line agent / CLI log.
     #[must_use]
     pub fn line(&self) -> String {
-        format!("store {} {}", self.metrics.line(), self.score.line())
+        format!(
+            "store {} {} graph_updates={}",
+            self.metrics.line(),
+            self.score.line(),
+            self.graph_updates
+        )
     }
 }
 
@@ -980,6 +1025,7 @@ pub fn store_replay_cfg(
     let n = u64::try_from(trace.events.len()).unwrap_or(1);
     Ok(StoreReplay {
         metrics: store.metrics(),
+        graph_updates: store.graph_updates(),
         score: store.score()?.with_tokens(n),
     })
 }

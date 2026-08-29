@@ -698,13 +698,13 @@ fn vmm_paged_matches_full_vmm_hits() {
 #[test]
 fn vmm_evict_reacquires_same_va() {
     use crate::replay::Touch;
-    use crate::sim_replay::{apply_touch, PageHandle, TouchArgs};
+    use crate::sim_replay::{apply_touch, GraphBank, PageHandle, TouchArgs};
     use gpu_sim::{Sim, StreamId};
     use std::collections::BTreeMap;
 
     let mut sim = Sim::new(HardwareProfile::example_h100_sxm());
     let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
-    let mut graphs = BTreeMap::new();
+    let mut graphs = GraphBank::new(false);
     let args = TouchArgs {
         d: DeviceId(0),
         s: StreamId(0),
@@ -2113,6 +2113,98 @@ fn cuda_graphs_reuse_leaf_graphs_across_combos() {
 }
 
 #[test]
+fn cuda_graphs_graph_update_reuses_parked_leaves() {
+    let t = Trace {
+        events: vec![
+            ev(0, 0, &[0]),
+            ev(1, 0, &[1]),
+            ev(2, 0, &[0]),
+            ev(3, 0, &[1]),
+        ],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_instantiate_ns=100000\ngraph_update_ns=1000\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let base = SimCfg {
+        cuda_graphs: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let inst = sim_replay_cfg(&t, p.clone(), base).expect("inst");
+    let upd = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            graph_update: true,
+            ..base
+        },
+    )
+    .expect("upd");
+    assert_eq!(inst.hits, upd.hits);
+    assert_eq!(inst.misses, upd.misses);
+    assert_eq!(inst.graph_updates, 0);
+    assert_eq!(upd.graph_updates, 3);
+    assert!(
+        upd.sim_ns < inst.sim_ns,
+        "update={} instantiate={}",
+        upd.sim_ns,
+        inst.sim_ns
+    );
+    assert!(upd.line().contains("graph_updates="));
+}
+
+#[test]
+fn simulated_gpu_store_graph_update_reuses_parked_exec() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_instantiate_ns=100000\ngraph_update_ns=1000\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let run = |graph_update: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            1,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                graph_update,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let k0 = ExpertKey::new(0, 0);
+        let k1 = ExpertKey::new(0, 1);
+        let _n = gpu.prefetch(&[k0]).expect("p0");
+        let _s = gpu.score().expect("d0");
+        let _a = gpu.acquire(k0).expect("a0");
+        let _s = gpu.score().expect("drain0");
+        gpu.evict(k0).expect("evict");
+        let _s = gpu.score().expect("free");
+        let _n = gpu.prefetch(&[k1]).expect("p1");
+        let _s = gpu.score().expect("d1");
+        let _b = gpu.acquire(k1).expect("a1");
+        let score = gpu.score().expect("final");
+        (
+            gpu.graph_updates(),
+            gpu.metrics().hits,
+            gpu.metrics().misses,
+            score.wall_ns,
+        )
+    };
+    let (upd, h0, m0, wall_u) = run(true);
+    let (none, h1, m1, wall_i) = run(false);
+    assert_eq!(upd, 1);
+    assert_eq!(none, 0);
+    assert_eq!(h0, h1);
+    assert_eq!(m0, m1);
+    assert!(wall_u < wall_i, "update={wall_u} instantiate={wall_i}");
+}
+
+#[test]
 fn simulated_gpu_store_captures_gemm_after_drain() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],
@@ -2614,13 +2706,13 @@ fn simulated_gpu_store_legacy_null_serializes_copy_and_compute() {
 #[test]
 fn sim_replay_accessed_by_maps_peer_without_migrating() {
     use crate::replay::Touch;
-    use crate::sim_replay::{apply_touch, PageHandle, TouchArgs};
+    use crate::sim_replay::{apply_touch, GraphBank, PageHandle, TouchArgs};
     use gpu_sim::{DType, KernelKind, Sim, StreamId};
     use std::collections::BTreeMap;
 
     let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
     let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
-    let mut graphs = BTreeMap::new();
+    let mut graphs = GraphBank::new(false);
     let args = TouchArgs {
         d: DeviceId(0),
         s: StreamId(0),
@@ -2782,7 +2874,9 @@ fn simulated_gpu_store_stream_priority_marks_compute() {
 #[test]
 fn seq_stream_priority_starts_higher_stream_first() {
     use crate::replay::Touch;
-    use crate::sim_replay::{apply_touch, gemm_keys, PageHandle, ReplayCounters, TouchArgs};
+    use crate::sim_replay::{
+        apply_touch, gemm_keys, GraphBank, PageHandle, ReplayCounters, TouchArgs,
+    };
     use gpu_sim::{GpuOp, Sim, StreamId};
     use std::collections::BTreeMap;
 
@@ -2793,7 +2887,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             sim.set_created_streams_priority(2).expect("pri");
         }
         let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
-        let mut graphs = BTreeMap::new();
+        let mut graphs = GraphBank::new(false);
         let mut args = TouchArgs {
             d: DeviceId(0),
             s: StreamId(0),
