@@ -5,7 +5,7 @@ use gpu_sim::{
     AllocId, DeviceId, HardwareProfile, KernelBuf, KernelKind, MemcpyOp, Place, Score, Sim,
     StreamId,
 };
-use std::fmt::Write;
+use std::fmt::{self, Write};
 
 /// Simulated paged-KV result: working-set hits plus gpu-sim scores.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -26,6 +26,8 @@ pub struct KvReplay {
     pub pages: u32,
     /// Mapped-page capacity (LRU slots).
     pub slots: usize,
+    /// How a miss fills the mapped page.
+    pub fill: KvFill,
 }
 
 impl KvReplay {
@@ -38,28 +40,87 @@ impl KvReplay {
         );
         let _w = write!(
             s,
-            " hits={} misses={} pages={} slots={}",
-            self.hits, self.misses, self.pages, self.slots
+            " hits={} misses={} pages={} slots={} fill={}",
+            self.hits, self.misses, self.pages, self.slots, self.fill
         );
         s
     }
 }
 
+/// How [`kv_paged`] fills a newly mapped KV page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KvFill {
+    /// Pinned H2D (reload a page from host).
+    H2d,
+    /// `cudaMemsetAsync` of the mapped span (new KV block; no PCIe).
+    Memset,
+}
+
+impl KvFill {
+    /// CLI / agent parse. `h2d` or `memset`.
+    pub fn parse(s: &str) -> Result<Self, Error> {
+        match s {
+            "h2d" => Ok(Self::H2d),
+            "memset" => Ok(Self::Memset),
+            _ => Err(Error::Trace("fill must be h2d or memset")),
+        }
+    }
+}
+
+impl fmt::Display for KvFill {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::H2d => write!(f, "h2d"),
+            Self::Memset => write!(f, "memset"),
+        }
+    }
+}
+
+/// Page size, occupancy, and miss fill for [`kv_paged`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KvCfg {
+    /// Bytes per mapped page.
+    pub page_bytes: u64,
+    /// Mapped-page LRU capacity.
+    pub slots: usize,
+    /// Miss fill.
+    pub fill: KvFill,
+}
+
+impl KvCfg {
+    /// Pinned H2D into each miss.
+    #[must_use]
+    pub fn h2d(page_bytes: u64, slots: usize) -> Self {
+        Self {
+            page_bytes,
+            slots,
+            fill: KvFill::H2d,
+        }
+    }
+}
+
 /// Demand-page a reserved KV VA. `accesses` are page indices.
 ///
-/// Reserves `n_pages * page_bytes` of VA (`n_pages = 1 + max(accesses)`), maps
-/// at most `slots` pages at a time, H2Ds a miss into that span, and GEMMs with
-/// [`gpu_sim::Sim::kernel_bufs`]. Peak HBM is the working set, not the VA.
+/// Same as [`kv_paged`] with [`KvFill::H2d`].
 pub fn kv_replay(
     accesses: &[u32],
     profile: HardwareProfile,
     page_bytes: u64,
     slots: usize,
 ) -> Result<KvReplay, Error> {
-    if page_bytes == 0 {
+    kv_paged(accesses, profile, KvCfg::h2d(page_bytes, slots))
+}
+
+/// Demand-page a reserved KV VA. `accesses` are page indices.
+///
+/// Reserves `n_pages * page_bytes` of VA (`n_pages = 1 + max(accesses)`), maps
+/// at most `slots` pages at a time, fills a miss ([`KvFill`]), and GEMMs with
+/// [`gpu_sim::Sim::kernel_bufs`]. Peak HBM is the working set, not the VA.
+pub fn kv_paged(accesses: &[u32], profile: HardwareProfile, cfg: KvCfg) -> Result<KvReplay, Error> {
+    if cfg.page_bytes == 0 {
         return Err(Error::Store("page-bytes must be > 0"));
     }
-    if slots == 0 {
+    if cfg.slots == 0 {
         return Err(Error::Store("kv slots must be > 0"));
     }
     if accesses.is_empty() {
@@ -71,12 +132,13 @@ pub fn kv_replay(
             hits: 0,
             misses: 0,
             pages: 0,
-            slots,
+            slots: cfg.slots,
+            fill: cfg.fill,
         });
     }
     let max_page = accesses.iter().copied().max().unwrap_or(0);
     let n_pages = max_page.saturating_add(1);
-    let va_bytes = u64::from(n_pages).saturating_mul(page_bytes);
+    let va_bytes = u64::from(n_pages).saturating_mul(cfg.page_bytes);
     let mut sim = Sim::new(profile);
     let va = sim.va_reserve(va_bytes)?;
     let d = DeviceId(0);
@@ -84,21 +146,21 @@ pub fn kv_replay(
     let mut hits = 0u64;
     let mut misses = 0u64;
     for &page in accesses {
-        let off = page_offset(page, page_bytes);
+        let off = page_offset(page, cfg.page_bytes);
         if recency_touch(&mut order, page) {
             hits = hits.saturating_add(1);
-            gemm_page(&mut sim, va, off, page_bytes)?;
+            gemm_page(&mut sim, va, off, cfg.page_bytes)?;
             continue;
         }
         misses = misses.saturating_add(1);
-        if order.len() >= slots {
+        if order.len() >= cfg.slots {
             let victim = order.remove(0);
-            let voff = page_offset(victim, page_bytes);
-            sim.va_unmap_range(va, d, voff, page_bytes)?;
+            let voff = page_offset(victim, cfg.page_bytes);
+            sim.va_unmap_range(va, d, voff, cfg.page_bytes)?;
         }
-        sim.va_map_range(va, d, off, page_bytes)?;
-        h2d_page(&mut sim, va, off, page_bytes)?;
-        gemm_page(&mut sim, va, off, page_bytes)?;
+        sim.va_map_range(va, d, off, cfg.page_bytes)?;
+        fill_page(&mut sim, va, off, cfg.page_bytes, cfg.fill)?;
+        gemm_page(&mut sim, va, off, cfg.page_bytes)?;
         order.push(page);
     }
     sim.synchronize()?;
@@ -113,7 +175,8 @@ pub fn kv_replay(
         hits,
         misses,
         pages: n_pages,
-        slots,
+        slots: cfg.slots,
+        fill: cfg.fill,
     })
 }
 
@@ -139,6 +202,19 @@ fn recency_touch(order: &mut Vec<u32>, page: u32) -> bool {
     true
 }
 
+fn fill_page(
+    sim: &mut Sim,
+    va: AllocId,
+    off: u64,
+    page_bytes: u64,
+    fill: KvFill,
+) -> Result<(), Error> {
+    match fill {
+        KvFill::H2d => h2d_page(sim, va, off, page_bytes),
+        KvFill::Memset => memset_page(sim, va, off, page_bytes),
+    }
+}
+
 fn h2d_page(sim: &mut Sim, va: AllocId, off: u64, page_bytes: u64) -> Result<(), Error> {
     let d = DeviceId(0);
     let s = StreamId(0);
@@ -153,6 +229,13 @@ fn h2d_page(sim: &mut Sim, va: AllocId, off: u64, page_bytes: u64) -> Result<(),
         },
         s,
     )?;
+    Ok(())
+}
+
+fn memset_page(sim: &mut Sim, va: AllocId, off: u64, page_bytes: u64) -> Result<(), Error> {
+    let d = DeviceId(0);
+    let s = StreamId(0);
+    let _op = sim.memset_buf(d, KernelBuf::span(va, off, page_bytes), s)?;
     Ok(())
 }
 
@@ -191,6 +274,32 @@ mod tests {
         assert!(tight.bytes_moved > fat.bytes_moved);
         assert!(tight.line().contains("slots=2"));
         assert!(fat.line().contains("hbm_peak=32768"));
+        assert!(tight.line().contains("fill=h2d"));
+    }
+
+    #[test]
+    fn memset_fill_skips_pcie() {
+        let p = HardwareProfile::example_h100_sxm();
+        let accesses = cycling_pages(8, 32);
+        let cfg = KvCfg {
+            page_bytes: 4096,
+            slots: 2,
+            fill: KvFill::H2d,
+        };
+        let h2d = kv_paged(&accesses, p.clone(), cfg).expect("h2d");
+        let mut zero = cfg;
+        zero.fill = KvFill::Memset;
+        let mem = kv_paged(&accesses, p, zero).expect("memset");
+        assert_eq!(mem.bytes_moved, 0);
+        assert_eq!(mem.hbm_peak, h2d.hbm_peak);
+        assert_eq!(mem.misses, h2d.misses);
+        assert!(
+            mem.sim_ns < h2d.sim_ns,
+            "memset={} h2d={}",
+            mem.sim_ns,
+            h2d.sim_ns
+        );
+        assert!(mem.line().contains("fill=memset"));
     }
 
     #[test]

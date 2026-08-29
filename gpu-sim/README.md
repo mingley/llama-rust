@@ -39,7 +39,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemPrefetchAsync` (`prefetch` / `prefetch_host`) **moves** the unique location | PCIe / NVLink (1 ns if already local) |
 | `cuMemAddressReserve` (`va_reserve`) is a VA with no physical pages | `alloc_overhead_ns` (at the call) |
 | `cuMemMap` (`va_map`) charges HBM; `va_unmap` refunds; the VA is reusable | `alloc_overhead_ns` (map) |
-| `va_map_range` / `va_unmap_range` map a span; `kernel()` needs the whole VA; `kernel_bufs` / `MemcpyOp::offset` touch a mapped span | HBM = mapped bytes |
+| `va_map_range` / `va_unmap_range` map a span; `kernel()` needs the whole VA; `kernel_bufs` / `memset_buf` / `MemcpyOp::offset` touch a mapped span | HBM = mapped bytes |
 | `va_release` parks an unmapped VA; `va_acquire` remaps same size | map only on reuse (no second reserve) |
 | `va_acquire_paged` maps the VA in `page` physicals | `alloc_overhead_ns` per block |
 | `cudaLaunchHostFunc` (`host_func`) is stream-ordered host work | `host_func_ns` (no compute / copy occupancy) |
@@ -67,7 +67,7 @@ warp scheduler, L1, …   ← do not model
 | `mem_info` is `(free, total)` HBM | `cudaMemGetInfo` |
 | stream[i+1].start ≥ stream[i].finish (`Operation` timestamps) | queue wait vs run |
 | higher `set_stream_priority` starts first under contention | launch overhead |
-| memset requires device residency | HBM write + launch overhead |
+| `memset` / `memset_buf` needs the filled span resident (not mapped host) | HBM write + launch overhead |
 | peer D2D needs topology + `enable_peer` | link bandwidth |
 | legacy null stream serializes (opt-in) | copy/compute overlap |
 | `cudaStreamCreate` blocking stream serializes with NULL | `cudaStreamNonBlocking` overlap |
@@ -214,7 +214,7 @@ alloc/register. `alloc_managed` is `cudaMallocManaged` (no HBM until
 `alloc_managed` is refused; a graph must record prefetch before the kernel.
 `va_reserve` / `va_map` / `va_unmap` / `va_free` are CUDA virtual memory.
 `va_map_range` / `va_unmap_range` map sparse physicals (HBM is the mapped
-span). `kernel()` needs the whole VA covered; `kernel_bufs` and
+span). `kernel()` needs the whole VA covered; `kernel_bufs`, `memset_buf`, and
 `MemcpyOp::offset` touch a mapped page (paged KV). `va_acquire` remaps an idle VA of the same
 size (or reserves); `va_acquire_paged` maps KV-block physicals covering the VA;
 `va_release` unmaps into that pool. Capture cannot

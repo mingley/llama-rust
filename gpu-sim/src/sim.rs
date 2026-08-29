@@ -1561,10 +1561,11 @@ impl Sim {
         )
     }
 
-    /// Device-side fill (`cudaMemsetAsync`). `alloc` must already be resident.
+    /// Device-side fill (`cudaMemsetAsync`) of `[0, bytes)`.
     ///
-    /// Bills exclusive compute as an HBM write plus launch overhead. Capture is
-    /// allowed; alloc/free still are not.
+    /// A VMM destination must have that span mapped ([`Self::is_range_resident`]).
+    /// [`Self::kernel`] still needs the whole VA. [`Self::memset_buf`] names an
+    /// interior page. Capture is allowed; alloc/free still are not.
     pub fn memset(
         &mut self,
         device: DeviceId,
@@ -1577,7 +1578,35 @@ impl Sim {
                 why: "zero-byte memset",
             });
         }
-        self.submit(device, stream, Kind::Memset { id: alloc, bytes })
+        self.memset_buf(device, KernelBuf::span(alloc, 0, bytes), stream)
+    }
+
+    /// `cudaMemsetAsync` of a [`KernelBuf`] span (vLLM new-KV-block analog).
+    ///
+    /// `bytes == 0` means from `offset` to the end of the allocation. A range
+    /// past the reservation is `Invalid`. Mapped host is not a memset dest.
+    pub fn memset_buf(
+        &mut self,
+        device: DeviceId,
+        buf: KernelBuf,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let total = self.alloc_ref(buf.id)?.bytes;
+        let (offset, bytes) = kernel_span(total, &buf)?;
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte memset",
+            });
+        }
+        self.submit(
+            device,
+            stream,
+            Kind::Memset {
+                id: buf.id,
+                offset,
+                bytes,
+            },
+        )
     }
 
     /// `cudaLaunchHostFunc`. Stream-ordered host work; does not occupy compute
@@ -2424,13 +2453,18 @@ impl Sim {
                 });
                 Ok(true)
             }
-            Kind::Memset { id: alloc, bytes } => {
+            Kind::Memset {
+                id: alloc,
+                offset,
+                bytes,
+            } => {
                 if self.gpu_rt(device)?.compute_busy {
                     return Ok(false);
                 }
                 let alloc = *alloc;
+                let offset = *offset;
                 let bytes = *bytes;
-                self.lease_kernel(device, &[], &[KernelBuf::whole(alloc)], false)?;
+                self.lease_kernel(device, &[], &[KernelBuf::span(alloc, offset, bytes)], false)?;
                 let ns = self.memset_ns(device, bytes, launch)?;
                 self.gpu_rt_mut(device)?.compute_busy = true;
                 self.running.push(Running {

@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — memset of a mapped VMM span (new KV block)
+
+`Sim::memset` fills `[0, bytes)`. `Sim::memset_buf` names an interior
+page. A hole is `NotResident`; mapped host is not a memset dest.
+`expertvm kv --fill memset` zeros a miss in HBM (no PCIe) so `bytes_moved=0`
+and wall is shorter than `--fill h2d`. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — kernel/copy of a mapped VMM span (paged KV)
 
 `Sim::kernel` still needs the whole VA covered. `Sim::kernel_bufs` /

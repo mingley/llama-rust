@@ -221,9 +221,11 @@ pub enum GpuOp {
     },
     /// Device-side fill (`cudaMemsetAsync`).
     Memset {
-        /// Resident allocation to fill.
+        /// Allocation to fill.
         id: AllocId,
-        /// Bytes billed as an HBM write.
+        /// Byte offset into `id`.
+        offset: u64,
+        /// Bytes billed as an HBM write and the mapped span that must be resident.
         bytes: u64,
     },
     /// Host callback (`cudaLaunchHostFunc`). Stream-ordered; does not occupy

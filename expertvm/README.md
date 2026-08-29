@@ -95,7 +95,7 @@ HBM, prefetch migrates the page (same hits/misses as H2D). `--vmm` uses
 VA (evict `va_release`s the pointer so the next miss skips reserve).
 `--vmm-page N` maps each expert in `N`-byte physicals (`va_acquire_paged`,
 vLLM KV-block analog; implies `--vmm`). `expertvm kv` reserves a KV VA and
-maps only `capacity` pages (`kernel_bufs` + H2D at `MemcpyOp::offset`;
+maps only `capacity` pages (`kernel_bufs` plus H2D or `--fill memset`;
 peak HBM is the working set, not the reservation).
 `--host-func` enqueues `cudaLaunchHostFunc` after each event's GEMMs
 (`host_func_ns`; other streams can still compute). `--blocking-streams`
@@ -205,6 +205,7 @@ expertvm ep       trace.jsonl --hbm-bytes 4096 --profile 8xh100
 expertvm remote   trace.jsonl --expert-bytes 1048576 --profile 2node-rdma
 expertvm remote   trace.jsonl --expert-bytes 1048576 --activation-bytes 128
 expertvm kv       --pages 8 --page-bytes 4096 --capacity 2 --tokens 64
+expertvm kv       --pages 8 --capacity 2 --fill memset
 gpu-profile probe 2xh100-pcie --bytes 1048576
 ```
 

@@ -37,9 +37,9 @@
 //! [`Sim::va_acquire`] remaps an idle VA of the same size (or reserves);
 //! [`va_acquire_paged`](Sim::va_acquire_paged) maps it in KV-block spans;
 //! [`va_release`](Sim::va_release) unmaps into that pool instead of freeing the VA.
-//! [`Sim::kernel`] still needs the whole VA mapped; [`Sim::kernel_bufs`] and
-//! [`MemcpyOp::offset`] touch a mapped span (paged KV). [`Sim::is_range_resident`]
-//! is that span check.
+//! [`Sim::kernel`] still needs the whole VA mapped; [`Sim::kernel_bufs`],
+//! [`Sim::memset_buf`], and [`MemcpyOp::offset`] touch a mapped span (paged KV).
+//! [`Sim::is_range_resident`] is that span check.
 //! [`Sim::host_func`] is `cudaLaunchHostFunc` (stream-ordered host work; no GPU occupancy).
 //! [`Sim::set_stream_blocking`] is `cudaStreamCreate` vs `cudaStreamNonBlocking`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
@@ -2137,6 +2137,50 @@ mod tests {
         let g = sim.end_capture().unwrap();
         let n = sim.launch_graph(g, s).unwrap();
         assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        sim.va_unmap_range(va, d, 0, 4096).unwrap();
+        sim.va_free(va).unwrap();
+    }
+
+    #[test]
+    fn memset_buf_on_mapped_span_is_ok() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let va = sim.va_reserve(8192).unwrap();
+        sim.va_map_range(va, d, 4096, 4096).unwrap();
+        assert!(!sim.is_resident(va, d).unwrap());
+        enq(sim.memset_buf(d, KernelBuf::span(va, 4096, 4096), s));
+        sim.synchronize().unwrap();
+        sim.va_unmap_range(va, d, 4096, 4096).unwrap();
+        sim.va_free(va).unwrap();
+    }
+
+    #[test]
+    fn memset_whole_va_on_partial_map_is_not_resident() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let va = sim.va_reserve(8192).unwrap();
+        sim.va_map_range(va, d, 0, 4096).unwrap();
+        enq(sim.memset(d, va, 8192, s));
+        match sim.synchronize() {
+            Err(SimError::NotResident { alloc, device }) => {
+                assert_eq!(alloc, va);
+                assert_eq!(device, d);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn memset_first_page_of_partial_va_is_ok() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let va = sim.va_reserve(8192).unwrap();
+        sim.va_map_range(va, d, 0, 4096).unwrap();
+        enq(sim.memset(d, va, 4096, s));
         sim.synchronize().unwrap();
         sim.va_unmap_range(va, d, 0, 4096).unwrap();
         sim.va_free(va).unwrap();

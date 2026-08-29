@@ -2,9 +2,9 @@
 
 use expertvm::{
     adversarial_suite, analyze, colocated, compare, compare_ep, cycling_pages, format_table,
-    generate, kv_replay, report, schedule_placed, schedule_remote, sim_placed, sim_remote_home_cfg,
-    sim_replay_cfg, striped, topology_suite, with_hot_replicas, Policy, Prefetch, SchedCfg, SimCfg,
-    Trace, Workload, DECODE_ACTIVATION_BYTES,
+    generate, kv_paged, report, schedule_placed, schedule_remote, sim_placed, sim_remote_home_cfg,
+    sim_replay_cfg, striped, topology_suite, with_hot_replicas, KvCfg, KvFill, Policy, Prefetch,
+    SchedCfg, SimCfg, Trace, Workload, DECODE_ACTIVATION_BYTES,
 };
 use gpu_sim::HardwareProfile;
 use std::env;
@@ -25,7 +25,7 @@ usage: expertvm <command> [args]
   ep       <trace.jsonl> [--capacity N] [--expert-bytes N] [--hbm-bytes N] [--profile NAME]
   place    <trace.jsonl> [--gpus N] [--hot-pt N]
   remote   <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  kv       [--pages N] [--page-bytes B] [--capacity C] [--tokens T] [--profile NAME]
+  kv       [--pages N] [--page-bytes B] [--capacity C] [--tokens T] [--profile NAME] [--fill h2d|memset]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch, prefill-batch, shared-prefix
@@ -566,6 +566,7 @@ where
     let mut capacity = 2usize;
     let mut tokens = 64u32;
     let mut profile = String::from("h100");
+    let mut fill = KvFill::H2d;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -582,6 +583,9 @@ where
             }
             "--tokens" => tokens = parse_u32("tokens", &value("tokens", inline, &mut it)?)?,
             "--profile" => profile = value("profile", inline, &mut it)?,
+            "--fill" => {
+                fill = KvFill::parse(&value("fill", inline, &mut it)?).map_err(|e| e.to_string())?
+            }
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => return Err(format!("unexpected argument {other}\n{USAGE}")),
         }
@@ -591,7 +595,16 @@ where
     }
     let accesses = cycling_pages(pages, tokens);
     let hw = load_profile(&profile)?;
-    let row = kv_replay(&accesses, hw, page_bytes, capacity).map_err(|e| e.to_string())?;
+    let row = kv_paged(
+        &accesses,
+        hw,
+        KvCfg {
+            page_bytes,
+            slots: capacity,
+            fill,
+        },
+    )
+    .map_err(|e| e.to_string())?;
     println!("{}", row.line());
     Ok(())
 }
