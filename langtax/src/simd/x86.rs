@@ -1,4 +1,4 @@
-//! AVX2 + FMA row kernels for F32, F16, Q4_K, Q5_0, Q5_1, Q6_K and Q8_0 on
+//! AVX2 + FMA row kernels for F32, F16, Q4_0, Q4_K, Q5_0, Q5_1, Q6_K and Q8_0 on
 //! x86-64.
 //!
 //! # Where `unsafe` lives
@@ -14,7 +14,7 @@
 //!    borrow checker supplies it. The kernels obtain those arrays from
 //!    `as_chunks` / `first_chunk` / `last_chunk`, so no raw offset arithmetic
 //!    is involved anywhere.
-//! 2. Eight dispatch wrappers, which call a `#[target_feature]` kernel after
+//! 2. Nine dispatch wrappers, which call a `#[target_feature]` kernel after
 //!    [`super`] has confirmed the CPU supports it.
 #![expect(
     unsafe_code,
@@ -41,8 +41,8 @@ use core::arch::x86_64::{
 use crate::fp16::load_f16_le;
 use crate::quant::scalar as sc;
 use crate::quant::{
-    i8_from_bits, Q4_K_BLOCK, Q5_0_BLOCK, Q5_1_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, QK5_0, QK5_1, QK8_0,
-    QK_K,
+    i8_from_bits, Q4_0_BLOCK, Q4_K_BLOCK, Q5_0_BLOCK, Q5_1_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, QK4_0,
+    QK5_0, QK5_1, QK8_0, QK_K,
 };
 
 /// True when this CPU has the features the kernels below are compiled for.
@@ -76,6 +76,14 @@ pub(super) fn dot_f16_row(row: &[u8], x: &[f32]) -> f32 {
     // `super::f16_row_dot` requires both `CAP_AVX2_FMA` and `CAP_F16C` before
     // it will hand out this function.
     unsafe { dot_f16_avx2(row, x) }
+}
+
+/// Q4_0 weight row against an `f32` activation row.
+pub(super) fn dot_q4_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
+    debug_assert!(have_avx2_fma_f16c(), "Q4_0 kernel reached without F16C");
+    // SAFETY: as `dot_q5_0_f32_row`; reachable only through
+    // `super::q4_0_f32_row_dot`, which checks `CAP_AVX2_FMA` and `CAP_F16C`.
+    unsafe { dot_q4_0_f32_avx2(row, x) }
 }
 
 /// Q4_K weight row against an `f32` activation row.
@@ -565,6 +573,53 @@ fn q5_nibbles(pack: &[u8; 8]) -> (__m256i, __m256i) {
         _mm256_and_si256(bytes, _mm256_set1_epi32(0x0f)),
         _mm256_srli_epi32::<4>(bytes),
     )
+}
+
+/// One accumulator for the whole row, reduced once at the end.
+///
+/// A Q4_0 block is 32 elements (16 packed nibble-bytes plus a binary16 scale).
+/// Reducing once per row rather than per block matches the scalar kernel's
+/// single `sum` and is the same reassociation the bound already covers.
+///
+/// # Safety
+///
+/// The caller must run on a CPU with `avx2`, `fma` and `f16c`.
+#[target_feature(enable = "avx2", enable = "fma", enable = "f16c")]
+fn dot_q4_0_f32_avx2(row: &[u8], x: &[f32]) -> f32 {
+    let mut acc = _mm256_setzero_ps();
+    let (w_blocks, _) = row.as_chunks::<Q4_0_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(dbits) = wb.first_chunk::<2>() else {
+            continue;
+        };
+        let Some(qs) = wb.get(2..) else { continue };
+        let x_base = b.saturating_mul(QK4_0);
+        let Some(xr) = x.get(x_base..x_base.saturating_add(QK4_0)) else {
+            continue;
+        };
+        let dv = f16_scale(*dbits);
+        for (c, pack) in qs.as_chunks::<8>().0.iter().enumerate() {
+            let j = c.saturating_mul(8);
+            let (Some(xlo), Some(xhi)) = (
+                xr.get(j..).and_then(<[f32]>::first_chunk::<8>),
+                xr.get(j.saturating_add(16)..)
+                    .and_then(<[f32]>::first_chunk::<8>),
+            ) else {
+                continue;
+            };
+            let (low, high) = q5_nibbles(pack);
+            // Scalar: `(nibble - 8) * d`. Subtract 8 as i32, convert, then
+            // multiply by `d` separately so the dequantized weight is
+            // bit-identical; only the accumulation reassociates.
+            let q_lo = _mm256_sub_epi32(low, _mm256_set1_epi32(8));
+            let q_hi = _mm256_sub_epi32(high, _mm256_set1_epi32(8));
+            let w_lo = _mm256_mul_ps(_mm256_cvtepi32_ps(q_lo), dv);
+            let w_hi = _mm256_mul_ps(_mm256_cvtepi32_ps(q_hi), dv);
+            acc = _mm256_fmadd_ps(w_lo, load_f32x8(xlo), acc);
+            acc = _mm256_fmadd_ps(w_hi, load_f32x8(xhi), acc);
+        }
+    }
+    hsum_ps(acc)
 }
 
 /// One accumulator for the whole row, reduced once at the end.

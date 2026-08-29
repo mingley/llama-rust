@@ -1,4 +1,4 @@
-//! NEON row kernels for F32, F16, Q4_K, Q5_0, Q5_1, Q6_K and Q8_0 on aarch64.
+//! NEON row kernels for F32, F16, Q4_0, Q4_K, Q5_0, Q5_1, Q6_K and Q8_0 on aarch64.
 //!
 //! # Where `unsafe` lives
 //!
@@ -10,7 +10,7 @@
 //!    no alignment requirement beyond the element type, which a live reference
 //!    to the array already guarantees. All arrays come from `as_chunks` /
 //!    `first_chunk` / `last_chunk`; no raw offset arithmetic appears anywhere.
-//! 2. Eight dispatch wrappers, which call a `#[target_feature]` kernel after
+//! 2. Nine dispatch wrappers, which call a `#[target_feature]` kernel after
 //!    [`super`] has confirmed the CPU supports Advanced SIMD.
 //!
 //! Everything else is register-only and safe to call from a function that
@@ -38,8 +38,8 @@ use core::arch::aarch64::{
 use crate::fp16::load_f16_le;
 use crate::quant::scalar as sc;
 use crate::quant::{
-    i8_from_bits, Q4_K_BLOCK, Q5_0_BLOCK, Q5_1_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, QK5_0, QK5_1, QK8_0,
-    QK_K,
+    i8_from_bits, Q4_0_BLOCK, Q4_K_BLOCK, Q5_0_BLOCK, Q5_1_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, QK4_0,
+    QK5_0, QK5_1, QK8_0, QK_K,
 };
 
 /// True when this CPU reports Advanced SIMD. `std`'s detection macro caches its
@@ -82,6 +82,14 @@ pub(super) fn dot_q6_k_f32_row(row: &[u8], x: &[f32]) -> f32 {
     // SAFETY: as `dot_f32_row`; reachable only through
     // `super::q6_k_f32_row_dot`.
     unsafe { dot_q6_k_f32_neon(row, x) }
+}
+
+/// Q4_0 weight row against an `f32` activation row.
+pub(super) fn dot_q4_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
+    debug_assert!(have_neon(), "NEON kernel reached without NEON");
+    // SAFETY: as `dot_f32_row`. Reachable only through
+    // `super::q4_0_f32_row_dot`, which checks `CAP_NEON`.
+    unsafe { dot_q4_0_f32_neon(row, x) }
 }
 
 /// Q5_0 weight row against an `f32` activation row.
@@ -358,6 +366,45 @@ fn widen_s8x8(v: int8x8_t) -> (int32x4_t, int32x4_t) {
         vmovl_s16(vget_low_s16(wide)),
         vmovl_s16(vget_high_s16(wide)),
     )
+}
+
+/// Reduced once per row. A Q4_0 block is 32 elements; the scalar kernel also
+/// runs one `sum` across every block, so this reassociation is the bound's.
+///
+/// # Safety
+///
+/// The caller must run on a CPU with Advanced SIMD.
+#[target_feature(enable = "neon")]
+fn dot_q4_0_f32_neon(row: &[u8], x: &[f32]) -> f32 {
+    let mut acc = vdupq_n_f32(0.0);
+    let (w_blocks, _) = row.as_chunks::<Q4_0_BLOCK>();
+    for (b, wb) in w_blocks.iter().enumerate() {
+        let Some(dbits) = wb.first_chunk::<2>() else {
+            continue;
+        };
+        let Some(qs) = wb.get(2..) else { continue };
+        let x_base = b.saturating_mul(QK4_0);
+        let Some(xr) = x.get(x_base..x_base.saturating_add(QK4_0)) else {
+            continue;
+        };
+        let dv = f16_scale(*dbits);
+        for (c, pack) in qs.as_chunks::<4>().0.iter().enumerate() {
+            let j = c.saturating_mul(4);
+            let (Some(xlo), Some(xhi)) = (
+                xr.get(j..).and_then(<[f32]>::first_chunk::<4>),
+                xr.get(j.saturating_add(16)..)
+                    .and_then(<[f32]>::first_chunk::<4>),
+            ) else {
+                continue;
+            };
+            let (low, high) = q5_nibbles(pack);
+            let q_lo = vsubq_s32(vreinterpretq_s32_u32(low), vdupq_n_s32(8));
+            let q_hi = vsubq_s32(vreinterpretq_s32_u32(high), vdupq_n_s32(8));
+            acc = vfmaq_f32(acc, vmulq_f32(vcvtq_f32_s32(q_lo), dv), load_f32x4(xlo));
+            acc = vfmaq_f32(acc, vmulq_f32(vcvtq_f32_s32(q_hi), dv), load_f32x4(xhi));
+        }
+    }
+    vaddvq_f32(acc)
 }
 
 /// One accumulator for the whole row, reduced once at the end.

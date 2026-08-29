@@ -5856,6 +5856,12 @@ pub(crate) mod scalar {
         super::vec_dot_f16_row(row, x)
     }
 
+    /// Q4_0 weight bytes against an `f32` activation row.
+    #[cfg(test)]
+    pub(crate) fn q4_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
+        super::vec_dot_q4_0_f32_row(row, x)
+    }
+
     /// Q4_K weight bytes against an `f32` activation row.
     #[cfg(test)]
     pub(crate) fn q4_k_f32_row(row: &[u8], x: &[f32]) -> f32 {
@@ -5929,6 +5935,12 @@ macro_rules! row_kernel {
 row_kernel!(f32_row_kernel, RowDotF32, vec_dot_f32_row, f32_row_dot);
 row_kernel!(f16_row_kernel, RowDotF32, vec_dot_f16_row, f16_row_dot);
 row_kernel!(
+    q4_0_f32_row_kernel,
+    RowDotF32,
+    vec_dot_q4_0_f32_row,
+    q4_0_f32_row_dot
+);
+row_kernel!(
     q4_k_f32_row_kernel,
     RowDotF32,
     vec_dot_q4_k_f32_row,
@@ -5970,6 +5982,7 @@ fn simd_row_dot(kind: GemmKind) -> Option<RowDotF32> {
         GemmKind::F16 => crate::simd::f16_row_dot(),
         GemmKind::Q4K => crate::simd::q4_k_f32_row_dot(),
         GemmKind::Q6K => crate::simd::q6_k_f32_row_dot(),
+        GemmKind::Q40 => crate::simd::q4_0_f32_row_dot(),
         GemmKind::Q50 => crate::simd::q5_0_f32_row_dot(),
         GemmKind::Q51 => crate::simd::q5_1_f32_row_dot(),
         GemmKind::Q80 => crate::simd::q8_0_f32_row_dot(),
@@ -6664,7 +6677,7 @@ fn gemm_f32_x(
                 GemmKind::NVFP4 => vec_dot_nvfp4_f32_row(wrow, xt),
                 GemmKind::Q10 => vec_dot_q1_0_f32_row(wrow, xt),
                 GemmKind::Q20 => vec_dot_q2_0_f32_row(wrow, xt),
-                GemmKind::Q40 => vec_dot_q4_0_f32_row(wrow, xt),
+                GemmKind::Q40 => simd.unwrap_or(vec_dot_q4_0_f32_row)(wrow, xt),
                 GemmKind::Q80 => simd.unwrap_or(vec_dot_q8_0_f32_row)(wrow, xt),
                 GemmKind::Q81 => vec_dot_q8_1_f32_row(wrow, xt),
                 GemmKind::TQ10 => vec_dot_tq1_0_f32_row(wrow, xt),
@@ -6958,10 +6971,9 @@ pub fn gemv_q4_0_f32(n_cols: usize, w: &[u8], x: &[f32], y: &mut [f32]) -> Resul
     if y.is_empty() {
         return Ok(());
     }
+    let dot = q4_0_f32_row_kernel();
     for_each_row(y, |r, out| {
-        *out = row_bytes(w, w_rb, r)
-            .map(|row| vec_dot_q4_0_f32_row(row, x))
-            .unwrap_or(0.0);
+        *out = row_bytes(w, w_rb, r).map(|row| dot(row, x)).unwrap_or(0.0);
     });
     Ok(())
 }
@@ -9040,16 +9052,19 @@ fn vec_dot_q4_0_f32_row(row: &[u8], x: &[f32]) -> f32 {
         let Some(d) = load_f16_le(wb) else { continue };
         let Some(qs) = wb.get(2..) else { continue };
         let x_base = b.saturating_mul(QK4_0);
-        let hi_base = x_base.saturating_add(16);
-        for (j, p) in qs.iter().enumerate() {
+        // A block whose activation slice is short contributes nothing, matching
+        // the SIMD kernel and the other 32-wide dtypes (Q5_0 / Q8_0). Production
+        // GEMV/GEMM always pass `n_cols` a multiple of `QK4_0`.
+        let Some(xr) = x.get(x_base..x_base.saturating_add(QK4_0)) else {
+            continue;
+        };
+        let Some(xlo) = xr.get(..16) else { continue };
+        let Some(xhi) = xr.get(16..32) else { continue };
+        for ((p, xl), xh) in qs.iter().zip(xlo.iter()).zip(xhi.iter()) {
             let q0 = i32::from(*p & 0x0f) - 8;
             let q1 = i32::from(*p >> 4) - 8;
-            if let Some(xv) = x.get(x_base.saturating_add(j)) {
-                sum += (q0 as f32) * d * *xv;
-            }
-            if let Some(xv) = x.get(hi_base.saturating_add(j)) {
-                sum += (q1 as f32) * d * *xv;
-            }
+            sum += (q0 as f32) * d * *xl;
+            sum += (q1 as f32) * d * *xh;
         }
     }
     sum

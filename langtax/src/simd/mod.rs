@@ -1,5 +1,5 @@
 //! Opt-in SIMD fast path for the dtypes a Q4_K_M-class GGUF touches in bulk:
-//! F32, F16, Q4_K, Q5_0, Q5_1, Q6_K and Q8_0. The other 23 ggml dtypes keep
+//! F32, F16, Q4_0, Q4_K, Q5_0, Q5_1, Q6_K and Q8_0. The other 22 ggml dtypes keep
 //! running on the scalar kernels in [`crate::quant`].
 //!
 //! The dtype list is not a guess. On `Qwen2.5-0.5B-Instruct-Q4_K_M`, the file
@@ -156,6 +156,21 @@ pub(crate) fn f16_row_dot() -> Option<RowDotF32> {
     #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
     if found & CAP_NEON != 0 {
         return Some(aarch64::dot_f16_row);
+    }
+    let _ = found;
+    None
+}
+
+/// Vector kernel for `GGML_TYPE_Q4_0` weights, or `None` for the scalar path.
+pub(crate) fn q4_0_f32_row_dot() -> Option<RowDotF32> {
+    let found = caps();
+    #[cfg(all(target_arch = "x86_64", target_endian = "little"))]
+    if found & CAP_AVX2_FMA != 0 && found & CAP_F16C != 0 {
+        return Some(x86::dot_q4_0_f32_row);
+    }
+    #[cfg(all(target_arch = "aarch64", target_endian = "little"))]
+    if found & CAP_NEON != 0 {
+        return Some(aarch64::dot_q4_0_f32_row);
     }
     let _ = found;
     None

@@ -9,7 +9,7 @@
 //! in the same order with the same values. Anything less than `==` there would
 //! be a bug.
 //!
-//! **The seven float kernels are asserted within a proven bound.** They are not
+//! **The eight float kernels are asserted within a proven bound.** They are not
 //! bit-identical and cannot be: the SIMD kernels keep one accumulator per
 //! vector lane, which reassociates the summation, and they use fused
 //! multiply-add, which drops one intermediate rounding. Both kernels evaluate
@@ -43,15 +43,16 @@
 //! would catch a kernel that regressed without becoming outright wrong.
 
 use super::{
-    f16_row_dot, f32_row_dot, q4_k_f32_row_dot, q5_0_f32_row_dot, q5_1_f32_row_dot,
-    q6_k_f32_row_dot, q8_0_f32_row_dot, q8_0_row_dot,
+    f16_row_dot, f32_row_dot, q4_0_f32_row_dot, q4_k_f32_row_dot, q5_0_f32_row_dot,
+    q5_1_f32_row_dot, q6_k_f32_row_dot, q8_0_f32_row_dot, q8_0_row_dot,
 };
 use crate::fp16::{f16_to_f32, f32_to_f16};
 use crate::quant::{
-    dequant_f16_row, dequant_f32_row, dequant_q4_k_row, dequant_q5_0_row, dequant_q5_1_row,
-    dequant_q6_k_row, dequant_q8_0_row, pack_f16, pack_f32, pack_q4_k_block, pack_q5_0_block,
-    pack_q5_1_block, pack_q6_k_block, pack_q8_0_block, scalar as sc, Q4_K_BLOCK, Q5_0_BLOCK,
-    Q5_1_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, QK5_0, QK5_1, QK8_0, QK_K,
+    dequant_f16_row, dequant_f32_row, dequant_q4_0_row, dequant_q4_k_row, dequant_q5_0_row,
+    dequant_q5_1_row, dequant_q6_k_row, dequant_q8_0_row, pack_f16, pack_f32, pack_q4_0_from_i4,
+    pack_q4_k_block, pack_q5_0_block, pack_q5_1_block, pack_q6_k_block, pack_q8_0_block,
+    scalar as sc, Q4_0_BLOCK, Q4_K_BLOCK, Q5_0_BLOCK, Q5_1_BLOCK, Q6_K_BLOCK, Q8_0_BLOCK, QK4_0,
+    QK5_0, QK5_1, QK8_0, QK_K,
 };
 use crate::sample::splitmix64;
 
@@ -206,14 +207,16 @@ fn dispatch_engages_on_this_host() {
     let f16k = f16_row_dot();
     let q4k = q4_k_f32_row_dot();
     let q6k = q6_k_f32_row_dot();
+    let q40 = q4_0_f32_row_dot();
     let q50 = q5_0_f32_row_dot();
     let q51 = q5_1_f32_row_dot();
     let q80f = q8_0_f32_row_dot();
     let q8k = q8_0_row_dot();
     eprintln!(
-        "simd dispatch: f32={} f16={} q4_k={} q6_k={} q5_0={} q5_1={} q8_0-f32={} q8_0={}",
+        "simd dispatch: f32={} f16={} q4_0={} q4_k={} q6_k={} q5_0={} q5_1={} q8_0-f32={} q8_0={}",
         f32k.is_some(),
         f16k.is_some(),
+        q40.is_some(),
         q4k.is_some(),
         q6k.is_some(),
         q50.is_some(),
@@ -232,6 +235,7 @@ fn dispatch_engages_on_this_host() {
         // Every kernel that decodes a block scale with `VCVTPH2PS` needs F16C.
         for (got, what) in [
             (f16k.is_some(), "F16"),
+            (q40.is_some(), "Q4_0"),
             (q50.is_some(), "Q5_0"),
             (q51.is_some(), "Q5_1"),
             (q80f.is_some(), "Q8_0-f32"),
@@ -248,6 +252,7 @@ fn dispatch_engages_on_this_host() {
         for (got, what) in [
             (f32k.is_some(), "F32"),
             (f16k.is_some(), "F16"),
+            (q40.is_some(), "Q4_0"),
             (q4k.is_some(), "Q4_K"),
             (q6k.is_some(), "Q6_K"),
             (q50.is_some(), "Q5_0"),
@@ -647,6 +652,175 @@ fn q6_k_live_terms<'a>(row: &[u8], x: &'a [f32]) -> (Vec<f32>, &'a [f32]) {
         "q6_k dequant rejected {blocks} whole blocks"
     );
     (w, x.get(..n).unwrap_or(&[]))
+}
+
+// ---------------------------------------------------------------- Q4_0
+
+fn q4_0_row_case(n_blocks: usize, state: &mut u64) -> (Vec<u8>, Vec<f32>, Vec<f32>) {
+    let mut row = Vec::with_capacity(n_blocks * Q4_0_BLOCK);
+    for _ in 0..n_blocks {
+        let mut v = [0i8; QK4_0];
+        for q in &mut v {
+            let n = i32::from(rand_u8(state) & 0x0f);
+            *q = i8::try_from(n - 8).unwrap_or(0);
+        }
+        row.extend_from_slice(&pack_q4_0_from_i4(signed(state, 0.05), &v));
+    }
+    let n = n_blocks * QK4_0;
+    let x: Vec<f32> = (0..n).map(|_| signed(state, 1.0)).collect();
+    let mut w = vec![0.0f32; n];
+    assert!(
+        dequant_q4_0_row(n, &row, &mut w).is_ok(),
+        "q4_0 dequant rejected {n_blocks} whole blocks"
+    );
+    (row, x, w)
+}
+
+fn q4_0_live_terms<'a>(row: &[u8], x: &'a [f32]) -> (Vec<f32>, &'a [f32]) {
+    let blocks = (row.len() / Q4_0_BLOCK).min(x.len() / QK4_0);
+    let n = blocks * QK4_0;
+    let mut w = vec![0.0f32; n];
+    let whole = row.get(..blocks * Q4_0_BLOCK).unwrap_or(&[]);
+    assert!(
+        dequant_q4_0_row(n, whole, &mut w).is_ok(),
+        "q4_0 dequant rejected {blocks} whole blocks"
+    );
+    (w, x.get(..n).unwrap_or(&[]))
+}
+
+#[test]
+fn q4_0_matches_scalar_over_block_sweep() {
+    let Some(simd) = q4_0_f32_row_dot() else {
+        return;
+    };
+    let mut state = 0x4e4d_4000_u64;
+    let mut obs = Observed::default();
+    for &nb in Q8_BLOCKS {
+        for trial in 0..4 {
+            let (row, x, w) = q4_0_row_case(nb, &mut state);
+            obs.check(
+                &format!("q4_0 blocks={nb} trial={trial}"),
+                &w,
+                &x,
+                sc::q4_0_f32_row(&row, &x),
+                simd(&row, &x),
+            );
+        }
+    }
+    obs.report("q4_0");
+}
+
+#[test]
+fn q4_0_matches_scalar_on_ragged_inputs() {
+    let Some(simd) = q4_0_f32_row_dot() else {
+        return;
+    };
+    let mut state = 0x4e4d_4001_u64;
+    let mut obs = Observed::default();
+    for &nb in &[1usize, 2, 3, 5] {
+        for &trim in &[1usize, 5, 15, Q4_0_BLOCK] {
+            let (mut row, x, _) = q4_0_row_case(nb, &mut state);
+            row.truncate(row.len().saturating_sub(trim));
+            let (w, xs) = q4_0_live_terms(&row, &x);
+            obs.check(
+                &format!("q4_0 trim={trim} blocks={nb}"),
+                &w,
+                xs,
+                sc::q4_0_f32_row(&row, &x),
+                simd(&row, &x),
+            );
+        }
+        for &short in &[1usize, QK4_0, QK4_0 + 1] {
+            let (row, x, _) = q4_0_row_case(nb, &mut state);
+            let xs = x.get(..x.len().saturating_sub(short)).unwrap_or(&[]);
+            let (w, live) = q4_0_live_terms(&row, xs);
+            obs.check(
+                &format!("q4_0 short-x={short} blocks={nb}"),
+                &w,
+                live,
+                sc::q4_0_f32_row(&row, xs),
+                simd(&row, xs),
+            );
+        }
+    }
+    obs.report("q4_0 ragged");
+}
+
+/// Every nibble `0..=15` in every of the 32 positions of a Q4_0 block.
+#[test]
+fn q4_0_covers_every_code_in_every_position() {
+    let Some(simd) = q4_0_f32_row_dot() else {
+        return;
+    };
+    let mut obs = Observed::default();
+    for lane in 0..QK4_0 {
+        for nibble in 0u8..16 {
+            let mut v = [0i8; QK4_0];
+            if let Some(slot) = v.get_mut(lane) {
+                *slot = i8::try_from(i32::from(nibble) - 8).unwrap_or(0);
+            }
+            let row = pack_q4_0_from_i4(0.25, &v);
+            let x: Vec<f32> = (0..QK4_0).map(|i| 1.0 + as_f32(i)).collect();
+            let mut w = vec![0.0f32; QK4_0];
+            assert!(dequant_q4_0_row(QK4_0, &row, &mut w).is_ok(), "dequant");
+            let want = sc::q4_0_f32_row(&row, &x);
+            let got = simd(&row, &x);
+            assert_eq!(
+                got.to_bits(),
+                want.to_bits(),
+                "q4_0 nibble={nibble} lane={lane}: {got} != {want}"
+            );
+            obs.check(
+                &format!("q4_0 nibble={nibble} lane={lane}"),
+                &w,
+                &x,
+                want,
+                got,
+            );
+        }
+    }
+    obs.report("q4_0 code coverage");
+}
+
+/// Every finite binary16 as a Q4_0 block scale.
+///
+/// Same reason as the Q5_0 sweep: the kernels decode `d` with `VCVTPH2PS` /
+/// `FCVTL` rather than [`f16_to_f32`], so the shortcut has to be exact on
+/// every pattern, not just the ones a writer can emit.
+#[test]
+fn q4_0_block_scales_are_bit_identical_for_all_finite_patterns() {
+    let Some(simd) = q4_0_f32_row_dot() else {
+        return;
+    };
+    let mut state = 0x4e4d_5f16_u64;
+    let mut v = [0i8; QK4_0];
+    for q in &mut v {
+        let n = i32::from(rand_u8(&mut state) & 0x0f);
+        *q = i8::try_from(n - 8).unwrap_or(0);
+    }
+    let x: Vec<f32> = (0..QK4_0).map(|_| signed(&mut state, 1.0)).collect();
+    for bits in 0u16..=u16::MAX {
+        if bits & 0x7c00 == 0x7c00 {
+            continue;
+        }
+        let mut row = pack_q4_0_from_i4(1.0, &v);
+        if let Some(slot) = row.get_mut(..2) {
+            slot.copy_from_slice(&bits.to_le_bytes());
+        }
+        let want = sc::q4_0_f32_row(&row, &x);
+        let got = simd(&row, &x);
+        let d = f64::from(f16_to_f32(bits));
+        let abs_sum: f64 = (0..QK4_0)
+            .map(|i| {
+                let q = f64::from(v.get(i).copied().unwrap_or(0));
+                (q * d * f64::from(x.get(i).copied().unwrap_or(0.0))).abs()
+            })
+            .sum();
+        assert!(
+            (f64::from(got) - f64::from(want)).abs() <= agreement_bound(QK4_0, abs_sum),
+            "q4_0 scale {bits:#06x}: {got} vs {want}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------- Q5_0
@@ -1300,6 +1474,14 @@ fn degenerate_rows_agree() {
             }
         }
     }
+    if let Some(simd) = q4_0_f32_row_dot() {
+        // All-zero bytes are a scale of +0.0 and nibbles of 0, which the -8
+        // bias turns into -8: the dequantized weights are -0.0, not 0.0.
+        let row = vec![0u8; Q4_0_BLOCK * 2];
+        let x = vec![0.0f32; QK4_0 * 2];
+        assert_eq!(simd(&row, &x), sc::q4_0_f32_row(&row, &x));
+        assert_eq!(simd(&[], &[]), sc::q4_0_f32_row(&[], &[]));
+    }
     if let Some(simd) = q4_k_f32_row_dot() {
         let row = vec![0u8; Q4_K_BLOCK * 2];
         let x = vec![0.0f32; QK_K * 2];
@@ -1539,20 +1721,20 @@ fn gemv_entry_points_match_row_scalars() {
     }
 }
 
-/// The model-path entry points for the three dtypes that carry the bulk of a
-/// real checkpoint. `gemv_q8_0_f32` in particular is a *different* function
-/// from `gemv_q8_0`: the former takes `f32` activations and is what
-/// `output.weight` and `attn_v` go through, the latter takes a quantized
-/// activation row and belongs to the GEMV benchmark.
+/// The model-path entry points for the four 32-element-block dtypes that
+/// carry the bulk of a real checkpoint plus Q4_0. `gemv_q8_0_f32` in
+/// particular is a *different* function from `gemv_q8_0`: the former takes
+/// `f32` activations and is what `output.weight` and `attn_v` go through, the
+/// latter takes a quantized activation row and belongs to the GEMV benchmark.
 #[test]
 fn model_path_gemv_entry_points_match_row_scalars() {
-    use crate::quant::{gemv_q5_0_f32, gemv_q5_1_f32, gemv_q8_0_f32};
+    use crate::quant::{gemv_q4_0_f32, gemv_q5_0_f32, gemv_q5_1_f32, gemv_q8_0_f32};
 
     let mut state = 0x5eed_9e12_u64;
     let n_rows = 5usize;
     let n = 4 * QK5_0;
 
-    for dtype in 0..3u8 {
+    for dtype in 0..4u8 {
         let mut w_bytes = Vec::new();
         let mut rows = Vec::new();
         let mut x = Vec::new();
@@ -1560,7 +1742,8 @@ fn model_path_gemv_entry_points_match_row_scalars() {
             let (row, x_case, _) = match dtype {
                 0 => q5_0_row_case(4, &mut state),
                 1 => q5_1_row_case(4, &mut state),
-                _ => q8_0_f32_row_case(4, &mut state),
+                2 => q8_0_f32_row_case(4, &mut state),
+                _ => q4_0_row_case(4, &mut state),
             };
             if r == 0 {
                 x = x_case;
@@ -1572,14 +1755,16 @@ fn model_path_gemv_entry_points_match_row_scalars() {
         let call = match dtype {
             0 => gemv_q5_0_f32(n, &w_bytes, &x, &mut y),
             1 => gemv_q5_1_f32(n, &w_bytes, &x, &mut y),
-            _ => gemv_q8_0_f32(n, &w_bytes, &x, &mut y),
+            2 => gemv_q8_0_f32(n, &w_bytes, &x, &mut y),
+            _ => gemv_q4_0_f32(n, &w_bytes, &x, &mut y),
         };
         assert!(call.is_ok(), "dtype {dtype} gemv rejected its own fixture");
         for (r, row) in rows.iter().enumerate() {
             let (scalar, w) = match dtype {
                 0 => (sc::q5_0_f32_row(row, &x), q5_0_live_terms(row, &x).0),
                 1 => (sc::q5_1_f32_row(row, &x), q5_1_live_terms(row, &x).0),
-                _ => (sc::q8_0_f32_row(row, &x), q8_0_f32_live_terms(row, &x).0),
+                2 => (sc::q8_0_f32_row(row, &x), q8_0_f32_live_terms(row, &x).0),
+                _ => (sc::q4_0_f32_row(row, &x), q4_0_live_terms(row, &x).0),
             };
             let got = y.get(r).copied().unwrap_or(f32::NAN);
             let (_, abs_sum) = reference(&w, &x);
@@ -1596,14 +1781,14 @@ fn model_path_gemv_entry_points_match_row_scalars() {
 /// `gemm_*_f32` must reproduce the per-row scalar kernel for both.
 #[test]
 fn model_path_gemm_entry_points_match_row_scalars() {
-    use crate::quant::{gemm_q5_0_f32, gemm_q5_1_f32, gemm_q8_0_f32};
+    use crate::quant::{gemm_q4_0_f32, gemm_q5_0_f32, gemm_q5_1_f32, gemm_q8_0_f32};
 
     let mut state = 0x5eed_9e13_u64;
     let n_rows = 3usize;
     let n_tokens = 2usize;
     let n = 4 * QK5_0;
 
-    for dtype in 0..3u8 {
+    for dtype in 0..4u8 {
         let mut w_bytes = Vec::new();
         let mut rows = Vec::new();
         let mut x = Vec::new();
@@ -1611,7 +1796,8 @@ fn model_path_gemm_entry_points_match_row_scalars() {
             let (row, x_case, _) = match dtype {
                 0 => q5_0_row_case(4, &mut state),
                 1 => q5_1_row_case(4, &mut state),
-                _ => q8_0_f32_row_case(4, &mut state),
+                2 => q8_0_f32_row_case(4, &mut state),
+                _ => q4_0_row_case(4, &mut state),
             };
             if x.len() < n * n_tokens {
                 x.extend_from_slice(&x_case);
@@ -1623,7 +1809,8 @@ fn model_path_gemm_entry_points_match_row_scalars() {
         let call = match dtype {
             0 => gemm_q5_0_f32(n, n_tokens, &w_bytes, &x, &mut y),
             1 => gemm_q5_1_f32(n, n_tokens, &w_bytes, &x, &mut y),
-            _ => gemm_q8_0_f32(n, n_tokens, &w_bytes, &x, &mut y),
+            2 => gemm_q8_0_f32(n, n_tokens, &w_bytes, &x, &mut y),
+            _ => gemm_q4_0_f32(n, n_tokens, &w_bytes, &x, &mut y),
         };
         assert!(call.is_ok(), "dtype {dtype} gemm rejected its own fixture");
         for (r, row) in rows.iter().enumerate() {
@@ -1632,7 +1819,8 @@ fn model_path_gemm_entry_points_match_row_scalars() {
                 let (scalar, w) = match dtype {
                     0 => (sc::q5_0_f32_row(row, xt), q5_0_live_terms(row, xt).0),
                     1 => (sc::q5_1_f32_row(row, xt), q5_1_live_terms(row, xt).0),
-                    _ => (sc::q8_0_f32_row(row, xt), q8_0_f32_live_terms(row, xt).0),
+                    2 => (sc::q8_0_f32_row(row, xt), q8_0_f32_live_terms(row, xt).0),
+                    _ => (sc::q4_0_f32_row(row, xt), q4_0_live_terms(row, xt).0),
                 };
                 // `gemm_f32_x` writes token-major: `y[t * n_rows + r]`.
                 let got = y.get(t * n_rows + r).copied().unwrap_or(f32::NAN);
@@ -1779,6 +1967,21 @@ fn kernel_throughput() {
             "f16",
             &m,
             time_f32(sc::f16_row, &m, &x),
+            time_f32(simd, &m, &x),
+        );
+    }
+
+    if let Some(simd) = q4_0_f32_row_dot() {
+        let (row, _, _) = q4_0_row_case(BENCH_N / QK4_0, &mut state);
+        let m = BenchMat {
+            row_bytes: row.len(),
+            n_rows: BENCH_N,
+            w: row.repeat(BENCH_N),
+        };
+        report_bench(
+            "q4_0",
+            &m,
+            time_f32(sc::q4_0_f32_row, &m, &x),
             time_f32(simd, &m, &x),
         );
     }

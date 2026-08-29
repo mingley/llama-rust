@@ -1,6 +1,6 @@
 # llama-rust
 
-Verifiable GGUF v3 Llama-family **prompt → text** in Rust. No llama.cpp bind, no C GGML snapshot. Default `simd` is the only `unsafe`; `--no-default-features` restores `forbid(unsafe_code)`.
+Verifiable GGUF v3 Llama-family **prompt → text** in Rust. No llama.cpp bind, no C GGML snapshot. Default `simd` is the only `unsafe`; `--no-default-features` restores `forbid(unsafe_code)`. SIMD row kernels cover F32, F16, Q4_0, Q4_K, Q5_0, Q5_1, Q6_K, and Q8_0 (AVX2+FMA+F16C / NEON); every other ggml dtype stays on the scalar kernels.
 
 This is the **correctness laboratory** for the research stack in [PLAN.md](PLAN.md). It answers “what does this model mean, and is the math right?” against an independent oracle and llama.cpp greedy on real checkpoints. The other workspace crates answer “where are the weights, and what would that cost?”
 
