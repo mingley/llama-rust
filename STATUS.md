@@ -18,7 +18,9 @@ tight cache can still demand-page). SimulatedGpuStore `pin_hot` still
 NVLink-replicates. `StoreMetrics::pins` counts sticky inserts.
 After the router GEMM, unique experts that fit in `slots` prefetch
 before the grouped expert GEMM (H2D can start before compute on
-SimulatedGpuStore). Dual score still has no `$/M tokens`.
+SimulatedGpuStore). A multi-GPU SimulatedGpuStore then D2Ds pinned
+experts onto GPU0 (`StoreMetrics::migrates`). Dual score still has no
+`$/M tokens`.
 
 ## Shipped 2026-08-29 — grouped expert GEMM
 

@@ -75,6 +75,8 @@ pub struct StoreMetrics {
     pub bytes_moved: u64,
     /// Sticky [`CachedStore::pin_hot`] inserts (not in-flight [`ExpertStore::lease`]s).
     pub pins: u64,
+    /// D2D [`crate::SimulatedGpuStore::migrate`] moves (src ≠ dst); 0 for CPU stores.
+    pub migrates: u64,
 }
 
 impl StoreMetrics {
@@ -82,8 +84,14 @@ impl StoreMetrics {
     #[must_use]
     pub fn line(&self) -> String {
         format!(
-            "hits={} misses={} evicts={} prefetches={} bytes_moved={} pins={}",
-            self.hits, self.misses, self.evicts, self.prefetches, self.bytes_moved, self.pins
+            "hits={} misses={} evicts={} prefetches={} bytes_moved={} pins={} migrates={}",
+            self.hits,
+            self.misses,
+            self.evicts,
+            self.prefetches,
+            self.bytes_moved,
+            self.pins,
+            self.migrates
         )
     }
 }
@@ -409,6 +417,7 @@ impl ExpertStore for CachedStore {
             prefetches: self.prefetches,
             bytes_moved: 0,
             pins: self.pins,
+            migrates: 0,
         }
     }
 }

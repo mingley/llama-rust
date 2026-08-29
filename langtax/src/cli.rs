@@ -73,6 +73,7 @@ join the same scheduler. A tight `--pool-blocks` preempts (recompute +
 replay). One ExpertStore is parked on each batched GEMM so MoE serving
 stays on the shared-pool path. After each GEMM the store sticky-pins
 last-used ∪ Markov experts (`slots - 1`; `slots == 1` pins nothing).
+A multi-GPU SimulatedGpuStore then migrates those pins onto GPU0.
 MoE traces stay on that GEMM (per-row
 sequence / token / prefix). Prints each continuation (`n_gen` plus
 decoded text), then intern_hits, preempts, GEMM stats, store metrics,

@@ -82,6 +82,15 @@ impl LiveStore {
         self.slots().unwrap_or(0).saturating_sub(1)
     }
 
+    /// GPUs in a [`Self::Simulated`] profile. CPU stores are 0.
+    #[must_use]
+    pub fn n_gpus(&self) -> usize {
+        match self {
+            Self::Simulated(s) => s.n_gpus(),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => 0,
+        }
+    }
+
     /// Whether `key` has a sticky [`Self::pin_hot`] pin.
     #[must_use]
     pub fn is_pinned(&self, key: ExpertKey) -> bool {

@@ -135,6 +135,8 @@ pub struct SimulatedGpuStore {
     pageable: bool,
     /// [`GpuStoreCfg::accessed_by`]: managed pages stay on the home GPU.
     accessed_by: bool,
+    /// Successful D2D [`Self::migrate`] calls (source device ≠ dest).
+    migrates: u64,
 }
 
 impl SimulatedGpuStore {
@@ -279,6 +281,7 @@ impl SimulatedGpuStore {
             vmm_page: cfg.vmm_page,
             pageable: cfg.pageable,
             accessed_by: cfg.accessed_by,
+            migrates: 0,
         })
     }
 
@@ -428,7 +431,12 @@ impl SimulatedGpuStore {
             page.device = dst;
             page.ready = Some(ev_copy);
         }
+        self.note_migrate();
         Ok(())
+    }
+
+    fn note_migrate(&mut self) {
+        self.migrates = self.migrates.saturating_add(1);
     }
 
     /// Prefetch `dst` (ReadMostly keeps extras) then drop the source copy.
@@ -448,6 +456,7 @@ impl SimulatedGpuStore {
                 page.device = dst;
                 page.ready = None;
             }
+            self.note_migrate();
             return Ok(());
         }
         if !self.sim.is_resident(id, dst)? {
@@ -462,6 +471,7 @@ impl SimulatedGpuStore {
             page.device = dst;
             page.ready = None;
         }
+        self.note_migrate();
         Ok(())
     }
 
@@ -472,6 +482,7 @@ impl SimulatedGpuStore {
             page.device = dst;
             page.ready = None;
         }
+        self.note_migrate();
         Ok(())
     }
 
@@ -499,6 +510,7 @@ impl SimulatedGpuStore {
             page.device = dst;
             page.ready = None;
         }
+        self.note_migrate();
         Ok(())
     }
 
@@ -573,6 +585,12 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn slots(&self) -> usize {
         self.cache.slots()
+    }
+
+    /// GPUs in the attached hardware profile.
+    #[must_use]
+    pub fn n_gpus(&self) -> usize {
+        self.sim.profile().n_gpus()
     }
 
     /// Sticky keep-hot budget: leave one slot for demand paging.
@@ -1001,6 +1019,7 @@ impl ExpertStore for SimulatedGpuStore {
     fn metrics(&self) -> StoreMetrics {
         let mut m = self.cache.metrics();
         m.bytes_moved = self.sim.bytes_moved();
+        m.migrates = self.migrates;
         m
     }
 }

@@ -1956,6 +1956,9 @@ fn migrate_moves_page_to_peer_and_gemms_there() {
     assert_eq!(gpu.device_of(k0), Some(DeviceId(0)));
     gpu.migrate(k0, DeviceId(1)).expect("mig");
     assert_eq!(gpu.device_of(k0), Some(DeviceId(1)));
+    assert_eq!(gpu.metrics().migrates, 1);
+    gpu.migrate(k0, DeviceId(1)).expect("already dest");
+    assert_eq!(gpu.metrics().migrates, 1);
     let _p = gpu.acquire(k0).expect("gemm dest");
     let score = gpu.score().expect("score");
     assert!(score.bytes_moved >= 8192, "{}", score.bytes_moved);
