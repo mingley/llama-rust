@@ -33,6 +33,7 @@
 //! [`Sim::va_reserve`] / [`va_map`](Sim::va_map) / [`va_unmap`](Sim::va_unmap) /
 //! [`va_free`](Sim::va_free) are `cuMemAddressReserve` / `cuMemMap` /
 //! `cuMemUnmap` / `cuMemAddressFree` (one physical per VA; HBM charged while mapped).
+//! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
 //! [`Sim::query_event`] is `cudaEventQuery` (no wait).
@@ -1945,5 +1946,38 @@ mod tests {
             other => panic!("{other:?}"),
         }
         sim.va_free(va).unwrap();
+    }
+
+    #[test]
+    fn host_pin_budget_rejects_second_mapped_alloc() {
+        let mut sim = Sim::new(h100().restrict_pin(4096));
+        let a = sim.alloc_host_mapped(4096).unwrap();
+        assert_eq!(sim.pin_used(), 4096);
+        match sim.alloc_host_mapped(4096) {
+            Err(SimError::PinOom { need, free }) => {
+                assert_eq!(need, 4096);
+                assert_eq!(free, 0);
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.free_host_pinned(a).unwrap();
+        assert_eq!(sim.pin_used(), 0);
+        let b = sim.alloc_host_mapped(4096).unwrap();
+        sim.free_host_pinned(b).unwrap();
+    }
+
+    #[test]
+    fn pageable_host_does_not_charge_pin_budget() {
+        let mut sim = Sim::new(h100().restrict_pin(4096));
+        let h = sim.alloc_host(8 << 20).unwrap();
+        assert_eq!(sim.pin_used(), 0);
+        match sim.host_register(h) {
+            Err(SimError::PinOom { need, free }) => {
+                assert_eq!(need, 8 << 20);
+                assert_eq!(free, 4096);
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.free_host(h).unwrap();
     }
 }

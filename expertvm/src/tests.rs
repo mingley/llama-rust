@@ -617,6 +617,19 @@ fn vmm_map_matches_h2d_hits() {
 }
 
 #[test]
+fn mapped_host_respects_pin_budget() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm().restrict_pin(1u64 << 20);
+    let cfg = SimCfg {
+        slots: 2,
+        mapped: true,
+        ..SimCfg::lru(2, 1u64 << 20, 0)
+    };
+    let err = sim_replay_cfg(&t, p, cfg).unwrap_err();
+    assert!(err.to_string().contains("pin"), "{err}");
+}
+
+#[test]
 fn max_batch_serializes_sequences_at_a_token() {
     let t = Trace {
         events: vec![

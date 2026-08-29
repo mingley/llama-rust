@@ -69,6 +69,13 @@ pub enum SimError {
         /// Allocation that did not move.
         alloc: AllocId,
     },
+    /// Host pin / `mlock` budget (`cudaMallocHost` / `cudaHostRegister`).
+    PinOom {
+        /// Requested pin bytes.
+        need: u64,
+        /// Bytes still within the profile pin cap.
+        free: u64,
+    },
     /// Profile or submit argument that cannot occur on real hardware as modeled.
     Invalid {
         /// Human-readable reason.
@@ -98,6 +105,9 @@ impl fmt::Display for SimError {
             }
             Self::TransferFailed { alloc } => {
                 write!(f, "transfer failed for allocation {}", alloc.0)
+            }
+            Self::PinOom { need, free } => {
+                write!(f, "host pin OOM: need {need} bytes, {free} free")
             }
             Self::Invalid { why } => write!(f, "invalid: {why}"),
         }

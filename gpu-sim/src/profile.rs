@@ -131,6 +131,10 @@ pub struct HardwareProfile {
     pub gpus: Vec<GpuProfile>,
     /// Interconnects.
     pub links: Vec<LinkProfile>,
+    /// Host page-lock budget (`mlock` / `cudaHostRegister`), bytes.
+    ///
+    /// Example default is `u64::MAX` (unlimited). Not a capture.
+    pub host_pin_bytes: u64,
 }
 
 impl HardwareProfile {
@@ -146,6 +150,13 @@ impl HardwareProfile {
         for g in &mut self.gpus {
             g.hbm_bytes = bytes;
         }
+        self
+    }
+
+    /// Cap page-locked host bytes (`cudaMallocHost` / `cudaHostRegister`).
+    #[must_use]
+    pub fn restrict_pin(mut self, bytes: u64) -> Self {
+        self.host_pin_bytes = bytes;
         self
     }
 
@@ -221,6 +232,7 @@ impl HardwareProfile {
             name: "example-8xh100-nvlink".into(),
             gpus,
             links,
+            host_pin_bytes: u64::MAX,
         }
     }
 
@@ -244,6 +256,7 @@ impl HardwareProfile {
                 pcie_host(DeviceId(1)),
                 pcie_peer(DeviceId(0), DeviceId(1)),
             ],
+            host_pin_bytes: u64::MAX,
         }
     }
 
@@ -254,6 +267,7 @@ impl HardwareProfile {
             name: "example-bad-numa".into(),
             gpus: vec![h100_gpu(DeviceId(0)), h100_gpu(DeviceId(1))],
             links: vec![pcie_host(DeviceId(0)), pcie_host_slow(DeviceId(1))],
+            host_pin_bytes: u64::MAX,
         }
     }
 
@@ -268,6 +282,7 @@ impl HardwareProfile {
                 pcie_host(DeviceId(1)),
                 rdma_peer(DeviceId(0), DeviceId(1)),
             ],
+            host_pin_bytes: u64::MAX,
         }
     }
 
@@ -287,6 +302,7 @@ impl HardwareProfile {
             name: "example-asymmetric".into(),
             gpus,
             links,
+            host_pin_bytes: u64::MAX,
         }
     }
 
@@ -329,7 +345,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_pin_bytes={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -344,7 +360,8 @@ impl HardwareProfile {
             g0.grouped_moe_permille,
             self.host_pageable_permille(g0.id),
             self.host_align_bytes(g0.id),
-            g0.pool_reuse_ns
+            g0.pool_reuse_ns,
+            self.host_pin_bytes
         )
     }
 
@@ -421,6 +438,7 @@ fn one_gpu_example(name: &str, gpu: GpuProfile, pcie: LinkProfile) -> HardwarePr
         name: name.into(),
         gpus: vec![gpu],
         links: vec![pcie],
+        host_pin_bytes: u64::MAX,
     }
 }
 
@@ -566,6 +584,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut pageable_permille: u16 = 500;
     let mut align_bytes: u64 = 128;
     let mut pool_reuse_ns: Option<u64> = None;
+    let mut host_pin_bytes = u64::MAX;
     let mut mesh = MeshKind::NvlinkClique;
     let mut mesh_set = false;
     for raw in text.lines() {
@@ -598,6 +617,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             "pageable_permille" => pageable_permille = parse_u16(v)?,
             "align_bytes" => align_bytes = parse_u64(v)?,
             "pool_reuse_ns" => pool_reuse_ns = Some(parse_u64(v)?),
+            "host_pin_bytes" => host_pin_bytes = parse_u64(v)?,
             "topology" => {
                 mesh = parse_mesh(v)?;
                 mesh_set = true;
@@ -648,7 +668,12 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         });
     }
     push_gpu_mesh(&mut links, n_gpus, mesh, nvlink_bps)?;
-    Ok(HardwareProfile { name, gpus, links })
+    Ok(HardwareProfile {
+        name,
+        gpus,
+        links,
+        host_pin_bytes,
+    })
 }
 
 fn push_gpu_mesh(
@@ -823,6 +848,15 @@ mod tests {
         let p = HardwareProfile::parse("gpus=1\npool_reuse_ns=50\n").unwrap();
         assert_eq!(p.gpu(DeviceId(0)).unwrap().pool_reuse_ns, 50);
         assert!(p.to_profile_text().contains("pool_reuse_ns=50"));
+    }
+
+    #[test]
+    fn parse_host_pin_bytes() {
+        let p = HardwareProfile::parse("gpus=1\nhost_pin_bytes=4096\n").unwrap();
+        assert_eq!(p.host_pin_bytes, 4096);
+        assert!(p.to_profile_text().contains("host_pin_bytes=4096"));
+        let open = HardwareProfile::parse("gpus=1\n").unwrap();
+        assert_eq!(open.host_pin_bytes, u64::MAX);
     }
 
     #[test]

@@ -420,7 +420,7 @@ Exact (mechanical invariants agents may rely on):
 - `cudaHostRegister` / mapped host (`alloc_host`, `host_register`,
   `host_register_mapped`, `alloc_host_mapped`): pin existing pageable
   memory; mapped pointers are kernel-readable over PCIe with no H2D and
-  no HBM charge
+  no HBM charge; `host_pin_bytes` is the `mlock` cap (`PinOom`)
 - `cudaMallocManaged` / `cudaMemPrefetchAsync` (`alloc_managed`,
   `prefetch`, `prefetch_host`): no HBM until migrate; prefetch **moves**
   (does not replicate); a kernel first-touch prefetches on that stream

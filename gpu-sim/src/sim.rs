@@ -113,6 +113,7 @@ pub struct Sim {
     next_pool: u32,
     pools: BTreeMap<PoolId, Pool>,
     default_pools: BTreeMap<DeviceId, PoolId>,
+    pinned_used: u64,
 }
 
 impl Sim {
@@ -159,6 +160,7 @@ impl Sim {
             next_pool,
             pools,
             default_pools,
+            pinned_used: 0,
         }
     }
 
@@ -178,6 +180,18 @@ impl Sim {
     #[must_use]
     pub fn hbm_peak(&self) -> u64 {
         self.hbm_peak
+    }
+
+    /// Page-locked host bytes currently charged against [`HardwareProfile::host_pin_bytes`].
+    #[must_use]
+    pub fn pin_used(&self) -> u64 {
+        self.pinned_used
+    }
+
+    /// Pin budget from the profile (`u64::MAX` is unlimited).
+    #[must_use]
+    pub fn pin_budget(&self) -> u64 {
+        self.profile.host_pin_bytes
     }
 
     /// Borrow the profile.
@@ -908,6 +922,8 @@ impl Sim {
                 why: "host-registered still resident on a device",
             });
         }
+        let bytes = a.bytes;
+        self.refund_pin(bytes);
         let a = self.alloc_mut(id)?;
         a.host_pinned = false;
         a.host_mapped = false;
@@ -961,6 +977,8 @@ impl Sim {
                 why: "host-pinned still resident on a device",
             });
         }
+        let bytes = a.bytes;
+        self.refund_pin(bytes);
         let a = self.alloc_mut(id)?;
         a.live = false;
         a.host_pinned = false;
@@ -1582,6 +1600,9 @@ impl Sim {
             });
         }
         self.fail_if_capturing("cannot capture alloc/free")?;
+        if pinned {
+            self.charge_pin(bytes)?;
+        }
         let id = AllocId(self.next_alloc);
         self.next_alloc = self.next_alloc.saturating_add(1);
         let _prev = self.allocs.insert(
@@ -1603,6 +1624,21 @@ impl Sim {
         Ok(id)
     }
 
+    fn charge_pin(&mut self, bytes: u64) -> Result<(), SimError> {
+        let cap = self.profile.host_pin_bytes;
+        let used = self.pinned_used;
+        let free = cap.saturating_sub(used);
+        if bytes > free {
+            return Err(SimError::PinOom { need: bytes, free });
+        }
+        self.pinned_used = used.saturating_add(bytes);
+        Ok(())
+    }
+
+    fn refund_pin(&mut self, bytes: u64) {
+        self.pinned_used = self.pinned_used.saturating_sub(bytes);
+    }
+
     fn host_register_flags(&mut self, id: AllocId, mapped: bool) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture host register")?;
         let a = self.alloc_ref(id)?;
@@ -1614,14 +1650,9 @@ impl Sim {
                 why: "not pageable host",
             });
         }
-        let ns = self
-            .profile
-            .gpus
-            .first()
-            .map(|g| g.alloc_overhead_ns)
-            .unwrap_or(1)
-            .max(1);
-        self.clock = self.clock.saturating_add(ns);
+        let bytes = a.bytes;
+        self.charge_pin(bytes)?;
+        self.clock = self.clock.saturating_add(self.first_alloc_ns());
         let a = self.alloc_mut(id)?;
         a.host_pageable = false;
         a.host_pinned = true;
