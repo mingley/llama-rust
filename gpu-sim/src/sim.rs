@@ -82,6 +82,8 @@ struct GpuRt {
 
 struct Ev {
     recorded_by: Option<OpId>,
+    /// `false` is `cudaEventDisableTiming`: [`Sim::event_elapsed_ns`] fails.
+    timing: bool,
 }
 
 struct Graph {
@@ -409,6 +411,45 @@ impl Sim {
             return Err(SimError::UnknownEvent { event: event.0 });
         }
         Ok(self.event_complete(event))
+    }
+
+    /// `cudaEventCreate` (timing enabled). Implicit on first [`Self::record_event`]
+    /// if the id was never created.
+    pub fn create_event(&mut self, event: EventId) -> Result<(), SimError> {
+        self.insert_event(event, true)
+    }
+
+    /// `cudaEventCreateWithFlags(..., cudaEventDisableTiming)`.
+    ///
+    /// Record / wait / query still work. [`Self::event_elapsed_ns`] is
+    /// [`SimError::Invalid`].
+    pub fn create_event_disable_timing(&mut self, event: EventId) -> Result<(), SimError> {
+        self.insert_event(event, false)
+    }
+
+    /// Whether `event` was created with timing enabled (`cudaEventDefault`).
+    pub fn event_timing(&self, event: EventId) -> Result<bool, SimError> {
+        self.events
+            .get(&event)
+            .map(|e| e.timing)
+            .ok_or(SimError::UnknownEvent { event: event.0 })
+    }
+
+    fn insert_event(&mut self, event: EventId, timing: bool) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture event create")?;
+        if self.events.contains_key(&event) {
+            return Err(SimError::Invalid {
+                why: "event already created",
+            });
+        }
+        let _prev = self.events.insert(
+            event,
+            Ev {
+                recorded_by: None,
+                timing,
+            },
+        );
+        Ok(())
     }
 
     /// Drop not-yet-started ops on `(device, stream)`. In-flight ops still complete.
@@ -1451,7 +1492,10 @@ impl Sim {
         event: EventId,
         stream: StreamId,
     ) -> Result<OpId, SimError> {
-        let _ev = self.events.entry(event).or_insert(Ev { recorded_by: None });
+        let _ev = self.events.entry(event).or_insert(Ev {
+            recorded_by: None,
+            timing: true,
+        });
         self.submit(device, stream, Kind::EventRecord { event })
     }
 
@@ -1463,7 +1507,10 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         if let Entry::Vacant(slot) = self.events.entry(event) {
-            let _ev = slot.insert(Ev { recorded_by: None });
+            let _ev = slot.insert(Ev {
+                recorded_by: None,
+                timing: true,
+            });
         }
         self.submit(device, stream, Kind::EventWait { event })
     }
@@ -1563,15 +1610,28 @@ impl Sim {
 
     /// `cudaEventElapsedTime` in nanoseconds (this crate is ns, not milliseconds).
     ///
-    /// Both events must be recorded and complete. Returns `end.done_ns -
-    /// start.done_ns`. An unknown event is [`SimError::UnknownEvent`]. If `end`
-    /// finished first, [`SimError::Invalid`].
+    /// Both events must be recorded, complete, and created with timing enabled.
+    /// [`Self::create_event_disable_timing`] events are [`SimError::Invalid`].
+    /// Returns `end.done_ns - start.done_ns`. An unknown event is
+    /// [`SimError::UnknownEvent`]. If `end` finished first, [`SimError::Invalid`].
     pub fn event_elapsed_ns(&self, start: EventId, end: EventId) -> Result<u64, SimError> {
+        self.require_event_timing(start)?;
+        self.require_event_timing(end)?;
         let start_ns = self.event_done_ns(start)?;
         let end_ns = self.event_done_ns(end)?;
         end_ns.checked_sub(start_ns).ok_or(SimError::Invalid {
             why: "event elapsed: end before start",
         })
+    }
+
+    fn require_event_timing(&self, event: EventId) -> Result<(), SimError> {
+        match self.events.get(&event) {
+            None => Err(SimError::UnknownEvent { event: event.0 }),
+            Some(ev) if ev.timing => Ok(()),
+            Some(_) => Err(SimError::Invalid {
+                why: "event elapsed: disable timing",
+            }),
+        }
     }
 
     fn event_done_ns(&self, event: EventId) -> Result<u64, SimError> {

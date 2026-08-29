@@ -160,10 +160,12 @@ impl SimulatedGpuStore {
         }
         let ev_copy = EventId(self.next_event);
         self.next_event = self.next_event.saturating_add(1);
+        self.sim.create_event_disable_timing(ev_copy)?;
         let _r = self.sim.record_event(src, ev_copy, self.copy)?;
         // Copy-engine free must not race a compute-stream lease on src.
         let ev_compute = EventId(self.next_event);
         self.next_event = self.next_event.saturating_add(1);
+        self.sim.create_event_disable_timing(ev_compute)?;
         let _r2 = self.sim.record_event(src, ev_compute, self.compute)?;
         let _w = self.sim.wait_event(src, ev_compute, self.copy)?;
         self.sim.free(src, id, self.copy)?;
@@ -253,6 +255,7 @@ impl SimulatedGpuStore {
         let _c = self.sim.memcpy_pinned_to_device(d, id, bytes, self.copy)?;
         let ev = EventId(self.next_event);
         self.next_event = self.next_event.saturating_add(1);
+        self.sim.create_event_disable_timing(ev)?;
         let _r = self.sim.record_event(d, ev, self.copy)?;
         let _prev = self.pages.insert(
             key,
@@ -340,6 +343,7 @@ impl SimulatedGpuStore {
         // Copy-engine free must not race a compute-stream lease on the same page.
         let ev = EventId(self.next_event);
         self.next_event = self.next_event.saturating_add(1);
+        self.sim.create_event_disable_timing(ev)?;
         let _r = self.sim.record_event(page.device, ev, self.compute)?;
         let _w = self.sim.wait_event(page.device, ev, self.copy)?;
         if self.replicas.remove(&key) {

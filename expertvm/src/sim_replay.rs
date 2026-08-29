@@ -1139,6 +1139,7 @@ fn wait_peer(
 ) -> Result<(), Error> {
     let ev = EventId(*next_event);
     *next_event = next_event.saturating_add(1);
+    sim.create_event_disable_timing(ev)?;
     let _r = sim.record_event(src, ev, stream)?;
     let _w = sim.wait_event(dst, ev, stream)?;
     Ok(())

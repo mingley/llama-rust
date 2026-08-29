@@ -41,6 +41,7 @@
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
+//! [`Sim::create_event_disable_timing`] is `cudaEventDisableTiming` (elapsed fails).
 //! [`Sim::query_event`] is `cudaEventQuery` (no wait).
 //! [`Sim::query_stream`] is `cudaStreamQuery` (no wait).
 //! [`Sim::mem_info`] is `cudaMemGetInfo` `(free, total)`.
@@ -2242,6 +2243,48 @@ mod tests {
         assert!(sim
             .operations()
             .any(|o| matches!(o.kind, GpuOp::HostFunc) && o.done));
+    }
+
+    #[test]
+    fn disable_timing_event_cannot_elapsed() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let start = EventId(1);
+        let end = EventId(2);
+        sim.create_event_disable_timing(start).unwrap();
+        sim.create_event(end).unwrap();
+        assert!(!sim.event_timing(start).unwrap());
+        assert!(sim.event_timing(end).unwrap());
+        enq(sim.record_event(d, start, s));
+        enq(sim.record_event(d, end, s));
+        sim.synchronize().unwrap();
+        match sim.event_elapsed_ns(start, end) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("disable timing"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let ns = sim.event_elapsed_ns(end, end).unwrap();
+        assert_eq!(ns, 0);
+        assert!(sim.query_event(start).unwrap());
+        enq(sim.wait_event(d, start, StreamId(1)));
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn create_event_rejects_duplicate_and_capture() {
+        let mut sim = Sim::new(h100());
+        let ev = EventId(8);
+        sim.create_event(ev).unwrap();
+        let err = sim.create_event(ev).unwrap_err();
+        assert!(matches!(err, SimError::Invalid { .. }), "{err:?}");
+        let err = sim.create_event_disable_timing(ev).unwrap_err();
+        assert!(matches!(err, SimError::Invalid { .. }), "{err:?}");
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.begin_capture(d, s).unwrap();
+        let err = sim.create_event(EventId(9)).unwrap_err();
+        assert!(matches!(err, SimError::Invalid { .. }), "{err:?}");
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

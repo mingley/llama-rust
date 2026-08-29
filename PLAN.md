@@ -437,6 +437,8 @@ Exact (mechanical invariants agents may rely on):
   blocking streams serialize with the default/null stream; created
   streams default to non-blocking (vLLM-style). The legacy default
   stream (`set_legacy_null_stream`) still serializes with every stream
+- `cudaEventCreateWithFlags(..., cudaEventDisableTiming)`
+  (`create_event_disable_timing`): wait/query work; `event_elapsed_ns` fails
 - stream ordering, events, barriers
 - kernel enqueue, async copies
 - copy-engine availability, peer accessibility
@@ -606,7 +608,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   the legacy null stream are mechanical CUDA invariants.
   `synchronize_stream` / `synchronize_event` / `synchronize_device` are
   `cudaStreamSynchronize` / `cudaEventSynchronize` / `cudaDeviceSynchronize`. `event_elapsed_ns` is `cudaEventElapsedTime` in
-  nanoseconds. `query_event` is `cudaEventQuery`. `query_stream` is `cudaStreamQuery`.
+  nanoseconds (`create_event_disable_timing` forbids it). `query_event` is `cudaEventQuery`. `query_stream` is `cudaStreamQuery`.
   `mem_info` is `cudaMemGetInfo` `(free, total)`. Public `GpuOp` / `Operation` is the compiled DAG
   (`Sim::operations`).   `expertvm bench` on a multi-sequence trace prints
   `schedule-all` vs `schedule-1`, `schedule-chunk1` when a first token

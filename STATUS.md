@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — cudaEventDisableTiming forbids elapsed
+
+`Sim::create_event` / `create_event_disable_timing` are `cudaEventCreate`
+and `cudaEventCreateWithFlags(..., cudaEventDisableTiming)`. Timing-off
+events still record, wait, and query; `event_elapsed_ns` is `Invalid`.
+Capture refuses create. Implicit create on first record stays
+timing-on. `SimulatedGpuStore` and remote D2D waits use disable-timing
+sync events (vLLM-style). Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — mapped occupancy respects the pin budget
 
 `--mapped` walker slots are `min(capacity, host_pin_bytes / expert_bytes)`

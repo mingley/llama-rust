@@ -60,6 +60,7 @@ warp scheduler, L1, …   ← do not model
 | `synchronize_event` waits the record only | later ops on that stream keep running |
 | `idle_until` drains, then jumps the clock | GPU idle until the next arrival |
 | `event_elapsed_ns` is record-to-record delta | `cudaEventElapsedTime` (ns) |
+| `cudaEventDisableTiming` forbids elapsed | wait / query still work |
 | `query_event` is non-blocking | `cudaEventQuery` |
 | `query_stream` is non-blocking | `cudaStreamQuery` |
 | `mem_info` is `(free, total)` HBM | `cudaMemGetInfo` |
@@ -188,7 +189,8 @@ streams (`cudaStreamCreate`). Created streams default to
 `idle_until` drains in-flight work, then jumps the virtual clock so an
 open-loop arrival can wait without `sleep`.
 `event_elapsed_ns` is `cudaEventElapsedTime` in nanoseconds (both records
-must be complete; end-before-start is invalid).
+must be complete and timing-enabled; `create_event_disable_timing` is
+invalid; end-before-start is invalid).
 `query_event` is `cudaEventQuery` (unknown id is semantic; incomplete is
 `Ok(false)`).
 `query_stream` is `cudaStreamQuery` (unknown device is semantic; a busy

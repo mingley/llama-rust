@@ -27,6 +27,10 @@ impl StreamId {
 }
 
 /// Cross-stream ordering token. Record on one stream, wait on another.
+///
+/// [`crate::Sim::create_event_disable_timing`] is `cudaEventDisableTiming`
+/// (elapsed fails; wait/query still work). Implicit create on record is
+/// timing-enabled (`cudaEventDefault`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EventId(pub u32);
 

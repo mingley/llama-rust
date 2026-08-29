@@ -98,7 +98,8 @@ can overlap a miss with another sequence's GEMM. Pair with `--seq-streams`
 or it is a no-op (`n_streams = 1`). A
 profile `host_pin_bytes` cap pages `min(capacity, pin / expert_bytes)`
 mapped experts (`PinOom` only when even one expert cannot lock). `SimulatedGpuStore` stays on the async H2D
-path with CUDA's default threshold (`0`) and non-blocking streams. `--max-batch N` admits N sequences per engine
+path with CUDA's default threshold (`0`), non-blocking streams, and
+`cudaEventDisableTiming` copy events. `--max-batch N` admits N sequences per engine
 iteration at a token (`0` = the whole token) and still samples TTFT once.
 `--cuda-graphs` captures grouped expert GEMMs after `synchronize_stream` on
 that stream and replays them (`graph_launch_ns` once per launch). `--plan-window
