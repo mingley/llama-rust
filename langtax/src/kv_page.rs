@@ -194,6 +194,12 @@ impl PagedKvPool {
             .unwrap_or(0)
     }
 
+    /// True when `other` is the same intern arena (shared `Rc`).
+    #[must_use]
+    pub fn same_as(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
+    }
+
     fn try_mut(&self) -> Result<RefMut<'_, KvPool>, &'static str> {
         self.inner.try_borrow_mut().map_err(|_| "kv page borrow")
     }
@@ -218,6 +224,10 @@ impl KvPages {
             pool,
             table: Vec::new(),
         }
+    }
+
+    pub(crate) fn pool(&self) -> &PagedKvPool {
+        &self.pool
     }
 
     pub(crate) fn block_size(&self) -> usize {

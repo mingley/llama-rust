@@ -636,6 +636,30 @@ impl KvCache {
         self.rewind(0);
     }
 
+    /// Ensure `n_past + extra` KV positions exist so a later write cannot fail
+    /// the page cap. Paged block allocation is idempotent: a second call with
+    /// the same `extra` before advancing `n_past` does not take another block.
+    /// Dense caches only check `n_past + extra <= max_seq`.
+    pub fn prepare_append(&mut self, extra: usize) -> Result<(), LlamaError> {
+        let end = self
+            .n_past
+            .checked_add(extra)
+            .ok_or_else(|| LlamaError::Shape("kv cache full".into()))?;
+        if extra == 0 {
+            return Ok(());
+        }
+        if end > self.max_seq {
+            return Err(LlamaError::Shape("kv cache full".into()));
+        }
+        if let Some(p) = self.pages.as_mut() {
+            for pos in self.n_past..end {
+                p.ensure_write(pos)
+                    .map_err(|e| LlamaError::Shape(e.into()))?;
+            }
+        }
+        Ok(())
+    }
+
     /// Physical blocks on this sequence's page table (`0` when dense).
     #[must_use]
     pub fn page_table_len(&self) -> usize {
@@ -859,6 +883,65 @@ impl Scratch {
         out.push((self.moe.order.as_ptr() as usize, self.moe.order.capacity()));
         out
     }
+}
+
+/// Paged block table or dense `max_seq` stride for one sequence in a transformer walk.
+struct KvAddr {
+    table: Vec<u32>,
+    block_size: usize,
+    n_layers: usize,
+    dense_max: usize,
+}
+
+impl KvAddr {
+    fn geom(&self, n_head_kv: usize, hd: usize) -> KvGeom<'_> {
+        if self.dense_max > 0 {
+            KvGeom::dense(n_head_kv, hd, self.dense_max)
+        } else {
+            KvGeom {
+                n_head_kv,
+                hd,
+                n_layers: self.n_layers,
+                time_stride: self.block_size,
+                table: Some(self.table.as_slice()),
+            }
+        }
+    }
+}
+
+fn kv_addr(addrs: &[KvAddr], t: usize) -> Result<&KvAddr, LlamaError> {
+    if addrs.len() == 1 {
+        addrs
+            .first()
+            .ok_or_else(|| LlamaError::Shape("kv addr".into()))
+    } else {
+        addrs
+            .get(t)
+            .ok_or_else(|| LlamaError::Shape("kv addr".into()))
+    }
+}
+
+fn token_pos(pos: &[usize], t: usize) -> Result<usize, LlamaError> {
+    pos.get(t)
+        .copied()
+        .ok_or_else(|| LlamaError::Shape("kv pos".into()))
+}
+
+enum LogitsKind {
+    Last,
+    All,
+}
+
+struct TransformerRun<'a> {
+    s: &'a mut Scratch,
+    pool: &'a mut GemvPool,
+    moe_trace: &'a mut MoeTraceBuf,
+    expert_store: &'a mut Option<LiveStore>,
+    cache_k: &'a mut [f32],
+    cache_v: &'a mut [f32],
+    n: usize,
+    width: usize,
+    hd: usize,
 }
 
 /// Resize `buf` to `len` zeros. Does not allocate once capacity is reached,
@@ -1297,6 +1380,392 @@ impl Llama {
         }
     }
 
+    /// One decode token per cache. Shared-pool paged caches GEMM together.
+    ///
+    /// Q/K/V, FFN, and lm_head are one GEMM of `caches.len()` rows. Attention
+    /// stays per sequence (its own `n_past` and block table). Logits of each
+    /// row bit-match a sequential [`Llama::forward`]. Mixed dense/paged,
+    /// attached stores, or MoE traces fall back to one-at-a-time forwards.
+    pub fn forward_batch(
+        &self,
+        caches: &mut [&mut KvCache],
+        tokens: &[u32],
+    ) -> Result<Vec<Vec<f32>>, LlamaError> {
+        if caches.len() != tokens.len() {
+            return Err(LlamaError::Shape("forward batch".into()));
+        }
+        if caches.is_empty() {
+            return Ok(Vec::new());
+        }
+        if caches.len() == 1 || !self.can_batch_paged(caches) {
+            let mut out = Vec::new();
+            for (cache, tok) in caches.iter_mut().zip(tokens.iter()) {
+                out.push(self.forward(cache, *tok)?);
+            }
+            return Ok(out);
+        }
+        self.forward_paged_batch(caches, tokens)
+    }
+
+    fn can_batch_paged(&self, caches: &[&mut KvCache]) -> bool {
+        let Some(first) = caches.first() else {
+            return false;
+        };
+        let Some(home) = first.pages.as_ref().map(KvPages::pool) else {
+            return false;
+        };
+        caches.iter().all(|c| {
+            !c.moe_trace.enabled
+                && c.expert_store.is_none()
+                && c.pages.as_ref().is_some_and(|p| p.pool().same_as(home))
+        })
+    }
+
+    fn forward_paged_batch(
+        &self,
+        caches: &mut [&mut KvCache],
+        tokens: &[u32],
+    ) -> Result<Vec<Vec<f32>>, LlamaError> {
+        let hd = self.head_dim()?;
+        let n = tokens.len();
+        let width = n
+            .checked_mul(self.n_embd)
+            .ok_or_else(|| LlamaError::Shape("prefill embed".into()))?;
+        for cache in caches.iter_mut() {
+            cache.prepare_append(1)?;
+        }
+        let mut addrs = Vec::new();
+        let mut positions = Vec::new();
+        let mut max_seq = 0usize;
+        for cache in caches.iter() {
+            positions.push(cache.n_past);
+            max_seq = max_seq.max(cache.max_seq);
+            let Some(p) = cache.pages.as_ref() else {
+                return Err(LlamaError::Shape("kv page".into()));
+            };
+            addrs.push(KvAddr {
+                table: p.table_ids().to_vec(),
+                block_size: p.block_size(),
+                n_layers: p.n_layers(),
+                dense_max: 0,
+            });
+        }
+        let Some(first) = caches.first_mut() else {
+            return Ok(Vec::new());
+        };
+        let pages = first
+            .pages
+            .as_ref()
+            .ok_or_else(|| LlamaError::Shape("kv page".into()))?;
+        let mut pool_guard = pages
+            .try_pool_mut()
+            .map_err(|e| LlamaError::Shape(e.into()))?;
+        let (cache_k, cache_v) = pool_guard.kv_mut();
+        let s = &mut first.scratch;
+        let pool = &mut first.pool;
+        if s.scores.capacity() < max_seq {
+            fit(&mut s.scores, max_seq);
+        }
+        fit(&mut s.x, width);
+        for (t, tok) in tokens.iter().enumerate() {
+            let row = token_row_mut(&mut s.x, t, self.n_embd, "prefill embed")?;
+            self.embed_into(*tok, row)?;
+            for v in row.iter_mut() {
+                *v *= self.embed_scale;
+            }
+        }
+        let mut moe_trace = MoeTraceBuf::default();
+        let mut expert_store = None;
+        moe_trace.batch.extend(tokens.iter().copied());
+        self.transformer(
+            &mut TransformerRun {
+                s,
+                pool,
+                moe_trace: &mut moe_trace,
+                expert_store: &mut expert_store,
+                cache_k,
+                cache_v,
+                n,
+                width,
+                hd,
+            },
+            &addrs,
+            &positions,
+            LogitsKind::All,
+        )?;
+        drop(pool_guard);
+        let n_vocab = self.n_vocab;
+        let mut out = Vec::new();
+        {
+            let Some(first) = caches.first_mut() else {
+                return Ok(Vec::new());
+            };
+            for t in 0..n {
+                let off = t.saturating_mul(n_vocab);
+                let row = first
+                    .scratch
+                    .logits
+                    .get(off..off.saturating_add(n_vocab))
+                    .ok_or_else(|| LlamaError::Shape("forward batch logits".into()))?;
+                out.push(row.to_vec());
+            }
+        }
+        for (cache, tok) in caches.iter_mut().zip(tokens.iter()) {
+            cache.n_past = cache.n_past.saturating_add(1);
+            cache.moe_trace.ids.push(*tok);
+            if let Some(p) = cache.pages.as_mut() {
+                p.intern_full(&cache.moe_trace.ids);
+            }
+        }
+        Ok(out)
+    }
+
+    fn transformer(
+        &self,
+        run: &mut TransformerRun<'_>,
+        addrs: &[KvAddr],
+        pos: &[usize],
+        logits: LogitsKind,
+    ) -> Result<(), LlamaError> {
+        let TransformerRun {
+            s,
+            pool,
+            moe_trace,
+            expert_store,
+            cache_k,
+            cache_v,
+            n,
+            width,
+            hd,
+        } = run;
+        let n = *n;
+        let width = *width;
+        let hd = *hd;
+        for (li, layer) in self.layers.iter().enumerate() {
+            moe_trace.layer = u32::try_from(li).unwrap_or(u32::MAX);
+            if layer.wk.n_rows != self.n_head_kv.saturating_mul(hd)
+                || layer.wv.n_rows != self.n_head_kv.saturating_mul(hd)
+            {
+                return Err(LlamaError::Shape("qkv head split".into()));
+            }
+            copy_buf(&mut s.residual, &s.x);
+            if self.phi2 {
+                layernorm_rows_inplace(
+                    &mut s.x,
+                    self.n_embd,
+                    &layer.attn_norm,
+                    layer.attn_norm_b.as_deref(),
+                    self.rms_eps,
+                )?;
+            } else {
+                rmsnorm_rows_inplace(&mut s.x, self.n_embd, &layer.attn_norm, self.rms_eps)?;
+            }
+            self.gemm_into(&layer.wq, n, &s.x, &mut s.q, pool)?;
+            add_bias_rows(&mut s.q, layer.wq.n_rows, layer.bq.as_deref())?;
+            self.gemm_into(&layer.wk, n, &s.x, &mut s.k, pool)?;
+            add_bias_rows(&mut s.k, layer.wk.n_rows, layer.bk.as_deref())?;
+            self.gemm_into(&layer.wv, n, &s.x, &mut s.v, pool)?;
+            add_bias_rows(&mut s.v, layer.wv.n_rows, layer.bv.as_deref())?;
+            let q_width = self.n_head.saturating_mul(hd);
+            if layer.attn_q_gate {
+                split_qwen3next_q_gate_into(&mut s.q, &mut s.q_gate, n, self.n_head, hd)?;
+            } else if layer.wq.n_rows != q_width {
+                return Err(LlamaError::Shape("qkv head split".into()));
+            }
+            if let Some(w) = layer.attn_q_norm.as_deref() {
+                rmsnorm_rows_inplace(&mut s.q, hd, w, self.rms_eps)?;
+            }
+            if let Some(w) = layer.attn_k_norm.as_deref() {
+                rmsnorm_rows_inplace(&mut s.k, hd, w, self.rms_eps)?;
+            }
+            for t in 0..n {
+                let p = token_pos(pos, t)?;
+                let geom = kv_addr(addrs, t)?.geom(self.n_head_kv, hd);
+                let k_t = token_row_mut(&mut s.k, t, layer.wk.n_rows, "prefill k")?;
+                if layer.use_rope {
+                    for h in k_t.chunks_mut(hd) {
+                        apply_rope(
+                            h,
+                            p,
+                            self.n_rot,
+                            self.rope_base,
+                            self.rope_sections,
+                            self.rope_imrope,
+                            self.rope_neox,
+                        )?;
+                    }
+                    if layer.qk_l2 {
+                        for h in k_t.chunks_mut(hd) {
+                            rmsnorm_unweighted_inplace(h, self.rms_eps);
+                        }
+                    }
+                }
+                store_kv(cache_k, li, &geom, p, k_t)?;
+                let v_t = token_row(&s.v, t, layer.wv.n_rows, "prefill v")?;
+                store_kv(cache_v, li, &geom, p, v_t)?;
+            }
+            fit(&mut s.attn, width);
+            for t in 0..n {
+                let p = token_pos(pos, t)?;
+                let geom = kv_addr(addrs, t)?.geom(self.n_head_kv, hd);
+                let q_t = token_row_mut(&mut s.q, t, q_width, "prefill q")?;
+                if layer.use_rope {
+                    for h in q_t.chunks_mut(hd) {
+                        apply_rope(
+                            h,
+                            p,
+                            self.n_rot,
+                            self.rope_base,
+                            self.rope_sections,
+                            self.rope_imrope,
+                            self.rope_neox,
+                        )?;
+                    }
+                    if layer.qk_l2 {
+                        for h in q_t.chunks_mut(hd) {
+                            rmsnorm_unweighted_inplace(h, self.rms_eps);
+                        }
+                    }
+                    if self.phi2 {
+                        let hd_f = f32::from(u16::try_from(hd).unwrap_or(1));
+                        let q_scale = if hd_f > 0.0 { 1.0 / hd_f.sqrt() } else { 0.0 };
+                        for v in q_t.iter_mut() {
+                            *v *= q_scale;
+                        }
+                    }
+                } else {
+                    let scale = llama4_attn_temp_scale(p);
+                    for v in q_t.iter_mut() {
+                        *v *= scale;
+                    }
+                }
+                let score_scale = if self.phi2 {
+                    1.0
+                } else {
+                    let scale = f32::from(u16::try_from(hd).unwrap_or(1)).sqrt();
+                    if scale > 0.0 {
+                        1.0 / scale
+                    } else {
+                        0.0
+                    }
+                };
+                let dst_off = t.saturating_mul(self.n_embd);
+                let dst = s
+                    .attn
+                    .get_mut(dst_off..dst_off.saturating_add(self.n_embd))
+                    .ok_or_else(|| LlamaError::Shape("prefill attn".into()))?;
+                attend_query(
+                    cache_k,
+                    cache_v,
+                    li,
+                    q_t,
+                    &geom,
+                    p.saturating_add(1),
+                    score_scale,
+                    &mut s.scores,
+                    dst,
+                )?;
+            }
+            if layer.attn_q_gate {
+                if s.q_gate.len() != s.attn.len() {
+                    return Err(LlamaError::Shape("attn gate".into()));
+                }
+                for (a, g) in s.attn.iter_mut().zip(s.q_gate.iter()) {
+                    *a *= sigmoid_f32(*g);
+                }
+            }
+            self.gemm_into(&layer.wo, n, &s.attn, &mut s.attn_proj, pool)?;
+            add_bias_rows(&mut s.attn_proj, layer.wo.n_rows, layer.wo_b.as_deref())?;
+            if self.phi2 {
+                match &layer.ffn {
+                    LayerFfn::Phi2(ffn) => {
+                        self.gemm_into(&ffn.up, n, &s.x, &mut s.up, pool)?;
+                        add_bias_rows(&mut s.up, ffn.up.n_rows, Some(ffn.up_b.as_slice()))?;
+                        gelu_inplace(&mut s.up);
+                        self.gemm_into(&ffn.down, n, &s.up, &mut s.ffn_out, pool)?;
+                        add_bias_rows(
+                            &mut s.ffn_out,
+                            ffn.down.n_rows,
+                            Some(ffn.down_b.as_slice()),
+                        )?;
+                    }
+                    _ => return Err(LlamaError::Shape("phi2 ffn".into())),
+                }
+                add_into(&mut s.x, &s.attn_proj, &s.ffn_out)?;
+                add_assign(&mut s.x, &s.residual)?;
+            } else {
+                add_into(&mut s.x, &s.attn_proj, &s.residual)?;
+                copy_buf(&mut s.residual, &s.x);
+                rmsnorm_rows_inplace(&mut s.x, self.n_embd, &layer.ffn_norm, self.rms_eps)?;
+                match &layer.ffn {
+                    LayerFfn::Dense(dense) => {
+                        self.gemm_into(&dense.gate, n, &s.x, &mut s.gate, pool)?;
+                        self.gemm_into(&dense.up, n, &s.x, &mut s.up, pool)?;
+                        ffn_gate_act_inplace(&mut s.gate, self.ffn_gelu);
+                        for (hv, uv) in s.gate.iter_mut().zip(s.up.iter()) {
+                            *hv *= *uv;
+                        }
+                        self.gemm_into(&dense.down, n, &s.gate, &mut s.ffn_out, pool)?;
+                    }
+                    LayerFfn::Llama4Moe(moe) => {
+                        self.llama4_moe_into(moe.as_ref(), n, s, pool, moe_trace, expert_store)?
+                    }
+                    LayerFfn::LlamaMoe(moe) => {
+                        self.llama_moe_into(moe.as_ref(), n, s, pool, moe_trace, expert_store)?
+                    }
+                    LayerFfn::Qwen2Moe(moe) => {
+                        self.qwen2moe_into(moe.as_ref(), n, s, pool, moe_trace, expert_store)?
+                    }
+                    LayerFfn::Qwen3Moe(moe) => {
+                        self.qwen3moe_into(moe.as_ref(), n, s, pool, moe_trace, expert_store)?
+                    }
+                    LayerFfn::Qwen3Next(moe) => {
+                        self.qwen3next_into(moe.as_ref(), n, s, pool, moe_trace, expert_store)?
+                    }
+                    LayerFfn::Phi2(_) => return Err(LlamaError::Shape("phi2 ffn".into())),
+                }
+                add_into(&mut s.x, &s.ffn_out, &s.residual)?;
+            }
+        }
+        match logits {
+            LogitsKind::Last => {
+                let last_off = n.saturating_sub(1).saturating_mul(self.n_embd);
+                let last =
+                    s.x.get(last_off..last_off.saturating_add(self.n_embd))
+                        .ok_or_else(|| LlamaError::Shape("prefill last".into()))?;
+                copy_buf(&mut s.xn, last);
+                if self.phi2 {
+                    layernorm_inplace(
+                        &mut s.xn,
+                        &self.output_norm,
+                        self.output_norm_b.as_deref(),
+                        self.rms_eps,
+                    )?;
+                } else {
+                    rmsnorm_inplace(&mut s.xn, &self.output_norm, self.rms_eps)?;
+                }
+                self.gemv_into(&self.output, &s.xn, &mut s.logits, pool)?;
+                add_bias_rows(&mut s.logits, self.n_vocab, self.output_b.as_deref())?;
+            }
+            LogitsKind::All => {
+                if self.phi2 {
+                    layernorm_rows_inplace(
+                        &mut s.x,
+                        self.n_embd,
+                        &self.output_norm,
+                        self.output_norm_b.as_deref(),
+                        self.rms_eps,
+                    )?;
+                } else {
+                    rmsnorm_rows_inplace(&mut s.x, self.n_embd, &self.output_norm, self.rms_eps)?;
+                }
+                self.gemm_into(&self.output, n, &s.x, &mut s.logits, pool)?;
+                add_bias_rows(&mut s.logits, self.n_vocab, self.output_b.as_deref())?;
+            }
+        }
+        Ok(())
+    }
+
     /// One decode step. Writes K/V at `cache.n_past` and increments it. Returns logits.
     ///
     /// Copies the logits out of the cache. [`Llama::forward_logits`] borrows
@@ -1397,17 +1866,25 @@ impl Llama {
             page_bs = p.block_size();
             page_nl = p.n_layers();
         }
-        let geom = if pages.is_some() {
-            KvGeom {
-                n_head_kv: self.n_head_kv,
-                hd,
+        let addr = if pages.is_some() {
+            KvAddr {
+                table: table_copy,
+                block_size: page_bs,
                 n_layers: page_nl,
-                time_stride: page_bs,
-                table: Some(table_copy.as_slice()),
+                dense_max: 0,
             }
         } else {
-            KvGeom::dense(self.n_head_kv, hd, max_seq)
+            KvAddr {
+                table: Vec::new(),
+                block_size: max_seq,
+                n_layers: 0,
+                dense_max: max_seq,
+            }
         };
+        let mut positions = Vec::new();
+        for t in 0..n {
+            positions.push(n0.saturating_add(t));
+        }
         let mut pool_guard = match pages.as_ref() {
             Some(p) => Some(p.try_pool_mut().map_err(|e| LlamaError::Shape(e.into()))?),
             None => None,
@@ -1416,221 +1893,22 @@ impl Llama {
             Some(g) => g.kv_mut(),
             None => (dense_k.as_mut_slice(), dense_v.as_mut_slice()),
         };
-        for (li, layer) in self.layers.iter().enumerate() {
-            moe_trace.layer = u32::try_from(li).unwrap_or(u32::MAX);
-            if layer.wk.n_rows != self.n_head_kv.saturating_mul(hd)
-                || layer.wv.n_rows != self.n_head_kv.saturating_mul(hd)
-            {
-                return Err(LlamaError::Shape("qkv head split".into()));
-            }
-            copy_buf(&mut s.residual, &s.x);
-            if self.phi2 {
-                layernorm_rows_inplace(
-                    &mut s.x,
-                    self.n_embd,
-                    &layer.attn_norm,
-                    layer.attn_norm_b.as_deref(),
-                    self.rms_eps,
-                )?;
-            } else {
-                rmsnorm_rows_inplace(&mut s.x, self.n_embd, &layer.attn_norm, self.rms_eps)?;
-            }
-            // `s.x` holds the `attn_norm` output from here until the residual add.
-            // Official phi2 feeds it to attention *and* the FFN (parallel
-            // residual), so that branch runs its FFN before the add rather than
-            // keeping a second copy of the normed activations.
-            self.gemm_into(&layer.wq, n, &s.x, &mut s.q, pool)?;
-            add_bias_rows(&mut s.q, layer.wq.n_rows, layer.bq.as_deref())?;
-            self.gemm_into(&layer.wk, n, &s.x, &mut s.k, pool)?;
-            add_bias_rows(&mut s.k, layer.wk.n_rows, layer.bk.as_deref())?;
-            self.gemm_into(&layer.wv, n, &s.x, &mut s.v, pool)?;
-            add_bias_rows(&mut s.v, layer.wv.n_rows, layer.bv.as_deref())?;
-            // Official Qwen3Next: joint Q projection is query+gate
-            // (`n_embd_head * n_head * 2`), split per head, gate applied after attn.
-            let q_width = self.n_head.saturating_mul(hd);
-            if layer.attn_q_gate {
-                split_qwen3next_q_gate_into(&mut s.q, &mut s.q_gate, n, self.n_head, hd)?;
-            } else if layer.wq.n_rows != q_width {
-                return Err(LlamaError::Shape("qkv head split".into()));
-            }
-            // Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next: RMSNorm on Q and K
-            // after projection, before RoPE (`attn_q_norm` / `attn_k_norm`,
-            // per-head, `LLM_NORM_RMS`).
-            if let Some(w) = layer.attn_q_norm.as_deref() {
-                rmsnorm_rows_inplace(&mut s.q, hd, w, self.rms_eps)?;
-            }
-            if let Some(w) = layer.attn_k_norm.as_deref() {
-                rmsnorm_rows_inplace(&mut s.k, hd, w, self.rms_eps)?;
-            }
-            for t in 0..n {
-                let pos = n0.saturating_add(t);
-                let k_t = token_row_mut(&mut s.k, t, layer.wk.n_rows, "prefill k")?;
-                if layer.use_rope {
-                    for h in k_t.chunks_mut(hd) {
-                        apply_rope(
-                            h,
-                            pos,
-                            self.n_rot,
-                            self.rope_base,
-                            self.rope_sections,
-                            self.rope_imrope,
-                            self.rope_neox,
-                        )?;
-                    }
-                    if layer.qk_l2 {
-                        // Official Llama4: unweighted RMS after RoPE (`Llama4TextL2Norm`).
-                        for h in k_t.chunks_mut(hd) {
-                            rmsnorm_unweighted_inplace(h, self.rms_eps);
-                        }
-                    }
-                }
-                store_kv(cache_k, li, &geom, pos, k_t)?;
-                let v_t = token_row(&s.v, t, layer.wv.n_rows, "prefill v")?;
-                store_kv(cache_v, li, &geom, pos, v_t)?;
-            }
-            fit(&mut s.attn, width);
-            for t in 0..n {
-                let pos = n0.saturating_add(t);
-                let q_t = token_row_mut(&mut s.q, t, q_width, "prefill q")?;
-                if layer.use_rope {
-                    for h in q_t.chunks_mut(hd) {
-                        apply_rope(
-                            h,
-                            pos,
-                            self.n_rot,
-                            self.rope_base,
-                            self.rope_sections,
-                            self.rope_imrope,
-                            self.rope_neox,
-                        )?;
-                    }
-                    if layer.qk_l2 {
-                        for h in q_t.chunks_mut(hd) {
-                            rmsnorm_unweighted_inplace(h, self.rms_eps);
-                        }
-                    }
-                    if self.phi2 {
-                        // Official phi2.cpp: scale Q after RoPE, then attn scale 1.0.
-                        let hd_f = f32::from(u16::try_from(hd).unwrap_or(1));
-                        let q_scale = if hd_f > 0.0 { 1.0 / hd_f.sqrt() } else { 0.0 };
-                        for v in q_t.iter_mut() {
-                            *v *= q_scale;
-                        }
-                    }
-                } else {
-                    // Official Llama4 NoPE: Q *= attn temperature scale.
-                    let scale = llama4_attn_temp_scale(pos);
-                    for v in q_t.iter_mut() {
-                        *v *= scale;
-                    }
-                }
-                let score_scale = if self.phi2 {
-                    1.0
-                } else {
-                    let scale = f32::from(u16::try_from(hd).unwrap_or(1)).sqrt();
-                    if scale > 0.0 {
-                        1.0 / scale
-                    } else {
-                        0.0
-                    }
-                };
-                let dst_off = t.saturating_mul(self.n_embd);
-                let dst = s
-                    .attn
-                    .get_mut(dst_off..dst_off.saturating_add(self.n_embd))
-                    .ok_or_else(|| LlamaError::Shape("prefill attn".into()))?;
-                attend_query(
-                    cache_k,
-                    cache_v,
-                    li,
-                    q_t,
-                    &geom,
-                    pos.saturating_add(1),
-                    score_scale,
-                    &mut s.scores,
-                    dst,
-                )?;
-            }
-            if layer.attn_q_gate {
-                if s.q_gate.len() != s.attn.len() {
-                    return Err(LlamaError::Shape("attn gate".into()));
-                }
-                for (a, g) in s.attn.iter_mut().zip(s.q_gate.iter()) {
-                    *a *= sigmoid_f32(*g);
-                }
-            }
-            self.gemm_into(&layer.wo, n, &s.attn, &mut s.attn_proj, pool)?;
-            add_bias_rows(&mut s.attn_proj, layer.wo.n_rows, layer.wo_b.as_deref())?;
-            if self.phi2 {
-                // Official phi2.cpp: FFN on the same `attn_norm` as attention
-                // (parallel residual), then `attn + ffn + inpL`.
-                match &layer.ffn {
-                    LayerFfn::Phi2(ffn) => {
-                        self.gemm_into(&ffn.up, n, &s.x, &mut s.up, pool)?;
-                        add_bias_rows(&mut s.up, ffn.up.n_rows, Some(ffn.up_b.as_slice()))?;
-                        gelu_inplace(&mut s.up);
-                        self.gemm_into(&ffn.down, n, &s.up, &mut s.ffn_out, pool)?;
-                        add_bias_rows(
-                            &mut s.ffn_out,
-                            ffn.down.n_rows,
-                            Some(ffn.down_b.as_slice()),
-                        )?;
-                    }
-                    _ => return Err(LlamaError::Shape("phi2 ffn".into())),
-                }
-                add_into(&mut s.x, &s.attn_proj, &s.ffn_out)?;
-                add_assign(&mut s.x, &s.residual)?;
-            } else {
-                add_into(&mut s.x, &s.attn_proj, &s.residual)?;
-                copy_buf(&mut s.residual, &s.x);
-                rmsnorm_rows_inplace(&mut s.x, self.n_embd, &layer.ffn_norm, self.rms_eps)?;
-                match &layer.ffn {
-                    LayerFfn::Dense(dense) => {
-                        self.gemm_into(&dense.gate, n, &s.x, &mut s.gate, pool)?;
-                        self.gemm_into(&dense.up, n, &s.x, &mut s.up, pool)?;
-                        ffn_gate_act_inplace(&mut s.gate, self.ffn_gelu);
-                        for (hv, uv) in s.gate.iter_mut().zip(s.up.iter()) {
-                            *hv *= *uv;
-                        }
-                        self.gemm_into(&dense.down, n, &s.gate, &mut s.ffn_out, pool)?;
-                    }
-                    LayerFfn::Llama4Moe(moe) => {
-                        self.llama4_moe_into(moe.as_ref(), n, s, pool, moe_trace, expert_store)?
-                    }
-                    LayerFfn::LlamaMoe(moe) => {
-                        self.llama_moe_into(moe.as_ref(), n, s, pool, moe_trace, expert_store)?
-                    }
-                    LayerFfn::Qwen2Moe(moe) => {
-                        self.qwen2moe_into(moe.as_ref(), n, s, pool, moe_trace, expert_store)?
-                    }
-                    LayerFfn::Qwen3Moe(moe) => {
-                        self.qwen3moe_into(moe.as_ref(), n, s, pool, moe_trace, expert_store)?
-                    }
-                    LayerFfn::Qwen3Next(moe) => {
-                        self.qwen3next_into(moe.as_ref(), n, s, pool, moe_trace, expert_store)?
-                    }
-                    LayerFfn::Phi2(_) => return Err(LlamaError::Shape("phi2 ffn".into())),
-                }
-                add_into(&mut s.x, &s.ffn_out, &s.residual)?;
-            }
-        }
-        let last_off = n.saturating_sub(1).saturating_mul(self.n_embd);
-        let last =
-            s.x.get(last_off..last_off.saturating_add(self.n_embd))
-                .ok_or_else(|| LlamaError::Shape("prefill last".into()))?;
-        copy_buf(&mut s.xn, last);
-        if self.phi2 {
-            layernorm_inplace(
-                &mut s.xn,
-                &self.output_norm,
-                self.output_norm_b.as_deref(),
-                self.rms_eps,
-            )?;
-        } else {
-            rmsnorm_inplace(&mut s.xn, &self.output_norm, self.rms_eps)?;
-        }
-        self.gemv_into(&self.output, &s.xn, &mut s.logits, pool)?;
-        add_bias_rows(&mut s.logits, self.n_vocab, self.output_b.as_deref())?;
+        self.transformer(
+            &mut TransformerRun {
+                s,
+                pool,
+                moe_trace,
+                expert_store,
+                cache_k,
+                cache_v,
+                n,
+                width,
+                hd,
+            },
+            &[addr],
+            &positions,
+            LogitsKind::Last,
+        )?;
         drop(pool_guard);
         *n_past = end;
         moe_trace.ids.extend_from_slice(&moe_trace.batch);
@@ -9962,6 +10240,110 @@ mod tests {
                 "second sequence must intern-hit the first sequence's full blocks"
             );
         }
+    }
+
+    #[test]
+    fn forward_batch_two_paged_matches_sequential() {
+        let prompt = [1u32, 2, 3, 4];
+        for bytes in [tiny_llama_gguf(), tiny_qwen3moe_gguf(), tiny_llama4_gguf()] {
+            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("m");
+            let pool = model.new_paged_pool(2, 16).expect("pool");
+            let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+            let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+            let _pa = model.prefill(&mut a, &prompt).expect("pa");
+            let _pb = model.prefill(&mut b, &[5, 0, 5, 0]).expect("pb");
+            let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+            let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+            let _pas = model.prefill(&mut a_seq, &prompt).expect("pas");
+            let _pbs = model.prefill(&mut b_seq, &[5, 0, 5, 0]).expect("pbs");
+            let exp_a = model.forward(&mut a_seq, 1).expect("fa");
+            let exp_b = model.forward(&mut b_seq, 2).expect("fb");
+            let mut pair = [&mut a, &mut b];
+            let got = model.forward_batch(&mut pair, &[1, 2]).expect("batch");
+            assert_eq!(got.len(), 2);
+            assert_logits_match(&got[0], &exp_a);
+            assert_logits_match(&got[1], &exp_b);
+        }
+    }
+
+    #[test]
+    fn forward_batch_three_paged_matches_sequential() {
+        let prompts = [[1u32, 2, 3, 4], [5, 0, 5, 0], [1, 2, 0, 1]];
+        let toks = [1u32, 2, 3];
+        let model = Llama::from_gguf(load_gguf_owned(tiny_llama_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 32).expect("pool");
+        let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+        let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+        let mut c = model.new_paged_cache_on(&pool, 16).expect("c");
+        let _pa = model.prefill(&mut a, &prompts[0]).expect("pa");
+        let _pb = model.prefill(&mut b, &prompts[1]).expect("pb");
+        let _pc = model.prefill(&mut c, &prompts[2]).expect("pc");
+        let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+        let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+        let mut c_seq = model.new_paged_cache_on(&pool, 16).expect("cs");
+        let _pas = model.prefill(&mut a_seq, &prompts[0]).expect("pas");
+        let _pbs = model.prefill(&mut b_seq, &prompts[1]).expect("pbs");
+        let _pcs = model.prefill(&mut c_seq, &prompts[2]).expect("pcs");
+        let exp_a = model.forward(&mut a_seq, toks[0]).expect("fa");
+        let exp_b = model.forward(&mut b_seq, toks[1]).expect("fb");
+        let exp_c = model.forward(&mut c_seq, toks[2]).expect("fc");
+        let mut triple = [&mut a, &mut b, &mut c];
+        let got = model.forward_batch(&mut triple, &toks).expect("batch");
+        assert_eq!(got.len(), 3);
+        assert_logits_match(&got[0], &exp_a);
+        assert_logits_match(&got[1], &exp_b);
+        assert_logits_match(&got[2], &exp_c);
+    }
+
+    #[test]
+    fn forward_batch_mixed_dense_paged_matches_sequential() {
+        let prompt = [1u32, 2, 3, 4];
+        let model = Llama::from_gguf(load_gguf_owned(tiny_llama_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 16).expect("pool");
+        let mut dense = model.new_cache(16).expect("d");
+        let mut paged = model.new_paged_cache_on(&pool, 16).expect("p");
+        let _pd = model.prefill(&mut dense, &prompt).expect("pd");
+        let _pp = model.prefill(&mut paged, &[5, 0, 5, 0]).expect("pp");
+        let mut d_seq = model.new_cache(16).expect("ds");
+        let mut p_seq = model.new_paged_cache_on(&pool, 16).expect("ps");
+        let _pds = model.prefill(&mut d_seq, &prompt).expect("pds");
+        let _pps = model.prefill(&mut p_seq, &[5, 0, 5, 0]).expect("pps");
+        let exp_d = model.forward(&mut d_seq, 1).expect("fd");
+        let exp_p = model.forward(&mut p_seq, 2).expect("fp");
+        let mut pair = [&mut dense, &mut paged];
+        let got = model.forward_batch(&mut pair, &[1, 2]).expect("batch");
+        assert_eq!(got.len(), 2);
+        assert_logits_match(&got[0], &exp_d);
+        assert_logits_match(&got[1], &exp_p);
+    }
+
+    #[test]
+    fn forward_batch_expert_store_fallback_matches_sequential() {
+        let prompt = [1u32, 2, 3, 4];
+        let model =
+            Llama::from_gguf(load_gguf_owned(tiny_qwen3moe_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 16).expect("pool");
+        let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+        let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+        a.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog"),
+        ));
+        let _pa = model.prefill(&mut a, &prompt).expect("pa");
+        let _pb = model.prefill(&mut b, &[5, 0, 5, 0]).expect("pb");
+        let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+        let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+        a_seq.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog2"),
+        ));
+        let _pas = model.prefill(&mut a_seq, &prompt).expect("pas");
+        let _pbs = model.prefill(&mut b_seq, &[5, 0, 5, 0]).expect("pbs");
+        let exp_a = model.forward(&mut a_seq, 1).expect("fa");
+        let exp_b = model.forward(&mut b_seq, 2).expect("fb");
+        let mut pair = [&mut a, &mut b];
+        let got = model.forward_batch(&mut pair, &[1, 2]).expect("batch");
+        assert_eq!(got.len(), 2);
+        assert_logits_match(&got[0], &exp_a);
+        assert_logits_match(&got[1], &exp_b);
     }
 
     #[test]

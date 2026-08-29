@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — batched decode GEMM
+
+`Llama::forward_batch` runs Q/K/V, FFN, and lm_head as one GEMM of N
+decode tokens when the caches share a `PagedKvPool`. Attention stays
+per sequence (its `n_past` and block table). `Engine` decode uses this
+path for replay and sampled tokens. Logits bit-match sequential
+`forward` on writer tinies. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine waiting queue
 
 `Engine::add` beyond `max_seqs` parks the prompt. Each `step` retires

@@ -759,6 +759,10 @@ model, do not celebrate the sim.
 16. [x] Engine waiting queue: `add` beyond `max_seqs` parks the prompt.
     Finished slots retire (KV Drop) and waiters install. Greedy ids still
     match `greedy_generate_cache`. Distinct from `expertvm schedule` arrivals.
+17. [x] Batched decode GEMM: `Llama::forward_batch` GEMMs Q/K/V, FFN, and
+    lm_head across sequences that share one `PagedKvPool`. Attention stays
+    per sequence. Engine decode (replay and sample) uses it. Logits
+    bit-match sequential `forward`. Mixed dense/store/trace falls back.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

@@ -359,21 +359,44 @@ impl<'a> Engine<'a> {
 
     /// Replay generated ids into KV, then sample one new greedy token.
     ///
-    /// Cap errors preempt a victim and retry the same cell. Already sampled
-    /// tokens are never drawn again.
+    /// Decode forwards that are ready in the same step share one batched GEMM
+    /// (`Llama::forward_batch`) when they sit on this engine's intern pool.
     fn decode_ready(&mut self) -> Result<usize, LlamaError> {
         let mut n = 0usize;
-        for i in 0..self.slots.len() {
-            n = n.saturating_add(self.decode_one(i)?);
+        loop {
+            let mut replay = Vec::new();
+            for i in 0..self.slots.len() {
+                let Some(cell) = self.slot(i) else {
+                    continue;
+                };
+                if !cell.is_decode() || cell.replay >= cell.generated.len() {
+                    continue;
+                }
+                let tok = cell
+                    .generated
+                    .get(cell.replay)
+                    .copied()
+                    .ok_or_else(|| LlamaError::Shape("engine replay token".into()))?;
+                replay.push((i, tok));
+            }
+            if replay.is_empty() {
+                break;
+            }
+            n = n.saturating_add(self.forward_batch_items(&replay, true)?);
         }
+        let mut batch = Vec::new();
+        for i in 0..self.slots.len() {
+            n = n.saturating_add(self.sample_into_batch(i, &mut batch)?);
+        }
+        n = n.saturating_add(self.forward_batch_items(&batch, false)?);
         Ok(n)
     }
 
-    fn decode_one(&mut self, i: usize) -> Result<usize, LlamaError> {
-        if !self.slot(i).is_some_and(Slot::is_decode) {
-            return Ok(0);
-        }
-        self.replay_until_caught_up(i)?;
+    fn sample_into_batch(
+        &mut self,
+        i: usize,
+        batch: &mut Vec<(usize, u32)>,
+    ) -> Result<usize, LlamaError> {
         if !self.slot(i).is_some_and(Slot::is_decode) {
             return Ok(0);
         }
@@ -388,73 +411,99 @@ impl<'a> Engine<'a> {
         if self.slot(i).is_some_and(|s| s.last.is_empty()) {
             return Err(LlamaError::Shape("engine logits".into()));
         }
-        self.sample_and_advance(i)
-    }
-
-    fn replay_until_caught_up(&mut self, i: usize) -> Result<(), LlamaError> {
-        loop {
-            let Some(cell) = self.slot(i) else {
-                return Ok(());
-            };
-            if !cell.is_decode() || cell.replay >= cell.generated.len() {
-                return Ok(());
-            }
-            let tok = cell
-                .generated
-                .get(cell.replay)
-                .copied()
-                .ok_or_else(|| LlamaError::Shape("engine replay token".into()))?;
-            match self.forward_at(i, tok) {
-                Ok(()) => {
-                    if let Ok(s) = self.slot_mut(i) {
-                        s.replay = s.replay.saturating_add(1);
-                    }
-                }
-                Err(e) => self.on_cap(i, e)?,
-            }
-        }
-    }
-
-    fn sample_and_advance(&mut self, i: usize) -> Result<usize, LlamaError> {
         let eos = self.cfg.eos;
         let next = {
             let slot = self.slot_mut(i)?;
-            if slot.last.is_empty() {
-                return Err(LlamaError::Shape("engine logits".into()));
-            }
             argmax(&slot.last)
         };
-        {
-            let slot = self.slot_mut(i)?;
-            if eos == Some(next) {
-                slot.done = true;
-                return Ok(1);
-            }
-            slot.generated.push(next);
-            slot.last.clear();
-            if slot.generated.len() >= slot.n_predict {
-                slot.done = true;
-                return Ok(1);
-            }
+        let slot = self.slot_mut(i)?;
+        if eos == Some(next) {
+            slot.done = true;
+            return Ok(1);
         }
+        slot.generated.push(next);
+        slot.last.clear();
+        if slot.generated.len() >= slot.n_predict {
+            slot.done = true;
+            return Ok(1);
+        }
+        batch.push((i, next));
+        Ok(0)
+    }
+
+    fn forward_batch_items(
+        &mut self,
+        items: &[(usize, u32)],
+        replay: bool,
+    ) -> Result<usize, LlamaError> {
+        if items.is_empty() {
+            return Ok(0);
+        }
+        let mut rest: Vec<(usize, u32)> = items.to_vec();
         loop {
-            match self.forward_at(i, next) {
-                Ok(()) => {
-                    if let Ok(s) = self.slot_mut(i) {
-                        s.replay = s.generated.len();
+            match self.try_forward_batch(&rest, replay) {
+                Ok(n) => return Ok(n),
+                Err(BatchFail::Other(e)) => return Err(e),
+                Err(BatchFail::Cap(except, e)) => {
+                    self.on_cap(except, e)?;
+                    rest.retain(|(i, _)| self.slot_batchable(*i));
+                    if rest.is_empty() {
+                        return Ok(1);
                     }
-                    return Ok(1);
                 }
-                Err(e) => self.on_cap(i, e)?,
             }
         }
     }
 
-    fn forward_at(&mut self, i: usize, tok: u32) -> Result<(), LlamaError> {
-        let llama = self.llama;
-        let slot = self.slot_mut(i)?;
-        slot.last = llama.forward_logits(&mut slot.cache, tok)?.to_vec();
-        Ok(())
+    /// True when this slot still has decode KV and an unforwarded generated id.
+    ///
+    /// After a cap preempt the victim's `n_past` is 0, so it must leave the
+    /// batch. Retrying the original items would write the sampled token at
+    /// position 0 instead of re-prefill + replay.
+    fn slot_batchable(&self, i: usize) -> bool {
+        self.slot(i)
+            .is_some_and(|s| s.is_decode() && s.replay < s.generated.len())
+    }
+
+    fn try_forward_batch(
+        &mut self,
+        items: &[(usize, u32)],
+        replay: bool,
+    ) -> Result<usize, BatchFail> {
+        for &(i, _) in items {
+            let slot = self.slot_mut(i).map_err(BatchFail::Other)?;
+            match slot.cache.prepare_append(1) {
+                Ok(()) => {}
+                Err(e) if is_kv_cap(&e) => return Err(BatchFail::Cap(i, e)),
+                Err(e) => return Err(BatchFail::Other(e)),
+            }
+        }
+        let mut order: Vec<(usize, u32)> = items.to_vec();
+        order.sort_by_key(|(i, _)| *i);
+        let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
+        let tokens: Vec<u32> = order.iter().map(|(_, t)| *t).collect();
+        let mut slots = borrow_slots_mut(&mut self.slots, &indices).map_err(BatchFail::Other)?;
+        let mut caches: Vec<&mut KvCache> = slots.iter_mut().map(|s| &mut s.cache).collect();
+        let rows = match self.llama.forward_batch(&mut caches, &tokens) {
+            Ok(r) => r,
+            Err(e) if is_kv_cap(&e) => {
+                let except = items.first().map_or(0, |(i, _)| *i);
+                return Err(BatchFail::Cap(except, e));
+            }
+            Err(e) => return Err(BatchFail::Other(e)),
+        };
+        if rows.len() != slots.len() {
+            return Err(BatchFail::Other(LlamaError::Shape("forward batch".into())));
+        }
+        for (slot, row) in slots.iter_mut().zip(rows) {
+            slot.last = row;
+            if replay {
+                slot.replay = slot.replay.saturating_add(1);
+            } else {
+                slot.replay = slot.generated.len();
+            }
+        }
+        Ok(indices.len())
     }
 
     fn slot(&self, i: usize) -> Option<&Slot> {
@@ -520,6 +569,41 @@ impl<'a> Engine<'a> {
 
 fn is_kv_cap(err: &LlamaError) -> bool {
     matches!(err, LlamaError::Shape(s) if s.as_str() == "kv page cap")
+}
+
+enum BatchFail {
+    Cap(usize, LlamaError),
+    Other(LlamaError),
+}
+
+fn borrow_slots_mut<'a>(
+    slots: &'a mut [Option<Slot>],
+    indices: &[usize],
+) -> Result<Vec<&'a mut Slot>, LlamaError> {
+    let mut out = Vec::new();
+    let mut rest = slots;
+    let mut base = 0usize;
+    for &i in indices {
+        if i < base {
+            return Err(LlamaError::Shape("engine batch order".into()));
+        }
+        let skip = i.saturating_sub(base);
+        if skip >= rest.len() {
+            return Err(LlamaError::Shape("engine slot".into()));
+        }
+        let (_, tail) = rest.split_at_mut(skip);
+        let (one, next) = tail.split_at_mut(1);
+        let cell = one
+            .first_mut()
+            .ok_or_else(|| LlamaError::Shape("engine slot".into()))?;
+        let slot = cell
+            .as_mut()
+            .ok_or_else(|| LlamaError::Shape("engine slot".into()))?;
+        out.push(slot);
+        rest = next;
+        base = i.saturating_add(1);
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
