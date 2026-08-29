@@ -20,7 +20,7 @@ use crate::tok::Tokenizer;
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--trace-out FILE]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
@@ -33,6 +33,7 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --expert-8gpu     8×H100 NVLink profile (`--expert-sim`; enables plan_placement)
       --expert-bytes N  simulated expert page bytes (`--expert-sim`; default: 4096)
       --prefill-chunk N prefill tokens per Engine step (`--engine`; `0` = the rest)
+      --decode-first    hold leftover prefill while any live sequence is decoding (`--engine`)
       --trace-out FILE  append batched MoE ExpertAccess JSONL (`--engine`)
 
 POST /generate takes {\"prompt\": TEXT} or, to render the model's own
@@ -45,7 +46,8 @@ together (`gguf_gemv engine` is the same scheduler). `--kv-page N` interned
 completed blocks so a later prompt can hit them after a rewind (`page_hits`).
 `--engine` JSON `page_hits` is the intern-hit delta for that sequence.
 `--expert-slots` / `--expert-sim` park the same ExpertStore as `gguf_gemv engine`.
-`--prefill-chunk` interleaves long prefills with decode. `--trace-out` writes
+`--prefill-chunk` interleaves long prefills with decode. `--decode-first` holds
+leftover prefill while any live sequence is already decoding. `--trace-out` writes
 router JSONL as sequences finish. Not a production inference server.
 ";
 
@@ -89,6 +91,8 @@ pub struct ServeArgs {
     pub expert_bytes: Option<u64>,
     /// Prefill tokens per Engine step (`0` = the rest). `--engine` only.
     pub prefill_chunk: usize,
+    /// Hold leftover prefill while any live sequence is decoding. `--engine` only.
+    pub decode_first: bool,
     /// Append Engine MoE traces as JSONL (`--engine`). `None` leaves tracing off.
     pub trace_out: Option<String>,
 }
@@ -134,7 +138,7 @@ impl From<std::io::Error> for ServeError {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--trace-out FILE]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--trace-out FILE]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -153,6 +157,7 @@ where
     let mut expert_8gpu = false;
     let mut expert_bytes = None;
     let mut prefill_chunk = 0usize;
+    let mut decode_first = false;
     let mut trace_out = None;
     let mut it = args.into_iter();
     while let Some(raw) = it.next() {
@@ -230,6 +235,12 @@ where
                     &opt_value("prefill-chunk", inline, &mut it)?,
                 )?;
             }
+            "--decode-first" => {
+                if inline.is_some() {
+                    return usage_err("--decode-first does not take a value");
+                }
+                decode_first = true;
+            }
             "--trace-out" => {
                 trace_out = Some(opt_value("trace-out", inline, &mut it)?);
             }
@@ -271,6 +282,9 @@ where
     if prefill_chunk > 0 && !engine {
         return usage_err("--prefill-chunk requires --engine");
     }
+    if decode_first && !engine {
+        return usage_err("--decode-first requires --engine");
+    }
     if trace_out.is_some() && !engine {
         return usage_err("--trace-out requires --engine");
     }
@@ -287,6 +301,7 @@ where
         expert_8gpu,
         expert_bytes,
         prefill_chunk,
+        decode_first,
         trace_out,
     }))
 }
@@ -995,6 +1010,7 @@ mod tests {
             expert_8gpu: false,
             expert_bytes: None,
             prefill_chunk: 0,
+            decode_first: false,
             trace_out: None,
         }
     }
@@ -1065,6 +1081,7 @@ mod tests {
         assert!(!a.engine);
         assert_eq!(a.max_seqs, None);
         assert_eq!(a.prefill_chunk, 0);
+        assert!(!a.decode_first);
         assert_eq!(a.trace_out, None);
     }
 
@@ -1094,6 +1111,7 @@ mod tests {
                 expert_8gpu: false,
                 expert_bytes: None,
                 prefill_chunk: 0,
+                decode_first: false,
                 trace_out: None,
             }
         );
@@ -1168,6 +1186,7 @@ mod tests {
                 expert_8gpu: false,
                 expert_bytes: None,
                 prefill_chunk: 0,
+                decode_first: false,
                 trace_out: None,
             }
         );
@@ -1210,13 +1229,22 @@ mod tests {
         assert!(err.contains("--prefill-chunk requires --engine"), "{err}");
         let err = parse_serve_args(["m.gguf", "--trace-out", "t.jsonl"]).unwrap_err();
         assert!(err.contains("--trace-out requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--decode-first"]).unwrap_err();
+        assert!(err.contains("--decode-first requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--decode-first=1"]).unwrap_err();
+        assert!(
+            err.contains("--decode-first does not take a value"),
+            "{err}"
+        );
         let a = run(&[
             "m.gguf",
             "--engine",
             "--prefill-chunk=1",
+            "--decode-first",
             "--trace-out=t.jsonl",
         ]);
         assert_eq!(a.prefill_chunk, 1);
+        assert!(a.decode_first);
         assert_eq!(a.trace_out.as_deref(), Some("t.jsonl"));
     }
 

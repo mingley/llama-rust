@@ -2,7 +2,9 @@
 //!
 //! Several sequences share interned KV blocks. Each [`Engine::step`] prefills
 //! at most `prefill_chunk` tokens per waiting sequence, then greedily samples
-//! one token for every sequence whose prompt is in KV. Sequences may be added
+//! one token for every sequence whose prompt is in KV. [`EngineCfg::decode_first`]
+//! holds leftover prefill while any live sequence is already decoding (same
+//! policy as `expertvm schedule --decode-first`). Sequences may be added
 //! while others are already decoding. Sequences that do not fit in
 //! `max_seqs` wait and are admitted when a finished sequence is retired.
 //! Prefill chunks and replay tokens that are ready in the same step share one
@@ -59,6 +61,12 @@ pub struct EngineCfg {
     pub prefill_chunk: usize,
     /// Stop sampling when this id is drawn (`None` never stops early).
     pub eos: Option<u32>,
+    /// Hold leftover prefill while any live sequence is already decoding.
+    ///
+    /// New waiters still admit into a slot; their prompt stays unforwarded
+    /// until every in-flight decode finishes. Default `false` interleaves
+    /// chunked prefill with decode in the same step.
+    pub decode_first: bool,
 }
 
 impl EngineCfg {
@@ -72,6 +80,7 @@ impl EngineCfg {
             max_seqs: 4,
             prefill_chunk: 0,
             eos: None,
+            decode_first: false,
         }
     }
 }
@@ -262,6 +271,12 @@ impl<'a> Engine<'a> {
     #[must_use]
     pub fn waiting(&self) -> usize {
         self.wait.len()
+    }
+
+    /// KV tokens in a live slot. Waiters and retired sequences are `None`.
+    #[must_use]
+    pub fn n_past(&self, id: SeqId) -> Option<usize> {
+        self.slot_by_id(id).map(|s| s.cache.n_past)
     }
 
     /// Generated ids for `id` (empty until decode starts, including waiters).
@@ -630,18 +645,25 @@ impl<'a> Engine<'a> {
     }
 
     fn collect_compute_jobs(&self) -> Vec<(usize, bool)> {
+        let hold = self.hold_prefill();
         let mut jobs = Vec::new();
         for i in 0..self.slots.len() {
             let Some(s) = self.slot(i) else {
                 continue;
             };
             if s.is_prefill() {
-                jobs.push((i, false));
+                if !hold {
+                    jobs.push((i, false));
+                }
             } else if s.is_decode() && s.replay < s.generated.len() {
                 jobs.push((i, true));
             }
         }
         jobs
+    }
+
+    fn hold_prefill(&self) -> bool {
+        self.cfg.decode_first && self.slots.iter().flatten().any(Slot::is_decode)
     }
 
     fn compute_one_at_a_time(&mut self) -> Result<usize, LlamaError> {
@@ -691,8 +713,10 @@ impl<'a> Engine<'a> {
     }
 
     fn slot_compute(&self, i: usize) -> bool {
-        self.slot(i)
-            .is_some_and(|s| s.is_prefill() || (s.is_decode() && s.replay < s.generated.len()))
+        let hold = self.hold_prefill();
+        self.slot(i).is_some_and(|s| {
+            (s.is_prefill() && !hold) || (s.is_decode() && s.replay < s.generated.len())
+        })
     }
 
     fn try_compute_batch(&mut self, jobs: &[(usize, bool)]) -> Result<usize, BatchFail> {
@@ -755,6 +779,9 @@ impl<'a> Engine<'a> {
     }
 
     fn prefill_one_at_a_time(&mut self) -> Result<usize, LlamaError> {
+        if self.hold_prefill() {
+            return Ok(0);
+        }
         let mut n = 0usize;
         for i in 0..self.slots.len() {
             loop {
@@ -1242,17 +1269,116 @@ mod tests {
         let b = eng.add(&tokens_b, 2).expect("queued");
         assert_eq!(eng.waiting(), 1);
         assert_eq!(eng.active(), 1);
+        assert_eq!(eng.n_past(b), None);
         eng.run().expect("run");
         assert_eq!(eng.take(a).expect("ta").generated, exp_a);
         assert_eq!(eng.take(b).expect("tb").generated, exp_b);
         assert_eq!(eng.waiting(), 0);
     }
 
+    #[test]
+    fn engine_decode_first_holds_leftover_prefill() {
+        let prompt_a = [1u32, 2];
+        let prompt_b = [1u32, 2, 3, 4, 5, 0, 1, 2];
+        let model = Llama::from_gguf(load_gguf_owned(tiny_llama_gguf()).expect("o")).expect("m");
+        let held = n_past_b_when_a_done(&model, &prompt_a, &prompt_b, true);
+        let open = n_past_b_when_a_done(&model, &prompt_a, &prompt_b, false);
+        assert_eq!(held, 2, "decode_first must hold B after A finishes prompt");
+        assert!(
+            open >= 4,
+            "without decode_first B must keep prefilling, n_past={open}"
+        );
+        assert!(open > held, "open n_past={open} held={held}");
+    }
+
+    fn n_past_b_when_a_done(
+        model: &Llama,
+        prompt_a: &[u32],
+        prompt_b: &[u32],
+        decode_first: bool,
+    ) -> usize {
+        let mut cfg = EngineCfg::tiny();
+        cfg.max_seqs = 2;
+        cfg.prefill_chunk = 1;
+        cfg.decode_first = decode_first;
+        let mut eng = Engine::new(model, cfg).expect("eng");
+        let a = eng.add(prompt_a, 4).expect("a");
+        let b = eng.add(prompt_b, 1).expect("b");
+        assert_eq!(eng.n_past(a), Some(0));
+        assert_eq!(eng.n_past(b), Some(0));
+        for _ in 0..128 {
+            if eng.is_finished(a) {
+                break;
+            }
+            let n = eng.step().expect("step");
+            assert!(n > 0, "engine stall before A finished");
+        }
+        assert!(eng.is_finished(a), "A must finish generating");
+        eng.n_past(b).expect("B still live")
+    }
+
+    #[test]
+    fn engine_decode_first_ids_still_match_independent() {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        for bytes in [tiny_llama_gguf(), tiny_qwen3moe_gguf()] {
+            let g = load_gguf_owned(bytes).expect("owned");
+            let tok = Tokenizer::from_gguf(&g).expect("tok");
+            let model = Llama::from_gguf(g).expect("m");
+            let exp_a = independent(&model, &tok, &tokens_a, 2);
+            let exp_b = independent(&model, &tok, &tokens_b, 2);
+            let mut cfg = EngineCfg::tiny();
+            cfg.decode_first = true;
+            cfg.prefill_chunk = 1;
+            cfg.eos = tok.eos;
+            let mut eng = Engine::new(&model, cfg).expect("eng");
+            let a = eng.add(&tokens_a, 2).expect("a");
+            let b = eng.add(&tokens_b, 2).expect("b");
+            eng.run().expect("run");
+            assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+            assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+        }
+    }
+
     fn batch_prompt(i: u32) -> [u32; 2] {
         [i % 6, (i / 6) % 6]
     }
 
-    fn run_batch_128(bytes: Vec<u8>, with_direct: bool) {
+    #[derive(Clone, Copy)]
+    enum Batch128Store {
+        Blob,
+        Direct,
+        Cached,
+        Gpu,
+    }
+
+    fn attach_batch_128(eng: &mut Engine<'_>, model: &Llama, kind: Batch128Store) {
+        match kind {
+            Batch128Store::Blob => {}
+            Batch128Store::Direct => {
+                eng.attach_expert_store(LiveStore::Direct(
+                    model.expert_direct_store().expect("catalog"),
+                ));
+            }
+            Batch128Store::Cached => {
+                let catalog = model.expert_direct_store().expect("catalog");
+                let n = catalog.len().max(1);
+                eng.attach_expert_store(LiveStore::Cached(
+                    CachedStore::new(catalog, n).expect("cached"),
+                ));
+            }
+            Batch128Store::Gpu => {
+                let catalog = model.expert_direct_store().expect("catalog");
+                let n = catalog.len().max(1);
+                let gpu =
+                    SimulatedGpuStore::new(catalog, n, HardwareProfile::example_h100_sxm(), 4096)
+                        .expect("gpu");
+                eng.attach_expert_store(LiveStore::simulated(gpu));
+            }
+        }
+    }
+
+    fn run_batch_128(bytes: Vec<u8>, kind: Batch128Store) {
         let g = load_gguf_owned(bytes).expect("owned");
         let tok = Tokenizer::from_gguf(&g).expect("tok");
         let model = Llama::from_gguf(g).expect("m");
@@ -1267,11 +1393,7 @@ mod tests {
         cfg.pool_blocks = 64;
         cfg.eos = tok.eos;
         let mut eng = Engine::new(&model, cfg).expect("eng");
-        if with_direct {
-            eng.attach_expert_store(LiveStore::Direct(
-                model.expert_direct_store().expect("catalog"),
-            ));
-        }
+        attach_batch_128(&mut eng, &model, kind);
         let mut ids = Vec::new();
         for i in 0..n {
             ids.push(eng.add(&batch_prompt(i), n_predict).expect("add"));
@@ -1290,17 +1412,37 @@ mod tests {
             "8 in-flight sequences must GEMM together, peak={}",
             eng.stats().gemm_peak
         );
-        if with_direct {
-            let hits = eng.expert_store_metrics().expect("metrics").hits;
-            assert!(hits > 0, "MoE batch-128 must acquire from DirectStore");
+        match kind {
+            Batch128Store::Blob => {}
+            Batch128Store::Direct | Batch128Store::Cached => {
+                let hits = eng.expert_store_metrics().expect("metrics").hits;
+                assert!(hits > 0, "MoE batch-128 must acquire from the store");
+            }
+            Batch128Store::Gpu => {
+                let hits = eng.expert_store_metrics().expect("metrics").hits;
+                assert!(
+                    hits > 0,
+                    "MoE batch-128 must acquire from SimulatedGpuStore"
+                );
+                let score = eng.expert_store_score().expect("sc").expect("sim");
+                assert!(score.wall_ns > 0, "gpu-sim must bill wall_ns");
+            }
         }
     }
 
     #[test]
     fn engine_batch_128_waiting_queue_matches_independent() {
-        run_batch_128(tiny_llama_gguf(), false);
-        run_batch_128(tiny_qwen3moe_gguf(), true);
-        run_batch_128(tiny_qwen3moe_2layer_gguf(), true);
+        run_batch_128(tiny_llama_gguf(), Batch128Store::Blob);
+        run_batch_128(tiny_qwen3moe_gguf(), Batch128Store::Direct);
+        run_batch_128(tiny_qwen3moe_2layer_gguf(), Batch128Store::Direct);
+    }
+
+    #[test]
+    fn engine_batch_128_cached_and_gpu_match_independent() {
+        run_batch_128(tiny_qwen3moe_gguf(), Batch128Store::Cached);
+        run_batch_128(tiny_qwen3moe_2layer_gguf(), Batch128Store::Cached);
+        run_batch_128(tiny_qwen3moe_gguf(), Batch128Store::Gpu);
+        run_batch_128(tiny_qwen3moe_2layer_gguf(), Batch128Store::Gpu);
     }
 
     #[test]

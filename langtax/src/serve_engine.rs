@@ -3,8 +3,9 @@
 //! Default `gguf_gemv serve` stays one connection at a time. `--engine` admits
 //! several `POST /generate` bodies onto one interned pool so prefills and
 //! decodes GEMM together. `"stream": true` is HTTP/1.1 chunked NDJSON token
-//! lines then a final `generated` object. `--prefill-chunk` and `--trace-out`
-//! match `gguf_gemv engine`. No Tokio, no keep-alive, no OpenAI SDK surface.
+//! lines then a final `generated` object. `--prefill-chunk`, `--decode-first`,
+//! and `--trace-out` match `gguf_gemv engine`. No Tokio, no keep-alive, no
+//! OpenAI SDK surface.
 
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Read, Write};
@@ -84,6 +85,7 @@ fn engine_cfg(tok: &Tokenizer, args: &ServeArgs) -> EngineCfg {
         max_seqs,
         prefill_chunk: args.prefill_chunk,
         eos: tok.eos,
+        decode_first: args.decode_first,
     }
 }
 
@@ -529,6 +531,7 @@ mod tests {
             expert_8gpu: false,
             expert_bytes: None,
             prefill_chunk: 0,
+            decode_first: false,
             trace_out: None,
         }
     }

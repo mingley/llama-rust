@@ -48,14 +48,14 @@ usage: gguf_gemv <command> [args]
   infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]
   trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE [--capacity N]
   chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--kv-page N] [--show-prompt]
-  serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--trace-out FILE]
-  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--trace-out FILE]
+  serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--trace-out FILE]
+  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--trace-out FILE]
   write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|write-tiny-qwen3|write-tiny-gemma|write-tiny-llama4|write-tiny-llama-moe|write-tiny-qwen2moe|write-tiny-qwen3moe|write-tiny-qwen3moe-2layer|write-tiny-qwen2vl|write-tiny-qwen3vl|write-tiny-qwen3next|write-tiny-qwen35|write-tiny-phi2 <path>
 ";
 
 /// Usage for the `engine` verb.
 pub const ENGINE_USAGE: &str = "\
-usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--trace-out FILE]
+usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--trace-out FILE]
   -p, --prompt TEXT     prompt (repeatable; default: one `ab`)
   -n, --n-predict N     tokens to generate per sequence (default: 2)
       --n-ctx N         KV capacity (default: longest prompt + n_predict + 1)
@@ -64,6 +64,7 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
       --max-seqs N      in-flight sequences (default: number of prompts; extras wait).
                         Engine tests cover 128 waiters at max_seqs=8 (batch-128).
       --prefill-chunk N prefill tokens per step (`0` = the rest; default: 0)
+      --decode-first    hold leftover prefill while any live sequence is decoding
       --expert-slots N  ExpertStore on the Engine: omit = blob FFN, `0` = DirectStore,
                         N>0 = CachedStore with N slots (`--expert-sim` uses N, default 8)
       --expert-sim      SimulatedGpuStore (example H100, 4096-byte experts)
@@ -72,11 +73,13 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
       --trace-out FILE  write batched MoE ExpertAccess JSONL (all sequences)
 
 Runs Engine continuous batching on one interned pool. Several `--prompt`s
-join the same scheduler. A tight `--pool-blocks` preempts (recompute +
-replay). One ExpertStore is parked on each batched GEMM so MoE serving
-stays on the shared-pool path. After each GEMM the store sticky-pins
-last-used ∪ Markov experts (`slots - 1`; `slots == 1` pins nothing).
-A multi-GPU SimulatedGpuStore then `plan_placement`s those pins
+join the same scheduler. `--decode-first` holds leftover prefill while any
+live sequence is already decoding (ITL over leftover prefill; same policy
+as `expertvm schedule --decode-first`). A tight `--pool-blocks` preempts
+(recompute + replay). One ExpertStore is parked on each batched GEMM so
+MoE serving stays on the shared-pool path. After each GEMM the store
+sticky-pins last-used ∪ Markov experts (`slots - 1`; `slots == 1` pins
+nothing). A multi-GPU SimulatedGpuStore then `plan_placement`s those pins
 (D2D onto GPU0 vs leave on the striped home).
 MoE traces stay on that GEMM (per-row
 sequence / token / prefix). Prints each continuation (`n_gen` plus
@@ -410,6 +413,8 @@ pub struct EngineArgs {
     pub max_seqs: Option<usize>,
     /// Prefill tokens per sequence per step (`0` = the rest of the prompt).
     pub prefill_chunk: usize,
+    /// Hold leftover prefill while any live sequence is already decoding.
+    pub decode_first: bool,
     /// ExpertStore slots. `None` keeps blob FFN. `Some(0)` is DirectStore.
     pub expert_slots: Option<usize>,
     /// Attach [`SimulatedGpuStore`] (example H100) instead of Direct/Cached.
@@ -444,6 +449,7 @@ where
     let mut pool_blocks = None;
     let mut max_seqs = None;
     let mut prefill_chunk = 0usize;
+    let mut decode_first = false;
     let mut expert_slots = None;
     let mut expert_sim = false;
     let mut expert_8gpu = false;
@@ -501,6 +507,12 @@ where
                     "prefill-chunk",
                     &engine_value("prefill-chunk", inline, &mut it)?,
                 )?;
+            }
+            "--decode-first" => {
+                if inline.is_some() {
+                    return engine_err("--decode-first does not take a value");
+                }
+                decode_first = true;
             }
             "--expert-slots" => {
                 expert_slots = Some(engine_usize(
@@ -565,6 +577,7 @@ where
         pool_blocks,
         max_seqs,
         prefill_chunk,
+        decode_first,
         expert_slots,
         expert_sim,
         expert_8gpu,
@@ -695,6 +708,7 @@ fn engine_cfg(tok: &Tokenizer, args: &EngineArgs) -> Result<EngineCfg, Box<dyn s
         max_seqs,
         prefill_chunk: args.prefill_chunk,
         eos: tok.eos,
+        decode_first: args.decode_first,
     })
 }
 
@@ -1139,6 +1153,7 @@ mod tests {
                 assert_eq!(a.block_size, EngineArgs::DEFAULT_BLOCK_SIZE);
                 assert_eq!(a.pool_blocks, None);
                 assert_eq!(a.prefill_chunk, 0);
+                assert!(!a.decode_first);
                 assert_eq!(a.expert_slots, None);
                 assert!(!a.expert_sim);
                 assert!(!a.expert_8gpu);
@@ -1199,6 +1214,15 @@ mod tests {
             EngineCmd::Run(a) => assert_eq!(a.trace_out.as_deref(), Some("out.jsonl")),
             EngineCmd::Help => panic!("expected Run"),
         }
+        match parse_engine_args(["m.gguf", "--decode-first"]).expect("df") {
+            EngineCmd::Run(a) => assert!(a.decode_first),
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        let err = parse_engine_args(["m.gguf", "--decode-first=1"]).unwrap_err();
+        assert!(
+            err.contains("--decode-first does not take a value"),
+            "{err}"
+        );
         assert_eq!(parse_engine_args(["--help"]).unwrap(), EngineCmd::Help);
         let err = parse_engine_args(["--n-predict", "2"]).unwrap_err();
         assert!(err.contains("missing GGUF path"), "{err}");

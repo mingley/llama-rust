@@ -875,6 +875,15 @@ model, do not celebrate the sim.
 42. [x] Engine batch-128 on Qwen3MoE DirectStore (1-layer and 2-layer
     tinies): 128 waiters, `max_seqs=8`, store acquires, GEMM together.
     Dual score still has no `$/M tokens`.
+43. [x] Engine `decode_first`: hold leftover prefill while any live
+    sequence is already decoding (same policy as
+    `expertvm schedule --decode-first`). Greedy ids still match
+    independent decode. `gguf_gemv engine --decode-first` /
+    `serve --engine --decode-first`. Dual score still has no `$/M tokens`.
+44. [x] Engine batch-128 on Qwen3MoE CachedStore and SimulatedGpuStore
+    (1-layer and 2-layer tinies): 128 waiters, `max_seqs=8`, greedy
+    identity, store hits, gpu-sim `wall_ns`. Dual score still has no
+    `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

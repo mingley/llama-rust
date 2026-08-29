@@ -139,7 +139,9 @@ chunk (layer-major) per engine step, finished sequences retire,
 whole next token unless `--prefill-chunk N` limits a sequence's first
 token to N layer-events so a short decode is not stuck behind a long
 prefill. `--decode-first` holds leftover prefill while any running
-sequence is already in decode. `--slo-reject` drops a waiter whose queue
+sequence is already in decode. `llama-rust` `EngineCfg::decode_first` /
+`gguf_gemv engine --decode-first` is the same hold on real KV, not this
+trace walker. `--slo-reject` drops a waiter whose queue
 wait already meets `--ttft-slo-ns` (`rejected=` on the schedule line).
 `--prefix-cache` skips GPU work for a token whose JSONL `"p"` hash
 already completed on another sequence (`prefix_hits=` on the schedule

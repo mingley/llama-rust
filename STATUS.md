@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine `decode_first` + batch-128 Cached/GPU stores
+
+`EngineCfg::decode_first` holds leftover prefill while any live sequence
+is already decoding (same policy as `expertvm schedule --decode-first`).
+Greedy ids still match independent decode. `gguf_gemv engine --decode-first`
+and `serve --engine --decode-first` wire the knob. Engine batch-128 on
+writer-tiny Qwen3MoE (1-layer and 2-layer) now also runs CachedStore
+(full catalog) and SimulatedGpuStore (example H100, 4096-byte pages)
+with identity, store hits, and gpu-sim `wall_ns`. Dual score still has
+no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine batch-128 MoE DirectStore
 
 128 Engine prompts on writer-tiny Qwen3MoE (1-layer and 2-layer) with
