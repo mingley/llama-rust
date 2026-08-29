@@ -80,18 +80,26 @@ pub struct LinkProfile {
     ///
     /// Example knob, not a capture. GPU↔GPU copies ignore this.
     pub pageable_permille: u16,
+    /// Copy size is rounded up to this many bytes before `ramp_bytes` (0 or 1 = off).
+    ///
+    /// Example knob so a 1-byte DMA cannot beat a cache-line copy. Not a capture.
+    pub align_bytes: u64,
 }
 
 impl LinkProfile {
     /// Duration of a copy of `bytes` on an otherwise idle link.
     ///
-    /// `T = fixed_ns + (bytes + ramp_bytes) / bps`.
+    /// `T = fixed_ns + (align_up(bytes) + ramp_bytes) / bps`.
     /// Tiny copies pay `ramp_bytes` as if they were large, so fragmenting a
-    /// transfer cannot increase effective bandwidth. This is the pinned /
-    /// GPU-direct rate.
+    /// transfer cannot increase effective bandwidth. Sizes below `align_bytes`
+    /// bill as one aligned beat. This is the pinned / GPU-direct rate.
     #[must_use]
     pub fn copy_ns(&self, bytes: u64) -> u64 {
-        ns_for_bytes(bytes.saturating_add(self.ramp_bytes), self.bps).saturating_add(self.fixed_ns)
+        ns_for_bytes(
+            align_up(bytes, self.align_bytes).saturating_add(self.ramp_bytes),
+            self.bps,
+        )
+        .saturating_add(self.fixed_ns)
     }
 
     /// Pageable host copy: [`Self::copy_ns`] scaled by `1000 / pageable_permille`.
@@ -314,7 +322,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ntdp_mw={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ntdp_mw={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -325,7 +333,8 @@ impl HardwareProfile {
             g0.tdp_mw,
             g0.gemm_util_permille,
             g0.grouped_moe_permille,
-            self.host_pageable_permille(g0.id)
+            self.host_pageable_permille(g0.id),
+            self.host_align_bytes(g0.id)
         )
     }
 
@@ -345,9 +354,31 @@ impl HardwareProfile {
             .unwrap_or(500)
     }
 
+    fn host_align_bytes(&self, gpu: DeviceId) -> u64 {
+        self.links
+            .iter()
+            .find(|l| l.kind == LinkKind::Pcie && l.connects(None, Some(gpu)))
+            .map(|l| l.align_bytes)
+            .unwrap_or(128)
+    }
+
     /// Parse a `key=value` profile. Unknown keys are errors so captures cannot silently drop fields.
     pub fn parse(text: &str) -> Result<Self, SimError> {
         parse_profile(text)
+    }
+}
+
+/// Round `n` up to a multiple of `align`. `align <= 1` is a no-op.
+#[must_use]
+pub fn align_up(n: u64, align: u64) -> u64 {
+    if align <= 1 {
+        return n;
+    }
+    let rem = n % align;
+    if rem == 0 {
+        n
+    } else {
+        n.saturating_add(align.saturating_sub(rem))
     }
 }
 
@@ -417,6 +448,7 @@ fn pcie_host(gpu: DeviceId) -> LinkProfile {
         ramp_bytes: 256 * 1024,
         kind: LinkKind::Pcie,
         pageable_permille: 500,
+        align_bytes: link_align(LinkKind::Pcie),
     }
 }
 
@@ -429,6 +461,7 @@ fn nvlink(a: DeviceId, b: DeviceId) -> LinkProfile {
         ramp_bytes: 64 * 1024,
         kind: LinkKind::Nvlink,
         pageable_permille: 1000,
+        align_bytes: link_align(LinkKind::Nvlink),
     }
 }
 
@@ -441,6 +474,7 @@ fn pcie_peer(a: DeviceId, b: DeviceId) -> LinkProfile {
         ramp_bytes: 256 * 1024,
         kind: LinkKind::PciePeer,
         pageable_permille: 1000,
+        align_bytes: link_align(LinkKind::PciePeer),
     }
 }
 
@@ -453,6 +487,7 @@ fn rdma_peer(a: DeviceId, b: DeviceId) -> LinkProfile {
         ramp_bytes: 512 * 1024,
         kind: LinkKind::Rdma,
         pageable_permille: 1000,
+        align_bytes: link_align(LinkKind::Rdma),
     }
 }
 
@@ -465,6 +500,15 @@ fn pcie_host_slow(gpu: DeviceId) -> LinkProfile {
         ramp_bytes: 256 * 1024,
         kind: LinkKind::Pcie,
         pageable_permille: 500,
+        align_bytes: link_align(LinkKind::Pcie),
+    }
+}
+
+fn link_align(kind: LinkKind) -> u64 {
+    match kind {
+        LinkKind::Nvlink => 16,
+        LinkKind::Rdma => 64,
+        LinkKind::Pcie | LinkKind::PciePeer => 128,
     }
 }
 
@@ -506,6 +550,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut gemm_util_permille: u16 = 1000;
     let mut grouped_moe_permille: u16 = 1000;
     let mut pageable_permille: u16 = 500;
+    let mut align_bytes: u64 = 128;
     let mut mesh = MeshKind::NvlinkClique;
     let mut mesh_set = false;
     for raw in text.lines() {
@@ -534,6 +579,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             "gemm_util_permille" => gemm_util_permille = parse_u16(v)?,
             "grouped_moe_permille" => grouped_moe_permille = parse_u16(v)?,
             "pageable_permille" => pageable_permille = parse_u16(v)?,
+            "align_bytes" => align_bytes = parse_u64(v)?,
             "topology" => {
                 mesh = parse_mesh(v)?;
                 mesh_set = true;
@@ -575,6 +621,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             ramp_bytes: 256 * 1024,
             kind: LinkKind::Pcie,
             pageable_permille,
+            align_bytes,
         });
     }
     push_gpu_mesh(&mut links, n_gpus, mesh, nvlink_bps)?;
@@ -604,6 +651,7 @@ fn push_gpu_mesh(
                 2_000,
                 64 * 1024,
                 LinkKind::Nvlink,
+                link_align(LinkKind::Nvlink),
             );
             Ok(())
         }
@@ -615,6 +663,7 @@ fn push_gpu_mesh(
                 12_000,
                 256 * 1024,
                 LinkKind::PciePeer,
+                link_align(LinkKind::PciePeer),
             );
             Ok(())
         }
@@ -626,6 +675,7 @@ fn push_gpu_mesh(
                 25_000,
                 512 * 1024,
                 LinkKind::Rdma,
+                link_align(LinkKind::Rdma),
             );
             Ok(())
         }
@@ -650,6 +700,7 @@ fn clique_links(
     fixed_ns: u64,
     ramp_bytes: u64,
     kind: LinkKind,
+    align_bytes: u64,
 ) {
     for i in 0..n_gpus {
         for j in (i.saturating_add(1))..n_gpus {
@@ -661,6 +712,7 @@ fn clique_links(
                 ramp_bytes,
                 kind,
                 pageable_permille: 1000,
+                align_bytes,
             });
         }
     }
@@ -752,6 +804,34 @@ mod tests {
     }
 
     #[test]
+    fn aligned_copy_bills_a_full_beat() {
+        let link = LinkProfile {
+            a: None,
+            b: Some(DeviceId(0)),
+            bps: 32u64.saturating_mul(1_000_000_000),
+            fixed_ns: 0,
+            ramp_bytes: 0,
+            kind: LinkKind::Pcie,
+            pageable_permille: 1000,
+            align_bytes: 128,
+        };
+        assert_eq!(link.copy_ns(1), link.copy_ns(128));
+        assert!(link.copy_ns(129) > link.copy_ns(128));
+        assert_eq!(align_up(1, 128), 128);
+        assert_eq!(align_up(128, 128), 128);
+        assert_eq!(align_up(129, 128), 256);
+        assert_eq!(align_up(7, 1), 7);
+    }
+
+    #[test]
+    fn parse_align_bytes_on_host_pcie() {
+        let p = HardwareProfile::parse("gpus=1\nalign_bytes=256\n").unwrap();
+        let link = p.link(None, Some(DeviceId(0))).unwrap();
+        assert_eq!(link.align_bytes, 256);
+        assert!(p.to_profile_text().contains("align_bytes=256"));
+    }
+
+    #[test]
     fn pageable_copy_is_slower_than_pinned_at_default() {
         let pcie = pcie_host(DeviceId(0));
         assert_eq!(pcie.pageable_permille, 500);
@@ -764,6 +844,9 @@ mod tests {
         let dir = format!("{}/profiles", env!("CARGO_MANIFEST_DIR"));
         for file in [
             "h100-sxm.profile",
+            "h200-sxm.profile",
+            "8xh100-nvlink.profile",
+            "cheap-48gb.profile",
             "2xh100-pcie.profile",
             "bad-numa.profile",
             "2node-rdma.profile",

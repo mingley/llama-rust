@@ -72,8 +72,8 @@ use crate::sample::{SampleError, SampleParams, Sampler};
 use crate::tok::{TokError, Tokenizer};
 use crate::{write_gguf_with_kv, GGUF_DEFAULT_ALIGNMENT};
 use expertvm::{
-    prefetch_keys, transition_pair, weight_permille, DirectStore, ExpertAccess, ExpertKey,
-    ExpertParts, ExpertStore, LiveStore, Markov, Trace,
+    observe_chain, prefetch_keys, prefetch_keys_ctx, weight_permille, DirectStore, ExpertAccess,
+    ExpertKey, ExpertParts, ExpertStore, LiveStore, Markov, Trace,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -567,7 +567,7 @@ impl KvCache {
 }
 
 /// Opt-in MoE access log. Events allocate only when enabled. Markov prefetch
-/// runs when a store is attached (copy-forward ∪ online `P(to|from)`).
+/// runs when a store is attached (copy-forward ∪ lookback-2 `P(to|from, from_prev)`).
 #[derive(Default)]
 struct MoeTraceBuf {
     enabled: bool,
@@ -577,6 +577,7 @@ struct MoeTraceBuf {
     events: Vec<ExpertAccess>,
     markov: Markov,
     prev: Option<ExpertAccess>,
+    prev2: Option<ExpertAccess>,
 }
 
 impl MoeTraceBuf {
@@ -624,17 +625,22 @@ impl MoeTraceBuf {
                 keys.push(ExpertKey::new(self.layer, ex));
             }
         }
-        let planned = prefetch_keys(&self.markov, &keys);
+        let planned = match self.prev.as_ref() {
+            Some(p) => prefetch_keys_ctx(&self.markov, &p.keys(), &keys),
+            None => prefetch_keys(&self.markov, &keys),
+        };
         match store.prefetch(&planned) {
             Ok(_n) => {}
             Err(_e) => {}
         }
         let ev = self.event(token_off, selected, &[]);
-        if let Some(p) = self.prev.as_ref() {
-            if transition_pair(p, &ev) {
-                self.markov.observe(&p.keys(), &ev.keys());
-            }
-        }
+        observe_chain(
+            &mut self.markov,
+            self.prev2.as_ref(),
+            self.prev.as_ref(),
+            &ev,
+        );
+        self.prev2 = self.prev.clone();
         self.prev = Some(ev);
     }
 }

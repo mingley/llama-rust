@@ -42,17 +42,18 @@ warp scheduler, L1, …   ← do not model
 Memcpy cost is
 
 ```text
-T = T_fixed + (bytes + ramp) / peak_bandwidth
+T = T_fixed + (align_up(bytes, align_bytes) + ramp) / peak_bandwidth
 ```
 
-Eight thousand tiny copies cannot harvest full PCIe bandwidth. Concurrent
-copies on the same link share bandwidth. Kernels on one GPU are exclusive
-in v0 (copy engines still overlap compute). Profile knobs
-`gemm_util_permille` (achieved/peak) and `grouped_moe_permille` (grouped vs
-dense duration) scale kernel time. Defaults are 1000 (identity roofline).
-They are parseable; they are not a capture. Host PCIe links also carry
-`pageable_permille` (default `500`: pageable H2D takes twice pinned DMA).
-That is an example knob, not a capture.
+`align_bytes` (host PCIe default 128) so a 1-byte DMA cannot beat a
+cache-line copy. Eight thousand tiny copies cannot harvest full PCIe
+bandwidth. Concurrent copies on the same link share bandwidth. Kernels on
+one GPU are exclusive in v0 (copy engines still overlap compute). Profile
+knobs `gemm_util_permille` (achieved/peak) and `grouped_moe_permille`
+(grouped vs dense duration) scale kernel time. Defaults are 1000
+(identity roofline). They are parseable; they are not a capture. Host PCIe
+links also carry `pageable_permille` (default `500`: pageable H2D takes
+twice pinned DMA). That is an example knob, not a capture.
 
 ## Example profiles
 

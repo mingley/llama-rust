@@ -214,9 +214,14 @@ P(expert_j at layer L+1 |
    experts at L, L-1, …, prompt class, session)
 ```
 
-Online [`Markov`] table (no future leak) plus `Prefetch::{None, CopyForward, Markov, Both}` /
-`copy-forward` in `sim_replay_cfg`. `Both` is copy-forward ∪ Markov (decode's store path).
-Prefetch before the next router event.
+Online [`Markov`] table (no future leak, no invented prompt class) is
+`P(to|from)` plus lookback-2 `P(to|from, from_prev)` with order-1 backoff.
+`Prefetch::{None, CopyForward, Markov, Both}` / `copy-forward` in
+`sim_replay_cfg`. `Both` is copy-forward ∪ lookback-2 Markov (decode's store
+path). Prefetch before the next router event. `SimCfg::seq_streams` maps
+`sequence % n_streams` onto CUDA streams so a batched token can overlap
+H2D/GEMM (`expertvm sim --seq-streams`). Token-boundary TTFT samples when
+`token` changes, not when `sequence` changes.
 
 Design so vLLM / SGLang / mistral.rs can consume the crate. Nobody should
 have to adopt this inference server.
@@ -436,7 +441,8 @@ refused in this crate).
 commit A + hardware H + workload W + seed S  →  performance P
 ```
 
-Profiles live in `profiles/` (`h100-sxm.toml`, `8xh100-nvlink.toml`, …)
+Profiles live in `profiles/` (`h100-sxm.profile`, `h200-sxm.profile`,
+`8xh100-nvlink.profile`, `cheap-48gb.profile`, …)
 and are **empirical**, not hard-coded folklore:
 
 ```
@@ -500,6 +506,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   be captured; capture requires an idle stream.
 - performance model must include fixed overhead, size-dependent
   throughput, queueing, concurrency limits, alignment, startup latency
+  (`LinkProfile::align_bytes` rounds the billed payload up; a 1-byte DMA
+  cannot beat a 128-byte beat)
 - never let an agent “win” by issuing 8,000 tiny copies that the model
   treats as free
 
@@ -540,8 +548,8 @@ model, do not celebrate the sim.
    `acquire` then GEMV `ExpertParts`, then `release` (one expert at a time so
    `slots < top-k` still works). Direct/Cached/Simulated bit-match
    the blob path on writer tinies. Shared experts stay on the blob.
-   Prefetch is copy-forward ∪ online [`Markov`] (`MoeTraceBuf` when a store is
-   attached; `sim_replay_cfg` `Prefetch::{None, CopyForward, Markov}`).
+   Prefetch is copy-forward ∪ lookback-2 [`Markov`] (`MoeTraceBuf` when a store is
+   attached; `sim_replay_cfg` `Prefetch::{None, CopyForward, Markov, Both}`).
 7. [x] `gpu-sim` workspace crate: streams, events, HBM vs host-pinned,
    memcpy, leases, virtual clock. No CUDA. `expertvm sim` is the first app.
 8. [x] `infer-bench` crate: adversarial workloads + trace replay scores.

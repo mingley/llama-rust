@@ -7,5 +7,6 @@ hbm_bps=3350000000000
 fp16_flops=989000000000000
 pcie_bps=32000000000
 pcie_far_bps=4000000000
+align_bytes=128
 copy_engines=2
 tdp_mw=700000

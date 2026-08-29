@@ -26,8 +26,8 @@ pub use gpu_store::SimulatedGpuStore;
 pub use live::LiveStore;
 pub use place::{colocated, home_gpu, striped, with_hot_replicas, PlaceMap};
 pub use planner::{
-    copy_forward, hot_keys, plan_placement, plan_window, prefetch_keys, transition_pair,
-    window_keys, Markov, Placement, Plan, Prefetch,
+    copy_forward, hot_keys, observe_chain, plan_placement, plan_window, prefetch_keys,
+    prefetch_keys_ctx, transition_pair, window_keys, Markov, Placement, Plan, Prefetch,
 };
 pub use policy::Policy;
 pub use replay::{compare, format_table, replay, ReplayRow};

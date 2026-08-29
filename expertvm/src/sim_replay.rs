@@ -4,7 +4,7 @@ use crate::access::{ExpertAccess, ExpertKey, Trace};
 use crate::error::Error;
 use crate::place::PlaceMap;
 use crate::planner::{
-    copy_forward, plan_placement, prefetch_keys, transition_pair, Markov, Placement, Prefetch,
+    copy_forward, observe_chain, plan_placement, prefetch_keys_ctx, Markov, Placement, Prefetch,
 };
 use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
@@ -73,6 +73,11 @@ pub struct SimCfg {
     pub lookahead: usize,
     /// Prefetch before the next router event.
     pub prefetch: Prefetch,
+    /// Map `sequence % n_streams` onto CUDA streams so a batch can overlap.
+    ///
+    /// `n_streams` is GPU0 `copy_engines.max(2)`. Token-boundary sync ignores
+    /// sequence changes so interleaved sequences at the same token stay concurrent.
+    pub seq_streams: bool,
 }
 
 /// Replay `trace` on `profile` with a `slots`-entry expert cache.
@@ -97,6 +102,7 @@ pub fn sim_replay(
             bytes_per_expert,
             lookahead,
             prefetch: Prefetch::None,
+            seq_streams: false,
         },
     )
 }
@@ -114,7 +120,8 @@ pub fn sim_replay_cfg(
     let mut handles: BTreeMap<ExpertKey, AllocId> = BTreeMap::new();
     let mut w = Walker::new(&keys, cfg.slots, cfg.policy, cfg.lookahead);
     let bytes = cfg.bytes_per_expert.max(1);
-    let args = TouchArgs {
+    let n_streams = replay_streams(sim.profile(), cfg.seq_streams);
+    let mut args = TouchArgs {
         d,
         s,
         bytes,
@@ -127,7 +134,9 @@ pub fn sim_replay_cfg(
     let mut prefetches = 0u64;
     let mut markov = Markov::new();
     let mut prev: Option<&ExpertAccess> = None;
+    let mut prev2: Option<&ExpertAccess> = None;
     for (i, event) in trace.events.iter().enumerate() {
+        args.s = stream_of(event, n_streams);
         let ek = event.keys();
         for key in &ek {
             let (got, touch) = w.next_touch().ok_or(Error::Store("short walker"))?;
@@ -140,12 +149,7 @@ pub fn sim_replay_cfg(
             }
             apply_touch(&mut sim, &mut handles, args, *key, touch)?;
         }
-        let predicted = match cfg.prefetch {
-            Prefetch::None => Vec::new(),
-            Prefetch::CopyForward => copy_forward(&ek),
-            Prefetch::Markov => markov.predict(&ek, ek.len().max(1)),
-            Prefetch::Both => prefetch_keys(&markov, &ek),
-        };
+        let predicted = predicted_keys(cfg.prefetch, &markov, prev, &ek);
         let mut fill = args;
         fill.kernel = false;
         for key in predicted {
@@ -157,11 +161,8 @@ pub fn sim_replay_cfg(
                 }
             }
         }
-        if let Some(p) = prev {
-            if transition_pair(p, event) {
-                markov.observe(&p.keys(), &ek);
-            }
-        }
+        observe_chain(&mut markov, prev2, prev, event);
+        prev2 = prev;
         prev = Some(event);
         if last_of_token(&trace.events, i) {
             sim.synchronize()?;
@@ -250,8 +251,51 @@ fn last_of_token(events: &[ExpertAccess], i: usize) -> bool {
         return true;
     };
     match events.get(i.saturating_add(1)) {
-        Some(n) => n.sequence != cur.sequence || n.token != cur.token,
+        Some(n) => n.token != cur.token,
         None => true,
+    }
+}
+
+fn replay_streams(profile: &HardwareProfile, seq_streams: bool) -> u8 {
+    if !seq_streams {
+        return 1;
+    }
+    profile
+        .gpus
+        .first()
+        .map(|g| g.copy_engines.max(2))
+        .unwrap_or(2)
+}
+
+fn stream_of(event: &ExpertAccess, n_streams: u8) -> StreamId {
+    if n_streams <= 1 {
+        return StreamId(0);
+    }
+    let n = u64::from(n_streams);
+    let id = event.sequence % n;
+    StreamId(u16::try_from(id).unwrap_or(0))
+}
+
+fn predicted_keys(
+    prefetch: Prefetch,
+    markov: &Markov,
+    prev: Option<&ExpertAccess>,
+    ek: &[ExpertKey],
+) -> Vec<ExpertKey> {
+    match prefetch {
+        Prefetch::None => Vec::new(),
+        Prefetch::CopyForward => copy_forward(ek),
+        Prefetch::Markov => {
+            let k = ek.len().max(1);
+            match prev {
+                Some(p) => markov.predict_ctx(&p.keys(), ek, k),
+                None => markov.predict(ek, k),
+            }
+        }
+        Prefetch::Both => match prev {
+            Some(p) => prefetch_keys_ctx(markov, &p.keys(), ek),
+            None => prefetch_keys_ctx(markov, &[], ek),
+        },
     }
 }
 

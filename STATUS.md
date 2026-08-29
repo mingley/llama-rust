@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — alignment, lookback-2 Markov, seq-stream overlap
+
+Memcpy bills `align_up(bytes, align_bytes) + ramp_bytes` so a 1-byte DMA
+cannot beat a cache-line copy (`align_bytes` parse key; host PCIe default
+128, NVLink 16, RDMA 64). Checked-in profiles now include `h200-sxm`,
+`8xh100-nvlink`, and `cheap-48gb`. Online Markov is `P(to|from, from_prev)`
+with order-1 backoff (still no prompt-class labels). Decode prefetch uses
+the same table. `sim_replay` samples TTFT when `token` changes so a batch
+of sequences at one token is one serving-shaped sample. `--seq-streams`
+maps `sequence % copy_engines.max(2)` onto CUDA streams so those H2Ds can
+overlap compute. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — HBM vs host-pinned residency
 
 `Place::{Host, HostPinned, Device}`: pageable H2D (`memcpy_host_to_device`)

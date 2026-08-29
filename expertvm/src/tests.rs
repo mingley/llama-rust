@@ -308,6 +308,7 @@ fn markov_prefetch_beats_copy_forward_when_ids_are_not_sticky() {
         bytes_per_expert: 4096,
         lookahead: 8,
         prefetch,
+        seq_streams: false,
     };
     let none = sim_replay_cfg(&t, p.clone(), cfg(Prefetch::None)).expect("none");
     let fwd = sim_replay_cfg(&t, p.clone(), cfg(Prefetch::CopyForward)).expect("fwd");
@@ -328,6 +329,99 @@ fn markov_prefetch_beats_copy_forward_when_ids_are_not_sticky() {
     let both =
         sim_replay_cfg(&t, HardwareProfile::example_h100_sxm(), cfg(Prefetch::Both)).expect("both");
     assert!(both.prefetches >= fwd.prefetches);
+}
+
+#[test]
+fn markov_order2_breaks_order1_tie() {
+    let mut m = Markov::new();
+    let l0e5 = ExpertKey::new(0, 5);
+    let l0e6 = ExpertKey::new(0, 6);
+    let l1e0 = ExpertKey::new(1, 0);
+    let l2e1 = ExpertKey::new(2, 1);
+    let l2e2 = ExpertKey::new(2, 2);
+    for _ in 0..8 {
+        m.observe_ctx(&[l0e5], &[l1e0], &[l2e1]);
+        m.observe_ctx(&[l0e6], &[l1e0], &[l2e2]);
+    }
+    let from0 = [l1e0];
+    assert_eq!(m.predict(&from0, 1), vec![l2e1]);
+    assert_eq!(m.predict_ctx(&[l0e6], &from0, 1), vec![l2e2]);
+    assert_eq!(m.predict_ctx(&[l0e5], &from0, 1), vec![l2e1]);
+    let ctx = prefetch_keys_ctx(&m, &[l0e6], &from0);
+    assert!(ctx.contains(&l2e2));
+}
+
+#[test]
+fn markov_order2_prefetch_beats_copy_forward_on_tied_ids() {
+    let mut events = Vec::new();
+    for tok in 0..16u32 {
+        if tok % 2 == 0 {
+            events.push(ev(tok, 0, &[5]));
+            events.push(ev(tok, 1, &[0]));
+            events.push(ev(tok, 2, &[1]));
+        } else {
+            events.push(ev(tok, 0, &[6]));
+            events.push(ev(tok, 1, &[0]));
+            events.push(ev(tok, 2, &[2]));
+        }
+    }
+    let t = Trace { events };
+    let p = HardwareProfile::example_h100_sxm();
+    let cfg = |prefetch: Prefetch| SimCfg {
+        slots: 1,
+        policy: Policy::Lru,
+        bytes_per_expert: 4096,
+        lookahead: 8,
+        prefetch,
+        seq_streams: false,
+    };
+    let fwd = sim_replay_cfg(&t, p.clone(), cfg(Prefetch::CopyForward)).expect("fwd");
+    let mk = sim_replay_cfg(&t, p, cfg(Prefetch::Markov)).expect("mk");
+    assert!(
+        mk.hits > fwd.hits,
+        "order2 markov={} copy-forward={}",
+        mk.hits,
+        fwd.hits
+    );
+}
+
+#[test]
+fn seq_streams_overlap_beats_serial_on_batch_token() {
+    let t = Trace {
+        events: vec![
+            ExpertAccess {
+                sequence: 0,
+                token: 0,
+                layer: 0,
+                experts: vec![0],
+                weight_pt: Vec::new(),
+            },
+            ExpertAccess {
+                sequence: 1,
+                token: 0,
+                layer: 0,
+                experts: vec![1],
+                weight_pt: Vec::new(),
+            },
+        ],
+    };
+    let p = HardwareProfile::parse("gpus=1\ncopy_engines=1\n").expect("profile");
+    let cfg = |seq_streams: bool| SimCfg {
+        slots: 2,
+        policy: Policy::Lru,
+        bytes_per_expert: 32u64 << 20,
+        lookahead: 0,
+        prefetch: Prefetch::None,
+        seq_streams,
+    };
+    let serial = sim_replay_cfg(&t, p.clone(), cfg(false)).expect("serial");
+    let overlap = sim_replay_cfg(&t, p, cfg(true)).expect("overlap");
+    assert!(
+        overlap.sim_ns < serial.sim_ns,
+        "overlap={} serial={}",
+        overlap.sim_ns,
+        serial.sim_ns
+    );
 }
 
 #[test]

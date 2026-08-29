@@ -4,10 +4,14 @@ use crate::access::{ExpertAccess, ExpertKey, Trace};
 use gpu_sim::ns_for_bytes;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// Online counts for `P(to | from)` over paired routing events.
+/// Online counts for `P(to | from)` and lookback-2 `P(to | from, from_prev)`.
+///
+/// Order-2 backs off to order-1 when a pair has never been seen. No prompt-class
+/// labels (those are not in the JSONL).
 #[derive(Clone, Debug, Default)]
 pub struct Markov {
-    counts: BTreeMap<ExpertKey, BTreeMap<ExpertKey, u64>>,
+    order1: BTreeMap<ExpertKey, BTreeMap<ExpertKey, u64>>,
+    order2: BTreeMap<(ExpertKey, ExpertKey), BTreeMap<ExpertKey, u64>>,
 }
 
 impl Markov {
@@ -20,7 +24,7 @@ impl Markov {
     /// Add every from×to pair (same token next layer, or next token same layer).
     pub fn observe(&mut self, from: &[ExpertKey], to: &[ExpertKey]) {
         for a in from {
-            let row = self.counts.entry(*a).or_default();
+            let row = self.order1.entry(*a).or_default();
             for b in to {
                 let slot = row.entry(*b).or_insert(0);
                 *slot = slot.saturating_add(1);
@@ -28,12 +32,50 @@ impl Markov {
         }
     }
 
+    /// Record `prev2 → prev1 → to` plus the order-1 `prev1 → to` edge.
+    pub fn observe_ctx(&mut self, prev2: &[ExpertKey], prev1: &[ExpertKey], to: &[ExpertKey]) {
+        self.observe(prev1, to);
+        for a in prev2 {
+            for b in prev1 {
+                let row = self.order2.entry((*a, *b)).or_default();
+                for c in to {
+                    let slot = row.entry(*c).or_insert(0);
+                    *slot = slot.saturating_add(1);
+                }
+            }
+        }
+    }
+
     /// Top-`k` destinations by summed count from `from`. Stable on ties.
     #[must_use]
     pub fn predict(&self, from: &[ExpertKey], k: usize) -> Vec<ExpertKey> {
+        rank_scores(self.order1_scores(from), k)
+    }
+
+    /// `P(to | prev2, prev1)` with order-1 mixed in as backoff. Falls back to
+    /// [`Self::predict`] when the pair has no counts.
+    #[must_use]
+    pub fn predict_ctx(
+        &self,
+        prev2: &[ExpertKey],
+        prev1: &[ExpertKey],
+        k: usize,
+    ) -> Vec<ExpertKey> {
+        let mut score = self.order2_scores(prev2, prev1);
+        if score.is_empty() {
+            return self.predict(prev1, k);
+        }
+        for (key, n) in self.order1_scores(prev1) {
+            let slot = score.entry(key).or_insert(0);
+            *slot = slot.saturating_add(n);
+        }
+        rank_scores(score, k)
+    }
+
+    fn order1_scores(&self, from: &[ExpertKey]) -> BTreeMap<ExpertKey, u64> {
         let mut score: BTreeMap<ExpertKey, u64> = BTreeMap::new();
         for a in from {
-            let Some(row) = self.counts.get(a) else {
+            let Some(row) = self.order1.get(a) else {
                 continue;
             };
             for (b, c) in row {
@@ -41,10 +83,30 @@ impl Markov {
                 *slot = slot.saturating_add(*c);
             }
         }
-        let mut pairs: Vec<(ExpertKey, u64)> = score.into_iter().collect();
-        pairs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        pairs.into_iter().take(k).map(|(key, _)| key).collect()
+        score
     }
+
+    fn order2_scores(&self, prev2: &[ExpertKey], prev1: &[ExpertKey]) -> BTreeMap<ExpertKey, u64> {
+        let mut score: BTreeMap<ExpertKey, u64> = BTreeMap::new();
+        for a in prev2 {
+            for b in prev1 {
+                let Some(row) = self.order2.get(&(*a, *b)) else {
+                    continue;
+                };
+                for (c, n) in row {
+                    let slot = score.entry(*c).or_insert(0);
+                    *slot = slot.saturating_add(*n);
+                }
+            }
+        }
+        score
+    }
+}
+
+fn rank_scores(score: BTreeMap<ExpertKey, u64>, k: usize) -> Vec<ExpertKey> {
+    let mut pairs: Vec<(ExpertKey, u64)> = score.into_iter().collect();
+    pairs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    pairs.into_iter().take(k).map(|(key, _)| key).collect()
 }
 
 /// Same sequence, and either next layer this token or next token this layer.
@@ -58,6 +120,29 @@ pub fn transition_pair(prev: &ExpertAccess, next: &ExpertAccess) -> bool {
     next_layer || next_tok
 }
 
+/// Fit order-2 when `prev2 → prev → event` are consecutive transitions; else order-1.
+pub fn observe_chain(
+    markov: &mut Markov,
+    prev2: Option<&ExpertAccess>,
+    prev: Option<&ExpertAccess>,
+    event: &ExpertAccess,
+) {
+    let Some(p) = prev else {
+        return;
+    };
+    if !transition_pair(p, event) {
+        return;
+    }
+    let to = event.keys();
+    if let Some(p2) = prev2 {
+        if transition_pair(p2, p) {
+            markov.observe_ctx(&p2.keys(), &p.keys(), &to);
+            return;
+        }
+    }
+    markov.observe(&p.keys(), &to);
+}
+
 /// Prefetch policy for [`crate::sim_replay::sim_replay_cfg`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Prefetch {
@@ -65,7 +150,7 @@ pub enum Prefetch {
     None,
     /// Same expert ids one layer ahead.
     CopyForward,
-    /// Online [`Markov`] table fitted on observed pairs only (no future leak).
+    /// Online [`Markov`] table: lookback-2 `P(to|from, from_prev)` with order-1 backoff.
     Markov,
     /// Copy-forward ∪ Markov (decode's attached-store policy).
     Both,
@@ -213,9 +298,19 @@ pub fn copy_forward(keys: &[ExpertKey]) -> Vec<ExpertKey> {
 /// Copy-forward union online [`Markov`] destinations (no future leak).
 #[must_use]
 pub fn prefetch_keys(markov: &Markov, keys: &[ExpertKey]) -> Vec<ExpertKey> {
+    prefetch_keys_ctx(markov, &[], keys)
+}
+
+/// Copy-forward union lookback-2 Markov destinations (order-1 backoff).
+#[must_use]
+pub fn prefetch_keys_ctx(
+    markov: &Markov,
+    prev: &[ExpertKey],
+    keys: &[ExpertKey],
+) -> Vec<ExpertKey> {
     let mut out = copy_forward(keys);
     let k = keys.len().max(1);
-    for extra in markov.predict(keys, k) {
+    for extra in markov.predict_ctx(prev, keys, k) {
         if !out.contains(&extra) {
             out.push(extra);
         }

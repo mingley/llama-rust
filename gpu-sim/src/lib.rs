@@ -22,7 +22,7 @@ pub use ids::{AllocId, DeviceId, EventId, GraphId, LinkId, OpId, StreamId};
 pub use ops::{DType, KernelKind, MemcpyOp, Place};
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
-    ns_for_bytes, scale_ns_permille, GpuProfile, HardwareProfile, LinkKind, LinkProfile,
+    align_up, ns_for_bytes, scale_ns_permille, GpuProfile, HardwareProfile, LinkKind, LinkProfile,
 };
 pub use score::Score;
 pub use sim::Sim;

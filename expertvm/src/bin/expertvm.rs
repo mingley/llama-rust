@@ -15,7 +15,7 @@ const USAGE: &str = "\
 usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
-  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both]
+  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
@@ -76,6 +76,7 @@ fn run() -> Result<(), String> {
                     bytes_per_expert: cfg.expert_bytes,
                     lookahead: cfg.lookahead,
                     prefetch,
+                    seq_streams: cfg.seq_streams,
                 },
             )
             .map_err(|e| e.to_string())?;
@@ -103,6 +104,7 @@ struct Cfg {
     experts: u32,
     hbm_bytes: Option<u64>,
     prefetch: String,
+    seq_streams: bool,
 }
 
 fn parse_cfg<I>(args: I) -> Result<Cfg, String>
@@ -126,6 +128,7 @@ where
     let mut experts = 16u32;
     let mut hbm_bytes = None;
     let mut prefetch = String::from("none");
+    let mut seq_streams = false;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -158,6 +161,9 @@ where
                 )?)
             }
             "--prefetch" => prefetch = value("prefetch", inline, &mut it)?,
+            "--seq-streams" => {
+                seq_streams = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => {
                 if path.is_some() {
@@ -178,6 +184,7 @@ where
         experts,
         hbm_bytes,
         prefetch,
+        seq_streams,
     })
 }
 

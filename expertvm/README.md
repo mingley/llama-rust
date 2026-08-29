@@ -72,9 +72,12 @@ holds `gate` + `up` + `down` bytes.
 `sim_replay` runs a policy through gpu-sim: pinned H2D on miss, grouped GEMM on
 acquire, stream-ordered free on eviction. Timing comes from a
 `HardwareProfile`, not from the policy. The clock is sampled after each
-token (`ttft_ns`, mean `itl_ns`). Planner helpers: `copy_forward`,
+token (`ttft_ns`, mean `itl_ns`); a batch of sequences at the same token is
+one sample. `--seq-streams` maps `sequence % n_streams` onto CUDA streams so
+those copies can overlap. Planner helpers: `copy_forward`,
 `hot_keys`, `plan_window`, `plan_placement` (move weights vs dispatch
-activations), `Markov` / `Prefetch`. `colocated` keeps co-fired experts
+activations), `Markov` / `Prefetch` (lookback-2 `P(to|from, from_prev)` with
+order-1 backoff). `colocated` keeps co-fired experts
 on one GPU; `with_hot_replicas` copies hot keys to a second GPU.
 `compare_ep` / `sim_static_ep` place each expert on
 `home_gpu` (`expert_id % n_gpus`) with no eviction. LRU-on-GPU0 can
@@ -102,6 +105,7 @@ must bit-match the blob GEMV path. Shared experts stay on the blob.
 expertvm analyze  trace.jsonl
 expertvm replay   trace.jsonl --capacity 8
 expertvm sim      trace.jsonl --capacity 8 --expert-bytes 188743680 --profile h100 --prefetch both
+expertvm sim      trace.jsonl --capacity 8 --profile h100 --prefetch markov --seq-streams
 expertvm place    trace.jsonl --gpus 8 --hot-pt 200
 expertvm bench    trace.jsonl --capacity 8 --profile h100
 expertvm bench    adversarial --tokens 64 --experts 16 --capacity 2 --profile cheap
