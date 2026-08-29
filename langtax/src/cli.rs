@@ -61,7 +61,8 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
       --n-ctx N         KV capacity (default: longest prompt + n_predict + 1)
       --kv-page N       paged KV block size in tokens (default: 16)
       --pool-blocks N   physical intern blocks (default: max_seqs * pages)
-      --max-seqs N      in-flight sequences (default: number of prompts; extras wait)
+      --max-seqs N      in-flight sequences (default: number of prompts; extras wait).
+                        Engine tests cover 128 waiters at max_seqs=8 (batch-128).
       --prefill-chunk N prefill tokens per step (`0` = the rest; default: 0)
       --expert-slots N  ExpertStore on the Engine: omit = blob FFN, `0` = DirectStore,
                         N>0 = CachedStore with N slots (`--expert-sim` uses N, default 8)

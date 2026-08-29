@@ -1248,6 +1248,46 @@ mod tests {
         assert_eq!(eng.waiting(), 0);
     }
 
+    fn batch_prompt(i: u32) -> [u32; 2] {
+        [i % 6, (i / 6) % 6]
+    }
+
+    #[test]
+    fn engine_batch_128_waiting_queue_matches_independent() {
+        let g = load_gguf_owned(tiny_llama_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let n = 128u32;
+        let n_predict = 1usize;
+        let mut expected = Vec::new();
+        for i in 0..n {
+            expected.push(independent(&model, &tok, &batch_prompt(i), n_predict));
+        }
+        let mut cfg = EngineCfg::tiny();
+        cfg.max_seqs = 8;
+        cfg.pool_blocks = 64;
+        cfg.eos = tok.eos;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        let mut ids = Vec::new();
+        for i in 0..n {
+            ids.push(eng.add(&batch_prompt(i), n_predict).expect("add"));
+        }
+        assert_eq!(eng.active(), 8);
+        assert_eq!(eng.waiting(), 120);
+        eng.run().expect("run");
+        for (i, id) in ids.iter().copied().enumerate() {
+            let got = eng.take(id).expect("take").generated;
+            let exp = expected.get(i).expect("exp");
+            assert_eq!(&got, exp, "seq {i}");
+        }
+        assert_eq!(eng.waiting(), 0);
+        assert!(
+            eng.stats().gemm_peak >= 8,
+            "8 in-flight sequences must GEMM together, peak={}",
+            eng.stats().gemm_peak
+        );
+    }
+
     #[test]
     fn engine_preempts_when_pool_is_full_and_ids_still_match() {
         let tokens_a = [1u32, 2, 3, 4];

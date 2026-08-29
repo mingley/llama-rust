@@ -869,6 +869,9 @@ model, do not celebrate the sim.
     the two-layer tiny (copy-forward L+1 prefetches more than 1-layer).
     `infer-bench` / `expertvm schedule` replay the checked-in two-layer
     JSONL; copy-forward hits L+1. Dual score still has no `$/M tokens`.
+41. [x] Engine waiting queue at batch-128: 128 prompts with `max_seqs=8`
+    finish with greedy ids matching independent decode. GEMM peak stays
+    batched. Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
