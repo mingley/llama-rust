@@ -9,4 +9,5 @@ pcie_bps=32000000000
 pcie_far_bps=4000000000
 align_bytes=128
 copy_engines=2
+compute_slots=1
 tdp_mw=700000

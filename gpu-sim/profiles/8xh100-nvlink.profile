@@ -10,4 +10,5 @@ nvlink_bps=450000000000
 pageable_permille=500
 align_bytes=128
 copy_engines=2
+compute_slots=1
 tdp_mw=700000

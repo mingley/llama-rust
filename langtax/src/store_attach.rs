@@ -49,6 +49,10 @@ pub(crate) struct GpuCli {
     pub kv_sim: bool,
     /// Decode GEMMs on a higher-priority compute stream (`GpuStoreCfg::decode_priority`).
     pub decode_priority: bool,
+    /// Hyper-Q occupancy (`GpuStoreCfg::compute_slots`). `0` keeps the profile.
+    pub compute_slots: u8,
+    /// True when `--compute-slots` appeared.
+    pub compute_slots_set: bool,
     /// `--kv-bytes` override. `None` uses intern K+V geometry.
     pub kv_bytes: Option<u64>,
     /// Physical span for [`GpuFill::Vmm`]. `0` maps the whole expert.
@@ -117,6 +121,16 @@ impl GpuCli {
         Ok(())
     }
 
+    /// Hyper-Q occupancy (`--compute-slots`). `0` is refused.
+    pub(crate) fn set_compute_slots(&mut self, n: u8) -> Result<(), String> {
+        if n == 0 {
+            return Err("compute-slots must be > 0".into());
+        }
+        self.compute_slots = n;
+        self.compute_slots_set = true;
+        Ok(())
+    }
+
     /// First CUDA knob that needs `--expert-sim`, if any.
     #[must_use]
     pub(crate) fn sim_flag(self) -> Option<&'static str> {
@@ -140,6 +154,7 @@ impl GpuCli {
             (self.kv_sim, "--kv-sim"),
             (self.decode_priority, "--decode-priority"),
             (self.vmm_page_set, "--vmm-page"),
+            (self.compute_slots_set, "--compute-slots"),
         ]
         .into_iter()
         .find_map(|(on, name)| on.then_some(name))
@@ -193,6 +208,7 @@ enum Dash {
 enum PlanSlot {
     VmmPage,
     KvBytes,
+    ComputeSlots,
     Prefetch,
     PlanWindow,
     PlanThreshold,
@@ -203,6 +219,7 @@ impl PlanSlot {
         match self {
             Self::VmmPage => "vmm-page",
             Self::KvBytes => "kv-bytes",
+            Self::ComputeSlots => "compute-slots",
             Self::Prefetch => "prefetch",
             Self::PlanWindow => "plan-window",
             Self::PlanThreshold => "plan-threshold",
@@ -218,6 +235,7 @@ impl PlannerCli {
         Ok(match key {
             "--vmm-page" => Dash::Need(PlanSlot::VmmPage),
             "--kv-bytes" => Dash::Need(PlanSlot::KvBytes),
+            "--compute-slots" => Dash::Need(PlanSlot::ComputeSlots),
             "--prefetch" => Dash::Need(PlanSlot::Prefetch),
             "--plan-window" => Dash::Need(PlanSlot::PlanWindow),
             "--plan-threshold" => Dash::Need(PlanSlot::PlanThreshold),
@@ -238,6 +256,12 @@ impl PlannerCli {
                     .parse::<u64>()
                     .map_err(|_| format!("invalid kv-bytes {raw:?}"))?;
                 self.gpu.set_kv_bytes(n)?;
+            }
+            PlanSlot::ComputeSlots => {
+                let n = raw
+                    .parse::<u8>()
+                    .map_err(|_| format!("invalid compute-slots {raw:?}"))?;
+                self.gpu.set_compute_slots(n)?;
             }
             PlanSlot::Prefetch => {
                 self.prefetch =
@@ -320,6 +344,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         seq_streams: gpu.seq_streams,
         kv_sim: gpu.kv_sim,
         decode_priority: gpu.decode_priority,
+        compute_slots: gpu.compute_slots,
     }
 }
 

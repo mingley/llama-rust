@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine `--compute-slots` Hyper-Q
+
+`--expert-sim --compute-slots N` (`N>=2`, with `--decode-priority`) lets
+leftover prefill and decode GEMMs overlap at full issue rate on two
+compute streams (Hyper-Q occupancy, not SM-partition). Default profile
+occupancy is exclusive (`1`), so stream-priority contention and decode
+identity stay. Mixed leftover-prefill `wall_ns` is strictly shorter than
+one slot; greedy identity stays. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine `--decode-priority` ITL
 
 `--expert-sim --decode-priority` token-boundary ITL samples the decode
@@ -1171,8 +1180,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 58 (Engine
-`--decode-priority` ITL samples the decode stream). `gguf_gemv serve --engine`
+Next code change is PLAN systems depth after item 59 (Engine
+`--compute-slots` Hyper-Q occupancy). `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover
 is a Llama NORM real-model fixture when a GGUF is on disk. Physical

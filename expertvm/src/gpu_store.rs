@@ -121,6 +121,13 @@ pub struct GpuStoreCfg {
     /// prefill does not inflate ITL. Default off: one compute stream (decode
     /// identity); ITL still [`SimulatedGpuStore::clock_ns`] (full drain).
     pub decode_priority: bool,
+    /// Hyper-Q compute occupancy override (`0` keeps the profile).
+    ///
+    /// `1` is exclusive compute. `>=2` lets leftover prefill and decode GEMMs
+    /// overlap at full issue rate when they sit on different streams
+    /// ([`Self::decode_priority`]). Default `0` (profile `compute_slots`,
+    /// example H100 is `1`) keeps decode identity.
+    pub compute_slots: u8,
 }
 
 #[derive(Clone, Copy)]
@@ -274,6 +281,8 @@ impl SimulatedGpuStore {
     /// Defaults keep decode identity: async alloc, overlapping copy/compute,
     /// no `host_func`, default pool threshold 0, no AccessedBy, per-thread NULL,
     /// destroy+instantiate graphs, disable-timing copy events.
+    /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
+    /// exclusive compute).
     pub fn with_cfg(
         inner: DirectStore,
         slots: usize,
@@ -285,6 +294,11 @@ impl SimulatedGpuStore {
         let bytes = bytes_per_expert.max(1);
         let (copy, prefill, decode, mark) =
             copy_compute_streams(&profile, cfg.seq_streams, cfg.decode_priority);
+        let profile = if cfg.compute_slots > 0 {
+            profile.with_compute_slots(cfg.compute_slots)
+        } else {
+            profile
+        };
         let mut sim = Sim::new(profile);
         if cfg.mempool {
             sim.set_default_pool_release_threshold(u64::MAX)?;
@@ -871,8 +885,9 @@ impl SimulatedGpuStore {
         };
         if let Some(ev) = ready {
             if !self.sim.query_event(ev)? {
-                let _w = self.sim.wait_event(device, ev, self.compute)?;
-                self.sim.synchronize_stream(device, self.compute)?;
+                // Wait the DMA stream only. Syncing compute here would drain
+                // leftover prefill GEMMs before decode-priority can overlap them.
+                self.sim.synchronize_stream(device, self.copy)?;
             }
             self.note_copy_elapsed(start, ev)?;
             if let Some(page) = self.pages.get_mut(&key) {

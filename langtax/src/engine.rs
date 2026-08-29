@@ -28,7 +28,8 @@
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `vmm_page`, pageable H2D, `SetAccessedBy`, legacy NULL, stream priority,
-//! graph update/clone, timing events, `seq_streams`, `kv_sim`, `decode_priority`) are the same mechanical
+//! graph update/clone, timing events, `seq_streams`, `kv_sim`, `decode_priority`,
+//! `compute_slots`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -40,7 +41,10 @@
 //! stream at higher CUDA priority than leftover prefill (implies
 //! `--stream-priority`). Token-boundary ITL then samples that decode stream
 //! so leftover prefill does not inflate it. Default off: one compute stream
-//! and a full-device clock sample.
+//! and a full-device clock sample. `--compute-slots N` (`N>=2`) is Hyper-Q
+//! occupancy so leftover prefill and decode GEMMs on those two streams overlap
+//! at full issue rate (not SM-partition). Default profile occupancy is
+//! exclusive (`1`), which keeps decode identity and stream-priority contention.
 //! [`EngineCfg::slo_reject`] drops waiters whose gpu-sim queue wait already
 //! meets [`EngineCfg::ttft_slo_ns`]. [`EngineCfg::itl_slo_ns`] counts later-token
 //! gaps that miss the ITL budget (`Engine::itl_slo_miss`; does not drop).
@@ -1769,6 +1773,22 @@ mod tests {
         itl_slo_ns: Option<u64>,
         gpu_cfg: GpuStoreCfg,
     ) -> (u64, Score, usize, u64, Vec<u32>) {
+        mixed_gpu_decode_itl_at(
+            bytes,
+            decode_first,
+            itl_slo_ns,
+            gpu_cfg,
+            HardwareProfile::example_h100_sxm(),
+        )
+    }
+
+    fn mixed_gpu_decode_itl_at(
+        bytes: Vec<u8>,
+        decode_first: bool,
+        itl_slo_ns: Option<u64>,
+        gpu_cfg: GpuStoreCfg,
+        profile: HardwareProfile,
+    ) -> (u64, Score, usize, u64, Vec<u32>) {
         let prompt_a = [1u32, 2];
         let prompt_b = [1u32, 2, 3, 4, 5, 0, 1, 2];
         let g = load_gguf_owned(bytes).expect("owned");
@@ -1783,7 +1803,7 @@ mod tests {
         let gpu = SimulatedGpuStore::with_cfg(
             model.expert_direct_store().expect("c"),
             n,
-            HardwareProfile::example_h100_sxm(),
+            profile,
             4096,
             GpuFill::Pinned,
             gpu_cfg,
@@ -3332,6 +3352,54 @@ mod tests {
             mixed.0,
             prefer.1.line(),
             mixed.1.line()
+        );
+    }
+
+    #[test]
+    fn engine_gpu_compute_slots_overlap_mixed_wall() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        // Slow GEMM so leftover/decode compute is the critical path (example H100
+        // hides those kernels under H2D, so occupancy cannot shorten wall_ns).
+        let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+            .expect("slow gemm profile");
+        let pri = GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            ..GpuStoreCfg::default()
+        };
+        let serial = mixed_gpu_decode_itl_at(
+            bytes.clone(),
+            false,
+            None,
+            GpuStoreCfg {
+                compute_slots: 1,
+                ..pri
+            },
+            profile.clone(),
+        );
+        let overlap = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                compute_slots: 2,
+                ..pri
+            },
+            profile,
+        );
+        assert_eq!(serial.2, 4);
+        assert_eq!(overlap.2, 4);
+        assert_eq!(
+            overlap.4, serial.4,
+            "Hyper-Q occupancy must keep greedy identity"
+        );
+        assert!(
+            overlap.1.wall_ns < serial.1.wall_ns,
+            "two compute slots must overlap leftover prefill with decode; overlap={} serial={} overlap_line={} serial_line={}",
+            overlap.1.wall_ns,
+            serial.1.wall_ns,
+            overlap.1.line(),
+            serial.1.line()
         );
     }
 }

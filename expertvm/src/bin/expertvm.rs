@@ -607,6 +607,7 @@ where
                 seq_streams: cfg.seq_streams,
                 kv_sim: false,
                 decode_priority: false,
+                compute_slots: 0,
             },
             prefetch,
             plan_window: cfg.plan_window,

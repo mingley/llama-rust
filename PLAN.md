@@ -460,7 +460,9 @@ Exact (mechanical invariants agents may rely on):
   (`create_event_disable_timing`): wait/query work; `event_elapsed_ns` fails
 - stream ordering, events, barriers
 - kernel enqueue, async copies
-- copy-engine availability, peer accessibility
+- copy-engine availability, Hyper-Q `compute_slots` occupancy (default
+  exclusive; `>=2` concurrent kernels at full issue rate, not SM-partition),
+  peer accessibility
 - HBM vs host-pinned residency (`Place::{Host, HostPinned, Device}`,
   `alloc_host_pinned`, `memcpy_pinned_to_device`; pageable
   `cudaMemcpyAsync` is host-synchronous — `memcpy_host_to_device` /
@@ -975,6 +977,16 @@ model, do not celebrate the sim.
     replica). Default `--expert-sim` keeps one compute stream and a full-device
     clock. Mixed leftover-prefill ITL is strictly shorter than without the
     knob; greedy ids still match. Dual score still has no `$/M tokens`.
+
+59. [x] Engine `--compute-slots N`: Hyper-Q occupancy on SimulatedGpuStore
+    so leftover prefill and decode GEMMs on different streams overlap at full
+    issue rate when `N>=2` (not an SM-partition / green-context model). Needs
+    `--decode-priority` for two compute streams. Default profile occupancy is
+    exclusive (`1`), which keeps decode identity and stream-priority
+    contention. `cudaStreamSynchronize` of an idle stream still does not start
+    leftover kernels. Mixed leftover-prefill `wall_ns` is strictly shorter
+    with two slots than with one; greedy ids still match. Dual score still has
+    no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

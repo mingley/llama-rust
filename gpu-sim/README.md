@@ -16,7 +16,7 @@ inference system
         │
 GPU systems semantics   ← exact (streams, events, residency, OOM, topology)
         │
-resource contention     ← copy engines, links, exclusive compute
+resource contention     ← copy engines, links, Hyper-Q compute_slots
         │
 calibrated op costs     ← HardwareProfile
         │
@@ -79,6 +79,7 @@ warp scheduler, L1, …   ← do not model
 | `mem_info` is `(free, total)` HBM | `cudaMemGetInfo` |
 | stream[i+1].start ≥ stream[i].finish (`Operation` timestamps) | queue wait vs run |
 | higher `set_stream_priority` starts first under contention | launch overhead |
+| `compute_slots>=2` overlaps independent kernels at full issue rate | kernel duration (not SM-partition) |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host) | HBM write + launch overhead |
 | peer D2D needs topology + `enable_peer` | link bandwidth |
 | legacy null stream serializes (opt-in) | copy/compute overlap |
@@ -95,8 +96,9 @@ T = T_fixed + (align_up(bytes, align_bytes) + ramp) / peak_bandwidth
 `align_bytes` (host PCIe default 128) so a 1-byte DMA cannot beat a
 cache-line copy. Eight thousand tiny copies cannot harvest full PCIe
 bandwidth. Concurrent copies on the same link share bandwidth. Kernels on
-one GPU are exclusive in v0 (copy engines still overlap compute). Profile
-knobs `gemm_util_permille` (achieved/peak) and `grouped_moe_permille`
+one GPU default to exclusive compute (`compute_slots=1`); `>=2` is Hyper-Q
+occupancy at full issue rate (not an SM-partition / green-context model).
+Copy engines still overlap compute. Profile knobs `gemm_util_permille` (achieved/peak) and `grouped_moe_permille`
 (grouped vs dense duration) scale kernel time. Defaults are 1000
 (identity roofline). They are parseable; they are not a capture. Host PCIe
 links also carry `pageable_permille` (default `500`: pageable H2D takes

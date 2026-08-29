@@ -9,7 +9,8 @@
 //! Submitted work is a [`GpuOp`] compiled into an [`Operation`] DAG
 //! ([`Sim::operations`]). [`Sim::synchronize_stream`] waits one stream
 //! (`cudaStreamSynchronize`); an already-idle stream returns without starting
-//! leftover kernels on other streams.
+//! leftover kernels on other streams. [`GpuProfile::compute_slots`] is Hyper-Q
+//! occupancy (`1` exclusive; `>=2` concurrent kernels at full issue rate).
 //! [`Sim::synchronize_device`] is `cudaDeviceSynchronize` (one GPU).
 //! [`Sim::synchronize_event`] is `cudaEventSynchronize`.
 //! [`Sim::alloc`] / [`memcpy`](Sim::memcpy) / [`free`](Sim::free) are
@@ -1325,6 +1326,68 @@ mod tests {
         assert!(!sim.stream_is_idle(d, StreamId(1)).unwrap());
         sim.synchronize().unwrap();
         assert!(sim.stream_is_idle(d, StreamId(1)).unwrap());
+    }
+
+    #[test]
+    fn two_compute_slots_overlap_kernels_on_two_streams() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |slots: u8| {
+            let mut sim = Sim::new(h100().with_compute_slots(slots));
+            let d = DeviceId(0);
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+            enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(2)));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let serial = run(1);
+        let overlap = run(2);
+        assert!(
+            overlap < serial,
+            "two Hyper-Q slots must overlap independent kernels; overlap={overlap} serial={serial}"
+        );
+        let same_stream = {
+            let mut sim = Sim::new(h100().with_compute_slots(2));
+            let d = DeviceId(0);
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+            enq(sim.kernel(d, kind, &[a], &[a], StreamId(1)));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        assert!(
+            overlap < same_stream,
+            "Hyper-Q must not overlap kernels on one stream; overlap={overlap} same={same_stream}"
+        );
+    }
+
+    #[test]
+    fn two_compute_slots_start_both_ready_kernels() {
+        let d = DeviceId(0);
+        let kind = KernelKind::other(1 << 40, 4096);
+        let mut sim = Sim::new(h100().with_compute_slots(2));
+        let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+        sim.synchronize().unwrap();
+        enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+        enq(sim.kernel(d, kind, &[a], &[a], StreamId(2)));
+        sim.start_ready().unwrap();
+        let started: Vec<StreamId> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.start_ns.is_some())
+            .map(|o| o.stream)
+            .collect();
+        assert_eq!(
+            started.len(),
+            2,
+            "two Hyper-Q slots must start both ready kernels; started={started:?}"
+        );
     }
 
     #[test]

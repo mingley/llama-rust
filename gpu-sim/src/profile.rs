@@ -23,6 +23,13 @@ pub struct GpuProfile {
     pub fp32_flops: u64,
     /// Concurrent copy engines.
     pub copy_engines: u8,
+    /// Concurrent compute kernels (Hyper-Q occupancy). `1` is exclusive.
+    ///
+    /// Ready kernels on different streams may run together up to this cap, each
+    /// at full issue rate (not an SM-partition / green-context model). Default
+    /// `1` keeps exclusive compute so stream priority serializes leftover
+    /// prefill behind decode. Example profiles stay `1` (not a capture).
+    pub compute_slots: u8,
     /// Kernel launch overhead, nanoseconds.
     pub launch_overhead_ns: u64,
     /// `cudaGraphLaunch` overhead, nanoseconds. Paid once per graph launch, not
@@ -175,6 +182,16 @@ impl HardwareProfile {
     #[must_use]
     pub fn restrict_pin(mut self, bytes: u64) -> Self {
         self.host_pin_bytes = bytes;
+        self
+    }
+
+    /// Hyper-Q occupancy on every GPU (`1` is exclusive compute).
+    #[must_use]
+    pub fn with_compute_slots(mut self, slots: u8) -> Self {
+        let n = slots.max(1);
+        for g in &mut self.gpus {
+            g.compute_slots = n;
+        }
         self
     }
 
@@ -363,7 +380,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -371,6 +388,7 @@ impl HardwareProfile {
             g0.fp16_flops,
             self.host_bps(g0.id),
             g0.copy_engines,
+            g0.compute_slots,
             g0.tdp_mw,
             g0.launch_overhead_ns,
             g0.graph_launch_ns,
@@ -475,6 +493,7 @@ fn h100_gpu(id: DeviceId) -> GpuProfile {
         fp4_flops: 3_958u64.saturating_mul(1_000_000_000_000),
         fp32_flops: 67u64.saturating_mul(1_000_000_000_000),
         copy_engines: 2,
+        compute_slots: 1,
         launch_overhead_ns: 3_000,
         graph_launch_ns: 3_000,
         graph_instantiate_ns: 25_000,
@@ -604,6 +623,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut nvlink_bps = 450u64.saturating_mul(1_000_000_000);
     let mut pcie_far_bps = 4u64.saturating_mul(1_000_000_000);
     let mut copy_engines: u8 = 2;
+    let mut compute_slots: u8 = 1;
     let mut tdp_mw = 700_000u64;
     let mut launch_overhead_ns = 3_000u64;
     let mut graph_launch_ns = 3_000u64;
@@ -642,6 +662,14 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             "nvlink_bps" => nvlink_bps = parse_u64(v)?,
             "pcie_far_bps" => pcie_far_bps = parse_u64(v)?,
             "copy_engines" => copy_engines = parse_u8(v)?,
+            "compute_slots" => {
+                compute_slots = parse_u8(v)?;
+                if compute_slots == 0 {
+                    return Err(SimError::Invalid {
+                        why: "compute_slots must be > 0",
+                    });
+                }
+            }
             "tdp_mw" => tdp_mw = parse_u64(v)?,
             "launch_overhead_ns" => launch_overhead_ns = parse_u64(v)?,
             "graph_launch_ns" => graph_launch_ns = parse_u64(v)?,
@@ -684,6 +712,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         g.hbm_bps = hbm_bps;
         g.fp16_flops = fp16_flops;
         g.copy_engines = copy_engines;
+        g.compute_slots = compute_slots;
         g.tdp_mw = tdp_mw;
         g.launch_overhead_ns = launch_overhead_ns;
         g.graph_launch_ns = graph_launch_ns;
@@ -924,6 +953,20 @@ mod tests {
         let p = HardwareProfile::parse("gpus=1\npool_reuse_ns=50\n").unwrap();
         assert_eq!(p.gpu(DeviceId(0)).unwrap().pool_reuse_ns, 50);
         assert!(p.to_profile_text().contains("pool_reuse_ns=50"));
+    }
+
+    #[test]
+    fn parse_compute_slots() {
+        let p = HardwareProfile::parse("gpus=1\ncompute_slots=2\n").unwrap();
+        assert_eq!(p.gpu(DeviceId(0)).unwrap().compute_slots, 2);
+        assert!(p.to_profile_text().contains("compute_slots=2"));
+        let open = HardwareProfile::parse("gpus=1\n").unwrap();
+        assert_eq!(open.gpu(DeviceId(0)).unwrap().compute_slots, 1);
+        let err = HardwareProfile::parse("gpus=1\ncompute_slots=0\n").unwrap_err();
+        assert!(
+            format!("{err:?}").contains("compute_slots must be > 0"),
+            "{err:?}"
+        );
     }
 
     #[test]

@@ -104,7 +104,8 @@ enum Share {
 
 struct GpuRt {
     used: u64,
-    compute_busy: bool,
+    /// In-flight kernels / memset / allreduce occupying Hyper-Q slots.
+    compute: u8,
     copies: u8,
 }
 
@@ -180,7 +181,7 @@ impl Sim {
                 g.id,
                 GpuRt {
                     used: 0,
-                    compute_busy: false,
+                    compute: 0,
                     copies: 0,
                 },
             );
@@ -436,6 +437,24 @@ impl Sim {
                 self.set_stream_priority(d, StreamId(u16::from(s)), i32::from(s))?;
             }
         }
+        Ok(())
+    }
+
+    /// Take one Hyper-Q compute slot, or `false` if [`GpuProfile::compute_slots`] are full.
+    fn take_compute(&mut self, device: DeviceId) -> Result<bool, SimError> {
+        let cap = self.profile.gpu(device)?.compute_slots.max(1);
+        let rt = self.gpu_rt_mut(device)?;
+        if rt.compute >= cap {
+            return Ok(false);
+        }
+        rt.compute = rt.compute.saturating_add(1);
+        Ok(true)
+    }
+
+    /// Release one Hyper-Q compute slot.
+    fn drop_compute(&mut self, device: DeviceId) -> Result<(), SimError> {
+        let rt = self.gpu_rt_mut(device)?;
+        rt.compute = rt.compute.saturating_sub(1);
         Ok(())
     }
 
@@ -2811,14 +2830,71 @@ impl Sim {
         {
             return Ok(true);
         }
-        if self.gpu_rt(device)?.compute_busy {
+        if !self.take_compute(device)? {
             return Ok(false);
         }
         let mem_bps = self.kernel_mem_bps(device, &reads, &writes)?;
-        self.lease_kernel(device, &reads, &writes, true)?;
-        self.invalidate_read_mostly_writes(device, &writes)?;
-        let ns = self.kernel_ns(device, &kind, launch, mem_bps)?;
-        self.gpu_rt_mut(device)?.compute_busy = true;
+        if let Err(e) = self.lease_kernel(device, &reads, &writes, true) {
+            self.drop_compute(device)?;
+            return Err(e);
+        }
+        if let Err(e) = self.invalidate_read_mostly_writes(device, &writes) {
+            self.drop_compute(device)?;
+            return Err(e);
+        }
+        let ns = match self.kernel_ns(device, &kind, launch, mem_bps) {
+            Ok(n) => n,
+            Err(e) => {
+                self.drop_compute(device)?;
+                return Err(e);
+            }
+        };
+        self.running.push(Running {
+            op: id,
+            remaining_ns: ns.max(1),
+            share: Share::Solo,
+        });
+        Ok(true)
+    }
+
+    fn start_memset(&mut self, id: OpId) -> Result<bool, SimError> {
+        let (device, launch, alloc, offset, bytes) = {
+            let op = self
+                .ops
+                .get(&id)
+                .ok_or(SimError::Invalid { why: "unknown op" })?;
+            match &op.kind {
+                Kind::Memset {
+                    id: alloc,
+                    offset,
+                    bytes,
+                } => (op.device, op.launch, *alloc, *offset, *bytes),
+                _ => {
+                    return Err(SimError::Invalid {
+                        why: "not a memset",
+                    });
+                }
+            }
+        };
+        if !self.take_compute(device)? {
+            return Ok(false);
+        }
+        let writes = [KernelBuf::span(alloc, offset, bytes)];
+        if let Err(e) = self.lease_kernel(device, &[], &writes, false) {
+            self.drop_compute(device)?;
+            return Err(e);
+        }
+        if let Err(e) = self.invalidate_read_mostly_writes(device, &writes) {
+            self.drop_compute(device)?;
+            return Err(e);
+        }
+        let ns = match self.memset_ns(device, bytes, launch) {
+            Ok(n) => n,
+            Err(e) => {
+                self.drop_compute(device)?;
+                return Err(e);
+            }
+        };
         self.running.push(Running {
             op: id,
             remaining_ns: ns.max(1),
@@ -3128,29 +3204,7 @@ impl Sim {
             Kind::Alloc { id: alloc, bytes } => self.start_alloc(id, device, *alloc, *bytes),
             Kind::Free { id: alloc } => self.start_free(id, device, *alloc),
             Kind::Kernel { .. } => self.start_kernel(id),
-            Kind::Memset {
-                id: alloc,
-                offset,
-                bytes,
-            } => {
-                if self.gpu_rt(device)?.compute_busy {
-                    return Ok(false);
-                }
-                let alloc = *alloc;
-                let offset = *offset;
-                let bytes = *bytes;
-                let writes = [KernelBuf::span(alloc, offset, bytes)];
-                self.lease_kernel(device, &[], &writes, false)?;
-                self.invalidate_read_mostly_writes(device, &writes)?;
-                let ns = self.memset_ns(device, bytes, launch)?;
-                self.gpu_rt_mut(device)?.compute_busy = true;
-                self.running.push(Running {
-                    op: id,
-                    remaining_ns: ns.max(1),
-                    share: Share::Solo,
-                });
-                Ok(true)
-            }
+            Kind::Memset { .. } => self.start_memset(id),
             Kind::HostFunc => {
                 let ns = self.host_func_ns(device, launch)?;
                 self.running.push(Running {
@@ -3220,9 +3274,6 @@ impl Sim {
                 Ok(true)
             }
             Kind::AllReduce { parts, bytes } => {
-                if self.gpu_rt(device)?.compute_busy {
-                    return Ok(false);
-                }
                 let parts = parts.clone();
                 let bytes = *bytes;
                 self.start_allreduce(id, device, &parts, bytes)
@@ -3445,11 +3496,13 @@ impl Sim {
             }
         }
         let ns = self.allreduce_ns(parts, bytes)?;
+        if !self.take_compute(device)? {
+            return Ok(false);
+        }
         for (_, a) in parts {
             let alloc = self.alloc_mut(*a)?;
             alloc.leases = alloc.leases.saturating_add(1);
         }
-        self.gpu_rt_mut(device)?.compute_busy = true;
         self.running.push(Running {
             op: id,
             remaining_ns: ns.max(1),
@@ -3688,7 +3741,7 @@ impl Sim {
             _ => None,
         });
         if let Some(ids) = kernel_ids {
-            self.gpu_rt_mut(device)?.compute_busy = false;
+            self.drop_compute(device)?;
             for a in ids {
                 let cur = self.alloc_mut(a)?;
                 cur.leases = cur.leases.saturating_sub(1);
