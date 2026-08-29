@@ -259,6 +259,9 @@ impl SchedRt {
                 *key,
                 touch,
             )?;
+            if matches!(touch, Touch::Miss { .. }) {
+                self.replicate_key(*key)?;
+            }
         }
         gemm_keys(
             &mut self.sim,
@@ -296,8 +299,34 @@ impl SchedRt {
                         key,
                         miss,
                     )?;
+                    self.replicate_key(key)?;
                 }
             }
+        }
+        Ok(())
+    }
+
+    fn replicate_key(&mut self, key: ExpertKey) -> Result<(), Error> {
+        let Some(map) = &self.place else {
+            return Ok(());
+        };
+        let Some(dsts) = map.replicas.get(&key).cloned() else {
+            return Ok(());
+        };
+        let Some(page) = self.handles.get(&key) else {
+            return Ok(());
+        };
+        let src = page.device;
+        let id = page.id;
+        let stream = page.stream;
+        let bytes = self.args.bytes;
+        for dst in dsts {
+            if dst == src {
+                continue;
+            }
+            let _c = self
+                .sim
+                .memcpy_device_to_device(src, dst, id, bytes, stream)?;
         }
         Ok(())
     }

@@ -8,7 +8,7 @@
 pub use expertvm::{
     adversarial_suite, colocated, compare, format_table, generate, report, schedule_placed,
     schedule_replay, sim_placed, sim_remote_home, sim_remote_home_cfg, sim_replay, striped,
-    topology_suite, BenchReport, Policy, SchedCfg, SimCfg, Trace, Workload,
+    topology_suite, with_hot_replicas, BenchReport, Policy, SchedCfg, SimCfg, Trace, Workload,
     DECODE_ACTIVATION_BYTES,
 };
 pub use gpu_sim::{probe_topology, HardwareProfile, Score, TopologyProbe};

@@ -720,6 +720,27 @@ fn schedule_striped_homes_beat_gpu0_on_wide_token() {
 }
 
 #[test]
+fn schedule_hot_replicas_move_more_bytes_than_stripe() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0]), ev(2, 0, &[0])],
+    };
+    let p = HardwareProfile::example_8xh100_nvlink();
+    let bytes = 1u64 << 20;
+    let cfg = SimCfg::lru(4, bytes, 0);
+    let stripe = striped(&t, 8);
+    let hot = with_hot_replicas(stripe.clone(), &t, 8, 200);
+    let a =
+        schedule_placed(&t, p.clone(), cfg, SchedCfg::closed(0), Some(&stripe)).expect("stripe");
+    let b = schedule_placed(&t, p, cfg, SchedCfg::closed(0), Some(&hot)).expect("hot");
+    assert!(
+        b.replay.bytes_moved > a.replay.bytes_moved,
+        "hot={} stripe={}",
+        b.replay.bytes_moved,
+        a.replay.bytes_moved
+    );
+}
+
+#[test]
 fn schedule_slo_reject_drops_late_head_of_line() {
     let t = Trace {
         events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],

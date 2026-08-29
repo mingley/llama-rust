@@ -10,8 +10,9 @@ Work lands on `main`. No PRs.
 `schedule_placed` / `expertvm schedule --place striped` H2Ds a miss onto
 the expert's `PlaceMap` home and GEMMs there, so a wide token uses every
 GPU's copy engines instead of serial GPU0. `--place colocated` uses
-coactivation homes. `expertvm bench` on a multi-GPU profile prints
-`schedule-gpu0` vs `schedule-striped`. Dual score still has no
+coactivation homes; `--place replicas` NVLink-copies hot experts onto a
+second GPU after the home H2D. `expertvm bench` on a multi-GPU profile
+prints `schedule-gpu0` vs `schedule-striped`. Dual score still has no
 `$/M tokens`.
 
 ## Shipped 2026-08-29 — decode-first, SLO reject, cudaStreamQuery
@@ -364,6 +365,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 ./target/release/expertvm remote tests/traces/cycling.jsonl --expert-bytes 1048576
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 2 --max-batch 1 --interarrival-ns 1000000 --prefill-chunk 1 --decode-first --slo-reject --ttft-slo-ns 1
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 8 --place striped --profile 8xh100 --expert-bytes 1048576
+./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 8 --place replicas --profile 8xh100 --expert-bytes 1048576
 ./target/release/expertvm workload prefill-batch
 ./target/release/gpu-profile probe bad-numa --bytes 1048576
 cargo run -p llama-rust --example session

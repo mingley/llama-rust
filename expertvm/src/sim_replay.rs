@@ -249,9 +249,9 @@ pub(crate) struct ReplayCounters {
 }
 
 pub(crate) struct PageHandle {
-    id: AllocId,
-    stream: StreamId,
-    device: DeviceId,
+    pub(crate) id: AllocId,
+    pub(crate) stream: StreamId,
+    pub(crate) device: DeviceId,
 }
 
 pub(crate) fn note_touch(

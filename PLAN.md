@@ -536,7 +536,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `synchronize_stream` so the compute stream is idle (CUDA). `--max-batch N`
   admits N sequences per engine iteration. `expertvm schedule` is the
   open-loop running set (arrivals, retire, SLO misses, `idle_until`,
-  `--prefill-chunk N`, `--decode-first`, `--slo-reject`, `--place striped`). `query_event` is `cudaEventQuery`.
+  `--prefill-chunk N`, `--decode-first`, `--slo-reject`, `--place striped|replicas`). `query_event` is `cudaEventQuery`.
   `query_stream` is `cudaStreamQuery`. `mem_info` is `cudaMemGetInfo`.
   `plan_window` Stay vs Fetch gates prefetch
   in the GPU loop (`--plan-window N`). `prefetch_hits` / `prefetch_waste`

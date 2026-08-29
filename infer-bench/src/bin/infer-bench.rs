@@ -2,7 +2,7 @@
 
 use infer_bench::{
     adversarial_suite, colocated, report, schedule_placed, sim_placed, sim_remote_home_cfg,
-    striped, topology_suite, HardwareProfile, SchedCfg, SimCfg, Trace, Workload,
+    striped, topology_suite, with_hot_replicas, HardwareProfile, SchedCfg, SimCfg, Trace, Workload,
     DECODE_ACTIVATION_BYTES,
 };
 use std::env;
@@ -17,7 +17,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--place none|striped|colocated]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--place none|striped|colocated|replicas]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch, prefill-batch
@@ -128,7 +128,17 @@ fn run() -> Result<(), String> {
                 "none" => None,
                 "striped" => Some(striped(&trace, n_gpus)),
                 "colocated" => Some(colocated(&trace, n_gpus)),
-                other => return Err(format!("unknown --place {other} (none|striped|colocated)")),
+                "replicas" => Some(with_hot_replicas(
+                    colocated(&trace, n_gpus),
+                    &trace,
+                    n_gpus,
+                    200,
+                )),
+                other => {
+                    return Err(format!(
+                        "unknown --place {other} (none|striped|colocated|replicas)"
+                    ))
+                }
             };
             let row = schedule_placed(
                 &trace,

@@ -17,7 +17,7 @@ usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
   sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N]
-  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--place none|striped|colocated]
+  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--place none|striped|colocated|replicas]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
@@ -511,7 +511,17 @@ where
         "none" => None,
         "striped" => Some(striped(&trace, n_gpus)),
         "colocated" => Some(colocated(&trace, n_gpus)),
-        other => return Err(format!("unknown --place {other} (none|striped|colocated)")),
+        "replicas" => Some(with_hot_replicas(
+            colocated(&trace, n_gpus),
+            &trace,
+            n_gpus,
+            200,
+        )),
+        other => {
+            return Err(format!(
+                "unknown --place {other} (none|striped|colocated|replicas)"
+            ))
+        }
     };
     let row = schedule_placed(
         &trace,
