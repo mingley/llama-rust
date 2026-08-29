@@ -5,8 +5,9 @@
 //! one token for every sequence whose prompt is in KV. Sequences may be added
 //! while others are already decoding. Sequences that do not fit in
 //! `max_seqs` wait and are admitted when a finished sequence is retired.
-//! Prefill chunks that are ready in the same step share one batched GEMM
-//! (`Llama::prefill_batch`); decode tokens share `Llama::forward_batch`.
+//! Prefill chunks and replay tokens that are ready in the same step share one
+//! batched GEMM (`Llama::prefill_batch`); new greedy tokens share
+//! `Llama::forward_batch`.
 //! A full pool **preempts** another
 //! sequence (unique blocks drop; intern pins remain) and later re-prefills
 //! plus replays already sampled greedy tokens. Greedy ids must match
@@ -171,11 +172,15 @@ impl<'a> Engine<'a> {
 
     /// One scheduler iteration: retire finished slots, admit waiters, prefill, decode.
     ///
+    /// Prefill chunks and replay tokens that are ready together share one
+    /// [`Llama::prefill_batch`] GEMM. New greedy tokens are sampled afterward
+    /// and forwarded with [`Llama::forward_batch`].
+    ///
     /// Returns how many sequences made progress (including admits after retire).
     pub fn step(&mut self) -> Result<usize, LlamaError> {
         let mut n = self.retire_done();
         n = n.saturating_add(self.admit()?);
-        n = n.saturating_add(self.prefill_ready()?);
+        n = n.saturating_add(self.prefill_and_replay()?);
         n = n.saturating_add(self.decode_ready()?);
         Ok(n)
     }
@@ -326,19 +331,134 @@ impl<'a> Engine<'a> {
             .position(|c| c.as_ref().is_some_and(|s| s.id == id))
     }
 
-    /// Prefill every sequence that still has prompt tokens outside KV.
+    /// Prefill suffixes and unforwarded replay ids that are ready this step.
     ///
-    /// Two or more ready sequences share one [`Llama::prefill_batch`] GEMM.
-    /// A `kv page cap` error drops another sequence's unique pages and retries
-    /// the remaining set. A sequence that cannot fit alone still fails.
-    fn prefill_ready(&mut self) -> Result<usize, LlamaError> {
-        let idxs: Vec<usize> = (0..self.slots.len())
-            .filter(|&i| self.slot(i).is_some_and(Slot::is_prefill))
-            .collect();
-        if idxs.len() <= 1 {
-            return self.prefill_one_at_a_time();
+    /// Two or more jobs share one [`Llama::prefill_batch`] GEMM, including a
+    /// mix of prefill chunks and single-token replays. A `kv page cap` error
+    /// drops another sequence's unique pages and retries the remaining set.
+    fn prefill_and_replay(&mut self) -> Result<usize, LlamaError> {
+        let jobs = self.collect_compute_jobs();
+        if jobs.len() <= 1 {
+            return self.compute_one_at_a_time();
         }
-        self.prefill_batch_items(&idxs)
+        self.compute_batch_items(&jobs)
+    }
+
+    fn collect_compute_jobs(&self) -> Vec<(usize, bool)> {
+        let mut jobs = Vec::new();
+        for i in 0..self.slots.len() {
+            let Some(s) = self.slot(i) else {
+                continue;
+            };
+            if s.is_prefill() {
+                jobs.push((i, false));
+            } else if s.is_decode() && s.replay < s.generated.len() {
+                jobs.push((i, true));
+            }
+        }
+        jobs
+    }
+
+    fn compute_one_at_a_time(&mut self) -> Result<usize, LlamaError> {
+        let mut n = self.prefill_one_at_a_time()?;
+        loop {
+            let mut replay = Vec::new();
+            for i in 0..self.slots.len() {
+                let Some(cell) = self.slot(i) else {
+                    continue;
+                };
+                if !cell.is_decode() || cell.replay >= cell.generated.len() {
+                    continue;
+                }
+                let tok = cell
+                    .generated
+                    .get(cell.replay)
+                    .copied()
+                    .ok_or_else(|| LlamaError::Shape("engine replay token".into()))?;
+                replay.push((i, tok));
+            }
+            if replay.is_empty() {
+                break;
+            }
+            n = n.saturating_add(self.forward_batch_items(&replay, true)?);
+        }
+        Ok(n)
+    }
+
+    fn compute_batch_items(&mut self, jobs: &[(usize, bool)]) -> Result<usize, LlamaError> {
+        let mut rest = jobs.to_vec();
+        loop {
+            if rest.len() <= 1 {
+                return self.compute_one_at_a_time();
+            }
+            match self.try_compute_batch(&rest) {
+                Ok(n) => return Ok(n),
+                Err(BatchFail::Other(e)) => return Err(e),
+                Err(BatchFail::Cap(except, e)) => {
+                    let victim = self.on_cap(except, e)?;
+                    rest.retain(|(i, _)| *i != victim && self.slot_compute(*i));
+                    if rest.is_empty() {
+                        return Ok(1);
+                    }
+                }
+            }
+        }
+    }
+
+    fn slot_compute(&self, i: usize) -> bool {
+        self.slot(i)
+            .is_some_and(|s| s.is_prefill() || (s.is_decode() && s.replay < s.generated.len()))
+    }
+
+    fn try_compute_batch(&mut self, jobs: &[(usize, bool)]) -> Result<usize, BatchFail> {
+        let chunk = self.cfg.prefill_chunk;
+        let mut owned: Vec<(usize, Vec<u32>, bool)> = Vec::new();
+        for &(i, replay) in jobs {
+            let slot = self.slot_mut(i).map_err(BatchFail::Other)?;
+            let part = if replay {
+                let tok = slot
+                    .generated
+                    .get(slot.replay)
+                    .copied()
+                    .ok_or_else(|| LlamaError::Shape("engine replay token".into()))
+                    .map_err(BatchFail::Other)?;
+                vec![tok]
+            } else {
+                slot.cache
+                    .prompt_suffix(&slot.prompt, chunk)
+                    .map_err(BatchFail::Other)?
+                    .to_vec()
+            };
+            match slot.cache.prepare_append(part.len()) {
+                Ok(()) => {}
+                Err(e) if is_kv_cap(&e) => return Err(BatchFail::Cap(i, e)),
+                Err(e) => return Err(BatchFail::Other(e)),
+            }
+            owned.push((i, part, replay));
+        }
+        owned.sort_by_key(|(i, _, _)| *i);
+        let order: Vec<usize> = owned.iter().map(|(i, _, _)| *i).collect();
+        let mut slots = borrow_slots_mut(&mut self.slots, &order).map_err(BatchFail::Other)?;
+        let mut caches: Vec<&mut KvCache> = slots.iter_mut().map(|s| &mut s.cache).collect();
+        let groups: Vec<&[u32]> = owned.iter().map(|(_, t, _)| t.as_slice()).collect();
+        let rows = match self.llama.prefill_batch(&mut caches, &groups) {
+            Ok(r) => r,
+            Err(e) if is_kv_cap(&e) => {
+                let except = jobs.first().map_or(0, |(i, _)| *i);
+                return Err(BatchFail::Cap(except, e));
+            }
+            Err(e) => return Err(BatchFail::Other(e)),
+        };
+        if rows.len() != slots.len() {
+            return Err(BatchFail::Other(LlamaError::Shape("prefill batch".into())));
+        }
+        for ((slot, row), (_, toks, replay)) in slots.iter_mut().zip(rows).zip(owned.iter()) {
+            slot.last = row;
+            if *replay {
+                slot.replay = slot.replay.saturating_add(toks.len());
+            }
+        }
+        Ok(order.len())
     }
 
     fn prefill_one_at_a_time(&mut self) -> Result<usize, LlamaError> {
@@ -362,65 +482,6 @@ impl<'a> Engine<'a> {
         Ok(n)
     }
 
-    fn prefill_batch_items(&mut self, indices: &[usize]) -> Result<usize, LlamaError> {
-        let mut rest = indices.to_vec();
-        loop {
-            if rest.len() <= 1 {
-                return self.prefill_one_at_a_time();
-            }
-            match self.try_prefill_batch(&rest) {
-                Ok(n) => return Ok(n),
-                Err(BatchFail::Other(e)) => return Err(e),
-                Err(BatchFail::Cap(except, e)) => {
-                    let victim = self.on_cap(except, e)?;
-                    rest.retain(|&i| i != victim && self.slot(i).is_some_and(Slot::is_prefill));
-                    if rest.is_empty() {
-                        return Ok(1);
-                    }
-                }
-            }
-        }
-    }
-
-    fn try_prefill_batch(&mut self, indices: &[usize]) -> Result<usize, BatchFail> {
-        let chunk = self.cfg.prefill_chunk;
-        let mut owned: Vec<Vec<u32>> = Vec::new();
-        for &i in indices {
-            let slot = self.slot_mut(i).map_err(BatchFail::Other)?;
-            let part = slot
-                .cache
-                .prompt_suffix(&slot.prompt, chunk)
-                .map_err(BatchFail::Other)?;
-            match slot.cache.prepare_append(part.len()) {
-                Ok(()) => {}
-                Err(e) if is_kv_cap(&e) => return Err(BatchFail::Cap(i, e)),
-                Err(e) => return Err(BatchFail::Other(e)),
-            }
-            owned.push(part.to_vec());
-        }
-        let mut jobs: Vec<(usize, Vec<u32>)> = indices.iter().copied().zip(owned).collect();
-        jobs.sort_by_key(|(i, _)| *i);
-        let order: Vec<usize> = jobs.iter().map(|(i, _)| *i).collect();
-        let mut slots = borrow_slots_mut(&mut self.slots, &order).map_err(BatchFail::Other)?;
-        let mut caches: Vec<&mut KvCache> = slots.iter_mut().map(|s| &mut s.cache).collect();
-        let groups: Vec<&[u32]> = jobs.iter().map(|(_, t)| t.as_slice()).collect();
-        let rows = match self.llama.prefill_batch(&mut caches, &groups) {
-            Ok(r) => r,
-            Err(e) if is_kv_cap(&e) => {
-                let except = indices.first().copied().unwrap_or(0);
-                return Err(BatchFail::Cap(except, e));
-            }
-            Err(e) => return Err(BatchFail::Other(e)),
-        };
-        if rows.len() != slots.len() {
-            return Err(BatchFail::Other(LlamaError::Shape("prefill batch".into())));
-        }
-        for (slot, row) in slots.iter_mut().zip(rows) {
-            slot.last = row;
-        }
-        Ok(order.len())
-    }
-
     fn prompt_chunk_at(&mut self, i: usize) -> Result<(), LlamaError> {
         let llama = self.llama;
         let chunk = self.cfg.prefill_chunk;
@@ -431,33 +492,12 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
-    /// Replay generated ids into KV, then sample one new greedy token.
+    /// Sample one new greedy token per decode-ready sequence, then forward.
     ///
-    /// Decode forwards that are ready in the same step share one batched GEMM
-    /// (`Llama::forward_batch`) when they sit on this engine's intern pool.
+    /// Replay of already sampled ids happens in [`Engine::prefill_and_replay`]
+    /// so a prefill chunk and a replay token can share one GEMM.
     fn decode_ready(&mut self) -> Result<usize, LlamaError> {
         let mut n = 0usize;
-        loop {
-            let mut replay = Vec::new();
-            for i in 0..self.slots.len() {
-                let Some(cell) = self.slot(i) else {
-                    continue;
-                };
-                if !cell.is_decode() || cell.replay >= cell.generated.len() {
-                    continue;
-                }
-                let tok = cell
-                    .generated
-                    .get(cell.replay)
-                    .copied()
-                    .ok_or_else(|| LlamaError::Shape("engine replay token".into()))?;
-                replay.push((i, tok));
-            }
-            if replay.is_empty() {
-                break;
-            }
-            n = n.saturating_add(self.forward_batch_items(&replay, true)?);
-        }
         let mut batch = Vec::new();
         for i in 0..self.slots.len() {
             n = n.saturating_add(self.sample_into_batch(i, &mut batch)?);
@@ -718,6 +758,27 @@ mod tests {
                 eng.pool().hits() > 0,
                 "B must intern-hit A's [1,2] full block"
             );
+        }
+    }
+
+    #[test]
+    fn engine_two_added_together_match_independent() {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        for bytes in [tiny_llama_gguf(), tiny_qwen3moe_gguf(), tiny_llama4_gguf()] {
+            let g = load_gguf_owned(bytes).expect("owned");
+            let tok = Tokenizer::from_gguf(&g).expect("tok");
+            let model = Llama::from_gguf(g).expect("m");
+            let exp_a = independent(&model, &tok, &tokens_a, 2);
+            let exp_b = independent(&model, &tok, &tokens_b, 2);
+            let mut cfg = EngineCfg::tiny();
+            cfg.eos = tok.eos;
+            let mut eng = Engine::new(&model, cfg).expect("eng");
+            let a = eng.add(&tokens_a, 2).expect("a");
+            let b = eng.add(&tokens_b, 2).expect("b");
+            eng.run().expect("run");
+            assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+            assert_eq!(eng.take(b).expect("tb").generated, exp_b);
         }
     }
 

@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — mixed prefill+replay GEMM
+
+`Engine` packs ready prefill chunks and unforwarded replay tokens into
+one `Llama::prefill_batch` when two or more jobs share the intern pool
+(ragged lengths included). New greedy tokens still sample and
+`forward_batch` afterward. Greedy ids still match
+`greedy_generate_cache` on writer tinies, including recompute
+preemption. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — batched prefill GEMM
 
 `Llama::prefill_batch` runs Q/K/V, FFN, and lm_head as one GEMM of all

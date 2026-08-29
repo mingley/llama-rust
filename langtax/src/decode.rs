@@ -10471,6 +10471,18 @@ mod tests {
     }
 
     #[test]
+    fn prepare_append_twice_multi_block_is_idempotent() {
+        let model = Llama::from_gguf(load_gguf_owned(tiny_llama_gguf()).expect("load")).expect("m");
+        let mut cache = model.new_paged_cache(16, 2).expect("c");
+        cache.prepare_append(4).expect("p1");
+        assert_eq!(cache.page_table_len(), 2);
+        cache.prepare_append(4).expect("p2");
+        assert_eq!(cache.page_table_len(), 2);
+        cache.prepare_append(5).expect("p3");
+        assert_eq!(cache.page_table_len(), 3);
+    }
+
+    #[test]
     fn tiny_gemma_load_gemv_gemm_embed_and_greedy() {
         let bytes = tiny_gemma_gguf();
         let g = load_gguf(&bytes).expect("load gemma");

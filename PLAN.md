@@ -767,6 +767,10 @@ model, do not celebrate the sim.
     across sequences with equal or ragged chunk lengths. Engine prefills
     that are ready in the same step use it. Logits bit-match sequential
     `prefill`. Prefix intern bind stays per sequence before the GEMM.
+19. [x] Mixed prefill+replay GEMM: Engine packs ready prefill chunks and
+    unforwarded replay tokens into one `prefill_batch` when two or more
+    jobs are ready. New greedy samples still forward afterward. Greedy ids
+    still match `greedy_generate_cache`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

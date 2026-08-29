@@ -328,13 +328,9 @@ impl KvPages {
         let mut pool = self.pool.try_mut()?;
         let bs = pool.block_size;
         let bi = pos / bs;
-        if self.table.len() == bi {
+        while self.table.len() <= bi {
             let id = pool.alloc()?;
             self.table.push(id);
-            return Ok(());
-        }
-        if self.table.len() != bi.saturating_add(1) {
-            return Err("kv page table");
         }
         let Some(&id) = self.table.get(bi) else {
             return Err("kv page table");
