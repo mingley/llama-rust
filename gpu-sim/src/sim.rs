@@ -32,7 +32,8 @@ struct Alloc {
     managed: bool,
     /// `cudaMemAdviseSetReadMostly`: prefetch replicates instead of moving.
     read_mostly: bool,
-    /// GPUs that may map this managed alloc without migrating (`SetAccessedBy`).
+    /// GPUs that may read this alloc without a local copy (`SetAccessedBy` /
+    /// VMM `cuMemSetAccess` PROT_READ).
     accessed_by: BTreeSet<DeviceId>,
     /// `cudaMemAdviseSetPreferredLocation` (host or one GPU).
     preferred: Preferred,
@@ -46,16 +47,23 @@ struct Alloc {
 
 impl Alloc {
     fn remote_read_ok(&self, device: DeviceId) -> bool {
-        if !self.live || !self.managed {
+        if !self.live {
             return false;
         }
-        if self.accessed_by.contains(&device) {
-            return true;
+        if self.managed {
+            if self.accessed_by.contains(&device) {
+                return true;
+            }
+            return match self.preferred {
+                Preferred::Gpu(p) => self.devices.contains(&p) && p != device,
+                Preferred::None | Preferred::Host => false,
+            };
         }
-        match self.preferred {
-            Preferred::Gpu(p) => self.devices.contains(&p) && p != device,
-            Preferred::None | Preferred::Host => false,
-        }
+        self.vmm && self.accessed_by.contains(&device) && !self.vmm_maps.is_empty()
+    }
+
+    fn vmm_home(&self) -> Option<DeviceId> {
+        self.vmm_maps.first().map(|(d, _, _)| *d)
     }
 }
 
@@ -1337,10 +1345,10 @@ impl Sim {
         Ok(a.live && a.managed && a.read_mostly)
     }
 
-    /// Whether `device` has [`MemAdvise::SetAccessedBy`] on `alloc`.
+    /// Whether `device` has [`MemAdvise::SetAccessedBy`] or [`Self::va_set_access`].
     pub fn is_accessed_by(&self, alloc: AllocId, device: DeviceId) -> Result<bool, SimError> {
         let a = self.alloc_ref(alloc)?;
-        Ok(a.live && a.managed && a.accessed_by.contains(&device))
+        Ok(a.live && a.accessed_by.contains(&device) && (a.managed || a.vmm))
     }
 
     /// Whether [`MemAdvise::SetPreferredLocation`] names `device`.
@@ -1437,8 +1445,9 @@ impl Sim {
         Ok(a.live && a.vmm)
     }
 
-    /// `cuMemCreate` + `cuMemMap` + `cuMemSetAccess` for the whole VA.
+    /// `cuMemCreate` + `cuMemMap` for the whole VA (local ReadWrite).
     ///
+    /// Peer [`Self::va_set_access`] is separate (`cuMemSetAccess` PROT_READ).
     /// Equivalent to [`Self::va_map_range`] of `[0, bytes)`. Capture cannot include it.
     pub fn va_map(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
         let bytes = self.alloc_ref(id)?.bytes;
@@ -1518,6 +1527,7 @@ impl Sim {
         let a = self.alloc_mut(id)?;
         a.vmm_maps.clear();
         a.devices.clear();
+        a.accessed_by.clear();
         Ok(())
     }
 
@@ -1551,6 +1561,52 @@ impl Sim {
         if !a.vmm_maps.iter().any(|&(d, _, _)| d == device) {
             a.devices.retain(|d| *d != device);
         }
+        if a.vmm_maps.is_empty() {
+            a.accessed_by.clear();
+        }
+        Ok(())
+    }
+
+    /// `cuMemSetAccess` PROT_READ on `device` for a mapped VMM VA.
+    ///
+    /// Host-synchronous. Does not charge dest HBM. A kernel on `device` may
+    /// read physicals that live on another GPU (interconnect). Writes still
+    /// need a local map. Capture cannot include it. Needs a topology link and
+    /// directed peer access from the home GPU, same as D2D.
+    pub fn va_set_access(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let _gpu = self.profile.gpu(device)?;
+        let a = self.alloc_ref(id)?;
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        let Some(owner) = a.vmm_home() else {
+            return Err(SimError::Invalid { why: "not mapped" });
+        };
+        if owner != device {
+            let _link = self.profile.link(Some(owner), Some(device))?;
+            if !self.peer_access(owner, device) {
+                return Err(SimError::PeerDisabled {
+                    src: owner,
+                    dst: device,
+                });
+            }
+        }
+        let _ins = self.alloc_mut(id)?.accessed_by.insert(device);
+        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+        Ok(())
+    }
+
+    /// Drop [`Self::va_set_access`] for `device`. Host-synchronous.
+    pub fn va_unset_access(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let _gpu = self.profile.gpu(device)?;
+        let a = self.alloc_ref(id)?;
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        let _was = self.alloc_mut(id)?.accessed_by.remove(&device);
+        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
     }
 
@@ -2085,8 +2141,9 @@ impl Sim {
 
     /// Enqueue a kernel on whole allocations. Reads/writes are leased until it completes.
     ///
-    /// A VMM VA must be fully mapped ([`Self::is_resident`]). For a mapped
-    /// page of a larger VA, use [`Self::kernel_bufs`].
+    /// A VMM VA must be fully mapped ([`Self::is_resident`]) or peer-readable
+    /// via [`Self::va_set_access`] (reads only). For a mapped page of a larger
+    /// VA, use [`Self::kernel_bufs`].
     ///
     /// A managed allocation not yet on `device` is [`Self::prefetch`]'d when
     /// the kernel starts (page fault after stream deps). Capture does not
@@ -2108,8 +2165,9 @@ impl Sim {
 
     /// Enqueue a kernel on explicit buffer spans (vLLM paged-KV analog).
     ///
-    /// Each [`KernelBuf`] must be mapped-host, device-resident, or a VMM span
-    /// covered by [`Self::va_map_range`]. `bytes == 0` means from `offset` to
+    /// Each [`KernelBuf`] must be mapped-host, device-resident, a VMM span
+    /// covered by [`Self::va_map_range`], or a VMM peer [`Self::va_set_access`]
+    /// read. `bytes == 0` means from `offset` to
     /// the end of the allocation. A range past the reservation is `Invalid`.
     /// A live kernel (not a graph replay) page-faults managed memory when it
     /// *starts*, after stream deps, so a waited prefetch is visible.
@@ -3344,8 +3402,16 @@ impl Sim {
         writes: &[KernelBuf],
         mapped_ok: bool,
     ) -> Result<(), SimError> {
-        for b in reads.iter().chain(writes.iter()) {
-            if !self.buf_on_device(b, device, mapped_ok)? {
+        for b in reads {
+            if !self.buf_on_device(b, device, mapped_ok, true)? {
+                return Err(SimError::NotResident {
+                    alloc: b.id,
+                    device,
+                });
+            }
+        }
+        for b in writes {
+            if !self.buf_on_device(b, device, mapped_ok, false)? {
                 return Err(SimError::NotResident {
                     alloc: b.id,
                     device,
@@ -3364,6 +3430,7 @@ impl Sim {
         buf: &KernelBuf,
         device: DeviceId,
         mapped_ok: bool,
+        allow_remote: bool,
     ) -> Result<bool, SimError> {
         let a = self.alloc_ref(buf.id)?;
         let (off, n) = kernel_span(a.bytes, buf)?;
@@ -3373,7 +3440,11 @@ impl Sim {
             a.live && a.devices.contains(&device)
         };
         let mapped = mapped_ok && a.live && a.host_mapped;
-        let accessed = mapped_ok && a.remote_read_ok(device);
+        let home_span = a
+            .vmm_home()
+            .is_some_and(|h| vmm_covers(&a.vmm_maps, h, off, n));
+        let accessed =
+            mapped_ok && allow_remote && a.remote_read_ok(device) && (!a.vmm || home_span);
         Ok(on_device || mapped || accessed)
     }
 
@@ -3404,10 +3475,14 @@ impl Sim {
                 remote = true;
                 continue;
             }
-            if a.managed && a.remote_read_ok(device) {
-                let src = match a.preferred {
-                    Preferred::Gpu(p) if a.devices.contains(&p) => Some(p),
-                    _ => a.devices.first().copied(),
+            if a.remote_read_ok(device) {
+                let src = if a.vmm {
+                    a.vmm_home()
+                } else {
+                    match a.preferred {
+                        Preferred::Gpu(p) if a.devices.contains(&p) => Some(p),
+                        _ => a.devices.first().copied(),
+                    }
                 };
                 let link = if let Some(src) = src {
                     self.peer_or_host_bps(src, device)?

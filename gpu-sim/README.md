@@ -43,6 +43,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemPrefetchAsync` (`prefetch` / `prefetch_host`) **moves** unless ReadMostly | PCIe / NVLink (1 ns if already local) |
 | `cuMemAddressReserve` (`va_reserve`) is a VA with no physical pages | `alloc_overhead_ns` (at the call) |
 | `cuMemMap` (`va_map`) charges HBM; `va_unmap` refunds; the VA is reusable | `alloc_overhead_ns` (map) |
+| `cuMemSetAccess` (`va_set_access`) PROT_READ on a peer; dest HBM stays 0 | interconnect, not local HBM |
 | `va_map_range` / `va_unmap_range` map a span; `kernel()` needs the whole VA; `kernel_bufs` / `memset_buf` / `MemcpyOp::offset` touch a mapped span | HBM = mapped bytes |
 | `va_release` parks an unmapped VA; `va_acquire` remaps same size | map only on reuse (no second reserve) |
 | `va_acquire_paged` maps the VA in `page` physicals | `alloc_overhead_ns` per block |
@@ -55,7 +56,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemcpy` (`memcpy_sync`) waits that stream | pinned `memcpy` does not |
 | `synchronize_device` waits one GPU | other GPUs keep running |
 | stream order, event dependencies | memcpy microseconds |
-| residency: a kernel may only read **device** or **mapped-host** allocations; managed first-touch at kernel start | PCIe / NVLink / HBM bandwidth |
+| residency: a kernel may only read **device**, **mapped-host**, or VMM peer `va_set_access` allocations; managed first-touch at kernel start | PCIe / NVLink / HBM bandwidth |
 | HBM vs host-pinned: `alloc_host_pinned` does not charge HBM | pageable vs pinned H2D (`pageable_permille`) |
 | copy-engine occupancy | launch overhead |
 | peer accessibility | size-dependent efficiency |
@@ -256,7 +257,8 @@ does not skip kernel first-touch). `prefetch` / `prefetch_host` are
 before the kernel unless AccessedBy or PreferredLocation covers that GPU.
 `va_reserve` / `va_map` / `va_unmap` / `va_free` are CUDA virtual memory.
 `va_map_range` / `va_unmap_range` map sparse physicals (HBM is the mapped
-span). `kernel()` needs the whole VA covered; `kernel_bufs`, `memset_buf`, and
+span). `va_set_access` is `cuMemSetAccess` PROT_READ on a peer (no dest HBM;
+writes still need a local map). `kernel()` needs the whole VA covered; `kernel_bufs`, `memset_buf`, and
 `MemcpyOp::offset` touch a mapped page (paged KV). `va_acquire` remaps an idle VA of the same
 size (or reserves); `va_acquire_paged` maps KV-block physicals covering the VA;
 `va_release` unmaps into that pool. Capture cannot

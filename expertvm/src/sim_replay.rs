@@ -162,7 +162,8 @@ pub struct SimCfg {
     /// pinned H2D. Evict [`gpu_sim::Sim::va_release`]s so the pointer stays.
     /// Hits/misses match H2D. [`crate::SimulatedGpuStore::new`] stays on pinned
     /// H2D; [`crate::SimulatedGpuStore::with_vmm`] uses this path. [`Self::vmm_page`] splits each map into KV-sized
-    /// physicals (`0` is one `cuMemMap` for the whole expert).
+    /// physicals (`0` is one `cuMemMap` for the whole expert). [`Self::accessed_by`]
+    /// is `va_set_access` on every GPU at fill (peer read, no dest HBM).
     pub vmm: bool,
     /// Page size for [`Self::vmm`]. `0` maps the whole expert in one physical.
     /// [`crate::SimulatedGpuStore::with_vmm`] stays whole-VA;
@@ -188,10 +189,11 @@ pub struct SimCfg {
     /// Host-synchronous (`pageable_permille`). [`crate::SimulatedGpuStore::new`]
     /// stays pinned; [`crate::GpuStoreCfg::pageable`] is the store path.
     pub pageable: bool,
-    /// [`gpu_sim::MemAdvise::SetAccessedBy`] on every GPU at a managed fill.
+    /// Peer map without dest HBM at a managed or VMM fill.
     ///
-    /// Dest GEMMs may read without migrating. `--place replicas` skips dest
-    /// prefetch (no extra HBM). No-op unless [`Self::managed`].
+    /// Dest GEMMs may read without migrating or charging dest HBM. `--place replicas`
+    /// skips dest prefetch (no extra HBM). No-op unless [`Self::managed`] or
+    /// [`Self::vmm`].
     /// [`crate::GpuStoreCfg::accessed_by`] is the store path.
     pub accessed_by: bool,
     /// CUDA legacy null stream (`set_legacy_null_stream`): NULL serializes
@@ -449,7 +451,7 @@ pub(crate) struct TouchArgs {
     pub vmm_page: u64,
     /// [`SimCfg::pageable`]: host-sync pageable H2D.
     pub pageable: bool,
-    /// [`SimCfg::accessed_by`]: `SetAccessedBy` on every GPU at a managed fill.
+    /// [`SimCfg::accessed_by`]: SetAccessedBy / VMM SetAccess on every GPU at fill.
     pub accessed_by: bool,
 }
 
@@ -506,6 +508,15 @@ pub(crate) fn advise_accessed_by(sim: &mut Sim, id: AllocId) -> Result<(), Error
     let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
     for g in 0..n {
         sim.mem_advise(id, gpu_sim::MemAdvise::SetAccessedBy, DeviceId(g))?;
+    }
+    Ok(())
+}
+
+/// `cuMemSetAccess` PROT_READ on every GPU so a remote VMM read skips dest HBM.
+pub(crate) fn advise_vmm_access(sim: &mut Sim, id: AllocId) -> Result<(), Error> {
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        sim.va_set_access(id, DeviceId(g))?;
     }
     Ok(())
 }
@@ -720,6 +731,9 @@ pub(crate) fn apply_touch(
                 (false, false) => {
                     hbm_h2d(sim, args, id)?;
                 }
+            }
+            if args.vmm && args.accessed_by {
+                advise_vmm_access(sim, id)?;
             }
             let _prev = handles.insert(
                 key,
@@ -1355,7 +1369,7 @@ pub(crate) struct RemoteFetch {
     pub(crate) sync_alloc: bool,
     /// `cudaMallocManaged` + PreferredLocation on home; compute GEMM reads remotely.
     pub(crate) managed: bool,
-    /// [`SimCfg::accessed_by`]: map compute without a dest migrate.
+    /// [`SimCfg::accessed_by`]: map compute without a dest migrate (managed or VMM).
     pub(crate) accessed_by: bool,
 }
 

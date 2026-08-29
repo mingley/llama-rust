@@ -65,12 +65,14 @@ pub struct GpuStoreCfg {
     /// Host-synchronous and slower (`pageable_permille`). Decode identity stays
     /// on pinned H2D.
     pub pageable: bool,
-    /// [`gpu_sim::MemAdvise::SetAccessedBy`] on every GPU at a managed fill.
+    /// Peer map without dest HBM: managed [`gpu_sim::MemAdvise::SetAccessedBy`]
+    /// or VMM [`gpu_sim::Sim::va_set_access`] on every GPU at fill.
     ///
-    /// Expert GEMMs are reads-only, so a dest acquire does not migrate. Migrate
-    /// retargets compute (no dest prefetch, no `drop_managed_copy`). Pin skips
-    /// the replica prefetch. No-op unless [`GpuFill::Managed`]. Decode identity
-    /// stays off.
+    /// Expert GEMMs are reads-only, so a dest acquire does not migrate or
+    /// charge dest HBM. Migrate retargets compute (no dest prefetch / VMM
+    /// map+D2D, no `drop_managed_copy` / `va_unmap` of home). Pin skips the
+    /// replica prefetch or VMM dest map. No-op unless [`GpuFill::Managed`] or
+    /// [`GpuFill::Vmm`]. Decode identity stays off.
     pub accessed_by: bool,
     /// CUDA legacy null stream: copy (`StreamId(0)`) serializes with compute.
     ///
@@ -180,7 +182,7 @@ pub struct SimulatedGpuStore {
     vmm_page: u64,
     /// Pageable H2D (`memcpy_host_to_device`) instead of pinned DMA.
     pageable: bool,
-    /// [`GpuStoreCfg::accessed_by`]: managed pages stay on the home GPU.
+    /// [`GpuStoreCfg::accessed_by`]: managed/VMM pages stay on the home GPU.
     accessed_by: bool,
     /// Successful D2D [`Self::migrate`] calls (source device ≠ dest).
     migrates: u64,
@@ -532,7 +534,7 @@ impl SimulatedGpuStore {
     ///
     /// Waits this page's GEMM lease before the replica copy so managed
     /// `prefetch` is not [`gpu_sim::SimError::Leased`]. Managed +
-    /// [`GpuStoreCfg::accessed_by`] maps the dest without a prefetch.
+    /// `cudaMemAdviseSetAccessedBy` / VMM `cuMemSetAccess` maps the dest without a prefetch.
     /// 1-GPU profiles skip that wait so leftover prefill GEMMs can overlap
     /// decode-priority ITL samples.
     pub fn pin_hot(&mut self, keys: &[ExpertKey]) -> Result<(), Error> {
@@ -559,7 +561,8 @@ impl SimulatedGpuStore {
         Ok(())
     }
 
-    /// Move `key` onto `dst`. Pinned/VMM pages D2D; managed pages prefetch then drop the source copy unless [`GpuStoreCfg::accessed_by`] (retarget GEMM, keep home residency); mapped pages retarget GEMM.
+    /// Move `key` onto `dst`. Pinned/VMM pages D2D unless [`GpuStoreCfg::accessed_by`]
+    /// (VMM retargets GEMM, keep home physicals); managed pages prefetch then drop the source copy unless AccessedBy (retarget GEMM, keep home residency); mapped pages retarget GEMM.
     ///
     /// Source HBM is released after the copy is stream-ordered; destination HBM
     /// is charged by the peer memcpy. Dest compute can overlap other GPUs.
@@ -713,6 +716,8 @@ impl SimulatedGpuStore {
     }
 
     /// Map `dst`, D2D, then unmap the source physicals.
+    ///
+    /// [`Self::accessed_by`]: GEMM retarget only — `va_set_access` already maps `dst`.
     fn migrate_vmm(
         &mut self,
         key: ExpertKey,
@@ -720,6 +725,15 @@ impl SimulatedGpuStore {
         src: DeviceId,
         dst: DeviceId,
     ) -> Result<(), Error> {
+        if self.accessed_by {
+            let _gone = self.replicas.remove(&key);
+            if let Some(page) = self.pages.get_mut(&key) {
+                page.device = dst;
+                page.ready = None;
+            }
+            self.note_migrate();
+            return Ok(());
+        }
         self.sim.synchronize_stream(src, self.prefill)?;
         if self.decode != self.prefill {
             self.sim.synchronize_stream(src, self.decode)?;
@@ -763,7 +777,7 @@ impl SimulatedGpuStore {
             .unwrap_or(false)
     }
 
-    /// Whether `device` has [`gpu_sim::MemAdvise::SetAccessedBy`] on `key`.
+    /// Whether `device` has SetAccessedBy / VMM `va_set_access` on `key`.
     #[must_use]
     pub fn page_accessed_by(&self, key: ExpertKey, device: DeviceId) -> bool {
         self.pages
@@ -772,7 +786,7 @@ impl SimulatedGpuStore {
             .unwrap_or(false)
     }
 
-    /// True when any placed page is [`gpu_sim::MemAdvise::SetAccessedBy`] on `device`.
+    /// True when any placed page is SetAccessedBy / VMM `va_set_access` on `device`.
     #[must_use]
     pub fn any_page_accessed_by(&self, device: DeviceId) -> bool {
         self.pages.keys().any(|k| self.page_accessed_by(*k, device))
@@ -998,6 +1012,9 @@ impl SimulatedGpuStore {
             GpuFill::Vmm => {
                 let id = self.vmm_alloc(d)?;
                 self.fill_hbm(d, id)?;
+                if self.accessed_by {
+                    advise_vmm_access(&mut self.sim, id)?;
+                }
                 Ok(id)
             }
             GpuFill::Pinned => {
@@ -1233,7 +1250,11 @@ impl SimulatedGpuStore {
                 return Ok(());
             }
             GpuFill::Vmm => {
-                if !self.sim.is_resident(id, dst)? {
+                if self.accessed_by {
+                    if !self.sim.is_accessed_by(id, dst)? {
+                        self.sim.va_set_access(id, dst)?;
+                    }
+                } else if !self.sim.is_resident(id, dst)? {
                     self.sim.va_map(id, dst)?;
                     let _c = self.sim.memcpy_device_to_device(
                         src,
@@ -1643,6 +1664,15 @@ fn advise_accessed_by(sim: &mut Sim, id: AllocId) -> Result<(), Error> {
     let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
     for g in 0..n {
         sim.mem_advise(id, MemAdvise::SetAccessedBy, DeviceId(g))?;
+    }
+    Ok(())
+}
+
+/// `cuMemSetAccess` PROT_READ on every GPU so a remote VMM read skips dest HBM.
+fn advise_vmm_access(sim: &mut Sim, id: AllocId) -> Result<(), Error> {
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        sim.va_set_access(id, DeviceId(g))?;
     }
     Ok(())
 }

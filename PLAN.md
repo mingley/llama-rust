@@ -1016,6 +1016,13 @@ model, do not celebrate the sim.
     than a full-device sample on a GEMM-bound profile. Dual score still has
     no `$/M tokens`.
 
+63. [x] VMM `cuMemSetAccess` peer maps: `Sim::va_set_access` lets a kernel
+    on GPU1 read a VA whose physicals live on GPU0 without dest HBM
+    (NVLink billed; writes still need a local map). `GpuStoreCfg::accessed_by`
+    / `SimCfg::accessed_by` apply at VMM fills, pin (skip dest map+D2D), and
+    migrate (retarget GEMM, keep home physicals). Dual score still has no
+    `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

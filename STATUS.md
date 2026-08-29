@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — VMM `cuMemSetAccess` peer maps
+
+`Sim::va_set_access` is `cuMemSetAccess` PROT_READ on a mapped VMM VA so a
+kernel on a peer GPU can read physicals that live on the home GPU without
+dest HBM (interconnect billed). Writes still need a local map. Capture is
+refused. `GpuStoreCfg::accessed_by` / `SimCfg::accessed_by` apply at VMM
+fills (`va_set_access` on every GPU), pin (skip dest map+D2D), and migrate
+(retarget GEMM, keep home physicals). Managed `SetAccessedBy` is unchanged.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Trace-walker `--decode-priority` ITL
 
 `expertvm sim` / `schedule` / `store` and `infer-bench schedule` take the
@@ -463,10 +473,11 @@ so a later sequence wins when compute contends. Dual score still has no
 ## Shipped 2026-08-29 — AccessedBy and legacy NULL on the store seam
 
 `GpuStoreCfg::accessed_by` / `SimCfg::accessed_by` is
-`cudaMemAdviseSetAccessedBy` on every GPU at a managed fill. Expert GEMMs
-are reads-only, so migrate retargets compute without dest prefetch or
-`drop_managed_copy` (home residency, dest HBM 0). Pin / `--place replicas`
-skip the dest copy. `legacy_null` is `set_legacy_null_stream` (copy NULL
+`cudaMemAdviseSetAccessedBy` on every GPU at a managed fill, or
+`cuMemSetAccess` PROT_READ at a VMM fill. Expert GEMMs
+are reads-only, so migrate retargets compute without dest prefetch /
+VMM map+D2D or `drop_managed_copy` (home residency, dest HBM 0). Pin /
+`--place replicas` skip the dest copy. `legacy_null` is `set_legacy_null_stream` (copy NULL
 serializes with compute). `SimCfg::pageable` is the walker H2D path.
 `expertvm sim|schedule|store` take `--accessed-by`, `--legacy-null`, and
 `--pageable`. Dual score still has no `$/M tokens`.
@@ -1211,8 +1222,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 62 (trace-walker
-`--decode-priority`). `gguf_gemv serve --engine`
+Next code change is PLAN systems depth after item 63 (VMM `cuMemSetAccess`
+peer maps). `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover
 is a Llama NORM real-model fixture when a GGUF is on disk. Physical

@@ -3186,6 +3186,67 @@ fn simulated_gpu_store_accessed_by_pin_skips_dest_hbm() {
 }
 
 #[test]
+fn simulated_gpu_store_vmm_accessed_by_migrate_keeps_home() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::example_2node_rdma();
+    let bytes = 4096u64;
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        p,
+        bytes,
+        GpuFill::Vmm,
+        GpuStoreCfg {
+            accessed_by: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    let _p = gpu.acquire(k0).expect("acq");
+    assert!(gpu.page_accessed_by(k0, DeviceId(1)));
+    gpu.migrate(k0, DeviceId(1)).expect("mig");
+    assert_eq!(gpu.device_of(k0), Some(DeviceId(1)));
+    let _p = gpu.acquire(k0).expect("gemm dest");
+    let score = gpu.score().expect("score");
+    assert_eq!(score.bytes_moved, bytes);
+    assert_eq!(score.hbm_peak, bytes);
+    assert!(gpu.page_resident(k0, DeviceId(0)));
+    assert!(!gpu.page_resident(k0, DeviceId(1)));
+    assert_eq!(gpu.hbm_used(DeviceId(1)).expect("d1"), 0);
+}
+
+#[test]
+fn simulated_gpu_store_vmm_accessed_by_pin_skips_dest_hbm() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        2,
+        HardwareProfile::example_8xh100_nvlink(),
+        4096,
+        GpuFill::Vmm,
+        GpuStoreCfg {
+            accessed_by: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    gpu.pin_hot(&[k0]).expect("pin");
+    let _p = gpu.acquire(k0).expect("hit");
+    let score = gpu.score().expect("score");
+    assert_eq!(score.bytes_moved, 4096);
+    assert_eq!(gpu.hbm_used(DeviceId(1)).expect("d1"), 0);
+    assert!(gpu.page_accessed_by(k0, DeviceId(1)));
+}
+
+#[test]
 fn simulated_gpu_store_legacy_null_serializes_copy_and_compute() {
     let t = Trace {
         events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
@@ -3258,6 +3319,65 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
     let id = handles.get(&k0).expect("page").id;
     sim.synchronize().expect("prefetch");
     assert!(sim.is_accessed_by(id, DeviceId(1)).expect("advise"));
+    let _k = sim
+        .kernel(
+            DeviceId(1),
+            KernelKind::GroupedMoeGemm {
+                experts: 1,
+                tokens_per_expert: 1,
+                hidden: 64,
+                ff: 64,
+                dtype: DType::Fp16,
+            },
+            &[id],
+            &[],
+            StreamId(0),
+        )
+        .expect("remote gemm");
+    sim.synchronize().expect("gemm");
+    assert!(sim.is_resident(id, DeviceId(0)).expect("home"));
+    assert!(!sim.is_resident(id, DeviceId(1)).expect("dest"));
+    assert_eq!(sim.hbm_used(DeviceId(1)).expect("d1"), 0);
+}
+
+#[test]
+fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
+    use crate::replay::Touch;
+    use crate::sim_replay::{apply_touch, GraphBank, PageHandle, TouchArgs};
+    use gpu_sim::{DType, KernelKind, Sim, StreamId};
+    use std::collections::BTreeMap;
+
+    let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+    let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
+    let mut graphs = GraphBank::new(false, false);
+    let args = TouchArgs {
+        d: DeviceId(0),
+        s: StreamId(0),
+        bytes: 4096,
+        slots: 1,
+        sync_alloc: false,
+        mapped: false,
+        managed: false,
+        vmm: true,
+        vmm_page: 0,
+        pageable: false,
+        accessed_by: true,
+    };
+    let mut next_event = 1u32;
+    let k0 = ExpertKey::new(0, 0);
+    apply_touch(
+        &mut sim,
+        &mut handles,
+        &mut graphs,
+        args,
+        k0,
+        Touch::Miss { evicted: None },
+        &mut next_event,
+    )
+    .expect("miss");
+    let id = handles.get(&k0).expect("page").id;
+    sim.synchronize().expect("h2d");
+    assert!(sim.is_accessed_by(id, DeviceId(1)).expect("set access"));
     let _k = sim
         .kernel(
             DeviceId(1),
