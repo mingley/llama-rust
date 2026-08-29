@@ -34,6 +34,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMallocAsync` from a pool reuses cached bytes; `cudaMemGetInfo` still counts them used until `pool_trim_to` | `pool_reuse_ns` |
 | `cudaMemPoolSetAccess` (`pool_set_access`) ReadWrite on a peer; dest HBM stays 0; writes allowed | interconnect, not local HBM |
 | `cudaMalloc` (`malloc`) device-syncs that GPU, then the pointer is usable; it cannot consume another pool's cache | `alloc_overhead_ns` (charged at the call) |
+| `cudaIpcGetMemHandle` / `ipc_open` / `ipc_close` share physicals | `alloc_overhead_ns` (export/import) |
 | `cudaHostRegister` pins pageable host for DMA (`host_register`) | `alloc_overhead_ns` (mlock, host-sync) |
 | `cudaHostAllocMapped` / `host_register_mapped`: kernel may read host with no H2D | host PCIe vs HBM |
 | `cudaMallocManaged` (`alloc_managed`) does not charge HBM until migrate | `alloc_overhead_ns` (VA reserve at the call) |
@@ -257,6 +258,10 @@ completes). `create_pool` / `alloc_from_pool` /
 `cudaMallocFromPoolAsync` / `cudaMemPoolAttrReleaseThreshold` /
 `cudaMemPoolTrimTo`. `u64::MAX` holds unused bytes so `malloc` can OOM
 until trim. Capture cannot include pool create/trim/set-attribute.
+`ipc_get` / `ipc_open` / `ipc_close` are `cudaIpcGetMemHandle` /
+`cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`: the import aliases the
+source physicals (no extra HBM). Free of the source while imports are live
+is Invalid. Capture cannot include IPC.
 `alloc_host` is pageable; `host_register` / `host_register_mapped` are
 `cudaHostRegister` (host-synchronous). `alloc_host_mapped` is
 `cudaHostAllocMapped`: a kernel may read it with no H2D, billed at host

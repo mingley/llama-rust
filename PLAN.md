@@ -427,6 +427,10 @@ Exact (mechanical invariants agents may rely on):
   `cudaMemPoolAttrReleaseThreshold` / `cudaMemPoolTrimTo`); default
   threshold `0` returns unused bytes on free; `u64::MAX` holds them so
   `malloc` can OOM until trim; `cudaMalloc` cannot consume pool cache
+- `cudaIpcGetMemHandle` / `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`
+  (`ipc_get` / `ipc_open` / `ipc_close`): import aliases source physicals
+  (no extra HBM); free of the source while imports are live is Invalid;
+  capture is refused
 - `cudaHostRegister` / mapped host (`alloc_host`, `host_register`,
   `host_register_mapped`, `alloc_host_mapped`): pin existing pageable
   memory; mapped pointers are kernel-readable over PCIe with no H2D and
@@ -1108,6 +1112,11 @@ model, do not celebrate the sim.
     default record still joins. Graph WaitExternal waits for a live record,
     not the same graph's record of that event. Dual score still has no
     `$/M tokens`.
+74. [x] CUDA IPC: `Sim::ipc_get` / `ipc_open` / `ipc_close` are
+    `cudaIpcGetMemHandle` / `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`.
+    The import aliases source physicals (no extra HBM). Free of the source
+    while imports are live is Invalid. Capture is refused. Dual score still
+    has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

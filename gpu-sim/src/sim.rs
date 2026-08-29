@@ -5,7 +5,9 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::SimError;
-use crate::ids::{AllocId, DeviceId, EventId, GraphId, MemHandleId, OpId, PoolId, StreamId};
+use crate::ids::{
+    AllocId, DeviceId, EventId, GraphId, IpcHandleId, MemHandleId, OpId, PoolId, StreamId,
+};
 use crate::ops::{
     GpuOp as Kind, KernelBuf, KernelKind, MemAdvise, MemAttach, MemcpyOp, Operation, Place,
 };
@@ -56,6 +58,10 @@ struct Alloc {
     vmm_maps: Vec<(DeviceId, u64, u64)>,
     /// `None` is `cudaMalloc` / host-pinned. `Some` is `cudaMallocAsync` from that pool.
     pool: Option<PoolId>,
+    /// Import from [`Sim::ipc_open`] (`cudaIpcOpenMemHandle`). Physicals stay on the source.
+    ipc_src: Option<AllocId>,
+    /// Live [`Sim::ipc_open`] mappings of this allocation.
+    ipc_opens: u32,
 }
 
 impl Alloc {
@@ -220,6 +226,8 @@ pub struct Sim {
     default_pools: BTreeMap<DeviceId, PoolId>,
     next_handle: u64,
     mem_handles: BTreeMap<MemHandleId, MemHandle>,
+    next_ipc: u64,
+    ipc_handles: BTreeMap<IpcHandleId, AllocId>,
     /// Explicit [`Sim::va_map_handle`] maps. Missing is combined Create+Map.
     vmm_handle_at: BTreeMap<(AllocId, DeviceId, u64, u64), MemHandleId>,
     pinned_used: u64,
@@ -276,6 +284,8 @@ impl Sim {
             default_pools,
             next_handle: 1,
             mem_handles: BTreeMap::new(),
+            next_ipc: 1,
+            ipc_handles: BTreeMap::new(),
             vmm_handle_at: BTreeMap::new(),
             pinned_used: 0,
             vmm_idle: Vec::new(),
@@ -1231,6 +1241,8 @@ impl Sim {
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool,
+                ipc_src: None,
+                ipc_opens: 0,
             },
         );
         Ok(id)
@@ -1385,6 +1397,8 @@ impl Sim {
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: Some(pool),
+                ipc_src: None,
+                ipc_opens: 0,
             },
         );
         let _op = self.submit(device, stream, Kind::Alloc { id, bytes })?;
@@ -1562,6 +1576,8 @@ impl Sim {
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: None,
+                ipc_src: None,
+                ipc_opens: 0,
             },
         );
         Ok(id)
@@ -1759,6 +1775,8 @@ impl Sim {
                 vmm: true,
                 vmm_maps: Vec::new(),
                 pool: None,
+                ipc_src: None,
+                ipc_opens: 0,
             },
         );
         Ok(id)
@@ -2506,6 +2524,107 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaIpcGetMemHandle` of a live device allocation. Host-synchronous.
+    /// Capture cannot include it. The same alloc returns the same handle.
+    pub fn ipc_get(&mut self, id: AllocId) -> Result<IpcHandleId, SimError> {
+        self.fail_if_capturing("cannot capture ipc")?;
+        let d = {
+            let a = self.alloc_ref(id)?;
+            if !a.live
+                || a.managed
+                || a.vmm
+                || a.host_pinned
+                || a.host_pageable
+                || a.ipc_src.is_some()
+                || a.devices.is_empty()
+            {
+                return Err(SimError::Invalid {
+                    why: "not device ipc",
+                });
+            }
+            a.devices.first().copied().ok_or(SimError::Invalid {
+                why: "not device ipc",
+            })?
+        };
+        if let Some(h) = self
+            .ipc_handles
+            .iter()
+            .find_map(|(&h, src)| (*src == id).then_some(h))
+        {
+            return Ok(h);
+        }
+        let ns = self.profile.gpu(d)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let h = IpcHandleId(self.next_ipc);
+        self.next_ipc = self.next_ipc.saturating_add(1);
+        let _prev = self.ipc_handles.insert(h, id);
+        Ok(h)
+    }
+
+    /// `cudaIpcOpenMemHandle` on `device`. Alias shares the source physicals
+    /// (no extra HBM). `device` must already hold the source.
+    pub fn ipc_open(&mut self, device: DeviceId, handle: IpcHandleId) -> Result<AllocId, SimError> {
+        self.fail_if_capturing("cannot capture ipc")?;
+        let src = *self
+            .ipc_handles
+            .get(&handle)
+            .ok_or(SimError::Invalid { why: "unknown ipc" })?;
+        let (bytes, devices, opens) = {
+            let a = self.alloc_ref(src)?;
+            if !a.live {
+                return Err(SimError::Invalid { why: "freed" });
+            }
+            if !a.devices.contains(&device) {
+                return Err(SimError::Invalid {
+                    why: "ipc device mismatch",
+                });
+            }
+            (a.bytes, a.devices.clone(), a.ipc_opens)
+        };
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        self.alloc_mut(src)?.ipc_opens = opens.saturating_add(1);
+        let id = AllocId(self.next_alloc);
+        self.next_alloc = self.next_alloc.saturating_add(1);
+        let _prev = self.allocs.insert(
+            id,
+            Alloc {
+                bytes,
+                devices,
+                leases: 0,
+                live: true,
+                host_pinned: false,
+                host_pageable: false,
+                host_mapped: false,
+                host_registered: false,
+                managed: false,
+                attach: Attach::Global,
+                read_mostly: false,
+                accessed_by: BTreeSet::new(),
+                vmm_write_by: BTreeSet::new(),
+                preferred: Preferred::None,
+                vmm: false,
+                vmm_maps: Vec::new(),
+                pool: None,
+                ipc_src: Some(src),
+                ipc_opens: 0,
+            },
+        );
+        Ok(id)
+    }
+
+    /// `cudaIpcCloseMemHandle`. Does not refund source HBM.
+    pub fn ipc_close(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture ipc")?;
+        self.drop_ipc_import(id)
+    }
+
+    /// Whether `id` is a live [`Self::ipc_open`] alias.
+    pub fn is_ipc_import(&self, id: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(id)?;
+        Ok(a.live && a.ipc_src.is_some())
+    }
+
     /// `cudaFree`: wait every GPU that holds the pointer, then it is gone on
     /// all of them. [`Self::free`] is `cudaFreeAsync`. Host-pinned ids are
     /// [`SimError::UnknownAlloc`] (`cudaFreeHost` is [`Self::free_host_pinned`]).
@@ -2532,6 +2651,12 @@ impl Sim {
         let a = self.alloc_ref(id)?;
         if a.leases > 0 {
             return Err(SimError::Leased { alloc: id });
+        }
+        if a.ipc_src.is_some() {
+            return self.drop_ipc_import(id);
+        }
+        if a.ipc_opens > 0 {
+            return Err(SimError::Invalid { why: "ipc mapped" });
         }
         if !a.live || a.host_pinned {
             return Err(SimError::UnknownAlloc { alloc: id });
@@ -3384,6 +3509,8 @@ impl Sim {
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: None,
+                ipc_src: None,
+                ipc_opens: 0,
             },
         );
         Ok(id)
@@ -3934,6 +4061,18 @@ impl Sim {
         if a.leases > 0 {
             return Err(SimError::Leased { alloc });
         }
+        if a.ipc_src.is_some() {
+            self.drop_ipc_import(alloc)?;
+            self.running.push(Running {
+                op,
+                remaining_ns: 1,
+                share: Share::Solo,
+            });
+            return Ok(true);
+        }
+        if a.ipc_opens > 0 {
+            return Err(SimError::Invalid { why: "ipc mapped" });
+        }
         if !a.live || !a.devices.contains(&device) {
             return Err(SimError::UnknownAlloc { alloc });
         }
@@ -3950,6 +4089,27 @@ impl Sim {
             share: Share::Solo,
         });
         Ok(true)
+    }
+
+    fn drop_ipc_import(&mut self, id: AllocId) -> Result<(), SimError> {
+        let (src, leases) = {
+            let a = self.alloc_ref(id)?;
+            (
+                a.ipc_src.ok_or(SimError::Invalid {
+                    why: "not ipc import",
+                })?,
+                a.leases,
+            )
+        };
+        if leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        let opens = self.alloc_ref(src)?.ipc_opens;
+        self.alloc_mut(src)?.ipc_opens = opens.saturating_sub(1);
+        let a = self.alloc_mut(id)?;
+        a.live = false;
+        a.devices.clear();
+        Ok(())
     }
 
     fn reserve_now(&mut self, device: DeviceId, bytes: u64) -> Result<AllocId, SimError> {
@@ -3978,6 +4138,8 @@ impl Sim {
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: None,
+                ipc_src: None,
+                ipc_opens: 0,
             },
         );
         Ok(id)
@@ -4184,7 +4346,11 @@ impl Sim {
         mapped_ok: bool,
         allow_remote: bool,
     ) -> Result<bool, SimError> {
-        let a = self.alloc_ref(buf.id)?;
+        let root = {
+            let a = self.alloc_ref(buf.id)?;
+            a.ipc_src.unwrap_or(buf.id)
+        };
+        let a = self.alloc_ref(root)?;
         let (off, n) = kernel_span(a.bytes, buf)?;
         let on_device = if a.vmm {
             a.live && vmm_covers(&a.vmm_maps, device, off, n)

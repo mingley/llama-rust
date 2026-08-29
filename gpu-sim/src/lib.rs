@@ -21,6 +21,10 @@
 //! buffer). [`Sim::memcpy_pinned_to_device`] is the overlapping DMA path.
 //! [`Sim::malloc`] / [`memcpy_sync`](Sim::memcpy_sync) / [`free_sync`](Sim::free_sync)
 //! are host-synchronous (`cudaMalloc` / `cudaMemcpy` / `cudaFree`).
+//! [`Sim::ipc_get`] / [`ipc_open`](Sim::ipc_open) / [`ipc_close`](Sim::ipc_close)
+//! are `cudaIpcGetMemHandle` / `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`:
+//! the import is an alias of the same physicals (no extra HBM). Free of the
+//! source while imports are live is Invalid. Capture cannot include IPC.
 //! [`Sim::alloc`] draws from the device default mempool (`cudaMallocAsync`).
 //! [`Sim::create_pool`] / [`alloc_from_pool`](Sim::alloc_from_pool) /
 //! [`set_pool_release_threshold`](Sim::set_pool_release_threshold) /
@@ -119,7 +123,9 @@ mod score;
 mod sim;
 
 pub use error::SimError;
-pub use ids::{AllocId, DeviceId, EventId, GraphId, LinkId, MemHandleId, OpId, PoolId, StreamId};
+pub use ids::{
+    AllocId, DeviceId, EventId, GraphId, IpcHandleId, LinkId, MemHandleId, OpId, PoolId, StreamId,
+};
 pub use ops::{
     DType, GpuOp, KernelBuf, KernelKind, MemAdvise, MemAttach, MemcpyOp, Operation, Place,
 };
@@ -1874,6 +1880,75 @@ mod tests {
         enq(sim.kernel(d, KernelKind::other(1 << 20, bytes), &[b], &[b], s));
         sim.synchronize_stream(d, s).unwrap();
         assert!(sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn ipc_open_kernel_shares_hbm() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 8u64 << 20;
+        let a = sim.malloc(d, bytes).unwrap();
+        let h = sim.ipc_get(a).unwrap();
+        assert_eq!(sim.ipc_get(a).unwrap(), h);
+        let imp = sim.ipc_open(d, h).unwrap();
+        assert!(sim.is_ipc_import(imp).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        enq(sim.kernel(d, KernelKind::other(1 << 20, bytes), &[imp], &[imp], s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        sim.ipc_close(imp).unwrap();
+        assert!(!sim.is_ipc_import(imp).unwrap());
+        sim.free_sync(a).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+    }
+
+    #[test]
+    fn ipc_free_source_while_mapped_and_close_via_free() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let bytes = 4096u64;
+        let a = sim.malloc(d, bytes).unwrap();
+        let h = sim.ipc_get(a).unwrap();
+        let imp = sim.ipc_open(d, h).unwrap();
+        match sim.free_sync(a) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("ipc mapped")),
+            other => panic!("{other:?}"),
+        }
+        sim.free_sync(imp).unwrap();
+        sim.free_sync(a).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        match sim.ipc_open(d, h) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("freed")),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn ipc_rejects_managed_host_and_capture() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let m = sim.alloc_managed(4096).unwrap();
+        match sim.ipc_get(m) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not device ipc")),
+            other => panic!("{other:?}"),
+        }
+        let host = sim.alloc_host_pinned(4096).unwrap();
+        match sim.ipc_get(host) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not device ipc")),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.malloc(d, 4096).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.ipc_get(a) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
+        sim.free_sync(m).unwrap();
+        sim.free_host_pinned(host).unwrap();
     }
 
     #[test]

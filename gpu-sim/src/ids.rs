@@ -73,3 +73,14 @@ impl fmt::Display for MemHandleId {
         write!(f, "handle{}", self.0)
     }
 }
+
+/// `cudaIpcMemHandle_t`. [`crate::Sim::ipc_get`] exports a device alloc;
+/// [`crate::Sim::ipc_open`] imports an alias that shares the same physicals.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct IpcHandleId(pub u64);
+
+impl fmt::Display for IpcHandleId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ipc{}", self.0)
+    }
+}
