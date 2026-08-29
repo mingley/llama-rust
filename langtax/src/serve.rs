@@ -18,10 +18,11 @@ use crate::serve_engine;
 use crate::store_attach::GpuCli;
 use crate::template::ChatMessage;
 use crate::tok::Tokenizer;
+use expertvm::GpuFill;
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--trace-out FILE]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
@@ -42,6 +43,9 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --graph-update    cudaGraphExecUpdate parked leaves (`--expert-sim`)
       --graph-clone     cudaGraphClone before instantiate (`--expert-sim`)
       --timing-events   cudaEventElapsedTime on copy start/end (`--expert-sim`)
+      --mapped          cudaHostAllocMapped miss pages (`--expert-sim`)
+      --managed         cudaMallocManaged miss pages (`--expert-sim`)
+      --vmm             va_acquire miss pages (`--expert-sim`)
       --trace-out FILE  append batched MoE ExpertAccess JSONL (`--engine`)
 
 POST /generate takes {\"prompt\": TEXT} or, to render the model's own
@@ -59,7 +63,8 @@ leftover prefill while any live sequence is already decoding. `--slo-reject` /
 `--ttft-slo-ns` drop a waiter whose gpu-sim queue wait meets the TTFT budget
 (`--expert-sim`). `--itl-slo-ns` counts later-token ITL misses (does not drop).
 `--cuda-graphs` / `--graph-update` / `--graph-clone` / `--timing-events` are
-the same SimulatedGpuStore knobs as `gguf_gemv engine`. `--trace-out` writes
+the same SimulatedGpuStore knobs as `gguf_gemv engine`. `--mapped` /
+`--managed` / `--vmm` choose miss-page placement (default pinned H2D). `--trace-out` writes
 router JSONL as sequences finish. Not a production inference server.
 ";
 
@@ -121,6 +126,8 @@ pub struct ServeArgs {
     pub graph_clone: bool,
     /// Timing-on copy events (`--expert-sim`).
     pub timing_events: bool,
+    /// Miss-page placement (`--expert-sim`). Default is pinned H2D.
+    pub fill: GpuFill,
     /// Append Engine MoE traces as JSONL (`--engine`). `None` leaves tracing off.
     pub trace_out: Option<String>,
 }
@@ -252,6 +259,24 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
     }
     if n.gpu.timing_events && !n.expert_sim {
         return usage_err("--timing-events requires --expert-sim");
+    }
+    if n.gpu.mapped && !n.engine {
+        return usage_err("--mapped requires --engine");
+    }
+    if n.gpu.mapped && !n.expert_sim {
+        return usage_err("--mapped requires --expert-sim");
+    }
+    if n.gpu.managed && !n.engine {
+        return usage_err("--managed requires --engine");
+    }
+    if n.gpu.managed && !n.expert_sim {
+        return usage_err("--managed requires --expert-sim");
+    }
+    if n.gpu.vmm && !n.engine {
+        return usage_err("--vmm requires --engine");
+    }
+    if n.gpu.vmm && !n.expert_sim {
+        return usage_err("--vmm requires --expert-sim");
     }
     if n.has_trace && !n.engine {
         return usage_err("--trace-out requires --engine");
@@ -388,7 +413,8 @@ where
                 }
                 itl_slo_ns = Some(n);
             }
-            "--cuda-graphs" | "--graph-update" | "--graph-clone" | "--timing-events" => {
+            "--cuda-graphs" | "--graph-update" | "--graph-clone" | "--timing-events"
+            | "--mapped" | "--managed" | "--vmm" => {
                 if let Err(e) = gpu.apply(key, inline) {
                     return usage_err(&e);
                 }
@@ -425,6 +451,7 @@ where
         has_trace: trace_out.is_some(),
         gpu,
     })?;
+    let fill = gpu.fill()?;
     Ok(ServeCmd::Run(ServeArgs {
         path,
         n_predict,
@@ -445,6 +472,7 @@ where
         graph_update: gpu.graph_update,
         graph_clone: gpu.graph_clone,
         timing_events: gpu.timing_events,
+        fill,
         trace_out,
     }))
 }
@@ -1160,6 +1188,7 @@ mod tests {
             graph_update: false,
             graph_clone: false,
             timing_events: false,
+            fill: GpuFill::Pinned,
             trace_out: None,
         }
     }
@@ -1271,6 +1300,7 @@ mod tests {
                 graph_update: false,
                 graph_clone: false,
                 timing_events: false,
+                fill: GpuFill::Pinned,
                 trace_out: None,
             }
         );
@@ -1352,6 +1382,7 @@ mod tests {
                 graph_update: false,
                 graph_clone: false,
                 timing_events: false,
+                fill: GpuFill::Pinned,
                 trace_out: None,
             }
         );
@@ -1449,6 +1480,12 @@ mod tests {
         assert!(a.graph_clone);
         assert!(a.timing_events);
         assert_eq!(a.itl_slo_ns, Some(4));
+        let err = parse_serve_args(["m.gguf", "--managed"]).unwrap_err();
+        assert!(err.contains("--managed requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--mapped"]).unwrap_err();
+        assert!(err.contains("--mapped requires --expert-sim"), "{err}");
+        let a = run(&["m.gguf", "--engine", "--expert-sim", "--vmm"]);
+        assert_eq!(a.fill, GpuFill::Vmm);
     }
 
     #[test]

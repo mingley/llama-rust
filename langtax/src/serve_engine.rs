@@ -253,6 +253,7 @@ impl<'a> EngineHttp<'a> {
                 expert_8gpu: args.expert_8gpu,
                 expert_bytes: args.expert_bytes,
                 gpu_cfg: gpu_knobs(args.graph_update, args.graph_clone, args.timing_events),
+                fill: args.fill,
             },
         )
         .map_err(ServeError::Infer)?;
@@ -511,6 +512,7 @@ mod tests {
     use crate::decode::{greedy_generate_ctx, tiny_llama_gguf, tiny_qwen3moe_gguf};
     use crate::gguf::load_gguf_owned;
     use crate::serve::bind_loopback;
+    use expertvm::GpuFill;
     use std::fs::File;
     use std::net::SocketAddr;
     use std::time::Duration;
@@ -543,6 +545,7 @@ mod tests {
             graph_update: false,
             graph_clone: false,
             timing_events: false,
+            fill: GpuFill::Pinned,
             trace_out: None,
         }
     }

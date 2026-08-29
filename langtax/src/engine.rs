@@ -2374,7 +2374,7 @@ mod tests {
         copy_elapsed_ns: u64,
     }
 
-    fn two_seq_gpu_knobs(slots: usize, gpu_cfg: GpuStoreCfg) -> GpuKnobOut {
+    fn two_seq_gpu_store(slots: usize, gpu_cfg: GpuStoreCfg, fill: GpuFill) -> GpuKnobOut {
         let tokens_a = [1u32, 2, 3, 4];
         let tokens_b = [5u32, 0, 5, 0];
         let g = load_gguf_owned(tiny_qwen3moe_2layer_gguf()).expect("owned");
@@ -2390,7 +2390,7 @@ mod tests {
             slots,
             HardwareProfile::example_h100_sxm(),
             4096,
-            GpuFill::Pinned,
+            fill,
             gpu_cfg,
         )
         .expect("gpu");
@@ -2406,6 +2406,10 @@ mod tests {
             clones: eng.graph_clones(),
             copy_elapsed_ns: eng.copy_elapsed_ns(),
         }
+    }
+
+    fn two_seq_gpu_knobs(slots: usize, gpu_cfg: GpuStoreCfg) -> GpuKnobOut {
+        two_seq_gpu_store(slots, gpu_cfg, GpuFill::Pinned)
     }
 
     #[test]
@@ -2447,5 +2451,17 @@ mod tests {
             out.copy_elapsed_ns
         );
         assert!(out.launches >= 2, "launches={}", out.launches);
+    }
+
+    #[test]
+    fn engine_gpu_fill_modes_match_independent() {
+        for fill in [GpuFill::Managed, GpuFill::Mapped, GpuFill::Vmm] {
+            let out = two_seq_gpu_store(8, GpuStoreCfg::default(), fill);
+            assert!(
+                out.launches >= 2,
+                "fill={fill:?} launches={}",
+                out.launches
+            );
+        }
     }
 }

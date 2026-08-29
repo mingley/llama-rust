@@ -17,6 +17,8 @@ pub(crate) struct StoreAttach {
     pub expert_bytes: Option<u64>,
     /// CUDA-like knobs for [`SimulatedGpuStore::with_cfg`]. Identity stays default.
     pub gpu_cfg: GpuStoreCfg,
+    /// Miss-page placement. Default is pinned H2D.
+    pub fill: GpuFill,
 }
 
 /// CLI graph/timing switches for [`gpu_knobs`].
@@ -26,6 +28,9 @@ pub(crate) struct GpuCli {
     pub graph_update: bool,
     pub graph_clone: bool,
     pub timing_events: bool,
+    pub mapped: bool,
+    pub managed: bool,
+    pub vmm: bool,
 }
 
 impl GpuCli {
@@ -36,6 +41,9 @@ impl GpuCli {
             "--graph-update" => &mut self.graph_update,
             "--graph-clone" => &mut self.graph_clone,
             "--timing-events" => &mut self.timing_events,
+            "--mapped" => &mut self.mapped,
+            "--managed" => &mut self.managed,
+            "--vmm" => &mut self.vmm,
             _ => return Ok(false),
         };
         if inline.is_some() {
@@ -43,6 +51,11 @@ impl GpuCli {
         }
         *slot = true;
         Ok(true)
+    }
+
+    /// Pinned when every fill flag is off; otherwise exactly one of mapped/managed/vmm.
+    pub(crate) fn fill(self) -> Result<GpuFill, String> {
+        GpuFill::from_flags(self.mapped, self.managed, self.vmm).map_err(|e| e.to_string())
     }
 }
 
@@ -79,7 +92,7 @@ pub(crate) fn attach_store(
             slots,
             profile,
             spec.expert_bytes.unwrap_or(4096),
-            GpuFill::Pinned,
+            spec.fill,
             spec.gpu_cfg,
         )
         .map_err(|e| e.to_string())?;

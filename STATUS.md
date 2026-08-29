@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine GpuFill mapped / managed / vmm
+
+`--expert-sim --mapped` / `--managed` / `--vmm` park SimulatedGpuStore
+miss pages as `cudaHostAllocMapped`, `cudaMallocManaged`, or `va_acquire`
+on the Engine serving path. Default stays pinned H2D identity. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine CUDA graphs, ITL SLO, shared-prefix intern
 
 `--expert-sim` captures per-page GEMM graphs on the Engine path
