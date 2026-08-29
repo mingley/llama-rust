@@ -7,6 +7,7 @@ use crate::planner::{
     plan_placement, plan_window, predicted_keys, window_keys, ChainState, Markov, Placement, Plan,
     Prefetch, DECODE_ACTIVATION_BYTES,
 };
+use crate::sim_replay::{replay_streams, stream_of};
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
     AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelKind, MemAdvise, MemcpyOp,
@@ -46,7 +47,11 @@ impl GpuFill {
 pub struct GpuStoreCfg {
     /// [`gpu_sim::Sim::host_func`] after each acquire GEMM (CPU scheduler roundtrip).
     pub host_func: bool,
-    /// Blocking `cudaStreamCreate` for the compute stream (`StreamId(1)`).
+    /// Blocking `cudaStreamCreate` for created streams (`1 .. n`).
+    ///
+    /// Default off (decode identity): copy is NULL, compute is `StreamId(1)`, so
+    /// `n = 2`. [`Self::seq_streams`] marks copy streams `1 .. n_copy-1` and
+    /// compute `StreamId(n_copy)` (`n = n_copy + 1`).
     pub blocking_streams: bool,
     /// Host-sync `cudaMalloc` / `cudaMemcpy` / `cudaFree` on pinned/VMM misses.
     pub sync_alloc: bool,
@@ -71,9 +76,11 @@ pub struct GpuStoreCfg {
     /// Off by default (`cudaStreamNonBlocking` compute). Decode identity stays
     /// overlapping.
     pub legacy_null: bool,
-    /// `cudaStreamCreateWithPriority` on the compute stream (`StreamId(1)`).
+    /// `cudaStreamCreateWithPriority` on created streams (priority = stream id).
     ///
-    /// Copy stays NULL at priority 0. Decode identity stays default priority.
+    /// Default off: copy stays NULL at priority 0, compute is `StreamId(1)`.
+    /// [`Self::seq_streams`] also marks the extra copy streams and compute
+    /// `StreamId(n_copy)`. Decode identity stays default priority.
     pub stream_priority: bool,
     /// `cudaGraphExecUpdate` a parked exec onto the next miss alloc.
     ///
@@ -91,6 +98,13 @@ pub struct GpuStoreCfg {
     /// Default is `cudaEventDisableTiming` (vLLM wait events). Decode identity
     /// stays disable-timing; elapsed is not recorded.
     pub timing_events: bool,
+    /// Per-sequence copy streams so concurrent H2D can overlap.
+    ///
+    /// `n_copy` is GPU0 `copy_engines.max(2)`; copy for sequence `s` is
+    /// `s % n_copy`. Grouped GEMM stays on `StreamId(n_copy)` (not a
+    /// per-sequence compute stream). Default off: copy is NULL (`StreamId(0)`),
+    /// compute is `StreamId(1)`. Decode identity stays serial copies.
+    pub seq_streams: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -142,6 +156,8 @@ pub struct SimulatedGpuStore {
     dispatches: u64,
     /// Successful peer replica copies from [`Self::pin_hot`].
     replicates: u64,
+    /// [`GpuStoreCfg::seq_streams`]: `bind_sequence` retargets [`Self::copy`].
+    seq_streams: bool,
 }
 
 impl SimulatedGpuStore {
@@ -236,19 +252,19 @@ impl SimulatedGpuStore {
         cfg: GpuStoreCfg,
     ) -> Result<Self, Error> {
         let bytes = bytes_per_expert.max(1);
+        let (copy, compute, mark) = copy_compute_streams(&profile, cfg.seq_streams);
         let mut sim = Sim::new(profile);
         if cfg.mempool {
             sim.set_default_pool_release_threshold(u64::MAX)?;
         }
         if cfg.blocking_streams {
-            // Compute is `StreamId(1)`. Copy stays NULL (`StreamId(0)`).
-            sim.set_created_streams_blocking(2)?;
+            sim.set_created_streams_blocking(mark)?;
         }
         if cfg.legacy_null {
             sim.set_legacy_null_stream(true);
         }
         if cfg.stream_priority {
-            sim.set_created_streams_priority(2)?;
+            sim.set_created_streams_priority(mark)?;
         }
         let cache_slots = mapped_occupancy(slots, fill, sim.pin_budget(), bytes);
         // Mapped expert pages already charge the pin budget. Pageable H2D
@@ -262,8 +278,8 @@ impl SimulatedGpuStore {
             cache: CachedStore::new(inner, cache_slots)?,
             sim,
             device: DeviceId(0),
-            copy: StreamId(0),
-            compute: StreamId(1),
+            copy,
+            compute,
             next_event: 1,
             pages: BTreeMap::new(),
             replicas: BTreeMap::new(),
@@ -288,6 +304,7 @@ impl SimulatedGpuStore {
             migrates: 0,
             dispatches: 0,
             replicates: 0,
+            seq_streams: cfg.seq_streams,
         })
     }
 
@@ -320,6 +337,30 @@ impl SimulatedGpuStore {
         self.sim.synchronize()?;
         self.sweep_evicts();
         Ok(self.sim.pool_cached(self.sim.default_pool(self.device)?)?)
+    }
+
+    /// Bind H2D / alloc / free to the copy stream for `sequence`.
+    ///
+    /// No-op unless [`GpuStoreCfg::seq_streams`]. Grouped GEMM stays on
+    /// [`Self::compute_stream`].
+    pub fn bind_sequence(&mut self, sequence: u64) {
+        if !self.seq_streams {
+            return;
+        }
+        let n = u8::try_from(self.compute.0).unwrap_or(1);
+        self.copy = stream_of(sequence, n);
+    }
+
+    /// Compute stream for grouped expert GEMM (not a per-sequence stream).
+    #[must_use]
+    pub fn compute_stream(&self) -> StreamId {
+        self.compute
+    }
+
+    /// Copy stream for the currently bound sequence (NULL when seq-streams is off).
+    #[must_use]
+    pub fn copy_stream(&self) -> StreamId {
+        self.copy
     }
 
     /// Drain the simulator and return its performance vector.
@@ -1213,6 +1254,7 @@ pub fn store_replay_cfg(
     let mut markov = Markov::new();
     let mut chain = ChainState::new();
     for (i, event) in trace.events.iter().enumerate() {
+        store.bind_sequence(event.sequence);
         let ek = event.keys();
         for key in &ek {
             let _p = store.acquire(*key)?;
@@ -1282,6 +1324,20 @@ fn gemm(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Erro
         s,
     )?;
     Ok(())
+}
+
+/// Copy is NULL; compute is stream 1. Seq-streams: copy `0 .. n_copy-1`, compute `n_copy`.
+fn copy_compute_streams(
+    profile: &HardwareProfile,
+    seq_streams: bool,
+) -> (StreamId, StreamId, u8) {
+    if !seq_streams {
+        return (StreamId(0), StreamId(1), 2);
+    }
+    let n_copy = replay_streams(profile, true);
+    let compute = StreamId(u16::from(n_copy));
+    let mark = u8::try_from(u16::from(n_copy).saturating_add(1)).unwrap_or(u8::MAX);
+    (StreamId(0), compute, mark)
 }
 
 /// `cudaMemAdviseSetAccessedBy` on every GPU so a remote read does not migrate.

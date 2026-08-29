@@ -284,12 +284,16 @@ struct GroupedRun<'a> {
     pool: &'a mut GemvPool,
     store: &'a mut Option<LiveStore>,
     layer: u32,
+    row_seq: &'a [u64],
+    sequence: u64,
 }
 
 struct ExpertJob<'a> {
     expert: usize,
     toks: &'a [usize],
     layer: u32,
+    row_seq: &'a [u64],
+    sequence: u64,
 }
 
 struct ExpertGemm<'a> {
@@ -593,6 +597,11 @@ impl KvCache {
         self.moe_trace.sequence = sequence;
         self.moe_trace.events.clear();
         self.moe_trace.batch.clear();
+    }
+
+    /// Sequence id for batched MoE rows (Engine seq-streams). Does not enable tracing.
+    pub(crate) fn set_moe_sequence(&mut self, sequence: u64) {
+        self.moe_trace.sequence = sequence;
     }
 
     /// Take recorded router events. Empty if tracing was never enabled.
@@ -916,16 +925,19 @@ impl KvCache {
 }
 
 impl MoeTraceBuf {
+    fn seq_of(&self, token_off: usize) -> u64 {
+        self.row_seq
+            .get(token_off)
+            .copied()
+            .unwrap_or(self.sequence)
+    }
+
     fn event(&self, token_off: usize, experts: &[usize], weights: &[f32]) -> ExpertAccess {
         let token = self.row_tok.get(token_off).copied().unwrap_or_else(|| {
             self.token0
                 .saturating_add(u32::try_from(token_off).unwrap_or(u32::MAX))
         });
-        let sequence = self
-            .row_seq
-            .get(token_off)
-            .copied()
-            .unwrap_or(self.sequence);
+        let sequence = self.seq_of(token_off);
         let prefix = self
             .row_prefix
             .get(token_off)
@@ -5986,12 +5998,7 @@ impl Llama {
             store,
         } = run;
         self.route_softmax_tokens(&spec, n_tokens, s, pool, moe_trace)?;
-        prefetch_routed(
-            store,
-            moe_trace.layer,
-            &s.moe.sel_e,
-            moe_trace.policy.prefetch,
-        );
+        prefetch_routed(moe_trace, store, n_tokens, spec.n_used, &s.moe.sel_e);
         prefetch_selected(moe_trace, store, n_tokens, spec.n_used, &s.moe.sel_e);
         self.grouped_routed_ffn(
             &spec,
@@ -6001,6 +6008,8 @@ impl Llama {
                 pool,
                 store,
                 layer: moe_trace.layer,
+                row_seq: &moe_trace.row_seq,
+                sequence: moe_trace.sequence,
             },
         )?;
         Ok(())
@@ -6078,6 +6087,8 @@ impl Llama {
                     expert: e,
                     toks: &toks,
                     layer: run.layer,
+                    row_seq: run.row_seq,
+                    sequence: run.sequence,
                 },
                 s,
                 run.pool,
@@ -6121,6 +6132,12 @@ impl Llama {
                 dst.copy_from_slice(xt);
             }
         }
+        bind_row(
+            store,
+            job.row_seq,
+            job.sequence,
+            job.toks.first().copied().unwrap_or(0),
+        );
         let (parts, held) = Self::take_expert(store, job.layer, job.expert)?;
         let r = self.swiglu_expert_gemm(
             spec,
@@ -6357,10 +6374,11 @@ impl Llama {
         self.gemm_into(&moe.down_shexp, n_tokens, &s.gate, &mut s.ffn_out, pool)?;
         self.route_llama4_tokens(moe, n_tokens, s, pool, moe_trace)?;
         prefetch_routed(
+            moe_trace,
             store,
-            moe_trace.layer,
+            n_tokens,
+            moe.n_expert_used,
             &s.moe.sel_e,
-            moe_trace.policy.prefetch,
         );
         prefetch_selected(moe_trace, store, n_tokens, moe.n_expert_used, &s.moe.sel_e);
         let spec = SoftmaxMoE {
@@ -6383,6 +6401,8 @@ impl Llama {
                 pool,
                 store,
                 layer: moe_trace.layer,
+                row_seq: &moe_trace.row_seq,
+                sequence: moe_trace.sequence,
             },
         )?;
         Ok(())
@@ -6962,6 +6982,7 @@ fn prefetch_selected(
     sel_e: &[usize],
 ) {
     for t in 0..n_tokens {
+        bind_row(store, &moe_trace.row_seq, moe_trace.sequence, t);
         let start = t.saturating_mul(n_used);
         let experts = sel_e
             .get(start..start.saturating_add(n_used))
@@ -6973,36 +6994,66 @@ fn prefetch_selected(
 /// Fault in this layer's unique routed experts before grouped GEMM.
 ///
 /// Skipped when the unique set is larger than the cache (`slots`) so a tight
-/// LRU still demand-pages one expert at a time.
-fn prefetch_routed(store: &mut Option<LiveStore>, layer: u32, sel_e: &[usize], prefetch: Prefetch) {
-    if matches!(prefetch, Prefetch::None) {
+/// LRU still demand-pages one expert at a time. Distinct keys H2D on the
+/// first using sequence's copy stream ([`LiveStore::bind_sequence`]).
+fn prefetch_routed(
+    moe_trace: &MoeTraceBuf,
+    store: &mut Option<LiveStore>,
+    n_tokens: usize,
+    n_used: usize,
+    sel_e: &[usize],
+) {
+    if matches!(moe_trace.policy.prefetch, Prefetch::None) {
         return;
     }
     let Some(s) = store.as_mut() else {
         return;
     };
     let mut seen = BTreeSet::new();
-    let mut keys = Vec::new();
-    for e in sel_e {
-        let Ok(ex) = u32::try_from(*e) else {
-            continue;
-        };
-        let k = ExpertKey::new(layer, ex);
-        if seen.insert(k) {
-            keys.push(k);
+    let mut all = Vec::new();
+    let mut owner = BTreeMap::new();
+    for t in 0..n_tokens {
+        let seq = moe_trace.seq_of(t);
+        let start = t.saturating_mul(n_used);
+        let experts = sel_e
+            .get(start..start.saturating_add(n_used))
+            .unwrap_or(&[]);
+        for e in experts {
+            let Ok(ex) = u32::try_from(*e) else {
+                continue;
+            };
+            let k = ExpertKey::new(moe_trace.layer, ex);
+            if seen.insert(k) {
+                all.push(k);
+            }
+            let _owned = owner.entry(k).or_insert(seq);
         }
     }
-    if keys.is_empty() {
+    if all.is_empty() {
         return;
     }
     if let Some(slots) = s.slots() {
-        if keys.len() > slots {
+        if all.len() > slots {
             return;
         }
     }
-    match s.prefetch(&keys) {
-        Ok(_n) => {}
-        Err(_e) => {}
+    let mut by_seq: BTreeMap<u64, Vec<ExpertKey>> = BTreeMap::new();
+    for (k, seq) in owner {
+        by_seq.entry(seq).or_default().push(k);
+    }
+    for (seq, keys) in by_seq {
+        s.bind_sequence(seq);
+        match s.prefetch(&keys) {
+            Ok(_n) => {}
+            Err(_e) => {}
+        }
+    }
+}
+
+fn bind_row(store: &mut Option<LiveStore>, row_seq: &[u64], sequence: u64, token_off: usize) {
+    let seq = row_seq.get(token_off).copied().unwrap_or(sequence);
+    if let Some(s) = store.as_mut() {
+        s.bind_sequence(seq);
     }
 }
 

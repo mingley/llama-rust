@@ -604,6 +604,7 @@ where
                 graph_update: cfg.graph_update,
                 graph_clone: cfg.graph_clone,
                 timing_events: cfg.timing_events,
+                seq_streams: cfg.seq_streams,
             },
             prefetch,
             plan_window: cfg.plan_window,

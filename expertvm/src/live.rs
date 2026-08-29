@@ -42,6 +42,23 @@ impl LiveStore {
         }
     }
 
+    /// Bind H2D to `sequence`'s copy stream. CPU stores and default GPU are no-ops.
+    pub fn bind_sequence(&mut self, sequence: u64) {
+        match self {
+            Self::Simulated(s) => s.bind_sequence(sequence),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => {}
+        }
+    }
+
+    /// Grouped-GEMM compute stream. CPU stores are `None`.
+    #[must_use]
+    pub fn compute_stream(&self) -> Option<StreamId> {
+        match self {
+            Self::Simulated(s) => Some(s.compute_stream()),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => None,
+        }
+    }
+
     /// Keep-hot (sticky pin) and, for the simulated GPU, replicate to the next GPU.
     ///
     /// Distinct from [`ExpertStore::lease`]: a decode `release` does not drop

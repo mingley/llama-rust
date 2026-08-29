@@ -41,6 +41,8 @@ pub(crate) struct GpuCli {
     pub accessed_by: bool,
     pub legacy_null: bool,
     pub stream_priority: bool,
+    /// Per-sequence copy streams (`GpuStoreCfg::seq_streams`).
+    pub seq_streams: bool,
     /// Physical span for [`GpuFill::Vmm`]. `0` maps the whole expert.
     pub vmm_page: u64,
     /// True when `--vmm-page` appeared (even if the value is `0`).
@@ -66,6 +68,7 @@ impl GpuCli {
             "--accessed-by" => &mut self.accessed_by,
             "--legacy-null" => &mut self.legacy_null,
             "--stream-priority" => &mut self.stream_priority,
+            "--seq-streams" => &mut self.seq_streams,
             _ => return Ok(false),
         };
         if inline.is_some() {
@@ -107,6 +110,7 @@ impl GpuCli {
             (self.accessed_by, "--accessed-by"),
             (self.legacy_null, "--legacy-null"),
             (self.stream_priority, "--stream-priority"),
+            (self.seq_streams, "--seq-streams"),
             (self.vmm_page_set, "--vmm-page"),
         ]
         .into_iter()
@@ -276,6 +280,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         graph_update: gpu.graph_update,
         graph_clone: gpu.graph_clone,
         timing_events: gpu.timing_events,
+        seq_streams: gpu.seq_streams,
     }
 }
 

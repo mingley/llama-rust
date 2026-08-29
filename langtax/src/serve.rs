@@ -22,7 +22,7 @@ use expertvm::{GpuFill, GpuStoreCfg, Prefetch};
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
@@ -55,6 +55,7 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --accessed-by     SetAccessedBy on managed fills (`--expert-sim`)
       --legacy-null     NULL copy serializes with compute (`--expert-sim`)
       --stream-priority cudaStreamCreateWithPriority on compute (`--expert-sim`)
+      --seq-streams     per-sequence copy streams (`--expert-sim`; grouped GEMM stays fused)
       --prefetch MODE   none|copy-forward|markov|both (`--engine`; default: both)
       --plan-window N   Stay vs Fetch over N unique predicted keys (`--engine`; `0` ungated)
       --plan-threshold N  Stay permille of that window (`--engine`; default: 500)
@@ -77,7 +78,7 @@ leftover prefill while any live sequence is already decoding. `--slo-reject` /
 `--cuda-graphs` / `--graph-update` / `--graph-clone` / `--timing-events` are
 the same SimulatedGpuStore knobs as `gguf_gemv engine`. `--host-func` /
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--vmm-page` /
-`--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` match
+`--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` / `--seq-streams` match
 `GpuStoreCfg`. `--mapped` / `--managed` / `--vmm` choose miss-page placement
 (default pinned H2D). `--prefetch` / `--plan-window` / `--plan-threshold`
 match `gguf_gemv engine` (predicted keys only; `--engine`). `--trace-out` writes
@@ -275,7 +276,7 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -1524,6 +1525,15 @@ mod tests {
         assert!(a.gpu_cfg.stream_priority);
         assert_eq!(a.gpu_cfg.vmm_page, 1024);
         assert_eq!(a.fill, GpuFill::Vmm);
+        let err = parse_serve_args(["m.gguf", "--seq-streams"]).unwrap_err();
+        assert!(err.contains("--seq-streams requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--seq-streams"]).unwrap_err();
+        assert!(err.contains("--seq-streams requires --expert-sim"), "{err}");
+        let a = run(&["m.gguf", "--engine", "--expert-sim", "--seq-streams"]);
+        assert!(a.gpu_cfg.seq_streams);
+        let err = parse_serve_args(["m.gguf", "--engine", "--expert-sim", "--seq-streams=1"])
+            .unwrap_err();
+        assert!(err.contains("--seq-streams does not take a value"), "{err}");
     }
 
     #[test]

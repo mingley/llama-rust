@@ -3299,6 +3299,41 @@ fn simulated_gpu_store_stream_priority_marks_compute() {
 }
 
 #[test]
+fn simulated_gpu_store_seq_streams_overlaps_h2d() {
+    let t = Trace {
+        events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let bytes = 32u64 << 20;
+    let wall = |seq_streams: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            bytes,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                seq_streams,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        gpu.bind_sequence(0);
+        let _n = gpu.prefetch(&[ExpertKey::new(0, 0)]).expect("k0");
+        gpu.bind_sequence(1);
+        let _n = gpu.prefetch(&[ExpertKey::new(0, 1)]).expect("k1");
+        gpu.score().expect("score").wall_ns
+    };
+    let serial = wall(false);
+    let overlap = wall(true);
+    assert!(
+        overlap < serial,
+        "per-sequence copy streams must overlap H2D; overlap={overlap} serial={serial}"
+    );
+}
+
+#[test]
 fn seq_stream_priority_starts_higher_stream_first() {
     use crate::replay::Touch;
     use crate::sim_replay::{

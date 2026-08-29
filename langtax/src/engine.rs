@@ -26,8 +26,11 @@
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `vmm_page`, pageable H2D, `SetAccessedBy`, legacy NULL, stream priority,
-//! graph update/clone, timing events) are the same mechanical CUDA surface as
-//! `expertvm sim`. Default pinned async stays decode identity.
+//! graph update/clone, timing events, `seq_streams`) are the same mechanical
+//! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
+//! `--seq-streams` maps each Engine sequence onto a copy stream
+//! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
+//! GEMM stays on one compute stream.
 //! [`EngineCfg::slo_reject`] drops waiters whose gpu-sim queue wait already
 //! meets [`EngineCfg::ttft_slo_ns`]. [`EngineCfg::itl_slo_ns`] counts later-token
 //! gaps that miss the ITL budget (`Engine::itl_slo_miss`; does not drop).
@@ -392,6 +395,12 @@ impl<'a> Engine<'a> {
             .and_then(|s| s.stream_priority(device, stream))
     }
 
+    /// Grouped-GEMM compute stream on an attached SimulatedGpuStore.
+    #[must_use]
+    pub fn gpu_compute_stream(&self) -> Option<StreamId> {
+        self.live_store().and_then(LiveStore::compute_stream)
+    }
+
     /// True when any SimulatedGpuStore page has `SetAccessedBy` on `device`.
     #[must_use]
     pub fn gpu_any_accessed_by(&self, device: DeviceId) -> bool {
@@ -682,6 +691,7 @@ impl<'a> Engine<'a> {
 
     fn install(&mut self, id: SeqId, prompt: Vec<u32>, n_predict: usize) -> Result<(), LlamaError> {
         let mut cache = self.llama.new_paged_cache_on(&self.pool, self.cfg.n_ctx)?;
+        cache.set_moe_sequence(u64::from(id.0));
         if self.trace {
             cache.enable_moe_trace(u64::from(id.0));
         }
@@ -2626,6 +2636,7 @@ mod tests {
         wall_ns: u64,
         copy_pri: i32,
         compute_pri: i32,
+        compute_stream: StreamId,
         accessed_peer: bool,
     }
 
@@ -2671,6 +2682,7 @@ mod tests {
         assert_eq!(eng.take(a).expect("ta").generated, exp_a);
         assert_eq!(eng.take(b).expect("tb").generated, exp_b);
         let wall_ns = eng.expert_store_score().expect("sc").expect("sim").wall_ns;
+        let compute_stream = eng.gpu_compute_stream().unwrap_or(StreamId(1));
         GpuKnobOut {
             launches: eng.graph_launches(),
             updates: eng.graph_updates(),
@@ -2681,8 +2693,9 @@ mod tests {
                 .gpu_stream_priority(DeviceId(0), StreamId(0))
                 .unwrap_or(0),
             compute_pri: eng
-                .gpu_stream_priority(DeviceId(0), StreamId(1))
+                .gpu_stream_priority(DeviceId(0), compute_stream)
                 .unwrap_or(0),
+            compute_stream,
             accessed_peer: eng.gpu_any_accessed_by(DeviceId(1)),
         }
     }
@@ -2809,6 +2822,7 @@ mod tests {
         );
         assert_eq!(on.copy_pri, 0, "copy stays NULL priority 0");
         assert_eq!(on.compute_pri, 1, "compute is stream 1 at priority 1");
+        assert_eq!(on.compute_stream, StreamId(1));
         assert!(on.launches >= 2, "launches={}", on.launches);
     }
 
@@ -2909,5 +2923,108 @@ mod tests {
             paged.wall_ns,
             full.wall_ns
         );
+    }
+
+    #[test]
+    fn engine_gpu_seq_streams_match_independent() {
+        let on = two_seq_gpu_knobs(
+            8,
+            GpuStoreCfg {
+                seq_streams: true,
+                ..GpuStoreCfg::default()
+            },
+        );
+        assert_eq!(on.compute_stream, StreamId(2), "H100 copy_engines.max(2)");
+        assert!(on.launches >= 2, "launches={}", on.launches);
+        for bytes in [tiny_qwen3moe_gguf(), tiny_llama_gguf()] {
+            let tokens_a = [1u32, 2, 3, 4];
+            let tokens_b = [5u32, 0, 5, 0];
+            let g = load_gguf_owned(bytes).expect("owned");
+            let tok = Tokenizer::from_gguf(&g).expect("tok");
+            let model = Llama::from_gguf(g).expect("m");
+            let exp_a = independent(&model, &tok, &tokens_a, 2);
+            let exp_b = independent(&model, &tok, &tokens_b, 2);
+            let mut cfg = EngineCfg::tiny();
+            cfg.eos = tok.eos;
+            let mut eng = Engine::new(&model, cfg).expect("eng");
+            let gpu = SimulatedGpuStore::with_cfg(
+                model.expert_direct_store().expect("c"),
+                8,
+                HardwareProfile::example_h100_sxm(),
+                4096,
+                GpuFill::Pinned,
+                GpuStoreCfg {
+                    seq_streams: true,
+                    ..GpuStoreCfg::default()
+                },
+            )
+            .expect("gpu");
+            eng.attach_expert_store(LiveStore::simulated(gpu));
+            let a = eng.add(&tokens_a, 2).expect("a");
+            let b = eng.add(&tokens_b, 2).expect("b");
+            eng.run().expect("run");
+            assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+            assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+        }
+    }
+
+    #[test]
+    fn engine_gpu_seq_streams_overlap_beats_serial() {
+        let bytes = 32u64 << 20;
+        let profile = HardwareProfile::example_h100_sxm();
+        let serial = two_seq_gpu_bytes(
+            8,
+            GpuStoreCfg::default(),
+            GpuFill::Pinned,
+            profile.clone(),
+            bytes,
+        );
+        let overlap = two_seq_gpu_bytes(
+            8,
+            GpuStoreCfg {
+                seq_streams: true,
+                ..GpuStoreCfg::default()
+            },
+            GpuFill::Pinned,
+            profile,
+            bytes,
+        );
+        assert_eq!(serial.launches, overlap.launches);
+        assert!(
+            overlap.wall_ns < serial.wall_ns,
+            "seq-streams must overlap per-sequence H2D; overlap={} serial={}",
+            overlap.wall_ns,
+            serial.wall_ns
+        );
+    }
+
+    #[test]
+    fn engine_gpu_seq_streams_priority_marks_compute() {
+        let on = two_seq_gpu_knobs(
+            8,
+            GpuStoreCfg {
+                seq_streams: true,
+                stream_priority: true,
+                ..GpuStoreCfg::default()
+            },
+        );
+        assert_eq!(on.copy_pri, 0, "seq 0 copy stays NULL priority 0");
+        assert_eq!(on.compute_stream, StreamId(2));
+        assert_eq!(on.compute_pri, 2, "compute is stream n_copy at priority n_copy");
+        assert!(on.launches >= 2, "launches={}", on.launches);
+    }
+
+    #[test]
+    fn engine_gpu_seq_streams_blocking_matches_independent() {
+        let out = two_seq_gpu_knobs(
+            8,
+            GpuStoreCfg {
+                seq_streams: true,
+                blocking_streams: true,
+                ..GpuStoreCfg::default()
+            },
+        );
+        assert_eq!(out.compute_stream, StreamId(2));
+        assert!(out.launches >= 2, "launches={}", out.launches);
     }
 }

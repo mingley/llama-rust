@@ -5,7 +5,7 @@
 //! decodes GEMM together. `"stream": true` is HTTP/1.1 chunked NDJSON token
 //! lines then a final `generated` object. `--prefill-chunk`, `--decode-first`,
 //! `--slo-reject`, `--itl-slo-ns`, graph knobs, fill modes, `GpuStoreCfg`
-//! CUDA knobs, `--prefetch` / `--plan-window` / `--plan-threshold`, and
+//! CUDA knobs, `--prefetch` / `--plan-window` / `--plan-threshold`, `--seq-streams`, and
 //! `--trace-out` match `gguf_gemv engine`. No Tokio, no
 //! keep-alive, no OpenAI SDK surface.
 

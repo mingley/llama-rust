@@ -935,6 +935,13 @@ model, do not celebrate the sim.
     greedy ids still match independent decode. Dual score still has no
     `$/M tokens`.
 
+54. [x] Engine `--seq-streams`: per-sequence copy streams on SimulatedGpuStore
+    (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap, matching
+    `expertvm sim --seq-streams`. Grouped expert GEMM stays on one compute
+    stream (`StreamId(n_copy)`). Default `--expert-sim` stays copy NULL +
+    compute stream 1. Two-sequence greedy ids still match independent decode.
+    Dual score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

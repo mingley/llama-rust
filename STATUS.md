@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine `--seq-streams`
+
+`--expert-sim --seq-streams` maps each Engine sequence onto a copy stream
+(`sequence % copy_engines.max(2)`) so concurrent H2D can overlap — the
+real-KV analog of `expertvm sim --seq-streams`. Grouped expert GEMM stays
+on one compute stream. Default `--expert-sim` keeps copy on NULL and
+compute on stream 1. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine predictor planner
 
 `--prefetch none|copy-forward|markov|both` / `--plan-window N` /
