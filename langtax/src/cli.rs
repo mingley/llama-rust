@@ -25,7 +25,7 @@ usage: gguf_gemv trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out 
   -p, --prompt TEXT   prompt (default: ab)
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: prompt + n_predict + 1)
-      --out FILE      write ExpertAccess JSONL (required)
+      --out FILE      write ExpertAccess JSONL (required; optional per-event w permille)
       --capacity N    expertvm cache slots for the printed table (default: 8)
 ";
 

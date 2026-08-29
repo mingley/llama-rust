@@ -1,6 +1,7 @@
 //! Locality statistics on a real MoE access trace.
 
 use std::collections::BTreeMap;
+use std::fmt::Write;
 
 use crate::access::{ExpertAccess, ExpertKey, Trace};
 
@@ -26,13 +27,17 @@ pub struct TraceStats {
     pub ws90: u64,
     /// Distinct unordered co-activation pairs (same event, top-k ≥ 2).
     pub coact_pairs: u64,
+    /// Sum of recorded [`crate::ExpertAccess::weight_pt`] (0 if the trace has no `w`).
+    pub mass_pt: u64,
+    /// Hottest 20% of keys by router mass, ‰ of [`Self::mass_pt`]. 0 if no `w`.
+    pub top20_mass_pt: u64,
 }
 
 impl TraceStats {
     /// Human-readable block for CLI / docs.
     #[must_use]
     pub fn report(&self) -> String {
-        format!(
+        let mut s = format!(
             "events={} acquires={} unique={} top20‰={} layer_persist‰={} seq_persist‰={} reuse8‰={} ws90={} coact_pairs={}",
             self.n_events,
             self.n_acquires,
@@ -43,7 +48,15 @@ impl TraceStats {
             self.reuse8_pt,
             self.ws90,
             self.coact_pairs
-        )
+        );
+        if self.mass_pt > 0 {
+            let _w = write!(
+                s,
+                " mass‰={} top20_mass‰={}",
+                self.mass_pt, self.top20_mass_pt
+            );
+        }
+        s
     }
 }
 
@@ -54,6 +67,8 @@ pub fn analyze(trace: &Trace) -> TraceStats {
     let n_acquires = trace.n_acquires();
     let freq = freq_table(trace);
     let n_unique = u64::try_from(freq.len()).unwrap_or(0);
+    let mass = mass_table(trace);
+    let mass_pt = mass.values().fold(0u64, |a, v| a.saturating_add(*v));
     TraceStats {
         n_events,
         n_acquires,
@@ -64,6 +79,12 @@ pub fn analyze(trace: &Trace) -> TraceStats {
         reuse8_pt: reuse_within_pt(trace, 8),
         ws90: working_set_cover(&freq, n_acquires, 900),
         coact_pairs: u64::try_from(coactivation_counts(trace).len()).unwrap_or(0),
+        mass_pt,
+        top20_mass_pt: if mass_pt == 0 {
+            0
+        } else {
+            top_share_pt(&mass, mass_pt, 200)
+        },
     }
 }
 
@@ -76,6 +97,23 @@ pub fn freq_table(trace: &Trace) -> BTreeMap<ExpertKey, u64> {
         *slot = slot.saturating_add(1);
     }
     freq
+}
+
+/// Sum of router permille per key. Events with empty `weight_pt` contribute nothing.
+#[must_use]
+pub fn mass_table(trace: &Trace) -> BTreeMap<ExpertKey, u64> {
+    let mut mass: BTreeMap<ExpertKey, u64> = BTreeMap::new();
+    for e in &trace.events {
+        if e.weight_pt.is_empty() {
+            continue;
+        }
+        for (i, id) in e.experts.iter().enumerate() {
+            let w = u64::from(e.weight_pt.get(i).copied().unwrap_or(0));
+            let slot = mass.entry(ExpertKey::new(e.layer, *id)).or_insert(0);
+            *slot = slot.saturating_add(w);
+        }
+    }
+    mass
 }
 
 /// Unordered co-activation pair counts (same routing event).

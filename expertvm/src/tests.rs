@@ -94,6 +94,8 @@ fn analyze_counts_unique_and_persist() {
     assert!(s.layer_persist_pt > 0);
     assert_eq!(s.coact_pairs, 2);
     assert_eq!(s.ws90, 3);
+    assert_eq!(s.mass_pt, 0);
+    assert!(!s.report().contains("mass‰="));
 }
 
 #[test]
@@ -323,6 +325,9 @@ fn markov_prefetch_beats_copy_forward_when_ids_are_not_sticky() {
         none.hits
     );
     assert!(mk.prefetches > 0);
+    let both =
+        sim_replay_cfg(&t, HardwareProfile::example_h100_sxm(), cfg(Prefetch::Both)).expect("both");
+    assert!(both.prefetches >= fwd.prefetches);
 }
 
 #[test]
@@ -596,4 +601,34 @@ fn live_store_migrate_is_noop_on_cached() {
     let k = ExpertKey::new(0, 0);
     let _p = live.acquire(k).expect("acq");
     live.migrate(k, DeviceId(1)).expect("noop");
+}
+
+#[test]
+fn mass_table_weights_hottest_key_above_count_share() {
+    let mut a = ev(0, 0, &[0, 1]);
+    a.weight_pt = vec![900, 100];
+    let mut b = ev(1, 0, &[0, 1]);
+    b.weight_pt = vec![900, 100];
+    let t = Trace { events: vec![a, b] };
+    let s = analyze(&t);
+    assert_eq!(s.mass_pt, 2000);
+    assert_eq!(s.top20_share_pt, 500);
+    assert_eq!(s.top20_mass_pt, 900);
+    assert!(s.report().contains("top20_mass‰=900"));
+    assert_eq!(
+        mass_table(&t).get(&ExpertKey::new(0, 0)).copied(),
+        Some(1800)
+    );
+}
+
+#[test]
+fn hot_replicas_prefer_mass_when_w_is_present() {
+    let mut a = ev(0, 0, &[0, 1]);
+    a.weight_pt = vec![900, 100];
+    let mut b = ev(1, 0, &[0, 1]);
+    b.weight_pt = vec![900, 100];
+    let t = Trace { events: vec![a, b] };
+    let map = with_hot_replicas(striped(&t, 8), &t, 8, 500);
+    assert!(map.replicas.contains_key(&ExpertKey::new(0, 0)));
+    assert!(!map.replicas.contains_key(&ExpertKey::new(0, 1)));
 }

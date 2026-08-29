@@ -18,7 +18,7 @@ mod tiered;
 mod workload;
 
 pub use access::{weight_permille, ExpertAccess, ExpertKey, Trace};
-pub use analyze::{analyze, coactivation_counts, freq_table, TraceStats};
+pub use analyze::{analyze, coactivation_counts, freq_table, mass_table, TraceStats};
 pub use bench::{adversarial_suite, report, topology_suite, BenchReport};
 pub use error::Error;
 pub use gpu_sim::{probe_topology, DeviceId, HardwareProfile, Score, TopologyProbe};

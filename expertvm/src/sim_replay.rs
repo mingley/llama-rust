@@ -3,7 +3,7 @@
 use crate::access::{ExpertAccess, ExpertKey, Trace};
 use crate::error::Error;
 use crate::place::PlaceMap;
-use crate::planner::{copy_forward, transition_pair, Markov, Prefetch};
+use crate::planner::{copy_forward, prefetch_keys, transition_pair, Markov, Prefetch};
 use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
 use gpu_sim::{
@@ -142,6 +142,7 @@ pub fn sim_replay_cfg(
             Prefetch::None => Vec::new(),
             Prefetch::CopyForward => copy_forward(&ek),
             Prefetch::Markov => markov.predict(&ek, ek.len().max(1)),
+            Prefetch::Both => prefetch_keys(&markov, &ek),
         };
         let mut fill = args;
         fill.kernel = false;

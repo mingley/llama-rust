@@ -13,7 +13,9 @@ and, when a store is attached, prefetches copy-forward ∪ online Markov.
 `SimulatedGpuStore::migrate` D2D-moves a page onto a peer (copy stream;
 dest GEMM waits the event). `sim_remote_home` / `expertvm remote` compute
 on GPU0 and fetch remote-home experts over the peer link (RDMA on
-`2node-rdma`).
+`2node-rdma`). `analyze` reports `mass‰` / `top20_mass‰` when traces carry
+`w`. `Prefetch::Both` is copy-forward ∪ Markov (`expertvm sim --prefetch both`).
+`with_hot_replicas` uses router mass when `w` is present.
 
 ## Shipped 2026-08-29 — Markov prefetch, co-activation placement
 

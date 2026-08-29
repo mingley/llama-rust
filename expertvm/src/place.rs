@@ -1,7 +1,7 @@
 //! Traffic-aware expert homes and hot replicas.
 
 use crate::access::{ExpertKey, Trace};
-use crate::analyze::{coactivation_counts, freq_table};
+use crate::analyze::{coactivation_counts, freq_table, mass_table};
 use gpu_sim::DeviceId;
 use std::collections::BTreeMap;
 
@@ -98,7 +98,9 @@ pub fn colocated(trace: &Trace, n_gpus: u16) -> PlaceMap {
     }
 }
 
-/// Copy hot keys (share ≥ `hot_pt` ‰ of acquires) onto the next GPU.
+/// Copy hot keys onto the next GPU.
+///
+/// Share is ≥ `hot_pt` ‰ of acquires, or of router mass when `w` is present.
 #[must_use]
 pub fn with_hot_replicas(mut map: PlaceMap, trace: &Trace, n_gpus: u16, hot_pt: u32) -> PlaceMap {
     let n = n_gpus.max(1);
@@ -106,9 +108,15 @@ pub fn with_hot_replicas(mut map: PlaceMap, trace: &Trace, n_gpus: u16, hot_pt: 
         return map;
     }
     let freq = freq_table(trace);
-    let total = trace.n_acquires().max(1);
+    let mass = mass_table(trace);
+    let (weights, total) = if mass.is_empty() {
+        (freq, trace.n_acquires().max(1))
+    } else {
+        let tot = mass.values().fold(0u64, |a, v| a.saturating_add(*v)).max(1);
+        (mass, tot)
+    };
     let thresh = u64::from(hot_pt);
-    for (k, f) in freq {
+    for (k, f) in weights {
         let share = f.saturating_mul(1000).checked_div(total).unwrap_or(0);
         if share < thresh {
             continue;

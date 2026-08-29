@@ -67,6 +67,8 @@ pub enum Prefetch {
     CopyForward,
     /// Online [`Markov`] table fitted on observed pairs only (no future leak).
     Markov,
+    /// Copy-forward ∪ Markov (decode's attached-store policy).
+    Both,
 }
 
 impl Prefetch {
@@ -77,6 +79,7 @@ impl Prefetch {
             Self::None => "none",
             Self::CopyForward => "copy-forward",
             Self::Markov => "markov",
+            Self::Both => "both",
         }
     }
 
@@ -86,6 +89,7 @@ impl Prefetch {
             "none" => Ok(Self::None),
             "copy-forward" => Ok(Self::CopyForward),
             "markov" => Ok(Self::Markov),
+            "both" => Ok(Self::Both),
             _ => Err(crate::Error::Trace("unknown prefetch")),
         }
     }

@@ -213,8 +213,9 @@ P(expert_j at layer L+1 |
    experts at L, L-1, …, prompt class, session)
 ```
 
-Online [`Markov`] table (no future leak) plus `Prefetch::Markov` /
-`copy-forward` in `sim_replay_cfg`. Prefetch before the next router event.
+Online [`Markov`] table (no future leak) plus `Prefetch::{None, CopyForward, Markov, Both}` /
+`copy-forward` in `sim_replay_cfg`. `Both` is copy-forward ∪ Markov (decode's store path).
+Prefetch before the next router event.
 
 Design so vLLM / SGLang / mistral.rs can consume the crate. Nobody should
 have to adopt this inference server.

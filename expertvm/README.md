@@ -96,7 +96,7 @@ must bit-match the blob GEMV path. Shared experts stay on the blob.
 ```text
 expertvm analyze  trace.jsonl
 expertvm replay   trace.jsonl --capacity 8
-expertvm sim      trace.jsonl --capacity 8 --expert-bytes 188743680 --profile h100 --prefetch markov
+expertvm sim      trace.jsonl --capacity 8 --expert-bytes 188743680 --profile h100 --prefetch both
 expertvm place    trace.jsonl --gpus 8 --hot-pt 200
 expertvm bench    trace.jsonl --capacity 8 --profile h100
 expertvm bench    adversarial --tokens 64 --experts 16 --capacity 2 --profile cheap
