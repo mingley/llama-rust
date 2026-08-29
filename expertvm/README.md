@@ -93,6 +93,9 @@ token to N layer-events so a short decode is not stuck behind a long
 prefill. `--decode-first` holds leftover prefill while any running
 sequence is already in decode. `--slo-reject` drops a waiter whose queue
 wait already meets `--ttft-slo-ns` (`rejected=` on the schedule line).
+`--prefix-cache` skips GPU work for a token whose JSONL `"p"` hash
+already completed on another sequence (`prefix_hits=` on the schedule
+line). `"p"` is `prefix_hash` of the token ids, not a prompt class.
 TTFT is from
 arrival; `--ttft-slo-ns` / `--itl-slo-ns` count misses. `queue_ns` is mean
 first-token wait (`iteration_start - arrival`) so a tight `max_batch`
@@ -125,7 +128,8 @@ not count toward HBM. `HardwareProfile::restrict_hbm` is the knob. `topology_sui
 NVLink, bad NUMA, RDMA, asymmetric). `expertvm bench` on a multi-sequence
 trace prints `schedule-all` vs `schedule-1` (open-loop running set of
 unlimited vs 1) and `schedule-decode-first` when a mixed prefill/decode
-trace has a wide first token. Multi-GPU profiles also print
+trace has a wide first token. Multi-sequence traces with `"p"` also print
+`schedule-prefix`. Multi-GPU profiles also print
 `schedule-gpu0` vs `schedule-striped` vs `schedule-remote`. `SimulatedGpuStore` can inject GPU
 unavailable, copy-stream cancel, transfer delay, and next-H2D load
 failure.
@@ -148,12 +152,14 @@ expertvm schedule trace.jsonl --capacity 8 --place replicas --profile 8xh100 --e
 expertvm schedule trace.jsonl --capacity 8 --place remote --profile 2node-rdma --expert-bytes 1048576
 expertvm schedule trace.jsonl --capacity 8 --prefill-chunk 1 --seq-streams --decode-first
 expertvm schedule trace.jsonl --capacity 8 --max-batch 1 --ttft-slo-ns 1 --slo-reject
+expertvm schedule trace.jsonl --capacity 8 --max-batch 1 --prefix-cache
 expertvm place    trace.jsonl --gpus 8 --hot-pt 200
 expertvm bench    trace.jsonl --capacity 8 --profile h100
 expertvm bench    adversarial --tokens 64 --experts 16 --capacity 2 --profile cheap
 expertvm workload thrash --tokens 64 --experts 16 --capacity 2
 expertvm workload batch --tokens 32 --experts 16 --capacity 4
 expertvm workload prefill-batch --tokens 8 --experts 16 --capacity 4
+expertvm workload shared-prefix --tokens 8 --experts 16 --capacity 4
 expertvm topology --bytes 1048576
 expertvm ep       trace.jsonl --capacity 8 --expert-bytes 1048576 --profile 8xh100
 expertvm ep       trace.jsonl --hbm-bytes 4096 --profile 8xh100

@@ -1,5 +1,6 @@
 //! Expert virtual memory: traces, policies, stores, GPU-sim replay,
-//! open-loop continuous batching (`schedule_replay` / `schedule_placed` / `schedule_remote`).
+//! open-loop continuous batching (`schedule_replay` / `schedule_placed` /
+//! `schedule_remote`), optional prefix cache on content-addressed `"p"`.
 
 #![deny(missing_docs, unsafe_code)]
 
@@ -19,7 +20,7 @@ mod store;
 mod tiered;
 mod workload;
 
-pub use access::{weight_permille, ExpertAccess, ExpertKey, Trace};
+pub use access::{prefix_hash, weight_permille, ExpertAccess, ExpertKey, Trace};
 pub use analyze::{analyze, coactivation_counts, freq_table, mass_table, TraceStats};
 pub use bench::{adversarial_suite, report, topology_suite, BenchReport};
 pub use error::Error;

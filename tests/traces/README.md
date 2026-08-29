@@ -13,8 +13,10 @@ Writer-built tinies do **not** answer “is residency predictable on a 320B MoE?
 They prove the decoder emits JSONL and that `expertvm replay` is honest.
 A real Qwen3MoE / Qwen2MoE GGUF is the next input.
 
-New traces include optional `w` (router mass in permille). Older lines without
-`w` still parse; `analyze` then omits `mass‰`.
+New traces include optional `w` (router mass in permille) and optional
+`p` (content-addressed hash of the token-id prefix). Older lines without
+`w` or `p` still parse; `analyze` then omits `mass‰`, and `--prefix-cache`
+is a no-op when every event has `p` missing.
 
 ```
 gguf_gemv write-tiny-qwen3moe tiny-qwen3moe.gguf

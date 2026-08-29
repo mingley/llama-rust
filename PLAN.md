@@ -291,6 +291,7 @@ ExpertAccess {
     sequence, token, layer,
     experts: Vec<ExpertId>,   // selected
     weight_pt: Vec<u32>,      // optional router mass ‰; empty / omit `w` if unknown
+    prefix: Option<u64>,      // JSONL `"p"`; omit when None. Hash of token ids, not a class
 }
 ```
 
@@ -304,7 +305,11 @@ Replay and report (measured by `expertvm analyze`, integer ‰):
 - `P(E_a | E_b)` mass as pair count → `coact_pairs`
 
 Hit rates still come from `expertvm replay`, not from these locality
-numbers. Prompt/domain class is not in the JSONL yet (no fake labels).
+numbers. Prompt/domain class is not in the JSONL (no fake labels).
+Optional `"p"` is a content-addressed hash of the token ids in the
+prefix (`prefix_hash`), not a prompt class. `KvCache` emits `"p"` when
+tracing; `--prefix-cache` on `expertvm schedule` skips GPU work for a
+token whose hash already completed on another sequence.
 
 The research question, before any CUDA:
 
@@ -495,7 +500,10 @@ queue wait already meets `--ttft-slo-ns`. TTFT is first-token end minus arrival.
 leak). `--place striped|remote` keeps one walker per home GPU so `--capacity`
 is that device's slots, not a cluster-wide LRU. Hot replicas occupy dest slots
 and dest eviction frees replica HBM. `restrict_hbm` still evicts when fewer
-pages fit than `--capacity`. This is not a 500k-line vLLM engine.
+pages fit than `--capacity`. `--prefix-cache` skips GPU work for a token
+whose content-addressed `"p"` hash already completed on another sequence
+(insert after the computing token finishes; a hit consumes the whole
+remaining token, not one prefill chunk). This is not a 500k-line vLLM engine.
 
 Agents may aggressively optimize policies. Illegal GPU states are
 impossible or immediately fatal.
@@ -520,6 +528,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
 - adversarial workloads: uniform, hotset, shifting hotset, cache
   thrash, coding/chat/long-context traces, batch 1 vs 128,
   prefill-heavy / decode-heavy / prefill-batch (4-seq mixed prefill+decode)
+  / shared-prefix (identical token-0 prefix hash, diverging decode)
 - topologies: 1 GPU, 2 GPU PCIe, 8 GPU NVLink, bad NUMA, 2-node RDMA,
   asymmetric links — named example profiles (`h100`, `2xh100-pcie`,
   `8xh100`, `bad-numa`, `2node-rdma`, `asymmetric`) plus `gpu-profile probe`
@@ -540,7 +549,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `synchronize_stream` so the compute stream is idle (CUDA). `--max-batch N`
   admits N sequences per engine iteration. `expertvm schedule` is the
   open-loop running set (arrivals, retire, SLO misses, `idle_until`,
-  `--prefill-chunk N`, `--decode-first`, `--slo-reject`, `--place striped|replicas|remote`). `query_event` is `cudaEventQuery`.
+  `--prefill-chunk N`, `--decode-first`, `--slo-reject`, `--prefix-cache`, `--place striped|replicas|remote`). `query_event` is `cudaEventQuery`.
   `query_stream` is `cudaStreamQuery`. `mem_info` is `cudaMemGetInfo`.
   `plan_window` Stay vs Fetch gates prefetch
   in the GPU loop (`--plan-window N`). `prefetch_hits` / `prefetch_waste`

@@ -39,6 +39,9 @@ pub struct ExpertAccess {
     pub experts: Vec<u32>,
     /// Router mass per selected expert, permille (`0..=1000`). Empty if unknown.
     pub weight_pt: Vec<u32>,
+    /// Content-addressed hash of the token-id prefix at this event.
+    /// JSONL `"p"`; omit when `None`. Not a prompt-class label.
+    pub prefix: Option<u64>,
 }
 
 impl ExpertAccess {
@@ -51,7 +54,8 @@ impl ExpertAccess {
             .collect()
     }
 
-    /// JSONL line without a serde dependency. Omits `w` when [`Self::weight_pt`] is empty.
+    /// JSONL line without a serde dependency. Omits `w` when [`Self::weight_pt`]
+    /// is empty and omits `p` when [`Self::prefix`] is `None`.
     #[must_use]
     pub fn to_jsonl(&self) -> String {
         let experts = format_u32_list(&self.experts);
@@ -60,8 +64,12 @@ impl ExpertAccess {
         } else {
             format!(",\"w\":{}", format_u32_list(&self.weight_pt))
         };
+        let p = match self.prefix {
+            Some(h) => format!(",\"p\":{h}"),
+            None => String::new(),
+        };
         format!(
-            "{{\"sequence\":{},\"token\":{},\"layer\":{},\"experts\":{experts}{w}}}",
+            "{{\"sequence\":{},\"token\":{},\"layer\":{},\"experts\":{experts}{w}{p}}}",
             self.sequence, self.token, self.layer
         )
     }
@@ -151,7 +159,27 @@ fn parse_access(line: &str) -> Result<ExpertAccess, Error> {
         layer: field_u32(line, "layer")?,
         experts: field_u32_list(line, "experts")?,
         weight_pt: field_u32_list_opt(line, "w")?,
+        prefix: field_u64_opt(line, "p")?,
     })
+}
+
+/// Content-addressed hash of a token-id prefix. Same ids → same hash.
+/// Extra or different tokens change the hash. This is not a prompt-class label.
+#[must_use]
+pub fn prefix_hash(ids: &[u32]) -> u64 {
+    let mut h = 0x9e37_79b9_7f4a_7c15u64;
+    for &id in ids {
+        h ^= u64::from(id);
+        h = splitmix64(h);
+    }
+    splitmix64(h)
+}
+
+fn splitmix64(mut z: u64) -> u64 {
+    z = z.wrapping_add(0x9e37_79b9_7f4a_7c15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    z ^ (z >> 31)
 }
 
 /// Floor of `r` as permille without an `f32 as u32` cast (clippy `cast_possible_truncation`).
@@ -185,6 +213,20 @@ fn field_u32(line: &str, key: &str) -> Result<u32, Error> {
     let rest = after_key(line, key)?;
     let tok = rest.split([',', '}']).next().unwrap_or("");
     tok.trim().parse().map_err(|_| Error::Trace("bad u32"))
+}
+
+fn field_u64_opt(line: &str, key: &str) -> Result<Option<u64>, Error> {
+    let needle = format!("\"{key}\":");
+    match line.split(&needle).nth(1) {
+        None => Ok(None),
+        Some(rest) => {
+            let tok = rest.split([',', '}']).next().unwrap_or("");
+            tok.trim()
+                .parse()
+                .map(Some)
+                .map_err(|_| Error::Trace("bad u64"))
+        }
+    }
 }
 
 fn field_u32_list(line: &str, key: &str) -> Result<Vec<u32>, Error> {

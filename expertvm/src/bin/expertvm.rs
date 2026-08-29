@@ -17,7 +17,7 @@ usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
   sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N]
-  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--place none|striped|colocated|replicas|remote] [--activation-bytes N]
+  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
@@ -27,7 +27,7 @@ usage: expertvm <command> [args]
   remote   <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
-      prefill-heavy, decode-heavy, batch, prefill-batch
+      prefill-heavy, decode-heavy, batch, prefill-batch, shared-prefix
 profiles: h100 (default), h200, 8xh100, cheap, 2xh100-pcie, bad-numa,
           2node-rdma, asymmetric, or a path to a .profile file
 ";
@@ -122,6 +122,7 @@ struct Cfg {
     prefill_chunk: usize,
     decode_first: bool,
     slo_reject: bool,
+    prefix_cache: bool,
     place: String,
 }
 
@@ -157,6 +158,7 @@ where
     let mut prefill_chunk = 0usize;
     let mut decode_first = false;
     let mut slo_reject = false;
+    let mut prefix_cache = false;
     let mut place = String::from("none");
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
@@ -234,6 +236,9 @@ where
             "--slo-reject" => {
                 slo_reject = !matches!(inline.as_deref(), Some("0" | "false"));
             }
+            "--prefix-cache" => {
+                prefix_cache = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
             "--place" => place = value("place", inline, &mut it)?,
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => {
@@ -266,6 +271,7 @@ where
         prefill_chunk,
         decode_first,
         slo_reject,
+        prefix_cache,
         place,
     })
 }
@@ -527,6 +533,7 @@ where
         prefill_chunk_layers: cfg.prefill_chunk,
         decode_first: cfg.decode_first,
         slo_reject: cfg.slo_reject,
+        prefix_cache: cfg.prefix_cache,
     };
     let row = if cfg.place == "remote" {
         let map = striped(&trace, n_gpus);

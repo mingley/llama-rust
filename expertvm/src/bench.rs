@@ -34,6 +34,9 @@ pub struct BenchReport {
     pub decode: Option<String>,
     /// GPU0 vs striped homes when the profile has more than one GPU.
     pub ep: Option<String>,
+    /// `schedule-1` vs `--prefix-cache` when the trace has a `"p"` hash and
+    /// more than one sequence.
+    pub prefix: Option<String>,
 }
 
 impl BenchReport {
@@ -69,6 +72,10 @@ impl BenchReport {
             s.push_str(ep);
             s.push('\n');
         }
+        if let Some(px) = &self.prefix {
+            s.push_str(px);
+            s.push('\n');
+        }
         s
     }
 }
@@ -90,6 +97,7 @@ pub fn report(
     let mut chunk = None;
     let mut decode = None;
     let mut ep = None;
+    let mut prefix = None;
     if let Some(p) = profile {
         let lines = sim_lines(trace, p, capacity, lookahead, expert_bytes)?;
         sim = Some(lines.serial);
@@ -99,6 +107,7 @@ pub fn report(
         chunk = lines.chunk;
         decode = lines.decode;
         ep = lines.ep;
+        prefix = lines.prefix;
     }
     Ok(BenchReport {
         name: name.to_string(),
@@ -111,6 +120,7 @@ pub fn report(
         chunk,
         decode,
         ep,
+        prefix,
     })
 }
 
@@ -122,6 +132,7 @@ struct SimLines {
     chunk: Option<String>,
     decode: Option<String>,
     ep: Option<String>,
+    prefix: Option<String>,
 }
 
 fn sim_lines(
@@ -153,6 +164,7 @@ fn sim_lines(
         chunk: lines.chunk,
         decode: lines.decode,
         ep: lines.ep,
+        prefix: lines.prefix,
     })
 }
 
@@ -161,6 +173,7 @@ struct ScheduleLines {
     chunk: Option<String>,
     decode: Option<String>,
     ep: Option<String>,
+    prefix: Option<String>,
 }
 
 fn schedule_compare(
@@ -175,6 +188,7 @@ fn schedule_compare(
             chunk: None,
             decode: None,
             ep,
+            prefix: None,
         });
     }
     let all = schedule_replay(trace, profile.clone(), base, SchedCfg::closed(0))?;
@@ -221,12 +235,35 @@ fn schedule_compare(
         }
         _ => None,
     };
+    let prefix = if has_prefix(trace) {
+        let cached = schedule_replay(
+            trace,
+            profile,
+            base,
+            SchedCfg {
+                prefix_cache: true,
+                ..SchedCfg::closed(1)
+            },
+        )?;
+        Some(format!(
+            "schedule-1 {} | schedule-prefix {}",
+            one.line(),
+            cached.line()
+        ))
+    } else {
+        None
+    };
     Ok(ScheduleLines {
         schedule,
         chunk,
         decode,
         ep,
+        prefix,
     })
+}
+
+fn has_prefix(trace: &Trace) -> bool {
+    trace.events.iter().any(|e| e.prefix.is_some())
 }
 
 fn ep_line(trace: &Trace, profile: HardwareProfile, base: SimCfg) -> Result<Option<String>, Error> {

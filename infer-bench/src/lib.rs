@@ -26,6 +26,7 @@ mod tests {
         assert_eq!(rows.len(), super::Workload::ALL.len());
         assert!(rows.iter().any(|r| r.name == "thrash"));
         assert!(rows.iter().any(|r| r.name == "batch"));
+        assert!(rows.iter().any(|r| r.name == "shared-prefix"));
     }
 
     #[test]

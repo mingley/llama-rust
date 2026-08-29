@@ -15,6 +15,7 @@ fn ev_seq(seq: u64, token: u32, layer: u32, experts: &[u32]) -> ExpertAccess {
         layer,
         experts: experts.to_vec(),
         weight_pt: Vec::new(),
+        prefix: None,
     }
 }
 
@@ -61,10 +62,12 @@ fn jsonl_omits_w_and_parses_legacy() {
         events: vec![ev(1, 2, &[3, 4])],
     };
     assert!(!t.to_jsonl().contains("\"w\""));
+    assert!(!t.to_jsonl().contains("\"p\""));
     let parsed = Trace::parse("{\"sequence\":0,\"token\":1,\"layer\":2,\"experts\":[3,4]}\n")
         .expect("legacy");
     let e = parsed.events.first().expect("one");
     assert!(e.weight_pt.is_empty());
+    assert!(e.prefix.is_none());
     assert_eq!(e.experts, vec![3, 4]);
 }
 
@@ -76,6 +79,24 @@ fn jsonl_roundtrip_weight_pt() {
     let parsed = Trace::parse(&t.to_jsonl()).expect("parse");
     assert_eq!(parsed, t);
     assert!(t.to_jsonl().contains("\"w\":[500,500]"));
+}
+
+#[test]
+fn jsonl_roundtrip_prefix() {
+    let mut e = ev(1, 2, &[3, 4]);
+    e.prefix = Some(prefix_hash(&[1, 2, 3]));
+    let t = Trace { events: vec![e] };
+    let parsed = Trace::parse(&t.to_jsonl()).expect("parse");
+    assert_eq!(parsed, t);
+    assert!(t.to_jsonl().contains("\"p\":"));
+}
+
+#[test]
+fn prefix_hash_is_content_addressed() {
+    assert_eq!(prefix_hash(&[1]), prefix_hash(&[1]));
+    assert_ne!(prefix_hash(&[1]), prefix_hash(&[1, 2]));
+    assert_ne!(prefix_hash(&[1, 2]), prefix_hash(&[1, 3]));
+    assert_eq!(prefix_hash(&[]), prefix_hash(&[]));
 }
 
 #[test]
@@ -446,6 +467,7 @@ fn seq_streams_overlap_beats_serial_on_batch_token() {
                 layer: 0,
                 experts: vec![0],
                 weight_pt: Vec::new(),
+                prefix: None,
             },
             ExpertAccess {
                 sequence: 1,
@@ -453,6 +475,7 @@ fn seq_streams_overlap_beats_serial_on_batch_token() {
                 layer: 0,
                 experts: vec![1],
                 weight_pt: Vec::new(),
+                prefix: None,
             },
         ],
     };
@@ -484,6 +507,7 @@ fn max_batch_serializes_sequences_at_a_token() {
                 layer: 0,
                 experts: vec![0],
                 weight_pt: Vec::new(),
+                prefix: None,
             },
             ExpertAccess {
                 sequence: 1,
@@ -491,6 +515,7 @@ fn max_batch_serializes_sequences_at_a_token() {
                 layer: 0,
                 experts: vec![1],
                 weight_pt: Vec::new(),
+                prefix: None,
             },
         ],
     };
@@ -966,6 +991,71 @@ fn schedule_retires_finished_sequences() {
     assert_eq!(row.replay.hits.saturating_add(row.replay.misses), 3);
 }
 
+fn shared_prefix_two_seq(layers: u32) -> Trace {
+    let pfx = prefix_hash(&[1]);
+    let mut events = Vec::new();
+    for seq in 0..2u64 {
+        for _ in 0..layers {
+            events.push(ExpertAccess {
+                sequence: seq,
+                token: 0,
+                layer: 0,
+                experts: vec![u32::try_from(seq).unwrap_or(0)],
+                weight_pt: Vec::new(),
+                prefix: Some(pfx),
+            });
+        }
+    }
+    Trace { events }
+}
+
+#[test]
+fn schedule_prefix_cache_hits_after_first_sequence() {
+    let t = shared_prefix_two_seq(4);
+    let p = HardwareProfile::parse("gpus=1\ncopy_engines=1\n").expect("profile");
+    let cfg = SimCfg::lru(1, 4096, 0);
+    let off = schedule_replay(&t, p.clone(), cfg, SchedCfg::closed(1)).expect("off");
+    assert_eq!(off.prefix_hits, 0);
+    assert_eq!(off.replay.misses, 2);
+    let on = schedule_replay(
+        &t,
+        p.clone(),
+        cfg,
+        SchedCfg {
+            prefix_cache: true,
+            ..SchedCfg::closed(1)
+        },
+    )
+    .expect("on");
+    assert_eq!(on.prefix_hits, 4);
+    assert_eq!(on.replay.misses, 1);
+    let concurrent = schedule_replay(
+        &t,
+        p.clone(),
+        cfg,
+        SchedCfg {
+            prefix_cache: true,
+            ..SchedCfg::closed(0)
+        },
+    )
+    .expect("concurrent");
+    assert_eq!(concurrent.prefix_hits, 0);
+    assert_eq!(concurrent.replay.misses, 2);
+    let chunked = schedule_replay(
+        &t,
+        p,
+        cfg,
+        SchedCfg {
+            prefix_cache: true,
+            prefill_chunk_layers: 1,
+            ..SchedCfg::closed(1)
+        },
+    )
+    .expect("chunk");
+    assert_eq!(chunked.prefix_hits, 4);
+    assert_eq!(chunked.replay.misses, 1);
+}
+
 #[test]
 fn colocated_keeps_coactivated_pair_on_one_gpu() {
     let t = Trace {
@@ -1056,6 +1146,28 @@ fn adversarial_workloads_are_named_and_measurable() {
     let mixed = rows.iter().find(|r| r.name == "prefill-batch").unwrap();
     assert!(mixed.chunk.is_some(), "{}", mixed.render());
     assert!(mixed.render().contains("schedule-chunk1"));
+    let shared = rows.iter().find(|r| r.name == "shared-prefix").unwrap();
+    assert!(
+        shared.render().contains("schedule-prefix"),
+        "{}",
+        shared.render()
+    );
+}
+
+#[test]
+fn shared_prefix_workload_reuses_token0_hash() {
+    let t = generate(Workload::SharedPrefix, 4, 8, 1, 1);
+    let p0: Vec<Option<u64>> = t
+        .events
+        .iter()
+        .filter(|e| e.token == 0)
+        .map(|e| e.prefix)
+        .collect();
+    assert!(p0.len() >= 8);
+    let first = p0.first().copied().flatten().expect("token0 p");
+    assert!(p0.iter().all(|p| *p == Some(first)));
+    let later = t.events.iter().find(|e| e.token > 0).expect("decode");
+    assert_ne!(later.prefix, Some(first));
 }
 
 #[test]

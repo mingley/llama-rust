@@ -1,6 +1,6 @@
 //! Adversarial MoE access traces. Timing stays in the hardware profile.
 
-use crate::access::{ExpertAccess, ExpertKey, Trace};
+use crate::access::{prefix_hash, ExpertAccess, ExpertKey, Trace};
 use std::collections::BTreeSet;
 
 /// Named synthetic traces for anti-Goodhart experiments.
@@ -28,11 +28,14 @@ pub enum Workload {
     Batch,
     /// Four sequences: token 0 is 4-layer prefill, later tokens are 1-layer decode.
     PrefillBatch,
+    /// Four sequences share a content-addressed token-id prefix on token 0;
+    /// later tokens diverge so decode is not cached.
+    SharedPrefix,
 }
 
 impl Workload {
     /// Every named workload, in CLI order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 12] = [
         Self::Uniform,
         Self::Hotset,
         Self::ShiftingHotset,
@@ -44,6 +47,7 @@ impl Workload {
         Self::DecodeHeavy,
         Self::Batch,
         Self::PrefillBatch,
+        Self::SharedPrefix,
     ];
 
     /// Name used in benches and CLI.
@@ -61,6 +65,7 @@ impl Workload {
             Self::DecodeHeavy => "decode-heavy",
             Self::Batch => "batch",
             Self::PrefillBatch => "prefill-batch",
+            Self::SharedPrefix => "shared-prefix",
         }
     }
 
@@ -100,6 +105,26 @@ pub fn generate(kind: Workload, n_tokens: u32, n_experts: u32, top_k: u32, seed:
                     }
                 }
             }
+            Workload::SharedPrefix => {
+                if tok == 0 {
+                    let p = Some(prefix_hash(&[1]));
+                    let mut layers = Vec::new();
+                    for layer in 0..4u32 {
+                        layers.push((layer, pick_uniform(&mut rng, n_ex, k)));
+                    }
+                    for seq in 0..4u64 {
+                        for (layer, experts) in &layers {
+                            events.push(ev_prefix(seq, tok, *layer, experts.clone(), p));
+                        }
+                    }
+                } else {
+                    for seq in 0..4u64 {
+                        let sid = u32::try_from(seq).unwrap_or(0);
+                        let p = Some(prefix_hash(&[1, tok, sid]));
+                        events.push(ev_prefix(seq, tok, 0, pick_uniform(&mut rng, n_ex, k), p));
+                    }
+                }
+            }
             Workload::Uniform
             | Workload::Hotset
             | Workload::ShiftingHotset
@@ -119,7 +144,10 @@ pub fn generate(kind: Workload, n_tokens: u32, n_experts: u32, top_k: u32, seed:
                     Workload::Coding => pick_hotset(&mut rng, n_ex, k, 95, 2),
                     Workload::Chat => pick_hotset(&mut rng, n_ex, k, 70, (n_ex / 4).max(1)),
                     Workload::LongContext => vec![(tok / 4) % n_ex.max(1)],
-                    Workload::PrefillHeavy | Workload::Batch | Workload::PrefillBatch => vec![0],
+                    Workload::PrefillHeavy
+                    | Workload::Batch
+                    | Workload::PrefillBatch
+                    | Workload::SharedPrefix => vec![0],
                 };
                 events.push(ev(0, tok, 0, experts));
             }
@@ -129,12 +157,23 @@ pub fn generate(kind: Workload, n_tokens: u32, n_experts: u32, top_k: u32, seed:
 }
 
 fn ev(sequence: u64, token: u32, layer: u32, experts: Vec<u32>) -> ExpertAccess {
+    ev_prefix(sequence, token, layer, experts, None)
+}
+
+fn ev_prefix(
+    sequence: u64,
+    token: u32,
+    layer: u32,
+    experts: Vec<u32>,
+    prefix: Option<u64>,
+) -> ExpertAccess {
     ExpertAccess {
         sequence,
         token,
         layer,
         experts,
         weight_pt: Vec::new(),
+        prefix,
     }
 }
 

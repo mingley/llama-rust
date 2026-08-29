@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — prefix cache on `expertvm schedule`
+
+Optional JSONL `"p"` is a content-addressed hash of the token ids in the
+prefix (`prefix_hash`), not a prompt-class label. Decode emits it from
+the actual ids. `--prefix-cache` skips GPU work for a token whose hash
+already completed on another sequence; in-flight layers of the computing
+sequence still run, and a hit consumes the whole remaining token (not
+one prefill chunk). Workload `shared-prefix` is four sequences with the
+same token-0 hash and diverging decode. `expertvm bench` prints
+`schedule-prefix` when a multi-sequence trace has `"p"`. Dual score still
+has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — HBM caps beat loose `--capacity`
 
 `restrict_hbm` / profile `hbm_bytes` is the real page budget. If `--capacity`
@@ -394,6 +406,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 ./target/release/expertvm topology --bytes 1048576
 ./target/release/expertvm remote tests/traces/cycling.jsonl --expert-bytes 1048576
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 2 --max-batch 1 --interarrival-ns 1000000 --prefill-chunk 1 --decode-first --slo-reject --ttft-slo-ns 1
+./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 8 --max-batch 1 --prefix-cache
+./target/release/expertvm workload shared-prefix
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 8 --place striped --profile 8xh100 --expert-bytes 1048576
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 8 --place replicas --profile 8xh100 --expert-bytes 1048576
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 8 --place remote --profile 2node-rdma --expert-bytes 1048576
@@ -402,8 +416,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth (`expertvm schedule` landed as the
-trace-level infer-scheduler slice). Phase 0 leftover is a Llama
+Next code change is PLAN systems depth (`expertvm schedule --prefix-cache`
+landed as the trace-level prefix reuse slice). Phase 0 leftover is a Llama
 NORM real-model fixture when a GGUF is on disk. Physical Phase 4 stays
 parked. Do not add crates.io
 runtime deps. Do not start Metal-in-crate on Linux. Do not invent a

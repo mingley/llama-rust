@@ -36,6 +36,10 @@ pub struct SchedCfg {
     /// Drop a waiting sequence instead of admitting it when queue wait already
     /// meets [`Self::ttft_slo_ns`] (Mooncake-style early rejection).
     pub slo_reject: bool,
+    /// Skip GPU work for a token whose content-addressed prefix hash already
+    /// completed on another sequence. Inserts `p` only after that token
+    /// finishes, so in-flight layers of the computing sequence still run.
+    pub prefix_cache: bool,
 }
 
 impl SchedCfg {
@@ -51,6 +55,7 @@ impl SchedCfg {
             prefill_chunk_layers: 0,
             decode_first: false,
             slo_reject: false,
+            prefix_cache: false,
         }
     }
 
@@ -81,6 +86,9 @@ pub struct SchedReplay {
     pub idle_ns: u64,
     /// Mean first-token queue wait (`iteration_start - arrival`) when sampled.
     pub queue_ns: Option<u64>,
+    /// Layer-events skipped because [`SchedCfg::prefix_cache`] found a completed
+    /// content-addressed prefix.
+    pub prefix_hits: u64,
 }
 
 impl SchedReplay {
@@ -90,8 +98,13 @@ impl SchedReplay {
         let mut s = self.replay.line();
         let _w = write!(
             s,
-            " completed={} rejected={} ttft_slo_miss={} itl_slo_miss={} idle_ns={}",
-            self.completed, self.rejected, self.ttft_slo_miss, self.itl_slo_miss, self.idle_ns
+            " completed={} rejected={} prefix_hits={} ttft_slo_miss={} itl_slo_miss={} idle_ns={}",
+            self.completed,
+            self.rejected,
+            self.prefix_hits,
+            self.ttft_slo_miss,
+            self.itl_slo_miss,
+            self.idle_ns
         );
         if let Some(n) = self.queue_ns {
             let _w = write!(s, " queue_ns={n}");
@@ -118,6 +131,9 @@ impl SchedReplay {
 /// wide token can use every GPU's copy engines; [`schedule_replay`] is GPU0.
 /// Capacity is per home GPU. [`schedule_remote`] keeps compute on GPU0 and uses [`crate::plan_placement`]
 /// on the home hop (move weights vs dispatch activations).
+/// [`SchedCfg::prefix_cache`] skips GPU work for a token whose `"p"` hash
+/// already completed on another sequence (insert after the computing token
+/// finishes; a hit consumes the whole remaining token, not one prefill chunk).
 pub fn schedule_replay(
     trace: &Trace,
     profile: HardwareProfile,
@@ -195,7 +211,15 @@ fn schedule_run(
         }
         note_queue(&mut running, rt.sim.clock_ns(), &mut rec);
         let consumed = execute_iteration(&mut rt, &running, sched)?;
-        retire(&mut running, &consumed, rt.sim.clock_ns(), sched, &mut rec);
+        let now = rt.sim.clock_ns();
+        retire(
+            &mut running,
+            &consumed,
+            now,
+            sched,
+            &mut rec,
+            &mut rt.prefixes,
+        );
     }
     Ok(finish_sched(rt, rec))
 }
@@ -243,6 +267,8 @@ struct SchedRt {
     /// One demand walker per home GPU. `--capacity` is slots on that device,
     /// not a cluster-wide LRU that can evict a peer's resident expert.
     walkers: BTreeMap<DeviceId, Walker>,
+    prefixes: BTreeSet<u64>,
+    prefix_hits: u64,
 }
 
 impl SchedRt {
@@ -281,6 +307,8 @@ impl SchedRt {
             remotes: BTreeMap::new(),
             seen: BTreeMap::new(),
             next_event: 1,
+            prefixes: BTreeSet::new(),
+            prefix_hits: 0,
         })
     }
 
@@ -698,22 +726,29 @@ fn execute_iteration(
     running: &[Job],
     sched: SchedCfg,
 ) -> Result<Vec<usize>, Error> {
-    let chunks: Vec<Vec<ExpertAccess>> = running
-        .iter()
-        .map(|j| {
-            if hold_prefill(running, j, sched) {
-                Vec::new()
-            } else {
-                chunk_events(j, sched.prefill_chunk_layers)
+    let mut consumed = Vec::new();
+    let mut gpu: Vec<ExpertAccess> = Vec::new();
+    for job in running {
+        if let Some(evs) = cached_token(job, sched, &rt.prefixes) {
+            let n = evs.len();
+            for ev in &evs {
+                rt.observe(ev);
             }
-        })
-        .collect();
-    let consumed: Vec<usize> = chunks.iter().map(Vec::len).collect();
-    let mut by_layer: BTreeMap<u32, Vec<ExpertAccess>> = BTreeMap::new();
-    for ch in &chunks {
-        for ev in ch {
-            by_layer.entry(ev.layer).or_default().push(ev.clone());
+            rt.prefix_hits = rt.prefix_hits.saturating_add(u64::try_from(n).unwrap_or(0));
+            consumed.push(n);
+            continue;
         }
+        if hold_prefill(running, job, sched) {
+            consumed.push(0);
+            continue;
+        }
+        let ch = chunk_events(job, sched.prefill_chunk_layers);
+        consumed.push(ch.len());
+        gpu.extend(ch);
+    }
+    let mut by_layer: BTreeMap<u32, Vec<ExpertAccess>> = BTreeMap::new();
+    for ev in gpu {
+        by_layer.entry(ev.layer).or_default().push(ev);
     }
     for (_layer, batch) in by_layer {
         for ev in &batch {
@@ -726,22 +761,48 @@ fn execute_iteration(
     Ok(consumed)
 }
 
-fn consume_prefix(job: &mut Job, n: usize) -> bool {
+fn token_prefix(evs: &[ExpertAccess]) -> Option<u64> {
+    let first = evs.first()?;
+    let p = first.prefix?;
+    let tok = first.token;
+    evs.iter()
+        .all(|e| e.token == tok && e.prefix == Some(p))
+        .then_some(p)
+}
+
+fn cached_token(job: &Job, sched: SchedCfg, prefixes: &BTreeSet<u64>) -> Option<Vec<ExpertAccess>> {
+    if !sched.prefix_cache {
+        return None;
+    }
+    let (_, evs) = job.tokens.first()?;
+    let p = token_prefix(evs)?;
+    prefixes.contains(&p).then(|| evs.clone())
+}
+
+fn consume_prefix(job: &mut Job, n: usize) -> (bool, Option<u64>) {
     let Some((_, evs)) = job.tokens.first_mut() else {
-        return false;
+        return (false, None);
     };
+    let p = token_prefix(evs);
     let n = n.min(evs.len());
     let keep: Vec<ExpertAccess> = evs.iter().skip(n).cloned().collect();
     if keep.is_empty() {
         let _tok = job.tokens.remove(0);
-        true
+        (true, p)
     } else {
         *evs = keep;
-        false
+        (false, None)
     }
 }
 
-fn retire(running: &mut Vec<Job>, consumed: &[usize], now: u64, sched: SchedCfg, rec: &mut Rec) {
+fn retire(
+    running: &mut Vec<Job>,
+    consumed: &[usize],
+    now: u64,
+    sched: SchedCfg,
+    rec: &mut Rec,
+    prefixes: &mut BTreeSet<u64>,
+) {
     let mut keep = Vec::new();
     for (i, mut job) in running.drain(..).enumerate() {
         let n = consumed.get(i).copied().unwrap_or(0);
@@ -749,9 +810,15 @@ fn retire(running: &mut Vec<Job>, consumed: &[usize], now: u64, sched: SchedCfg,
             keep.push(job);
             continue;
         }
-        if consume_prefix(&mut job, n) {
+        let (finished, prefix) = consume_prefix(&mut job, n);
+        if finished {
             rec.tokens_done = rec.tokens_done.saturating_add(1);
             record_latency(&mut job, now, sched, rec);
+            if sched.prefix_cache {
+                if let Some(p) = prefix {
+                    let _ins = prefixes.insert(p);
+                }
+            }
         }
         if job.tokens.is_empty() {
             rec.completed = rec.completed.saturating_add(1);
@@ -842,5 +909,6 @@ fn finish_sched(rt: SchedRt, rec: Rec) -> SchedReplay {
         itl_slo_miss: rec.itl_slo_miss,
         idle_ns: rt.idle_ns,
         queue_ns: mean_u64(&rec.queues),
+        prefix_hits: rt.prefix_hits,
     }
 }

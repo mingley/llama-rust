@@ -72,8 +72,8 @@ use crate::sample::{SampleError, SampleParams, Sampler};
 use crate::tok::{TokError, Tokenizer};
 use crate::{write_gguf_with_kv, GGUF_DEFAULT_ALIGNMENT};
 use expertvm::{
-    observe_chain, prefetch_keys, prefetch_keys_ctx, weight_permille, DirectStore, ExpertAccess,
-    ExpertKey, ExpertParts, ExpertStore, LiveStore, Markov, Trace,
+    observe_chain, prefetch_keys, prefetch_keys_ctx, prefix_hash, weight_permille, DirectStore,
+    ExpertAccess, ExpertKey, ExpertParts, ExpertStore, LiveStore, Markov, Trace,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -538,6 +538,8 @@ impl KvCache {
         self.moe_trace.enabled = true;
         self.moe_trace.sequence = sequence;
         self.moe_trace.events.clear();
+        self.moe_trace.ids.clear();
+        self.moe_trace.batch.clear();
     }
 
     /// Take recorded router events. Empty if tracing was never enabled.
@@ -575,6 +577,10 @@ struct MoeTraceBuf {
     layer: u32,
     token0: u32,
     events: Vec<ExpertAccess>,
+    /// Token ids from completed forwards (the prefix so far).
+    ids: Vec<u32>,
+    /// Token ids of the in-flight forward.
+    batch: Vec<u32>,
     markov: Markov,
     prev: Option<ExpertAccess>,
     prev2: Option<ExpertAccess>,
@@ -600,7 +606,16 @@ impl MoeTraceBuf {
             layer: self.layer,
             experts: ids,
             weight_pt,
+            prefix: Some(self.prefix_at(token_off)),
         }
+    }
+
+    fn prefix_at(&self, token_off: usize) -> u64 {
+        let take = token_off.saturating_add(1);
+        let mut buf = Vec::with_capacity(self.ids.len().saturating_add(take));
+        buf.extend_from_slice(&self.ids);
+        buf.extend(self.batch.iter().copied().take(take));
+        prefix_hash(&buf)
     }
 
     fn record(&mut self, token_off: usize, experts: &[usize], weights: &[f32]) {
@@ -1120,6 +1135,8 @@ impl Llama {
         } = cache;
         let max_seq = *max_seq;
         moe_trace.token0 = u32::try_from(n0).unwrap_or(u32::MAX);
+        moe_trace.batch.clear();
+        moe_trace.batch.extend(tokens.iter().copied());
         // Single-token steps are the only ones the pool serves: GEMM lays `y`
         // out token-major, so a row range there is not a contiguous slice.
         if n == 1 && pool.is_none() && self.wants_pool() {
@@ -1361,6 +1378,7 @@ impl Llama {
         self.gemv_into(&self.output, &s.xn, &mut s.logits, pool)?;
         add_bias_rows(&mut s.logits, self.n_vocab, self.output_b.as_deref())?;
         *n_past = end;
+        moe_trace.ids.extend_from_slice(&moe_trace.batch);
         Ok(&s.logits)
     }
 }
@@ -9882,6 +9900,7 @@ mod tests {
             greedy_generate_traced(&model, &tok, "ab", 4, None, 0).expect("traced");
         assert_eq!(plain, traced, "tracing must not change greedy tokens");
         assert!(!trace.events.is_empty(), "MoE layers must emit accesses");
+        let mut by_token: BTreeMap<u32, u64> = BTreeMap::new();
         for e in &trace.events {
             assert_eq!(e.layer, 0);
             assert_eq!(e.experts.len(), TINY_QWEN3MOE_N_EXPERT_USED);
@@ -9889,7 +9908,23 @@ mod tests {
             for w in &e.weight_pt {
                 assert!(*w <= 1000);
             }
+            let p = e.prefix.expect("decode traces hash the token-id prefix");
+            match by_token.get(&e.token) {
+                None => {
+                    let _prev = by_token.insert(e.token, p);
+                }
+                Some(old) => assert_eq!(*old, p, "same token must share prefix hash"),
+            }
         }
+        assert!(
+            by_token.len() >= 2,
+            "prefill + decode must emit more than one prefix hash"
+        );
+        let hashes: Vec<u64> = by_token.values().copied().collect();
+        assert_ne!(
+            hashes[0], hashes[1],
+            "a later token must change the prefix hash"
+        );
         let mut store = expertvm::DirectStore::from_trace(&trace);
         for k in trace.keys() {
             let blob = expertvm::ExpertStore::acquire(&mut store, k).expect("blob");
