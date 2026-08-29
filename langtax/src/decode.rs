@@ -628,6 +628,23 @@ impl KvCache {
         }
     }
 
+    /// Drop this sequence's KV blocks so another sequence can allocate.
+    ///
+    /// Interned prefixes stay in the pool (`refs` may remain 1). The engine
+    /// re-prefills and replays already sampled tokens (greedy recompute).
+    pub fn preempt(&mut self) {
+        self.rewind(0);
+    }
+
+    /// Physical blocks on this sequence's page table (`0` when dense).
+    #[must_use]
+    pub fn page_table_len(&self) -> usize {
+        self.pages
+            .as_ref()
+            .map(|p| p.table_ids().len())
+            .unwrap_or(0)
+    }
+
     /// Paged block size when this cache uses [`KvPages`].
     #[must_use]
     pub fn page_size(&self) -> Option<usize> {

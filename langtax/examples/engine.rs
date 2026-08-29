@@ -1,4 +1,4 @@
-//! Continuous batching: two sequences on one interned paged-KV pool.
+//! Continuous batching: intern hits, then recompute preemption on a tight pool.
 
 use llama_rust::{Engine, EngineCfg, Model};
 use std::io::{self, Write};
@@ -33,6 +33,26 @@ fn run() -> Result<(), String> {
             out_a.generated.len(),
             out_b.generated.len(),
             eng.active()
+        )
+        .as_bytes(),
+    )
+    .map_err(|e| e.to_string())?;
+
+    let mut tight = EngineCfg::tiny();
+    tight.pool_blocks = 3;
+    tight.max_seqs = 2;
+    let mut squeezed = Engine::new(model.llama(), tight).map_err(|e| e.to_string())?;
+    let pa = squeezed.add(&[1, 2, 3, 4], 2).map_err(|e| e.to_string())?;
+    let pb = squeezed.add(&[5, 0, 5, 0], 2).map_err(|e| e.to_string())?;
+    squeezed.run().map_err(|e| e.to_string())?;
+    let out_pa = squeezed.take(pa).ok_or("missing pa")?;
+    let out_pb = squeezed.take(pb).ok_or("missing pb")?;
+    out.write_all(
+        format!(
+            "preempt_a={} preempt_b={} preempts={}\n",
+            out_pa.generated.len(),
+            out_pb.generated.len(),
+            squeezed.preempts()
         )
         .as_bytes(),
     )

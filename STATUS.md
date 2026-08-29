@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine recompute preemption
+
+When `PagedKvPool` alloc returns `kv page cap`, `Engine` drops unique KV
+for the live sequence with the most tokens (`KvCache::preempt` / rewind
+to 0). Interned prefixes stay pinned (`refs` may remain 1) so intern
+eviction can reclaim them. The victim re-prefills and **replays**
+already sampled greedy ids; it does not resample. Greedy output still
+matches `greedy_generate_cache`. A single sequence that cannot fit is a
+hard `kv page cap` error. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — continuous batching on paged KV
 
 `Engine` admits several sequences onto one `PagedKvPool`. Each `step`

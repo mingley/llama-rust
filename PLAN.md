@@ -748,6 +748,11 @@ model, do not celebrate the sim.
     (`prefill_chunk`) interleaves with decode. Greedy ids match an independent
     `greedy_generate_cache` run. Intern hits across sequences. Distinct from
     `expertvm schedule` (trace-level, not real KV). Not an HTTP server.
+14. [x] Engine recompute preemption: when `PagedKvPool` alloc returns
+    `kv page cap`, drop unique KV for the live sequence with the most
+    tokens (intern pins remain). Re-prefill and replay already sampled
+    greedy ids so output still matches `greedy_generate_cache`. Distinct
+    from intern eviction (`refs==1` in `by_hash`). Not an HTTP server.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
