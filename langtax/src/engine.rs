@@ -1252,9 +1252,8 @@ mod tests {
         [i % 6, (i / 6) % 6]
     }
 
-    #[test]
-    fn engine_batch_128_waiting_queue_matches_independent() {
-        let g = load_gguf_owned(tiny_llama_gguf()).expect("owned");
+    fn run_batch_128(bytes: Vec<u8>, with_direct: bool) {
+        let g = load_gguf_owned(bytes).expect("owned");
         let tok = Tokenizer::from_gguf(&g).expect("tok");
         let model = Llama::from_gguf(g).expect("m");
         let n = 128u32;
@@ -1268,6 +1267,11 @@ mod tests {
         cfg.pool_blocks = 64;
         cfg.eos = tok.eos;
         let mut eng = Engine::new(&model, cfg).expect("eng");
+        if with_direct {
+            eng.attach_expert_store(LiveStore::Direct(
+                model.expert_direct_store().expect("catalog"),
+            ));
+        }
         let mut ids = Vec::new();
         for i in 0..n {
             ids.push(eng.add(&batch_prompt(i), n_predict).expect("add"));
@@ -1286,6 +1290,17 @@ mod tests {
             "8 in-flight sequences must GEMM together, peak={}",
             eng.stats().gemm_peak
         );
+        if with_direct {
+            let hits = eng.expert_store_metrics().expect("metrics").hits;
+            assert!(hits > 0, "MoE batch-128 must acquire from DirectStore");
+        }
+    }
+
+    #[test]
+    fn engine_batch_128_waiting_queue_matches_independent() {
+        run_batch_128(tiny_llama_gguf(), false);
+        run_batch_128(tiny_qwen3moe_gguf(), true);
+        run_batch_128(tiny_qwen3moe_2layer_gguf(), true);
     }
 
     #[test]

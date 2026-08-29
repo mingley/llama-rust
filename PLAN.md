@@ -872,6 +872,9 @@ model, do not celebrate the sim.
 41. [x] Engine waiting queue at batch-128: 128 prompts with `max_seqs=8`
     finish with greedy ids matching independent decode. GEMM peak stays
     batched. Dual score still has no `$/M tokens`.
+42. [x] Engine batch-128 on Qwen3MoE DirectStore (1-layer and 2-layer
+    tinies): 128 waiters, `max_seqs=8`, store acquires, GEMM together.
+    Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
