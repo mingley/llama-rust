@@ -29,6 +29,10 @@ pub struct GpuProfile {
     pub alloc_overhead_ns: u64,
     /// Board TDP, milliwatts. Energy estimate is `tdp_mw * wall_ns / 1e6` µJ.
     pub tdp_mw: u64,
+    /// Achieved GEMM / peak, ‰ (`1000` = full roofline). Duration scales `1000 / util`.
+    pub gemm_util_permille: u16,
+    /// Grouped-MoE duration vs dense roofline, ‰ (`1000` = no extra). Not a capture.
+    pub grouped_moe_permille: u16,
 }
 
 impl GpuProfile {
@@ -299,7 +303,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ntdp_mw={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ntdp_mw={}\ngemm_util_permille={}\ngrouped_moe_permille={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -307,7 +311,9 @@ impl HardwareProfile {
             g0.fp16_flops,
             self.host_bps(g0.id),
             g0.copy_engines,
-            g0.tdp_mw
+            g0.tdp_mw,
+            g0.gemm_util_permille,
+            g0.grouped_moe_permille
         )
     }
 
@@ -359,6 +365,8 @@ fn h100_gpu(id: DeviceId) -> GpuProfile {
         launch_overhead_ns: 3_000,
         alloc_overhead_ns: 2_000,
         tdp_mw: 700_000,
+        gemm_util_permille: 1000,
+        grouped_moe_permille: 1000,
     }
 }
 
@@ -459,6 +467,8 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut pcie_far_bps = 4u64.saturating_mul(1_000_000_000);
     let mut copy_engines: u8 = 2;
     let mut tdp_mw = 700_000u64;
+    let mut gemm_util_permille: u16 = 1000;
+    let mut grouped_moe_permille: u16 = 1000;
     let mut mesh = MeshKind::NvlinkClique;
     let mut mesh_set = false;
     for raw in text.lines() {
@@ -484,6 +494,8 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             "pcie_far_bps" => pcie_far_bps = parse_u64(v)?,
             "copy_engines" => copy_engines = parse_u8(v)?,
             "tdp_mw" => tdp_mw = parse_u64(v)?,
+            "gemm_util_permille" => gemm_util_permille = parse_u16(v)?,
+            "grouped_moe_permille" => grouped_moe_permille = parse_u16(v)?,
             "topology" => {
                 mesh = parse_mesh(v)?;
                 mesh_set = true;
@@ -513,6 +525,8 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         g.fp16_flops = fp16_flops;
         g.copy_engines = copy_engines;
         g.tdp_mw = tdp_mw;
+        g.gemm_util_permille = gemm_util_permille;
+        g.grouped_moe_permille = grouped_moe_permille;
         gpus.push(g);
         let far = mesh == MeshKind::NumaBad && i == 1;
         links.push(LinkProfile {
@@ -677,6 +691,16 @@ mod tests {
         assert_eq!(p.node_tdp_mw(), 246_000);
         assert_eq!(p.gpu(DeviceId(0)).unwrap().tdp_mw, 123_000);
         assert_eq!(p.gpu(DeviceId(1)).unwrap().tdp_mw, 123_000);
+    }
+
+    #[test]
+    fn parse_kernel_curve_keys() {
+        let p =
+            HardwareProfile::parse("gpus=1\ngemm_util_permille=500\ngrouped_moe_permille=2000\n")
+                .unwrap();
+        let g = p.gpu(DeviceId(0)).unwrap();
+        assert_eq!(g.gemm_util_permille, 500);
+        assert_eq!(g.grouped_moe_permille, 2000);
     }
 
     #[test]

@@ -280,6 +280,55 @@ mod tests {
     }
 
     #[test]
+    fn grouped_moe_permille_lengthens_kernel() {
+        let kind = KernelKind::GroupedMoeGemm {
+            experts: 4,
+            tokens_per_expert: 8,
+            hidden: 4096,
+            ff: 14336,
+            dtype: DType::Fp16,
+        };
+        let ns = |pen: u16| {
+            let mut p = HardwareProfile::example_h100_sxm();
+            for g in &mut p.gpus {
+                g.grouped_moe_permille = pen;
+            }
+            let mut sim = Sim::new(p);
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let a = sim.alloc(d, 1 << 20, s).unwrap();
+            enq(sim.memcpy_host_to_device(d, a, 1 << 20, s));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, kind.clone(), &[a], &[a], s));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        assert!(ns(2000) > ns(1000));
+    }
+
+    #[test]
+    fn gemm_util_below_peak_lengthens_dense_kernel() {
+        let ns = |util: u16| {
+            let mut p = HardwareProfile::example_h100_sxm();
+            for g in &mut p.gpus {
+                g.gemm_util_permille = util;
+            }
+            let mut sim = Sim::new(p);
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let a = sim.alloc(d, 1 << 20, s).unwrap();
+            enq(sim.memcpy_host_to_device(d, a, 1 << 20, s));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, KernelKind::other(1 << 40, 1 << 20), &[a], &[a], s));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        assert!(ns(500) > ns(1000));
+    }
+
+    #[test]
     fn d2d_replica_charges_peer_hbm_and_survives_src_free() {
         let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
         let d0 = DeviceId(0);

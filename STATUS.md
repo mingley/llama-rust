@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — kernel curve knobs
+
+`gemm_util_permille` (achieved/peak) and `grouped_moe_permille` (grouped
+vs dense duration) scale `kernel_ns`. Default 1000 is identity roofline.
+Parse them; do not treat example 1000 as a capture.
+
 ## Shipped 2026-08-29 — static EP vs cached expertvm
 
 `sim_static_ep` maps `expert_id % n_gpus` and never evicts. `compare_ep`

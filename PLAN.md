@@ -421,8 +421,9 @@ Contention is real: three transfers to GPU0 cannot each get the full
 PCIe x16.
 
 Kernels are structural (`Matmul {m,n,k,dtypes}`, `GroupedMoeGemm {…}`),
-costed by a hardware profile (roofline first; later small/large GEMM
-curves, FP8 efficiency, grouped-GEMM penalty).
+costed by a hardware profile (roofline first; `gemm_util_permille` and
+`grouped_moe_permille` are the empirical-curve knobs; capture still
+refused in this crate).
 
 **Virtual time only.** No `sleep(40us)`. Discrete events. Deterministic:
 

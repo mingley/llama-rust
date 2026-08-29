@@ -34,7 +34,7 @@ warp scheduler, L1, …   ← do not model
 | residency: a kernel may only read local allocations | PCIe / NVLink bandwidth |
 | copy-engine occupancy | launch overhead |
 | peer accessibility | size-dependent efficiency |
-| graph capture does not execute; launch replays | — |
+| graph capture does not execute; launch replays | GEMM util / grouped-MoE ‰ |
 
 ## Anti-Goodhart timing
 
@@ -46,7 +46,10 @@ T = T_fixed + (bytes + ramp) / peak_bandwidth
 
 Eight thousand tiny copies cannot harvest full PCIe bandwidth. Concurrent
 copies on the same link share bandwidth. Kernels on one GPU are exclusive
-in v0 (copy engines still overlap compute).
+in v0 (copy engines still overlap compute). Profile knobs
+`gemm_util_permille` (achieved/peak) and `grouped_moe_permille` (grouped vs
+dense duration) scale kernel time. Defaults are 1000 (identity roofline).
+They are parseable; they are not a capture.
 
 ## Example profiles
 

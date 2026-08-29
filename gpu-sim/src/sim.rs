@@ -788,7 +788,17 @@ impl Sim {
         let (flops, bytes) = kind.flops_and_bytes();
         let compute = ns_for_bytes(flops, g.flops(kind.dtype()));
         let memory = ns_for_bytes(bytes, g.hbm_bps);
-        Ok(g.launch_overhead_ns.saturating_add(compute.max(memory)))
+        let mut ns = g.launch_overhead_ns.saturating_add(compute.max(memory));
+        let util = u64::from(g.gemm_util_permille.max(1));
+        ns = ns
+            .saturating_mul(1000)
+            .checked_div(util)
+            .unwrap_or(u64::MAX);
+        if matches!(kind, KernelKind::GroupedMoeGemm { .. }) {
+            let pen = u64::from(g.grouped_moe_permille.max(1));
+            ns = ns.saturating_mul(pen).checked_div(1000).unwrap_or(u64::MAX);
+        }
+        Ok(ns)
     }
 
     fn event_wait_gate(&self, event: EventId) -> Result<Option<OpId>, SimError> {
