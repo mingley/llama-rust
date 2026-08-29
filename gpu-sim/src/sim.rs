@@ -23,8 +23,10 @@ struct Alloc {
     host_registered: bool,
     /// `cudaMallocManaged`: one location; [`Sim::prefetch`] migrates it.
     managed: bool,
-    /// `cuMemAddressReserve` VA. HBM is charged only while [`Sim::va_map`]ped.
+    /// `cuMemAddressReserve` VA. HBM is charged only while mapped (possibly sparse).
     vmm: bool,
+    /// Physical maps `(device, offset, bytes)` into a VMM VA.
+    vmm_maps: Vec<(DeviceId, u64, u64)>,
     /// `None` is `cudaMalloc` / host-pinned. `Some` is `cudaMallocAsync` from that pool.
     pool: Option<PoolId>,
 }
@@ -233,9 +235,16 @@ impl Sim {
     }
 
     /// Whether `alloc` currently has a copy on `device`.
+    ///
+    /// A VMM VA is resident only when mapped physicals cover the whole reserved
+    /// size (a hole is not kernel-readable).
     pub fn is_resident(&self, alloc: AllocId, device: DeviceId) -> Result<bool, SimError> {
         let a = self.alloc_ref(alloc)?;
-        Ok(a.live && a.devices.contains(&device))
+        if a.vmm {
+            Ok(a.live && vmm_covers(&a.vmm_maps, device, 0, a.bytes))
+        } else {
+            Ok(a.live && a.devices.contains(&device))
+        }
     }
 
     /// Refuse new work (and starting queued work) on `device`.
@@ -567,6 +576,7 @@ impl Sim {
                 host_registered: false,
                 managed: false,
                 vmm: false,
+                vmm_maps: Vec::new(),
                 pool: Some(pool),
             },
         );
@@ -692,6 +702,7 @@ impl Sim {
                 host_registered: false,
                 managed: true,
                 vmm: false,
+                vmm_maps: Vec::new(),
                 pool: None,
             },
         );
@@ -731,6 +742,7 @@ impl Sim {
                 host_registered: false,
                 managed: false,
                 vmm: true,
+                vmm_maps: Vec::new(),
                 pool: None,
             },
         );
@@ -743,11 +755,26 @@ impl Sim {
         Ok(a.live && a.vmm)
     }
 
-    /// `cuMemCreate` + `cuMemMap` + `cuMemSetAccess` onto `device`.
+    /// `cuMemCreate` + `cuMemMap` + `cuMemSetAccess` for the whole VA.
     ///
-    /// Host-synchronous. Charges HBM now. The pointer is kernel-readable
-    /// without a stream wait. Already-mapped ids fail. Capture cannot include it.
+    /// Equivalent to [`Self::va_map_range`] of `[0, bytes)`. Capture cannot include it.
     pub fn va_map(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
+        let bytes = self.alloc_ref(id)?.bytes;
+        self.va_map_range(id, device, 0, bytes)
+    }
+
+    /// Map `[offset, offset+bytes)` of a reserved VA onto `device`.
+    ///
+    /// Host-synchronous. Charges `bytes` of HBM. Overlapping maps on the same
+    /// device fail. A kernel needs the full VA covered; a hole is
+    /// [`SimError::NotResident`]. Capture cannot include it.
+    pub fn va_map_range(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        bytes: u64,
+    ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let _gpu = self.profile.gpu(device)?;
         let a = self.alloc_ref(id)?;
@@ -757,21 +784,35 @@ impl Sim {
         if !a.live || !a.vmm {
             return Err(SimError::Invalid { why: "not a VA" });
         }
-        if !a.devices.is_empty() {
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        let end = offset.saturating_add(bytes);
+        if end > a.bytes {
+            return Err(SimError::Invalid {
+                why: "range past VA",
+            });
+        }
+        if vmm_overlap(&a.vmm_maps, device, offset, bytes) {
             return Err(SimError::Invalid {
                 why: "already mapped",
             });
         }
-        let bytes = a.bytes;
         self.reserve_hbm(device, bytes)?;
         let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
         self.clock = self.clock.saturating_add(ns);
-        self.alloc_mut(id)?.devices.push(device);
+        let a = self.alloc_mut(id)?;
+        a.vmm_maps.push((device, offset, bytes));
+        if !a.devices.contains(&device) {
+            a.devices.push(device);
+        }
         self.vmm_idle.retain(|&x| x != id);
         Ok(())
     }
 
-    /// `cuMemUnmap` + `cuMemRelease`. The VA stays reserved ([`Self::va_map`] again).
+    /// `cuMemUnmap` + `cuMemRelease` for every physical on this VA.
     ///
     /// Host-synchronous: in-flight kernels using this pointer complete first.
     pub fn va_unmap(&mut self, id: AllocId) -> Result<(), SimError> {
@@ -784,16 +825,62 @@ impl Sim {
         if !a.live || !a.vmm {
             return Err(SimError::Invalid { why: "not a VA" });
         }
-        if a.devices.is_empty() {
+        let maps = a.vmm_maps.clone();
+        if maps.is_empty() {
             return Err(SimError::Invalid { why: "not mapped" });
         }
-        let bytes = a.bytes;
-        let holders = a.devices.clone();
-        for d in holders {
-            self.refund_device(d, id, bytes)?;
+        for (d, _, n) in maps {
+            self.refund_device(d, id, n)?;
         }
-        self.alloc_mut(id)?.devices.clear();
+        let a = self.alloc_mut(id)?;
+        a.vmm_maps.clear();
+        a.devices.clear();
         Ok(())
+    }
+
+    /// Unmap one exact `(device, offset, bytes)` physical. The VA stays reserved.
+    pub fn va_unmap_range(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        self.synchronize()?;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        let pos = a
+            .vmm_maps
+            .iter()
+            .position(|&(d, o, n)| d == device && o == offset && n == bytes);
+        let Some(i) = pos else {
+            return Err(SimError::Invalid { why: "no such map" });
+        };
+        self.refund_device(device, id, bytes)?;
+        let a = self.alloc_mut(id)?;
+        let _gone = a.vmm_maps.remove(i);
+        if !a.vmm_maps.iter().any(|&(d, _, _)| d == device) {
+            a.devices.retain(|d| *d != device);
+        }
+        Ok(())
+    }
+
+    /// Mapped bytes of `alloc` currently charged on `device`.
+    pub fn vmm_mapped_bytes(&self, alloc: AllocId, device: DeviceId) -> Result<u64, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        Ok(a.vmm_maps
+            .iter()
+            .filter(|(d, _, _)| *d == device)
+            .fold(0u64, |acc, (_, _, n)| acc.saturating_add(*n)))
     }
 
     /// `cuMemAddressFree`. Must already be unmapped and not leased.
@@ -1692,6 +1779,7 @@ impl Sim {
                 host_registered: registered,
                 managed: false,
                 vmm: false,
+                vmm_maps: Vec::new(),
                 pool: None,
             },
         );
@@ -2017,6 +2105,7 @@ impl Sim {
                 host_registered: false,
                 managed: false,
                 vmm: false,
+                vmm_maps: Vec::new(),
                 pool: None,
             },
         );
@@ -2216,7 +2305,11 @@ impl Sim {
     ) -> Result<(), SimError> {
         for id in reads.iter().chain(writes.iter()) {
             let a = self.alloc_ref(*id)?;
-            let on_device = a.live && a.devices.contains(&device);
+            let on_device = if a.vmm {
+                a.live && vmm_covers(&a.vmm_maps, device, 0, a.bytes)
+            } else {
+                a.live && a.devices.contains(&device)
+            };
             let mapped = mapped_ok && a.live && a.host_mapped;
             if !on_device && !mapped {
                 return Err(SimError::NotResident { alloc: *id, device });
@@ -2417,18 +2510,25 @@ impl Sim {
             }
         }
         match m.src {
-            Place::Host | Place::HostPinned => Ok(()),
+            Place::Host | Place::HostPinned => {}
             Place::Device(d) => {
-                if a.devices.contains(&d) {
-                    Ok(())
-                } else {
-                    Err(SimError::NotResident {
+                if !a.devices.contains(&d) {
+                    return Err(SimError::NotResident {
                         alloc: m.alloc,
                         device: d,
-                    })
+                    });
                 }
             }
         }
+        if let Place::Device(d) = m.dst {
+            if a.vmm && !vmm_covers(&a.vmm_maps, d, 0, m.bytes) {
+                return Err(SimError::NotResident {
+                    alloc: m.alloc,
+                    device: d,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Replication onto a GPU that does not yet hold `m.alloc` charges that GPU's HBM.
@@ -2600,6 +2700,38 @@ fn snapshot_op(id: OpId, o: &Op) -> Operation {
         start_ns: o.start_ns,
         done_ns: o.done_ns,
     }
+}
+
+fn vmm_overlap(maps: &[(DeviceId, u64, u64)], device: DeviceId, offset: u64, bytes: u64) -> bool {
+    let end = offset.saturating_add(bytes);
+    maps.iter()
+        .any(|&(d, o, n)| d == device && offset < o.saturating_add(n) && o < end)
+}
+
+fn vmm_covers(maps: &[(DeviceId, u64, u64)], device: DeviceId, offset: u64, bytes: u64) -> bool {
+    if bytes == 0 {
+        return true;
+    }
+    let end = offset.saturating_add(bytes);
+    let mut segs: Vec<(u64, u64)> = maps
+        .iter()
+        .filter(|(d, _, _)| *d == device)
+        .map(|(_, o, n)| (*o, o.saturating_add(*n)))
+        .collect();
+    segs.sort_by_key(|s| s.0);
+    let mut cur = offset;
+    for (s, e) in segs {
+        if s > cur {
+            return false;
+        }
+        if e > cur {
+            cur = e;
+        }
+        if cur >= end {
+            return true;
+        }
+    }
+    cur >= end
 }
 
 fn seed_peers(profile: &HardwareProfile) -> BTreeSet<(DeviceId, DeviceId)> {

@@ -425,11 +425,12 @@ Exact (mechanical invariants agents may rely on):
   `prefetch`, `prefetch_host`): no HBM until migrate; prefetch **moves**
   (does not replicate); a kernel first-touch prefetches on that stream
 - CUDA VMM (`va_reserve` / `va_map` / `va_unmap` / `va_free`,
-  `va_acquire` / `va_release`):
+  `va_acquire` / `va_release`, `va_map_range` / `va_unmap_range`):
   `cuMemAddressReserve` / `cuMemMap` / `cuMemUnmap` / `cuMemAddressFree`;
-  one physical per VA; HBM charged only while mapped; the pointer survives
-  unmap; `va_release` parks the VA so `va_acquire` remaps without another
-  reserve
+  HBM charged only while mapped; the pointer survives unmap;
+  `va_release` parks the VA so `va_acquire` remaps without another reserve;
+  sparse sub-range maps (vLLM KV-block analog) charge only the mapped span;
+  a kernel needs the whole VA covered
 - `cudaLaunchHostFunc` (`host_func`): stream-ordered host work; does not
   occupy compute or copy engines; graphs may record it
 - stream ordering, events, barriers

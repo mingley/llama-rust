@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — sparse VMM maps charge only the mapped span
+
+`Sim::va_map_range` / `va_unmap_range` / `vmm_mapped_bytes` map physical
+pages into a reserved VA (vLLM KV-block analog). Overlap is `already
+mapped`; a hole is not kernel-resident; H2D larger than the mapped span
+is `NotResident`. `va_map` is still the whole VA. Dual score still has
+no `$/M tokens`.
+
 ## Shipped 2026-08-29 — cudaLaunchHostFunc is host work, not a kernel
 
 `Sim::host_func` is `cudaLaunchHostFunc`: stream-ordered, billed at
@@ -37,8 +45,8 @@ no `$/M tokens`.
 `Sim::va_reserve` / `va_map` / `va_unmap` / `va_free` are
 `cuMemAddressReserve` / `cuMemMap` / `cuMemUnmap` / `cuMemAddressFree`.
 Reserve does not charge HBM; map does; unmap refunds and the pointer
-stays so a later map can reuse it. This crate maps one physical per VA
-(not sparse sub-ranges). Capture refuses reserve/map/unmap/free.
+stays so a later map can reuse it. Sparse sub-range maps are
+`va_map_range` / `va_unmap_range`. Capture refuses reserve/map/unmap/free.
 `expertvm sim --vmm` / `expertvm bench` `sim-vmm`. `SimulatedGpuStore`
 stays on pinned H2D. Dual score still has no `$/M tokens`.
 
