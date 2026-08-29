@@ -1007,6 +1007,15 @@ model, do not celebrate the sim.
     full HBM). Default unset keeps exclusive compute and a full chip. Dual
     score still has no `$/M tokens`.
 
+62. [x] Trace-walker `--decode-priority`: `expertvm sim` / `schedule` / `store`
+    and `infer-bench schedule` run decode GEMMs on a second compute stream
+    (`StreamId(n_copy + 1)`) and sample token-boundary ITL from that stream so
+    leftover prefill does not inflate it. Implies `--stream-priority` at the
+    CLI (library `SimCfg` does not). Walker `--decode-sms` does not imply
+    this (token 0 is prefill). Mixed leftover-prefill ITL is strictly shorter
+    than a full-device sample on a GEMM-bound profile. Dual score still has
+    no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

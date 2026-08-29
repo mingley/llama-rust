@@ -17,7 +17,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -128,6 +128,10 @@ fn run() -> Result<(), String> {
             let mut sim_cfg = SimCfg::lru(cfg.capacity, cfg.expert_bytes, 8);
             sim_cfg.compute_slots = cfg.compute_slots;
             sim_cfg.decode_sm_permille = cfg.decode_sm_permille;
+            sim_cfg.decode_priority = cfg.decode_priority;
+            if cfg.decode_priority {
+                sim_cfg.stream_priority = true;
+            }
             let sched = SchedCfg {
                 max_batch: cfg.max_batch,
                 interarrival_ns: cfg.interarrival_ns,
@@ -187,6 +191,7 @@ struct Cfg {
     place: String,
     compute_slots: u8,
     decode_sm_permille: u16,
+    decode_priority: bool,
 }
 
 fn parse_flags<I>(args: I) -> Result<Cfg, String>
@@ -218,6 +223,7 @@ where
     let mut place = String::from("none");
     let mut compute_slots = 0u8;
     let mut decode_sm_permille = 0u16;
+    let mut decode_priority = false;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -267,6 +273,9 @@ where
             }
             "--decode-first" => {
                 decode_first = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
+            "--decode-priority" => {
+                decode_priority = !matches!(inline.as_deref(), Some("0" | "false"));
             }
             "--slo-reject" => {
                 slo_reject = !matches!(inline.as_deref(), Some("0" | "false"));
@@ -324,6 +333,7 @@ where
         place,
         compute_slots,
         decode_sm_permille,
+        decode_priority,
     })
 }
 

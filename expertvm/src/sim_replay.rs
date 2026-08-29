@@ -228,7 +228,18 @@ pub struct SimCfg {
     pub compute_slots: u8,
     /// Green-context SM fraction (‰) on every replay stream. `0` keeps a full
     /// chip. Compute-bound kernels scale; memory-bound keep full HBM.
+    ///
+    /// With [`Self::decode_priority`], this caps the decode stream; leftover
+    /// prefill gets the remainder. Walker `--decode-sms` does not imply
+    /// decode-priority (token 0 is prefill).
     pub decode_sm_permille: u16,
+    /// Decode GEMMs on a second compute stream (`StreamId(n_copy + 1)`).
+    ///
+    /// Token 0 stays on the prefill stream. Token-boundary ITL samples the
+    /// decode stream so leftover prefill does not inflate it. Does not imply
+    /// [`Self::stream_priority`] (the walker CLI does). Default off: every
+    /// event uses `sequence % n_copy` / NULL.
+    pub decode_priority: bool,
 }
 
 impl SimCfg {
@@ -262,6 +273,7 @@ impl SimCfg {
             graph_clone: false,
             compute_slots: 0,
             decode_sm_permille: 0,
+            decode_priority: false,
         }
     }
 }
@@ -306,17 +318,17 @@ pub fn sim_replay_cfg(
     let slots = occupancy_slots(&cfg, sim.pin_budget());
     let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
     let mut w = Walker::new(&keys, slots, cfg.policy, cfg.lookahead);
-    let n_streams = replay_streams(sim.profile(), cfg.seq_streams);
+    let plan = StreamPlan::new(sim.profile(), cfg.seq_streams, cfg.decode_priority);
     if cfg.blocking_streams {
-        sim.set_created_streams_blocking(n_streams)?;
+        sim.set_created_streams_blocking(plan.mark)?;
     }
     if cfg.legacy_null {
         sim.set_legacy_null_stream(true);
     }
     if cfg.stream_priority {
-        sim.set_created_streams_priority(n_streams)?;
+        sim.set_created_streams_priority(plan.mark)?;
     }
-    apply_stream_sms(&mut sim, n_streams, cfg.decode_sm_permille)?;
+    apply_stream_sms(&mut sim, plan, cfg.decode_sm_permille)?;
     let mut args = TouchArgs {
         d,
         s,
@@ -339,7 +351,7 @@ pub fn sim_replay_cfg(
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
     let mut next_event = 1u32;
     for (i, event) in trace.events.iter().enumerate() {
-        args.s = stream_of(event.sequence, n_streams);
+        args.s = plan.work(event.sequence, event.token);
         let ek = event.keys();
         for key in &ek {
             let (got, touch) = w.next_touch().ok_or(Error::Store("short walker"))?;
@@ -364,9 +376,15 @@ pub fn sim_replay_cfg(
             &ek,
             cfg.cuda_graphs,
             &mut ctr,
+            cfg.decode_priority.then_some(args.s),
         )?;
         if cfg.host_func {
-            host_callbacks(&mut sim, &handles, &ek)?;
+            host_callbacks(
+                &mut sim,
+                &handles,
+                &ek,
+                cfg.decode_priority.then_some(args.s),
+            )?;
         }
         if should_prefetch(cfg, &handles, trace, i) {
             let predicted = predicted_keys(cfg.prefetch, &markov, chain.predecessor(event), &ek);
@@ -398,7 +416,7 @@ pub fn sim_replay_cfg(
         chain.observe(&mut markov, event);
         let _ins = admitted.insert(event.sequence);
         if engine_step(&trace.events, i, cfg.max_batch, admitted.len()) {
-            sim.synchronize()?;
+            sync_work(&mut sim, 1, plan, event.token > 0)?;
             if last_of_token(&trace.events, i) {
                 token_ends.push(sim.clock_ns());
             }
@@ -820,14 +838,16 @@ pub(crate) fn gemm_keys(
     keys: &[ExpertKey],
     cuda_graphs: bool,
     ctr: &mut ReplayCounters,
+    work: Option<StreamId>,
 ) -> Result<(), Error> {
     let mut by_dev: BTreeMap<(DeviceId, StreamId), Vec<AllocId>> = BTreeMap::new();
     for key in keys {
         let Some(page) = handles.get(key) else {
             continue;
         };
+        let stream = work.unwrap_or(page.stream);
         by_dev
-            .entry((page.device, page.stream))
+            .entry((page.device, stream))
             .or_default()
             .push(page.id);
     }
@@ -841,14 +861,16 @@ pub(crate) fn host_callbacks(
     sim: &mut Sim,
     handles: &BTreeMap<ExpertKey, PageHandle>,
     keys: &[ExpertKey],
+    work: Option<StreamId>,
 ) -> Result<(), Error> {
     let mut seen: BTreeSet<(DeviceId, StreamId)> = BTreeSet::new();
     for key in keys {
         let Some(page) = handles.get(key) else {
             continue;
         };
-        if seen.insert((page.device, page.stream)) {
-            let _id = sim.host_func(page.device, page.stream)?;
+        let stream = work.unwrap_or(page.stream);
+        if seen.insert((page.device, stream)) {
+            let _id = sim.host_func(page.device, stream)?;
         }
     }
     Ok(())
@@ -1023,17 +1045,102 @@ pub(crate) fn sim_profile(profile: HardwareProfile, cfg: &SimCfg) -> HardwarePro
     }
 }
 
-pub(crate) fn apply_stream_sms(sim: &mut Sim, n_streams: u8, permille: u16) -> Result<(), Error> {
+pub(crate) fn apply_stream_sms(
+    sim: &mut Sim,
+    plan: StreamPlan,
+    permille: u16,
+) -> Result<(), Error> {
     if permille == 0 {
         return Ok(());
     }
     let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    if plan.decode_priority {
+        let dec = permille.min(1000);
+        let pre = 1000u16.saturating_sub(dec).max(1);
+        for g in 0..n {
+            let d = DeviceId(g);
+            sim.set_stream_sm_permille(d, plan.decode, dec)?;
+            if plan.prefill != plan.decode {
+                sim.set_stream_sm_permille(d, plan.prefill, pre)?;
+            }
+        }
+        return Ok(());
+    }
     for g in 0..n {
-        for s in 0..n_streams.max(1) {
+        for s in 0..plan.n_copy.max(1) {
             sim.set_stream_sm_permille(DeviceId(g), StreamId(u16::from(s)), permille)?;
         }
     }
     Ok(())
+}
+
+/// Token-boundary drain: decode stream only when leftover prefill may still run.
+pub(crate) fn sync_work(
+    sim: &mut Sim,
+    n_gpus: u16,
+    plan: StreamPlan,
+    decode_token: bool,
+) -> Result<(), Error> {
+    if plan.decode_priority && decode_token {
+        for g in 0..n_gpus {
+            sim.synchronize_stream(DeviceId(g), plan.decode)?;
+        }
+    } else {
+        sim.synchronize()?;
+    }
+    Ok(())
+}
+
+/// Copy-engine count plus optional prefill/decode compute streams.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct StreamPlan {
+    n_copy: u8,
+    /// Prefill compute stream (`n_copy` when decode-priority, else NULL).
+    pub(crate) prefill: StreamId,
+    /// Decode compute stream (`n_copy + 1` when decode-priority).
+    pub(crate) decode: StreamId,
+    /// Exclusive upper bound for `set_created_streams_*` (`1 .. mark`).
+    pub(crate) mark: u8,
+    decode_priority: bool,
+}
+
+impl StreamPlan {
+    /// Prefill/decode streams when `decode_priority`, else seq-stream NULL mapping.
+    pub(crate) fn new(profile: &HardwareProfile, seq_streams: bool, decode_priority: bool) -> Self {
+        let n_copy = replay_streams(profile, seq_streams);
+        if decode_priority {
+            let prefill = StreamId(u16::from(n_copy));
+            let decode = StreamId(u16::from(n_copy).saturating_add(1));
+            Self {
+                n_copy,
+                prefill,
+                decode,
+                mark: n_copy.saturating_add(2),
+                decode_priority: true,
+            }
+        } else {
+            Self {
+                n_copy,
+                prefill: StreamId(0),
+                decode: StreamId(0),
+                mark: n_copy,
+                decode_priority: false,
+            }
+        }
+    }
+
+    /// Work stream for this event: prefill vs decode, or `sequence % n_copy`.
+    pub(crate) fn work(self, sequence: u64, token: u32) -> StreamId {
+        if self.decode_priority {
+            if token == 0 {
+                self.prefill
+            } else {
+                self.decode
+            }
+        } else {
+            stream_of(sequence, self.n_copy)
+        }
+    }
 }
 
 pub(crate) fn replay_streams(profile: &HardwareProfile, seq_streams: bool) -> u8 {

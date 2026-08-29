@@ -143,7 +143,10 @@ chunk (layer-major) per engine step, finished sequences retire,
 whole next token unless `--prefill-chunk N` limits a sequence's first
 token to N layer-events so a short decode is not stuck behind a long
 prefill. `--decode-first` holds leftover prefill while any running
-sequence is already in decode. `llama-rust` `EngineCfg::decode_first` /
+sequence is already in decode. `--decode-priority` runs decode GEMMs on a
+higher-priority compute stream and samples ITL from that stream so leftover
+prefill does not inflate it (implies `--stream-priority`; does not imply
+from `--decode-sms`). `llama-rust` `EngineCfg::decode_first` /
 `gguf_gemv engine --decode-first` is the same hold on real KV, not this
 trace walker. `--slo-reject` drops a waiter whose queue
 wait already meets `--ttft-slo-ns` (`rejected=` on the schedule line).
@@ -165,7 +168,10 @@ on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 `--seq-streams` / `--kv-sim` / `--kv-bytes` / `--decode-priority` /
 `--compute-slots` / `--decode-sms` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
 `expertvm sim` / `schedule` / `store` take `--compute-slots` / `--decode-sms`
-(Hyper-Q occupancy and green-context SM fraction on the trace walker).
+/ `--decode-priority` (Hyper-Q occupancy, green-context SM fraction, and
+decode-stream ITL on the trace walker). Walker `--decode-sms` does **not**
+imply `--decode-priority` (token 0 is prefill). `--decode-priority` implies
+`--stream-priority` so leftover prefill does not inflate decode ITL.
 `gguf_gemv engine --expert-sim --kv-sim` maps interned KV onto that Sim
 (distinct from `expertvm kv`; `--kv-bytes` overrides intern geometry).
 `gguf_gemv engine --expert-sim --decode-priority` runs decode GEMMs on a
@@ -281,6 +287,7 @@ expertvm store    trace.jsonl --capacity 2 --managed --accessed-by --profile 2no
 expertvm store    trace.jsonl --capacity 2 --legacy-null
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --stream-priority
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 2 --decode-sms 250
+expertvm schedule trace.jsonl --capacity 8 --prefill-chunk 1 --decode-priority --compute-slots 2
 expertvm sim      trace.jsonl --capacity 2 --managed --accessed-by --profile 2xh100-pcie
 gpu-profile probe 2xh100-pcie --bytes 1048576
 ```

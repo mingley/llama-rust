@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Trace-walker `--decode-priority` ITL
+
+`expertvm sim` / `schedule` / `store` and `infer-bench schedule` take the
+same decode-stream ITL knob as Engine. Token 0 stays on the prefill stream;
+later tokens GEMM on `StreamId(n_copy + 1)` at higher CUDA priority (CLI
+implies `--stream-priority`). Token-boundary ITL samples that decode stream
+so leftover prefill does not inflate it. Walker `--decode-sms` does not
+imply `--decode-priority` (token 0 is prefill). Mixed leftover-prefill ITL
+is strictly shorter than a full-device sample on a GEMM-bound profile.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Trace-walker `--compute-slots` / `--decode-sms`
 
 `expertvm sim` / `schedule` / `store` and `infer-bench schedule` take the
@@ -1191,6 +1202,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 ./target/release/expertvm workload batch-1
 ./target/release/expertvm workload batch-128 --tokens 8
 ./target/release/expertvm schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --seq-streams --compute-slots 2 --decode-sms 250
+./target/release/expertvm schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --prefill-chunk 1 --decode-priority --compute-slots 2
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 8 --place striped --profile 8xh100 --expert-bytes 1048576
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 8 --place replicas --profile 8xh100 --expert-bytes 1048576
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 8 --place remote --profile 2node-rdma --expert-bytes 1048576 --prefetch copy-forward
@@ -1199,8 +1211,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 61 (trace-walker
-`--compute-slots` / `--decode-sms`). `gguf_gemv serve --engine`
+Next code change is PLAN systems depth after item 62 (trace-walker
+`--decode-priority`). `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover
 is a Llama NORM real-model fixture when a GGUF is on disk. Physical

@@ -418,7 +418,8 @@ impl SimulatedGpuStore {
         if !self.seq_streams {
             return;
         }
-        let n = u8::try_from(self.compute.0).unwrap_or(1);
+        // Prefill id is `n_copy` even after `bind_decode_compute` retargets GEMM.
+        let n = u8::try_from(self.prefill.0).unwrap_or(1);
         self.copy = stream_of(sequence, n);
     }
 
@@ -1541,6 +1542,7 @@ pub fn store_replay_cfg(
     let mut chain = ChainState::new();
     for (i, event) in trace.events.iter().enumerate() {
         store.bind_sequence(event.sequence);
+        store.bind_decode_compute(event.token > 0);
         let ek = event.keys();
         for key in &ek {
             let _p = store.acquire(*key)?;

@@ -8,8 +8,8 @@ use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
     apply_stream_sms, apply_touch, drop_remote, fetch_remote, fill_remote, gemm_keys,
     host_callbacks, note_touch, occupancy_slots, reclaim_victim, remote_hit, replay_from_sim,
-    replay_streams, sim_profile, stream_of, GraphBank, PageHandle, RemoteFetch, RemotePage,
-    ReplayCounters, SimCfg, SimReplay, TouchArgs,
+    sim_profile, sync_work, GraphBank, PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg,
+    SimReplay, StreamPlan, TouchArgs,
 };
 use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -224,7 +224,7 @@ fn schedule_run(
             &mut rt.prefixes,
         );
     }
-    Ok(finish_sched(rt, rec))
+    finish_sched(rt, rec)
 }
 
 struct Job {
@@ -257,11 +257,11 @@ struct SchedRt {
     prefetched: BTreeSet<ExpertKey>,
     markov: Markov,
     chain: ChainState,
-    n_streams: u8,
     cfg: SimCfg,
     idle_ns: u64,
     place: Option<PlaceMap>,
     n_gpus: u16,
+    plan: StreamPlan,
     remote_act: Option<u64>,
     remotes: BTreeMap<ExpertKey, RemotePage>,
     seen: BTreeMap<ExpertKey, u64>,
@@ -284,23 +284,22 @@ impl SchedRt {
         if cfg.mempool {
             sim.set_default_pool_release_threshold(u64::MAX)?;
         }
-        let n_streams = replay_streams(sim.profile(), cfg.seq_streams);
+        let plan = StreamPlan::new(sim.profile(), cfg.seq_streams, cfg.decode_priority);
         if cfg.blocking_streams {
-            sim.set_created_streams_blocking(n_streams)?;
+            sim.set_created_streams_blocking(plan.mark)?;
         }
         if cfg.legacy_null {
             sim.set_legacy_null_stream(true);
         }
         if cfg.stream_priority {
-            sim.set_created_streams_priority(n_streams)?;
+            sim.set_created_streams_priority(plan.mark)?;
         }
-        apply_stream_sms(&mut sim, n_streams, cfg.decode_sm_permille)?;
+        apply_stream_sms(&mut sim, plan, cfg.decode_sm_permille)?;
         let n_gpus = u16::try_from(sim.profile().n_gpus()).unwrap_or(1).max(1);
         let bytes = cfg.bytes_per_expert.max(1);
         let mut cfg = cfg;
         cfg.slots = occupancy_slots(&cfg, sim.pin_budget());
         Ok(Self {
-            n_streams,
             walkers: BTreeMap::new(),
             args: TouchArgs {
                 d: DeviceId(0),
@@ -326,6 +325,7 @@ impl SchedRt {
             idle_ns: 0,
             place,
             n_gpus,
+            plan,
             remote_act,
             remotes: BTreeMap::new(),
             seen: BTreeMap::new(),
@@ -371,7 +371,7 @@ impl SchedRt {
             }
             return Ok(());
         }
-        self.args.s = stream_of(ev.sequence, self.n_streams);
+        self.args.s = self.plan.work(ev.sequence, ev.token);
         let ek = ev.keys();
         for key in &ek {
             let home = self.home(*key);
@@ -404,9 +404,15 @@ impl SchedRt {
             &ek,
             self.cfg.cuda_graphs,
             &mut self.ctr,
+            self.cfg.decode_priority.then_some(self.args.s),
         )?;
         if self.cfg.host_func {
-            host_callbacks(&mut self.sim, &self.handles, &ek)?;
+            host_callbacks(
+                &mut self.sim,
+                &self.handles,
+                &ek,
+                self.cfg.decode_priority.then_some(self.args.s),
+            )?;
         }
         Ok(())
     }
@@ -530,7 +536,7 @@ impl SchedRt {
     }
 
     fn touch_remote(&mut self, ev: &ExpertAccess) -> Result<(), Error> {
-        self.args.s = stream_of(ev.sequence, self.n_streams);
+        self.args.s = self.plan.work(ev.sequence, ev.token);
         let ek = ev.keys();
         let fan_in = u64::try_from(ev.experts.len()).unwrap_or(1).max(1);
         let act = self.remote_act.unwrap_or(1);
@@ -876,6 +882,7 @@ fn execute_iteration(
         consumed.push(ch.len());
         gpu.extend(ch);
     }
+    let decode_token = gpu.iter().any(|e| e.token > 0);
     let mut by_layer: BTreeMap<u32, Vec<ExpertAccess>> = BTreeMap::new();
     for ev in gpu {
         by_layer.entry(ev.layer).or_default().push(ev);
@@ -887,7 +894,7 @@ fn execute_iteration(
             rt.observe(ev);
         }
     }
-    rt.sim.synchronize()?;
+    sync_work(&mut rt.sim, rt.n_gpus, rt.plan, decode_token)?;
     Ok(consumed)
 }
 
@@ -1022,7 +1029,8 @@ fn mean_u64(xs: &[u64]) -> Option<u64> {
     Some(sum / n.max(1))
 }
 
-fn finish_sched(mut rt: SchedRt, rec: Rec) -> SchedReplay {
+fn finish_sched(mut rt: SchedRt, rec: Rec) -> Result<SchedReplay, Error> {
+    rt.sim.synchronize()?;
     rt.ctr.graph_updates = rt.graphs.updates;
     rt.ctr.graph_clones = rt.graphs.clones;
     let replay = replay_from_sim(
@@ -1032,7 +1040,7 @@ fn finish_sched(mut rt: SchedRt, rec: Rec) -> SchedReplay {
         mean_u64(&rec.itls),
         rt.ctr,
     );
-    SchedReplay {
+    Ok(SchedReplay {
         replay,
         completed: rec.completed,
         rejected: rec.rejected,
@@ -1041,5 +1049,5 @@ fn finish_sched(mut rt: SchedRt, rec: Rec) -> SchedReplay {
         idle_ns: rt.idle_ns,
         queue_ns: mean_u64(&rec.queues),
         prefix_hits: rt.prefix_hits,
-    }
+    })
 }

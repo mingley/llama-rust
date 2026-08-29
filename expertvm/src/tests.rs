@@ -1182,6 +1182,43 @@ fn schedule_decode_first_shortens_mixed_itl() {
 }
 
 #[test]
+fn schedule_decode_priority_shortens_mixed_itl() {
+    let mut events = Vec::new();
+    for layer in 0..16u32 {
+        events.push(ev_seq(0, 0, layer, &[0]));
+    }
+    events.push(ev_seq(1, 0, 0, &[1]));
+    for token in 1..5u32 {
+        events.push(ev_seq(1, token, 0, &[1]));
+    }
+    let t = Trace { events };
+    // Slow GEMM so leftover/decode compute is the critical path (example H100
+    // hides those kernels under H2D, so decode-priority cannot shorten ITL).
+    let p = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("slow gemm profile");
+    let off = SimCfg {
+        seq_streams: true,
+        compute_slots: 2,
+        ..SimCfg::lru(4, 4096, 0)
+    };
+    let on = SimCfg {
+        decode_priority: true,
+        stream_priority: true,
+        ..off
+    };
+    let mixed = schedule_replay(&t, p.clone(), off, SchedCfg::chunked(0, 1)).expect("mixed");
+    let prefer = schedule_replay(&t, p, on, SchedCfg::chunked(0, 1)).expect("prefer");
+    assert_eq!(mixed.completed, 2);
+    assert_eq!(prefer.completed, 2);
+    let mixed_itl = mixed.replay.itl_ns.expect("mixed itl");
+    let prefer_itl = prefer.replay.itl_ns.expect("prefer itl");
+    assert!(
+        prefer_itl < mixed_itl,
+        "decode-priority ITL must not wait leftover prefill; prefer={prefer_itl} mixed={mixed_itl}"
+    );
+}
+
+#[test]
 fn schedule_striped_homes_beat_gpu0_on_wide_token() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1, 2, 3, 4, 5, 6, 7])],
@@ -3442,7 +3479,16 @@ fn seq_stream_priority_starts_higher_stream_first() {
         .expect("k1");
         sim.synchronize().expect("h2d");
         let mut ctr = ReplayCounters::default();
-        gemm_keys(&mut sim, &handles, &mut graphs, &[k0, k1], false, &mut ctr).expect("gemm");
+        gemm_keys(
+            &mut sim,
+            &handles,
+            &mut graphs,
+            &[k0, k1],
+            false,
+            &mut ctr,
+            None,
+        )
+        .expect("gemm");
         sim.start_ready().expect("start");
         let started: Vec<StreamId> = sim
             .operations()
@@ -3541,6 +3587,36 @@ fn simulated_gpu_store_decode_priority_marks_higher_stream() {
         gpu.stream_priority(DeviceId(0), gpu_sim::StreamId(2))
             > gpu.stream_priority(DeviceId(0), gpu_sim::StreamId(1)),
         "decode stream must outrank prefill"
+    );
+}
+
+#[test]
+fn bind_sequence_keeps_copy_mod_n_copy_after_decode_bind() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            seq_streams: true,
+            decode_priority: true,
+            stream_priority: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    assert_eq!(gpu.prefill_stream(), gpu_sim::StreamId(2));
+    gpu.bind_decode_compute(true);
+    gpu.bind_sequence(2);
+    assert_eq!(
+        gpu.copy_stream(),
+        gpu_sim::StreamId(0),
+        "copy must stay sequence % n_copy after decode retarget"
     );
 }
 
@@ -3770,4 +3846,36 @@ fn sim_replay_decode_sms_lengthens_compute_bound() {
         quarter.sim_ns,
         full.sim_ns
     );
+}
+
+#[test]
+fn sim_replay_decode_priority_keeps_hits() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg::lru(1, 4096, 0);
+    let on = SimCfg {
+        decode_priority: true,
+        stream_priority: true,
+        ..off
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("off");
+    let b = sim_replay_cfg(&t, profile, on).expect("on");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+}
+
+#[test]
+fn store_replay_decode_priority_binds_later_tokens() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let mut run = StoreReplayCfg::demand(1, 4096, GpuFill::Pinned);
+    run.gpu.decode_priority = true;
+    run.gpu.stream_priority = true;
+    let row = store_replay_cfg(&t, HardwareProfile::example_h100_sxm(), run).expect("store");
+    assert_eq!(row.metrics.misses, 1);
+    assert_eq!(row.metrics.hits, 1);
+    assert!(row.score.wall_ns > 0);
 }
