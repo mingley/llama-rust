@@ -190,3 +190,100 @@ fn kernel(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Er
     )?;
     Ok(())
 }
+
+/// Static expert-parallel home: `expert_id % n_gpus`. No eviction, no migration.
+#[must_use]
+pub fn home_gpu(key: ExpertKey, n_gpus: u16) -> DeviceId {
+    let n = u32::from(n_gpus.max(1));
+    let idx = key.expert.checked_rem(n).unwrap_or(0);
+    DeviceId(u16::try_from(idx).unwrap_or(0))
+}
+
+/// Cached LRU on GPU0 versus static EP across the profile's GPUs.
+#[derive(Clone, Debug)]
+pub struct EpCompare {
+    /// [`sim_replay`] with a bounded GPU0 cache (evicts).
+    pub cached: SimReplay,
+    /// Static placement. `Err` when a home GPU OOMs (illegal under that HBM).
+    pub static_ep: Result<SimReplay, Error>,
+}
+
+impl EpCompare {
+    /// One line for CLI / benches.
+    #[must_use]
+    pub fn line(&self) -> String {
+        match &self.static_ep {
+            Ok(s) => format!("cached {} | static {}", self.cached.line(), s.line()),
+            Err(e) => format!("cached {} | static err={e}", self.cached.line()),
+        }
+    }
+}
+
+/// Run LRU-on-GPU0 and static EP on the same trace and profile.
+pub fn compare_ep(
+    trace: &Trace,
+    profile: HardwareProfile,
+    slots: usize,
+    bytes_per_expert: u64,
+    lookahead: usize,
+) -> Result<EpCompare, Error> {
+    let cached = sim_replay(
+        trace,
+        profile.clone(),
+        slots,
+        Policy::Lru,
+        bytes_per_expert,
+        lookahead,
+    )?;
+    let static_ep = sim_static_ep(trace, profile, bytes_per_expert);
+    Ok(EpCompare { cached, static_ep })
+}
+
+/// Place each expert on `home_gpu` and leave it there. HBM is the only cap.
+pub fn sim_static_ep(
+    trace: &Trace,
+    profile: HardwareProfile,
+    bytes_per_expert: u64,
+) -> Result<SimReplay, Error> {
+    let n_gpus = u16::try_from(profile.n_gpus()).unwrap_or(1).max(1);
+    let mut sim = Sim::new(profile);
+    let s = StreamId(0);
+    let mut handles: BTreeMap<ExpertKey, AllocId> = BTreeMap::new();
+    let bytes = bytes_per_expert.max(1);
+    let mut hits = 0u64;
+    let mut misses = 0u64;
+    let mut token_ends: Vec<u64> = Vec::new();
+    for (i, event) in trace.events.iter().enumerate() {
+        for key in event.keys() {
+            let d = home_gpu(key, n_gpus);
+            if let Some(id) = handles.get(&key).copied() {
+                hits = hits.saturating_add(1);
+                kernel(&mut sim, d, s, id)?;
+            } else {
+                misses = misses.saturating_add(1);
+                let id = sim.alloc(d, bytes, s)?;
+                let _c = sim.memcpy_host_to_device(d, id, bytes, s)?;
+                kernel(&mut sim, d, s, id)?;
+                let _prev = handles.insert(key, id);
+            }
+        }
+        if last_of_token(&trace.events, i) {
+            sim.synchronize()?;
+            token_ends.push(sim.clock_ns());
+        }
+    }
+    if token_ends.is_empty() {
+        sim.synchronize()?;
+    }
+    let score = serving_score(&sim, &token_ends);
+    Ok(SimReplay {
+        sim_ns: score.wall_ns,
+        bytes_moved: score.bytes_moved,
+        hbm_peak: score.hbm_peak,
+        energy_uj: score.energy_uj,
+        ttft_ns: score.ttft_ns,
+        itl_ns: score.itl_ns,
+        hits,
+        misses,
+    })
+}

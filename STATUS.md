@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — static EP vs cached expertvm
+
+`sim_static_ep` maps `expert_id % n_gpus` and never evicts. `compare_ep`
+runs that next to LRU-on-GPU0. Restricted HBM (`restrict_hbm`) makes
+static EP OOM while the cache still decodes. Wide tokens on `8xh100` pay
+parallel per-GPU PCIe instead of one serial root. CLI: `expertvm ep`.
+
 ## Shipped 2026-08-29 — TTFT/ITL + move vs dispatch
 
 `sim_replay` drains the virtual clock after each token and fills

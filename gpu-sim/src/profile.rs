@@ -110,6 +110,15 @@ impl HardwareProfile {
         self.gpus.len()
     }
 
+    /// Cap every GPU's HBM to `bytes` (restricted-HBM experiments).
+    #[must_use]
+    pub fn restrict_hbm(mut self, bytes: u64) -> Self {
+        for g in &mut self.gpus {
+            g.hbm_bytes = bytes;
+        }
+        self
+    }
+
     /// Sum of board TDP (milliwatts). Energy uses this times virtual wall time.
     #[must_use]
     pub fn node_tdp_mw(&self) -> u64 {
@@ -653,6 +662,13 @@ mod tests {
             assert!(p.n_gpus() >= 1);
             assert!(p.node_tdp_mw() > 0);
         }
+    }
+
+    #[test]
+    fn restrict_hbm_caps_every_gpu() {
+        let p = HardwareProfile::example_8xh100_nvlink().restrict_hbm(1024);
+        assert_eq!(p.n_gpus(), 8);
+        assert_eq!(p.gpu(DeviceId(7)).unwrap().hbm_bytes, 1024);
     }
 
     #[test]

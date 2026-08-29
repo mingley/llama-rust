@@ -28,7 +28,7 @@ pub use planner::{
 };
 pub use policy::Policy;
 pub use replay::{compare, format_table, replay, ReplayRow};
-pub use sim_replay::{sim_replay, SimReplay};
+pub use sim_replay::{compare_ep, home_gpu, sim_replay, sim_static_ep, EpCompare, SimReplay};
 pub use store::{
     replay_accesses, CachedStore, DirectStore, ExpertParts, ExpertStore, StoreMetrics,
 };

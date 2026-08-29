@@ -34,6 +34,9 @@ llama-rust routers  →  ExpertAccess JSONL
                          │
                          ▼
                    expertvm bench       replay table + sim score
+                         │
+                         ▼
+                   expertvm ep          static EP vs GPU0 LRU (8-GPU profile)
 ```
 
 ## Library
@@ -65,10 +68,16 @@ acquire, stream-ordered free on eviction. Timing comes from a
 `HardwareProfile`, not from the policy. The clock is sampled after each
 token (`ttft_ns`, mean `itl_ns`). Planner helpers: `copy_forward`,
 `hot_keys`, `plan_window`, `plan_placement` (move weights vs dispatch
-activations). `topology_suite` / `probe_topology` compare
-H2D and P2P costs across named meshes (PCIe P2P, NVLink, bad NUMA, RDMA,
-asymmetric). `SimulatedGpuStore` can inject GPU unavailable, copy-stream
-cancel, transfer delay, and next-H2D load failure.
+activations). `compare_ep` / `sim_static_ep` place each expert on
+`home_gpu` (`expert_id % n_gpus`) with no eviction. LRU-on-GPU0 can
+survive restricted HBM by evicting; static EP OOMs if a home GPU cannot
+hold its working set. On `8xh100`, a wide token's H2Ds run on eight PCIe
+roots and beat serial GPU0 copies of the same payload.
+`HardwareProfile::restrict_hbm` is the knob. `topology_suite` /
+`probe_topology` compare H2D and P2P costs across named meshes (PCIe P2P,
+NVLink, bad NUMA, RDMA, asymmetric). `SimulatedGpuStore` can inject GPU
+unavailable, copy-stream cancel, transfer delay, and next-H2D load
+failure.
 
 Decode identity: `Llama::expert_direct_store` + `KvCache::attach_expert_store`
 must bit-match the blob GEMV path. Shared experts stay on the blob.
@@ -84,6 +93,8 @@ expertvm bench    adversarial --tokens 64 --experts 16 --capacity 2 --profile ch
 expertvm workload thrash --tokens 64 --experts 16 --capacity 2
 expertvm workload batch --tokens 32 --experts 16 --capacity 4
 expertvm topology --bytes 1048576
+expertvm ep       trace.jsonl --capacity 8 --expert-bytes 1048576 --profile 8xh100
+expertvm ep       trace.jsonl --hbm-bytes 4096 --profile 8xh100
 gpu-profile probe 2xh100-pcie --bytes 1048576
 ```
 

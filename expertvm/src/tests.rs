@@ -1,7 +1,7 @@
 //! Library tests: JSONL, Zipf-ish traces, policy order, leases, gpu-sim.
 
 use super::*;
-use gpu_sim::HardwareProfile;
+use gpu_sim::{DeviceId, HardwareProfile};
 use std::collections::BTreeSet;
 
 fn ev(token: u32, layer: u32, experts: &[u32]) -> ExpertAccess {
@@ -204,6 +204,45 @@ fn placement_moves_when_reuse_beats_expert_bytes() {
         plan_placement(expert, act, 1, 64_000, pcie),
         Placement::MoveWeights
     );
+}
+
+#[test]
+fn home_gpu_is_expert_mod_n() {
+    assert_eq!(home_gpu(ExpertKey::new(3, 0), 8), DeviceId(0));
+    assert_eq!(home_gpu(ExpertKey::new(3, 8), 8), DeviceId(0));
+    assert_eq!(home_gpu(ExpertKey::new(0, 1), 8), DeviceId(1));
+}
+
+#[test]
+fn static_ep_ooms_when_home_cannot_hold_two_experts() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 8])],
+    };
+    let p = HardwareProfile::example_8xh100_nvlink().restrict_hbm(4096);
+    let bytes = 4096u64;
+    let cached = sim_replay(&t, p.clone(), 1, Policy::Lru, bytes, 8).expect("lru");
+    assert!(cached.misses >= 1);
+    let st = sim_static_ep(&t, p, bytes);
+    assert!(st.is_err(), "{st:?}");
+}
+
+#[test]
+fn static_ep_parallel_pcie_beats_serial_gpu0() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1, 2, 3, 4, 5, 6, 7])],
+    };
+    let p = HardwareProfile::example_8xh100_nvlink();
+    let bytes = 4u64 << 20;
+    let row = compare_ep(&t, p, 8, bytes, 8).expect("ep");
+    let st = row.static_ep.as_ref().expect("fits");
+    assert!(
+        st.sim_ns < row.cached.sim_ns,
+        "static={} cached={}",
+        st.sim_ns,
+        row.cached.sim_ns
+    );
+    assert!(row.line().contains("cached"));
+    assert!(row.line().contains("static"));
 }
 
 #[test]

@@ -1,7 +1,7 @@
 //! `expertvm analyze | replay | sim` — traces in, measured tables out.
 
 use expertvm::{
-    adversarial_suite, analyze, compare, format_table, generate, report, sim_replay,
+    adversarial_suite, analyze, compare, compare_ep, format_table, generate, report, sim_replay,
     topology_suite, Policy, Trace, Workload,
 };
 use gpu_sim::HardwareProfile;
@@ -19,6 +19,7 @@ usage: expertvm <command> [args]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
+  ep       <trace.jsonl> [--capacity N] [--expert-bytes N] [--hbm-bytes N] [--profile NAME]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch
@@ -77,6 +78,7 @@ fn run() -> Result<(), String> {
         "bench" => run_bench(args),
         "workload" => run_workload(args),
         "topology" => run_topology(args),
+        "ep" => run_ep(args),
         other => Err(format!("{USAGE}got {other}")),
     }
 }
@@ -89,6 +91,7 @@ struct Cfg {
     profile: String,
     tokens: u32,
     experts: u32,
+    hbm_bytes: Option<u64>,
 }
 
 fn parse_cfg<I>(args: I) -> Result<Cfg, String>
@@ -102,6 +105,7 @@ where
     let mut profile = "h100".to_string();
     let mut tokens = 64u32;
     let mut experts = 16u32;
+    let mut hbm_bytes = None;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -121,6 +125,12 @@ where
             "--profile" => profile = value("profile", inline, &mut it)?,
             "--tokens" => tokens = parse_u32("tokens", &value("tokens", inline, &mut it)?)?,
             "--experts" => experts = parse_u32("experts", &value("experts", inline, &mut it)?)?,
+            "--hbm-bytes" => {
+                hbm_bytes = Some(parse_u64(
+                    "hbm-bytes",
+                    &value("hbm-bytes", inline, &mut it)?,
+                )?)
+            }
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => {
                 if path.is_some() {
@@ -138,6 +148,7 @@ where
         profile,
         tokens,
         experts,
+        hbm_bytes,
     })
 }
 
@@ -279,5 +290,27 @@ where
     for row in rows {
         println!("{}", row.line());
     }
+    Ok(())
+}
+
+fn run_ep<I>(args: I) -> Result<(), String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let cfg = parse_cfg(args)?;
+    let trace = load_trace(&cfg.path)?;
+    let mut profile = load_profile(&cfg.profile)?;
+    if let Some(bytes) = cfg.hbm_bytes {
+        profile = profile.restrict_hbm(bytes);
+    }
+    let row = compare_ep(
+        &trace,
+        profile,
+        cfg.capacity,
+        cfg.expert_bytes,
+        cfg.lookahead,
+    )
+    .map_err(|e| e.to_string())?;
+    println!("{}", row.line());
     Ok(())
 }

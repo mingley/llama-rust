@@ -198,6 +198,7 @@ fixed latency and quality.
   layer-ahead prefetch, metrics
 - one real model family already in-tree (Qwen3MoE / Qwen2MoE / llama MoE)
 - benchmark static EP vs expertvm under intentionally restricted HBM
+  (`compare_ep`, `HardwareProfile::restrict_hbm`, `expertvm ep`)
 
 **V1:** traffic-aware placement, co-activation placement, adaptive
 replication.

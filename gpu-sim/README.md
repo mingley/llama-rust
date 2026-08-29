@@ -107,6 +107,7 @@ Named example profiles (order-of-magnitude, **not captures**):
 
 `HardwareProfile::by_name`, `probe_topology`, and `gpu-profile probe NAME`
 measure H2D per GPU and D2D per pair. Missing links print `p2p=0->2:none`.
+`restrict_hbm(bytes)` caps every GPU for the static-EP vs cache experiment.
 
 ## Faults
 
