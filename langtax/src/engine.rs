@@ -3,20 +3,26 @@
 //! Several sequences share interned KV blocks. Each [`Engine::step`] prefills
 //! at most `prefill_chunk` tokens per waiting sequence, then greedily samples
 //! one token for every sequence whose prompt is in KV. Sequences may be added
-//! while others are already decoding. A full pool **preempts** another
+//! while others are already decoding. Sequences that do not fit in
+//! `max_seqs` wait and are admitted when a finished sequence is retired.
+//! A full pool **preempts** another
 //! sequence (unique blocks drop; intern pins remain) and later re-prefills
 //! plus replays already sampled greedy tokens. Greedy ids must match
 //! [`crate::greedy_generate_cache`]. Not an HTTP server.
 
 use crate::decode::{KvCache, Llama, LlamaError, PagedKvPool};
 use crate::sample::argmax;
+use std::collections::{BTreeMap, VecDeque};
 
 /// Handle for one sequence on an [`Engine`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+///
+/// Stable for the lifetime of the sequence, including time spent in the
+/// waiting queue. Not a physical slot index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SeqId(u32);
 
 impl SeqId {
-    /// Raw slot index.
+    /// Raw identifier (not a physical slot index).
     #[must_use]
     pub fn index(self) -> usize {
         usize::try_from(self.0).unwrap_or(usize::MAX)
@@ -33,7 +39,7 @@ pub struct EngineCfg {
     /// Physical blocks in the shared intern pool. A sequence may be preempted
     /// (recompute) when allocate would exceed this cap.
     pub pool_blocks: usize,
-    /// Maximum in-flight sequences.
+    /// Maximum in-flight sequences. Extra [`Engine::add`]s wait.
     pub max_seqs: usize,
     /// Prefill tokens per sequence per step (`0` = the rest of the prompt).
     pub prefill_chunk: usize,
@@ -66,6 +72,7 @@ pub struct SeqOutput {
 }
 
 struct Slot {
+    id: SeqId,
     cache: KvCache,
     prompt: Vec<u32>,
     n_predict: usize,
@@ -73,6 +80,12 @@ struct Slot {
     last: Vec<f32>,
     replay: usize,
     done: bool,
+}
+
+struct Waiter {
+    id: SeqId,
+    prompt: Vec<u32>,
+    n_predict: usize,
 }
 
 impl Slot {
@@ -98,6 +111,9 @@ pub struct Engine<'a> {
     pool: PagedKvPool,
     cfg: EngineCfg,
     slots: Vec<Option<Slot>>,
+    wait: VecDeque<Waiter>,
+    finished: BTreeMap<SeqId, SeqOutput>,
+    next_id: u32,
     preempts: u64,
 }
 
@@ -113,6 +129,9 @@ impl<'a> Engine<'a> {
             pool,
             cfg,
             slots: Vec::new(),
+            wait: VecDeque::new(),
+            finished: BTreeMap::new(),
+            next_id: 0,
             preempts: 0,
         })
     }
@@ -124,6 +143,9 @@ impl<'a> Engine<'a> {
     }
 
     /// Admit a prompt. Prefill starts on the next [`Engine::step`].
+    ///
+    /// When [`EngineCfg::max_seqs`] in-flight slots are occupied the sequence
+    /// waits and is installed after a finished slot is retired.
     pub fn add(&mut self, prompt: &[u32], n_predict: usize) -> Result<SeqId, LlamaError> {
         if prompt.is_empty() {
             return Err(LlamaError::EmptyPrompt);
@@ -132,36 +154,25 @@ impl<'a> Engine<'a> {
         if needed > self.cfg.n_ctx {
             return Err(LlamaError::Shape("n_ctx".into()));
         }
-        let cache = self.llama.new_paged_cache_on(&self.pool, self.cfg.n_ctx)?;
-        let slot = Slot {
-            cache,
-            prompt: prompt.to_vec(),
-            n_predict,
-            generated: Vec::new(),
-            last: Vec::new(),
-            replay: 0,
-            done: false,
-        };
-        for (i, cell) in self.slots.iter_mut().enumerate() {
-            if cell.is_none() {
-                *cell = Some(slot);
-                let id = u32::try_from(i).map_err(|_| LlamaError::Shape("seq id".into()))?;
-                return Ok(SeqId(id));
-            }
+        let id = self.alloc_id()?;
+        if self.active() >= self.cfg.max_seqs {
+            self.wait.push_back(Waiter {
+                id,
+                prompt: prompt.to_vec(),
+                n_predict,
+            });
+            return Ok(id);
         }
-        if self.slots.len() >= self.cfg.max_seqs {
-            return Err(LlamaError::Shape("engine full".into()));
-        }
-        let id = u32::try_from(self.slots.len()).map_err(|_| LlamaError::Shape("seq id".into()))?;
-        self.slots.push(Some(slot));
-        Ok(SeqId(id))
+        self.install(id, prompt.to_vec(), n_predict)?;
+        Ok(id)
     }
 
-    /// One scheduler iteration: chunked prefill, then one decode token per ready sequence.
+    /// One scheduler iteration: retire finished slots, admit waiters, prefill, decode.
     ///
-    /// Returns how many sequences made progress.
+    /// Returns how many sequences made progress (including admits after retire).
     pub fn step(&mut self) -> Result<usize, LlamaError> {
-        let mut n = 0usize;
+        let mut n = self.retire_done();
+        n = n.saturating_add(self.admit()?);
         n = n.saturating_add(self.prefill_ready()?);
         n = n.saturating_add(self.decode_ready()?);
         Ok(n)
@@ -177,24 +188,34 @@ impl<'a> Engine<'a> {
         Ok(())
     }
 
-    /// True when every occupied slot has finished sampling.
+    /// True when every admitted sequence is finished (running and waiting).
     #[must_use]
     pub fn all_done(&self) -> bool {
-        self.slots.iter().flatten().all(|s| s.done)
+        self.wait.is_empty() && self.slots.iter().flatten().all(|s| s.done)
     }
 
-    /// Occupied slots.
+    /// Occupied in-flight slots (not the waiting queue).
     #[must_use]
     pub fn active(&self) -> usize {
         self.slots.iter().flatten().count()
     }
 
-    /// Generated ids for `id` (empty until decode starts).
+    /// Sequences admitted but not yet in a running slot.
+    #[must_use]
+    pub fn waiting(&self) -> usize {
+        self.wait.len()
+    }
+
+    /// Generated ids for `id` (empty until decode starts, including waiters).
     #[must_use]
     pub fn generated(&self, id: SeqId) -> Option<&[u32]> {
-        self.slots
-            .get(id.index())
-            .and_then(|c| c.as_ref().map(|s| s.generated.as_slice()))
+        if let Some(s) = self.slot_by_id(id) {
+            return Some(s.generated.as_slice());
+        }
+        if let Some(out) = self.finished.get(&id) {
+            return Some(out.generated.as_slice());
+        }
+        self.wait.iter().find(|w| w.id == id).map(|_| &[][..])
     }
 
     /// How many times a sequence was preempted to free pool blocks.
@@ -203,14 +224,104 @@ impl<'a> Engine<'a> {
         self.preempts
     }
 
-    /// Remove a finished (or in-flight) sequence and return its tokens.
+    /// Remove a finished (or in-flight / waiting) sequence and return its tokens.
     pub fn take(&mut self, id: SeqId) -> Option<SeqOutput> {
-        let cell = self.slots.get_mut(id.index())?;
-        let slot = cell.take()?;
+        if let Some(i) = self.slot_index(id) {
+            let slot = self.slots.get_mut(i).and_then(Option::take)?;
+            return Some(SeqOutput {
+                prompt: slot.prompt,
+                generated: slot.generated,
+            });
+        }
+        if let Some(out) = self.finished.remove(&id) {
+            return Some(out);
+        }
+        let pos = self.wait.iter().position(|w| w.id == id)?;
+        let w = self.wait.remove(pos)?;
         Some(SeqOutput {
-            prompt: slot.prompt,
-            generated: slot.generated,
+            prompt: w.prompt,
+            generated: Vec::new(),
         })
+    }
+
+    fn alloc_id(&mut self) -> Result<SeqId, LlamaError> {
+        let id = self.next_id;
+        self.next_id = self
+            .next_id
+            .checked_add(1)
+            .ok_or_else(|| LlamaError::Shape("seq id".into()))?;
+        Ok(SeqId(id))
+    }
+
+    fn install(&mut self, id: SeqId, prompt: Vec<u32>, n_predict: usize) -> Result<(), LlamaError> {
+        let cache = self.llama.new_paged_cache_on(&self.pool, self.cfg.n_ctx)?;
+        let slot = Slot {
+            id,
+            cache,
+            prompt,
+            n_predict,
+            generated: Vec::new(),
+            last: Vec::new(),
+            replay: 0,
+            done: false,
+        };
+        for cell in &mut self.slots {
+            if cell.is_none() {
+                *cell = Some(slot);
+                return Ok(());
+            }
+        }
+        if self.slots.len() >= self.cfg.max_seqs {
+            return Err(LlamaError::Shape("engine full".into()));
+        }
+        self.slots.push(Some(slot));
+        Ok(())
+    }
+
+    fn retire_done(&mut self) -> usize {
+        let mut n = 0usize;
+        for cell in &mut self.slots {
+            let Some(slot) = cell.as_ref() else {
+                continue;
+            };
+            if !slot.done {
+                continue;
+            }
+            let Some(slot) = cell.take() else {
+                continue;
+            };
+            let _prev = self.finished.insert(
+                slot.id,
+                SeqOutput {
+                    prompt: slot.prompt,
+                    generated: slot.generated,
+                },
+            );
+            n = n.saturating_add(1);
+        }
+        n
+    }
+
+    fn admit(&mut self) -> Result<usize, LlamaError> {
+        let mut n = 0usize;
+        while !self.wait.is_empty() && self.active() < self.cfg.max_seqs {
+            let Some(w) = self.wait.pop_front() else {
+                break;
+            };
+            self.install(w.id, w.prompt, w.n_predict)?;
+            n = n.saturating_add(1);
+        }
+        Ok(n)
+    }
+
+    fn slot_by_id(&self, id: SeqId) -> Option<&Slot> {
+        self.slots.iter().flatten().find(|s| s.id == id)
+    }
+
+    fn slot_index(&self, id: SeqId) -> Option<usize> {
+        self.slots
+            .iter()
+            .position(|c| c.as_ref().is_some_and(|s| s.id == id))
     }
 
     /// Prefill every sequence that still has prompt tokens outside KV.
@@ -474,19 +585,36 @@ mod tests {
     }
 
     #[test]
-    fn engine_rejects_empty_prompt_and_full_slots() {
+    fn engine_rejects_empty_prompt() {
         let model = Llama::from_gguf(load_gguf_owned(tiny_llama_gguf()).expect("o")).expect("m");
         let mut cfg = EngineCfg::tiny();
         cfg.max_seqs = 1;
         let mut eng = Engine::new(&model, cfg).expect("eng");
         let err = eng.add(&[], 1).unwrap_err();
         assert!(matches!(err, LlamaError::EmptyPrompt));
-        let _a = eng.add(&[1, 2], 1).expect("one");
-        let err = eng.add(&[3, 4], 1).unwrap_err();
-        match err {
-            LlamaError::Shape(s) => assert!(s.contains("full"), "{s}"),
-            other => panic!("{other}"),
-        }
+    }
+
+    #[test]
+    fn engine_waiting_queue_runs_overflow_and_ids_still_match() {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        let g = load_gguf_owned(tiny_llama_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let exp_a = independent(&model, &tok, &tokens_a, 2);
+        let exp_b = independent(&model, &tok, &tokens_b, 2);
+        let mut cfg = EngineCfg::tiny();
+        cfg.max_seqs = 1;
+        cfg.eos = tok.eos;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        let a = eng.add(&tokens_a, 2).expect("a");
+        let b = eng.add(&tokens_b, 2).expect("queued");
+        assert_eq!(eng.waiting(), 1);
+        assert_eq!(eng.active(), 1);
+        eng.run().expect("run");
+        assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+        assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+        assert_eq!(eng.waiting(), 0);
     }
 
     #[test]

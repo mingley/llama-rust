@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine waiting queue
+
+`Engine::add` beyond `max_seqs` parks the prompt. Each `step` retires
+finished slots (KV Drop frees unique blocks) and admits waiters. Greedy
+ids still match `greedy_generate_cache`. `gguf_gemv engine --max-seqs N`
+may list more `--prompt`s than N. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — paged-KV Drop and `gguf_gemv engine`
 
 `KvPages` Drop rewinds the block table so unique refs return to the

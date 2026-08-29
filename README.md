@@ -33,7 +33,7 @@ let logits = paged.prefill(&ids)?;
 let pool = model.paged_pool(16, 256)?;
 let mut a = model.session_on_pool(4096, &pool)?;
 let mut b = model.session_on_pool(4096, &pool)?;
-// Continuous batching (chunked prefill + join mid-flight).
+// Continuous batching (chunked prefill + join mid-flight + waiting queue).
 // A full pool preempts another sequence (recompute + replay).
 let mut eng = Engine::new(model.llama(), EngineCfg::tiny())?;
 let s0 = eng.add(&ids, 8)?;

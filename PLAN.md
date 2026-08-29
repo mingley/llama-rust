@@ -756,6 +756,9 @@ model, do not celebrate the sim.
 15. [x] `KvPages` Drop releases unique table refs so `Engine::take` (and
     cache drop) can reuse a tight intern pool. `gguf_gemv engine` runs
     several `--prompt`s through `Engine` and prints intern_hits / preempts.
+16. [x] Engine waiting queue: `add` beyond `max_seqs` parks the prompt.
+    Finished slots retire (KV Drop) and waiters install. Greedy ids still
+    match `greedy_generate_cache`. Distinct from `expertvm schedule` arrivals.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

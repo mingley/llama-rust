@@ -60,7 +60,7 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
       --n-ctx N         KV capacity (default: longest prompt + n_predict + 1)
       --kv-page N       paged KV block size in tokens (default: 16)
       --pool-blocks N   physical intern blocks (default: max_seqs * pages)
-      --max-seqs N      in-flight sequences (default: number of prompts)
+      --max-seqs N      in-flight sequences (default: number of prompts; extras wait)
       --prefill-chunk N prefill tokens per step (`0` = the rest; default: 0)
 
 Runs Engine continuous batching on one interned pool. Several `--prompt`s
@@ -561,9 +561,6 @@ fn engine_cfg(tok: &Tokenizer, args: &EngineArgs) -> Result<EngineCfg, Box<dyn s
         None => max_needed.saturating_add(1),
     };
     let max_seqs = args.max_seqs.unwrap_or(encoded.len());
-    if encoded.len() > max_seqs {
-        return Err(format!("{} prompts exceed --max-seqs {max_seqs}", encoded.len()).into());
-    }
     let pages = n_ctx.div_ceil(args.block_size).saturating_add(1);
     let pool_blocks = args
         .pool_blocks
