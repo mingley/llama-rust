@@ -832,6 +832,11 @@ model, do not celebrate the sim.
     admits onto one `Engine` so prefills GEMM together (`gemm_peak >= 2`).
     Default serve stays one connection at a time. Not OpenAI-compat. Dual
     score still has no `$/M tokens`.
+33. [x] `serve --engine --expert-slots` / `--expert-sim` / `--expert-8gpu` /
+    `--expert-bytes`: the HTTP Engine parks the same DirectStore /
+    CachedStore / SimulatedGpuStore as `gguf_gemv engine`. Writer-tiny
+    Qwen3MoE concurrent posts acquire from DirectStore and GEMM together.
+    Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

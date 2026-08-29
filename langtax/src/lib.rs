@@ -20,6 +20,7 @@ mod serve_engine;
 mod session;
 #[cfg(feature = "simd")]
 mod simd;
+mod store_attach;
 mod template;
 mod tok;
 mod ucd;

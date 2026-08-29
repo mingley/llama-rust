@@ -9,9 +9,9 @@ use crate::decode::{prompt_ids, KvCache, Llama};
 use crate::engine::{Engine, EngineCfg, SeqId};
 use crate::gguf::load_gguf_owned;
 use crate::sample::argmax;
+use crate::store_attach::{attach_store, StoreAttach};
 use crate::template::ChatMessage;
 use crate::tok::Tokenizer;
-use expertvm::{CachedStore, HardwareProfile, LiveStore, SimulatedGpuStore};
 
 /// Usage for the `infer` verb.
 pub const INFER_USAGE: &str = "\
@@ -48,7 +48,7 @@ usage: gguf_gemv <command> [args]
   infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]
   trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE [--capacity N]
   chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--kv-page N] [--show-prompt]
-  serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N]
+  serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N]
   engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--trace-out FILE]
   write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|write-tiny-qwen3|write-tiny-gemma|write-tiny-llama4|write-tiny-llama-moe|write-tiny-qwen2moe|write-tiny-qwen3moe|write-tiny-qwen2vl|write-tiny-qwen3vl|write-tiny-qwen3next|write-tiny-qwen35|write-tiny-phi2 <path>
 ";
@@ -641,35 +641,16 @@ fn attach_engine_store(
     llama: &Llama,
     args: &EngineArgs,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if args.expert_sim {
-        let slots = match args.expert_slots {
-            Some(0) => return Err("--expert-sim needs --expert-slots > 0".into()),
-            Some(n) => n,
-            None => 8,
-        };
-        let gpu = SimulatedGpuStore::new(
-            llama.expert_direct_store()?,
-            slots,
-            if args.expert_8gpu {
-                HardwareProfile::example_8xh100_nvlink()
-            } else {
-                HardwareProfile::example_h100_sxm()
-            },
-            args.expert_bytes.unwrap_or(4096),
-        )?;
-        eng.attach_expert_store(LiveStore::simulated(gpu));
-        return Ok(());
-    }
-    let Some(slots) = args.expert_slots else {
-        return Ok(());
-    };
-    let direct = llama.expert_direct_store()?;
-    let store = if slots == 0 {
-        LiveStore::Direct(direct)
-    } else {
-        LiveStore::Cached(CachedStore::new(direct, slots)?)
-    };
-    eng.attach_expert_store(store);
+    attach_store(
+        eng,
+        llama,
+        &StoreAttach {
+            expert_slots: args.expert_slots,
+            expert_sim: args.expert_sim,
+            expert_8gpu: args.expert_8gpu,
+            expert_bytes: args.expert_bytes,
+        },
+    )?;
     Ok(())
 }
 

@@ -13,6 +13,7 @@ use crate::serve::{
     http_err_status, http_json_bytes, json_error, json_generated, normalize_path, parse_gen_req,
     try_parse_http_request, HttpRequest, ServeArgs, ServeError, MAX_REQ,
 };
+use crate::store_attach::{attach_store, StoreAttach};
 use crate::tok::Tokenizer;
 
 /// Poll until the process exits. Listener must already be non-blocking.
@@ -195,8 +196,19 @@ impl<'a> EngineHttp<'a> {
         args: &ServeArgs,
         listener: TcpListener,
     ) -> Result<Self, ServeError> {
-        let engine = Engine::new(model, engine_cfg(tok, args))
+        let mut engine = Engine::new(model, engine_cfg(tok, args))
             .map_err(|e| ServeError::Infer(e.to_string()))?;
+        attach_store(
+            &mut engine,
+            model,
+            &StoreAttach {
+                expert_slots: args.expert_slots,
+                expert_sim: args.expert_sim,
+                expert_8gpu: args.expert_8gpu,
+                expert_bytes: args.expert_bytes,
+            },
+        )
+        .map_err(ServeError::Infer)?;
         Ok(Self {
             tok,
             n_predict: args.n_predict,
@@ -211,6 +223,13 @@ impl<'a> EngineHttp<'a> {
     #[must_use]
     fn stats(&self) -> &crate::engine::EngineStats {
         self.engine.stats()
+    }
+
+    /// Hits from the attached ExpertStore, if any.
+    #[cfg(test)]
+    #[must_use]
+    fn store_hits(&self) -> u64 {
+        self.engine.expert_store_metrics().map_or(0, |m| m.hits)
     }
 
     /// Accept, admit, step, harvest, write. Drain new requests before `step`.
@@ -370,7 +389,7 @@ impl<'a> EngineHttp<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decode::{greedy_generate_ctx, tiny_llama_gguf};
+    use crate::decode::{greedy_generate_ctx, tiny_llama_gguf, tiny_qwen3moe_gguf};
     use crate::gguf::load_gguf_owned;
     use crate::serve::bind_loopback;
     use std::net::SocketAddr;
@@ -392,6 +411,10 @@ mod tests {
             bind: "127.0.0.1:0".into(),
             engine: true,
             max_seqs: Some(4),
+            expert_slots: None,
+            expert_sim: false,
+            expert_8gpu: false,
+            expert_bytes: None,
         }
     }
 
@@ -527,5 +550,40 @@ mod tests {
         assert_eq!(status, 400, "{body}");
         assert!(body.contains("empty prompt"), "{body}");
         assert_eq!(http.stats().gemm_peak, 0);
+    }
+
+    #[test]
+    fn two_moe_posts_acquire_from_direct_store() {
+        let g = load_gguf_owned(tiny_qwen3moe_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("model");
+        let mut args = engine_args();
+        args.expert_slots = Some(0);
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nb");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let mut streams = [connect_nb(addr), connect_nb(addr)];
+        write_all_nb(&mut streams[0], &post_json(r#"{"prompt":"a"}"#));
+        write_all_nb(&mut streams[1], &post_json(r#"{"prompt":"ab"}"#));
+        let mut bufs = [Vec::new(), Vec::new()];
+        drive(&mut http, &mut streams, &mut bufs);
+        let (sa, ba) = response_parts(&bufs[0]).expect("a resp");
+        let (sb, bb) = response_parts(&bufs[1]).expect("b resp");
+        assert_eq!(sa, 200, "{ba}");
+        assert_eq!(sb, 200, "{bb}");
+        let expect_a = greedy_generate_ctx(&model, &tok, "a", 2, Some(64)).expect("ga");
+        let expect_b = greedy_generate_ctx(&model, &tok, "ab", 2, Some(64)).expect("gb");
+        assert_eq!(generated_field(&ba), expect_a);
+        assert_eq!(generated_field(&bb), expect_b);
+        assert!(
+            http.stats().gemm_peak >= 2,
+            "two concurrent MoE posts must GEMM together, peak={}",
+            http.stats().gemm_peak
+        );
+        assert!(
+            http.store_hits() > 0,
+            "HTTP Engine must acquire from DirectStore"
+        );
     }
 }

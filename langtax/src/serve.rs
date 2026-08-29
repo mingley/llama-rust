@@ -20,13 +20,18 @@ use crate::tok::Tokenizer;
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
       --bind ADDR     loopback listen address (default: 127.0.0.1:8080)
       --engine        concurrent requests on one Engine (continuous-batch GEMM)
       --max-seqs N    in-flight Engine sequences (`--engine`; default: 4)
+      --expert-slots N  ExpertStore on `--engine`: omit = blob FFN, `0` = DirectStore,
+                        N>0 = CachedStore (`--expert-sim` uses N, default 8)
+      --expert-sim      SimulatedGpuStore (`--engine`; example H100, 4096-byte experts)
+      --expert-8gpu     8×H100 NVLink profile (`--expert-sim`; enables plan_placement)
+      --expert-bytes N  simulated expert page bytes (`--expert-sim`; default: 4096)
 
 POST /generate takes {\"prompt\": TEXT} or, to render the model's own
 tokenizer.chat_template, {\"messages\": [{\"role\": R, \"content\": C}, ...]}
@@ -35,6 +40,7 @@ Default serve keeps one KV cache across requests (`prefix_hit` in the JSON).
 `--engine` admits several connections onto one interned pool so they GEMM
 together (`gguf_gemv engine` is the same scheduler). `--kv-page N` interned
 completed blocks so a later prompt can hit them after a rewind (`page_hits`).
+`--expert-slots` / `--expert-sim` park the same ExpertStore as `gguf_gemv engine`.
 Not a production inference server.
 ";
 
@@ -68,6 +74,14 @@ pub struct ServeArgs {
     pub engine: bool,
     /// In-flight Engine sequences. `None` is 4 when `--engine`.
     pub max_seqs: Option<usize>,
+    /// ExpertStore slots. `None` keeps blob FFN. `Some(0)` is DirectStore.
+    pub expert_slots: Option<usize>,
+    /// Attach [`expertvm::SimulatedGpuStore`] (`--engine`).
+    pub expert_sim: bool,
+    /// Example 8×H100 NVLink profile (`--expert-sim`).
+    pub expert_8gpu: bool,
+    /// Simulated expert page bytes (`--expert-sim`). `None` is 4096.
+    pub expert_bytes: Option<u64>,
 }
 
 impl ServeArgs {
@@ -111,7 +125,7 @@ impl From<std::io::Error> for ServeError {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -125,6 +139,10 @@ where
     let mut bind = ServeArgs::DEFAULT_BIND.to_string();
     let mut engine = false;
     let mut max_seqs = None;
+    let mut expert_slots = None;
+    let mut expert_sim = false;
+    let mut expert_8gpu = false;
+    let mut expert_bytes = None;
     let mut it = args.into_iter();
     while let Some(raw) = it.next() {
         let arg = raw.as_ref();
@@ -170,6 +188,31 @@ where
                 }
                 max_seqs = Some(n);
             }
+            "--expert-slots" => {
+                expert_slots = Some(parse_usize(
+                    "expert-slots",
+                    &opt_value("expert-slots", inline, &mut it)?,
+                )?);
+            }
+            "--expert-sim" => {
+                if inline.is_some() {
+                    return usage_err("--expert-sim does not take a value");
+                }
+                expert_sim = true;
+            }
+            "--expert-8gpu" => {
+                if inline.is_some() {
+                    return usage_err("--expert-8gpu does not take a value");
+                }
+                expert_8gpu = true;
+            }
+            "--expert-bytes" => {
+                let n = parse_u64("expert-bytes", &opt_value("expert-bytes", inline, &mut it)?)?;
+                if n == 0 {
+                    return usage_err("expert-bytes must be > 0");
+                }
+                expert_bytes = Some(n);
+            }
             flag if flag.starts_with('-') => {
                 return usage_err(&format!("unknown flag {flag}"));
             }
@@ -187,6 +230,24 @@ where
     if max_seqs.is_some() && !engine {
         return usage_err("--max-seqs requires --engine");
     }
+    if expert_slots.is_some() && !engine {
+        return usage_err("--expert-slots requires --engine");
+    }
+    if expert_sim && !engine {
+        return usage_err("--expert-sim requires --engine");
+    }
+    if expert_8gpu && !engine {
+        return usage_err("--expert-8gpu requires --engine");
+    }
+    if expert_bytes.is_some() && !engine {
+        return usage_err("--expert-bytes requires --engine");
+    }
+    if expert_8gpu && !expert_sim {
+        return usage_err("--expert-8gpu requires --expert-sim");
+    }
+    if expert_bytes.is_some() && !expert_sim {
+        return usage_err("--expert-bytes requires --expert-sim");
+    }
     Ok(ServeCmd::Run(ServeArgs {
         path,
         n_predict,
@@ -195,6 +256,10 @@ where
         bind,
         engine,
         max_seqs,
+        expert_slots,
+        expert_sim,
+        expert_8gpu,
+        expert_bytes,
     }))
 }
 
@@ -809,6 +874,11 @@ fn parse_usize(name: &str, s: &str) -> Result<usize, String> {
         .map_err(|_| format!("invalid {name} {s:?}\n{SERVE_USAGE}"))
 }
 
+fn parse_u64(name: &str, s: &str) -> Result<u64, String> {
+    s.parse::<u64>()
+        .map_err(|_| format!("invalid {name} {s:?}\n{SERVE_USAGE}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -860,6 +930,10 @@ mod tests {
             bind: ServeArgs::DEFAULT_BIND.into(),
             engine: false,
             max_seqs: None,
+            expert_slots: None,
+            expert_sim: false,
+            expert_8gpu: false,
+            expert_bytes: None,
         }
     }
 
@@ -951,6 +1025,10 @@ mod tests {
                 bind: "localhost:0".into(),
                 engine: false,
                 max_seqs: None,
+                expert_slots: None,
+                expert_sim: false,
+                expert_8gpu: false,
+                expert_bytes: None,
             }
         );
     }
@@ -1019,10 +1097,43 @@ mod tests {
                 bind: ServeArgs::DEFAULT_BIND.into(),
                 engine: true,
                 max_seqs: Some(8),
+                expert_slots: None,
+                expert_sim: false,
+                expert_8gpu: false,
+                expert_bytes: None,
             }
         );
         let a = run(&["m.gguf", "--engine", "--max-seqs=2"]);
         assert_eq!(a.max_seqs, Some(2));
+        let a = run(&["m.gguf", "--engine", "--expert-slots", "0"]);
+        assert_eq!(a.expert_slots, Some(0));
+        let a = run(&[
+            "m.gguf",
+            "--engine",
+            "--expert-sim",
+            "--expert-8gpu",
+            "--expert-bytes=8192",
+        ]);
+        assert!(a.expert_sim);
+        assert!(a.expert_8gpu);
+        assert_eq!(a.expert_bytes, Some(8192));
+    }
+
+    #[test]
+    fn expert_store_flags_need_engine() {
+        let err = parse_serve_args(["m.gguf", "--expert-slots", "0"]).unwrap_err();
+        assert!(err.contains("--expert-slots requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--expert-sim"]).unwrap_err();
+        assert!(err.contains("--expert-sim requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--expert-8gpu"]).unwrap_err();
+        assert!(err.contains("--expert-8gpu requires --expert-sim"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--expert-bytes", "4"]).unwrap_err();
+        assert!(
+            err.contains("--expert-bytes requires --expert-sim"),
+            "{err}"
+        );
+        let err = parse_serve_args(["m.gguf", "--engine", "--expert-bytes", "0"]).unwrap_err();
+        assert!(err.contains("expert-bytes must be > 0"), "{err}");
     }
 
     #[test]
