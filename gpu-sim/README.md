@@ -35,13 +35,15 @@ warp scheduler, L1, …   ← do not model
 | `cudaMalloc` (`malloc`) device-syncs that GPU, then the pointer is usable; it cannot consume another pool's cache | `alloc_overhead_ns` (charged at the call) |
 | `cudaHostRegister` pins pageable host for DMA (`host_register`) | `alloc_overhead_ns` (mlock, host-sync) |
 | `cudaHostAllocMapped` / `host_register_mapped`: kernel may read host with no H2D | host PCIe vs HBM |
+| `cudaMallocManaged` (`alloc_managed`) does not charge HBM until migrate | `alloc_overhead_ns` (VA reserve at the call) |
+| `cudaMemPrefetchAsync` (`prefetch` / `prefetch_host`) **moves** the unique location | PCIe / NVLink (1 ns if already local) |
 | `cudaFree` (`free_sync`) waits owning GPU(s), then every copy is gone | stream-ordered `free` refunds when that stream runs |
 | `cudaMemcpyAsync` of pageable host memory is host-synchronous | `pageable_permille` (bounce + DMA) |
 | `cudaMemcpyAsync` of pinned / device memory is stream-ordered | PCIe / NVLink bandwidth |
 | `cudaMemcpy` (`memcpy_sync`) waits that stream | pinned `memcpy` does not |
 | `synchronize_device` waits one GPU | other GPUs keep running |
 | stream order, event dependencies | memcpy microseconds |
-| residency: a kernel may only read **device** or **mapped-host** allocations | PCIe / NVLink / HBM bandwidth |
+| residency: a kernel may only read **device** or **mapped-host** allocations; managed first-touch migrates | PCIe / NVLink / HBM bandwidth |
 | HBM vs host-pinned: `alloc_host_pinned` does not charge HBM | pageable vs pinned H2D (`pageable_permille`) |
 | copy-engine occupancy | launch overhead |
 | peer accessibility | size-dependent efficiency |
@@ -190,7 +192,10 @@ until trim. Capture cannot include pool create/trim/set-attribute.
 `cudaHostRegister` (host-synchronous). `alloc_host_mapped` is
 `cudaHostAllocMapped`: a kernel may read it with no H2D, billed at host
 PCIe, and it does not charge HBM. Capture cannot include host
-alloc/register.
+alloc/register. `alloc_managed` is `cudaMallocManaged` (no HBM until
+`prefetch` / first-touch). `prefetch` / `prefetch_host` are
+`cudaMemPrefetchAsync` and **move** the unique location. Capture of
+`alloc_managed` is refused; a graph must record prefetch before the kernel.
 `set_stream_priority` is `cudaStreamCreateWithPriority` (higher first when
 compute contends). `Operation` carries `submit_ns` / `start_ns` / `done_ns`
 so stream[i+1].start ≥ stream[i].finish is inspectable. `GpuOp` /

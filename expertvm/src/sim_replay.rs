@@ -127,6 +127,10 @@ pub struct SimCfg {
     /// over PCIe with no H2D. Hits/misses follow the same walker; `hbm_peak`
     /// stays near zero. [`crate::SimulatedGpuStore`] stays on the H2D path.
     pub mapped: bool,
+    /// `cudaMallocManaged` + `cudaMemPrefetchAsync` on miss. Alloc does not
+    /// charge HBM; prefetch migrates the page. Hits/misses match H2D.
+    /// [`crate::SimulatedGpuStore`] stays on pinned H2D.
+    pub managed: bool,
 }
 
 impl SimCfg {
@@ -147,6 +151,7 @@ impl SimCfg {
             sync_alloc: false,
             mempool: false,
             mapped: false,
+            managed: false,
         }
     }
 }
@@ -198,6 +203,7 @@ pub fn sim_replay_cfg(
         slots: cfg.slots,
         sync_alloc: cfg.sync_alloc,
         mapped: cfg.mapped,
+        managed: cfg.managed,
     };
     let mut token_ends: Vec<u64> = Vec::new();
     let mut ctr = ReplayCounters::default();
@@ -290,6 +296,8 @@ pub(crate) struct TouchArgs {
     pub sync_alloc: bool,
     /// [`SimCfg::mapped`]: `alloc_host_mapped`, no H2D.
     pub mapped: bool,
+    /// [`SimCfg::managed`]: `alloc_managed` + [`gpu_sim::Sim::prefetch`].
+    pub managed: bool,
 }
 
 fn hbm_alloc(
@@ -416,11 +424,19 @@ pub(crate) fn apply_touch(
             }
             let id = if args.mapped {
                 sim.alloc_host_mapped(args.bytes)?
+            } else if args.managed {
+                sim.alloc_managed(args.bytes)?
             } else {
                 hbm_alloc(sim, args.d, args.bytes, args.s, args.sync_alloc)?
             };
-            if !args.mapped {
-                hbm_h2d_pinned(sim, args.d, id, args.bytes, args.s, args.sync_alloc)?;
+            match (args.mapped, args.managed) {
+                (true, _) => {}
+                (false, true) => {
+                    let _p = sim.prefetch(args.d, id, args.s)?;
+                }
+                (false, false) => {
+                    hbm_h2d_pinned(sim, args.d, id, args.bytes, args.s, args.sync_alloc)?;
+                }
             }
             let _prev = handles.insert(
                 key,
@@ -477,6 +493,10 @@ fn drop_handle(
         sim.free_host_pinned(page.id)?;
         return Ok(());
     }
+    if page_is_managed(sim, page.id) {
+        sim.free_sync(page.id)?;
+        return Ok(());
+    }
     if sync {
         // cudaFree: one host call, every device copy is gone.
         sim.free_sync(page.id)?;
@@ -514,6 +534,10 @@ fn drop_graphs(graphs: &mut BTreeMap<Vec<AllocId>, GraphId>, id: AllocId) {
 
 fn page_is_mapped(sim: &Sim, id: AllocId) -> bool {
     sim.is_host_mapped(id).unwrap_or(false)
+}
+
+fn page_is_managed(sim: &Sim, id: AllocId) -> bool {
+    sim.is_managed(id).unwrap_or(false)
 }
 
 pub(crate) fn gemm_keys(

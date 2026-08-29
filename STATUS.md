@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — cudaMallocManaged migrates, it does not replicate
+
+`Sim::alloc_managed` / `prefetch` / `prefetch_host` are `cudaMallocManaged`
+and `cudaMemPrefetchAsync` (GPU or `cudaCpuDeviceId`). Alloc does not
+charge HBM; first-touch or prefetch migrates the page and bills PCIe /
+NVLink. A second GPU prefetch **moves** the unique location (not a
+replica). `cudaMalloc` of the remaining HBM can OOM a later prefetch
+until that malloc is freed. Capture refuses `alloc_managed`; a graph
+must record prefetch before the kernel. `expertvm sim --managed` /
+`expertvm bench` `sim-managed`. `SimulatedGpuStore` stays on pinned H2D.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — mapped host is the no-H2D expert path
 
 `Sim::alloc_host` / `host_register` / `host_register_mapped` /

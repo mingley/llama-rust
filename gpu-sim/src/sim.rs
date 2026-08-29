@@ -21,6 +21,8 @@ struct Alloc {
     host_mapped: bool,
     /// Came from `cudaHostRegister`, not `cudaMallocHost`.
     host_registered: bool,
+    /// `cudaMallocManaged`: one location; [`Sim::prefetch`] migrates it.
+    managed: bool,
     /// `None` is `cudaMalloc` / host-pinned. `Some` is `cudaMallocAsync` from that pool.
     pool: Option<PoolId>,
 }
@@ -544,6 +546,7 @@ impl Sim {
                 host_pageable: false,
                 host_mapped: false,
                 host_registered: false,
+                managed: false,
                 pool: Some(pool),
             },
         );
@@ -639,6 +642,103 @@ impl Sim {
     /// immediately; the memory term is host PCIe, not HBM.
     pub fn alloc_host_mapped(&mut self, bytes: u64) -> Result<AllocId, SimError> {
         self.insert_host(bytes, false, true, true, false)
+    }
+
+    /// `cudaMallocManaged`: pointer is live immediately, no HBM until a
+    /// device first-touch or [`Self::prefetch`].
+    ///
+    /// Does not [`Self::synchronize_device`] (`cudaMalloc` does). Capture
+    /// cannot include it. [`Self::free_sync`] is `cudaFree`.
+    pub fn alloc_managed(&mut self, bytes: u64) -> Result<AllocId, SimError> {
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let ns = self
+            .profile
+            .gpus
+            .first()
+            .map(|g| g.alloc_overhead_ns)
+            .unwrap_or(1)
+            .max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let id = AllocId(self.next_alloc);
+        self.next_alloc = self.next_alloc.saturating_add(1);
+        let _prev = self.allocs.insert(
+            id,
+            Alloc {
+                bytes,
+                devices: Vec::new(),
+                leases: 0,
+                live: true,
+                host_pinned: false,
+                host_pageable: false,
+                host_mapped: false,
+                host_registered: false,
+                managed: true,
+                pool: None,
+            },
+        );
+        Ok(id)
+    }
+
+    /// Whether `alloc` is live unified memory (`cudaMallocManaged`).
+    pub fn is_managed(&self, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.managed)
+    }
+
+    /// `cudaMemPrefetchAsync` onto `device`. Stream-ordered; migrates, does not
+    /// replicate. Already-local pages pay 1 ns and skip the copy engine.
+    ///
+    /// Capture may record it (it is a memcpy). A kernel that first-touches
+    /// managed memory calls this on the same stream before the GEMM.
+    pub fn prefetch(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let (bytes, src) = self.managed_move_src(alloc, Some(device))?;
+        self.memcpy(
+            device,
+            MemcpyOp {
+                src,
+                dst: Place::Device(device),
+                alloc,
+                bytes,
+            },
+            stream,
+        )
+    }
+
+    /// `cudaMemPrefetchAsync(..., cudaCpuDeviceId)`. Pages leave HBM.
+    ///
+    /// Submit on `device`'s `stream` (the stream that owns the work). Already
+    /// on the host is a 1 ns no-op on that stream.
+    pub fn prefetch_host(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let (bytes, src) = self.managed_move_src(alloc, None)?;
+        let submit = match src {
+            Place::Device(d) => d,
+            Place::Host | Place::HostPinned => device,
+        };
+        self.memcpy(
+            submit,
+            MemcpyOp {
+                src,
+                dst: Place::HostPinned,
+                alloc,
+                bytes,
+            },
+            stream,
+        )
     }
 
     /// Whether `alloc` is live in page-locked host memory.
@@ -959,6 +1059,10 @@ impl Sim {
     }
 
     /// Enqueue a kernel. Reads/writes are leased until it completes.
+    ///
+    /// A managed allocation not yet on `device` is [`Self::prefetch`]'d on
+    /// this stream first (page fault). Capture does not insert that migrate;
+    /// record [`Self::prefetch`] in the graph or prefetch before capture.
     pub fn kernel(
         &mut self,
         device: DeviceId,
@@ -967,6 +1071,7 @@ impl Sim {
         writes: &[AllocId],
         stream: StreamId,
     ) -> Result<OpId, SimError> {
+        self.fault_managed(device, reads, writes, stream)?;
         self.submit(
             device,
             stream,
@@ -1374,6 +1479,7 @@ impl Sim {
                 host_pageable: pageable,
                 host_mapped: mapped,
                 host_registered: registered,
+                managed: false,
                 pool: None,
             },
         );
@@ -1404,6 +1510,122 @@ impl Sim {
         a.host_pinned = true;
         a.host_mapped = mapped;
         a.host_registered = true;
+        Ok(())
+    }
+
+    fn managed_move_src(
+        &self,
+        alloc: AllocId,
+        dest: Option<DeviceId>,
+    ) -> Result<(u64, Place), SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live || !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        let src = match dest {
+            Some(d) if a.devices.contains(&d) => Place::HostPinned,
+            Some(_) => a
+                .devices
+                .first()
+                .copied()
+                .map(Place::Device)
+                .unwrap_or(Place::HostPinned),
+            None if a.devices.is_empty() => Place::HostPinned,
+            None => a
+                .devices
+                .first()
+                .copied()
+                .map(Place::Device)
+                .unwrap_or(Place::HostPinned),
+        };
+        Ok((a.bytes, src))
+    }
+
+    fn fault_managed(
+        &mut self,
+        device: DeviceId,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        let mut seen = BTreeSet::new();
+        let mut wait = Vec::new();
+        for id in reads.iter().chain(writes.iter()) {
+            if !seen.insert(*id) {
+                continue;
+            }
+            let a = self.alloc_ref(*id)?;
+            if a.live && a.managed && !a.devices.contains(&device) {
+                wait.push(*id);
+            }
+        }
+        if wait.is_empty() {
+            return Ok(());
+        }
+        if self.capturing.is_some() {
+            // Implicit faults are not recorded. Capture an explicit prefetch
+            // first, or prefetch before begin_capture. Launch fails NotResident
+            // if the graph omitted the migrate.
+            return Ok(());
+        }
+        for id in wait {
+            let _op = self.prefetch(device, id, stream)?;
+        }
+        Ok(())
+    }
+
+    fn managed_local_copy(&self, m: &MemcpyOp) -> Result<bool, SimError> {
+        let a = self.alloc_ref(m.alloc)?;
+        if !a.managed {
+            return Ok(false);
+        }
+        match m.dst {
+            Place::Device(d) => Ok(a.devices.contains(&d)),
+            Place::Host | Place::HostPinned => Ok(a.devices.is_empty()),
+        }
+    }
+
+    fn migrate_off_except(&mut self, alloc: AllocId, keep: DeviceId) -> Result<(), SimError> {
+        let a = self.alloc_ref(alloc)?;
+        let bytes = a.bytes;
+        let others: Vec<DeviceId> = a.devices.iter().copied().filter(|d| *d != keep).collect();
+        for d in others {
+            self.refund_device(d, alloc, bytes)?;
+            self.alloc_mut(alloc)?.devices.retain(|x| *x != d);
+        }
+        Ok(())
+    }
+
+    fn migrate_off_all(&mut self, alloc: AllocId) -> Result<(), SimError> {
+        let a = self.alloc_ref(alloc)?;
+        let bytes = a.bytes;
+        let holders = a.devices.clone();
+        for d in holders {
+            self.refund_device(d, alloc, bytes)?;
+        }
+        self.alloc_mut(alloc)?.devices.clear();
+        Ok(())
+    }
+
+    fn finish_memcpy(&mut self, device: DeviceId, m: MemcpyOp, dma: bool) -> Result<(), SimError> {
+        if dma {
+            self.gpu_rt_mut(device)?.copies = self.gpu_rt(device)?.copies.saturating_sub(1);
+            self.bytes_moved = self.bytes_moved.saturating_add(m.bytes);
+        }
+        let managed = self.alloc_ref(m.alloc)?.managed;
+        if let Place::Device(dst) = m.dst {
+            let a = self.alloc_mut(m.alloc)?;
+            if !a.devices.contains(&dst) {
+                a.devices.push(dst);
+            }
+            if managed {
+                self.migrate_off_except(m.alloc, dst)?;
+            }
+        } else if managed {
+            self.migrate_off_all(m.alloc)?;
+        } else if matches!(m.dst, Place::HostPinned) {
+            self.alloc_mut(m.alloc)?.host_pinned = true;
+        }
         Ok(())
     }
 
@@ -1571,6 +1793,7 @@ impl Sim {
                 host_pageable: false,
                 host_mapped: false,
                 host_registered: false,
+                managed: false,
                 pool: None,
             },
         );
@@ -1678,11 +1901,19 @@ impl Sim {
                     }
                     return Err(SimError::TransferFailed { alloc: m.alloc });
                 }
+                self.memcpy_precheck(&m)?;
+                if self.managed_local_copy(&m)? {
+                    self.running.push(Running {
+                        op: id,
+                        remaining_ns: 1,
+                        share: Share::Solo,
+                    });
+                    return Ok(true);
+                }
                 let gp = self.profile.gpu(device)?;
                 if self.gpu_rt(device)?.copies >= gp.copy_engines {
                     return Ok(false);
                 }
-                self.memcpy_precheck(&m)?;
                 self.charge_replica_hbm(&m)?;
                 let (ns, link_idx) = self.memcpy_ns(&m)?;
                 let ns = ns.saturating_add(self.graph_head_ns(device, launch)?);
@@ -1927,6 +2158,15 @@ impl Sim {
         if !a.live {
             return Err(SimError::UnknownAlloc { alloc: m.alloc });
         }
+        if a.managed && a.leases > 0 {
+            let staying = match m.dst {
+                Place::Device(d) => a.devices.contains(&d),
+                Place::Host | Place::HostPinned => a.devices.is_empty(),
+            };
+            if !staying {
+                return Err(SimError::Leased { alloc: m.alloc });
+            }
+        }
         if let (Place::Device(src), Place::Device(dst)) = (m.src, m.dst) {
             if src != dst
                 && !self.peer_enabled.contains(&(src, dst))
@@ -2053,6 +2293,10 @@ impl Sim {
     }
 
     fn complete(&mut self, id: OpId) -> Result<(), SimError> {
+        let dma = self
+            .running
+            .iter()
+            .any(|r| r.op == id && matches!(r.share, Share::Link(_)));
         self.running.retain(|r| r.op != id);
         let device = self
             .ops
@@ -2092,17 +2336,7 @@ impl Sim {
             }
         }
         if let Some(m) = memcpy {
-            self.gpu_rt_mut(device)?.copies = self.gpu_rt(device)?.copies.saturating_sub(1);
-            self.bytes_moved = self.bytes_moved.saturating_add(m.bytes);
-            if let Place::Device(dst) = m.dst {
-                let a = self.alloc_mut(m.alloc)?;
-                if !a.devices.contains(&dst) {
-                    a.devices.push(dst);
-                }
-            }
-            if matches!(m.dst, Place::HostPinned) {
-                self.alloc_mut(m.alloc)?.host_pinned = true;
-            }
+            self.finish_memcpy(device, m, dma)?;
         }
         if let Some(op) = self.ops.get_mut(&id) {
             op.done = true;

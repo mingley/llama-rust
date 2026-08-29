@@ -421,6 +421,9 @@ Exact (mechanical invariants agents may rely on):
   `host_register_mapped`, `alloc_host_mapped`): pin existing pageable
   memory; mapped pointers are kernel-readable over PCIe with no H2D and
   no HBM charge
+- `cudaMallocManaged` / `cudaMemPrefetchAsync` (`alloc_managed`,
+  `prefetch`, `prefetch_host`): no HBM until migrate; prefetch **moves**
+  (does not replicate); a kernel first-touch prefetches on that stream
 - stream ordering, events, barriers
 - kernel enqueue, async copies
 - copy-engine availability, peer accessibility
@@ -579,7 +582,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `sim`/`schedule` stay on `cudaMallocAsync`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--mapped` is `cudaHostAllocMapped`
-  (no H2D, PCIe kernels, HBM unused). `memset`, directed peer enable, and
+  (no H2D, PCIe kernels, HBM unused). `--managed` is `cudaMallocManaged`
+  plus `cudaMemPrefetchAsync` on miss (HBM charged on migrate). `memset`, directed peer enable, and
   the legacy null stream are mechanical CUDA invariants.
   `synchronize_stream` / `synchronize_event` / `synchronize_device` are
   `cudaStreamSynchronize` / `cudaEventSynchronize` / `cudaDeviceSynchronize`. `event_elapsed_ns` is `cudaEventElapsedTime` in

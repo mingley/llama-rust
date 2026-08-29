@@ -27,6 +27,9 @@
 //! [`Sim::alloc_host`] is pageable; [`Sim::host_register`] / [`host_register_mapped`](Sim::host_register_mapped)
 //! are `cudaHostRegister` (host-synchronous mlock). [`Sim::alloc_host_mapped`] is
 //! `cudaHostAllocMapped`: a kernel may read it without H2D, billed at host PCIe.
+//! [`Sim::alloc_managed`] is `cudaMallocManaged` (no HBM until first-touch or
+//! [`Sim::prefetch`] / [`prefetch_host`](Sim::prefetch_host)). Prefetch migrates;
+//! it does not replicate. A kernel page-faults managed memory onto that GPU.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
 //! [`Sim::query_event`] is `cudaEventQuery` (no wait).
@@ -1312,6 +1315,10 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
             other => panic!("{other:?}"),
         }
+        match sim.alloc_managed(4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -1651,5 +1658,181 @@ mod tests {
         assert!(sim.query_stream(d, s).unwrap());
         assert!(sim.clock_ns() > 0);
         assert!(!sim.is_host_mapped(h).unwrap());
+    }
+
+    #[test]
+    fn alloc_managed_does_not_charge_hbm() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let m = sim.alloc_managed(8 << 20).unwrap();
+        assert!(sim.is_managed(m).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        assert!(!sim.is_resident(m, d).unwrap());
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn managed_kernel_fault_migrates_and_charges_hbm() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 8u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, bytes), &[m], &[m], s));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(m, d).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        assert_eq!(sim.bytes_moved(), bytes);
+        sim.free_sync(m).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+    }
+
+    #[test]
+    fn malloc_can_fill_hbm_until_managed_prefetch() {
+        let mut sim = Sim::new(h100().restrict_hbm(4096));
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let m = sim.alloc_managed(4096).unwrap();
+        let a = sim.malloc(d, 4096).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+        assert!(!sim.is_resident(m, d).unwrap());
+        enq(sim.prefetch(d, m, s));
+        match sim.synchronize() {
+            Err(SimError::Oom { device, need, free }) => {
+                assert_eq!(device, d);
+                assert_eq!(need, 4096);
+                assert_eq!(free, 0);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(sim.is_resident(a, d).unwrap());
+    }
+
+    #[test]
+    fn prefetch_host_refunds_hbm() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        enq(sim.prefetch(d, m, s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        enq(sim.prefetch_host(d, m, s));
+        sim.synchronize().unwrap();
+        assert!(!sim.is_resident(m, d).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        assert!(sim.is_managed(m).unwrap());
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn managed_d2d_prefetch_moves_not_replicas() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        enq(sim.prefetch(d0, m, s));
+        sim.synchronize().unwrap();
+        enq(sim.prefetch(d1, m, s));
+        sim.synchronize().unwrap();
+        assert!(!sim.is_resident(m, d0).unwrap());
+        assert!(sim.is_resident(m, d1).unwrap());
+        assert_eq!(sim.hbm_used(d0).unwrap(), 0);
+        assert_eq!(sim.hbm_used(d1).unwrap(), bytes);
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn already_local_prefetch_does_not_count_bytes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 8u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        enq(sim.prefetch(d, m, s));
+        sim.synchronize().unwrap();
+        let moved = sim.bytes_moved();
+        let t0 = sim.clock_ns();
+        enq(sim.prefetch(d, m, s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), moved);
+        assert!(sim.clock_ns() > t0);
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn managed_after_prefetch_is_faster_than_mapped() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 32u64 << 20;
+        let mut mapped = Sim::new(h100());
+        let h = mapped.alloc_host_mapped(bytes).unwrap();
+        enq(mapped.kernel(d, KernelKind::other(1 << 20, bytes), &[h], &[h], s));
+        mapped.synchronize().unwrap();
+        let map_ns = mapped.clock_ns();
+
+        let mut um = Sim::new(h100());
+        let m = um.alloc_managed(bytes).unwrap();
+        enq(um.prefetch(d, m, s));
+        um.synchronize().unwrap();
+        let t0 = um.clock_ns();
+        enq(um.kernel(d, KernelKind::other(1 << 20, bytes), &[m], &[m], s));
+        um.synchronize().unwrap();
+        let um_ns = um.clock_ns().saturating_sub(t0);
+        assert!(
+            map_ns > um_ns,
+            "mapped PCIe kernel vs managed-on-HBM; mapped={map_ns} um={um_ns}"
+        );
+    }
+
+    #[test]
+    fn graph_records_managed_prefetch_then_kernel() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let m = sim.alloc_managed(4096).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.prefetch(d, m, s));
+        enq(sim.kernel(d, KernelKind::other(8, 4096), &[m], &[m], s));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
+        assert!(!sim.is_resident(m, d).unwrap());
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(m, d).unwrap());
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn graph_kernel_without_managed_prefetch_is_not_resident() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let m = sim.alloc_managed(4096).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 4096), &[m], &[m], s));
+        let g = sim.end_capture().unwrap();
+        let _n = sim.launch_graph(g, s).unwrap();
+        match sim.synchronize() {
+            Err(SimError::NotResident { alloc, device }) => {
+                assert_eq!(alloc, m);
+                assert_eq!(device, d);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn prefetch_rejects_unmanaged() {
+        let mut sim = Sim::new(h100());
+        let a = sim.malloc(DeviceId(0), 4096).unwrap();
+        match sim.prefetch(DeviceId(0), a, StreamId(0)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed")),
+            other => panic!("{other:?}"),
+        }
     }
 }

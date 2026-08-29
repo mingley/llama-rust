@@ -31,6 +31,8 @@ pub struct BenchReport {
     pub mempool: Option<String>,
     /// Pinned H2D vs `cudaHostAllocMapped` zero-copy on the same LRU config.
     pub mapped: Option<String>,
+    /// Pinned H2D vs `cudaMallocManaged` + prefetch on the same LRU config.
+    pub managed: Option<String>,
     /// Closed-loop `schedule-all` vs `schedule-1` when the trace has >1 sequence.
     pub schedule: Option<String>,
     /// Unchunked vs `--prefill-chunk 1` when a first token has more than one layer.
@@ -74,6 +76,10 @@ impl BenchReport {
             s.push_str(md);
             s.push('\n');
         }
+        if let Some(um) = &self.managed {
+            s.push_str(um);
+            s.push('\n');
+        }
         if let Some(sch) = &self.schedule {
             s.push_str(sch);
             s.push('\n');
@@ -114,6 +120,7 @@ pub fn report(
     let mut malloc = None;
     let mut mempool = None;
     let mut mapped = None;
+    let mut managed = None;
     let mut schedule = None;
     let mut chunk = None;
     let mut decode = None;
@@ -127,6 +134,7 @@ pub fn report(
         malloc = lines.malloc;
         mempool = lines.mempool;
         mapped = lines.mapped;
+        managed = lines.managed;
         schedule = lines.schedule;
         chunk = lines.chunk;
         decode = lines.decode;
@@ -143,6 +151,7 @@ pub fn report(
         malloc,
         mempool,
         mapped,
+        managed,
         schedule,
         chunk,
         decode,
@@ -158,6 +167,7 @@ struct SimLines {
     malloc: Option<String>,
     mempool: Option<String>,
     mapped: Option<String>,
+    managed: Option<String>,
     schedule: Option<String>,
     chunk: Option<String>,
     decode: Option<String>,
@@ -194,7 +204,10 @@ fn sim_lines(
     let mp = sim_replay_cfg(trace, profile.clone(), pooled)?;
     let mut mapped = base;
     mapped.mapped = true;
-    let md = sim_replay_cfg(trace, profile, mapped)?;
+    let md = sim_replay_cfg(trace, profile.clone(), mapped)?;
+    let mut um = base;
+    um.managed = true;
+    let um_row = sim_replay_cfg(trace, profile, um)?;
     Ok(SimLines {
         serial: serial.line(),
         overlap,
@@ -213,6 +226,11 @@ fn sim_lines(
             "sim-async {} | sim-mapped {}",
             serial.line(),
             md.line()
+        )),
+        managed: Some(format!(
+            "sim-async {} | sim-managed {}",
+            serial.line(),
+            um_row.line()
         )),
         schedule: lines.schedule,
         chunk: lines.chunk,
