@@ -78,7 +78,9 @@ pub struct SimCfg {
     /// Resident expert slots per home GPU (`GPU0` when unplaced).
     ///
     /// [`crate::schedule_placed`] / [`crate::schedule_remote`] keep one walker
-    /// per home so a miss cannot evict a peer GPU's resident expert.
+    /// per home so a miss cannot evict a peer GPU's resident expert. When
+    /// `restrict_hbm` holds fewer pages than `slots`, the scheduler still
+    /// evicts so the next alloc cannot OOM.
     pub slots: usize,
     /// Victim policy.
     pub policy: Policy,

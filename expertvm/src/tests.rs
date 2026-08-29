@@ -793,6 +793,20 @@ fn schedule_replica_evict_frees_peer_hbm() {
 }
 
 #[test]
+fn schedule_hbm_evicts_when_slots_are_loose() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[2]), ev(2, 0, &[0])],
+    };
+    let p = HardwareProfile::example_2xh100_pcie().restrict_hbm(4096);
+    let cfg = SimCfg::lru(8, 4096, 0);
+    let map = striped(&t, 2);
+    let row = schedule_placed(&t, p, cfg, SchedCfg::closed(0), Some(&map)).expect("hbm");
+    assert_eq!(row.completed, 1);
+    assert_eq!(row.replay.misses, 3);
+    assert_eq!(row.replay.hits, 0);
+}
+
+#[test]
 fn schedule_remote_pays_peer_copy_on_rdma() {
     let t = Trace {
         events: vec![ev(0, 0, &[1])],

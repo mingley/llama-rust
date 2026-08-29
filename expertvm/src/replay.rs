@@ -182,6 +182,23 @@ impl Walker {
         self.recency.retain(|k| *k != key);
     }
 
+    /// Occupying keys on this walker (home pages and dest replicas).
+    #[must_use]
+    pub(crate) fn resident_len(&self) -> usize {
+        self.resident.len()
+    }
+
+    /// Evict one resident key so this device can take another HBM page.
+    pub(crate) fn evict_one(&mut self) -> Option<ExpertKey> {
+        if self.resident.is_empty() {
+            return None;
+        }
+        let v = self.pick_victim();
+        let _removed = self.resident.remove(&v);
+        self.recency.retain(|k| *k != v);
+        Some(v)
+    }
+
     fn fault_in(&mut self, key: ExpertKey) -> Touch {
         if self.resident.contains(&key) {
             self.touch_recency(key);

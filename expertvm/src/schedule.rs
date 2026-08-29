@@ -316,6 +316,9 @@ impl SchedRt {
             let home = self.home(*key);
             let touch = self.walker_mut(home).demand_touch(*key);
             note_touch(&mut self.ctr, &mut self.prefetched, *key, touch);
+            if matches!(touch, Touch::Miss { .. }) {
+                self.make_room(home, self.args.bytes)?;
+            }
             let args = self.args_for(*key);
             apply_touch(
                 &mut self.sim,
@@ -364,6 +367,7 @@ impl SchedRt {
                 miss @ Touch::Miss { .. } => {
                     self.ctr.prefetches = self.ctr.prefetches.saturating_add(1);
                     let _ins = self.prefetched.insert(key);
+                    self.make_room(home, self.args.bytes)?;
                     let args = self.args_for(key);
                     apply_touch(
                         &mut self.sim,
@@ -481,6 +485,7 @@ impl SchedRt {
                 )?;
                 self.forget_peer_if_home_dropped(v);
             }
+            self.make_room(dst, bytes)?;
             let _c = self
                 .sim
                 .memcpy_device_to_device(src, dst, id, bytes, stream)?;
@@ -505,6 +510,42 @@ impl SchedRt {
         for d in devices {
             if let Some(w) = self.walkers.get_mut(&d) {
                 w.forget(key);
+            }
+        }
+    }
+
+    fn make_room(&mut self, device: DeviceId, need: u64) -> Result<(), Error> {
+        if need == 0 {
+            return Ok(());
+        }
+        let total = self.sim.profile().gpu(device)?.hbm_bytes;
+        let max_pages = usize::try_from(total / need).unwrap_or(0);
+        let mut steps = 0usize;
+        let cap = self.cfg.slots.saturating_add(1);
+        loop {
+            let n = self
+                .walkers
+                .get(&device)
+                .map(Walker::resident_len)
+                .unwrap_or(0);
+            if n <= max_pages {
+                return Ok(());
+            }
+            let Some(v) = self.walker_mut(device).evict_one() else {
+                return Ok(());
+            };
+            reclaim_victim(
+                &mut self.sim,
+                &mut self.handles,
+                &mut self.graphs,
+                device,
+                v,
+                &mut self.next_event,
+            )?;
+            self.forget_peer_if_home_dropped(v);
+            steps = steps.saturating_add(1);
+            if steps > cap {
+                return Ok(());
             }
         }
     }

@@ -494,7 +494,8 @@ queue wait already meets `--ttft-slo-ns`. TTFT is first-token end minus arrival.
 `--ttft-slo-ns` / `--itl-slo-ns` count misses. Cache order is demand paging (no JSONL future
 leak). `--place striped|remote` keeps one walker per home GPU so `--capacity`
 is that device's slots, not a cluster-wide LRU. Hot replicas occupy dest slots
-and dest eviction frees replica HBM. This is not a 500k-line vLLM engine.
+and dest eviction frees replica HBM. `restrict_hbm` still evicts when fewer
+pages fit than `--capacity`. This is not a 500k-line vLLM engine.
 
 Agents may aggressively optimize policies. Illegal GPU states are
 impossible or immediately fatal.

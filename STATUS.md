@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — HBM caps beat loose `--capacity`
+
+`restrict_hbm` / profile `hbm_bytes` is the real page budget. If `--capacity`
+is larger than pages that fit, `schedule_placed` still evicts so the next
+alloc cannot OOM. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — replica HBM is dest-capacity
 
 Hot replicas occupy the destination GPU's `--capacity` slots. Evicting a
