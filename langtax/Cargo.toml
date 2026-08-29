@@ -2,6 +2,12 @@
 name = "llama-rust"
 version = "0.1.0"
 edition = "2021"
+description = "Verifiable GGUF v3 Llama-family reference engine: oracle decode, MoE traces, ExpertStore seam."
+license = "MIT"
+readme = "../README.md"
+repository = "https://github.com/mingley/llama-rust"
+keywords = ["gguf", "llm", "llama", "moe", "inference"]
+categories = ["science"]
 
 [features]
 default = ["simd"]

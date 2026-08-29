@@ -14,6 +14,7 @@ mod pretok;
 mod quant;
 mod sample;
 mod serve;
+mod session;
 #[cfg(feature = "simd")]
 mod simd;
 mod template;
@@ -37,7 +38,10 @@ pub use decode::{
     tiny_qwen3moe_gguf, tiny_qwen3next_gguf, tiny_qwen3vl_gguf, tiny_tied_copy_gguf,
     tiny_tied_gguf, tiny_tq10_gguf, tiny_tq20_gguf, KvCache, Llama, LlamaError,
 };
-pub use expertvm::{ExpertAccess, ExpertKey, Trace};
+pub use expertvm::{
+    CachedStore, DirectStore, ExpertAccess, ExpertKey, ExpertParts, ExpertStore, LiveStore,
+    SimulatedGpuStore, StoreMetrics, Trace,
+};
 pub use gguf::{
     load_gguf, load_gguf_owned, write_gguf, write_gguf_with_kv, GgmlType, Gguf, GgufError, Kv,
     Tensor, TensorWrite, GGUF_DEFAULT_ALIGNMENT,
@@ -81,6 +85,7 @@ pub use quant::{
 };
 pub use sample::{argmax, sample_next, splitmix64, SampleError, SampleParams, Sampler};
 pub use serve::{parse_serve_args, run_serve, ServeArgs, ServeCmd, ServeError, SERVE_USAGE};
+pub use session::{Model, Session};
 pub use template::{
     render_chat_template, ChatMessage, ChatOptions, Template, TemplateError, Value,
 };

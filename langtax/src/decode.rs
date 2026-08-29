@@ -71,7 +71,8 @@ use crate::quant::{
 use crate::sample::{SampleError, SampleParams, Sampler};
 use crate::tok::{TokError, Tokenizer};
 use crate::{write_gguf_with_kv, GGUF_DEFAULT_ALIGNMENT};
-use expertvm::{ExpertAccess, Trace};
+use expertvm::{DirectStore, ExpertAccess, ExpertKey, ExpertParts, ExpertStore, LiveStore, Trace};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 const TINY_N_EMBD: usize = 256;
@@ -179,6 +180,8 @@ pub enum LlamaError {
     EmptyPrompt,
     /// Sampling failed.
     Sample(SampleError),
+    /// Expert store (lease, unknown key, gpu-sim).
+    Store(String),
 }
 
 impl std::fmt::Display for LlamaError {
@@ -195,6 +198,7 @@ impl std::fmt::Display for LlamaError {
             Self::Tok(e) => write!(f, "{e}"),
             Self::EmptyPrompt => write!(f, "empty prompt"),
             Self::Sample(e) => write!(f, "{e}"),
+            Self::Store(e) => write!(f, "expert store: {e}"),
         }
     }
 }
@@ -222,6 +226,12 @@ impl From<TokError> for LlamaError {
 impl From<SampleError> for LlamaError {
     fn from(v: SampleError) -> Self {
         Self::Sample(v)
+    }
+}
+
+impl From<expertvm::Error> for LlamaError {
+    fn from(v: expertvm::Error) -> Self {
+        Self::Store(v.to_string())
     }
 }
 
@@ -512,6 +522,8 @@ pub struct KvCache {
     /// under `pool::with_sequential`.
     pool: Option<Pool<GemvRows>>,
     moe_trace: MoeTraceBuf,
+    /// Opt-in expert residency. `None` keeps the default blob GEMV path.
+    expert_store: Option<LiveStore>,
 }
 
 impl KvCache {
@@ -530,6 +542,24 @@ impl KvCache {
         Trace {
             events: core::mem::take(&mut self.moe_trace.events),
         }
+    }
+
+    /// Decode expert FFN from store copies instead of the GGUF blob.
+    ///
+    /// Off by default so allocation-free blob decode stays unchanged.
+    pub fn attach_expert_store(&mut self, store: LiveStore) {
+        self.expert_store = Some(store);
+    }
+
+    /// Remove the attached store.
+    pub fn take_expert_store(&mut self) -> Option<LiveStore> {
+        self.expert_store.take()
+    }
+
+    /// Counters from the attached store, if any.
+    #[must_use]
+    pub fn expert_store_metrics(&self) -> Option<expertvm::StoreMetrics> {
+        self.expert_store.as_ref().map(ExpertStore::metrics)
     }
 }
 
@@ -862,7 +892,83 @@ impl Llama {
             scratch: Scratch::default(),
             pool: None,
             moe_trace: MoeTraceBuf::default(),
+            expert_store: None,
         })
+    }
+
+    /// Catalog every routed expert's gate/up/down part bytes. Identity oracle
+    /// for the ExpertStore seam: GEMV on these copies matches the blob path.
+    pub fn expert_direct_store(&self) -> Result<DirectStore, LlamaError> {
+        let mut blobs = BTreeMap::new();
+        for (li, layer) in self.layers.iter().enumerate() {
+            let layer_u = u32::try_from(li).unwrap_or(u32::MAX);
+            match &layer.ffn {
+                LayerFfn::LlamaMoe(m) => self.catalog_exps(
+                    layer_u,
+                    m.n_expert,
+                    &m.gate_exps,
+                    &m.up_exps,
+                    &m.down_exps,
+                    &mut blobs,
+                )?,
+                LayerFfn::Llama4Moe(m) => self.catalog_exps(
+                    layer_u,
+                    m.n_expert,
+                    &m.gate_exps,
+                    &m.up_exps,
+                    &m.down_exps,
+                    &mut blobs,
+                )?,
+                LayerFfn::Qwen2Moe(m) | LayerFfn::Qwen3Next(m) => self.catalog_exps(
+                    layer_u,
+                    m.n_expert,
+                    &m.gate_exps,
+                    &m.up_exps,
+                    &m.down_exps,
+                    &mut blobs,
+                )?,
+                LayerFfn::Qwen3Moe(m) => self.catalog_exps(
+                    layer_u,
+                    m.n_expert,
+                    &m.gate_exps,
+                    &m.up_exps,
+                    &m.down_exps,
+                    &mut blobs,
+                )?,
+                LayerFfn::Dense(_) | LayerFfn::Phi2(_) => {}
+            }
+        }
+        Ok(DirectStore::new(blobs))
+    }
+
+    fn catalog_exps(
+        &self,
+        layer: u32,
+        n_expert: usize,
+        gate: &QuantMat,
+        up: &QuantMat,
+        down: &QuantMat,
+        into: &mut BTreeMap<ExpertKey, ExpertParts>,
+    ) -> Result<(), LlamaError> {
+        for e in 0..n_expert {
+            let expert = u32::try_from(e).map_err(|_| LlamaError::Shape("expert id".into()))?;
+            let parts = ExpertParts {
+                gate: self.part_bytes(gate, e)?,
+                up: self.part_bytes(up, e)?,
+                down: self.part_bytes(down, e)?,
+            };
+            let _prev = into.insert(ExpertKey::new(layer, expert), parts);
+        }
+        Ok(())
+    }
+
+    fn part_bytes(&self, m: &QuantMat, part: usize) -> Result<Vec<u8>, LlamaError> {
+        let (base, len) = self.mat_part_range(m, part)?;
+        let end = base.saturating_add(len);
+        match self.blob.get(base..end) {
+            Some(s) => Ok(s.to_vec()),
+            None => Err(LlamaError::Shape(m.name.clone())),
+        }
     }
 
     #[cfg(test)]
@@ -955,6 +1061,7 @@ impl Llama {
             scratch: s,
             pool,
             moe_trace,
+            expert_store,
         } = cache;
         let max_seq = *max_seq;
         moe_trace.token0 = u32::try_from(n0).unwrap_or(u32::MAX);
@@ -1162,24 +1269,52 @@ impl Llama {
                         self.gemm_into(&dense.down, n, &s.gate, &mut s.ffn_out, pool)?;
                     }
                     LayerFfn::Llama4Moe(moe) => {
-                        self.llama4_moe_into(moe.as_ref(), n, s, pool, moe_trace)?
+                        self.llama4_moe_into(moe.as_ref(), n, s, pool, moe_trace, expert_store)?
                     }
                     // The remaining expert FFNs still build their own row vectors.
                     // They are pooled but not allocation-free; see `Scratch`.
                     LayerFfn::LlamaMoe(moe) => {
-                        let rows = self.llama_moe_rows(moe.as_ref(), n, &s.x, pool, moe_trace)?;
+                        let rows = self.llama_moe_rows(
+                            moe.as_ref(),
+                            n,
+                            &s.x,
+                            pool,
+                            moe_trace,
+                            expert_store,
+                        )?;
                         copy_buf(&mut s.ffn_out, &rows);
                     }
                     LayerFfn::Qwen2Moe(moe) => {
-                        let rows = self.qwen2moe_rows(moe.as_ref(), n, &s.x, pool, moe_trace)?;
+                        let rows = self.qwen2moe_rows(
+                            moe.as_ref(),
+                            n,
+                            &s.x,
+                            pool,
+                            moe_trace,
+                            expert_store,
+                        )?;
                         copy_buf(&mut s.ffn_out, &rows);
                     }
                     LayerFfn::Qwen3Moe(moe) => {
-                        let rows = self.qwen3moe_rows(moe.as_ref(), n, &s.x, pool, moe_trace)?;
+                        let rows = self.qwen3moe_rows(
+                            moe.as_ref(),
+                            n,
+                            &s.x,
+                            pool,
+                            moe_trace,
+                            expert_store,
+                        )?;
                         copy_buf(&mut s.ffn_out, &rows);
                     }
                     LayerFfn::Qwen3Next(moe) => {
-                        let rows = self.qwen3next_rows(moe.as_ref(), n, &s.x, pool, moe_trace)?;
+                        let rows = self.qwen3next_rows(
+                            moe.as_ref(),
+                            n,
+                            &s.x,
+                            pool,
+                            moe_trace,
+                            expert_store,
+                        )?;
                         copy_buf(&mut s.ffn_out, &rows);
                     }
                     LayerFfn::Phi2(_) => return Err(LlamaError::Shape("phi2 ffn".into())),
@@ -4698,6 +4833,97 @@ impl Llama {
         Ok((m.start.saturating_add(part.saturating_mul(per)), per))
     }
 
+    fn gemv_part_bytes_into(
+        &self,
+        m: &QuantMat,
+        part: usize,
+        x: &[f32],
+        y: &mut Vec<f32>,
+        pool: &mut GemvPool,
+        bytes: Option<&[u8]>,
+    ) -> Result<(), LlamaError> {
+        match bytes {
+            Some(data) => {
+                fit(y, m.n_rows);
+                let y = y.as_mut_slice();
+                if gemv_rows(m.ty, m.n_cols, data, x, y)? {
+                    Ok(())
+                } else {
+                    Err(LlamaError::Type {
+                        tensor: m.name.clone(),
+                        ty: m.ty.to_i32(),
+                    })
+                }
+            }
+            None => self.gemv_part_into(m, part, x, y, pool),
+        }
+    }
+
+    fn gemv_part_vec(
+        &self,
+        m: &QuantMat,
+        part: usize,
+        x: &[f32],
+        pool: &mut GemvPool,
+        bytes: Option<&[u8]>,
+    ) -> Result<Vec<f32>, LlamaError> {
+        match bytes {
+            Some(data) => {
+                let mut y = Vec::new();
+                self.gemv_part_bytes_into(m, part, x, &mut y, pool, Some(data))?;
+                Ok(y)
+            }
+            None => self.gemv_part_mat(m, part, x, pool),
+        }
+    }
+
+    fn routed_swiglu(
+        &self,
+        exps: (&QuantMat, &QuantMat, &QuantMat),
+        expert: usize,
+        xt: &[f32],
+        pool: &mut GemvPool,
+        parts: Option<&ExpertParts>,
+    ) -> Result<Vec<f32>, LlamaError> {
+        let (gate, up, down) = exps;
+        let g = self.gemv_part_vec(gate, expert, xt, pool, parts.map(|p| p.gate.as_slice()))?;
+        let u = self.gemv_part_vec(up, expert, xt, pool, parts.map(|p| p.up.as_slice()))?;
+        let mut hh = g;
+        silu_inplace(&mut hh);
+        for (a, b) in hh.iter_mut().zip(u.iter()) {
+            *a *= *b;
+        }
+        self.gemv_part_vec(down, expert, &hh, pool, parts.map(|p| p.down.as_slice()))
+    }
+
+    fn take_expert(
+        store: &mut Option<LiveStore>,
+        layer: u32,
+        expert: usize,
+    ) -> Result<Option<ExpertParts>, LlamaError> {
+        let Some(store) = store.as_mut() else {
+            return Ok(None);
+        };
+        let e = u32::try_from(expert).map_err(|_| LlamaError::Shape("expert id".into()))?;
+        Ok(Some(store.acquire(ExpertKey::new(layer, e))?))
+    }
+
+    fn prefetch_copy_forward(store: &mut Option<LiveStore>, layer: u32, selected: &[usize]) {
+        let Some(store) = store.as_mut() else {
+            return;
+        };
+        let mut keys = Vec::new();
+        for e in selected {
+            if let Ok(ex) = u32::try_from(*e) {
+                keys.push(ExpertKey::new(layer.saturating_add(1), ex));
+            }
+        }
+        match store.prefetch(&keys) {
+            Ok(_n) => {}
+            Err(_e) => {}
+        }
+    }
+
     /// Official llama.cpp `build_moe_ffn` for `architecture=llama` + `n_expert>0`:
     /// softmax over all experts, then top-k; SwiGLU; weights after the expert
     /// with `norm_w` clamp `2^-14`. No shared expert (Mixtral-shaped).
@@ -4708,6 +4934,7 @@ impl Llama {
         x: &[f32],
         pool: &mut GemvPool,
         moe_trace: &mut MoeTraceBuf,
+        store: &mut Option<LiveStore>,
     ) -> Result<Vec<f32>, LlamaError> {
         let n_embd = moe.down_exps.n_rows;
         if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
@@ -4746,18 +4973,19 @@ impl Llama {
                 .get_mut(off..off.saturating_add(n_embd))
                 .ok_or_else(|| LlamaError::Shape("llama moe out".into()))?;
             for (e, w) in selected.iter().zip(weights.iter()) {
-                let g = self.gemv_part_mat(&moe.gate_exps, *e, xt, pool)?;
-                let u = self.gemv_part_mat(&moe.up_exps, *e, xt, pool)?;
-                let mut hh = g;
-                silu_inplace(&mut hh);
-                for (a, b) in hh.iter_mut().zip(u.iter()) {
-                    *a *= *b;
-                }
-                let y = self.gemv_part_mat(&moe.down_exps, *e, &hh, pool)?;
+                let parts = Self::take_expert(store, moe_trace.layer, *e)?;
+                let y = self.routed_swiglu(
+                    (&moe.gate_exps, &moe.up_exps, &moe.down_exps),
+                    *e,
+                    xt,
+                    pool,
+                    parts.as_ref(),
+                )?;
                 for (d, v) in dst.iter_mut().zip(y.iter()) {
                     *d += *v * *w;
                 }
             }
+            Self::prefetch_copy_forward(store, moe_trace.layer, &selected);
         }
         Ok(out)
     }
@@ -4773,6 +5001,7 @@ impl Llama {
         s: &mut Scratch,
         pool: &mut GemvPool,
         moe_trace: &mut MoeTraceBuf,
+        store: &mut Option<LiveStore>,
     ) -> Result<(), LlamaError> {
         let n_embd = moe.down_shexp.n_rows;
         if n_embd == 0 || !s.x.len().is_multiple_of(n_embd) {
@@ -4803,17 +5032,40 @@ impl Llama {
                 for (d, v) in s.moe.xw.iter_mut().zip(xt.iter()) {
                     *d = *v * w;
                 }
-                self.gemv_part_into(&moe.gate_exps, e, &s.moe.xw, &mut s.moe.g, pool)?;
-                self.gemv_part_into(&moe.up_exps, e, &s.moe.xw, &mut s.moe.u, pool)?;
+                let parts = Self::take_expert(store, moe_trace.layer, e)?;
+                self.gemv_part_bytes_into(
+                    &moe.gate_exps,
+                    e,
+                    &s.moe.xw,
+                    &mut s.moe.g,
+                    pool,
+                    parts.as_ref().map(|p| p.gate.as_slice()),
+                )?;
+                self.gemv_part_bytes_into(
+                    &moe.up_exps,
+                    e,
+                    &s.moe.xw,
+                    &mut s.moe.u,
+                    pool,
+                    parts.as_ref().map(|p| p.up.as_slice()),
+                )?;
                 silu_inplace(&mut s.moe.g);
                 for (a, b) in s.moe.g.iter_mut().zip(s.moe.u.iter()) {
                     *a *= *b;
                 }
-                self.gemv_part_into(&moe.down_exps, e, &s.moe.g, &mut s.moe.y, pool)?;
+                self.gemv_part_bytes_into(
+                    &moe.down_exps,
+                    e,
+                    &s.moe.g,
+                    &mut s.moe.y,
+                    pool,
+                    parts.as_ref().map(|p| p.down.as_slice()),
+                )?;
                 for (o, v) in s.moe.routed.iter_mut().zip(s.moe.y.iter()) {
                     *o += *v;
                 }
             }
+            Self::prefetch_copy_forward(store, moe_trace.layer, &s.moe.order);
             let off = t.saturating_mul(n_embd);
             let dst = s
                 .ffn_out
@@ -4835,6 +5087,7 @@ impl Llama {
         x: &[f32],
         pool: &mut GemvPool,
         moe_trace: &mut MoeTraceBuf,
+        store: &mut Option<LiveStore>,
     ) -> Result<Vec<f32>, LlamaError> {
         let n_embd = moe.down_shexp.n_rows;
         if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
@@ -4881,20 +5134,21 @@ impl Llama {
             let dst = out
                 .get_mut(off..off.saturating_add(n_embd))
                 .ok_or_else(|| LlamaError::Shape("qwen2moe out".into()))?;
-            for e in selected {
-                let w = probs.get(e).copied().unwrap_or(0.0);
-                let g = self.gemv_part_mat(&moe.gate_exps, e, xt, pool)?;
-                let u = self.gemv_part_mat(&moe.up_exps, e, xt, pool)?;
-                let mut hh = g;
-                silu_inplace(&mut hh);
-                for (a, b) in hh.iter_mut().zip(u.iter()) {
-                    *a *= *b;
-                }
-                let y = self.gemv_part_mat(&moe.down_exps, e, &hh, pool)?;
+            for e in &selected {
+                let w = probs.get(*e).copied().unwrap_or(0.0);
+                let parts = Self::take_expert(store, moe_trace.layer, *e)?;
+                let y = self.routed_swiglu(
+                    (&moe.gate_exps, &moe.up_exps, &moe.down_exps),
+                    *e,
+                    xt,
+                    pool,
+                    parts.as_ref(),
+                )?;
                 for (d, v) in dst.iter_mut().zip(y.iter()) {
                     *d += *v * w;
                 }
             }
+            Self::prefetch_copy_forward(store, moe_trace.layer, &selected);
             let srow = shexp
                 .get(off..off.saturating_add(n_embd))
                 .ok_or_else(|| LlamaError::Shape("qwen2moe shexp add".into()))?;
@@ -4914,6 +5168,7 @@ impl Llama {
         x: &[f32],
         pool: &mut GemvPool,
         moe_trace: &mut MoeTraceBuf,
+        store: &mut Option<LiveStore>,
     ) -> Result<Vec<f32>, LlamaError> {
         let n_embd = moe.down_exps.n_rows;
         if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
@@ -4952,18 +5207,19 @@ impl Llama {
                 .get_mut(off..off.saturating_add(n_embd))
                 .ok_or_else(|| LlamaError::Shape("qwen3moe out".into()))?;
             for (e, w) in selected.iter().zip(weights.iter()) {
-                let g = self.gemv_part_mat(&moe.gate_exps, *e, xt, pool)?;
-                let u = self.gemv_part_mat(&moe.up_exps, *e, xt, pool)?;
-                let mut hh = g;
-                silu_inplace(&mut hh);
-                for (a, b) in hh.iter_mut().zip(u.iter()) {
-                    *a *= *b;
-                }
-                let y = self.gemv_part_mat(&moe.down_exps, *e, &hh, pool)?;
+                let parts = Self::take_expert(store, moe_trace.layer, *e)?;
+                let y = self.routed_swiglu(
+                    (&moe.gate_exps, &moe.up_exps, &moe.down_exps),
+                    *e,
+                    xt,
+                    pool,
+                    parts.as_ref(),
+                )?;
                 for (d, v) in dst.iter_mut().zip(y.iter()) {
                     *d += *v * *w;
                 }
             }
+            Self::prefetch_copy_forward(store, moe_trace.layer, &selected);
         }
         Ok(out)
     }
@@ -4977,6 +5233,7 @@ impl Llama {
         x: &[f32],
         pool: &mut GemvPool,
         moe_trace: &mut MoeTraceBuf,
+        store: &mut Option<LiveStore>,
     ) -> Result<Vec<f32>, LlamaError> {
         let n_embd = moe.down_shexp.n_rows;
         if n_embd == 0 || !x.len().is_multiple_of(n_embd) {
@@ -5037,18 +5294,19 @@ impl Llama {
                 .get_mut(off..off.saturating_add(n_embd))
                 .ok_or_else(|| LlamaError::Shape("qwen3next out".into()))?;
             for (e, w) in selected.iter().zip(weights.iter()) {
-                let g = self.gemv_part_mat(&moe.gate_exps, *e, xt, pool)?;
-                let u = self.gemv_part_mat(&moe.up_exps, *e, xt, pool)?;
-                let mut hh = g;
-                silu_inplace(&mut hh);
-                for (a, b) in hh.iter_mut().zip(u.iter()) {
-                    *a *= *b;
-                }
-                let y = self.gemv_part_mat(&moe.down_exps, *e, &hh, pool)?;
+                let parts = Self::take_expert(store, moe_trace.layer, *e)?;
+                let y = self.routed_swiglu(
+                    (&moe.gate_exps, &moe.up_exps, &moe.down_exps),
+                    *e,
+                    xt,
+                    pool,
+                    parts.as_ref(),
+                )?;
                 for (d, v) in dst.iter_mut().zip(y.iter()) {
                     *d += *v * *w;
                 }
             }
+            Self::prefetch_copy_forward(store, moe_trace.layer, &selected);
             let srow = shexp
                 .get(off..off.saturating_add(n_embd))
                 .ok_or_else(|| LlamaError::Shape("qwen3next shexp add".into()))?;
@@ -9528,7 +9786,7 @@ mod tests {
         let mut store = expertvm::DirectStore::from_trace(&trace);
         for k in trace.keys() {
             let blob = expertvm::ExpertStore::acquire(&mut store, k).expect("blob");
-            assert_eq!(blob, vec![1]);
+            assert_eq!(blob.gate, vec![1]);
         }
         assert_eq!(expertvm::ExpertStore::misses(&store), 0);
         let table = expertvm::compare(&trace, 2, 8);
@@ -9552,6 +9810,134 @@ mod tests {
         let (text, trace) = greedy_generate_traced(&model, &tok, "ab", 2, None, 0).expect("traced");
         assert!(!text.is_empty());
         assert!(trace.events.is_empty());
+    }
+
+    fn store_prefill(model: &Llama, store: LiveStore, tokens: &[u32]) -> Vec<f32> {
+        let mut c = model.new_cache(8).expect("cache");
+        c.attach_expert_store(store);
+        model.prefill(&mut c, tokens).expect("store prefill")
+    }
+
+    #[test]
+    fn tiny_qwen3moe_expert_store_logits_match_blob() {
+        let bytes = tiny_qwen3moe_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let model = Llama::from_gguf(g).expect("model");
+        let tokens = [3u32];
+        let blob = {
+            let mut c = model.new_cache(8).expect("c");
+            model.prefill(&mut c, &tokens).expect("blob")
+        };
+        let direct = model.expert_direct_store().expect("catalog");
+        assert!(!direct.is_empty());
+        let via_direct = store_prefill(&model, LiveStore::Direct(direct.clone()), &tokens);
+        assert_eq!(
+            blob, via_direct,
+            "DirectStore GEMV must match the blob path"
+        );
+        let n = model.expert_direct_store().expect("catalog2").len().max(1);
+        let cached = expertvm::CachedStore::new(model.expert_direct_store().expect("c3"), n)
+            .expect("cached");
+        let via_cached = store_prefill(&model, LiveStore::Cached(cached), &tokens);
+        assert_eq!(
+            blob, via_cached,
+            "CachedStore copies must match DirectStore"
+        );
+        let gpu = expertvm::SimulatedGpuStore::new(
+            model.expert_direct_store().expect("c4"),
+            n,
+            expertvm::HardwareProfile::example_h100_sxm(),
+            4096,
+        )
+        .expect("gpu");
+        let mut c = model.new_cache(8).expect("cg");
+        c.attach_expert_store(LiveStore::simulated(gpu));
+        let via_gpu = model.prefill(&mut c, &tokens).expect("gpu prefill");
+        assert_eq!(blob, via_gpu, "SimulatedGpuStore CPU copies must match");
+        let mut store = c.take_expert_store().expect("store");
+        let score = store.score().expect("score");
+        assert!(score.is_some());
+        assert!(c.expert_store_metrics().is_none());
+    }
+
+    #[test]
+    fn tiny_llama_moe_direct_store_is_identity() {
+        let bytes = tiny_llama_moe_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let model = Llama::from_gguf(g).expect("model");
+        let tokens = [3u32];
+        let blob = {
+            let mut c = model.new_cache(8).expect("c");
+            model.prefill(&mut c, &tokens).expect("blob")
+        };
+        let via = store_prefill(
+            &model,
+            LiveStore::Direct(model.expert_direct_store().expect("d")),
+            &tokens,
+        );
+        assert_eq!(blob, via);
+    }
+
+    #[test]
+    fn tiny_qwen2moe_direct_store_is_identity() {
+        let bytes = tiny_qwen2moe_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let model = Llama::from_gguf(g).expect("model");
+        let tokens = [3u32];
+        let blob = {
+            let mut c = model.new_cache(8).expect("c");
+            model.prefill(&mut c, &tokens).expect("blob")
+        };
+        let via = store_prefill(
+            &model,
+            LiveStore::Direct(model.expert_direct_store().expect("d")),
+            &tokens,
+        );
+        assert_eq!(blob, via);
+    }
+
+    #[test]
+    fn tiny_llama4_direct_store_is_identity() {
+        let bytes = tiny_llama4_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let model = Llama::from_gguf(g).expect("model");
+        let tokens = [3u32];
+        let blob = {
+            let mut c = model.new_cache(8).expect("c");
+            model.prefill(&mut c, &tokens).expect("blob")
+        };
+        let via = store_prefill(
+            &model,
+            LiveStore::Direct(model.expert_direct_store().expect("d")),
+            &tokens,
+        );
+        assert_eq!(blob, via);
+    }
+
+    #[test]
+    fn tiny_qwen3next_direct_store_is_identity() {
+        let bytes = tiny_qwen3next_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let model = Llama::from_gguf(g).expect("model");
+        let tokens = [3u32];
+        let blob = {
+            let mut c = model.new_cache(8).expect("c");
+            model.prefill(&mut c, &tokens).expect("blob")
+        };
+        let via = store_prefill(
+            &model,
+            LiveStore::Direct(model.expert_direct_store().expect("d")),
+            &tokens,
+        );
+        assert_eq!(blob, via);
+    }
+
+    #[test]
+    fn dense_llama_expert_store_is_empty_catalog() {
+        let bytes = tiny_llama_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let model = Llama::from_gguf(g).expect("model");
+        assert!(model.expert_direct_store().expect("d").is_empty());
     }
 
     #[test]

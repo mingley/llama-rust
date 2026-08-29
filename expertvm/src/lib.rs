@@ -19,6 +19,7 @@ pub use access::{ExpertAccess, ExpertKey, Trace};
 pub use analyze::{analyze, TraceStats};
 pub use bench::{adversarial_suite, report, BenchReport};
 pub use error::Error;
+pub use gpu_sim::{HardwareProfile, Score};
 pub use gpu_store::SimulatedGpuStore;
 pub use live::LiveStore;
 pub use planner::{copy_forward, hot_keys, plan_window, window_keys, Plan};

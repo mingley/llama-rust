@@ -7,8 +7,29 @@ Work lands on `main`. No PRs.
 
 `llama-rust` is the correctness laboratory (GGUF math, oracle + llama.cpp
 greedy). `expertvm` is expert residency / virtual memory. `gpu-sim` is the
-GPU-systems VM (exact invariants, profiled timing). Traces are real JSONL
-from the decoder; hit rates are measured by `expertvm replay`.
+GPU-systems VM (exact invariants, profiled timing). `infer-bench` is
+serving-shaped measurement over those traces. Traces are real JSONL
+from the decoder; hit rates are measured by `expertvm replay`. Do not
+invent `$/M tokens`.
+
+## Shipped 2026-08-29 — ExpertStore decode seam + Session + infer-bench
+
+- Decode GEMV for routed experts can go through `LiveStore`. Default
+  `KvCache.expert_store = None` keeps the blob path (allocation-free
+  dense decode unchanged). `Llama::expert_direct_store` catalogs every
+  MoE layer’s gate/up/down part bytes. Identity: DirectStore, CachedStore
+  (full slots), and SimulatedGpuStore bit-match blob logits on writer
+  tinies (Qwen3MoE, llama MoE, Qwen2MoE, Llama4, Qwen3Next). Shared
+  experts stay on the blob. After routing, copy-forward prefetch of
+  `(layer+1, same experts)`.
+- Layered API: `Model::from_bytes` / `from_gguf` / `encode` / `session`.
+  `Session::{prefill, decode, attach_expert_store, expert_metrics}`.
+  Example: `cargo run -p llama-rust --example session`.
+- Workspace crate [`infer-bench/`](infer-bench/): `adversarial | trace |
+  workload`. Same numbers as `expertvm bench`. Score is
+  `wall_ns` / `hbm_peak` / `bytes_moved` / optional `ns_per_token`.
+- `expertvm` CLI also has `bench` and `workload`. `pin_hot` NVLink-replicates
+  to GPU1 when the profile has `n_gpus >= 2`.
 
 ## Shipped 2026-08-28 — expertvm + gpu-sim + MoE traces
 
@@ -33,7 +54,7 @@ item below.
 Repo: https://github.com/mingley/llama-rust
 Local: `~/dev/llama-rust-perf`
 
-- `forbid(unsafe_code)` without `simd`, no llama.cpp/FFI, `Cargo.lock` has no crates.io packages (workspace path crates `gpu-sim` / `expertvm` only).
+- `forbid(unsafe_code)` without `simd`, no llama.cpp/FFI, `Cargo.lock` has no crates.io packages (workspace path crates `gpu-sim` / `expertvm` / `infer-bench` only).
 - GGUF v3: F32, F16, BF16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q8_1, Q1_0, Q2_0, TQ1_0, TQ2_0, Q2_K, Q3_K, Q4_K, Q5_K, Q6_K, Q8_K, IQ1_M, IQ1_S, IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S, IQ4_NL, IQ4_XS, MXFP4, NVFP4. Kernels read on-disk bytes (no private f32-scale copy).
 - F16 is IEEE binary16 (`GGML_TYPE_F16` = 1). Writer-built tiny uses F16 for 2-D weights (`token_embd`, `output`, attn/ffn). 1-D attn/ffn/`output_norm` and optional `attn_{q,k,v}.bias` may be F16 or F32; on-disk F16 stays IEEE binary16 and is applied via the same `ggml_fp16_to_fp32` scalar walk as 2-D F16. Writer-built tiny can emit F16 1-D norms (and F16 QKV bias). Load/GEMV/GEMM/embed logits match an independent scalar of the same ggml/Llama math as the F32-norm twin. A 1-D F16 tensor that is not a norm/bias this crate applies fails with a named error. Not a new dtype. No tok/s.
 - BF16 is ggml bfloat16 (`GGML_TYPE_BF16` = 30). Writer-built tiny uses BF16 for 2-D weights (`token_embd`, `output`, attn/ffn); 1-D norms stay F32. Load/GEMV/GEMM/embed logits match an independent scalar of the same ggml `dequantize_row_bf16` / `GGML_BF16_TO_FP32` math (IEEE binary16-adjacent: 8-bit exp, high-16 of f32). No tok/s.
@@ -97,7 +118,10 @@ Local: `~/dev/llama-rust-perf`
 
 ## In progress
 
-Nothing. This slice is STATUS item 2 (official phi2). Metal-in-crate was skipped: this Linux VM cannot compile or run Metal.
+PLAN.md Phase 0 leftovers: Q4_0 SIMD, oracle-owned f16, Expert FFN on
+Scratch for llama/qwen2moe/qwen3moe/qwen3next, a second real-model
+fixture when one is on disk. Phase 2 `TieredStore`. Phase 3 more
+adversarial shapes (batch, prefill-heavy) without inventing `$/M tokens`.
 
 ## Still needed (production / researcher bar)
 
@@ -119,6 +143,13 @@ cargo test --release --lib
 cargo clippy --all-targets --all-features -- -D warnings
 ./target/release/gguf_gemv infer models/qwen2.5-3b-instruct-q4_k_m.gguf --prompt ab --n-predict 2
 ./target/release/gguf_gemv serve tiny-llama.gguf
+./target/release/expertvm bench adversarial --capacity 2
+./target/release/infer-bench trace tests/traces/cycling.jsonl --capacity 2
+cargo run -p llama-rust --example session
 ```
 
-Next code change should be item 1 (Metal-in-crate) on a machine that can compile Metal, or the remaining named item-2 hole (another official family still in `LLM_ARCH_NAMES` that is not qwen3vlmoe, not mixtral, and not linear-attn, `bloom`). Do not add crates.io runtime deps or `unsafe`. Do not start Metal-in-crate on Linux. Do not invent a `block_iq4_nl_4_4` dequant. Do not invent an arch. Do not list mixtral or qwen3vlmoe as an accepted arch.
+Next code change is PLAN Phase 0 leftovers (Q4_0 SIMD, oracle-owned f16,
+Expert FFN on Scratch) and Phase 2 `TieredStore`. Do not add crates.io
+runtime deps. Do not start Metal-in-crate on Linux. Do not invent a
+`block_iq4_nl_4_4` dequant. Do not invent an arch. Do not list mixtral
+or qwen3vlmoe as an accepted arch. Do not invent `$/M tokens`.

@@ -1,5 +1,5 @@
 [workspace]
-members = ["langtax", "gpu-sim", "expertvm"]
+members = ["langtax", "gpu-sim", "expertvm", "infer-bench"]
 resolver = "2"
 
 [workspace.lints.rust]

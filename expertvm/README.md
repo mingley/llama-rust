@@ -31,6 +31,9 @@ llama-rust routers  →  ExpertAccess JSONL
                          │
                          ▼
                    expertvm sim         gpu-sim wall time under a profile
+                         │
+                         ▼
+                   expertvm bench       replay table + sim score
 ```
 
 ## Library
@@ -46,18 +49,33 @@ assert!(table.iter().any(|r| r.policy == Policy::Oracle && r.hits >= lru.hits));
 let _ = stats;
 ```
 
-`DirectStore` is the identity backend (every acquire hits, bytes unchanged).
-`CachedStore` is a bounded LRU with **leases** that pin in-use experts so
-they cannot be evicted. `sim_replay` runs the same policy through
-[`gpu-sim`](../gpu-sim): H2D on miss, grouped GEMM on acquire, stream-ordered
-free on eviction. Timing comes from a `HardwareProfile`, not from the policy.
+One cache slot is one routed expert: [`ExpertParts`](crate::ExpertParts)
+holds `gate` + `up` + `down` bytes.
+
+| Store | Meaning |
+| --- | --- |
+| `DirectStore` | Identity catalog. Every acquire hits. Bytes unchanged. |
+| `CachedStore` | Bounded LRU with **leases** so in-use experts cannot be evicted. `prefetch(keys)` skips unknown keys. `pin_hot` / `is_resident` / `take_victim`. |
+| `SimulatedGpuStore` | CachedStore + [`gpu-sim`](../gpu-sim). H2D on a copy stream, GEMM waits that event. Prefetch is H2D without GEMM. `pin_hot` NVLink-replicates to GPU1 when `n_gpus >= 2`. `score()` is wall/HBM/bytes/`ns_per_token`. |
+| `LiveStore` | Enum over the three. Decode attaches this. |
+
+`sim_replay` runs a policy through gpu-sim: H2D on miss, grouped GEMM on
+acquire, stream-ordered free on eviction. Timing comes from a
+`HardwareProfile`, not from the policy. Planner helpers: `copy_forward`,
+`hot_keys`, `plan_window`.
+
+Decode identity: `Llama::expert_direct_store` + `KvCache::attach_expert_store`
+must bit-match the blob GEMV path. Shared experts stay on the blob.
 
 ## CLI
 
 ```text
-expertvm analyze trace.jsonl
-expertvm replay trace.jsonl --capacity 8
-expertvm sim    trace.jsonl --capacity 8 --expert-bytes 188743680 --profile h100
+expertvm analyze  trace.jsonl
+expertvm replay   trace.jsonl --capacity 8
+expertvm sim      trace.jsonl --capacity 8 --expert-bytes 188743680 --profile h100
+expertvm bench    trace.jsonl --capacity 8 --profile h100
+expertvm bench    adversarial --tokens 64 --experts 16 --capacity 2 --profile cheap
+expertvm workload thrash --tokens 64 --experts 16 --capacity 2
 ```
 
 Traces are produced by `gguf_gemv trace`:

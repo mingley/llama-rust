@@ -1,0 +1,193 @@
+//! `infer-bench adversarial | trace` — measured hit rates and sim scores.
+
+use infer_bench::{adversarial_suite, report, HardwareProfile, Trace, Workload};
+use std::env;
+use std::fs::File;
+use std::io::{Read, Write};
+use std::process::ExitCode;
+
+const USAGE: &str = "\
+usage: infer-bench <command> [args]
+  adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
+  trace <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N]
+  workload <uniform|hotset|shifting-hotset|thrash> [--tokens N] [--experts N] [--capacity N]
+
+profiles: h100 (default), h200, 8xh100, cheap
+";
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            let mut err = std::io::stderr();
+            let _w = writeln!(err, "{e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<(), String> {
+    let mut args = env::args().skip(1);
+    let cmd = args.next().ok_or_else(|| USAGE.trim().to_string())?;
+    match cmd.as_str() {
+        "help" | "--help" | "-h" => {
+            let mut out = std::io::stdout();
+            out.write_all(USAGE.as_bytes()).map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        "adversarial" => {
+            let cfg = parse_flags(args)?;
+            let profile = load_profile(&cfg.profile)?;
+            let rows = adversarial_suite(cfg.tokens, cfg.experts, cfg.capacity, profile)
+                .map_err(|e| e.to_string())?;
+            for row in rows {
+                print!("{}", row.render());
+            }
+            Ok(())
+        }
+        "trace" => {
+            let cfg = parse_flags(args)?;
+            let path = cfg.path.ok_or("trace <trace.jsonl>")?;
+            let trace = load_trace(&path)?;
+            let profile = load_profile(&cfg.profile)?;
+            let row = report(
+                &path,
+                &trace,
+                cfg.capacity,
+                8,
+                Some(profile),
+                cfg.expert_bytes,
+            )
+            .map_err(|e| e.to_string())?;
+            print!("{}", row.render());
+            Ok(())
+        }
+        "workload" => {
+            let cfg = parse_flags(args)?;
+            let name = cfg.path.ok_or("workload <name>")?;
+            let kind = parse_workload(&name)?;
+            let trace = infer_bench::generate(kind, cfg.tokens, cfg.experts, 1, 1);
+            let profile = load_profile(&cfg.profile)?;
+            let row = report(
+                kind.name(),
+                &trace,
+                cfg.capacity,
+                8,
+                Some(profile),
+                cfg.expert_bytes,
+            )
+            .map_err(|e| e.to_string())?;
+            print!("{}", row.render());
+            Ok(())
+        }
+        other => Err(format!("{USAGE}got {other}")),
+    }
+}
+
+struct Cfg {
+    path: Option<String>,
+    capacity: usize,
+    expert_bytes: u64,
+    profile: String,
+    tokens: u32,
+    experts: u32,
+}
+
+fn parse_flags<I>(args: I) -> Result<Cfg, String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut path = None;
+    let mut capacity = 8usize;
+    let mut expert_bytes = 4096u64;
+    let mut profile = "h100".to_string();
+    let mut tokens = 64u32;
+    let mut experts = 16u32;
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        let (key, inline) = match arg.split_once('=') {
+            Some((k, v)) => (k.to_string(), Some(v.to_string())),
+            None => (arg, None),
+        };
+        match key.as_str() {
+            "--capacity" | "-c" => {
+                capacity = parse_usize("capacity", &value("capacity", inline, &mut it)?)?
+            }
+            "--expert-bytes" => {
+                expert_bytes = parse_u64("expert-bytes", &value("expert-bytes", inline, &mut it)?)?
+            }
+            "--profile" => profile = value("profile", inline, &mut it)?,
+            "--tokens" => tokens = parse_u32("tokens", &value("tokens", inline, &mut it)?)?,
+            "--experts" => experts = parse_u32("experts", &value("experts", inline, &mut it)?)?,
+            flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
+            other => {
+                if path.is_some() {
+                    return Err(format!("unexpected argument {other}\n{USAGE}"));
+                }
+                path = Some(other.to_string());
+            }
+        }
+    }
+    Ok(Cfg {
+        path,
+        capacity,
+        expert_bytes,
+        profile,
+        tokens,
+        experts,
+    })
+}
+
+fn value<I>(name: &str, inline: Option<String>, it: &mut I) -> Result<String, String>
+where
+    I: Iterator<Item = String>,
+{
+    if let Some(v) = inline {
+        return Ok(v);
+    }
+    it.next().ok_or_else(|| format!("missing --{name} value"))
+}
+
+fn parse_usize(name: &str, s: &str) -> Result<usize, String> {
+    s.parse::<usize>()
+        .map_err(|_| format!("invalid {name} {s:?}"))
+}
+
+fn parse_u64(name: &str, s: &str) -> Result<u64, String> {
+    s.parse::<u64>()
+        .map_err(|_| format!("invalid {name} {s:?}"))
+}
+
+fn parse_u32(name: &str, s: &str) -> Result<u32, String> {
+    s.parse::<u32>()
+        .map_err(|_| format!("invalid {name} {s:?}"))
+}
+
+fn parse_workload(name: &str) -> Result<Workload, String> {
+    match name {
+        "uniform" => Ok(Workload::Uniform),
+        "hotset" => Ok(Workload::Hotset),
+        "shifting-hotset" => Ok(Workload::ShiftingHotset),
+        "thrash" => Ok(Workload::Thrash),
+        other => Err(format!("unknown workload {other}")),
+    }
+}
+
+fn load_trace(path: &str) -> Result<Trace, String> {
+    let mut f = File::open(path).map_err(|e| format!("{path}: {e}"))?;
+    let mut buf = String::new();
+    let _n = f
+        .read_to_string(&mut buf)
+        .map_err(|e| format!("{path}: {e}"))?;
+    Trace::parse(&buf).map_err(|e| e.to_string())
+}
+
+fn load_profile(name: &str) -> Result<HardwareProfile, String> {
+    match name {
+        "h100" => Ok(HardwareProfile::example_h100_sxm()),
+        "h200" => Ok(HardwareProfile::example_h200_sxm()),
+        "8xh100" => Ok(HardwareProfile::example_8xh100_nvlink()),
+        "cheap" => Ok(HardwareProfile::example_cheap_48gb()),
+        other => Err(format!("unknown profile {other}")),
+    }
+}

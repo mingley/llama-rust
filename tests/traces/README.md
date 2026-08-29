@@ -18,4 +18,7 @@ gguf_gemv write-tiny-qwen3moe tiny-qwen3moe.gguf
 gguf_gemv trace tiny-qwen3moe.gguf -p ab -n 8 --out tests/traces/tiny-qwen3moe.jsonl
 expertvm replay tests/traces/tiny-qwen3moe.jsonl --capacity 2
 expertvm replay tests/traces/cycling.jsonl --capacity 2
+expertvm bench adversarial --capacity 2 --profile cheap
+infer-bench trace tests/traces/cycling.jsonl --capacity 2 --profile h100
+infer-bench adversarial --capacity 2 --tokens 64 --experts 16
 ```

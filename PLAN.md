@@ -257,12 +257,12 @@ The reference engine has to be something researchers will actually load.
 - [x] Real-model llama.cpp differential (fail-loud if env is set)
 - [x] SIMD fast path + persistent pool landed on `main`
 - [x] Chat templates + special-token split + Unicode BPE pre-tokenizer
-- [ ] Layered public API (`Model`/`Session`), examples, crates.io metadata
-- [ ] README/STATUS rewritten for “verifiable reference,” not “no tok/s curiosity”
+- [x] Layered public API (`Model`/`Session`), examples, crates.io metadata
+- [x] README/STATUS rewritten for “verifiable reference,” not “no tok/s curiosity”
 - [ ] More than one real-model fixture (NEOX Qwen + NORM Llama control)
 - [ ] Oracle-owned f16 conversion (oracle must not call production `fp16`)
 - [ ] Q4_0 SIMD (loadable; still scalar)
-- [ ] Expert FFN on Scratch (pool already, alloc-free not yet)
+- [ ] Expert FFN on Scratch (Llama4 is on Scratch; llama/qwen2moe/qwen3moe/qwen3next still build row vectors)
 
 Push each of these to `main` as they land. Do not open PRs.
 
@@ -352,7 +352,12 @@ Backends:
 
 `DirectStore` must keep every existing oracle / real-model test green.
 The dense/common weights stay resident. Only expert tensors go through
-the store.
+the store. Decode wiring is on `main`: `KvCache::attach_expert_store`
+takes a `LiveStore::{Direct, Cached, Simulated}`. Default `None` keeps
+the blob GEMV path (allocation-free tests unchanged). Identity tests
+cover Qwen3MoE (Direct + Cached + SimulatedGpuStore), llama MoE,
+Qwen2MoE, Llama4, and Qwen3Next. `TieredStore` and mmap `WeightStorage`
+are still open.
 
 Artificially constrain the cache (e.g. 64 experts total, 8 resident)
 and execute a real trace.
@@ -502,17 +507,23 @@ model, do not celebrate the sim.
 
 1. [x] This document + the visible share extract.
 2. [x] Complete share-API extract (transcript, searches, sources, raw JSON).
-3. Finish landing leftover public-API work onto `main` (no new PRs).
-4. Rewrite README/STATUS to the verifiable-reference positioning, with
+3. [x] Layered `Model` / `Session` API and crates.io metadata on `main`.
+4. [x] README/STATUS rewritten to the verifiable-reference positioning, with
    this plan linked.
 5. [x] MoE `ExpertAccess` trace emission behind a test/bin flag
    (`gguf_gemv trace`, `KvCache::enable_moe_trace`, identity vs untraced greedy).
 6. [x] `ExpertStore` trait + `DirectStore` (identity) + `CachedStore` (leases)
-   in `expertvm`. Decoder still reads the GGUF blob; the store is the
-   residency lab fed by traces. Wiring `gemv_part` through the store is
-   the next decode seam.
+   + `SimulatedGpuStore` in `expertvm`. Decode's expert inner products
+   `acquire` then GEMV `ExpertParts`. Direct/Cached/Simulated bit-match
+   the blob path on writer tinies. Shared experts stay on the blob.
+   Prefetch is copy-forward `(layer+1, same experts)`.
 7. [x] `gpu-sim` workspace crate: streams, events, HBM, memcpy, leases,
    virtual clock. No CUDA. `expertvm sim` is the first app.
+8. [x] `infer-bench` crate: adversarial workloads + trace replay scores.
+   Dual score is semantic (`Ok` vs illegal GPU state) and performance
+   (`wall_ns`, `hbm_peak`, `bytes_moved`, optional `ns_per_token`).
+   No invented `$/M tokens`.
+9. [x] `Model` / `Session` layered API with `attach_expert_store`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
