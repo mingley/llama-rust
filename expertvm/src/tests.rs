@@ -1559,6 +1559,61 @@ fn simulated_gpu_store_evicts_and_scores() {
 }
 
 #[test]
+fn simulated_gpu_store_managed_prefetches_on_miss() {
+    let t = cycling_trace();
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::with_managed(inner, 2, HardwareProfile::example_h100_sxm(), 4096)
+            .expect("gpu");
+    assert!(gpu.uses_managed());
+    assert!(gpu.staging_is_pinned());
+    let k0 = ExpertKey::new(0, 0);
+    let parts = gpu.acquire(k0).expect("acq");
+    assert_eq!(parts.gate, vec![1]);
+    let score = gpu.score().expect("score");
+    assert!(score.bytes_moved >= 4096);
+    assert!(score.hbm_peak >= 4096);
+    gpu.evict(k0).expect("evict");
+    assert!(!gpu.is_resident(k0));
+    assert_eq!(gpu.phase(k0), ExpertPhase::Cold);
+}
+
+#[test]
+fn simulated_gpu_store_managed_pin_replicates_by_prefetch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::with_managed(inner, 2, HardwareProfile::example_8xh100_nvlink(), 4096)
+            .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    gpu.pin_hot(&[k0]).expect("pin");
+    let _p = gpu.acquire(k0).expect("hit");
+    let score = gpu.score().expect("score");
+    assert!(score.bytes_moved >= 8192, "{}", score.bytes_moved);
+}
+
+#[test]
+fn simulated_gpu_store_managed_migrate_drops_source_copy() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::with_managed(inner, 1, HardwareProfile::example_2node_rdma(), 4096)
+            .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    let _p = gpu.acquire(k0).expect("acq");
+    assert_eq!(gpu.device_of(k0), Some(DeviceId(0)));
+    gpu.migrate(k0, DeviceId(1)).expect("mig");
+    assert_eq!(gpu.device_of(k0), Some(DeviceId(1)));
+    let _p = gpu.acquire(k0).expect("gemm dest");
+    let score = gpu.score().expect("score");
+    assert!(score.bytes_moved >= 8192, "{}", score.bytes_moved);
+}
+
+#[test]
 fn simulated_gpu_store_pin_hot_replicates_on_nvlink() {
     let t = Trace {
         events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],

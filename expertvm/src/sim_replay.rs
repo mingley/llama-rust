@@ -142,7 +142,8 @@ pub struct SimCfg {
     /// keep the page on that GPU. `--place remote` GEMMs on GPU0 without a
     /// dest HBM copy. `--place replicas` uses
     /// that dest prefetch; dest eviction is `drop_managed_copy`.
-    /// Hits/misses match H2D. [`crate::SimulatedGpuStore`] stays on pinned H2D.
+    /// Hits/misses match H2D. [`crate::SimulatedGpuStore::new`] stays on pinned
+    /// H2D; [`crate::SimulatedGpuStore::with_managed`] uses this path.
     pub managed: bool,
     /// `va_acquire` on miss (reuse an unmapped VA, else reserve+map), then
     /// pinned H2D. Evict [`gpu_sim::Sim::va_release`]s so the pointer stays.

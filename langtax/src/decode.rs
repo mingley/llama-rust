@@ -9996,6 +9996,20 @@ mod tests {
         c.attach_expert_store(LiveStore::simulated(gpu));
         let via_gpu = model.prefill(&mut c, &tokens).expect("gpu prefill");
         assert_eq!(blob, via_gpu, "SimulatedGpuStore CPU copies must match");
+        let gpu_um = expertvm::SimulatedGpuStore::with_managed(
+            model.expert_direct_store().expect("c5"),
+            n,
+            expertvm::HardwareProfile::example_h100_sxm(),
+            4096,
+        )
+        .expect("gpu um");
+        let mut c_um = model.new_cache(8).expect("cgum");
+        c_um.attach_expert_store(LiveStore::simulated(gpu_um));
+        let via_um = model.prefill(&mut c_um, &tokens).expect("gpu um prefill");
+        assert_eq!(
+            blob, via_um,
+            "managed SimulatedGpuStore CPU copies must match"
+        );
         let tier = expertvm::TieredStore::memory(model.expert_direct_store().expect("t"), n)
             .expect("tier");
         let via_tier = store_prefill(&model, LiveStore::tiered(tier), &tokens);

@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — SimulatedGpuStore managed miss path
+
+`SimulatedGpuStore::with_managed` places experts with `cudaMallocManaged`
++ ReadMostly + PreferredLocation + prefetch. Default `new` stays pinned
+H2D (decode identity). Pin/migrate prefetch dest copies and drop extras
+with `drop_managed_copy`. Evict is `free_sync`. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — cudaGraphClone recursively clones child graphs
 
 `Sim::clone_graph` walks child-graph nodes and clones each unique graph

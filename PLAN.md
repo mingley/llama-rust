@@ -365,7 +365,7 @@ Backends:
 | `DirectStore` | today’s blob range; bit-identical to current decode |
 | `CachedStore` | bounded “fast memory” of N experts; rest fault in |
 | `TieredStore` | fast RAM / slow RAM / disk |
-| `SimulatedGpuStore` | fake HBM capacity, PCIe/NVLink bandwidth, DMA concurrency |
+| `SimulatedGpuStore` | fake HBM capacity, PCIe/NVLink bandwidth, DMA concurrency; `with_managed` is UM prefetch |
 
 `DirectStore` must keep every existing oracle / real-model test green.
 The dense/common weights stay resident. Only expert tensors go through

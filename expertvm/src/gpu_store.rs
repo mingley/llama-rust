@@ -1,11 +1,12 @@
-//! [`ExpertStore`] backed by [`gpu_sim`]: H2D on miss, GEMM on acquire, D2D replica.
+//! [`ExpertStore`] backed by [`gpu_sim`]: H2D or managed prefetch on miss, GEMM on acquire.
 
 use crate::access::ExpertKey;
 use crate::error::Error;
 use crate::place::home_gpu;
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
-    AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelKind, Sim, StreamId,
+    AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelKind, MemAdvise, Sim,
+    StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -17,7 +18,7 @@ struct GpuPage {
     ready: Option<EventId>,
 }
 
-/// Bounded cache whose misses pay a simulated pinned H2D onto the striped home GPU.
+/// Bounded cache whose misses pay pinned H2D or managed prefetch onto the striped home GPU.
 pub struct SimulatedGpuStore {
     cache: CachedStore,
     sim: Sim,
@@ -33,6 +34,8 @@ pub struct SimulatedGpuStore {
     staging: AllocId,
     graphs: BTreeMap<AllocId, GraphId>,
     graph_launches: u64,
+    /// `cudaMallocManaged` + ReadMostly + PreferredLocation + prefetch on miss.
+    managed: bool,
 }
 
 impl SimulatedGpuStore {
@@ -61,7 +64,29 @@ impl SimulatedGpuStore {
             staging,
             graphs: BTreeMap::new(),
             graph_launches: 0,
+            managed: false,
         })
+    }
+
+    /// Same as [`Self::new`], but miss pages are `cudaMallocManaged`.
+    ///
+    /// ReadMostly + PreferredLocation on the striped home, then prefetch
+    /// (no pinned H2D). Decode identity stays on [`Self::new`].
+    pub fn with_managed(
+        inner: DirectStore,
+        slots: usize,
+        profile: HardwareProfile,
+        bytes_per_expert: u64,
+    ) -> Result<Self, Error> {
+        let mut store = Self::new(inner, slots, profile, bytes_per_expert)?;
+        store.managed = true;
+        Ok(store)
+    }
+
+    /// Whether miss pages use unified memory (`cudaMallocManaged`).
+    #[must_use]
+    pub fn uses_managed(&self) -> bool {
+        self.managed
     }
 
     /// Page-locked staging buffer from construction; does not count toward HBM.
@@ -98,7 +123,7 @@ impl SimulatedGpuStore {
         Ok(self.sim.cancel_stream(self.device, self.copy)?)
     }
 
-    /// Fault `keys` in (H2D, no GEMM). Unknown catalog keys are skipped.
+    /// Fault `keys` in (H2D or managed prefetch, no GEMM). Unknown catalog keys are skipped.
     pub fn prefetch(&mut self, keys: &[ExpertKey]) -> Result<u64, Error> {
         self.sweep_evicts();
         let n = self.cache.prefetch(keys)?;
@@ -129,7 +154,7 @@ impl SimulatedGpuStore {
         Ok(())
     }
 
-    /// Async D2D move onto `dst`. Compute on `dst` waits the copy-stream event.
+    /// Move `key` onto `dst`. Pinned pages D2D; managed pages prefetch then drop the source copy.
     ///
     /// Source HBM is released after the copy is stream-ordered; destination HBM
     /// is charged by the peer memcpy. Dest compute can overlap other GPUs.
@@ -154,6 +179,9 @@ impl SimulatedGpuStore {
         if let Some(g) = self.graphs.remove(&id) {
             self.sim.destroy_graph(g)?;
         }
+        if self.managed {
+            return self.migrate_managed(key, id, src, dst);
+        }
         let already = self.sim.is_resident(id, dst)?;
         if !already {
             let _c =
@@ -175,6 +203,30 @@ impl SimulatedGpuStore {
         if let Some(page) = self.pages.get_mut(&key) {
             page.device = dst;
             page.ready = Some(ev_copy);
+        }
+        Ok(())
+    }
+
+    /// Prefetch `dst` (ReadMostly keeps extras) then drop the source copy.
+    fn migrate_managed(
+        &mut self,
+        key: ExpertKey,
+        id: AllocId,
+        src: DeviceId,
+        dst: DeviceId,
+    ) -> Result<(), Error> {
+        self.sim.synchronize_stream(src, self.compute)?;
+        if !self.sim.is_resident(id, dst)? {
+            let _p = self.sim.prefetch(dst, id, self.copy)?;
+            self.sim.synchronize_stream(dst, self.copy)?;
+        }
+        if self.sim.is_resident(id, src)? {
+            self.sim.drop_managed_copy(id, src)?;
+        }
+        let _gone = self.replicas.remove(&key);
+        if let Some(page) = self.pages.get_mut(&key) {
+            page.device = dst;
+            page.ready = None;
         }
         Ok(())
     }
@@ -248,13 +300,8 @@ impl SimulatedGpuStore {
         if self.pages.contains_key(&key) {
             return Ok(());
         }
-        let bytes = self.bytes_per_expert;
         let d = self.home(key);
-        // Stream-ordered `cudaMallocAsync`. `malloc` (`cudaMalloc`) would
-        // device-sync this GPU on every miss and serialize with GEMM.
-        let id = self.sim.alloc(d, bytes, self.copy)?;
-        // Pinned DMA. Pageable `memcpy_host_to_device` would wait this stream.
-        let _c = self.sim.memcpy_pinned_to_device(d, id, bytes, self.copy)?;
+        let id = self.fill_page(d)?;
         let ev = EventId(self.next_event);
         self.next_event = self.next_event.saturating_add(1);
         self.sim.create_event_disable_timing(ev)?;
@@ -268,6 +315,24 @@ impl SimulatedGpuStore {
             },
         );
         Ok(())
+    }
+
+    fn fill_page(&mut self, d: DeviceId) -> Result<AllocId, Error> {
+        let bytes = self.bytes_per_expert;
+        if self.managed {
+            let id = self.sim.alloc_managed(bytes)?;
+            self.sim.mem_advise(id, MemAdvise::SetReadMostly, d)?;
+            self.sim
+                .mem_advise(id, MemAdvise::SetPreferredLocation, d)?;
+            let _p = self.sim.prefetch(d, id, self.copy)?;
+            return Ok(id);
+        }
+        // Stream-ordered `cudaMallocAsync`. `malloc` (`cudaMalloc`) would
+        // device-sync this GPU on every miss and serialize with GEMM.
+        let id = self.sim.alloc(d, bytes, self.copy)?;
+        // Pinned DMA. Pageable `memcpy_host_to_device` would wait this stream.
+        let _c = self.sim.memcpy_pinned_to_device(d, id, bytes, self.copy)?;
+        Ok(id)
     }
 
     fn home(&self, key: ExpertKey) -> DeviceId {
@@ -289,6 +354,10 @@ impl SimulatedGpuStore {
         if let Some(ev) = ready {
             if !self.sim.event_complete(ev) {
                 let _w = self.sim.wait_event(device, ev, self.compute)?;
+                if self.managed {
+                    // `fault_managed` inspects residency at submit.
+                    self.sim.synchronize_stream(device, self.compute)?;
+                }
             }
         }
         self.launch_or_gemm(device, id)
@@ -346,6 +415,15 @@ impl SimulatedGpuStore {
         if let Some(g) = self.graphs.remove(&page.id) {
             self.sim.destroy_graph(g)?;
         }
+        if self.managed {
+            self.sim.synchronize_stream(page.device, self.compute)?;
+            self.sim.synchronize_stream(page.device, self.copy)?;
+            if self.replicas.remove(&key) {
+                self.sim.synchronize_stream(self.replica, self.copy)?;
+            }
+            self.sim.free_sync(page.id)?;
+            return Ok(());
+        }
         // Copy-engine free must not race a compute-stream lease on the same page.
         let ev = EventId(self.next_event);
         self.next_event = self.next_event.saturating_add(1);
@@ -366,15 +444,23 @@ impl SimulatedGpuStore {
         if self.replicas.contains(&key) {
             return Ok(());
         }
-        let page = self.pages.get(&key).ok_or(Error::Store("missing handle"))?;
-        if page.device == self.replica {
+        let (id, src) = {
+            let page = self.pages.get(&key).ok_or(Error::Store("missing handle"))?;
+            (page.id, page.device)
+        };
+        if src == self.replica {
+            let _ins = self.replicas.insert(key);
+            return Ok(());
+        }
+        if self.managed {
+            let _p = self.sim.prefetch(self.replica, id, self.copy)?;
             let _ins = self.replicas.insert(key);
             return Ok(());
         }
         let _c = self.sim.memcpy_device_to_device(
-            page.device,
+            src,
             self.replica,
-            page.id,
+            id,
             self.bytes_per_expert,
             self.copy,
         )?;
