@@ -884,6 +884,12 @@ model, do not celebrate the sim.
     (1-layer and 2-layer tinies): 128 waiters, `max_seqs=8`, greedy
     identity, store hits, gpu-sim `wall_ns`. Dual score still has no
     `$/M tokens`.
+45. [x] Engine SimulatedGpuStore token-boundary scores: each newly
+    sampled greedy token records the gpu-sim clock. `expert_store_score`
+    fills `ttft_ns` / `itl_ns` / `ns_per_token`. Mixed leftover prefill +
+    decode: `decode_first` shortens the decode sequence's ITL (same
+    policy as `expertvm schedule --decode-first`). Dual score still has
+    no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

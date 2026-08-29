@@ -329,6 +329,13 @@ impl SimulatedGpuStore {
         Ok(gpu_sim::Score::from_sim(&self.sim))
     }
 
+    /// Drain and return the virtual clock (token-boundary sample).
+    pub fn clock_ns(&mut self) -> Result<u64, Error> {
+        self.sim.synchronize()?;
+        self.sweep_evicts();
+        Ok(self.sim.clock_ns())
+    }
+
     /// Next H2D that starts fails ([`gpu_sim::SimError::TransferFailed`]).
     pub fn fail_next_transfer(&mut self) {
         self.sim.fail_next_memcpy();

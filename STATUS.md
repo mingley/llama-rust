@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine gpu-sim TTFT / ITL
+
+SimulatedGpuStore Engine runs sample the virtual clock at each newly
+generated token. `expert_store_score` fills `ttft_ns`, `itl_ns`, and
+`ns_per_token` (still no `$/M tokens`). On the two-layer Qwen3MoE tiny,
+`decode_first` shortens the decode sequence's ITL while a leftover
+prefill waits — the same policy as `expertvm schedule --decode-first`.
+
 ## Shipped 2026-08-29 — Engine `decode_first` + batch-128 Cached/GPU stores
 
 `EngineCfg::decode_first` holds leftover prefill while any live sequence

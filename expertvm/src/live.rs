@@ -178,6 +178,14 @@ impl LiveStore {
             Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => Ok(None),
         }
     }
+
+    /// Virtual clock after a drain, if this is a GPU store.
+    pub fn clock_ns(&mut self) -> Result<Option<u64>, Error> {
+        match self {
+            Self::Simulated(s) => Ok(Some(s.clock_ns()?)),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => Ok(None),
+        }
+    }
 }
 
 impl ExpertStore for LiveStore {

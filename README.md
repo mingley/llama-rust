@@ -48,6 +48,7 @@ eng.step()?;
 let s1 = eng.add(&ids, 8)?;
 eng.run()?;
 // eng.stats().gemm_peak is the widest cross-sequence GEMM (not wall-clock tok/s).
+// With SimulatedGpuStore, eng.expert_store_score() includes ttft_ns / itl_ns.
 ```
 
 Default decode stays on the GGUF blob (`expert_store == None`). Attaching DirectStore, CachedStore, TieredStore, or SimulatedGpuStore GEMVs routed expert copies; identity tests require bit-equal logits vs the blob path. Shared experts stay on the blob. `TieredStore::memory` / `on_path` keep only `slots` experts in fast RAM (`WeightStorage::mmap` is parked).

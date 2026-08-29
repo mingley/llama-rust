@@ -19,6 +19,8 @@
 //! `slots == 1` pins nothing so demand paging can evict). Multi-GPU SimulatedGpuStore
 //! then runs [`plan_placement`](expertvm::plan_placement) on those pins: D2D onto GPU0
 //! when weight bytes beat activation volume, otherwise leave them on the striped home.
+//! SimulatedGpuStore scores sample the virtual clock at each generated token
+//! (`ttft_ns` / `itl_ns` / `ns_per_token`; not `$/M tokens`).
 //! A full pool **preempts** another sequence (unique blocks drop; intern pins remain)
 //! and later re-prefills
 //! plus replays already sampled greedy tokens. Greedy ids must match
@@ -154,7 +156,8 @@ pub struct EngineStats {
 /// those pins: [`expertvm::plan_placement`] D2Ds onto GPU0 when expert bytes beat
 /// [`expertvm::DECODE_ACTIVATION_BYTES`] times fan-in times reuse, else activations
 /// stay on the striped home (`StoreMetrics::dispatches`). [`LiveStore::migrate`]
-/// stays unconditional. 1-GPU profiles skip.
+/// stays unconditional. 1-GPU profiles skip. SimulatedGpuStore token samples
+/// fill [`Engine::seq_ttft_ns`] / [`Engine::seq_itl_ns`] and the score line.
 pub struct Engine<'a> {
     llama: &'a Llama,
     pool: PagedKvPool,
@@ -171,6 +174,8 @@ pub struct Engine<'a> {
     /// Online keep-hot counts per key (no JSONL future leak).
     hot_reuse: BTreeMap<ExpertKey, u64>,
     trace: bool,
+    /// gpu-sim clock at each newly sampled greedy token, per sequence.
+    seq_token_ns: BTreeMap<SeqId, Vec<u64>>,
 }
 
 impl<'a> Engine<'a> {
@@ -195,6 +200,7 @@ impl<'a> Engine<'a> {
             prefetch: PrefetchChain::default(),
             hot_reuse: BTreeMap::new(),
             trace: false,
+            seq_token_ns: BTreeMap::new(),
         })
     }
 
@@ -352,13 +358,31 @@ impl<'a> Engine<'a> {
 
     /// gpu-sim score when the attached store is [`LiveStore::Simulated`].
     ///
-    /// DirectStore / CachedStore return `Ok(None)`. Not `$/M tokens`.
+    /// DirectStore / CachedStore return `Ok(None)`. Token-boundary samples
+    /// fill `ttft_ns` / `itl_ns` / `ns_per_token` when any sequence produced
+    /// a greedy token. Not `$/M tokens`.
     pub fn expert_store_score(&mut self) -> Result<Option<Score>, LlamaError> {
         self.reclaim_parked_stores();
-        match self.expert_store.as_mut() {
-            Some(s) => s.score().map_err(Into::into),
-            None => Ok(None),
-        }
+        let Some(s) = self.expert_store.as_mut() else {
+            return Ok(None);
+        };
+        let Some(mut score) = s.score().map_err(LlamaError::from)? else {
+            return Ok(None);
+        };
+        score = attach_token_latencies(score, &self.seq_token_ns);
+        Ok(Some(score))
+    }
+
+    /// gpu-sim clock of this sequence's first generated token (`None` if blob / CPU store).
+    #[must_use]
+    pub fn seq_ttft_ns(&self, id: SeqId) -> Option<u64> {
+        self.seq_token_ns.get(&id).and_then(|v| v.first().copied())
+    }
+
+    /// Mean inter-token gap for `id` after TTFT (`None` unless two generated tokens).
+    #[must_use]
+    pub fn seq_itl_ns(&self, id: SeqId) -> Option<u64> {
+        self.seq_token_ns.get(&id).and_then(|v| mean_itl(v))
     }
 
     /// Record MoE router events on every live and later-admitted sequence.
@@ -857,19 +881,41 @@ impl<'a> Engine<'a> {
             let slot = self.slot_mut(i)?;
             argmax(&slot.last)
         };
-        let slot = self.slot_mut(i)?;
-        if eos == Some(next) {
-            slot.done = true;
-            return Ok(1);
+        let (id, finished) = {
+            let slot = self.slot_mut(i)?;
+            if eos == Some(next) {
+                slot.done = true;
+                return Ok(1);
+            }
+            slot.generated.push(next);
+            slot.last.clear();
+            let finished = slot.generated.len() >= slot.n_predict;
+            if finished {
+                slot.done = true;
+            }
+            (slot.id, finished)
+        };
+        if !finished {
+            batch.push((i, next));
         }
-        slot.generated.push(next);
-        slot.last.clear();
-        if slot.generated.len() >= slot.n_predict {
-            slot.done = true;
-            return Ok(1);
+        self.record_seq_token(id)?;
+        Ok(usize::from(finished))
+    }
+
+    fn record_seq_token(&mut self, id: SeqId) -> Result<(), LlamaError> {
+        let Some(ns) = self.sample_sim_clock()? else {
+            return Ok(());
+        };
+        self.seq_token_ns.entry(id).or_default().push(ns);
+        Ok(())
+    }
+
+    fn sample_sim_clock(&mut self) -> Result<Option<u64>, LlamaError> {
+        self.reclaim_parked_stores();
+        match self.expert_store.as_mut() {
+            Some(s) => s.clock_ns().map_err(LlamaError::from),
+            None => Ok(None),
         }
-        batch.push((i, next));
-        Ok(0)
     }
 
     fn forward_batch_items(
@@ -1055,6 +1101,51 @@ fn borrow_slots_mut<'a>(
         base = i.saturating_add(1);
     }
     Ok(out)
+}
+
+fn mean_itl(ends: &[u64]) -> Option<u64> {
+    if ends.len() < 2 {
+        return None;
+    }
+    let first = *ends.first()?;
+    let last = *ends.last()?;
+    let n = u64::try_from(ends.len().saturating_sub(1)).ok()?;
+    last.saturating_sub(first).checked_div(n.max(1))
+}
+
+fn attach_token_latencies(mut score: Score, by_seq: &BTreeMap<SeqId, Vec<u64>>) -> Score {
+    let mut ttft = None;
+    let mut gap_sum = 0u64;
+    let mut gap_n = 0u64;
+    let mut ntok = 0u64;
+    for ends in by_seq.values() {
+        ntok = ntok.saturating_add(u64::try_from(ends.len()).unwrap_or(0));
+        if let Some(&t) = ends.first() {
+            ttft = Some(ttft.map_or(t, |u: u64| u.min(t)));
+        }
+        for pair in ends.windows(2) {
+            let Some(&a) = pair.first() else {
+                continue;
+            };
+            let Some(&b) = pair.get(1) else {
+                continue;
+            };
+            gap_sum = gap_sum.saturating_add(b.saturating_sub(a));
+            gap_n = gap_n.saturating_add(1);
+        }
+    }
+    if ntok > 0 {
+        score = score.with_tokens(ntok);
+    }
+    if let Some(t) = ttft {
+        let itl = if gap_n > 0 {
+            Some(gap_sum / gap_n)
+        } else {
+            None
+        };
+        score = score.with_latencies(t, itl);
+    }
+    score
 }
 
 #[cfg(test)]
@@ -1338,6 +1429,53 @@ mod tests {
             assert_eq!(eng.take(a).expect("ta").generated, exp_a);
             assert_eq!(eng.take(b).expect("tb").generated, exp_b);
         }
+    }
+
+    fn mixed_gpu_decode_itl(bytes: Vec<u8>, decode_first: bool) -> (u64, Score, usize) {
+        let prompt_a = [1u32, 2];
+        let prompt_b = [1u32, 2, 3, 4, 5, 0, 1, 2];
+        let g = load_gguf_owned(bytes).expect("owned");
+        let model = Llama::from_gguf(g).expect("m");
+        let n = model.expert_direct_store().expect("n").len().max(1);
+        let mut cfg = EngineCfg::tiny();
+        cfg.max_seqs = 2;
+        cfg.prefill_chunk = 1;
+        cfg.decode_first = decode_first;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        let gpu = SimulatedGpuStore::new(
+            model.expert_direct_store().expect("c"),
+            n,
+            HardwareProfile::example_h100_sxm(),
+            4096,
+        )
+        .expect("gpu");
+        eng.attach_expert_store(LiveStore::simulated(gpu));
+        let a = eng.add(&prompt_a, 4).expect("a");
+        let _b = eng.add(&prompt_b, 1).expect("b");
+        eng.run().expect("run");
+        let n_gen = eng.generated(a).expect("ga").len();
+        let itl = eng.seq_itl_ns(a).expect("A ITL");
+        let score = eng.expert_store_score().expect("sc").expect("sim");
+        (itl, score, n_gen)
+    }
+
+    #[test]
+    fn engine_decode_first_shortens_mixed_gpu_itl() {
+        let mixed = mixed_gpu_decode_itl(tiny_qwen3moe_2layer_gguf(), false);
+        let prefer = mixed_gpu_decode_itl(tiny_qwen3moe_2layer_gguf(), true);
+        assert_eq!(mixed.2, 4);
+        assert_eq!(prefer.2, 4);
+        assert!(prefer.1.ttft_ns.is_some(), "{}", prefer.1.line());
+        assert!(prefer.1.itl_ns.is_some(), "{}", prefer.1.line());
+        assert!(prefer.1.ns_per_token.is_some(), "{}", prefer.1.line());
+        assert!(
+            prefer.0 < mixed.0,
+            "decode_first must not wait A's ITL on leftover prefill; prefer={} mixed={} prefer_line={} mixed_line={}",
+            prefer.0,
+            mixed.0,
+            prefer.1.line(),
+            mixed.1.line()
+        );
     }
 
     fn batch_prompt(i: u32) -> [u32; 2] {

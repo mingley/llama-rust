@@ -84,7 +84,8 @@ nothing). A multi-GPU SimulatedGpuStore then `plan_placement`s those pins
 MoE traces stay on that GEMM (per-row
 sequence / token / prefix). Prints each continuation (`n_gen` plus
 decoded text), then intern_hits, preempts, GEMM stats, store metrics,
-and a gpu-sim score line when `--expert-sim` is set. Not `$/M tokens`.
+and a gpu-sim score line when `--expert-sim` is set (`ttft_ns` / `itl_ns`
+when sequences generate). Not `$/M tokens`.
 Not an HTTP server.
 ";
 
