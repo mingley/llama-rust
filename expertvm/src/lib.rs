@@ -8,6 +8,7 @@ mod bench;
 mod error;
 mod gpu_store;
 mod live;
+mod place;
 mod planner;
 mod policy;
 mod replay;
@@ -17,18 +18,22 @@ mod tiered;
 mod workload;
 
 pub use access::{ExpertAccess, ExpertKey, Trace};
-pub use analyze::{analyze, TraceStats};
+pub use analyze::{analyze, coactivation_counts, freq_table, TraceStats};
 pub use bench::{adversarial_suite, report, topology_suite, BenchReport};
 pub use error::Error;
 pub use gpu_sim::{probe_topology, HardwareProfile, Score, TopologyProbe};
 pub use gpu_store::SimulatedGpuStore;
 pub use live::LiveStore;
+pub use place::{colocated, home_gpu, striped, with_hot_replicas, PlaceMap};
 pub use planner::{
-    copy_forward, hot_keys, plan_placement, plan_window, window_keys, Placement, Plan,
+    copy_forward, hot_keys, plan_placement, plan_window, transition_pair, window_keys, Markov,
+    Placement, Plan, Prefetch,
 };
 pub use policy::Policy;
 pub use replay::{compare, format_table, replay, ReplayRow};
-pub use sim_replay::{compare_ep, home_gpu, sim_replay, sim_static_ep, EpCompare, SimReplay};
+pub use sim_replay::{
+    compare_ep, sim_placed, sim_replay, sim_replay_cfg, sim_static_ep, EpCompare, SimCfg, SimReplay,
+};
 pub use store::{
     replay_accesses, CachedStore, DirectStore, ExpertParts, ExpertStore, StoreMetrics,
 };

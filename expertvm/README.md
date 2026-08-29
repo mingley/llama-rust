@@ -27,10 +27,13 @@ llama-rust routers  →  ExpertAccess JSONL
                    expertvm analyze     locality, Zipf, predictability
                          │
                          ▼
+                   expertvm place       striped / colocated / hot replicas
+                         │
+                         ▼
                    expertvm replay      LRU / LFU / predictor / oracle
                          │
                          ▼
-                   expertvm sim         gpu-sim wall time under a profile
+                   expertvm sim         gpu-sim wall; --prefetch markov
                          │
                          ▼
                    expertvm bench       replay table + sim score
@@ -68,7 +71,9 @@ acquire, stream-ordered free on eviction. Timing comes from a
 `HardwareProfile`, not from the policy. The clock is sampled after each
 token (`ttft_ns`, mean `itl_ns`). Planner helpers: `copy_forward`,
 `hot_keys`, `plan_window`, `plan_placement` (move weights vs dispatch
-activations). `compare_ep` / `sim_static_ep` place each expert on
+activations), `Markov` / `Prefetch`. `colocated` keeps co-fired experts
+on one GPU; `with_hot_replicas` copies hot keys to a second GPU.
+`compare_ep` / `sim_static_ep` place each expert on
 `home_gpu` (`expert_id % n_gpus`) with no eviction. LRU-on-GPU0 can
 survive restricted HBM by evicting; static EP OOMs if a home GPU cannot
 hold its working set. On `8xh100`, a wide token's H2Ds run on eight PCIe
@@ -87,7 +92,8 @@ must bit-match the blob GEMV path. Shared experts stay on the blob.
 ```text
 expertvm analyze  trace.jsonl
 expertvm replay   trace.jsonl --capacity 8
-expertvm sim      trace.jsonl --capacity 8 --expert-bytes 188743680 --profile h100
+expertvm sim      trace.jsonl --capacity 8 --expert-bytes 188743680 --profile h100 --prefetch markov
+expertvm place    trace.jsonl --gpus 8 --hot-pt 200
 expertvm bench    trace.jsonl --capacity 8 --profile h100
 expertvm bench    adversarial --tokens 64 --experts 16 --capacity 2 --profile cheap
 expertvm workload thrash --tokens 64 --experts 16 --capacity 2

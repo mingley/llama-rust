@@ -2,8 +2,10 @@
 
 use crate::access::{ExpertAccess, ExpertKey, Trace};
 use crate::error::Error;
+use crate::place::PlaceMap;
+use crate::planner::{copy_forward, transition_pair, Markov, Prefetch};
 use crate::policy::Policy;
-use crate::replay::{replay_keys, Touch, Walker};
+use crate::replay::{Touch, Walker};
 use gpu_sim::{AllocId, DType, DeviceId, HardwareProfile, KernelKind, Score, Sim, StreamId};
 use std::collections::BTreeMap;
 use std::fmt::Write;
@@ -27,6 +29,8 @@ pub struct SimReplay {
     pub hits: u64,
     /// Cache misses.
     pub misses: u64,
+    /// Prefetch fills that were not already resident.
+    pub prefetches: u64,
 }
 
 impl SimReplay {
@@ -43,9 +47,28 @@ impl SimReplay {
         if let Some(n) = self.itl_ns {
             let _w = write!(s, " itl_ns={n}");
         }
-        let _w = write!(s, " hits={} misses={}", self.hits, self.misses);
+        let _w = write!(
+            s,
+            " hits={} misses={} prefetches={}",
+            self.hits, self.misses, self.prefetches
+        );
         s
     }
+}
+
+/// Cache size, policy, expert payload, lookahead, and prefetch mode.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SimCfg {
+    /// Resident expert slots on GPU0.
+    pub slots: usize,
+    /// Victim policy.
+    pub policy: Policy,
+    /// Bytes per expert H2D.
+    pub bytes_per_expert: u64,
+    /// Lookahead window for layer-ahead / oracle.
+    pub lookahead: usize,
+    /// Prefetch before the next router event.
+    pub prefetch: Prefetch,
 }
 
 /// Replay `trace` on `profile` with a `slots`-entry expert cache.
@@ -61,29 +84,80 @@ pub fn sim_replay(
     bytes_per_expert: u64,
     lookahead: usize,
 ) -> Result<SimReplay, Error> {
+    sim_replay_cfg(
+        trace,
+        profile,
+        SimCfg {
+            slots,
+            policy,
+            bytes_per_expert,
+            lookahead,
+            prefetch: Prefetch::None,
+        },
+    )
+}
+
+/// [`sim_replay`] with an explicit [`Prefetch`] mode.
+pub fn sim_replay_cfg(
+    trace: &Trace,
+    profile: HardwareProfile,
+    cfg: SimCfg,
+) -> Result<SimReplay, Error> {
     let keys = trace.keys();
-    let table = replay_keys(&keys, slots, policy, lookahead);
     let mut sim = Sim::new(profile);
     let d = DeviceId(0);
     let s = StreamId(0);
     let mut handles: BTreeMap<ExpertKey, AllocId> = BTreeMap::new();
-    let mut w = Walker::new(&keys, slots, policy, lookahead);
-    let bytes = bytes_per_expert.max(1);
+    let mut w = Walker::new(&keys, cfg.slots, cfg.policy, cfg.lookahead);
+    let bytes = cfg.bytes_per_expert.max(1);
+    let args = TouchArgs {
+        d,
+        s,
+        bytes,
+        slots: cfg.slots,
+        kernel: true,
+    };
     let mut token_ends: Vec<u64> = Vec::new();
+    let mut hits = 0u64;
+    let mut misses = 0u64;
+    let mut prefetches = 0u64;
+    let mut markov = Markov::new();
+    let mut prev: Option<&ExpertAccess> = None;
     for (i, event) in trace.events.iter().enumerate() {
-        for key in event.keys() {
+        let ek = event.keys();
+        for key in &ek {
             let (got, touch) = w.next_touch().ok_or(Error::Store("short walker"))?;
-            if got != key {
+            if got != *key {
                 return Err(Error::Store("walker key mismatch"));
             }
-            apply_touch(
-                &mut sim,
-                &mut handles,
-                TouchArgs { d, s, bytes, slots },
-                key,
-                touch,
-            )?;
+            match touch {
+                Touch::Hit => hits = hits.saturating_add(1),
+                Touch::Miss { .. } => misses = misses.saturating_add(1),
+            }
+            apply_touch(&mut sim, &mut handles, args, *key, touch)?;
         }
+        let predicted = match cfg.prefetch {
+            Prefetch::None => Vec::new(),
+            Prefetch::CopyForward => copy_forward(&ek),
+            Prefetch::Markov => markov.predict(&ek, ek.len().max(1)),
+        };
+        let mut fill = args;
+        fill.kernel = false;
+        for key in predicted {
+            match w.prefetch_touch(key) {
+                Touch::Hit => {}
+                miss @ Touch::Miss { .. } => {
+                    prefetches = prefetches.saturating_add(1);
+                    apply_touch(&mut sim, &mut handles, fill, key, miss)?;
+                }
+            }
+        }
+        if let Some(p) = prev {
+            if transition_pair(p, event) {
+                markov.observe(&p.keys(), &ek);
+            }
+        }
+        prev = Some(event);
         if last_of_token(&trace.events, i) {
             sim.synchronize()?;
             token_ends.push(sim.clock_ns());
@@ -92,24 +166,16 @@ pub fn sim_replay(
     if token_ends.is_empty() {
         sim.synchronize()?;
     }
-    let score = serving_score(&sim, &token_ends);
-    Ok(SimReplay {
-        sim_ns: score.wall_ns,
-        bytes_moved: score.bytes_moved,
-        hbm_peak: score.hbm_peak,
-        energy_uj: score.energy_uj,
-        ttft_ns: score.ttft_ns,
-        itl_ns: score.itl_ns,
-        hits: table.hits,
-        misses: table.misses,
-    })
+    Ok(finish(&sim, &token_ends, hits, misses, prefetches))
 }
 
+#[derive(Clone, Copy)]
 struct TouchArgs {
     d: DeviceId,
     s: StreamId,
     bytes: u64,
     slots: usize,
+    kernel: bool,
 }
 
 fn apply_touch(
@@ -121,6 +187,9 @@ fn apply_touch(
 ) -> Result<(), Error> {
     match touch {
         Touch::Hit => {
+            if !args.kernel {
+                return Ok(());
+            }
             let id = *handles.get(&key).ok_or(Error::Store("missing handle"))?;
             kernel(sim, args.d, args.s, id)
         }
@@ -135,10 +204,27 @@ fn apply_touch(
             }
             let id = sim.alloc(args.d, args.bytes, args.s)?;
             let _c = sim.memcpy_host_to_device(args.d, id, args.bytes, args.s)?;
-            kernel(sim, args.d, args.s, id)?;
+            if args.kernel {
+                kernel(sim, args.d, args.s, id)?;
+            }
             let _prev = handles.insert(key, id);
             Ok(())
         }
+    }
+}
+
+fn finish(sim: &Sim, token_ends: &[u64], hits: u64, misses: u64, prefetches: u64) -> SimReplay {
+    let score = serving_score(sim, token_ends);
+    SimReplay {
+        sim_ns: score.wall_ns,
+        bytes_moved: score.bytes_moved,
+        hbm_peak: score.hbm_peak,
+        energy_uj: score.energy_uj,
+        ttft_ns: score.ttft_ns,
+        itl_ns: score.itl_ns,
+        hits,
+        misses,
+        prefetches,
     }
 }
 
@@ -191,12 +277,49 @@ fn kernel(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Er
     Ok(())
 }
 
-/// Static expert-parallel home: `expert_id % n_gpus`. No eviction, no migration.
-#[must_use]
-pub fn home_gpu(key: ExpertKey, n_gpus: u16) -> DeviceId {
-    let n = u32::from(n_gpus.max(1));
-    let idx = key.expert.checked_rem(n).unwrap_or(0);
-    DeviceId(u16::try_from(idx).unwrap_or(0))
+/// Place each expert per `map` (home H2D, replica D2D). HBM is the only cap.
+pub fn sim_placed(
+    trace: &Trace,
+    profile: HardwareProfile,
+    bytes_per_expert: u64,
+    map: &PlaceMap,
+) -> Result<SimReplay, Error> {
+    let n_gpus = u16::try_from(profile.n_gpus()).unwrap_or(1).max(1);
+    let mut sim = Sim::new(profile);
+    let s = StreamId(0);
+    let mut handles: BTreeMap<ExpertKey, AllocId> = BTreeMap::new();
+    let bytes = bytes_per_expert.max(1);
+    let mut hits = 0u64;
+    let mut misses = 0u64;
+    let mut token_ends: Vec<u64> = Vec::new();
+    for (i, event) in trace.events.iter().enumerate() {
+        for key in event.keys() {
+            let d = map.home_of(key, n_gpus);
+            if let Some(id) = handles.get(&key).copied() {
+                hits = hits.saturating_add(1);
+                kernel(&mut sim, d, s, id)?;
+            } else {
+                misses = misses.saturating_add(1);
+                let id = sim.alloc(d, bytes, s)?;
+                let _c = sim.memcpy_host_to_device(d, id, bytes, s)?;
+                if let Some(reps) = map.replicas.get(&key) {
+                    for dst in reps {
+                        let _c = sim.memcpy_device_to_device(d, *dst, id, bytes, s)?;
+                    }
+                }
+                kernel(&mut sim, d, s, id)?;
+                let _prev = handles.insert(key, id);
+            }
+        }
+        if last_of_token(&trace.events, i) {
+            sim.synchronize()?;
+            token_ends.push(sim.clock_ns());
+        }
+    }
+    if token_ends.is_empty() {
+        sim.synchronize()?;
+    }
+    Ok(finish(&sim, &token_ends, hits, misses, 0))
 }
 
 /// Cached LRU on GPU0 versus static EP across the profile's GPUs.
@@ -245,45 +368,11 @@ pub fn sim_static_ep(
     profile: HardwareProfile,
     bytes_per_expert: u64,
 ) -> Result<SimReplay, Error> {
-    let n_gpus = u16::try_from(profile.n_gpus()).unwrap_or(1).max(1);
-    let mut sim = Sim::new(profile);
-    let s = StreamId(0);
-    let mut handles: BTreeMap<ExpertKey, AllocId> = BTreeMap::new();
-    let bytes = bytes_per_expert.max(1);
-    let mut hits = 0u64;
-    let mut misses = 0u64;
-    let mut token_ends: Vec<u64> = Vec::new();
-    for (i, event) in trace.events.iter().enumerate() {
-        for key in event.keys() {
-            let d = home_gpu(key, n_gpus);
-            if let Some(id) = handles.get(&key).copied() {
-                hits = hits.saturating_add(1);
-                kernel(&mut sim, d, s, id)?;
-            } else {
-                misses = misses.saturating_add(1);
-                let id = sim.alloc(d, bytes, s)?;
-                let _c = sim.memcpy_host_to_device(d, id, bytes, s)?;
-                kernel(&mut sim, d, s, id)?;
-                let _prev = handles.insert(key, id);
-            }
-        }
-        if last_of_token(&trace.events, i) {
-            sim.synchronize()?;
-            token_ends.push(sim.clock_ns());
-        }
-    }
-    if token_ends.is_empty() {
-        sim.synchronize()?;
-    }
-    let score = serving_score(&sim, &token_ends);
-    Ok(SimReplay {
-        sim_ns: score.wall_ns,
-        bytes_moved: score.bytes_moved,
-        hbm_peak: score.hbm_peak,
-        energy_uj: score.energy_uj,
-        ttft_ns: score.ttft_ns,
-        itl_ns: score.itl_ns,
-        hits,
-        misses,
-    })
+    let n = u16::try_from(profile.n_gpus()).unwrap_or(1).max(1);
+    sim_placed(
+        trace,
+        profile,
+        bytes_per_expert,
+        &crate::place::striped(trace, n),
+    )
 }

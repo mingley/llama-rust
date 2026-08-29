@@ -201,7 +201,7 @@ fixed latency and quality.
   (`compare_ep`, `HardwareProfile::restrict_hbm`, `expertvm ep`)
 
 **V1:** traffic-aware placement, co-activation placement, adaptive
-replication.
+replication (`colocated`, `with_hot_replicas`, `expertvm place`).
 
 **V2:** RDMA, multi-node, remote expert residency.
 
@@ -212,7 +212,8 @@ P(expert_j at layer L+1 |
    experts at L, L-1, …, prompt class, session)
 ```
 
-Prefetch before the router asks. That is the research crossing.
+Online [`Markov`] table (no future leak) plus `Prefetch::Markov` /
+`copy-forward` in `sim_replay_cfg`. Prefetch before the next router event.
 
 Design so vLLM / SGLang / mistral.rs can consume the crate. Nobody should
 have to adopt this inference server.
@@ -284,17 +285,16 @@ ExpertAccess {
 }
 ```
 
-Replay and report:
+Replay and report (measured by `expertvm analyze`, integer ‰):
 
-```
-P(E_t,l   | E_t-1,l)
-P(E_t,l+1 | E_t,l)
-P(E | prompt/domain)
-P(E_a | E_b)
-popularity distribution
-working-set size
-reuse distance
-```
+- `P(E_t,l | E_{t-1},l)` → `seq_persist‰`
+- `P(E_t,l+1 | E_t,l)` → `layer_persist‰`
+- popularity / working set → `top20‰`, `ws90`
+- reuse distance → `reuse8‰`
+- `P(E_a | E_b)` mass as pair count → `coact_pairs`
+
+Hit rates still come from `expertvm replay`, not from these locality
+numbers. Prompt/domain class is not in the JSONL yet (no fake labels).
 
 The research question, before any CUDA:
 

@@ -1,8 +1,95 @@
 //! Move-weights vs already-resident: a cheap planner over a trace window.
 
-use crate::access::{ExpertKey, Trace};
+use crate::access::{ExpertAccess, ExpertKey, Trace};
 use gpu_sim::ns_for_bytes;
 use std::collections::{BTreeMap, BTreeSet};
+
+/// Online counts for `P(to | from)` over paired routing events.
+#[derive(Clone, Debug, Default)]
+pub struct Markov {
+    counts: BTreeMap<ExpertKey, BTreeMap<ExpertKey, u64>>,
+}
+
+impl Markov {
+    /// Empty table.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add every from×to pair (same token next layer, or next token same layer).
+    pub fn observe(&mut self, from: &[ExpertKey], to: &[ExpertKey]) {
+        for a in from {
+            let row = self.counts.entry(*a).or_default();
+            for b in to {
+                let slot = row.entry(*b).or_insert(0);
+                *slot = slot.saturating_add(1);
+            }
+        }
+    }
+
+    /// Top-`k` destinations by summed count from `from`. Stable on ties.
+    #[must_use]
+    pub fn predict(&self, from: &[ExpertKey], k: usize) -> Vec<ExpertKey> {
+        let mut score: BTreeMap<ExpertKey, u64> = BTreeMap::new();
+        for a in from {
+            let Some(row) = self.counts.get(a) else {
+                continue;
+            };
+            for (b, c) in row {
+                let slot = score.entry(*b).or_insert(0);
+                *slot = slot.saturating_add(*c);
+            }
+        }
+        let mut pairs: Vec<(ExpertKey, u64)> = score.into_iter().collect();
+        pairs.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+        pairs.into_iter().take(k).map(|(key, _)| key).collect()
+    }
+}
+
+/// Same sequence, and either next layer this token or next token this layer.
+#[must_use]
+pub fn transition_pair(prev: &ExpertAccess, next: &ExpertAccess) -> bool {
+    if prev.sequence != next.sequence {
+        return false;
+    }
+    let next_layer = prev.token == next.token && next.layer == prev.layer.saturating_add(1);
+    let next_tok = next.token == prev.token.saturating_add(1) && next.layer == prev.layer;
+    next_layer || next_tok
+}
+
+/// Prefetch policy for [`crate::sim_replay::sim_replay_cfg`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Prefetch {
+    /// Demand paging only.
+    None,
+    /// Same expert ids one layer ahead.
+    CopyForward,
+    /// Online [`Markov`] table fitted on observed pairs only (no future leak).
+    Markov,
+}
+
+impl Prefetch {
+    /// CLI name.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::CopyForward => "copy-forward",
+            Self::Markov => "markov",
+        }
+    }
+
+    /// Parse a CLI name.
+    pub fn parse(name: &str) -> Result<Self, crate::Error> {
+        match name {
+            "none" => Ok(Self::None),
+            "copy-forward" => Ok(Self::CopyForward),
+            "markov" => Ok(Self::Markov),
+            _ => Err(crate::Error::Trace("unknown prefetch")),
+        }
+    }
+}
 
 /// Move the expert weights, or ship activations to a resident copy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

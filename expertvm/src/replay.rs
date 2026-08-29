@@ -145,7 +145,19 @@ impl Walker {
         }
         let c = self.freq.entry(key).or_insert(0);
         *c = c.saturating_add(1);
-        let touch = if self.resident.contains(&key) {
+        let touch = self.fault_in(key);
+        self.last = Some(key);
+        self.i = self.i.saturating_add(1);
+        Some((key, touch))
+    }
+
+    /// Fill `key` without consuming the demand stream (prefetch).
+    pub(crate) fn prefetch_touch(&mut self, key: ExpertKey) -> Touch {
+        self.fault_in(key)
+    }
+
+    fn fault_in(&mut self, key: ExpertKey) -> Touch {
+        if self.resident.contains(&key) {
             self.touch_recency(key);
             Touch::Hit
         } else if self.slots == 0 {
@@ -162,10 +174,7 @@ impl Walker {
             let _inserted = self.resident.insert(key);
             self.recency.push_back(key);
             Touch::Miss { evicted }
-        };
-        self.last = Some(key);
-        self.i = self.i.saturating_add(1);
-        Some((key, touch))
+        }
     }
 
     fn touch_recency(&mut self, key: ExpertKey) {

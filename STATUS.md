@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Markov prefetch, co-activation placement
+
+`analyze` reports seq persist, reuse-within-8, 90% working set, and
+co-activation pair count. `Prefetch::{None,CopyForward,Markov}`: Markov
+is online `P(to|from)` with no future leak. `colocated` keeps a co-fired
+pair on one GPU; `with_hot_replicas` copies keys whose share ≥ `hot_pt` ‰
+onto the next GPU. CLI: `expertvm sim --prefetch markov`, `expertvm place`.
+
 ## Shipped 2026-08-29 — kernel curve knobs
 
 `gemm_util_permille` (achieved/peak) and `grouped_moe_permille` (grouped

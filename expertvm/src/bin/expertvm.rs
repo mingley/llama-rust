@@ -1,8 +1,9 @@
 //! `expertvm analyze | replay | sim` — traces in, measured tables out.
 
 use expertvm::{
-    adversarial_suite, analyze, compare, compare_ep, format_table, generate, report, sim_replay,
-    topology_suite, Policy, Trace, Workload,
+    adversarial_suite, analyze, colocated, compare, compare_ep, format_table, generate, report,
+    sim_replay_cfg, striped, topology_suite, with_hot_replicas, Policy, Prefetch, SimCfg, Trace,
+    Workload,
 };
 use gpu_sim::HardwareProfile;
 use std::env;
@@ -14,12 +15,13 @@ const USAGE: &str = "\
 usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
-  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
+  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   ep       <trace.jsonl> [--capacity N] [--expert-bytes N] [--hbm-bytes N] [--profile NAME]
+  place    <trace.jsonl> [--gpus N] [--hot-pt N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch
@@ -63,13 +65,17 @@ fn run() -> Result<(), String> {
             let trace = load_trace(&cfg.path)?;
             print_replay(&trace, cfg.capacity, cfg.lookahead)?;
             let profile = load_profile(&cfg.profile)?;
-            let row = sim_replay(
+            let prefetch = Prefetch::parse(&cfg.prefetch).map_err(|e| e.to_string())?;
+            let row = sim_replay_cfg(
                 &trace,
                 profile,
-                cfg.capacity,
-                Policy::Lru,
-                cfg.expert_bytes,
-                cfg.lookahead,
+                SimCfg {
+                    slots: cfg.capacity,
+                    policy: Policy::Lru,
+                    bytes_per_expert: cfg.expert_bytes,
+                    lookahead: cfg.lookahead,
+                    prefetch,
+                },
             )
             .map_err(|e| e.to_string())?;
             println!("{}", row.line());
@@ -79,6 +85,7 @@ fn run() -> Result<(), String> {
         "workload" => run_workload(args),
         "topology" => run_topology(args),
         "ep" => run_ep(args),
+        "place" => run_place(args),
         other => Err(format!("{USAGE}got {other}")),
     }
 }
@@ -92,6 +99,7 @@ struct Cfg {
     tokens: u32,
     experts: u32,
     hbm_bytes: Option<u64>,
+    prefetch: String,
 }
 
 fn parse_cfg<I>(args: I) -> Result<Cfg, String>
@@ -106,6 +114,7 @@ where
     let mut tokens = 64u32;
     let mut experts = 16u32;
     let mut hbm_bytes = None;
+    let mut prefetch = String::from("none");
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -131,6 +140,7 @@ where
                     &value("hbm-bytes", inline, &mut it)?,
                 )?)
             }
+            "--prefetch" => prefetch = value("prefetch", inline, &mut it)?,
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => {
                 if path.is_some() {
@@ -149,6 +159,7 @@ where
         tokens,
         experts,
         hbm_bytes,
+        prefetch,
     })
 }
 
@@ -313,4 +324,45 @@ where
     .map_err(|e| e.to_string())?;
     println!("{}", row.line());
     Ok(())
+}
+
+fn run_place<I>(args: I) -> Result<(), String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut path = None;
+    let mut gpus = 8u16;
+    let mut hot_pt = 200u32;
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        let (key, inline) = match arg.split_once('=') {
+            Some((k, v)) => (k.to_string(), Some(v.to_string())),
+            None => (arg, None),
+        };
+        match key.as_str() {
+            "--gpus" => gpus = parse_u16("gpus", &value("gpus", inline, &mut it)?)?,
+            "--hot-pt" => hot_pt = parse_u32("hot-pt", &value("hot-pt", inline, &mut it)?)?,
+            flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
+            other => {
+                if path.is_some() {
+                    return Err(format!("unexpected argument {other}\n{USAGE}"));
+                }
+                path = Some(other.to_string());
+            }
+        }
+    }
+    let path = path.ok_or("place <trace.jsonl>")?;
+    let trace = load_trace(&path)?;
+    let stripe = striped(&trace, gpus);
+    let colo = colocated(&trace, gpus);
+    let hot = with_hot_replicas(colo.clone(), &trace, gpus, hot_pt);
+    println!("striped {}", stripe.line());
+    println!("colocated {}", colo.line());
+    println!("replicas {}", hot.line());
+    Ok(())
+}
+
+fn parse_u16(name: &str, s: &str) -> Result<u16, String> {
+    s.parse::<u16>()
+        .map_err(|_| format!("invalid {name} {s:?}"))
 }

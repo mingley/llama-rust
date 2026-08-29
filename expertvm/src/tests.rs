@@ -60,6 +60,18 @@ fn analyze_counts_unique_and_persist() {
     assert_eq!(s.n_acquires, 4);
     assert_eq!(s.n_unique, 4);
     assert!(s.layer_persist_pt > 0);
+    assert_eq!(s.coact_pairs, 2);
+    assert_eq!(s.ws90, 3);
+}
+
+#[test]
+fn seq_persist_and_reuse_on_repeated_token_expert() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[4]), ev(1, 0, &[4]), ev(2, 0, &[4])],
+    };
+    let s = analyze(&t);
+    assert_eq!(s.seq_persist_pt, 1000);
+    assert!(s.reuse8_pt > 0);
 }
 
 #[test]
@@ -243,6 +255,68 @@ fn static_ep_parallel_pcie_beats_serial_gpu0() {
     );
     assert!(row.line().contains("cached"));
     assert!(row.line().contains("static"));
+}
+
+#[test]
+fn markov_prefetch_beats_copy_forward_when_ids_are_not_sticky() {
+    let mut events = Vec::new();
+    for tok in 0..16u32 {
+        events.push(ev(tok, 0, &[0]));
+        events.push(ev(tok, 1, &[7]));
+    }
+    let t = Trace { events };
+    let p = HardwareProfile::example_h100_sxm();
+    let cfg = |prefetch: Prefetch| SimCfg {
+        slots: 1,
+        policy: Policy::Lru,
+        bytes_per_expert: 4096,
+        lookahead: 8,
+        prefetch,
+    };
+    let none = sim_replay_cfg(&t, p.clone(), cfg(Prefetch::None)).expect("none");
+    let fwd = sim_replay_cfg(&t, p.clone(), cfg(Prefetch::CopyForward)).expect("fwd");
+    let mk = sim_replay_cfg(&t, p, cfg(Prefetch::Markov)).expect("mk");
+    assert!(
+        mk.hits > fwd.hits,
+        "markov={} copy-forward={}",
+        mk.hits,
+        fwd.hits
+    );
+    assert!(
+        mk.hits > none.hits,
+        "markov={} demand={}",
+        mk.hits,
+        none.hits
+    );
+    assert!(mk.prefetches > 0);
+}
+
+#[test]
+fn colocated_keeps_coactivated_pair_on_one_gpu() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1]), ev(1, 0, &[0, 1]), ev(2, 0, &[0, 1])],
+    };
+    let map = colocated(&t, 8);
+    let a = ExpertKey::new(0, 0);
+    let b = ExpertKey::new(0, 1);
+    assert_eq!(map.home_of(a, 8), map.home_of(b, 8));
+    let stripe = striped(&t, 8);
+    assert_ne!(stripe.home_of(a, 8), stripe.home_of(b, 8));
+}
+
+#[test]
+fn hot_replicas_move_more_bytes_than_stripe() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0]), ev(2, 0, &[0])],
+    };
+    let p = HardwareProfile::example_8xh100_nvlink();
+    let bytes = 1u64 << 20;
+    let base = striped(&t, 8);
+    let hot = with_hot_replicas(base.clone(), &t, 8, 200);
+    assert!(!hot.replicas.is_empty());
+    let plain = sim_placed(&t, p.clone(), bytes, &base).expect("stripe");
+    let rep = sim_placed(&t, p, bytes, &hot).expect("rep");
+    assert!(rep.bytes_moved > plain.bytes_moved);
 }
 
 #[test]

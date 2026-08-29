@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::access::{ExpertKey, Trace};
+use crate::access::{ExpertAccess, ExpertKey, Trace};
 
 /// Working-set and predictability summary. All rates are in parts per thousand
 /// so the crate stays integer-only.
@@ -18,6 +18,14 @@ pub struct TraceStats {
     pub top20_share_pt: u64,
     /// Next-layer expert is in the previous layer's selected set, ‰.
     pub layer_persist_pt: u64,
+    /// Next-token same-layer expert is in the previous token's set, ‰.
+    pub seq_persist_pt: u64,
+    /// Non-first acquires whose previous use was ≤ 8 acquires ago, ‰.
+    pub reuse8_pt: u64,
+    /// Smallest key count covering 90% of acquires.
+    pub ws90: u64,
+    /// Distinct unordered co-activation pairs (same event, top-k ≥ 2).
+    pub coact_pairs: u64,
 }
 
 impl TraceStats {
@@ -25,12 +33,16 @@ impl TraceStats {
     #[must_use]
     pub fn report(&self) -> String {
         format!(
-            "events={} acquires={} unique={} top20‰={} layer_persist‰={}",
+            "events={} acquires={} unique={} top20‰={} layer_persist‰={} seq_persist‰={} reuse8‰={} ws90={} coact_pairs={}",
             self.n_events,
             self.n_acquires,
             self.n_unique,
             self.top20_share_pt,
-            self.layer_persist_pt
+            self.layer_persist_pt,
+            self.seq_persist_pt,
+            self.reuse8_pt,
+            self.ws90,
+            self.coact_pairs
         )
     }
 }
@@ -40,35 +52,107 @@ impl TraceStats {
 pub fn analyze(trace: &Trace) -> TraceStats {
     let n_events = u64::try_from(trace.events.len()).unwrap_or(0);
     let n_acquires = trace.n_acquires();
+    let freq = freq_table(trace);
+    let n_unique = u64::try_from(freq.len()).unwrap_or(0);
+    TraceStats {
+        n_events,
+        n_acquires,
+        n_unique,
+        top20_share_pt: top_share_pt(&freq, n_acquires, 200),
+        layer_persist_pt: layer_persist_pt(trace),
+        seq_persist_pt: seq_persist_pt(trace),
+        reuse8_pt: reuse_within_pt(trace, 8),
+        ws90: working_set_cover(&freq, n_acquires, 900),
+        coact_pairs: u64::try_from(coactivation_counts(trace).len()).unwrap_or(0),
+    }
+}
+
+/// Acquire counts per key.
+#[must_use]
+pub fn freq_table(trace: &Trace) -> BTreeMap<ExpertKey, u64> {
     let mut freq: BTreeMap<ExpertKey, u64> = BTreeMap::new();
+    for k in trace.keys() {
+        let slot = freq.entry(k).or_insert(0);
+        *slot = slot.saturating_add(1);
+    }
+    freq
+}
+
+/// Unordered co-activation pair counts (same routing event).
+#[must_use]
+pub fn coactivation_counts(trace: &Trace) -> BTreeMap<(ExpertKey, ExpertKey), u64> {
+    let mut pairs: BTreeMap<(ExpertKey, ExpertKey), u64> = BTreeMap::new();
     for e in &trace.events {
-        for k in e.keys() {
-            let slot = freq.entry(k).or_insert(0);
-            *slot = slot.saturating_add(1);
+        let keys = e.keys();
+        for (i, a) in keys.iter().enumerate() {
+            for b in keys.iter().skip(i.saturating_add(1)) {
+                let pair = if a < b { (*a, *b) } else { (*b, *a) };
+                let slot = pairs.entry(pair).or_insert(0);
+                *slot = slot.saturating_add(1);
+            }
         }
     }
-    let n_unique = u64::try_from(freq.len()).unwrap_or(0);
+    pairs
+}
+
+fn top_share_pt(freq: &BTreeMap<ExpertKey, u64>, n_acquires: u64, cover_pt: u64) -> u64 {
     let mut counts: Vec<u64> = freq.values().copied().collect();
     counts.sort_unstable();
     counts.reverse();
-    let hot_n = (counts.len() / 5).max(1);
+    let n = counts.len();
+    let hot_n = n
+        .saturating_mul(usize::try_from(cover_pt).unwrap_or(0))
+        .checked_div(1000)
+        .unwrap_or(0)
+        .max(1);
     let mut hot = 0u64;
     for c in counts.iter().take(hot_n) {
         hot = hot.saturating_add(*c);
     }
-    let top20_share_pt = hot
-        .saturating_mul(1000)
+    hot.saturating_mul(1000)
         .checked_div(n_acquires)
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
+
+fn working_set_cover(freq: &BTreeMap<ExpertKey, u64>, n_acquires: u64, cover_pt: u64) -> u64 {
+    let mut counts: Vec<u64> = freq.values().copied().collect();
+    counts.sort_unstable();
+    counts.reverse();
+    let need = n_acquires
+        .saturating_mul(cover_pt)
+        .checked_div(1000)
+        .unwrap_or(n_acquires);
+    let mut acc = 0u64;
+    let mut n = 0u64;
+    for c in counts {
+        acc = acc.saturating_add(c);
+        n = n.saturating_add(1);
+        if acc >= need {
+            return n;
+        }
+    }
+    n
+}
+
+fn layer_persist_pt(trace: &Trace) -> u64 {
+    persist_pt(trace, |p, e| {
+        p.sequence == e.sequence && p.token == e.token && e.layer == p.layer.saturating_add(1)
+    })
+}
+
+fn seq_persist_pt(trace: &Trace) -> u64 {
+    persist_pt(trace, |p, e| {
+        p.sequence == e.sequence && e.token == p.token.saturating_add(1) && e.layer == p.layer
+    })
+}
+
+fn persist_pt(trace: &Trace, paired: fn(&ExpertAccess, &ExpertAccess) -> bool) -> u64 {
     let mut persist_hit = 0u64;
     let mut persist_n = 0u64;
-    let mut prev: Option<&crate::access::ExpertAccess> = None;
+    let mut prev: Option<&ExpertAccess> = None;
     for e in &trace.events {
         if let Some(p) = prev {
-            if p.sequence == e.sequence
-                && p.token == e.token
-                && e.layer == p.layer.saturating_add(1)
-            {
+            if paired(p, e) {
                 persist_n = persist_n.saturating_add(u64::try_from(e.experts.len()).unwrap_or(0));
                 for x in &e.experts {
                     if p.experts.contains(x) {
@@ -79,15 +163,24 @@ pub fn analyze(trace: &Trace) -> TraceStats {
         }
         prev = Some(e);
     }
-    let layer_persist_pt = persist_hit
+    persist_hit
         .saturating_mul(1000)
         .checked_div(persist_n)
-        .unwrap_or(0);
-    TraceStats {
-        n_events,
-        n_acquires,
-        n_unique,
-        top20_share_pt,
-        layer_persist_pt,
+        .unwrap_or(0)
+}
+
+fn reuse_within_pt(trace: &Trace, window: usize) -> u64 {
+    let mut last: BTreeMap<ExpertKey, usize> = BTreeMap::new();
+    let mut hit = 0u64;
+    let mut n = 0u64;
+    for (i, k) in trace.keys().into_iter().enumerate() {
+        if let Some(p) = last.get(&k).copied() {
+            n = n.saturating_add(1);
+            if i.saturating_sub(p) <= window {
+                hit = hit.saturating_add(1);
+            }
+        }
+        let _prev = last.insert(k, i);
     }
+    hit.saturating_mul(1000).checked_div(n).unwrap_or(0)
 }
