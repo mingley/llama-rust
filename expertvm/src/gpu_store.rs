@@ -353,7 +353,8 @@ impl SimulatedGpuStore {
         Ok(n)
     }
 
-    /// Pin against eviction and, on multi-GPU profiles, NVLink-replicate to GPU1.
+    /// Pin against eviction (sticky, survives compute `release`) and, on
+    /// multi-GPU profiles, NVLink-replicate to GPU1.
     ///
     /// Managed + [`GpuStoreCfg::accessed_by`] maps GPU1 without a dest prefetch.
     pub fn pin_hot(&mut self, keys: &[ExpertKey]) -> Result<(), Error> {
@@ -368,7 +369,7 @@ impl SimulatedGpuStore {
                 self.place(*key)?;
             }
             self.wait_copy(*key)?;
-            self.cache.lease(*key)?;
+            self.cache.pin_hot(&[*key])?;
             self.replicate(*key)?;
         }
         Ok(())
@@ -568,6 +569,29 @@ impl SimulatedGpuStore {
         self.cache.is_resident(key)
     }
 
+    /// Fast-tier capacity (may be smaller than the constructor `slots` for mapped pages).
+    #[must_use]
+    pub fn slots(&self) -> usize {
+        self.cache.slots()
+    }
+
+    /// Sticky keep-hot budget: leave one slot for demand paging.
+    #[must_use]
+    pub fn pin_budget(&self) -> usize {
+        self.cache.pin_budget()
+    }
+
+    /// Whether `key` has a sticky [`Self::pin_hot`] pin.
+    #[must_use]
+    pub fn is_pinned(&self, key: ExpertKey) -> bool {
+        self.cache.is_pinned(key)
+    }
+
+    /// Drop every sticky pin. In-flight leases are unchanged.
+    pub fn unpin_all(&mut self) {
+        self.cache.unpin_all();
+    }
+
     /// PLAN state: GPU copies are Transferring until the copy-stream event completes.
     #[must_use]
     pub fn phase(&self, key: ExpertKey) -> ExpertPhase {
@@ -584,7 +608,7 @@ impl SimulatedGpuStore {
                 }
             }
         }
-        ExpertPhase::cpu(self.cache.is_resident(key), self.cache.is_leased(key))
+        ExpertPhase::cpu(self.cache.is_resident(key), self.cache.is_held(key))
     }
 
     /// Drop `key` from HBM. Illegal while leased. Stays [`ExpertPhase::Evicting`]

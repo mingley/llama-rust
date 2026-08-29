@@ -246,6 +246,51 @@ fn cached_store_phase_is_cold_resident_leased() {
 }
 
 #[test]
+fn cached_store_pin_hot_survives_release() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(0, 0, &[1]), ev(0, 0, &[2])],
+    };
+    let mut cache = CachedStore::new(DirectStore::from_trace(&t), 2).expect("cache");
+    let k0 = ExpertKey::new(0, 0);
+    let k1 = ExpertKey::new(0, 1);
+    let k2 = ExpertKey::new(0, 2);
+    let _p0 = cache.acquire(k0).expect("k0");
+    cache.pin_hot(&[k0]).expect("pin");
+    assert!(cache.is_pinned(k0));
+    assert!(!cache.is_leased(k0));
+    assert_eq!(cache.phase(k0), ExpertPhase::Leased);
+    cache.lease(k0).expect("compute lease");
+    cache.release(k0);
+    assert!(cache.is_pinned(k0));
+    assert_eq!(cache.phase(k0), ExpertPhase::Leased);
+    let _p1 = cache.acquire(k1).expect("k1");
+    let _p2 = cache.acquire(k2).expect("evict unpinned");
+    assert!(cache.is_resident(k0));
+    assert!(cache.is_resident(k2));
+    assert!(!cache.is_resident(k1));
+    assert_eq!(cache.metrics().pins, 1);
+}
+
+#[test]
+fn cached_store_unpin_all_frees_demand_slot() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(0, 0, &[1])],
+    };
+    let mut cache = CachedStore::new(DirectStore::from_trace(&t), 1).expect("cache");
+    let k0 = ExpertKey::new(0, 0);
+    let k1 = ExpertKey::new(0, 1);
+    cache.pin_hot(&[k0]).expect("pin");
+    let err = cache.acquire(k1).unwrap_err();
+    assert!(matches!(err, Error::Store(_)));
+    cache.unpin_all();
+    assert!(!cache.is_pinned(k0));
+    let _p1 = cache.acquire(k1).expect("evict after unpin");
+    assert!(cache.is_resident(k1));
+    assert!(!cache.is_resident(k0));
+    assert_eq!(cache.pin_budget(), 0);
+}
+
+#[test]
 fn cached_store_evict_of_leased_is_fatal() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],
@@ -1701,6 +1746,9 @@ fn simulated_gpu_store_pin_hot_replicates_on_nvlink() {
     let k0 = ExpertKey::new(0, 0);
     gpu.pin_hot(&[k0]).expect("pin");
     let _p = gpu.acquire(k0).expect("hit");
+    gpu.release(k0);
+    assert!(gpu.is_pinned(k0));
+    assert_eq!(gpu.phase(k0), ExpertPhase::Leased);
     assert!(gpu.is_resident(k0));
     let score = gpu.score().expect("score");
     assert!(score.bytes_moved >= 4096);
@@ -1881,6 +1929,9 @@ fn live_store_dispatches() {
     let _p = live.acquire(k).expect("acq");
     live.pin_hot(&[k]).expect("pin");
     assert!(live.is_resident(k));
+    assert!(live.is_pinned(k));
+    live.release(k);
+    assert!(live.is_pinned(k));
     assert!(live.score().expect("score").is_none());
 }
 

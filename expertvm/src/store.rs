@@ -73,6 +73,8 @@ pub struct StoreMetrics {
     pub prefetches: u64,
     /// Host↔device bytes ([`crate::SimulatedGpuStore`]); 0 for CPU stores.
     pub bytes_moved: u64,
+    /// Sticky [`CachedStore::pin_hot`] inserts (not in-flight [`ExpertStore::lease`]s).
+    pub pins: u64,
 }
 
 impl StoreMetrics {
@@ -80,8 +82,8 @@ impl StoreMetrics {
     #[must_use]
     pub fn line(&self) -> String {
         format!(
-            "hits={} misses={} evicts={} prefetches={} bytes_moved={}",
-            self.hits, self.misses, self.evicts, self.prefetches, self.bytes_moved
+            "hits={} misses={} evicts={} prefetches={} bytes_moved={} pins={}",
+            self.hits, self.misses, self.evicts, self.prefetches, self.bytes_moved, self.pins
         )
     }
 }
@@ -91,6 +93,8 @@ pub trait ExpertStore {
     /// Load `key`. `Ok(parts)` on hit or fill; `Err` if the key is unknown.
     fn acquire(&mut self, key: ExpertKey) -> Result<ExpertParts, Error>;
     /// Pin `key` against eviction. Must be resident ([`CachedStore`]).
+    /// In-flight only: [`CachedStore::release`] drops this. Sticky keep-hot
+    /// is [`CachedStore::pin_hot`].
     fn lease(&mut self, key: ExpertKey) -> Result<(), Error>;
     /// Drop a lease.
     fn release(&mut self, key: ExpertKey);
@@ -196,10 +200,12 @@ pub struct CachedStore {
     resident: BTreeSet<ExpertKey>,
     recency: VecDeque<ExpertKey>,
     leased: BTreeSet<ExpertKey>,
+    pinned: BTreeSet<ExpertKey>,
     hits: u64,
     misses: u64,
     evicts: u64,
     prefetches: u64,
+    pins: u64,
     last_victim: Option<ExpertKey>,
 }
 
@@ -215,10 +221,12 @@ impl CachedStore {
             resident: BTreeSet::new(),
             recency: VecDeque::new(),
             leased: BTreeSet::new(),
+            pinned: BTreeSet::new(),
             hits: 0,
             misses: 0,
             evicts: 0,
             prefetches: 0,
+            pins: 0,
             last_victim: None,
         })
     }
@@ -238,7 +246,22 @@ impl CachedStore {
         Ok(n)
     }
 
+    /// Fast-tier capacity (concurrent resident experts).
+    #[must_use]
+    pub fn slots(&self) -> usize {
+        self.slots
+    }
+
+    /// Sticky keep-hot budget: leave one slot for demand paging. `slots == 1` is 0.
+    #[must_use]
+    pub fn pin_budget(&self) -> usize {
+        self.slots.saturating_sub(1)
+    }
+
     /// Pin `keys` (hot replication / keep-hot). Faults in if needed.
+    ///
+    /// Distinct from [`ExpertStore::lease`]: a decode `release` does not drop
+    /// the pin. [`Self::unpin_all`] clears sticky pins.
     pub fn pin_hot(&mut self, keys: &[ExpertKey]) -> Result<(), Error> {
         for key in keys {
             if !self.inner.contains(*key) {
@@ -247,9 +270,16 @@ impl CachedStore {
             if !self.resident.contains(key) {
                 self.fault_in(*key)?;
             }
-            self.lease(*key)?;
+            if self.pinned.insert(*key) {
+                self.pins = self.pins.saturating_add(1);
+            }
         }
         Ok(())
+    }
+
+    /// Drop every sticky pin. In-flight leases are unchanged.
+    pub fn unpin_all(&mut self) {
+        self.pinned.clear();
     }
 
     /// Whether `key` is in the fast tier.
@@ -258,16 +288,28 @@ impl CachedStore {
         self.resident.contains(&key)
     }
 
-    /// Whether `key` is pinned against eviction.
+    /// Whether `key` has an in-flight compute lease.
     #[must_use]
     pub fn is_leased(&self, key: ExpertKey) -> bool {
         self.leased.contains(&key)
     }
 
+    /// Whether `key` has a sticky [`Self::pin_hot`] pin.
+    #[must_use]
+    pub fn is_pinned(&self, key: ExpertKey) -> bool {
+        self.pinned.contains(&key)
+    }
+
+    /// In-flight lease or sticky pin: LRU must not evict.
+    #[must_use]
+    pub fn is_held(&self, key: ExpertKey) -> bool {
+        self.leased.contains(&key) || self.pinned.contains(&key)
+    }
+
     /// PLAN state for `key`. CPU fault-in is instantaneous (no Transferring).
     #[must_use]
     pub fn phase(&self, key: ExpertKey) -> ExpertPhase {
-        ExpertPhase::cpu(self.resident.contains(&key), self.leased.contains(&key))
+        ExpertPhase::cpu(self.resident.contains(&key), self.is_held(key))
     }
 
     /// Whether `key` exists in the backing catalog.
@@ -293,9 +335,9 @@ impl CachedStore {
         self.evicts
     }
 
-    /// Drop `key` from the fast tier. Illegal while leased or if not resident.
+    /// Drop `key` from the fast tier. Illegal while leased/pinned or if not resident.
     pub fn evict(&mut self, key: ExpertKey) -> Result<(), Error> {
-        if self.leased.contains(&key) {
+        if self.is_held(key) {
             return Err(Error::Store("evict of leased expert"));
         }
         if !self.resident.contains(&key) {
@@ -320,11 +362,7 @@ impl CachedStore {
     }
 
     fn evict_lru(&mut self) -> Result<(), Error> {
-        let victim = self
-            .recency
-            .iter()
-            .copied()
-            .find(|k| !self.leased.contains(k));
+        let victim = self.recency.iter().copied().find(|k| !self.is_held(*k));
         match victim {
             Some(v) => {
                 let _removed = self.resident.remove(&v);
@@ -370,6 +408,7 @@ impl ExpertStore for CachedStore {
             evicts: self.evicts,
             prefetches: self.prefetches,
             bytes_moved: 0,
+            pins: self.pins,
         }
     }
 }

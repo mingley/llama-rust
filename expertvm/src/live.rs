@@ -42,13 +42,54 @@ impl LiveStore {
         }
     }
 
-    /// Keep-hot (lease) and, for the simulated GPU, replicate to a peer.
+    /// Keep-hot (sticky pin) and, for the simulated GPU, replicate to a peer.
+    ///
+    /// Distinct from [`ExpertStore::lease`]: a decode `release` does not drop
+    /// the pin. Engine serving uses [`Self::unpin_all`] before a new pin set.
     pub fn pin_hot(&mut self, keys: &[ExpertKey]) -> Result<(), Error> {
         match self {
             Self::Direct(_) => Ok(()),
             Self::Cached(s) => s.pin_hot(keys),
             Self::Tiered(s) => s.pin_hot(keys),
             Self::Simulated(s) => s.pin_hot(keys),
+        }
+    }
+
+    /// Drop sticky pins. Direct catalogs are a no-op. In-flight leases stay.
+    pub fn unpin_all(&mut self) {
+        match self {
+            Self::Direct(_) => {}
+            Self::Cached(s) => s.unpin_all(),
+            Self::Tiered(s) => s.unpin_all(),
+            Self::Simulated(s) => s.unpin_all(),
+        }
+    }
+
+    /// Fast-tier slots. [`DirectStore`] has no cache.
+    #[must_use]
+    pub fn slots(&self) -> Option<usize> {
+        match self {
+            Self::Direct(_) => None,
+            Self::Cached(s) => Some(s.slots()),
+            Self::Tiered(s) => Some(s.slots()),
+            Self::Simulated(s) => Some(s.slots()),
+        }
+    }
+
+    /// Sticky keep-hot budget: `slots.saturating_sub(1)` so demand paging can evict.
+    #[must_use]
+    pub fn pin_budget(&self) -> usize {
+        self.slots().unwrap_or(0).saturating_sub(1)
+    }
+
+    /// Whether `key` has a sticky [`Self::pin_hot`] pin.
+    #[must_use]
+    pub fn is_pinned(&self, key: ExpertKey) -> bool {
+        match self {
+            Self::Direct(_) => false,
+            Self::Cached(s) => s.is_pinned(key),
+            Self::Tiered(s) => s.is_pinned(key),
+            Self::Simulated(s) => s.is_pinned(key),
         }
     }
 
