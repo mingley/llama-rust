@@ -1,8 +1,9 @@
-//! Local one-request HTTP/1.1 serve. Not a production inference server.
+//! Local HTTP/1.1 serve. Not a production inference server.
 //!
-//! `gguf_gemv serve` binds loopback, accepts one connection at a time, reads a
-//! single `POST /generate` JSON body, and writes JSON. No batching, no
-//! keep-alive, no OpenAI SDK surface, no crates.io HTTP stack.
+//! Default `gguf_gemv serve` accepts one connection at a time with a persistent
+//! KV cache. `--engine` admits concurrent `POST /generate` onto one [`Engine`]
+//! so prefills and decodes GEMM together. No keep-alive, no OpenAI SDK surface,
+//! no crates.io HTTP stack.
 
 use std::fs::File;
 use std::io::{Read, Write};
@@ -13,29 +14,31 @@ use std::time::Duration;
 use crate::cli::InferArgs;
 use crate::decode::{greedy_generate_slot, KvCache, Llama, LlamaError};
 use crate::gguf::load_gguf_owned;
+use crate::serve_engine;
 use crate::template::ChatMessage;
 use crate::tok::Tokenizer;
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N]
   -n, --n-predict N   tokens to generate (default: 2)
-      --n-ctx N       persistent KV capacity (default: grow per request)
-      --kv-page N     paged KV block size in tokens (default: dense layout)
+      --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
+      --kv-page N     paged KV block size (default: dense; `--engine` default 16)
       --bind ADDR     loopback listen address (default: 127.0.0.1:8080)
+      --engine        concurrent requests on one Engine (continuous-batch GEMM)
+      --max-seqs N    in-flight Engine sequences (`--engine`; default: 4)
 
 POST /generate takes {\"prompt\": TEXT} or, to render the model's own
 tokenizer.chat_template, {\"messages\": [{\"role\": R, \"content\": C}, ...]}
 with optional \"add_generation_prompt\" (default true) and \"n_predict\".
-The listener keeps one KV cache across requests and reuses a matching
-token prefix (`prefix_hit` in the JSON). `--kv-page N` interned completed
-blocks so a later prompt can hit them after a rewind (`page_hits`).
-`--n-ctx` sizes that cache; omit it to allocate `prompt + n_predict + 1`
-and keep the cache while later requests fit. Not a production inference
-server.
+Default serve keeps one KV cache across requests (`prefix_hit` in the JSON).
+`--engine` admits several connections onto one interned pool so they GEMM
+together (`gguf_gemv engine` is the same scheduler). `--kv-page N` interned
+completed blocks so a later prompt can hit them after a rewind (`page_hits`).
+Not a production inference server.
 ";
 
-const MAX_REQ: u64 = 65_536;
+pub(crate) const MAX_REQ: u64 = 65_536;
 const IO_TIMEOUT_SECS: u64 = 30;
 
 /// Parsed `serve` invocation.
@@ -61,6 +64,10 @@ pub struct ServeArgs {
     pub kv_page: Option<usize>,
     /// Loopback `HOST:PORT`. Host must be `127.0.0.1` or `localhost`.
     pub bind: String,
+    /// Admit concurrent requests onto one [`crate::Engine`].
+    pub engine: bool,
+    /// In-flight Engine sequences. `None` is 4 when `--engine`.
+    pub max_seqs: Option<usize>,
 }
 
 impl ServeArgs {
@@ -104,7 +111,7 @@ impl From<std::io::Error> for ServeError {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -116,6 +123,8 @@ where
     let mut n_ctx = None;
     let mut kv_page = None;
     let mut bind = ServeArgs::DEFAULT_BIND.to_string();
+    let mut engine = false;
+    let mut max_seqs = None;
     let mut it = args.into_iter();
     while let Some(raw) = it.next() {
         let arg = raw.as_ref();
@@ -148,6 +157,19 @@ where
                 bind = opt_value("bind", inline, &mut it)?;
                 let _addr = parse_bind(&bind)?;
             }
+            "--engine" => {
+                if inline.is_some() {
+                    return usage_err("--engine does not take a value");
+                }
+                engine = true;
+            }
+            "--max-seqs" => {
+                let n = parse_usize("max-seqs", &opt_value("max-seqs", inline, &mut it)?)?;
+                if n == 0 {
+                    return usage_err("max-seqs must be > 0");
+                }
+                max_seqs = Some(n);
+            }
             flag if flag.starts_with('-') => {
                 return usage_err(&format!("unknown flag {flag}"));
             }
@@ -162,12 +184,17 @@ where
     let Some(path) = path else {
         return usage_err("missing GGUF path");
     };
+    if max_seqs.is_some() && !engine {
+        return usage_err("--max-seqs requires --engine");
+    }
     Ok(ServeCmd::Run(ServeArgs {
         path,
         n_predict,
         n_ctx,
         kv_page,
         bind,
+        engine,
+        max_seqs,
     }))
 }
 
@@ -192,7 +219,7 @@ fn parse_bind(spec: &str) -> Result<(Ipv4Addr, u16), String> {
 }
 
 /// Listen on loopback. `spec` is `HOST:PORT` (`localhost` → `127.0.0.1`).
-fn bind_loopback(spec: &str) -> Result<TcpListener, ServeError> {
+pub(crate) fn bind_loopback(spec: &str) -> Result<TcpListener, ServeError> {
     let (ip, port) = parse_bind(spec).map_err(ServeError::Bind)?;
     TcpListener::bind((ip, port)).map_err(|e| ServeError::Bind(format!("bind {ip}:{port}: {e}")))
 }
@@ -217,6 +244,11 @@ pub fn run_serve(args: &ServeArgs) -> Result<(), ServeError> {
     let addr = listener.local_addr()?;
     println!("listening {addr}");
     println!("model={} n_predict={}", args.path, args.n_predict);
+    if args.engine {
+        println!("engine continuous batch; loopback only");
+        listener.set_nonblocking(true)?;
+        return serve_engine::run_loop(&model, &tok, args, listener);
+    }
     println!("one request at a time; loopback only; persistent KV prefix reuse");
     let mut cache = None;
     loop {
@@ -230,24 +262,24 @@ pub fn run_serve(args: &ServeArgs) -> Result<(), ServeError> {
 }
 
 #[derive(Debug)]
-struct HttpRequest {
-    method: String,
-    path: String,
-    body: Vec<u8>,
+pub(crate) struct HttpRequest {
+    pub(crate) method: String,
+    pub(crate) path: String,
+    pub(crate) body: Vec<u8>,
 }
 
 #[derive(Debug)]
-struct GenReq {
+pub(crate) struct GenReq {
     prompt: Option<String>,
     messages: Option<Vec<ChatMessage>>,
     add_generation_prompt: bool,
-    n_predict: Option<usize>,
+    pub(crate) n_predict: Option<usize>,
 }
 
 impl GenReq {
     /// The text to prefill: either the raw `prompt`, or `messages` rendered
     /// through the model's own `tokenizer.chat_template`.
-    fn resolve(&self, tok: &Tokenizer) -> Result<String, String> {
+    pub(crate) fn resolve(&self, tok: &Tokenizer) -> Result<String, String> {
         match (&self.prompt, &self.messages) {
             (Some(_), Some(_)) => Err("send either prompt or messages, not both".into()),
             (Some(p), None) => Ok(p.clone()),
@@ -288,7 +320,7 @@ fn handle_connection<S: Read + Write>(
     }
 }
 
-fn http_err_status(e: &ServeError) -> (u16, &'static str) {
+pub(crate) fn http_err_status(e: &ServeError) -> (u16, &'static str) {
     match e {
         ServeError::Http(m) if m.contains("too large") => (413, "Payload Too Large"),
         _ => (400, "Bad Request"),
@@ -343,7 +375,7 @@ fn dispatch(
     }
 }
 
-fn normalize_path(path: &str) -> &str {
+pub(crate) fn normalize_path(path: &str) -> &str {
     path.strip_suffix('/')
         .filter(|p| !p.is_empty())
         .unwrap_or(path)
@@ -373,7 +405,7 @@ fn read_request<R: Read>(reader: &mut R) -> Result<HttpRequest, ServeError> {
     }
 }
 
-fn try_parse_http_request(buf: &[u8]) -> Result<Option<HttpRequest>, ServeError> {
+pub(crate) fn try_parse_http_request(buf: &[u8]) -> Result<Option<HttpRequest>, ServeError> {
     let Some((header_bytes, body_so_far)) = header_body_split(buf) else {
         return Ok(None);
     };
@@ -464,17 +496,23 @@ fn write_http_json<W: Write>(
     reason: &str,
     json: &str,
 ) -> Result<(), ServeError> {
-    let len = json.len();
-    let head = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n"
-    );
-    w.write_all(head.as_bytes())?;
-    w.write_all(json.as_bytes())?;
+    w.write_all(&http_json_bytes(status, reason, json))?;
     w.flush()?;
     Ok(())
 }
 
-fn json_generated(text: &str, prefix_hit: usize, page_hits: u64) -> String {
+/// HTTP/1.1 JSON response bytes (`Connection: close`).
+pub(crate) fn http_json_bytes(status: u16, reason: &str, json: &str) -> Vec<u8> {
+    let len = json.len();
+    let head = format!(
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n"
+    );
+    let mut out = head.into_bytes();
+    out.extend_from_slice(json.as_bytes());
+    out
+}
+
+pub(crate) fn json_generated(text: &str, prefix_hit: usize, page_hits: u64) -> String {
     let mut s = String::from("{\"generated\":");
     append_json_string(&mut s, text);
     s.push_str(",\"prefix_hit\":");
@@ -485,7 +523,7 @@ fn json_generated(text: &str, prefix_hit: usize, page_hits: u64) -> String {
     s
 }
 
-fn json_error(msg: &str) -> String {
+pub(crate) fn json_error(msg: &str) -> String {
     let mut s = String::from("{\"error\":");
     append_json_string(&mut s, msg);
     s.push('}');
@@ -702,7 +740,7 @@ impl Scan<'_> {
     }
 }
 
-fn parse_gen_req(s: &str) -> Result<GenReq, String> {
+pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
     let mut scan = Scan { s, i: 0 };
     scan.expect_char('{')?;
     let mut prompt = None;
@@ -820,6 +858,8 @@ mod tests {
             n_ctx: None,
             kv_page: None,
             bind: ServeArgs::DEFAULT_BIND.into(),
+            engine: false,
+            max_seqs: None,
         }
     }
 
@@ -886,6 +926,8 @@ mod tests {
         assert_eq!(a.kv_page, None);
         assert_eq!(a.bind, ServeArgs::DEFAULT_BIND);
         assert_eq!(a.bind, "127.0.0.1:8080");
+        assert!(!a.engine);
+        assert_eq!(a.max_seqs, None);
     }
 
     #[test]
@@ -907,6 +949,8 @@ mod tests {
                 n_ctx: Some(16),
                 kv_page: None,
                 bind: "localhost:0".into(),
+                engine: false,
+                max_seqs: None,
             }
         );
     }
@@ -951,6 +995,34 @@ mod tests {
         assert!(err.contains("localhost"), "{err}");
         let err = parse_serve_args(["--bind"]).unwrap_err();
         assert!(err.contains("missing --bind value"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--max-seqs", "2"]).unwrap_err();
+        assert!(err.contains("--max-seqs requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--max-seqs", "0"]).unwrap_err();
+        assert!(err.contains("max-seqs must be > 0"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine=1"]).unwrap_err();
+        assert!(err.contains("--engine does not take a value"), "{err}");
+    }
+
+    #[test]
+    fn engine_flag_and_max_seqs() {
+        let a = run(&["tiny.gguf", "--engine"]);
+        assert!(a.engine);
+        assert_eq!(a.max_seqs, None);
+        let a = run(&["--engine", "--max-seqs", "8", "m.gguf"]);
+        assert_eq!(
+            a,
+            ServeArgs {
+                path: "m.gguf".into(),
+                n_predict: InferArgs::DEFAULT_N_PREDICT,
+                n_ctx: None,
+                kv_page: None,
+                bind: ServeArgs::DEFAULT_BIND.into(),
+                engine: true,
+                max_seqs: Some(8),
+            }
+        );
+        let a = run(&["m.gguf", "--engine", "--max-seqs=2"]);
+        assert_eq!(a.max_seqs, Some(2));
     }
 
     #[test]

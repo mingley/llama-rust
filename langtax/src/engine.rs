@@ -18,7 +18,8 @@
 //! A full pool **preempts** another sequence (unique blocks drop; intern pins remain)
 //! and later re-prefills
 //! plus replays already sampled greedy tokens. Greedy ids must match
-//! [`crate::greedy_generate_cache`]. Not an HTTP server.
+//! [`crate::greedy_generate_cache`]. `gguf_gemv serve --engine` is the HTTP
+//! loop around this scheduler.
 
 use crate::decode::{KvCache, Llama, LlamaError, PagedKvPool, PrefetchChain};
 use crate::sample::argmax;
@@ -283,6 +284,21 @@ impl<'a> Engine<'a> {
     #[must_use]
     pub fn stats(&self) -> &EngineStats {
         &self.stats
+    }
+
+    /// True when `id` has finished sampling (slot still held or already retired).
+    #[must_use]
+    pub fn is_finished(&self, id: SeqId) -> bool {
+        if self.finished.contains_key(&id) {
+            return true;
+        }
+        self.slot_by_id(id).is_some_and(|s| s.done)
+    }
+
+    /// Waiting queue or a live slot that still needs prefill/decode.
+    #[must_use]
+    pub fn has_runnable(&self) -> bool {
+        !self.wait.is_empty() || self.slots.iter().flatten().any(|s| !s.done)
     }
 
     /// Decode routed experts from `store` on every Engine GEMM.

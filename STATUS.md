@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — serve `--engine` continuous-batch HTTP
+
+`gguf_gemv serve --engine` admits concurrent loopback `POST /generate`
+onto one `Engine` so prefills and decodes GEMM together (`gemm_peak`).
+`--max-seqs N` is the in-flight cap (default 4). `--n-ctx` defaults to
+64 and `--kv-page` to 16. JSON `generated` matches
+`greedy_generate_ctx`. `prefix_hit` / `page_hits` stay 0 (shared intern
+pool, not a persistent per-connection cache). Default serve without
+`--engine` is still one HTTP request at a time. No Tokio, no
+OpenAI-compat. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — pin_hot replicates onto the next GPU
 
 `SimulatedGpuStore::pin_hot` D2Ds a replica onto `(home + 1) % n_gpus`
@@ -905,7 +916,7 @@ Local: `~/dev/llama-rust-perf`
 - Load/decode errors name tensor, ggml type id, and/or KV key. ggml-removed type ids are named as removed.
 - CLI: `gguf_gemv infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]`. Seedless greedy. Defaults remain `ab` / 2 so the shipped two-run command still works.
 - **MoE traces.** `gguf_gemv trace <path> --out FILE [--capacity N]`. Same greedy as `infer`, writes JSONL, prints the measured expertvm hit-rate table. Identity vs untraced greedy.
-- **Serving.** Local `gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--bind HOST:PORT]`. Std `TcpListener` on `127.0.0.1` (default `:8080`; `localhost` allowed). One HTTP/1.1 request at a time: `POST /generate` JSON `{"prompt"}` optional `n_predict` → `{"generated"}`. Seedless greedy (`greedy_generate_ctx`). Missing file and empty prompt fail cleanly. No batching, no multi-request, no OpenAI-compat, no tok/s. Not a production inference server. Kernel Integrity has not signed it.
+- **Serving.** Local `gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--bind HOST:PORT] [--engine] [--max-seqs N]`. Std `TcpListener` on `127.0.0.1` (default `:8080`; `localhost` allowed). Default: one HTTP/1.1 request at a time, `POST /generate` JSON `{"prompt"}` optional `n_predict` → `{"generated"}`, persistent KV prefix reuse. `--engine` admits concurrent requests onto one `Engine` so they GEMM together. Seedless greedy. Missing file and empty prompt fail cleanly. No OpenAI-compat, no tok/s. Not a production inference server. Kernel Integrity has not signed it.
 - One file blob. `load_gguf_owned(Vec<u8>)` keeps the file bytes. Tensor payloads are ranges of that blob. mmap is still forbidden (`unsafe` or a crate).
 - **Tokenizer.** `token_id` / merge rank are `HashMap` lookups, not a linear scan of the vocab.
   - `tokenizer.ggml.model=gpt2` (and vocabs that contain `Ġ` / `Ċ`): UTF-8 bytes → GPT-2 bytes-to-unicode → BPE. Decode maps `Ċ` → `\n` and `Ġ` → space. The recorded Qwen `generated=abĊĊ` was two newline pieces printed raw.
@@ -936,9 +947,10 @@ Ordered by how much they block “others can actually use this”:
 5. **Chat template apply.** Shipped: in-tree Jinja subset, special-token
    split, Unicode BPE pre-tokenizer, `Tokenizer::apply_chat_template`,
    `gguf_gemv chat`. Remaining: not a full Jinja engine.
-6. **Serving beyond local.** `gguf_gemv engine` continuous-batches on one
-   interned pool. Loopback `serve` is still one HTTP request at a time.
-   No concurrent HTTP, no OpenAI-compat. Not a production inference server.
+6. **Serving beyond local.** `gguf_gemv engine` and `gguf_gemv serve --engine`
+   continuous-batch on one interned pool (HTTP `POST /generate` GEMMs
+   together). Default `serve` is still one HTTP request at a time.
+   No OpenAI-compat. Not a production inference server.
 
 Non-goals that were explicitly parked: SIMD crates (`wide`/`pulp`/`std::simd`); matching llama.cpp tok/s; downloading HF checkpoints in CI; mmap (`unsafe` or a crate).
 
@@ -965,10 +977,10 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth (`expertvm schedule --prefix-cache`
-landed as the trace-level prefix reuse slice). Phase 0 leftover is a Llama
-NORM real-model fixture when a GGUF is on disk. Physical Phase 4 stays
-parked. Do not add crates.io
+Next code change is PLAN systems depth. `gguf_gemv serve --engine`
+continuous-batches HTTP onto the same Engine scheduler. Phase 0 leftover
+is a Llama NORM real-model fixture when a GGUF is on disk. Physical
+Phase 4 stays parked. Do not add crates.io
 runtime deps. Do not start Metal-in-crate on Linux. Do not invent a
 `block_iq4_nl_4_4` dequant. Do not invent an arch. Do not list mixtral
 or qwen3vlmoe as an accepted arch. Do not invent `$/M tokens`.

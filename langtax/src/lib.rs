@@ -16,6 +16,7 @@ mod pretok;
 mod quant;
 mod sample;
 mod serve;
+mod serve_engine;
 mod session;
 #[cfg(feature = "simd")]
 mod simd;

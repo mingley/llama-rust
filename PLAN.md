@@ -828,6 +828,10 @@ model, do not celebrate the sim.
 31. [x] SimulatedGpuStore `pin_hot` NVLink-replicates onto `(home + 1) % n_gpus`
     (not a fixed GPU1). `StoreMetrics::replicates` counts peer copies.
     Dual score still has no `$/M tokens`.
+32. [x] Engine-backed `gguf_gemv serve --engine`: concurrent `POST /generate`
+    admits onto one `Engine` so prefills GEMM together (`gemm_peak >= 2`).
+    Default serve stays one connection at a time. Not OpenAI-compat. Dual
+    score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
