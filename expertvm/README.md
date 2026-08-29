@@ -66,7 +66,7 @@ holds `gate` + `up` + `down` bytes.
 | `DirectStore` | Identity catalog. Every acquire hits. Bytes unchanged. |
 | `CachedStore` | Bounded LRU with **leases** so in-use experts cannot be evicted. `prefetch(keys)` skips unknown keys. `pin_hot` / `is_resident` / `take_victim`. |
 | `TieredStore` | Fast RAM LRU in front of slow RAM, a paging **file** (seek+read, not mmap), or synthetic bytes. Only `slots` [`ExpertParts`](crate::ExpertParts) live in the fast map. `WeightStorage::mmap` is parked. |
-| `SimulatedGpuStore` | CachedStore + [`gpu-sim`](../gpu-sim). H2D on a copy stream, GEMM waits that event. Prefetch is H2D without GEMM. `pin_hot` NVLink-replicates to GPU1 when `n_gpus >= 2`. `migrate(key, dst)` D2D-moves onto `dst` (copy stream; dest compute waits the event; src HBM dropped). `score()` is wall/HBM/bytes/`energy_uj`/`ns_per_token`. |
+| `SimulatedGpuStore` | CachedStore + [`gpu-sim`](../gpu-sim). H2D on a copy stream onto the striped home (`expert_id % n_gpus`); GEMM waits that event. Prefetch is H2D without GEMM. `pin_hot` NVLink-replicates to GPU1 when `n_gpus >= 2`. `migrate(key, dst)` D2D-moves onto `dst` (copy stream; dest compute waits the event; src HBM dropped). `score()` is wall/HBM/bytes/`energy_uj`/`ns_per_token`. |
 | `LiveStore` | Enum over Direct / Cached / Tiered / Simulated. Decode attaches this. |
 
 `sim_replay` runs a policy through gpu-sim: H2D on miss, grouped GEMM on

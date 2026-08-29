@@ -10,7 +10,7 @@ Work lands on `main`. No PRs.
 `ExpertAccess.weight_pt` is optional router mass in permille (`w` in JSONL;
 legacy lines without `w` still parse). Decode records after router weights
 and, when a store is attached, prefetches copy-forward ∪ online Markov.
-`SimulatedGpuStore::migrate` D2D-moves a page onto a peer (copy stream;
+`SimulatedGpuStore` H2D-places onto `expert_id % n_gpus`. `migrate` D2D-moves a page onto a peer (copy stream;
 dest GEMM waits the event). `sim_remote_home` / `expertvm remote` compute
 on GPU0 and fetch remote-home experts over the peer link (RDMA on
 `2node-rdma`). `analyze` reports `mass‰` / `top20_mass‰` when traces carry

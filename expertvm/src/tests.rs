@@ -571,6 +571,21 @@ fn migrate_single_gpu_is_no_peer() {
 }
 
 #[test]
+fn simulated_gpu_store_places_on_striped_home() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[1])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::new(inner, 1, HardwareProfile::example_2node_rdma(), 4096).expect("gpu");
+    let k = ExpertKey::new(0, 1);
+    let _p = gpu.acquire(k).expect("acq");
+    assert_eq!(gpu.device_of(k), Some(DeviceId(1)));
+    let score = gpu.score().expect("score");
+    assert!(score.bytes_moved >= 4096);
+}
+
+#[test]
 fn remote_home_on_rdma_pays_peer_copy() {
     let t = Trace {
         events: vec![ev(0, 0, &[1])],

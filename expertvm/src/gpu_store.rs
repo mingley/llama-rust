@@ -2,6 +2,7 @@
 
 use crate::access::ExpertKey;
 use crate::error::Error;
+use crate::place::home_gpu;
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertStore, StoreMetrics};
 use gpu_sim::{AllocId, DType, DeviceId, EventId, HardwareProfile, KernelKind, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet};
@@ -13,7 +14,7 @@ struct GpuPage {
     ready: Option<EventId>,
 }
 
-/// Bounded cache whose misses pay a simulated PCIe copy.
+/// Bounded cache whose misses pay a simulated H2D onto the striped home GPU.
 pub struct SimulatedGpuStore {
     cache: CachedStore,
     sim: Sim,
@@ -167,22 +168,28 @@ impl SimulatedGpuStore {
             return Ok(());
         }
         let bytes = self.bytes_per_expert;
-        let id = self.sim.alloc(self.device, bytes, self.copy)?;
-        let _c = self
-            .sim
-            .memcpy_host_to_device(self.device, id, bytes, self.copy)?;
+        let d = self.home(key);
+        let id = self.sim.alloc(d, bytes, self.copy)?;
+        let _c = self.sim.memcpy_host_to_device(d, id, bytes, self.copy)?;
         let ev = EventId(self.next_event);
         self.next_event = self.next_event.saturating_add(1);
-        let _r = self.sim.record_event(self.device, ev, self.copy)?;
+        let _r = self.sim.record_event(d, ev, self.copy)?;
         let _prev = self.pages.insert(
             key,
             GpuPage {
                 id,
-                device: self.device,
+                device: d,
                 ready: Some(ev),
             },
         );
         Ok(())
+    }
+
+    fn home(&self, key: ExpertKey) -> DeviceId {
+        let n = u16::try_from(self.sim.profile().n_gpus())
+            .unwrap_or(1)
+            .max(1);
+        home_gpu(key, n)
     }
 
     fn gemm_resident(&mut self, key: ExpertKey) -> Result<(), Error> {
