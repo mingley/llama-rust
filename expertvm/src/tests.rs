@@ -1208,6 +1208,30 @@ fn schedule_remote_hbm_evicts_when_slots_are_loose() {
 }
 
 #[test]
+fn schedule_managed_remote_hbm_evicts_when_slots_are_loose() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[2]), ev(2, 0, &[0])],
+    };
+    let p = HardwareProfile::example_2xh100_pcie().restrict_hbm(4096);
+    let cfg = SimCfg {
+        managed: true,
+        ..SimCfg::lru(8, 4096, 0)
+    };
+    let map = striped(&t, 2);
+    let row = schedule_remote(
+        &t,
+        p,
+        cfg,
+        SchedCfg::closed(0),
+        &map,
+        DECODE_ACTIVATION_BYTES,
+    )
+    .expect("hbm");
+    assert_eq!(row.completed, 1);
+    assert_eq!(row.replay.misses, 3);
+}
+
+#[test]
 fn schedule_remote_pays_peer_copy_on_rdma() {
     let t = Trace {
         events: vec![ev(0, 0, &[1])],
@@ -1253,6 +1277,37 @@ fn schedule_remote_pays_peer_copy_on_rdma() {
         moved.replay.bytes_moved
     );
     assert!(moved.replay.bytes_moved > remote.replay.bytes_moved);
+}
+
+#[test]
+fn schedule_managed_remote_reads_without_weight_d2d() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[1])],
+    };
+    let p = HardwareProfile::example_2xh100_pcie();
+    let bytes = 1u64 << 20;
+    let map = striped(&t, 2);
+    let pin = SimCfg::lru(4, bytes, 0);
+    let um = SimCfg {
+        managed: true,
+        ..pin
+    };
+    let moved = schedule_remote(&t, p.clone(), pin, SchedCfg::closed(0), &map, bytes).expect("d2d");
+    let remote = schedule_remote(&t, p, um, SchedCfg::closed(0), &map, bytes).expect("um");
+    assert_eq!(moved.completed, 1);
+    assert_eq!(remote.completed, 1);
+    assert_eq!(moved.replay.misses, remote.replay.misses);
+    assert!(
+        remote.replay.bytes_moved < moved.replay.bytes_moved,
+        "managed={} d2d={}",
+        remote.replay.bytes_moved,
+        moved.replay.bytes_moved
+    );
+    assert!(
+        remote.replay.bytes_moved < bytes.saturating_mul(2),
+        "preferred-location GEMM must not D2D the expert; moved={}",
+        remote.replay.bytes_moved
+    );
 }
 
 #[test]

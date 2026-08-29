@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Remote managed GEMM reads PreferredLocation
+
+Expert GEMMs treat weight pages as kernel reads. `--managed --place remote`
+prefetches onto home with `SetPreferredLocation` and GEMMs on GPU0 over
+the interconnect (no dest HBM copy, no weight D2D). Dual score still has
+no `$/M tokens`.
+
 ## Shipped 2026-08-29 — PreferredLocation and grouped child graphs
 
 `MemAdvise::SetPreferredLocation` keeps a managed page already at that

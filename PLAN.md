@@ -646,7 +646,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   has more than one layer, and `schedule-decode-first` when a later token
   exists too. Multi-GPU profiles also print `schedule-gpu0` vs
   `schedule-striped` (`schedule_placed`) vs `schedule-remote`
-  (`plan_placement` on the home hop, compute pinned on GPU0).
+  (`plan_placement` on the home hop, compute pinned on GPU0). `--managed`
+  `--place remote` prefetches the expert onto home with PreferredLocation
+  and GEMMs on GPU0 as a remote read (no second HBM copy, no weight D2D).
 - performance model must include fixed overhead, size-dependent
   throughput, queueing, concurrency limits, alignment, startup latency
   (`LinkProfile::align_bytes` rounds the billed payload up; a 1-byte DMA

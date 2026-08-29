@@ -160,7 +160,9 @@ roots and beat serial GPU0 copies of the same payload.
 `sim_remote_home` keeps compute on GPU0. A miss does pinned H2D onto the
 home GPU, then `plan_placement` (online reuse, no future leak) either
 D2Ds the expert weights onto GPU0 or ships a small activation payload to
-home and GEMMs there. Decode acquires then **leases** each routed expert
+home and GEMMs there. `--managed --place remote` prefetches the expert
+onto home (`SetPreferredLocation`) and GEMMs on GPU0 as a remote read
+(weights are kernel reads, so the page stays on home). Decode acquires then **leases** each routed expert
 for the GEMV and releases before the next (so `slots < top-k` still
 works). `SimulatedGpuStore` holds a host-pinned staging alloc that does
 not count toward HBM. `HardwareProfile::restrict_hbm` is the knob. `topology_suite` /

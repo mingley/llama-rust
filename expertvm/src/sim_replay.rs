@@ -138,7 +138,8 @@ pub struct SimCfg {
     /// Alloc does not charge HBM; prefetch migrates (and replicates if a
     /// second GPU later prefetches the same page). Home also sets
     /// [`gpu_sim::MemAdvise::SetPreferredLocation`] so a remote read can
-    /// keep the page on that GPU. `--place replicas` uses
+    /// keep the page on that GPU. `--place remote` GEMMs on GPU0 without a
+    /// dest HBM copy. `--place replicas` uses
     /// that dest prefetch; dest eviction is `drop_managed_copy`.
     /// Hits/misses match H2D. [`crate::SimulatedGpuStore`] stays on pinned H2D.
     pub managed: bool,
@@ -890,7 +891,7 @@ fn kernel(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Er
             dtype: DType::Fp16,
         },
         &[id],
-        &[id],
+        &[],
         s,
     )?;
     Ok(())
@@ -1016,6 +1017,7 @@ pub fn sim_remote_home_cfg(
                         act_bytes: act,
                         stream: s,
                         sync_alloc: false,
+                        managed: false,
                     },
                     reuse,
                     fan_in,
@@ -1058,6 +1060,8 @@ pub(crate) struct RemoteFetch {
     pub(crate) act_bytes: u64,
     pub(crate) stream: StreamId,
     pub(crate) sync_alloc: bool,
+    /// `cudaMallocManaged` + PreferredLocation on home; compute GEMM reads remotely.
+    pub(crate) managed: bool,
 }
 
 pub(crate) fn remote_hit(
@@ -1087,7 +1091,9 @@ pub(crate) fn remote_hit(
 }
 
 /// Pin weights on home (and D2D them onto compute when
-/// [`Placement::MoveWeights`]). No GEMM — that is [`remote_hit`] / demand.
+/// [`Placement::MoveWeights`]). [`RemoteFetch::managed`] prefetches a
+/// PreferredLocation page and leaves GEMM on compute as a remote read.
+/// No GEMM — that is [`remote_hit`] / demand.
 pub(crate) fn fill_remote(
     sim: &mut Sim,
     fetch: RemoteFetch,
@@ -1095,6 +1101,9 @@ pub(crate) fn fill_remote(
     fan_in: u64,
     next_event: &mut u32,
 ) -> Result<RemotePage, Error> {
+    if fetch.managed {
+        return fill_remote_managed(sim, fetch, next_event);
+    }
     let id = hbm_alloc(
         sim,
         fetch.home,
@@ -1148,6 +1157,29 @@ pub(crate) fn fill_remote(
     }
 }
 
+fn fill_remote_managed(
+    sim: &mut Sim,
+    fetch: RemoteFetch,
+    next_event: &mut u32,
+) -> Result<RemotePage, Error> {
+    let id = sim.alloc_managed(fetch.expert_bytes)?;
+    sim.mem_advise(id, gpu_sim::MemAdvise::SetReadMostly, fetch.home)?;
+    sim.mem_advise(id, gpu_sim::MemAdvise::SetPreferredLocation, fetch.home)?;
+    let _p = sim.prefetch(fetch.home, id, fetch.stream)?;
+    // fault_managed inspects residency at submit. The page must already be
+    // at home or a compute kernel would prefetch a second copy.
+    sim.synchronize_stream(fetch.home, fetch.stream)?;
+    if fetch.home != fetch.compute {
+        wait_peer(sim, fetch.home, fetch.compute, fetch.stream, next_event)?;
+    }
+    Ok(RemotePage {
+        id,
+        gemm: fetch.compute,
+        home: fetch.home,
+        act: None,
+    })
+}
+
 pub(crate) fn fetch_remote(
     sim: &mut Sim,
     fetch: RemoteFetch,
@@ -1171,6 +1203,23 @@ pub(crate) fn drop_remote(
     stream: StreamId,
     sync: bool,
 ) -> Result<(), Error> {
+    if page_is_managed(sim, page.id) {
+        if page.gemm != page.home {
+            sim.synchronize_stream(page.gemm, stream)?;
+        }
+        sim.free_sync(page.id)?;
+        if let Some(act) = page.act {
+            if sync {
+                sim.free_sync(act)?;
+            } else {
+                if page.home != compute {
+                    sim.free(page.home, act, stream)?;
+                }
+                sim.free(compute, act, stream)?;
+            }
+        }
+        return Ok(());
+    }
     if sync {
         sim.free_sync(page.id)?;
         if let Some(act) = page.act {

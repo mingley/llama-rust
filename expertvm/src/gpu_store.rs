@@ -424,7 +424,7 @@ fn gemm(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Erro
             dtype: DType::Fp16,
         },
         &[id],
-        &[id],
+        &[],
         s,
     )?;
     Ok(())
