@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — timing copy events and cudaEventQuery on the store
+
+`GpuStoreCfg::timing_events` creates timing-on copy start/end events and
+sums `event_elapsed_ns` (`cudaEventElapsedTime`) after
+`cudaEventSynchronize`. Default stays `cudaEventDisableTiming`. Phase and
+copy waits use `query_event` (`cudaEventQuery`); capture uses
+`query_stream` (`cudaStreamQuery`). `expertvm store --timing-events` opts
+in. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — cudaGraphClone before instantiate
 
 `GpuStoreCfg::graph_clone` / `SimCfg::graph_clone` clones a leaf capture

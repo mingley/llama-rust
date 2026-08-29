@@ -365,7 +365,7 @@ Backends:
 | `DirectStore` | today’s blob range; bit-identical to current decode |
 | `CachedStore` | bounded “fast memory” of N experts; rest fault in |
 | `TieredStore` | fast RAM / slow RAM / disk |
-| `SimulatedGpuStore` | fake HBM capacity, PCIe/NVLink bandwidth, DMA concurrency; `with_managed` is UM prefetch, `with_mapped` is zero-copy host (and `host_pin_bytes` occupancy), `with_vmm` is `va_acquire`; `with_cfg` is `host_func` / blocking streams / `sync_alloc` / mempool / `vmm_page` / pageable H2D / `SetAccessedBy` / legacy NULL / stream priority / `graph_update` / `graph_clone`; `expertvm store` / `store_replay_cfg` is the CLI (Markov prefetch) |
+| `SimulatedGpuStore` | fake HBM capacity, PCIe/NVLink bandwidth, DMA concurrency; `with_managed` is UM prefetch, `with_mapped` is zero-copy host (and `host_pin_bytes` occupancy), `with_vmm` is `va_acquire`; `with_cfg` is `host_func` / blocking streams / `sync_alloc` / mempool / `vmm_page` / pageable H2D / `SetAccessedBy` / legacy NULL / stream priority / `graph_update` / `graph_clone` / `timing_events`; `expertvm store` / `store_replay_cfg` is the CLI (Markov prefetch) |
 
 `DirectStore` must keep every existing oracle / real-model test green.
 The dense/common weights stay resident. Only expert tensors go through
@@ -630,7 +630,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `sim`/`schedule` / `SimulatedGpuStore::new` stay on `cudaMallocAsync`.
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, and `--graph-clone`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-clone`, and `--timing-events`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--mapped` is `cudaHostAllocMapped`
   (no H2D, PCIe kernels, HBM unused; walker slots also cap at
@@ -654,7 +654,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `cudaStreamCreateWithPriority` on seq-streams (priority = stream id). `--graph-update`
   is `cudaGraphExecUpdate` of a parked leaf (store and `--cuda-graphs`
   walker). `--graph-clone` is `cudaGraphClone` of a leaf capture before
-  instantiate (graph vs exec). `memset` / `memset_buf` of a mapped span, directed peer enable, and
+  instantiate (graph vs exec). `--timing-events` is timing-on copy events
+  plus `event_elapsed_ns` (`cudaEventElapsedTime`); default wait events stay
+  `cudaEventDisableTiming`. `memset` / `memset_buf` of a mapped span, directed peer enable, and
   the legacy null stream are mechanical CUDA invariants.
   `synchronize_stream` / `synchronize_event` / `synchronize_device` are
   `cudaStreamSynchronize` / `cudaEventSynchronize` / `cudaDeviceSynchronize`. `event_elapsed_ns` is `cudaEventElapsedTime` in

@@ -2279,6 +2279,44 @@ fn simulated_gpu_store_graph_clone_copies_capture() {
 }
 
 #[test]
+fn simulated_gpu_store_timing_events_score_copy_elapsed() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let run = |timing_events: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            1,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                timing_events,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let k0 = ExpertKey::new(0, 0);
+        let _p = gpu.acquire(k0).expect("acq");
+        gpu.release(k0);
+        let _s = gpu.score().expect("score");
+        (
+            gpu.copy_elapsed_ns(),
+            gpu.metrics().hits,
+            gpu.metrics().misses,
+        )
+    };
+    let (elapsed, h0, m0) = run(true);
+    let (none, h1, m1) = run(false);
+    assert!(elapsed > 0, "elapsed={elapsed}");
+    assert_eq!(none, 0);
+    assert_eq!(h0, h1);
+    assert_eq!(m0, m1);
+}
+
+#[test]
 fn simulated_gpu_store_captures_gemm_after_drain() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],

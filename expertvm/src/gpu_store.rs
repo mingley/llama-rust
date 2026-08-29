@@ -85,6 +85,11 @@ pub struct GpuStoreCfg {
     /// Clone, destroy the src, then instantiate the copy. A parked-exec
     /// update skips clone. Decode identity stays instantiate-in-place.
     pub graph_clone: bool,
+    /// Timing-on copy events (`cudaEventCreate`) and [`gpu_sim::Sim::event_elapsed_ns`].
+    ///
+    /// Default is `cudaEventDisableTiming` (vLLM wait events). Decode identity
+    /// stays disable-timing; elapsed is not recorded.
+    pub timing_events: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -93,6 +98,8 @@ struct GpuPage {
     device: DeviceId,
     /// Copy-stream event the compute stream must wait on, if not yet consumed.
     ready: Option<EventId>,
+    /// Timing-on record before the copy, when [`GpuStoreCfg::timing_events`].
+    start: Option<EventId>,
 }
 
 /// Bounded cache whose misses pay pinned H2D, mapped host, managed prefetch, or VMM.
@@ -117,6 +124,8 @@ pub struct SimulatedGpuStore {
     graph_clones: u64,
     graph_update: bool,
     graph_clone: bool,
+    timing_events: bool,
+    copy_elapsed_ns: u64,
     mode: GpuFill,
     host_func: bool,
     sync_alloc: bool,
@@ -210,7 +219,7 @@ impl SimulatedGpuStore {
     ///
     /// Defaults keep decode identity: async alloc, overlapping copy/compute,
     /// no `host_func`, default pool threshold 0, no AccessedBy, per-thread NULL,
-    /// destroy+instantiate graphs.
+    /// destroy+instantiate graphs, disable-timing copy events.
     pub fn with_cfg(
         inner: DirectStore,
         slots: usize,
@@ -262,6 +271,8 @@ impl SimulatedGpuStore {
             graph_clones: 0,
             graph_update: cfg.graph_update,
             graph_clone: cfg.graph_clone,
+            timing_events: cfg.timing_events,
+            copy_elapsed_ns: 0,
             mode: fill,
             host_func: cfg.host_func,
             sync_alloc: cfg.sync_alloc,
@@ -543,6 +554,14 @@ impl SimulatedGpuStore {
         self.graph_clones
     }
 
+    /// Sum of [`gpu_sim::Sim::event_elapsed_ns`] on copy start/end events.
+    ///
+    /// Zero unless [`GpuStoreCfg::timing_events`] and a copy was waited.
+    #[must_use]
+    pub fn copy_elapsed_ns(&self) -> u64 {
+        self.copy_elapsed_ns
+    }
+
     /// Whether `key` is in the fast CPU tier.
     #[must_use]
     pub fn is_resident(&self, key: ExpertKey) -> bool {
@@ -560,7 +579,7 @@ impl SimulatedGpuStore {
         }
         if let Some(page) = self.pages.get(&key) {
             if let Some(ev) = page.ready {
-                if !self.sim.event_complete(ev) {
+                if !self.sim.query_event(ev).unwrap_or(false) {
                     return ExpertPhase::Transferring;
                 }
             }
@@ -577,17 +596,19 @@ impl SimulatedGpuStore {
     }
 
     fn wait_copy(&mut self, key: ExpertKey) -> Result<(), Error> {
-        let (device, ready) = {
+        let (device, ready, start) = {
             let page = self.pages.get(&key).ok_or(Error::Store("missing handle"))?;
-            (page.device, page.ready)
+            (page.device, page.ready, page.start)
         };
         if let Some(ev) = ready {
-            if !self.sim.event_complete(ev) {
+            if !self.sim.query_event(ev)? {
                 let _w = self.sim.wait_event(device, ev, self.compute)?;
                 self.sim.synchronize_stream(device, self.compute)?;
             }
+            self.note_copy_elapsed(start, ev)?;
             if let Some(page) = self.pages.get_mut(&key) {
                 page.ready = None;
+                page.start = None;
             }
         }
         Ok(())
@@ -601,10 +622,9 @@ impl SimulatedGpuStore {
             return Ok(());
         }
         let d = self.home(key);
+        let start = self.record_copy_start(d)?;
         let id = self.fill_page(d)?;
-        let ev = EventId(self.next_event);
-        self.next_event = self.next_event.saturating_add(1);
-        self.sim.create_event_disable_timing(ev)?;
+        let ev = self.create_copy_event()?;
         let _r = self.sim.record_event(d, ev, self.copy)?;
         let _prev = self.pages.insert(
             key,
@@ -612,8 +632,43 @@ impl SimulatedGpuStore {
                 id,
                 device: d,
                 ready: Some(ev),
+                start,
             },
         );
+        Ok(())
+    }
+
+    fn create_copy_event(&mut self) -> Result<EventId, Error> {
+        let ev = EventId(self.next_event);
+        self.next_event = self.next_event.saturating_add(1);
+        if self.timing_events {
+            self.sim.create_event(ev)?;
+        } else {
+            self.sim.create_event_disable_timing(ev)?;
+        }
+        Ok(ev)
+    }
+
+    fn record_copy_start(&mut self, d: DeviceId) -> Result<Option<EventId>, Error> {
+        if !self.timing_events || self.mode == GpuFill::Mapped {
+            return Ok(None);
+        }
+        let ev = self.create_copy_event()?;
+        let _r = self.sim.record_event(d, ev, self.copy)?;
+        Ok(Some(ev))
+    }
+
+    fn note_copy_elapsed(&mut self, start: Option<EventId>, end: EventId) -> Result<(), Error> {
+        if !self.timing_events {
+            return Ok(());
+        }
+        let Some(st) = start else {
+            return Ok(());
+        };
+        self.sim.synchronize_event(st)?;
+        self.sim.synchronize_event(end)?;
+        let ns = self.sim.event_elapsed_ns(st, end)?;
+        self.copy_elapsed_ns = self.copy_elapsed_ns.saturating_add(ns);
         Ok(())
     }
 
@@ -696,18 +751,20 @@ impl SimulatedGpuStore {
     }
 
     fn gemm_resident(&mut self, key: ExpertKey) -> Result<(), Error> {
-        let (id, device, ready) = {
+        let (id, device, ready, start) = {
             let page = self
                 .pages
                 .get_mut(&key)
                 .ok_or(Error::Store("missing handle"))?;
             let ready = page.ready.take();
-            (page.id, page.device, ready)
+            let start = page.start.take();
+            (page.id, page.device, ready, start)
         };
         if let Some(ev) = ready {
-            if !self.sim.event_complete(ev) {
+            if !self.sim.query_event(ev)? {
                 let _w = self.sim.wait_event(device, ev, self.compute)?;
             }
+            self.note_copy_elapsed(start, ev)?;
         }
         self.launch_or_gemm(device, id)?;
         if self.host_func {
@@ -722,10 +779,10 @@ impl SimulatedGpuStore {
             let _n = self.sim.launch_graph(g, self.compute)?;
             return Ok(());
         }
-        if !self.sim.stream_is_idle(device, self.compute)? {
+        if !self.sim.query_stream(device, self.compute)? {
             self.sim.synchronize_stream(device, self.compute)?;
         }
-        if self.sim.stream_is_idle(device, self.compute)? {
+        if self.sim.query_stream(device, self.compute)? {
             self.sim.begin_capture(device, self.compute)?;
             gemm(&mut self.sim, device, self.compute, id)?;
             let src = self.sim.end_capture()?;
@@ -934,6 +991,8 @@ pub struct StoreReplay {
     pub graph_updates: u64,
     /// [`SimulatedGpuStore::graph_clones`] after the walk.
     pub graph_clones: u64,
+    /// [`SimulatedGpuStore::copy_elapsed_ns`] after the walk.
+    pub copy_elapsed_ns: u64,
 }
 
 impl StoreReplay {
@@ -941,11 +1000,12 @@ impl StoreReplay {
     #[must_use]
     pub fn line(&self) -> String {
         format!(
-            "store {} {} graph_updates={} graph_clones={}",
+            "store {} {} graph_updates={} graph_clones={} copy_elapsed_ns={}",
             self.metrics.line(),
             self.score.line(),
             self.graph_updates,
-            self.graph_clones
+            self.graph_clones,
+            self.copy_elapsed_ns
         )
     }
 }
@@ -1053,6 +1113,7 @@ pub fn store_replay_cfg(
         metrics: store.metrics(),
         graph_updates: store.graph_updates(),
         graph_clones: store.graph_clones(),
+        copy_elapsed_ns: store.copy_elapsed_ns(),
         score: store.score()?.with_tokens(n),
     })
 }

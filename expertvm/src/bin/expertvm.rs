@@ -27,7 +27,7 @@ usage: expertvm <command> [args]
   place    <trace.jsonl> [--gpus N] [--hot-pt N]
   remote   <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
   kv       [--pages N] [--page-bytes B] [--capacity C] [--tokens T] [--profile NAME] [--fill h2d|memset]
-  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-clone]
+  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-clone] [--timing-events]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch, prefill-batch, shared-prefix
@@ -120,6 +120,7 @@ struct Cfg {
     stream_priority: bool,
     graph_update: bool,
     graph_clone: bool,
+    timing_events: bool,
     interarrival_ns: u64,
     ttft_slo_ns: Option<u64>,
     itl_slo_ns: Option<u64>,
@@ -167,6 +168,7 @@ where
     let mut stream_priority = false;
     let mut graph_update = false;
     let mut graph_clone = false;
+    let mut timing_events = false;
     let mut plan_window = 0usize;
     let mut plan_threshold = 500u32;
     let mut max_batch = 0usize;
@@ -226,6 +228,7 @@ where
             "--stream-priority" => stream_priority = switch(&inline),
             "--graph-update" => graph_update = switch(&inline),
             "--graph-clone" => graph_clone = switch(&inline),
+            "--timing-events" => timing_events = switch(&inline),
             "--plan-window" => {
                 plan_window = parse_usize("plan-window", &value("plan-window", inline, &mut it)?)?
             }
@@ -304,6 +307,7 @@ where
         stream_priority,
         graph_update,
         graph_clone,
+        timing_events,
         interarrival_ns,
         ttft_slo_ns,
         itl_slo_ns,
@@ -598,6 +602,7 @@ where
                 stream_priority: cfg.stream_priority,
                 graph_update: cfg.graph_update,
                 graph_clone: cfg.graph_clone,
+                timing_events: cfg.timing_events,
             },
             prefetch,
             plan_window: cfg.plan_window,
