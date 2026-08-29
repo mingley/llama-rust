@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — store_replay prefetch and pageable H2D
+
+`store_replay_cfg` runs copy-forward / Markov / `plan_window` on
+`SimulatedGpuStore` (same predictors as `sim_replay`, no JSONL future
+leak except the Stay vs Fetch window). `GpuStoreCfg::pageable` is
+host-sync `memcpy_host_to_device` (slower than pinned DMA). `expertvm store`
+takes `--prefetch` and `--pageable`. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — `expertvm store` demand-pages SimulatedGpuStore
 
 `store_replay` / `expertvm store` walks a JSONL trace on
@@ -281,8 +289,9 @@ and `expertvm bench` `sim-pool` raise the default-pool threshold.
 host-synchronous: the call does not return until that stream finishes
 the copy, matching CUDA's pinned staging bounce. Pinned DMA
 (`memcpy_pinned_to_device`) stays stream-ordered so two streams can
-share PCIe. Capture refuses pageable copies. `SimulatedGpuStore` still
-pins. Dual score still has no `$/M tokens`.
+share PCIe. Capture refuses pageable copies. `GpuStoreCfg::pageable` /
+`expertvm store --pageable` uses that path; `SimulatedGpuStore::new`
+stays pinned. Dual score still has no `$/M tokens`.
 
 ## Shipped 2026-08-29 — `--sync-alloc` measures naive cudaMalloc
 

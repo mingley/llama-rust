@@ -289,6 +289,31 @@ pub fn window_keys(trace: &Trace, from: usize, window: usize) -> Vec<ExpertKey> 
     out
 }
 
+/// Copy-forward, Markov, or both, from the last event (no JSONL future leak).
+#[must_use]
+pub fn predicted_keys(
+    prefetch: Prefetch,
+    markov: &Markov,
+    prev: Option<&ExpertAccess>,
+    ek: &[ExpertKey],
+) -> Vec<ExpertKey> {
+    match prefetch {
+        Prefetch::None => Vec::new(),
+        Prefetch::CopyForward => copy_forward(ek),
+        Prefetch::Markov => {
+            let k = ek.len().max(1);
+            match prev {
+                Some(p) => markov.predict_ctx(&p.keys(), ek, k),
+                None => markov.predict(ek, k),
+            }
+        }
+        Prefetch::Both => match prev {
+            Some(p) => prefetch_keys_ctx(markov, &p.keys(), ek),
+            None => prefetch_keys_ctx(markov, &[], ek),
+        },
+    }
+}
+
 /// Copy-forward: same expert ids one layer ahead (predictor prefetch).
 #[must_use]
 pub fn copy_forward(keys: &[ExpertKey]) -> Vec<ExpertKey> {

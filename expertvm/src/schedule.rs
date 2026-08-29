@@ -3,12 +3,12 @@
 use crate::access::{ExpertAccess, ExpertKey, Trace};
 use crate::error::Error;
 use crate::place::PlaceMap;
-use crate::planner::{observe_chain, plan_keys, Markov, Plan};
+use crate::planner::{observe_chain, plan_keys, predicted_keys, Markov, Plan};
 use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
     apply_touch, drop_remote, fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch,
-    occupancy_slots, predicted_keys, reclaim_victim, remote_hit, replay_from_sim, replay_streams,
-    stream_of, PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, TouchArgs,
+    occupancy_slots, reclaim_victim, remote_hit, replay_from_sim, replay_streams, stream_of,
+    PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, TouchArgs,
 };
 use gpu_sim::{AllocId, DeviceId, GraphId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};

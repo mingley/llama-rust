@@ -2436,3 +2436,79 @@ fn store_replay_demand_pages_the_trace() {
     assert!(row.line().contains("hits="));
     assert!(row.line().contains("wall_ns="));
 }
+
+#[test]
+fn simulated_gpu_store_pageable_h2d_is_slower_than_pinned() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let bytes = 32u64 << 20;
+    let run = |pageable: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            bytes,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                pageable,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        if pageable {
+            assert!(!gpu.staging_is_pinned());
+        }
+        let _a = gpu.acquire(ExpertKey::new(0, 0)).expect("k0");
+        let _b = gpu.acquire(ExpertKey::new(0, 1)).expect("k1");
+        gpu.score().expect("score")
+    };
+    let pin = run(false);
+    let page = run(true);
+    assert!(
+        page.wall_ns > pin.wall_ns,
+        "pageable={} pinned={}",
+        page.wall_ns,
+        pin.wall_ns
+    );
+}
+
+#[test]
+fn store_replay_markov_prefetch_beats_demand() {
+    let mut events = Vec::new();
+    for tok in 0..16u32 {
+        events.push(ev(tok, 0, &[0]));
+        events.push(ev(tok, 1, &[7]));
+    }
+    let t = Trace { events };
+    let p = HardwareProfile::example_h100_sxm();
+    let run = |prefetch: Prefetch| {
+        store_replay_cfg(
+            &t,
+            p.clone(),
+            StoreReplayCfg {
+                prefetch,
+                ..StoreReplayCfg::demand(1, 4096, GpuFill::Pinned)
+            },
+        )
+        .expect("store")
+    };
+    let none = run(Prefetch::None);
+    let fwd = run(Prefetch::CopyForward);
+    let mk = run(Prefetch::Markov);
+    assert!(
+        mk.metrics.hits > fwd.metrics.hits,
+        "markov={} copy-forward={}",
+        mk.metrics.hits,
+        fwd.metrics.hits
+    );
+    assert!(
+        mk.metrics.hits > none.metrics.hits,
+        "markov={} demand={}",
+        mk.metrics.hits,
+        none.metrics.hits
+    );
+    assert!(mk.metrics.prefetches > 0);
+}

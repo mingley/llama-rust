@@ -4,8 +4,8 @@ use crate::access::{ExpertAccess, ExpertKey, Trace};
 use crate::error::Error;
 use crate::place::PlaceMap;
 use crate::planner::{
-    copy_forward, observe_chain, plan_placement, plan_window, prefetch_keys_ctx, window_keys,
-    Markov, Placement, Plan, Prefetch,
+    observe_chain, plan_placement, plan_window, predicted_keys, window_keys, Markov, Placement,
+    Plan, Prefetch,
 };
 use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
@@ -861,29 +861,6 @@ pub(crate) fn stream_of(sequence: u64, n_streams: u8) -> StreamId {
     let n = u64::from(n_streams);
     let id = sequence % n;
     StreamId(u16::try_from(id).unwrap_or(0))
-}
-
-pub(crate) fn predicted_keys(
-    prefetch: Prefetch,
-    markov: &Markov,
-    prev: Option<&ExpertAccess>,
-    ek: &[ExpertKey],
-) -> Vec<ExpertKey> {
-    match prefetch {
-        Prefetch::None => Vec::new(),
-        Prefetch::CopyForward => copy_forward(ek),
-        Prefetch::Markov => {
-            let k = ek.len().max(1);
-            match prev {
-                Some(p) => markov.predict_ctx(&p.keys(), ek, k),
-                None => markov.predict(ek, k),
-            }
-        }
-        Prefetch::Both => match prev {
-            Some(p) => prefetch_keys_ctx(markov, &p.keys(), ek),
-            None => prefetch_keys_ctx(markov, &[], ek),
-        },
-    }
 }
 
 fn itl_from_ends(ends: &[u64]) -> Option<u64> {

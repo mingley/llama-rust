@@ -29,13 +29,17 @@ pub use error::Error;
 pub use gpu_sim::{
     probe_topology, DeviceId, GpuOp, HardwareProfile, Operation, PoolId, Score, TopologyProbe,
 };
-pub use gpu_store::{store_replay, GpuFill, GpuStoreCfg, SimulatedGpuStore, StoreReplay};
+pub use gpu_store::{
+    store_replay, store_replay_cfg, GpuFill, GpuStoreCfg, SimulatedGpuStore, StoreReplay,
+    StoreReplayCfg,
+};
 pub use kv::{cycling_pages, kv_paged, kv_replay, KvCfg, KvFill, KvReplay};
 pub use live::LiveStore;
 pub use place::{colocated, home_gpu, striped, with_hot_replicas, PlaceMap};
 pub use planner::{
-    copy_forward, hot_keys, observe_chain, plan_keys, plan_placement, plan_window, prefetch_keys,
-    prefetch_keys_ctx, transition_pair, window_keys, Markov, Placement, Plan, Prefetch,
+    copy_forward, hot_keys, observe_chain, plan_keys, plan_placement, plan_window, predicted_keys,
+    prefetch_keys, prefetch_keys_ctx, transition_pair, window_keys, Markov, Placement, Plan,
+    Prefetch,
 };
 pub use policy::Policy;
 pub use replay::{compare, format_table, replay, ReplayRow};

@@ -1,8 +1,11 @@
 //! [`ExpertStore`] backed by [`gpu_sim`]: H2D, mapped host, managed, or VMM on miss.
 
-use crate::access::{ExpertKey, Trace};
+use crate::access::{ExpertAccess, ExpertKey, Trace};
 use crate::error::Error;
 use crate::place::home_gpu;
+use crate::planner::{
+    observe_chain, plan_window, predicted_keys, window_keys, Markov, Plan, Prefetch,
+};
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
     AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelKind, MemAdvise, MemcpyOp,
@@ -50,6 +53,11 @@ pub struct GpuStoreCfg {
     pub mempool: bool,
     /// Physical span for [`GpuFill::Vmm`]. `0` maps the whole expert (`va_acquire`).
     pub vmm_page: u64,
+    /// Pageable `cudaMemcpyAsync` (`memcpy_host_to_device`) instead of pinned DMA.
+    ///
+    /// Host-synchronous and slower (`pageable_permille`). Decode identity stays
+    /// on pinned H2D.
+    pub pageable: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -81,6 +89,8 @@ pub struct SimulatedGpuStore {
     sync_alloc: bool,
     /// [`GpuStoreCfg::vmm_page`]: KV-sized physicals when [`GpuFill::Vmm`].
     vmm_page: u64,
+    /// Pageable H2D (`memcpy_host_to_device`) instead of pinned DMA.
+    pageable: bool,
 }
 
 impl SimulatedGpuStore {
@@ -183,9 +193,9 @@ impl SimulatedGpuStore {
             sim.set_created_streams_blocking(2)?;
         }
         let cache_slots = mapped_occupancy(slots, fill, sim.pin_budget(), bytes);
-        // Mapped expert pages already charge the pin budget. A second pinned
-        // staging alloc would steal the last expert's mlock.
-        let staging = if fill == GpuFill::Mapped {
+        // Mapped expert pages already charge the pin budget. Pageable H2D
+        // does not need a second mlock either.
+        let staging = if fill == GpuFill::Mapped || cfg.pageable {
             sim.alloc_host(bytes)?
         } else {
             sim.alloc_host_pinned(bytes)?
@@ -209,6 +219,7 @@ impl SimulatedGpuStore {
             host_func: cfg.host_func,
             sync_alloc: cfg.sync_alloc,
             vmm_page: cfg.vmm_page,
+            pageable: cfg.pageable,
         })
     }
 
@@ -553,7 +564,9 @@ impl SimulatedGpuStore {
 
     fn fill_hbm(&mut self, d: DeviceId, id: AllocId) -> Result<(), Error> {
         let bytes = self.bytes_per_expert;
-        if self.sync_alloc {
+        if self.pageable {
+            let _id = self.sim.memcpy_host_to_device(d, id, bytes, self.copy)?;
+        } else if self.sync_alloc {
             let _id = self.sim.memcpy_sync(
                 d,
                 MemcpyOp {
@@ -795,6 +808,41 @@ impl StoreReplay {
     }
 }
 
+/// Planner + CUDA knobs for [`store_replay_cfg`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StoreReplayCfg {
+    /// Cache slots (mapped occupancy may shrink this).
+    pub slots: usize,
+    /// Payload bytes per expert page.
+    pub bytes_per_expert: u64,
+    /// Miss fill path.
+    pub fill: GpuFill,
+    /// `SimCfg` subset on the store.
+    pub gpu: GpuStoreCfg,
+    /// Online prefetch (no JSONL future leak except [`Self::plan_window`]).
+    pub prefetch: Prefetch,
+    /// Upcoming-event window for [`plan_window`]. `0` leaves prefetch ungated.
+    pub plan_window: usize,
+    /// Stay vs Fetch threshold, permille of upcoming unique keys already resident.
+    pub plan_threshold: u32,
+}
+
+impl StoreReplayCfg {
+    /// Demand paging, pinned async H2D, no planner.
+    #[must_use]
+    pub fn demand(slots: usize, bytes_per_expert: u64, fill: GpuFill) -> Self {
+        Self {
+            slots,
+            bytes_per_expert,
+            fill,
+            gpu: GpuStoreCfg::default(),
+            prefetch: Prefetch::None,
+            plan_window: 0,
+            plan_threshold: 500,
+        }
+    }
+}
+
 /// Walk `trace.keys()` on a store, then [`SimulatedGpuStore::score`].
 pub fn store_replay(
     trace: &Trace,
@@ -804,18 +852,92 @@ pub fn store_replay(
     fill: GpuFill,
     cfg: GpuStoreCfg,
 ) -> Result<StoreReplay, Error> {
+    store_replay_cfg(
+        trace,
+        profile,
+        StoreReplayCfg {
+            slots,
+            bytes_per_expert,
+            fill,
+            gpu: cfg,
+            prefetch: Prefetch::None,
+            plan_window: 0,
+            plan_threshold: 500,
+        },
+    )
+}
+
+/// [`store_replay`] plus copy-forward / Markov / `plan_window` prefetch.
+pub fn store_replay_cfg(
+    trace: &Trace,
+    profile: HardwareProfile,
+    run: StoreReplayCfg,
+) -> Result<StoreReplay, Error> {
     let inner = DirectStore::from_trace(trace);
-    let mut store =
-        SimulatedGpuStore::with_cfg(inner, slots, profile, bytes_per_expert, fill, cfg)?;
-    for key in trace.keys() {
-        let _p = store.acquire(key)?;
-        store.release(key);
+    let mut store = SimulatedGpuStore::with_cfg(
+        inner,
+        run.slots,
+        profile,
+        run.bytes_per_expert,
+        run.fill,
+        run.gpu,
+    )?;
+    let catalog: BTreeSet<ExpertKey> = trace.keys().into_iter().collect();
+    let mut markov = Markov::new();
+    let mut prev: Option<&ExpertAccess> = None;
+    let mut prev2: Option<&ExpertAccess> = None;
+    for (i, event) in trace.events.iter().enumerate() {
+        let ek = event.keys();
+        for key in &ek {
+            let _p = store.acquire(*key)?;
+            store.release(*key);
+        }
+        if store_should_prefetch(&store, &catalog, &run, trace, i) {
+            let predicted = predicted_keys(run.prefetch, &markov, prev, &ek);
+            let planned = if run.plan_window > 0 {
+                window_keys(trace, i.saturating_add(1), run.plan_window)
+            } else {
+                Vec::new()
+            };
+            let fill: Vec<ExpertKey> = predicted.into_iter().chain(planned).collect();
+            let _n = store.prefetch(&fill)?;
+        }
+        observe_chain(&mut markov, prev2, prev, event);
+        prev2 = prev;
+        prev = Some(event);
     }
     let n = u64::try_from(trace.events.len()).unwrap_or(1);
     Ok(StoreReplay {
         metrics: store.metrics(),
         score: store.score()?.with_tokens(n),
     })
+}
+
+fn store_should_prefetch(
+    store: &SimulatedGpuStore,
+    catalog: &BTreeSet<ExpertKey>,
+    run: &StoreReplayCfg,
+    trace: &Trace,
+    i: usize,
+) -> bool {
+    if run.plan_window == 0 {
+        return true;
+    }
+    let resident: BTreeSet<ExpertKey> = catalog
+        .iter()
+        .copied()
+        .filter(|k| store.is_resident(*k))
+        .collect();
+    !matches!(
+        plan_window(
+            &resident,
+            trace,
+            i.saturating_add(1),
+            run.plan_window,
+            run.plan_threshold,
+        ),
+        Plan::Stay
+    )
 }
 
 fn gemm(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Error> {
