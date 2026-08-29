@@ -1337,6 +1337,34 @@ fn schedule_replica_evict_frees_peer_hbm() {
 }
 
 #[test]
+fn schedule_vmm_replica_evict_frees_peer_hbm() {
+    let t = Trace {
+        events: vec![
+            ev(0, 0, &[0]),
+            ev(1, 0, &[0]),
+            ev(2, 0, &[0]),
+            ev(3, 0, &[0]),
+            ev(4, 0, &[1]),
+        ],
+    };
+    let p = HardwareProfile::example_2xh100_pcie().restrict_hbm(4096);
+    let cfg = SimCfg {
+        vmm: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let stripe = striped(&t, 2);
+    let hot = with_hot_replicas(stripe, &t, 2, 250);
+    assert!(
+        hot.replicas.contains_key(&ExpertKey::new(0, 0)),
+        "{}",
+        hot.line()
+    );
+    let row = schedule_placed(&t, p, cfg, SchedCfg::closed(0), Some(&hot)).expect("hbm");
+    assert_eq!(row.completed, 1);
+    assert!(row.replay.misses >= 2);
+}
+
+#[test]
 fn schedule_hbm_evicts_when_slots_are_loose() {
     let t = Trace {
         events: vec![ev(0, 0, &[0]), ev(1, 0, &[2]), ev(2, 0, &[0])],
@@ -3464,6 +3492,61 @@ fn schedule_managed_accessed_by_replicas_skip_dest_prefetch() {
     let bytes = 1u64 << 20;
     let um = SimCfg {
         managed: true,
+        ..SimCfg::lru(4, bytes, 0)
+    };
+    let ab = SimCfg {
+        accessed_by: true,
+        ..um
+    };
+    let stripe = striped(&t, 8);
+    let hot = with_hot_replicas(stripe.clone(), &t, 8, 200);
+    let plain =
+        schedule_placed(&t, p.clone(), um, SchedCfg::closed(0), Some(&stripe)).expect("stripe");
+    let prefetch =
+        schedule_placed(&t, p.clone(), um, SchedCfg::closed(0), Some(&hot)).expect("prefetch");
+    let mapped = schedule_placed(&t, p, ab, SchedCfg::closed(0), Some(&hot)).expect("accessed");
+    assert!(
+        prefetch.replay.bytes_moved > plain.replay.bytes_moved,
+        "prefetch={} stripe={}",
+        prefetch.replay.bytes_moved,
+        plain.replay.bytes_moved
+    );
+    assert_eq!(mapped.replay.bytes_moved, plain.replay.bytes_moved);
+}
+
+#[test]
+fn schedule_vmm_hot_replicas_d2d() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0]), ev(2, 0, &[0])],
+    };
+    let p = HardwareProfile::example_8xh100_nvlink();
+    let bytes = 1u64 << 20;
+    let cfg = SimCfg {
+        vmm: true,
+        ..SimCfg::lru(4, bytes, 0)
+    };
+    let stripe = striped(&t, 8);
+    let hot = with_hot_replicas(stripe.clone(), &t, 8, 200);
+    let a =
+        schedule_placed(&t, p.clone(), cfg, SchedCfg::closed(0), Some(&stripe)).expect("stripe");
+    let b = schedule_placed(&t, p, cfg, SchedCfg::closed(0), Some(&hot)).expect("hot");
+    assert!(
+        b.replay.bytes_moved > a.replay.bytes_moved,
+        "vmm hot={} stripe={}",
+        b.replay.bytes_moved,
+        a.replay.bytes_moved
+    );
+}
+
+#[test]
+fn schedule_vmm_accessed_by_replicas_skip_dest_hbm() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0]), ev(2, 0, &[0])],
+    };
+    let p = HardwareProfile::example_8xh100_nvlink();
+    let bytes = 1u64 << 20;
+    let um = SimCfg {
+        vmm: true,
         ..SimCfg::lru(4, bytes, 0)
     };
     let ab = SimCfg {

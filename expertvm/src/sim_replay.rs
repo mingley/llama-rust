@@ -164,6 +164,8 @@ pub struct SimCfg {
     /// H2D; [`crate::SimulatedGpuStore::with_vmm`] uses this path. [`Self::vmm_page`] splits each map into KV-sized
     /// physicals (`0` is one `cuMemMap` for the whole expert). [`Self::accessed_by`]
     /// is `va_set_access` on every GPU at fill (peer read, no dest HBM).
+    /// `--place replicas` maps dest then D2D unless AccessedBy; dest eviction
+    /// is `va_unmap_range`.
     pub vmm: bool,
     /// Page size for [`Self::vmm`]. `0` maps the whole expert in one physical.
     /// [`crate::SimulatedGpuStore::with_vmm`] stays whole-VA;
@@ -635,7 +637,7 @@ pub(crate) struct PageHandle {
     pub(crate) id: AllocId,
     pub(crate) stream: StreamId,
     pub(crate) device: DeviceId,
-    /// Extra devices that hold a D2D replica of `id`.
+    /// Extra devices that hold a D2D / VMM-map replica of `id`.
     pub(crate) replicas: Vec<DeviceId>,
 }
 
@@ -771,7 +773,7 @@ pub(crate) fn reclaim_victim(
             let Some(page) = handles.get_mut(&victim) else {
                 return Ok(());
             };
-            drop_replica(sim, page, args.d, next_event)
+            drop_replica(sim, page, args.d, next_event, args.bytes)
         }
     }
 }
@@ -819,6 +821,7 @@ fn drop_replica(
     page: &mut PageHandle,
     dst: DeviceId,
     next_event: &mut u32,
+    bytes: u64,
 ) -> Result<(), Error> {
     if !page.replicas.contains(&dst) {
         return Ok(());
@@ -826,6 +829,8 @@ fn drop_replica(
     wait_peer(sim, page.device, dst, page.stream, next_event)?;
     if page_is_managed(sim, page.id) {
         sim.drop_managed_copy(page.id, dst)?;
+    } else if page_is_vmm(sim, page.id) {
+        sim.va_unmap_range(page.id, dst, 0, bytes)?;
     } else {
         sim.free(dst, page.id, page.stream)?;
     }

@@ -608,11 +608,11 @@ impl SchedRt {
     }
 
     fn replicate_key(&mut self, key: ExpertKey) -> Result<(), Error> {
-        if self.args.mapped || self.args.vmm {
+        if self.args.mapped {
             return Ok(());
         }
-        if self.args.managed && self.cfg.accessed_by {
-            // SetAccessedBy already maps dest GPUs; no dest HBM replica.
+        if (self.args.managed || self.args.vmm) && self.cfg.accessed_by {
+            // SetAccessedBy / va_set_access already maps dest GPUs; no dest HBM.
             return Ok(());
         }
         let Some(map) = &self.place else {
@@ -653,7 +653,14 @@ impl SchedRt {
                 self.forget_peer_if_home_dropped(v);
             }
             self.make_room(dst, bytes)?;
-            if self.args.managed {
+            if self.args.vmm {
+                if !self.sim.is_resident(id, dst)? {
+                    self.sim.va_map(id, dst)?;
+                    let _c = self
+                        .sim
+                        .memcpy_device_to_device(src, dst, id, bytes, stream)?;
+                }
+            } else if self.args.managed {
                 let _p = self.sim.prefetch(dst, id, stream)?;
             } else {
                 let _c = self

@@ -99,7 +99,8 @@ That is the “do not move the expert” alternative to H2D. `--managed` uses
 (and replicates if another GPU later prefetches the same page). A remote
 kernel read can keep the page at the preferred GPU.
 `--place replicas` uses that prefetch onto dest GPUs; dest eviction
-`drop_managed_copy`s one GPU without freeing the allocation. `--accessed-by`
+`drop_managed_copy`s one GPU without freeing the allocation. `--place replicas
+--vmm` maps dest then D2D (`va_unmap_range` on dest eviction). `--accessed-by`
 is `cudaMemAdviseSetAccessedBy` on every GPU at a managed fill, or
 `cuMemSetAccess` PROT_READ at a VMM fill: dest GEMMs
 read without migrating or charging dest HBM, and replica prefetch / VMM dest

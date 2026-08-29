@@ -1030,6 +1030,11 @@ model, do not celebrate the sim.
     `va_granularity_bytes=` in a `.profile` file). Dual score still has no
     `$/M tokens`.
 
+65. [x] Trace-walker VMM `--place replicas`: `expertvm schedule --vmm` maps
+    dest then D2D like SimulatedGpuStore pin (dest eviction `va_unmap_range`).
+    `--accessed-by` skips dest HBM (`va_set_access` at fill). Dual score still
+    has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.
