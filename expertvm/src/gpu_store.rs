@@ -413,7 +413,9 @@ impl SimulatedGpuStore {
     /// Pin against eviction (sticky, survives compute `release`) and, on
     /// multi-GPU profiles, NVLink-replicate onto `(home + 1) % n_gpus`.
     ///
-    /// Managed + [`GpuStoreCfg::accessed_by`] maps the dest without a prefetch.
+    /// Waits this page's GEMM lease before the replica copy so managed
+    /// `prefetch` is not [`gpu_sim::SimError::Leased`]. Managed +
+    /// [`GpuStoreCfg::accessed_by`] maps the dest without a prefetch.
     pub fn pin_hot(&mut self, keys: &[ExpertKey]) -> Result<(), Error> {
         for key in keys {
             if !self.cache.contains_catalog(*key) {
@@ -426,6 +428,8 @@ impl SimulatedGpuStore {
                 self.place(*key)?;
             }
             self.wait_copy(*key)?;
+            // Replica prefetch / D2D cannot start while a GEMM still leases the page.
+            self.wait_page_idle(*key)?;
             self.cache.pin_hot(&[*key])?;
             self.replicate(*key)?;
         }
@@ -454,6 +458,11 @@ impl SimulatedGpuStore {
         if src == dst {
             return Ok(());
         }
+        // Host-sync managed/VMM drops, and stream-ordered pinned free, must not
+        // race a live GEMM lease. Drain this page (and its replica) only — do
+        // not `synchronize()` the whole device, or overlapping H2D of other
+        // experts would collapse into the migrate.
+        self.wait_page_idle(key)?;
         if let Some(g) = self.graphs.remove(&id) {
             self.sim.destroy_graph(g)?;
         }
@@ -506,11 +515,13 @@ impl SimulatedGpuStore {
 
     /// [`plan_placement`] on the GPU0↔GPU1 hop: D2D weights onto GPU0, or count a dispatch.
     ///
-    /// 1-GPU profiles skip. [`Self::migrate`] stays unconditional. `reuse` is
+    /// 1-GPU profiles skip (`Ok`). [`Self::migrate`] stays unconditional. `reuse` is
     /// how many times this key has been selected for keep-hot so far (online).
-    pub fn place_hot(&mut self, key: ExpertKey, reuse: u64, fan_in: u64) {
+    /// Fail-loud: a leased managed/VMM drop is [`Error::Sim`], not a swallowed
+    /// no-op (Engine serving used to ignore that `Result`).
+    pub fn place_hot(&mut self, key: ExpertKey, reuse: u64, fan_in: u64) -> Result<(), Error> {
         if self.sim.profile().n_gpus() < 2 {
-            return;
+            return Ok(());
         }
         match plan_placement(
             self.bytes_per_expert,
@@ -519,11 +530,10 @@ impl SimulatedGpuStore {
             reuse,
             self.peer_bps(),
         ) {
-            Placement::MoveWeights => {
-                let _moved = self.migrate(key, DeviceId(0));
-            }
+            Placement::MoveWeights => self.migrate(key, DeviceId(0)),
             Placement::DispatchActivations => {
                 self.dispatches = self.dispatches.saturating_add(1);
+                Ok(())
             }
         }
     }
@@ -535,6 +545,7 @@ impl SimulatedGpuStore {
     /// Prefetch `dst` (ReadMostly keeps extras) then drop the source copy.
     ///
     /// [`Self::accessed_by`]: GEMM retarget only — AccessedBy already maps `dst`.
+    /// [`Self::wait_page_idle`] already drained this alloc's kernel leases.
     fn migrate_managed(
         &mut self,
         key: ExpertKey,
@@ -542,7 +553,6 @@ impl SimulatedGpuStore {
         src: DeviceId,
         dst: DeviceId,
     ) -> Result<(), Error> {
-        self.sim.synchronize_stream(src, self.compute)?;
         if self.accessed_by {
             let _gone = self.replicas.remove(&key);
             if let Some(page) = self.pages.get_mut(&key) {
@@ -734,6 +744,25 @@ impl SimulatedGpuStore {
         self.sweep_evicts();
         self.cache.evict(key)?;
         self.drop_gpu(key)
+    }
+
+    /// Drain GEMM and copy on this page's device (and replica), not the whole sim.
+    fn wait_page_idle(&mut self, key: ExpertKey) -> Result<(), Error> {
+        let (device, replica) = {
+            let Some(page) = self.pages.get(&key) else {
+                return Ok(());
+            };
+            (page.device, self.replicas.get(&key).copied())
+        };
+        self.sim.synchronize_stream(device, self.compute)?;
+        self.sim.synchronize_stream(device, self.copy)?;
+        if let Some(dst) = replica {
+            if dst != device {
+                self.sim.synchronize_stream(dst, self.compute)?;
+                self.sim.synchronize_stream(dst, self.copy)?;
+            }
+        }
+        Ok(())
     }
 
     fn wait_copy(&mut self, key: ExpertKey) -> Result<(), Error> {
@@ -1327,10 +1356,7 @@ fn gemm(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Erro
 }
 
 /// Copy is NULL; compute is stream 1. Seq-streams: copy `0 .. n_copy-1`, compute `n_copy`.
-fn copy_compute_streams(
-    profile: &HardwareProfile,
-    seq_streams: bool,
-) -> (StreamId, StreamId, u8) {
+fn copy_compute_streams(profile: &HardwareProfile, seq_streams: bool) -> (StreamId, StreamId, u8) {
     if !seq_streams {
         return (StreamId(0), StreamId(1), 2);
     }

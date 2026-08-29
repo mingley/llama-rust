@@ -180,11 +180,12 @@ impl LiveStore {
     /// Move pinned weights onto GPU0, or leave them on the striped home.
     ///
     /// [`crate::plan_placement`] on the GPU0↔GPU1 hop. CPU stores and 1-GPU
-    /// profiles are no-ops. [`Self::migrate`] stays unconditional.
-    pub fn place_hot(&mut self, key: ExpertKey, reuse: u64, fan_in: u64) {
+    /// profiles are `Ok` no-ops. [`Self::migrate`] stays unconditional.
+    /// Simulated GPU fails loud on a leased managed/VMM drop.
+    pub fn place_hot(&mut self, key: ExpertKey, reuse: u64, fan_in: u64) -> Result<(), Error> {
         match self {
             Self::Simulated(s) => s.place_hot(key, reuse, fan_in),
-            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => {}
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => Ok(()),
         }
     }
 

@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine place_hot fail-loud
+
+Managed/VMM `place_hot` waits that expert page's GEMM and copy streams
+before replica prefetch / `drop_managed_copy` / `va_unmap`. Engine
+propagates pin and migrate errors (`allocation N is still leased` used
+to be swallowed). 8×H100 managed and pinned two-sequence runs with
+64-byte pages D2D onto GPU0 (`migrates>=1`) and keep greedy identity.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine `--seq-streams`
 
 `--expert-sim --seq-streams` maps each Engine sequence onto a copy stream
@@ -1133,8 +1142,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 42 (Engine batch-128
-MoE DirectStore). `gguf_gemv serve --engine`
+Next code change is PLAN systems depth after item 55 (Engine `place_hot`
+fail-loud managed/VMM migrate). `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover
 is a Llama NORM real-model fixture when a GGUF is on disk. Physical

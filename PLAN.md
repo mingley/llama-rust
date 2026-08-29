@@ -942,6 +942,15 @@ model, do not celebrate the sim.
     compute stream 1. Two-sequence greedy ids still match independent decode.
     Dual score still has no `$/M tokens`.
 
+55. [x] Engine `place_hot` fail-loud: SimulatedGpuStore drains that page's
+    GEMM/copy streams before managed replica prefetch, `drop_managed_copy`,
+    and VMM `va_unmap` (no whole-device `synchronize`, so other experts'
+    overlapping H2D stay concurrent). `LiveStore::place_hot` returns `Result`;
+    Engine `pin_predicted` propagates pin/migrate errors instead of swallowing
+    `allocation N is still leased`. Two-sequence greedy ids still match
+    independent decode on managed and pinned 8×H100 with 64-byte pages
+    (`migrates >= 1`). Dual score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

@@ -116,7 +116,8 @@ policy. A tight `--pool-blocks` preempts
 MoE serving stays on the shared-pool path. After each GEMM the store
 sticky-pins last-used ∪ predicted experts (`slots - 1`; `slots == 1` pins
 nothing). A multi-GPU SimulatedGpuStore then `plan_placement`s those pins
-(D2D onto GPU0 vs leave on the striped home).
+(D2D onto GPU0 vs leave on the striped home). Managed/VMM moves drain that
+page's GEMM lease first; `place_hot` errors are fail-loud.
 MoE traces stay on that GEMM (per-row
 sequence / token / prefix). Prints each continuation (`n_gen` plus
 decoded text), then intern_hits, preempts, GEMM stats, store metrics,

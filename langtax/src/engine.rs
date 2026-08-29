@@ -21,6 +21,8 @@
 //! `slots == 1` pins nothing so demand paging can evict). Multi-GPU SimulatedGpuStore
 //! then runs [`plan_placement`](expertvm::plan_placement) on those pins: D2D onto GPU0
 //! when weight bytes beat activation volume, otherwise leave them on the striped home.
+//! Managed/VMM moves wait that page's GEMM lease before `drop_managed_copy` /
+//! `va_unmap`; `place_hot` errors propagate (they used to be swallowed).
 //! SimulatedGpuStore scores sample the virtual clock at each generated token
 //! (`ttft_ns` / `itl_ns` / `ns_per_token`; not `$/M tokens`). Default GPU
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
@@ -195,8 +197,10 @@ pub struct EngineStats {
 /// A multi-GPU [`LiveStore::Simulated`] then calls [`LiveStore::place_hot`] on
 /// those pins: [`expertvm::plan_placement`] D2Ds onto GPU0 when expert bytes beat
 /// [`expertvm::DECODE_ACTIVATION_BYTES`] times fan-in times reuse, else activations
-/// stay on the striped home (`StoreMetrics::dispatches`). [`LiveStore::migrate`]
-/// stays unconditional. 1-GPU profiles skip. SimulatedGpuStore token samples
+/// stay on the striped home (`StoreMetrics::dispatches`). Place/migrate errors
+/// propagate (managed/VMM wait in-flight GEMM leases first; they used to be
+/// swallowed). [`LiveStore::migrate`] stays unconditional. 1-GPU profiles skip.
+/// SimulatedGpuStore token samples
 /// fill [`Engine::seq_ttft_ns`] / [`Engine::seq_itl_ns`] and the score line.
 /// Default GPU GEMMs capture graphs ([`Engine::graph_launches`]).
 /// [`EngineCfg::itl_slo_ns`] counts later-token misses ([`Engine::itl_slo_miss`]).
@@ -592,28 +596,43 @@ impl<'a> Engine<'a> {
         self.prefetch = chain;
     }
 
-    fn with_store_parked<T>(&mut self, idx: usize, f: impl FnOnce(&mut Self) -> T) -> T {
+    fn with_store_parked<T, E>(
+        &mut self,
+        idx: usize,
+        f: impl FnOnce(&mut Self) -> Result<T, E>,
+    ) -> Result<T, E>
+    where
+        E: From<LlamaError>,
+    {
         self.park_store_on(idx);
         let out = f(self);
         self.unpark_store_from(idx);
-        self.pin_predicted();
-        out
+        match out {
+            Ok(v) => {
+                self.pin_predicted().map_err(E::from)?;
+                Ok(v)
+            }
+            Err(e) => {
+                let _keep = self.pin_predicted();
+                Err(e)
+            }
+        }
     }
 
     /// Sticky-pin last-used ∪ Markov keys, then place them (move vs dispatch).
-    fn pin_predicted(&mut self) {
+    fn pin_predicted(&mut self) -> Result<(), LlamaError> {
         let budget = match self.expert_store.as_ref() {
             Some(s) => s.pin_budget(),
-            None => return,
+            None => return Ok(()),
         };
         if budget == 0 {
-            return;
+            return Ok(());
         }
         let fan_in = self.prefetch.last_fan_in();
         let keys = self.prefetch.keep_hot_keys();
         let pinned = {
             let Some(store) = self.expert_store.as_mut() else {
-                return;
+                return Ok(());
             };
             store.unpin_all();
             let mut pinned = Vec::new();
@@ -621,10 +640,9 @@ impl<'a> Engine<'a> {
                 if pinned.len() >= budget {
                     break;
                 }
-                if let Ok(()) = store.pin_hot(&[key]) {
-                    if store.is_pinned(key) {
-                        pinned.push(key);
-                    }
+                store.pin_hot(&[key])?;
+                if store.is_pinned(key) {
+                    pinned.push(key);
                 }
             }
             pinned
@@ -636,11 +654,12 @@ impl<'a> Engine<'a> {
             jobs.push((key, *slot));
         }
         let Some(store) = self.expert_store.as_mut() else {
-            return;
+            return Ok(());
         };
         for (key, reuse) in jobs {
-            store.place_hot(key, reuse, fan_in);
+            store.place_hot(key, reuse, fan_in)?;
         }
+        Ok(())
     }
 
     fn note_gemm(&mut self, n: usize) {
@@ -1236,6 +1255,12 @@ fn is_kv_cap(err: &LlamaError) -> bool {
 enum BatchFail {
     Cap(usize, LlamaError),
     Other(LlamaError),
+}
+
+impl From<LlamaError> for BatchFail {
+    fn from(e: LlamaError) -> Self {
+        Self::Other(e)
+    }
 }
 
 fn borrow_slots_mut<'a>(
@@ -2638,6 +2663,7 @@ mod tests {
         compute_pri: i32,
         compute_stream: StreamId,
         accessed_peer: bool,
+        migrates: u64,
     }
 
     fn two_seq_gpu_on(
@@ -2683,6 +2709,7 @@ mod tests {
         assert_eq!(eng.take(b).expect("tb").generated, exp_b);
         let wall_ns = eng.expert_store_score().expect("sc").expect("sim").wall_ns;
         let compute_stream = eng.gpu_compute_stream().unwrap_or(StreamId(1));
+        let migrates = eng.expert_store_metrics().map_or(0, |m| m.migrates);
         GpuKnobOut {
             launches: eng.graph_launches(),
             updates: eng.graph_updates(),
@@ -2697,6 +2724,7 @@ mod tests {
                 .unwrap_or(0),
             compute_stream,
             accessed_peer: eng.gpu_any_accessed_by(DeviceId(1)),
+            migrates,
         }
     }
 
@@ -2841,6 +2869,44 @@ mod tests {
         );
         assert!(on.accessed_peer, "accessed_by must map a peer GPU");
         assert!(on.launches >= 2, "launches={}", on.launches);
+    }
+
+    #[test]
+    fn engine_gpu_managed_8gpu_place_hot_migrates() {
+        // 64-byte pages: weight D2D beats activation volume, so place_hot
+        // migrates onto GPU0. Previously pin_hot replica prefetch and
+        // drop_managed_copy raced the GEMM lease and Engine swallowed it.
+        let out = two_seq_gpu_bytes(
+            8,
+            GpuStoreCfg::default(),
+            GpuFill::Managed,
+            HardwareProfile::example_8xh100_nvlink(),
+            64,
+        );
+        assert!(
+            out.migrates >= 1,
+            "managed 8gpu place_hot must D2D; migrates={}",
+            out.migrates
+        );
+        assert!(out.launches >= 2, "launches={}", out.launches);
+        assert!(!out.accessed_peer, "default managed must not SetAccessedBy");
+    }
+
+    #[test]
+    fn engine_gpu_pinned_8gpu_place_hot_migrates() {
+        let out = two_seq_gpu_bytes(
+            8,
+            GpuStoreCfg::default(),
+            GpuFill::Pinned,
+            HardwareProfile::example_8xh100_nvlink(),
+            64,
+        );
+        assert!(
+            out.migrates >= 1,
+            "pinned 8gpu place_hot must D2D; migrates={}",
+            out.migrates
+        );
+        assert!(out.launches >= 2, "launches={}", out.launches);
     }
 
     #[test]
@@ -3010,7 +3076,10 @@ mod tests {
         );
         assert_eq!(on.copy_pri, 0, "seq 0 copy stays NULL priority 0");
         assert_eq!(on.compute_stream, StreamId(2));
-        assert_eq!(on.compute_pri, 2, "compute is stream n_copy at priority n_copy");
+        assert_eq!(
+            on.compute_pri, 2,
+            "compute is stream n_copy at priority n_copy"
+        );
         assert!(on.launches >= 2, "launches={}", on.launches);
     }
 

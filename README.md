@@ -38,7 +38,7 @@ let mut b = model.session_on_pool(4096, &pool)?;
 // Routed experts that share an expert id GEMM together (one acquire each).
 // Router logits are one GEMM of the batch; Engine pin_hot keeps last-used
 // experts resident (`slots - 1`) and plan_placement either D2Ds multi-GPU
-// pins onto GPU0 or leaves them on the striped home.
+// pins onto GPU0 or leaves them on the striped home (place_hot is fail-loud).
 // A full pool preempts another sequence (recompute + replay).
 let mut eng = Engine::new(model.llama(), EngineCfg::tiny())?;
 eng.attach_expert_store(LiveStore::Direct(model.llama().expert_direct_store()?));

@@ -6373,13 +6373,7 @@ impl Llama {
         }
         self.gemm_into(&moe.down_shexp, n_tokens, &s.gate, &mut s.ffn_out, pool)?;
         self.route_llama4_tokens(moe, n_tokens, s, pool, moe_trace)?;
-        prefetch_routed(
-            moe_trace,
-            store,
-            n_tokens,
-            moe.n_expert_used,
-            &s.moe.sel_e,
-        );
+        prefetch_routed(moe_trace, store, n_tokens, moe.n_expert_used, &s.moe.sel_e);
         prefetch_selected(moe_trace, store, n_tokens, moe.n_expert_used, &s.moe.sel_e);
         let spec = SoftmaxMoE {
             gate_inp: &moe.gate_inp,
