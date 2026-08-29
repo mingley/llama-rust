@@ -1,9 +1,9 @@
 //! `infer-bench adversarial | trace` — measured hit rates and sim scores.
 
 use infer_bench::{
-    adversarial_suite, colocated, report, schedule_placed, sim_placed, sim_remote_home_cfg,
-    striped, topology_suite, with_hot_replicas, HardwareProfile, SchedCfg, SimCfg, Trace, Workload,
-    DECODE_ACTIVATION_BYTES,
+    adversarial_suite, colocated, report, schedule_placed, schedule_remote, sim_placed,
+    sim_remote_home_cfg, striped, topology_suite, with_hot_replicas, HardwareProfile, SchedCfg,
+    SimCfg, Trace, Workload, DECODE_ACTIVATION_BYTES,
 };
 use std::env;
 use std::fs::File;
@@ -17,7 +17,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--place none|striped|colocated|replicas]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--place none|striped|colocated|replicas|remote] [--activation-bytes N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch, prefill-batch
@@ -124,37 +124,38 @@ fn run() -> Result<(), String> {
             let trace = load_trace(&path)?;
             let profile = load_profile(&cfg.profile)?;
             let n_gpus = u16::try_from(profile.n_gpus()).unwrap_or(1).max(1);
-            let map = match cfg.place.as_str() {
-                "none" => None,
-                "striped" => Some(striped(&trace, n_gpus)),
-                "colocated" => Some(colocated(&trace, n_gpus)),
-                "replicas" => Some(with_hot_replicas(
-                    colocated(&trace, n_gpus),
-                    &trace,
-                    n_gpus,
-                    200,
-                )),
-                other => {
-                    return Err(format!(
-                        "unknown --place {other} (none|striped|colocated|replicas)"
-                    ))
-                }
+            let sim_cfg = SimCfg::lru(cfg.capacity, cfg.expert_bytes, 8);
+            let sched = SchedCfg {
+                max_batch: cfg.max_batch,
+                interarrival_ns: cfg.interarrival_ns,
+                ttft_slo_ns: cfg.ttft_slo_ns,
+                itl_slo_ns: cfg.itl_slo_ns,
+                prefill_chunk_layers: cfg.prefill_chunk,
+                decode_first: cfg.decode_first,
+                slo_reject: cfg.slo_reject,
             };
-            let row = schedule_placed(
-                &trace,
-                profile,
-                SimCfg::lru(cfg.capacity, cfg.expert_bytes, 8),
-                SchedCfg {
-                    max_batch: cfg.max_batch,
-                    interarrival_ns: cfg.interarrival_ns,
-                    ttft_slo_ns: cfg.ttft_slo_ns,
-                    itl_slo_ns: cfg.itl_slo_ns,
-                    prefill_chunk_layers: cfg.prefill_chunk,
-                    decode_first: cfg.decode_first,
-                    slo_reject: cfg.slo_reject,
-                },
-                map.as_ref(),
-            )
+            let row = if cfg.place == "remote" {
+                let map = striped(&trace, n_gpus);
+                schedule_remote(&trace, profile, sim_cfg, sched, &map, cfg.activation_bytes)
+            } else {
+                let map = match cfg.place.as_str() {
+                    "none" => None,
+                    "striped" => Some(striped(&trace, n_gpus)),
+                    "colocated" => Some(colocated(&trace, n_gpus)),
+                    "replicas" => Some(with_hot_replicas(
+                        colocated(&trace, n_gpus),
+                        &trace,
+                        n_gpus,
+                        200,
+                    )),
+                    other => {
+                        return Err(format!(
+                            "unknown --place {other} (none|striped|colocated|replicas|remote)"
+                        ))
+                    }
+                };
+                schedule_placed(&trace, profile, sim_cfg, sched, map.as_ref())
+            }
             .map_err(|e| e.to_string())?;
             println!("{}", row.line());
             Ok(())

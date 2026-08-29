@@ -741,6 +741,95 @@ fn schedule_hot_replicas_move_more_bytes_than_stripe() {
 }
 
 #[test]
+fn schedule_remote_pays_peer_copy_on_rdma() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[1])],
+    };
+    let p = HardwareProfile::example_2node_rdma();
+    let bytes = 1u64 << 20;
+    let cfg = SimCfg::lru(4, bytes, 0);
+    let map = striped(&t, 2);
+    let local =
+        schedule_placed(&t, p.clone(), cfg, SchedCfg::closed(0), Some(&map)).expect("local");
+    let remote = schedule_remote(
+        &t,
+        p.clone(),
+        cfg,
+        SchedCfg::closed(0),
+        &map,
+        DECODE_ACTIVATION_BYTES,
+    )
+    .expect("remote");
+    assert_eq!(local.completed, 1);
+    assert_eq!(remote.completed, 1);
+    assert!(
+        remote.replay.bytes_moved > local.replay.bytes_moved,
+        "remote={} local={}",
+        remote.replay.bytes_moved,
+        local.replay.bytes_moved
+    );
+    assert!(
+        remote.replay.sim_ns > local.replay.sim_ns,
+        "remote={} local={}",
+        remote.replay.sim_ns,
+        local.replay.sim_ns
+    );
+    assert!(
+        remote.replay.bytes_moved < bytes.saturating_mul(2),
+        "dispatch should not D2D the full expert; moved={}",
+        remote.replay.bytes_moved
+    );
+    let moved = schedule_remote(&t, p, cfg, SchedCfg::closed(0), &map, bytes).expect("move");
+    assert!(
+        moved.replay.bytes_moved >= bytes.saturating_mul(2),
+        "equal act vs expert volume must move weights; moved={}",
+        moved.replay.bytes_moved
+    );
+    assert!(moved.replay.bytes_moved > remote.replay.bytes_moved);
+}
+
+#[test]
+fn schedule_remote_hit_reuses_resident_page() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[1]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::example_2node_rdma();
+    let bytes = 1u64 << 20;
+    let cfg = SimCfg::lru(4, bytes, 0);
+    let map = striped(&t, 2);
+    let row = schedule_remote(
+        &t,
+        p,
+        cfg,
+        SchedCfg::closed(0),
+        &map,
+        DECODE_ACTIVATION_BYTES,
+    )
+    .expect("remote");
+    assert_eq!(row.completed, 1);
+    assert_eq!(row.replay.misses, 1);
+    assert_eq!(row.replay.hits, 1);
+}
+
+#[test]
+fn schedule_remote_evicts_when_slots_are_tight() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_2node_rdma();
+    let map = striped(&t, 2);
+    let row = schedule_remote(
+        &t,
+        p,
+        SimCfg::lru(1, 4096, 0),
+        SchedCfg::closed(0),
+        &map,
+        DECODE_ACTIVATION_BYTES,
+    )
+    .expect("remote");
+    assert_eq!(row.completed, 1);
+    assert!(row.replay.misses >= 3);
+}
+
+#[test]
 fn schedule_slo_reject_drops_late_head_of_line() {
     let t = Trace {
         events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],

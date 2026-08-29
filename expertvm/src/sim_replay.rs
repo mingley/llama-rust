@@ -690,22 +690,22 @@ pub fn sim_remote_home_cfg(
 }
 
 #[derive(Clone, Copy)]
-struct RemotePage {
-    id: AllocId,
-    gemm: DeviceId,
-    home: DeviceId,
-    act: Option<AllocId>,
+pub(crate) struct RemotePage {
+    pub(crate) id: AllocId,
+    pub(crate) gemm: DeviceId,
+    pub(crate) home: DeviceId,
+    pub(crate) act: Option<AllocId>,
 }
 
-struct RemoteFetch {
-    home: DeviceId,
-    compute: DeviceId,
-    expert_bytes: u64,
-    act_bytes: u64,
-    stream: StreamId,
+pub(crate) struct RemoteFetch {
+    pub(crate) home: DeviceId,
+    pub(crate) compute: DeviceId,
+    pub(crate) expert_bytes: u64,
+    pub(crate) act_bytes: u64,
+    pub(crate) stream: StreamId,
 }
 
-fn remote_hit(
+pub(crate) fn remote_hit(
     sim: &mut Sim,
     page: RemotePage,
     compute: DeviceId,
@@ -722,7 +722,7 @@ fn remote_hit(
     kernel(sim, page.gemm, stream, page.id)
 }
 
-fn fetch_remote(
+pub(crate) fn fetch_remote(
     sim: &mut Sim,
     fetch: RemoteFetch,
     reuse: u64,
@@ -791,6 +791,26 @@ fn fetch_remote(
             })
         }
     }
+}
+
+/// Stream-ordered free of a remote expert page (weights on home/compute, optional act).
+pub(crate) fn drop_remote(
+    sim: &mut Sim,
+    page: RemotePage,
+    compute: DeviceId,
+    stream: StreamId,
+) -> Result<(), Error> {
+    if page.gemm != page.home {
+        sim.free(page.gemm, page.id, stream)?;
+    }
+    sim.free(page.home, page.id, stream)?;
+    if let Some(act) = page.act {
+        if page.home != compute {
+            sim.free(page.home, act, stream)?;
+        }
+        sim.free(compute, act, stream)?;
+    }
+    Ok(())
 }
 
 fn ship_act(

@@ -99,7 +99,10 @@ first-token wait (`iteration_start - arrival`) so a tight `max_batch`
 shows queueing separately from GPU service. The cache walker
 is demand paging (no JSONL future leak). [`schedule_placed`] H2Ds a miss onto the expert's [`PlaceMap`](crate::PlaceMap)
 home (`--place striped|colocated|replicas`) so a wide token can use every GPU's copy
-engines. [`schedule_replay`] is GPU0. Planner helpers: `copy_forward`,
+engines. [`schedule_replay`] is GPU0. [`schedule_remote`] / `--place remote`
+keeps compute on GPU0: a miss H2Ds onto the striped home, then
+`plan_placement` either D2Ds weights onto GPU0 or ships `--activation-bytes`
+to home (pair with `--profile 2node-rdma`; prefetch is skipped). Planner helpers: `copy_forward`,
 `hot_keys`, `plan_keys`, `plan_window`, `plan_placement` (move weights vs dispatch
 activations), `Markov` / `Prefetch` (lookback-2 `P(to|from, from_prev)` with
 order-1 backoff). `colocated` keeps co-fired experts
@@ -120,7 +123,8 @@ not count toward HBM. `HardwareProfile::restrict_hbm` is the knob. `topology_sui
 NVLink, bad NUMA, RDMA, asymmetric). `expertvm bench` on a multi-sequence
 trace prints `schedule-all` vs `schedule-1` (open-loop running set of
 unlimited vs 1) and `schedule-decode-first` when a mixed prefill/decode
-trace has a wide first token. `SimulatedGpuStore` can inject GPU
+trace has a wide first token. Multi-GPU profiles also print
+`schedule-gpu0` vs `schedule-striped` vs `schedule-remote`. `SimulatedGpuStore` can inject GPU
 unavailable, copy-stream cancel, transfer delay, and next-H2D load
 failure.
 
@@ -139,6 +143,7 @@ expertvm sim      trace.jsonl --capacity 8 --seq-streams --max-batch 2
 expertvm schedule trace.jsonl --capacity 8 --max-batch 2 --interarrival-ns 1000000 --ttft-slo-ns 20000000
 expertvm schedule trace.jsonl --capacity 8 --place striped --profile 8xh100 --expert-bytes 1048576
 expertvm schedule trace.jsonl --capacity 8 --place replicas --profile 8xh100 --expert-bytes 1048576
+expertvm schedule trace.jsonl --capacity 8 --place remote --profile 2node-rdma --expert-bytes 1048576
 expertvm schedule trace.jsonl --capacity 8 --prefill-chunk 1 --seq-streams --decode-first
 expertvm schedule trace.jsonl --capacity 8 --max-batch 1 --ttft-slo-ns 1 --slo-reject
 expertvm place    trace.jsonl --gpus 8 --hot-pt 200

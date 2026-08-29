@@ -6,8 +6,9 @@ use crate::place::PlaceMap;
 use crate::planner::{observe_chain, plan_keys, Markov, Plan};
 use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
-    apply_touch, gemm_keys, note_touch, predicted_keys, replay_from_sim, replay_streams, stream_of,
-    PageHandle, ReplayCounters, SimCfg, SimReplay, TouchArgs,
+    apply_touch, drop_remote, fetch_remote, gemm_keys, note_touch, predicted_keys, remote_hit,
+    replay_from_sim, replay_streams, stream_of, PageHandle, RemoteFetch, RemotePage,
+    ReplayCounters, SimCfg, SimReplay, TouchArgs,
 };
 use gpu_sim::{AllocId, DeviceId, GraphId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -115,6 +116,8 @@ impl SchedReplay {
 /// is not stuck behind hopeless FCFS head-of-line work.
 /// [`schedule_placed`] H2Ds a miss onto the expert's [`PlaceMap`] home so a
 /// wide token can use every GPU's copy engines; [`schedule_replay`] is GPU0.
+/// [`schedule_remote`] keeps compute on GPU0 and uses [`crate::plan_placement`]
+/// on the home hop (move weights vs dispatch activations).
 pub fn schedule_replay(
     trace: &Trace,
     profile: HardwareProfile,
@@ -133,9 +136,43 @@ pub fn schedule_placed(
     sched: SchedCfg,
     place: Option<&PlaceMap>,
 ) -> Result<SchedReplay, Error> {
+    schedule_run(trace, profile, cfg, sched, place.cloned(), None)
+}
+
+/// [`schedule_placed`] with compute pinned on GPU0. A miss H2Ds onto the
+/// expert home, then [`crate::plan_placement`] either D2Ds weights onto GPU0
+/// or ships a small activation payload to home. Hits GEMM where the first
+/// fetch left the weights. Demand paging (no JSONL future leak). Prefetch is
+/// skipped so a predicted fill cannot mix local pages with remote ones.
+pub fn schedule_remote(
+    trace: &Trace,
+    profile: HardwareProfile,
+    cfg: SimCfg,
+    sched: SchedCfg,
+    map: &PlaceMap,
+    act_bytes: u64,
+) -> Result<SchedReplay, Error> {
+    schedule_run(
+        trace,
+        profile,
+        cfg,
+        sched,
+        Some(map.clone()),
+        Some(act_bytes.max(1)),
+    )
+}
+
+fn schedule_run(
+    trace: &Trace,
+    profile: HardwareProfile,
+    cfg: SimCfg,
+    sched: SchedCfg,
+    place: Option<PlaceMap>,
+    remote_act: Option<u64>,
+) -> Result<SchedReplay, Error> {
     let mut pending = group_jobs(&trace.events, sched.interarrival_ns);
     let mut running: Vec<Job> = Vec::new();
-    let mut rt = SchedRt::new(profile, cfg, place.cloned())?;
+    let mut rt = SchedRt::new(profile, cfg, place, remote_act)?;
     let mut rec = Rec::default();
     let cap = batch_cap(sched.max_batch);
     loop {
@@ -199,10 +236,19 @@ struct SchedRt {
     idle_ns: u64,
     place: Option<PlaceMap>,
     n_gpus: u16,
+    remote_act: Option<u64>,
+    remotes: BTreeMap<ExpertKey, RemotePage>,
+    seen: BTreeMap<ExpertKey, u64>,
+    next_event: u32,
 }
 
 impl SchedRt {
-    fn new(profile: HardwareProfile, cfg: SimCfg, place: Option<PlaceMap>) -> Result<Self, Error> {
+    fn new(
+        profile: HardwareProfile,
+        cfg: SimCfg,
+        place: Option<PlaceMap>,
+        remote_act: Option<u64>,
+    ) -> Result<Self, Error> {
         let sim = Sim::new(profile);
         let n_streams = replay_streams(sim.profile(), cfg.seq_streams);
         let n_gpus = u16::try_from(sim.profile().n_gpus()).unwrap_or(1).max(1);
@@ -228,6 +274,10 @@ impl SchedRt {
             idle_ns: 0,
             place,
             n_gpus,
+            remote_act,
+            remotes: BTreeMap::new(),
+            seen: BTreeMap::new(),
+            next_event: 1,
         })
     }
 
@@ -245,6 +295,9 @@ impl SchedRt {
     }
 
     fn touch_event(&mut self, ev: &ExpertAccess) -> Result<(), Error> {
+        if self.remote_act.is_some() {
+            return self.touch_remote(ev);
+        }
         self.args.s = stream_of(ev.sequence, self.n_streams);
         let ek = ev.keys();
         for key in &ek {
@@ -274,6 +327,9 @@ impl SchedRt {
     }
 
     fn prefetch_event(&mut self, ev: &ExpertAccess, running: &[Job]) -> Result<(), Error> {
+        if self.remote_act.is_some() {
+            return Ok(());
+        }
         if !want_prefetch(self.cfg, &self.handles, running) {
             return Ok(());
         }
@@ -300,6 +356,66 @@ impl SchedRt {
                         miss,
                     )?;
                     self.replicate_key(key)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn touch_remote(&mut self, ev: &ExpertAccess) -> Result<(), Error> {
+        self.args.s = stream_of(ev.sequence, self.n_streams);
+        let ek = ev.keys();
+        let fan_in = u64::try_from(ev.experts.len()).unwrap_or(1).max(1);
+        let act = self.remote_act.unwrap_or(1);
+        let compute = DeviceId(0);
+        for key in &ek {
+            let n = self.seen.entry(*key).or_insert(0);
+            *n = n.saturating_add(1);
+            let reuse = *n;
+            let touch = self.walker.demand_touch(*key);
+            note_touch(&mut self.ctr, &mut self.prefetched, *key, touch);
+            match touch {
+                Touch::Hit => {
+                    let page = self
+                        .remotes
+                        .get(key)
+                        .copied()
+                        .ok_or(Error::Store("remote hit without page"))?;
+                    remote_hit(
+                        &mut self.sim,
+                        page,
+                        compute,
+                        act,
+                        self.args.s,
+                        &mut self.next_event,
+                    )?;
+                }
+                Touch::Miss { evicted } => {
+                    if let Some(v) = evicted {
+                        if let Some(page) = self.remotes.remove(&v) {
+                            drop_remote(&mut self.sim, page, compute, self.args.s)?;
+                        }
+                    }
+                    if self.args.slots == 0 {
+                        continue;
+                    }
+                    let home = self.home(*key);
+                    let stream = self.args.s;
+                    let bytes = self.args.bytes;
+                    let page = fetch_remote(
+                        &mut self.sim,
+                        RemoteFetch {
+                            home,
+                            compute,
+                            expert_bytes: bytes,
+                            act_bytes: act,
+                            stream,
+                        },
+                        reuse,
+                        fan_in,
+                        &mut self.next_event,
+                    )?;
+                    let _prev = self.remotes.insert(*key, page);
                 }
             }
         }

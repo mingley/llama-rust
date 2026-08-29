@@ -2,8 +2,8 @@
 
 use expertvm::{
     adversarial_suite, analyze, colocated, compare, compare_ep, format_table, generate, report,
-    schedule_placed, sim_placed, sim_remote_home_cfg, sim_replay_cfg, striped, topology_suite,
-    with_hot_replicas, Policy, Prefetch, SchedCfg, SimCfg, Trace, Workload,
+    schedule_placed, schedule_remote, sim_placed, sim_remote_home_cfg, sim_replay_cfg, striped,
+    topology_suite, with_hot_replicas, Policy, Prefetch, SchedCfg, SimCfg, Trace, Workload,
     DECODE_ACTIVATION_BYTES,
 };
 use gpu_sim::HardwareProfile;
@@ -17,7 +17,7 @@ usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
   sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N]
-  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--place none|striped|colocated|replicas]
+  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--place none|striped|colocated|replicas|remote] [--activation-bytes N]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
@@ -507,48 +507,49 @@ where
     let profile = load_profile(&cfg.profile)?;
     let prefetch = Prefetch::parse(&cfg.prefetch).map_err(|e| e.to_string())?;
     let n_gpus = u16::try_from(profile.n_gpus()).unwrap_or(1).max(1);
-    let map = match cfg.place.as_str() {
-        "none" => None,
-        "striped" => Some(striped(&trace, n_gpus)),
-        "colocated" => Some(colocated(&trace, n_gpus)),
-        "replicas" => Some(with_hot_replicas(
-            colocated(&trace, n_gpus),
-            &trace,
-            n_gpus,
-            200,
-        )),
-        other => {
-            return Err(format!(
-                "unknown --place {other} (none|striped|colocated|replicas)"
-            ))
-        }
+    let sim_cfg = SimCfg {
+        slots: cfg.capacity,
+        policy: Policy::Lru,
+        bytes_per_expert: cfg.expert_bytes,
+        lookahead: cfg.lookahead,
+        prefetch,
+        seq_streams: cfg.seq_streams,
+        cuda_graphs: cfg.cuda_graphs,
+        plan_window: cfg.plan_window,
+        plan_threshold: cfg.plan_threshold,
+        max_batch: 0,
     };
-    let row = schedule_placed(
-        &trace,
-        profile,
-        SimCfg {
-            slots: cfg.capacity,
-            policy: Policy::Lru,
-            bytes_per_expert: cfg.expert_bytes,
-            lookahead: cfg.lookahead,
-            prefetch,
-            seq_streams: cfg.seq_streams,
-            cuda_graphs: cfg.cuda_graphs,
-            plan_window: cfg.plan_window,
-            plan_threshold: cfg.plan_threshold,
-            max_batch: 0,
-        },
-        SchedCfg {
-            max_batch: cfg.max_batch,
-            interarrival_ns: cfg.interarrival_ns,
-            ttft_slo_ns: cfg.ttft_slo_ns,
-            itl_slo_ns: cfg.itl_slo_ns,
-            prefill_chunk_layers: cfg.prefill_chunk,
-            decode_first: cfg.decode_first,
-            slo_reject: cfg.slo_reject,
-        },
-        map.as_ref(),
-    )
+    let sched = SchedCfg {
+        max_batch: cfg.max_batch,
+        interarrival_ns: cfg.interarrival_ns,
+        ttft_slo_ns: cfg.ttft_slo_ns,
+        itl_slo_ns: cfg.itl_slo_ns,
+        prefill_chunk_layers: cfg.prefill_chunk,
+        decode_first: cfg.decode_first,
+        slo_reject: cfg.slo_reject,
+    };
+    let row = if cfg.place == "remote" {
+        let map = striped(&trace, n_gpus);
+        schedule_remote(&trace, profile, sim_cfg, sched, &map, cfg.activation_bytes)
+    } else {
+        let map = match cfg.place.as_str() {
+            "none" => None,
+            "striped" => Some(striped(&trace, n_gpus)),
+            "colocated" => Some(colocated(&trace, n_gpus)),
+            "replicas" => Some(with_hot_replicas(
+                colocated(&trace, n_gpus),
+                &trace,
+                n_gpus,
+                200,
+            )),
+            other => {
+                return Err(format!(
+                    "unknown --place {other} (none|striped|colocated|replicas|remote)"
+                ))
+            }
+        };
+        schedule_placed(&trace, profile, sim_cfg, sched, map.as_ref())
+    }
     .map_err(|e| e.to_string())?;
     println!("{}", row.line());
     Ok(())

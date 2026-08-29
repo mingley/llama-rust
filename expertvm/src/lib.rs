@@ -1,5 +1,5 @@
 //! Expert virtual memory: traces, policies, stores, GPU-sim replay,
-//! open-loop continuous batching (`schedule_replay` / `schedule_placed`).
+//! open-loop continuous batching (`schedule_replay` / `schedule_placed` / `schedule_remote`).
 
 #![deny(missing_docs, unsafe_code)]
 
@@ -35,7 +35,7 @@ pub use planner::{
 };
 pub use policy::Policy;
 pub use replay::{compare, format_table, replay, ReplayRow};
-pub use schedule::{schedule_placed, schedule_replay, SchedCfg, SchedReplay};
+pub use schedule::{schedule_placed, schedule_remote, schedule_replay, SchedCfg, SchedReplay};
 pub use sim_replay::{
     compare_ep, sim_placed, sim_remote_home, sim_remote_home_cfg, sim_replay, sim_replay_cfg,
     sim_static_ep, EpCompare, SimCfg, SimReplay, DECODE_ACTIVATION_BYTES,

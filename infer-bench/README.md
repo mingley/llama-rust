@@ -24,6 +24,7 @@ infer-bench schedule tests/traces/cycling.jsonl --capacity 2 --prefill-chunk 1 -
 infer-bench schedule tests/traces/cycling.jsonl --capacity 2 --max-batch 1 --ttft-slo-ns 1 --slo-reject
 infer-bench schedule tests/traces/cycling.jsonl --capacity 8 --place striped --profile 8xh100
 infer-bench schedule tests/traces/cycling.jsonl --capacity 8 --place replicas --profile 8xh100
+infer-bench schedule tests/traces/cycling.jsonl --capacity 8 --place remote --profile 2node-rdma --expert-bytes 1048576
 ```
 
 Same numbers as `expertvm bench` / `expertvm workload`. Timing comes from a

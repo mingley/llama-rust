@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — remote-home inside `schedule`
+
+`schedule_remote` / `expertvm schedule --place remote` keeps compute on
+GPU0. A miss H2Ds onto the striped home, then `plan_placement` either
+D2Ds weights onto GPU0 or ships a small activation payload to home
+(`--activation-bytes`). Hits GEMM where the first fetch left the weights.
+Prefetch is skipped so predicted fills cannot mix local pages with remote
+ones. `expertvm bench` on a multi-GPU profile prints `schedule-remote`
+next to gpu0/striped. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — EP homes inside `schedule`
 
 `schedule_placed` / `expertvm schedule --place striped` H2Ds a miss onto
@@ -366,6 +376,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 2 --max-batch 1 --interarrival-ns 1000000 --prefill-chunk 1 --decode-first --slo-reject --ttft-slo-ns 1
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 8 --place striped --profile 8xh100 --expert-bytes 1048576
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 8 --place replicas --profile 8xh100 --expert-bytes 1048576
+./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 8 --place remote --profile 2node-rdma --expert-bytes 1048576
 ./target/release/expertvm workload prefill-batch
 ./target/release/gpu-profile probe bad-numa --bytes 1048576
 cargo run -p llama-rust --example session

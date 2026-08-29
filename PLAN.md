@@ -204,7 +204,8 @@ fixed latency and quality.
 replication (`colocated`, `with_hot_replicas`, `expertvm place`).
 
 **V2:** RDMA, multi-node, remote expert residency (`sim_remote_home` +
-`plan_placement` on the home↔compute hop, `SimulatedGpuStore::migrate`,
+`plan_placement` on the home↔compute hop, `schedule_remote` /
+`expertvm schedule --place remote`, `SimulatedGpuStore::migrate`,
 `expertvm remote`).
 
 **V3:** predictive residency:
@@ -536,7 +537,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `synchronize_stream` so the compute stream is idle (CUDA). `--max-batch N`
   admits N sequences per engine iteration. `expertvm schedule` is the
   open-loop running set (arrivals, retire, SLO misses, `idle_until`,
-  `--prefill-chunk N`, `--decode-first`, `--slo-reject`, `--place striped|replicas`). `query_event` is `cudaEventQuery`.
+  `--prefill-chunk N`, `--decode-first`, `--slo-reject`, `--place striped|replicas|remote`). `query_event` is `cudaEventQuery`.
   `query_stream` is `cudaStreamQuery`. `mem_info` is `cudaMemGetInfo`.
   `plan_window` Stay vs Fetch gates prefetch
   in the GPU loop (`--plan-window N`). `prefetch_hits` / `prefetch_waste`
@@ -546,11 +547,12 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `cudaEventSynchronize`. `event_elapsed_ns` is `cudaEventElapsedTime` in
   nanoseconds. `query_event` is `cudaEventQuery`. `query_stream` is `cudaStreamQuery`.
   `mem_info` is `cudaMemGetInfo` `(free, total)`. Public `GpuOp` / `Operation` is the compiled DAG
-  (`Sim::operations`). `expertvm bench` on a multi-sequence trace prints
+  (`Sim::operations`).   `expertvm bench` on a multi-sequence trace prints
   `schedule-all` vs `schedule-1`, `schedule-chunk1` when a first token
   has more than one layer, and `schedule-decode-first` when a later token
   exists too. Multi-GPU profiles also print `schedule-gpu0` vs
-  `schedule-striped` (`schedule_placed`).
+  `schedule-striped` (`schedule_placed`) vs `schedule-remote`
+  (`plan_placement` on the home hop, compute pinned on GPU0).
 - performance model must include fixed overhead, size-dependent
   throughput, queueing, concurrency limits, alignment, startup latency
   (`LinkProfile::align_bytes` rounds the billed payload up; a 1-byte DMA

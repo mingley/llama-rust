@@ -4,8 +4,8 @@ use crate::access::Trace;
 use crate::error::Error;
 use crate::place::striped;
 use crate::replay::{compare, format_table};
-use crate::schedule::{schedule_placed, schedule_replay, SchedCfg};
-use crate::sim_replay::{sim_replay_cfg, SimCfg};
+use crate::schedule::{schedule_placed, schedule_remote, schedule_replay, SchedCfg};
+use crate::sim_replay::{sim_replay_cfg, SimCfg, DECODE_ACTIVATION_BYTES};
 use crate::workload::{generate, Workload};
 use gpu_sim::HardwareProfile;
 use std::collections::BTreeMap;
@@ -236,11 +236,26 @@ fn ep_line(trace: &Trace, profile: HardwareProfile, base: SimCfg) -> Result<Opti
     let n = u16::try_from(profile.n_gpus()).unwrap_or(1).max(1);
     let map = striped(trace, n);
     let gpu0 = schedule_replay(trace, profile.clone(), base, SchedCfg::closed(0))?;
-    let placed = schedule_placed(trace, profile, base, SchedCfg::closed(0), Some(&map))?;
+    let placed = schedule_placed(
+        trace,
+        profile.clone(),
+        base,
+        SchedCfg::closed(0),
+        Some(&map),
+    )?;
+    let remote = schedule_remote(
+        trace,
+        profile,
+        base,
+        SchedCfg::closed(0),
+        &map,
+        DECODE_ACTIVATION_BYTES,
+    )?;
     Ok(Some(format!(
-        "schedule-gpu0 {} | schedule-striped {}",
+        "schedule-gpu0 {} | schedule-striped {} | schedule-remote {}",
         gpu0.line(),
-        placed.line()
+        placed.line(),
+        remote.line()
     )))
 }
 
