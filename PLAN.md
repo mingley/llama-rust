@@ -430,7 +430,8 @@ Exact (mechanical invariants agents may rely on):
   HBM charged only while mapped; the pointer survives unmap;
   `va_release` parks the VA so `va_acquire` remaps without another reserve;
   sparse sub-range maps (vLLM KV-block analog) charge only the mapped span;
-  a kernel needs the whole VA covered
+  a kernel needs the whole VA covered; `va_acquire_paged` maps a VA in
+  page-sized physicals (each pays map overhead)
 - `cudaLaunchHostFunc` (`host_func`): stream-ordered host work; does not
   occupy compute or copy engines; graphs may record it
 - `cudaStreamCreate` vs `cudaStreamNonBlocking` (`set_stream_blocking`):
@@ -601,7 +602,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `host_pin_bytes / expert_bytes`). `--managed` is `cudaMallocManaged`
   plus `cudaMemPrefetchAsync` on miss (HBM charged on migrate). `--vmm` is
   `va_acquire` (remap idle VA or reserve+map) then H2D; evict `va_release`s
-  the pointer. `--host-func` is `cudaLaunchHostFunc` after each event's
+  the pointer. `--vmm-page N` is `va_acquire_paged` (KV-block physicals;
+  implies `--vmm`). `--host-func` is `cudaLaunchHostFunc` after each event's
   GEMMs (`host_func_ns`; no GPU occupancy). `--blocking-streams` is
   `cudaStreamCreate` on seq-streams (serialize with NULL); default is
   `cudaStreamNonBlocking`. `memset`, directed peer enable, and

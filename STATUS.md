@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — paged VMM maps experts in KV-block physicals
+
+`Sim::va_acquire_paged` reserves (or remaps an idle VA) then `va_map_range`s
+`page`-byte spans that cover the pointer. Hits/misses match a single
+`va_map`; wall pays `alloc_overhead_ns` per block. `expertvm sim --vmm-page N`
+implies `--vmm`. `expertvm bench` `sim-vmmpage`. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — cudaEventDisableTiming forbids elapsed
 
 `Sim::create_event` / `create_event_disable_timing` are `cudaEventCreate`

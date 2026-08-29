@@ -1030,6 +1030,50 @@ impl Sim {
         Ok(id)
     }
 
+    /// [`Self::va_acquire`] mapping `page` physicals that cover the VA (vLLM KV analog).
+    ///
+    /// `page >= bytes` is [`Self::va_acquire`]. The kernel still needs the whole
+    /// VA covered; this splits `cuMemMap` so each block pays `alloc_overhead_ns`.
+    pub fn va_acquire_paged(
+        &mut self,
+        device: DeviceId,
+        bytes: u64,
+        page: u64,
+    ) -> Result<AllocId, SimError> {
+        let page = page.max(1);
+        if page >= bytes {
+            return self.va_acquire(device, bytes);
+        }
+        let id = match self.take_idle_va(bytes) {
+            Some(id) => id,
+            None => self.va_reserve(bytes)?,
+        };
+        if let Err(e) = self.map_va_pages(id, device, page) {
+            self.park_idle_va(id);
+            return Err(e);
+        }
+        Ok(id)
+    }
+
+    fn map_va_pages(&mut self, id: AllocId, device: DeviceId, page: u64) -> Result<(), SimError> {
+        let total = self.alloc_ref(id)?.bytes;
+        let mut off = 0u64;
+        while off < total {
+            let n = page.min(total.saturating_sub(off));
+            if let Err(e) = self.va_map_range(id, device, off, n) {
+                if off > 0 {
+                    match self.va_unmap(id) {
+                        Ok(()) => {}
+                        Err(_u) => {}
+                    }
+                }
+                return Err(e);
+            }
+            off = off.saturating_add(n);
+        }
+        Ok(())
+    }
+
     /// [`Self::va_unmap`] then keep the VA for [`Self::va_acquire`]. Does not
     /// [`Self::va_free`]. Already-idle ids are a no-op. Capture cannot include it.
     pub fn va_release(&mut self, id: AllocId) -> Result<(), SimError> {

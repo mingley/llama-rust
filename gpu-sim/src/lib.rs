@@ -35,6 +35,7 @@
 //! `cuMemUnmap` / `cuMemAddressFree`. [`Sim::va_map_range`] / [`va_unmap_range`](Sim::va_unmap_range)
 //! map sparse physicals (vLLM KV-block analog); HBM is the mapped span.
 //! [`Sim::va_acquire`] remaps an idle VA of the same size (or reserves);
+//! [`va_acquire_paged`](Sim::va_acquire_paged) maps it in KV-block spans;
 //! [`va_release`](Sim::va_release) unmaps into that pool instead of freeing the VA.
 //! [`Sim::host_func`] is `cudaLaunchHostFunc` (stream-ordered host work; no GPU occupancy).
 //! [`Sim::set_stream_blocking`] is `cudaStreamCreate` vs `cudaStreamNonBlocking`.
@@ -2159,6 +2160,31 @@ mod tests {
             other => panic!("{other:?}"),
         }
         sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn va_acquire_paged_covers_the_va_in_spans() {
+        let mut one = Sim::new(h100());
+        let mut paged = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 16u64 << 10;
+        let page = bytes / 4;
+        let a = one.va_acquire(d, bytes).unwrap();
+        let t1 = one.clock_ns();
+        let b = paged.va_acquire_paged(d, bytes, page).unwrap();
+        let t4 = paged.clock_ns();
+        assert!(t4 > t1, "paged={t4} one={t1}");
+        assert_eq!(paged.vmm_mapped_bytes(b, d).unwrap(), bytes);
+        assert!(paged.is_resident(b, d).unwrap());
+        enq(paged.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
+        paged.synchronize().unwrap();
+        one.va_release(a).unwrap();
+        paged.va_release(b).unwrap();
+        let c = paged.va_acquire_paged(d, bytes, page).unwrap();
+        assert_eq!(c, b);
+        paged.va_release(c).unwrap();
+        paged.va_free(c).unwrap();
     }
 
     #[test]

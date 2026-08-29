@@ -90,6 +90,8 @@ That is the “do not move the expert” alternative to H2D. `--managed` uses
 HBM, prefetch migrates the page (same hits/misses as H2D). `--vmm` uses
 `va_acquire` (remap an idle VA, else reserve+map) then pinned H2D into that
 VA (evict `va_release`s the pointer so the next miss skips reserve).
+`--vmm-page N` maps each expert in `N`-byte physicals (`va_acquire_paged`,
+vLLM KV-block analog; implies `--vmm`).
 `--host-func` enqueues `cudaLaunchHostFunc` after each event's GEMMs
 (`host_func_ns`; other streams can still compute). `--blocking-streams`
 marks created seq-streams as `cudaStreamCreate` (they serialize with the
@@ -173,6 +175,7 @@ expertvm sim      trace.jsonl --capacity 8 --mempool
 expertvm sim      trace.jsonl --capacity 8 --mapped
 expertvm sim      trace.jsonl --capacity 8 --managed
 expertvm sim      trace.jsonl --capacity 8 --vmm
+expertvm sim      trace.jsonl --capacity 8 --vmm-page 2097152
 expertvm sim      trace.jsonl --capacity 8 --host-func
 expertvm sim      trace.jsonl --capacity 8 --seq-streams --blocking-streams
 expertvm sim      trace.jsonl --capacity 8 --prefetch copy-forward --plan-window 8 --cuda-graphs

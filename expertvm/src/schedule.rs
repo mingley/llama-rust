@@ -304,6 +304,7 @@ impl SchedRt {
                 mapped: cfg.mapped,
                 managed: cfg.managed,
                 vmm: cfg.vmm,
+                vmm_page: cfg.vmm_page,
             },
             sim,
             handles: BTreeMap::new(),

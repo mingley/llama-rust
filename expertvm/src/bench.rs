@@ -35,6 +35,8 @@ pub struct BenchReport {
     pub managed: Option<String>,
     /// Pinned H2D vs `cuMemMap` expert pages on the same LRU config.
     pub vmm: Option<String>,
+    /// Whole-VA `cuMemMap` vs KV-block `va_acquire_paged` on the same `--vmm` config.
+    pub vmm_page: Option<String>,
     /// Pinned H2D vs a `cudaLaunchHostFunc` after each event's GEMMs.
     pub host_func: Option<String>,
     /// `--seq-streams` non-blocking vs `cudaStreamCreate` blocking streams.
@@ -90,6 +92,10 @@ impl BenchReport {
             s.push_str(vmm);
             s.push('\n');
         }
+        if let Some(vp) = &self.vmm_page {
+            s.push_str(vp);
+            s.push('\n');
+        }
         if let Some(hf) = &self.host_func {
             s.push_str(hf);
             s.push('\n');
@@ -140,6 +146,7 @@ pub fn report(
     let mut mapped = None;
     let mut managed = None;
     let mut vmm = None;
+    let mut vmm_page = None;
     let mut host_func = None;
     let mut blocking_streams = None;
     let mut schedule = None;
@@ -157,6 +164,7 @@ pub fn report(
         mapped = lines.mapped;
         managed = lines.managed;
         vmm = lines.vmm;
+        vmm_page = lines.vmm_page;
         host_func = lines.host_func;
         blocking_streams = lines.blocking_streams;
         schedule = lines.schedule;
@@ -177,6 +185,7 @@ pub fn report(
         mapped,
         managed,
         vmm,
+        vmm_page,
         host_func,
         blocking_streams,
         schedule,
@@ -196,6 +205,7 @@ struct SimLines {
     mapped: Option<String>,
     managed: Option<String>,
     vmm: Option<String>,
+    vmm_page: Option<String>,
     host_func: Option<String>,
     blocking_streams: Option<String>,
     schedule: Option<String>,
@@ -251,6 +261,19 @@ fn sim_lines(
     let mut vmm = base;
     vmm.vmm = true;
     let vmm_row = sim_replay_cfg(trace, profile.clone(), vmm)?;
+    let page = expert_bytes / 4;
+    let vmm_page = if page > 0 && page < expert_bytes {
+        let mut vp = vmm;
+        vp.vmm_page = page;
+        let vp_row = sim_replay_cfg(trace, profile.clone(), vp)?;
+        Some(format!(
+            "sim-vmm {} | sim-vmmpage {}",
+            vmm_row.line(),
+            vp_row.line()
+        ))
+    } else {
+        None
+    };
     let mut hf = base;
     hf.host_func = true;
     let hf_row = sim_replay_cfg(trace, profile, hf)?;
@@ -283,6 +306,7 @@ fn sim_lines(
             serial.line(),
             vmm_row.line()
         )),
+        vmm_page,
         host_func: Some(format!(
             "sim-async {} | sim-hostfn {}",
             serial.line(),

@@ -41,6 +41,7 @@ warp scheduler, L1, …   ← do not model
 | `cuMemMap` (`va_map`) charges HBM; `va_unmap` refunds; the VA is reusable | `alloc_overhead_ns` (map) |
 | `va_map_range` / `va_unmap_range` map a span; holes are not kernel-resident | HBM = mapped bytes |
 | `va_release` parks an unmapped VA; `va_acquire` remaps same size | map only on reuse (no second reserve) |
+| `va_acquire_paged` maps the VA in `page` physicals | `alloc_overhead_ns` per block |
 | `cudaLaunchHostFunc` (`host_func`) is stream-ordered host work | `host_func_ns` (no compute / copy occupancy) |
 | `cudaStreamCreate` (`set_stream_blocking`) serializes with NULL | copy/compute overlap vs NULL |
 | host pin / `mlock` budget (`host_pin_bytes`) | `SimError::PinOom` |
@@ -214,7 +215,8 @@ alloc/register. `alloc_managed` is `cudaMallocManaged` (no HBM until
 `va_reserve` / `va_map` / `va_unmap` / `va_free` are CUDA virtual memory.
 `va_map_range` / `va_unmap_range` map sparse physicals (HBM is the mapped
 span; a kernel needs the whole VA covered). `va_acquire` remaps an idle VA of the same
-size (or reserves); `va_release` unmaps into that pool. Capture cannot
+size (or reserves); `va_acquire_paged` maps KV-block physicals covering the VA;
+`va_release` unmaps into that pool. Capture cannot
 include them.
 `host_func` is `cudaLaunchHostFunc` (stream-ordered; other streams can compute).
 `set_stream_blocking` is `cudaStreamCreate` vs `cudaStreamNonBlocking`

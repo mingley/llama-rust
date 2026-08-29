@@ -669,6 +669,33 @@ fn vmm_map_matches_h2d_hits() {
 }
 
 #[test]
+fn vmm_paged_matches_full_vmm_hits() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let bytes = 1u64 << 20;
+    let full = SimCfg {
+        slots: 1,
+        vmm: true,
+        ..SimCfg::lru(1, bytes, 0)
+    };
+    let paged = SimCfg {
+        vmm_page: bytes / 4,
+        ..full
+    };
+    let one = sim_replay_cfg(&t, p.clone(), full).expect("full");
+    let many = sim_replay_cfg(&t, p, paged).expect("paged");
+    assert_eq!(one.hits, many.hits);
+    assert_eq!(one.misses, many.misses);
+    assert_eq!(one.hbm_peak, many.hbm_peak);
+    assert!(
+        many.sim_ns > one.sim_ns,
+        "paged maps must pay per-block map overhead; paged={} full={}",
+        many.sim_ns,
+        one.sim_ns
+    );
+}
+
+#[test]
 fn vmm_evict_reacquires_same_va() {
     use crate::replay::Touch;
     use crate::sim_replay::{apply_touch, PageHandle, TouchArgs};
@@ -687,6 +714,7 @@ fn vmm_evict_reacquires_same_va() {
         mapped: false,
         managed: false,
         vmm: true,
+        vmm_page: 0,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -1489,6 +1517,7 @@ fn adversarial_workloads_are_named_and_measurable() {
     assert!(batch.render().contains("schedule-1"));
     assert!(batch.render().contains("sim-managed"), "{}", batch.render());
     assert!(batch.render().contains("sim-vmm"), "{}", batch.render());
+    assert!(batch.render().contains("sim-vmmpage"), "{}", batch.render());
     assert!(batch.render().contains("sim-hostfn"), "{}", batch.render());
     assert!(
         batch.render().contains("sim-blockstrm"),

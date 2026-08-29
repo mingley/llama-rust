@@ -16,8 +16,8 @@ const USAGE: &str = "\
 usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
-  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--host-func] [--blocking-streams]
-  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--host-func] [--blocking-streams]
+  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams]
+  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
@@ -106,6 +106,7 @@ struct Cfg {
     mapped: bool,
     managed: bool,
     vmm: bool,
+    vmm_page: u64,
     host_func: bool,
     blocking_streams: bool,
     interarrival_ns: u64,
@@ -146,6 +147,7 @@ where
     let mut mapped = false;
     let mut managed = false;
     let mut vmm = false;
+    let mut vmm_page = 0u64;
     let mut host_func = false;
     let mut blocking_streams = false;
     let mut plan_window = 0usize;
@@ -212,6 +214,7 @@ where
             "--vmm" => {
                 vmm = !matches!(inline.as_deref(), Some("0" | "false"));
             }
+            "--vmm-page" => vmm_page = parse_u64("vmm-page", &value("vmm-page", inline, &mut it)?)?,
             "--host-func" => {
                 host_func = !matches!(inline.as_deref(), Some("0" | "false"));
             }
@@ -269,6 +272,9 @@ where
             }
         }
     }
+    if vmm_page > 0 {
+        vmm = true;
+    }
     Ok(Cfg {
         path: path.ok_or("missing trace.jsonl or workload name")?,
         capacity,
@@ -290,6 +296,7 @@ where
         mapped,
         managed,
         vmm,
+        vmm_page,
         host_func,
         blocking_streams,
         interarrival_ns,
@@ -320,6 +327,7 @@ fn sim_cfg_from(cfg: &Cfg, prefetch: Prefetch, max_batch: usize) -> SimCfg {
         mapped: cfg.mapped,
         managed: cfg.managed,
         vmm: cfg.vmm,
+        vmm_page: cfg.vmm_page,
         host_func: cfg.host_func,
         blocking_streams: cfg.blocking_streams,
     }

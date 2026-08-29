@@ -135,8 +135,11 @@ pub struct SimCfg {
     pub managed: bool,
     /// `va_acquire` on miss (reuse an unmapped VA, else reserve+map), then
     /// pinned H2D. Evict [`gpu_sim::Sim::va_release`]s so the pointer stays.
-    /// Hits/misses match H2D.
+    /// Hits/misses match H2D. [`Self::vmm_page`] splits each map into KV-sized
+    /// physicals (`0` is one `cuMemMap` for the whole expert).
     pub vmm: bool,
+    /// Page size for [`Self::vmm`]. `0` maps the whole expert in one physical.
+    pub vmm_page: u64,
     /// `cudaLaunchHostFunc` after each event's GEMMs (CPU scheduler roundtrip).
     ///
     /// Does not change hits/misses. Lengthens wall by `host_func_ns` per
@@ -171,6 +174,7 @@ impl SimCfg {
             mapped: false,
             managed: false,
             vmm: false,
+            vmm_page: 0,
             host_func: false,
             blocking_streams: false,
         }
@@ -230,6 +234,7 @@ pub fn sim_replay_cfg(
         mapped: cfg.mapped,
         managed: cfg.managed,
         vmm: cfg.vmm,
+        vmm_page: cfg.vmm_page,
     };
     let mut token_ends: Vec<u64> = Vec::new();
     let mut ctr = ReplayCounters::default();
@@ -327,8 +332,10 @@ pub(crate) struct TouchArgs {
     pub mapped: bool,
     /// [`SimCfg::managed`]: `alloc_managed` + [`gpu_sim::Sim::prefetch`].
     pub managed: bool,
-    /// [`SimCfg::vmm`]: `va_acquire` + H2D.
+    /// [`SimCfg::vmm`]: `va_acquire` / `va_acquire_paged` + H2D.
     pub vmm: bool,
+    /// [`SimCfg::vmm_page`]: physical span for paged VMM (`0` = whole expert).
+    pub vmm_page: u64,
 }
 
 fn hbm_alloc(
@@ -458,7 +465,11 @@ pub(crate) fn apply_touch(
             } else if args.managed {
                 sim.alloc_managed(args.bytes)?
             } else if args.vmm {
-                sim.va_acquire(args.d, args.bytes)?
+                if args.vmm_page > 0 && args.vmm_page < args.bytes {
+                    sim.va_acquire_paged(args.d, args.bytes, args.vmm_page)?
+                } else {
+                    sim.va_acquire(args.d, args.bytes)?
+                }
             } else {
                 hbm_alloc(sim, args.d, args.bytes, args.s, args.sync_alloc)?
             };
