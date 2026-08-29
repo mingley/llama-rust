@@ -66,7 +66,7 @@ warp scheduler, L1, …   ← do not model
 | graph instantiate is host-sync; first launch pays it once | `graph_instantiate_ns` |
 | graph upload is host-sync after instantiate; first launch pays it once | `graph_upload_ns` |
 | graph update replaces steps when topology matches (device, stream, kind) | `graph_update_ns` |
-| graph clone is an independent uninstantiated copy | `graph_clone_ns` |
+| graph clone is an independent uninstantiated copy; child graphs cloned recursively | `graph_clone_ns` |
 | graph destroy drops the id (`cudaGraphDestroy`) | 1 ns host-sync |
 | graph launch amortizes per-kernel launch overhead | `graph_launch_ns` |
 | `synchronize_stream` waits one stream only | other streams keep running |
@@ -194,7 +194,10 @@ it. Independent streams still launch live. Alloc/free cannot be captured, includ
 host-sync `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device`.
 Instantiate, update, and upload are host-synchronous and cannot run during capture.
 `clone_graph` is `cudaGraphClone` (`graph_clone_ns`): an independent
-uninstantiated copy. `destroy_graph` is `cudaGraphDestroy` (1 ns;
+uninstantiated copy; child-graph nodes are cloned recursively (a diamond
+of shared children becomes one cloned child). Destroying the original
+child still breaks a parent that names it; a recursive clone of that
+parent keeps working. `destroy_graph` is `cudaGraphDestroy` (1 ns;
 later launch is unknown). First launch instantiates if needed (`graph_instantiate_ns` once)
 then uploads if needed (`graph_upload_ns`). `upload_graph` is `cudaGraphUpload`.
 `update_graph` copies source steps into an instantiated exec when the

@@ -62,7 +62,8 @@
 //! `cudaGraphUpload` (host-sync; first launch after instantiate calls it).
 //! [`Sim::update_graph`] is
 //! `cudaGraphExecUpdate` when device, stream, and op kinds match.
-//! [`Sim::clone_graph`] is `cudaGraphClone` (independent, not instantiated).
+//! [`Sim::clone_graph`] is `cudaGraphClone` (independent, not instantiated;
+//! child-graph nodes are cloned recursively).
 //! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`.
 //! Capture records every stream that [`wait_event`](Sim::wait_event)s an
 //! event recorded in this capture (CUDA forked capture). Independent streams
@@ -3546,6 +3547,42 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("unknown graph"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn clone_graph_recursively_clones_child_graphs() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_clone_ns = 9_000;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let child = sim.end_capture().unwrap();
+        sim.instantiate_graph(child).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        let _once = sim.launch_graph(child, s).unwrap();
+        let _twice = sim.launch_graph(child, s).unwrap();
+        let parent = sim.end_capture().unwrap();
+        let t0 = sim.clock_ns();
+        let cloned = sim.clone_graph(parent).unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(18_000));
+        assert_eq!(sim.graph_len(cloned).unwrap(), 2);
+        assert!(!sim.graph_instantiated(cloned).unwrap());
+        sim.destroy_graph(child).unwrap();
+        let err = sim.launch_graph(parent, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let n = sim.launch_graph(cloned, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
     }
 
     #[test]

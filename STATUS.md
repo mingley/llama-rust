@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — cudaGraphClone recursively clones child graphs
+
+`Sim::clone_graph` walks child-graph nodes and clones each unique graph
+(`graph_clone_ns` per id). A diamond of shared children becomes one
+cloned child. Cycles fail. The original parent still names the original
+child; destroying that child breaks parent launch, not a recursive clone.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — cudaGraphUpload after instantiate
 
 `Sim::upload_graph` is `cudaGraphUpload` (host-sync, `graph_upload_ns`).

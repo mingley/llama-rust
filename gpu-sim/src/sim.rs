@@ -129,6 +129,13 @@ struct Graph {
     uploaded: bool,
 }
 
+/// DFS state for [`Sim::clone_graph`]: unique graphs in post-order, ancestor stack.
+struct CloneWalk {
+    order: Vec<GraphId>,
+    seen: BTreeSet<GraphId>,
+    stack: Vec<GraphId>,
+}
+
 /// Deterministic GPU node.
 pub struct Sim {
     profile: HardwareProfile,
@@ -894,32 +901,81 @@ impl Sim {
 
     /// `cudaGraphClone`. Host-synchronous. Capture cannot include it.
     ///
-    /// The clone is an independent graph (`instantiated = false`) with a copy
-    /// of the source steps. Instantiating or updating one id does not change
-    /// the other.
+    /// The clone is an independent graph (`instantiated = false`). Child-graph
+    /// nodes are cloned recursively so the copy names new ids; a diamond of
+    /// shared children becomes one cloned child. Instantiating or updating one
+    /// id does not change the other. Cycles among child ids fail.
     pub fn clone_graph(&mut self, graph: GraphId) -> Result<GraphId, SimError> {
         self.fail_if_capturing("cannot capture graph clone")?;
-        let (steps, origin, device) = {
+        let mut walk = CloneWalk {
+            order: Vec::new(),
+            seen: BTreeSet::new(),
+            stack: Vec::new(),
+        };
+        self.collect_clone_tree(graph, &mut walk)?;
+        let mut remap = BTreeMap::new();
+        for &src in &walk.order {
+            let id = GraphId(self.next_graph);
+            self.next_graph = self.next_graph.saturating_add(1);
+            let _prev = remap.insert(src, id);
+        }
+        let mut built = Vec::new();
+        for &src in &walk.order {
+            let g = self.graphs.get(&src).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let steps = remap_child_graphs(&g.steps, &remap)?;
+            let cloned = remap.get(&src).copied().ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            built.push((
+                cloned,
+                Graph {
+                    steps,
+                    origin: g.origin,
+                    instantiated: false,
+                    uploaded: false,
+                },
+                g.origin.0,
+            ));
+        }
+        for (id, cloned, device) in built {
+            let ns = self.profile.gpu(device)?.graph_clone_ns.max(1);
+            self.clock = self.clock.saturating_add(ns);
+            let _prev = self.graphs.insert(id, cloned);
+        }
+        remap.get(&graph).copied().ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })
+    }
+
+    /// Post-order unique graphs in `graph`'s child-graph tree. Diamonds reuse
+    /// `seen`; an ancestor appearing again is a cycle.
+    fn collect_clone_tree(&self, graph: GraphId, walk: &mut CloneWalk) -> Result<(), SimError> {
+        if walk.seen.contains(&graph) {
+            return Ok(());
+        }
+        if walk.stack.contains(&graph) {
+            return Err(SimError::Invalid {
+                why: "cyclic child graph",
+            });
+        }
+        let steps = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            let device = g.origin.0;
-            (g.steps.clone(), g.origin, device)
+            g.steps.clone()
         };
-        let ns = self.profile.gpu(device)?.graph_clone_ns.max(1);
-        self.clock = self.clock.saturating_add(ns);
-        let id = GraphId(self.next_graph);
-        self.next_graph = self.next_graph.saturating_add(1);
-        let _prev = self.graphs.insert(
-            id,
-            Graph {
-                steps,
-                origin,
-                instantiated: false,
-                uploaded: false,
-            },
-        );
-        Ok(id)
+        walk.stack.push(graph);
+        for (_, _, kind) in &steps {
+            if let Kind::ChildGraph { graph: child } = kind {
+                self.collect_clone_tree(*child, walk)?;
+            }
+        }
+        let _popped = walk.stack.pop();
+        let _fresh = walk.seen.insert(graph);
+        walk.order.push(graph);
+        Ok(())
     }
 
     /// `cudaGraphDestroy` / `cudaGraphExecDestroy`. Host-synchronous.
@@ -3623,6 +3679,26 @@ fn seed_peers(profile: &HardwareProfile) -> BTreeSet<(DeviceId, DeviceId)> {
         let _ba = out.insert((b, a));
     }
     out
+}
+
+fn remap_child_graphs(
+    steps: &[(DeviceId, StreamId, Kind)],
+    remap: &BTreeMap<GraphId, GraphId>,
+) -> Result<Vec<(DeviceId, StreamId, Kind)>, SimError> {
+    let mut out = Vec::with_capacity(steps.len());
+    for (device, stream, kind) in steps {
+        let kind = match kind {
+            Kind::ChildGraph { graph } => {
+                let cloned = remap.get(graph).copied().ok_or(SimError::Invalid {
+                    why: "unknown graph",
+                })?;
+                Kind::ChildGraph { graph: cloned }
+            }
+            other => other.clone(),
+        };
+        out.push((*device, *stream, kind));
+    }
+    Ok(out)
 }
 
 fn graph_topology_eq(a: &[(DeviceId, StreamId, Kind)], b: &[(DeviceId, StreamId, Kind)]) -> bool {

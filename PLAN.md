@@ -596,7 +596,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `graph_upload_ns`) is a separate host-sync after instantiate; the first
   launch uploads if needed. `update_graph` replaces an instantiated exec's
   steps when device, stream, and op kinds match (`graph_update_ns`).
-  `clone_graph` is an independent uninstantiated copy (`graph_clone_ns`).
+  `clone_graph` is an independent uninstantiated copy (`graph_clone_ns`);
+  child-graph nodes are cloned recursively (shared children cloned once).
   `destroy_graph` is `cudaGraphDestroy` (later launch is unknown).
   Independent streams stay live during capture. A `wait_event` on an
   event recorded in this capture **joins** (CUDA forked capture) so
