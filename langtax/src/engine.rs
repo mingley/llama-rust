@@ -7,7 +7,8 @@
 //! `max_seqs` wait and are admitted when a finished sequence is retired.
 //! Prefill chunks and replay tokens that are ready in the same step share one
 //! batched GEMM (`Llama::prefill_batch`); new greedy tokens share
-//! `Llama::forward_batch`.
+//! `Llama::forward_batch`. One attached [`expertvm::LiveStore`] is parked on
+//! the first cache of each GEMM so MoE serving stays on the batched path.
 //! A full pool **preempts** another
 //! sequence (unique blocks drop; intern pins remain) and later re-prefills
 //! plus replays already sampled greedy tokens. Greedy ids must match
@@ -15,6 +16,7 @@
 
 use crate::decode::{KvCache, Llama, LlamaError, PagedKvPool};
 use crate::sample::argmax;
+use expertvm::{ExpertStore, LiveStore, StoreMetrics};
 use std::collections::{BTreeMap, VecDeque};
 
 /// Handle for one sequence on an [`Engine`].
@@ -122,6 +124,11 @@ pub struct EngineStats {
 }
 
 /// Multi-sequence greedy decode on one interned paged-KV pool.
+///
+/// [`Engine::attach_expert_store`] parks one store on the first cache of each
+/// batched GEMM so routed experts come from DirectStore / CachedStore /
+/// SimulatedGpuStore instead of the GGUF blob. DirectStore ids match the blob
+/// Engine. Two per-cache stores still fall back inside `forward_batch`.
 pub struct Engine<'a> {
     llama: &'a Llama,
     pool: PagedKvPool,
@@ -132,6 +139,7 @@ pub struct Engine<'a> {
     next_id: u32,
     preempts: u64,
     stats: EngineStats,
+    expert_store: Option<LiveStore>,
 }
 
 impl<'a> Engine<'a> {
@@ -151,6 +159,7 @@ impl<'a> Engine<'a> {
             next_id: 0,
             preempts: 0,
             stats: EngineStats::default(),
+            expert_store: None,
         })
     }
 
@@ -253,6 +262,75 @@ impl<'a> Engine<'a> {
         &self.stats
     }
 
+    /// Decode routed experts from `store` on every Engine GEMM.
+    ///
+    /// The store is parked on the first cache of each batched prefill/decode
+    /// so [`Llama::prefill_batch`] / [`Llama::forward_batch`] stay on the
+    /// shared-pool path. Omit this to keep the GGUF blob FFN.
+    pub fn attach_expert_store(&mut self, store: LiveStore) {
+        self.reclaim_parked_stores();
+        self.expert_store = Some(store);
+    }
+
+    /// Remove the attached store, including one parked on a live cache.
+    pub fn take_expert_store(&mut self) -> Option<LiveStore> {
+        self.reclaim_parked_stores();
+        self.expert_store.take()
+    }
+
+    /// Counters from the attached store, if any.
+    #[must_use]
+    pub fn expert_store_metrics(&self) -> Option<StoreMetrics> {
+        if let Some(s) = self.expert_store.as_ref() {
+            return Some(ExpertStore::metrics(s));
+        }
+        self.slots
+            .iter()
+            .flatten()
+            .find_map(|s| s.cache.expert_store_metrics())
+    }
+
+    fn reclaim_parked_stores(&mut self) {
+        for cell in &mut self.slots {
+            if let Some(slot) = cell.as_mut() {
+                if let Some(store) = slot.cache.take_expert_store() {
+                    self.expert_store = Some(store);
+                }
+            }
+        }
+    }
+
+    fn reclaim_from(&mut self, cache: &mut KvCache) {
+        if let Some(store) = cache.take_expert_store() {
+            self.expert_store = Some(store);
+        }
+    }
+
+    fn park_store_on(&mut self, idx: usize) {
+        let Some(store) = self.expert_store.take() else {
+            return;
+        };
+        match self.slot_mut(idx) {
+            Ok(slot) => slot.cache.attach_expert_store(store),
+            Err(_) => self.expert_store = Some(store),
+        }
+    }
+
+    fn unpark_store_from(&mut self, idx: usize) {
+        if let Ok(slot) = self.slot_mut(idx) {
+            if let Some(store) = slot.cache.take_expert_store() {
+                self.expert_store = Some(store);
+            }
+        }
+    }
+
+    fn with_store_parked<T>(&mut self, idx: usize, f: impl FnOnce(&mut Self) -> T) -> T {
+        self.park_store_on(idx);
+        let out = f(self);
+        self.unpark_store_from(idx);
+        out
+    }
+
     fn note_gemm(&mut self, n: usize) {
         self.stats.gemm_tokens = self
             .stats
@@ -271,7 +349,8 @@ impl<'a> Engine<'a> {
     /// Remove a finished (or in-flight / waiting) sequence and return its tokens.
     pub fn take(&mut self, id: SeqId) -> Option<SeqOutput> {
         if let Some(i) = self.slot_index(id) {
-            let slot = self.slots.get_mut(i).and_then(Option::take)?;
+            let mut slot = self.slots.get_mut(i).and_then(Option::take)?;
+            self.reclaim_from(&mut slot.cache);
             return Some(SeqOutput {
                 prompt: slot.prompt,
                 generated: slot.generated,
@@ -324,6 +403,7 @@ impl<'a> Engine<'a> {
 
     fn retire_done(&mut self) -> usize {
         let mut n = 0usize;
+        let mut reclaimed = None;
         for cell in &mut self.slots {
             let Some(slot) = cell.as_ref() else {
                 continue;
@@ -331,9 +411,12 @@ impl<'a> Engine<'a> {
             if !slot.done {
                 continue;
             }
-            let Some(slot) = cell.take() else {
+            let Some(mut slot) = cell.take() else {
                 continue;
             };
+            if let Some(store) = slot.cache.take_expert_store() {
+                reclaimed = Some(store);
+            }
             let _prev = self.finished.insert(
                 slot.id,
                 SeqOutput {
@@ -342,6 +425,9 @@ impl<'a> Engine<'a> {
                 },
             );
             n = n.saturating_add(1);
+        }
+        if let Some(store) = reclaimed {
+            self.expert_store = Some(store);
         }
         n
     }
@@ -475,21 +561,27 @@ impl<'a> Engine<'a> {
         }
         owned.sort_by_key(|(i, _, _)| *i);
         let order: Vec<usize> = owned.iter().map(|(i, _, _)| *i).collect();
-        let mut slots = borrow_slots_mut(&mut self.slots, &order).map_err(BatchFail::Other)?;
-        let mut caches: Vec<&mut KvCache> = slots.iter_mut().map(|s| &mut s.cache).collect();
-        let groups: Vec<&[u32]> = owned.iter().map(|(_, t, _)| t.as_slice()).collect();
-        let rows = match self.llama.prefill_batch(&mut caches, &groups) {
-            Ok(r) => r,
-            Err(e) if is_kv_cap(&e) => {
-                let except = jobs.first().map_or(0, |(i, _)| *i);
-                return Err(BatchFail::Cap(except, e));
+        let first = *order
+            .first()
+            .ok_or_else(|| BatchFail::Other(LlamaError::Shape("engine batch".into())))?;
+        let rows = self.with_store_parked(first, |eng| {
+            let mut slots = borrow_slots_mut(&mut eng.slots, &order).map_err(BatchFail::Other)?;
+            let mut caches: Vec<&mut KvCache> = slots.iter_mut().map(|s| &mut s.cache).collect();
+            let groups: Vec<&[u32]> = owned.iter().map(|(_, t, _)| t.as_slice()).collect();
+            match eng.llama.prefill_batch(&mut caches, &groups) {
+                Ok(r) => Ok(r),
+                Err(e) if is_kv_cap(&e) => {
+                    let except = jobs.first().map_or(0, |(i, _)| *i);
+                    Err(BatchFail::Cap(except, e))
+                }
+                Err(e) => Err(BatchFail::Other(e)),
             }
-            Err(e) => return Err(BatchFail::Other(e)),
-        };
-        if rows.len() != slots.len() {
+        })?;
+        if rows.len() != order.len() {
             return Err(BatchFail::Other(LlamaError::Shape("prefill batch".into())));
         }
-        for ((slot, row), (_, toks, replay)) in slots.iter_mut().zip(rows).zip(owned.iter()) {
+        for ((i, toks, replay), row) in owned.iter().zip(rows) {
+            let slot = self.slot_mut(*i).map_err(BatchFail::Other)?;
             slot.last = row;
             if *replay {
                 slot.replay = slot.replay.saturating_add(toks.len());
@@ -522,18 +614,20 @@ impl<'a> Engine<'a> {
     }
 
     fn prompt_chunk_at(&mut self, i: usize) -> Result<(), LlamaError> {
-        let llama = self.llama;
-        let chunk = self.cfg.prefill_chunk;
-        let n = {
-            let slot = self.slot_mut(i)?;
-            let before = slot.cache.n_past;
-            slot.last = llama
-                .prompt_chunk(&mut slot.cache, &slot.prompt, chunk)?
-                .to_vec();
-            slot.cache.n_past.saturating_sub(before)
-        };
-        self.note_serial(n);
-        Ok(())
+        self.with_store_parked(i, |eng| {
+            let llama = eng.llama;
+            let chunk = eng.cfg.prefill_chunk;
+            let n = {
+                let slot = eng.slot_mut(i)?;
+                let before = slot.cache.n_past;
+                slot.last = llama
+                    .prompt_chunk(&mut slot.cache, &slot.prompt, chunk)?
+                    .to_vec();
+                slot.cache.n_past.saturating_sub(before)
+            };
+            eng.note_serial(n);
+            Ok(())
+        })
     }
 
     /// Sample one new greedy token per decode-ready sequence, then forward.
@@ -640,20 +734,26 @@ impl<'a> Engine<'a> {
         order.sort_by_key(|(i, _)| *i);
         let indices: Vec<usize> = order.iter().map(|(i, _)| *i).collect();
         let tokens: Vec<u32> = order.iter().map(|(_, t)| *t).collect();
-        let mut slots = borrow_slots_mut(&mut self.slots, &indices).map_err(BatchFail::Other)?;
-        let mut caches: Vec<&mut KvCache> = slots.iter_mut().map(|s| &mut s.cache).collect();
-        let rows = match self.llama.forward_batch(&mut caches, &tokens) {
-            Ok(r) => r,
-            Err(e) if is_kv_cap(&e) => {
-                let except = items.first().map_or(0, |(i, _)| *i);
-                return Err(BatchFail::Cap(except, e));
+        let first = *indices
+            .first()
+            .ok_or_else(|| BatchFail::Other(LlamaError::Shape("engine batch".into())))?;
+        let rows = self.with_store_parked(first, |eng| {
+            let mut slots = borrow_slots_mut(&mut eng.slots, &indices).map_err(BatchFail::Other)?;
+            let mut caches: Vec<&mut KvCache> = slots.iter_mut().map(|s| &mut s.cache).collect();
+            match eng.llama.forward_batch(&mut caches, &tokens) {
+                Ok(r) => Ok(r),
+                Err(e) if is_kv_cap(&e) => {
+                    let except = items.first().map_or(0, |(i, _)| *i);
+                    Err(BatchFail::Cap(except, e))
+                }
+                Err(e) => Err(BatchFail::Other(e)),
             }
-            Err(e) => return Err(BatchFail::Other(e)),
-        };
-        if rows.len() != slots.len() {
+        })?;
+        if rows.len() != indices.len() {
             return Err(BatchFail::Other(LlamaError::Shape("forward batch".into())));
         }
-        for (slot, row) in slots.iter_mut().zip(rows) {
+        for (i, row) in indices.iter().zip(rows) {
+            let slot = self.slot_mut(*i).map_err(BatchFail::Other)?;
             slot.last = row;
             if replay {
                 slot.replay = slot.replay.saturating_add(1);
@@ -777,6 +877,7 @@ mod tests {
     };
     use crate::gguf::load_gguf_owned;
     use crate::tok::Tokenizer;
+    use expertvm::{CachedStore, LiveStore};
 
     fn independent(model: &Llama, tok: &Tokenizer, prompt: &[u32], n: usize) -> Vec<u32> {
         let mut cache = model.new_cache(16).expect("d");
@@ -952,5 +1053,72 @@ mod tests {
         eng.run().expect("b run");
         assert_eq!(eng.take(b).expect("tb").generated, exp_b);
         assert_eq!(eng.preempts(), 0);
+    }
+
+    #[test]
+    fn engine_direct_store_two_sequences_match_blob_and_gemm() {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        let g = load_gguf_owned(tiny_qwen3moe_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let exp_a = independent(&model, &tok, &tokens_a, 2);
+        let exp_b = independent(&model, &tok, &tokens_b, 2);
+        let mut cfg = EngineCfg::tiny();
+        cfg.eos = tok.eos;
+        let mut blob = Engine::new(&model, cfg.clone()).expect("blob");
+        let ba = blob.add(&tokens_a, 2).expect("ba");
+        let bb = blob.add(&tokens_b, 2).expect("bb");
+        blob.run().expect("blob run");
+        assert_eq!(blob.take(ba).expect("tba").generated, exp_a);
+        assert_eq!(blob.take(bb).expect("tbb").generated, exp_b);
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        eng.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("direct"),
+        ));
+        let a = eng.add(&tokens_a, 2).expect("a");
+        let b = eng.add(&tokens_b, 2).expect("b");
+        eng.run().expect("run");
+        assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+        assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+        assert!(
+            eng.stats().gemm_peak >= 8,
+            "Engine store must GEMM together, peak={}",
+            eng.stats().gemm_peak
+        );
+        let hits = eng.expert_store_metrics().expect("metrics").hits;
+        assert!(hits > 0, "batched MoE must acquire from the Engine store");
+        assert!(eng.take_expert_store().is_some());
+        assert!(eng.expert_store_metrics().is_none());
+    }
+
+    #[test]
+    fn engine_cached_store_two_sequences_match_blob_and_gemm() {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        let g = load_gguf_owned(tiny_qwen3moe_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let exp_a = independent(&model, &tok, &tokens_a, 2);
+        let exp_b = independent(&model, &tok, &tokens_b, 2);
+        let n = model.expert_direct_store().expect("n").len().max(1);
+        let mut cfg = EngineCfg::tiny();
+        cfg.eos = tok.eos;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        eng.attach_expert_store(LiveStore::Cached(
+            CachedStore::new(model.expert_direct_store().expect("c"), n).expect("cached"),
+        ));
+        let a = eng.add(&tokens_a, 2).expect("a");
+        let b = eng.add(&tokens_b, 2).expect("b");
+        eng.run().expect("run");
+        assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+        assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+        assert!(
+            eng.stats().gemm_peak >= 8,
+            "CachedStore Engine must GEMM together, peak={}",
+            eng.stats().gemm_peak
+        );
+        let m = eng.expert_store_metrics().expect("metrics");
+        assert!(m.hits > 0 || m.misses > 0, "CachedStore must be used");
     }
 }

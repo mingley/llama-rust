@@ -1026,6 +1026,14 @@ fn last_group_logits(
     Ok(out)
 }
 
+fn restore_batch_store(caches: &mut [&mut KvCache], idx: Option<usize>, store: Option<LiveStore>) {
+    if let Some(i) = idx {
+        if let Some(c) = caches.get_mut(i) {
+            c.expert_store = store;
+        }
+    }
+}
+
 enum LogitsKind {
     Last,
     All,
@@ -1484,7 +1492,9 @@ impl Llama {
     /// Q/K/V, FFN, and lm_head are one GEMM of `caches.len()` rows. Attention
     /// stays per sequence (its own `n_past` and block table). Logits of each
     /// row bit-match a sequential [`Llama::forward`]. Mixed dense/paged,
-    /// attached stores, or MoE traces fall back to one-at-a-time forwards.
+    /// two attached stores, or MoE traces fall back to one-at-a-time
+    /// forwards. A single [`KvCache::attach_expert_store`] is used for the
+    /// whole GEMM (Engine parks one store on the first cache).
     pub fn forward_batch(
         &self,
         caches: &mut [&mut KvCache],
@@ -1516,7 +1526,8 @@ impl Llama {
     /// Attention stays per sequence. Returns last-token logits of each group,
     /// bit-matching sequential [`Llama::prefill`]. Prefix reuse / intern bind
     /// is the caller's job ([`Llama::prompt_chunk`], Engine). Mixed
-    /// dense/store/trace falls back to one-at-a-time prefills.
+    /// dense/two-store/trace falls back to one-at-a-time prefills. One
+    /// attached store is used for the whole GEMM.
     pub fn prefill_batch(
         &self,
         caches: &mut [&mut KvCache],
@@ -1548,11 +1559,11 @@ impl Llama {
         let Some(home) = first.pages.as_ref().map(KvPages::pool) else {
             return false;
         };
-        caches.iter().all(|c| {
-            !c.moe_trace.enabled
-                && c.expert_store.is_none()
-                && c.pages.as_ref().is_some_and(|p| p.pool().same_as(home))
-        })
+        let stores = caches.iter().filter(|c| c.expert_store.is_some()).count();
+        stores <= 1
+            && caches.iter().all(|c| {
+                !c.moe_trace.enabled && c.pages.as_ref().is_some_and(|p| p.pool().same_as(home))
+            })
     }
 
     fn run_paged_batch(
@@ -1576,64 +1587,70 @@ impl Llama {
             .checked_mul(self.n_embd)
             .ok_or_else(|| LlamaError::Shape("prefill embed".into()))?;
         let (addrs, positions, max_seq) = batch_kv_layout(caches, groups)?;
-        let Some(first) = caches.first_mut() else {
-            return Ok(Vec::new());
-        };
-        let pages = first
-            .pages
-            .as_ref()
-            .ok_or_else(|| LlamaError::Shape("kv page".into()))?;
-        let mut pool_guard = pages
-            .try_pool_mut()
-            .map_err(|e| LlamaError::Shape(e.into()))?;
-        let (cache_k, cache_v) = pool_guard.kv_mut();
-        let s = &mut first.scratch;
-        let pool = &mut first.pool;
-        if s.scores.capacity() < max_seq {
-            fit(&mut s.scores, max_seq);
-        }
-        fit(&mut s.x, width);
-        for (t, tok) in flat.iter().enumerate() {
-            let row = token_row_mut(&mut s.x, t, self.n_embd, "prefill embed")?;
-            self.embed_into(*tok, row)?;
-            for v in row.iter_mut() {
-                *v *= self.embed_scale;
-            }
-        }
-        let mut moe_trace = MoeTraceBuf::default();
-        let mut expert_store = None;
-        moe_trace.batch.extend(flat.iter().copied());
-        self.transformer(
-            &mut TransformerRun {
-                s,
-                pool,
-                moe_trace: &mut moe_trace,
-                expert_store: &mut expert_store,
-                cache_k,
-                cache_v,
-                n,
-                width,
-                hd,
-            },
-            &addrs,
-            &positions,
-            LogitsKind::All,
-        )?;
-        drop(pool_guard);
-        let out = {
+        let store_idx = caches.iter().position(|c| c.expert_store.is_some());
+        let mut parked_store =
+            store_idx.and_then(|i| caches.get_mut(i).and_then(|c| c.expert_store.take()));
+        let result = (|| {
             let Some(first) = caches.first_mut() else {
                 return Ok(Vec::new());
             };
-            last_group_logits(&first.scratch.logits, self.n_vocab, groups)?
-        };
-        for (cache, group) in caches.iter_mut().zip(groups.iter()) {
-            cache.n_past = cache.n_past.saturating_add(group.len());
-            cache.moe_trace.ids.extend_from_slice(group);
-            if let Some(p) = cache.pages.as_mut() {
-                p.intern_full(&cache.moe_trace.ids);
+            let pages = first
+                .pages
+                .as_ref()
+                .ok_or_else(|| LlamaError::Shape("kv page".into()))?;
+            let mut pool_guard = pages
+                .try_pool_mut()
+                .map_err(|e| LlamaError::Shape(e.into()))?;
+            let (cache_k, cache_v) = pool_guard.kv_mut();
+            let s = &mut first.scratch;
+            let pool = &mut first.pool;
+            if s.scores.capacity() < max_seq {
+                fit(&mut s.scores, max_seq);
             }
-        }
-        Ok(out)
+            fit(&mut s.x, width);
+            for (t, tok) in flat.iter().enumerate() {
+                let row = token_row_mut(&mut s.x, t, self.n_embd, "prefill embed")?;
+                self.embed_into(*tok, row)?;
+                for v in row.iter_mut() {
+                    *v *= self.embed_scale;
+                }
+            }
+            let mut moe_trace = MoeTraceBuf::default();
+            moe_trace.batch.extend(flat.iter().copied());
+            self.transformer(
+                &mut TransformerRun {
+                    s,
+                    pool,
+                    moe_trace: &mut moe_trace,
+                    expert_store: &mut parked_store,
+                    cache_k,
+                    cache_v,
+                    n,
+                    width,
+                    hd,
+                },
+                &addrs,
+                &positions,
+                LogitsKind::All,
+            )?;
+            drop(pool_guard);
+            let out = {
+                let Some(first) = caches.first_mut() else {
+                    return Ok(Vec::new());
+                };
+                last_group_logits(&first.scratch.logits, self.n_vocab, groups)?
+            };
+            for (cache, group) in caches.iter_mut().zip(groups.iter()) {
+                cache.n_past = cache.n_past.saturating_add(group.len());
+                cache.moe_trace.ids.extend_from_slice(group);
+                if let Some(p) = cache.pages.as_mut() {
+                    p.intern_full(&cache.moe_trace.ids);
+                }
+            }
+            Ok(out)
+        })();
+        restore_batch_store(caches, store_idx, parked_store);
+        result
     }
 
     fn transformer(
@@ -10398,7 +10415,7 @@ mod tests {
     }
 
     #[test]
-    fn forward_batch_expert_store_fallback_matches_sequential() {
+    fn forward_batch_one_expert_store_matches_sequential_and_counts_hits() {
         let prompt = [1u32, 2, 3, 4];
         let model =
             Llama::from_gguf(load_gguf_owned(tiny_qwen3moe_gguf()).expect("load")).expect("m");
@@ -10414,6 +10431,49 @@ mod tests {
         let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
         a_seq.attach_expert_store(LiveStore::Direct(
             model.expert_direct_store().expect("catalog2"),
+        ));
+        let _pas = model.prefill(&mut a_seq, &prompt).expect("pas");
+        let _pbs = model.prefill(&mut b_seq, &[5, 0, 5, 0]).expect("pbs");
+        let exp_a = model.forward(&mut a_seq, 1).expect("fa");
+        let exp_b = model.forward(&mut b_seq, 2).expect("fb");
+        let hits_before = a.expert_store_metrics().expect("mb").hits;
+        let got = {
+            let mut pair = [&mut a, &mut b];
+            model.forward_batch(&mut pair, &[1, 2]).expect("batch")
+        };
+        assert_eq!(got.len(), 2);
+        assert_logits_match(&got[0], &exp_a);
+        assert_logits_match(&got[1], &exp_b);
+        let hits_after = a.expert_store_metrics().expect("ma").hits;
+        assert!(
+            hits_after > hits_before,
+            "batched GEMM must acquire from the parked store, hits {hits_before} -> {hits_after}"
+        );
+    }
+
+    #[test]
+    fn forward_batch_two_expert_stores_fallback_matches_sequential() {
+        let prompt = [1u32, 2, 3, 4];
+        let model =
+            Llama::from_gguf(load_gguf_owned(tiny_qwen3moe_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 16).expect("pool");
+        let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+        let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+        a.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog"),
+        ));
+        b.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog-b"),
+        ));
+        let _pa = model.prefill(&mut a, &prompt).expect("pa");
+        let _pb = model.prefill(&mut b, &[5, 0, 5, 0]).expect("pb");
+        let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+        let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+        a_seq.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog2"),
+        ));
+        b_seq.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog2b"),
         ));
         let _pas = model.prefill(&mut a_seq, &prompt).expect("pas");
         let _pbs = model.prefill(&mut b_seq, &[5, 0, 5, 0]).expect("pbs");
@@ -10448,6 +10508,41 @@ mod tests {
             assert_logits_match(&got[0], &exp_a);
             assert_logits_match(&got[1], &exp_b);
         }
+    }
+
+    #[test]
+    fn prefill_batch_one_expert_store_matches_sequential() {
+        let a_tok = [1u32, 2];
+        let b_tok = [5u32, 0, 5, 0];
+        let model =
+            Llama::from_gguf(load_gguf_owned(tiny_qwen3moe_gguf()).expect("load")).expect("m");
+        let pool = model.new_paged_pool(2, 16).expect("pool");
+        let mut a = model.new_paged_cache_on(&pool, 16).expect("a");
+        let mut b = model.new_paged_cache_on(&pool, 16).expect("b");
+        a.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog"),
+        ));
+        let mut a_seq = model.new_paged_cache_on(&pool, 16).expect("as");
+        let mut b_seq = model.new_paged_cache_on(&pool, 16).expect("bs");
+        a_seq.attach_expert_store(LiveStore::Direct(
+            model.expert_direct_store().expect("catalog2"),
+        ));
+        let exp_a = model.prefill(&mut a_seq, &a_tok).expect("fa");
+        let exp_b = model.prefill(&mut b_seq, &b_tok).expect("fb");
+        let hits_before = a.expert_store_metrics().expect("mb").hits;
+        let got = {
+            let mut pair = [&mut a, &mut b];
+            let groups: [&[u32]; 2] = [&a_tok, &b_tok];
+            model.prefill_batch(&mut pair, &groups).expect("batch")
+        };
+        assert_eq!(got.len(), 2);
+        assert_logits_match(&got[0], &exp_a);
+        assert_logits_match(&got[1], &exp_b);
+        let hits_after = a.expert_store_metrics().expect("ma").hits;
+        assert!(
+            hits_after > hits_before,
+            "prefill GEMM must acquire from the parked store, hits {hits_before} -> {hits_after}"
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Continuous batching: intern hits, then recompute preemption on a tight pool.
 
-use llama_rust::{Engine, EngineCfg, Model};
+use llama_rust::{Engine, EngineCfg, LiveStore, Model};
 use std::io::{self, Write};
 use std::process::ExitCode;
 
@@ -19,6 +19,12 @@ fn run() -> Result<(), String> {
     let mut cfg = EngineCfg::tiny();
     cfg.prefill_chunk = 2;
     let mut eng = Engine::new(model.llama(), cfg).map_err(|e| e.to_string())?;
+    eng.attach_expert_store(LiveStore::Direct(
+        model
+            .llama()
+            .expert_direct_store()
+            .map_err(|e| e.to_string())?,
+    ));
     let a = eng.add(&[1, 2, 3, 4], 2).map_err(|e| e.to_string())?;
     let _s = eng.step().map_err(|e| e.to_string())?;
     let b = eng.add(&[1, 2, 0, 1], 2).map_err(|e| e.to_string())?;
@@ -29,10 +35,11 @@ fn run() -> Result<(), String> {
     let mut out = io::stdout();
     out.write_all(
         format!(
-            "a_gen={} b_gen={} intern_hits={hits} gemm_peak={} active={}\n",
+            "a_gen={} b_gen={} intern_hits={hits} gemm_peak={} store_hits={} active={}\n",
             out_a.generated.len(),
             out_b.generated.len(),
             eng.stats().gemm_peak,
+            eng.expert_store_metrics().map(|m| m.hits).unwrap_or(0),
             eng.active()
         )
         .as_bytes(),

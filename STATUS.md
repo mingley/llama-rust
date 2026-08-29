@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine ExpertStore on batched GEMM
+
+`Engine::attach_expert_store` parks one `LiveStore` on the first cache of
+each `prefill_batch` / `forward_batch` so MoE serving stays on the
+shared-pool GEMM (not a sequential fallback). DirectStore and CachedStore
+greedy ids match the blob Engine on writer-tiny Qwen3MoE. Two per-cache
+stores still fall back sequential. `gguf_gemv engine --expert-slots N`
+(`0` = DirectStore, `N>0` = CachedStore) prints `StoreMetrics::line()`.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine GEMM stats
 
 `EngineStats` counts scheduler steps, tokens that ran in a
