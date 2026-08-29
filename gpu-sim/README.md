@@ -66,6 +66,7 @@ warp scheduler, L1, …   ← do not model
 | peer accessibility | size-dependent efficiency |
 | graph capture does not execute; launch replays | GEMM util / grouped-MoE ‰ |
 | forked capture: `wait_event` on a captured record joins that stream | copy/compute overlap inside one launch |
+| `cudaEventRecordExternal` / `cudaEventWaitExternal` do not join capture | live waiters overlap graph launch |
 | `launch_graph` during capture is a child-graph node | nested exec expanded at parent launch |
 | independent streams stay live during capture | query/sync of a capturing stream is Invalid |
 | graph instantiate is host-sync; first launch pays it once; `instantiate_graph_auto_free` is AutoFreeOnLaunch | `graph_instantiate_ns` |
@@ -197,6 +198,8 @@ CUDA graphs: `begin_capture` / `end_capture` / `instantiate_graph` /
 `update_graph` / `clone_graph` / `destroy_graph` / `launch_graph`. Capture does
 not advance the virtual clock. Independent streams stay live. A stream that
 `wait_event`s an event recorded in this capture joins (CUDA forked capture);
+`record_event_external` / `wait_event_external` (`cudaEventRecordExternal` /
+`cudaEventWaitExternal`) do not join, so a live waiter can overlap graph launch.
 `launch_graph` remaps origin-stream nodes onto the launch stream so copy and
 compute can overlap. Query or `synchronize_stream` of a capturing stream, and
 node `synchronize`, are `Invalid`. `launch_graph` during capture records a

@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — CUDA event RecordExternal / WaitExternal
+
+`Sim::record_event_external` / `wait_event_external` are
+`cudaEventRecordExternal` / `cudaEventWaitExternal`: captured without
+forked-capture join so a live waiter can overlap graph launch. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — `cudaStreamAttachMemAsync`
 
 `Sim::stream_attach` is stream-ordered managed-memory visibility

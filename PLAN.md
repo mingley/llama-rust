@@ -469,6 +469,11 @@ Exact (mechanical invariants agents may rely on):
   stream (`set_legacy_null_stream`) still serializes with every stream
 - `cudaEventCreateWithFlags(..., cudaEventDisableTiming)`
   (`create_event_disable_timing`): wait/query work; `event_elapsed_ns` fails
+- `cudaEventRecordWithFlags(..., cudaEventRecordExternal)` /
+  `cudaStreamWaitEvent(..., cudaEventWaitExternal)`
+  (`record_event_external` / `wait_event_external`): captured without
+  forked-capture join; graph WaitExternal waits for a live record, not the
+  same graph's record of that event
 - stream ordering, events, barriers
 - kernel enqueue, async copies
 - copy-engine availability, Hyper-Q `compute_slots` occupancy (default
@@ -1096,6 +1101,12 @@ model, do not celebrate the sim.
     Device kernels / memset / device prefetch fail `not attached` when Host
     or a different Single stream. Single cannot use the NULL stream. Capture
     is refused (`cudaErrorStreamCaptureUnsupported`). Dual score still has no
+    `$/M tokens`.
+73. [x] `cudaEventRecordExternal` / `cudaEventWaitExternal`:
+    `Sim::record_event_external` / `wait_event_external` capture as event
+    nodes without forked-capture join. A default `wait_event` on a captured
+    default record still joins. Graph WaitExternal waits for a live record,
+    not the same graph's record of that event. Dual score still has no
     `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

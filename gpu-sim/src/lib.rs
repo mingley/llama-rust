@@ -93,8 +93,9 @@
 //! child-graph nodes are cloned recursively).
 //! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`.
 //! Capture records every stream that [`wait_event`](Sim::wait_event)s an
-//! event recorded in this capture (CUDA forked capture). Independent streams
-//! stay live. Launch remaps origin-stream nodes onto the launch stream.
+//! event recorded in this capture (CUDA forked capture). [`record_event_external`](Sim::record_event_external)
+//! / [`wait_event_external`](Sim::wait_event_external) do not join.
+//! Independent streams stay live. Launch remaps origin-stream nodes onto the launch stream.
 //! [`launch_graph`](Sim::launch_graph) during capture records a child graph
 //! ([`GpuOp::ChildGraph`]) if the child is already instantiated.
 //! [`Sim::alloc`] / [`free`](Sim::free) during capture are graph mem alloc/free
@@ -4365,6 +4366,98 @@ mod tests {
         enq(sim.wait_event(d, ev, live));
         let g = sim.end_capture().unwrap();
         assert_eq!(sim.graph_len(g).unwrap(), 0);
+    }
+
+    #[test]
+    fn record_external_does_not_fork_capture() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let copy = StreamId(0);
+        let compute = StreamId(1);
+        let ev = EventId(3);
+        let a = sim.alloc(d, 4096, copy).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, copy));
+        sim.synchronize().unwrap();
+        sim.create_event(ev).unwrap();
+        sim.begin_capture(d, copy).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], copy));
+        enq(sim.record_event_external(d, ev, copy));
+        enq(sim.wait_event(d, ev, compute));
+        assert!(!sim.query_stream(d, compute).unwrap());
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
+        let n = sim.launch_graph(g, copy).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        assert!(sim.event_complete(ev));
+        assert!(sim.query_stream(d, compute).unwrap());
+    }
+
+    #[test]
+    fn wait_external_does_not_fork_default_record() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let copy = StreamId(0);
+        let compute = StreamId(1);
+        let ev = EventId(4);
+        let a = sim.alloc(d, 4096, copy).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, copy));
+        sim.synchronize().unwrap();
+        sim.create_event(ev).unwrap();
+        sim.begin_capture(d, copy).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], copy));
+        enq(sim.record_event(d, ev, copy));
+        enq(sim.wait_event_external(d, ev, compute));
+        assert!(!sim.query_stream(d, compute).unwrap());
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
+        let n = sim.launch_graph(g, copy).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        assert!(sim.query_stream(d, compute).unwrap());
+    }
+
+    #[test]
+    fn wait_external_graph_waits_for_live_record() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let copy = StreamId(0);
+        let compute = StreamId(1);
+        let ev = EventId(5);
+        let bytes = 8u64 << 20;
+        let a = sim.alloc(d, bytes, copy).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, copy));
+        sim.synchronize().unwrap();
+        sim.create_event(ev).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, copy));
+        enq(sim.record_event(d, ev, copy));
+        sim.begin_capture(d, compute).unwrap();
+        enq(sim.wait_event_external(d, ev, compute));
+        enq(sim.kernel(d, KernelKind::other(1 << 20, bytes), &[a], &[a], compute));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
+        let n = sim.launch_graph(g, compute).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        let rec = sim
+            .operations()
+            .find(|o| {
+                matches!(
+                    o.kind,
+                    GpuOp::EventRecord {
+                        external: false,
+                        ..
+                    }
+                )
+            })
+            .and_then(|o| o.done_ns)
+            .expect("live record");
+        let kern = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.start_ns.is_some())
+            .and_then(|o| o.start_ns)
+            .expect("kernel");
+        assert!(kern >= rec, "kernel={kern} record={rec}");
     }
 
     #[test]

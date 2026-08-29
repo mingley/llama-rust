@@ -725,6 +725,8 @@ impl Sim {
     /// Other streams keep running. A stream that [`Self::wait_event`]s an
     /// event recorded in this capture **joins** (CUDA forked capture) so copy
     /// and compute can overlap inside one [`Self::launch_graph`].
+    /// [`Self::record_event_external`] / [`Self::wait_event_external`] do not
+    /// join (`cudaEventRecordExternal` / `cudaEventWaitExternal`).
     pub fn begin_capture(&mut self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         if self.capturing.is_some() {
@@ -883,11 +885,11 @@ impl Sim {
                 continue;
             }
             let rec = match &kind {
-                Kind::EventRecord { event } => Some(*event),
+                Kind::EventRecord { event, .. } => Some(*event),
                 _ => None,
             };
             let wait = match &kind {
-                Kind::EventWait { event } => Some(*event),
+                Kind::EventWait { event, external } => Some((*event, *external)),
                 _ => None,
             };
             let launch = if head {
@@ -900,8 +902,12 @@ impl Sim {
             if let Some(event) = rec {
                 let _prev = rec_ops.insert(event, id);
             }
-            if let Some(event) = wait {
-                if let Some(rec_id) = rec_ops.get(&event).copied() {
+            if let Some((event, external)) = wait {
+                if external {
+                    if let Some(rec_id) = self.events.get(&event).and_then(|e| e.recorded_by) {
+                        self.add_op_dep(id, rec_id);
+                    }
+                } else if let Some(rec_id) = rec_ops.get(&event).copied() {
                     self.add_op_dep(id, rec_id);
                 }
             }
@@ -2842,18 +2848,42 @@ impl Sim {
         self.submit(device, stream, Kind::Attach { id, flags })
     }
 
-    /// Record `event` after prior ops on `stream`.
+    /// Record `event` after prior ops on `stream` (`cudaEventRecord`).
     pub fn record_event(
         &mut self,
         device: DeviceId,
         event: EventId,
         stream: StreamId,
     ) -> Result<OpId, SimError> {
+        self.record_event_flags(device, event, stream, false)
+    }
+
+    /// `cudaEventRecordWithFlags(..., cudaEventRecordExternal)`.
+    ///
+    /// During capture this is a record node that does **not** put `event` in the
+    /// forked-capture join set. A later [`Self::wait_event`] on another stream
+    /// stays live. Live (non-capturing) this matches [`Self::record_event`].
+    pub fn record_event_external(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.record_event_flags(device, event, stream, true)
+    }
+
+    fn record_event_flags(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+        external: bool,
+    ) -> Result<OpId, SimError> {
         let _ev = self.events.entry(event).or_insert(Ev {
             recorded_by: None,
             timing: true,
         });
-        self.submit(device, stream, Kind::EventRecord { event })
+        self.submit(device, stream, Kind::EventRecord { event, external })
     }
 
     /// Make later ops on `stream` wait until `event` is recorded and complete.
@@ -2863,13 +2893,38 @@ impl Sim {
         event: EventId,
         stream: StreamId,
     ) -> Result<OpId, SimError> {
+        self.wait_event_flags(device, event, stream, false)
+    }
+
+    /// `cudaStreamWaitEvent(..., cudaEventWaitExternal)`.
+    ///
+    /// During capture this is a wait node that does **not** join the waiter into
+    /// the graph. Graph replay waits for a live record of `event`, not a
+    /// [`Self::record_event_external`] node in the same graph. Live this matches
+    /// [`Self::wait_event`].
+    pub fn wait_event_external(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.wait_event_flags(device, event, stream, true)
+    }
+
+    fn wait_event_flags(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+        external: bool,
+    ) -> Result<OpId, SimError> {
         if let Entry::Vacant(slot) = self.events.entry(event) {
             let _ev = slot.insert(Ev {
                 recorded_by: None,
                 timing: true,
             });
         }
-        self.submit(device, stream, Kind::EventWait { event })
+        self.submit(device, stream, Kind::EventWait { event, external })
     }
 
     /// Run until every submitted op is complete (`cudaDeviceSynchronize` on every GPU).
@@ -3109,11 +3164,12 @@ impl Sim {
         stream: StreamId,
         kind: Kind,
     ) -> Result<OpId, SimError> {
-        if let Kind::EventWait { event } = &kind {
-            let join = self
-                .capturing
-                .as_ref()
-                .is_some_and(|c| c.events.contains(event));
+        if let Kind::EventWait { event, external } = &kind {
+            let join = !*external
+                && self
+                    .capturing
+                    .as_ref()
+                    .is_some_and(|c| c.events.contains(event));
             if join && !self.in_capture(device, stream) {
                 let same = self
                     .capturing
@@ -3137,9 +3193,11 @@ impl Sim {
         if !self.in_capture(device, stream) {
             return self.submit_live(device, stream, kind, LaunchCost::Kernel);
         }
-        if let Kind::EventRecord { event } = &kind {
-            if let Some(cap) = self.capturing.as_mut() {
-                let _ins = cap.events.insert(*event);
+        if let Kind::EventRecord { event, external } = &kind {
+            if !*external {
+                if let Some(cap) = self.capturing.as_mut() {
+                    let _ins = cap.events.insert(*event);
+                }
             }
         }
         self.capture_buf.push((device, stream, kind));
@@ -3159,7 +3217,7 @@ impl Sim {
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
         let mut deps = self.stream_order_deps(device, stream);
-        if let Kind::EventWait { event } = &kind {
+        if let Kind::EventWait { event, .. } = &kind {
             if let Some(ev) = self.events.get(event) {
                 if let Some(rec) = ev.recorded_by {
                     deps.push(rec);
@@ -4035,7 +4093,7 @@ impl Sim {
                 });
                 Ok(true)
             }
-            Kind::EventRecord { event } => {
+            Kind::EventRecord { event, .. } => {
                 let event = *event;
                 if let Some(ev) = self.events.get_mut(&event) {
                     ev.recorded_by = Some(id);
@@ -4047,9 +4105,10 @@ impl Sim {
                 });
                 Ok(true)
             }
-            Kind::EventWait { event } => {
-                let event = *event;
-                if self.event_wait_gate(event)?.is_none() {
+            Kind::EventWait { event, external } => {
+                let skip_graph =
+                    *external && matches!(launch, LaunchCost::GraphHead | LaunchCost::GraphBody);
+                if self.event_wait_gate(*event, skip_graph)?.is_none() {
                     return Ok(false);
                 }
                 self.running.push(Running {
@@ -4280,23 +4339,33 @@ impl Sim {
         }
     }
 
-    fn event_wait_gate(&self, event: EventId) -> Result<Option<OpId>, SimError> {
+    fn event_wait_gate(&self, event: EventId, skip_graph: bool) -> Result<Option<OpId>, SimError> {
         if let Some(rec) = self.events.get(&event).and_then(|e| e.recorded_by) {
-            if self.ops.get(&rec).is_some_and(|o| o.cancelled) {
-                let stream = self.ops.get(&rec).map(|o| o.stream).unwrap_or(StreamId(0));
-                return Err(SimError::Cancelled { stream, n: 1 });
+            let graph_rec = self.ops.get(&rec).is_some_and(|o| {
+                skip_graph && matches!(o.launch, LaunchCost::GraphHead | LaunchCost::GraphBody)
+            });
+            if !graph_rec {
+                if self.ops.get(&rec).is_some_and(|o| o.cancelled) {
+                    let stream = self.ops.get(&rec).map(|o| o.stream).unwrap_or(StreamId(0));
+                    return Err(SimError::Cancelled { stream, n: 1 });
+                }
+                if !self.op_done(rec) {
+                    return Ok(None);
+                }
+                return Ok(Some(rec));
             }
-            if !self.op_done(rec) {
-                return Ok(None);
-            }
-            return Ok(Some(rec));
         }
         let mut pending = false;
         let mut cancelled_n = 0u32;
         let mut stream = StreamId(0);
         for op in self.ops.values() {
-            if let Kind::EventRecord { event: ev } = &op.kind {
+            if let Kind::EventRecord { event: ev, .. } = &op.kind {
                 if *ev == event {
+                    if skip_graph
+                        && matches!(op.launch, LaunchCost::GraphHead | LaunchCost::GraphBody)
+                    {
+                        continue;
+                    }
                     if op.cancelled {
                         cancelled_n = cancelled_n.saturating_add(1);
                         stream = op.stream;
@@ -4773,6 +4842,8 @@ fn graph_topology_eq(a: &[(DeviceId, StreamId, Kind)], b: &[(DeviceId, StreamId,
 fn op_eq(a: &Kind, b: &Kind) -> bool {
     match (a, b) {
         (Kind::ChildGraph { graph: x }, Kind::ChildGraph { graph: y }) => x == y,
+        (Kind::EventRecord { external: x, .. }, Kind::EventRecord { external: y, .. }) => x == y,
+        (Kind::EventWait { external: x, .. }, Kind::EventWait { external: y, .. }) => x == y,
         _ => op_tag(a) == op_tag(b),
     }
 }

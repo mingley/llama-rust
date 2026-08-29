@@ -283,11 +283,17 @@ pub enum GpuOp {
     EventRecord {
         /// Event id.
         event: EventId,
+        /// `cudaEventRecordExternal`: captured without putting the event in the
+        /// forked-capture join set; live waiters do not join the graph.
+        external: bool,
     },
     /// Later ops on this stream wait until `event` is recorded and complete.
     EventWait {
         /// Event id.
         event: EventId,
+        /// `cudaEventWaitExternal`: captured without forking; graph waits do not
+        /// depend on the same graph's record of this event.
+        external: bool,
     },
     /// Ring allreduce (PLAN Collective). Each alloc must already be resident.
     AllReduce {
