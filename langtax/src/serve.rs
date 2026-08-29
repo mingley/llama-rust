@@ -18,18 +18,21 @@ use crate::tok::Tokenizer;
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--bind HOST:PORT]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       persistent KV capacity (default: grow per request)
+      --kv-page N     paged KV block size in tokens (default: dense layout)
       --bind ADDR     loopback listen address (default: 127.0.0.1:8080)
 
 POST /generate takes {\"prompt\": TEXT} or, to render the model's own
 tokenizer.chat_template, {\"messages\": [{\"role\": R, \"content\": C}, ...]}
 with optional \"add_generation_prompt\" (default true) and \"n_predict\".
 The listener keeps one KV cache across requests and reuses a matching
-token prefix (`prefix_hit` in the JSON). `--n-ctx` sizes that cache;
-omit it to allocate `prompt + n_predict + 1` and keep the cache while
-later requests fit. Not a production inference server.
+token prefix (`prefix_hit` in the JSON). `--kv-page N` interned completed
+blocks so a later prompt can hit them after a rewind (`page_hits`).
+`--n-ctx` sizes that cache; omit it to allocate `prompt + n_predict + 1`
+and keep the cache while later requests fit. Not a production inference
+server.
 ";
 
 const MAX_REQ: u64 = 65_536;
@@ -54,6 +57,8 @@ pub struct ServeArgs {
     /// Optional persistent KV capacity. `None` grows to prompt + `n_predict` + 1
     /// on the first request that does not fit the current cache.
     pub n_ctx: Option<usize>,
+    /// Paged KV block size in tokens. `None` keeps the dense `max_seq` layout.
+    pub kv_page: Option<usize>,
     /// Loopback `HOST:PORT`. Host must be `127.0.0.1` or `localhost`.
     pub bind: String,
 }
@@ -99,7 +104,7 @@ impl From<std::io::Error> for ServeError {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--bind HOST:PORT]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -109,6 +114,7 @@ where
     let mut path = None;
     let mut n_predict = InferArgs::DEFAULT_N_PREDICT;
     let mut n_ctx = None;
+    let mut kv_page = None;
     let mut bind = ServeArgs::DEFAULT_BIND.to_string();
     let mut it = args.into_iter();
     while let Some(raw) = it.next() {
@@ -130,6 +136,13 @@ where
                     return usage_err("n-ctx must be > 0");
                 }
                 n_ctx = Some(n);
+            }
+            "--kv-page" => {
+                let n = parse_usize("kv-page", &opt_value("kv-page", inline, &mut it)?)?;
+                if n == 0 {
+                    return usage_err("kv-page must be > 0");
+                }
+                kv_page = Some(n);
             }
             "--bind" => {
                 bind = opt_value("bind", inline, &mut it)?;
@@ -153,6 +166,7 @@ where
         path,
         n_predict,
         n_ctx,
+        kv_page,
         bind,
     }))
 }
@@ -310,10 +324,19 @@ fn dispatch(
         return (400, "Bad Request", json_error("empty prompt"));
     }
     let n_predict = gen.n_predict.unwrap_or(args.n_predict);
-    match greedy_generate_slot(model, tok, cache, &prompt, n_predict, args.n_ctx) {
+    match greedy_generate_slot(
+        model,
+        tok,
+        cache,
+        &prompt,
+        n_predict,
+        args.n_ctx,
+        args.kv_page,
+    ) {
         Ok(text) => {
             let hit = cache.as_ref().map_or(0, KvCache::last_prefix_hit);
-            (200, "OK", json_generated(&text, hit))
+            let pages = cache.as_ref().map_or(0, KvCache::page_hits);
+            (200, "OK", json_generated(&text, hit, pages))
         }
         Err(LlamaError::EmptyPrompt) => (400, "Bad Request", json_error("empty prompt")),
         Err(e) => (500, "Internal Server Error", json_error(&e.to_string())),
@@ -451,11 +474,13 @@ fn write_http_json<W: Write>(
     Ok(())
 }
 
-fn json_generated(text: &str, prefix_hit: usize) -> String {
+fn json_generated(text: &str, prefix_hit: usize, page_hits: u64) -> String {
     let mut s = String::from("{\"generated\":");
     append_json_string(&mut s, text);
     s.push_str(",\"prefix_hit\":");
     s.push_str(&prefix_hit.to_string());
+    s.push_str(",\"page_hits\":");
+    s.push_str(&page_hits.to_string());
     s.push('}');
     s
 }
@@ -749,7 +774,7 @@ fn parse_usize(name: &str, s: &str) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decode::{greedy_generate_ctx, tiny_llama_gguf};
+    use crate::decode::{greedy_generate_ctx, greedy_generate_slot, tiny_llama_gguf};
     use std::io::Cursor;
     use std::net::{IpAddr, Ipv4Addr};
 
@@ -793,6 +818,7 @@ mod tests {
             path: "tiny.gguf".into(),
             n_predict: InferArgs::DEFAULT_N_PREDICT,
             n_ctx: None,
+            kv_page: None,
             bind: ServeArgs::DEFAULT_BIND.into(),
         }
     }
@@ -857,6 +883,7 @@ mod tests {
         assert_eq!(a.n_predict, InferArgs::DEFAULT_N_PREDICT);
         assert_eq!(a.n_predict, 2);
         assert_eq!(a.n_ctx, None);
+        assert_eq!(a.kv_page, None);
         assert_eq!(a.bind, ServeArgs::DEFAULT_BIND);
         assert_eq!(a.bind, "127.0.0.1:8080");
     }
@@ -878,6 +905,7 @@ mod tests {
                 path: "m.gguf".into(),
                 n_predict: 4,
                 n_ctx: Some(16),
+                kv_page: None,
                 bind: "localhost:0".into(),
             }
         );
@@ -885,9 +913,16 @@ mod tests {
 
     #[test]
     fn short_flags_equals_and_path_first() {
-        let a = run(&["model.gguf", "-n=0", "--n-ctx=8", "--bind=127.0.0.1:9"]);
+        let a = run(&[
+            "model.gguf",
+            "-n=0",
+            "--n-ctx=8",
+            "--kv-page=2",
+            "--bind=127.0.0.1:9",
+        ]);
         assert_eq!(a.n_predict, 0);
         assert_eq!(a.n_ctx, Some(8));
+        assert_eq!(a.kv_page, Some(2));
         assert_eq!(a.bind, "127.0.0.1:9");
     }
 
@@ -906,6 +941,8 @@ mod tests {
         assert!(err.contains("invalid n-predict"), "{err}");
         let err = parse_serve_args(["m.gguf", "--n-ctx", "0"]).unwrap_err();
         assert!(err.contains("n-ctx must be > 0"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--kv-page", "0"]).unwrap_err();
+        assert!(err.contains("kv-page must be > 0"), "{err}");
         let err = parse_serve_args(["m.gguf", "--nope"]).unwrap_err();
         assert!(err.contains("unknown flag"), "{err}");
         let err = parse_serve_args(["a.gguf", "b.gguf"]).unwrap_err();
@@ -1144,20 +1181,20 @@ mod tests {
     #[test]
     fn json_response_shape_escapes() {
         assert_eq!(
-            json_generated("ab", 0),
-            r#"{"generated":"ab","prefix_hit":0}"#
+            json_generated("ab", 0, 0),
+            r#"{"generated":"ab","prefix_hit":0,"page_hits":0}"#
         );
         assert_eq!(
-            json_generated("a\"b", 0),
-            r#"{"generated":"a\"b","prefix_hit":0}"#
+            json_generated("a\"b", 0, 0),
+            r#"{"generated":"a\"b","prefix_hit":0,"page_hits":0}"#
         );
         assert_eq!(
-            json_generated("a\nb", 2),
-            r#"{"generated":"a\nb","prefix_hit":2}"#
+            json_generated("a\nb", 2, 3),
+            r#"{"generated":"a\nb","prefix_hit":2,"page_hits":3}"#
         );
         assert_eq!(json_error("empty prompt"), r#"{"error":"empty prompt"}"#);
         assert_eq!(
-            json_field_string(&json_generated("a\"b\n", 0), "generated").unwrap(),
+            json_field_string(&json_generated("a\"b\n", 0, 0), "generated").unwrap(),
             "a\"b\n"
         );
     }
@@ -1232,6 +1269,44 @@ mod tests {
         assert!(
             !body2.contains("\"prefix_hit\":0"),
             "second request must reuse the prompt prefix: {body2}"
+        );
+    }
+
+    #[test]
+    fn serve_paged_kv_matches_dense_greedy() {
+        let (model, tok) = tiny_model();
+        let args = ServeArgs {
+            n_ctx: Some(16),
+            kv_page: Some(2),
+            ..defaults()
+        };
+        let expect =
+            greedy_generate_slot(&model, &tok, &mut None, "ab", 2, Some(16), Some(2)).expect("p");
+        let dense = greedy_generate_ctx(&model, &tok, "ab", 2, Some(16)).expect("d");
+        assert_eq!(expect, dense);
+        let mut cache = None;
+        let (head, body) = exchange_on(
+            &post_json(r#"{"prompt":"ab"}"#),
+            &model,
+            &tok,
+            &args,
+            &mut cache,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(json_field_string(&body, "generated").unwrap(), expect);
+        assert!(body.contains("\"page_hits\":"), "{body}");
+        let (head2, body2) = exchange_on(
+            &post_json(r#"{"prompt":"ab"}"#),
+            &model,
+            &tok,
+            &args,
+            &mut cache,
+        );
+        assert!(head2.starts_with("HTTP/1.1 200 OK"), "{head2}");
+        assert_eq!(json_field_string(&body2, "generated").unwrap(), expect);
+        assert!(
+            cache.as_ref().is_some_and(|c| c.page_size() == Some(2)),
+            "persistent slot must stay paged"
         );
     }
 }

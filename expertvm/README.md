@@ -103,7 +103,9 @@ VA (evict `va_release`s the pointer so the next miss skips reserve).
 `--vmm-page N` maps each expert in `N`-byte physicals (`va_acquire_paged`,
 vLLM KV-block analog; implies `--vmm`). `expertvm kv` reserves a KV VA and
 maps only `capacity` pages (`kernel_bufs` plus H2D or `--fill memset`;
-peak HBM is the working set, not the reservation).
+peak HBM is the working set, not the reservation). That is **simulated
+VMM**, not the reference engine's paged KV (`Llama::new_paged_cache` /
+`gguf_gemv serve --kv-page`, interned decode blocks).
 `--host-func` enqueues `cudaLaunchHostFunc` after each event's GEMMs
 (`host_func_ns`; other streams can still compute). `--blocking-streams`
 marks created seq-streams as `cudaStreamCreate` (they serialize with the

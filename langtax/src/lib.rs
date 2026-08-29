@@ -9,6 +9,7 @@ mod cli;
 mod decode;
 mod fp16;
 mod gguf;
+mod kv_page;
 mod pool;
 mod pretok;
 mod quant;

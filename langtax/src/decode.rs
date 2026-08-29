@@ -36,6 +36,7 @@
 //! bias. Not Mixtral, not `qwen3vlmoe`, not linear-attn. Not a phi3 redo.
 
 use crate::gguf::{GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
+use crate::kv_page::{KvGeom, KvPages};
 use crate::pool::{Pool, RowKernel};
 use crate::quant::{
     bf16_row_bytes, dequant_bf16_row, dequant_f16_row, dequant_f32_row, dequant_iq1_m_row,
@@ -529,6 +530,8 @@ pub struct KvCache {
     expert_store: Option<LiveStore>,
     /// Longest common prefix of the last [`Llama::prompt_logits`] vs cached ids.
     last_prefix_hit: usize,
+    /// Opt-in paged KV. `None` keeps the dense `max_seq` layout.
+    pages: Option<KvPages>,
 }
 
 impl KvCache {
@@ -619,6 +622,27 @@ impl KvCache {
         self.moe_trace.events.retain(|e| e.token < tok_u);
         self.moe_trace.prev = None;
         self.moe_trace.prev2 = None;
+        if let Some(p) = self.pages.as_mut() {
+            p.rewind_tokens(n);
+        }
+    }
+
+    /// Paged block size when this cache uses [`KvPages`].
+    #[must_use]
+    pub fn page_size(&self) -> Option<usize> {
+        self.pages.as_ref().map(KvPages::block_size)
+    }
+
+    /// Interned-block hits on this cache's pool (`0` when dense).
+    #[must_use]
+    pub fn page_hits(&self) -> u64 {
+        self.pages.as_ref().map_or(0, KvPages::hits)
+    }
+
+    /// Physical blocks with a positive refcount (`0` when dense).
+    #[must_use]
+    pub fn page_occupied(&self) -> usize {
+        self.pages.as_ref().map_or(0, KvPages::occupied)
     }
 }
 
@@ -1018,6 +1042,40 @@ impl Llama {
             moe_trace: MoeTraceBuf::default(),
             expert_store: None,
             last_prefix_hit: 0,
+            pages: None,
+        })
+    }
+
+    /// KV cache whose K/V live in paged blocks of `block_size` tokens.
+    ///
+    /// Dense [`Llama::new_cache`] stays the default. Prefill/decode logits must
+    /// bit-match that path. Completed blocks are interned so a later prompt on
+    /// this cache can hit them after a rewind to 0.
+    pub fn new_paged_cache(
+        &self,
+        max_seq: usize,
+        block_size: usize,
+    ) -> Result<KvCache, LlamaError> {
+        let hd = self.head_dim()?;
+        let n_layers = self.layers.len();
+        let bs = block_size.min(max_seq.max(1));
+        if bs == 0 || max_seq == 0 {
+            return Err(LlamaError::Shape("kv page".into()));
+        }
+        let cap = max_seq.div_ceil(bs).saturating_add(1);
+        let pages = KvPages::new(n_layers, self.n_head_kv, hd, bs, cap.max(2))
+            .map_err(|e| LlamaError::Shape(e.into()))?;
+        Ok(KvCache {
+            k: Vec::new(),
+            v: Vec::new(),
+            n_past: 0,
+            max_seq,
+            scratch: Scratch::default(),
+            pool: None,
+            moe_trace: MoeTraceBuf::default(),
+            expert_store: None,
+            last_prefix_hit: 0,
+            pages: Some(pages),
         })
     }
 
@@ -1038,12 +1096,41 @@ impl Llama {
             None => needed.saturating_add(1),
         };
         let keep = match (slot.as_ref(), n_ctx) {
-            (Some(c), Some(n)) => c.max_seq == n,
-            (Some(c), None) => c.max_seq >= needed,
+            (Some(c), Some(n)) => c.max_seq == n && c.page_size().is_none(),
+            (Some(c), None) => c.max_seq >= needed && c.page_size().is_none(),
             (None, _) => false,
         };
         if !keep {
             *slot = Some(self.new_cache(max_seq)?);
+        }
+        slot.as_mut()
+            .ok_or_else(|| LlamaError::Shape("kv cache".into()))
+    }
+
+    /// [`Llama::ensure_cache`] with optional paged KV (`block_size`).
+    pub fn ensure_cache_page<'a>(
+        &self,
+        slot: &'a mut Option<KvCache>,
+        needed: usize,
+        n_ctx: Option<usize>,
+        page: Option<usize>,
+    ) -> Result<&'a mut KvCache, LlamaError> {
+        if page.is_none() {
+            return self.ensure_cache(slot, needed, n_ctx);
+        }
+        let max_seq = match n_ctx {
+            Some(n) if n < needed => return Err(LlamaError::Shape("n_ctx".into())),
+            Some(n) => n,
+            None => needed.saturating_add(1),
+        };
+        let keep = match (slot.as_ref(), n_ctx) {
+            (Some(c), Some(n)) => c.max_seq == n && c.page_size() == page,
+            (Some(c), None) => c.max_seq >= needed && c.page_size() == page,
+            (None, _) => false,
+        };
+        if !keep {
+            let bs = page.ok_or_else(|| LlamaError::Shape("kv page".into()))?;
+            *slot = Some(self.new_paged_cache(max_seq, bs)?);
         }
         slot.as_mut()
             .ok_or_else(|| LlamaError::Shape("kv cache".into()))
@@ -1207,8 +1294,8 @@ impl Llama {
             .checked_mul(self.n_embd)
             .ok_or_else(|| LlamaError::Shape("prefill embed".into()))?;
         let KvCache {
-            k: cache_k,
-            v: cache_v,
+            k: dense_k,
+            v: dense_v,
             n_past,
             max_seq,
             scratch: s,
@@ -1216,6 +1303,7 @@ impl Llama {
             moe_trace,
             expert_store,
             last_prefix_hit: _,
+            pages,
         } = cache;
         let max_seq = *max_seq;
         moe_trace.token0 = u32::try_from(n0).unwrap_or(u32::MAX);
@@ -1244,6 +1332,33 @@ impl Llama {
                 *v *= self.embed_scale;
             }
         }
+        let mut table_copy = Vec::new();
+        let mut page_bs = max_seq;
+        let mut page_nl = 0usize;
+        if let Some(p) = pages.as_mut() {
+            for pos in n0..end {
+                p.ensure_write(pos)
+                    .map_err(|e| LlamaError::Shape(e.into()))?;
+            }
+            table_copy.extend_from_slice(p.table_ids());
+            page_bs = p.block_size();
+            page_nl = p.n_layers();
+        }
+        let geom = if pages.is_some() {
+            KvGeom {
+                n_head_kv: self.n_head_kv,
+                hd,
+                n_layers: page_nl,
+                time_stride: page_bs,
+                table: Some(table_copy.as_slice()),
+            }
+        } else {
+            KvGeom::dense(self.n_head_kv, hd, max_seq)
+        };
+        let (cache_k, cache_v): (&mut [f32], &mut [f32]) = match pages.as_mut() {
+            Some(p) => p.kv_mut(),
+            None => (dense_k.as_mut_slice(), dense_v.as_mut_slice()),
+        };
         for (li, layer) in self.layers.iter().enumerate() {
             moe_trace.layer = u32::try_from(li).unwrap_or(u32::MAX);
             if layer.wk.n_rows != self.n_head_kv.saturating_mul(hd)
@@ -1312,9 +1427,9 @@ impl Llama {
                         }
                     }
                 }
-                store_kv(cache_k, li, self.n_head_kv, max_seq, pos, hd, k_t)?;
+                store_kv(cache_k, li, &geom, pos, k_t)?;
                 let v_t = token_row(&s.v, t, layer.wv.n_rows, "prefill v")?;
-                store_kv(cache_v, li, self.n_head_kv, max_seq, pos, hd, v_t)?;
+                store_kv(cache_v, li, &geom, pos, v_t)?;
             }
             fit(&mut s.attn, width);
             for t in 0..n {
@@ -1372,10 +1487,8 @@ impl Llama {
                     cache_v,
                     li,
                     q_t,
-                    self.n_head_kv,
-                    hd,
+                    &geom,
                     pos.saturating_add(1),
-                    max_seq,
                     score_scale,
                     &mut s.scores,
                     dst,
@@ -1463,6 +1576,9 @@ impl Llama {
         add_bias_rows(&mut s.logits, self.n_vocab, self.output_b.as_deref())?;
         *n_past = end;
         moe_trace.ids.extend_from_slice(&moe_trace.batch);
+        if let Some(p) = pages.as_mut() {
+            p.intern_full(&moe_trace.ids);
+        }
         Ok(&s.logits)
     }
 
@@ -1487,8 +1603,21 @@ impl Llama {
             return Err(LlamaError::Shape("prefill tokens".into()));
         }
         let lcp = cache.reuse_prefix(tokens);
-        cache.last_prefix_hit = lcp;
-        if lcp == tokens.len() {
+        let mut hit = lcp;
+        let bound = if let Some(p) = cache.pages.as_mut() {
+            p.bind_full_prefix(tokens, cache.n_past)
+        } else {
+            lcp
+        };
+        if bound > cache.n_past {
+            if let Some(extra) = tokens.get(cache.n_past..bound) {
+                cache.moe_trace.ids.extend_from_slice(extra);
+            }
+            cache.n_past = bound;
+            hit = bound;
+        }
+        cache.last_prefix_hit = hit;
+        if hit == tokens.len() {
             let keep = tokens.len().saturating_sub(1);
             cache.rewind(keep);
             let last = tokens
@@ -1497,7 +1626,7 @@ impl Llama {
             return self.prefill_logits(cache, last);
         }
         let suffix = tokens
-            .get(lcp..)
+            .get(hit..)
             .ok_or_else(|| LlamaError::Shape("prefill tokens".into()))?;
         self.prefill_logits(cache, suffix)
     }
@@ -1526,7 +1655,7 @@ pub fn greedy_generate_ctx(
     n_ctx: Option<usize>,
 ) -> Result<String, LlamaError> {
     let mut slot = None;
-    greedy_generate_slot(model, tok, &mut slot, prompt, n_predict, n_ctx)
+    greedy_generate_slot(model, tok, &mut slot, prompt, n_predict, n_ctx, None)
 }
 
 /// [`greedy_generate_ctx`] on a persistent KV slot (Automatic Prefix Caching).
@@ -1537,6 +1666,7 @@ pub fn greedy_generate_slot(
     prompt: &str,
     n_predict: usize,
     n_ctx: Option<usize>,
+    kv_page: Option<usize>,
 ) -> Result<String, LlamaError> {
     if prompt.is_empty() {
         return Err(LlamaError::EmptyPrompt);
@@ -1546,7 +1676,7 @@ pub fn greedy_generate_slot(
         return Err(LlamaError::EmptyPrompt);
     }
     let needed = ids.len().saturating_add(n_predict);
-    let cache = model.ensure_cache(slot, needed, n_ctx)?;
+    let cache = model.ensure_cache_page(slot, needed, n_ctx, kv_page)?;
     greedy_generate_cache(model, tok, cache, &mut ids, n_predict)
 }
 
@@ -5758,14 +5888,14 @@ fn attend_query(
     cache_v: &[f32],
     layer: usize,
     q: &[f32],
-    n_head_kv: usize,
-    hd: usize,
+    geom: &KvGeom<'_>,
     seq: usize,
-    max_seq: usize,
     score_scale: f32,
     scores: &mut Vec<f32>,
     out: &mut [f32],
 ) -> Result<(), LlamaError> {
+    let n_head_kv = geom.n_head_kv;
+    let hd = geom.hd;
     if n_head_kv == 0 || hd == 0 || q.len() != out.len() || !q.len().is_multiple_of(hd) {
         return Err(LlamaError::Shape("gqa".into()));
     }
@@ -5777,7 +5907,7 @@ fn attend_query(
     for (hq, (qvec, dst)) in q.chunks(hd).zip(out.chunks_mut(hd)).enumerate() {
         let hkv = hq / gqa;
         for (t, score) in scores.iter_mut().enumerate() {
-            let kv = kv_at(cache_k, layer, hkv, n_head_kv, max_seq, t, hd)?;
+            let kv = kv_at(cache_k, layer, hkv, geom, t)?;
             let mut dot = 0.0f32;
             for (a, b) in qvec.iter().zip(kv.iter()) {
                 dot += *a * *b;
@@ -5789,7 +5919,7 @@ fn attend_query(
             *d = 0.0;
         }
         for (t, st) in scores.iter().enumerate() {
-            let vv = kv_at(cache_v, layer, hkv, n_head_kv, max_seq, t, hd)?;
+            let vv = kv_at(cache_v, layer, hkv, geom, t)?;
             for (a, b) in dst.iter_mut().zip(vv.iter()) {
                 *a += *st * *b;
             }
@@ -6236,22 +6366,23 @@ fn add_assign(x: &mut [f32], r: &[f32]) -> Result<(), LlamaError> {
     Ok(())
 }
 
-/// Scatter one token's `n_head_kv * hd` row into the cache, which is laid out
-/// head-major (`((layer * n_head_kv + head) * max_seq + t) * hd`).
+/// Scatter one token's `n_head_kv * hd` row into the cache.
 fn store_kv(
     cache: &mut [f32],
     layer: usize,
-    n_head_kv: usize,
-    max_seq: usize,
+    geom: &KvGeom<'_>,
     t: usize,
-    hd: usize,
     row: &[f32],
 ) -> Result<(), LlamaError> {
+    let n_head_kv = geom.n_head_kv;
+    let hd = geom.hd;
     if hd == 0 || row.len() != n_head_kv.saturating_mul(hd) {
         return Err(LlamaError::Shape("kv store".into()));
     }
     for (h, head) in row.chunks(hd).enumerate() {
-        let off = kv_offset(layer, h, n_head_kv, max_seq, t, hd)?;
+        let off = geom
+            .offset(layer, h, t)
+            .ok_or_else(|| LlamaError::Shape("kv offset".into()))?;
         let dst = cache
             .get_mut(off..off.saturating_add(hd))
             .ok_or_else(|| LlamaError::Shape("kv store".into()))?;
@@ -6262,36 +6393,19 @@ fn store_kv(
     Ok(())
 }
 
-fn kv_at(
-    cache: &[f32],
+fn kv_at<'a>(
+    cache: &'a [f32],
     layer: usize,
     head: usize,
-    n_head_kv: usize,
-    max_seq: usize,
+    geom: &KvGeom<'_>,
     t: usize,
-    hd: usize,
-) -> Result<&[f32], LlamaError> {
-    let off = kv_offset(layer, head, n_head_kv, max_seq, t, hd)?;
+) -> Result<&'a [f32], LlamaError> {
+    let off = geom
+        .offset(layer, head, t)
+        .ok_or_else(|| LlamaError::Shape("kv offset".into()))?;
     cache
-        .get(off..off + hd)
+        .get(off..off.saturating_add(geom.hd))
         .ok_or_else(|| LlamaError::Shape("kv load".into()))
-}
-
-fn kv_offset(
-    layer: usize,
-    head: usize,
-    n_head_kv: usize,
-    max_seq: usize,
-    t: usize,
-    hd: usize,
-) -> Result<usize, LlamaError> {
-    layer
-        .checked_mul(n_head_kv)
-        .and_then(|v| v.checked_add(head))
-        .and_then(|v| v.checked_mul(max_seq))
-        .and_then(|v| v.checked_add(t))
-        .and_then(|v| v.checked_mul(hd))
-        .ok_or_else(|| LlamaError::Shape("kv offset".into()))
 }
 
 fn argmax(x: &[f32]) -> u32 {
@@ -9662,9 +9776,9 @@ mod tests {
         let model = Llama::from_gguf(g).expect("m");
         let cold = greedy_generate(&model, &tok, "ab", 2).expect("cold");
         let mut slot = None;
-        let a = greedy_generate_slot(&model, &tok, &mut slot, "ab", 2, Some(16)).expect("a");
+        let a = greedy_generate_slot(&model, &tok, &mut slot, "ab", 2, Some(16), None).expect("a");
         let hit = slot.as_ref().expect("slot").last_prefix_hit();
-        let b = greedy_generate_slot(&model, &tok, &mut slot, "ab", 2, Some(16)).expect("b");
+        let b = greedy_generate_slot(&model, &tok, &mut slot, "ab", 2, Some(16), None).expect("b");
         assert_eq!(a, cold);
         assert_eq!(b, cold);
         assert_eq!(hit, 0);
@@ -9675,8 +9789,53 @@ mod tests {
             model.expert_direct_store().expect("catalog"),
         ));
         let mut store_s = Some(held);
-        let via = greedy_generate_slot(&model, &tok, &mut store_s, "ab", 2, Some(16)).expect("st");
+        let via =
+            greedy_generate_slot(&model, &tok, &mut store_s, "ab", 2, Some(16), None).expect("st");
         assert_eq!(via, cold);
+    }
+
+    #[test]
+    fn paged_kv_logits_match_dense_and_intern_after_divergent_prompt() {
+        let tokens = [1u32, 2, 3, 4];
+        for bytes in [tiny_llama_gguf(), tiny_qwen3moe_gguf(), tiny_llama4_gguf()] {
+            let model = Llama::from_gguf(load_gguf_owned(bytes).expect("load")).expect("m");
+            let mut dense = model.new_cache(16).expect("d");
+            let exp = model.prefill(&mut dense, &tokens).expect("dense");
+            let mut paged = model.new_paged_cache(16, 2).expect("p");
+            let got = model.prefill(&mut paged, &tokens).expect("paged");
+            assert_logits_match(&got, &exp);
+            assert_eq!(paged.n_past, tokens.len());
+            let cow_exp = {
+                let mut d = model.new_cache(16).expect("cow dense");
+                let _p = model.prefill(&mut d, &tokens).expect("cow pre");
+                model
+                    .prompt(&mut d, &[1, 0, 3, 4])
+                    .expect("cow dense prompt")
+            };
+            let cow_got = model.prompt(&mut paged, &[1, 0, 3, 4]).expect("cow paged");
+            assert_logits_match(&cow_got, &cow_exp);
+            let _div = model.prompt(&mut paged, &[5, 0, 5, 0]).expect("div");
+            let again = model.prompt(&mut paged, &tokens).expect("hit");
+            assert_logits_match(&again, &exp);
+            assert!(
+                paged.page_hits() > 0,
+                "interned blocks must be reusable after a rewind"
+            );
+        }
+    }
+
+    #[test]
+    fn paged_kv_greedy_matches_dense() {
+        for bytes in [tiny_llama_gguf(), tiny_qwen3moe_gguf(), tiny_llama4_gguf()] {
+            let g = load_gguf_owned(bytes).expect("owned");
+            let tok = Tokenizer::from_gguf(&g).expect("tok");
+            let model = Llama::from_gguf(g).expect("m");
+            let dense =
+                greedy_generate_slot(&model, &tok, &mut None, "ab", 2, Some(16), None).expect("d");
+            let paged = greedy_generate_slot(&model, &tok, &mut None, "ab", 2, Some(16), Some(2))
+                .expect("p");
+            assert_eq!(dense, paged, "paged greedy must match dense");
+        }
     }
 
     #[test]

@@ -31,9 +31,14 @@ fn run() -> Result<(), String> {
     let n_past = sess.n_past();
     let hit = sess.last_prefix_hit();
     let hits = sess.expert_metrics().map_or(0, |m| m.hits);
+    let mut paged = model.session_paged(16, 2).map_err(|e| e.to_string())?;
+    let _p = paged.prefill(&[1, 2, 3, 4]).map_err(|e| e.to_string())?;
+    let _d = paged.prompt(&[5, 0, 5, 0]).map_err(|e| e.to_string())?;
+    let _h = paged.prompt(&[1, 2, 3, 4]).map_err(|e| e.to_string())?;
+    let page_hits = paged.page_hits();
     let mut out = io::stdout();
     out.write_all(
-        format!("n_past={n_past} vocab_logits={n_logits} reused_logits={reused} prefix_hit={hit} hits={hits}\n")
+        format!("n_past={n_past} vocab_logits={n_logits} reused_logits={reused} prefix_hit={hit} hits={hits} page_hits={page_hits}\n")
             .as_bytes(),
     )
     .map_err(|e| e.to_string())?;

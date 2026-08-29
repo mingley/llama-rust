@@ -49,6 +49,18 @@ impl Model {
             cache: self.llama.new_cache(n_ctx)?,
         })
     }
+
+    /// Session whose KV is paged (`block_size` tokens per block).
+    pub fn session_paged(
+        &self,
+        n_ctx: usize,
+        block_size: usize,
+    ) -> Result<Session<'_>, LlamaError> {
+        Ok(Session {
+            llama: &self.llama,
+            cache: self.llama.new_paged_cache(n_ctx, block_size)?,
+        })
+    }
 }
 
 /// One sequence: KV cache plus optional expert store.
@@ -100,6 +112,18 @@ impl Session<'_> {
     #[must_use]
     pub fn last_prefix_hit(&self) -> usize {
         self.cache.last_prefix_hit()
+    }
+
+    /// Interned paged-KV block hits (`0` on a dense session).
+    #[must_use]
+    pub fn page_hits(&self) -> u64 {
+        self.cache.page_hits()
+    }
+
+    /// Paged block size when this session was built with [`Model::session_paged`].
+    #[must_use]
+    pub fn page_size(&self) -> Option<usize> {
+        self.cache.page_size()
     }
 
     /// Store counters, if a store is attached.
@@ -166,5 +190,27 @@ mod tests {
         let got = sess.prompt(&[1, 2, 0]).expect("partial").to_vec();
         assert_eq!(got, exp);
         assert_eq!(sess.last_prefix_hit(), 2);
+    }
+
+    #[test]
+    fn session_paged_logits_match_dense_and_intern_hits() {
+        let model = Model::from_bytes(tiny_llama_gguf()).expect("model");
+        let tokens = [1u32, 2, 3, 4];
+        let dense = {
+            let mut s = model.session(16).expect("dense");
+            s.prefill(&tokens).expect("d").to_vec()
+        };
+        let mut paged = model.session_paged(16, 2).expect("paged");
+        let got = paged.prefill(&tokens).expect("p").to_vec();
+        assert_eq!(got, dense);
+        assert_eq!(paged.n_past(), 4);
+        assert_eq!(paged.page_size(), Some(2));
+        let _other = paged.prompt(&[5, 0, 5, 0]).expect("divergent");
+        let again = paged.prompt(&tokens).expect("intern").to_vec();
+        assert_eq!(again, dense);
+        assert!(
+            paged.page_hits() > 0,
+            "prompt after a rewind must hit interned prefix blocks"
+        );
     }
 }

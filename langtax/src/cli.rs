@@ -31,11 +31,12 @@ usage: gguf_gemv trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out 
 
 /// Usage for the `chat` verb.
 pub const CHAT_USAGE: &str = "\
-usage: gguf_gemv chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--show-prompt]
+usage: gguf_gemv chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--kv-page N] [--show-prompt]
   -s, --system TEXT   system message placed before the conversation
   -p, --prompt TEXT   send one user turn and exit; omit to read turns from stdin
   -n, --n-predict N   tokens to generate per reply (default: 64)
       --n-ctx N       persistent KV capacity (default: grow per turn)
+      --kv-page N     paged KV block size in tokens (default: dense layout)
       --show-prompt   print the rendered chat template before each reply
 ";
 
@@ -44,8 +45,8 @@ pub const BIN_USAGE: &str = "\
 usage: gguf_gemv <command> [args]
   infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]
   trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE [--capacity N]
-  chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--show-prompt]
-  serve <path> [--n-predict N] [--n-ctx N] [--bind HOST:PORT]
+  chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--kv-page N] [--show-prompt]
+  serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT]
   write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|write-tiny-qwen3|write-tiny-gemma|write-tiny-llama4|write-tiny-llama-moe|write-tiny-qwen2moe|write-tiny-qwen3moe|write-tiny-qwen2vl|write-tiny-qwen3vl|write-tiny-qwen3next|write-tiny-qwen35|write-tiny-phi2 <path>
 ";
 
@@ -253,6 +254,8 @@ pub struct ChatArgs {
     pub n_predict: usize,
     /// Optional KV capacity. `None` sizes to prompt + `n_predict` + 1.
     pub n_ctx: Option<usize>,
+    /// Paged KV block size in tokens. `None` keeps the dense layout.
+    pub kv_page: Option<usize>,
     /// Print the rendered template before each reply.
     pub show_prompt: bool,
 }
@@ -265,7 +268,7 @@ impl ChatArgs {
 
 /// Parse operands after the `chat` verb.
 ///
-/// `chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--show-prompt]`
+/// `chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--kv-page N] [--show-prompt]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_chat_args<I, S>(args: I) -> Result<ChatCmd, String>
 where
@@ -277,6 +280,7 @@ where
     let mut prompt = None;
     let mut n_predict = ChatArgs::DEFAULT_N_PREDICT;
     let mut n_ctx = None;
+    let mut kv_page = None;
     let mut show_prompt = false;
     let mut it = args.into_iter();
     while let Some(raw) = it.next() {
@@ -307,6 +311,16 @@ where
                 }
                 n_ctx = Some(n);
             }
+            "--kv-page" => {
+                let v = chat_value("kv-page", inline, &mut it)?;
+                let n = v
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid kv-page {v:?}\n{CHAT_USAGE}"))?;
+                if n == 0 {
+                    return chat_usage_err("kv-page must be > 0");
+                }
+                kv_page = Some(n);
+            }
             "--show-prompt" => show_prompt = true,
             flag if flag.starts_with('-') => {
                 return chat_usage_err(&format!("unknown flag {flag}"));
@@ -328,6 +342,7 @@ where
         prompt,
         n_predict,
         n_ctx,
+        kv_page,
         show_prompt,
     }))
 }
@@ -339,7 +354,8 @@ where
 /// Every turn re-renders the template. Prefill uses [`crate::decode::Llama::prompt`]
 /// so a matching token prefix keeps its KV. Templates that rewrite earlier
 /// turns simply get a shorter hit. `--n-ctx` sizes the persistent cache;
-/// omit it and the cache is reallocated when a turn no longer fits.
+/// `--kv-page N` stores that cache in interned blocks. Omit `--n-ctx` and
+/// the cache is reallocated when a turn no longer fits.
 pub fn run_chat(args: &ChatArgs) -> Result<(), Box<dyn std::error::Error>> {
     let bytes = read_file(Path::new(&args.path))?;
     let g = load_gguf_owned(bytes)?;
@@ -429,7 +445,7 @@ fn generate_reply(
             return Err(format!("--n-ctx {n} is below the {needed} tokens this turn needs").into());
         }
     }
-    let kv = model.ensure_cache(cache, needed, args.n_ctx)?;
+    let kv = model.ensure_cache_page(cache, needed, args.n_ctx, args.kv_page)?;
     let mut logits = model.prompt(kv, &ids)?;
     let mut reply = Vec::new();
     for _ in 0..args.n_predict {
@@ -615,6 +631,7 @@ mod tests {
         assert_eq!(a.n_predict, ChatArgs::DEFAULT_N_PREDICT);
         assert_eq!(a.n_predict, 64);
         assert_eq!(a.n_ctx, None);
+        assert_eq!(a.kv_page, None);
         assert!(!a.show_prompt);
     }
 
@@ -628,6 +645,7 @@ mod tests {
             "--n-predict",
             "8",
             "--n-ctx=32",
+            "--kv-page=2",
             "--show-prompt",
         ]);
         assert_eq!(
@@ -638,6 +656,7 @@ mod tests {
                 prompt: Some("Hi".into()),
                 n_predict: 8,
                 n_ctx: Some(32),
+                kv_page: Some(2),
                 show_prompt: true,
             }
         );
@@ -657,6 +676,8 @@ mod tests {
         assert!(err.contains("invalid n-predict"), "{err}");
         let err = parse_chat_args(["m.gguf", "--n-ctx", "0"]).unwrap_err();
         assert!(err.contains("n-ctx must be > 0"), "{err}");
+        let err = parse_chat_args(["m.gguf", "--kv-page", "0"]).unwrap_err();
+        assert!(err.contains("kv-page must be > 0"), "{err}");
         let err = parse_chat_args(["m.gguf", "--nope"]).unwrap_err();
         assert!(err.contains("unknown flag"), "{err}");
         let err = parse_chat_args(["a.gguf", "b.gguf"]).unwrap_err();

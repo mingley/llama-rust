@@ -315,7 +315,10 @@ token whose hash already completed on another sequence. That is a
 does Automatic Prefix Caching on real KV: `KvCache::reuse_prefix` plus
 `Llama::prompt` (Session / `serve` / `chat`). `prefill` / `forward` still
 append so decode identity is unchanged. A full-prefix hit recomputes the
-last prompt token for logits. Prompt/domain class is not in the JSONL.
+last prompt token for logits. Opt-in paged KV (`Llama::new_paged_cache`,
+`Model::session_paged`, `--kv-page`) stores K/V in interned blocks of
+`N` tokens; logits bit-match dense. Distinct from `expertvm kv` (simulated
+VMM pages, not decode blocks). Prompt/domain class is not in the JSONL.
 
 The research question, before any CUDA:
 
@@ -732,6 +735,10 @@ model, do not celebrate the sim.
 10. [x] Engine-level prefix KV reuse (`KvCache::reuse_prefix`, `Llama::prompt`,
     persistent `serve` / `chat` cache). Greedy tokens and logits bit-match a
     cold prefill. Distinct from JSONL `"p"` / `--prefix-cache`.
+11. [x] Paged KV on the reference engine (`KvPages`, intern by `prefix_hash`,
+    COW on `refs > 1`). `Llama::new_paged_cache` / `Model::session_paged` /
+    `serve --kv-page` / `chat --kv-page`. Logits and greedy bit-match dense.
+    Distinct from `expertvm kv` (sim VMM pages).
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

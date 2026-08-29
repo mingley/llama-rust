@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — paged KV on the decode engine
+
+`Llama::new_paged_cache` / `Model::session_paged` store K/V in fixed-size
+blocks with a sequence block table. Completed blocks are interned by
+`expertvm::prefix_hash` of the token prefix so a later prompt on the same
+cache can hit them after a rewind (vLLM Automatic Prefix Caching + block
+intern). Writing a block with `refs > 1` copy-on-writes. Default
+`Llama::new_cache` stays dense. Logits and greedy text bit-match dense on
+writer tinies (llama / qwen3moe / llama4). `gguf_gemv serve|chat --kv-page N`
+opts in; serve JSON includes `page_hits`. Distinct from `expertvm kv`
+(simulated VMM pages, not decode blocks). Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — prefix KV reuse on the decode engine
 
 `KvCache::reuse_prefix` rewinds `n_past` to the longest common prefix of
