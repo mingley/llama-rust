@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine predictor planner
+
+`--prefetch none|copy-forward|markov|both` / `--plan-window N` /
+`--plan-threshold N` park the same Stay vs Fetch predictor as
+`expertvm sim` on Engine serving (`gguf_gemv engine` and
+`serve --engine`). Upcoming keys are the online predicted list, not
+JSONL future events. Default `both` / window `0` / threshold `500`
+keeps today's copy-forward ∪ lookback-2 decode policy.
+`--prefetch none` is demand paging (`prefetches=0`). Dual score still
+has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine GpuStoreCfg CUDA knobs
 
 `--expert-sim --host-func` / `--blocking-streams` / `--sync-alloc` /

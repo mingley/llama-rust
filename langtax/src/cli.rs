@@ -9,10 +9,10 @@ use crate::decode::{prompt_ids, KvCache, Llama};
 use crate::engine::{Engine, EngineCfg, SeqId};
 use crate::gguf::load_gguf_owned;
 use crate::sample::argmax;
-use crate::store_attach::{attach_store, gpu_knobs, GpuCli, StoreAttach};
+use crate::store_attach::{attach_store, gpu_knobs, GpuCli, PlannerCli, StoreAttach};
 use crate::template::ChatMessage;
 use crate::tok::Tokenizer;
-use expertvm::{GpuFill, GpuStoreCfg};
+use expertvm::{GpuFill, GpuStoreCfg, Prefetch};
 
 /// Usage for the `infer` verb.
 pub const INFER_USAGE: &str = "\
@@ -56,7 +56,7 @@ usage: gguf_gemv <command> [args]
 
 /// Usage for the `engine` verb.
 pub const ENGINE_USAGE: &str = "\
-usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--trace-out FILE]
+usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
   -p, --prompt TEXT     prompt (repeatable; default: one `ab`)
   -n, --n-predict N     tokens to generate per sequence (default: 2)
       --n-ctx N         KV capacity (default: longest prompt + n_predict + 1)
@@ -90,6 +90,9 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
       --accessed-by     SetAccessedBy on managed fills (`--expert-sim`)
       --legacy-null     NULL copy serializes with compute (`--expert-sim`)
       --stream-priority cudaStreamCreateWithPriority on compute (`--expert-sim`)
+      --prefetch MODE   none|copy-forward|markov|both (default: both; CachedStore or sim)
+      --plan-window N   Stay vs Fetch over N unique predicted keys (`0` = ungated)
+      --plan-threshold N  Stay permille of that window already resident (default: 500)
       --trace-out FILE  write batched MoE ExpertAccess JSONL (all sequences)
 
 Runs Engine continuous batching on one interned pool. Several `--prompt`s
@@ -104,10 +107,13 @@ mechanical path as `expertvm sim --cuda-graphs`). `--graph-update` /
 `--graph-clone` / `--timing-events` / `--host-func` / `--blocking-streams` /
 `--sync-alloc` / `--mempool` / `--vmm-page` / `--pageable` / `--accessed-by` /
 `--legacy-null` / `--stream-priority` match `GpuStoreCfg` / `expertvm sim`.
-A tight `--pool-blocks` preempts
+`--prefetch` / `--plan-window` / `--plan-threshold` match `expertvm sim`
+Stay vs Fetch on the serving path (predicted keys only; no JSONL future
+leak). Default `both` / window `0` / threshold `500` is today's decode
+policy. A tight `--pool-blocks` preempts
 (recompute + replay). One ExpertStore is parked on each batched GEMM so
 MoE serving stays on the shared-pool path. After each GEMM the store
-sticky-pins last-used ∪ Markov experts (`slots - 1`; `slots == 1` pins
+sticky-pins last-used ∪ predicted experts (`slots - 1`; `slots == 1` pins
 nothing). A multi-GPU SimulatedGpuStore then `plan_placement`s those pins
 (D2D onto GPU0 vs leave on the striped home).
 MoE traces stay on that GEMM (per-row
@@ -468,6 +474,12 @@ pub struct EngineArgs {
     pub gpu_cfg: GpuStoreCfg,
     /// Miss-page placement (`--expert-sim`). Default is pinned H2D.
     pub fill: GpuFill,
+    /// Predictor prefetch. Default [`Prefetch::Both`].
+    pub prefetch: Prefetch,
+    /// Unique predicted-key Stay vs Fetch window. `0` is ungated.
+    pub plan_window: usize,
+    /// Stay permille of the predicted window already resident.
+    pub plan_threshold: u32,
     /// Write Engine MoE traces as JSONL. `None` leaves tracing off.
     pub trace_out: Option<String>,
 }
@@ -539,7 +551,7 @@ where
     let mut expert_sim = false;
     let mut expert_8gpu = false;
     let mut expert_bytes = None;
-    let mut gpu = GpuCli::default();
+    let mut planner = PlannerCli::default();
     let mut trace_out = None;
     let mut it = args.into_iter();
     while let Some(raw) = it.next() {
@@ -654,16 +666,10 @@ where
             "--trace-out" => {
                 trace_out = Some(engine_value("trace-out", inline, &mut it)?);
             }
-            flag if flag.starts_with('-') => match gpu.apply(key, inline) {
+            flag if flag.starts_with('-') => match planner.take(key, inline, &mut it) {
                 Ok(true) => {}
-                Err(e) => return engine_err(&e),
-                Ok(false) if key == "--vmm-page" => {
-                    gpu.set_vmm_page(engine_u64(
-                        "vmm-page",
-                        &engine_value("vmm-page", inline, &mut it)?,
-                    )?);
-                }
                 Ok(false) => return engine_err(&format!("unknown flag {flag}")),
+                Err(e) => return engine_err(&e),
             },
             other => {
                 if path.is_some() {
@@ -686,11 +692,11 @@ where
         slo_reject,
         has_ttft: ttft_slo_ns.is_some(),
         has_itl: itl_slo_ns.is_some(),
-        gpu,
+        gpu: planner.gpu,
     })?;
-    gpu.imply_vmm();
-    let fill = gpu.fill()?;
-    let gpu_cfg = gpu_knobs(gpu);
+    planner.gpu.imply_vmm();
+    let fill = planner.gpu.fill()?;
+    let gpu_cfg = gpu_knobs(planner.gpu);
     Ok(EngineCmd::Run(EngineArgs {
         path,
         prompts,
@@ -710,6 +716,9 @@ where
         expert_bytes,
         gpu_cfg,
         fill,
+        prefetch: planner.prefetch,
+        plan_window: planner.plan_window,
+        plan_threshold: planner.plan_threshold,
         trace_out,
     }))
 }
@@ -847,6 +856,9 @@ fn engine_cfg(tok: &Tokenizer, args: &EngineArgs) -> Result<EngineCfg, Box<dyn s
         slo_reject: args.slo_reject,
         ttft_slo_ns: args.ttft_slo_ns,
         itl_slo_ns: args.itl_slo_ns,
+        prefetch: args.prefetch,
+        plan_window: args.plan_window,
+        plan_threshold: args.plan_threshold,
     })
 }
 
@@ -1301,6 +1313,9 @@ mod tests {
                 assert_eq!(a.expert_bytes, None);
                 assert_eq!(a.gpu_cfg, GpuStoreCfg::default());
                 assert_eq!(a.fill, GpuFill::Pinned);
+                assert_eq!(a.prefetch, Prefetch::Both);
+                assert_eq!(a.plan_window, 0);
+                assert_eq!(a.plan_threshold, 500);
                 assert_eq!(a.trace_out, None);
             }
             EngineCmd::Help => panic!("expected Run"),
@@ -1535,6 +1550,45 @@ mod tests {
         assert!(err.contains("choose one of mapped, managed, vmm"), "{err}");
         let err = parse_engine_args(["m.gguf", "--expert-sim", "--host-func=1"]).unwrap_err();
         assert!(err.contains("--host-func does not take a value"), "{err}");
+    }
+
+    #[test]
+    fn engine_prefetch_planner_flags() {
+        match parse_engine_args(["m.gguf", "--prefetch", "none"]).expect("none") {
+            EngineCmd::Run(a) => {
+                assert_eq!(a.prefetch, Prefetch::None);
+                assert!(!a.expert_sim);
+            }
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        match parse_engine_args([
+            "m.gguf",
+            "--prefetch=copy-forward",
+            "--plan-window",
+            "8",
+            "--plan-threshold=100",
+        ])
+        .expect("plan")
+        {
+            EngineCmd::Run(a) => {
+                assert_eq!(a.prefetch, Prefetch::CopyForward);
+                assert_eq!(a.plan_window, 8);
+                assert_eq!(a.plan_threshold, 100);
+            }
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        match parse_engine_args(["m.gguf", "--prefetch=markov"]).expect("mk") {
+            EngineCmd::Run(a) => assert_eq!(a.prefetch, Prefetch::Markov),
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        match parse_engine_args(["m.gguf", "--prefetch=both"]).expect("both") {
+            EngineCmd::Run(a) => assert_eq!(a.prefetch, Prefetch::Both),
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        let err = parse_engine_args(["m.gguf", "--prefetch", "nope"]).unwrap_err();
+        assert!(err.contains("unknown prefetch"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--prefetch"]).unwrap_err();
+        assert!(err.contains("missing --prefetch value"), "{err}");
     }
 
     #[test]

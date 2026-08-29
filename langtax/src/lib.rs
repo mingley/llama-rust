@@ -47,8 +47,8 @@ pub use decode::{
 pub use engine::{Engine, EngineCfg, EngineStats, SeqId, SeqOutput};
 pub use expertvm::{
     CachedStore, DeviceId, DirectStore, ExpertAccess, ExpertKey, ExpertParts, ExpertPhase,
-    ExpertStore, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore, Score, SimulatedGpuStore,
-    StoreMetrics, StreamId, TieredStore, Trace, WeightStorage,
+    ExpertStore, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore, Prefetch, Score,
+    SimulatedGpuStore, StoreMetrics, StreamId, TieredStore, Trace, WeightStorage,
 };
 pub use gguf::{
     load_gguf, load_gguf_owned, write_gguf, write_gguf_with_kv, GgmlType, Gguf, GgufError, Kv,

@@ -926,6 +926,14 @@ model, do not celebrate the sim.
     match `GpuStoreCfg` / `expertvm sim` on `gguf_gemv engine` and
     `serve --engine --expert-sim`. Default pinned async stays decode
     identity. Dual score still has no `$/M tokens`.
+53. [x] Engine predictor planner: `--prefetch none|copy-forward|markov|both`
+    / `--plan-window N` / `--plan-threshold N` on `gguf_gemv engine` and
+    `serve --engine`. Default `both` / window `0` (ungated) / threshold
+    `500` matches copy-forward ∪ lookback-2. Stay vs Fetch uses
+    `plan_keys` over unique predicted keys (no JSONL future leak).
+    `--prefetch none` is demand paging (`prefetches=0`). Two-sequence
+    greedy ids still match independent decode. Dual score still has no
+    `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

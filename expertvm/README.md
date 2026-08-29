@@ -147,7 +147,11 @@ wait already meets `--ttft-slo-ns` (`rejected=` on the schedule line).
 is the same drop on real KV waiters, using the SimulatedGpuStore clock.
 `--itl-slo-ns` counts later-token gaps (`itl_slo_miss=`; does not drop);
 `llama-rust` `EngineCfg::itl_slo_ns` / `gguf_gemv engine --itl-slo-ns`
-is the same counter on real generated tokens. `--expert-sim` captures
+is the same later-token count on real KV. `gguf_gemv engine --prefetch`
+/ `--plan-window` / `--plan-threshold` (and `serve --engine`) is the
+same Stay vs Fetch predictor on real decode; upcoming keys are the
+online predicted list, not this walker's JSONL future window.
+`--expert-sim` captures
 per-page GEMM graphs (`graph_launches=`; `--cuda-graphs` documents that).
 `--graph-update` / `--graph-clone` / `--timing-events` are `GpuStoreCfg`
 on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`

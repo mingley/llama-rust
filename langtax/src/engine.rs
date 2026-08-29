@@ -12,9 +12,11 @@
 //! `Llama::forward_batch`. One attached [`expertvm::LiveStore`] is parked on
 //! the first cache of each GEMM so MoE serving stays on the batched path.
 //! Opt-in [`Engine::enable_moe_trace`] records per-sequence [`expertvm::Trace`]
-//! events from those GEMMs (not a sequential fallback). Markov copy-forward ∪
-//! lookback-2 prefetch runs **before** grouped expert GEMM so H2D of L+1 can
-//! overlap this layer's compute. After each GEMM the
+//! events from those GEMMs (not a sequential fallback). Predictor prefetch
+//! ([`EngineCfg::prefetch`], default copy-forward ∪ lookback-2) runs **before**
+//! grouped expert GEMM so H2D of L+1 can overlap this layer's compute.
+//! [`EngineCfg::plan_window`] Stay vs Fetch gates that prefetch over unique
+//! predicted keys (no JSONL future leak). After each GEMM the
 //! parked store sticky-pins last-used ∪ Markov experts (`slots.saturating_sub(1)`;
 //! `slots == 1` pins nothing so demand paging can evict). Multi-GPU SimulatedGpuStore
 //! then runs [`plan_placement`](expertvm::plan_placement) on those pins: D2D onto GPU0
@@ -37,7 +39,9 @@
 
 use crate::decode::{KvCache, Llama, LlamaError, PagedKvPool, PrefetchChain};
 use crate::sample::argmax;
-use expertvm::{DeviceId, ExpertKey, ExpertStore, LiveStore, Score, StoreMetrics, StreamId, Trace};
+use expertvm::{
+    DeviceId, ExpertKey, ExpertStore, LiveStore, Prefetch, Score, StoreMetrics, StreamId, Trace,
+};
 use std::collections::{BTreeMap, VecDeque};
 
 /// Handle for one sequence on an [`Engine`].
@@ -86,6 +90,15 @@ pub struct EngineCfg {
     ///
     /// Does not drop sequences. No-op without a SimulatedGpuStore clock.
     pub itl_slo_ns: Option<u64>,
+    /// Predictor prefetch. Default [`Prefetch::Both`] (copy-forward ∪ Markov).
+    /// [`Prefetch::None`] is demand paging only.
+    pub prefetch: Prefetch,
+    /// Unique predicted-key window for Stay vs Fetch. `0` leaves prefetch ungated.
+    ///
+    /// Upcoming keys are the predictor list, not JSONL future events.
+    pub plan_window: usize,
+    /// Stay when this permille of the predicted window is already resident.
+    pub plan_threshold: u32,
 }
 
 impl EngineCfg {
@@ -103,6 +116,9 @@ impl EngineCfg {
             slo_reject: false,
             ttft_slo_ns: None,
             itl_slo_ns: None,
+            prefetch: Prefetch::Both,
+            plan_window: 0,
+            plan_threshold: 500,
         }
     }
 }
@@ -210,6 +226,7 @@ impl<'a> Engine<'a> {
             return Err(LlamaError::Shape("engine cfg".into()));
         }
         let pool = llama.new_paged_pool(cfg.block_size, cfg.pool_blocks)?;
+        let chain = PrefetchChain::with_policy(cfg.prefetch, cfg.plan_window, cfg.plan_threshold);
         Ok(Self {
             llama,
             pool,
@@ -224,7 +241,7 @@ impl<'a> Engine<'a> {
             itl_slo_miss: 0,
             stats: EngineStats::default(),
             expert_store: None,
-            prefetch: PrefetchChain::default(),
+            prefetch: chain,
             hot_reuse: BTreeMap::new(),
             trace: false,
             seq_token_ns: BTreeMap::new(),
@@ -425,8 +442,8 @@ impl<'a> Engine<'a> {
     ///
     /// The store is parked on the first cache of each batched prefill/decode
     /// so [`Llama::prefill_batch`] / [`Llama::forward_batch`] stay on the
-    /// shared-pool path. Markov prefetch (copy-forward ∪ lookback-2) is parked
-    /// on the same cache so CachedStore can prefetch across GEMMs. Omit this
+    /// shared-pool path. Predictor prefetch is parked on the same cache so
+    /// CachedStore can prefetch across GEMMs (`EngineCfg::prefetch`). Omit this
     /// to keep the GGUF blob FFN.
     pub fn attach_expert_store(&mut self, store: LiveStore) {
         self.reclaim_parked_stores();
@@ -1291,8 +1308,8 @@ mod tests {
     use crate::gguf::load_gguf_owned;
     use crate::tok::Tokenizer;
     use expertvm::{
-        CachedStore, DeviceId, ExpertKey, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore, Score,
-        SimulatedGpuStore, StoreMetrics, StreamId, TieredStore, Trace,
+        CachedStore, DeviceId, ExpertKey, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore,
+        Prefetch, Score, SimulatedGpuStore, StoreMetrics, StreamId, TieredStore, Trace,
     };
 
     struct GpuEngineOut {
@@ -2306,6 +2323,213 @@ mod tests {
         assert!(
             p2 > p1,
             "Engine copy-forward L+1 must prefetch on 2-layer, 1={p1} 2={p2}"
+        );
+    }
+
+    #[derive(Clone, Copy)]
+    struct CachedPrefetch {
+        prefetch: Prefetch,
+        plan_window: usize,
+        plan_threshold: u32,
+        slots: usize,
+    }
+
+    struct CachedOut {
+        ids_a: Vec<u32>,
+        ids_b: Vec<u32>,
+        exp_a: Vec<u32>,
+        exp_b: Vec<u32>,
+        prefetches: u64,
+        peak: usize,
+    }
+
+    fn two_seq_cached(bytes: Vec<u8>, run: CachedPrefetch) -> CachedOut {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        let g = load_gguf_owned(bytes).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let exp_a = independent(&model, &tok, &tokens_a, 2);
+        let exp_b = independent(&model, &tok, &tokens_b, 2);
+        let mut cfg = EngineCfg::tiny();
+        cfg.eos = tok.eos;
+        cfg.prefetch = run.prefetch;
+        cfg.plan_window = run.plan_window;
+        cfg.plan_threshold = run.plan_threshold;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        let catalog = model.expert_direct_store().expect("c");
+        let slots = run.slots.max(1);
+        eng.attach_expert_store(LiveStore::Cached(
+            CachedStore::new(catalog, slots).expect("cached"),
+        ));
+        let a = eng.add(&tokens_a, 2).expect("a");
+        let b = eng.add(&tokens_b, 2).expect("b");
+        eng.run().expect("run");
+        CachedOut {
+            ids_a: eng.take(a).expect("ta").generated,
+            ids_b: eng.take(b).expect("tb").generated,
+            exp_a,
+            exp_b,
+            prefetches: eng.expert_store_metrics().expect("metrics").prefetches,
+            peak: eng.stats().gemm_peak,
+        }
+    }
+
+    #[test]
+    fn engine_prefetch_modes_match_independent() {
+        for prefetch in [
+            Prefetch::None,
+            Prefetch::CopyForward,
+            Prefetch::Markov,
+            Prefetch::Both,
+        ] {
+            for bytes in [tiny_qwen3moe_gguf(), tiny_qwen3moe_2layer_gguf()] {
+                let out = two_seq_cached(
+                    bytes,
+                    CachedPrefetch {
+                        prefetch,
+                        plan_window: 0,
+                        plan_threshold: 500,
+                        slots: 8,
+                    },
+                );
+                assert_eq!(out.ids_a, out.exp_a, "{prefetch:?} a");
+                assert_eq!(out.ids_b, out.exp_b, "{prefetch:?} b");
+                assert!(
+                    out.peak >= 8,
+                    "{prefetch:?} must GEMM together, peak={}",
+                    out.peak
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn engine_prefetch_none_is_demand_paging() {
+        let none = two_seq_cached(
+            tiny_qwen3moe_2layer_gguf(),
+            CachedPrefetch {
+                prefetch: Prefetch::None,
+                plan_window: 0,
+                plan_threshold: 500,
+                slots: 1,
+            },
+        );
+        let both = two_seq_cached(
+            tiny_qwen3moe_2layer_gguf(),
+            CachedPrefetch {
+                prefetch: Prefetch::Both,
+                plan_window: 0,
+                plan_threshold: 500,
+                slots: 1,
+            },
+        );
+        assert_eq!(none.ids_a, none.exp_a);
+        assert_eq!(none.ids_b, none.exp_b);
+        assert_eq!(none.prefetches, 0, "none must not predictor-prefetch");
+        assert!(
+            both.prefetches > none.prefetches,
+            "both={} none={}",
+            both.prefetches,
+            none.prefetches
+        );
+        assert!(both.peak >= 8);
+        assert!(none.peak >= 8);
+    }
+
+    #[test]
+    fn engine_prefetch_copy_forward_beats_one_layer() {
+        let spec = CachedPrefetch {
+            prefetch: Prefetch::CopyForward,
+            plan_window: 0,
+            plan_threshold: 500,
+            slots: 8,
+        };
+        let one = two_seq_cached(tiny_qwen3moe_gguf(), spec);
+        let two = two_seq_cached(tiny_qwen3moe_2layer_gguf(), spec);
+        assert_eq!(two.ids_a, two.exp_a);
+        assert_eq!(two.ids_b, two.exp_b);
+        assert!(
+            two.prefetches > one.prefetches,
+            "copy-forward L+1 must prefetch on 2-layer, 1={} 2={}",
+            one.prefetches,
+            two.prefetches
+        );
+    }
+
+    #[test]
+    fn engine_plan_window_stay_skips_predictor_prefetch() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let ungated = two_seq_cached(
+            bytes.clone(),
+            CachedPrefetch {
+                prefetch: Prefetch::CopyForward,
+                plan_window: 0,
+                plan_threshold: 500,
+                slots: 2,
+            },
+        );
+        let gated = two_seq_cached(
+            bytes,
+            CachedPrefetch {
+                prefetch: Prefetch::CopyForward,
+                plan_window: 8,
+                plan_threshold: 0,
+                slots: 2,
+            },
+        );
+        assert_eq!(gated.ids_a, gated.exp_a);
+        assert_eq!(gated.ids_b, gated.exp_b);
+        assert!(
+            gated.prefetches < ungated.prefetches,
+            "Stay must skip predictor prefetch, gated={} ungated={}",
+            gated.prefetches,
+            ungated.prefetches
+        );
+        assert!(gated.peak >= 8);
+        assert!(ungated.peak >= 8);
+    }
+
+    #[test]
+    fn engine_gpu_prefetch_none_matches_independent() {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        fn run(model: &Llama, tok: &Tokenizer, prefetch: Prefetch) -> (Vec<u32>, Vec<u32>, u64) {
+            let tokens_a = [1u32, 2, 3, 4];
+            let tokens_b = [5u32, 0, 5, 0];
+            let mut cfg = EngineCfg::tiny();
+            cfg.eos = tok.eos;
+            cfg.prefetch = prefetch;
+            let mut eng = Engine::new(model, cfg).expect("eng");
+            let gpu = SimulatedGpuStore::new(
+                model.expert_direct_store().expect("c"),
+                2,
+                HardwareProfile::example_h100_sxm(),
+                4096,
+            )
+            .expect("gpu");
+            eng.attach_expert_store(LiveStore::simulated(gpu));
+            let a = eng.add(&tokens_a, 2).expect("a");
+            let b = eng.add(&tokens_b, 2).expect("b");
+            eng.run().expect("run");
+            (
+                eng.take(a).expect("ta").generated,
+                eng.take(b).expect("tb").generated,
+                eng.expert_store_metrics().expect("m").prefetches,
+            )
+        }
+        let g = load_gguf_owned(tiny_qwen3moe_2layer_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let exp_a = independent(&model, &tok, &tokens_a, 2);
+        let exp_b = independent(&model, &tok, &tokens_b, 2);
+        let (none_a, none_b, none_p) = run(&model, &tok, Prefetch::None);
+        let (_both_a, _both_b, both_p) = run(&model, &tok, Prefetch::Both);
+        assert_eq!(none_a, exp_a);
+        assert_eq!(none_b, exp_b);
+        assert!(
+            none_p < both_p,
+            "GPU none must skip predictor prefetch, none={none_p} both={both_p}"
         );
     }
 

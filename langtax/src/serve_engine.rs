@@ -5,7 +5,8 @@
 //! decodes GEMM together. `"stream": true` is HTTP/1.1 chunked NDJSON token
 //! lines then a final `generated` object. `--prefill-chunk`, `--decode-first`,
 //! `--slo-reject`, `--itl-slo-ns`, graph knobs, fill modes, `GpuStoreCfg`
-//! CUDA knobs, and `--trace-out` match `gguf_gemv engine`. No Tokio, no
+//! CUDA knobs, `--prefetch` / `--plan-window` / `--plan-threshold`, and
+//! `--trace-out` match `gguf_gemv engine`. No Tokio, no
 //! keep-alive, no OpenAI SDK surface.
 
 use std::fs::OpenOptions;
@@ -90,6 +91,9 @@ fn engine_cfg(tok: &Tokenizer, args: &ServeArgs) -> EngineCfg {
         slo_reject: args.slo_reject,
         ttft_slo_ns: args.ttft_slo_ns,
         itl_slo_ns: args.itl_slo_ns,
+        prefetch: args.prefetch,
+        plan_window: args.plan_window,
+        plan_threshold: args.plan_threshold,
     }
 }
 
@@ -512,7 +516,7 @@ mod tests {
     use crate::decode::{greedy_generate_ctx, tiny_llama_gguf, tiny_qwen3moe_gguf};
     use crate::gguf::load_gguf_owned;
     use crate::serve::bind_loopback;
-    use expertvm::{GpuFill, GpuStoreCfg};
+    use expertvm::{GpuFill, GpuStoreCfg, Prefetch};
     use std::fs::File;
     use std::net::SocketAddr;
     use std::time::Duration;
@@ -544,6 +548,9 @@ mod tests {
             itl_slo_ns: None,
             gpu_cfg: GpuStoreCfg::default(),
             fill: GpuFill::Pinned,
+            prefetch: Prefetch::Both,
+            plan_window: 0,
+            plan_threshold: 500,
             trace_out: None,
         }
     }

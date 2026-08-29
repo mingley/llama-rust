@@ -2,7 +2,9 @@
 
 use crate::decode::Llama;
 use crate::engine::Engine;
-use expertvm::{CachedStore, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore, SimulatedGpuStore};
+use expertvm::{
+    CachedStore, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore, Prefetch, SimulatedGpuStore,
+};
 
 /// CLI knobs that build a [`LiveStore`] for an [`Engine`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,6 +116,147 @@ impl GpuCli {
     /// Pinned when every fill flag is off; otherwise exactly one of mapped/managed/vmm.
     pub(crate) fn fill(self) -> Result<GpuFill, String> {
         GpuFill::from_flags(self.mapped, self.managed, self.vmm).map_err(|e| e.to_string())
+    }
+}
+
+/// GPU knobs plus predictor planner (`--prefetch` / Stay vs Fetch).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PlannerCli {
+    /// SimulatedGpuStore CUDA / fill flags.
+    pub gpu: GpuCli,
+    /// Predictor mode. Default [`Prefetch::Both`].
+    pub prefetch: Prefetch,
+    /// Unique predicted-key Stay vs Fetch window. `0` is ungated.
+    pub plan_window: usize,
+    /// Stay permille of that window already resident.
+    pub plan_threshold: u32,
+    prefetch_set: bool,
+    window_set: bool,
+    threshold_set: bool,
+}
+
+impl Default for PlannerCli {
+    fn default() -> Self {
+        Self {
+            gpu: GpuCli::default(),
+            prefetch: Prefetch::Both,
+            plan_window: 0,
+            plan_threshold: 500,
+            prefetch_set: false,
+            window_set: false,
+            threshold_set: false,
+        }
+    }
+}
+
+/// Result of [`PlannerCli::take`] classifying one dashed operand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Dash {
+    Taken,
+    Need(PlanSlot),
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PlanSlot {
+    VmmPage,
+    Prefetch,
+    PlanWindow,
+    PlanThreshold,
+}
+
+impl PlanSlot {
+    fn name(self) -> &'static str {
+        match self {
+            Self::VmmPage => "vmm-page",
+            Self::Prefetch => "prefetch",
+            Self::PlanWindow => "plan-window",
+            Self::PlanThreshold => "plan-threshold",
+        }
+    }
+}
+
+impl PlannerCli {
+    fn dash(&mut self, key: &str, inline: Option<&str>) -> Result<Dash, String> {
+        if self.gpu.apply(key, inline)? {
+            return Ok(Dash::Taken);
+        }
+        Ok(match key {
+            "--vmm-page" => Dash::Need(PlanSlot::VmmPage),
+            "--prefetch" => Dash::Need(PlanSlot::Prefetch),
+            "--plan-window" => Dash::Need(PlanSlot::PlanWindow),
+            "--plan-threshold" => Dash::Need(PlanSlot::PlanThreshold),
+            _ => Dash::Unknown,
+        })
+    }
+
+    fn set(&mut self, slot: PlanSlot, raw: &str) -> Result<(), String> {
+        match slot {
+            PlanSlot::VmmPage => {
+                let n = raw
+                    .parse::<u64>()
+                    .map_err(|_| format!("invalid vmm-page {raw:?}"))?;
+                self.gpu.set_vmm_page(n);
+            }
+            PlanSlot::Prefetch => {
+                self.prefetch =
+                    Prefetch::parse(raw).map_err(|_| format!("unknown prefetch {raw}"))?;
+                self.prefetch_set = true;
+            }
+            PlanSlot::PlanWindow => {
+                self.plan_window = raw
+                    .parse::<usize>()
+                    .map_err(|_| format!("invalid plan-window {raw:?}"))?;
+                self.window_set = true;
+            }
+            PlanSlot::PlanThreshold => {
+                self.plan_threshold = raw
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid plan-threshold {raw:?}"))?;
+                self.threshold_set = true;
+            }
+        }
+        Ok(())
+    }
+
+    /// Consume a dashed Engine / serve flag. `false` means the key is unknown.
+    pub(crate) fn take<I, S>(
+        &mut self,
+        key: &str,
+        inline: Option<&str>,
+        it: &mut I,
+    ) -> Result<bool, String>
+    where
+        I: Iterator<Item = S>,
+        S: AsRef<str>,
+    {
+        match self.dash(key, inline)? {
+            Dash::Taken => Ok(true),
+            Dash::Need(slot) => {
+                let v = match inline {
+                    Some(v) => v.to_string(),
+                    None => match it.next() {
+                        Some(s) => s.as_ref().to_string(),
+                        None => return Err(format!("missing --{} value", slot.name())),
+                    },
+                };
+                self.set(slot, &v)?;
+                Ok(true)
+            }
+            Dash::Unknown => Ok(false),
+        }
+    }
+
+    /// First planner flag that needs `--engine` on `serve`.
+    #[must_use]
+    pub(crate) fn serve_engine_flag(self) -> Option<&'static str> {
+        [
+            (self.prefetch_set, "--prefetch"),
+            (self.window_set, "--plan-window"),
+            (self.threshold_set, "--plan-threshold"),
+        ]
+        .into_iter()
+        .find_map(|(on, name)| on.then_some(name))
     }
 }
 

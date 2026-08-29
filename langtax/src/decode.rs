@@ -74,9 +74,8 @@ use crate::sample::{SampleError, SampleParams, Sampler};
 use crate::tok::{TokError, Tokenizer};
 use crate::{write_gguf_with_kv, GGUF_DEFAULT_ALIGNMENT};
 use expertvm::{
-    predicted_keys, prefetch_keys, prefetch_keys_ctx, prefix_hash, weight_permille, ChainState,
-    DirectStore, ExpertAccess, ExpertKey, ExpertParts, ExpertStore, LiveStore, Markov, Prefetch,
-    Trace,
+    plan_keys, predicted_keys, prefix_hash, weight_permille, ChainState, DirectStore, ExpertAccess,
+    ExpertKey, ExpertParts, ExpertStore, LiveStore, Markov, Plan, Prefetch, Trace,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -792,8 +791,8 @@ impl KvCache {
     }
 }
 
-/// Opt-in MoE access log. Events allocate only when enabled. Markov prefetch
-/// runs when a store is attached (copy-forward ∪ lookback-2 `P(to|from, from_prev)`).
+/// Opt-in MoE access log. Events allocate only when enabled. Predictor prefetch
+/// (`Prefetch::Both` by default) runs when a store is attached.
 #[derive(Default)]
 struct MoeTraceBuf {
     enabled: bool,
@@ -813,6 +812,41 @@ struct MoeTraceBuf {
     row_prefix: Vec<u64>,
     markov: Markov,
     chain: ChainState,
+    policy: PlanPolicy,
+}
+
+/// Engine/decode predictor knobs. Default is copy-forward ∪ lookback-2, ungated.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PlanPolicy {
+    prefetch: Prefetch,
+    plan_window: usize,
+    plan_threshold: u32,
+}
+
+impl Default for PlanPolicy {
+    fn default() -> Self {
+        Self {
+            prefetch: Prefetch::Both,
+            plan_window: 0,
+            plan_threshold: 500,
+        }
+    }
+}
+
+/// Unique predicted keys, at most `n` (order preserved).
+fn unique_prefix(keys: &[ExpertKey], n: usize) -> Vec<ExpertKey> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for k in keys {
+        if !seen.insert(*k) {
+            continue;
+        }
+        out.push(*k);
+        if out.len() >= n {
+            break;
+        }
+    }
+    out
 }
 
 /// Online Markov + last two router events, parked on Engine across GEMMs.
@@ -820,16 +854,34 @@ struct MoeTraceBuf {
 pub(crate) struct PrefetchChain {
     markov: Markov,
     chain: ChainState,
+    policy: PlanPolicy,
 }
 
 impl PrefetchChain {
-    /// Last selected experts union copy-forward ∪ Markov (no JSONL future leak).
+    /// Engine serving policy. Default decode is [`Prefetch::Both`], ungated.
+    pub(crate) fn with_policy(prefetch: Prefetch, plan_window: usize, plan_threshold: u32) -> Self {
+        Self {
+            policy: PlanPolicy {
+                prefetch,
+                plan_window,
+                plan_threshold,
+            },
+            ..Self::default()
+        }
+    }
+
+    /// Last selected experts union the configured predictor (no JSONL future leak).
     pub(crate) fn keep_hot_keys(&self) -> Vec<ExpertKey> {
         let Some(prev) = self.chain.last_event() else {
             return Vec::new();
         };
         let mut out = prev.keys();
-        let extra = predicted_keys(Prefetch::Both, &self.markov, self.chain.last_pred(), &out);
+        let extra = predicted_keys(
+            self.policy.prefetch,
+            &self.markov,
+            self.chain.last_pred(),
+            &out,
+        );
         for k in extra {
             if !out.contains(&k) {
                 out.push(k);
@@ -850,6 +902,7 @@ impl KvCache {
     pub(crate) fn set_prefetch_chain(&mut self, chain: PrefetchChain) {
         self.moe_trace.markov = chain.markov;
         self.moe_trace.chain = chain.chain;
+        self.moe_trace.policy = chain.policy;
     }
 
     /// Take Markov prefetch state so Engine can park it across GEMMs.
@@ -857,6 +910,7 @@ impl KvCache {
         PrefetchChain {
             markov: core::mem::take(&mut self.moe_trace.markov),
             chain: core::mem::take(&mut self.moe_trace.chain),
+            policy: self.moe_trace.policy,
         }
     }
 }
@@ -927,15 +981,35 @@ impl MoeTraceBuf {
             }
         }
         let ev = self.event(token_off, selected, &[]);
-        let planned = match self.chain.predecessor(&ev) {
-            Some(p) => prefetch_keys_ctx(&self.markov, &p.keys(), &keys),
-            None => prefetch_keys(&self.markov, &keys),
-        };
-        match store.prefetch(&planned) {
-            Ok(_n) => {}
-            Err(_e) => {}
+        let planned = predicted_keys(
+            self.policy.prefetch,
+            &self.markov,
+            self.chain.predecessor(&ev),
+            &keys,
+        );
+        if self.want_prefetch(store, &planned) {
+            match store.prefetch(&planned) {
+                Ok(_n) => {}
+                Err(_e) => {}
+            }
         }
         self.chain.observe(&mut self.markov, &ev);
+    }
+
+    fn want_prefetch(&self, store: &LiveStore, predicted: &[ExpertKey]) -> bool {
+        if self.policy.plan_window == 0 {
+            return true;
+        }
+        let upcoming = unique_prefix(predicted, self.policy.plan_window);
+        let resident: BTreeSet<ExpertKey> = upcoming
+            .iter()
+            .copied()
+            .filter(|k| store.is_resident(*k))
+            .collect();
+        !matches!(
+            plan_keys(&resident, &upcoming, self.policy.plan_threshold),
+            Plan::Stay
+        )
     }
 }
 
@@ -5912,7 +5986,12 @@ impl Llama {
             store,
         } = run;
         self.route_softmax_tokens(&spec, n_tokens, s, pool, moe_trace)?;
-        prefetch_routed(store, moe_trace.layer, &s.moe.sel_e);
+        prefetch_routed(
+            store,
+            moe_trace.layer,
+            &s.moe.sel_e,
+            moe_trace.policy.prefetch,
+        );
         prefetch_selected(moe_trace, store, n_tokens, spec.n_used, &s.moe.sel_e);
         self.grouped_routed_ffn(
             &spec,
@@ -6277,7 +6356,12 @@ impl Llama {
         }
         self.gemm_into(&moe.down_shexp, n_tokens, &s.gate, &mut s.ffn_out, pool)?;
         self.route_llama4_tokens(moe, n_tokens, s, pool, moe_trace)?;
-        prefetch_routed(store, moe_trace.layer, &s.moe.sel_e);
+        prefetch_routed(
+            store,
+            moe_trace.layer,
+            &s.moe.sel_e,
+            moe_trace.policy.prefetch,
+        );
         prefetch_selected(moe_trace, store, n_tokens, moe.n_expert_used, &s.moe.sel_e);
         let spec = SoftmaxMoE {
             gate_inp: &moe.gate_inp,
@@ -6866,9 +6950,10 @@ fn fill_router_weights(logits: &[f32], order: &[usize], weights: &mut Vec<f32>, 
     }
 }
 
-/// Observe this layer's router events and prefetch copy-forward ∪ Markov
-/// destinations **before** grouped expert GEMM so H2D of L+1 can overlap
-/// this layer's compute. Unknown catalog keys are skipped.
+/// Observe this layer's router events and prefetch predicted destinations
+/// **before** grouped expert GEMM so H2D of L+1 can overlap this layer's
+/// compute. Unknown catalog keys are skipped. [`Prefetch::None`] is demand
+/// paging only.
 fn prefetch_selected(
     moe_trace: &mut MoeTraceBuf,
     store: &mut Option<LiveStore>,
@@ -6889,7 +6974,10 @@ fn prefetch_selected(
 ///
 /// Skipped when the unique set is larger than the cache (`slots`) so a tight
 /// LRU still demand-pages one expert at a time.
-fn prefetch_routed(store: &mut Option<LiveStore>, layer: u32, sel_e: &[usize]) {
+fn prefetch_routed(store: &mut Option<LiveStore>, layer: u32, sel_e: &[usize], prefetch: Prefetch) {
+    if matches!(prefetch, Prefetch::None) {
+        return;
+    }
     let Some(s) = store.as_mut() else {
         return;
     };

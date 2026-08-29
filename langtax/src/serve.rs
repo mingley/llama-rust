@@ -15,14 +15,14 @@ use crate::cli::InferArgs;
 use crate::decode::{greedy_generate_slot, KvCache, Llama, LlamaError};
 use crate::gguf::load_gguf_owned;
 use crate::serve_engine;
-use crate::store_attach::{gpu_knobs, GpuCli};
+use crate::store_attach::{gpu_knobs, PlannerCli};
 use crate::template::ChatMessage;
 use crate::tok::Tokenizer;
-use expertvm::{GpuFill, GpuStoreCfg};
+use expertvm::{GpuFill, GpuStoreCfg, Prefetch};
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--trace-out FILE]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
@@ -55,6 +55,9 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --accessed-by     SetAccessedBy on managed fills (`--expert-sim`)
       --legacy-null     NULL copy serializes with compute (`--expert-sim`)
       --stream-priority cudaStreamCreateWithPriority on compute (`--expert-sim`)
+      --prefetch MODE   none|copy-forward|markov|both (`--engine`; default: both)
+      --plan-window N   Stay vs Fetch over N unique predicted keys (`--engine`; `0` ungated)
+      --plan-threshold N  Stay permille of that window (`--engine`; default: 500)
       --trace-out FILE  append batched MoE ExpertAccess JSONL (`--engine`)
 
 POST /generate takes {\"prompt\": TEXT} or, to render the model's own
@@ -76,7 +79,8 @@ the same SimulatedGpuStore knobs as `gguf_gemv engine`. `--host-func` /
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` match
 `GpuStoreCfg`. `--mapped` / `--managed` / `--vmm` choose miss-page placement
-(default pinned H2D). `--trace-out` writes
+(default pinned H2D). `--prefetch` / `--plan-window` / `--plan-threshold`
+match `gguf_gemv engine` (predicted keys only; `--engine`). `--trace-out` writes
 router JSONL as sequences finish. Not a production inference server.
 ";
 
@@ -136,6 +140,12 @@ pub struct ServeArgs {
     pub gpu_cfg: GpuStoreCfg,
     /// Miss-page placement (`--expert-sim`). Default is pinned H2D.
     pub fill: GpuFill,
+    /// Predictor prefetch (`--engine`). Default [`Prefetch::Both`].
+    pub prefetch: Prefetch,
+    /// Unique predicted-key Stay vs Fetch window (`--engine`). `0` is ungated.
+    pub plan_window: usize,
+    /// Stay permille of the predicted window already resident (`--engine`).
+    pub plan_threshold: u32,
     /// Append Engine MoE traces as JSONL (`--engine`). `None` leaves tracing off.
     pub trace_out: Option<String>,
 }
@@ -192,7 +202,7 @@ struct ServeNeed {
     has_ttft: bool,
     has_itl: bool,
     has_trace: bool,
-    gpu: GpuCli,
+    plan: PlannerCli,
 }
 
 fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
@@ -244,12 +254,17 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
     if n.has_itl && !n.expert_sim {
         return usage_err("--itl-slo-ns requires --expert-sim");
     }
-    if let Some(flag) = n.gpu.sim_flag() {
+    if let Some(flag) = n.plan.gpu.sim_flag() {
         if !n.engine {
             return usage_err(&format!("{flag} requires --engine"));
         }
         if !n.expert_sim {
             return usage_err(&format!("{flag} requires --expert-sim"));
+        }
+    }
+    if let Some(flag) = n.plan.serve_engine_flag() {
+        if !n.engine {
+            return usage_err(&format!("{flag} requires --engine"));
         }
     }
     if n.has_trace && !n.engine {
@@ -260,7 +275,7 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--trace-out FILE]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -283,7 +298,7 @@ where
     let mut slo_reject = false;
     let mut ttft_slo_ns = None;
     let mut itl_slo_ns = None;
-    let mut gpu = GpuCli::default();
+    let mut planner = PlannerCli::default();
     let mut trace_out = None;
     let mut it = args.into_iter();
     while let Some(raw) = it.next() {
@@ -390,16 +405,10 @@ where
             "--trace-out" => {
                 trace_out = Some(opt_value("trace-out", inline, &mut it)?);
             }
-            flag if flag.starts_with('-') => match gpu.apply(key, inline) {
+            flag if flag.starts_with('-') => match planner.take(key, inline, &mut it) {
                 Ok(true) => {}
-                Err(e) => return usage_err(&e),
-                Ok(false) if key == "--vmm-page" => {
-                    gpu.set_vmm_page(parse_u64(
-                        "vmm-page",
-                        &opt_value("vmm-page", inline, &mut it)?,
-                    )?);
-                }
                 Ok(false) => return usage_err(&format!("unknown flag {flag}")),
+                Err(e) => return usage_err(&e),
             },
             other => {
                 if path.is_some() {
@@ -425,11 +434,11 @@ where
         has_ttft: ttft_slo_ns.is_some(),
         has_itl: itl_slo_ns.is_some(),
         has_trace: trace_out.is_some(),
-        gpu,
+        plan: planner,
     })?;
-    gpu.imply_vmm();
-    let fill = gpu.fill()?;
-    let gpu_cfg = gpu_knobs(gpu);
+    planner.gpu.imply_vmm();
+    let fill = planner.gpu.fill()?;
+    let gpu_cfg = gpu_knobs(planner.gpu);
     Ok(ServeCmd::Run(ServeArgs {
         path,
         n_predict,
@@ -449,6 +458,9 @@ where
         itl_slo_ns,
         gpu_cfg,
         fill,
+        prefetch: planner.prefetch,
+        plan_window: planner.plan_window,
+        plan_threshold: planner.plan_threshold,
         trace_out,
     }))
 }
@@ -1163,6 +1175,9 @@ mod tests {
             itl_slo_ns: None,
             gpu_cfg: GpuStoreCfg::default(),
             fill: GpuFill::Pinned,
+            prefetch: Prefetch::Both,
+            plan_window: 0,
+            plan_threshold: 500,
             trace_out: None,
         }
     }
@@ -1238,6 +1253,9 @@ mod tests {
         assert_eq!(a.ttft_slo_ns, None);
         assert_eq!(a.itl_slo_ns, None);
         assert_eq!(a.gpu_cfg, GpuStoreCfg::default());
+        assert_eq!(a.prefetch, Prefetch::Both);
+        assert_eq!(a.plan_window, 0);
+        assert_eq!(a.plan_threshold, 500);
         assert_eq!(a.trace_out, None);
     }
 
@@ -1273,6 +1291,9 @@ mod tests {
                 itl_slo_ns: None,
                 gpu_cfg: GpuStoreCfg::default(),
                 fill: GpuFill::Pinned,
+                prefetch: Prefetch::Both,
+                plan_window: 0,
+                plan_threshold: 500,
                 trace_out: None,
             }
         );
@@ -1353,6 +1374,9 @@ mod tests {
                 itl_slo_ns: None,
                 gpu_cfg: GpuStoreCfg::default(),
                 fill: GpuFill::Pinned,
+                prefetch: Prefetch::Both,
+                plan_window: 0,
+                plan_threshold: 500,
                 trace_out: None,
             }
         );
@@ -1387,6 +1411,31 @@ mod tests {
         );
         let err = parse_serve_args(["m.gguf", "--engine", "--expert-bytes", "0"]).unwrap_err();
         assert!(err.contains("expert-bytes must be > 0"), "{err}");
+    }
+
+    #[test]
+    fn serve_prefetch_planner_needs_engine() {
+        let err = parse_serve_args(["m.gguf", "--prefetch", "none"]).unwrap_err();
+        assert!(err.contains("--prefetch requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--plan-window", "8"]).unwrap_err();
+        assert!(err.contains("--plan-window requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--plan-threshold", "100"]).unwrap_err();
+        assert!(err.contains("--plan-threshold requires --engine"), "{err}");
+        let a = run(&["m.gguf", "--engine", "--prefetch=none"]);
+        assert_eq!(a.prefetch, Prefetch::None);
+        assert!(!a.expert_sim);
+        let a = run(&[
+            "m.gguf",
+            "--engine",
+            "--prefetch=copy-forward",
+            "--plan-window=8",
+            "--plan-threshold=100",
+        ]);
+        assert_eq!(a.prefetch, Prefetch::CopyForward);
+        assert_eq!(a.plan_window, 8);
+        assert_eq!(a.plan_threshold, 100);
+        let err = parse_serve_args(["m.gguf", "--engine", "--prefetch", "nope"]).unwrap_err();
+        assert!(err.contains("unknown prefetch"), "{err}");
     }
 
     #[test]
