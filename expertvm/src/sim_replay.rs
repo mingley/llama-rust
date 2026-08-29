@@ -115,6 +115,14 @@ pub struct SimCfg {
     /// A naive engine that uses the sync path cannot overlap a miss with other
     /// streams on that GPU. [`crate::SimulatedGpuStore`] stays on the async path.
     pub sync_alloc: bool,
+    /// Hold unused `cudaMallocAsync` bytes in the default mempool (`u64::MAX`
+    /// release threshold) until [`gpu_sim::Sim::pool_trim_to`].
+    ///
+    /// Default `false` matches CUDA's default pool (`threshold = 0`: free
+    /// returns HBM when the stream-ordered free completes). Serving engines
+    /// raise the threshold so `cudaMalloc` can OOM while the pool still holds
+    /// cache. Hits/misses stay the same; reuse pays `pool_reuse_ns`.
+    pub mempool: bool,
 }
 
 impl SimCfg {
@@ -133,6 +141,7 @@ impl SimCfg {
             plan_threshold: 500,
             max_batch: 0,
             sync_alloc: false,
+            mempool: false,
         }
     }
 }
@@ -168,6 +177,9 @@ pub fn sim_replay_cfg(
 ) -> Result<SimReplay, Error> {
     let keys = trace.keys();
     let mut sim = Sim::new(profile);
+    if cfg.mempool {
+        sim.set_default_pool_release_threshold(u64::MAX)?;
+    }
     let d = DeviceId(0);
     let s = StreamId(0);
     let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();

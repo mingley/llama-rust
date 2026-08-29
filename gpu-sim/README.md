@@ -30,8 +30,9 @@ warp scheduler, L1, …   ← do not model
 | Exact (tests fail if violated) | Timed (profile data) |
 | --- | --- |
 | HBM capacity, alloc/free, OOM | kernel microseconds |
-| `cudaMallocAsync` (`alloc`) is stream-ordered; pointer not usable until the stream catches up | `alloc_overhead_ns` |
-| `cudaMalloc` (`malloc`) device-syncs that GPU, then the pointer is usable | `alloc_overhead_ns` (charged at the call) |
+| `cudaMallocAsync` (`alloc`) is stream-ordered; pointer not usable until the stream catches up | `alloc_overhead_ns` (first touch) / `pool_reuse_ns` (cached) |
+| `cudaMallocAsync` from a pool reuses cached bytes; `cudaMemGetInfo` still counts them used until `pool_trim_to` | `pool_reuse_ns` |
+| `cudaMalloc` (`malloc`) device-syncs that GPU, then the pointer is usable; it cannot consume another pool's cache | `alloc_overhead_ns` (charged at the call) |
 | `cudaFree` (`free_sync`) waits owning GPU(s), then every copy is gone | stream-ordered `free` refunds when that stream runs |
 | `cudaMemcpyAsync` of pageable host memory is host-synchronous | `pageable_permille` (bounce + DMA) |
 | `cudaMemcpyAsync` of pinned / device memory is stream-ordered | PCIe / NVLink bandwidth |
@@ -176,6 +177,13 @@ must be complete; end-before-start is invalid).
 `query_stream` is `cudaStreamQuery` (unknown device is semantic; a busy
 stream is `Ok(false)`; the clock does not advance).
 `mem_info` is `cudaMemGetInfo` `(free, total)` HBM bytes.
+Default `cudaMallocAsync` uses the device mempool with release threshold
+`0` (unused bytes return to the OS when the stream-ordered free
+completes). `create_pool` / `alloc_from_pool` /
+`set_pool_release_threshold` / `pool_trim_to` are `cudaMemPoolCreate` /
+`cudaMallocFromPoolAsync` / `cudaMemPoolAttrReleaseThreshold` /
+`cudaMemPoolTrimTo`. `u64::MAX` holds unused bytes so `malloc` can OOM
+until trim. Capture cannot include pool create/trim/set-attribute.
 `set_stream_priority` is `cudaStreamCreateWithPriority` (higher first when
 compute contends). `Operation` carries `submit_ns` / `start_ns` / `done_ns`
 so stream[i+1].start ≥ stream[i].finish is inspectable. `GpuOp` /

@@ -43,3 +43,13 @@ pub struct LinkId(pub u16);
 /// Captured CUDA-like graph. Launch replays the recorded ops; capture does not execute them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GraphId(pub u32);
+
+/// CUDA memory pool (`cudaMemPool_t`). [`crate::Sim::alloc`] uses the device default pool.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PoolId(pub u32);
+
+impl fmt::Display for PoolId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "pool{}", self.0)
+    }
+}

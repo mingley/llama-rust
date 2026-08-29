@@ -280,7 +280,10 @@ impl SchedRt {
         place: Option<PlaceMap>,
         remote_act: Option<u64>,
     ) -> Result<Self, Error> {
-        let sim = Sim::new(profile);
+        let mut sim = Sim::new(profile);
+        if cfg.mempool {
+            sim.set_default_pool_release_threshold(u64::MAX)?;
+        }
         let n_streams = replay_streams(sim.profile(), cfg.seq_streams);
         let n_gpus = u16::try_from(sim.profile().n_gpus()).unwrap_or(1).max(1);
         let bytes = cfg.bytes_per_expert.max(1);

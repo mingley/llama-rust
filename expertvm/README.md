@@ -79,8 +79,12 @@ token (`ttft_ns`, mean `itl_ns`); a batch of sequences at the same token is
 one sample. `--seq-streams` maps `sequence % n_streams` onto CUDA streams so
 those copies can overlap. `--sync-alloc` uses host-sync `cudaMalloc` /
 `cudaMemcpy` / `cudaFree` on every miss (`Sim::malloc`); the default is
-stream-ordered `alloc` so a miss can overlap other streams. `SimulatedGpuStore`
-stays on the async path. `--max-batch N` admits N sequences per engine
+stream-ordered `alloc` so a miss can overlap other streams. `--mempool`
+sets the default pool release threshold to `u64::MAX` so unused
+`cudaMallocAsync` bytes stay in `cudaMemGetInfo` used until trim (vLLM);
+reuse of a same-size page pays `pool_reuse_ns` instead of
+`alloc_overhead_ns`. `SimulatedGpuStore`
+stays on the async path with CUDA's default threshold (`0`). `--max-batch N` admits N sequences per engine
 iteration at a token (`0` = the whole token) and still samples TTFT once.
 `--cuda-graphs` captures grouped expert GEMMs after `synchronize_stream` on
 that stream and replays them (`graph_launch_ns` once per launch). `--plan-window
@@ -150,6 +154,7 @@ expertvm replay   trace.jsonl --capacity 8
 expertvm sim      trace.jsonl --capacity 8 --expert-bytes 188743680 --profile h100 --prefetch both
 expertvm sim      trace.jsonl --capacity 8 --profile h100 --prefetch markov --seq-streams
 expertvm sim      trace.jsonl --capacity 8 --seq-streams --sync-alloc
+expertvm sim      trace.jsonl --capacity 8 --mempool
 expertvm sim      trace.jsonl --capacity 8 --prefetch copy-forward --plan-window 8 --cuda-graphs
 expertvm sim      trace.jsonl --capacity 8 --seq-streams --max-batch 2
 expertvm schedule trace.jsonl --capacity 8 --max-batch 2 --interarrival-ns 1000000 --ttft-slo-ns 20000000

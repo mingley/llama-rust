@@ -541,6 +541,27 @@ fn sync_alloc_cannot_overlap_misses_across_streams() {
 }
 
 #[test]
+fn mempool_reuse_beats_first_touch_on_thrash() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let cfg = |mempool: bool| SimCfg {
+        slots: 1,
+        mempool,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let released = sim_replay_cfg(&t, p.clone(), cfg(false)).expect("release");
+    let held = sim_replay_cfg(&t, p, cfg(true)).expect("hold");
+    assert_eq!(released.hits, held.hits);
+    assert_eq!(released.misses, held.misses);
+    assert!(
+        held.sim_ns < released.sim_ns,
+        "cached cudaMallocFromPoolAsync must beat first-touch; pool={} release={}",
+        held.sim_ns,
+        released.sim_ns
+    );
+}
+
+#[test]
 fn max_batch_serializes_sequences_at_a_token() {
     let t = Trace {
         events: vec![

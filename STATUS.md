@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — CUDA memory pools hold unused HBM until trim
+
+`Sim::create_pool` / `alloc_from_pool` / `set_pool_release_threshold` /
+`pool_trim_to` are `cudaMemPoolCreate` / `cudaMallocFromPoolAsync` /
+`cudaMemPoolAttrReleaseThreshold` / `cudaMemPoolTrimTo`. `alloc` uses the
+device default pool (threshold `0`: free returns HBM). `u64::MAX` holds
+unused bytes in `cudaMemGetInfo` used so `malloc` can OOM until trim.
+Reuse of cached bytes pays `pool_reuse_ns`, not `alloc_overhead_ns`.
+Capture refuses pool create/trim/set-attribute. `expertvm sim --mempool`
+and `expertvm bench` `sim-pool` raise the default-pool threshold.
+`SimulatedGpuStore` stays on threshold `0`. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — pageable `cudaMemcpyAsync` waits the stream
 
 `memcpy_host_to_device` / `memcpy_device_to_host` (`Place::Host`) are

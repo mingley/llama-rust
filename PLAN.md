@@ -411,6 +411,12 @@ Exact (mechanical invariants agents may rely on):
   `cudaMallocAsync` / `cudaFreeAsync` / `cudaMemcpyAsync`
   (`alloc` / `free` / `memcpy`); `malloc` OOM is at the call;
   `cudaDeviceSynchronize` (`synchronize_device`) waits one GPU
+- memory pools: `create_pool` / `alloc_from_pool` /
+  `set_pool_release_threshold` / `pool_trim_to`
+  (`cudaMemPoolCreate` / `cudaMallocFromPoolAsync` /
+  `cudaMemPoolAttrReleaseThreshold` / `cudaMemPoolTrimTo`); default
+  threshold `0` returns unused bytes on free; `u64::MAX` holds them so
+  `malloc` can OOM until trim; `cudaMalloc` cannot consume pool cache
 - stream ordering, events, barriers
 - kernel enqueue, async copies
 - copy-engine availability, peer accessibility
@@ -551,7 +557,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
 - CUDA-graph capture: `begin_capture` / `end_capture` / `launch_graph`.
   Recorded kernels and copies do not run until launch; alloc/free cannot
   be captured (`malloc` / `free_sync` / `memcpy_sync` / `synchronize_device`
-  included); capture requires an idle stream. Graph launch pays
+  included); mempool create/trim/set-attribute cannot be captured;
+  capture requires an idle stream. Graph launch pays
   `graph_launch_ns` once; recorded kernels skip per-launch overhead.
   `sim_replay` / `SimulatedGpuStore` capture repeated expert GEMMs
   (`expertvm sim --cuda-graphs`). Capture after a miss waits with
@@ -564,7 +571,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   in the GPU loop (`--plan-window N`). `prefetch_hits` / `prefetch_waste`
   measure whether those fills were used. `--sync-alloc` is host-sync
   `cudaMalloc`/`cudaMemcpy`/`cudaFree` on miss (`Sim::malloc`); default
-  `sim`/`schedule` stay on `cudaMallocAsync`. `memset`, directed peer enable, and
+  `sim`/`schedule` stay on `cudaMallocAsync`. `--mempool` sets the default
+  pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
+  cached page pays `pool_reuse_ns`. `memset`, directed peer enable, and
   the legacy null stream are mechanical CUDA invariants.
   `synchronize_stream` / `synchronize_event` / `synchronize_device` are
   `cudaStreamSynchronize` / `cudaEventSynchronize` / `cudaDeviceSynchronize`. `event_elapsed_ns` is `cudaEventElapsedTime` in

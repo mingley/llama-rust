@@ -27,6 +27,8 @@ pub struct BenchReport {
     pub graphs: Option<String>,
     /// Stream-ordered `alloc` vs host-sync `malloc` on the same LRU config.
     pub malloc: Option<String>,
+    /// Default-pool release vs `u64::MAX` mempool hold on the same LRU config.
+    pub mempool: Option<String>,
     /// Closed-loop `schedule-all` vs `schedule-1` when the trace has >1 sequence.
     pub schedule: Option<String>,
     /// Unchunked vs `--prefill-chunk 1` when a first token has more than one layer.
@@ -60,6 +62,10 @@ impl BenchReport {
         }
         if let Some(m) = &self.malloc {
             s.push_str(m);
+            s.push('\n');
+        }
+        if let Some(mp) = &self.mempool {
+            s.push_str(mp);
             s.push('\n');
         }
         if let Some(sch) = &self.schedule {
@@ -100,6 +106,7 @@ pub fn report(
     let mut overlap = None;
     let mut graphs = None;
     let mut malloc = None;
+    let mut mempool = None;
     let mut schedule = None;
     let mut chunk = None;
     let mut decode = None;
@@ -111,6 +118,7 @@ pub fn report(
         overlap = lines.overlap;
         graphs = lines.graphs;
         malloc = lines.malloc;
+        mempool = lines.mempool;
         schedule = lines.schedule;
         chunk = lines.chunk;
         decode = lines.decode;
@@ -125,6 +133,7 @@ pub fn report(
         overlap,
         graphs,
         malloc,
+        mempool,
         schedule,
         chunk,
         decode,
@@ -138,6 +147,7 @@ struct SimLines {
     overlap: Option<String>,
     graphs: Option<String>,
     malloc: Option<String>,
+    mempool: Option<String>,
     schedule: Option<String>,
     chunk: Option<String>,
     decode: Option<String>,
@@ -168,7 +178,10 @@ fn sim_lines(
     let g = sim_replay_cfg(trace, profile.clone(), graphed)?;
     let mut malloced = base;
     malloced.sync_alloc = true;
-    let mal = sim_replay_cfg(trace, profile, malloced)?;
+    let mal = sim_replay_cfg(trace, profile.clone(), malloced)?;
+    let mut pooled = base;
+    pooled.mempool = true;
+    let mp = sim_replay_cfg(trace, profile, pooled)?;
     Ok(SimLines {
         serial: serial.line(),
         overlap,
@@ -177,6 +190,11 @@ fn sim_lines(
             "sim-async {} | sim-malloc {}",
             serial.line(),
             mal.line()
+        )),
+        mempool: Some(format!(
+            "sim-async {} | sim-pool {}",
+            serial.line(),
+            mp.line()
         )),
         schedule: lines.schedule,
         chunk: lines.chunk,

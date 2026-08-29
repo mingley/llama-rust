@@ -5,7 +5,7 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::SimError;
-use crate::ids::{AllocId, DeviceId, EventId, GraphId, OpId, StreamId};
+use crate::ids::{AllocId, DeviceId, EventId, GraphId, OpId, PoolId, StreamId};
 use crate::ops::{GpuOp as Kind, KernelKind, MemcpyOp, Operation, Place};
 use crate::profile::{ns_for_bytes, HardwareProfile};
 
@@ -15,6 +15,15 @@ struct Alloc {
     leases: u32,
     live: bool,
     host_pinned: bool,
+    /// `None` is `cudaMalloc` / host-pinned. `Some` is `cudaMallocAsync` from that pool.
+    pool: Option<PoolId>,
+}
+
+struct Pool {
+    device: DeviceId,
+    live: u64,
+    cached: u64,
+    release_threshold: u64,
 }
 
 struct Op {
@@ -91,6 +100,9 @@ pub struct Sim {
     peer_enabled: BTreeSet<(DeviceId, DeviceId)>,
     legacy_null_stream: bool,
     priority: BTreeMap<(DeviceId, StreamId), i32>,
+    next_pool: u32,
+    pools: BTreeMap<PoolId, Pool>,
+    default_pools: BTreeMap<DeviceId, PoolId>,
 }
 
 impl Sim {
@@ -110,6 +122,7 @@ impl Sim {
             let _dup = replaced.is_some();
         }
         let peer_enabled = seed_peers(&profile);
+        let (next_pool, pools, default_pools) = seed_pools(&profile);
         Self {
             profile,
             clock: 0,
@@ -133,6 +146,9 @@ impl Sim {
             peer_enabled,
             legacy_null_stream: false,
             priority: BTreeMap::new(),
+            next_pool,
+            pools,
+            default_pools,
         }
     }
 
@@ -448,18 +464,65 @@ impl Sim {
             })
     }
 
-    /// Stream-ordered allocation (`cudaMallocAsync`). Capacity is reserved when
-    /// the op starts. The pointer is not usable until this stream catches up.
-    /// [`Self::malloc`] is host-synchronous `cudaMalloc`.
+    /// Stream-ordered allocation (`cudaMallocAsync`) from the device default pool.
+    ///
+    /// Capacity is reserved when the op starts. The pointer is not usable until
+    /// this stream catches up. [`Self::malloc`] is host-synchronous `cudaMalloc`.
     pub fn alloc(
         &mut self,
         device: DeviceId,
         bytes: u64,
         stream: StreamId,
     ) -> Result<AllocId, SimError> {
+        let pool = self.default_pool(device)?;
+        self.alloc_from_pool(device, pool, bytes, stream)
+    }
+
+    /// Device default mempool (`cudaDeviceGetDefaultMemPool`).
+    pub fn default_pool(&self, device: DeviceId) -> Result<PoolId, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.default_pools
+            .get(&device)
+            .copied()
+            .ok_or(SimError::Invalid {
+                why: "default pool missing",
+            })
+    }
+
+    /// `cudaMemPoolCreate` for `device`. Release threshold starts at 0.
+    pub fn create_pool(&mut self, device: DeviceId) -> Result<PoolId, SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let _gpu = self.profile.gpu(device)?;
+        let id = PoolId(self.next_pool);
+        self.next_pool = self.next_pool.saturating_add(1);
+        let _prev = self.pools.insert(
+            id,
+            Pool {
+                device,
+                live: 0,
+                cached: 0,
+                release_threshold: 0,
+            },
+        );
+        Ok(id)
+    }
+
+    /// `cudaMallocFromPoolAsync`. `pool` must belong to `device`.
+    pub fn alloc_from_pool(
+        &mut self,
+        device: DeviceId,
+        pool: PoolId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<AllocId, SimError> {
         if bytes == 0 {
             return Err(SimError::Invalid {
                 why: "zero-byte alloc",
+            });
+        }
+        if self.pool_ref(pool)?.device != device {
+            return Err(SimError::Invalid {
+                why: "pool device mismatch",
             });
         }
         let id = AllocId(self.next_alloc);
@@ -472,10 +535,61 @@ impl Sim {
                 leases: 0,
                 live: false,
                 host_pinned: false,
+                pool: Some(pool),
             },
         );
         let _op = self.submit(device, stream, Kind::Alloc { id, bytes })?;
         Ok(id)
+    }
+
+    /// `cudaMemPoolAttrReleaseThreshold`. Does not trim; later frees apply it.
+    ///
+    /// `0` (CUDA default) returns unused bytes to the OS when the stream-ordered
+    /// free completes. `u64::MAX` holds them so [`Self::mem_info`] still counts
+    /// them used until [`Self::pool_trim_to`].
+    pub fn set_pool_release_threshold(&mut self, pool: PoolId, bytes: u64) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        self.pool_mut(pool)?.release_threshold = bytes;
+        Ok(())
+    }
+
+    /// Set every device default pool's release threshold.
+    pub fn set_default_pool_release_threshold(&mut self, bytes: u64) -> Result<(), SimError> {
+        let ids: Vec<PoolId> = self.default_pools.values().copied().collect();
+        for id in ids {
+            self.set_pool_release_threshold(id, bytes)?;
+        }
+        Ok(())
+    }
+
+    /// `cudaMemPoolTrimTo`: return cached bytes above `min_bytes` to the OS.
+    ///
+    /// Only completed frees are cached; in-flight [`Self::free`] has not entered
+    /// the pool yet. Applied immediately to `mem_info` (no extra device sync).
+    pub fn pool_trim_to(&mut self, pool: PoolId, min_bytes: u64) -> Result<u64, SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let (device, cached) = {
+            let p = self.pool_ref(pool)?;
+            (p.device, p.cached)
+        };
+        let drop = cached.saturating_sub(min_bytes);
+        if drop == 0 {
+            return Ok(0);
+        }
+        self.pool_mut(pool)?.cached = cached.saturating_sub(drop);
+        let used = self.gpu_rt(device)?.used;
+        self.gpu_rt_mut(device)?.used = used.saturating_sub(drop);
+        Ok(drop)
+    }
+
+    /// Unused bytes held by `pool` (`cudaMemGetInfo` still counts them used).
+    pub fn pool_cached(&self, pool: PoolId) -> Result<u64, SimError> {
+        Ok(self.pool_ref(pool)?.cached)
+    }
+
+    /// Live bytes allocated from `pool` and not yet freed.
+    pub fn pool_live(&self, pool: PoolId) -> Result<u64, SimError> {
+        Ok(self.pool_ref(pool)?.live)
     }
 
     /// `cudaMalloc`: [`Self::synchronize_device`] then the pointer is usable.
@@ -523,6 +637,7 @@ impl Sim {
                 leases: 0,
                 live: true,
                 host_pinned: true,
+                pool: None,
             },
         );
         Ok(id)
@@ -603,8 +718,7 @@ impl Sim {
         let devices = a.devices.clone();
         let bytes = a.bytes;
         for d in &devices {
-            let used = self.gpu_rt(*d)?.used;
-            self.gpu_rt_mut(*d)?.used = used.saturating_sub(bytes);
+            self.refund_device(*d, id, bytes)?;
         }
         let a = self.alloc_mut(id)?;
         a.devices.clear();
@@ -1146,9 +1260,36 @@ impl Sim {
             .ok_or(SimError::UnknownAlloc { alloc: id })
     }
 
-    fn reserve_now(&mut self, device: DeviceId, bytes: u64) -> Result<AllocId, SimError> {
+    fn fail_if_capturing(&self, why: &'static str) -> Result<(), SimError> {
+        if self.capturing.is_some() {
+            Err(SimError::Invalid { why })
+        } else {
+            Ok(())
+        }
+    }
+
+    fn pool_ref(&self, id: PoolId) -> Result<&Pool, SimError> {
+        self.pools.get(&id).ok_or(SimError::Invalid {
+            why: "unknown pool",
+        })
+    }
+
+    fn pool_mut(&mut self, id: PoolId) -> Result<&mut Pool, SimError> {
+        self.pools.get_mut(&id).ok_or(SimError::Invalid {
+            why: "unknown pool",
+        })
+    }
+
+    fn bump_hbm_peak(&mut self, device: DeviceId) -> Result<(), SimError> {
+        let peak = self.gpu_rt(device)?.used;
+        if peak > self.hbm_peak {
+            self.hbm_peak = peak;
+        }
+        Ok(())
+    }
+
+    fn reserve_hbm(&mut self, device: DeviceId, bytes: u64) -> Result<(), SimError> {
         let cap = self.profile.gpu(device)?.hbm_bytes;
-        let overhead = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
         let used = self.gpu_rt(device)?.used;
         let free = cap.saturating_sub(used);
         if bytes > free {
@@ -1159,10 +1300,124 @@ impl Sim {
             });
         }
         self.gpu_rt_mut(device)?.used = used.saturating_add(bytes);
-        let peak = self.gpu_rt(device)?.used;
-        if peak > self.hbm_peak {
-            self.hbm_peak = peak;
+        self.bump_hbm_peak(device)
+    }
+
+    fn pool_acquire(&mut self, pool: PoolId, bytes: u64) -> Result<u64, SimError> {
+        let (device, cached) = {
+            let p = self.pool_ref(pool)?;
+            (p.device, p.cached)
+        };
+        let first = self.profile.gpu(device)?.alloc_overhead_ns;
+        let reuse = self.profile.gpu(device)?.pool_reuse_ns;
+        if cached >= bytes {
+            let p = self.pool_mut(pool)?;
+            p.cached = cached.saturating_sub(bytes);
+            p.live = p.live.saturating_add(bytes);
+            return Ok(reuse.max(1));
         }
+        let extra = bytes.saturating_sub(cached);
+        self.reserve_hbm(device, extra)?;
+        let p = self.pool_mut(pool)?;
+        p.cached = 0;
+        p.live = p.live.saturating_add(bytes);
+        Ok(first.max(1))
+    }
+
+    fn pool_release(&mut self, pool: PoolId, bytes: u64) -> Result<(), SimError> {
+        let (device, threshold, cached, live) = {
+            let p = self.pool_ref(pool)?;
+            (p.device, p.release_threshold, p.cached, p.live)
+        };
+        let live = live.saturating_sub(bytes);
+        let cached = cached.saturating_add(bytes);
+        let (cached, drop) = if cached > threshold {
+            (threshold, cached.saturating_sub(threshold))
+        } else {
+            (cached, 0)
+        };
+        {
+            let p = self.pool_mut(pool)?;
+            p.live = live;
+            p.cached = cached;
+        }
+        if drop > 0 {
+            let used = self.gpu_rt(device)?.used;
+            self.gpu_rt_mut(device)?.used = used.saturating_sub(drop);
+        }
+        Ok(())
+    }
+
+    fn refund_device(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        let pool = self.alloc_ref(alloc)?.pool;
+        if let Some(p) = pool {
+            if self.pool_ref(p)?.device == device {
+                return self.pool_release(p, bytes);
+            }
+        }
+        let used = self.gpu_rt(device)?.used;
+        self.gpu_rt_mut(device)?.used = used.saturating_sub(bytes);
+        Ok(())
+    }
+
+    fn start_alloc(
+        &mut self,
+        op: OpId,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+    ) -> Result<bool, SimError> {
+        let pool = self.alloc_ref(alloc)?.pool;
+        let ns = if let Some(p) = pool {
+            if self.pool_ref(p)?.device != device {
+                return Err(SimError::Invalid {
+                    why: "pool device mismatch",
+                });
+            }
+            self.pool_acquire(p, bytes)?
+        } else {
+            self.reserve_hbm(device, bytes)?;
+            self.profile.gpu(device)?.alloc_overhead_ns.max(1)
+        };
+        self.running.push(Running {
+            op,
+            remaining_ns: ns.max(1),
+            share: Share::Solo,
+        });
+        Ok(true)
+    }
+
+    fn start_free(&mut self, op: OpId, device: DeviceId, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc });
+        }
+        if !a.live || !a.devices.contains(&device) {
+            return Err(SimError::UnknownAlloc { alloc });
+        }
+        let bytes = a.bytes;
+        self.refund_device(device, alloc, bytes)?;
+        let a = self.alloc_mut(alloc)?;
+        a.devices.retain(|d| *d != device);
+        if a.devices.is_empty() && !a.host_pinned {
+            a.live = false;
+        }
+        self.running.push(Running {
+            op,
+            remaining_ns: 1,
+            share: Share::Solo,
+        });
+        Ok(true)
+    }
+
+    fn reserve_now(&mut self, device: DeviceId, bytes: u64) -> Result<AllocId, SimError> {
+        self.reserve_hbm(device, bytes)?;
+        let overhead = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
         self.clock = self.clock.saturating_add(overhead);
         let id = AllocId(self.next_alloc);
         self.next_alloc = self.next_alloc.saturating_add(1);
@@ -1174,6 +1429,7 @@ impl Sim {
                 leases: 0,
                 live: true,
                 host_pinned: false,
+                pool: None,
             },
         );
         Ok(id)
@@ -1229,54 +1485,8 @@ impl Sim {
             return Err(SimError::Unavailable { device });
         }
         match &op.kind {
-            Kind::Alloc { bytes, .. } => {
-                let bytes = *bytes;
-                let cap = self.profile.gpu(device)?.hbm_bytes;
-                let used = self.gpu_rt(device)?.used;
-                let free = cap.saturating_sub(used);
-                if bytes > free {
-                    return Err(SimError::Oom {
-                        device,
-                        need: bytes,
-                        free,
-                    });
-                }
-                let ns = self.profile.gpu(device)?.alloc_overhead_ns;
-                self.gpu_rt_mut(device)?.used = used.saturating_add(bytes);
-                let peak = self.gpu_rt(device)?.used;
-                if peak > self.hbm_peak {
-                    self.hbm_peak = peak;
-                }
-                self.running.push(Running {
-                    op: id,
-                    remaining_ns: ns.max(1),
-                    share: Share::Solo,
-                });
-                Ok(true)
-            }
-            Kind::Free { id: alloc } => {
-                let alloc = *alloc;
-                let a = self.alloc_ref(alloc)?;
-                if a.leases > 0 {
-                    return Err(SimError::Leased { alloc });
-                }
-                if !a.live || !a.devices.contains(&device) {
-                    return Err(SimError::UnknownAlloc { alloc });
-                }
-                let bytes = a.bytes;
-                self.gpu_rt_mut(device)?.used = self.gpu_rt(device)?.used.saturating_sub(bytes);
-                let a = self.alloc_mut(alloc)?;
-                a.devices.retain(|d| *d != device);
-                if a.devices.is_empty() && !a.host_pinned {
-                    a.live = false;
-                }
-                self.running.push(Running {
-                    op: id,
-                    remaining_ns: 1,
-                    share: Share::Solo,
-                });
-                Ok(true)
-            }
+            Kind::Alloc { id: alloc, bytes } => self.start_alloc(id, device, *alloc, *bytes),
+            Kind::Free { id: alloc } => self.start_free(id, device, *alloc),
             Kind::Kernel {
                 reads,
                 writes,
@@ -1760,4 +1970,29 @@ fn seed_peers(profile: &HardwareProfile) -> BTreeSet<(DeviceId, DeviceId)> {
         let _ba = out.insert((b, a));
     }
     out
+}
+
+fn seed_pools(
+    profile: &HardwareProfile,
+) -> (u32, BTreeMap<PoolId, Pool>, BTreeMap<DeviceId, PoolId>) {
+    let mut pools = BTreeMap::new();
+    let mut default_pools = BTreeMap::new();
+    let mut next_pool = 1u32;
+    for g in &profile.gpus {
+        let id = PoolId(next_pool);
+        next_pool = next_pool.saturating_add(1);
+        let replaced = pools.insert(
+            id,
+            Pool {
+                device: g.id,
+                live: 0,
+                cached: 0,
+                release_threshold: 0,
+            },
+        );
+        let _dup = replaced.is_some();
+        let replaced = default_pools.insert(g.id, id);
+        let _dup = replaced.is_some();
+    }
+    (next_pool, pools, default_pools)
 }

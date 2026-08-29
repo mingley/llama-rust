@@ -16,6 +16,14 @@
 //! buffer). [`Sim::memcpy_pinned_to_device`] is the overlapping DMA path.
 //! [`Sim::malloc`] / [`memcpy_sync`](Sim::memcpy_sync) / [`free_sync`](Sim::free_sync)
 //! are host-synchronous (`cudaMalloc` / `cudaMemcpy` / `cudaFree`).
+//! [`Sim::alloc`] draws from the device default mempool (`cudaMallocAsync`).
+//! [`Sim::create_pool`] / [`alloc_from_pool`](Sim::alloc_from_pool) /
+//! [`set_pool_release_threshold`](Sim::set_pool_release_threshold) /
+//! [`pool_trim_to`](Sim::pool_trim_to) are `cudaMemPoolCreate` /
+//! `cudaMallocFromPoolAsync` / `cudaMemPoolAttrReleaseThreshold` /
+//! `cudaMemPoolTrimTo`. Unused pool bytes stay in `cudaMemGetInfo` used until
+//! trim when the release threshold is high (`u64::MAX`, vLLM-style).
+//! [`Sim::malloc`] cannot consume another pool's cache.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
 //! [`Sim::query_event`] is `cudaEventQuery` (no wait).
@@ -34,7 +42,7 @@ mod score;
 mod sim;
 
 pub use error::SimError;
-pub use ids::{AllocId, DeviceId, EventId, GraphId, LinkId, OpId, StreamId};
+pub use ids::{AllocId, DeviceId, EventId, GraphId, LinkId, OpId, PoolId, StreamId};
 pub use ops::{DType, GpuOp, KernelKind, MemcpyOp, Operation, Place};
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -1280,6 +1288,19 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
             other => panic!("{other:?}"),
         }
+        match sim.create_pool(d) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
+        let pool = sim.default_pool(d).unwrap();
+        match sim.set_pool_release_threshold(pool, u64::MAX) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_trim_to(pool, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -1357,5 +1378,144 @@ mod tests {
             other => panic!("{other:?}"),
         }
         sim.free_host_pinned(h).unwrap();
+    }
+
+    #[test]
+    fn default_pool_threshold_zero_releases_hbm() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let p = sim.default_pool(d).unwrap();
+        let a = sim.alloc(d, 1 << 20, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.pool_live(p).unwrap(), 1 << 20);
+        sim.free(d, a, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        assert_eq!(sim.pool_cached(p).unwrap(), 0);
+        assert_eq!(sim.pool_live(p).unwrap(), 0);
+    }
+
+    #[test]
+    fn high_release_threshold_holds_hbm_until_trim() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let p = sim.default_pool(d).unwrap();
+        sim.set_pool_release_threshold(p, u64::MAX).unwrap();
+        let bytes = 1u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        sim.synchronize().unwrap();
+        let used = sim.hbm_used(d).unwrap();
+        sim.free(d, a, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), used);
+        assert_eq!(sim.pool_cached(p).unwrap(), bytes);
+        let b = sim.alloc(d, bytes, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), used);
+        assert_eq!(sim.pool_cached(p).unwrap(), 0);
+        sim.free(d, b, s).unwrap();
+        sim.synchronize().unwrap();
+        let dropped = sim.pool_trim_to(p, 0).unwrap();
+        assert_eq!(dropped, bytes);
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        assert_eq!(sim.pool_cached(p).unwrap(), 0);
+    }
+
+    #[test]
+    fn malloc_cannot_consume_pool_cache_until_trim() {
+        let mut sim = Sim::new(HardwareProfile::parse("gpus=1\nhbm_bytes=1048576\n").unwrap());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let p = sim.default_pool(d).unwrap();
+        sim.set_pool_release_threshold(p, u64::MAX).unwrap();
+        let a = sim.alloc(d, 1 << 20, s).unwrap();
+        sim.synchronize().unwrap();
+        sim.free(d, a, s).unwrap();
+        sim.synchronize().unwrap();
+        match sim.malloc(d, 4096) {
+            Err(SimError::Oom { .. }) => {}
+            other => panic!("{other:?}"),
+        }
+        let _n = sim.pool_trim_to(p, 0).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        assert!(sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn two_pools_do_not_share_cache() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let p1 = sim.create_pool(d).unwrap();
+        let p2 = sim.create_pool(d).unwrap();
+        sim.set_pool_release_threshold(p1, u64::MAX).unwrap();
+        sim.set_pool_release_threshold(p2, u64::MAX).unwrap();
+        let a = sim.alloc_from_pool(d, p1, 4096, s).unwrap();
+        sim.synchronize().unwrap();
+        sim.free(d, a, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.pool_cached(p1).unwrap(), 4096);
+        assert_eq!(sim.pool_cached(p2).unwrap(), 0);
+        let b = sim.alloc_from_pool(d, p2, 4096, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.pool_cached(p1).unwrap(), 4096);
+        assert_eq!(sim.pool_cached(p2).unwrap(), 0);
+        assert!(sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn pool_reuse_is_cheaper_than_os_alloc() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let run = |hold: bool| {
+            let mut sim = Sim::new(h100());
+            if hold {
+                sim.set_default_pool_release_threshold(u64::MAX).unwrap();
+            }
+            let a = sim.alloc(d, bytes, s).unwrap();
+            sim.synchronize().unwrap();
+            sim.free(d, a, s).unwrap();
+            let b = sim.alloc(d, bytes, s).unwrap();
+            sim.synchronize().unwrap();
+            assert!(sim.is_resident(b, d).unwrap());
+            sim.clock_ns()
+        };
+        assert!(
+            run(true) < run(false),
+            "cached cudaMallocFromPoolAsync must beat first-touch; hold={} release={}",
+            run(true),
+            run(false)
+        );
+    }
+
+    #[test]
+    fn alloc_from_pool_rejects_wrong_device() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let p0 = sim.default_pool(DeviceId(0)).unwrap();
+        match sim.alloc_from_pool(DeviceId(1), p0, 4096, StreamId(0)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mismatch")),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn replica_free_does_not_fill_dest_pool() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let p1 = sim.default_pool(d1).unwrap();
+        sim.set_pool_release_threshold(p1, u64::MAX).unwrap();
+        let a = sim.alloc(d0, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d0, a, 4096, s));
+        enq(sim.memcpy_device_to_device(d0, d1, a, 4096, s));
+        sim.synchronize().unwrap();
+        sim.free(d1, a, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.pool_cached(p1).unwrap(), 0);
+        assert_eq!(sim.hbm_used(d1).unwrap(), 0);
     }
 }

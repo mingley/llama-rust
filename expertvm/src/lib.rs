@@ -25,7 +25,7 @@ pub use analyze::{analyze, coactivation_counts, freq_table, mass_table, TraceSta
 pub use bench::{adversarial_suite, report, topology_suite, BenchReport};
 pub use error::Error;
 pub use gpu_sim::{
-    probe_topology, DeviceId, GpuOp, HardwareProfile, Operation, Score, TopologyProbe,
+    probe_topology, DeviceId, GpuOp, HardwareProfile, Operation, PoolId, Score, TopologyProbe,
 };
 pub use gpu_store::SimulatedGpuStore;
 pub use live::LiveStore;
