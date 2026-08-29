@@ -25,6 +25,8 @@ pub struct BenchReport {
     pub overlap: Option<String>,
     /// Serial vs `--cuda-graphs` on the same LRU config.
     pub graphs: Option<String>,
+    /// Stream-ordered `alloc` vs host-sync `malloc` on the same LRU config.
+    pub malloc: Option<String>,
     /// Closed-loop `schedule-all` vs `schedule-1` when the trace has >1 sequence.
     pub schedule: Option<String>,
     /// Unchunked vs `--prefill-chunk 1` when a first token has more than one layer.
@@ -54,6 +56,10 @@ impl BenchReport {
         }
         if let Some(g) = &self.graphs {
             s.push_str(g);
+            s.push('\n');
+        }
+        if let Some(m) = &self.malloc {
+            s.push_str(m);
             s.push('\n');
         }
         if let Some(sch) = &self.schedule {
@@ -93,6 +99,7 @@ pub fn report(
     let mut sim = None;
     let mut overlap = None;
     let mut graphs = None;
+    let mut malloc = None;
     let mut schedule = None;
     let mut chunk = None;
     let mut decode = None;
@@ -103,6 +110,7 @@ pub fn report(
         sim = Some(lines.serial);
         overlap = lines.overlap;
         graphs = lines.graphs;
+        malloc = lines.malloc;
         schedule = lines.schedule;
         chunk = lines.chunk;
         decode = lines.decode;
@@ -116,6 +124,7 @@ pub fn report(
         sim,
         overlap,
         graphs,
+        malloc,
         schedule,
         chunk,
         decode,
@@ -128,6 +137,7 @@ struct SimLines {
     serial: String,
     overlap: Option<String>,
     graphs: Option<String>,
+    malloc: Option<String>,
     schedule: Option<String>,
     chunk: Option<String>,
     decode: Option<String>,
@@ -155,11 +165,19 @@ fn sim_lines(
     let lines = schedule_compare(trace, profile.clone(), base)?;
     let mut graphed = base;
     graphed.cuda_graphs = true;
-    let g = sim_replay_cfg(trace, profile, graphed)?;
+    let g = sim_replay_cfg(trace, profile.clone(), graphed)?;
+    let mut malloced = base;
+    malloced.sync_alloc = true;
+    let mal = sim_replay_cfg(trace, profile, malloced)?;
     Ok(SimLines {
         serial: serial.line(),
         overlap,
         graphs: Some(format!("serial {} | graphs {}", serial.line(), g.line())),
+        malloc: Some(format!(
+            "sim-async {} | sim-malloc {}",
+            serial.line(),
+            mal.line()
+        )),
         schedule: lines.schedule,
         chunk: lines.chunk,
         decode: lines.decode,

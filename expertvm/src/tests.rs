@@ -498,6 +498,49 @@ fn seq_streams_overlap_beats_serial_on_batch_token() {
 }
 
 #[test]
+fn sync_alloc_cannot_overlap_misses_across_streams() {
+    let t = Trace {
+        events: vec![
+            ExpertAccess {
+                sequence: 0,
+                token: 0,
+                layer: 0,
+                experts: vec![0],
+                weight_pt: Vec::new(),
+                prefix: None,
+            },
+            ExpertAccess {
+                sequence: 1,
+                token: 0,
+                layer: 0,
+                experts: vec![1],
+                weight_pt: Vec::new(),
+                prefix: None,
+            },
+        ],
+    };
+    let p = HardwareProfile::parse("gpus=1\ncopy_engines=1\n").expect("profile");
+    let cfg = |sync_alloc: bool| SimCfg {
+        slots: 2,
+        bytes_per_expert: 32u64 << 20,
+        lookahead: 0,
+        seq_streams: true,
+        sync_alloc,
+        ..SimCfg::lru(2, 32u64 << 20, 0)
+    };
+    let async_row = sim_replay_cfg(&t, p.clone(), cfg(false)).expect("async");
+    let sync_row = sim_replay_cfg(&t, p, cfg(true)).expect("sync");
+    assert_eq!(async_row.hits, sync_row.hits);
+    assert_eq!(async_row.misses, sync_row.misses);
+    assert!(
+        sync_row.sim_ns > async_row.sim_ns,
+        "cudaMalloc must serialize the two-stream miss; sync={} async={}",
+        sync_row.sim_ns,
+        async_row.sim_ns
+    );
+}
+
+#[test]
 fn max_batch_serializes_sequences_at_a_token() {
     let t = Trace {
         events: vec![

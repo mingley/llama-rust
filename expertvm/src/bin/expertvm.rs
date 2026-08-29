@@ -16,8 +16,8 @@ const USAGE: &str = "\
 usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
-  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N]
-  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N]
+  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc]
+  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
@@ -69,23 +69,8 @@ fn run() -> Result<(), String> {
             print_replay(&trace, cfg.capacity, cfg.lookahead)?;
             let profile = load_profile(&cfg.profile)?;
             let prefetch = Prefetch::parse(&cfg.prefetch).map_err(|e| e.to_string())?;
-            let row = sim_replay_cfg(
-                &trace,
-                profile,
-                SimCfg {
-                    slots: cfg.capacity,
-                    policy: Policy::Lru,
-                    bytes_per_expert: cfg.expert_bytes,
-                    lookahead: cfg.lookahead,
-                    prefetch,
-                    seq_streams: cfg.seq_streams,
-                    cuda_graphs: cfg.cuda_graphs,
-                    plan_window: cfg.plan_window,
-                    plan_threshold: cfg.plan_threshold,
-                    max_batch: cfg.max_batch,
-                },
-            )
-            .map_err(|e| e.to_string())?;
+            let row = sim_replay_cfg(&trace, profile, sim_cfg_from(&cfg, prefetch, cfg.max_batch))
+                .map_err(|e| e.to_string())?;
             println!("{}", row.line());
             Ok(())
         }
@@ -116,6 +101,7 @@ struct Cfg {
     plan_window: usize,
     plan_threshold: u32,
     max_batch: usize,
+    sync_alloc: bool,
     interarrival_ns: u64,
     ttft_slo_ns: Option<u64>,
     itl_slo_ns: Option<u64>,
@@ -149,6 +135,7 @@ where
     let mut prefetch = String::from("none");
     let mut seq_streams = false;
     let mut cuda_graphs = false;
+    let mut sync_alloc = false;
     let mut plan_window = 0usize;
     let mut plan_threshold = 500u32;
     let mut max_batch = 0usize;
@@ -197,6 +184,9 @@ where
             }
             "--cuda-graphs" => {
                 cuda_graphs = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
+            "--sync-alloc" => {
+                sync_alloc = !matches!(inline.as_deref(), Some("0" | "false"));
             }
             "--plan-window" => {
                 plan_window = parse_usize("plan-window", &value("plan-window", inline, &mut it)?)?
@@ -265,6 +255,7 @@ where
         plan_window,
         plan_threshold,
         max_batch,
+        sync_alloc,
         interarrival_ns,
         ttft_slo_ns,
         itl_slo_ns,
@@ -274,6 +265,22 @@ where
         prefix_cache,
         place,
     })
+}
+
+fn sim_cfg_from(cfg: &Cfg, prefetch: Prefetch, max_batch: usize) -> SimCfg {
+    SimCfg {
+        slots: cfg.capacity,
+        policy: Policy::Lru,
+        bytes_per_expert: cfg.expert_bytes,
+        lookahead: cfg.lookahead,
+        prefetch,
+        seq_streams: cfg.seq_streams,
+        cuda_graphs: cfg.cuda_graphs,
+        plan_window: cfg.plan_window,
+        plan_threshold: cfg.plan_threshold,
+        max_batch,
+        sync_alloc: cfg.sync_alloc,
+    }
 }
 
 fn value<I>(name: &str, inline: Option<String>, it: &mut I) -> Result<String, String>
@@ -513,18 +520,7 @@ where
     let profile = load_profile(&cfg.profile)?;
     let prefetch = Prefetch::parse(&cfg.prefetch).map_err(|e| e.to_string())?;
     let n_gpus = u16::try_from(profile.n_gpus()).unwrap_or(1).max(1);
-    let sim_cfg = SimCfg {
-        slots: cfg.capacity,
-        policy: Policy::Lru,
-        bytes_per_expert: cfg.expert_bytes,
-        lookahead: cfg.lookahead,
-        prefetch,
-        seq_streams: cfg.seq_streams,
-        cuda_graphs: cfg.cuda_graphs,
-        plan_window: cfg.plan_window,
-        plan_threshold: cfg.plan_threshold,
-        max_batch: 0,
-    };
+    let sim_cfg = sim_cfg_from(&cfg, prefetch, 0);
     let sched = SchedCfg {
         max_batch: cfg.max_batch,
         interarrival_ns: cfg.interarrival_ns,

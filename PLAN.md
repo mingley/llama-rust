@@ -560,7 +560,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `query_stream` is `cudaStreamQuery`. `mem_info` is `cudaMemGetInfo`.
   `plan_window` Stay vs Fetch gates prefetch
   in the GPU loop (`--plan-window N`). `prefetch_hits` / `prefetch_waste`
-  measure whether those fills were used. `memset`, directed peer enable, and
+  measure whether those fills were used. `--sync-alloc` is host-sync
+  `cudaMalloc`/`cudaMemcpy`/`cudaFree` on miss (`Sim::malloc`); default
+  `sim`/`schedule` stay on `cudaMallocAsync`. `memset`, directed peer enable, and
   the legacy null stream are mechanical CUDA invariants.
   `synchronize_stream` / `synchronize_event` / `synchronize_device` are
   `cudaStreamSynchronize` / `cudaEventSynchronize` / `cudaDeviceSynchronize`. `event_elapsed_ns` is `cudaEventElapsedTime` in

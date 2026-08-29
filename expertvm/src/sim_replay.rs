@@ -10,7 +10,8 @@ use crate::planner::{
 use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
 use gpu_sim::{
-    AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelKind, Score, Sim, StreamId,
+    AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelKind, MemcpyOp, Place,
+    Score, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -108,6 +109,12 @@ pub struct SimCfg {
     /// Sequences admitted per engine iteration at a token. `0` admits every
     /// sequence that shares the current token (one drain at the token boundary).
     pub max_batch: usize,
+    /// Host-synchronous `cudaMalloc` / `cudaMemcpy` / `cudaFree` on every miss.
+    ///
+    /// Default is stream-ordered `alloc` / `memcpy` / `free` (`cudaMallocAsync`).
+    /// A naive engine that uses the sync path cannot overlap a miss with other
+    /// streams on that GPU. [`crate::SimulatedGpuStore`] stays on the async path.
+    pub sync_alloc: bool,
 }
 
 impl SimCfg {
@@ -125,6 +132,7 @@ impl SimCfg {
             plan_window: 0,
             plan_threshold: 500,
             max_batch: 0,
+            sync_alloc: false,
         }
     }
 }
@@ -171,6 +179,7 @@ pub fn sim_replay_cfg(
         s,
         bytes,
         slots: cfg.slots,
+        sync_alloc: cfg.sync_alloc,
     };
     let mut token_ends: Vec<u64> = Vec::new();
     let mut ctr = ReplayCounters::default();
@@ -259,6 +268,47 @@ pub(crate) struct TouchArgs {
     pub s: StreamId,
     pub bytes: u64,
     pub slots: usize,
+    /// [`SimCfg::sync_alloc`]: `malloc` / `memcpy_sync` / `free_sync`.
+    pub sync_alloc: bool,
+}
+
+fn hbm_alloc(
+    sim: &mut Sim,
+    device: DeviceId,
+    bytes: u64,
+    stream: StreamId,
+    sync: bool,
+) -> Result<AllocId, Error> {
+    if sync {
+        Ok(sim.malloc(device, bytes)?)
+    } else {
+        Ok(sim.alloc(device, bytes, stream)?)
+    }
+}
+
+fn hbm_h2d_pinned(
+    sim: &mut Sim,
+    device: DeviceId,
+    alloc: AllocId,
+    bytes: u64,
+    stream: StreamId,
+    sync: bool,
+) -> Result<(), Error> {
+    if sync {
+        let _id = sim.memcpy_sync(
+            device,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(device),
+                alloc,
+                bytes,
+            },
+            stream,
+        )?;
+    } else {
+        let _c = sim.memcpy_pinned_to_device(device, alloc, bytes, stream)?;
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Default)]
@@ -339,14 +389,13 @@ pub(crate) fn apply_touch(
         Touch::Hit => Ok(()),
         Touch::Miss { evicted } => {
             if let Some(v) = evicted {
-                reclaim_victim(sim, handles, graphs, args.d, v, next_event)?;
+                reclaim_victim(sim, handles, graphs, args, v, next_event)?;
             }
             if args.slots == 0 {
                 return Ok(());
             }
-            // Stream-ordered `cudaMallocAsync` (not host-sync `malloc`).
-            let id = sim.alloc(args.d, args.bytes, args.s)?;
-            let _c = sim.memcpy_pinned_to_device(args.d, id, args.bytes, args.s)?;
+            let id = hbm_alloc(sim, args.d, args.bytes, args.s, args.sync_alloc)?;
+            hbm_h2d_pinned(sim, args.d, id, args.bytes, args.s, args.sync_alloc)?;
             let _prev = handles.insert(
                 key,
                 PageHandle {
@@ -366,24 +415,24 @@ pub(crate) fn reclaim_victim(
     sim: &mut Sim,
     handles: &mut BTreeMap<ExpertKey, PageHandle>,
     graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
-    device: DeviceId,
+    args: TouchArgs,
     victim: ExpertKey,
     next_event: &mut u32,
 ) -> Result<(), Error> {
     let home = handles.get(&victim).map(|p| p.device);
     match home {
         None => Ok(()),
-        Some(h) if h == device => {
+        Some(h) if h == args.d => {
             let Some(page) = handles.remove(&victim) else {
                 return Ok(());
             };
-            drop_handle(sim, graphs, page, next_event)
+            drop_handle(sim, graphs, page, next_event, args.sync_alloc)
         }
         Some(_) => {
             let Some(page) = handles.get_mut(&victim) else {
                 return Ok(());
             };
-            drop_replica(sim, page, device, next_event)
+            drop_replica(sim, page, args.d, next_event)
         }
     }
 }
@@ -393,8 +442,14 @@ fn drop_handle(
     graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
     page: PageHandle,
     next_event: &mut u32,
+    sync: bool,
 ) -> Result<(), Error> {
     drop_graphs(graphs, page.id);
+    if sync {
+        // cudaFree: one host call, every device copy is gone.
+        sim.free_sync(page.id)?;
+        return Ok(());
+    }
     for dst in &page.replicas {
         if *dst == page.device {
             continue;
@@ -735,7 +790,7 @@ pub fn sim_remote_home_cfg(
             let reuse = *n;
             if let Some(page) = pages.get(&key).copied() {
                 hits = hits.saturating_add(1);
-                let page = remote_hit(&mut sim, page, compute, act, s, &mut next_event)?;
+                let page = remote_hit(&mut sim, page, compute, act, s, &mut next_event, false)?;
                 let _prev = pages.insert(key, page);
             } else {
                 misses = misses.saturating_add(1);
@@ -748,6 +803,7 @@ pub fn sim_remote_home_cfg(
                         expert_bytes: bytes,
                         act_bytes: act,
                         stream: s,
+                        sync_alloc: false,
                     },
                     reuse,
                     fan_in,
@@ -789,6 +845,7 @@ pub(crate) struct RemoteFetch {
     pub(crate) expert_bytes: u64,
     pub(crate) act_bytes: u64,
     pub(crate) stream: StreamId,
+    pub(crate) sync_alloc: bool,
 }
 
 pub(crate) fn remote_hit(
@@ -798,11 +855,12 @@ pub(crate) fn remote_hit(
     act_bytes: u64,
     stream: StreamId,
     next_event: &mut u32,
+    sync: bool,
 ) -> Result<RemotePage, Error> {
     if page.home != compute && page.gemm == page.home {
         let act = match page.act {
             Some(a) => a,
-            None => sim.alloc(compute, act_bytes, stream)?,
+            None => hbm_alloc(sim, compute, act_bytes, stream, sync)?,
         };
         ship_act(sim, compute, page.home, act, act_bytes, stream, next_event)?;
         kernel(sim, page.home, stream, page.id)?;
@@ -825,8 +883,21 @@ pub(crate) fn fill_remote(
     fan_in: u64,
     next_event: &mut u32,
 ) -> Result<RemotePage, Error> {
-    let id = sim.alloc(fetch.home, fetch.expert_bytes, fetch.stream)?;
-    let _c = sim.memcpy_pinned_to_device(fetch.home, id, fetch.expert_bytes, fetch.stream)?;
+    let id = hbm_alloc(
+        sim,
+        fetch.home,
+        fetch.expert_bytes,
+        fetch.stream,
+        fetch.sync_alloc,
+    )?;
+    hbm_h2d_pinned(
+        sim,
+        fetch.home,
+        id,
+        fetch.expert_bytes,
+        fetch.stream,
+        fetch.sync_alloc,
+    )?;
     if fetch.home == fetch.compute {
         return Ok(RemotePage {
             id,
@@ -875,17 +946,26 @@ pub(crate) fn fetch_remote(
     let compute = fetch.compute;
     let act = fetch.act_bytes;
     let stream = fetch.stream;
+    let sync = fetch.sync_alloc;
     let page = fill_remote(sim, fetch, reuse, fan_in, next_event)?;
-    remote_hit(sim, page, compute, act, stream, next_event)
+    remote_hit(sim, page, compute, act, stream, next_event, sync)
 }
 
-/// Stream-ordered free of a remote expert page (weights on home/compute, optional act).
+/// Free a remote expert page (weights on home/compute, optional act).
 pub(crate) fn drop_remote(
     sim: &mut Sim,
     page: RemotePage,
     compute: DeviceId,
     stream: StreamId,
+    sync: bool,
 ) -> Result<(), Error> {
+    if sync {
+        sim.free_sync(page.id)?;
+        if let Some(act) = page.act {
+            sim.free_sync(act)?;
+        }
+        return Ok(());
+    }
     if page.gemm != page.home {
         sim.free(page.gemm, page.id, stream)?;
     }

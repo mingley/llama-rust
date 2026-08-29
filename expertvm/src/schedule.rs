@@ -292,6 +292,7 @@ impl SchedRt {
                 s: StreamId(0),
                 bytes,
                 slots: cfg.slots,
+                sync_alloc: cfg.sync_alloc,
             },
             sim,
             handles: BTreeMap::new(),
@@ -324,6 +325,12 @@ impl SchedRt {
     fn args_for(&self, key: ExpertKey) -> TouchArgs {
         let mut a = self.args;
         a.d = self.home(key);
+        a
+    }
+
+    fn args_on(&self, device: DeviceId) -> TouchArgs {
+        let mut a = self.args;
+        a.d = device;
         a
     }
 
@@ -362,7 +369,7 @@ impl SchedRt {
             if let Touch::Miss { evicted: Some(v) } = touch {
                 self.forget_peer_if_home_dropped(v);
             }
-            if matches!(touch, Touch::Miss { .. }) {
+            if matches!(touch, Touch::Miss { .. }) && !self.cfg.sync_alloc {
                 self.replicate_key(*key)?;
             }
         }
@@ -416,7 +423,9 @@ impl SchedRt {
                     if let Touch::Miss { evicted: Some(v) } = miss {
                         self.forget_peer_if_home_dropped(v);
                     }
-                    self.replicate_key(key)?;
+                    if !self.cfg.sync_alloc {
+                        self.replicate_key(key)?;
+                    }
                 }
             }
         }
@@ -443,7 +452,13 @@ impl SchedRt {
                     let _ins = self.prefetched.insert(key);
                     if let Some(v) = evicted {
                         if let Some(page) = self.remotes.remove(&v) {
-                            drop_remote(&mut self.sim, page, compute, self.args.s)?;
+                            drop_remote(
+                                &mut self.sim,
+                                page,
+                                compute,
+                                self.args.s,
+                                self.cfg.sync_alloc,
+                            )?;
                         }
                     }
                     if self.args.slots == 0 {
@@ -461,6 +476,7 @@ impl SchedRt {
                             expert_bytes: bytes,
                             act_bytes: act,
                             stream,
+                            sync_alloc: self.cfg.sync_alloc,
                         },
                         reuse,
                         fan_in,
@@ -500,13 +516,20 @@ impl SchedRt {
                         act,
                         self.args.s,
                         &mut self.next_event,
+                        self.cfg.sync_alloc,
                     )?;
                     let _prev = self.remotes.insert(*key, page);
                 }
                 Touch::Miss { evicted } => {
                     if let Some(v) = evicted {
                         if let Some(page) = self.remotes.remove(&v) {
-                            drop_remote(&mut self.sim, page, compute, self.args.s)?;
+                            drop_remote(
+                                &mut self.sim,
+                                page,
+                                compute,
+                                self.args.s,
+                                self.cfg.sync_alloc,
+                            )?;
                         }
                     }
                     if self.args.slots == 0 {
@@ -523,6 +546,7 @@ impl SchedRt {
                             expert_bytes: bytes,
                             act_bytes: act,
                             stream,
+                            sync_alloc: self.cfg.sync_alloc,
                         },
                         reuse,
                         fan_in,
@@ -561,12 +585,13 @@ impl SchedRt {
                 continue;
             }
             let touch = self.walker_mut(dst).prefetch_touch(key);
+            let args = self.args_on(dst);
             if let Touch::Miss { evicted: Some(v) } = touch {
                 reclaim_victim(
                     &mut self.sim,
                     &mut self.handles,
                     &mut self.graphs,
-                    dst,
+                    args,
                     v,
                     &mut self.next_event,
                 )?;
@@ -621,11 +646,12 @@ impl SchedRt {
             let Some(v) = self.walker_mut(device).evict_one() else {
                 return Ok(());
             };
+            let args = self.args_on(device);
             reclaim_victim(
                 &mut self.sim,
                 &mut self.handles,
                 &mut self.graphs,
-                device,
+                args,
                 v,
                 &mut self.next_event,
             )?;
@@ -664,7 +690,7 @@ impl SchedRt {
                 return Ok(());
             };
             if let Some(page) = self.remotes.remove(&v) {
-                drop_remote(&mut self.sim, page, compute, stream)?;
+                drop_remote(&mut self.sim, page, compute, stream, self.cfg.sync_alloc)?;
             }
             steps = steps.saturating_add(1);
             if steps > cap {

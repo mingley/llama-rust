@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — `--sync-alloc` measures naive cudaMalloc
+
+`SimCfg::sync_alloc` / `expertvm sim --sync-alloc` uses `malloc` /
+`memcpy_sync` / `free_sync` on every miss so a two-stream batch cannot
+overlap H2D. Default `sim`/`schedule` and `SimulatedGpuStore` stay on
+`cudaMallocAsync`. `expertvm bench` prints `sim-async` vs `sim-malloc`.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — host-sync `cudaMalloc` / `cudaFree` / `cudaMemcpy`
 
 `Sim::alloc` / `free` / `memcpy` stay stream-ordered (`cudaMallocAsync` /
@@ -13,8 +21,9 @@ Work lands on `main`. No PRs.
 GPU (`synchronize_device` = `cudaDeviceSynchronize`) then the pointer is
 usable and OOM is at the call; `free_sync` waits every GPU that holds the
 id; `memcpy_sync` waits that stream. Capture refuses all four plus
-`synchronize_device`. `SimulatedGpuStore` / `sim_replay` keep using
-`alloc` so a miss does not device-sync. Dual score still has no
+`synchronize_device`. Default `sim_replay` / `SimulatedGpuStore` keep
+using `alloc` so a miss does not device-sync (`--sync-alloc` opts into
+the naive path). Dual score still has no
 `$/M tokens`.
 
 ## Shipped 2026-08-29 — remote prefetch fills `RemotePage` only
