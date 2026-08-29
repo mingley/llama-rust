@@ -678,7 +678,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `sim`/`schedule` / `SimulatedGpuStore::new` stay on `cudaMallocAsync`.
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-clone`, `--graph-build`, `--graph-mem`, `--graph-auto-free`, and `--timing-events`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-clone`, `--graph-build`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, and `--cooperative`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--mapped` is `cudaHostAllocMapped`
   (no H2D, PCIe kernels, HBM unused; walker slots also cap at
@@ -1151,6 +1151,14 @@ model, do not celebrate the sim.
     `--graph-mem` (CUDA cannot AutoFree a graph that has mem free nodes).
     `--graph-update` is skipped. Implies `--cuda-graphs` on the walker. Decode
     identity stays kernel-only graphs. Dual score still has no `$/M tokens`.
+78. [x] `cudaLaunchCooperativeKernel`: `Sim::cooperative_kernel` /
+    `graph_add_cooperative_kernel` occupy every Hyper-Q
+    [`GpuProfile::compute_slots`] so leftover kernels cannot overlap (CUDA
+    `cudaDevAttrCooperativeLaunch`; example H100 is true). Capture is allowed
+    (CUDA 11+). `--cooperative` on `expertvm sim` / `schedule` / `store`,
+    `gguf_gemv engine` / `serve --engine --expert-sim`, and `infer-bench
+    schedule` launches grouped GEMMs that way. Decode identity stays
+    `cudaLaunchKernel`. Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

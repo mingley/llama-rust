@@ -82,7 +82,10 @@ token (`ttft_ns`, mean `itl_ns`); a batch of sequences at the same token is
 one sample. `--seq-streams` maps `sequence % n_streams` onto CUDA streams so
 those copies can overlap. `--compute-slots N` (`N>=2`) is Hyper-Q occupancy
 so independent sequence GEMMs on those streams overlap at full issue rate
-(default profile `1` is exclusive). `--decode-sms N` (`1..=1000`) is a
+(default profile `1` is exclusive). `--cooperative` is
+`cudaLaunchCooperativeKernel`: GEMMs occupy every Hyper-Q slot, so
+independent sequences cannot overlap even with `--compute-slots 2`.
+`--decode-sms N` (`1..=1000`) is a
 green-context SM fraction on every replay stream (compute-bound kernels
 scale; memory-bound keep full HBM; default unset is a full chip). `--sync-alloc` uses host-sync `cudaMalloc` /
 `cudaMemcpy` / `cudaFree` on every miss (`Sim::malloc`); the default is
@@ -126,7 +129,7 @@ mapped experts (`PinOom` only when even one expert cannot lock). `SimulatedGpuSt
 uses the same occupancy cap (pageable staging so construction does not steal mlock). `SimulatedGpuStore::new`
 stays on the async H2D path with CUDA's default threshold (`0`), non-blocking
 streams, and `cudaEventDisableTiming` copy events. `with_cfg` opts into the
-`sim` knobs (`host_func`, blocking compute, `sync_alloc`, mempool, `vmm_page`, pageable H2D, AccessedBy, legacy NULL, stream priority, `graph_update`, `graph_clone`, `graph_build`, `graph_mem`, `graph_auto_free`, `timing_events`). `--max-batch N` admits N sequences per engine
+`sim` knobs (`host_func`, blocking compute, `sync_alloc`, mempool, `vmm_page`, pageable H2D, AccessedBy, legacy NULL, stream priority, `graph_update`, `graph_clone`, `graph_build`, `graph_mem`, `graph_auto_free`, `timing_events`, `cooperative`). `--max-batch N` admits N sequences per engine
 iteration at a token (`0` = the whole token) and still samples TTFT once.
 `--cuda-graphs` captures a leaf GEMM per resident expert alloc, instantiates
 it, then a parent of `launch_graph` child nodes for a grouped launch
@@ -178,10 +181,10 @@ on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` /
 `--seq-streams` / `--kv-sim` / `--kv-bytes` / `--decode-priority` /
-`--compute-slots` / `--decode-sms` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
+`--cooperative` / `--compute-slots` / `--decode-sms` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
 `expertvm sim` / `schedule` / `store` take `--compute-slots` / `--decode-sms`
-/ `--decode-priority` (Hyper-Q occupancy, green-context SM fraction, and
-decode-stream ITL on the trace walker). Walker `--decode-sms` does **not**
+/ `--decode-priority` / `--cooperative` (Hyper-Q occupancy, green-context SM fraction,
+decode-stream ITL, and exclusive cooperative GEMMs on the trace walker). Walker `--decode-sms` does **not**
 imply `--decode-priority` (token 0 is prefill). `--decode-priority` implies
 `--stream-priority` so leftover prefill does not inflate decode ITL.
 `gguf_gemv engine --expert-sim --kv-sim` maps interned KV onto that Sim
@@ -190,7 +193,9 @@ imply `--decode-priority` (token 0 is prefill). `--decode-priority` implies
 second compute stream at higher CUDA priority than leftover prefill.
 Token-boundary ITL samples that decode stream (leftover prefill stays in
 flight). `--compute-slots N` (`N>=2`) is Hyper-Q occupancy so those two
-streams' GEMMs overlap at full issue rate. `--decode-sms N` (`1..=1000`)
+streams' GEMMs overlap at full issue rate. `--cooperative` is
+`cudaLaunchCooperativeKernel`: those GEMMs occupy every Hyper-Q slot, so
+leftover prefill cannot overlap even with `--compute-slots 2`. `--decode-sms N` (`1..=1000`)
 is a green-context SM fraction on the decode stream (leftover prefill gets
 the remainder; implies `--decode-priority`). Default `--expert-sim` keeps
 one compute stream, exclusive compute (`compute_slots=1`), a full chip of
@@ -307,7 +312,7 @@ expertvm store    trace.jsonl --capacity 2 --vmm --accessed-by --profile 8xh100
 expertvm store    trace.jsonl --capacity 2 --accessed-by --profile 8xh100
 expertvm store    trace.jsonl --capacity 2 --legacy-null
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --stream-priority
-expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 2 --decode-sms 250
+expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 2 --cooperative
 expertvm schedule trace.jsonl --capacity 8 --prefill-chunk 1 --decode-priority --compute-slots 2
 expertvm sim      trace.jsonl --capacity 2 --managed --accessed-by --profile 2xh100-pcie
 gpu-profile probe 2xh100-pcie --bytes 1048576

@@ -11,6 +11,10 @@
 //! (`cudaStreamSynchronize`); an already-idle stream returns without starting
 //! leftover kernels on other streams. [`GpuProfile::compute_slots`] is Hyper-Q
 //! occupancy (`1` exclusive; `>=2` concurrent kernels at full issue rate).
+//! [`Sim::cooperative_kernel`] is `cudaLaunchCooperativeKernel`: it occupies
+//! every compute slot so leftover kernels cannot Hyper-Q overlap it. Capture is
+//! allowed (CUDA 11+). [`GpuProfile::cooperative_launch`] is
+//! `cudaDevAttrCooperativeLaunch` (example H100 is true).
 //! [`Sim::set_stream_sm_permille`] is a green-context SM fraction (compute-bound
 //! kernels scale; memory-bound keep full HBM). Default unset is a full chip.
 //! [`Sim::synchronize_device`] is `cudaDeviceSynchronize` (one GPU).
@@ -103,7 +107,9 @@
 //! [`graph_add_event_wait`](Sim::graph_add_event_wait) /
 //! [`graph_add_child`](Sim::graph_add_child) /
 //! [`graph_add_alloc`](Sim::graph_add_alloc) /
-//! [`graph_add_free`](Sim::graph_add_free) are `cudaGraphAdd*` on that id.
+//! [`graph_add_free`](Sim::graph_add_free) /
+//! [`graph_add_cooperative_kernel`](Sim::graph_add_cooperative_kernel) are
+//! `cudaGraphAdd*` on that id.
 //! Illegal after instantiate and during capture.
 //! [`Sim::graph_add_alloc`] / [`graph_add_free`](Sim::graph_add_free) are
 //! `cudaGraphAddMemAllocNode` / `cudaGraphAddMemFreeNode` (same reuse /
@@ -1650,6 +1656,90 @@ mod tests {
             2,
             "two Hyper-Q slots must start both ready kernels; started={started:?}"
         );
+    }
+
+    #[test]
+    fn cooperative_kernel_occupies_all_compute_slots() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |coop_second: bool| {
+            let mut sim = Sim::new(h100().with_compute_slots(2));
+            let d = DeviceId(0);
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+            if coop_second {
+                enq(sim.cooperative_kernel(d, kind.clone(), &[a], &[a], StreamId(2)));
+            } else {
+                enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(2)));
+            }
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let overlap = run(false);
+        let serial = run(true);
+        assert!(
+            overlap < serial,
+            "cooperative must not Hyper-Q overlap leftover; overlap={overlap} serial={serial}"
+        );
+    }
+
+    #[test]
+    fn cooperative_kernel_rejects_unsupported_device() {
+        let mut sim = Sim::new(h100().with_cooperative_launch(false));
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        match sim.cooperative_kernel(d, KernelKind::other(8, 8), &[a], &[a], s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cooperative launch not supported"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let g = sim.create_graph(d, s).unwrap();
+        match sim.graph_add_cooperative_kernel(g, KernelKind::other(8, 8), &[a], &[a]) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cooperative launch not supported"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn cooperative_kernel_capture_and_graph_add() {
+        let kind = KernelKind::other(8, 8);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let mut cap = Sim::new(h100());
+        let a = cap.alloc(d, 4096, s).unwrap();
+        enq(cap.memcpy_pinned_to_device(d, a, 4096, s));
+        cap.synchronize().unwrap();
+        cap.begin_capture(d, s).unwrap();
+        enq(cap.cooperative_kernel(d, kind.clone(), &[a], &[], s));
+        let g = cap.end_capture().unwrap();
+        let n = cap.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        cap.synchronize().unwrap();
+        let coop = cap
+            .operations()
+            .any(|o| matches!(o.kind, GpuOp::Kernel { cooperative: true, .. }));
+        assert!(coop, "captured cooperative kernel");
+
+        let mut built = Sim::new(h100());
+        let b = built.alloc(d, 4096, s).unwrap();
+        enq(built.memcpy_pinned_to_device(d, b, 4096, s));
+        built.synchronize().unwrap();
+        let h = built.create_graph(d, s).unwrap();
+        built
+            .graph_add_cooperative_kernel(h, kind, &[b], &[])
+            .unwrap();
+        built.instantiate_graph(h).unwrap();
+        let n = built.launch_graph(h, s).unwrap();
+        assert_eq!(n, 1);
+        built.synchronize().unwrap();
     }
 
     #[test]

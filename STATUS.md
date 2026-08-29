@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — `cudaLaunchCooperativeKernel`
+
+`Sim::cooperative_kernel` / `graph_add_cooperative_kernel` are
+`cudaLaunchCooperativeKernel`. A cooperative grid occupies every Hyper-Q
+compute slot, so leftover prefill cannot overlap decode the way `--compute-slots
+2` can. Capture is allowed (CUDA 11+). `--cooperative` is opt-in on the walker,
+Engine, serve, and infer-bench schedule. Decode identity stays
+`cudaLaunchKernel`. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — `--graph-auto-free` (AutoFreeOnLaunch)
 
 `--graph-auto-free` records leaf GEMM scratch without a matching free and

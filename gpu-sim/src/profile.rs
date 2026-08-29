@@ -30,6 +30,12 @@ pub struct GpuProfile {
     /// `1` keeps exclusive compute so stream priority serializes leftover
     /// prefill behind decode. Example profiles stay `1` (not a capture).
     pub compute_slots: u8,
+    /// `cudaDevAttrCooperativeLaunch`. Example H100 is true (not a capture).
+    ///
+    /// [`crate::Sim::cooperative_kernel`] fails `cooperative launch not
+    /// supported` when this is false. A cooperative kernel occupies every
+    /// [`Self::compute_slots`] so it cannot Hyper-Q overlap leftover work.
+    pub cooperative_launch: bool,
     /// Kernel launch overhead, nanoseconds.
     pub launch_overhead_ns: u64,
     /// `cudaGraphLaunch` overhead, nanoseconds. Paid once per graph launch, not
@@ -209,6 +215,15 @@ impl HardwareProfile {
         let n = slots.max(1);
         for g in &mut self.gpus {
             g.compute_slots = n;
+        }
+        self
+    }
+
+    /// `cudaDevAttrCooperativeLaunch` on every GPU.
+    #[must_use]
+    pub fn with_cooperative_launch(mut self, yes: bool) -> Self {
+        for g in &mut self.gpus {
+            g.cooperative_launch = yes;
         }
         self
     }
@@ -403,7 +418,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -412,6 +427,7 @@ impl HardwareProfile {
             self.host_bps(g0.id),
             g0.copy_engines,
             g0.compute_slots,
+            u8::from(g0.cooperative_launch),
             g0.tdp_mw,
             g0.launch_overhead_ns,
             g0.graph_launch_ns,
@@ -519,6 +535,7 @@ fn h100_gpu(id: DeviceId) -> GpuProfile {
         fp32_flops: 67u64.saturating_mul(1_000_000_000_000),
         copy_engines: 2,
         compute_slots: 1,
+        cooperative_launch: true,
         launch_overhead_ns: 3_000,
         graph_launch_ns: 3_000,
         graph_instantiate_ns: 25_000,
@@ -649,6 +666,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut pcie_far_bps = 4u64.saturating_mul(1_000_000_000);
     let mut copy_engines: u8 = 2;
     let mut compute_slots: u8 = 1;
+    let mut cooperative_launch = true;
     let mut tdp_mw = 700_000u64;
     let mut launch_overhead_ns = 3_000u64;
     let mut graph_launch_ns = 3_000u64;
@@ -696,6 +714,15 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
                     });
                 }
             }
+            "cooperative_launch" => {
+                let n = parse_u8(v)?;
+                if n > 1 {
+                    return Err(SimError::Invalid {
+                        why: "cooperative_launch must be 0 or 1",
+                    });
+                }
+                cooperative_launch = n == 1;
+            }
             "tdp_mw" => tdp_mw = parse_u64(v)?,
             "launch_overhead_ns" => launch_overhead_ns = parse_u64(v)?,
             "graph_launch_ns" => graph_launch_ns = parse_u64(v)?,
@@ -740,6 +767,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         g.fp16_flops = fp16_flops;
         g.copy_engines = copy_engines;
         g.compute_slots = compute_slots;
+        g.cooperative_launch = cooperative_launch;
         g.tdp_mw = tdp_mw;
         g.launch_overhead_ns = launch_overhead_ns;
         g.graph_launch_ns = graph_launch_ns;
@@ -993,6 +1021,21 @@ mod tests {
         let err = HardwareProfile::parse("gpus=1\ncompute_slots=0\n").unwrap_err();
         assert!(
             format!("{err:?}").contains("compute_slots must be > 0"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_cooperative_launch() {
+        let p = HardwareProfile::parse("gpus=1\ncooperative_launch=0\n").unwrap();
+        assert!(!p.gpu(DeviceId(0)).unwrap().cooperative_launch);
+        assert!(p.to_profile_text().contains("cooperative_launch=0"));
+        let open = HardwareProfile::parse("gpus=1\n").unwrap();
+        assert!(open.gpu(DeviceId(0)).unwrap().cooperative_launch);
+        assert!(open.to_profile_text().contains("cooperative_launch=1"));
+        let err = HardwareProfile::parse("gpus=1\ncooperative_launch=2\n").unwrap_err();
+        assert!(
+            format!("{err:?}").contains("cooperative_launch must be 0 or 1"),
             "{err:?}"
         );
     }

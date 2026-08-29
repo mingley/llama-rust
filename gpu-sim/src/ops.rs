@@ -259,6 +259,10 @@ pub enum GpuOp {
         reads: Vec<KernelBuf>,
         /// Buffers the kernel writes (whole alloc or a mapped VMM span).
         writes: Vec<KernelBuf>,
+        /// `cudaLaunchCooperativeKernel`: the grid must occupy the whole GPU
+        /// ([`crate::GpuProfile::compute_slots`]) so leftover kernels cannot
+        /// Hyper-Q overlap it. Capture is allowed (CUDA 11+).
+        cooperative: bool,
     },
     /// Device-side fill (`cudaMemsetAsync`).
     Memset {

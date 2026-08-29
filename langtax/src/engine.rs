@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `vmm_page`, pageable H2D, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone, timing events, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `compute_slots`, `decode_sm_permille`) are the same mechanical
+//! `compute_slots`, `decode_sm_permille`, `cooperative`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -45,6 +45,8 @@
 //! occupancy so leftover prefill and decode GEMMs on those two streams overlap
 //! at full issue rate (not SM-partition). Default profile occupancy is
 //! exclusive (`1`), which keeps decode identity and stream-priority contention.
+//! `--cooperative` is `cudaLaunchCooperativeKernel`: GEMMs occupy every Hyper-Q
+//! slot, so leftover prefill cannot overlap even with `--compute-slots 2`.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode
 //! stream (compute-bound kernels scale; memory-bound keep full HBM). Leftover
 //! prefill gets the remainder. Implies `--decode-priority`. Default unset is a
@@ -3470,6 +3472,44 @@ mod tests {
         assert!(
             overlap.1.wall_ns < serial.1.wall_ns,
             "two compute slots must overlap leftover prefill with decode; overlap={} serial={} overlap_line={} serial_line={}",
+            overlap.1.wall_ns,
+            serial.1.wall_ns,
+            overlap.1.line(),
+            serial.1.line()
+        );
+    }
+
+    #[test]
+    fn engine_gpu_cooperative_serializes_mixed_wall() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+            .expect("slow gemm profile");
+        let pri = GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            compute_slots: 2,
+            ..GpuStoreCfg::default()
+        };
+        let overlap = mixed_gpu_decode_itl_at(bytes.clone(), false, None, pri, profile.clone());
+        let serial = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                cooperative: true,
+                ..pri
+            },
+            profile,
+        );
+        assert_eq!(overlap.2, 4);
+        assert_eq!(serial.2, 4);
+        assert_eq!(
+            overlap.4, serial.4,
+            "cooperative launch must keep greedy identity"
+        );
+        assert!(
+            overlap.1.wall_ns < serial.1.wall_ns,
+            "cooperative must not overlap leftover prefill with decode; overlap={} serial={} overlap_line={} serial_line={}",
             overlap.1.wall_ns,
             serial.1.wall_ns,
             overlap.1.line(),

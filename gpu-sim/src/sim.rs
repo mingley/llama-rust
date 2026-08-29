@@ -544,20 +544,51 @@ impl Sim {
 
     /// Take one Hyper-Q compute slot, or `false` if [`GpuProfile::compute_slots`] are full.
     fn take_compute(&mut self, device: DeviceId) -> Result<bool, SimError> {
+        self.take_compute_n(device, 1)
+    }
+
+    /// Take `n` Hyper-Q slots (`cudaLaunchCooperativeKernel` takes every slot).
+    fn take_compute_n(&mut self, device: DeviceId, n: u8) -> Result<bool, SimError> {
         let cap = self.profile.gpu(device)?.compute_slots.max(1);
+        let need = n.max(1);
         let rt = self.gpu_rt_mut(device)?;
-        if rt.compute >= cap {
+        if rt.compute.saturating_add(need) > cap {
             return Ok(false);
         }
-        rt.compute = rt.compute.saturating_add(1);
+        rt.compute = rt.compute.saturating_add(need);
         Ok(true)
     }
 
     /// Release one Hyper-Q compute slot.
     fn drop_compute(&mut self, device: DeviceId) -> Result<(), SimError> {
+        self.drop_compute_n(device, 1)
+    }
+
+    /// Release `n` Hyper-Q slots.
+    fn drop_compute_n(&mut self, device: DeviceId, n: u8) -> Result<(), SimError> {
         let rt = self.gpu_rt_mut(device)?;
-        rt.compute = rt.compute.saturating_sub(1);
+        rt.compute = rt.compute.saturating_sub(n.max(1));
         Ok(())
+    }
+
+    /// Slots a kernel occupies: cooperative grids need the whole GPU.
+    fn kernel_slots(&self, device: DeviceId, cooperative: bool) -> Result<u8, SimError> {
+        if cooperative {
+            Ok(self.profile.gpu(device)?.compute_slots.max(1))
+        } else {
+            Ok(1)
+        }
+    }
+
+    /// `cudaDevAttrCooperativeLaunch` must be set on `device`.
+    fn require_cooperative(&self, device: DeviceId) -> Result<(), SimError> {
+        if self.profile.gpu(device)?.cooperative_launch {
+            Ok(())
+        } else {
+            Err(SimError::Invalid {
+                why: "cooperative launch not supported",
+            })
+        }
     }
 
     /// `cudaDeviceEnablePeerAccess(dst)` from `src`. No-op if `src == dst`.
@@ -1351,7 +1382,36 @@ impl Sim {
         reads: &[AllocId],
         writes: &[AllocId],
     ) -> Result<(), SimError> {
+        self.graph_add_kernel_node(graph, kind, reads, writes, false)
+    }
+
+    /// `cudaGraphAddKernelNode` for a [`Self::cooperative_kernel`] launch.
+    ///
+    /// Occupies every Hyper-Q slot at launch. Capture cannot include it.
+    /// Illegal after instantiate. Device must advertise
+    /// [`crate::GpuProfile::cooperative_launch`].
+    pub fn graph_add_cooperative_kernel(
+        &mut self,
+        graph: GraphId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+    ) -> Result<(), SimError> {
+        self.graph_add_kernel_node(graph, kind, reads, writes, true)
+    }
+
+    fn graph_add_kernel_node(
+        &mut self,
+        graph: GraphId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        cooperative: bool,
+    ) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
+        if cooperative {
+            self.require_cooperative(device)?;
+        }
         let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
         let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
         let reads = self.resolve_bufs(&reads)?;
@@ -1364,6 +1424,7 @@ impl Sim {
                 kind,
                 reads,
                 writes,
+                cooperative,
             },
         )
     }
@@ -3087,6 +3148,51 @@ impl Sim {
         writes: &[KernelBuf],
         stream: StreamId,
     ) -> Result<OpId, SimError> {
+        self.submit_kernel(device, kind, reads, writes, stream, false)
+    }
+
+    /// `cudaLaunchCooperativeKernel` on whole allocations.
+    ///
+    /// Same lease / residency rules as [`Self::kernel`]. The grid occupies
+    /// every [`crate::GpuProfile::compute_slots`] so leftover kernels on other
+    /// streams cannot Hyper-Q overlap it. Fails `cooperative launch not
+    /// supported` unless [`crate::GpuProfile::cooperative_launch`]. Capture is
+    /// allowed (CUDA 11+).
+    pub fn cooperative_kernel(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
+        let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
+        self.cooperative_kernel_bufs(device, kind, &reads, &writes, stream)
+    }
+
+    /// `cudaLaunchCooperativeKernel` on explicit buffer spans.
+    pub fn cooperative_kernel_bufs(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.require_cooperative(device)?;
+        self.submit_kernel(device, kind, reads, writes, stream, true)
+    }
+
+    fn submit_kernel(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+        cooperative: bool,
+    ) -> Result<OpId, SimError> {
         let reads = self.resolve_bufs(reads)?;
         let writes = self.resolve_bufs(writes)?;
         self.submit(
@@ -3096,6 +3202,7 @@ impl Sim {
                 kind,
                 reads,
                 writes,
+                cooperative,
             },
         )
     }
@@ -3909,7 +4016,7 @@ impl Sim {
     }
 
     fn start_kernel(&mut self, id: OpId) -> Result<bool, SimError> {
-        let (device, stream, launch, reads, writes, kind) = {
+        let (device, stream, launch, reads, writes, kind, cooperative) = {
             let op = self
                 .ops
                 .get(&id)
@@ -3919,6 +4026,7 @@ impl Sim {
                     reads,
                     writes,
                     kind,
+                    cooperative,
                 } => (
                     op.device,
                     op.stream,
@@ -3926,6 +4034,7 @@ impl Sim {
                     reads.clone(),
                     writes.clone(),
                     kind.clone(),
+                    *cooperative,
                 ),
                 _ => {
                     return Err(SimError::Invalid {
@@ -3940,22 +4049,23 @@ impl Sim {
         {
             return Ok(true);
         }
-        if !self.take_compute(device)? {
+        let slots = self.kernel_slots(device, cooperative)?;
+        if !self.take_compute_n(device, slots)? {
             return Ok(false);
         }
         let mem_bps = self.kernel_mem_bps(device, &reads, &writes)?;
         if let Err(e) = self.lease_kernel(device, &reads, &writes, true) {
-            self.drop_compute(device)?;
+            self.drop_compute_n(device, slots)?;
             return Err(e);
         }
         if let Err(e) = self.invalidate_read_mostly_writes(device, &writes) {
-            self.drop_compute(device)?;
+            self.drop_compute_n(device, slots)?;
             return Err(e);
         }
         let ns = match self.kernel_ns(device, stream, &kind, launch, mem_bps) {
             Ok(n) => n,
             Err(e) => {
-                self.drop_compute(device)?;
+                self.drop_compute_n(device, slots)?;
                 return Err(e);
             }
         };
@@ -5012,14 +5122,23 @@ impl Sim {
                 a.devices.push(device);
             }
         }
-        let kernel_ids: Option<Vec<AllocId>> = self.ops.get(&id).and_then(|op| match &op.kind {
-            Kind::Kernel { reads, writes, .. } => {
-                Some(reads.iter().chain(writes.iter()).map(|b| b.id).collect())
-            }
-            Kind::Memset { id: alloc, .. } => Some(vec![*alloc]),
-            Kind::AllReduce { parts, .. } => Some(parts.iter().map(|(_, a)| *a).collect()),
-            _ => None,
-        });
+        let kernel_work: Option<(Vec<AllocId>, bool)> =
+            self.ops.get(&id).and_then(|op| match &op.kind {
+                Kind::Kernel {
+                    reads,
+                    writes,
+                    cooperative,
+                    ..
+                } => Some((
+                    reads.iter().chain(writes.iter()).map(|b| b.id).collect(),
+                    *cooperative,
+                )),
+                Kind::Memset { id: alloc, .. } => Some((vec![*alloc], false)),
+                Kind::AllReduce { parts, .. } => {
+                    Some((parts.iter().map(|(_, a)| *a).collect(), false))
+                }
+                _ => None,
+            });
         let memcpy = self.ops.get(&id).and_then(|op| match &op.kind {
             Kind::Memcpy(m) => Some(m.clone()),
             _ => None,
@@ -5031,8 +5150,9 @@ impl Sim {
         if let Some((alloc, flags, stream)) = attach {
             self.alloc_mut(alloc)?.attach = attach_state(flags, stream);
         }
-        if let Some(ids) = kernel_ids {
-            self.drop_compute(device)?;
+        if let Some((ids, cooperative)) = kernel_work {
+            let n = self.kernel_slots(device, cooperative)?;
+            self.drop_compute_n(device, n)?;
             for a in ids {
                 let cur = self.alloc_mut(a)?;
                 cur.leases = cur.leases.saturating_sub(1);
@@ -5161,10 +5281,12 @@ fn remap_alloc_kind(kind: Kind, map: &BTreeMap<AllocId, AllocId>) -> Kind {
             kind,
             reads,
             writes,
+            cooperative,
         } => Kind::Kernel {
             kind,
             reads: reads.into_iter().map(|b| remap_buf(b, map)).collect(),
             writes: writes.into_iter().map(|b| remap_buf(b, map)).collect(),
+            cooperative,
         },
         Kind::Memset { id, offset, bytes } => Kind::Memset {
             id: remap_alloc_id(id, map),
@@ -5220,6 +5342,7 @@ fn op_eq(a: &Kind, b: &Kind) -> bool {
         (Kind::ChildGraph { graph: x }, Kind::ChildGraph { graph: y }) => x == y,
         (Kind::EventRecord { external: x, .. }, Kind::EventRecord { external: y, .. }) => x == y,
         (Kind::EventWait { external: x, .. }, Kind::EventWait { external: y, .. }) => x == y,
+        (Kind::Kernel { cooperative: x, .. }, Kind::Kernel { cooperative: y, .. }) => x == y,
         _ => op_tag(a) == op_tag(b),
     }
 }

@@ -76,7 +76,7 @@ warp scheduler, L1, …   ← do not model
 | graph mem alloc/free nodes (`cudaMallocAsync` / `cudaFreeAsync` during capture, or `graph_add_alloc` / `graph_add_free`) | `pool_reuse_ns` on relaunch without free |
 | graph clone is an independent uninstantiated copy; child graphs cloned recursively; mem alloc nodes get new ids | `graph_clone_ns` |
 | `cudaGraphCreate` (`create_graph`) is an empty uninstantiated graph | 1 ns host-sync |
-| `cudaGraphAddKernelNode` / memcpy / memset / host / event / child / mem alloc/free (`graph_add_*`) | not timed (host-side topology) |
+| `cudaGraphAddKernelNode` / memcpy / memset / host / event / child / mem alloc/free / cooperative kernel (`graph_add_*`) | not timed (host-side topology) |
 | graph destroy drops the id (`cudaGraphDestroy`); remaining graph mem is refunded | 1 ns host-sync |
 | graph launch amortizes per-kernel launch overhead | `graph_launch_ns` |
 | `synchronize_stream` waits one stream only | other streams keep running |
@@ -90,6 +90,7 @@ warp scheduler, L1, …   ← do not model
 | stream[i+1].start ≥ stream[i].finish (`Operation` timestamps) | queue wait vs run |
 | higher `set_stream_priority` starts first under contention | launch overhead |
 | `compute_slots>=2` overlaps independent kernels at full issue rate | kernel duration (not SM-partition) |
+| `cudaLaunchCooperativeKernel` occupies every compute slot (`cooperative_kernel`) | leftover kernels cannot Hyper-Q overlap |
 | `set_stream_sm_permille` is a green-context SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host) | HBM write + launch overhead |
 | peer D2D needs topology + `enable_peer` | link bandwidth |
@@ -233,7 +234,10 @@ evict and updates the next miss instead of instantiate. `--graph-clone`
 copies the capture (`cudaGraphClone`) before instantiate. `--graph-build` is
 `cudaGraphCreate` / `cudaGraphAdd*` (no idle stream). `--graph-mem` is in-graph
 scratch (`graph_add_alloc` / capture `alloc`). `--graph-auto-free` is
-AutoFreeOnLaunch (relaunch recharges HBM; not with `--graph-mem`). Launch pays `graph_launch_ns` once; recorded
+AutoFreeOnLaunch (relaunch recharges HBM; not with `--graph-mem`).
+`cooperative_kernel` / `graph_add_cooperative_kernel` are
+`cudaLaunchCooperativeKernel` (occupy every Hyper-Q slot; capture allowed).
+Launch pays `graph_launch_ns` once; recorded
 kernels skip per-kernel launch overhead.
 `memset` is an HBM-write kernel on a resident alloc. `host_func` is
 `cudaLaunchHostFunc`: stream-ordered host work that does not occupy compute

@@ -52,6 +52,8 @@ pub(crate) struct GpuCli {
     pub kv_sim: bool,
     /// Decode GEMMs on a higher-priority compute stream (`GpuStoreCfg::decode_priority`).
     pub decode_priority: bool,
+    /// `cudaLaunchCooperativeKernel` (`GpuStoreCfg::cooperative`).
+    pub cooperative: bool,
     /// Hyper-Q occupancy (`GpuStoreCfg::compute_slots`). `0` keeps the profile.
     pub compute_slots: u8,
     /// True when `--compute-slots` appeared.
@@ -93,6 +95,7 @@ impl GpuCli {
             "--seq-streams" => &mut self.seq_streams,
             "--kv-sim" => &mut self.kv_sim,
             "--decode-priority" => &mut self.decode_priority,
+            "--cooperative" => &mut self.cooperative,
             _ => return Ok(false),
         };
         if inline.is_some() {
@@ -180,6 +183,7 @@ impl GpuCli {
             (self.seq_streams, "--seq-streams"),
             (self.kv_sim, "--kv-sim"),
             (self.decode_priority, "--decode-priority"),
+            (self.cooperative, "--cooperative"),
             (self.vmm_page_set, "--vmm-page"),
             (self.compute_slots_set, "--compute-slots"),
             (self.decode_sm_set, "--decode-sms"),
@@ -384,6 +388,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         seq_streams: gpu.seq_streams,
         kv_sim: gpu.kv_sim,
         decode_priority: gpu.decode_priority,
+        cooperative: gpu.cooperative,
         compute_slots: gpu.compute_slots,
         decode_sm_permille: gpu.decode_sm_permille,
     }
