@@ -1973,14 +1973,19 @@ fn checked_in_two_layer_schedule_and_copy_forward() {
         p,
         StoreReplayCfg {
             prefetch: Prefetch::CopyForward,
-            ..StoreReplayCfg::demand(4, 4096, GpuFill::Pinned)
+            ..StoreReplayCfg::demand(2, 4096, GpuFill::Pinned)
         },
     )
     .expect("store");
-    assert!(store.metrics.prefetches > 0, "{}", store.line());
+    assert!(
+        store.metrics.prefetches > 0,
+        "slots=2 must evict L+1 so copy-forward refills, {}",
+        store.line()
+    );
     assert!(store.score.wall_ns > 0, "{}", store.line());
 }
 
+#[test]
 fn shared_prefix_workload_reuses_token0_hash() {
     let t = generate(Workload::SharedPrefix, 4, 8, 1, 1);
     let p0: Vec<Option<u64>> = t

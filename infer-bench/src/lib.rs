@@ -132,13 +132,14 @@ mod tests {
         )
         .expect("report");
         assert!(row.sim.is_some(), "{}", row.render());
-        assert!(row.render().contains("wall_ns="), "{}", row.render());
+        assert!(row.render().contains("sim_ns="), "{}", row.render());
+        assert!(row.render().contains("layer-ahead"), "{}", row.render());
         let sch = schedule_replay(
             &t,
             HardwareProfile::example_cheap_48gb(),
             SimCfg {
                 prefetch: super::Prefetch::CopyForward,
-                ..SimCfg::lru(4, 4096, 8)
+                ..SimCfg::lru(2, 4096, 8)
             },
             SchedCfg::closed(0),
         )
@@ -147,7 +148,7 @@ mod tests {
         assert!(sch.replay.sim_ns > 0, "{}", sch.replay.line());
         assert!(
             sch.replay.prefetch_hits > 0,
-            "2-layer copy-forward must hit L+1, {}",
+            "slots=2 copy-forward must hit L+1, {}",
             sch.replay.line()
         );
     }
