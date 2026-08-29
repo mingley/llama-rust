@@ -525,9 +525,13 @@ pub fn run_engine(args: &EngineArgs) -> Result<(), Box<dyn std::error::Error>> {
     }
     writeln!(
         out,
-        "intern_hits={} preempts={}",
+        "intern_hits={} preempts={} steps={} gemm_tokens={} gemm_peak={} serial_tokens={}",
         eng.pool().hits(),
-        eng.preempts()
+        eng.preempts(),
+        eng.stats().steps,
+        eng.stats().gemm_tokens,
+        eng.stats().gemm_peak,
+        eng.stats().serial_tokens
     )?;
     Ok(())
 }

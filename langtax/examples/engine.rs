@@ -29,9 +29,10 @@ fn run() -> Result<(), String> {
     let mut out = io::stdout();
     out.write_all(
         format!(
-            "a_gen={} b_gen={} intern_hits={hits} active={}\n",
+            "a_gen={} b_gen={} intern_hits={hits} gemm_peak={} active={}\n",
             out_a.generated.len(),
             out_b.generated.len(),
+            eng.stats().gemm_peak,
             eng.active()
         )
         .as_bytes(),

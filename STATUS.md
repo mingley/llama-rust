@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine GEMM stats
+
+`EngineStats` counts scheduler steps, tokens that ran in a
+cross-sequence GEMM, the peak GEMM width, and one-at-a-time fallback
+tokens. `gguf_gemv engine` prints `gemm_tokens` / `gemm_peak` /
+`serial_tokens` next to intern hits. Not wall-clock tok/s. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — mixed prefill+replay GEMM
 
 `Engine` packs ready prefill chunks and unforwarded replay tokens into

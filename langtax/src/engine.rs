@@ -108,6 +108,19 @@ impl Slot {
     }
 }
 
+/// Counters for cross-sequence GEMMs. Not wall-clock tok/s and not `$/M tokens`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct EngineStats {
+    /// [`Engine::step`] calls that returned.
+    pub steps: u64,
+    /// Tokens in a shared-pool GEMM of two or more sequences.
+    pub gemm_tokens: u64,
+    /// Largest token count in one of those GEMMs.
+    pub gemm_peak: usize,
+    /// Tokens forwarded one sequence at a time.
+    pub serial_tokens: u64,
+}
+
 /// Multi-sequence greedy decode on one interned paged-KV pool.
 pub struct Engine<'a> {
     llama: &'a Llama,
@@ -118,6 +131,7 @@ pub struct Engine<'a> {
     finished: BTreeMap<SeqId, SeqOutput>,
     next_id: u32,
     preempts: u64,
+    stats: EngineStats,
 }
 
 impl<'a> Engine<'a> {
@@ -136,6 +150,7 @@ impl<'a> Engine<'a> {
             finished: BTreeMap::new(),
             next_id: 0,
             preempts: 0,
+            stats: EngineStats::default(),
         })
     }
 
@@ -182,6 +197,7 @@ impl<'a> Engine<'a> {
         n = n.saturating_add(self.admit()?);
         n = n.saturating_add(self.prefill_and_replay()?);
         n = n.saturating_add(self.decode_ready()?);
+        self.stats.steps = self.stats.steps.saturating_add(1);
         Ok(n)
     }
 
@@ -229,6 +245,27 @@ impl<'a> Engine<'a> {
     #[must_use]
     pub fn preempts(&self) -> u64 {
         self.preempts
+    }
+
+    /// Cross-sequence GEMM counters for this engine.
+    #[must_use]
+    pub fn stats(&self) -> &EngineStats {
+        &self.stats
+    }
+
+    fn note_gemm(&mut self, n: usize) {
+        self.stats.gemm_tokens = self
+            .stats
+            .gemm_tokens
+            .saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
+        self.stats.gemm_peak = self.stats.gemm_peak.max(n);
+    }
+
+    fn note_serial(&mut self, n: usize) {
+        self.stats.serial_tokens = self
+            .stats
+            .serial_tokens
+            .saturating_add(u64::try_from(n).unwrap_or(u64::MAX));
     }
 
     /// Remove a finished (or in-flight / waiting) sequence and return its tokens.
@@ -458,6 +495,8 @@ impl<'a> Engine<'a> {
                 slot.replay = slot.replay.saturating_add(toks.len());
             }
         }
+        let ntok: usize = owned.iter().map(|(_, t, _)| t.len()).sum();
+        self.note_gemm(ntok);
         Ok(order.len())
     }
 
@@ -485,10 +524,15 @@ impl<'a> Engine<'a> {
     fn prompt_chunk_at(&mut self, i: usize) -> Result<(), LlamaError> {
         let llama = self.llama;
         let chunk = self.cfg.prefill_chunk;
-        let slot = self.slot_mut(i)?;
-        slot.last = llama
-            .prompt_chunk(&mut slot.cache, &slot.prompt, chunk)?
-            .to_vec();
+        let n = {
+            let slot = self.slot_mut(i)?;
+            let before = slot.cache.n_past;
+            slot.last = llama
+                .prompt_chunk(&mut slot.cache, &slot.prompt, chunk)?
+                .to_vec();
+            slot.cache.n_past.saturating_sub(before)
+        };
+        self.note_serial(n);
         Ok(())
     }
 
@@ -617,7 +661,13 @@ impl<'a> Engine<'a> {
                 slot.replay = slot.generated.len();
             }
         }
-        Ok(indices.len())
+        let n = indices.len();
+        if n >= 2 {
+            self.note_gemm(n);
+        } else {
+            self.note_serial(n);
+        }
+        Ok(n)
     }
 
     fn slot(&self, i: usize) -> Option<&Slot> {
@@ -779,6 +829,13 @@ mod tests {
             eng.run().expect("run");
             assert_eq!(eng.take(a).expect("ta").generated, exp_a);
             assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+            assert!(
+                eng.stats().gemm_peak >= 8,
+                "two 4-token prefills must GEMM together, peak={}",
+                eng.stats().gemm_peak
+            );
+            assert!(eng.stats().steps > 0);
+            assert!(eng.stats().gemm_tokens >= 8);
         }
     }
 

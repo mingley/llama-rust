@@ -42,7 +42,7 @@ pub use decode::{
     tiny_qwen3vl_gguf, tiny_tied_copy_gguf, tiny_tied_gguf, tiny_tq10_gguf, tiny_tq20_gguf,
     KvCache, Llama, LlamaError, PagedKvPool,
 };
-pub use engine::{Engine, EngineCfg, SeqId, SeqOutput};
+pub use engine::{Engine, EngineCfg, EngineStats, SeqId, SeqOutput};
 pub use expertvm::{
     CachedStore, DirectStore, ExpertAccess, ExpertKey, ExpertParts, ExpertPhase, ExpertStore,
     GpuFill, GpuStoreCfg, LiveStore, SimulatedGpuStore, StoreMetrics, TieredStore, Trace,
