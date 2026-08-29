@@ -425,7 +425,8 @@ Exact (mechanical invariants agents may rely on):
   `prefetch`, `prefetch_host`): no HBM until migrate; prefetch **moves**
   (does not replicate) unless `cudaMemAdviseSetReadMostly`
   ([`Sim::mem_advise`] [`MemAdvise::SetReadMostly`]); a kernel first-touch
-  prefetches on that stream unless [`MemAdvise::SetAccessedBy`] maps that
+  prefetches when that kernel *starts* (after stream deps) unless
+  [`MemAdvise::SetAccessedBy`] maps that
   GPU or [`MemAdvise::SetPreferredLocation`] already holds the page at
   another GPU (remote read, interconnect billing; writes still migrate;
   host preferred does not skip first-touch)

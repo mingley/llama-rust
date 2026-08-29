@@ -55,7 +55,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemcpy` (`memcpy_sync`) waits that stream | pinned `memcpy` does not |
 | `synchronize_device` waits one GPU | other GPUs keep running |
 | stream order, event dependencies | memcpy microseconds |
-| residency: a kernel may only read **device** or **mapped-host** allocations; managed first-touch migrates | PCIe / NVLink / HBM bandwidth |
+| residency: a kernel may only read **device** or **mapped-host** allocations; managed first-touch at kernel start | PCIe / NVLink / HBM bandwidth |
 | HBM vs host-pinned: `alloc_host_pinned` does not charge HBM | pageable vs pinned H2D (`pageable_permille`) |
 | copy-engine occupancy | launch overhead |
 | peer accessibility | size-dependent efficiency |
@@ -239,7 +239,7 @@ until trim. Capture cannot include pool create/trim/set-attribute.
 `cudaHostAllocMapped`: a kernel may read it with no H2D, billed at host
 PCIe, and it does not charge HBM. Capture cannot include host
 alloc/register. `alloc_managed` is `cudaMallocManaged` (no HBM until
-`prefetch` / first-touch). `mem_advise` is `cudaMemAdvise` (host-sync).
+`prefetch` / first-touch at kernel start). `mem_advise` is `cudaMemAdvise` (host-sync).
 `SetReadMostly` makes prefetch replicate; `SetAccessedBy` lets a kernel
 read without migrating. `SetPreferredLocation` keeps a page already at
 that GPU there on a remote read (writes still migrate; host preferred

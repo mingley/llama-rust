@@ -354,10 +354,6 @@ impl SimulatedGpuStore {
         if let Some(ev) = ready {
             if !self.sim.event_complete(ev) {
                 let _w = self.sim.wait_event(device, ev, self.compute)?;
-                if self.managed {
-                    // `fault_managed` inspects residency at submit.
-                    self.sim.synchronize_stream(device, self.compute)?;
-                }
             }
         }
         self.launch_or_gemm(device, id)

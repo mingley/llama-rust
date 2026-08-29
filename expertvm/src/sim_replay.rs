@@ -1170,9 +1170,6 @@ fn fill_remote_managed(
     sim.mem_advise(id, gpu_sim::MemAdvise::SetReadMostly, fetch.home)?;
     sim.mem_advise(id, gpu_sim::MemAdvise::SetPreferredLocation, fetch.home)?;
     let _p = sim.prefetch(fetch.home, id, fetch.stream)?;
-    // fault_managed inspects residency at submit. The page must already be
-    // at home or a compute kernel would prefetch a second copy.
-    sim.synchronize_stream(fetch.home, fetch.stream)?;
     if fetch.home != fetch.compute {
         wait_peer(sim, fetch.home, fetch.compute, fetch.stream, next_event)?;
     }

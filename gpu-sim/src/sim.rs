@@ -2021,9 +2021,11 @@ impl Sim {
     /// A VMM VA must be fully mapped ([`Self::is_resident`]). For a mapped
     /// page of a larger VA, use [`Self::kernel_bufs`].
     ///
-    /// A managed allocation not yet on `device` is [`Self::prefetch`]'d on
-    /// this stream first (page fault). Capture does not insert that migrate;
-    /// record [`Self::prefetch`] in the graph or prefetch before capture.
+    /// A managed allocation not yet on `device` is [`Self::prefetch`]'d when
+    /// the kernel starts (page fault after stream deps). Capture does not
+    /// record that migrate; graph replay fails [`SimError::NotResident`] if
+    /// the graph omitted it. Prefetch before [`Self::begin_capture`], or
+    /// record [`Self::prefetch`] in the graph.
     pub fn kernel(
         &mut self,
         device: DeviceId,
@@ -2042,6 +2044,8 @@ impl Sim {
     /// Each [`KernelBuf`] must be mapped-host, device-resident, or a VMM span
     /// covered by [`Self::va_map_range`]. `bytes == 0` means from `offset` to
     /// the end of the allocation. A range past the reservation is `Invalid`.
+    /// A live kernel (not a graph replay) page-faults managed memory when it
+    /// *starts*, after stream deps, so a waited prefetch is visible.
     pub fn kernel_bufs(
         &mut self,
         device: DeviceId,
@@ -2050,7 +2054,6 @@ impl Sim {
         writes: &[KernelBuf],
         stream: StreamId,
     ) -> Result<OpId, SimError> {
-        self.fault_managed(device, reads, writes, stream)?;
         let reads = self.resolve_bufs(reads)?;
         let writes = self.resolve_bufs(writes)?;
         self.submit(
@@ -2670,13 +2673,38 @@ impl Sim {
         Ok((a.bytes, src))
     }
 
-    fn fault_managed(
+    /// Live kernels page-fault at start. Returns true if a prefetch was
+    /// inserted ahead of `kernel` (caller must reschedule; the kernel is not
+    /// running yet).
+    fn inject_managed_faults(
         &mut self,
+        kernel: OpId,
         device: DeviceId,
         reads: &[KernelBuf],
         writes: &[KernelBuf],
-        stream: StreamId,
-    ) -> Result<(), SimError> {
+    ) -> Result<bool, SimError> {
+        let wait = self.managed_fault_ids(device, reads, writes)?;
+        if wait.is_empty() {
+            return Ok(false);
+        }
+        let kdeps = self
+            .ops
+            .get(&kernel)
+            .ok_or(SimError::Invalid { why: "unknown op" })?
+            .deps
+            .clone();
+        for alloc in wait {
+            self.inject_fault_memcpy(kernel, device, alloc, &kdeps)?;
+        }
+        Ok(true)
+    }
+
+    fn managed_fault_ids(
+        &self,
+        device: DeviceId,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+    ) -> Result<BTreeSet<AllocId>, SimError> {
         let mut wait = BTreeSet::new();
         for b in reads {
             let a = self.alloc_ref(b.id)?;
@@ -2690,19 +2718,93 @@ impl Sim {
                 let _ins = wait.insert(b.id);
             }
         }
-        if wait.is_empty() {
-            return Ok(());
-        }
-        if self.capturing.is_some() {
-            // Implicit faults are not recorded. Capture an explicit prefetch
-            // first, or prefetch before begin_capture. Launch fails NotResident
-            // if the graph omitted the migrate.
-            return Ok(());
-        }
-        for id in wait {
-            let _op = self.prefetch(device, id, stream)?;
-        }
+        Ok(wait)
+    }
+
+    fn inject_fault_memcpy(
+        &mut self,
+        kernel: OpId,
+        device: DeviceId,
+        alloc: AllocId,
+        deps: &[OpId],
+    ) -> Result<(), SimError> {
+        let stream = self
+            .ops
+            .get(&kernel)
+            .ok_or(SimError::Invalid { why: "unknown op" })?
+            .stream;
+        let (bytes, src) = self.managed_move_src(alloc, Some(device))?;
+        let id = OpId(self.next_op);
+        self.next_op = self.next_op.saturating_add(1);
+        let _prev = self.ops.insert(
+            id,
+            Op {
+                device,
+                stream,
+                kind: Kind::Memcpy(MemcpyOp {
+                    src,
+                    dst: Place::Device(device),
+                    alloc,
+                    bytes,
+                    offset: 0,
+                }),
+                deps: deps.to_vec(),
+                done: false,
+                cancelled: false,
+                launch: LaunchCost::Kernel,
+                submit_ns: self.clock,
+                start_ns: None,
+                done_ns: None,
+            },
+        );
+        self.add_op_dep(kernel, id);
         Ok(())
+    }
+
+    fn start_kernel(&mut self, id: OpId) -> Result<bool, SimError> {
+        let (device, launch, reads, writes, kind) = {
+            let op = self
+                .ops
+                .get(&id)
+                .ok_or(SimError::Invalid { why: "unknown op" })?;
+            match &op.kind {
+                Kind::Kernel {
+                    reads,
+                    writes,
+                    kind,
+                } => (
+                    op.device,
+                    op.launch,
+                    reads.clone(),
+                    writes.clone(),
+                    kind.clone(),
+                ),
+                _ => {
+                    return Err(SimError::Invalid {
+                        why: "not a kernel",
+                    });
+                }
+            }
+        };
+        if matches!(launch, LaunchCost::Kernel)
+            && self.inject_managed_faults(id, device, &reads, &writes)?
+        {
+            return Ok(true);
+        }
+        if self.gpu_rt(device)?.compute_busy {
+            return Ok(false);
+        }
+        let mem_bps = self.kernel_mem_bps(device, &reads, &writes)?;
+        self.lease_kernel(device, &reads, &writes, true)?;
+        self.invalidate_read_mostly_writes(device, &writes)?;
+        let ns = self.kernel_ns(device, &kind, launch, mem_bps)?;
+        self.gpu_rt_mut(device)?.compute_busy = true;
+        self.running.push(Running {
+            op: id,
+            remaining_ns: ns.max(1),
+            share: Share::Solo,
+        });
+        Ok(true)
     }
 
     fn resolve_bufs(&self, bufs: &[KernelBuf]) -> Result<Vec<KernelBuf>, SimError> {
@@ -2977,9 +3079,11 @@ impl Sim {
             candidates.sort_by_key(|&(pri, oid, _)| (Reverse(pri), oid));
             for (_, _, id) in candidates {
                 if self.try_start(id)? {
-                    if let Some(op) = self.ops.get_mut(&id) {
-                        if op.start_ns.is_none() && !op.cancelled {
-                            op.start_ns = Some(self.clock);
+                    if self.is_running(id) {
+                        if let Some(op) = self.ops.get_mut(&id) {
+                            if op.start_ns.is_none() && !op.cancelled {
+                                op.start_ns = Some(self.clock);
+                            }
                         }
                     }
                     started = true;
@@ -3003,29 +3107,7 @@ impl Sim {
         match &op.kind {
             Kind::Alloc { id: alloc, bytes } => self.start_alloc(id, device, *alloc, *bytes),
             Kind::Free { id: alloc } => self.start_free(id, device, *alloc),
-            Kind::Kernel {
-                reads,
-                writes,
-                kind,
-            } => {
-                if self.gpu_rt(device)?.compute_busy {
-                    return Ok(false);
-                }
-                let reads = reads.clone();
-                let writes = writes.clone();
-                let kind = kind.clone();
-                let mem_bps = self.kernel_mem_bps(device, &reads, &writes)?;
-                self.lease_kernel(device, &reads, &writes, true)?;
-                self.invalidate_read_mostly_writes(device, &writes)?;
-                let ns = self.kernel_ns(device, &kind, launch, mem_bps)?;
-                self.gpu_rt_mut(device)?.compute_busy = true;
-                self.running.push(Running {
-                    op: id,
-                    remaining_ns: ns.max(1),
-                    share: Share::Solo,
-                });
-                Ok(true)
-            }
+            Kind::Kernel { .. } => self.start_kernel(id),
             Kind::Memset {
                 id: alloc,
                 offset,

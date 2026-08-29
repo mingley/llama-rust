@@ -32,7 +32,8 @@
 //! it does not replicate unless [`Sim::mem_advise`] [`MemAdvise::SetReadMostly`].
 //! [`MemAdvise::SetAccessedBy`] maps a GPU so a kernel can read without
 //! migrating (billed on the interconnect, not local HBM). A kernel
-//! page-faults managed memory onto that GPU unless AccessedBy covers it.
+//! page-faults managed memory onto that GPU when the kernel *starts*
+//! (after stream deps) unless AccessedBy covers it.
 //! [`MemAdvise::SetPreferredLocation`] keeps a page already at that GPU
 //! there on a remote read (same interconnect billing; writes still migrate).
 //! Host preferred does not skip a kernel first-touch.
@@ -2031,6 +2032,30 @@ mod tests {
         assert_eq!(sim.bytes_moved(), bytes);
         sim.free_sync(m).unwrap();
         assert_eq!(sim.hbm_used(d).unwrap(), 0);
+    }
+
+    #[test]
+    fn kernel_start_fault_sees_waited_prefetch() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let home = DeviceId(0);
+        let compute = DeviceId(1);
+        let copy = StreamId(0);
+        let gemm = StreamId(1);
+        let bytes = 8u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        sim.mem_advise(m, MemAdvise::SetReadMostly, home).unwrap();
+        sim.mem_advise(m, MemAdvise::SetPreferredLocation, home)
+            .unwrap();
+        enq(sim.prefetch(home, m, copy));
+        sim.create_event_disable_timing(EventId(1)).unwrap();
+        enq(sim.record_event(home, EventId(1), copy));
+        enq(sim.wait_event(compute, EventId(1), gemm));
+        enq(sim.kernel(compute, KernelKind::other(8, bytes), &[m], &[], gemm));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(m, home).unwrap());
+        assert!(!sim.is_resident(m, compute).unwrap());
+        assert_eq!(sim.bytes_moved(), bytes);
+        sim.free_sync(m).unwrap();
     }
 
     #[test]

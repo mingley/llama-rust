@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Managed page faults at kernel start
+
+Live kernels prefetch managed pages when they start, after stream deps.
+A waited home prefetch is visible then, so a PreferredLocation remote
+read does not copy twice. Graph replay still omits implicit faults
+(`NotResident` if the graph skipped prefetch). Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — SimulatedGpuStore managed miss path
 
 `SimulatedGpuStore::with_managed` places experts with `cudaMallocManaged`
