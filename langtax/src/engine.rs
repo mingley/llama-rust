@@ -1208,6 +1208,10 @@ mod tests {
         );
         let hits = eng.expert_store_metrics().expect("metrics").hits;
         assert!(hits > 0, "batched MoE must acquire from the Engine store");
+        assert!(
+            hits < 16,
+            "grouped expert GEMM must acquire each expert once per layer, hits={hits}"
+        );
         assert!(eng.take_expert_store().is_some());
         assert!(eng.expert_store_metrics().is_none());
     }

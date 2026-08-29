@@ -792,6 +792,12 @@ model, do not celebrate the sim.
     `gguf_gemv engine --trace-out FILE` writes JSONL. Events bit-match
     sequential traced prefill/forward and dense `greedy_generate_cache`.
     GEMM peak stays on the batched path. Dual score still has no `$/M tokens`.
+24. [x] Grouped expert GEMM: tokens that select the same expert share one
+    gate/up/down GEMM (acquire once per expert per layer). Softmax MoE
+    walks (llama / Qwen2MoE / Qwen3MoE / Qwen3Next) and Llama4
+    `weight_before_ffn` stay bit-equal to the serial GEMV path. Engine
+    DirectStore hits drop below one-acquire-per-token-expert. Dual score
+    still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

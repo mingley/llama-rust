@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — grouped expert GEMM
+
+Routed experts in a multi-token forward gather tokens that selected the
+same expert and run one gate/up/down GEMM (one store acquire per expert
+per layer). Softmax MoE walks and Llama4 `weight_before_ffn` logits
+bit-match the serial GEMV path. Engine DirectStore hits stay below one
+acquire per token-expert. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine batched MoE traces
 
 `Llama::prefill_batch` / `forward_batch` record `ExpertAccess` with

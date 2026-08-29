@@ -251,6 +251,53 @@ struct QuantMat {
     end: usize,
 }
 
+/// One expert part plus optional store bytes for a grouped GEMM.
+struct PartBytes<'a> {
+    m: &'a QuantMat,
+    part: usize,
+    n_tokens: usize,
+    bytes: Option<&'a [u8]>,
+}
+
+/// Softmax-then-top-k routed experts (llama / Qwen2MoE / Qwen3MoE / Qwen3Next).
+struct SoftmaxMoE<'a> {
+    gate_inp: &'a QuantMat,
+    gate: &'a QuantMat,
+    up: &'a QuantMat,
+    down: &'a QuantMat,
+    n_expert: usize,
+    n_used: usize,
+    n_embd: usize,
+    norm_w: bool,
+    /// Llama4 applies the router weight to `x` before SwiGLU (`weight_before_ffn`).
+    scale_x: bool,
+    err: &'static str,
+}
+
+struct MoeExec<'a> {
+    pool: &'a mut GemvPool,
+    moe_trace: &'a mut MoeTraceBuf,
+    store: &'a mut Option<LiveStore>,
+}
+
+struct GroupedRun<'a> {
+    pool: &'a mut GemvPool,
+    store: &'a mut Option<LiveStore>,
+    layer: u32,
+}
+
+struct ExpertJob<'a> {
+    expert: usize,
+    toks: &'a [usize],
+    layer: u32,
+}
+
+struct ExpertGemm<'a> {
+    expert: usize,
+    n: usize,
+    parts: Option<&'a ExpertParts>,
+}
+
 /// Reuse `token_embd.weight` as the lm_head when `output.weight` is absent.
 /// Copies only the range metadata (same on-disk bytes). Does not clone the matrix.
 fn reuse_token_embd_as_output(token_embd: &QuantMat) -> QuantMat {
@@ -927,14 +974,18 @@ struct MoeScratch {
     weights: Vec<f32>,
     /// Shared-expert gate per token (`ffn_gate_inp_shexp`), `n_tokens`.
     shexp_gate: Vec<f32>,
-    /// Sum of the selected experts for one token, `n_embd`.
-    routed: Vec<f32>,
-    /// `x_t` scaled by the router weight, `n_embd`.
-    xw: Vec<f32>,
     /// One routed expert's gate / up / down, `n_ff_exp` and `n_embd`.
     g: Vec<f32>,
     u: Vec<f32>,
     y: Vec<f32>,
+    /// Flattened top-k expert ids, `n_tokens * n_used`.
+    sel_e: Vec<usize>,
+    /// Flattened top-k weights, `n_tokens * n_used`.
+    sel_w: Vec<f32>,
+    /// Token indices that selected each expert this layer.
+    buckets: Vec<Vec<usize>>,
+    /// Packed token rows for a grouped expert GEMM, `n_group * n_embd`.
+    pack_x: Vec<f32>,
 }
 
 impl Scratch {
@@ -964,17 +1015,18 @@ impl Scratch {
             &self.moe.logits,
             &self.moe.weights,
             &self.moe.shexp_gate,
-            &self.moe.routed,
-            &self.moe.xw,
             &self.moe.g,
             &self.moe.u,
             &self.moe.y,
+            &self.moe.sel_w,
+            &self.moe.pack_x,
         ];
         let mut out: Vec<(usize, usize)> = f32s
             .iter()
             .map(|b| (b.as_ptr() as usize, b.capacity()))
             .collect();
         out.push((self.moe.order.as_ptr() as usize, self.moe.order.capacity()));
+        out.push((self.moe.sel_e.as_ptr() as usize, self.moe.sel_e.capacity()));
         out
     }
 }
@@ -5579,6 +5631,17 @@ impl Llama {
             return self.gemv_into(m, x, y, pool);
         }
         let data = self.mat_bytes(m)?;
+        Self::gemm_data_into(m, n_tokens, data, x, y)
+    }
+
+    /// `y[t, r] = W[r] · x[t]` against an already-sliced weight blob.
+    fn gemm_data_into(
+        m: &QuantMat,
+        n_tokens: usize,
+        data: &[u8],
+        x: &[f32],
+        y: &mut Vec<f32>,
+    ) -> Result<(), LlamaError> {
         let n_out = m
             .n_rows
             .checked_mul(n_tokens)
@@ -5730,44 +5793,28 @@ impl Llama {
         }
     }
 
-    fn routed_swiglu_into(
+    /// GEMM `n_tokens` rows against one expert part. One token stays on the GEMV pool.
+    fn gemm_part_bytes_into(
         &self,
-        exps: (&QuantMat, &QuantMat, &QuantMat),
-        expert: usize,
-        xt: &[f32],
-        moe: &mut MoeScratch,
+        spec: PartBytes<'_>,
+        x: &[f32],
+        y: &mut Vec<f32>,
         pool: &mut GemvPool,
-        parts: Option<&ExpertParts>,
     ) -> Result<(), LlamaError> {
-        let (gate, up, down) = exps;
-        self.gemv_part_bytes_into(
-            gate,
-            expert,
-            xt,
-            &mut moe.g,
-            pool,
-            parts.map(|p| p.gate.as_slice()),
-        )?;
-        self.gemv_part_bytes_into(
-            up,
-            expert,
-            xt,
-            &mut moe.u,
-            pool,
-            parts.map(|p| p.up.as_slice()),
-        )?;
-        silu_inplace(&mut moe.g);
-        for (a, b) in moe.g.iter_mut().zip(moe.u.iter()) {
-            *a *= *b;
+        if spec.n_tokens == 1 {
+            return self.gemv_part_bytes_into(spec.m, spec.part, x, y, pool, spec.bytes);
         }
-        self.gemv_part_bytes_into(
-            down,
-            expert,
-            &moe.g,
-            &mut moe.y,
-            pool,
-            parts.map(|p| p.down.as_slice()),
-        )
+        match spec.bytes {
+            Some(data) => Self::gemm_data_into(spec.m, spec.n_tokens, data, x, y),
+            None => {
+                let (base, len) = self.mat_part_range(spec.m, spec.part)?;
+                let data = self
+                    .blob
+                    .get(base..base.saturating_add(len))
+                    .ok_or_else(|| LlamaError::Shape(spec.m.name.clone()))?;
+                Self::gemm_data_into(spec.m, spec.n_tokens, data, x, y)
+            }
+        }
     }
 
     fn take_expert(
@@ -5791,6 +5838,240 @@ impl Llama {
         }
     }
 
+    /// Route every token, then one GEMM per expert that at least one token selected.
+    fn softmax_routed_layer(
+        &self,
+        spec: SoftmaxMoE<'_>,
+        n_tokens: usize,
+        s: &mut Scratch,
+        run: MoeExec<'_>,
+    ) -> Result<(), LlamaError> {
+        let MoeExec {
+            pool,
+            moe_trace,
+            store,
+        } = run;
+        s.moe.sel_e.clear();
+        s.moe.sel_w.clear();
+        for t in 0..n_tokens {
+            let xt = token_row(&s.x, t, spec.n_embd, spec.err)?;
+            self.route_softmax(
+                (spec.gate_inp, spec.n_expert, spec.n_used),
+                xt,
+                &mut s.moe,
+                pool,
+                spec.err,
+            )?;
+            fill_router_weights(&s.moe.logits, &s.moe.order, &mut s.moe.weights, spec.norm_w);
+            moe_trace.record(t, &s.moe.order, &s.moe.weights);
+            s.moe.sel_e.extend_from_slice(&s.moe.order);
+            s.moe.sel_w.extend_from_slice(&s.moe.weights);
+        }
+        self.grouped_routed_ffn(
+            &spec,
+            n_tokens,
+            s,
+            GroupedRun {
+                pool,
+                store,
+                layer: moe_trace.layer,
+            },
+        )?;
+        for t in 0..n_tokens {
+            let start = t.saturating_mul(spec.n_used);
+            let experts = s
+                .moe
+                .sel_e
+                .get(start..start.saturating_add(spec.n_used))
+                .unwrap_or(&[]);
+            moe_trace.prefetch_experts(store, t, experts);
+        }
+        Ok(())
+    }
+
+    fn grouped_routed_ffn(
+        &self,
+        spec: &SoftmaxMoE<'_>,
+        n_tokens: usize,
+        s: &mut Scratch,
+        run: GroupedRun<'_>,
+    ) -> Result<(), LlamaError> {
+        while s.moe.buckets.len() < spec.n_expert {
+            s.moe.buckets.push(Vec::new());
+        }
+        for b in &mut s.moe.buckets {
+            b.clear();
+        }
+        for t in 0..n_tokens {
+            for j in 0..spec.n_used {
+                let idx = t.saturating_mul(spec.n_used).saturating_add(j);
+                let e = *s
+                    .moe
+                    .sel_e
+                    .get(idx)
+                    .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+                let bucket = s
+                    .moe
+                    .buckets
+                    .get_mut(e)
+                    .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+                bucket.push(t);
+            }
+        }
+        for e in 0..spec.n_expert {
+            let toks = s
+                .moe
+                .buckets
+                .get_mut(e)
+                .map(core::mem::take)
+                .unwrap_or_default();
+            if toks.is_empty() {
+                continue;
+            }
+            self.grouped_one_expert(
+                spec,
+                ExpertJob {
+                    expert: e,
+                    toks: &toks,
+                    layer: run.layer,
+                },
+                s,
+                run.pool,
+                run.store,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn grouped_one_expert(
+        &self,
+        spec: &SoftmaxMoE<'_>,
+        job: ExpertJob<'_>,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+        store: &mut Option<LiveStore>,
+    ) -> Result<(), LlamaError> {
+        let n = job.toks.len();
+        let width = n
+            .checked_mul(spec.n_embd)
+            .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+        fit(&mut s.moe.pack_x, width);
+        for (i, t) in job.toks.iter().copied().enumerate() {
+            let w = if spec.scale_x {
+                token_expert_weight(&s.moe, t, spec.n_used, job.expert).unwrap_or(0.0)
+            } else {
+                0.0
+            };
+            let xt = token_row(&s.x, t, spec.n_embd, spec.err)?;
+            let off = i.saturating_mul(spec.n_embd);
+            let dst = s
+                .moe
+                .pack_x
+                .get_mut(off..off.saturating_add(spec.n_embd))
+                .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+            if spec.scale_x {
+                for (d, v) in dst.iter_mut().zip(xt.iter()) {
+                    *d = *v * w;
+                }
+            } else {
+                dst.copy_from_slice(xt);
+            }
+        }
+        let (parts, held) = Self::take_expert(store, job.layer, job.expert)?;
+        let r = self.swiglu_expert_gemm(
+            spec,
+            ExpertGemm {
+                expert: job.expert,
+                n,
+                parts: parts.as_ref(),
+            },
+            s,
+            pool,
+        );
+        Self::put_expert(store, held);
+        r?;
+        Self::scatter_expert_rows(spec, job.expert, job.toks, s)
+    }
+
+    fn swiglu_expert_gemm(
+        &self,
+        spec: &SoftmaxMoE<'_>,
+        g: ExpertGemm<'_>,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        let gate_b = g.parts.map(|p| p.gate.as_slice());
+        self.gemm_part_bytes_into(
+            PartBytes {
+                m: spec.gate,
+                part: g.expert,
+                n_tokens: g.n,
+                bytes: gate_b,
+            },
+            &s.moe.pack_x,
+            &mut s.moe.g,
+            pool,
+        )?;
+        let up_b = g.parts.map(|p| p.up.as_slice());
+        self.gemm_part_bytes_into(
+            PartBytes {
+                m: spec.up,
+                part: g.expert,
+                n_tokens: g.n,
+                bytes: up_b,
+            },
+            &s.moe.pack_x,
+            &mut s.moe.u,
+            pool,
+        )?;
+        silu_inplace(&mut s.moe.g);
+        for (a, b) in s.moe.g.iter_mut().zip(s.moe.u.iter()) {
+            *a *= *b;
+        }
+        let down_b = g.parts.map(|p| p.down.as_slice());
+        self.gemm_part_bytes_into(
+            PartBytes {
+                m: spec.down,
+                part: g.expert,
+                n_tokens: g.n,
+                bytes: down_b,
+            },
+            &s.moe.g,
+            &mut s.moe.y,
+            pool,
+        )
+    }
+
+    fn scatter_expert_rows(
+        spec: &SoftmaxMoE<'_>,
+        expert: usize,
+        toks: &[usize],
+        s: &mut Scratch,
+    ) -> Result<(), LlamaError> {
+        for (i, t) in toks.iter().copied().enumerate() {
+            let w = if spec.scale_x {
+                1.0
+            } else {
+                token_expert_weight(&s.moe, t, spec.n_used, expert).unwrap_or(0.0)
+            };
+            let src_off = i.saturating_mul(spec.n_embd);
+            let src = s
+                .moe
+                .y
+                .get(src_off..src_off.saturating_add(spec.n_embd))
+                .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+            let dst_off = t.saturating_mul(spec.n_embd);
+            let dst = s
+                .ffn_out
+                .get_mut(dst_off..dst_off.saturating_add(spec.n_embd))
+                .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+            for (d, v) in dst.iter_mut().zip(src.iter()) {
+                *d += *v * w;
+            }
+        }
+        Ok(())
+    }
+
     fn route_softmax(
         &self,
         gate: (&QuantMat, usize, usize),
@@ -5806,52 +6087,6 @@ impl Llama {
         }
         softmax(&mut moe.logits);
         topk_into(&moe.logits, n_used, &mut moe.order)
-    }
-
-    fn accumulate_routed(
-        &self,
-        exps: (&QuantMat, &QuantMat, &QuantMat),
-        tok: (usize, usize),
-        s: &mut Scratch,
-        pool: &mut GemvPool,
-        store: &mut Option<LiveStore>,
-        moe_trace: &mut MoeTraceBuf,
-    ) -> Result<(), LlamaError> {
-        let (t, n_embd) = tok;
-        let xt = token_row(&s.x, t, n_embd, "moe x")?;
-        fit(&mut s.moe.routed, n_embd);
-        for i in 0..s.moe.order.len() {
-            let Some(e) = s.moe.order.get(i).copied() else {
-                continue;
-            };
-            let w = s.moe.weights.get(i).copied().unwrap_or(0.0);
-            let (parts, held) = Self::take_expert(store, moe_trace.layer, e)?;
-            let r = self.routed_swiglu_into(exps, e, xt, &mut s.moe, pool, parts.as_ref());
-            Self::put_expert(store, held);
-            r?;
-            for (o, v) in s.moe.routed.iter_mut().zip(s.moe.y.iter()) {
-                *o += *v * w;
-            }
-        }
-        moe_trace.prefetch_experts(store, t, &s.moe.order);
-        Ok(())
-    }
-
-    fn merge_routed_token(
-        s: &mut Scratch,
-        t: usize,
-        n_embd: usize,
-        err: &'static str,
-    ) -> Result<(), LlamaError> {
-        let off = t.saturating_mul(n_embd);
-        let dst = s
-            .ffn_out
-            .get_mut(off..off.saturating_add(n_embd))
-            .ok_or_else(|| LlamaError::Shape(err.into()))?;
-        for (d, v) in dst.iter_mut().zip(s.moe.routed.iter()) {
-            *d += *v;
-        }
-        Ok(())
     }
 
     fn shexp_silu_into(
@@ -5916,28 +6151,27 @@ impl Llama {
             .checked_mul(n_embd)
             .ok_or_else(|| LlamaError::Shape("llama moe".into()))?;
         fit(&mut s.ffn_out, n_out);
-        for t in 0..n_tokens {
-            let xt = token_row(&s.x, t, n_embd, "llama moe x")?;
-            self.route_softmax(
-                (&moe.gate_inp, moe.n_expert, moe.n_expert_used),
-                xt,
-                &mut s.moe,
+        self.softmax_routed_layer(
+            SoftmaxMoE {
+                gate_inp: &moe.gate_inp,
+                gate: &moe.gate_exps,
+                up: &moe.up_exps,
+                down: &moe.down_exps,
+                n_expert: moe.n_expert,
+                n_used: moe.n_expert_used,
+                n_embd,
+                norm_w: true,
+                scale_x: false,
+                err: "llama moe",
+            },
+            n_tokens,
+            s,
+            MoeExec {
                 pool,
-                "llama ffn_gate_inp",
-            )?;
-            fill_router_weights(&s.moe.logits, &s.moe.order, &mut s.moe.weights, true);
-            moe_trace.record(t, &s.moe.order, &s.moe.weights);
-            self.accumulate_routed(
-                (&moe.gate_exps, &moe.up_exps, &moe.down_exps),
-                (t, n_embd),
-                s,
-                pool,
-                store,
                 moe_trace,
-            )?;
-            Self::merge_routed_token(s, t, n_embd, "llama moe out")?;
-        }
-        Ok(())
+                store,
+            },
+        )
     }
 
     /// Official llama4.cpp MoE: top-k on raw router logits, sigmoid weights applied
@@ -5964,6 +6198,8 @@ impl Llama {
             *hv *= *uv;
         }
         self.gemm_into(&moe.down_shexp, n_tokens, &s.gate, &mut s.ffn_out, pool)?;
+        s.moe.sel_e.clear();
+        s.moe.sel_w.clear();
         for t in 0..n_tokens {
             let xt = token_row(&s.x, t, n_embd, "llama4 moe x")?;
             self.gemv_into(&moe.gate_inp, xt, &mut s.moe.logits, pool)?;
@@ -5981,64 +6217,39 @@ impl Llama {
                     .push(sigmoid_f32(s.moe.logits.get(e).copied().unwrap_or(0.0)));
             }
             moe_trace.record(t, &s.moe.order, &s.moe.weights);
-            fit(&mut s.moe.routed, n_embd);
-            for i in 0..s.moe.order.len() {
-                let Some(e) = s.moe.order.get(i).copied() else {
-                    continue;
-                };
-                let w = s.moe.weights.get(i).copied().unwrap_or(0.0);
-                fit(&mut s.moe.xw, xt.len());
-                for (d, v) in s.moe.xw.iter_mut().zip(xt.iter()) {
-                    *d = *v * w;
-                }
-                let (parts, held) = Self::take_expert(store, moe_trace.layer, e)?;
-                let r = self.gemv_part_bytes_into(
-                    &moe.gate_exps,
-                    e,
-                    &s.moe.xw,
-                    &mut s.moe.g,
-                    pool,
-                    parts.as_ref().map(|p| p.gate.as_slice()),
-                );
-                let r = r.and_then(|()| {
-                    self.gemv_part_bytes_into(
-                        &moe.up_exps,
-                        e,
-                        &s.moe.xw,
-                        &mut s.moe.u,
-                        pool,
-                        parts.as_ref().map(|p| p.up.as_slice()),
-                    )
-                });
-                let r = r.and_then(|()| {
-                    silu_inplace(&mut s.moe.g);
-                    for (a, b) in s.moe.g.iter_mut().zip(s.moe.u.iter()) {
-                        *a *= *b;
-                    }
-                    self.gemv_part_bytes_into(
-                        &moe.down_exps,
-                        e,
-                        &s.moe.g,
-                        &mut s.moe.y,
-                        pool,
-                        parts.as_ref().map(|p| p.down.as_slice()),
-                    )
-                });
-                Self::put_expert(store, held);
-                r?;
-                for (o, v) in s.moe.routed.iter_mut().zip(s.moe.y.iter()) {
-                    *o += *v;
-                }
-            }
-            moe_trace.prefetch_experts(store, t, &s.moe.order);
-            let off = t.saturating_mul(n_embd);
-            let dst = s
-                .ffn_out
-                .get_mut(off..off.saturating_add(n_embd))
-                .ok_or_else(|| LlamaError::Shape("llama4 moe out".into()))?;
-            for (d, v) in dst.iter_mut().zip(s.moe.routed.iter()) {
-                *d += *v;
-            }
+            s.moe.sel_e.extend_from_slice(&s.moe.order);
+            s.moe.sel_w.extend_from_slice(&s.moe.weights);
+        }
+        let spec = SoftmaxMoE {
+            gate_inp: &moe.gate_inp,
+            gate: &moe.gate_exps,
+            up: &moe.up_exps,
+            down: &moe.down_exps,
+            n_expert: moe.n_expert,
+            n_used: moe.n_expert_used,
+            n_embd,
+            norm_w: false,
+            scale_x: true,
+            err: "llama4 moe",
+        };
+        self.grouped_routed_ffn(
+            &spec,
+            n_tokens,
+            s,
+            GroupedRun {
+                pool,
+                store,
+                layer: moe_trace.layer,
+            },
+        )?;
+        for t in 0..n_tokens {
+            let start = t.saturating_mul(moe.n_expert_used);
+            let experts = s
+                .moe
+                .sel_e
+                .get(start..start.saturating_add(moe.n_expert_used))
+                .unwrap_or(&[]);
+            moe_trace.prefetch_experts(store, t, experts);
         }
         Ok(())
     }
@@ -6061,28 +6272,27 @@ impl Llama {
             return Err(LlamaError::Shape("qwen2moe".into()));
         }
         self.shexp_silu_into(moe, n_tokens, s, pool, "qwen2moe")?;
-        for t in 0..n_tokens {
-            let xt = token_row(&s.x, t, n_embd, "qwen2moe x")?;
-            self.route_softmax(
-                (&moe.gate_inp, moe.n_expert, moe.n_expert_used),
-                xt,
-                &mut s.moe,
+        self.softmax_routed_layer(
+            SoftmaxMoE {
+                gate_inp: &moe.gate_inp,
+                gate: &moe.gate_exps,
+                up: &moe.up_exps,
+                down: &moe.down_exps,
+                n_expert: moe.n_expert,
+                n_used: moe.n_expert_used,
+                n_embd,
+                norm_w: false,
+                scale_x: false,
+                err: "qwen2moe",
+            },
+            n_tokens,
+            s,
+            MoeExec {
                 pool,
-                "qwen2moe ffn_gate_inp",
-            )?;
-            fill_router_weights(&s.moe.logits, &s.moe.order, &mut s.moe.weights, false);
-            moe_trace.record(t, &s.moe.order, &s.moe.weights);
-            self.accumulate_routed(
-                (&moe.gate_exps, &moe.up_exps, &moe.down_exps),
-                (t, n_embd),
-                s,
-                pool,
-                store,
                 moe_trace,
-            )?;
-            Self::merge_routed_token(s, t, n_embd, "qwen2moe out")?;
-        }
-        Ok(())
+                store,
+            },
+        )
     }
 
     /// Official qwen3moe.cpp: softmax then top-k, weights after SwiGLU (`norm_w`
@@ -6106,28 +6316,27 @@ impl Llama {
             .checked_mul(n_embd)
             .ok_or_else(|| LlamaError::Shape("qwen3moe".into()))?;
         fit(&mut s.ffn_out, n_out);
-        for t in 0..n_tokens {
-            let xt = token_row(&s.x, t, n_embd, "qwen3moe x")?;
-            self.route_softmax(
-                (&moe.gate_inp, moe.n_expert, moe.n_expert_used),
-                xt,
-                &mut s.moe,
+        self.softmax_routed_layer(
+            SoftmaxMoE {
+                gate_inp: &moe.gate_inp,
+                gate: &moe.gate_exps,
+                up: &moe.up_exps,
+                down: &moe.down_exps,
+                n_expert: moe.n_expert,
+                n_used: moe.n_expert_used,
+                n_embd,
+                norm_w: true,
+                scale_x: false,
+                err: "qwen3moe",
+            },
+            n_tokens,
+            s,
+            MoeExec {
                 pool,
-                "qwen3moe ffn_gate_inp",
-            )?;
-            fill_router_weights(&s.moe.logits, &s.moe.order, &mut s.moe.weights, true);
-            moe_trace.record(t, &s.moe.order, &s.moe.weights);
-            self.accumulate_routed(
-                (&moe.gate_exps, &moe.up_exps, &moe.down_exps),
-                (t, n_embd),
-                s,
-                pool,
-                store,
                 moe_trace,
-            )?;
-            Self::merge_routed_token(s, t, n_embd, "qwen3moe out")?;
-        }
-        Ok(())
+                store,
+            },
+        )
     }
 
     /// Official qwen3next.cpp: softmax then top-k, weights after SwiGLU (`norm_w`
@@ -6148,28 +6357,27 @@ impl Llama {
             return Err(LlamaError::Shape("qwen3next".into()));
         }
         self.shexp_silu_into(moe, n_tokens, s, pool, "qwen3next")?;
-        for t in 0..n_tokens {
-            let xt = token_row(&s.x, t, n_embd, "qwen3next x")?;
-            self.route_softmax(
-                (&moe.gate_inp, moe.n_expert, moe.n_expert_used),
-                xt,
-                &mut s.moe,
+        self.softmax_routed_layer(
+            SoftmaxMoE {
+                gate_inp: &moe.gate_inp,
+                gate: &moe.gate_exps,
+                up: &moe.up_exps,
+                down: &moe.down_exps,
+                n_expert: moe.n_expert,
+                n_used: moe.n_expert_used,
+                n_embd,
+                norm_w: true,
+                scale_x: false,
+                err: "qwen3next",
+            },
+            n_tokens,
+            s,
+            MoeExec {
                 pool,
-                "qwen3next ffn_gate_inp",
-            )?;
-            fill_router_weights(&s.moe.logits, &s.moe.order, &mut s.moe.weights, true);
-            moe_trace.record(t, &s.moe.order, &s.moe.weights);
-            self.accumulate_routed(
-                (&moe.gate_exps, &moe.up_exps, &moe.down_exps),
-                (t, n_embd),
-                s,
-                pool,
-                store,
                 moe_trace,
-            )?;
-            Self::merge_routed_token(s, t, n_embd, "qwen3next out")?;
-        }
-        Ok(())
+                store,
+            },
+        )
     }
 
     /// Dequantize `token`'s embedding row into `y` (`token_embd.n_cols` long).
@@ -6576,6 +6784,17 @@ fn topk_into(logits: &[f32], k: usize, order: &mut Vec<usize>) -> Result<(), Lla
     });
     order.truncate(k);
     Ok(())
+}
+
+fn token_expert_weight(moe: &MoeScratch, t: usize, n_used: usize, expert: usize) -> Option<f32> {
+    let start = t.saturating_mul(n_used);
+    for j in 0..n_used {
+        let idx = start.saturating_add(j);
+        if moe.sel_e.get(idx).copied() == Some(expert) {
+            return moe.sel_w.get(idx).copied();
+        }
+    }
+    None
 }
 
 fn fill_router_weights(logits: &[f32], order: &[usize], weights: &mut Vec<f32>, norm_w: bool) {

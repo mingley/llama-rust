@@ -35,6 +35,7 @@ let mut a = model.session_on_pool(4096, &pool)?;
 let mut b = model.session_on_pool(4096, &pool)?;
 // Continuous batching (chunked prefill + join mid-flight + waiting queue).
 // Prefill chunks, replay tokens, and decode tokens GEMM together on the pool.
+// Routed experts that share an expert id GEMM together (one acquire each).
 // A full pool preempts another sequence (recompute + replay).
 let mut eng = Engine::new(model.llama(), EngineCfg::tiny())?;
 eng.attach_expert_store(LiveStore::Direct(model.llama().expert_direct_store()?));
