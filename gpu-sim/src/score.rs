@@ -1,4 +1,7 @@
 //! Performance vector. Semantic failure is [`crate::SimError`], not a field here.
+//!
+//! There is no `$/M tokens` field. Energy is `profile TDP × virtual wall`, not
+//! a rental price.
 
 use crate::sim::Sim;
 
@@ -13,17 +16,21 @@ pub struct Score {
     pub bytes_moved: u64,
     /// `wall_ns / n_tokens` when the caller knows the token count.
     pub ns_per_token: Option<u64>,
+    /// Microjoules: `node_tdp_mw * wall_ns / 1_000_000`. Profile TDP, not a bill.
+    pub energy_uj: u64,
 }
 
 impl Score {
     /// Snapshot after [`Sim::synchronize`].
     #[must_use]
     pub fn from_sim(sim: &Sim) -> Self {
+        let wall_ns = sim.clock_ns();
         Self {
-            wall_ns: sim.clock_ns(),
+            wall_ns,
             hbm_peak: sim.hbm_peak(),
             bytes_moved: sim.bytes_moved(),
             ns_per_token: None,
+            energy_uj: energy_uj(sim.profile().node_tdp_mw(), wall_ns),
         }
     }
 
@@ -39,13 +46,22 @@ impl Score {
     pub fn line(&self) -> String {
         match self.ns_per_token {
             Some(n) => format!(
-                "wall_ns={} hbm_peak={} bytes_moved={} ns_per_token={}",
-                self.wall_ns, self.hbm_peak, self.bytes_moved, n
+                "wall_ns={} hbm_peak={} bytes_moved={} energy_uj={} ns_per_token={}",
+                self.wall_ns, self.hbm_peak, self.bytes_moved, self.energy_uj, n
             ),
             None => format!(
-                "wall_ns={} hbm_peak={} bytes_moved={}",
-                self.wall_ns, self.hbm_peak, self.bytes_moved
+                "wall_ns={} hbm_peak={} bytes_moved={} energy_uj={}",
+                self.wall_ns, self.hbm_peak, self.bytes_moved, self.energy_uj
             ),
         }
     }
+}
+
+/// `tdp_mw * wall_ns / 1e6` microjoules.
+fn energy_uj(tdp_mw: u64, wall_ns: u64) -> u64 {
+    let n = u128::from(tdp_mw)
+        .saturating_mul(u128::from(wall_ns))
+        .checked_div(1_000_000)
+        .unwrap_or(u128::MAX);
+    u64::try_from(n).unwrap_or(u64::MAX)
 }

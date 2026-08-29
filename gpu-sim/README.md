@@ -76,10 +76,11 @@ assert!(sim.clock_ns() > 0);
 [`Score`](crate::Score) splits the two numbers agents must not mix:
 
 - **semantic**: `Ok` or a [`SimError`](crate::SimError) (binary)
-- **performance**: `wall_ns`, `hbm_peak`, `bytes_moved`, optional `ns_per_token`
+- **performance**: `wall_ns`, `hbm_peak`, `bytes_moved`, `energy_uj`, optional `ns_per_token`
 
-`Score::with_tokens(n)` fills `ns_per_token = wall_ns / n`. There is no
-invented `$/M tokens` field. Device-to-device replica copies charge the
+`Score::with_tokens(n)` fills `ns_per_token = wall_ns / n`. `energy_uj` is
+profile board TDP × virtual wall (`mW × ns / 1e6`). There is no invented
+`$/M tokens` field. Device-to-device replica copies charge the
 destination HBM at memcpy start and OOM if that GPU is full. `free` of a
 replicated allocation only drops `live` when no device still holds it.
 

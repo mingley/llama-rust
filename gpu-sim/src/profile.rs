@@ -27,6 +27,8 @@ pub struct GpuProfile {
     pub launch_overhead_ns: u64,
     /// Stream-ordered alloc overhead, nanoseconds.
     pub alloc_overhead_ns: u64,
+    /// Board TDP, milliwatts. Energy estimate is `tdp_mw * wall_ns / 1e6` µJ.
+    pub tdp_mw: u64,
 }
 
 impl GpuProfile {
@@ -108,6 +110,14 @@ impl HardwareProfile {
         self.gpus.len()
     }
 
+    /// Sum of board TDP (milliwatts). Energy uses this times virtual wall time.
+    #[must_use]
+    pub fn node_tdp_mw(&self) -> u64 {
+        self.gpus
+            .iter()
+            .fold(0u64, |acc, g| acc.saturating_add(g.tdp_mw))
+    }
+
     /// GPU profile for `id`.
     pub fn gpu(&self, id: DeviceId) -> Result<&GpuProfile, SimError> {
         self.gpus
@@ -180,6 +190,7 @@ impl HardwareProfile {
     pub fn example_cheap_48gb() -> Self {
         let mut g = h100_gpu(DeviceId(0));
         g.hbm_bytes = 48u64.saturating_mul(1 << 30);
+        g.tdp_mw = 300_000;
         one_gpu_example("example-cheap-48gb", g, pcie_host(DeviceId(0)))
     }
 
@@ -279,14 +290,15 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ntdp_mw={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
             g0.hbm_bps,
             g0.fp16_flops,
             self.host_bps(g0.id),
-            g0.copy_engines
+            g0.copy_engines,
+            g0.tdp_mw
         )
     }
 
@@ -337,6 +349,7 @@ fn h100_gpu(id: DeviceId) -> GpuProfile {
         copy_engines: 2,
         launch_overhead_ns: 3_000,
         alloc_overhead_ns: 2_000,
+        tdp_mw: 700_000,
     }
 }
 
@@ -436,6 +449,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut nvlink_bps = 450u64.saturating_mul(1_000_000_000);
     let mut pcie_far_bps = 4u64.saturating_mul(1_000_000_000);
     let mut copy_engines: u8 = 2;
+    let mut tdp_mw = 700_000u64;
     let mut mesh = MeshKind::NvlinkClique;
     let mut mesh_set = false;
     for raw in text.lines() {
@@ -460,6 +474,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             "nvlink_bps" => nvlink_bps = parse_u64(v)?,
             "pcie_far_bps" => pcie_far_bps = parse_u64(v)?,
             "copy_engines" => copy_engines = parse_u8(v)?,
+            "tdp_mw" => tdp_mw = parse_u64(v)?,
             "topology" => {
                 mesh = parse_mesh(v)?;
                 mesh_set = true;
@@ -488,6 +503,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         g.hbm_bps = hbm_bps;
         g.fp16_flops = fp16_flops;
         g.copy_engines = copy_engines;
+        g.tdp_mw = tdp_mw;
         gpus.push(g);
         let far = mesh == MeshKind::NumaBad && i == 1;
         links.push(LinkProfile {
@@ -635,7 +651,16 @@ mod tests {
             let p = HardwareProfile::by_name(name).unwrap();
             assert!(!p.name.is_empty());
             assert!(p.n_gpus() >= 1);
+            assert!(p.node_tdp_mw() > 0);
         }
+    }
+
+    #[test]
+    fn parse_tdp_mw_sets_every_gpu() {
+        let p = HardwareProfile::parse("gpus=2\ntopology=pcie\ntdp_mw=123000\n").unwrap();
+        assert_eq!(p.node_tdp_mw(), 246_000);
+        assert_eq!(p.gpu(DeviceId(0)).unwrap().tdp_mw, 123_000);
+        assert_eq!(p.gpu(DeviceId(1)).unwrap().tdp_mw, 123_000);
     }
 
     #[test]

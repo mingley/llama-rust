@@ -241,12 +241,36 @@ mod tests {
             hbm_peak: 20,
             bytes_moved: 30,
             ns_per_token: None,
+            energy_uj: 7,
         };
-        assert_eq!(s.line(), "wall_ns=10 hbm_peak=20 bytes_moved=30");
+        assert_eq!(
+            s.line(),
+            "wall_ns=10 hbm_peak=20 bytes_moved=30 energy_uj=7"
+        );
         assert_eq!(
             s.clone().with_tokens(2).line(),
-            "wall_ns=10 hbm_peak=20 bytes_moved=30 ns_per_token=5"
+            "wall_ns=10 hbm_peak=20 bytes_moved=30 energy_uj=7 ns_per_token=5"
         );
+    }
+
+    #[test]
+    fn energy_scales_with_profile_tdp_not_dollars() {
+        let bytes = 8u64 << 20;
+        let run = |p: HardwareProfile| {
+            let mut sim = Sim::new(p);
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let a = sim.alloc(d, bytes, s).unwrap();
+            enq(sim.memcpy_host_to_device(d, a, bytes, s));
+            sim.synchronize().unwrap();
+            Score::from_sim(&sim)
+        };
+        let h100 = run(HardwareProfile::example_h100_sxm());
+        let cheap = run(HardwareProfile::example_cheap_48gb());
+        assert!(h100.energy_uj > 0);
+        assert!(h100.energy_uj > cheap.energy_uj);
+        assert!(h100.line().contains("energy_uj="));
+        assert!(!h100.line().contains('$'));
     }
 
     #[test]

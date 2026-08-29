@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — energy from profile TDP
+
+`Score::energy_uj` is `node_tdp_mw * wall_ns / 1e6` microjoules. H100/H200
+examples are 700 W; `cheap` is 300 W. Parse key `tdp_mw`. This is a
+power-envelope estimate, not a cloud bill. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — gpu-sim faults + topology matrix
 
 First-class semantic faults: GPU unavailable, stream cancel of queued
