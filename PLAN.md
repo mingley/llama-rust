@@ -466,7 +466,8 @@ impossible or immediately fatal.
 
    Shipped in `gpu-sim::Score` (not a rental price): `wall_ns`, `hbm_peak`,
    `bytes_moved`, `energy_uj` (`node_tdp_mw * wall_ns / 1e6` µJ), optional
-   `ns_per_token`. There is no `$/M tokens` field.
+   `ns_per_token`, `ttft_ns`, `itl_ns`. `sim_replay` samples the virtual clock
+   after each token. There is no `$/M tokens` field.
 
 Agent loop: modify expertvm → `cargo test` (semantics) → simulator
 (score) → keep/revert. Thousands of experiments, no H100 required.
@@ -536,8 +537,9 @@ model, do not celebrate the sim.
    virtual clock. No CUDA. `expertvm sim` is the first app.
 8. [x] `infer-bench` crate: adversarial workloads + trace replay scores.
    Dual score is semantic (`Ok` vs illegal GPU state) and performance
-   (`wall_ns`, `hbm_peak`, `bytes_moved`, `energy_uj`, optional `ns_per_token`).
-   No invented `$/M tokens`. Energy is profile TDP × virtual wall.
+   (`wall_ns`, `hbm_peak`, `bytes_moved`, `energy_uj`, optional `ns_per_token`,
+   `ttft_ns`, `itl_ns`). No invented `$/M tokens`. Energy is profile TDP ×
+   virtual wall. `sim_replay` reports TTFT / mean ITL at token boundaries.
 9. [x] `Model` / `Session` layered API with `attach_expert_store`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

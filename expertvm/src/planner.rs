@@ -1,7 +1,42 @@
 //! Move-weights vs already-resident: a cheap planner over a trace window.
 
 use crate::access::{ExpertKey, Trace};
+use gpu_sim::ns_for_bytes;
 use std::collections::{BTreeMap, BTreeSet};
+
+/// Move the expert weights, or ship activations to a resident copy.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Placement {
+    /// Copy expert weights onto the compute device (pay `expert_bytes` once).
+    MoveWeights,
+    /// Leave the expert where it lives; ship activations each use.
+    DispatchActivations,
+}
+
+/// Volume-crossover: move once vs dispatch `reuse * fan_in` activation payloads.
+///
+/// `link_bps` is the hop that would carry either transfer (PCIe, NVLink, RDMA).
+/// Equal bandwidth means this is a byte-volume compare; different hops are the
+/// caller's job (pass that hop's `bps`). Not a dollar figure.
+#[must_use]
+pub fn plan_placement(
+    expert_bytes: u64,
+    activation_bytes: u64,
+    fan_in: u64,
+    reuse: u64,
+    link_bps: u64,
+) -> Placement {
+    let move_ns = ns_for_bytes(expert_bytes, link_bps);
+    let dispatch_bytes = activation_bytes
+        .saturating_mul(fan_in.max(1))
+        .saturating_mul(reuse.max(1));
+    let dispatch_ns = ns_for_bytes(dispatch_bytes, link_bps);
+    if move_ns <= dispatch_ns {
+        Placement::MoveWeights
+    } else {
+        Placement::DispatchActivations
+    }
+}
 
 /// Decision for one window of future expert uses.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -242,6 +242,8 @@ mod tests {
             bytes_moved: 30,
             ns_per_token: None,
             energy_uj: 7,
+            ttft_ns: None,
+            itl_ns: None,
         };
         assert_eq!(
             s.line(),
@@ -250,6 +252,10 @@ mod tests {
         assert_eq!(
             s.clone().with_tokens(2).line(),
             "wall_ns=10 hbm_peak=20 bytes_moved=30 energy_uj=7 ns_per_token=5"
+        );
+        assert_eq!(
+            s.with_latencies(4, Some(3)).line(),
+            "wall_ns=10 hbm_peak=20 bytes_moved=30 energy_uj=7 ttft_ns=4 itl_ns=3"
         );
     }
 

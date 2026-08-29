@@ -179,7 +179,31 @@ fn sim_replay_moves_bytes_on_miss() {
     .expect("sim tight");
     assert!(missy.bytes_moved > hitty.bytes_moved);
     assert!(missy.sim_ns > 0);
+    assert!(missy.energy_uj > 0);
+    let ttft = missy.ttft_ns.expect("first token");
+    assert!(ttft > 0);
+    assert!(ttft <= missy.sim_ns);
+    let itl = missy.itl_ns.expect("24 tokens");
+    assert!(itl > 0);
     assert!(hitty.hits > missy.hits);
+    assert!(missy.line().contains("energy_uj="));
+    assert!(missy.line().contains("ttft_ns="));
+    assert!(missy.line().contains("itl_ns="));
+}
+
+#[test]
+fn placement_moves_when_reuse_beats_expert_bytes() {
+    let expert = 188u64 << 20;
+    let act = 4096u64;
+    let pcie = 32u64.saturating_mul(1_000_000_000);
+    assert_eq!(
+        plan_placement(expert, act, 1, 1, pcie),
+        Placement::DispatchActivations
+    );
+    assert_eq!(
+        plan_placement(expert, act, 1, 64_000, pcie),
+        Placement::MoveWeights
+    );
 }
 
 #[test]

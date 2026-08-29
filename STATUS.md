@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — TTFT/ITL + move vs dispatch
+
+`sim_replay` drains the virtual clock after each token and fills
+`Score::{ttft_ns,itl_ns,ns_per_token}` plus `energy_uj`. `plan_placement`
+chooses move-weights vs dispatch-activations from expert size, activation
+size, fan-in, reuse, and link `bps` (volume crossover, still not `$/M`).
+
 ## Shipped 2026-08-29 — energy from profile TDP
 
 `Score::energy_uj` is `node_tdp_mw * wall_ns / 1e6` microjoules. H100/H200

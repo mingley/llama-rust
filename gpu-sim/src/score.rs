@@ -1,7 +1,9 @@
 //! Performance vector. Semantic failure is [`crate::SimError`], not a field here.
 //!
 //! There is no `$/M tokens` field. Energy is `profile TDP × virtual wall`, not
-//! a rental price.
+//! a rental price. TTFT / ITL are optional; the simulator core has no tokens.
+
+use std::fmt::Write;
 
 use crate::sim::Sim;
 
@@ -18,6 +20,10 @@ pub struct Score {
     pub ns_per_token: Option<u64>,
     /// Microjoules: `node_tdp_mw * wall_ns / 1_000_000`. Profile TDP, not a bill.
     pub energy_uj: u64,
+    /// Time to first token, when the caller samples the clock at token 0.
+    pub ttft_ns: Option<u64>,
+    /// Mean inter-token latency after TTFT (`(wall - ttft) / (n-1)`).
+    pub itl_ns: Option<u64>,
 }
 
 impl Score {
@@ -31,6 +37,8 @@ impl Score {
             bytes_moved: sim.bytes_moved(),
             ns_per_token: None,
             energy_uj: energy_uj(sim.profile().node_tdp_mw(), wall_ns),
+            ttft_ns: None,
+            itl_ns: None,
         }
     }
 
@@ -41,19 +49,31 @@ impl Score {
         self
     }
 
+    /// Attach serving latencies measured at token boundaries.
+    #[must_use]
+    pub fn with_latencies(mut self, ttft_ns: u64, itl_ns: Option<u64>) -> Self {
+        self.ttft_ns = Some(ttft_ns);
+        self.itl_ns = itl_ns;
+        self
+    }
+
     /// Format as a single line for agent logs.
     #[must_use]
     pub fn line(&self) -> String {
-        match self.ns_per_token {
-            Some(n) => format!(
-                "wall_ns={} hbm_peak={} bytes_moved={} energy_uj={} ns_per_token={}",
-                self.wall_ns, self.hbm_peak, self.bytes_moved, self.energy_uj, n
-            ),
-            None => format!(
-                "wall_ns={} hbm_peak={} bytes_moved={} energy_uj={}",
-                self.wall_ns, self.hbm_peak, self.bytes_moved, self.energy_uj
-            ),
+        let mut s = format!(
+            "wall_ns={} hbm_peak={} bytes_moved={} energy_uj={}",
+            self.wall_ns, self.hbm_peak, self.bytes_moved, self.energy_uj
+        );
+        if let Some(n) = self.ns_per_token {
+            let _w = write!(s, " ns_per_token={n}");
         }
+        if let Some(n) = self.ttft_ns {
+            let _w = write!(s, " ttft_ns={n}");
+        }
+        if let Some(n) = self.itl_ns {
+            let _w = write!(s, " itl_ns={n}");
+        }
+        s
     }
 }
 

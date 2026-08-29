@@ -1,21 +1,28 @@
 //! Replay a trace through [`gpu_sim`] with H2D fills on miss.
 
-use crate::access::{ExpertKey, Trace};
+use crate::access::{ExpertAccess, ExpertKey, Trace};
 use crate::error::Error;
 use crate::policy::Policy;
 use crate::replay::{replay_keys, Touch, Walker};
-use gpu_sim::{AllocId, DType, DeviceId, HardwareProfile, KernelKind, Sim, StreamId};
+use gpu_sim::{AllocId, DType, DeviceId, HardwareProfile, KernelKind, Score, Sim, StreamId};
 use std::collections::BTreeMap;
+use std::fmt::Write;
 
 /// Simulated residency result: semantic score plus cache stats.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct SimReplay {
-    /// Simulated nanoseconds.
+    /// Simulated nanoseconds (same as [`Score::wall_ns`]).
     pub sim_ns: u64,
     /// Host↔device bytes moved.
     pub bytes_moved: u64,
     /// Peak HBM live bytes.
     pub hbm_peak: u64,
+    /// Profile TDP × wall, microjoules.
+    pub energy_uj: u64,
+    /// Clock after the first token's last layer, when the trace has tokens.
+    pub ttft_ns: Option<u64>,
+    /// Mean later-token delta, when the trace has at least two tokens.
+    pub itl_ns: Option<u64>,
     /// Cache hits.
     pub hits: u64,
     /// Cache misses.
@@ -26,10 +33,18 @@ impl SimReplay {
     /// Single-line agent / CLI log.
     #[must_use]
     pub fn line(&self) -> String {
-        format!(
-            "sim_ns={} bytes_moved={} hbm_peak={} hits={} misses={}",
-            self.sim_ns, self.bytes_moved, self.hbm_peak, self.hits, self.misses
-        )
+        let mut s = format!(
+            "sim_ns={} bytes_moved={} hbm_peak={} energy_uj={}",
+            self.sim_ns, self.bytes_moved, self.hbm_peak, self.energy_uj
+        );
+        if let Some(n) = self.ttft_ns {
+            let _w = write!(s, " ttft_ns={n}");
+        }
+        if let Some(n) = self.itl_ns {
+            let _w = write!(s, " itl_ns={n}");
+        }
+        let _w = write!(s, " hits={} misses={}", self.hits, self.misses);
+        s
     }
 }
 
@@ -37,6 +52,7 @@ impl SimReplay {
 ///
 /// Each miss copies `bytes_per_expert` host→device, then a grouped GEMM runs
 /// on the same stream (stream-ordered; no invented overlap). Hits skip the copy.
+/// The clock is sampled after each token so TTFT / ITL are real token boundaries.
 pub fn sim_replay(
     trace: &Trace,
     profile: HardwareProfile,
@@ -53,36 +69,109 @@ pub fn sim_replay(
     let mut handles: BTreeMap<ExpertKey, AllocId> = BTreeMap::new();
     let mut w = Walker::new(&keys, slots, policy, lookahead);
     let bytes = bytes_per_expert.max(1);
-    while let Some((key, touch)) = w.next_touch() {
-        match touch {
-            Touch::Hit => {
-                let id = *handles.get(&key).ok_or(Error::Store("missing handle"))?;
-                kernel(&mut sim, d, s, id)?;
+    let mut token_ends: Vec<u64> = Vec::new();
+    for (i, event) in trace.events.iter().enumerate() {
+        for key in event.keys() {
+            let (got, touch) = w.next_touch().ok_or(Error::Store("short walker"))?;
+            if got != key {
+                return Err(Error::Store("walker key mismatch"));
             }
-            Touch::Miss { evicted } => {
-                if let Some(v) = evicted {
-                    if let Some(id) = handles.remove(&v) {
-                        sim.free(d, id, s)?;
-                    }
-                }
-                if slots == 0 {
-                    continue;
-                }
-                let id = sim.alloc(d, bytes, s)?;
-                let _c = sim.memcpy_host_to_device(d, id, bytes, s)?;
-                kernel(&mut sim, d, s, id)?;
-                let _prev = handles.insert(key, id);
-            }
+            apply_touch(
+                &mut sim,
+                &mut handles,
+                TouchArgs { d, s, bytes, slots },
+                key,
+                touch,
+            )?;
+        }
+        if last_of_token(&trace.events, i) {
+            sim.synchronize()?;
+            token_ends.push(sim.clock_ns());
         }
     }
-    sim.synchronize()?;
+    if token_ends.is_empty() {
+        sim.synchronize()?;
+    }
+    let score = serving_score(&sim, &token_ends);
     Ok(SimReplay {
-        sim_ns: sim.clock_ns(),
-        bytes_moved: sim.bytes_moved(),
-        hbm_peak: sim.hbm_peak(),
+        sim_ns: score.wall_ns,
+        bytes_moved: score.bytes_moved,
+        hbm_peak: score.hbm_peak,
+        energy_uj: score.energy_uj,
+        ttft_ns: score.ttft_ns,
+        itl_ns: score.itl_ns,
         hits: table.hits,
         misses: table.misses,
     })
+}
+
+struct TouchArgs {
+    d: DeviceId,
+    s: StreamId,
+    bytes: u64,
+    slots: usize,
+}
+
+fn apply_touch(
+    sim: &mut Sim,
+    handles: &mut BTreeMap<ExpertKey, AllocId>,
+    args: TouchArgs,
+    key: ExpertKey,
+    touch: Touch,
+) -> Result<(), Error> {
+    match touch {
+        Touch::Hit => {
+            let id = *handles.get(&key).ok_or(Error::Store("missing handle"))?;
+            kernel(sim, args.d, args.s, id)
+        }
+        Touch::Miss { evicted } => {
+            if let Some(v) = evicted {
+                if let Some(id) = handles.remove(&v) {
+                    sim.free(args.d, id, args.s)?;
+                }
+            }
+            if args.slots == 0 {
+                return Ok(());
+            }
+            let id = sim.alloc(args.d, args.bytes, args.s)?;
+            let _c = sim.memcpy_host_to_device(args.d, id, args.bytes, args.s)?;
+            kernel(sim, args.d, args.s, id)?;
+            let _prev = handles.insert(key, id);
+            Ok(())
+        }
+    }
+}
+
+fn serving_score(sim: &Sim, token_ends: &[u64]) -> Score {
+    let n = u64::try_from(token_ends.len()).unwrap_or(0);
+    let mut score = Score::from_sim(sim);
+    if n > 0 {
+        score = score.with_tokens(n);
+    }
+    let Some(ttft) = token_ends.first().copied() else {
+        return score;
+    };
+    score.with_latencies(ttft, itl_from_ends(token_ends))
+}
+
+fn last_of_token(events: &[ExpertAccess], i: usize) -> bool {
+    let Some(cur) = events.get(i) else {
+        return true;
+    };
+    match events.get(i.saturating_add(1)) {
+        Some(n) => n.sequence != cur.sequence || n.token != cur.token,
+        None => true,
+    }
+}
+
+fn itl_from_ends(ends: &[u64]) -> Option<u64> {
+    if ends.len() < 2 {
+        return None;
+    }
+    let first = *ends.first()?;
+    let last = *ends.last()?;
+    let n = u64::try_from(ends.len().saturating_sub(1)).ok()?;
+    last.saturating_sub(first).checked_div(n.max(1))
 }
 
 fn kernel(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Error> {
