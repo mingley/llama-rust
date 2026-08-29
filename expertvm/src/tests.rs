@@ -95,7 +95,9 @@ fn analyze_counts_unique_and_persist() {
     assert_eq!(s.coact_pairs, 2);
     assert_eq!(s.ws90, 3);
     assert_eq!(s.mass_pt, 0);
+    assert_eq!(s.order2_persist_pt, 0);
     assert!(!s.report().contains("mass‰="));
+    assert!(s.report().contains("order2_persist‰="));
 }
 
 #[test]
@@ -106,6 +108,17 @@ fn seq_persist_and_reuse_on_repeated_token_expert() {
     let s = analyze(&t);
     assert_eq!(s.seq_persist_pt, 1000);
     assert!(s.reuse8_pt > 0);
+}
+
+#[test]
+fn order2_persist_predicts_a_cycle() {
+    let t = cycling_trace();
+    let s = analyze(&t);
+    assert!(
+        s.order2_persist_pt > 500,
+        "order2_persist‰={}",
+        s.order2_persist_pt
+    );
 }
 
 #[test]
@@ -503,6 +516,9 @@ fn adversarial_workloads_are_named_and_measurable() {
     assert!(rows[0].render().contains("uniform"));
     assert!(rows.iter().any(|r| r.name == "prefill-heavy"));
     assert!(rows.iter().any(|r| r.name == "batch"));
+    let batch = rows.iter().find(|r| r.name == "batch").unwrap();
+    assert!(batch.overlap.is_some(), "{}", batch.render());
+    assert!(batch.render().contains("overlap"));
 }
 
 #[test]

@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — order2 persist + batch stream overlap in benches
+
+`analyze` reports causal `order2_persist‰` (`P(to|from, from_prev)` online, no
+future leak). Multi-sequence traces (`workload batch`) print serial vs
+`--seq-streams` gpu-sim lines in `expertvm bench` / `infer-bench`. A page's
+GEMM stays on the stream that copied it so a later sequence cannot read
+before H2D completes. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — alignment, lookback-2 Markov, seq-stream overlap
 
 Memcpy bills `align_up(bytes, align_bytes) + ramp_bytes` so a 1-byte DMA

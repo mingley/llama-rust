@@ -4,8 +4,9 @@ use crate::access::Trace;
 use crate::error::Error;
 use crate::policy::Policy;
 use crate::replay::{compare, format_table};
-use crate::sim_replay::sim_replay;
+use crate::sim_replay::{sim_replay_cfg, SimCfg};
 use crate::workload::{generate, Workload};
+use crate::Prefetch;
 use gpu_sim::HardwareProfile;
 
 /// One measured line: policy table plus simulated LRU cost.
@@ -19,19 +20,24 @@ pub struct BenchReport {
     pub table: String,
     /// `expertvm sim` LRU line, if run.
     pub sim: Option<String>,
+    /// Serial vs `--seq-streams` when the trace has more than one sequence.
+    pub overlap: Option<String>,
 }
 
 impl BenchReport {
     /// Multi-line text.
     #[must_use]
     pub fn render(&self) -> String {
-        match &self.sim {
-            Some(s) => format!(
-                "# {} capacity={}\n{}{}\n",
-                self.name, self.capacity, self.table, s
-            ),
-            None => format!("# {} capacity={}\n{}", self.name, self.capacity, self.table),
+        let mut s = format!("# {} capacity={}\n{}", self.name, self.capacity, self.table);
+        if let Some(sim) = &self.sim {
+            s.push_str(sim);
+            s.push('\n');
         }
+        if let Some(ov) = &self.overlap {
+            s.push_str(ov);
+            s.push('\n');
+        }
+        s
     }
 }
 
@@ -45,19 +51,44 @@ pub fn report(
     expert_bytes: u64,
 ) -> Result<BenchReport, Error> {
     let table = format_table(&compare(trace, capacity, lookahead));
-    let sim = match profile {
-        Some(p) => {
-            let row = sim_replay(trace, p, capacity, Policy::Lru, expert_bytes, lookahead)?;
-            Some(row.line())
-        }
-        None => None,
+    let (sim, overlap) = match profile {
+        Some(p) => sim_lines(trace, p, capacity, lookahead, expert_bytes)?,
+        None => (None, None),
     };
     Ok(BenchReport {
         name: name.to_string(),
         capacity,
         table,
         sim,
+        overlap,
     })
+}
+
+fn sim_lines(
+    trace: &Trace,
+    profile: HardwareProfile,
+    capacity: usize,
+    lookahead: usize,
+    expert_bytes: u64,
+) -> Result<(Option<String>, Option<String>), Error> {
+    let base = SimCfg {
+        slots: capacity,
+        policy: Policy::Lru,
+        bytes_per_expert: expert_bytes,
+        lookahead,
+        prefetch: Prefetch::None,
+        seq_streams: false,
+    };
+    let serial = sim_replay_cfg(trace, profile.clone(), base)?;
+    let overlap = if trace.n_sequences() > 1 {
+        let mut streamed = base;
+        streamed.seq_streams = true;
+        let ov = sim_replay_cfg(trace, profile, streamed)?;
+        Some(format!("serial {} | overlap {}", serial.line(), ov.line()))
+    } else {
+        None
+    };
+    Ok((Some(serial.line()), overlap))
 }
 
 /// Run every named adversarial workload at `capacity`.

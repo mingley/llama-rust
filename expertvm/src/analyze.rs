@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 
 use crate::access::{ExpertAccess, ExpertKey, Trace};
+use crate::planner::{observe_chain, transition_pair, Markov};
 
 /// Working-set and predictability summary. All rates are in parts per thousand
 /// so the crate stays integer-only.
@@ -31,6 +32,8 @@ pub struct TraceStats {
     pub mass_pt: u64,
     /// Hottest 20% of keys by router mass, ‰ of [`Self::mass_pt`]. 0 if no `w`.
     pub top20_mass_pt: u64,
+    /// Causal lookback-2 Markov: next keys that were in `predict_ctx` (‰).
+    pub order2_persist_pt: u64,
 }
 
 impl TraceStats {
@@ -38,13 +41,14 @@ impl TraceStats {
     #[must_use]
     pub fn report(&self) -> String {
         let mut s = format!(
-            "events={} acquires={} unique={} top20‰={} layer_persist‰={} seq_persist‰={} reuse8‰={} ws90={} coact_pairs={}",
+            "events={} acquires={} unique={} top20‰={} layer_persist‰={} seq_persist‰={} order2_persist‰={} reuse8‰={} ws90={} coact_pairs={}",
             self.n_events,
             self.n_acquires,
             self.n_unique,
             self.top20_share_pt,
             self.layer_persist_pt,
             self.seq_persist_pt,
+            self.order2_persist_pt,
             self.reuse8_pt,
             self.ws90,
             self.coact_pairs
@@ -85,6 +89,7 @@ pub fn analyze(trace: &Trace) -> TraceStats {
         } else {
             top_share_pt(&mass, mass_pt, 200)
         },
+        order2_persist_pt: order2_persist_pt(trace),
     }
 }
 
@@ -182,6 +187,32 @@ fn seq_persist_pt(trace: &Trace) -> u64 {
     persist_pt(trace, |p, e| {
         p.sequence == e.sequence && e.token == p.token.saturating_add(1) && e.layer == p.layer
     })
+}
+
+fn order2_persist_pt(trace: &Trace) -> u64 {
+    let mut markov = Markov::new();
+    let mut prev: Option<&ExpertAccess> = None;
+    let mut prev2: Option<&ExpertAccess> = None;
+    let mut hit = 0u64;
+    let mut n = 0u64;
+    for e in &trace.events {
+        if let (Some(p2), Some(p1)) = (prev2, prev) {
+            if transition_pair(p2, p1) && transition_pair(p1, e) {
+                let ek = e.keys();
+                n = n.saturating_add(u64::try_from(ek.len()).unwrap_or(0));
+                let pred = markov.predict_ctx(&p2.keys(), &p1.keys(), ek.len().max(1));
+                for k in &ek {
+                    if pred.contains(k) {
+                        hit = hit.saturating_add(1);
+                    }
+                }
+            }
+        }
+        observe_chain(&mut markov, prev2, prev, e);
+        prev2 = prev;
+        prev = Some(e);
+    }
+    hit.saturating_mul(1000).checked_div(n).unwrap_or(0)
 }
 
 fn persist_pt(trace: &Trace, paired: fn(&ExpertAccess, &ExpertAccess) -> bool) -> u64 {

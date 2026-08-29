@@ -117,7 +117,7 @@ pub fn sim_replay_cfg(
     let mut sim = Sim::new(profile);
     let d = DeviceId(0);
     let s = StreamId(0);
-    let mut handles: BTreeMap<ExpertKey, AllocId> = BTreeMap::new();
+    let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
     let mut w = Walker::new(&keys, cfg.slots, cfg.policy, cfg.lookahead);
     let bytes = cfg.bytes_per_expert.max(1);
     let n_streams = replay_streams(sim.profile(), cfg.seq_streams);
@@ -184,9 +184,14 @@ struct TouchArgs {
     kernel: bool,
 }
 
+struct PageHandle {
+    id: AllocId,
+    stream: StreamId,
+}
+
 fn apply_touch(
     sim: &mut Sim,
-    handles: &mut BTreeMap<ExpertKey, AllocId>,
+    handles: &mut BTreeMap<ExpertKey, PageHandle>,
     args: TouchArgs,
     key: ExpertKey,
     touch: Touch,
@@ -196,13 +201,15 @@ fn apply_touch(
             if !args.kernel {
                 return Ok(());
             }
-            let id = *handles.get(&key).ok_or(Error::Store("missing handle"))?;
-            kernel(sim, args.d, args.s, id)
+            let page = handles.get(&key).ok_or(Error::Store("missing handle"))?;
+            // Kernels stay on the stream that copied the page so a later
+            // sequence cannot GEMM before that H2D is resident.
+            kernel(sim, args.d, page.stream, page.id)
         }
         Touch::Miss { evicted } => {
             if let Some(v) = evicted {
-                if let Some(id) = handles.remove(&v) {
-                    sim.free(args.d, id, args.s)?;
+                if let Some(page) = handles.remove(&v) {
+                    sim.free(args.d, page.id, page.stream)?;
                 }
             }
             if args.slots == 0 {
@@ -213,7 +220,7 @@ fn apply_touch(
             if args.kernel {
                 kernel(sim, args.d, args.s, id)?;
             }
-            let _prev = handles.insert(key, id);
+            let _prev = handles.insert(key, PageHandle { id, stream: args.s });
             Ok(())
         }
     }

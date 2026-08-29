@@ -297,6 +297,7 @@ Replay and report (measured by `expertvm analyze`, integer ‰):
 
 - `P(E_t,l | E_{t-1},l)` → `seq_persist‰`
 - `P(E_t,l+1 | E_t,l)` → `layer_persist‰`
+- `P(E_t | E_{t-1}, E_{t-2})` causal lookback-2 → `order2_persist‰`
 - popularity / working set → `top20‰`, `ws90`
 - reuse distance → `reuse8‰`
 - `P(E_a | E_b)` mass as pair count → `coact_pairs`

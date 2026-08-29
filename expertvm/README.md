@@ -24,7 +24,7 @@ right ones in a bounded fast tier (HBM, or a simulated HBM).
 llama-rust routers  →  ExpertAccess JSONL
                          │
                          ▼
-                   expertvm analyze     locality, Zipf, predictability
+                   expertvm analyze     locality, Zipf, lookback-2 persist
                          │
                          ▼
                    expertvm place       striped / colocated / hot replicas

@@ -1,6 +1,7 @@
 //! One router decision: which experts a token touched at a layer.
 
 use crate::error::Error;
+use std::collections::BTreeSet;
 
 /// Identifies one expert at one layer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -127,6 +128,16 @@ impl Trace {
             out.extend(e.keys());
         }
         out
+    }
+
+    /// Distinct `sequence` ids (batch width).
+    #[must_use]
+    pub fn n_sequences(&self) -> u64 {
+        let mut seen = BTreeSet::new();
+        for e in &self.events {
+            let _ins = seen.insert(e.sequence);
+        }
+        u64::try_from(seen.len()).unwrap_or(0)
     }
 }
 
