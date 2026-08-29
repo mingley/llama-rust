@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine `TieredStore`
+
+Engine parks `LiveStore::Tiered` the same way as CachedStore. Two
+sequences and batch-128 (1-layer and 2-layer Qwen3MoE tinies) keep
+greedy identity, acquire from the paging store, and GEMM together.
+`WeightStorage::mmap` stays parked. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine `slo_reject`
 
 Waiting Engine sequences whose gpu-sim queue wait already meets

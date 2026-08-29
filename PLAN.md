@@ -896,6 +896,10 @@ model, do not celebrate the sim.
     `gguf_gemv engine --slo-reject --ttft-slo-ns N --expert-sim` /
     `serve --engine --expert-sim --slo-reject`. Dual score still has no
     `$/M tokens`.
+47. [x] Engine `TieredStore`: two-sequence and batch-128 identity on
+    writer-tiny Qwen3MoE (1-layer and 2-layer) with in-memory paging
+    (`WeightStorage::mmap` still parked). Store hits, GEMM together.
+    Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

@@ -157,7 +157,7 @@ pub struct EngineStats {
 ///
 /// [`Engine::attach_expert_store`] parks one store on the first cache of each
 /// batched GEMM so routed experts come from DirectStore / CachedStore /
-/// SimulatedGpuStore instead of the GGUF blob. DirectStore ids match the blob
+/// TieredStore / SimulatedGpuStore instead of the GGUF blob. DirectStore ids match the blob
 /// Engine. Two per-cache stores still fall back inside `forward_batch`.
 /// [`Engine::enable_moe_trace`] records router events per [`SeqId`].
 /// After each GEMM, [`LiveStore::pin_hot`] keeps last-used ∪ predicted experts
@@ -1201,7 +1201,8 @@ mod tests {
     use crate::gguf::load_gguf_owned;
     use crate::tok::Tokenizer;
     use expertvm::{
-        CachedStore, HardwareProfile, LiveStore, Score, SimulatedGpuStore, StoreMetrics, Trace,
+        CachedStore, HardwareProfile, LiveStore, Score, SimulatedGpuStore, StoreMetrics,
+        TieredStore, Trace,
     };
 
     struct GpuEngineOut {
@@ -1583,6 +1584,7 @@ mod tests {
         Blob,
         Direct,
         Cached,
+        Tiered,
         Gpu,
     }
 
@@ -1599,6 +1601,13 @@ mod tests {
                 let n = catalog.len().max(1);
                 eng.attach_expert_store(LiveStore::Cached(
                     CachedStore::new(catalog, n).expect("cached"),
+                ));
+            }
+            Batch128Store::Tiered => {
+                let catalog = model.expert_direct_store().expect("catalog");
+                let n = catalog.len().max(1);
+                eng.attach_expert_store(LiveStore::tiered(
+                    TieredStore::memory(catalog, n).expect("tiered"),
                 ));
             }
             Batch128Store::Gpu => {
@@ -1648,7 +1657,7 @@ mod tests {
         );
         match kind {
             Batch128Store::Blob => {}
-            Batch128Store::Direct | Batch128Store::Cached => {
+            Batch128Store::Direct | Batch128Store::Cached | Batch128Store::Tiered => {
                 let hits = eng.expert_store_metrics().expect("metrics").hits;
                 assert!(hits > 0, "MoE batch-128 must acquire from the store");
             }
@@ -1677,6 +1686,12 @@ mod tests {
         run_batch_128(tiny_qwen3moe_2layer_gguf(), Batch128Store::Cached);
         run_batch_128(tiny_qwen3moe_gguf(), Batch128Store::Gpu);
         run_batch_128(tiny_qwen3moe_2layer_gguf(), Batch128Store::Gpu);
+    }
+
+    #[test]
+    fn engine_batch_128_tiered_matches_independent() {
+        run_batch_128(tiny_qwen3moe_gguf(), Batch128Store::Tiered);
+        run_batch_128(tiny_qwen3moe_2layer_gguf(), Batch128Store::Tiered);
     }
 
     #[test]
@@ -2025,6 +2040,36 @@ mod tests {
             m.prefetches > 0,
             "routed experts that fit in slots must prefetch before grouped GEMM, {m:?}"
         );
+    }
+
+    #[test]
+    fn engine_tiered_store_two_sequences_match_blob_and_gemm() {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        let g = load_gguf_owned(tiny_qwen3moe_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let exp_a = independent(&model, &tok, &tokens_a, 2);
+        let exp_b = independent(&model, &tok, &tokens_b, 2);
+        let n = model.expert_direct_store().expect("n").len().max(1);
+        let mut cfg = EngineCfg::tiny();
+        cfg.eos = tok.eos;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        eng.attach_expert_store(LiveStore::tiered(
+            TieredStore::memory(model.expert_direct_store().expect("c"), n).expect("tier"),
+        ));
+        let a = eng.add(&tokens_a, 2).expect("a");
+        let b = eng.add(&tokens_b, 2).expect("b");
+        eng.run().expect("run");
+        assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+        assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+        assert!(
+            eng.stats().gemm_peak >= 8,
+            "TieredStore Engine must GEMM together, peak={}",
+            eng.stats().gemm_peak
+        );
+        let m = eng.expert_store_metrics().expect("metrics");
+        assert!(m.hits > 0 || m.misses > 0, "TieredStore must be used");
     }
 
     #[test]
