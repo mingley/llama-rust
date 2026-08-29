@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — engine `--expert-8gpu` / `--expert-bytes`
+
+`gguf_gemv engine --expert-sim --expert-8gpu` attaches SimulatedGpuStore
+to the example 8×H100 NVLink profile so `plan_placement` can D2D or
+dispatch. `--expert-bytes N` sets the simulated page size (default
+4096). Default `--expert-sim` stays 1×H100. Store metrics print
+`migrates=` / `dispatches=`. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine plan_placement (move vs dispatch)
 
 After each GEMM, Engine sticky-pins last-used ∪ Markov experts and then

@@ -820,6 +820,11 @@ model, do not celebrate the sim.
     (online reuse, no future leak). Otherwise weights stay on the striped
     home (`StoreMetrics::dispatches`). `migrate` itself stays unconditional.
     Dual score still has no `$/M tokens`.
+30. [x] `gguf_gemv engine --expert-8gpu` / `--expert-bytes N`: SimulatedGpuStore
+    can use the example 8×H100 NVLink profile and a chosen page size so
+    CLI metrics show `plan_placement` `migrates` / `dispatches` (default
+    `--expert-sim` stays 1×H100 / 4096 bytes). Dual score still has no
+    `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

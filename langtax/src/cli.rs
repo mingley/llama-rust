@@ -49,13 +49,13 @@ usage: gguf_gemv <command> [args]
   trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE [--capacity N]
   chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--kv-page N] [--show-prompt]
   serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT]
-  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--expert-slots N] [--expert-sim] [--trace-out FILE]
+  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--trace-out FILE]
   write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|write-tiny-qwen3|write-tiny-gemma|write-tiny-llama4|write-tiny-llama-moe|write-tiny-qwen2moe|write-tiny-qwen3moe|write-tiny-qwen2vl|write-tiny-qwen3vl|write-tiny-qwen3next|write-tiny-qwen35|write-tiny-phi2 <path>
 ";
 
 /// Usage for the `engine` verb.
 pub const ENGINE_USAGE: &str = "\
-usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--expert-slots N] [--expert-sim] [--trace-out FILE]
+usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--trace-out FILE]
   -p, --prompt TEXT     prompt (repeatable; default: one `ab`)
   -n, --n-predict N     tokens to generate per sequence (default: 2)
       --n-ctx N         KV capacity (default: longest prompt + n_predict + 1)
@@ -65,7 +65,9 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
       --prefill-chunk N prefill tokens per step (`0` = the rest; default: 0)
       --expert-slots N  ExpertStore on the Engine: omit = blob FFN, `0` = DirectStore,
                         N>0 = CachedStore with N slots (`--expert-sim` uses N, default 8)
-      --expert-sim      SimulatedGpuStore (example H100 profile, 4096-byte experts)
+      --expert-sim      SimulatedGpuStore (example H100, 4096-byte experts)
+      --expert-8gpu     8×H100 NVLink profile (`--expert-sim`; enables plan_placement)
+      --expert-bytes N  simulated expert page bytes (`--expert-sim`; default: 4096)
       --trace-out FILE  write batched MoE ExpertAccess JSONL (all sequences)
 
 Runs Engine continuous batching on one interned pool. Several `--prompt`s
@@ -411,6 +413,10 @@ pub struct EngineArgs {
     pub expert_slots: Option<usize>,
     /// Attach [`SimulatedGpuStore`] (example H100) instead of Direct/Cached.
     pub expert_sim: bool,
+    /// Use [`HardwareProfile::example_8xh100_nvlink`] with `--expert-sim`.
+    pub expert_8gpu: bool,
+    /// Simulated expert page bytes with `--expert-sim`. `None` is 4096.
+    pub expert_bytes: Option<u64>,
     /// Write Engine MoE traces as JSONL. `None` leaves tracing off.
     pub trace_out: Option<String>,
 }
@@ -439,6 +445,8 @@ where
     let mut prefill_chunk = 0usize;
     let mut expert_slots = None;
     let mut expert_sim = false;
+    let mut expert_8gpu = false;
+    let mut expert_bytes = None;
     let mut trace_out = None;
     let mut it = args.into_iter();
     while let Some(raw) = it.next() {
@@ -505,6 +513,22 @@ where
                 }
                 expert_sim = true;
             }
+            "--expert-8gpu" => {
+                if inline.is_some() {
+                    return engine_err("--expert-8gpu does not take a value");
+                }
+                expert_8gpu = true;
+            }
+            "--expert-bytes" => {
+                let n = engine_u64(
+                    "expert-bytes",
+                    &engine_value("expert-bytes", inline, &mut it)?,
+                )?;
+                if n == 0 {
+                    return engine_err("expert-bytes must be > 0");
+                }
+                expert_bytes = Some(n);
+            }
             "--trace-out" => {
                 trace_out = Some(engine_value("trace-out", inline, &mut it)?);
             }
@@ -525,6 +549,12 @@ where
     if prompts.is_empty() {
         prompts.push(InferArgs::DEFAULT_PROMPT.to_string());
     }
+    if expert_8gpu && !expert_sim {
+        return engine_err("--expert-8gpu requires --expert-sim");
+    }
+    if expert_bytes.is_some() && !expert_sim {
+        return engine_err("--expert-bytes requires --expert-sim");
+    }
     Ok(EngineCmd::Run(EngineArgs {
         path,
         prompts,
@@ -536,6 +566,8 @@ where
         prefill_chunk,
         expert_slots,
         expert_sim,
+        expert_8gpu,
+        expert_bytes,
         trace_out,
     }))
 }
@@ -618,8 +650,12 @@ fn attach_engine_store(
         let gpu = SimulatedGpuStore::new(
             llama.expert_direct_store()?,
             slots,
-            HardwareProfile::example_h100_sxm(),
-            4096,
+            if args.expert_8gpu {
+                HardwareProfile::example_8xh100_nvlink()
+            } else {
+                HardwareProfile::example_h100_sxm()
+            },
+            args.expert_bytes.unwrap_or(4096),
         )?;
         eng.attach_expert_store(LiveStore::simulated(gpu));
         return Ok(());
@@ -857,6 +893,11 @@ where
 
 fn engine_usize(name: &str, s: &str) -> Result<usize, String> {
     s.parse::<usize>()
+        .map_err(|_| format!("invalid {name} {s:?}\n{ENGINE_USAGE}"))
+}
+
+fn engine_u64(name: &str, s: &str) -> Result<u64, String> {
+    s.parse::<u64>()
         .map_err(|_| format!("invalid {name} {s:?}\n{ENGINE_USAGE}"))
 }
 
@@ -1118,6 +1159,8 @@ mod tests {
                 assert_eq!(a.prefill_chunk, 0);
                 assert_eq!(a.expert_slots, None);
                 assert!(!a.expert_sim);
+                assert!(!a.expert_8gpu);
+                assert_eq!(a.expert_bytes, None);
                 assert_eq!(a.trace_out, None);
             }
             EngineCmd::Help => panic!("expected Run"),
@@ -1140,8 +1183,30 @@ mod tests {
         match parse_engine_args(["m.gguf", "--expert-sim"]).expect("sim") {
             EngineCmd::Run(a) => {
                 assert!(a.expert_sim);
+                assert!(!a.expert_8gpu);
+                assert_eq!(a.expert_bytes, None);
                 assert_eq!(a.expert_slots, None);
             }
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        match parse_engine_args([
+            "m.gguf",
+            "--expert-sim",
+            "--expert-8gpu",
+            "--expert-bytes",
+            "64",
+        ])
+        .expect("8gpu")
+        {
+            EngineCmd::Run(a) => {
+                assert!(a.expert_sim);
+                assert!(a.expert_8gpu);
+                assert_eq!(a.expert_bytes, Some(64));
+            }
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        match parse_engine_args(["m.gguf", "--expert-sim", "--expert-bytes=128"]).expect("eq") {
+            EngineCmd::Run(a) => assert_eq!(a.expert_bytes, Some(128)),
             EngineCmd::Help => panic!("expected Run"),
         }
         match parse_engine_args(["m.gguf", "--trace-out", "t.jsonl"]).expect("trace") {
@@ -1163,6 +1228,15 @@ mod tests {
         assert!(err.contains("unknown flag"), "{err}");
         let err = parse_engine_args(["m.gguf", "--trace-out"]).unwrap_err();
         assert!(err.contains("missing --trace-out value"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--expert-8gpu"]).unwrap_err();
+        assert!(err.contains("--expert-8gpu requires --expert-sim"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--expert-bytes", "64"]).unwrap_err();
+        assert!(
+            err.contains("--expert-bytes requires --expert-sim"),
+            "{err}"
+        );
+        let err = parse_engine_args(["m.gguf", "--expert-sim", "--expert-bytes", "0"]).unwrap_err();
+        assert!(err.contains("expert-bytes must be > 0"), "{err}");
     }
 
     #[test]
@@ -1200,5 +1274,35 @@ mod tests {
         assert!(t.events.iter().any(|e| e.sequence == 1));
         let _rm_g = std::fs::remove_file(&gguf);
         let _rm_j = std::fs::remove_file(&jsonl);
+    }
+
+    #[test]
+    fn engine_sim_8gpu_tiny_bytes_runs() {
+        let pid = std::process::id();
+        let dir = std::env::temp_dir();
+        let gguf = dir.join(format!("llama-rust-eng-8gpu-{pid}.gguf"));
+        write_file(&gguf, &crate::decode::tiny_qwen3moe_gguf()).expect("gguf");
+        let args = match parse_engine_args([
+            gguf.to_str().expect("utf8 gguf"),
+            "-p",
+            "a",
+            "-p",
+            "b",
+            "--kv-page",
+            "2",
+            "--expert-sim",
+            "--expert-8gpu",
+            "--expert-bytes",
+            "64",
+            "--expert-slots",
+            "4",
+        ])
+        .expect("parse")
+        {
+            EngineCmd::Run(a) => a,
+            EngineCmd::Help => panic!("expected Run"),
+        };
+        run_engine(&args).expect("run");
+        let _rm = std::fs::remove_file(&gguf);
     }
 }
