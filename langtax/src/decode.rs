@@ -6097,8 +6097,8 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q4_K_BLOCK..(b + 1) * crate::quant::Q4_K_BLOCK];
-            let d = crate::fp16::load_f16_le(wb).unwrap();
-            let minv = crate::fp16::load_f16_le(&wb[2..]).unwrap();
+            let d = crate::fp16::oracle_load_f16_le(wb).unwrap();
+            let minv = crate::fp16::oracle_load_f16_le(&wb[2..]).unwrap();
             let scales = &wb[4..16];
             let mut qoff = 16usize;
             let mut yo = b * QK_K;
@@ -6128,7 +6128,7 @@ mod tests {
 
     /// ggml `ggml_fp16_to_fp32` (oracle). Independent of `dequant_f16_row` / `gemv_f16`.
     fn oracle_f16_elem(bytes: &[u8]) -> f32 {
-        crate::fp16::f16_to_f32(u16::from_le_bytes([bytes[0], bytes[1]]))
+        crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([bytes[0], bytes[1]]))
     }
 
     /// ggml `GGML_BF16_TO_FP32` (oracle). Independent of `dequant_bf16_row` / `gemv_bf16`.
@@ -6165,7 +6165,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::IQ2_XXS_BLOCK..(b + 1) * crate::quant::IQ2_XXS_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..66];
             let mut yo = b * QK_K;
             for ib32 in 0..QK_K / 32 {
@@ -6195,7 +6195,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::IQ1_S_BLOCK..(b + 1) * crate::quant::IQ1_S_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..34];
             let qh = &wb[34..50];
             let mut yo = b * QK_K;
@@ -6238,7 +6238,7 @@ mod tests {
                 | ((sc[1] >> 8) & 0x00f0)
                 | ((sc[2] >> 4) & 0x0f00)
                 | (sc[3] & 0xf000);
-            let d = crate::fp16::f16_to_f32(bits);
+            let d = crate::fp16::oracle_f16_to_f32(bits);
             let mut yo = b * QK_K;
             for ib in 0..8 {
                 let scv = sc[ib / 2];
@@ -6273,7 +6273,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::IQ2_XS_BLOCK..(b + 1) * crate::quant::IQ2_XS_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..66];
             let scales = &wb[66..74];
             let mut yo = b * QK_K;
@@ -6304,7 +6304,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::IQ2_S_BLOCK..(b + 1) * crate::quant::IQ2_S_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..34];
             let signs = &wb[34..66];
             let qh = &wb[66..74];
@@ -6339,7 +6339,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::IQ3_XXS_BLOCK..(b + 1) * crate::quant::IQ3_XXS_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..66];
             let ss = &wb[66..98];
             let mut yo = b * QK_K;
@@ -6381,7 +6381,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::IQ3_S_BLOCK..(b + 1) * crate::quant::IQ3_S_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..66];
             let qh = &wb[66..74];
             let signs = &wb[74..106];
@@ -6455,7 +6455,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK4_NL];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::IQ4_NL_BLOCK..(b + 1) * crate::quant::IQ4_NL_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..];
             let yo = b * QK4_NL;
             for j in 0..16 {
@@ -6475,7 +6475,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::IQ4_XS_BLOCK..(b + 1) * crate::quant::IQ4_XS_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let scales_h = u16::from_le_bytes([wb[2], wb[3]]);
             let scales_l = &wb[4..8];
             let qs = &wb[8..];
@@ -6503,8 +6503,8 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q2_K_BLOCK..(b + 1) * crate::quant::Q2_K_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[80], wb[81]]));
-            let minv = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[82], wb[83]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[80], wb[81]]));
+            let minv = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[82], wb[83]]));
             let scales = &wb[0..16];
             let mut yo = b * QK_K;
             let mut is = 0usize;
@@ -6543,7 +6543,7 @@ mod tests {
         const KMASK2: u32 = 0x0f0f_0f0f;
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q3_K_BLOCK..(b + 1) * crate::quant::Q3_K_BLOCK];
-            let d_all = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[108], wb[109]]));
+            let d_all = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[108], wb[109]]));
             let hmask = &wb[0..32];
             let mut aux = [0u32; 4];
             aux[0] = u32::from_le_bytes([wb[96], wb[97], wb[98], wb[99]]);
@@ -6596,8 +6596,8 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK4_1];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q4_1_BLOCK..(b + 1) * crate::quant::Q4_1_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
-            let m = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let m = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
             let qs = &wb[4..];
             let yo = b * QK4_1;
             for j in 0..16 {
@@ -6614,7 +6614,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK5_0];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q5_0_BLOCK..(b + 1) * crate::quant::Q5_0_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qh = u32::from_le_bytes([wb[2], wb[3], wb[4], wb[5]]);
             let qs = &wb[6..];
             let yo = b * QK5_0;
@@ -6636,8 +6636,8 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK5_1];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q5_1_BLOCK..(b + 1) * crate::quant::Q5_1_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
-            let m = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let m = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
             let qh = u32::from_le_bytes([wb[4], wb[5], wb[6], wb[7]]);
             let qs = &wb[8..];
             let yo = b * QK5_1;
@@ -6721,7 +6721,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK1_0];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q1_0_BLOCK..(b + 1) * crate::quant::Q1_0_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..];
             let yo = b * QK1_0;
             for j in 0..QK1_0 {
@@ -6738,7 +6738,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK2_0];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q2_0_BLOCK..(b + 1) * crate::quant::Q2_0_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..];
             let yo = b * QK2_0;
             for j in 0..QK2_0 {
@@ -6759,7 +6759,7 @@ mod tests {
             let wb = &w[b * crate::quant::TQ1_0_BLOCK..(b + 1) * crate::quant::TQ1_0_BLOCK];
             let qs = &wb[0..48];
             let qh = &wb[48..52];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[52], wb[53]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[52], wb[53]]));
             let mut yo = b * QK_K;
             for &p in &POW3 {
                 for &byte in qs.iter().take(32) {
@@ -6797,7 +6797,7 @@ mod tests {
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::TQ2_0_BLOCK..(b + 1) * crate::quant::TQ2_0_BLOCK];
             let qs = &wb[0..64];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[64], wb[65]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[64], wb[65]]));
             let mut yo = b * QK_K;
             for j in [0usize, 32] {
                 for l in 0..4 {
@@ -6819,7 +6819,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK8_1];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q8_1_BLOCK..(b + 1) * crate::quant::Q8_1_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[4..];
             let yo = b * QK8_1;
             for j in 0..QK8_1 {
@@ -6837,7 +6837,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK4_0];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q4_0_BLOCK..(b + 1) * crate::quant::Q4_0_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..];
             let yo = b * QK4_0;
             for j in 0..(QK4_0 / 2) {
@@ -6855,7 +6855,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK8_0];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q8_0_BLOCK..(b + 1) * crate::quant::Q8_0_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
             let qs = &wb[2..];
             let yo = b * QK8_0;
             for j in 0..QK8_0 {
@@ -6871,8 +6871,8 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q5_K_BLOCK..(b + 1) * crate::quant::Q5_K_BLOCK];
-            let d = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
-            let minv = crate::fp16::f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
+            let d = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[0], wb[1]]));
+            let minv = crate::fp16::oracle_f16_to_f32(u16::from_le_bytes([wb[2], wb[3]]));
             let scales = &wb[4..16];
             let qh = &wb[16..48];
             let mut qoff = 48usize;
@@ -6913,7 +6913,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * crate::quant::Q6_K_BLOCK..(b + 1) * crate::quant::Q6_K_BLOCK];
-            let d = crate::fp16::load_f16_le(&wb[208..]).unwrap();
+            let d = crate::fp16::oracle_load_f16_le(&wb[208..]).unwrap();
             let ql = &wb[0..128];
             let qh = &wb[128..192];
             let sc = &wb[192..208];
@@ -8127,12 +8127,13 @@ mod tests {
 
     /// Differential check against llama.cpp on a real quantized checkpoint.
     ///
-    /// The writer-built tinies and the in-tree oracle cannot substitute for this.
-    /// Every per-dtype oracle calls `crate::fp16::f16_to_f32`, so a bug in that
-    /// primitive is invisible to the whole suite, and the tiny fixtures use
+    /// The writer-built tinies cannot substitute for this. Tiny fixtures use
     /// hand-picked scales that avoid the ranges where real weights live. A
-    /// subnormal binary16 bug that halved real Q4_K / Q6_K weights survived 221
-    /// passing tests for exactly those two reasons.
+    /// subnormal binary16 bug that halved real Q4_K / Q6_K weights survived
+    /// 221 passing tests for that reason; per-dtype oracles now call
+    /// `oracle_f16_to_f32` (IEEE arithmetic, not production bit-surgery)
+    /// so that class of bug is visible without a real GGUF.
+    /// This test is still the llama.cpp greedy identity on a real checkpoint.
     ///
     /// Skips unless `LLAMA_RUST_REAL_MODEL_DIR` names a directory holding
     /// `qwen2.5-0.5b-instruct-q4_k_m.gguf`. Reference values, model SHA, capture
@@ -8749,9 +8750,9 @@ mod tests {
     /// These 18 bytes are one `block_q4_0` whose scale is `0x812B`, a binary16
     /// *subnormal*. That is deliberate: a subnormal super-block scale is exactly
     /// what exposed the `f16_to_f32` off-by-one that halved real Q4_K / Q6_K
-    /// weights, and the in-tree oracle cannot catch a repeat because it calls the
-    /// same `f16_to_f32`. The expected values were produced by
-    /// `ggml_get_type_traits(GGML_TYPE_Q4_0)->to_float` on these exact bytes; see
+    /// weights. The in-tree oracle now uses `oracle_f16_to_f32`
+    /// (IEEE arithmetic) and would catch a repeat; this test still pins the
+    /// dequant against ggml's captured `to_float` on these exact bytes. See
     /// `tests/reference/README.md` for the capture tool.
     #[test]
     fn q4_0_matches_ggml_reference_with_subnormal_scale() {

@@ -879,7 +879,7 @@ fn read_kv_value(bytes: &[u8], pos: &mut usize, ty: i32) -> Result<Kv, GgufError
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fp16::load_f16_le;
+    use crate::fp16::oracle_load_f16_le;
     use crate::quant::{
         gemv_q4_0, gemv_q4_k, gemv_q8_0, i8_from_bits, pack_bf16, pack_f16, pack_f32,
         pack_iq1_m_block, pack_iq1_s_block, pack_iq2_s_block, pack_iq2_xs_block,
@@ -903,8 +903,8 @@ mod tests {
         while off < w.len() {
             let wb = &w[off..off + Q8_0_BLOCK];
             let xb = &x[off..off + Q8_0_BLOCK];
-            let dw = load_f16_le(wb).unwrap();
-            let dx = load_f16_le(xb).unwrap();
+            let dw = oracle_load_f16_le(wb).unwrap();
+            let dx = oracle_load_f16_le(xb).unwrap();
             let mut acc = 0i32;
             for i in 0..QK8_0 {
                 acc += i32::from(i8_from_bits(wb[2 + i])) * i32::from(i8_from_bits(xb[2 + i]));
@@ -921,7 +921,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK4_0];
         for b in 0..nblocks {
             let wb = &w[b * Q4_0_BLOCK..(b + 1) * Q4_0_BLOCK];
-            let d = load_f16_le(wb).unwrap();
+            let d = oracle_load_f16_le(wb).unwrap();
             for j in 0..(QK4_0 / 2) {
                 let packed = wb[2 + j];
                 let lo = i32::from(packed & 0x0f) - 8;
@@ -938,7 +938,7 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK8_0];
         for b in 0..nblocks {
             let xb = &x[b * Q8_0_BLOCK..(b + 1) * Q8_0_BLOCK];
-            let d = load_f16_le(xb).unwrap();
+            let d = oracle_load_f16_le(xb).unwrap();
             for i in 0..QK8_0 {
                 y[b * QK8_0 + i] = f32::from(i8_from_bits(xb[2 + i])) * d;
             }
@@ -1118,8 +1118,8 @@ mod tests {
         let mut y = vec![0.0f32; nblocks * QK_K];
         for b in 0..nblocks {
             let wb = &w[b * Q4_K_BLOCK..(b + 1) * Q4_K_BLOCK];
-            let d = load_f16_le(wb).unwrap();
-            let minv = load_f16_le(&wb[2..]).unwrap();
+            let d = oracle_load_f16_le(wb).unwrap();
+            let minv = oracle_load_f16_le(&wb[2..]).unwrap();
             let scales = &wb[4..16];
             let mut qoff = 16usize;
             let mut yo = b * QK_K;

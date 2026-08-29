@@ -3,11 +3,13 @@
 Captured from llama.cpp so the crate can be checked against real quantized
 weights instead of only against writer-built tiny GGUFs and the in-tree oracle.
 
-This matters because the in-tree oracle is not fully independent. Every
-per-dtype oracle calls `crate::fp16::f16_to_f32`, so a bug in that primitive is
-invisible to the whole suite — that is exactly how a subnormal binary16 bug
-that halved real Q4_K/Q6_K weights survived 221 passing tests. The writer-built
-fixtures also use hand-picked scales that never land in the affected ranges.
+This matters because a production `f16_to_f32` bug used to be invisible:
+every per-dtype oracle called that same primitive, which is how a
+subnormal binary16 bug that halved real Q4_K/Q6_K weights survived 221
+passing tests. Oracles now use `oracle_f16_to_f32` (IEEE arithmetic, not
+bit-surgery). The writer-built fixtures still use hand-picked scales that
+never land in the affected ranges, so this llama.cpp capture remains the
+greedy-identity check on a real checkpoint.
 
 ## Files
 

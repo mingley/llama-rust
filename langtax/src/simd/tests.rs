@@ -46,7 +46,7 @@ use super::{
     f16_row_dot, f32_row_dot, q4_0_f32_row_dot, q4_k_f32_row_dot, q5_0_f32_row_dot,
     q5_1_f32_row_dot, q6_k_f32_row_dot, q8_0_f32_row_dot, q8_0_row_dot,
 };
-use crate::fp16::{f16_to_f32, f32_to_f16};
+use crate::fp16::{f32_to_f16, oracle_f16_to_f32};
 use crate::quant::{
     dequant_f16_row, dequant_f32_row, dequant_q4_0_row, dequant_q4_k_row, dequant_q5_0_row,
     dequant_q5_1_row, dequant_q6_k_row, dequant_q8_0_row, pack_f16, pack_f32, pack_q4_0_from_i4,
@@ -352,7 +352,10 @@ fn f16_row_case(n: usize, state: &mut u64) -> (Vec<u8>, Vec<f32>, Vec<f32>) {
     let bytes = pack_f16(&w);
     // The packed row is what both kernels read, so the reference weights are
     // the round-tripped values, not the originals.
-    let rounded: Vec<f32> = w.iter().map(|v| f16_to_f32(f32_to_f16(*v))).collect();
+    let rounded: Vec<f32> = w
+        .iter()
+        .map(|v| oracle_f16_to_f32(f32_to_f16(*v)))
+        .collect();
     let mut viadequant = vec![0.0f32; n];
     assert!(
         dequant_f16_row(n, &bytes, &mut viadequant).is_ok(),
@@ -384,7 +387,8 @@ fn f16_matches_scalar_over_length_sweep() {
 
 /// Every representable binary16 bit pattern that is not a NaN or an infinity,
 /// dotted one at a time against 1.0. A one-element dot is `0.0 + w * 1.0`, so
-/// this pins the hardware conversion against `crate::fp16::f16_to_f32` exactly,
+/// this pins the hardware conversion against [`crate::fp16::oracle_f16_to_f32`]
+/// (IEEE arithmetic, not production bit-surgery) exactly,
 /// subnormals included. The one thing it cannot distinguish is the sign of
 /// zero, which `0.0 + (-0.0)` collapses to `+0.0` on both paths.
 #[test]
@@ -406,7 +410,7 @@ fn f16_conversion_is_bit_identical_for_all_finite_patterns() {
         if bits & 0x7fff != 0 {
             assert_eq!(
                 want.to_bits(),
-                f16_to_f32(bits).to_bits(),
+                oracle_f16_to_f32(bits).to_bits(),
                 "f16 pattern {bits:#06x}: scalar dot is not the converted value"
             );
         }
@@ -425,7 +429,7 @@ fn f16_conversion_is_bit_identical_eight_wide() {
             continue;
         }
         row.extend_from_slice(&bits.to_le_bytes());
-        want.push(f16_to_f32(bits));
+        want.push(oracle_f16_to_f32(bits));
     }
     let x = vec![1.0f32; want.len()];
     let mut obs = Observed::default();
@@ -809,7 +813,7 @@ fn q4_0_block_scales_are_bit_identical_for_all_finite_patterns() {
         }
         let want = sc::q4_0_f32_row(&row, &x);
         let got = simd(&row, &x);
-        let d = f64::from(f16_to_f32(bits));
+        let d = f64::from(oracle_f16_to_f32(bits));
         let abs_sum: f64 = (0..QK4_0)
             .map(|i| {
                 let q = f64::from(v.get(i).copied().unwrap_or(0));
@@ -989,7 +993,7 @@ fn q5_0_block_scales_are_bit_identical_for_all_finite_patterns() {
         // `f16_conversion_is_bit_identical_for_all_finite_patterns`.
         let want = sc::q5_0_f32_row(&row, &x);
         let got = simd(&row, &x);
-        let d = f64::from(f16_to_f32(bits));
+        let d = f64::from(oracle_f16_to_f32(bits));
         let abs_sum: f64 = (0..QK5_0)
             .map(|i| {
                 let q = f64::from(qs.get(i).copied().unwrap_or(0)) - 16.0;

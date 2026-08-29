@@ -5,13 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
-## Shipped 2026-08-29 — Q4_0 SIMD
+## Shipped 2026-08-29 — Q4_0 SIMD + oracle-owned f16
 
 Q4_0 row kernels (AVX2+FMA+F16C / NEON) on the f32 GEMV and GEMM path.
 Dequantized weights stay bit-identical to the scalar kernel; only the
 accumulation reassociates. Differential tests cover block sweeps, ragged
 rows, every nibble in every lane, every finite binary16 scale, GEMV/GEMM
 entry points, and all-zero blocks.
+
+Decode, quant, and GGUF oracles convert binary16 through
+`oracle_f16_to_f32` (IEEE arithmetic) instead of production bit-surgery
+`f16_to_f32`, so a repeat of the subnormal off-by-one cannot hide.
 
 `llama-rust` is the correctness laboratory (GGUF math, oracle + llama.cpp
 greedy). `expertvm` is expert residency / virtual memory. `gpu-sim` is the
@@ -126,9 +130,9 @@ Local: `~/dev/llama-rust-perf`
 
 ## In progress
 
-PLAN.md Phase 0 leftovers: oracle-owned f16, a second real-model fixture
-when one is on disk. Phase 2 `TieredStore`. Phase 3 more adversarial
-shapes (batch, prefill-heavy) without inventing `$/M tokens`.
+PLAN.md Phase 0 leftover: a second real-model fixture when one is on disk.
+Phase 2 `TieredStore`. Phase 3 more adversarial shapes (batch, prefill-heavy)
+without inventing `$/M tokens`.
 
 ## Still needed (production / researcher bar)
 
@@ -155,8 +159,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN Phase 0 leftovers (oracle-owned f16, a second
-real-model fixture) and Phase 2 `TieredStore`. Do not add crates.io
+Next code change is PLAN Phase 0 leftover (a second real-model fixture)
+and Phase 2 `TieredStore`. Do not add crates.io
 runtime deps. Do not start Metal-in-crate on Linux. Do not invent a
 `block_iq4_nl_4_4` dequant. Do not invent an arch. Do not list mixtral
 or qwen3vlmoe as an accepted arch. Do not invent `$/M tokens`.

@@ -260,7 +260,7 @@ The reference engine has to be something researchers will actually load.
 - [x] Layered public API (`Model`/`Session`), examples, crates.io metadata
 - [x] README/STATUS rewritten for “verifiable reference,” not “no tok/s curiosity”
 - [ ] More than one real-model fixture (NEOX Qwen + NORM Llama control)
-- [ ] Oracle-owned f16 conversion (oracle must not call production `fp16`)
+- [x] Oracle-owned f16 conversion (oracle must not call production `fp16`)
 - [x] Q4_0 SIMD (AVX2+FMA+F16C / NEON row kernels on GEMV and GEMM)
 - [x] Expert FFN on Scratch (llama / qwen2moe / qwen3moe / qwen3next / Llama4)
 
