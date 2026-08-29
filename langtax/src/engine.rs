@@ -1138,12 +1138,7 @@ fn attach_token_latencies(mut score: Score, by_seq: &BTreeMap<SeqId, Vec<u64>>) 
         score = score.with_tokens(ntok);
     }
     if let Some(t) = ttft {
-        let itl = if gap_n > 0 {
-            Some(gap_sum / gap_n)
-        } else {
-            None
-        };
-        score = score.with_latencies(t, itl);
+        score = score.with_latencies(t, gap_sum.checked_div(gap_n));
     }
     score
 }
