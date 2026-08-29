@@ -30,6 +30,11 @@ warp scheduler, L1, …   ← do not model
 | Exact (tests fail if violated) | Timed (profile data) |
 | --- | --- |
 | HBM capacity, alloc/free, OOM | kernel microseconds |
+| `cudaMallocAsync` (`alloc`) is stream-ordered; pointer not usable until the stream catches up | `alloc_overhead_ns` |
+| `cudaMalloc` (`malloc`) device-syncs that GPU, then the pointer is usable | `alloc_overhead_ns` (charged at the call) |
+| `cudaFree` (`free_sync`) waits owning GPU(s), then every copy is gone | stream-ordered `free` refunds when that stream runs |
+| `cudaMemcpy` (`memcpy_sync`) waits that stream | `cudaMemcpyAsync` (`memcpy`) does not |
+| `synchronize_device` waits one GPU | other GPUs keep running |
 | stream order, event dependencies | memcpy microseconds |
 | residency: a kernel may only read **device** allocations | PCIe / NVLink bandwidth |
 | HBM vs host-pinned: `alloc_host_pinned` does not charge HBM | pageable vs pinned H2D (`pageable_permille`) |
@@ -146,15 +151,17 @@ kernel on it fails `NotResident` until a copy places it on a device.
 | over-capacity alloc | `SimError::Oom` |
 
 CUDA graphs: `begin_capture` / `end_capture` / `launch_graph`. Capture does
-not advance the virtual clock. Alloc/free cannot be captured. Launch pays
-`graph_launch_ns` once; recorded kernels skip per-kernel launch overhead.
+not advance the virtual clock. Alloc/free cannot be captured, including
+host-sync `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device`.
+Launch pays `graph_launch_ns` once; recorded kernels skip per-kernel launch overhead.
 `memset` is an HBM-write kernel on a resident alloc. Peer D2D requires a
 topology link **and** directed `enable_peer` (seeded on for every GPU↔GPU
 link; `disable_peer` → `PeerDisabled`). [`StreamId::NULL`] is the CUDA null
 stream; `set_legacy_null_stream(true)` serializes it with every other stream
 on that device (off by default = `cudaStreamNonBlocking`).
-`synchronize_stream` is `cudaStreamSynchronize`. `synchronize_event` is
-`cudaEventSynchronize` (later ops on that stream keep running).
+`synchronize_stream` is `cudaStreamSynchronize`. `synchronize_device` is
+`cudaDeviceSynchronize` (one GPU; other GPUs keep running).
+`synchronize_event` is `cudaEventSynchronize` (later ops on that stream keep running).
 `idle_until` drains in-flight work, then jumps the virtual clock so an
 open-loop arrival can wait without `sleep`.
 `event_elapsed_ns` is `cudaEventElapsedTime` in nanoseconds (both records

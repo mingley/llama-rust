@@ -344,6 +344,7 @@ pub(crate) fn apply_touch(
             if args.slots == 0 {
                 return Ok(());
             }
+            // Stream-ordered `cudaMallocAsync` (not host-sync `malloc`).
             let id = sim.alloc(args.d, args.bytes, args.s)?;
             let _c = sim.memcpy_pinned_to_device(args.d, id, args.bytes, args.s)?;
             let _prev = handles.insert(

@@ -406,6 +406,11 @@ already do that, and it is too expensive).
 Exact (mechanical invariants agents may rely on):
 
 - memory capacity, alloc/free, lifetimes
+- host-synchronous `cudaMalloc` / `cudaFree` / `cudaMemcpy`
+  (`Sim::malloc` / `free_sync` / `memcpy_sync`) vs stream-ordered
+  `cudaMallocAsync` / `cudaFreeAsync` / `cudaMemcpyAsync`
+  (`alloc` / `free` / `memcpy`); `malloc` OOM is at the call;
+  `cudaDeviceSynchronize` (`synchronize_device`) waits one GPU
 - stream ordering, events, barriers
 - kernel enqueue, async copies
 - copy-engine availability, peer accessibility
@@ -543,7 +548,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   links fail `NoPeer`.
 - CUDA-graph capture: `begin_capture` / `end_capture` / `launch_graph`.
   Recorded kernels and copies do not run until launch; alloc/free cannot
-  be captured; capture requires an idle stream. Graph launch pays
+  be captured (`malloc` / `free_sync` / `memcpy_sync` / `synchronize_device`
+  included); capture requires an idle stream. Graph launch pays
   `graph_launch_ns` once; recorded kernels skip per-launch overhead.
   `sim_replay` / `SimulatedGpuStore` capture repeated expert GEMMs
   (`expertvm sim --cuda-graphs`). Capture after a miss waits with
@@ -556,8 +562,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   in the GPU loop (`--plan-window N`). `prefetch_hits` / `prefetch_waste`
   measure whether those fills were used. `memset`, directed peer enable, and
   the legacy null stream are mechanical CUDA invariants.
-  `synchronize_stream` / `synchronize_event` are `cudaStreamSynchronize` /
-  `cudaEventSynchronize`. `event_elapsed_ns` is `cudaEventElapsedTime` in
+  `synchronize_stream` / `synchronize_event` / `synchronize_device` are
+  `cudaStreamSynchronize` / `cudaEventSynchronize` / `cudaDeviceSynchronize`. `event_elapsed_ns` is `cudaEventElapsedTime` in
   nanoseconds. `query_event` is `cudaEventQuery`. `query_stream` is `cudaStreamQuery`.
   `mem_info` is `cudaMemGetInfo` `(free, total)`. Public `GpuOp` / `Operation` is the compiled DAG
   (`Sim::operations`).   `expertvm bench` on a multi-sequence trace prints

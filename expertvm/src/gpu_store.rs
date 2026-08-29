@@ -246,6 +246,8 @@ impl SimulatedGpuStore {
         }
         let bytes = self.bytes_per_expert;
         let d = self.home(key);
+        // Stream-ordered `cudaMallocAsync`. `malloc` (`cudaMalloc`) would
+        // device-sync this GPU on every miss and serialize with GEMM.
         let id = self.sim.alloc(d, bytes, self.copy)?;
         let _c = self.sim.memcpy_pinned_to_device(d, id, bytes, self.copy)?;
         let ev = EventId(self.next_event);

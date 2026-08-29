@@ -448,7 +448,9 @@ impl Sim {
             })
     }
 
-    /// Stream-ordered allocation. Capacity is reserved when the op starts.
+    /// Stream-ordered allocation (`cudaMallocAsync`). Capacity is reserved when
+    /// the op starts. The pointer is not usable until this stream catches up.
+    /// [`Self::malloc`] is host-synchronous `cudaMalloc`.
     pub fn alloc(
         &mut self,
         device: DeviceId,
@@ -474,6 +476,26 @@ impl Sim {
         );
         let _op = self.submit(device, stream, Kind::Alloc { id, bytes })?;
         Ok(id)
+    }
+
+    /// `cudaMalloc`: [`Self::synchronize_device`] then the pointer is usable.
+    ///
+    /// OOM is returned at this call, not later at [`Self::synchronize`]. Capture
+    /// cannot include it. [`Self::alloc`] is `cudaMallocAsync`.
+    pub fn malloc(&mut self, device: DeviceId, bytes: u64) -> Result<AllocId, SimError> {
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture alloc/free",
+            });
+        }
+        let _gpu = self.profile.gpu(device)?;
+        self.synchronize_device(device)?;
+        self.reserve_now(device, bytes)
     }
 
     /// Immediate page-locked host allocation. Does not charge HBM.
@@ -537,7 +559,7 @@ impl Sim {
         Ok(())
     }
 
-    /// Stream-ordered free. Illegal while a kernel lease is held.
+    /// Stream-ordered free (`cudaFreeAsync`). Illegal while a kernel lease is held.
     pub fn free(
         &mut self,
         device: DeviceId,
@@ -548,7 +570,49 @@ impl Sim {
         Ok(())
     }
 
-    /// Asynchronous copy. Completion moves/replicates residency.
+    /// `cudaFree`: wait every GPU that holds the pointer, then it is gone on
+    /// all of them. [`Self::free`] is `cudaFreeAsync`. Host-pinned ids are
+    /// [`SimError::UnknownAlloc`] (`cudaFreeHost` is [`Self::free_host_pinned`]).
+    pub fn free_sync(&mut self, id: AllocId) -> Result<(), SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture alloc/free",
+            });
+        }
+        let a = self.alloc_ref(id)?;
+        if a.host_pinned {
+            return Err(SimError::UnknownAlloc { alloc: id });
+        }
+        let holders = a.devices.clone();
+        if holders.is_empty() {
+            // Stream-ordered `alloc` may not have started; drain so OOM/residency
+            // is resolved before the host returns.
+            self.synchronize()?;
+        } else {
+            for d in holders {
+                self.synchronize_device(d)?;
+            }
+        }
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || a.host_pinned {
+            return Err(SimError::UnknownAlloc { alloc: id });
+        }
+        let devices = a.devices.clone();
+        let bytes = a.bytes;
+        for d in &devices {
+            let used = self.gpu_rt(*d)?.used;
+            self.gpu_rt_mut(*d)?.used = used.saturating_sub(bytes);
+        }
+        let a = self.alloc_mut(id)?;
+        a.devices.clear();
+        a.live = false;
+        Ok(())
+    }
+
+    /// Asynchronous copy (`cudaMemcpyAsync`). Completion moves/replicates residency.
     pub fn memcpy(
         &mut self,
         device: DeviceId,
@@ -556,6 +620,25 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         self.submit(device, stream, Kind::Memcpy(op))
+    }
+
+    /// `cudaMemcpy`: enqueue then wait for that stream (host-synchronous).
+    ///
+    /// Capture cannot include it. [`Self::memcpy`] is `cudaMemcpyAsync`.
+    pub fn memcpy_sync(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memcpy",
+            });
+        }
+        let id = self.memcpy(device, op, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
     }
 
     /// Pageable host → `device`. Slower than [`Self::memcpy_pinned_to_device`].
@@ -706,7 +789,9 @@ impl Sim {
         self.submit(device, stream, Kind::EventWait { event })
     }
 
-    /// Run until every submitted op is complete.
+    /// Run until every submitted op is complete (`cudaDeviceSynchronize` on every GPU).
+    ///
+    /// [`Self::synchronize_device`] waits one GPU.
     pub fn synchronize(&mut self) -> Result<(), SimError> {
         self.drive_until(|sim| sim.running.is_empty() && sim.ops.values().all(|o| o.done))?;
         if self.running.is_empty() && !self.ops.values().all(|o| o.done) {
@@ -715,6 +800,27 @@ impl Sim {
             });
         }
         self.sync_outcome()
+    }
+
+    /// `cudaDeviceSynchronize`: wait until every stream on `device` is idle.
+    ///
+    /// Other GPUs keep running. Capture cannot include it.
+    /// [`Self::synchronize`] waits the whole node; [`Self::synchronize_stream`]
+    /// waits one stream.
+    pub fn synchronize_device(&mut self, device: DeviceId) -> Result<(), SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot synchronize device during capture",
+            });
+        }
+        let _gpu = self.profile.gpu(device)?;
+        self.drive_until(|sim| sim.device_idle(device))?;
+        if !self.device_idle(device) {
+            return Err(SimError::Invalid {
+                why: "deadlock: device busy but nothing running",
+            });
+        }
+        self.device_sync_outcome(device)
     }
 
     /// Drain in-flight work, then jump the virtual clock to `ns` if that is still in the future.
@@ -942,6 +1048,29 @@ impl Sim {
         deps
     }
 
+    fn device_idle(&self, device: DeviceId) -> bool {
+        !self.ops.values().any(|o| o.device == device && !o.done)
+            && !self
+                .running
+                .iter()
+                .any(|r| self.ops.get(&r.op).is_some_and(|o| o.device == device))
+    }
+
+    fn device_sync_outcome(&self, device: DeviceId) -> Result<(), SimError> {
+        let mut n = 0u32;
+        let mut stream = StreamId(0);
+        for o in self.ops.values() {
+            if o.cancelled && o.device == device {
+                n = n.saturating_add(1);
+                stream = o.stream;
+            }
+        }
+        if n > 0 {
+            return Err(SimError::Cancelled { stream, n });
+        }
+        Ok(())
+    }
+
     fn stream_idle(&self, device: DeviceId, stream: StreamId) -> bool {
         !self
             .ops
@@ -976,6 +1105,39 @@ impl Sim {
         self.allocs
             .get_mut(&id)
             .ok_or(SimError::UnknownAlloc { alloc: id })
+    }
+
+    fn reserve_now(&mut self, device: DeviceId, bytes: u64) -> Result<AllocId, SimError> {
+        let cap = self.profile.gpu(device)?.hbm_bytes;
+        let overhead = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        let used = self.gpu_rt(device)?.used;
+        let free = cap.saturating_sub(used);
+        if bytes > free {
+            return Err(SimError::Oom {
+                device,
+                need: bytes,
+                free,
+            });
+        }
+        self.gpu_rt_mut(device)?.used = used.saturating_add(bytes);
+        let peak = self.gpu_rt(device)?.used;
+        if peak > self.hbm_peak {
+            self.hbm_peak = peak;
+        }
+        self.clock = self.clock.saturating_add(overhead);
+        let id = AllocId(self.next_alloc);
+        self.next_alloc = self.next_alloc.saturating_add(1);
+        let _prev = self.allocs.insert(
+            id,
+            Alloc {
+                bytes,
+                devices: vec![device],
+                leases: 0,
+                live: true,
+                host_pinned: false,
+            },
+        );
+        Ok(id)
     }
 
     fn op_done(&self, id: OpId) -> bool {

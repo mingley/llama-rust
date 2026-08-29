@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — host-sync `cudaMalloc` / `cudaFree` / `cudaMemcpy`
+
+`Sim::alloc` / `free` / `memcpy` stay stream-ordered (`cudaMallocAsync` /
+`cudaFreeAsync` / `cudaMemcpyAsync`). `Sim::malloc` / `free_sync` /
+`memcpy_sync` are the host-synchronous counterparts: `malloc` waits that
+GPU (`synchronize_device` = `cudaDeviceSynchronize`) then the pointer is
+usable and OOM is at the call; `free_sync` waits every GPU that holds the
+id; `memcpy_sync` waits that stream. Capture refuses all four plus
+`synchronize_device`. `SimulatedGpuStore` / `sim_replay` keep using
+`alloc` so a miss does not device-sync. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — remote prefetch fills `RemotePage` only
 
 `schedule_remote --prefetch copy-forward|markov|both` H2Ds predicted

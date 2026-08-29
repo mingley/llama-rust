@@ -8,7 +8,12 @@
 //! This crate does not model warps, L1 caches, or Tensor Core pipelines.
 //! Submitted work is a [`GpuOp`] compiled into an [`Operation`] DAG
 //! ([`Sim::operations`]). [`Sim::synchronize_stream`] waits one stream.
+//! [`Sim::synchronize_device`] is `cudaDeviceSynchronize` (one GPU).
 //! [`Sim::synchronize_event`] is `cudaEventSynchronize`.
+//! [`Sim::alloc`] / [`memcpy`](Sim::memcpy) / [`free`](Sim::free) are
+//! stream-ordered (`cudaMallocAsync` / `cudaMemcpyAsync` / `cudaFreeAsync`).
+//! [`Sim::malloc`] / [`memcpy_sync`](Sim::memcpy_sync) / [`free_sync`](Sim::free_sync)
+//! are host-synchronous (`cudaMalloc` / `cudaMemcpy` / `cudaFree`).
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
 //! [`Sim::query_event`] is `cudaEventQuery` (no wait).
@@ -1096,5 +1101,190 @@ mod tests {
         sim.synchronize().unwrap();
         let (free2, _) = sim.mem_info(d).unwrap();
         assert_eq!(free2, total);
+    }
+
+    #[test]
+    fn malloc_is_resident_without_stream_sync() {
+        let mut queued = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let a = queued.alloc(d, bytes, s).unwrap();
+        assert!(!queued.is_resident(a, d).unwrap());
+        let (free0, total) = queued.mem_info(d).unwrap();
+        assert_eq!(free0, total);
+
+        let mut sim = Sim::new(h100());
+        let b = sim.malloc(d, bytes).unwrap();
+        assert!(sim.is_resident(b, d).unwrap());
+        let (free, total) = sim.mem_info(d).unwrap();
+        assert_eq!(free, total.saturating_sub(bytes));
+        enq(sim.kernel(d, KernelKind::other(1 << 20, bytes), &[b], &[b], s));
+        sim.synchronize_stream(d, s).unwrap();
+        assert!(sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn malloc_waits_for_other_streams_alloc_async_does_not() {
+        let mut async_sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s0 = StreamId(0);
+        let s1 = StreamId(1);
+        let a = async_sim.alloc(d, 4096, s0).unwrap();
+        async_sim.synchronize_stream(d, s0).unwrap();
+        enq(async_sim.kernel(d, KernelKind::other(1 << 30, 4096), &[a], &[a], s0));
+        let t0 = async_sim.clock_ns();
+        let b = async_sim.alloc(d, 4096, s1).unwrap();
+        async_sim.synchronize_stream(d, s1).unwrap();
+        let async_ns = async_sim.clock_ns().saturating_sub(t0);
+        assert!(async_sim.is_resident(b, d).unwrap());
+
+        let mut sync_sim = Sim::new(h100());
+        let c = sync_sim.alloc(d, 4096, s0).unwrap();
+        sync_sim.synchronize_stream(d, s0).unwrap();
+        enq(sync_sim.kernel(d, KernelKind::other(1 << 30, 4096), &[c], &[c], s0));
+        let t1 = sync_sim.clock_ns();
+        let e = sync_sim.malloc(d, 4096).unwrap();
+        let malloc_ns = sync_sim.clock_ns().saturating_sub(t1);
+        assert!(sync_sim.is_resident(e, d).unwrap());
+        assert!(
+            malloc_ns > async_ns,
+            "cudaMalloc must wait for the other stream; malloc={malloc_ns} async={async_ns}"
+        );
+    }
+
+    #[test]
+    fn malloc_oom_is_returned_at_the_call() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let cap = sim.profile().gpu(d).unwrap().hbm_bytes;
+        let _full = sim.malloc(d, cap).unwrap();
+        let err = sim.malloc(d, 1).unwrap_err();
+        match err {
+            SimError::Oom { need: 1, .. } => {}
+            e => panic!("{e:?}"),
+        }
+    }
+
+    #[test]
+    fn free_sync_waits_then_releases_hbm() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let a = sim.malloc(d, bytes).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, bytes), &[a], &[a], s));
+        sim.free_sync(a).unwrap();
+        assert!(!sim.is_resident(a, d).unwrap());
+        let (free, total) = sim.mem_info(d).unwrap();
+        assert_eq!(free, total);
+        let b = sim.malloc(d, total).unwrap();
+        assert!(sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn memcpy_sync_leaves_the_stream_idle() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 4096u64;
+        let a = sim.malloc(d, bytes).unwrap();
+        let op = sim
+            .memcpy_sync(
+                d,
+                MemcpyOp {
+                    src: Place::HostPinned,
+                    dst: Place::Device(d),
+                    alloc: a,
+                    bytes,
+                },
+                s,
+            )
+            .unwrap();
+        assert!(op.0 >= 1);
+        assert!(sim.query_stream(d, s).unwrap());
+        assert!(sim.is_resident(a, d).unwrap());
+    }
+
+    #[test]
+    fn malloc_does_not_wait_peer_gpu() {
+        let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let a1 = sim.malloc(d1, 4096).unwrap();
+        enq(sim.kernel(d1, KernelKind::other(1 << 30, 4096), &[a1], &[a1], s));
+        let t0 = sim.clock_ns();
+        let a0 = sim.malloc(d0, 4096).unwrap();
+        let malloc_ns = sim.clock_ns().saturating_sub(t0);
+        assert!(sim.is_resident(a0, d0).unwrap());
+        assert!(
+            malloc_ns < 10_000,
+            "cudaMalloc on GPU0 must not drain GPU1; ns={malloc_ns}"
+        );
+        assert!(!sim.query_stream(d1, s).unwrap());
+        sim.synchronize_device(d1).unwrap();
+        assert!(sim.query_stream(d1, s).unwrap());
+        assert!(sim.clock_ns().saturating_sub(t0) > malloc_ns);
+    }
+
+    #[test]
+    fn synchronize_device_waits_every_stream_on_one_gpu() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s0 = StreamId(0);
+        let s1 = StreamId(1);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s0));
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[b], &[b], s1));
+        sim.synchronize_device(d).unwrap();
+        assert!(sim.query_stream(d, s0).unwrap());
+        assert!(sim.query_stream(d, s1).unwrap());
+    }
+
+    #[test]
+    fn host_sync_memory_cannot_be_captured() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.malloc(d, 4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
+        match sim.free_sync(a) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
+        match sim.synchronize_device(d) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_sync(
+            d,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(d),
+                alloc: a,
+                bytes: 4096,
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn free_sync_rejects_host_pin() {
+        let mut sim = Sim::new(h100());
+        let h = sim.alloc_host_pinned(4096).unwrap();
+        match sim.free_sync(h) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, h),
+            other => panic!("{other:?}"),
+        }
+        sim.free_host_pinned(h).unwrap();
     }
 }
