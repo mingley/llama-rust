@@ -42,6 +42,7 @@ warp scheduler, L1, …   ← do not model
 | `va_map_range` / `va_unmap_range` map a span; holes are not kernel-resident | HBM = mapped bytes |
 | `va_release` parks an unmapped VA; `va_acquire` remaps same size | map only on reuse (no second reserve) |
 | `cudaLaunchHostFunc` (`host_func`) is stream-ordered host work | `host_func_ns` (no compute / copy occupancy) |
+| `cudaStreamCreate` (`set_stream_blocking`) serializes with NULL | copy/compute overlap vs NULL |
 | host pin / `mlock` budget (`host_pin_bytes`) | `SimError::PinOom` |
 | `cudaFree` (`free_sync`) waits owning GPU(s), then every copy is gone | stream-ordered `free` refunds when that stream runs |
 | `cudaMemcpyAsync` of pageable host memory is host-synchronous | `pageable_permille` (bounce + DMA) |
@@ -67,6 +68,7 @@ warp scheduler, L1, …   ← do not model
 | memset requires device residency | HBM write + launch overhead |
 | peer D2D needs topology + `enable_peer` | link bandwidth |
 | legacy null stream serializes (opt-in) | copy/compute overlap |
+| `cudaStreamCreate` blocking stream serializes with NULL | `cudaStreamNonBlocking` overlap |
 
 ## Anti-Goodhart timing
 
@@ -176,7 +178,10 @@ or copy engines (other streams may GEMM). Peer D2D requires a
 topology link **and** directed `enable_peer` (seeded on for every GPU↔GPU
 link; `disable_peer` → `PeerDisabled`). [`StreamId::NULL`] is the CUDA null
 stream; `set_legacy_null_stream(true)` serializes it with every other stream
-on that device (off by default = `cudaStreamNonBlocking`).
+on that device (CUDA legacy default stream). Off by default is the
+per-thread default: NULL serializes only with `set_stream_blocking`
+streams (`cudaStreamCreate`). Created streams default to
+`cudaStreamNonBlocking`.
 `synchronize_stream` is `cudaStreamSynchronize`. `synchronize_device` is
 `cudaDeviceSynchronize` (one GPU; other GPUs keep running).
 `synchronize_event` is `cudaEventSynchronize` (later ops on that stream keep running).
@@ -210,6 +215,10 @@ span; a kernel needs the whole VA covered). `va_acquire` remaps an idle VA of th
 size (or reserves); `va_release` unmaps into that pool. Capture cannot
 include them.
 `host_func` is `cudaLaunchHostFunc` (stream-ordered; other streams can compute).
+`set_stream_blocking` is `cudaStreamCreate` vs `cudaStreamNonBlocking`
+(NULL serializes with blocking streams; created streams default to
+non-blocking). `set_legacy_null_stream` is the CUDA legacy default
+stream (NULL serializes with every stream).
 `host_pin_bytes` caps page-locked host (`cudaMallocHost` / `cudaHostRegister`);
 overflow is `PinOom`. Example default is unlimited.
 `set_stream_priority` is `cudaStreamCreateWithPriority` (higher first when

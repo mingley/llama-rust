@@ -14,8 +14,10 @@ impl fmt::Display for DeviceId {
 
 /// CUDA-like stream on one device. Independent streams are unordered until an event.
 ///
-/// [`StreamId::NULL`] (`0`) is the CUDA null stream. Streams are
-/// `cudaStreamNonBlocking` unless [`crate::Sim::set_legacy_null_stream`] is on.
+/// [`StreamId::NULL`] (`0`) is the CUDA null stream. Created streams default
+/// to `cudaStreamNonBlocking`. [`crate::Sim::set_stream_blocking`] models
+/// `cudaStreamCreate` (serialize with NULL). [`crate::Sim::set_legacy_null_stream`]
+/// makes NULL serialize with every stream.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StreamId(pub u16);
 

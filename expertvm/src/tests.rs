@@ -541,6 +541,58 @@ fn sync_alloc_cannot_overlap_misses_across_streams() {
 }
 
 #[test]
+fn blocking_streams_cannot_overlap_misses_across_streams() {
+    let t = Trace {
+        events: vec![
+            ExpertAccess {
+                sequence: 0,
+                token: 0,
+                layer: 0,
+                experts: vec![0],
+                weight_pt: Vec::new(),
+                prefix: None,
+            },
+            ExpertAccess {
+                sequence: 1,
+                token: 0,
+                layer: 0,
+                experts: vec![1],
+                weight_pt: Vec::new(),
+                prefix: None,
+            },
+        ],
+    };
+    let p = HardwareProfile::parse("gpus=1\ncopy_engines=1\n").expect("profile");
+    let cfg = |blocking_streams: bool| SimCfg {
+        slots: 2,
+        bytes_per_expert: 32u64 << 20,
+        lookahead: 0,
+        seq_streams: true,
+        blocking_streams,
+        ..SimCfg::lru(2, 32u64 << 20, 0)
+    };
+    let nonblock = sim_replay_cfg(&t, p.clone(), cfg(false)).expect("nb");
+    let block = sim_replay_cfg(&t, p.clone(), cfg(true)).expect("block");
+    assert_eq!(nonblock.hits, block.hits);
+    assert_eq!(nonblock.misses, block.misses);
+    assert!(
+        block.sim_ns > nonblock.sim_ns,
+        "cudaStreamCreate must serialize the two-stream miss; block={} nb={}",
+        block.sim_ns,
+        nonblock.sim_ns
+    );
+    let sched_nb = schedule_replay(&t, p.clone(), cfg(false), SchedCfg::closed(0)).expect("snb");
+    let sched_b = schedule_replay(&t, p, cfg(true), SchedCfg::closed(0)).expect("sb");
+    assert_eq!(sched_nb.replay.hits, sched_b.replay.hits);
+    assert!(
+        sched_b.replay.sim_ns > sched_nb.replay.sim_ns,
+        "schedule blocking={} nb={}",
+        sched_b.replay.sim_ns,
+        sched_nb.replay.sim_ns
+    );
+}
+
+#[test]
 fn mempool_reuse_beats_first_touch_on_thrash() {
     let t = cycling_trace();
     let p = HardwareProfile::example_h100_sxm();
@@ -1403,6 +1455,11 @@ fn adversarial_workloads_are_named_and_measurable() {
     assert!(batch.render().contains("sim-managed"), "{}", batch.render());
     assert!(batch.render().contains("sim-vmm"), "{}", batch.render());
     assert!(batch.render().contains("sim-hostfn"), "{}", batch.render());
+    assert!(
+        batch.render().contains("sim-blockstrm"),
+        "{}",
+        batch.render()
+    );
     let mixed = rows.iter().find(|r| r.name == "prefill-batch").unwrap();
     assert!(mixed.chunk.is_some(), "{}", mixed.render());
     assert!(mixed.render().contains("schedule-chunk1"));

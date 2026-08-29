@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — cudaStreamCreate serializes with the default stream
+
+`Sim::set_stream_blocking` / `set_created_streams_blocking` model
+`cudaStreamCreate` (blocking) vs `cudaStreamCreateWithFlags(...,
+cudaStreamNonBlocking)`. Blocking streams wait on / for
+`StreamId::NULL`. The legacy default stream still serializes with
+*every* stream. Created streams default to non-blocking so
+`--seq-streams` can overlap. `expertvm sim --seq-streams --blocking-streams`
+/ `expertvm bench` `sim-blockstrm`. `SimulatedGpuStore` stays
+non-blocking. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — sparse VMM maps charge only the mapped span
 
 `Sim::va_map_range` / `va_unmap_range` / `vmm_mapped_bytes` map physical

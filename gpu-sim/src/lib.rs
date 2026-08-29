@@ -37,6 +37,7 @@
 //! [`Sim::va_acquire`] remaps an idle VA of the same size (or reserves);
 //! [`va_release`](Sim::va_release) unmaps into that pool instead of freeing the VA.
 //! [`Sim::host_func`] is `cudaLaunchHostFunc` (stream-ordered host work; no GPU occupancy).
+//! [`Sim::set_stream_blocking`] is `cudaStreamCreate` vs `cudaStreamNonBlocking`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -2241,6 +2242,97 @@ mod tests {
         assert!(sim
             .operations()
             .any(|o| matches!(o.kind, GpuOp::HostFunc) && o.done));
+    }
+
+    #[test]
+    fn blocking_stream_serializes_with_null() {
+        let d = DeviceId(0);
+        let bytes = 32u64 << 20;
+        let k = KernelKind::GroupedMoeGemm {
+            experts: 8,
+            tokens_per_expert: 16,
+            hidden: 2048,
+            ff: 2048,
+            dtype: DType::Fp16,
+        };
+        let run = |blocking: bool| {
+            let mut sim = Sim::new(h100());
+            if blocking {
+                sim.set_stream_blocking(d, StreamId(1), true).unwrap();
+            }
+            let w = sim.alloc(d, bytes, StreamId(0)).unwrap();
+            let c = sim.alloc(d, bytes, StreamId(1)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, w, bytes, StreamId(0)));
+            enq(sim.memcpy_pinned_to_device(d, c, bytes, StreamId(1)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, k.clone(), &[w], &[w], StreamId::NULL));
+            enq(sim.memcpy_pinned_to_device(d, c, bytes, StreamId(1)));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let serial = run(true);
+        let overlap = run(false);
+        assert!(
+            serial > overlap,
+            "cudaStreamCreate must serialize with NULL; serial={serial} overlap={overlap}"
+        );
+    }
+
+    #[test]
+    fn set_stream_blocking_rejects_null() {
+        let mut sim = Sim::new(h100());
+        let err = sim
+            .set_stream_blocking(DeviceId(0), StreamId::NULL, true)
+            .unwrap_err();
+        assert!(matches!(err, SimError::Invalid { .. }), "{err:?}");
+        assert!(!sim.stream_is_blocking(DeviceId(0), StreamId::NULL));
+    }
+
+    #[test]
+    fn set_created_streams_blocking_skips_null() {
+        let mut sim = Sim::new(h100());
+        sim.set_created_streams_blocking(2).unwrap();
+        assert!(!sim.stream_is_blocking(DeviceId(0), StreamId::NULL));
+        assert!(sim.stream_is_blocking(DeviceId(0), StreamId(1)));
+        sim.set_created_streams_blocking(1).unwrap();
+        assert!(sim.stream_is_blocking(DeviceId(0), StreamId(1)));
+        sim.set_stream_blocking(DeviceId(0), StreamId(1), false)
+            .unwrap();
+        assert!(!sim.stream_is_blocking(DeviceId(0), StreamId(1)));
+    }
+
+    #[test]
+    fn nonblocking_stream_still_overlaps_null_when_peer_is_blocking() {
+        let d = DeviceId(0);
+        let bytes = 32u64 << 20;
+        let k = KernelKind::GroupedMoeGemm {
+            experts: 8,
+            tokens_per_expert: 16,
+            hidden: 2048,
+            ff: 2048,
+            dtype: DType::Fp16,
+        };
+        let run = |copy_on: StreamId| {
+            let mut sim = Sim::new(h100());
+            sim.set_stream_blocking(d, StreamId(1), true).unwrap();
+            let w = sim.alloc(d, bytes, StreamId(0)).unwrap();
+            let c = sim.alloc(d, bytes, copy_on).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, w, bytes, StreamId(0)));
+            enq(sim.memcpy_pinned_to_device(d, c, bytes, copy_on));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, k.clone(), &[w], &[w], StreamId::NULL));
+            enq(sim.memcpy_pinned_to_device(d, c, bytes, copy_on));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let serial = run(StreamId(1));
+        let overlap = run(StreamId(2));
+        assert!(
+            serial > overlap,
+            "non-blocking stream 2 must still overlap NULL; block1={serial} nb2={overlap}"
+        );
     }
 
     #[test]

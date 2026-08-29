@@ -433,6 +433,10 @@ Exact (mechanical invariants agents may rely on):
   a kernel needs the whole VA covered
 - `cudaLaunchHostFunc` (`host_func`): stream-ordered host work; does not
   occupy compute or copy engines; graphs may record it
+- `cudaStreamCreate` vs `cudaStreamNonBlocking` (`set_stream_blocking`):
+  blocking streams serialize with the default/null stream; created
+  streams default to non-blocking (vLLM-style). The legacy default
+  stream (`set_legacy_null_stream`) still serializes with every stream
 - stream ordering, events, barriers
 - kernel enqueue, async copies
 - copy-engine availability, peer accessibility
@@ -595,7 +599,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   plus `cudaMemPrefetchAsync` on miss (HBM charged on migrate). `--vmm` is
   `va_acquire` (remap idle VA or reserve+map) then H2D; evict `va_release`s
   the pointer. `--host-func` is `cudaLaunchHostFunc` after each event's
-  GEMMs (`host_func_ns`; no GPU occupancy). `memset`, directed peer enable, and
+  GEMMs (`host_func_ns`; no GPU occupancy). `--blocking-streams` is
+  `cudaStreamCreate` on seq-streams (serialize with NULL); default is
+  `cudaStreamNonBlocking`. `memset`, directed peer enable, and
   the legacy null stream are mechanical CUDA invariants.
   `synchronize_stream` / `synchronize_event` / `synchronize_device` are
   `cudaStreamSynchronize` / `cudaEventSynchronize` / `cudaDeviceSynchronize`. `event_elapsed_ns` is `cudaEventElapsedTime` in

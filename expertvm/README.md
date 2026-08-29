@@ -91,10 +91,14 @@ HBM, prefetch migrates the page (same hits/misses as H2D). `--vmm` uses
 `va_acquire` (remap an idle VA, else reserve+map) then pinned H2D into that
 VA (evict `va_release`s the pointer so the next miss skips reserve).
 `--host-func` enqueues `cudaLaunchHostFunc` after each event's GEMMs
-(`host_func_ns`; other streams can still compute). A
+(`host_func_ns`; other streams can still compute). `--blocking-streams`
+marks created seq-streams as `cudaStreamCreate` (they serialize with the
+default/null stream). Default is `cudaStreamNonBlocking`, so `--seq-streams`
+can overlap a miss with another sequence's GEMM. Pair with `--seq-streams`
+or it is a no-op (`n_streams = 1`). A
 profile `host_pin_bytes` cap makes `--mapped` `PinOom` when slots × expert
 bytes exceed the lock budget. `SimulatedGpuStore` stays on the async H2D
-path with CUDA's default threshold (`0`). `--max-batch N` admits N sequences per engine
+path with CUDA's default threshold (`0`) and non-blocking streams. `--max-batch N` admits N sequences per engine
 iteration at a token (`0` = the whole token) and still samples TTFT once.
 `--cuda-graphs` captures grouped expert GEMMs after `synchronize_stream` on
 that stream and replays them (`graph_launch_ns` once per launch). `--plan-window
@@ -169,6 +173,7 @@ expertvm sim      trace.jsonl --capacity 8 --mapped
 expertvm sim      trace.jsonl --capacity 8 --managed
 expertvm sim      trace.jsonl --capacity 8 --vmm
 expertvm sim      trace.jsonl --capacity 8 --host-func
+expertvm sim      trace.jsonl --capacity 8 --seq-streams --blocking-streams
 expertvm sim      trace.jsonl --capacity 8 --prefetch copy-forward --plan-window 8 --cuda-graphs
 expertvm sim      trace.jsonl --capacity 8 --seq-streams --max-batch 2
 expertvm schedule trace.jsonl --capacity 8 --max-batch 2 --interarrival-ns 1000000 --ttft-slo-ns 20000000

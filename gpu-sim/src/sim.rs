@@ -112,6 +112,8 @@ pub struct Sim {
     peer_enabled: BTreeSet<(DeviceId, DeviceId)>,
     legacy_null_stream: bool,
     priority: BTreeMap<(DeviceId, StreamId), i32>,
+    /// `cudaStreamCreate` (blocking) streams. They serialize with [`StreamId::NULL`].
+    blocking: BTreeSet<(DeviceId, StreamId)>,
     next_pool: u32,
     pools: BTreeMap<PoolId, Pool>,
     default_pools: BTreeMap<DeviceId, PoolId>,
@@ -161,6 +163,7 @@ impl Sim {
             peer_enabled,
             legacy_null_stream: false,
             priority: BTreeMap::new(),
+            blocking: BTreeSet::new(),
             next_pool,
             pools,
             default_pools,
@@ -294,7 +297,7 @@ impl Sim {
     }
 
     /// CUDA legacy null stream: [`StreamId::NULL`] serializes with every other stream
-    /// on that device. Off by default (`cudaStreamNonBlocking`).
+    /// on that device. Off by default (`cudaStreamNonBlocking` created streams).
     pub fn set_legacy_null_stream(&mut self, yes: bool) {
         self.legacy_null_stream = yes;
     }
@@ -303,6 +306,50 @@ impl Sim {
     #[must_use]
     pub fn legacy_null_stream(&self) -> bool {
         self.legacy_null_stream
+    }
+
+    /// `cudaStreamCreate` (`yes`) vs `cudaStreamCreateWithFlags(..., cudaStreamNonBlocking)`.
+    ///
+    /// Blocking streams serialize with [`StreamId::NULL`] even when legacy null
+    /// is off. Created streams default to non-blocking (vLLM-style). The null
+    /// stream's flags are [`Self::set_legacy_null_stream`], not this call.
+    pub fn set_stream_blocking(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        yes: bool,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if stream == StreamId::NULL {
+            return Err(SimError::Invalid {
+                why: "null stream uses set_legacy_null_stream",
+            });
+        }
+        if yes {
+            let _was = self.blocking.insert((device, stream));
+        } else {
+            let _was = self.blocking.remove(&(device, stream));
+        }
+        Ok(())
+    }
+
+    /// Whether `stream` is a blocking `cudaStreamCreate` stream on `device`.
+    #[must_use]
+    pub fn stream_is_blocking(&self, device: DeviceId, stream: StreamId) -> bool {
+        self.blocking.contains(&(device, stream))
+    }
+
+    /// Mark streams `1 .. n_streams` blocking on every GPU (`cudaStreamCreate`).
+    ///
+    /// [`StreamId::NULL`] stays the default stream. `n_streams <= 1` is a no-op.
+    pub fn set_created_streams_blocking(&mut self, n_streams: u8) -> Result<(), SimError> {
+        let devices: Vec<DeviceId> = self.profile.gpus.iter().map(|g| g.id).collect();
+        for d in devices {
+            for s in 1..n_streams {
+                self.set_stream_blocking(d, StreamId(u16::from(s)), true)?;
+            }
+        }
+        Ok(())
     }
 
     /// `cudaDeviceEnablePeerAccess(dst)` from `src`. No-op if `src == dst`.
@@ -1665,19 +1712,34 @@ impl Sim {
         if let Some(prev) = self.tail.get(&(device, stream)) {
             deps.push(*prev);
         }
-        if !self.legacy_null_stream {
-            return deps;
+        self.add_null_stream_deps(device, stream, &mut deps);
+        deps
+    }
+
+    fn add_null_stream_deps(&self, device: DeviceId, stream: StreamId, deps: &mut Vec<OpId>) {
+        if self.legacy_null_stream {
+            if stream == StreamId::NULL {
+                for ((d, s), tail) in &self.tail {
+                    if *d == device && *s != stream {
+                        deps.push(*tail);
+                    }
+                }
+            } else if let Some(tail) = self.tail.get(&(device, StreamId::NULL)) {
+                deps.push(*tail);
+            }
+            return;
         }
         if stream == StreamId::NULL {
             for ((d, s), tail) in &self.tail {
-                if *d == device && *s != stream {
+                if *d == device && self.blocking.contains(&(*d, *s)) {
                     deps.push(*tail);
                 }
             }
-        } else if let Some(tail) = self.tail.get(&(device, StreamId::NULL)) {
-            deps.push(*tail);
+        } else if self.blocking.contains(&(device, stream)) {
+            if let Some(tail) = self.tail.get(&(device, StreamId::NULL)) {
+                deps.push(*tail);
+            }
         }
-        deps
     }
 
     fn device_idle(&self, device: DeviceId) -> bool {

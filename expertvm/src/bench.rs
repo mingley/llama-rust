@@ -37,6 +37,8 @@ pub struct BenchReport {
     pub vmm: Option<String>,
     /// Pinned H2D vs a `cudaLaunchHostFunc` after each event's GEMMs.
     pub host_func: Option<String>,
+    /// `--seq-streams` non-blocking vs `cudaStreamCreate` blocking streams.
+    pub blocking_streams: Option<String>,
     /// Closed-loop `schedule-all` vs `schedule-1` when the trace has >1 sequence.
     pub schedule: Option<String>,
     /// Unchunked vs `--prefill-chunk 1` when a first token has more than one layer.
@@ -92,6 +94,10 @@ impl BenchReport {
             s.push_str(hf);
             s.push('\n');
         }
+        if let Some(bs) = &self.blocking_streams {
+            s.push_str(bs);
+            s.push('\n');
+        }
         if let Some(sch) = &self.schedule {
             s.push_str(sch);
             s.push('\n');
@@ -135,6 +141,7 @@ pub fn report(
     let mut managed = None;
     let mut vmm = None;
     let mut host_func = None;
+    let mut blocking_streams = None;
     let mut schedule = None;
     let mut chunk = None;
     let mut decode = None;
@@ -151,6 +158,7 @@ pub fn report(
         managed = lines.managed;
         vmm = lines.vmm;
         host_func = lines.host_func;
+        blocking_streams = lines.blocking_streams;
         schedule = lines.schedule;
         chunk = lines.chunk;
         decode = lines.decode;
@@ -170,6 +178,7 @@ pub fn report(
         managed,
         vmm,
         host_func,
+        blocking_streams,
         schedule,
         chunk,
         decode,
@@ -188,6 +197,7 @@ struct SimLines {
     managed: Option<String>,
     vmm: Option<String>,
     host_func: Option<String>,
+    blocking_streams: Option<String>,
     schedule: Option<String>,
     chunk: Option<String>,
     decode: Option<String>,
@@ -204,13 +214,23 @@ fn sim_lines(
 ) -> Result<SimLines, Error> {
     let base = SimCfg::lru(capacity, expert_bytes, lookahead);
     let serial = sim_replay_cfg(trace, profile.clone(), base)?;
-    let overlap = if trace.n_sequences() > 1 {
+    let (overlap, blocking_streams) = if trace.n_sequences() > 1 {
         let mut streamed = base;
         streamed.seq_streams = true;
         let ov = sim_replay_cfg(trace, profile.clone(), streamed)?;
-        Some(format!("serial {} | overlap {}", serial.line(), ov.line()))
+        let mut blk = streamed;
+        blk.blocking_streams = true;
+        let bl = sim_replay_cfg(trace, profile.clone(), blk)?;
+        (
+            Some(format!("serial {} | overlap {}", serial.line(), ov.line())),
+            Some(format!(
+                "sim-overlap {} | sim-blockstrm {}",
+                ov.line(),
+                bl.line()
+            )),
+        )
     } else {
-        None
+        (None, None)
     };
     let lines = schedule_compare(trace, profile.clone(), base)?;
     let mut graphed = base;
@@ -268,6 +288,7 @@ fn sim_lines(
             serial.line(),
             hf_row.line()
         )),
+        blocking_streams,
         schedule: lines.schedule,
         chunk: lines.chunk,
         decode: lines.decode,

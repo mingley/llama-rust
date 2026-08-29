@@ -140,6 +140,13 @@ pub struct SimCfg {
     /// Does not change hits/misses. Lengthens wall by `host_func_ns` per
     /// stream that ran a GEMM. [`crate::SimulatedGpuStore`] does not enqueue it.
     pub host_func: bool,
+    /// `cudaStreamCreate` (blocking) for streams `1 .. n_streams`.
+    ///
+    /// They serialize with [`gpu_sim::StreamId::NULL`]. Default is
+    /// `cudaStreamNonBlocking` (vLLM-style overlap). A no-op unless
+    /// [`Self::seq_streams`] creates extra streams. [`crate::SimulatedGpuStore`]
+    /// stays non-blocking.
+    pub blocking_streams: bool,
 }
 
 impl SimCfg {
@@ -163,6 +170,7 @@ impl SimCfg {
             managed: false,
             vmm: false,
             host_func: false,
+            blocking_streams: false,
         }
     }
 }
@@ -207,6 +215,9 @@ pub fn sim_replay_cfg(
     let mut w = Walker::new(&keys, cfg.slots, cfg.policy, cfg.lookahead);
     let bytes = cfg.bytes_per_expert.max(1);
     let n_streams = replay_streams(sim.profile(), cfg.seq_streams);
+    if cfg.blocking_streams {
+        sim.set_created_streams_blocking(n_streams)?;
+    }
     let mut args = TouchArgs {
         d,
         s,

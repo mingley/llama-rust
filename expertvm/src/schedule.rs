@@ -285,6 +285,9 @@ impl SchedRt {
             sim.set_default_pool_release_threshold(u64::MAX)?;
         }
         let n_streams = replay_streams(sim.profile(), cfg.seq_streams);
+        if cfg.blocking_streams {
+            sim.set_created_streams_blocking(n_streams)?;
+        }
         let n_gpus = u16::try_from(sim.profile().n_gpus()).unwrap_or(1).max(1);
         let bytes = cfg.bytes_per_expert.max(1);
         Ok(Self {
