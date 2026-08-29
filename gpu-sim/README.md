@@ -232,7 +232,8 @@ mismatch is `Invalid`. Graphs with mem alloc/free nodes cannot be updated. `expe
 evict and updates the next miss instead of instantiate. `--graph-clone`
 copies the capture (`cudaGraphClone`) before instantiate. `--graph-build` is
 `cudaGraphCreate` / `cudaGraphAdd*` (no idle stream). `--graph-mem` is in-graph
-scratch (`graph_add_alloc` / capture `alloc`). Launch pays `graph_launch_ns` once; recorded
+scratch (`graph_add_alloc` / capture `alloc`). `--graph-auto-free` is
+AutoFreeOnLaunch (relaunch recharges HBM; not with `--graph-mem`). Launch pays `graph_launch_ns` once; recorded
 kernels skip per-kernel launch overhead.
 `memset` is an HBM-write kernel on a resident alloc. `host_func` is
 `cudaLaunchHostFunc`: stream-ordered host work that does not occupy compute

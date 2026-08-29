@@ -8,8 +8,8 @@ use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
     advise_pool_access_if_pinned, apply_stream_sms, apply_touch, drop_remote, fetch_remote,
     fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots, reclaim_victim,
-    remote_hit, replay_from_sim, sim_profile, sync_work, GraphBank, PageHandle, RemoteFetch,
-    RemotePage, ReplayCounters, SimCfg, SimReplay, StreamPlan, TouchArgs,
+    remote_hit, replay_from_sim, sim_profile, sync_work, GraphBank, LeafMem, PageHandle,
+    RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, StreamPlan, TouchArgs,
 };
 use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -321,7 +321,7 @@ impl SchedRt {
                 cfg.graph_update,
                 cfg.graph_clone,
                 cfg.graph_build,
-                cfg.graph_mem,
+                LeafMem::from_flags(cfg.graph_mem, cfg.graph_auto_free)?,
             ),
             ctr: ReplayCounters::default(),
             prefetched: BTreeSet::new(),

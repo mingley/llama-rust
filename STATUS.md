@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — `--graph-auto-free` (AutoFreeOnLaunch)
+
+`--graph-auto-free` records leaf GEMM scratch without a matching free and
+instantiates with `cudaGraphInstantiateFlagAutoFreeOnLaunch`, so relaunch
+recharges HBM. Illegal with `--graph-mem`. `--graph-update` is skipped.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — `cudaGraphAddMemAllocNode` / `--graph-mem`
 
 `Sim::graph_add_alloc` / `graph_add_free` are `cudaGraphAddMemAllocNode` /

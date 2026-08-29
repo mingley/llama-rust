@@ -17,8 +17,8 @@ const USAGE: &str = "\
 usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
-  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-clone] [--graph-build] [--graph-mem] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--compute-slots N] [--decode-sms N]
-  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-clone] [--graph-build] [--graph-mem] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--compute-slots N] [--decode-sms N]
+  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--compute-slots N] [--decode-sms N]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
@@ -27,7 +27,7 @@ usage: expertvm <command> [args]
   place    <trace.jsonl> [--gpus N] [--hot-pt N]
   remote   <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
   kv       [--pages N] [--page-bytes B] [--capacity C] [--tokens T] [--profile NAME] [--fill h2d|memset] [--sequences N]
-  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-clone] [--graph-build] [--graph-mem] [--timing-events] [--decode-priority] [--compute-slots N] [--decode-sms N]
+  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--decode-priority] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -123,6 +123,7 @@ struct Cfg {
     graph_clone: bool,
     graph_build: bool,
     graph_mem: bool,
+    graph_auto_free: bool,
     timing_events: bool,
     compute_slots: u8,
     decode_sm_permille: u16,
@@ -176,6 +177,7 @@ where
     let mut graph_clone = false;
     let mut graph_build = false;
     let mut graph_mem = false;
+    let mut graph_auto_free = false;
     let mut timing_events = false;
     let mut compute_slots = 0u8;
     let mut decode_sm_permille = 0u16;
@@ -242,6 +244,7 @@ where
             "--graph-clone" => graph_clone = switch(&inline),
             "--graph-build" => graph_build = switch(&inline),
             "--graph-mem" => graph_mem = switch(&inline),
+            "--graph-auto-free" => graph_auto_free = switch(&inline),
             "--timing-events" => timing_events = switch(&inline),
             "--compute-slots" => {
                 compute_slots = parse_compute_slots(&value("compute-slots", inline, &mut it)?)?
@@ -300,6 +303,9 @@ where
     if decode_priority {
         stream_priority = true;
     }
+    if graph_mem && graph_auto_free {
+        return Err("choose one of --graph-mem, --graph-auto-free".into());
+    }
     Ok(Cfg {
         path: path.ok_or("missing trace.jsonl or workload name")?,
         capacity,
@@ -332,6 +338,7 @@ where
         graph_clone,
         graph_build,
         graph_mem,
+        graph_auto_free,
         timing_events,
         compute_slots,
         decode_sm_permille,
@@ -355,7 +362,7 @@ fn sim_cfg_from(cfg: &Cfg, prefetch: Prefetch, max_batch: usize) -> SimCfg {
         lookahead: cfg.lookahead,
         prefetch,
         seq_streams: cfg.seq_streams,
-        cuda_graphs: cfg.cuda_graphs || cfg.graph_build || cfg.graph_mem,
+        cuda_graphs: cfg.cuda_graphs || cfg.graph_build || cfg.graph_mem || cfg.graph_auto_free,
         plan_window: cfg.plan_window,
         plan_threshold: cfg.plan_threshold,
         max_batch,
@@ -375,6 +382,7 @@ fn sim_cfg_from(cfg: &Cfg, prefetch: Prefetch, max_batch: usize) -> SimCfg {
         graph_clone: cfg.graph_clone,
         graph_build: cfg.graph_build,
         graph_mem: cfg.graph_mem,
+        graph_auto_free: cfg.graph_auto_free,
         compute_slots: cfg.compute_slots,
         decode_sm_permille: cfg.decode_sm_permille,
         decode_priority: cfg.decode_priority,
@@ -657,6 +665,7 @@ where
                 graph_clone: cfg.graph_clone,
                 graph_build: cfg.graph_build,
                 graph_mem: cfg.graph_mem,
+                graph_auto_free: cfg.graph_auto_free,
                 timing_events: cfg.timing_events,
                 seq_streams: cfg.seq_streams,
                 kv_sim: false,

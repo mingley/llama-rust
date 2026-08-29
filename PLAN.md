@@ -678,7 +678,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `sim`/`schedule` / `SimulatedGpuStore::new` stay on `cudaMallocAsync`.
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-clone`, `--graph-build`, `--graph-mem`, and `--timing-events`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-clone`, `--graph-build`, `--graph-mem`, `--graph-auto-free`, and `--timing-events`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--mapped` is `cudaHostAllocMapped`
   (no H2D, PCIe kernels, HBM unused; walker slots also cap at
@@ -704,9 +704,11 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   is `cudaGraphExecUpdate` of a parked leaf (store and `--cuda-graphs`
   walker). `--graph-clone` is `cudaGraphClone` of a leaf capture before
   instantiate (graph vs exec). `--graph-build` is `cudaGraphCreate` /
-  `cudaGraphAddKernelNode` (and child add for combo parents). `--graph-mem`
+  `cudaGraphAddKernelNode` (and child add for combo parents).   `--graph-mem`
   is in-graph scratch (`cudaGraphAddMemAllocNode` / capture `cudaMallocAsync`);
   `--graph-update` is skipped because CUDA cannot update mem nodes.
+  `--graph-auto-free` is AutoFreeOnLaunch scratch without a matching free
+  (illegal with `--graph-mem`).
   `--timing-events` is timing-on copy events
   plus `event_elapsed_ns` (`cudaEventElapsedTime`); default wait events stay
   `cudaEventDisableTiming`. `memset` / `memset_buf` of a mapped span, directed peer enable, and
@@ -944,7 +946,7 @@ model, do not celebrate the sim.
     Dual score still has no `$/M tokens`.
 48. [x] Engine SimulatedGpuStore CUDA graphs: default `--expert-sim` captures
     per-page GEMM graphs (`Engine::graph_launches`). `--graph-update` /
-    `--graph-clone` / `--graph-build` / `--graph-mem` / `--timing-events` / `--cuda-graphs` match
+    `--graph-clone` / `--graph-build` / `--graph-mem` / `--graph-auto-free` / `--timing-events` / `--cuda-graphs` match
     `GpuStoreCfg` / `expertvm sim`. Tight slots park+update. Identity stays.
     Dual score still has no `$/M tokens`.
 49. [x] Engine `itl_slo_ns`: count later-token gaps over a virtual-ns budget
@@ -1143,6 +1145,12 @@ model, do not celebrate the sim.
     `cudaGraphExecUpdate` mem nodes, so `--graph-update` is skipped.
     Implies `--cuda-graphs` on the walker. Decode identity stays kernel-only
     graphs. Dual score still has no `$/M tokens`.
+77. [x] `cudaGraphInstantiateFlagAutoFreeOnLaunch` in expertvm: `--graph-auto-free`
+    records leaf GEMM scratch without a matching free and instantiates with
+    `Sim::instantiate_graph_auto_free` so relaunch recharges HBM. Illegal with
+    `--graph-mem` (CUDA cannot AutoFree a graph that has mem free nodes).
+    `--graph-update` is skipped. Implies `--cuda-graphs` on the walker. Decode
+    identity stays kernel-only graphs. Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

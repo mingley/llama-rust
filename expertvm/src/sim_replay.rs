@@ -1,7 +1,30 @@
 //! Replay a trace through [`gpu_sim`] with pinned H2D fills on miss.
 
-/// In-graph scratch workspace for [`SimCfg::graph_mem`] (`cudaGraphAddMemAllocNode`).
+/// In-graph scratch workspace for [`SimCfg::graph_mem`] / [`SimCfg::graph_auto_free`].
 pub(crate) const GRAPH_SCRATCH_BYTES: u64 = 4096;
+
+/// How a leaf GEMM graph owns its scratch workspace.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LeafMem {
+    /// Kernel-only (decode identity).
+    None,
+    /// `cudaMallocAsync` + matching `cudaFreeAsync` in the graph.
+    Free,
+    /// Alloc without free; [`gpu_sim::Sim::instantiate_graph_auto_free`].
+    AutoFree,
+}
+
+impl LeafMem {
+    /// Exclusive scratch mode from `--graph-mem` / `--graph-auto-free`.
+    pub(crate) fn from_flags(mem: bool, auto_free: bool) -> Result<Self, Error> {
+        match (mem, auto_free) {
+            (true, true) => Err(Error::Store("choose one of graph-mem, graph-auto-free")),
+            (true, false) => Ok(Self::Free),
+            (false, true) => Ok(Self::AutoFree),
+            (false, false) => Ok(Self::None),
+        }
+    }
+}
 
 use crate::access::{ExpertAccess, ExpertKey, Trace};
 use crate::error::Error;
@@ -244,6 +267,15 @@ pub struct SimCfg {
     /// Implies [`Self::cuda_graphs`]. Decode identity stays kernel-only graphs.
     /// [`crate::GpuStoreCfg::graph_mem`] is the store path.
     pub graph_mem: bool,
+    /// Leaf GEMM graphs alloc scratch without a matching free.
+    ///
+    /// Instantiates with [`gpu_sim::Sim::instantiate_graph_auto_free`] so
+    /// relaunch recharges HBM. Illegal with [`Self::graph_mem`] (CUDA cannot
+    /// AutoFreeOnLaunch a graph that has mem free nodes). CUDA cannot
+    /// `cudaGraphExecUpdate` mem nodes, so [`Self::graph_update`] is skipped.
+    /// Implies [`Self::cuda_graphs`]. Decode identity stays kernel-only graphs.
+    /// [`crate::GpuStoreCfg::graph_auto_free`] is the store path.
+    pub graph_auto_free: bool,
     /// Hyper-Q occupancy override (`0` keeps the profile).
     ///
     /// `1` is exclusive compute. `>=2` lets independent sequence GEMMs overlap
@@ -297,6 +329,7 @@ impl SimCfg {
             graph_clone: false,
             graph_build: false,
             graph_mem: false,
+            graph_auto_free: false,
             compute_slots: 0,
             decode_sm_permille: 0,
             decode_priority: false,
@@ -374,12 +407,8 @@ pub fn sim_replay_cfg(
     let mut markov = Markov::new();
     let mut chain = ChainState::new();
     let mut prefetched: BTreeSet<ExpertKey> = BTreeSet::new();
-    let mut graphs = GraphBank::new(
-        cfg.graph_update,
-        cfg.graph_clone,
-        cfg.graph_build,
-        cfg.graph_mem,
-    );
+    let leaf = LeafMem::from_flags(cfg.graph_mem, cfg.graph_auto_free)?;
+    let mut graphs = GraphBank::new(cfg.graph_update, cfg.graph_clone, cfg.graph_build, leaf);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
     let mut next_event = 1u32;
     for (i, event) in trace.events.iter().enumerate() {
@@ -593,13 +622,13 @@ pub(crate) struct GraphBank {
     update: bool,
     clone: bool,
     build: bool,
-    mem: bool,
+    mem: LeafMem,
     pub updates: u64,
     pub clones: u64,
 }
 
 impl GraphBank {
-    pub(crate) fn new(update: bool, clone: bool, build: bool, mem: bool) -> Self {
+    pub(crate) fn new(update: bool, clone: bool, build: bool, mem: LeafMem) -> Self {
         Self {
             graphs: BTreeMap::new(),
             idle: BTreeMap::new(),
@@ -628,7 +657,7 @@ impl GraphBank {
             sim.destroy_graph(src)?;
             return Ok(gid);
         }
-        let gid = if self.update && !self.mem && ids.len() == 1 {
+        let gid = if self.update && self.mem == LeafMem::None && ids.len() == 1 {
             if let Some(exec) = self.idle.entry(origin).or_default().pop() {
                 sim.update_graph(exec, src)?;
                 sim.destroy_graph(src)?;
@@ -659,7 +688,7 @@ impl GraphBank {
         } else {
             src
         };
-        instantiate_src(sim, exec)
+        instantiate_src(sim, exec, self.mem == LeafMem::AutoFree)
     }
 
     pub(crate) fn drop_alloc(&mut self, sim: &mut Sim, id: AllocId) -> Result<(), Error> {
@@ -671,7 +700,7 @@ impl GraphBank {
             .collect();
         for (ids, gid, origin) in victims {
             let _gone = self.graphs.remove(&ids);
-            if self.update && !self.mem && ids.len() == 1 {
+            if self.update && self.mem == LeafMem::None && ids.len() == 1 {
                 self.idle.entry(origin).or_default().push(gid);
             } else {
                 sim.destroy_graph(gid)?;
@@ -681,8 +710,12 @@ impl GraphBank {
     }
 }
 
-fn instantiate_src(sim: &mut Sim, src: GraphId) -> Result<GraphId, Error> {
-    sim.instantiate_graph(src)?;
+fn instantiate_src(sim: &mut Sim, src: GraphId, auto_free: bool) -> Result<GraphId, Error> {
+    if auto_free {
+        sim.instantiate_graph_auto_free(src)?;
+    } else {
+        sim.instantiate_graph(src)?;
+    }
     sim.upload_graph(src)?;
     Ok(src)
 }
@@ -966,7 +999,7 @@ fn gemm_ids(
         ctr.graph_launches = ctr.graph_launches.saturating_add(1);
         return Ok(());
     }
-    if cuda_graphs || graphs.build || graphs.mem {
+    if cuda_graphs || graphs.build || graphs.mem != LeafMem::None {
         if let Some(g) = capture_expert_graph(sim, graphs, d, stream, &ids)? {
             if ids.len() > 1 {
                 ctr.child_graphs = ctr.child_graphs.saturating_add(1);
@@ -1289,7 +1322,7 @@ fn gemm_kind() -> KernelKind {
 }
 
 fn kernel(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Error> {
-    kernel_leaf(sim, d, s, id, false)
+    kernel_leaf(sim, d, s, id, LeafMem::None)
 }
 
 fn kernel_leaf(
@@ -1297,25 +1330,32 @@ fn kernel_leaf(
     d: DeviceId,
     s: StreamId,
     id: AllocId,
-    mem: bool,
+    mem: LeafMem,
 ) -> Result<(), Error> {
-    if !mem {
+    if mem == LeafMem::None {
         let _k = sim.kernel(d, gemm_kind(), &[id], &[], s)?;
         return Ok(());
     }
     let scratch = sim.alloc(d, GRAPH_SCRATCH_BYTES, s)?;
     let _k = sim.kernel(d, gemm_kind(), &[id], &[scratch], s)?;
-    sim.free(d, scratch, s).map_err(Error::from)
+    if mem == LeafMem::Free {
+        sim.free(d, scratch, s)?;
+    }
+    Ok(())
 }
 
-fn add_leaf_gemm(sim: &mut Sim, graph: GraphId, id: AllocId, mem: bool) -> Result<(), Error> {
-    if mem {
-        let scratch = sim.graph_add_alloc(graph, GRAPH_SCRATCH_BYTES)?;
-        sim.graph_add_kernel(graph, gemm_kind(), &[id], &[scratch])?;
-        return sim.graph_add_free(graph, scratch).map_err(Error::from);
+fn add_leaf_gemm(sim: &mut Sim, graph: GraphId, id: AllocId, mem: LeafMem) -> Result<(), Error> {
+    if mem == LeafMem::None {
+        return sim
+            .graph_add_kernel(graph, gemm_kind(), &[id], &[])
+            .map_err(Error::from);
     }
-    sim.graph_add_kernel(graph, gemm_kind(), &[id], &[])
-        .map_err(Error::from)
+    let scratch = sim.graph_add_alloc(graph, GRAPH_SCRATCH_BYTES)?;
+    sim.graph_add_kernel(graph, gemm_kind(), &[id], &[scratch])?;
+    if mem == LeafMem::Free {
+        sim.graph_add_free(graph, scratch)?;
+    }
+    Ok(())
 }
 
 pub(crate) use crate::planner::DECODE_ACTIVATION_BYTES;

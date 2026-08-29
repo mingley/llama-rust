@@ -2915,6 +2915,24 @@ mod tests {
     }
 
     #[test]
+    fn engine_gpu_graph_auto_free_skips_update() {
+        let out = two_seq_gpu_knobs(
+            2,
+            GpuStoreCfg {
+                graph_update: true,
+                graph_auto_free: true,
+                ..GpuStoreCfg::default()
+            },
+        );
+        assert_eq!(
+            out.updates, 0,
+            "graph_auto_free cannot cudaGraphExecUpdate, updates={} launches={}",
+            out.updates, out.launches
+        );
+        assert!(out.launches >= 2, "launches={}", out.launches);
+    }
+
+    #[test]
     fn engine_gpu_graph_clone_and_timing_events() {
         let out = two_seq_gpu_knobs(
             8,
