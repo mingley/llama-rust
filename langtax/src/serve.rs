@@ -22,7 +22,7 @@ use expertvm::{GpuFill, GpuStoreCfg, Prefetch};
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-clone] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
@@ -58,6 +58,7 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --seq-streams     per-sequence copy streams (`--expert-sim`; grouped GEMM stays fused)
       --kv-sim          interned KV on the SimulatedGpuStore clock (`--expert-sim`; default off)
       --kv-bytes N      KV page bytes for `--kv-sim` (default: f32 K+V of one intern block)
+      --decode-priority decode GEMMs on a higher-priority compute stream (`--expert-sim`; implies `--stream-priority`)
       --prefetch MODE   none|copy-forward|markov|both (`--engine`; default: both)
       --plan-window N   Stay vs Fetch over N unique predicted keys (`--engine`; `0` ungated)
       --plan-threshold N  Stay permille of that window (`--engine`; default: 500)
@@ -81,7 +82,7 @@ leftover prefill while any live sequence is already decoding. `--slo-reject` /
 the same SimulatedGpuStore knobs as `gguf_gemv engine`. `--host-func` /
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` / `--seq-streams` /
-`--kv-sim` / `--kv-bytes` match
+`--kv-sim` / `--kv-bytes` / `--decode-priority` match
 `GpuStoreCfg`. `--kv-sim` bills interned KV on the same clock as expert H2D
 (distinct from `expertvm kv`; default off). `--mapped` / `--managed` / `--vmm` choose miss-page placement
 (default pinned H2D). `--prefetch` / `--plan-window` / `--plan-threshold`
@@ -447,6 +448,7 @@ where
         plan: planner,
     })?;
     planner.gpu.imply_vmm();
+    planner.gpu.imply_decode_priority();
     let fill = planner.gpu.fill()?;
     let gpu_cfg = gpu_knobs(planner.gpu);
     Ok(ServeCmd::Run(ServeArgs {
@@ -1575,6 +1577,16 @@ mod tests {
         ])
         .unwrap_err();
         assert!(err.contains("kv-bytes must be > 0"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--decode-priority"]).unwrap_err();
+        assert!(err.contains("--decode-priority requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--decode-priority"]).unwrap_err();
+        assert!(
+            err.contains("--decode-priority requires --expert-sim"),
+            "{err}"
+        );
+        let a = run(&["m.gguf", "--engine", "--expert-sim", "--decode-priority"]);
+        assert!(a.gpu_cfg.decode_priority);
+        assert!(a.gpu_cfg.stream_priority);
     }
 
     #[test]

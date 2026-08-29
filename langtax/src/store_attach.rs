@@ -47,6 +47,8 @@ pub(crate) struct GpuCli {
     pub seq_streams: bool,
     /// Engine interned KV on the SimulatedGpuStore clock (`GpuStoreCfg::kv_sim`).
     pub kv_sim: bool,
+    /// Decode GEMMs on a higher-priority compute stream (`GpuStoreCfg::decode_priority`).
+    pub decode_priority: bool,
     /// `--kv-bytes` override. `None` uses intern K+V geometry.
     pub kv_bytes: Option<u64>,
     /// Physical span for [`GpuFill::Vmm`]. `0` maps the whole expert.
@@ -76,6 +78,7 @@ impl GpuCli {
             "--stream-priority" => &mut self.stream_priority,
             "--seq-streams" => &mut self.seq_streams,
             "--kv-sim" => &mut self.kv_sim,
+            "--decode-priority" => &mut self.decode_priority,
             _ => return Ok(false),
         };
         if inline.is_some() {
@@ -95,6 +98,13 @@ impl GpuCli {
     pub(crate) fn imply_vmm(&mut self) {
         if self.vmm_page > 0 {
             self.vmm = true;
+        }
+    }
+
+    /// `--decode-priority` implies [`Self::stream_priority`]. Call after sim-flag checks.
+    pub(crate) fn imply_decode_priority(&mut self) {
+        if self.decode_priority {
+            self.stream_priority = true;
         }
     }
 
@@ -128,6 +138,7 @@ impl GpuCli {
             (self.stream_priority, "--stream-priority"),
             (self.seq_streams, "--seq-streams"),
             (self.kv_sim, "--kv-sim"),
+            (self.decode_priority, "--decode-priority"),
             (self.vmm_page_set, "--vmm-page"),
         ]
         .into_iter()
@@ -308,6 +319,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         timing_events: gpu.timing_events,
         seq_streams: gpu.seq_streams,
         kv_sim: gpu.kv_sim,
+        decode_priority: gpu.decode_priority,
     }
 }
 

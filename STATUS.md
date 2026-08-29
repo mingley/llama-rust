@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Engine `--decode-priority`
+
+`--expert-sim --decode-priority` runs decode GEMMs on a second compute
+stream at higher CUDA priority than leftover prefill (implies
+`--stream-priority`). Prefill/replay stays on the existing compute
+stream. Default `--expert-sim` keeps one compute stream. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Engine `--kv-sim`
 
 `--expert-sim --kv-sim` maps Engine interned KV blocks onto the same
@@ -1152,8 +1160,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 56 (Engine `--kv-sim`
-on the SimulatedGpuStore clock). `gguf_gemv serve --engine`
+Next code change is PLAN systems depth after item 57 (Engine `--decode-priority`
+compute stream). `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover
 is a Llama NORM real-model fixture when a GGUF is on disk. Physical

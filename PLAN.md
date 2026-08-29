@@ -960,6 +960,13 @@ model, do not celebrate the sim.
     greedy ids still match independent decode. Dual score still has no
     `$/M tokens`.
 
+57. [x] Engine `--decode-priority`: decode `forward_batch` GEMMs on a second
+    SimulatedGpuStore compute stream at higher CUDA priority than leftover
+    prefill (implies `--stream-priority`). Prefill/replay stays on the existing
+    compute stream. Default `--expert-sim` keeps one compute stream. Two-sequence
+    greedy ids still match independent decode. Dual score still has no
+    `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

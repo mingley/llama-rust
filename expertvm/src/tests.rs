@@ -3512,3 +3512,34 @@ fn simulated_gpu_store_kv_sim_off_ignores_ops() {
     assert_eq!(gpu.kv_misses(), 0);
     assert_eq!(gpu.kv_hits(), 0);
 }
+
+#[test]
+fn simulated_gpu_store_decode_priority_marks_higher_stream() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    assert_eq!(gpu.prefill_stream(), gpu_sim::StreamId(1));
+    assert_eq!(gpu.decode_stream(), gpu_sim::StreamId(2));
+    assert_eq!(gpu.compute_stream(), gpu_sim::StreamId(1));
+    gpu.bind_decode_compute(true);
+    assert_eq!(gpu.compute_stream(), gpu_sim::StreamId(2));
+    assert!(
+        gpu.stream_priority(DeviceId(0), gpu_sim::StreamId(2))
+            > gpu.stream_priority(DeviceId(0), gpu_sim::StreamId(1)),
+        "decode stream must outrank prefill"
+    );
+}

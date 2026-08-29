@@ -606,6 +606,7 @@ where
                 timing_events: cfg.timing_events,
                 seq_streams: cfg.seq_streams,
                 kv_sim: false,
+                decode_priority: false,
             },
             prefetch,
             plan_window: cfg.plan_window,

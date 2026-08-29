@@ -112,6 +112,12 @@ pub struct GpuStoreCfg {
     /// `--kv-sim` reserves a VA of `pool_blocks` pages so TTFT/ITL include
     /// KV traffic on the same clock. Distinct from `expertvm kv`.
     pub kv_sim: bool,
+    /// Second compute stream at higher CUDA priority for decode GEMMs.
+    ///
+    /// Prefill stays on the existing compute stream. [`Self::stream_priority`]
+    /// must also be on so decode actually preempts leftover prefill (priority
+    /// equals stream id). Default off: one compute stream (decode identity).
+    pub decode_priority: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -131,6 +137,9 @@ pub struct SimulatedGpuStore {
     device: DeviceId,
     copy: StreamId,
     compute: StreamId,
+    prefill: StreamId,
+    decode: StreamId,
+    decode_priority: bool,
     next_event: u32,
     pages: BTreeMap<ExpertKey, GpuPage>,
     /// Peer copy dest per pinned key (`(home + 1) % n_gpus`).
@@ -271,7 +280,8 @@ impl SimulatedGpuStore {
         cfg: GpuStoreCfg,
     ) -> Result<Self, Error> {
         let bytes = bytes_per_expert.max(1);
-        let (copy, compute, mark) = copy_compute_streams(&profile, cfg.seq_streams);
+        let (copy, prefill, decode, mark) =
+            copy_compute_streams(&profile, cfg.seq_streams, cfg.decode_priority);
         let mut sim = Sim::new(profile);
         if cfg.mempool {
             sim.set_default_pool_release_threshold(u64::MAX)?;
@@ -298,7 +308,10 @@ impl SimulatedGpuStore {
             sim,
             device: DeviceId(0),
             copy,
-            compute,
+            compute: prefill,
+            prefill,
+            decode,
+            decode_priority: cfg.decode_priority,
             next_event: 1,
             pages: BTreeMap::new(),
             replicas: BTreeMap::new(),
@@ -376,6 +389,29 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn compute_stream(&self) -> StreamId {
         self.compute
+    }
+
+    /// Prefill grouped-GEMM stream (same as [`Self::compute_stream`] unless decode-priority).
+    #[must_use]
+    pub fn prefill_stream(&self) -> StreamId {
+        self.prefill
+    }
+
+    /// Decode grouped-GEMM stream (same as prefill unless [`GpuStoreCfg::decode_priority`]).
+    #[must_use]
+    pub fn decode_stream(&self) -> StreamId {
+        self.decode
+    }
+
+    /// Retarget grouped GEMM to the decode or prefill compute stream.
+    ///
+    /// No-op unless [`GpuStoreCfg::decode_priority`]. Engine `forward_batch`
+    /// binds decode; prefill/replay binds prefill.
+    pub fn bind_decode_compute(&mut self, decode: bool) {
+        if !self.decode_priority {
+            return;
+        }
+        self.compute = if decode { self.decode } else { self.prefill };
     }
 
     /// Copy stream for the currently bound sequence (NULL when seq-streams is off).
@@ -618,7 +654,10 @@ impl SimulatedGpuStore {
         src: DeviceId,
         dst: DeviceId,
     ) -> Result<(), Error> {
-        self.sim.synchronize_stream(src, self.compute)?;
+        self.sim.synchronize_stream(src, self.prefill)?;
+        if self.decode != self.prefill {
+            self.sim.synchronize_stream(src, self.decode)?;
+        }
         if !self.sim.is_resident(id, dst)? {
             self.sim.va_map(id, dst)?;
             let _c =
@@ -775,13 +814,21 @@ impl SimulatedGpuStore {
             };
             (page.device, self.replicas.get(&key).copied())
         };
-        self.sim.synchronize_stream(device, self.compute)?;
+        self.wait_compute(device)?;
         self.sim.synchronize_stream(device, self.copy)?;
         if let Some(dst) = replica {
             if dst != device {
-                self.sim.synchronize_stream(dst, self.compute)?;
+                self.wait_compute(dst)?;
                 self.sim.synchronize_stream(dst, self.copy)?;
             }
+        }
+        Ok(())
+    }
+
+    fn wait_compute(&mut self, device: DeviceId) -> Result<(), Error> {
+        self.sim.synchronize_stream(device, self.prefill)?;
+        if self.decode != self.prefill {
+            self.sim.synchronize_stream(device, self.decode)?;
         }
         Ok(())
     }
@@ -1044,7 +1091,7 @@ impl SimulatedGpuStore {
         }
         match self.mode {
             GpuFill::Managed => {
-                self.sim.synchronize_stream(page.device, self.compute)?;
+                self.wait_compute(page.device)?;
                 self.sim.synchronize_stream(page.device, self.copy)?;
                 if let Some(dst) = self.replicas.remove(&key) {
                     self.sim.synchronize_stream(dst, self.copy)?;
@@ -1053,24 +1100,26 @@ impl SimulatedGpuStore {
                 return Ok(());
             }
             GpuFill::Mapped => {
-                self.sim.synchronize_stream(page.device, self.compute)?;
+                self.wait_compute(page.device)?;
                 self.sim.free_host_pinned(page.id)?;
                 let _gone = self.replicas.remove(&key);
                 return Ok(());
             }
             GpuFill::Vmm => {
-                self.sim.synchronize_stream(page.device, self.compute)?;
+                self.wait_compute(page.device)?;
                 self.sim.va_release(page.id)?;
                 let _gone = self.replicas.remove(&key);
                 return Ok(());
             }
             GpuFill::Pinned if self.sync_alloc => {
-                self.sim.synchronize_stream(page.device, self.compute)?;
+                self.wait_compute(page.device)?;
                 self.sim.free_sync(page.id)?;
                 let _gone = self.replicas.remove(&key);
                 return Ok(());
             }
-            GpuFill::Pinned => {}
+            GpuFill::Pinned => {
+                self.wait_compute(page.device)?;
+            }
         }
         // Copy-engine free must not race a compute-stream lease on the same page.
         let ev = EventId(self.next_event);
@@ -1497,15 +1546,28 @@ fn gemm(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Erro
     Ok(())
 }
 
-/// Copy is NULL; compute is stream 1. Seq-streams: copy `0 .. n_copy-1`, compute `n_copy`.
-fn copy_compute_streams(profile: &HardwareProfile, seq_streams: bool) -> (StreamId, StreamId, u8) {
-    if !seq_streams {
-        return (StreamId(0), StreamId(1), 2);
-    }
-    let n_copy = replay_streams(profile, true);
-    let compute = StreamId(u16::from(n_copy));
-    let mark = u8::try_from(u16::from(n_copy).saturating_add(1)).unwrap_or(u8::MAX);
-    (StreamId(0), compute, mark)
+/// Copy is NULL; prefill compute is stream 1. Seq-streams: copy `0 .. n_copy-1`,
+/// prefill `StreamId(n_copy)`. Decode-priority adds `n_copy+1` at higher id.
+fn copy_compute_streams(
+    profile: &HardwareProfile,
+    seq_streams: bool,
+    decode_priority: bool,
+) -> (StreamId, StreamId, StreamId, u8) {
+    let (copy, prefill, mut mark) = if seq_streams {
+        let n_copy = replay_streams(profile, true);
+        let compute = StreamId(u16::from(n_copy));
+        let mark = u8::try_from(u16::from(n_copy).saturating_add(1)).unwrap_or(u8::MAX);
+        (StreamId(0), compute, mark)
+    } else {
+        (StreamId(0), StreamId(1), 2)
+    };
+    let decode = if decode_priority {
+        mark = mark.saturating_add(1);
+        StreamId(prefill.0.saturating_add(1))
+    } else {
+        prefill
+    };
+    (copy, prefill, decode, mark)
 }
 
 /// `cudaMemAdviseSetAccessedBy` on every GPU so a remote read does not migrate.

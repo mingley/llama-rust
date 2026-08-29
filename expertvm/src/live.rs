@@ -59,6 +59,14 @@ impl LiveStore {
         }
     }
 
+    /// Retarget grouped GEMM to the decode compute stream. CPU stores are no-ops.
+    pub fn bind_decode_compute(&mut self, decode: bool) {
+        match self {
+            Self::Simulated(s) => s.bind_decode_compute(decode),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => {}
+        }
+    }
+
     /// Keep-hot (sticky pin) and, for the simulated GPU, replicate to the next GPU.
     ///
     /// Distinct from [`ExpertStore::lease`]: a decode `release` does not drop

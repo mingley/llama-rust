@@ -28,7 +28,7 @@
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `vmm_page`, pageable H2D, `SetAccessedBy`, legacy NULL, stream priority,
-//! graph update/clone, timing events, `seq_streams`, `kv_sim`) are the same mechanical
+//! graph update/clone, timing events, `seq_streams`, `kv_sim`, `decode_priority`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -36,7 +36,9 @@
 //! `--kv-sim` maps interned KV blocks onto the same SimulatedGpuStore clock
 //! (`va_reserve` + memset on fault, kernel on intern hit) so TTFT/ITL include
 //! KV traffic. Default off: scores bill expert H2D/GEMM only. Distinct from
-//! `expertvm kv`.
+//! `expertvm kv`. `--decode-priority` runs decode GEMMs on a second compute
+//! stream at higher CUDA priority than leftover prefill (implies
+//! `--stream-priority`). Default off: one compute stream.
 //! [`EngineCfg::slo_reject`] drops waiters whose gpu-sim queue wait already
 //! meets [`EngineCfg::ttft_slo_ns`]. [`EngineCfg::itl_slo_ns`] counts later-token
 //! gaps that miss the ITL budget (`Engine::itl_slo_miss`; does not drop).
@@ -634,6 +636,12 @@ impl<'a> Engine<'a> {
         self.prefetch = chain;
     }
 
+    fn bind_gpu_decode(&mut self, decode: bool) {
+        if let Some(s) = self.expert_store.as_mut() {
+            s.bind_decode_compute(decode);
+        }
+    }
+
     fn flush_kv_sim(&mut self) -> Result<(), LlamaError> {
         let ops = self.pool.take_sim_ops();
         if ops.is_empty() {
@@ -999,6 +1007,7 @@ impl<'a> Engine<'a> {
             }
             owned.push((i, part, replay));
         }
+        self.bind_gpu_decode(false);
         self.flush_kv_sim().map_err(BatchFail::Other)?;
         owned.sort_by_key(|(i, _, _)| *i);
         let order: Vec<usize> = owned.iter().map(|(i, _, _)| *i).collect();
@@ -1058,6 +1067,7 @@ impl<'a> Engine<'a> {
     }
 
     fn prompt_chunk_at(&mut self, i: usize) -> Result<(), LlamaError> {
+        self.bind_gpu_decode(false);
         self.with_store_parked(i, |eng| {
             let llama = eng.llama;
             let chunk = eng.cfg.prefill_chunk;
@@ -1210,6 +1220,7 @@ impl<'a> Engine<'a> {
                 Err(e) => return Err(BatchFail::Other(e)),
             }
         }
+        self.bind_gpu_decode(true);
         self.flush_kv_sim().map_err(BatchFail::Other)?;
         let mut order: Vec<(usize, u32)> = items.to_vec();
         order.sort_by_key(|(i, _)| *i);
@@ -3253,5 +3264,20 @@ mod tests {
             "seq B [1,2] must intern-hit A's completed first page, hits={}",
             eng.kv_hits()
         );
+    }
+
+    #[test]
+    fn engine_gpu_decode_priority_retargets_compute() {
+        let on = two_seq_gpu_knobs(
+            8,
+            GpuStoreCfg {
+                decode_priority: true,
+                stream_priority: true,
+                ..GpuStoreCfg::default()
+            },
+        );
+        assert_eq!(on.compute_stream, StreamId(2), "decode compute is stream 2");
+        assert_eq!(on.compute_pri, 2, "decode stream priority equals stream id");
+        assert!(on.launches >= 2, "launches={}", on.launches);
     }
 }
