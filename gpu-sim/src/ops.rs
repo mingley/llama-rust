@@ -218,4 +218,24 @@ pub struct Operation {
     pub done: bool,
     /// Cancelled before start, or failed transfer.
     pub cancelled: bool,
+    /// Virtual time when the op was submitted (enqueued).
+    pub submit_ns: u64,
+    /// Virtual time when the op started. `None` if still queued or cancelled first.
+    pub start_ns: Option<u64>,
+    /// Virtual time when the op finished (including cancel / failed transfer).
+    pub done_ns: Option<u64>,
+}
+
+impl Operation {
+    /// Queue wait: `start_ns - submit_ns` once the op has started.
+    #[must_use]
+    pub fn queue_ns(&self) -> Option<u64> {
+        Some(self.start_ns?.saturating_sub(self.submit_ns))
+    }
+
+    /// Run duration: `done_ns - start_ns` once the op has started and finished.
+    #[must_use]
+    pub fn duration_ns(&self) -> Option<u64> {
+        Some(self.done_ns?.saturating_sub(self.start_ns?))
+    }
 }

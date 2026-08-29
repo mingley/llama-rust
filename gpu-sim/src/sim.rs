@@ -1,5 +1,6 @@
 //! Discrete-event GPU-systems simulator.
 
+use std::cmp::Reverse;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -24,6 +25,9 @@ struct Op {
     done: bool,
     cancelled: bool,
     launch: LaunchCost,
+    submit_ns: u64,
+    start_ns: Option<u64>,
+    done_ns: Option<u64>,
 }
 
 /// How a submitted op pays kernel/graph launch overhead.
@@ -86,6 +90,7 @@ pub struct Sim {
     extra_transfer_ns: u64,
     peer_enabled: BTreeSet<(DeviceId, DeviceId)>,
     legacy_null_stream: bool,
+    priority: BTreeMap<(DeviceId, StreamId), i32>,
 }
 
 impl Sim {
@@ -127,6 +132,7 @@ impl Sim {
             extra_transfer_ns: 0,
             peer_enabled,
             legacy_null_stream: false,
+            priority: BTreeMap::new(),
         }
     }
 
@@ -209,6 +215,25 @@ impl Sim {
         self.extra_transfer_ns = ns;
     }
 
+    /// CUDA stream priority (`cudaStreamCreateWithPriority`). Higher runs first
+    /// when multiple ops are ready for the same resource. Default `0`.
+    pub fn set_stream_priority(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        priority: i32,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        let _prev = self.priority.insert((device, stream), priority);
+        Ok(())
+    }
+
+    /// Current priority for `(device, stream)`, or `0` if unset.
+    #[must_use]
+    pub fn stream_priority(&self, device: DeviceId, stream: StreamId) -> i32 {
+        self.priority.get(&(device, stream)).copied().unwrap_or(0)
+    }
+
     /// CUDA legacy null stream: [`StreamId::NULL`] serializes with every other stream
     /// on that device. Off by default (`cudaStreamNonBlocking`).
     pub fn set_legacy_null_stream(&mut self, yes: bool) {
@@ -280,6 +305,7 @@ impl Sim {
             if let Some(op) = self.ops.get_mut(&id) {
                 op.cancelled = true;
                 op.done = true;
+                op.done_ns = Some(self.clock);
                 n = n.saturating_add(1);
             }
         }
@@ -811,6 +837,9 @@ impl Sim {
                 done: false,
                 cancelled: false,
                 launch,
+                submit_ns: self.clock,
+                start_ns: None,
+                done_ns: None,
             },
         );
         let _prev_tail = self.tail.insert((device, stream), id);
@@ -888,14 +917,22 @@ impl Sim {
     fn schedule(&mut self) -> Result<(), SimError> {
         loop {
             let mut started = false;
-            let candidates: Vec<OpId> = self
-                .ops
-                .iter()
-                .filter(|(id, o)| !o.done && !self.is_running(**id) && self.deps_ready(o))
-                .map(|(id, _)| *id)
-                .collect();
-            for id in candidates {
+            let mut candidates: Vec<(i32, u64, OpId)> = Vec::new();
+            for (id, o) in &self.ops {
+                if o.done || self.is_running(*id) || !self.deps_ready(o) {
+                    continue;
+                }
+                let pri = self.stream_priority(o.device, o.stream);
+                candidates.push((pri, id.0, *id));
+            }
+            candidates.sort_by_key(|&(pri, oid, _)| (Reverse(pri), oid));
+            for (_, _, id) in candidates {
                 if self.try_start(id)? {
+                    if let Some(op) = self.ops.get_mut(&id) {
+                        if op.start_ns.is_none() && !op.cancelled {
+                            op.start_ns = Some(self.clock);
+                        }
+                    }
                     started = true;
                 }
             }
@@ -1007,6 +1044,7 @@ impl Sim {
                     if let Some(op) = self.ops.get_mut(&id) {
                         op.cancelled = true;
                         op.done = true;
+                        op.done_ns = Some(self.clock);
                     }
                     return Err(SimError::TransferFailed { alloc: m.alloc });
                 }
@@ -1414,6 +1452,7 @@ impl Sim {
         }
         if let Some(op) = self.ops.get_mut(&id) {
             op.done = true;
+            op.done_ns = Some(self.clock);
         }
         Ok(())
     }
@@ -1428,6 +1467,9 @@ fn snapshot_op(id: OpId, o: &Op) -> Operation {
         deps: o.deps.clone(),
         done: o.done,
         cancelled: o.cancelled,
+        submit_ns: o.submit_ns,
+        start_ns: o.start_ns,
+        done_ns: o.done_ns,
     }
 }
 

@@ -174,6 +174,20 @@ impl TieredStore {
         ExpertPhase::cpu(self.fast.contains_key(&key), self.leased.contains(&key))
     }
 
+    /// Drop `key` from the fast tier. Illegal while leased or if not resident.
+    pub fn evict(&mut self, key: ExpertKey) -> Result<(), Error> {
+        if self.leased.contains(&key) {
+            return Err(Error::Store("evict of leased expert"));
+        }
+        if !self.fast.contains_key(&key) {
+            return Err(Error::Store("evict of non-resident expert"));
+        }
+        let _gone = self.fast.remove(&key);
+        self.recency.retain(|k| *k != key);
+        self.evicts = self.evicts.saturating_add(1);
+        Ok(())
+    }
+
     /// Whether `key` exists in the slow catalog.
     #[must_use]
     pub fn contains_catalog(&self, key: ExpertKey) -> bool {

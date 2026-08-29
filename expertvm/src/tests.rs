@@ -214,6 +214,24 @@ fn cached_store_phase_is_cold_resident_leased() {
     assert!(cache.is_leased(k));
     cache.release(k);
     assert_eq!(cache.phase(k), ExpertPhase::Resident);
+    cache.evict(k).expect("evict");
+    assert_eq!(cache.phase(k), ExpertPhase::Cold);
+    let err = cache.lease(k).unwrap_err();
+    assert!(matches!(err, Error::Store(_)));
+}
+
+#[test]
+fn cached_store_evict_of_leased_is_fatal() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let mut cache = CachedStore::new(DirectStore::from_trace(&t), 1).expect("cache");
+    let k = ExpertKey::new(0, 0);
+    let _p = cache.acquire(k).expect("acq");
+    cache.lease(k).expect("lease");
+    let err = cache.evict(k).unwrap_err();
+    assert!(matches!(err, Error::Store(_)));
+    assert_eq!(cache.phase(k), ExpertPhase::Leased);
 }
 
 #[test]
@@ -956,4 +974,30 @@ fn simulated_gpu_store_phase_tracks_copy() {
     assert_eq!(gpu.phase(k0), ExpertPhase::Leased);
     gpu.release(k0);
     assert_eq!(gpu.phase(k0), ExpertPhase::Resident);
+}
+
+#[test]
+fn simulated_gpu_store_evict_is_observable_until_free_completes() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::new(inner, 1, HardwareProfile::example_h100_sxm(), 4096).expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    let k1 = ExpertKey::new(0, 1);
+    let _n = gpu.prefetch(&[k0]).expect("k0");
+    let _score = gpu.score().expect("drain k0");
+    assert_eq!(gpu.phase(k0), ExpertPhase::Resident);
+    gpu.evict(k0).expect("evict");
+    assert_eq!(gpu.phase(k0), ExpertPhase::Evicting);
+    let err = gpu.lease(k0).unwrap_err();
+    assert!(matches!(err, Error::Store(_)));
+    let _score = gpu.score().expect("drain free");
+    assert_eq!(gpu.phase(k0), ExpertPhase::Cold);
+    let _n = gpu.prefetch(&[k0]).expect("k0 again");
+    let _score = gpu.score().expect("drain");
+    let _n = gpu.prefetch(&[k1]).expect("evict via prefetch");
+    assert_eq!(gpu.phase(k0), ExpertPhase::Evicting);
+    assert_eq!(gpu.phase(k1), ExpertPhase::Transferring);
 }

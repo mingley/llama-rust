@@ -9,6 +9,7 @@
 //! Submitted work is a [`GpuOp`] compiled into an [`Operation`] DAG
 //! ([`Sim::operations`]). [`Sim::synchronize_stream`] waits one stream.
 //! [`Sim::synchronize_event`] is `cudaEventSynchronize`.
+//! [`Sim::set_stream_priority`] is `cudaStreamCreateWithPriority`.
 
 #![cfg_attr(not(test), deny(missing_docs))]
 
@@ -841,6 +842,65 @@ mod tests {
         assert!(kernel.done);
         assert!(!kernel.deps.is_empty());
         assert_eq!(sim.operation(kernel.id).unwrap().kind, kernel.kind);
+        assert!(kernel.start_ns.is_some());
+        assert!(kernel.done_ns.is_some());
+        assert!(kernel.duration_ns().is_some());
+    }
+
+    #[test]
+    fn same_stream_next_op_starts_after_previous_finishes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s));
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s));
+        sim.synchronize().unwrap();
+        let kernels: Vec<Operation> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .collect();
+        assert_eq!(kernels.len(), 2);
+        let a0 = kernels[0].start_ns.expect("k0 start");
+        let d0 = kernels[0].done_ns.expect("k0 done");
+        let a1 = kernels[1].start_ns.expect("k1 start");
+        assert!(
+            a1 >= d0,
+            "stream[i+1].start >= stream[i].finish; start1={a1} done0={d0} start0={a0}"
+        );
+    }
+
+    #[test]
+    fn higher_stream_priority_starts_first_when_compute_contends() {
+        let d = DeviceId(0);
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |hi_first: bool| {
+            let mut sim = Sim::new(h100());
+            sim.set_stream_priority(d, StreamId(0), 0).unwrap();
+            sim.set_stream_priority(d, StreamId(1), 1).unwrap();
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            if hi_first {
+                enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+                enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(0)));
+            } else {
+                enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(0)));
+                enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+            }
+            sim.start_ready().unwrap();
+            let started: Vec<StreamId> = sim
+                .operations()
+                .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.start_ns.is_some())
+                .map(|o| o.stream)
+                .collect();
+            started
+        };
+        let low_submitted_first = run(false);
+        assert_eq!(low_submitted_first, vec![StreamId(1)]);
+        let high_submitted_first = run(true);
+        assert_eq!(high_submitted_first, vec![StreamId(1)]);
     }
 
     #[test]

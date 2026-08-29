@@ -293,6 +293,21 @@ impl CachedStore {
         self.evicts
     }
 
+    /// Drop `key` from the fast tier. Illegal while leased or if not resident.
+    pub fn evict(&mut self, key: ExpertKey) -> Result<(), Error> {
+        if self.leased.contains(&key) {
+            return Err(Error::Store("evict of leased expert"));
+        }
+        if !self.resident.contains(&key) {
+            return Err(Error::Store("evict of non-resident expert"));
+        }
+        let _removed = self.resident.remove(&key);
+        self.recency.retain(|k| *k != key);
+        self.evicts = self.evicts.saturating_add(1);
+        self.last_victim = Some(key);
+        Ok(())
+    }
+
     fn fault_in(&mut self, key: ExpertKey) -> Result<(), Error> {
         self.last_victim = None;
         if self.resident.len() >= self.slots {

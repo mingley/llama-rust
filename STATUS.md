@@ -16,7 +16,9 @@ ops on that stream keep running). `sim_replay --cuda-graphs` and `SimulatedGpuSt
 call it before capture so a miss-path H2D can still record a GEMM graph.
 `ExpertPhase` is Cold → Transferring → Resident → Leased → Evicting → Cold
 (`CachedStore` / `TieredStore` are instant; GPU copies are Transferring until
-the copy event completes; lease of Transferring is fatal). `SimCfg::max_batch`
+the copy event completes; `evict` stays Evicting until the free completes;
+lease of Transferring is fatal). `Operation` records `submit_ns` / `start_ns` /
+`done_ns`. `set_stream_priority` is CUDA stream priority. `SimCfg::max_batch`
 admits N sequences per engine iteration at a token (`expertvm sim --max-batch
 N`); TTFT/ITL still sample once per token. `expertvm bench` prints serial vs
 graphs. Dual score still has no `$/M tokens`.

@@ -473,8 +473,12 @@ Cold → Transferring → Resident → Leased → Resident → Evicting → Cold
 ```
 
 CPU `CachedStore` / `TieredStore` fault-in is instantaneous (Resident
-or Leased). `SimulatedGpuStore` is Transferring until the copy-stream
-event completes; lease of Transferring/Cold/Evicting is refused.
+or Leased). `evict` of a leased key is fatal. `SimulatedGpuStore` is
+Transferring until the copy-stream event completes; `evict` leaves the
+key `Evicting` until the stream-ordered free completes. Lease of
+Transferring/Cold/Evicting is refused. `Operation` timestamps make
+`stream[i+1].start ≥ stream[i].finish` inspectable. `set_stream_priority`
+is CUDA stream priority (higher starts first when compute contends).
 `sim_replay` `--max-batch N` is a trace-level admission cap (N sequences
 per engine iteration at a token; `0` admits the whole token).
 

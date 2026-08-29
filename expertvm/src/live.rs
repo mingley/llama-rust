@@ -74,6 +74,16 @@ impl LiveStore {
         }
     }
 
+    /// Drop `key` from the fast tier. Direct catalogs are a no-op.
+    pub fn evict(&mut self, key: ExpertKey) -> Result<(), Error> {
+        match self {
+            Self::Direct(_) => Ok(()),
+            Self::Cached(s) => s.evict(key),
+            Self::Tiered(s) => s.evict(key),
+            Self::Simulated(s) => s.evict(key),
+        }
+    }
+
     /// D2D migrate on the simulated GPU; no-op for CPU stores.
     pub fn migrate(&mut self, key: ExpertKey, dst: DeviceId) -> Result<(), Error> {
         match self {

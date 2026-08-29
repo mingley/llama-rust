@@ -9,6 +9,7 @@ use gpu_sim::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 
+#[derive(Clone, Copy)]
 struct GpuPage {
     id: AllocId,
     device: DeviceId,
@@ -27,7 +28,7 @@ pub struct SimulatedGpuStore {
     next_event: u32,
     pages: BTreeMap<ExpertKey, GpuPage>,
     replicas: BTreeSet<ExpertKey>,
-    evicting: BTreeSet<ExpertKey>,
+    evicting: BTreeMap<ExpertKey, GpuPage>,
     bytes_per_expert: u64,
     staging: AllocId,
     graphs: BTreeMap<AllocId, GraphId>,
@@ -55,7 +56,7 @@ impl SimulatedGpuStore {
             next_event: 1,
             pages: BTreeMap::new(),
             replicas: BTreeSet::new(),
-            evicting: BTreeSet::new(),
+            evicting: BTreeMap::new(),
             bytes_per_expert: bytes,
             staging,
             graphs: BTreeMap::new(),
@@ -72,6 +73,7 @@ impl SimulatedGpuStore {
     /// Drain the simulator and return its performance vector.
     pub fn score(&mut self) -> Result<gpu_sim::Score, Error> {
         self.sim.synchronize()?;
+        self.sweep_evicts();
         Ok(gpu_sim::Score::from_sim(&self.sim))
     }
 
@@ -98,6 +100,7 @@ impl SimulatedGpuStore {
 
     /// Fault `keys` in (H2D, no GEMM). Unknown catalog keys are skipped.
     pub fn prefetch(&mut self, keys: &[ExpertKey]) -> Result<u64, Error> {
+        self.sweep_evicts();
         let n = self.cache.prefetch(keys)?;
         for key in keys {
             if self.cache.is_resident(*key) && !self.pages.contains_key(key) {
@@ -193,8 +196,11 @@ impl SimulatedGpuStore {
     /// PLAN state: GPU copies are Transferring until the copy-stream event completes.
     #[must_use]
     pub fn phase(&self, key: ExpertKey) -> ExpertPhase {
-        if self.evicting.contains(&key) {
-            return ExpertPhase::Evicting;
+        if let Some(page) = self.evicting.get(&key) {
+            if self.sim.is_resident(page.id, page.device).unwrap_or(false) {
+                return ExpertPhase::Evicting;
+            }
+            return ExpertPhase::Cold;
         }
         if let Some(page) = self.pages.get(&key) {
             if let Some(ev) = page.ready {
@@ -204,6 +210,14 @@ impl SimulatedGpuStore {
             }
         }
         ExpertPhase::cpu(self.cache.is_resident(key), self.cache.is_leased(key))
+    }
+
+    /// Drop `key` from HBM. Illegal while leased. Stays [`ExpertPhase::Evicting`]
+    /// until the stream-ordered free completes.
+    pub fn evict(&mut self, key: ExpertKey) -> Result<(), Error> {
+        self.sweep_evicts();
+        self.cache.evict(key)?;
+        self.drop_gpu(key)
     }
 
     fn wait_copy(&mut self, key: ExpertKey) -> Result<(), Error> {
@@ -297,10 +311,25 @@ impl SimulatedGpuStore {
         let Some(page) = self.pages.remove(&key) else {
             return Ok(());
         };
-        let _was = self.evicting.insert(key);
-        let out = self.finish_drop(key, page);
-        let _gone = self.evicting.remove(&key);
-        out
+        let _prev = self.evicting.insert(key, page);
+        self.finish_drop(key, page)
+    }
+
+    fn sweep_evicts(&mut self) {
+        let done: Vec<ExpertKey> = self
+            .evicting
+            .iter()
+            .filter_map(|(k, p)| {
+                if self.sim.is_resident(p.id, p.device).unwrap_or(false) {
+                    None
+                } else {
+                    Some(*k)
+                }
+            })
+            .collect();
+        for k in done {
+            let _gone = self.evicting.remove(&k);
+        }
     }
 
     fn finish_drop(&mut self, key: ExpertKey, page: GpuPage) -> Result<(), Error> {
@@ -343,6 +372,7 @@ impl SimulatedGpuStore {
 
 impl ExpertStore for SimulatedGpuStore {
     fn acquire(&mut self, key: ExpertKey) -> Result<ExpertParts, Error> {
+        self.sweep_evicts();
         let hit = self.cache.is_resident(key);
         let parts = self.cache.acquire(key)?;
         if !hit && !self.pages.contains_key(&key) {

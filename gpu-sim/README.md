@@ -39,6 +39,8 @@ warp scheduler, L1, …   ← do not model
 | graph launch amortizes per-kernel launch overhead | `graph_launch_ns` |
 | `synchronize_stream` waits one stream only | other streams keep running |
 | `synchronize_event` waits the record only | later ops on that stream keep running |
+| stream[i+1].start ≥ stream[i].finish (`Operation` timestamps) | queue wait vs run |
+| higher `set_stream_priority` starts first under contention | launch overhead |
 | memset requires device residency | HBM write + launch overhead |
 | peer D2D needs topology + `enable_peer` | link bandwidth |
 | legacy null stream serializes (opt-in) | copy/compute overlap |
@@ -147,7 +149,10 @@ link; `disable_peer` → `PeerDisabled`). [`StreamId::NULL`] is the CUDA null
 stream; `set_legacy_null_stream(true)` serializes it with every other stream
 on that device (off by default = `cudaStreamNonBlocking`).
 `synchronize_stream` is `cudaStreamSynchronize`. `synchronize_event` is
-`cudaEventSynchronize` (later ops on that stream keep running). `GpuOp` /
+`cudaEventSynchronize` (later ops on that stream keep running).
+`set_stream_priority` is `cudaStreamCreateWithPriority` (higher first when
+compute contends). `Operation` carries `submit_ns` / `start_ns` / `done_ns`
+so stream[i+1].start ≥ stream[i].finish is inspectable. `GpuOp` /
 `Operation` is the compiled submit DAG (`Sim::operations`).
 
 In-flight ops are not cancelled. `gpu-profile capture` is refused in this
