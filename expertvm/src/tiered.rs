@@ -358,6 +358,7 @@ impl ExpertStore for TieredStore {
             pins: self.pins,
             migrates: 0,
             dispatches: 0,
+            replicates: 0,
         }
     }
 }

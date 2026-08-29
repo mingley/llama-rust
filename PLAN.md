@@ -825,6 +825,9 @@ model, do not celebrate the sim.
     CLI metrics show `plan_placement` `migrates` / `dispatches` (default
     `--expert-sim` stays 1×H100 / 4096 bytes). Dual score still has no
     `$/M tokens`.
+31. [x] SimulatedGpuStore `pin_hot` NVLink-replicates onto `(home + 1) % n_gpus`
+    (not a fixed GPU1). `StoreMetrics::replicates` counts peer copies.
+    Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

@@ -80,6 +80,8 @@ pub struct StoreMetrics {
     /// [`crate::plan_placement`] chose [`crate::Placement::DispatchActivations`]
     /// (leave weights on the striped home); 0 for CPU stores.
     pub dispatches: u64,
+    /// NVLink/peer replica copies from [`crate::SimulatedGpuStore::pin_hot`]; 0 for CPU stores.
+    pub replicates: u64,
 }
 
 impl StoreMetrics {
@@ -87,7 +89,7 @@ impl StoreMetrics {
     #[must_use]
     pub fn line(&self) -> String {
         format!(
-            "hits={} misses={} evicts={} prefetches={} bytes_moved={} pins={} migrates={} dispatches={}",
+            "hits={} misses={} evicts={} prefetches={} bytes_moved={} pins={} migrates={} dispatches={} replicates={}",
             self.hits,
             self.misses,
             self.evicts,
@@ -95,7 +97,8 @@ impl StoreMetrics {
             self.bytes_moved,
             self.pins,
             self.migrates,
-            self.dispatches
+            self.dispatches,
+            self.replicates
         )
     }
 }
@@ -423,6 +426,7 @@ impl ExpertStore for CachedStore {
             pins: self.pins,
             migrates: 0,
             dispatches: 0,
+            replicates: 0,
         }
     }
 }

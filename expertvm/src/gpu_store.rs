@@ -108,12 +108,12 @@ pub struct SimulatedGpuStore {
     cache: CachedStore,
     sim: Sim,
     device: DeviceId,
-    replica: DeviceId,
     copy: StreamId,
     compute: StreamId,
     next_event: u32,
     pages: BTreeMap<ExpertKey, GpuPage>,
-    replicas: BTreeSet<ExpertKey>,
+    /// Peer copy dest per pinned key (`(home + 1) % n_gpus`).
+    replicas: BTreeMap<ExpertKey, DeviceId>,
     evicting: BTreeMap<ExpertKey, GpuPage>,
     bytes_per_expert: u64,
     staging: AllocId,
@@ -140,6 +140,8 @@ pub struct SimulatedGpuStore {
     migrates: u64,
     /// [`plan_placement`] chose [`Placement::DispatchActivations`] (no D2D).
     dispatches: u64,
+    /// Successful peer replica copies from [`Self::pin_hot`].
+    replicates: u64,
 }
 
 impl SimulatedGpuStore {
@@ -260,12 +262,11 @@ impl SimulatedGpuStore {
             cache: CachedStore::new(inner, cache_slots)?,
             sim,
             device: DeviceId(0),
-            replica: DeviceId(1),
             copy: StreamId(0),
             compute: StreamId(1),
             next_event: 1,
             pages: BTreeMap::new(),
-            replicas: BTreeSet::new(),
+            replicas: BTreeMap::new(),
             evicting: BTreeMap::new(),
             bytes_per_expert: bytes,
             staging,
@@ -286,6 +287,7 @@ impl SimulatedGpuStore {
             accessed_by: cfg.accessed_by,
             migrates: 0,
             dispatches: 0,
+            replicates: 0,
         })
     }
 
@@ -361,9 +363,9 @@ impl SimulatedGpuStore {
     }
 
     /// Pin against eviction (sticky, survives compute `release`) and, on
-    /// multi-GPU profiles, NVLink-replicate to GPU1.
+    /// multi-GPU profiles, NVLink-replicate onto `(home + 1) % n_gpus`.
     ///
-    /// Managed + [`GpuStoreCfg::accessed_by`] maps GPU1 without a dest prefetch.
+    /// Managed + [`GpuStoreCfg::accessed_by`] maps the dest without a prefetch.
     pub fn pin_hot(&mut self, keys: &[ExpertKey]) -> Result<(), Error> {
         for key in keys {
             if !self.cache.contains_catalog(*key) {
@@ -940,8 +942,8 @@ impl SimulatedGpuStore {
             GpuFill::Managed => {
                 self.sim.synchronize_stream(page.device, self.compute)?;
                 self.sim.synchronize_stream(page.device, self.copy)?;
-                if self.replicas.remove(&key) {
-                    self.sim.synchronize_stream(self.replica, self.copy)?;
+                if let Some(dst) = self.replicas.remove(&key) {
+                    self.sim.synchronize_stream(dst, self.copy)?;
                 }
                 self.sim.free_sync(page.id)?;
                 return Ok(());
@@ -972,8 +974,8 @@ impl SimulatedGpuStore {
         self.sim.create_event_disable_timing(ev)?;
         let _r = self.sim.record_event(page.device, ev, self.compute)?;
         let _w = self.sim.wait_event(page.device, ev, self.copy)?;
-        if self.replicas.remove(&key) {
-            self.sim.free(self.replica, page.id, self.copy)?;
+        if let Some(dst) = self.replicas.remove(&key) {
+            self.sim.free(dst, page.id, self.copy)?;
         }
         self.sim.free(page.device, page.id, self.copy)?;
         Ok(())
@@ -983,54 +985,76 @@ impl SimulatedGpuStore {
         if self.sim.profile().n_gpus() < 2 {
             return Ok(());
         }
-        if self.replicas.contains(&key) {
+        if self.replicas.contains_key(&key) {
             return Ok(());
         }
         let (id, src) = {
             let page = self.pages.get(&key).ok_or(Error::Store("missing handle"))?;
             (page.id, page.device)
         };
-        if src == self.replica {
-            let _ins = self.replicas.insert(key);
+        let Some(dst) = self.replica_dst(src) else {
+            return Ok(());
+        };
+        if src == dst {
+            let _prev = self.replicas.insert(key, dst);
             return Ok(());
         }
         match self.mode {
             GpuFill::Managed => {
                 if !self.accessed_by {
-                    let _p = self.sim.prefetch(self.replica, id, self.copy)?;
+                    let _p = self.sim.prefetch(dst, id, self.copy)?;
+                    self.note_replicate();
                 }
-                let _ins = self.replicas.insert(key);
+                let _prev = self.replicas.insert(key, dst);
                 return Ok(());
             }
             GpuFill::Mapped => {
-                let _ins = self.replicas.insert(key);
+                let _prev = self.replicas.insert(key, dst);
                 return Ok(());
             }
             GpuFill::Vmm => {
-                if !self.sim.is_resident(id, self.replica)? {
-                    self.sim.va_map(id, self.replica)?;
+                if !self.sim.is_resident(id, dst)? {
+                    self.sim.va_map(id, dst)?;
                     let _c = self.sim.memcpy_device_to_device(
                         src,
-                        self.replica,
+                        dst,
                         id,
                         self.bytes_per_expert,
                         self.copy,
                     )?;
+                    self.note_replicate();
                 }
-                let _ins = self.replicas.insert(key);
+                let _prev = self.replicas.insert(key, dst);
                 return Ok(());
             }
             GpuFill::Pinned => {}
         }
-        let _c = self.sim.memcpy_device_to_device(
-            src,
-            self.replica,
-            id,
-            self.bytes_per_expert,
-            self.copy,
-        )?;
-        let _ins = self.replicas.insert(key);
+        let _c =
+            self.sim
+                .memcpy_device_to_device(src, dst, id, self.bytes_per_expert, self.copy)?;
+        self.note_replicate();
+        let _prev = self.replicas.insert(key, dst);
         Ok(())
+    }
+
+    /// Next GPU after `src` on the profile mesh (`None` when `n_gpus < 2`).
+    #[must_use]
+    fn replica_dst(&self, src: DeviceId) -> Option<DeviceId> {
+        let n = u16::try_from(self.sim.profile().n_gpus()).unwrap_or(1);
+        if n < 2 {
+            return None;
+        }
+        Some(DeviceId(src.0.wrapping_add(1) % n))
+    }
+
+    fn note_replicate(&mut self) {
+        self.replicates = self.replicates.saturating_add(1);
+    }
+
+    /// Peer GPU that holds a [`Self::pin_hot`] replica of `key`, if any.
+    #[must_use]
+    pub fn replica_of(&self, key: ExpertKey) -> Option<DeviceId> {
+        self.replicas.get(&key).copied()
     }
 }
 
@@ -1064,6 +1088,7 @@ impl ExpertStore for SimulatedGpuStore {
         m.bytes_moved = self.sim.bytes_moved();
         m.migrates = self.migrates;
         m.dispatches = self.dispatches;
+        m.replicates = self.replicates;
         m
     }
 }

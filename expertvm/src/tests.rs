@@ -1750,8 +1750,29 @@ fn simulated_gpu_store_pin_hot_replicates_on_nvlink() {
     assert!(gpu.is_pinned(k0));
     assert_eq!(gpu.phase(k0), ExpertPhase::Leased);
     assert!(gpu.is_resident(k0));
+    assert_eq!(gpu.replica_of(k0), Some(DeviceId(1)));
     let score = gpu.score().expect("score");
+    assert!(gpu.page_resident(k0, DeviceId(1)));
+    assert_eq!(gpu.metrics().replicates, 1);
     assert!(score.bytes_moved >= 4096);
+}
+
+#[test]
+fn simulated_gpu_store_pin_hot_replicates_onto_next_home() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[3])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::new(inner, 2, HardwareProfile::example_8xh100_nvlink(), 4096)
+        .expect("gpu");
+    let k = ExpertKey::new(0, 3);
+    gpu.pin_hot(&[k]).expect("pin");
+    assert_eq!(gpu.device_of(k), Some(DeviceId(3)));
+    assert_eq!(gpu.replica_of(k), Some(DeviceId(4)));
+    assert_eq!(gpu.metrics().replicates, 1);
+    let score = gpu.score().expect("score");
+    assert!(gpu.page_resident(k, DeviceId(4)));
+    assert!(score.bytes_moved >= 8192, "{}", score.bytes_moved);
 }
 
 #[test]

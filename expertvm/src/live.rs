@@ -42,7 +42,7 @@ impl LiveStore {
         }
     }
 
-    /// Keep-hot (sticky pin) and, for the simulated GPU, replicate to a peer.
+    /// Keep-hot (sticky pin) and, for the simulated GPU, replicate to the next GPU.
     ///
     /// Distinct from [`ExpertStore::lease`]: a decode `release` does not drop
     /// the pin. Engine serving uses [`Self::unpin_all`] before a new pin set.

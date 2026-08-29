@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — pin_hot replicates onto the next GPU
+
+`SimulatedGpuStore::pin_hot` D2Ds a replica onto `(home + 1) % n_gpus`
+instead of always GPU1, so a striped expert on GPU3 copies to GPU4.
+`StoreMetrics::replicates` counts those peer copies. Evict frees that
+dest. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — engine `--expert-8gpu` / `--expert-bytes`
 
 `gguf_gemv engine --expert-sim --expert-8gpu` attaches SimulatedGpuStore
@@ -822,7 +829,7 @@ invent `$/M tokens`.
   workload`. Same numbers as `expertvm bench`. Score is
   `wall_ns` / `hbm_peak` / `bytes_moved` / optional `ns_per_token`.
 - `expertvm` CLI also has `bench` and `workload`. `pin_hot` NVLink-replicates
-  to GPU1 when the profile has `n_gpus >= 2`.
+  onto `(home + 1) % n_gpus` when the profile has `n_gpus >= 2`.
 
 ## Shipped 2026-08-28 — expertvm + gpu-sim + MoE traces
 
