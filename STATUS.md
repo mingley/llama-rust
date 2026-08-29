@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — SimulatedGpuStore mapped pin occupancy
+
+`with_mapped` caps cache slots at `host_pin_bytes / expert_bytes` so a
+pin budget of one expert pages one expert instead of `PinOom` on the
+second. Zero fit still `PinOom`s the first mapped alloc. Mapped fill
+uses a pageable staging object so construction does not steal the last
+mlock. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — SimulatedGpuStore SimCfg knobs
 
 `SimulatedGpuStore::with_cfg` takes `GpuFill` plus `GpuStoreCfg`:
@@ -204,7 +212,7 @@ A different size does not share the pool. Map OOM parks the reserved VA.
 and `cudaHostRegister` (`SimError::PinOom`). Pageable `alloc_host` does
 not charge; register does. Example default is `u64::MAX`. Mapped expert
 replay now caps occupancy at `pin / expert_bytes` (see the mapped
-occupancy note). `SimulatedGpuStore` still pins without a tight cap.
+occupancy note). `SimulatedGpuStore::with_mapped` uses the same cap.
 Dual score still has no `$/M tokens`.
 
 ## Shipped 2026-08-29 — CUDA VMM keeps a VA while HBM is mapped

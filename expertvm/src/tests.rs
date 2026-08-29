@@ -2318,3 +2318,47 @@ fn simulated_gpu_store_mempool_holds_after_evict() {
         "mempool must hold the expert page"
     );
 }
+
+#[test]
+fn simulated_gpu_store_mapped_pin_budget_caps_occupancy() {
+    let mut events = Vec::new();
+    for tok in 0..16u32 {
+        events.push(ev(tok, 0, &[tok % 2]));
+    }
+    let t = Trace { events };
+    let bytes = 1u64 << 20;
+    let tight = HardwareProfile::example_h100_sxm().restrict_pin(bytes);
+    let open = HardwareProfile::example_h100_sxm();
+    let run = |slots: usize, profile: HardwareProfile| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_mapped(inner, slots, profile, bytes).expect("gpu");
+        assert!(!gpu.staging_is_pinned());
+        for k in t.keys() {
+            let _p = gpu.acquire(k).expect("acq");
+        }
+        gpu.metrics()
+    };
+    let capped = run(2, tight);
+    let slim = run(1, open.clone());
+    let fat = run(2, open);
+    assert_eq!(capped.hits, slim.hits);
+    assert_eq!(capped.misses, slim.misses);
+    assert!(
+        fat.hits > capped.hits,
+        "uncapped two-slot mapped must hit; fat={} cap={}",
+        fat.hits,
+        capped.hits
+    );
+}
+
+#[test]
+fn simulated_gpu_store_mapped_pin_budget_zero_fit_is_pin_oom() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::example_h100_sxm().restrict_pin(1);
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_mapped(inner, 1, p, 1u64 << 20).expect("gpu");
+    let err = gpu.acquire(ExpertKey::new(0, 0)).unwrap_err();
+    assert!(err.to_string().contains("pin"), "{err}");
+}

@@ -165,9 +165,16 @@ impl SimulatedGpuStore {
             // Compute is `StreamId(1)`. Copy stays NULL (`StreamId(0)`).
             sim.set_created_streams_blocking(2)?;
         }
-        let staging = sim.alloc_host_pinned(bytes)?;
+        let cache_slots = mapped_occupancy(slots, fill, sim.pin_budget(), bytes);
+        // Mapped expert pages already charge the pin budget. A second pinned
+        // staging alloc would steal the last expert's mlock.
+        let staging = if fill == GpuFill::Mapped {
+            sim.alloc_host(bytes)?
+        } else {
+            sim.alloc_host_pinned(bytes)?
+        };
         Ok(Self {
-            cache: CachedStore::new(inner, slots)?,
+            cache: CachedStore::new(inner, cache_slots)?,
             sim,
             device: DeviceId(0),
             replica: DeviceId(1),
@@ -760,4 +767,21 @@ fn gemm(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Erro
         s,
     )?;
     Ok(())
+}
+
+/// `--mapped` occupancy: `min(slots, pin / expert_bytes)`.
+///
+/// `fit == 0` keeps the requested slots so the first `alloc_host_mapped` is
+/// [`gpu_sim::SimError::PinOom`] (same walker rule as `sim_replay --mapped`).
+fn mapped_occupancy(slots: usize, fill: GpuFill, pin_bytes: u64, expert_bytes: u64) -> usize {
+    if fill != GpuFill::Mapped {
+        return slots;
+    }
+    let bytes = expert_bytes.max(1);
+    let fit = usize::try_from(pin_bytes / bytes).unwrap_or(usize::MAX);
+    if fit == 0 {
+        slots
+    } else {
+        slots.min(fit)
+    }
 }
