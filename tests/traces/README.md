@@ -13,12 +13,17 @@ Writer-built tinies do **not** answer “is residency predictable on a 320B MoE?
 They prove the decoder emits JSONL and that `expertvm replay` is honest.
 A real Qwen3MoE / Qwen2MoE GGUF is the next input.
 
+New traces include optional `w` (router mass in permille). Older lines without
+`w` still parse; `analyze` then omits `mass‰`.
+
 ```
 gguf_gemv write-tiny-qwen3moe tiny-qwen3moe.gguf
 gguf_gemv trace tiny-qwen3moe.gguf -p ab -n 8 --out tests/traces/tiny-qwen3moe.jsonl
 expertvm replay tests/traces/tiny-qwen3moe.jsonl --capacity 2
 expertvm replay tests/traces/cycling.jsonl --capacity 2
 expertvm bench adversarial --capacity 2 --profile cheap
+expertvm remote tests/traces/cycling.jsonl --expert-bytes 1048576
 infer-bench trace tests/traces/cycling.jsonl --capacity 2 --profile h100
 infer-bench adversarial --capacity 2 --tokens 64 --experts 16
+infer-bench remote tests/traces/cycling.jsonl --expert-bytes 1048576
 ```

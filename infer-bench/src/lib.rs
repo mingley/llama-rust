@@ -6,14 +6,14 @@
 #![deny(missing_docs, unsafe_code)]
 
 pub use expertvm::{
-    adversarial_suite, compare, format_table, generate, report, sim_replay, topology_suite,
-    BenchReport, Policy, Trace, Workload,
+    adversarial_suite, compare, format_table, generate, report, sim_placed, sim_remote_home,
+    sim_replay, striped, topology_suite, BenchReport, Policy, Trace, Workload,
 };
 pub use gpu_sim::{probe_topology, HardwareProfile, Score, TopologyProbe};
 
 #[cfg(test)]
 mod tests {
-    use super::{adversarial_suite, HardwareProfile};
+    use super::{adversarial_suite, sim_placed, sim_remote_home, striped, HardwareProfile, Trace};
 
     #[test]
     fn adversarial_suite_covers_named_workloads() {
@@ -28,5 +28,16 @@ mod tests {
         let rows = super::topology_suite(1u64 << 20).unwrap();
         assert_eq!(rows.len(), HardwareProfile::example_names().len());
         assert!(rows.iter().any(|r| r.line().contains("h2d_ns=")));
+    }
+
+    #[test]
+    fn remote_home_reexport_pays_peer_copy() {
+        let t = Trace::parse("{\"sequence\":0,\"token\":0,\"layer\":0,\"experts\":[1]}\n").unwrap();
+        let p = HardwareProfile::example_2node_rdma();
+        let map = striped(&t, 2);
+        let bytes = 1u64 << 20;
+        let local = sim_placed(&t, p.clone(), bytes, &map).unwrap();
+        let remote = sim_remote_home(&t, p, bytes, &map).unwrap();
+        assert!(remote.bytes_moved > local.bytes_moved);
     }
 }

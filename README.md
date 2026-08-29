@@ -62,6 +62,7 @@ cargo build --release --bin gguf_gemv
 ./target/release/expertvm bench adversarial --capacity 2 --profile cheap
 ./target/release/infer-bench adversarial --capacity 2 --profile cheap
 ./target/release/infer-bench trace tests/traces/cycling.jsonl --capacity 2
+./target/release/infer-bench remote tests/traces/cycling.jsonl --expert-bytes 1048576
 ./target/release/expertvm topology --bytes 1048576
 ./target/release/expertvm remote tests/traces/cycling.jsonl --expert-bytes 1048576
 ./target/release/gpu-profile probe bad-numa

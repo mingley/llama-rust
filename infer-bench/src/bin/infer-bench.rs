@@ -1,6 +1,9 @@
 //! `infer-bench adversarial | trace` — measured hit rates and sim scores.
 
-use infer_bench::{adversarial_suite, report, topology_suite, HardwareProfile, Trace, Workload};
+use infer_bench::{
+    adversarial_suite, report, sim_placed, sim_remote_home, striped, topology_suite,
+    HardwareProfile, Trace, Workload,
+};
 use std::env;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -12,6 +15,7 @@ usage: infer-bench <command> [args]
   trace <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
+  remote <trace.jsonl> [--expert-bytes N] [--profile NAME]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch
@@ -92,6 +96,20 @@ fn run() -> Result<(), String> {
             }
             Ok(())
         }
+        "remote" => {
+            let cfg = parse_flags_profile(args, "2node-rdma")?;
+            let path = cfg.path.ok_or("remote <trace.jsonl>")?;
+            let trace = load_trace(&path)?;
+            let profile = load_profile(&cfg.profile)?;
+            let n = u16::try_from(profile.n_gpus()).unwrap_or(1).max(1);
+            let map = striped(&trace, n);
+            let local = sim_placed(&trace, profile.clone(), cfg.expert_bytes, &map)
+                .map_err(|e| e.to_string())?;
+            let remote = sim_remote_home(&trace, profile, cfg.expert_bytes, &map)
+                .map_err(|e| e.to_string())?;
+            println!("local {} | remote {}", local.line(), remote.line());
+            Ok(())
+        }
         other => Err(format!("{USAGE}got {other}")),
     }
 }
@@ -109,10 +127,17 @@ fn parse_flags<I>(args: I) -> Result<Cfg, String>
 where
     I: IntoIterator<Item = String>,
 {
+    parse_flags_profile(args, "h100")
+}
+
+fn parse_flags_profile<I>(args: I, default_profile: &str) -> Result<Cfg, String>
+where
+    I: IntoIterator<Item = String>,
+{
     let mut path = None;
     let mut capacity = 8usize;
     let mut expert_bytes = 4096u64;
-    let mut profile = "h100".to_string();
+    let mut profile = default_profile.to_string();
     let mut tokens = 64u32;
     let mut experts = 16u32;
     let mut it = args.into_iter();
