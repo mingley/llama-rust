@@ -53,6 +53,10 @@ pub(crate) struct GpuCli {
     pub compute_slots: u8,
     /// True when `--compute-slots` appeared.
     pub compute_slots_set: bool,
+    /// Decode-stream SM permille (`GpuStoreCfg::decode_sm_permille`).
+    pub decode_sm_permille: u16,
+    /// True when `--decode-sms` appeared.
+    pub decode_sm_set: bool,
     /// `--kv-bytes` override. `None` uses intern K+V geometry.
     pub kv_bytes: Option<u64>,
     /// Physical span for [`GpuFill::Vmm`]. `0` maps the whole expert.
@@ -105,11 +109,25 @@ impl GpuCli {
         }
     }
 
-    /// `--decode-priority` implies [`Self::stream_priority`]. Call after sim-flag checks.
+    /// `--decode-priority` implies [`Self::stream_priority`]. `--decode-sms`
+    /// implies both. Call after sim-flag checks.
     pub(crate) fn imply_decode_priority(&mut self) {
+        if self.decode_sm_permille > 0 {
+            self.decode_priority = true;
+        }
         if self.decode_priority {
             self.stream_priority = true;
         }
+    }
+
+    /// Decode-stream SM permille (`--decode-sms`). `0` and `>1000` are refused.
+    pub(crate) fn set_decode_sms(&mut self, n: u16) -> Result<(), String> {
+        if n == 0 || n > 1000 {
+            return Err("decode-sms must be 1..=1000".into());
+        }
+        self.decode_sm_permille = n;
+        self.decode_sm_set = true;
+        Ok(())
     }
 
     /// KV page bytes (`--kv-bytes`). `0` is refused.
@@ -155,6 +173,7 @@ impl GpuCli {
             (self.decode_priority, "--decode-priority"),
             (self.vmm_page_set, "--vmm-page"),
             (self.compute_slots_set, "--compute-slots"),
+            (self.decode_sm_set, "--decode-sms"),
         ]
         .into_iter()
         .find_map(|(on, name)| on.then_some(name))
@@ -209,6 +228,7 @@ enum PlanSlot {
     VmmPage,
     KvBytes,
     ComputeSlots,
+    DecodeSms,
     Prefetch,
     PlanWindow,
     PlanThreshold,
@@ -220,6 +240,7 @@ impl PlanSlot {
             Self::VmmPage => "vmm-page",
             Self::KvBytes => "kv-bytes",
             Self::ComputeSlots => "compute-slots",
+            Self::DecodeSms => "decode-sms",
             Self::Prefetch => "prefetch",
             Self::PlanWindow => "plan-window",
             Self::PlanThreshold => "plan-threshold",
@@ -236,6 +257,7 @@ impl PlannerCli {
             "--vmm-page" => Dash::Need(PlanSlot::VmmPage),
             "--kv-bytes" => Dash::Need(PlanSlot::KvBytes),
             "--compute-slots" => Dash::Need(PlanSlot::ComputeSlots),
+            "--decode-sms" => Dash::Need(PlanSlot::DecodeSms),
             "--prefetch" => Dash::Need(PlanSlot::Prefetch),
             "--plan-window" => Dash::Need(PlanSlot::PlanWindow),
             "--plan-threshold" => Dash::Need(PlanSlot::PlanThreshold),
@@ -262,6 +284,12 @@ impl PlannerCli {
                     .parse::<u8>()
                     .map_err(|_| format!("invalid compute-slots {raw:?}"))?;
                 self.gpu.set_compute_slots(n)?;
+            }
+            PlanSlot::DecodeSms => {
+                let n = raw
+                    .parse::<u16>()
+                    .map_err(|_| format!("invalid decode-sms {raw:?}"))?;
+                self.gpu.set_decode_sms(n)?;
             }
             PlanSlot::Prefetch => {
                 self.prefetch =
@@ -345,6 +373,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         kv_sim: gpu.kv_sim,
         decode_priority: gpu.decode_priority,
         compute_slots: gpu.compute_slots,
+        decode_sm_permille: gpu.decode_sm_permille,
     }
 }
 

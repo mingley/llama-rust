@@ -16,7 +16,7 @@ inference system
         │
 GPU systems semantics   ← exact (streams, events, residency, OOM, topology)
         │
-resource contention     ← copy engines, links, Hyper-Q compute_slots
+resource contention     ← copy engines, links, Hyper-Q compute_slots, SM permille
         │
 calibrated op costs     ← HardwareProfile
         │
@@ -80,6 +80,7 @@ warp scheduler, L1, …   ← do not model
 | stream[i+1].start ≥ stream[i].finish (`Operation` timestamps) | queue wait vs run |
 | higher `set_stream_priority` starts first under contention | launch overhead |
 | `compute_slots>=2` overlaps independent kernels at full issue rate | kernel duration (not SM-partition) |
+| `set_stream_sm_permille` is a green-context SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host) | HBM write + launch overhead |
 | peer D2D needs topology + `enable_peer` | link bandwidth |
 | legacy null stream serializes (opt-in) | copy/compute overlap |
@@ -97,8 +98,10 @@ T = T_fixed + (align_up(bytes, align_bytes) + ramp) / peak_bandwidth
 cache-line copy. Eight thousand tiny copies cannot harvest full PCIe
 bandwidth. Concurrent copies on the same link share bandwidth. Kernels on
 one GPU default to exclusive compute (`compute_slots=1`); `>=2` is Hyper-Q
-occupancy at full issue rate (not an SM-partition / green-context model).
-Copy engines still overlap compute. Profile knobs `gemm_util_permille` (achieved/peak) and `grouped_moe_permille`
+occupancy at full issue rate (not an SM-partition model).
+`set_stream_sm_permille` is the green-context SM fraction: compute-bound
+kernels scale as `1000 / permille`; memory-bound keep full HBM. Default
+unset is a full chip (`1000`). Copy engines still overlap compute. Profile knobs `gemm_util_permille` (achieved/peak) and `grouped_moe_permille`
 (grouped vs dense duration) scale kernel time. Defaults are 1000
 (identity roofline). They are parseable; they are not a capture. Host PCIe
 links also carry `pageable_permille` (default `500`: pageable H2D takes
@@ -267,7 +270,9 @@ stream (NULL serializes with every stream).
 overflow is `PinOom`. Example default is unlimited.
 `set_stream_priority` is `cudaStreamCreateWithPriority` (higher first when
 compute contends). `set_created_streams_priority` assigns created streams
-their id. `Operation` carries `submit_ns` / `start_ns` / `done_ns`
+their id. `set_stream_sm_permille` is a green-context SM fraction
+(compute-bound kernels scale; memory-bound keep full HBM; default unset is
+a full chip). `Operation` carries `submit_ns` / `start_ns` / `done_ns`
 so stream[i+1].start ≥ stream[i].finish is inspectable. `GpuOp` /
 `Operation` is the compiled submit DAG (`Sim::operations`).
 

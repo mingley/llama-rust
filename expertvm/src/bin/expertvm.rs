@@ -608,6 +608,7 @@ where
                 kv_sim: false,
                 decode_priority: false,
                 compute_slots: 0,
+                decode_sm_permille: 0,
             },
             prefetch,
             plan_window: cfg.plan_window,

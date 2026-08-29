@@ -163,6 +163,8 @@ pub struct Sim {
     priority: BTreeMap<(DeviceId, StreamId), i32>,
     /// `cudaStreamCreate` (blocking) streams. They serialize with [`StreamId::NULL`].
     blocking: BTreeSet<(DeviceId, StreamId)>,
+    /// Green-context SM fraction per stream (‰). Missing is full chip (`1000`).
+    sm_permille: BTreeMap<(DeviceId, StreamId), u16>,
     next_pool: u32,
     pools: BTreeMap<PoolId, Pool>,
     default_pools: BTreeMap<DeviceId, PoolId>,
@@ -213,6 +215,7 @@ impl Sim {
             legacy_null_stream: false,
             priority: BTreeMap::new(),
             blocking: BTreeSet::new(),
+            sm_permille: BTreeMap::new(),
             next_pool,
             pools,
             default_pools,
@@ -368,6 +371,37 @@ impl Sim {
     #[must_use]
     pub fn stream_priority(&self, device: DeviceId, stream: StreamId) -> i32 {
         self.priority.get(&(device, stream)).copied().unwrap_or(0)
+    }
+
+    /// Reserve a green-context SM fraction for `(device, stream)` (‰ of peak FLOP/s).
+    ///
+    /// `1000` is a full chip. Compute-bound kernels scale as `1000 / permille`;
+    /// memory-bound kernels keep full HBM. Default (unset) is `1000`. `0` is
+    /// [`SimError::Invalid`].
+    pub fn set_stream_sm_permille(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        permille: u16,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if permille == 0 || permille > 1000 {
+            return Err(SimError::Invalid {
+                why: "sm permille must be 1..=1000",
+            });
+        }
+        let _prev = self.sm_permille.insert((device, stream), permille);
+        Ok(())
+    }
+
+    /// SM fraction for `(device, stream)`, or `1000` if unset.
+    #[must_use]
+    pub fn stream_sm_permille(&self, device: DeviceId, stream: StreamId) -> u16 {
+        self.sm_permille
+            .get(&(device, stream))
+            .copied()
+            .unwrap_or(1000)
+            .max(1)
     }
 
     /// CUDA legacy null stream: [`StreamId::NULL`] serializes with every other stream
@@ -2801,7 +2835,7 @@ impl Sim {
     }
 
     fn start_kernel(&mut self, id: OpId) -> Result<bool, SimError> {
-        let (device, launch, reads, writes, kind) = {
+        let (device, stream, launch, reads, writes, kind) = {
             let op = self
                 .ops
                 .get(&id)
@@ -2813,6 +2847,7 @@ impl Sim {
                     kind,
                 } => (
                     op.device,
+                    op.stream,
                     op.launch,
                     reads.clone(),
                     writes.clone(),
@@ -2842,7 +2877,7 @@ impl Sim {
             self.drop_compute(device)?;
             return Err(e);
         }
-        let ns = match self.kernel_ns(device, &kind, launch, mem_bps) {
+        let ns = match self.kernel_ns(device, stream, &kind, launch, mem_bps) {
             Ok(n) => n,
             Err(e) => {
                 self.drop_compute(device)?;
@@ -3389,13 +3424,21 @@ impl Sim {
     fn kernel_ns(
         &self,
         device: DeviceId,
+        stream: StreamId,
         kind: &KernelKind,
         launch: LaunchCost,
         mem_bps: u64,
     ) -> Result<u64, SimError> {
         let g = self.profile.gpu(device)?;
         let (flops, bytes) = kind.flops_and_bytes();
-        let compute = ns_for_bytes(flops, g.flops(kind.dtype()));
+        let sm = u64::from(self.stream_sm_permille(device, stream));
+        let peak = g
+            .flops(kind.dtype())
+            .saturating_mul(sm)
+            .checked_div(1000)
+            .unwrap_or(1)
+            .max(1);
+        let compute = ns_for_bytes(flops, peak);
         let memory = ns_for_bytes(bytes, mem_bps.max(1));
         let overhead = match launch {
             LaunchCost::Kernel => g.launch_overhead_ns,

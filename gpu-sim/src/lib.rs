@@ -11,6 +11,8 @@
 //! (`cudaStreamSynchronize`); an already-idle stream returns without starting
 //! leftover kernels on other streams. [`GpuProfile::compute_slots`] is Hyper-Q
 //! occupancy (`1` exclusive; `>=2` concurrent kernels at full issue rate).
+//! [`Sim::set_stream_sm_permille`] is a green-context SM fraction (compute-bound
+//! kernels scale; memory-bound keep full HBM). Default unset is a full chip.
 //! [`Sim::synchronize_device`] is `cudaDeviceSynchronize` (one GPU).
 //! [`Sim::synchronize_event`] is `cudaEventSynchronize`.
 //! [`Sim::alloc`] / [`memcpy`](Sim::memcpy) / [`free`](Sim::free) are
@@ -1387,6 +1389,62 @@ mod tests {
             started.len(),
             2,
             "two Hyper-Q slots must start both ready kernels; started={started:?}"
+        );
+    }
+
+    #[test]
+    fn stream_sm_permille_slows_compute_bound_kernel() {
+        let d = DeviceId(0);
+        let kind = KernelKind::other(1 << 40, 8);
+        let run = |permille: u16| {
+            let mut sim = Sim::new(h100());
+            sim.set_stream_sm_permille(d, StreamId(1), permille)
+                .unwrap();
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let full = run(1000);
+        let quarter = run(250);
+        assert!(
+            quarter > full,
+            "250‰ SMs must slow a compute-bound kernel; quarter={quarter} full={full}"
+        );
+        let err = Sim::new(h100())
+            .set_stream_sm_permille(d, StreamId(1), 0)
+            .unwrap_err();
+        assert!(
+            format!("{err:?}").contains("sm permille must be 1..=1000"),
+            "{err:?}"
+        );
+        let err = Sim::new(h100())
+            .set_stream_sm_permille(d, StreamId(1), 1001)
+            .unwrap_err();
+        assert!(
+            format!("{err:?}").contains("sm permille must be 1..=1000"),
+            "{err:?}"
+        );
+        let mem = |permille: u16| {
+            let mut sim = Sim::new(h100());
+            sim.set_stream_sm_permille(d, StreamId(1), permille)
+                .unwrap();
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, KernelKind::other(8, 1 << 40), &[a], &[a], StreamId(1)));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let mem_full = mem(1000);
+        let mem_quarter = mem(250);
+        assert_eq!(
+            mem_quarter, mem_full,
+            "250‰ SMs must keep full HBM for a memory-bound kernel; quarter={mem_quarter} full={mem_full}"
         );
     }
 

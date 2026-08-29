@@ -158,16 +158,21 @@ on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 (`gguf_gemv engine --expert-sim --managed`). `--host-func` /
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` /
-`--seq-streams` / `--kv-sim` / `--kv-bytes` are the same `GpuStoreCfg` knobs as `expertvm sim`.
+`--seq-streams` / `--kv-sim` / `--kv-bytes` / `--decode-priority` /
+`--compute-slots` / `--decode-sms` are `GpuStoreCfg` knobs on `gguf_gemv engine`
+(`expertvm sim` does not take `--decode-priority` / `--compute-slots` /
+`--decode-sms`).
 `gguf_gemv engine --expert-sim --kv-sim` maps interned KV onto that Sim
 (distinct from `expertvm kv`; `--kv-bytes` overrides intern geometry).
 `gguf_gemv engine --expert-sim --decode-priority` runs decode GEMMs on a
 second compute stream at higher CUDA priority than leftover prefill.
 Token-boundary ITL samples that decode stream (leftover prefill stays in
 flight). `--compute-slots N` (`N>=2`) is Hyper-Q occupancy so those two
-streams' GEMMs overlap at full issue rate. Default `--expert-sim` keeps
-one compute stream, exclusive compute (`compute_slots=1`), and a
-full-device clock sample.
+streams' GEMMs overlap at full issue rate. `--decode-sms N` (`1..=1000`)
+is a green-context SM fraction on the decode stream (leftover prefill gets
+the remainder; implies `--decode-priority`). Default `--expert-sim` keeps
+one compute stream, exclusive compute (`compute_slots=1`), a full chip of
+SMs, and a full-device clock sample.
 `gguf_gemv engine --expert-sim --seq-streams` is the real-KV analog of
 `expertvm sim --seq-streams`: per-sequence copy streams, grouped GEMM
 on one compute stream. `--prefix-cache` skips GPU work for a token whose JSONL `"p"` hash

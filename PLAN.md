@@ -461,7 +461,9 @@ Exact (mechanical invariants agents may rely on):
 - stream ordering, events, barriers
 - kernel enqueue, async copies
 - copy-engine availability, Hyper-Q `compute_slots` occupancy (default
-  exclusive; `>=2` concurrent kernels at full issue rate, not SM-partition),
+  exclusive; `>=2` concurrent kernels at full issue rate), green-context
+  `set_stream_sm_permille` (compute-bound kernels scale; memory-bound keep
+  full HBM; default unset is a full chip),
   peer accessibility
 - HBM vs host-pinned residency (`Place::{Host, HostPinned, Device}`,
   `alloc_host_pinned`, `memcpy_pinned_to_device`; pageable
@@ -987,6 +989,15 @@ model, do not celebrate the sim.
     leftover kernels. Mixed leftover-prefill `wall_ns` is strictly shorter
     with two slots than with one; greedy ids still match. Dual score still has
     no `$/M tokens`.
+
+60. [x] Engine `--decode-sms N`: green-context SM fraction on the decode
+    compute stream (`Sim::set_stream_sm_permille`, `1..=1000` ‰ of peak
+    FLOP/s). Compute-bound kernels scale; memory-bound keep full HBM. Leftover
+    prefill gets the remainder. Implies `--decode-priority` (two compute
+    streams). Default unset is a full chip, which keeps decode identity.
+    Mixed leftover-prefill ITL is strictly longer at `250` than at full chip
+    on a GEMM-bound profile; greedy ids still match. Dual score still has no
+    `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

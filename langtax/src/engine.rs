@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `vmm_page`, pageable H2D, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone, timing events, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `compute_slots`) are the same mechanical
+//! `compute_slots`, `decode_sm_permille`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -45,6 +45,10 @@
 //! occupancy so leftover prefill and decode GEMMs on those two streams overlap
 //! at full issue rate (not SM-partition). Default profile occupancy is
 //! exclusive (`1`), which keeps decode identity and stream-priority contention.
+//! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode
+//! stream (compute-bound kernels scale; memory-bound keep full HBM). Leftover
+//! prefill gets the remainder. Implies `--decode-priority`. Default unset is a
+//! full chip (`1000`).
 //! [`EngineCfg::slo_reject`] drops waiters whose gpu-sim queue wait already
 //! meets [`EngineCfg::ttft_slo_ns`]. [`EngineCfg::itl_slo_ns`] counts later-token
 //! gaps that miss the ITL budget (`Engine::itl_slo_miss`; does not drop).
@@ -3400,6 +3404,46 @@ mod tests {
             serial.1.wall_ns,
             overlap.1.line(),
             serial.1.line()
+        );
+    }
+
+    #[test]
+    fn engine_gpu_decode_sms_lengthens_mixed_itl() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        // Slow GEMM so decode ITL is compute-bound (example H100 hides those
+        // kernels under H2D, so a 250‰ SM cap cannot lengthen ITL).
+        let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+            .expect("slow gemm profile");
+        let pri = GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            compute_slots: 2,
+            ..GpuStoreCfg::default()
+        };
+        let full = mixed_gpu_decode_itl_at(bytes.clone(), false, None, pri, profile.clone());
+        let quarter = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                decode_sm_permille: 250,
+                ..pri
+            },
+            profile,
+        );
+        assert_eq!(full.2, 4);
+        assert_eq!(quarter.2, 4);
+        assert_eq!(
+            quarter.4, full.4,
+            "decode-sms ITL must keep greedy identity"
+        );
+        assert!(
+            quarter.0 > full.0,
+            "250‰ decode SMs must lengthen compute-bound ITL; quarter={} full={} quarter_line={} full_line={}",
+            quarter.0,
+            full.0,
+            quarter.1.line(),
+            full.1.line()
         );
     }
 }

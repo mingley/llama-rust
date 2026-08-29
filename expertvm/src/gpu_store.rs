@@ -128,6 +128,12 @@ pub struct GpuStoreCfg {
     /// ([`Self::decode_priority`]). Default `0` (profile `compute_slots`,
     /// example H100 is `1`) keeps decode identity.
     pub compute_slots: u8,
+    /// Decode-stream green-context SM fraction (‰). `0` keeps a full chip.
+    ///
+    /// `1..=1000` calls [`gpu_sim::Sim::set_stream_sm_permille`] on the decode
+    /// stream; leftover prefill gets the remainder. Implies two compute streams
+    /// ([`Self::decode_priority`]). Default `0` keeps decode identity.
+    pub decode_sm_permille: u16,
 }
 
 #[derive(Clone, Copy)]
@@ -282,7 +288,8 @@ impl SimulatedGpuStore {
     /// no `host_func`, default pool threshold 0, no AccessedBy, per-thread NULL,
     /// destroy+instantiate graphs, disable-timing copy events.
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
-    /// exclusive compute).
+    /// exclusive compute). [`GpuStoreCfg::decode_sm_permille`] `0` keeps a
+    /// full chip; `1..=1000` implies two compute streams.
     pub fn with_cfg(
         inner: DirectStore,
         slots: usize,
@@ -292,8 +299,9 @@ impl SimulatedGpuStore {
         cfg: GpuStoreCfg,
     ) -> Result<Self, Error> {
         let bytes = bytes_per_expert.max(1);
+        let decode_priority = cfg.decode_priority || cfg.decode_sm_permille > 0;
         let (copy, prefill, decode, mark) =
-            copy_compute_streams(&profile, cfg.seq_streams, cfg.decode_priority);
+            copy_compute_streams(&profile, cfg.seq_streams, decode_priority);
         let profile = if cfg.compute_slots > 0 {
             profile.with_compute_slots(cfg.compute_slots)
         } else {
@@ -312,6 +320,18 @@ impl SimulatedGpuStore {
         if cfg.stream_priority {
             sim.set_created_streams_priority(mark)?;
         }
+        if cfg.decode_sm_permille > 0 {
+            let dec = cfg.decode_sm_permille.min(1000);
+            let pre = 1000u16.saturating_sub(dec).max(1);
+            let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+            for g in 0..n {
+                let d = DeviceId(g);
+                sim.set_stream_sm_permille(d, decode, dec)?;
+                if prefill != decode {
+                    sim.set_stream_sm_permille(d, prefill, pre)?;
+                }
+            }
+        }
         let cache_slots = mapped_occupancy(slots, fill, sim.pin_budget(), bytes);
         // Mapped expert pages already charge the pin budget. Pageable H2D
         // does not need a second mlock either.
@@ -328,7 +348,7 @@ impl SimulatedGpuStore {
             compute: prefill,
             prefill,
             decode,
-            decode_priority: cfg.decode_priority,
+            decode_priority,
             next_event: 1,
             pages: BTreeMap::new(),
             replicas: BTreeMap::new(),
