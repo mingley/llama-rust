@@ -614,9 +614,12 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   VMM / mempool create/trim/set-attribute cannot be captured;
   instantiate/update/upload/clone/destroy cannot be captured; capture requires an idle stream.
   Instantiate is host-sync (`graph_instantiate_ns`); the first launch
-  instantiates if needed. `cudaGraphUpload` (`Sim::upload_graph`,
+  instantiates if needed (default flags reuse graph mem allocs on relaunch).
+  `instantiate_graph_auto_free` is `cudaGraphInstantiateFlagAutoFreeOnLaunch`
+  (stream-ordered free before a later launch's alloc nodes; illegal with mem
+  free nodes). `cudaGraphUpload` (`Sim::upload_graph`,
   `graph_upload_ns`) is a separate host-sync after instantiate; the first
-  launch uploads if needed.   `update_graph` replaces an instantiated exec's
+  launch uploads if needed. `update_graph` replaces an instantiated exec's
   steps when device, stream, and op kinds match (`graph_update_ns`).
   Graphs with mem alloc/free nodes cannot be updated.
   `clone_graph` is an independent uninstantiated copy (`graph_clone_ns`);
@@ -1070,6 +1073,11 @@ model, do not celebrate the sim.
     HBM charge). `clone_graph` forks those ids. `destroy_graph` refunds
     remaining graph mem. `update_graph` of mem nodes is Invalid. `expertvm
     --cuda-graphs` stays kernel-only (alloc on miss, then capture GEMM).
+    Dual score still has no `$/M tokens`.
+70. [x] CUDA `cudaGraphInstantiateFlagAutoFreeOnLaunch`:
+    `Sim::instantiate_graph_auto_free` stream-ordered-frees graph mem allocs
+    before a later launch so relaunch recharges HBM instead of reusing the
+    pointer. Illegal with mem free nodes and after a default instantiate.
     Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

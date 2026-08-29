@@ -150,6 +150,8 @@ struct Graph {
     instantiated: bool,
     /// `cudaGraphUpload` has run (explicit or first launch after instantiate).
     uploaded: bool,
+    /// `cudaGraphInstantiateFlagAutoFreeOnLaunch`: free graph mem before relaunch.
+    auto_free_on_launch: bool,
 }
 
 /// DFS state for [`Sim::clone_graph`]: unique graphs in post-order, ancestor stack.
@@ -741,6 +743,7 @@ impl Sim {
                 origin: cap.origin,
                 instantiated: false,
                 uploaded: false,
+                auto_free_on_launch: false,
             },
         );
         let _old = self.graph_allocs.insert(id, mem_allocs);
@@ -752,9 +755,10 @@ impl Sim {
     ///
     /// First launch [`Self::instantiate_graph`]s if needed (`cudaGraphInstantiate`
     /// then [`Self::upload_graph`] then `cudaGraphLaunch`). Later launches skip
-    /// both. During capture
-    /// on a captured stream this records a child-graph node (the child must
-    /// already be instantiated). Independent streams still launch live.
+    /// both. [`Self::instantiate_graph_auto_free`] frees graph mem on the launch
+    /// stream before a later launch's alloc nodes (`AutoFreeOnLaunch`).
+    /// During capture on a captured stream this records a child-graph node (the
+    /// child must already be instantiated). Independent streams still launch live.
     /// [`Self::upload_graph`] is skipped while any stream is capturing (host-sync
     /// upload cannot run during capture); the live launch still enqueues.
     pub fn launch_graph(&mut self, graph: GraphId, stream: StreamId) -> Result<u32, SimError> {
@@ -793,6 +797,32 @@ impl Sim {
         Ok(1)
     }
 
+    /// Stream-ordered `cudaFreeAsync` of live graph mem before recorded steps
+    /// (`cudaGraphInstantiateFlagAutoFreeOnLaunch`). Not counted in launch size.
+    fn enqueue_auto_frees(&mut self, graph: GraphId, stream: StreamId) -> Result<(), SimError> {
+        let (device, ids) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            if !g.auto_free_on_launch {
+                return Ok(());
+            }
+            let ids = self.graph_allocs.get(&graph).cloned().unwrap_or_default();
+            (g.origin.0, ids)
+        };
+        for id in ids {
+            let live = self
+                .alloc_ref(id)
+                .is_ok_and(|a| a.live && a.devices.contains(&device));
+            if !live {
+                continue;
+            }
+            let _op =
+                self.submit_launch(device, stream, Kind::Free { id }, LaunchCost::GraphBody)?;
+        }
+        Ok(())
+    }
+
     fn enqueue_graph(
         &mut self,
         graph: GraphId,
@@ -805,6 +835,7 @@ impl Sim {
                 why: "cyclic child graph",
             });
         }
+        self.enqueue_auto_frees(graph, stream)?;
         let (origin, steps) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
@@ -899,30 +930,70 @@ impl Sim {
             })
     }
 
+    /// Whether [`Self::instantiate_graph_auto_free`] was used
+    /// (`cudaGraphInstantiateFlagAutoFreeOnLaunch`).
+    pub fn graph_auto_free_on_launch(&self, graph: GraphId) -> Result<bool, SimError> {
+        self.graphs
+            .get(&graph)
+            .map(|g| g.auto_free_on_launch)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })
+    }
+
     /// `cudaGraphInstantiate`. Host-synchronous. Capture cannot include it.
     ///
     /// Already-instantiated ids are a no-op. The first [`Self::launch_graph`]
-    /// calls this when needed.
+    /// calls this when needed (default flags: graph mem allocs without a
+    /// matching free are reused on relaunch).
     pub fn instantiate_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.instantiate_graph_inner(graph, false)
+    }
+
+    /// `cudaGraphInstantiate` with `cudaGraphInstantiateFlagAutoFreeOnLaunch`.
+    ///
+    /// Host-synchronous. Capture cannot include it. Graph mem allocs are
+    /// `cudaFreeAsync`'d on the launch stream before a later launch's alloc
+    /// nodes run, so relaunch recharges HBM instead of reusing the pointer.
+    /// Illegal when the graph has mem free nodes. Illegal after a default
+    /// [`Self::instantiate_graph`].
+    pub fn instantiate_graph_auto_free(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.instantiate_graph_inner(graph, true)
+    }
+
+    fn instantiate_graph_inner(&mut self, graph: GraphId, auto_free: bool) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph instantiate")?;
-        let (device, already) = {
+        let (device, already, current_auto, has_free) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
             let device = g.steps.first().map(|(d, _, _)| *d).unwrap_or(DeviceId(0));
-            (device, g.instantiated)
+            let has_free = g
+                .steps
+                .iter()
+                .any(|(_, _, k)| matches!(k, Kind::Free { .. }));
+            (device, g.instantiated, g.auto_free_on_launch, has_free)
         };
         if already {
+            if auto_free && !current_auto {
+                return Err(SimError::Invalid {
+                    why: "graph instantiate flags",
+                });
+            }
             return Ok(());
+        }
+        if auto_free && has_free {
+            return Err(SimError::Invalid {
+                why: "auto free with mem free nodes",
+            });
         }
         let ns = self.profile.gpu(device)?.graph_instantiate_ns.max(1);
         self.clock = self.clock.saturating_add(ns);
-        self.graphs
-            .get_mut(&graph)
-            .ok_or(SimError::Invalid {
-                why: "unknown graph",
-            })?
-            .instantiated = true;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        g.instantiated = true;
+        g.auto_free_on_launch = auto_free;
         Ok(())
     }
 
@@ -1048,6 +1119,7 @@ impl Sim {
                     origin,
                     instantiated: false,
                     uploaded: false,
+                    auto_free_on_launch: false,
                 },
                 origin.0,
             ));

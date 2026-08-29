@@ -67,7 +67,7 @@ warp scheduler, L1, …   ← do not model
 | forked capture: `wait_event` on a captured record joins that stream | copy/compute overlap inside one launch |
 | `launch_graph` during capture is a child-graph node | nested exec expanded at parent launch |
 | independent streams stay live during capture | query/sync of a capturing stream is Invalid |
-| graph instantiate is host-sync; first launch pays it once | `graph_instantiate_ns` |
+| graph instantiate is host-sync; first launch pays it once; `instantiate_graph_auto_free` is AutoFreeOnLaunch | `graph_instantiate_ns` |
 | graph upload is host-sync after instantiate; first launch pays it once | `graph_upload_ns` |
 | graph update replaces steps when topology matches (device, stream, kind); mem nodes are Invalid | `graph_update_ns` |
 | graph mem alloc/free nodes (`cudaMallocAsync` / `cudaFreeAsync` during capture) | `pool_reuse_ns` on relaunch without free |
@@ -204,7 +204,9 @@ it. Independent streams still launch live. `cudaMallocAsync` / `cudaFreeAsync`
 (`alloc` / `free`) during capture are graph mem alloc/free nodes. Host-sync
 `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device` / VMM / mempool
 create cannot be captured. A graph that allocates without a matching free
-reuses the pointer on later launches (no second HBM charge). `clone_graph`
+reuses the pointer on later launches (no second HBM charge) unless
+`instantiate_graph_auto_free` (`cudaGraphInstantiateFlagAutoFreeOnLaunch`)
+stream-ordered-frees those allocs before relaunch. `clone_graph`
 forks those ids. `destroy_graph` refunds remaining graph mem. `update_graph`
 of mem nodes is `Invalid`.
 Instantiate, update, and upload are host-synchronous and cannot run during capture.

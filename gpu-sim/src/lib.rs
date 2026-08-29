@@ -78,7 +78,8 @@
 //! [`Sim::set_stream_priority`] is `cudaStreamCreateWithPriority`.
 //! [`Sim::set_created_streams_priority`] assigns created streams their id.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; first
-//! [`launch_graph`](Sim::launch_graph) calls it). [`Sim::upload_graph`] is
+//! [`launch_graph`](Sim::launch_graph) calls it). [`Sim::instantiate_graph_auto_free`]
+//! is `cudaGraphInstantiateFlagAutoFreeOnLaunch`. [`Sim::upload_graph`] is
 //! `cudaGraphUpload` (host-sync; first launch after instantiate calls it).
 //! [`Sim::update_graph`] is
 //! `cudaGraphExecUpdate` when device, stream, and op kinds match.
@@ -94,7 +95,9 @@
 //! nodes (`cudaMallocAsync` / `cudaFreeAsync`). Host-sync [`malloc`](Sim::malloc)
 //! / [`free_sync`](Sim::free_sync) / VMM / [`create_pool`](Sim::create_pool) cannot
 //! be captured. A graph that allocates without a matching free reuses the pointer
-//! on later launches (no second HBM charge). [`clone_graph`](Sim::clone_graph)
+//! on later launches (no second HBM charge) unless instantiated with
+//! [`instantiate_graph_auto_free`](Sim::instantiate_graph_auto_free)
+//! (`cudaGraphInstantiateFlagAutoFreeOnLaunch`). [`clone_graph`](Sim::clone_graph)
 //! forks those ids. [`destroy_graph`](Sim::destroy_graph) refunds remaining graph
 //! mem. [`update_graph`](Sim::update_graph) of mem nodes is Invalid.
 
@@ -689,6 +692,88 @@ mod tests {
         sim.synchronize().unwrap();
         assert_eq!(sim.hbm_used(d).unwrap(), 4096);
         assert_eq!(sim.hbm_peak(), 4096);
+    }
+
+    #[test]
+    fn graph_auto_free_on_launch_recharges_hbm() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.alloc_overhead_ns = 50_000;
+            g.pool_reuse_ns = 1;
+            g.graph_launch_ns = 1;
+            g.graph_instantiate_ns = 1;
+            g.graph_upload_ns = 1;
+        }
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let mut reuse = Sim::new(p.clone());
+        reuse.begin_capture(d, s).unwrap();
+        let a = reuse.alloc(d, 4096, s).unwrap();
+        enq(reuse.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let g = reuse.end_capture().unwrap();
+        reuse.instantiate_graph(g).unwrap();
+        let n = reuse.launch_graph(g, s).unwrap();
+        assert_eq!(n, 2);
+        reuse.synchronize().unwrap();
+        let t_reuse0 = reuse.clock_ns();
+        let n2 = reuse.launch_graph(g, s).unwrap();
+        assert_eq!(n2, 2);
+        reuse.synchronize().unwrap();
+        let reuse_ns = reuse.clock_ns().saturating_sub(t_reuse0);
+
+        let mut af = Sim::new(p);
+        af.begin_capture(d, s).unwrap();
+        let b = af.alloc(d, 4096, s).unwrap();
+        enq(af.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
+        let h = af.end_capture().unwrap();
+        af.instantiate_graph_auto_free(h).unwrap();
+        assert!(af.graph_auto_free_on_launch(h).unwrap());
+        let n = af.launch_graph(h, s).unwrap();
+        assert_eq!(n, 2);
+        af.synchronize().unwrap();
+        assert_eq!(af.hbm_used(d).unwrap(), 4096);
+        let t0 = af.clock_ns();
+        let n2 = af.launch_graph(h, s).unwrap();
+        assert_eq!(n2, 2);
+        af.synchronize().unwrap();
+        let auto_ns = af.clock_ns().saturating_sub(t0);
+        assert_eq!(af.hbm_used(d).unwrap(), 4096);
+        assert_eq!(af.hbm_peak(), 4096);
+        assert!(
+            auto_ns > reuse_ns,
+            "auto-free relaunch must re-alloc, auto={auto_ns} reuse={reuse_ns}"
+        );
+        af.destroy_graph(h).unwrap();
+        assert_eq!(af.hbm_used(d).unwrap(), 0);
+    }
+
+    #[test]
+    fn graph_auto_free_rejects_free_nodes_and_flag_change() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.begin_capture(d, s).unwrap();
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        sim.free(d, a, s).unwrap();
+        let with_free = sim.end_capture().unwrap();
+        let err = sim.instantiate_graph_auto_free(with_free).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("mem free"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+
+        sim.begin_capture(d, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
+        let g = sim.end_capture().unwrap();
+        sim.instantiate_graph(g).unwrap();
+        assert!(!sim.graph_auto_free_on_launch(g).unwrap());
+        let err = sim.instantiate_graph_auto_free(g).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

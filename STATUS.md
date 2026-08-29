@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — CUDA-graph AutoFreeOnLaunch
+
+`Sim::instantiate_graph_auto_free` is `cudaGraphInstantiateFlagAutoFreeOnLaunch`:
+graph mem allocs are `cudaFreeAsync`'d on the launch stream before a later
+launch's alloc nodes, so relaunch recharges HBM. Default instantiate still
+reuses the pointer. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — CUDA-graph mem alloc/free nodes
 
 `cudaMallocAsync` / `cudaFreeAsync` (`Sim::alloc` / `free`) during stream
