@@ -2,11 +2,9 @@
 
 use crate::access::Trace;
 use crate::error::Error;
-use crate::policy::Policy;
 use crate::replay::{compare, format_table};
 use crate::sim_replay::{sim_replay_cfg, SimCfg};
 use crate::workload::{generate, Workload};
-use crate::Prefetch;
 use gpu_sim::HardwareProfile;
 
 /// One measured line: policy table plus simulated LRU cost.
@@ -71,14 +69,7 @@ fn sim_lines(
     lookahead: usize,
     expert_bytes: u64,
 ) -> Result<(Option<String>, Option<String>), Error> {
-    let base = SimCfg {
-        slots: capacity,
-        policy: Policy::Lru,
-        bytes_per_expert: expert_bytes,
-        lookahead,
-        prefetch: Prefetch::None,
-        seq_streams: false,
-    };
+    let base = SimCfg::lru(capacity, expert_bytes, lookahead);
     let serial = sim_replay_cfg(trace, profile.clone(), base)?;
     let overlap = if trace.n_sequences() > 1 {
         let mut streamed = base;

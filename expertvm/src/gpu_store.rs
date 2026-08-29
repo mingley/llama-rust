@@ -4,7 +4,9 @@ use crate::access::ExpertKey;
 use crate::error::Error;
 use crate::place::home_gpu;
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertStore, StoreMetrics};
-use gpu_sim::{AllocId, DType, DeviceId, EventId, HardwareProfile, KernelKind, Sim, StreamId};
+use gpu_sim::{
+    AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelKind, Sim, StreamId,
+};
 use std::collections::{BTreeMap, BTreeSet};
 
 struct GpuPage {
@@ -27,6 +29,8 @@ pub struct SimulatedGpuStore {
     replicas: BTreeSet<ExpertKey>,
     bytes_per_expert: u64,
     staging: AllocId,
+    graphs: BTreeMap<AllocId, GraphId>,
+    graph_launches: u64,
 }
 
 impl SimulatedGpuStore {
@@ -52,6 +56,8 @@ impl SimulatedGpuStore {
             replicas: BTreeSet::new(),
             bytes_per_expert: bytes,
             staging,
+            graphs: BTreeMap::new(),
+            graph_launches: 0,
         })
     }
 
@@ -136,6 +142,7 @@ impl SimulatedGpuStore {
         if src == dst {
             return Ok(());
         }
+        let _gone = self.graphs.remove(&id);
         let already = self.sim.is_resident(id, dst)?;
         if !already {
             let _c =
@@ -163,6 +170,12 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn device_of(&self, key: ExpertKey) -> Option<DeviceId> {
         self.pages.get(&key).map(|p| p.device)
+    }
+
+    /// How many times a captured GEMM graph was launched.
+    #[must_use]
+    pub fn graph_launches(&self) -> u64 {
+        self.graph_launches
     }
 
     /// Whether `key` is in the fast CPU tier.
@@ -213,7 +226,27 @@ impl SimulatedGpuStore {
             (page.id, page.device, ready)
         };
         if let Some(ev) = ready {
-            let _w = self.sim.wait_event(device, ev, self.compute)?;
+            if !self.sim.event_complete(ev) {
+                let _w = self.sim.wait_event(device, ev, self.compute)?;
+            }
+        }
+        self.launch_or_gemm(device, id)
+    }
+
+    fn launch_or_gemm(&mut self, device: DeviceId, id: AllocId) -> Result<(), Error> {
+        if let Some(g) = self.graphs.get(&id).copied() {
+            self.graph_launches = self.graph_launches.saturating_add(1);
+            let _n = self.sim.launch_graph(g, self.compute)?;
+            return Ok(());
+        }
+        if self.sim.stream_is_idle(device, self.compute)? {
+            self.sim.begin_capture(device, self.compute)?;
+            gemm(&mut self.sim, device, self.compute, id)?;
+            let g = self.sim.end_capture()?;
+            let _prev = self.graphs.insert(id, g);
+            self.graph_launches = self.graph_launches.saturating_add(1);
+            let _n = self.sim.launch_graph(g, self.compute)?;
+            return Ok(());
         }
         gemm(&mut self.sim, device, self.compute, id)
     }
@@ -222,6 +255,7 @@ impl SimulatedGpuStore {
         let Some(page) = self.pages.remove(&key) else {
             return Ok(());
         };
+        let _g = self.graphs.remove(&page.id);
         // Copy-engine free must not race a compute-stream lease on the same page.
         let ev = EventId(self.next_event);
         self.next_event = self.next_event.saturating_add(1);

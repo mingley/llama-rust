@@ -635,4 +635,187 @@ mod tests {
             other => panic!("{other:?}"),
         }
     }
+
+    #[test]
+    fn graph_launch_amortizes_kernel_overhead() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.launch_overhead_ns = 50_000;
+            g.graph_launch_ns = 5_000;
+        }
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let kind = KernelKind::other(8, 8);
+        let n = 4u32;
+        let kernels = |sim: &mut Sim, a: AllocId| {
+            for _ in 0..n {
+                enq(sim.kernel(d, kind.clone(), &[a], &[a], s));
+            }
+        };
+        let mut serial = Sim::new(p.clone());
+        let a = serial.alloc(d, 4096, s).unwrap();
+        enq(serial.memcpy_pinned_to_device(d, a, 4096, s));
+        serial.synchronize().unwrap();
+        let t0 = serial.clock_ns();
+        kernels(&mut serial, a);
+        serial.synchronize().unwrap();
+        let serial_ns = serial.clock_ns().saturating_sub(t0);
+
+        let mut gsim = Sim::new(p);
+        let b = gsim.alloc(d, 4096, s).unwrap();
+        enq(gsim.memcpy_pinned_to_device(d, b, 4096, s));
+        gsim.synchronize().unwrap();
+        gsim.begin_capture(d, s).unwrap();
+        kernels(&mut gsim, b);
+        let g = gsim.end_capture().unwrap();
+        let t1 = gsim.clock_ns();
+        let launched = gsim.launch_graph(g, s).unwrap();
+        assert_eq!(launched, n);
+        gsim.synchronize().unwrap();
+        let graph_ns = gsim.clock_ns().saturating_sub(t1);
+        assert!(graph_ns < serial_ns, "graph={graph_ns} serial={serial_ns}");
+    }
+
+    #[test]
+    fn graph_capture_replays_memcpy() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.bytes_moved(), 0);
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert!(sim.bytes_moved() >= bytes);
+        assert!(sim.is_resident(a, d).unwrap());
+    }
+
+    #[test]
+    fn memset_requires_residency_then_advances_clock() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let h = sim.alloc_host_pinned(4096).unwrap();
+        enq(sim.memset(d, h, 4096, s));
+        match sim.synchronize() {
+            Err(SimError::NotResident { alloc, device }) => {
+                assert_eq!(alloc, h);
+                assert_eq!(device, d);
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut sim = Sim::new(h100());
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let t0 = sim.clock_ns();
+        enq(sim.memset(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        assert!(sim.clock_ns() > t0);
+    }
+
+    #[test]
+    fn disable_peer_blocks_d2d_when_link_exists() {
+        let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let a = sim.alloc(d0, bytes, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d0, a, bytes, s));
+        sim.synchronize().unwrap();
+        assert!(sim.peer_access(d0, d1));
+        sim.disable_peer(d0, d1).unwrap();
+        assert!(!sim.peer_access(d0, d1));
+        enq(sim.memcpy_device_to_device(d0, d1, a, bytes, s));
+        match sim.synchronize() {
+            Err(SimError::PeerDisabled { src, dst }) => {
+                assert_eq!(src, d0);
+                assert_eq!(dst, d1);
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.enable_peer(d0, d1).unwrap();
+        enq(sim.memcpy_device_to_device(d0, d1, a, bytes, s));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(a, d1).unwrap());
+    }
+
+    #[test]
+    fn legacy_null_stream_serializes_copy_with_compute() {
+        let d = DeviceId(0);
+        let bytes = 32u64 << 20;
+        let k = KernelKind::GroupedMoeGemm {
+            experts: 8,
+            tokens_per_expert: 16,
+            hidden: 2048,
+            ff: 2048,
+            dtype: DType::Fp16,
+        };
+        let run = |legacy: bool| {
+            let mut sim = Sim::new(h100());
+            sim.set_legacy_null_stream(legacy);
+            let w = sim.alloc(d, bytes, StreamId(0)).unwrap();
+            let c = sim.alloc(d, bytes, StreamId(1)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, w, bytes, StreamId(0)));
+            enq(sim.memcpy_pinned_to_device(d, c, bytes, StreamId(1)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, k.clone(), &[w], &[w], StreamId::NULL));
+            enq(sim.memcpy_pinned_to_device(d, c, bytes, StreamId(1)));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let serial = run(true);
+        let overlap = run(false);
+        assert!(
+            serial > overlap,
+            "legacy null stream must serialize; serial={serial} overlap={overlap}"
+        );
+        assert!(Sim::new(h100()).stream_is_idle(d, StreamId(0)).unwrap());
+    }
+
+    #[test]
+    fn third_copy_waits_when_two_engines() {
+        let p = HardwareProfile::parse("gpus=1\ncopy_engines=2\n").unwrap();
+        let d = DeviceId(0);
+        let bytes = 16u64 << 20;
+        let n_copies = |n: u16| {
+            let mut sim = Sim::new(p.clone());
+            for i in 0..n {
+                let s = StreamId(i);
+                let a = sim.alloc(d, bytes, s).unwrap();
+                enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+            }
+            sim.synchronize().unwrap();
+            sim.clock_ns()
+        };
+        let two = n_copies(2);
+        let three = n_copies(3);
+        assert!(
+            three > two,
+            "third H2D must wait for a copy engine; two={two} three={three}"
+        );
+    }
+
+    #[test]
+    fn event_complete_after_record_sync() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let ev = EventId(7);
+        assert!(!sim.event_complete(ev));
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.record_event(d, ev, s));
+        assert!(!sim.event_complete(ev));
+        sim.synchronize().unwrap();
+        assert!(sim.event_complete(ev));
+        assert!(sim.stream_is_idle(d, s).unwrap());
+    }
 }

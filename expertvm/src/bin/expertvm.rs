@@ -15,7 +15,7 @@ const USAGE: &str = "\
 usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
-  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams]
+  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
@@ -77,6 +77,9 @@ fn run() -> Result<(), String> {
                     lookahead: cfg.lookahead,
                     prefetch,
                     seq_streams: cfg.seq_streams,
+                    cuda_graphs: cfg.cuda_graphs,
+                    plan_window: cfg.plan_window,
+                    plan_threshold: cfg.plan_threshold,
                 },
             )
             .map_err(|e| e.to_string())?;
@@ -105,6 +108,9 @@ struct Cfg {
     hbm_bytes: Option<u64>,
     prefetch: String,
     seq_streams: bool,
+    cuda_graphs: bool,
+    plan_window: usize,
+    plan_threshold: u32,
 }
 
 fn parse_cfg<I>(args: I) -> Result<Cfg, String>
@@ -129,6 +135,9 @@ where
     let mut hbm_bytes = None;
     let mut prefetch = String::from("none");
     let mut seq_streams = false;
+    let mut cuda_graphs = false;
+    let mut plan_window = 0usize;
+    let mut plan_threshold = 500u32;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -164,6 +173,16 @@ where
             "--seq-streams" => {
                 seq_streams = !matches!(inline.as_deref(), Some("0" | "false"));
             }
+            "--cuda-graphs" => {
+                cuda_graphs = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
+            "--plan-window" => {
+                plan_window = parse_usize("plan-window", &value("plan-window", inline, &mut it)?)?
+            }
+            "--plan-threshold" => {
+                plan_threshold =
+                    parse_u32("plan-threshold", &value("plan-threshold", inline, &mut it)?)?
+            }
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => {
                 if path.is_some() {
@@ -185,6 +204,9 @@ where
         hbm_bytes,
         prefetch,
         seq_streams,
+        cuda_graphs,
+        plan_window,
+        plan_threshold,
     })
 }
 

@@ -5,6 +5,21 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — planner-in-sim, CUDA-graph GEMMs, prefetch hits
+
+`plan_window` Stay vs Fetch now gates prefetch inside `sim_replay` (no future
+leak: the window starts at the next event). Stay skips prefetch so a sticky
+working set is not evicted by copy-forward ghosts. Fetch still runs the
+configured Markov/copy-forward fill and also faults in `window_keys`.
+`SimCfg::cuda_graphs` captures grouped expert GEMMs on an idle stream and
+replays them with `launch_graph`; graph launch pays `graph_launch_ns` once
+instead of per-kernel `launch_overhead_ns`. `SimulatedGpuStore` does the same
+per resident page after a drain (completed copy event, idle compute stream).
+Replay lines report `prefetch_hits` / `prefetch_waste` / `graph_launches`.
+gpu-sim also models `memset`, directed `enable_peer` / `disable_peer`, and the
+legacy CUDA null stream (`set_legacy_null_stream`). Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — real-model sidecar JSON drives the llama.cpp check
 
 `tests/reference/qwen2.5-0.5b-instruct-q4_k_m.json` is the source of tokens,
@@ -279,8 +294,10 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN Phase 0 leftover (Llama NORM real-model fixture
-when a GGUF is on disk). Physical Phase 4 stays parked. Do not add crates.io
+Next code change is PLAN systems depth (planner-in-sim, CUDA-graph GEMMs,
+and remaining CUDA-like invariants landed). Phase 0 leftover is a Llama
+NORM real-model fixture when a GGUF is on disk. Physical Phase 4 stays
+parked. Do not add crates.io
 runtime deps. Do not start Metal-in-crate on Linux. Do not invent a
 `block_iq4_nl_4_4` dequant. Do not invent an arch. Do not list mixtral
 or qwen3vlmoe as an accepted arch. Do not invent `$/M tokens`.

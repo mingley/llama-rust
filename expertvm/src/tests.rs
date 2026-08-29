@@ -317,11 +317,8 @@ fn markov_prefetch_beats_copy_forward_when_ids_are_not_sticky() {
     let p = HardwareProfile::example_h100_sxm();
     let cfg = |prefetch: Prefetch| SimCfg {
         slots: 1,
-        policy: Policy::Lru,
-        bytes_per_expert: 4096,
-        lookahead: 8,
         prefetch,
-        seq_streams: false,
+        ..SimCfg::lru(1, 4096, 8)
     };
     let none = sim_replay_cfg(&t, p.clone(), cfg(Prefetch::None)).expect("none");
     let fwd = sim_replay_cfg(&t, p.clone(), cfg(Prefetch::CopyForward)).expect("fwd");
@@ -339,6 +336,11 @@ fn markov_prefetch_beats_copy_forward_when_ids_are_not_sticky() {
         none.hits
     );
     assert!(mk.prefetches > 0);
+    assert!(
+        mk.prefetch_hits > 0,
+        "useful prefetch must show up as demand hits; line={}",
+        mk.line()
+    );
     let both =
         sim_replay_cfg(&t, HardwareProfile::example_h100_sxm(), cfg(Prefetch::Both)).expect("both");
     assert!(both.prefetches >= fwd.prefetches);
@@ -382,11 +384,8 @@ fn markov_order2_prefetch_beats_copy_forward_on_tied_ids() {
     let p = HardwareProfile::example_h100_sxm();
     let cfg = |prefetch: Prefetch| SimCfg {
         slots: 1,
-        policy: Policy::Lru,
-        bytes_per_expert: 4096,
-        lookahead: 8,
         prefetch,
-        seq_streams: false,
+        ..SimCfg::lru(1, 4096, 8)
     };
     let fwd = sim_replay_cfg(&t, p.clone(), cfg(Prefetch::CopyForward)).expect("fwd");
     let mk = sim_replay_cfg(&t, p, cfg(Prefetch::Markov)).expect("mk");
@@ -421,11 +420,10 @@ fn seq_streams_overlap_beats_serial_on_batch_token() {
     let p = HardwareProfile::parse("gpus=1\ncopy_engines=1\n").expect("profile");
     let cfg = |seq_streams: bool| SimCfg {
         slots: 2,
-        policy: Policy::Lru,
         bytes_per_expert: 32u64 << 20,
         lookahead: 0,
-        prefetch: Prefetch::None,
         seq_streams,
+        ..SimCfg::lru(2, 32u64 << 20, 0)
     };
     let serial = sim_replay_cfg(&t, p.clone(), cfg(false)).expect("serial");
     let overlap = sim_replay_cfg(&t, p, cfg(true)).expect("overlap");
@@ -771,4 +769,105 @@ fn hot_replicas_prefer_mass_when_w_is_present() {
     let map = with_hot_replicas(striped(&t, 8), &t, 8, 500);
     assert!(map.replicas.contains_key(&ExpertKey::new(0, 0)));
     assert!(!map.replicas.contains_key(&ExpertKey::new(0, 1)));
+}
+
+#[test]
+fn plan_window_stay_skips_harmful_copy_forward() {
+    let mut events = Vec::new();
+    for tok in 0..16u32 {
+        events.push(ev(tok, 0, &[0]));
+        events.push(ev(tok, 1, &[1]));
+    }
+    let t = Trace { events };
+    let p = HardwareProfile::example_h100_sxm();
+    let fwd = sim_replay_cfg(
+        &t,
+        p.clone(),
+        SimCfg {
+            slots: 2,
+            prefetch: Prefetch::CopyForward,
+            ..SimCfg::lru(2, 4096, 8)
+        },
+    )
+    .expect("fwd");
+    let planned = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            slots: 2,
+            prefetch: Prefetch::CopyForward,
+            plan_window: 8,
+            plan_threshold: 500,
+            ..SimCfg::lru(2, 4096, 8)
+        },
+    )
+    .expect("plan");
+    assert!(
+        planned.hits > fwd.hits,
+        "stay planner={} copy-forward={}",
+        planned.hits,
+        fwd.hits
+    );
+    assert!(
+        planned.prefetches < fwd.prefetches,
+        "stay prefetches={} copy-forward={}",
+        planned.prefetches,
+        fwd.prefetches
+    );
+}
+
+#[test]
+fn cuda_graphs_amortize_repeated_expert_gemms() {
+    let mut events = Vec::new();
+    for tok in 0..12u32 {
+        events.push(ev(tok, 0, &[0, 1, 2, 3]));
+    }
+    let t = Trace { events };
+    let p = HardwareProfile::parse(
+        "gpus=1\nlaunch_overhead_ns=50000\ngraph_launch_ns=4000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let base = SimCfg {
+        slots: 4,
+        bytes_per_expert: 4096,
+        lookahead: 0,
+        ..SimCfg::lru(4, 4096, 0)
+    };
+    let serial = sim_replay_cfg(&t, p.clone(), base).expect("serial");
+    let mut graphs = base;
+    graphs.cuda_graphs = true;
+    let g = sim_replay_cfg(&t, p, graphs).expect("graphs");
+    assert!(
+        g.graph_launches > 0,
+        "expected captured launches; line={}",
+        g.line()
+    );
+    assert!(
+        g.sim_ns < serial.sim_ns,
+        "graphs={} serial={}",
+        g.sim_ns,
+        serial.sim_ns
+    );
+    assert!(g.line().contains("graph_launches="));
+}
+
+#[test]
+fn simulated_gpu_store_captures_gemm_after_drain() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu =
+        SimulatedGpuStore::new(inner, 1, HardwareProfile::example_h100_sxm(), 4096).expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    let n = gpu.prefetch(&[k0]).expect("prefetch");
+    assert_eq!(n, 1);
+    let _score = gpu.score().expect("drain");
+    let _a = gpu.acquire(k0).expect("first");
+    let _b = gpu.acquire(k0).expect("second");
+    assert!(
+        gpu.graph_launches() >= 2,
+        "launches={}",
+        gpu.graph_launches()
+    );
 }

@@ -4,14 +4,15 @@ use crate::access::{ExpertAccess, ExpertKey, Trace};
 use crate::error::Error;
 use crate::place::PlaceMap;
 use crate::planner::{
-    copy_forward, observe_chain, plan_placement, prefetch_keys_ctx, Markov, Placement, Prefetch,
+    copy_forward, observe_chain, plan_placement, plan_window, prefetch_keys_ctx, window_keys,
+    Markov, Placement, Plan, Prefetch,
 };
 use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
 use gpu_sim::{
-    AllocId, DType, DeviceId, EventId, HardwareProfile, KernelKind, Score, Sim, StreamId,
+    AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelKind, Score, Sim, StreamId,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 /// Simulated residency result: semantic score plus cache stats.
@@ -35,6 +36,12 @@ pub struct SimReplay {
     pub misses: u64,
     /// Prefetch fills that were not already resident.
     pub prefetches: u64,
+    /// Demand hits on a key that was last filled by prefetch (not a demand miss).
+    pub prefetch_hits: u64,
+    /// Prefetched keys evicted before a demand acquire.
+    pub prefetch_waste: u64,
+    /// [`gpu_sim::Sim::launch_graph`] calls (0 unless [`SimCfg::cuda_graphs`]).
+    pub graph_launches: u64,
 }
 
 impl SimReplay {
@@ -53,8 +60,13 @@ impl SimReplay {
         }
         let _w = write!(
             s,
-            " hits={} misses={} prefetches={}",
-            self.hits, self.misses, self.prefetches
+            " hits={} misses={} prefetches={} prefetch_hits={} prefetch_waste={} graph_launches={}",
+            self.hits,
+            self.misses,
+            self.prefetches,
+            self.prefetch_hits,
+            self.prefetch_waste,
+            self.graph_launches
         );
         s
     }
@@ -78,6 +90,33 @@ pub struct SimCfg {
     /// `n_streams` is GPU0 `copy_engines.max(2)`. Token-boundary sync ignores
     /// sequence changes so interleaved sequences at the same token stay concurrent.
     pub seq_streams: bool,
+    /// Capture grouped expert GEMMs and replay them with [`gpu_sim::Sim::launch_graph`].
+    ///
+    /// Capture requires an idle stream (CUDA). After a token drain, a sticky
+    /// resident set launches one graph instead of N kernel launches.
+    pub cuda_graphs: bool,
+    /// Upcoming-event window for [`plan_window`]. `0` leaves prefetch ungated.
+    pub plan_window: usize,
+    /// Stay vs Fetch threshold, permille of upcoming unique keys already resident.
+    pub plan_threshold: u32,
+}
+
+impl SimCfg {
+    /// LRU demand paging: no prefetch, graphs, planner, or seq-streams.
+    #[must_use]
+    pub fn lru(slots: usize, bytes_per_expert: u64, lookahead: usize) -> Self {
+        Self {
+            slots,
+            policy: Policy::Lru,
+            bytes_per_expert,
+            lookahead,
+            prefetch: Prefetch::None,
+            seq_streams: false,
+            cuda_graphs: false,
+            plan_window: 0,
+            plan_threshold: 500,
+        }
+    }
 }
 
 /// Replay `trace` on `profile` with a `slots`-entry expert cache.
@@ -97,12 +136,8 @@ pub fn sim_replay(
         trace,
         profile,
         SimCfg {
-            slots,
             policy,
-            bytes_per_expert,
-            lookahead,
-            prefetch: Prefetch::None,
-            seq_streams: false,
+            ..SimCfg::lru(slots, bytes_per_expert, lookahead)
         },
     )
 }
@@ -126,15 +161,14 @@ pub fn sim_replay_cfg(
         s,
         bytes,
         slots: cfg.slots,
-        kernel: true,
     };
     let mut token_ends: Vec<u64> = Vec::new();
-    let mut hits = 0u64;
-    let mut misses = 0u64;
-    let mut prefetches = 0u64;
+    let mut ctr = ReplayCounters::default();
     let mut markov = Markov::new();
     let mut prev: Option<&ExpertAccess> = None;
     let mut prev2: Option<&ExpertAccess> = None;
+    let mut prefetched: BTreeSet<ExpertKey> = BTreeSet::new();
+    let mut graphs: BTreeMap<Vec<AllocId>, GraphId> = BTreeMap::new();
     for (i, event) in trace.events.iter().enumerate() {
         args.s = stream_of(event, n_streams);
         let ek = event.keys();
@@ -143,21 +177,34 @@ pub fn sim_replay_cfg(
             if got != *key {
                 return Err(Error::Store("walker key mismatch"));
             }
-            match touch {
-                Touch::Hit => hits = hits.saturating_add(1),
-                Touch::Miss { .. } => misses = misses.saturating_add(1),
-            }
-            apply_touch(&mut sim, &mut handles, args, *key, touch)?;
+            note_touch(&mut ctr, &mut prefetched, *key, touch);
+            apply_touch(&mut sim, &mut handles, &mut graphs, args, *key, touch)?;
         }
-        let predicted = predicted_keys(cfg.prefetch, &markov, prev, &ek);
-        let mut fill = args;
-        fill.kernel = false;
-        for key in predicted {
-            match w.prefetch_touch(key) {
-                Touch::Hit => {}
-                miss @ Touch::Miss { .. } => {
-                    prefetches = prefetches.saturating_add(1);
-                    apply_touch(&mut sim, &mut handles, fill, key, miss)?;
+        gemm_keys(
+            &mut sim,
+            &handles,
+            &mut graphs,
+            d,
+            &ek,
+            cfg.cuda_graphs,
+            &mut ctr,
+        )?;
+        if should_prefetch(cfg, &handles, trace, i) {
+            let predicted = predicted_keys(cfg.prefetch, &markov, prev, &ek);
+            let planned = if cfg.plan_window > 0 {
+                window_keys(trace, i.saturating_add(1), cfg.plan_window)
+            } else {
+                Vec::new()
+            };
+            let fill = args;
+            for key in predicted.into_iter().chain(planned) {
+                match w.prefetch_touch(key) {
+                    Touch::Hit => {}
+                    miss @ Touch::Miss { .. } => {
+                        ctr.prefetches = ctr.prefetches.saturating_add(1);
+                        let _ins = prefetched.insert(key);
+                        apply_touch(&mut sim, &mut handles, &mut graphs, fill, key, miss)?;
+                    }
                 }
             }
         }
@@ -172,7 +219,7 @@ pub fn sim_replay_cfg(
     if token_ends.is_empty() {
         sim.synchronize()?;
     }
-    Ok(finish(&sim, &token_ends, hits, misses, prefetches))
+    Ok(finish(&sim, &token_ends, ctr))
 }
 
 #[derive(Clone, Copy)]
@@ -181,7 +228,16 @@ struct TouchArgs {
     s: StreamId,
     bytes: u64,
     slots: usize,
-    kernel: bool,
+}
+
+#[derive(Clone, Copy, Default)]
+struct ReplayCounters {
+    hits: u64,
+    misses: u64,
+    prefetches: u64,
+    prefetch_hits: u64,
+    prefetch_waste: u64,
+    graph_launches: u64,
 }
 
 struct PageHandle {
@@ -189,26 +245,67 @@ struct PageHandle {
     stream: StreamId,
 }
 
+fn note_touch(
+    ctr: &mut ReplayCounters,
+    prefetched: &mut BTreeSet<ExpertKey>,
+    key: ExpertKey,
+    touch: Touch,
+) {
+    match touch {
+        Touch::Hit => {
+            ctr.hits = ctr.hits.saturating_add(1);
+            if prefetched.remove(&key) {
+                ctr.prefetch_hits = ctr.prefetch_hits.saturating_add(1);
+            }
+        }
+        Touch::Miss { evicted } => {
+            ctr.misses = ctr.misses.saturating_add(1);
+            if let Some(v) = evicted {
+                if prefetched.remove(&v) {
+                    ctr.prefetch_waste = ctr.prefetch_waste.saturating_add(1);
+                }
+            }
+            let _gone = prefetched.remove(&key);
+        }
+    }
+}
+
+fn should_prefetch(
+    cfg: SimCfg,
+    handles: &BTreeMap<ExpertKey, PageHandle>,
+    trace: &Trace,
+    i: usize,
+) -> bool {
+    if cfg.plan_window == 0 {
+        return true;
+    }
+    let resident: BTreeSet<ExpertKey> = handles.keys().copied().collect();
+    !matches!(
+        plan_window(
+            &resident,
+            trace,
+            i.saturating_add(1),
+            cfg.plan_window,
+            cfg.plan_threshold,
+        ),
+        Plan::Stay
+    )
+}
+
 fn apply_touch(
     sim: &mut Sim,
     handles: &mut BTreeMap<ExpertKey, PageHandle>,
+    graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
     args: TouchArgs,
     key: ExpertKey,
     touch: Touch,
 ) -> Result<(), Error> {
     match touch {
-        Touch::Hit => {
-            if !args.kernel {
-                return Ok(());
-            }
-            let page = handles.get(&key).ok_or(Error::Store("missing handle"))?;
-            // Kernels stay on the stream that copied the page so a later
-            // sequence cannot GEMM before that H2D is resident.
-            kernel(sim, args.d, page.stream, page.id)
-        }
+        Touch::Hit => Ok(()),
         Touch::Miss { evicted } => {
             if let Some(v) = evicted {
                 if let Some(page) = handles.remove(&v) {
+                    drop_graphs(graphs, page.id);
                     sim.free(args.d, page.id, page.stream)?;
                 }
             }
@@ -217,16 +314,72 @@ fn apply_touch(
             }
             let id = sim.alloc(args.d, args.bytes, args.s)?;
             let _c = sim.memcpy_pinned_to_device(args.d, id, args.bytes, args.s)?;
-            if args.kernel {
-                kernel(sim, args.d, args.s, id)?;
-            }
             let _prev = handles.insert(key, PageHandle { id, stream: args.s });
             Ok(())
         }
     }
 }
 
-fn finish(sim: &Sim, token_ends: &[u64], hits: u64, misses: u64, prefetches: u64) -> SimReplay {
+fn drop_graphs(graphs: &mut BTreeMap<Vec<AllocId>, GraphId>, id: AllocId) {
+    graphs.retain(|ids, _| !ids.contains(&id));
+}
+
+fn gemm_keys(
+    sim: &mut Sim,
+    handles: &BTreeMap<ExpertKey, PageHandle>,
+    graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
+    d: DeviceId,
+    keys: &[ExpertKey],
+    cuda_graphs: bool,
+    ctr: &mut ReplayCounters,
+) -> Result<(), Error> {
+    let mut by_stream: BTreeMap<StreamId, Vec<AllocId>> = BTreeMap::new();
+    for key in keys {
+        let Some(page) = handles.get(key) else {
+            continue;
+        };
+        by_stream.entry(page.stream).or_default().push(page.id);
+    }
+    for (stream, ids) in by_stream {
+        gemm_ids(sim, graphs, d, stream, ids, cuda_graphs, ctr)?;
+    }
+    Ok(())
+}
+
+fn gemm_ids(
+    sim: &mut Sim,
+    graphs: &mut BTreeMap<Vec<AllocId>, GraphId>,
+    d: DeviceId,
+    stream: StreamId,
+    ids: Vec<AllocId>,
+    cuda_graphs: bool,
+    ctr: &mut ReplayCounters,
+) -> Result<(), Error> {
+    if ids.is_empty() {
+        return Ok(());
+    }
+    if cuda_graphs && sim.stream_is_idle(d, stream)? {
+        if !graphs.contains_key(&ids) {
+            sim.begin_capture(d, stream)?;
+            for id in &ids {
+                kernel(sim, d, stream, *id)?;
+            }
+            let g = sim.end_capture()?;
+            let _prev = graphs.insert(ids.clone(), g);
+        }
+        if let Some(g) = graphs.get(&ids).copied() {
+            let _n = sim.launch_graph(g, stream)?;
+            ctr.graph_launches = ctr.graph_launches.saturating_add(1);
+            return Ok(());
+        }
+    }
+    for id in ids {
+        kernel(sim, d, stream, id)?;
+    }
+    Ok(())
+}
+
+fn finish(sim: &Sim, token_ends: &[u64], ctr: ReplayCounters) -> SimReplay {
     let score = serving_score(sim, token_ends);
     SimReplay {
         sim_ns: score.wall_ns,
@@ -235,9 +388,12 @@ fn finish(sim: &Sim, token_ends: &[u64], hits: u64, misses: u64, prefetches: u64
         energy_uj: score.energy_uj,
         ttft_ns: score.ttft_ns,
         itl_ns: score.itl_ns,
-        hits,
-        misses,
-        prefetches,
+        hits: ctr.hits,
+        misses: ctr.misses,
+        prefetches: ctr.prefetches,
+        prefetch_hits: ctr.prefetch_hits,
+        prefetch_waste: ctr.prefetch_waste,
+        graph_launches: ctr.graph_launches,
     }
 }
 
@@ -378,7 +534,15 @@ pub fn sim_placed(
     if token_ends.is_empty() {
         sim.synchronize()?;
     }
-    Ok(finish(&sim, &token_ends, hits, misses, 0))
+    Ok(finish(
+        &sim,
+        &token_ends,
+        ReplayCounters {
+            hits,
+            misses,
+            ..ReplayCounters::default()
+        },
+    ))
 }
 
 /// Compute on GPU0; experts live on `map` homes. Miss: pinned H2D to home, then
@@ -459,7 +623,15 @@ pub fn sim_remote_home_cfg(
     if token_ends.is_empty() {
         sim.synchronize()?;
     }
-    Ok(finish(&sim, &token_ends, hits, misses, 0))
+    Ok(finish(
+        &sim,
+        &token_ends,
+        ReplayCounters {
+            hits,
+            misses,
+            ..ReplayCounters::default()
+        },
+    ))
 }
 
 #[derive(Clone, Copy)]

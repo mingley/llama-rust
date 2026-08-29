@@ -13,8 +13,16 @@ impl fmt::Display for DeviceId {
 }
 
 /// CUDA-like stream on one device. Independent streams are unordered until an event.
+///
+/// [`StreamId::NULL`] (`0`) is the CUDA null stream. Streams are
+/// `cudaStreamNonBlocking` unless [`crate::Sim::set_legacy_null_stream`] is on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct StreamId(pub u16);
+
+impl StreamId {
+    /// CUDA null / default stream (`cudaStream_t` 0).
+    pub const NULL: Self = Self(0);
+}
 
 /// Cross-stream ordering token. Record on one stream, wait on another.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

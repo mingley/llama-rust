@@ -23,6 +23,18 @@ struct Op {
     deps: Vec<OpId>,
     done: bool,
     cancelled: bool,
+    launch: LaunchCost,
+}
+
+/// How a submitted op pays kernel/graph launch overhead.
+#[derive(Clone, Copy)]
+enum LaunchCost {
+    /// Standalone kernel: profile `launch_overhead_ns`.
+    Kernel,
+    /// First recorded op of a graph launch: profile `graph_launch_ns`.
+    GraphHead,
+    /// Later recorded ops of a graph launch: no extra launch overhead.
+    GraphBody,
 }
 
 #[derive(Clone)]
@@ -39,6 +51,10 @@ enum Kind {
         kind: KernelKind,
         reads: Vec<AllocId>,
         writes: Vec<AllocId>,
+    },
+    Memset {
+        id: AllocId,
+        bytes: u64,
     },
     EventRecord {
         event: EventId,
@@ -99,6 +115,8 @@ pub struct Sim {
     unavailable: BTreeSet<DeviceId>,
     fail_next_memcpy: bool,
     extra_transfer_ns: u64,
+    peer_enabled: BTreeSet<(DeviceId, DeviceId)>,
+    legacy_null_stream: bool,
 }
 
 impl Sim {
@@ -117,6 +135,7 @@ impl Sim {
             );
             let _dup = replaced.is_some();
         }
+        let peer_enabled = seed_peers(&profile);
         Self {
             profile,
             clock: 0,
@@ -137,6 +156,8 @@ impl Sim {
             unavailable: BTreeSet::new(),
             fail_next_memcpy: false,
             extra_transfer_ns: 0,
+            peer_enabled,
+            legacy_null_stream: false,
         }
     }
 
@@ -206,6 +227,60 @@ impl Sim {
     /// Extra nanoseconds added to every memcpy and allreduce (injected transfer delay).
     pub fn set_extra_transfer_ns(&mut self, ns: u64) {
         self.extra_transfer_ns = ns;
+    }
+
+    /// CUDA legacy null stream: [`StreamId::NULL`] serializes with every other stream
+    /// on that device. Off by default (`cudaStreamNonBlocking`).
+    pub fn set_legacy_null_stream(&mut self, yes: bool) {
+        self.legacy_null_stream = yes;
+    }
+
+    /// Whether [`Self::set_legacy_null_stream`] is on.
+    #[must_use]
+    pub fn legacy_null_stream(&self) -> bool {
+        self.legacy_null_stream
+    }
+
+    /// `cudaDeviceEnablePeerAccess(dst)` from `src`. No-op if `src == dst`.
+    pub fn enable_peer(&mut self, src: DeviceId, dst: DeviceId) -> Result<(), SimError> {
+        if src == dst {
+            return Ok(());
+        }
+        let _link = self.profile.link(Some(src), Some(dst))?;
+        let _was = self.peer_enabled.insert((src, dst));
+        Ok(())
+    }
+
+    /// `cudaDeviceDisablePeerAccess(dst)` from `src`. Later D2D is [`SimError::PeerDisabled`].
+    pub fn disable_peer(&mut self, src: DeviceId, dst: DeviceId) -> Result<(), SimError> {
+        if src == dst {
+            return Ok(());
+        }
+        let _gpu_s = self.profile.gpu(src)?;
+        let _gpu_d = self.profile.gpu(dst)?;
+        let _was = self.peer_enabled.remove(&(src, dst));
+        Ok(())
+    }
+
+    /// Whether `src` may D2D-read `dst` (directed, like CUDA peer access).
+    #[must_use]
+    pub fn peer_access(&self, src: DeviceId, dst: DeviceId) -> bool {
+        src == dst || self.peer_enabled.contains(&(src, dst))
+    }
+
+    /// No unfinished ops on `(device, stream)`, including in-flight.
+    pub fn stream_is_idle(&self, device: DeviceId, stream: StreamId) -> Result<bool, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.stream_idle(device, stream))
+    }
+
+    /// Recorded event whose record op has completed.
+    #[must_use]
+    pub fn event_complete(&self, event: EventId) -> bool {
+        self.events
+            .get(&event)
+            .and_then(|e| e.recorded_by)
+            .is_some_and(|id| self.op_done(id))
     }
 
     /// Drop not-yet-started ops on `(device, stream)`. In-flight ops still complete.
@@ -279,16 +354,7 @@ impl Sim {
                 why: "nested graph capture",
             });
         }
-        let busy = self
-            .ops
-            .values()
-            .any(|o| o.device == device && o.stream == stream && !o.done)
-            || self.running.iter().any(|r| {
-                self.ops
-                    .get(&r.op)
-                    .is_some_and(|o| o.device == device && o.stream == stream)
-            });
-        if busy {
+        if !self.stream_idle(device, stream) {
             return Err(SimError::Invalid {
                 why: "capture requires idle stream",
             });
@@ -328,8 +394,15 @@ impl Sim {
             .steps
             .clone();
         let mut n = 0u32;
+        let mut head = true;
         for (device, kind) in steps {
-            let _op = self.submit(device, stream, kind)?;
+            let launch = if head {
+                LaunchCost::GraphHead
+            } else {
+                LaunchCost::GraphBody
+            };
+            head = false;
+            let _op = self.submit_launch(device, stream, kind, launch)?;
             n = n.saturating_add(1);
         }
         Ok(n)
@@ -560,6 +633,25 @@ impl Sim {
         )
     }
 
+    /// Device-side fill (`cudaMemsetAsync`). `alloc` must already be resident.
+    ///
+    /// Bills exclusive compute as an HBM write plus launch overhead. Capture is
+    /// allowed; alloc/free still are not.
+    pub fn memset(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte memset",
+            });
+        }
+        self.submit(device, stream, Kind::Memset { id: alloc, bytes })
+    }
+
     /// Record `event` after prior ops on `stream`.
     pub fn record_event(
         &mut self,
@@ -623,6 +715,16 @@ impl Sim {
     }
 
     fn submit(&mut self, device: DeviceId, stream: StreamId, kind: Kind) -> Result<OpId, SimError> {
+        self.submit_launch(device, stream, kind, LaunchCost::Kernel)
+    }
+
+    fn submit_launch(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        kind: Kind,
+        launch: LaunchCost,
+    ) -> Result<OpId, SimError> {
         if self.unavailable.contains(&device) {
             return Err(SimError::Unavailable { device });
         }
@@ -647,10 +749,7 @@ impl Sim {
         let _gpu = self.profile.gpu(device)?;
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
-        let mut deps = Vec::new();
-        if let Some(prev) = self.tail.get(&(device, stream)) {
-            deps.push(*prev);
-        }
+        let mut deps = self.stream_order_deps(device, stream);
         if let Kind::EventWait { event } = &kind {
             if let Some(ev) = self.events.get(event) {
                 if let Some(rec) = ev.recorded_by {
@@ -667,10 +766,43 @@ impl Sim {
                 deps,
                 done: false,
                 cancelled: false,
+                launch,
             },
         );
         let _prev_tail = self.tail.insert((device, stream), id);
         Ok(id)
+    }
+
+    fn stream_order_deps(&self, device: DeviceId, stream: StreamId) -> Vec<OpId> {
+        let mut deps = Vec::new();
+        if let Some(prev) = self.tail.get(&(device, stream)) {
+            deps.push(*prev);
+        }
+        if !self.legacy_null_stream {
+            return deps;
+        }
+        if stream == StreamId::NULL {
+            for ((d, s), tail) in &self.tail {
+                if *d == device && *s != stream {
+                    deps.push(*tail);
+                }
+            }
+        } else if let Some(tail) = self.tail.get(&(device, StreamId::NULL)) {
+            deps.push(*tail);
+        }
+        deps
+    }
+
+    fn stream_idle(&self, device: DeviceId, stream: StreamId) -> bool {
+        !self
+            .ops
+            .values()
+            .any(|o| o.device == device && o.stream == stream && !o.done)
+            && !self.running.iter().any(|r| {
+                self.ops
+                    .get(&r.op)
+                    .is_some_and(|o| o.device == device && o.stream == stream)
+            })
     }
 
     fn gpu_rt(&self, device: DeviceId) -> Result<&GpuRt, SimError> {
@@ -734,6 +866,7 @@ impl Sim {
             return Err(SimError::Invalid { why: "unknown op" });
         };
         let device = op.device;
+        let launch = op.launch;
         if self.unavailable.contains(&device) {
             return Err(SimError::Unavailable { device });
         }
@@ -798,7 +931,23 @@ impl Sim {
                 let writes = writes.clone();
                 let kind = kind.clone();
                 self.lease_kernel(device, &reads, &writes)?;
-                let ns = self.kernel_ns(device, &kind)?;
+                let ns = self.kernel_ns(device, &kind, launch)?;
+                self.gpu_rt_mut(device)?.compute_busy = true;
+                self.running.push(Running {
+                    op: id,
+                    remaining_ns: ns.max(1),
+                    share: Share::Solo,
+                });
+                Ok(true)
+            }
+            Kind::Memset { id: alloc, bytes } => {
+                if self.gpu_rt(device)?.compute_busy {
+                    return Ok(false);
+                }
+                let alloc = *alloc;
+                let bytes = *bytes;
+                self.lease_kernel(device, &[], &[alloc])?;
+                let ns = self.memset_ns(device, bytes, launch)?;
                 self.gpu_rt_mut(device)?.compute_busy = true;
                 self.running.push(Running {
                     op: id,
@@ -824,6 +973,7 @@ impl Sim {
                 self.memcpy_precheck(&m)?;
                 self.charge_replica_hbm(&m)?;
                 let (ns, link_idx) = self.memcpy_ns(&m)?;
+                let ns = ns.saturating_add(self.graph_head_ns(device, launch)?);
                 self.gpu_rt_mut(device)?.copies = self.gpu_rt(device)?.copies.saturating_add(1);
                 self.running.push(Running {
                     op: id,
@@ -886,12 +1036,22 @@ impl Sim {
         Ok(())
     }
 
-    fn kernel_ns(&self, device: DeviceId, kind: &KernelKind) -> Result<u64, SimError> {
+    fn kernel_ns(
+        &self,
+        device: DeviceId,
+        kind: &KernelKind,
+        launch: LaunchCost,
+    ) -> Result<u64, SimError> {
         let g = self.profile.gpu(device)?;
         let (flops, bytes) = kind.flops_and_bytes();
         let compute = ns_for_bytes(flops, g.flops(kind.dtype()));
         let memory = ns_for_bytes(bytes, g.hbm_bps);
-        let mut ns = g.launch_overhead_ns.saturating_add(compute.max(memory));
+        let overhead = match launch {
+            LaunchCost::Kernel => g.launch_overhead_ns,
+            LaunchCost::GraphHead => g.graph_launch_ns,
+            LaunchCost::GraphBody => 0,
+        };
+        let mut ns = overhead.saturating_add(compute.max(memory));
         let util = u64::from(g.gemm_util_permille.max(1));
         ns = ns
             .saturating_mul(1000)
@@ -902,6 +1062,23 @@ impl Sim {
             ns = ns.saturating_mul(pen).checked_div(1000).unwrap_or(u64::MAX);
         }
         Ok(ns)
+    }
+
+    fn memset_ns(&self, device: DeviceId, bytes: u64, launch: LaunchCost) -> Result<u64, SimError> {
+        let g = self.profile.gpu(device)?;
+        let overhead = match launch {
+            LaunchCost::Kernel => g.launch_overhead_ns,
+            LaunchCost::GraphHead => g.graph_launch_ns,
+            LaunchCost::GraphBody => 0,
+        };
+        Ok(overhead.saturating_add(ns_for_bytes(bytes, g.hbm_bps)))
+    }
+
+    fn graph_head_ns(&self, device: DeviceId, launch: LaunchCost) -> Result<u64, SimError> {
+        match launch {
+            LaunchCost::GraphHead => Ok(self.profile.gpu(device)?.graph_launch_ns),
+            LaunchCost::Kernel | LaunchCost::GraphBody => Ok(0),
+        }
     }
 
     fn event_wait_gate(&self, event: EventId) -> Result<Option<OpId>, SimError> {
@@ -1013,6 +1190,14 @@ impl Sim {
         let a = self.alloc_ref(m.alloc)?;
         if !a.live {
             return Err(SimError::UnknownAlloc { alloc: m.alloc });
+        }
+        if let (Place::Device(src), Place::Device(dst)) = (m.src, m.dst) {
+            if src != dst
+                && !self.peer_enabled.contains(&(src, dst))
+                && self.profile.link(Some(src), Some(dst)).is_ok()
+            {
+                return Err(SimError::PeerDisabled { src, dst });
+            }
         }
         match m.src {
             Place::Host | Place::HostPinned => Ok(()),
@@ -1155,6 +1340,7 @@ impl Sim {
             Kind::Kernel { reads, writes, .. } => {
                 Some(reads.iter().chain(writes.iter()).copied().collect())
             }
+            Kind::Memset { id: alloc, .. } => Some(vec![*alloc]),
             Kind::AllReduce { parts, .. } => Some(parts.iter().map(|(_, a)| *a).collect()),
             _ => None,
         });
@@ -1187,4 +1373,16 @@ impl Sim {
         }
         Ok(())
     }
+}
+
+fn seed_peers(profile: &HardwareProfile) -> BTreeSet<(DeviceId, DeviceId)> {
+    let mut out = BTreeSet::new();
+    for link in &profile.links {
+        let (Some(a), Some(b)) = (link.a, link.b) else {
+            continue;
+        };
+        let _ab = out.insert((a, b));
+        let _ba = out.insert((b, a));
+    }
+    out
 }

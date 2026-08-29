@@ -36,6 +36,10 @@ warp scheduler, L1, …   ← do not model
 | copy-engine occupancy | launch overhead |
 | peer accessibility | size-dependent efficiency |
 | graph capture does not execute; launch replays | GEMM util / grouped-MoE ‰ |
+| graph launch amortizes per-kernel launch overhead | `graph_launch_ns` |
+| memset requires device residency | HBM write + launch overhead |
+| peer D2D needs topology + `enable_peer` | link bandwidth |
+| legacy null stream serializes (opt-in) | copy/compute overlap |
 
 ## Anti-Goodhart timing
 
@@ -131,7 +135,13 @@ kernel on it fails `NotResident` until a copy places it on a device.
 | over-capacity alloc | `SimError::Oom` |
 
 CUDA graphs: `begin_capture` / `end_capture` / `launch_graph`. Capture does
-not advance the virtual clock. Alloc/free cannot be captured.
+not advance the virtual clock. Alloc/free cannot be captured. Launch pays
+`graph_launch_ns` once; recorded kernels skip per-kernel launch overhead.
+`memset` is an HBM-write kernel on a resident alloc. Peer D2D requires a
+topology link **and** directed `enable_peer` (seeded on for every GPU↔GPU
+link; `disable_peer` → `PeerDisabled`). [`StreamId::NULL`] is the CUDA null
+stream; `set_legacy_null_stream(true)` serializes it with every other stream
+on that device (off by default = `cudaStreamNonBlocking`).
 
 In-flight ops are not cancelled. `gpu-profile capture` is refused in this
 crate: someone with a GPU writes a `key=value` file; agents `parse` it.

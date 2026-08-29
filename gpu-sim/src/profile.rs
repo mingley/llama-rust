@@ -25,6 +25,9 @@ pub struct GpuProfile {
     pub copy_engines: u8,
     /// Kernel launch overhead, nanoseconds.
     pub launch_overhead_ns: u64,
+    /// `cudaGraphLaunch` overhead, nanoseconds. Paid once per graph launch, not
+    /// per recorded kernel. Example default matches [`Self::launch_overhead_ns`].
+    pub graph_launch_ns: u64,
     /// Stream-ordered alloc overhead, nanoseconds.
     pub alloc_overhead_ns: u64,
     /// Board TDP, milliwatts. Energy estimate is `tdp_mw * wall_ns / 1e6` µJ.
@@ -322,7 +325,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ntdp_mw={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -331,6 +334,8 @@ impl HardwareProfile {
             self.host_bps(g0.id),
             g0.copy_engines,
             g0.tdp_mw,
+            g0.launch_overhead_ns,
+            g0.graph_launch_ns,
             g0.gemm_util_permille,
             g0.grouped_moe_permille,
             self.host_pageable_permille(g0.id),
@@ -425,6 +430,7 @@ fn h100_gpu(id: DeviceId) -> GpuProfile {
         fp32_flops: 67u64.saturating_mul(1_000_000_000_000),
         copy_engines: 2,
         launch_overhead_ns: 3_000,
+        graph_launch_ns: 3_000,
         alloc_overhead_ns: 2_000,
         tdp_mw: 700_000,
         gemm_util_permille: 1000,
@@ -547,6 +553,8 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut pcie_far_bps = 4u64.saturating_mul(1_000_000_000);
     let mut copy_engines: u8 = 2;
     let mut tdp_mw = 700_000u64;
+    let mut launch_overhead_ns = 3_000u64;
+    let mut graph_launch_ns = 3_000u64;
     let mut gemm_util_permille: u16 = 1000;
     let mut grouped_moe_permille: u16 = 1000;
     let mut pageable_permille: u16 = 500;
@@ -576,6 +584,8 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             "pcie_far_bps" => pcie_far_bps = parse_u64(v)?,
             "copy_engines" => copy_engines = parse_u8(v)?,
             "tdp_mw" => tdp_mw = parse_u64(v)?,
+            "launch_overhead_ns" => launch_overhead_ns = parse_u64(v)?,
+            "graph_launch_ns" => graph_launch_ns = parse_u64(v)?,
             "gemm_util_permille" => gemm_util_permille = parse_u16(v)?,
             "grouped_moe_permille" => grouped_moe_permille = parse_u16(v)?,
             "pageable_permille" => pageable_permille = parse_u16(v)?,
@@ -609,6 +619,8 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         g.fp16_flops = fp16_flops;
         g.copy_engines = copy_engines;
         g.tdp_mw = tdp_mw;
+        g.launch_overhead_ns = launch_overhead_ns;
+        g.graph_launch_ns = graph_launch_ns;
         g.gemm_util_permille = gemm_util_permille;
         g.grouped_moe_permille = grouped_moe_permille;
         gpus.push(g);
@@ -783,6 +795,16 @@ mod tests {
         assert_eq!(p.node_tdp_mw(), 246_000);
         assert_eq!(p.gpu(DeviceId(0)).unwrap().tdp_mw, 123_000);
         assert_eq!(p.gpu(DeviceId(1)).unwrap().tdp_mw, 123_000);
+    }
+
+    #[test]
+    fn parse_launch_and_graph_overhead() {
+        let p = HardwareProfile::parse("gpus=1\nlaunch_overhead_ns=9000\ngraph_launch_ns=1000\n")
+            .unwrap();
+        let g = p.gpu(DeviceId(0)).unwrap();
+        assert_eq!(g.launch_overhead_ns, 9000);
+        assert_eq!(g.graph_launch_ns, 1000);
+        assert!(p.to_profile_text().contains("graph_launch_ns=1000"));
     }
 
     #[test]

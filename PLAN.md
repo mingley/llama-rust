@@ -504,7 +504,13 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   links fail `NoPeer`.
 - CUDA-graph capture: `begin_capture` / `end_capture` / `launch_graph`.
   Recorded kernels and copies do not run until launch; alloc/free cannot
-  be captured; capture requires an idle stream.
+  be captured; capture requires an idle stream. Graph launch pays
+  `graph_launch_ns` once; recorded kernels skip per-launch overhead.
+  `sim_replay` / `SimulatedGpuStore` capture repeated expert GEMMs
+  (`expertvm sim --cuda-graphs`). `plan_window` Stay vs Fetch gates prefetch
+  in the GPU loop (`--plan-window N`). `prefetch_hits` / `prefetch_waste`
+  measure whether those fills were used. `memset`, directed peer enable, and
+  the legacy null stream are mechanical CUDA invariants.
 - performance model must include fixed overhead, size-dependent
   throughput, queueing, concurrency limits, alignment, startup latency
   (`LinkProfile::align_bytes` rounds the billed payload up; a 1-byte DMA

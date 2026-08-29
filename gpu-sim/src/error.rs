@@ -40,6 +40,13 @@ pub enum SimError {
         /// Destination GPU.
         dst: DeviceId,
     },
+    /// Topology has a link, but [`crate::Sim::enable_peer`] is off (`cudaDeviceDisablePeerAccess`).
+    PeerDisabled {
+        /// Source GPU.
+        src: DeviceId,
+        /// Destination GPU.
+        dst: DeviceId,
+    },
     /// Event wait before any record, or unknown event id.
     UnknownEvent {
         /// Event id.
@@ -81,6 +88,9 @@ impl fmt::Display for SimError {
                 write!(f, "allocation {} not resident on {device}", alloc.0)
             }
             Self::NoPeer { src, dst } => write!(f, "no peer link {src} → {dst}"),
+            Self::PeerDisabled { src, dst } => {
+                write!(f, "peer access disabled {src} → {dst}")
+            }
             Self::UnknownEvent { event } => write!(f, "unknown event {event}"),
             Self::Unavailable { device } => write!(f, "{device} unavailable"),
             Self::Cancelled { stream, n } => {
