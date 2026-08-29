@@ -162,6 +162,10 @@ impl Place {
 }
 
 /// One asynchronous copy.
+///
+/// [`crate::Sim::graph_exec_memcpy_set_params`] patches this on an instantiated
+/// memcpy node (`cudaGraphExecMemcpyNodeSetParams`). Pageable src/dst stay
+/// illegal as graph params.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemcpyOp {
     /// Source.

@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — `cudaGraphExecMemcpyNodeSetParams`
+
+`Sim::graph_exec_memcpy_set_params` is `cudaGraphExecMemcpyNodeSetParams`:
+patch one instantiated memcpy node's `MemcpyOp` without a second graph.
+Cheaper than `cudaGraphExecUpdate`. Legal with mem alloc/free nodes.
+Pageable copies stay illegal. `--graph-set-params` retargets a unique
+memcpy if the parked leaf has one (copy stays off the compute GEMM graph).
+Decode identity stays destroy+instantiate. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — mempool shareable-handle IPC
 
 `Sim::create_shareable_pool` is `cudaMemPoolCreate` with a POSIX-FD handle

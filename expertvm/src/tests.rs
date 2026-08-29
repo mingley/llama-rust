@@ -2614,6 +2614,41 @@ fn cuda_graphs_graph_update_reuses_parked_leaves() {
 }
 
 #[test]
+fn retarget_parked_kernel_patches_unique_memcpy() {
+    use crate::sim_replay::retarget_parked_kernel;
+    use gpu_sim::{KernelKind, MemcpyOp, Place, Sim, StreamId};
+
+    let mut sim = Sim::new(HardwareProfile::example_h100_sxm());
+    let d = DeviceId(0);
+    let s = StreamId(0);
+    let a = sim.malloc(d, 4096).expect("a");
+    let b = sim.malloc(d, 4096).expect("b");
+    let exec = sim.create_graph(d, s).expect("g");
+    sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
+        .expect("k");
+    sim.graph_add_memcpy(
+        exec,
+        MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: a,
+            bytes: 4096,
+            offset: 0,
+        },
+    )
+    .expect("m");
+    sim.instantiate_graph(exec).expect("i");
+    retarget_parked_kernel(&mut sim, exec, b).expect("retarget");
+    let (_, params) = sim.graph_unique_kernel(exec).expect("k2");
+    let read = params.reads.first().expect("read");
+    let write = params.writes.first().expect("write");
+    assert_eq!(read.id, b);
+    assert_eq!(write.id, b);
+    let (_, mop) = sim.graph_unique_memcpy(exec).expect("m2");
+    assert_eq!(mop.alloc, b);
+}
+
+#[test]
 fn cuda_graphs_graph_set_params_reuses_parked_leaves() {
     let t = Trace {
         events: vec![

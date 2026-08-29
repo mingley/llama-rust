@@ -77,6 +77,7 @@ warp scheduler, L1, …   ← do not model
 | graph upload is host-sync after instantiate; first launch pays it once | `graph_upload_ns` |
 | graph update replaces steps when topology matches (device, stream, kind, deps); mem nodes are Invalid | `graph_update_ns` |
 | `cudaGraphExecKernelNodeSetParams` patches one instantiated kernel node's pointers / kind (mem nodes legal) | `graph_set_params_ns` |
+| `cudaGraphExecMemcpyNodeSetParams` patches one instantiated memcpy node's `MemcpyOp` (mem nodes legal) | `graph_set_params_ns` |
 | graph mem alloc/free nodes (`cudaMallocAsync` / `cudaFreeAsync` during capture, or `graph_add_alloc` / `graph_add_free`) | `pool_reuse_ns` on relaunch without free |
 | graph clone is an independent uninstantiated copy; child graphs cloned recursively; mem alloc nodes get new ids | `graph_clone_ns` |
 | `cudaGraphCreate` (`create_graph`) is an empty uninstantiated graph | 1 ns host-sync |
@@ -235,7 +236,12 @@ later launch is unknown; remaining graph mem is refunded). First launch instanti
 then uploads if needed (`graph_upload_ns`). `upload_graph` is `cudaGraphUpload`.
 `update_graph` copies source steps into an instantiated exec when the
 device, stream, op kinds, and dependency edges match (`graph_update_ns`); a topology
-mismatch is `Invalid`. Graphs with mem alloc/free nodes cannot be updated. `expertvm --graph-update` parks a leaf GEMM on
+mismatch is `Invalid`. Graphs with mem alloc/free nodes cannot be updated.
+`graph_exec_kernel_set_params` / `graph_exec_memcpy_set_params` are
+`cudaGraphExecKernelNodeSetParams` / `cudaGraphExecMemcpyNodeSetParams`
+(`graph_set_params_ns`; mem nodes legal; pageable memcpy stays illegal).
+`expertvm --graph-set-params` parks a leaf and retargets the unique kernel
+(and a unique memcpy if present). `expertvm --graph-update` parks a leaf GEMM on
 evict and updates the next miss instead of instantiate. `--graph-clone`
 copies the capture (`cudaGraphClone`) before instantiate. `--graph-build` is
 `cudaGraphCreate` / `cudaGraphAdd*` (no idle stream; combo children may

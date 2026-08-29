@@ -1347,6 +1347,57 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphExecMemcpyNodeSetParams` on an instantiated exec.
+    ///
+    /// Node `node` must already be a memcpy. [`MemcpyOp`] src/dst/alloc/bytes
+    /// may change. Pageable copies stay illegal. Pays `graph_set_params_ns`
+    /// and clears the upload flag. Capture cannot include it. Graphs with
+    /// mem alloc/free nodes are legal (unlike [`Self::update_graph`]).
+    pub fn graph_exec_memcpy_set_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: &MemcpyOp,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture memcpy set params")?;
+        if op.src.is_pageable() || op.dst.is_pageable() {
+            return Err(SimError::Invalid {
+                why: "cannot add pageable memcpy",
+            });
+        }
+        let (instantiated, device) = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            if !matches!(step.kind, Kind::Memcpy(_)) {
+                return Err(SimError::Invalid {
+                    why: "not a memcpy node",
+                });
+            }
+            (g.instantiated, step.device)
+        };
+        if !instantiated {
+            return Err(SimError::Invalid {
+                why: "graph not instantiated",
+            });
+        }
+        self.memcpy_precheck(op)?;
+        let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.kind = Kind::Memcpy(op.clone());
+        g.uploaded = false;
+        Ok(())
+    }
+
     /// Unique kernel node on `graph` plus its current [`KernelNodeParams`].
     ///
     /// Zero or more than one kernel node is Invalid. Used by
@@ -1387,6 +1438,44 @@ impl Sim {
         found.ok_or(SimError::Invalid {
             why: "not a kernel node",
         })
+    }
+
+    /// Unique memcpy node on `graph` plus its current [`MemcpyOp`].
+    ///
+    /// Zero memcpy nodes is Invalid (`not a memcpy node`). More than one is
+    /// `not unique memcpy node`.
+    pub fn graph_unique_memcpy(&self, graph: GraphId) -> Result<(usize, MemcpyOp), SimError> {
+        match self.graph_try_unique_memcpy(graph)? {
+            Some(v) => Ok(v),
+            None => Err(SimError::Invalid {
+                why: "not a memcpy node",
+            }),
+        }
+    }
+
+    /// Unique memcpy node, or `None` when the graph has no memcpy.
+    ///
+    /// More than one memcpy node is Invalid.
+    pub fn graph_try_unique_memcpy(
+        &self,
+        graph: GraphId,
+    ) -> Result<Option<(usize, MemcpyOp)>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut found = None;
+        for (i, step) in g.steps.iter().enumerate() {
+            let Kind::Memcpy(op) = &step.kind else {
+                continue;
+            };
+            if found.is_some() {
+                return Err(SimError::Invalid {
+                    why: "not unique memcpy node",
+                });
+            }
+            found = Some((i, op.clone()));
+        }
+        Ok(found)
     }
 
     /// Graph mem alloc node ids (`cudaMallocAsync` / `cudaGraphAddMemAllocNode`).

@@ -48,7 +48,8 @@ pub struct GpuProfile {
     /// `cudaGraphExecUpdate` overhead, nanoseconds. Cheaper than recapture
     /// when topology matches. Example default, not a capture.
     pub graph_update_ns: u64,
-    /// `cudaGraphExecKernelNodeSetParams` overhead, nanoseconds. Cheaper than
+    /// `cudaGraphExecKernelNodeSetParams` /
+    /// `cudaGraphExecMemcpyNodeSetParams` overhead, nanoseconds. Cheaper than
     /// [`Self::graph_update_ns`] (no second graph / topology match). Example
     /// default, not a capture.
     pub graph_set_params_ns: u64,
