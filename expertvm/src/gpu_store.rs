@@ -307,6 +307,8 @@ impl SimulatedGpuStore {
             self.sim.begin_capture(device, self.compute)?;
             gemm(&mut self.sim, device, self.compute, id)?;
             let g = self.sim.end_capture()?;
+            self.sim.instantiate_graph(g)?;
+            self.sim.upload_graph(g)?;
             let _prev = self.graphs.insert(id, g);
             self.graph_launches = self.graph_launches.saturating_add(1);
             let _n = self.sim.launch_graph(g, self.compute)?;

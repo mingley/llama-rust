@@ -64,6 +64,7 @@ warp scheduler, L1, …   ← do not model
 | `launch_graph` during capture is a child-graph node | nested exec expanded at parent launch |
 | independent streams stay live during capture | query/sync of a capturing stream is Invalid |
 | graph instantiate is host-sync; first launch pays it once | `graph_instantiate_ns` |
+| graph upload is host-sync after instantiate; first launch pays it once | `graph_upload_ns` |
 | graph update replaces steps when topology matches (device, stream, kind) | `graph_update_ns` |
 | graph clone is an independent uninstantiated copy | `graph_clone_ns` |
 | graph destroy drops the id (`cudaGraphDestroy`) | 1 ns host-sync |
@@ -191,10 +192,11 @@ node `synchronize`, are `Invalid`. `launch_graph` during capture records a
 child-graph node if the child is already instantiated; parent launch expands
 it. Independent streams still launch live. Alloc/free cannot be captured, including
 host-sync `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device`.
-Instantiate and update are host-synchronous and cannot run during capture.
+Instantiate, update, and upload are host-synchronous and cannot run during capture.
 `clone_graph` is `cudaGraphClone` (`graph_clone_ns`): an independent
 uninstantiated copy. `destroy_graph` is `cudaGraphDestroy` (1 ns;
-later launch is unknown). First launch instantiates if needed (`graph_instantiate_ns` once).
+later launch is unknown). First launch instantiates if needed (`graph_instantiate_ns` once)
+then uploads if needed (`graph_upload_ns`). `upload_graph` is `cudaGraphUpload`.
 `update_graph` copies source steps into an instantiated exec when the
 device, stream, and op kinds match (`graph_update_ns`); a topology
 mismatch is `Invalid`. Launch pays `graph_launch_ns` once; recorded

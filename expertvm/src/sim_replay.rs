@@ -107,7 +107,8 @@ pub struct SimCfg {
     /// Capture requires an idle stream (CUDA). After a token drain, a sticky
     /// resident set launches one parent graph. Each expert alloc is a
     /// captured leaf; a multi-expert launch records those leaves as child
-    /// graphs so a later combo can reuse them.
+    /// graphs so a later combo can reuse them. Leaves and parents are
+    /// instantiated and uploaded before the first launch.
     pub cuda_graphs: bool,
     /// Upcoming-event window for [`plan_window`]. `0` leaves prefetch ungated.
     pub plan_window: usize,
@@ -722,6 +723,7 @@ fn capture_expert_graph(
         kernel(sim, d, stream, *id)?;
         let g = sim.end_capture()?;
         sim.instantiate_graph(g)?;
+        sim.upload_graph(g)?;
         let _prev = graphs.insert(key, g);
         leaves.push(g);
     }
@@ -734,6 +736,7 @@ fn capture_expert_graph(
     }
     let parent = sim.end_capture()?;
     sim.instantiate_graph(parent)?;
+    sim.upload_graph(parent)?;
     let _prev = graphs.insert(ids.to_vec(), parent);
     Ok(Some(parent))
 }

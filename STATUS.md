@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — cudaGraphUpload after instantiate
+
+`Sim::upload_graph` is `cudaGraphUpload` (host-sync, `graph_upload_ns`).
+The exec must already be instantiated. First `launch_graph` uploads if
+needed. `update_graph` clears the flag. Capture refused.
+`sim_replay` / `SimulatedGpuStore` upload after instantiate so replay
+launches skip the host-sync. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Remote managed GEMM reads PreferredLocation
 
 Expert GEMMs treat weight pages as kernel reads. `--managed --place remote`

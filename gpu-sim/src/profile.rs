@@ -38,6 +38,10 @@ pub struct GpuProfile {
     /// `cudaGraphClone` overhead, nanoseconds. Host-synchronous. Example
     /// default, not a capture.
     pub graph_clone_ns: u64,
+    /// `cudaGraphUpload` overhead, nanoseconds. Host-synchronous; paid once
+    /// per exec (explicit [`crate::Sim::upload_graph`] or first
+    /// [`crate::Sim::launch_graph`] after instantiate). Example default, not a capture.
+    pub graph_upload_ns: u64,
     /// Stream-ordered alloc overhead, nanoseconds.
     pub alloc_overhead_ns: u64,
     /// Reuse of cached pool bytes (`cudaMallocFromPoolAsync` hit), nanoseconds.
@@ -359,7 +363,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_clone_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -373,6 +377,7 @@ impl HardwareProfile {
             g0.graph_instantiate_ns,
             g0.graph_update_ns,
             g0.graph_clone_ns,
+            g0.graph_upload_ns,
             g0.gemm_util_permille,
             g0.grouped_moe_permille,
             self.host_pageable_permille(g0.id),
@@ -475,6 +480,7 @@ fn h100_gpu(id: DeviceId) -> GpuProfile {
         graph_instantiate_ns: 25_000,
         graph_update_ns: 5_000,
         graph_clone_ns: 8_000,
+        graph_upload_ns: 6_000,
         alloc_overhead_ns: 2_000,
         pool_reuse_ns: 200,
         host_func_ns: 10_000,
@@ -604,6 +610,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut graph_instantiate_ns: Option<u64> = None;
     let mut graph_update_ns: Option<u64> = None;
     let mut graph_clone_ns: Option<u64> = None;
+    let mut graph_upload_ns: Option<u64> = None;
     let mut gemm_util_permille: u16 = 1000;
     let mut grouped_moe_permille: u16 = 1000;
     let mut pageable_permille: u16 = 500;
@@ -641,6 +648,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             "graph_instantiate_ns" => graph_instantiate_ns = Some(parse_u64(v)?),
             "graph_update_ns" => graph_update_ns = Some(parse_u64(v)?),
             "graph_clone_ns" => graph_clone_ns = Some(parse_u64(v)?),
+            "graph_upload_ns" => graph_upload_ns = Some(parse_u64(v)?),
             "gemm_util_permille" => gemm_util_permille = parse_u16(v)?,
             "grouped_moe_permille" => grouped_moe_permille = parse_u16(v)?,
             "pageable_permille" => pageable_permille = parse_u16(v)?,
@@ -687,6 +695,9 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         }
         if let Some(ns) = graph_clone_ns {
             g.graph_clone_ns = ns;
+        }
+        if let Some(ns) = graph_upload_ns {
+            g.graph_upload_ns = ns;
         }
         g.gemm_util_permille = gemm_util_permille;
         g.grouped_moe_permille = grouped_moe_permille;
@@ -888,21 +899,24 @@ mod tests {
     #[test]
     fn parse_graph_instantiate_and_update() {
         let p = HardwareProfile::parse(
-            "gpus=1\ngraph_instantiate_ns=111\ngraph_update_ns=22\ngraph_clone_ns=33\n",
+            "gpus=1\ngraph_instantiate_ns=111\ngraph_update_ns=22\ngraph_clone_ns=33\ngraph_upload_ns=44\n",
         )
         .unwrap();
         let g = p.gpu(DeviceId(0)).unwrap();
         assert_eq!(g.graph_instantiate_ns, 111);
         assert_eq!(g.graph_update_ns, 22);
         assert_eq!(g.graph_clone_ns, 33);
+        assert_eq!(g.graph_upload_ns, 44);
         let text = p.to_profile_text();
         assert!(text.contains("graph_instantiate_ns=111"));
         assert!(text.contains("graph_update_ns=22"));
         assert!(text.contains("graph_clone_ns=33"));
+        assert!(text.contains("graph_upload_ns=44"));
         let open = HardwareProfile::parse("gpus=1\n").unwrap();
         assert_eq!(open.gpu(DeviceId(0)).unwrap().graph_instantiate_ns, 25_000);
         assert_eq!(open.gpu(DeviceId(0)).unwrap().graph_update_ns, 5_000);
         assert_eq!(open.gpu(DeviceId(0)).unwrap().graph_clone_ns, 8_000);
+        assert_eq!(open.gpu(DeviceId(0)).unwrap().graph_upload_ns, 6_000);
     }
 
     #[test]

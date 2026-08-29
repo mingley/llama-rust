@@ -58,7 +58,9 @@
 //! [`Sim::mem_info`] is `cudaMemGetInfo` `(free, total)`.
 //! [`Sim::set_stream_priority`] is `cudaStreamCreateWithPriority`.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; first
-//! [`launch_graph`](Sim::launch_graph) calls it). [`Sim::update_graph`] is
+//! [`launch_graph`](Sim::launch_graph) calls it). [`Sim::upload_graph`] is
+//! `cudaGraphUpload` (host-sync; first launch after instantiate calls it).
+//! [`Sim::update_graph`] is
 //! `cudaGraphExecUpdate` when device, stream, and op kinds match.
 //! [`Sim::clone_graph`] is `cudaGraphClone` (independent, not instantiated).
 //! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`.
@@ -793,6 +795,7 @@ mod tests {
         let mut p = h100();
         for g in &mut p.gpus {
             g.graph_instantiate_ns = 40_000;
+            g.graph_upload_ns = 12_000;
         }
         let mut sim = Sim::new(p);
         let d = DeviceId(0);
@@ -807,13 +810,69 @@ mod tests {
         sim.instantiate_graph(g).unwrap();
         assert_eq!(sim.clock_ns(), t0.saturating_add(40_000));
         assert!(sim.graph_instantiated(g).unwrap());
+        assert!(!sim.graph_uploaded(g).unwrap());
         sim.instantiate_graph(g).unwrap();
         assert_eq!(sim.clock_ns(), t0.saturating_add(40_000));
+        sim.upload_graph(g).unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(52_000));
+        assert!(sim.graph_uploaded(g).unwrap());
+        sim.upload_graph(g).unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(52_000));
         let t1 = sim.clock_ns();
         let n = sim.launch_graph(g, s).unwrap();
         assert_eq!(n, 1);
         assert_eq!(sim.clock_ns(), t1);
         sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn upload_graph_rejects_uninstantiated() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let g = sim.end_capture().unwrap();
+        let err = sim.upload_graph(g).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.instantiate_graph(g).unwrap();
+        sim.upload_graph(g).unwrap();
+        assert!(sim.graph_uploaded(g).unwrap());
+    }
+
+    #[test]
+    fn first_graph_launch_uploads_after_instantiate() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_instantiate_ns = 25_000;
+            g.graph_upload_ns = 9_000;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let g = sim.end_capture().unwrap();
+        sim.instantiate_graph(g).unwrap();
+        let t0 = sim.clock_ns();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(sim.clock_ns(), t0.saturating_add(9_000));
+        assert!(sim.graph_uploaded(g).unwrap());
+        sim.synchronize().unwrap();
+        let t1 = sim.clock_ns();
+        let n2 = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n2, 1);
+        assert_eq!(sim.clock_ns(), t1);
     }
 
     #[test]
@@ -834,12 +893,15 @@ mod tests {
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let exec = sim.end_capture().unwrap();
         sim.instantiate_graph(exec).unwrap();
+        sim.upload_graph(exec).unwrap();
+        assert!(sim.graph_uploaded(exec).unwrap());
         sim.begin_capture(d, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
         let src = sim.end_capture().unwrap();
         let t0 = sim.clock_ns();
         sim.update_graph(exec, src).unwrap();
         assert_eq!(sim.clock_ns(), t0.saturating_add(7_000));
+        assert!(!sim.graph_uploaded(exec).unwrap());
         sim.free_sync(a).unwrap();
         let n = sim.launch_graph(exec, s).unwrap();
         assert_eq!(n, 1);
@@ -907,6 +969,11 @@ mod tests {
         }
         let cl = sim.clone_graph(exec).unwrap_err();
         match cl {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let up = sim.upload_graph(exec).unwrap_err();
+        match up {
             SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }

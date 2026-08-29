@@ -117,8 +117,8 @@ iteration at a token (`0` = the whole token) and still samples TTFT once.
 it, then a parent of `launch_graph` child nodes for a grouped launch
 (combos reuse leaves when one expert is evicted). Capture waits with
 `synchronize_stream` so the compute stream is idle (CUDA). First launch of
-a new graph pays `graph_instantiate_ns`, then `graph_launch_ns` once per
-launch. `--plan-window
+a new graph pays `graph_instantiate_ns` then `graph_upload_ns`, then
+`graph_launch_ns` once per launch. `--plan-window
 N` runs [`plan_window`](crate::plan_window) Stay vs Fetch before prefetch (Stay
 does not evict a resident working set). Replay reports `prefetch_hits` /
 `prefetch_waste`. `schedule_replay` / `expertvm schedule` is open-loop

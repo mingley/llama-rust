@@ -125,6 +125,8 @@ struct Graph {
     origin: (DeviceId, StreamId),
     /// `cudaGraphInstantiate` has run (explicit or first launch).
     instantiated: bool,
+    /// `cudaGraphUpload` has run (explicit or first launch after instantiate).
+    uploaded: bool,
 }
 
 /// Deterministic GPU node.
@@ -630,6 +632,7 @@ impl Sim {
                 steps,
                 origin: cap.origin,
                 instantiated: false,
+                uploaded: false,
             },
         );
         Ok(id)
@@ -639,21 +642,27 @@ impl Sim {
     /// streams keep the ids they joined with, so copy and compute can overlap.
     ///
     /// First launch [`Self::instantiate_graph`]s if needed (`cudaGraphInstantiate`
-    /// then `cudaGraphLaunch`). Later launches skip instantiate. During capture
+    /// then [`Self::upload_graph`] then `cudaGraphLaunch`). Later launches skip
+    /// both. During capture
     /// on a captured stream this records a child-graph node (the child must
     /// already be instantiated). Independent streams still launch live.
+    /// [`Self::upload_graph`] is skipped while any stream is capturing (host-sync
+    /// upload cannot run during capture); the live launch still enqueues.
     pub fn launch_graph(&mut self, graph: GraphId, stream: StreamId) -> Result<u32, SimError> {
-        let (origin, instantiated) = {
+        let (origin, instantiated, uploaded) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            (g.origin, g.instantiated)
+            (g.origin, g.instantiated, g.uploaded)
         };
         if self.in_capture(origin.0, stream) {
             return self.capture_child_graph(graph, origin.0, stream, instantiated);
         }
         if !instantiated {
             self.instantiate_graph(graph)?;
+        }
+        if !uploaded && self.capturing.is_none() {
+            self.upload_graph(graph)?;
         }
         let mut stack = BTreeSet::new();
         self.enqueue_graph(graph, stream, true, &mut stack)
@@ -771,6 +780,16 @@ impl Sim {
             })
     }
 
+    /// Whether [`Self::upload_graph`] (or a first launch after instantiate) has run.
+    pub fn graph_uploaded(&self, graph: GraphId) -> Result<bool, SimError> {
+        self.graphs
+            .get(&graph)
+            .map(|g| g.uploaded)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })
+    }
+
     /// `cudaGraphInstantiate`. Host-synchronous. Capture cannot include it.
     ///
     /// Already-instantiated ids are a no-op. The first [`Self::launch_graph`]
@@ -795,6 +814,39 @@ impl Sim {
                 why: "unknown graph",
             })?
             .instantiated = true;
+        Ok(())
+    }
+
+    /// `cudaGraphUpload`. Host-synchronous. Capture cannot include it.
+    ///
+    /// The exec must already be instantiated. Already-uploaded ids are a no-op.
+    /// The first [`Self::launch_graph`] calls this when needed. [`Self::update_graph`]
+    /// clears the flag so the next launch uploads again.
+    pub fn upload_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture graph upload")?;
+        let (device, instantiated, already) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let device = g.steps.first().map(|(d, _, _)| *d).unwrap_or(DeviceId(0));
+            (device, g.instantiated, g.uploaded)
+        };
+        if !instantiated {
+            return Err(SimError::Invalid {
+                why: "graph not instantiated",
+            });
+        }
+        if already {
+            return Ok(());
+        }
+        let ns = self.profile.gpu(device)?.graph_upload_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        self.graphs
+            .get_mut(&graph)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .uploaded = true;
         Ok(())
     }
 
@@ -832,12 +884,11 @@ impl Sim {
         }
         let ns = self.profile.gpu(device)?.graph_update_ns.max(1);
         self.clock = self.clock.saturating_add(ns);
-        self.graphs
-            .get_mut(&exec)
-            .ok_or(SimError::Invalid {
-                why: "unknown graph",
-            })?
-            .steps = src_steps;
+        let exec = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        exec.steps = src_steps;
+        exec.uploaded = false;
         Ok(())
     }
 
@@ -865,6 +916,7 @@ impl Sim {
                 steps,
                 origin,
                 instantiated: false,
+                uploaded: false,
             },
         );
         Ok(id)
