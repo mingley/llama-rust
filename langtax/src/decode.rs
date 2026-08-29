@@ -1634,11 +1634,13 @@ impl Llama {
     /// Not used by [`Llama::forward`] / append [`Llama::prefill_logits`]. A
     /// full-prefix hit rewinds one token and recomputes it so the logits are
     /// of the last prompt token (scratch otherwise still holds the last
-    /// generated token).
-    pub fn prompt_logits<'c>(
+    /// generated token). `max_suffix` caps newly forwarded tokens (`0` = the
+    /// whole remaining suffix) for chunked prefill.
+    fn prompt_with_suffix_cap<'c>(
         &self,
         cache: &'c mut KvCache,
         tokens: &[u32],
+        max_suffix: usize,
     ) -> Result<&'c [f32], LlamaError> {
         if tokens.is_empty() {
             return Err(LlamaError::Shape("prefill tokens".into()));
@@ -1669,7 +1671,38 @@ impl Llama {
         let suffix = tokens
             .get(hit..)
             .ok_or_else(|| LlamaError::Shape("prefill tokens".into()))?;
-        self.prefill_logits(cache, suffix)
+        let cap = if max_suffix == 0 {
+            suffix.len()
+        } else {
+            suffix.len().min(max_suffix)
+        };
+        let part = suffix
+            .get(..cap)
+            .ok_or_else(|| LlamaError::Shape("prefill tokens".into()))?;
+        self.prefill_logits(cache, part)
+    }
+
+    /// [`Llama::prompt_logits`]: reuse + intern bind, then at most `max_suffix`
+    /// new tokens (`0` = the whole remaining suffix).
+    ///
+    /// A full-prefix intern/LCP hit still recomputes the last prompt token.
+    /// Used by the continuous-batching engine for chunked prefill.
+    pub fn prompt_chunk<'c>(
+        &self,
+        cache: &'c mut KvCache,
+        tokens: &[u32],
+        max_suffix: usize,
+    ) -> Result<&'c [f32], LlamaError> {
+        self.prompt_with_suffix_cap(cache, tokens, max_suffix)
+    }
+
+    /// [`Llama::prompt_chunk`] with `max_suffix = 0` (whole remaining suffix).
+    pub fn prompt_logits<'c>(
+        &self,
+        cache: &'c mut KvCache,
+        tokens: &[u32],
+    ) -> Result<&'c [f32], LlamaError> {
+        self.prompt_with_suffix_cap(cache, tokens, 0)
     }
 }
 
@@ -9877,6 +9910,20 @@ mod tests {
                 .expect("p");
             assert_eq!(dense, paged, "paged greedy must match dense");
         }
+    }
+
+    #[test]
+    fn prompt_chunk_two_steps_match_full_prompt_logits() {
+        let tokens = [1u32, 2, 3, 4];
+        let model = Llama::from_gguf(load_gguf_owned(tiny_llama_gguf()).expect("load")).expect("m");
+        let mut full = model.new_cache(16).expect("f");
+        let exp = model.prompt(&mut full, &tokens).expect("full");
+        let mut chunked = model.new_paged_cache(16, 2).expect("c");
+        let _a = model.prompt_chunk(&mut chunked, &tokens, 2).expect("c1");
+        assert_eq!(chunked.n_past, 2);
+        let got = model.prompt_chunk(&mut chunked, &tokens, 2).expect("c2");
+        assert_logits_match(got, &exp);
+        assert_eq!(chunked.n_past, tokens.len());
     }
 
     #[test]

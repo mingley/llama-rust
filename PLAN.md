@@ -743,6 +743,11 @@ model, do not celebrate the sim.
     prefixes (`Llama::new_paged_pool` / `new_paged_cache_on` /
     `Model::session_on_pool`). Default `new_paged_cache` still owns a private
     pool.
+13. [x] Engine-level continuous batching (`Engine` / `EngineCfg`) on a shared
+    `PagedKvPool`. Sequences may join mid-flight. Chunked prefill
+    (`prefill_chunk`) interleaves with decode. Greedy ids match an independent
+    `greedy_generate_cache` run. Intern hits across sequences. Distinct from
+    `expertvm schedule` (trace-level, not real KV). Not an HTTP server.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

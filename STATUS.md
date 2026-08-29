@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — continuous batching on paged KV
+
+`Engine` admits several sequences onto one `PagedKvPool`. Each `step`
+prefills at most `prefill_chunk` tokens (chunked prefill) then samples one
+greedy token per ready sequence. A sequence may `add` while another is
+already decoding. Greedy ids match `greedy_generate_cache` on writer
+tinies. Intern hits count across sequences. Distinct from `expertvm schedule`
+(trace JSONL, not decode KV). Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — shared paged-KV intern pool
 
 `PagedKvPool` is a cloneable interned-block arena. Two `KvCache`s built with
