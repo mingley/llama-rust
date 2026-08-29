@@ -8196,22 +8196,47 @@ mod tests {
     /// so that class of bug is visible without a real GGUF.
     /// This test is still the llama.cpp greedy identity on a real checkpoint.
     ///
-    /// Skips unless `LLAMA_RUST_REAL_MODEL_DIR` names a directory holding
-    /// `qwen2.5-0.5b-instruct-q4_k_m.gguf`. Reference values, model SHA, capture
-    /// tool, and the reason logits are not compared exactly are recorded in
-    /// `tests/reference/qwen2.5-0.5b-instruct-q4_k_m.json`.
+    /// Skips unless `LLAMA_RUST_REAL_MODEL_DIR` names a directory holding the
+    /// GGUF named in the sidecar JSON. Reference values live in
+    /// `tests/reference/*.json` so a second (NORM Llama) capture is drop-in.
     #[test]
     fn real_model_matches_llama_cpp_reference() {
-        // Unset means "not requested" and skipping is correct. Set-but-unusable
-        // must fail loudly: silently skipping there reports green while verifying
-        // nothing, which is the failure mode this whole test exists to prevent.
-        // It bit the CI workflow, which passed a relative `models` -- `cargo test`
-        // runs with the crate directory as CWD, so that resolved against
-        // `langtax/` and the job passed in 0.00s having loaded no weights.
+        check_real_fixture("qwen2.5-0.5b-instruct-q4_k_m.json", true);
+    }
+
+    /// NORM-RoPE Llama control. Skips until the sidecar JSON is captured.
+    /// When the JSON is present, a set `LLAMA_RUST_REAL_MODEL_DIR` must contain
+    /// the GGUF (fail-loud, same as Qwen). Do not invent the capture.
+    #[test]
+    fn real_llama_norm_matches_llama_cpp_reference() {
+        check_real_fixture("llama-3.2-1b-instruct-q4_k_m.json", false);
+    }
+
+    struct RealRef {
+        file: String,
+        architecture: String,
+        n_vocab: u32,
+        tokens: Vec<u32>,
+        prompt: String,
+        max_logit: f32,
+        greedy_ids: Vec<u32>,
+        greedy_text: String,
+    }
+
+    fn check_real_fixture(json_name: &str, required_when_env_set: bool) {
+        let json_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("tests")
+            .join("reference")
+            .join(json_name);
+        if !required_when_env_set && !json_path.is_file() {
+            return;
+        }
         let Ok(dir) = std::env::var("LLAMA_RUST_REAL_MODEL_DIR") else {
             return;
         };
-        let path = std::path::Path::new(&dir).join("qwen2.5-0.5b-instruct-q4_k_m.gguf");
+        let spec = load_real_ref(&json_path);
+        let path = std::path::Path::new(&dir).join(&spec.file);
         let opened = std::fs::File::open(&path);
         assert!(
             opened.is_ok(),
@@ -8222,61 +8247,151 @@ mod tests {
             path.display()
         );
         let mut file = opened.expect("checked by the assertion above");
-        // Printed so a CI log shows the test did real work rather than skipping.
         eprintln!("real-model differential test: {}", path.display());
         let mut blob = Vec::new();
         let _read = std::io::Read::read_to_end(&mut file, &mut blob).expect("read gguf");
         let g = load_gguf_owned(blob).expect("load real gguf");
         assert_eq!(
             g.kv("general.architecture"),
-            Some(&Kv::String("qwen2".into()))
+            Some(&Kv::String(spec.architecture.clone()))
         );
 
-        // Tokenization must match llama.cpp exactly; a divergence here changes
-        // the model input and invalidates every downstream comparison.
         let tok = Tokenizer::from_gguf(&g).expect("tokenizer");
-        let ids = tok.encode("The capital of France is").expect("encode");
-        assert_eq!(
-            ids,
-            [785u32, 6722, 315, 9625, 374],
-            "tokenization diverged from llama.cpp"
-        );
+        let ids = tok.encode(&spec.prompt).expect("encode");
+        assert_eq!(ids, spec.tokens, "tokenization diverged from llama.cpp");
 
         let model = Llama::from_gguf(g).expect("model");
-        assert_eq!(model.n_vocab, 151_936);
+        assert_eq!(
+            model.n_vocab,
+            usize::try_from(spec.n_vocab).expect("n_vocab")
+        );
 
         let mut cache = model.new_cache(64).expect("cache");
         let logits = model.prefill(&mut cache, &ids).expect("prefill");
         let best = argmax(&logits);
-        assert_eq!(best, 12095, "argmax must be token 12095 (\" Paris\")");
+        let want_first = *spec.greedy_ids.first().expect("greedy");
+        assert_eq!(best, want_first, "argmax must be token {want_first}");
 
-        // llama.cpp reports max logit 17.504869 here. The two do genuinely
-        // different arithmetic (llama.cpp quantizes activations to Q8_K for
-        // K-quant dot products; this crate multiplies against f32 activations),
-        // so this is a sanity band, not an equality check. A whole-logit-unit
-        // drift means a real bug.
         let mx = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
         assert!(
-            (mx - 17.504_87).abs() < 0.5,
-            "max logit {mx} drifted from llama.cpp 17.504869"
+            (mx - spec.max_logit).abs() < 0.5,
+            "max logit {mx} drifted from llama.cpp {}",
+            spec.max_logit
         );
 
-        // Greedy continuation is the acceptance criterion: it must match
-        // llama.cpp token for token.
         let mut gen = Vec::new();
         let mut cur = best;
-        for _ in 0..8 {
+        for _ in 0..spec.greedy_ids.len() {
             gen.push(cur);
             let step = model.forward(&mut cache, cur).expect("forward");
             cur = argmax(&step);
         }
         assert_eq!(
-            gen,
-            [12095u32, 13, 1084, 374, 279, 7772, 3283, 304],
+            gen, spec.greedy_ids,
             "greedy token ids diverged from llama.cpp"
         );
         let text = tok.decode(&gen);
-        assert_eq!(text, " Paris. It is the largest city in");
+        assert_eq!(text, spec.greedy_text);
+    }
+
+    fn load_real_ref(path: &std::path::Path) -> RealRef {
+        let mut f =
+            std::fs::File::open(path).unwrap_or_else(|e| panic!("open {}: {e}", path.display()));
+        let mut text = String::new();
+        let _n = std::io::Read::read_to_string(&mut f, &mut text).expect("read json");
+        RealRef {
+            file: json_string(&text, "file"),
+            architecture: json_string(&text, "architecture"),
+            n_vocab: json_u32(&text, "n_vocab"),
+            tokens: json_u32_list(&text, "tokens"),
+            prompt: json_string(&text, "prompt"),
+            max_logit: json_f32(&text, "max"),
+            greedy_ids: json_u32_list(&text, "greedy_ids"),
+            greedy_text: json_string(&text, "greedy_text"),
+        }
+    }
+
+    fn after_json_key<'a>(text: &'a str, key: &str) -> &'a str {
+        let needle = format!("\"{key}\":");
+        text.split(&needle)
+            .nth(1)
+            .unwrap_or_else(|| panic!("missing {key}"))
+            .trim()
+    }
+
+    fn json_string(text: &str, key: &str) -> String {
+        let rest = after_json_key(text, key);
+        let rest = rest
+            .strip_prefix('"')
+            .unwrap_or_else(|| panic!("{key} not a string"));
+        let mut out = String::new();
+        let mut chars = rest.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('n') => out.push('\n'),
+                    Some('t') => out.push('\t'),
+                    Some('"') => out.push('"'),
+                    Some('\\') => out.push('\\'),
+                    Some(o) => out.push(o),
+                    None => break,
+                }
+            } else if c == '"' {
+                break;
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    fn json_u32(text: &str, key: &str) -> u32 {
+        let tok = after_json_key(text, key)
+            .split([',', '}', '\n'])
+            .next()
+            .unwrap_or("")
+            .trim();
+        tok.parse().unwrap_or_else(|_| panic!("bad u32 {key}"))
+    }
+
+    fn json_f32(text: &str, key: &str) -> f32 {
+        let tok = after_json_key(text, key)
+            .split([',', '}', '\n'])
+            .next()
+            .unwrap_or("")
+            .trim();
+        tok.parse().unwrap_or_else(|_| panic!("bad f32 {key}"))
+    }
+
+    fn json_u32_list(text: &str, key: &str) -> Vec<u32> {
+        let rest = after_json_key(text, key);
+        let start = rest.strip_prefix('[').expect("expected []");
+        let inner = start.split(']').next().unwrap_or("");
+        if inner.trim().is_empty() {
+            return Vec::new();
+        }
+        inner
+            .split(',')
+            .map(|p| p.trim().parse().expect("bad u32 in list"))
+            .collect()
+    }
+
+    #[test]
+    fn real_qwen_sidecar_json_parses() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("tests")
+            .join("reference")
+            .join("qwen2.5-0.5b-instruct-q4_k_m.json");
+        let spec = load_real_ref(&path);
+        assert_eq!(spec.file, "qwen2.5-0.5b-instruct-q4_k_m.gguf");
+        assert_eq!(spec.architecture, "qwen2");
+        assert_eq!(spec.n_vocab, 151_936);
+        assert_eq!(spec.tokens, vec![785, 6722, 315, 9625, 374]);
+        assert_eq!(spec.greedy_ids.len(), 8);
+        assert_eq!(spec.greedy_text, " Paris. It is the largest city in");
+        assert!((spec.max_logit - 17.504_87).abs() < 1e-5);
+        assert_eq!(spec.prompt, "The capital of France is");
     }
 
     fn load_fwd_match(bytes: &[u8], token: u32) {

@@ -25,8 +25,9 @@ top-20 logits, and the greedy continuation for one fixed prompt.
 | architecture | `qwen2` (NEOX rope) |
 | tensor dtypes | Q5_0 x133, F32 x121, Q8_0 x13, Q6_K x12, Q4_K x12 |
 
-This file is a useful regression target because it mixes five dtypes, uses the
-NEOX rope convention, and has `add_bos_token=false`.
+The Rust tests read this JSON (not hardcoded logits) so a second fixture is
+drop-in. `real_qwen_sidecar_json_parses` always loads the file; the GGUF
+differential still skips unless `LLAMA_RUST_REAL_MODEL_DIR` is set.
 
 ## Running the test
 
@@ -63,8 +64,10 @@ GGUF whose `rope.scaling` / `rope.type` is the Llama NORM walk).
 
 Capture with the same `ref.cpp` command below, write
 `llama-3.2-1b-instruct-q4_k_m.json` next to this README, and point
-`LLAMA_RUST_REAL_MODEL_DIR` at the directory. Do not download Hugging Face
-checkpoints in CI.
+`LLAMA_RUST_REAL_MODEL_DIR` at the directory. The test
+`real_llama_norm_matches_llama_cpp_reference` skips until that JSON
+exists; once it does, a set env var must contain the GGUF (fail-loud).
+Do not download Hugging Face checkpoints in CI. Do not invent the capture.
 
 ## Regenerating the reference
 

@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — real-model sidecar JSON drives the llama.cpp check
+
+`tests/reference/qwen2.5-0.5b-instruct-q4_k_m.json` is the source of tokens,
+greedy ids, and the max-logit band (not hardcoded). A NORM Llama capture
+drops in as `llama-3.2-1b-instruct-q4_k_m.json`; the test skips until that
+file exists and still does not download Hugging Face in CI. Dual score still
+has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — order2 persist + batch stream overlap in benches
 
 `analyze` reports causal `order2_persist‰` (`P(to|from, from_prev)` online, no
