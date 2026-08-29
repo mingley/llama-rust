@@ -109,9 +109,10 @@ map+D2D / pinned D2D is skipped (`cudaMalloc` / `--sync-alloc` still D2Ds). `--v
 `va_acquire` (remap an idle VA, else reserve+map) then pinned H2D into that
 VA (evict `va_release`s the pointer so the next miss skips reserve).
 `--vmm-page N` maps each expert in `N`-byte physicals (`va_acquire_paged`,
-vLLM KV-block analog; implies `--vmm`). `expertvm kv` reserves a KV VA and
-maps only `capacity` pages (`kernel_bufs` plus H2D or `--fill memset`;
-peak HBM is the working set, not the reservation). That is **simulated
+vLLM KV-block analog; implies `--vmm`). `expertvm kv` reserves per-sequence
+KV VAs and `cuMemCreate`s interned pages (`kernel_bufs` plus H2D or
+`--fill memset`; `--sequences N` maps the same physical into N VAs;
+peak HBM is unique pages, not the reservation). That is **simulated
 VMM**, not the reference engine's paged KV (`Llama::new_paged_cache` /
 `gguf_gemv serve --kv-page`, interned decode blocks).
 `--host-func` enqueues `cudaLaunchHostFunc` after each event's GEMMs
@@ -281,6 +282,7 @@ expertvm remote   trace.jsonl --expert-bytes 1048576 --profile 2node-rdma
 expertvm remote   trace.jsonl --expert-bytes 1048576 --activation-bytes 128
 expertvm kv       --pages 8 --page-bytes 4096 --capacity 2 --tokens 64
 expertvm kv       --pages 8 --capacity 2 --fill memset
+expertvm kv       --pages 8 --capacity 2 --sequences 2
 expertvm store    trace.jsonl --capacity 2 --expert-bytes 4096 --profile h100
 expertvm store    trace.jsonl --capacity 2 --managed --host-func
 expertvm store    trace.jsonl --capacity 1 --prefetch markov

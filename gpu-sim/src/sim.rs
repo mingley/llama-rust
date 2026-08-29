@@ -79,8 +79,11 @@ struct Pool {
 struct MemHandle {
     device: DeviceId,
     bytes: u64,
-    live: bool,
+    /// `cuMemCreate` / retain refs. `0` is released (`cuMemRelease`).
+    refs: u32,
     maps: u32,
+    /// HBM still charged for this physical.
+    charged: bool,
 }
 
 struct Op {
@@ -1525,8 +1528,10 @@ impl Sim {
     /// `cuMemCreate`: a device physical. Charges HBM. Does not map a VA.
     ///
     /// Host-synchronous. Capture cannot include it. Size must be granularity-aligned.
-    /// [`Self::va_map_handle`] maps this handle into a reserved VA without a second
-    /// HBM charge. [`Self::va_release_handle`] refunds when no maps remain.
+    /// Starts with one handle ref. [`Self::va_map_handle`] maps this handle into a
+    /// reserved VA without a second HBM charge. [`Self::va_release_handle`] is
+    /// `cuMemRelease` (allowed while mapped). HBM refunds when refs and maps are
+    /// both 0.
     pub fn va_create(&mut self, device: DeviceId, bytes: u64) -> Result<MemHandleId, SimError> {
         if bytes == 0 {
             return Err(SimError::Invalid {
@@ -1546,8 +1551,9 @@ impl Sim {
             MemHandle {
                 device,
                 bytes,
-                live: true,
+                refs: 1,
                 maps: 0,
+                charged: true,
             },
         );
         Ok(id)
@@ -1556,7 +1562,9 @@ impl Sim {
     /// `cuMemMap` of an existing [`Self::va_create`] handle into a reserved VA.
     ///
     /// Host-synchronous. Does not charge HBM (the handle already holds the
-    /// physicals). `device` must be the handle's device. Capture cannot include it.
+    /// physicals). `device` must be the handle's device. The handle must still
+    /// have a ref ([`Self::va_release_handle`] while mapped forbids further
+    /// maps). Capture cannot include it.
     pub fn va_map_handle(
         &mut self,
         id: AllocId,
@@ -1566,7 +1574,7 @@ impl Sim {
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let h = self.handle_ref(handle)?;
-        if !h.live {
+        if h.refs == 0 {
             return Err(SimError::Invalid {
                 why: "handle released",
             });
@@ -1614,37 +1622,87 @@ impl Sim {
         Ok(())
     }
 
-    /// `cuMemRelease`. The handle must not still be mapped into a VA.
+    /// `cuMemRelease`. Allowed while the physical is still mapped.
+    ///
+    /// Drops one handle ref. HBM refunds when refs and maps are both 0.
+    /// Capture cannot include it. A released handle cannot be mapped again;
+    /// [`Self::va_retain_handle`] on a still-mapped VA restores a ref.
     pub fn va_release_handle(&mut self, handle: MemHandleId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
-        let h = self.handle_ref(handle)?;
-        if !h.live {
+        let refs = self.handle_ref(handle)?.refs;
+        if refs == 0 {
             return Err(SimError::Invalid {
                 why: "handle released",
             });
         }
-        if h.maps > 0 {
-            return Err(SimError::Invalid {
-                why: "handle still mapped",
-            });
-        }
-        let device = h.device;
-        let bytes = h.bytes;
-        let used = self.gpu_rt(device)?.used;
-        self.gpu_rt_mut(device)?.used = used.saturating_sub(bytes);
-        self.handle_mut(handle)?.live = false;
+        self.handle_mut(handle)?.refs = refs.saturating_sub(1);
         self.clock = self.clock.saturating_add(1);
-        Ok(())
+        self.maybe_refund_handle(handle)
     }
 
-    /// Whether `handle` is live ([`Self::va_create`] and not [`Self::va_release_handle`]).
+    /// `cuMemRetainAllocationHandle` at a mapped `(device, offset)` span.
+    ///
+    /// Host-synchronous. Capture cannot include it. An explicit handle's ref
+    /// count increments (a released-but-mapped handle is restored to one ref).
+    /// A combined [`Self::va_map`] / [`Self::va_map_range`] span is promoted
+    /// so later unmaps do not refund until [`Self::va_release_handle`].
+    pub fn va_retain_handle(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+    ) -> Result<MemHandleId, SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let _gpu = self.profile.gpu(device)?;
+        let a = self.alloc_ref(id)?;
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        let bytes = a
+            .vmm_maps
+            .iter()
+            .find(|&&(d, o, _)| d == device && o == offset)
+            .map(|&(_, _, n)| n)
+            .ok_or(SimError::Invalid { why: "no such map" })?;
+        let key = (id, device, offset, bytes);
+        if let Some(&h) = self.vmm_handle_at.get(&key) {
+            let refs = self.handle_ref(h)?.refs;
+            self.handle_mut(h)?.refs = refs.saturating_add(1);
+            let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+            self.clock = self.clock.saturating_add(ns);
+            return Ok(h);
+        }
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let h = MemHandleId(self.next_handle);
+        self.next_handle = self.next_handle.saturating_add(1);
+        let _prev = self.mem_handles.insert(
+            h,
+            MemHandle {
+                device,
+                bytes,
+                refs: 1,
+                maps: 1,
+                charged: true,
+            },
+        );
+        let _old = self.vmm_handle_at.insert(key, h);
+        Ok(h)
+    }
+
+    /// Whether `handle` still has a `cuMemCreate` / retain ref.
     pub fn is_handle_live(&self, handle: MemHandleId) -> Result<bool, SimError> {
-        Ok(self.handle_ref(handle)?.live)
+        Ok(self.handle_ref(handle)?.refs > 0)
     }
 
     /// How many VA maps currently hold `handle`.
     pub fn handle_maps(&self, handle: MemHandleId) -> Result<u32, SimError> {
         Ok(self.handle_ref(handle)?.maps)
+    }
+
+    /// Outstanding `cuMemCreate` / [`Self::va_retain_handle`] refs.
+    pub fn handle_refs(&self, handle: MemHandleId) -> Result<u32, SimError> {
+        Ok(self.handle_ref(handle)?.refs)
     }
 
     /// Map `[offset, offset+bytes)` of a reserved VA onto `device`.
@@ -3316,9 +3374,23 @@ impl Sim {
         if let Some(h) = self.vmm_handle_at.remove(&(id, device, offset, bytes)) {
             let maps = self.handle_ref(h)?.maps;
             self.handle_mut(h)?.maps = maps.saturating_sub(1);
-            return Ok(());
+            return self.maybe_refund_handle(h);
         }
         self.refund_device(device, id, bytes)
+    }
+
+    /// Free HBM when a handle has no refs and no maps.
+    fn maybe_refund_handle(&mut self, handle: MemHandleId) -> Result<(), SimError> {
+        let (device, bytes, refund) = {
+            let h = self.handle_ref(handle)?;
+            (h.device, h.bytes, h.refs == 0 && h.maps == 0 && h.charged)
+        };
+        if refund {
+            let used = self.gpu_rt(device)?.used;
+            self.gpu_rt_mut(device)?.used = used.saturating_sub(bytes);
+            self.handle_mut(handle)?.charged = false;
+        }
+        Ok(())
     }
 
     fn bump_hbm_peak(&mut self, device: DeviceId) -> Result<(), SimError> {

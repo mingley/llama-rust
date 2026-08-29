@@ -1,7 +1,8 @@
 //! Expert virtual memory: traces, policies, stores, GPU-sim replay,
 //! open-loop continuous batching (`schedule_replay` / `schedule_placed` /
 //! `schedule_remote`), optional prefix cache on content-addressed `"p"`,
-//! paged VMM KV (`kv_replay` / `kv_paged`), [`store_replay`] / `expertvm store`.
+//! paged VMM KV (`kv_replay` / `kv_paged`, interned `cuMemCreate` handles),
+//! [`store_replay`] / `expertvm store`.
 
 #![deny(missing_docs, unsafe_code)]
 

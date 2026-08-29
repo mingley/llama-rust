@@ -12,7 +12,7 @@ use crate::sim_replay::{replay_streams, stream_of};
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
     AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelBuf, KernelKind, MemAdvise,
-    MemcpyOp, Place, Score, Sim, StreamId,
+    MemHandleId, MemcpyOp, Place, Score, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -110,11 +110,12 @@ pub struct GpuStoreCfg {
     /// per-sequence compute stream). Default off: copy is NULL (`StreamId(0)`),
     /// compute is `StreamId(1)`. Decode identity stays serial copies.
     pub seq_streams: bool,
-    /// Map Engine interned KV blocks onto this Sim (`va_reserve` + memset).
+    /// Map Engine interned KV blocks onto this Sim (`cuMemCreate` + `cuMemMap`).
     ///
     /// Default off (decode identity): scores bill expert H2D/GEMM only.
     /// `--kv-sim` reserves a VA of `pool_blocks` pages so TTFT/ITL include
-    /// KV traffic on the same clock. Distinct from `expertvm kv`.
+    /// KV traffic on the same clock. Interned blocks share one physical
+    /// handle. Distinct from `expertvm kv`.
     pub kv_sim: bool,
     /// Second compute stream at higher CUDA priority for decode GEMMs.
     ///
@@ -204,6 +205,7 @@ struct KvGpu {
     page_bytes: u64,
     n_pages: u32,
     mapped: BTreeSet<u32>,
+    handles: BTreeMap<u32, MemHandleId>,
     hits: u64,
     misses: u64,
 }
@@ -1330,6 +1332,7 @@ impl SimulatedGpuStore {
     /// Reserve a VMM VA for Engine interned KV (`pool_blocks` pages).
     ///
     /// No-op unless [`GpuStoreCfg::kv_sim`]. Idempotent after the first bind.
+    /// Faults `cuMemCreate` a physical and `cuMemMap` it; drop releases the handle.
     pub fn bind_kv(&mut self, n_pages: u32, page_bytes: u64) -> Result<(), Error> {
         if !self.kv_sim {
             return Ok(());
@@ -1350,6 +1353,7 @@ impl SimulatedGpuStore {
             page_bytes,
             n_pages,
             mapped: BTreeSet::new(),
+            handles: BTreeMap::new(),
             hits: 0,
             misses: 0,
         });
@@ -1401,7 +1405,16 @@ impl SimulatedGpuStore {
         let already = self.kv.as_ref().is_some_and(|k| k.mapped.contains(&id));
         if !already {
             self.sim.synchronize_stream(self.device, self.compute)?;
-            self.sim.va_map_range(va, self.device, off, bytes)?;
+            let existing = self.kv.as_ref().and_then(|k| k.handles.get(&id).copied());
+            if let Some(h) = existing {
+                self.sim.va_map_handle(va, self.device, off, h)?;
+            } else {
+                let h = self.sim.va_create(self.device, bytes)?;
+                if let Some(k) = self.kv.as_mut() {
+                    let _prev = k.handles.insert(id, h);
+                }
+                self.sim.va_map_handle(va, self.device, off, h)?;
+            }
             if let Some(k) = self.kv.as_mut() {
                 let _ins = k.mapped.insert(id);
             }
@@ -1442,8 +1455,15 @@ impl SimulatedGpuStore {
         }
         let (va, off, bytes) = self.kv_off(id)?;
         self.sim.va_unmap_range(va, self.device, off, bytes)?;
+        let h = self.kv.as_ref().and_then(|k| k.handles.get(&id).copied());
+        if let Some(h) = h {
+            if self.sim.handle_maps(h)? == 0 {
+                self.sim.va_release_handle(h)?;
+            }
+        }
         if let Some(k) = self.kv.as_mut() {
             let _gone = k.mapped.remove(&id);
+            let _h = k.handles.remove(&id);
         }
         Ok(())
     }

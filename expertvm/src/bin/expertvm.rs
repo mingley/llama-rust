@@ -26,7 +26,7 @@ usage: expertvm <command> [args]
   ep       <trace.jsonl> [--capacity N] [--expert-bytes N] [--hbm-bytes N] [--profile NAME]
   place    <trace.jsonl> [--gpus N] [--hot-pt N]
   remote   <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  kv       [--pages N] [--page-bytes B] [--capacity C] [--tokens T] [--profile NAME] [--fill h2d|memset]
+  kv       [--pages N] [--page-bytes B] [--capacity C] [--tokens T] [--profile NAME] [--fill h2d|memset] [--sequences N]
   store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-clone] [--timing-events] [--decode-priority] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
@@ -672,6 +672,7 @@ where
     let mut tokens = 64u32;
     let mut profile = String::from("h100");
     let mut fill = KvFill::H2d;
+    let mut sequences = 1u32;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -691,6 +692,9 @@ where
             "--fill" => {
                 fill = KvFill::parse(&value("fill", inline, &mut it)?).map_err(|e| e.to_string())?
             }
+            "--sequences" => {
+                sequences = parse_u32("sequences", &value("sequences", inline, &mut it)?)?
+            }
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => return Err(format!("unexpected argument {other}\n{USAGE}")),
         }
@@ -707,6 +711,7 @@ where
             page_bytes,
             slots: capacity,
             fill,
+            sequences,
         },
     )
     .map_err(|e| e.to_string())?;

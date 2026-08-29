@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — VMM `cuMemRetainAllocationHandle`
+
+`Sim::va_retain_handle` is `cuMemRetainAllocationHandle` (handle refs;
+combined `va_map` spans are promoted so two VAs share one physical).
+`va_release_handle` is `cuMemRelease` while mapped; HBM refunds when refs
+and maps are both 0. `expertvm kv --sequences N` and Engine `--kv-sim`
+interned blocks are `cuMemCreate` + `cuMemMap`. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — VMM `cuMemCreate` / `cuMemMap` split
 
 `Sim::va_create` is `cuMemCreate` (HBM, no VA). `va_map_handle` is `cuMemMap`

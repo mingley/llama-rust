@@ -35,9 +35,9 @@
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
 //! GEMM stays on one compute stream.
 //! `--kv-sim` maps interned KV blocks onto the same SimulatedGpuStore clock
-//! (`va_reserve` + memset on fault, kernel on intern hit) so TTFT/ITL include
-//! KV traffic. Default off: scores bill expert H2D/GEMM only. Distinct from
-//! `expertvm kv`. `--decode-priority` runs decode GEMMs on a second compute
+//! (`cuMemCreate` + `cuMemMap` on fault, kernel on intern hit, `cuMemRelease`
+//! on drop) so TTFT/ITL include KV traffic. Default off: scores bill expert
+//! H2D/GEMM only. Distinct from `expertvm kv`. `--decode-priority` runs decode GEMMs on a second compute
 //! stream at higher CUDA priority than leftover prefill (implies
 //! `--stream-priority`). Token-boundary ITL then samples that decode stream
 //! so leftover prefill does not inflate it. Default off: one compute stream

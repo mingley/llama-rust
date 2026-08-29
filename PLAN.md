@@ -441,11 +441,16 @@ Exact (mechanical invariants agents may rely on):
   another GPU (remote read, interconnect billing; writes still migrate;
   host preferred does not skip first-touch)
 - CUDA VMM (`va_reserve` / `va_map` / `va_unmap` / `va_free`,
+  `va_create` / `va_map_handle` / `va_retain_handle` / `va_release_handle`,
   `va_acquire` / `va_release`, `va_map_range` / `va_unmap_range`):
   `cuMemAddressReserve` / `cuMemMap` / `cuMemUnmap` / `cuMemAddressFree`;
-  HBM charged only while mapped; the pointer survives unmap;
+  `cuMemCreate` / `cuMemRetainAllocationHandle` / `cuMemRelease`;
+  HBM charged while a handle has refs or maps; combined `va_map` still
+  refunds on unmap until retain promotes the span;
+  the pointer survives unmap;
   `va_release` parks the VA so `va_acquire` remaps without another reserve;
   sparse sub-range maps (vLLM KV-block analog) charge only the mapped span;
+  two VAs may `va_map_handle` the same physical;
   [`Sim::kernel`] needs the whole VA covered; [`Sim::kernel_bufs`] /
   [`Sim::memset_buf`] / [`MemcpyOp::offset`] touch a mapped span so a paged
   KV working set need not cover the pointer; `va_acquire_paged` maps a VA in
@@ -659,8 +664,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `--accessed-by`; dest eviction is `drop_managed_copy` (one GPU's copy, allocation stays). `--vmm` is
   `va_acquire` (remap idle VA or reserve+map) then H2D; evict `va_release`s
   the pointer. `--vmm-page N` is `va_acquire_paged` (KV-block physicals;
-  implies `--vmm`). `expertvm kv` demand-pages a reserved VA (`kernel_bufs`
-  + H2D or `memset_buf` at a mapped span; peak HBM is the working set). `--host-func` is `cudaLaunchHostFunc` after each event's
+  implies `--vmm`). `expertvm kv` demand-pages per-sequence VAs (`cuMemCreate`
+  + `cuMemMap`; `--sequences N` aliases interned physicals; `kernel_bufs`
+  + H2D or `memset_buf` at a mapped span; peak HBM is unique pages). `--host-func` is `cudaLaunchHostFunc` after each event's
   GEMMs (`host_func_ns`; no GPU occupancy). `--blocking-streams` is
   `cudaStreamCreate` on seq-streams (serialize with NULL); default is
   `cudaStreamNonBlocking`. `--legacy-null` is `set_legacy_null_stream`
@@ -1046,6 +1052,12 @@ model, do not celebrate the sim.
     no VA; `va_map_handle` maps that handle into a reserved VA without a
     second charge (two VAs may share one physical). `va_release_handle` is
     `cuMemRelease` when maps are 0. `va_map` still Create+Maps in one call.
+    Dual score still has no `$/M tokens`.
+68. [x] VMM `cuMemRetainAllocationHandle`: `Sim::va_retain_handle` increments
+    handle refs (combined `va_map` spans are promoted). `va_release_handle`
+    is `cuMemRelease` while mapped; HBM refunds when refs and maps are both
+    0. `expertvm kv --sequences N` and Engine `--kv-sim` interned blocks
+    are `cuMemCreate` + `cuMemMap` so sequence VAs share one physical.
     Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

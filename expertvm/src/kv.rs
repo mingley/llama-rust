@@ -2,9 +2,10 @@
 
 use crate::error::Error;
 use gpu_sim::{
-    AllocId, DeviceId, HardwareProfile, KernelBuf, KernelKind, MemcpyOp, Place, Score, Sim,
-    StreamId,
+    AllocId, DeviceId, HardwareProfile, KernelBuf, KernelKind, MemHandleId, MemcpyOp, Place, Score,
+    Sim, StreamId,
 };
+use std::collections::BTreeMap;
 use std::fmt::{self, Write};
 
 /// Simulated paged-KV result: working-set hits plus gpu-sim scores.
@@ -24,10 +25,12 @@ pub struct KvReplay {
     pub misses: u64,
     /// Pages in the reserved VA (`1 + max(accesses)`).
     pub pages: u32,
-    /// Mapped-page capacity (LRU slots).
+    /// Mapped-page capacity (LRU slots) per sequence VA.
     pub slots: usize,
     /// How a miss fills the mapped page.
     pub fill: KvFill,
+    /// Sequence VAs that shared interned physicals.
+    pub sequences: u32,
 }
 
 impl KvReplay {
@@ -40,8 +43,8 @@ impl KvReplay {
         );
         let _w = write!(
             s,
-            " hits={} misses={} pages={} slots={} fill={}",
-            self.hits, self.misses, self.pages, self.slots, self.fill
+            " hits={} misses={} pages={} slots={} fill={} sequences={}",
+            self.hits, self.misses, self.pages, self.slots, self.fill, self.sequences
         );
         s
     }
@@ -54,7 +57,7 @@ impl KvReplay {
 /// on the same virtual clock as expert H2D.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KvSimOp {
-    /// New physical block: `va_map_range` + `cudaMemsetAsync` (attention write).
+    /// New physical block: `cuMemCreate` + `cuMemMap` + `cudaMemsetAsync`.
     Fault(u32),
     /// Intern hit: kernel read of an already-mapped block.
     Hit(u32),
@@ -65,7 +68,7 @@ pub enum KvSimOp {
         /// Unique dest block.
         dst: u32,
     },
-    /// Refcount hit 0: `va_unmap_range`.
+    /// Refcount hit 0: `va_unmap_range` + `cuMemRelease`.
     Drop(u32),
 }
 
@@ -107,6 +110,11 @@ pub struct KvCfg {
     pub slots: usize,
     /// Miss fill.
     pub fill: KvFill,
+    /// Per-sequence VAs that alias interned physicals (`cuMemCreate` + `cuMemMap`).
+    ///
+    /// `1` is a single reserved VA. `2+` is the vLLM intern analog: unique pages
+    /// charge HBM once; each sequence maps the same handle into its own VA.
+    pub sequences: u32,
 }
 
 impl KvCfg {
@@ -117,7 +125,15 @@ impl KvCfg {
             page_bytes,
             slots,
             fill: KvFill::H2d,
+            sequences: 1,
         }
+    }
+
+    /// Alias interned physicals into `n` sequence VAs (`1` keeps a single VA).
+    #[must_use]
+    pub fn with_sequences(mut self, n: u32) -> Self {
+        self.sequences = n;
+        self
     }
 }
 
@@ -133,17 +149,22 @@ pub fn kv_replay(
     kv_paged(accesses, profile, KvCfg::h2d(page_bytes, slots))
 }
 
-/// Demand-page a reserved KV VA. `accesses` are page indices.
+/// Demand-page reserved KV VAs. `accesses` are interned page indices.
 ///
-/// Reserves `n_pages * page_bytes` of VA (`n_pages = 1 + max(accesses)`), maps
-/// at most `slots` pages at a time, fills a miss ([`KvFill`]), and GEMMs with
-/// [`gpu_sim::Sim::kernel_bufs`]. Peak HBM is the working set, not the VA.
+/// Reserves `n_pages * page_bytes` of VA per sequence (`n_pages = 1 + max(accesses)`).
+/// Each unique page is `cuMemCreate`; sequence VAs `cuMemMap` that handle.
+/// At most `slots` maps per sequence. Peak HBM is unique physicals, not
+/// `sequences * slots`. Fill a first map ([`KvFill`]) and GEMM with
+/// [`gpu_sim::Sim::kernel_bufs`].
 pub fn kv_paged(accesses: &[u32], profile: HardwareProfile, cfg: KvCfg) -> Result<KvReplay, Error> {
     if cfg.page_bytes == 0 {
         return Err(Error::Store("page-bytes must be > 0"));
     }
     if cfg.slots == 0 {
         return Err(Error::Store("kv slots must be > 0"));
+    }
+    if cfg.sequences == 0 {
+        return Err(Error::Store("kv sequences must be > 0"));
     }
     if accesses.is_empty() {
         return Ok(KvReplay {
@@ -156,50 +177,155 @@ pub fn kv_paged(accesses: &[u32], profile: HardwareProfile, cfg: KvCfg) -> Resul
             pages: 0,
             slots: cfg.slots,
             fill: cfg.fill,
+            sequences: cfg.sequences,
         });
     }
+    let nseq = usize::try_from(cfg.sequences).map_err(|_| Error::Store("kv sequences"))?;
     let max_page = accesses.iter().copied().max().unwrap_or(0);
     let n_pages = max_page.saturating_add(1);
     let va_bytes = u64::from(n_pages).saturating_mul(cfg.page_bytes);
     let mut sim = Sim::new(profile);
-    let va = sim.va_reserve(va_bytes)?;
     let d = DeviceId(0);
-    let mut order: Vec<u32> = Vec::new();
-    let mut hits = 0u64;
-    let mut misses = 0u64;
+    let mut vas = Vec::new();
+    for _ in 0..nseq {
+        vas.push(sim.va_reserve(va_bytes)?);
+    }
+    let mut rt = KvRt {
+        vas,
+        handles: BTreeMap::new(),
+        orders: vec![Vec::new(); nseq],
+        cfg,
+        hits: 0,
+        misses: 0,
+    };
     for &page in accesses {
-        let off = page_offset(page, cfg.page_bytes);
-        if recency_touch(&mut order, page) {
-            hits = hits.saturating_add(1);
-            gemm_page(&mut sim, va, off, cfg.page_bytes)?;
-            continue;
+        let mut missed: Vec<usize> = Vec::new();
+        for seq in 0..nseq {
+            if kv_lru_hit(&mut rt, seq, page)? {
+                rt.hits = rt.hits.saturating_add(1);
+                let va = *rt.vas.get(seq).ok_or(Error::Store("kv sequence"))?;
+                gemm_page(
+                    &mut sim,
+                    va,
+                    page_offset(page, rt.cfg.page_bytes),
+                    rt.cfg.page_bytes,
+                )?;
+            } else {
+                rt.misses = rt.misses.saturating_add(1);
+                kv_evict_if_full(&mut sim, &mut rt, seq)?;
+                missed.push(seq);
+            }
         }
-        misses = misses.saturating_add(1);
-        if order.len() >= cfg.slots {
-            let victim = order.remove(0);
-            let voff = page_offset(victim, cfg.page_bytes);
-            sim.va_unmap_range(va, d, voff, cfg.page_bytes)?;
+        for seq in missed {
+            kv_finish_miss(&mut sim, &mut rt, seq, page)?;
         }
-        sim.va_map_range(va, d, off, cfg.page_bytes)?;
-        fill_page(&mut sim, va, off, cfg.page_bytes, cfg.fill)?;
-        gemm_page(&mut sim, va, off, cfg.page_bytes)?;
-        order.push(page);
     }
     sim.synchronize()?;
     let score = Score::from_sim(&sim);
-    sim.va_unmap(va)?;
-    sim.va_free(va)?;
+    for &va in &rt.vas {
+        if sim.vmm_mapped_bytes(va, d)? > 0 {
+            sim.va_unmap(va)?;
+        }
+        sim.va_free(va)?;
+    }
+    for h in rt.handles.values().copied() {
+        if sim.is_handle_live(h)? {
+            sim.va_release_handle(h)?;
+        }
+    }
     Ok(KvReplay {
         sim_ns: score.wall_ns,
         bytes_moved: score.bytes_moved,
         hbm_peak: score.hbm_peak,
         energy_uj: score.energy_uj,
-        hits,
-        misses,
+        hits: rt.hits,
+        misses: rt.misses,
         pages: n_pages,
-        slots: cfg.slots,
-        fill: cfg.fill,
+        slots: rt.cfg.slots,
+        fill: rt.cfg.fill,
+        sequences: rt.cfg.sequences,
     })
+}
+
+struct KvRt {
+    vas: Vec<AllocId>,
+    handles: BTreeMap<u32, MemHandleId>,
+    orders: Vec<Vec<u32>>,
+    cfg: KvCfg,
+    hits: u64,
+    misses: u64,
+}
+
+fn kv_lru_hit(rt: &mut KvRt, seq: usize, page: u32) -> Result<bool, Error> {
+    let order = rt.orders.get_mut(seq).ok_or(Error::Store("kv sequence"))?;
+    Ok(recency_touch(order, page))
+}
+
+fn kv_evict_if_full(sim: &mut Sim, rt: &mut KvRt, seq: usize) -> Result<(), Error> {
+    let full = rt.orders.get(seq).is_some_and(|o| o.len() >= rt.cfg.slots);
+    if !full {
+        return Ok(());
+    }
+    let va = *rt.vas.get(seq).ok_or(Error::Store("kv sequence"))?;
+    let victim = rt
+        .orders
+        .get_mut(seq)
+        .ok_or(Error::Store("kv sequence"))?
+        .remove(0);
+    kv_drop_map(sim, &mut rt.handles, va, victim, rt.cfg.page_bytes)
+}
+
+fn kv_finish_miss(sim: &mut Sim, rt: &mut KvRt, seq: usize, page: u32) -> Result<(), Error> {
+    let page_bytes = rt.cfg.page_bytes;
+    let fill = rt.cfg.fill;
+    let va = *rt.vas.get(seq).ok_or(Error::Store("kv sequence"))?;
+    kv_bind_map(sim, &mut rt.handles, va, page, page_bytes, fill)?;
+    gemm_page(sim, va, page_offset(page, page_bytes), page_bytes)?;
+    rt.orders
+        .get_mut(seq)
+        .ok_or(Error::Store("kv sequence"))?
+        .push(page);
+    Ok(())
+}
+
+fn kv_drop_map(
+    sim: &mut Sim,
+    handles: &mut BTreeMap<u32, MemHandleId>,
+    va: AllocId,
+    page: u32,
+    page_bytes: u64,
+) -> Result<(), Error> {
+    let d = DeviceId(0);
+    let off = page_offset(page, page_bytes);
+    sim.va_unmap_range(va, d, off, page_bytes)?;
+    let Some(h) = handles.get(&page).copied() else {
+        return Ok(());
+    };
+    if sim.handle_maps(h)? == 0 {
+        sim.va_release_handle(h)?;
+        let _gone = handles.remove(&page);
+    }
+    Ok(())
+}
+
+fn kv_bind_map(
+    sim: &mut Sim,
+    handles: &mut BTreeMap<u32, MemHandleId>,
+    va: AllocId,
+    page: u32,
+    page_bytes: u64,
+    fill: KvFill,
+) -> Result<(), Error> {
+    let d = DeviceId(0);
+    let off = page_offset(page, page_bytes);
+    if let Some(h) = handles.get(&page).copied() {
+        sim.va_map_handle(va, d, off, h)?;
+        return Ok(());
+    }
+    let h = sim.va_create(d, page_bytes)?;
+    let _prev = handles.insert(page, h);
+    sim.va_map_handle(va, d, off, h)?;
+    fill_page(sim, va, off, page_bytes, fill)
 }
 
 /// Cycling page indices `0 .. pages` for `tokens` steps.
@@ -297,6 +423,7 @@ mod tests {
         assert!(tight.line().contains("slots=2"));
         assert!(fat.line().contains("hbm_peak=32768"));
         assert!(tight.line().contains("fill=h2d"));
+        assert!(tight.line().contains("sequences=1"));
     }
 
     #[test]
@@ -307,6 +434,7 @@ mod tests {
             page_bytes: 4096,
             slots: 2,
             fill: KvFill::H2d,
+            sequences: 1,
         };
         let h2d = kv_paged(&accesses, p.clone(), cfg).expect("h2d");
         let mut zero = cfg;
@@ -329,7 +457,28 @@ mod tests {
         let p = HardwareProfile::example_h100_sxm();
         let err = kv_replay(&[0], p.clone(), 0, 1).unwrap_err();
         assert!(matches!(err, Error::Store(_)));
-        let err = kv_replay(&[0], p, 4096, 0).unwrap_err();
+        let err = kv_replay(&[0], p.clone(), 4096, 0).unwrap_err();
         assert!(matches!(err, Error::Store(_)));
+        let err = kv_paged(&[0], p, KvCfg::h2d(4096, 1).with_sequences(0)).unwrap_err();
+        assert!(matches!(err, Error::Store(_)));
+    }
+
+    #[test]
+    fn alias_sequences_share_physicals() {
+        let p = HardwareProfile::example_h100_sxm();
+        let accesses = cycling_pages(8, 64);
+        let one = kv_paged(&accesses, p.clone(), KvCfg::h2d(4096, 2)).expect("one");
+        let two = kv_paged(&accesses, p, KvCfg::h2d(4096, 2).with_sequences(2)).expect("two");
+        assert_eq!(one.hbm_peak, 2 * 4096);
+        assert_eq!(two.hbm_peak, one.hbm_peak);
+        assert_eq!(two.sequences, 2);
+        assert_eq!(two.bytes_moved, one.bytes_moved);
+        assert!(
+            two.misses > one.misses,
+            "one={} two={}",
+            one.misses,
+            two.misses
+        );
+        assert!(two.line().contains("sequences=2"));
     }
 }

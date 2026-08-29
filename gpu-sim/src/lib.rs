@@ -54,7 +54,9 @@
 //! map sparse physicals (vLLM KV-block analog); HBM is the mapped span.
 //! [`Sim::va_create`] is `cuMemCreate` (charges HBM). [`Sim::va_map_handle`] is
 //! `cuMemMap` of that handle (no second HBM charge; two VAs may share it).
-//! [`Sim::va_release_handle`] is `cuMemRelease` when no maps remain.
+//! [`Sim::va_retain_handle`] is `cuMemRetainAllocationHandle` (handle refs;
+//! combined `va_map` spans are promoted). [`Sim::va_release_handle`] is
+//! `cuMemRelease` (allowed while mapped; HBM refunds when refs and maps are 0).
 //! [`Sim::va_map`] still Create+Maps in one call.
 //! [`Sim::va_set_access`] is `cuMemSetAccess` PROT_READ on a peer (no dest HBM;
 //! interconnect). Writes still need a local map. [`Sim::va_unset_access`] drops it.
@@ -3038,6 +3040,7 @@ mod tests {
         sim.va_unmap(b).unwrap();
         assert_eq!(sim.hbm_used(d).unwrap(), bytes);
         assert_eq!(sim.handle_maps(h).unwrap(), 0);
+        assert_eq!(sim.handle_refs(h).unwrap(), 1);
         sim.va_release_handle(h).unwrap();
         assert!(!sim.is_handle_live(h).unwrap());
         assert_eq!(sim.hbm_used(d).unwrap(), 0);
@@ -3058,21 +3061,95 @@ mod tests {
             other => panic!("{other:?}"),
         }
         sim.va_map_handle(va, d0, 0, h).unwrap();
-        match sim.va_release_handle(h).unwrap_err() {
-            SimError::Invalid { why } => assert!(why.contains("mapped"), "{why}"),
-            other => panic!("{other:?}"),
-        }
-        sim.va_unmap(va).unwrap();
         sim.va_release_handle(h).unwrap();
-        match sim.va_map_handle(va, d0, 0, h).unwrap_err() {
+        assert!(!sim.is_handle_live(h).unwrap());
+        assert_eq!(sim.hbm_used(d0).unwrap(), bytes);
+        let va2 = sim.va_reserve(bytes).unwrap();
+        match sim.va_map_handle(va2, d0, 0, h).unwrap_err() {
             SimError::Invalid { why } => assert!(why.contains("released"), "{why}"),
             other => panic!("{other:?}"),
         }
+        sim.va_unmap(va).unwrap();
+        assert_eq!(sim.hbm_used(d0).unwrap(), 0);
         sim.va_free(va).unwrap();
+        sim.va_free(va2).unwrap();
         match sim.va_create(d0, 0).unwrap_err() {
             SimError::Invalid { why } => assert!(why.contains("zero"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn va_retain_handle_aliases_combined_map_without_extra_hbm() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 4096u64;
+        let a = sim.va_reserve(bytes).unwrap();
+        let b = sim.va_reserve(bytes).unwrap();
+        sim.va_map(a, d).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        let h = sim.va_retain_handle(a, d, 0).unwrap();
+        assert_eq!(sim.handle_refs(h).unwrap(), 1);
+        assert_eq!(sim.handle_maps(h).unwrap(), 1);
+        sim.va_map_handle(b, d, 0, h).unwrap();
+        assert_eq!(sim.handle_maps(h).unwrap(), 2);
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
+        sim.synchronize().unwrap();
+        sim.va_unmap(a).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        sim.va_unmap(b).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        sim.va_release_handle(h).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        sim.va_free(a).unwrap();
+        sim.va_free(b).unwrap();
+    }
+
+    #[test]
+    fn va_retain_restores_released_mapped_handle() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let bytes = 4096u64;
+        let h = sim.va_create(d, bytes).unwrap();
+        let a = sim.va_reserve(bytes).unwrap();
+        let b = sim.va_reserve(bytes).unwrap();
+        sim.va_map_handle(a, d, 0, h).unwrap();
+        sim.va_release_handle(h).unwrap();
+        assert!(!sim.is_handle_live(h).unwrap());
+        let h2 = sim.va_retain_handle(a, d, 0).unwrap();
+        assert_eq!(h2, h);
+        assert_eq!(sim.handle_refs(h).unwrap(), 1);
+        sim.va_map_handle(b, d, 0, h2).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        sim.va_unmap(a).unwrap();
+        sim.va_unmap(b).unwrap();
+        sim.va_release_handle(h2).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        sim.va_free(a).unwrap();
+        sim.va_free(b).unwrap();
+    }
+
+    #[test]
+    fn va_retain_handle_rejects_unmapped_and_capture() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let va = sim.va_reserve(4096).unwrap();
+        match sim.va_retain_handle(va, d, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("no such map"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.va_map(va, d).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.va_retain_handle(va, d, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.va_unmap(va).unwrap();
+        sim.va_free(va).unwrap();
     }
 
     #[test]

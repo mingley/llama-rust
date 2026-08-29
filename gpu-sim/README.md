@@ -44,7 +44,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemPrefetchAsync` (`prefetch` / `prefetch_host`) **moves** unless ReadMostly | PCIe / NVLink (1 ns if already local) |
 | `cuMemAddressReserve` (`va_reserve`) is a VA with no physical pages | `alloc_overhead_ns` (at the call) |
 | `cuMemMap` (`va_map`) charges HBM; `va_unmap` refunds; the VA is reusable | `alloc_overhead_ns` (map) |
-| `cuMemCreate` (`va_create`) charges HBM with no VA; `va_map_handle` maps it without a second charge; `va_release_handle` refunds when maps are 0 | `alloc_overhead_ns` (create and map) |
+| `cuMemCreate` (`va_create`) charges HBM with no VA; `va_map_handle` maps it without a second charge; `va_retain_handle` increments refs; `va_release_handle` refunds when refs and maps are 0 | `alloc_overhead_ns` (create, map, retain) |
 | `cuMemGetAllocationGranularity` (`va_granularity_bytes`): reserve/map sizes align (`0`/`1` = any) | not timed |
 | `cuMemSetAccess` (`va_set_access`) PROT_READ on a peer; dest HBM stays 0 | interconnect, not local HBM |
 | `va_map_range` / `va_unmap_range` map a span; `kernel()` needs the whole VA; `kernel_bufs` / `memset_buf` / `MemcpyOp::offset` touch a mapped span | HBM = mapped bytes |
@@ -263,8 +263,10 @@ before the kernel unless AccessedBy or PreferredLocation covers that GPU.
 any size; a 2 MiB profile rejects unaligned reserve/map).
 `va_map_range` / `va_unmap_range` map sparse physicals (HBM is the mapped
 span). `va_create` is `cuMemCreate` (HBM, no VA). `va_map_handle` is `cuMemMap`
-of that handle (no second HBM charge; two VAs may share it). `va_release_handle`
-is `cuMemRelease` when no maps remain. `va_map` still Create+Maps in one call.
+of that handle (no second HBM charge; two VAs may share it). `va_retain_handle`
+is `cuMemRetainAllocationHandle` (combined `va_map` spans are promoted).
+`va_release_handle` is `cuMemRelease` while mapped; HBM refunds when refs and
+maps are 0. `va_map` still Create+Maps in one call.
 `va_set_access` is `cuMemSetAccess` PROT_READ on a peer (no dest HBM;
 writes still need a local map). `pool_set_access` is `cudaMemPoolSetAccess`
 ReadWrite on a peer (no dest HBM; kernels may write). `kernel()` needs the whole VA covered; `kernel_bufs`, `memset_buf`, and

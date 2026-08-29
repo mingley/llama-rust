@@ -96,6 +96,7 @@ mod tests {
                 page_bytes: 4096,
                 slots: 2,
                 fill: KvFill::Memset,
+                sequences: 1,
             },
         )
         .unwrap();
