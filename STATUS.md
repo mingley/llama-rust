@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — CUDA VMM keeps a VA while HBM is mapped
+
+`Sim::va_reserve` / `va_map` / `va_unmap` / `va_free` are
+`cuMemAddressReserve` / `cuMemMap` / `cuMemUnmap` / `cuMemAddressFree`.
+Reserve does not charge HBM; map does; unmap refunds and the pointer
+stays so a later map can reuse it. This crate maps one physical per VA
+(not sparse sub-ranges). Capture refuses reserve/map/unmap/free.
+`expertvm sim --vmm` / `expertvm bench` `sim-vmm`. `SimulatedGpuStore`
+stays on pinned H2D. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — cudaMallocManaged migrates, it does not replicate
 
 `Sim::alloc_managed` / `prefetch` / `prefetch_host` are `cudaMallocManaged`

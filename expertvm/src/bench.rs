@@ -33,6 +33,8 @@ pub struct BenchReport {
     pub mapped: Option<String>,
     /// Pinned H2D vs `cudaMallocManaged` + prefetch on the same LRU config.
     pub managed: Option<String>,
+    /// Pinned H2D vs `cuMemMap` expert pages on the same LRU config.
+    pub vmm: Option<String>,
     /// Closed-loop `schedule-all` vs `schedule-1` when the trace has >1 sequence.
     pub schedule: Option<String>,
     /// Unchunked vs `--prefill-chunk 1` when a first token has more than one layer.
@@ -80,6 +82,10 @@ impl BenchReport {
             s.push_str(um);
             s.push('\n');
         }
+        if let Some(vmm) = &self.vmm {
+            s.push_str(vmm);
+            s.push('\n');
+        }
         if let Some(sch) = &self.schedule {
             s.push_str(sch);
             s.push('\n');
@@ -121,6 +127,7 @@ pub fn report(
     let mut mempool = None;
     let mut mapped = None;
     let mut managed = None;
+    let mut vmm = None;
     let mut schedule = None;
     let mut chunk = None;
     let mut decode = None;
@@ -135,6 +142,7 @@ pub fn report(
         mempool = lines.mempool;
         mapped = lines.mapped;
         managed = lines.managed;
+        vmm = lines.vmm;
         schedule = lines.schedule;
         chunk = lines.chunk;
         decode = lines.decode;
@@ -152,6 +160,7 @@ pub fn report(
         mempool,
         mapped,
         managed,
+        vmm,
         schedule,
         chunk,
         decode,
@@ -168,6 +177,7 @@ struct SimLines {
     mempool: Option<String>,
     mapped: Option<String>,
     managed: Option<String>,
+    vmm: Option<String>,
     schedule: Option<String>,
     chunk: Option<String>,
     decode: Option<String>,
@@ -207,7 +217,10 @@ fn sim_lines(
     let md = sim_replay_cfg(trace, profile.clone(), mapped)?;
     let mut um = base;
     um.managed = true;
-    let um_row = sim_replay_cfg(trace, profile, um)?;
+    let um_row = sim_replay_cfg(trace, profile.clone(), um)?;
+    let mut vmm = base;
+    vmm.vmm = true;
+    let vmm_row = sim_replay_cfg(trace, profile, vmm)?;
     Ok(SimLines {
         serial: serial.line(),
         overlap,
@@ -231,6 +244,11 @@ fn sim_lines(
             "sim-async {} | sim-managed {}",
             serial.line(),
             um_row.line()
+        )),
+        vmm: Some(format!(
+            "sim-async {} | sim-vmm {}",
+            serial.line(),
+            vmm_row.line()
         )),
         schedule: lines.schedule,
         chunk: lines.chunk,

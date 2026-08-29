@@ -131,6 +131,9 @@ pub struct SimCfg {
     /// charge HBM; prefetch migrates the page. Hits/misses match H2D.
     /// [`crate::SimulatedGpuStore`] stays on pinned H2D.
     pub managed: bool,
+    /// `cuMemAddressReserve` + `cuMemMap` on miss, then pinned H2D into the VA.
+    /// Evict unmaps and frees the VA. Hits/misses match H2D.
+    pub vmm: bool,
 }
 
 impl SimCfg {
@@ -152,6 +155,7 @@ impl SimCfg {
             mempool: false,
             mapped: false,
             managed: false,
+            vmm: false,
         }
     }
 }
@@ -204,6 +208,7 @@ pub fn sim_replay_cfg(
         sync_alloc: cfg.sync_alloc,
         mapped: cfg.mapped,
         managed: cfg.managed,
+        vmm: cfg.vmm,
     };
     let mut token_ends: Vec<u64> = Vec::new();
     let mut ctr = ReplayCounters::default();
@@ -298,6 +303,8 @@ pub(crate) struct TouchArgs {
     pub mapped: bool,
     /// [`SimCfg::managed`]: `alloc_managed` + [`gpu_sim::Sim::prefetch`].
     pub managed: bool,
+    /// [`SimCfg::vmm`]: `va_reserve` + `va_map` + H2D.
+    pub vmm: bool,
 }
 
 fn hbm_alloc(
@@ -426,6 +433,10 @@ pub(crate) fn apply_touch(
                 sim.alloc_host_mapped(args.bytes)?
             } else if args.managed {
                 sim.alloc_managed(args.bytes)?
+            } else if args.vmm {
+                let va = sim.va_reserve(args.bytes)?;
+                sim.va_map(va, args.d)?;
+                va
             } else {
                 hbm_alloc(sim, args.d, args.bytes, args.s, args.sync_alloc)?
             };
@@ -497,6 +508,11 @@ fn drop_handle(
         sim.free_sync(page.id)?;
         return Ok(());
     }
+    if page_is_vmm(sim, page.id) {
+        sim.va_unmap(page.id)?;
+        sim.va_free(page.id)?;
+        return Ok(());
+    }
     if sync {
         // cudaFree: one host call, every device copy is gone.
         sim.free_sync(page.id)?;
@@ -538,6 +554,10 @@ fn page_is_mapped(sim: &Sim, id: AllocId) -> bool {
 
 fn page_is_managed(sim: &Sim, id: AllocId) -> bool {
     sim.is_managed(id).unwrap_or(false)
+}
+
+fn page_is_vmm(sim: &Sim, id: AllocId) -> bool {
+    sim.is_vmm(id).unwrap_or(false)
 }
 
 pub(crate) fn gemm_keys(

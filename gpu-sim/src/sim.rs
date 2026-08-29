@@ -23,6 +23,8 @@ struct Alloc {
     host_registered: bool,
     /// `cudaMallocManaged`: one location; [`Sim::prefetch`] migrates it.
     managed: bool,
+    /// `cuMemAddressReserve` VA. HBM is charged only while [`Sim::va_map`]ped.
+    vmm: bool,
     /// `None` is `cudaMalloc` / host-pinned. `Some` is `cudaMallocAsync` from that pool.
     pool: Option<PoolId>,
 }
@@ -547,6 +549,7 @@ impl Sim {
                 host_mapped: false,
                 host_registered: false,
                 managed: false,
+                vmm: false,
                 pool: Some(pool),
             },
         );
@@ -656,14 +659,7 @@ impl Sim {
             });
         }
         self.fail_if_capturing("cannot capture alloc/free")?;
-        let ns = self
-            .profile
-            .gpus
-            .first()
-            .map(|g| g.alloc_overhead_ns)
-            .unwrap_or(1)
-            .max(1);
-        self.clock = self.clock.saturating_add(ns);
+        self.clock = self.clock.saturating_add(self.first_alloc_ns());
         let id = AllocId(self.next_alloc);
         self.next_alloc = self.next_alloc.saturating_add(1);
         let _prev = self.allocs.insert(
@@ -678,6 +674,7 @@ impl Sim {
                 host_mapped: false,
                 host_registered: false,
                 managed: true,
+                vmm: false,
                 pool: None,
             },
         );
@@ -688,6 +685,125 @@ impl Sim {
     pub fn is_managed(&self, alloc: AllocId) -> Result<bool, SimError> {
         let a = self.alloc_ref(alloc)?;
         Ok(a.live && a.managed)
+    }
+
+    /// `cuMemAddressReserve`: a VA with no physical pages. Does not charge HBM.
+    ///
+    /// [`Self::va_map`] creates and maps one physical allocation (this crate
+    /// does not model sparse sub-range maps). Capture cannot include it.
+    pub fn va_reserve(&mut self, bytes: u64) -> Result<AllocId, SimError> {
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        self.clock = self.clock.saturating_add(self.first_alloc_ns());
+        let id = AllocId(self.next_alloc);
+        self.next_alloc = self.next_alloc.saturating_add(1);
+        let _prev = self.allocs.insert(
+            id,
+            Alloc {
+                bytes,
+                devices: Vec::new(),
+                leases: 0,
+                live: true,
+                host_pinned: false,
+                host_pageable: false,
+                host_mapped: false,
+                host_registered: false,
+                managed: false,
+                vmm: true,
+                pool: None,
+            },
+        );
+        Ok(id)
+    }
+
+    /// Whether `alloc` is a live reserved VA (`cuMemAddressReserve`).
+    pub fn is_vmm(&self, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.vmm)
+    }
+
+    /// `cuMemCreate` + `cuMemMap` + `cuMemSetAccess` onto `device`.
+    ///
+    /// Host-synchronous. Charges HBM now. The pointer is kernel-readable
+    /// without a stream wait. Already-mapped ids fail. Capture cannot include it.
+    pub fn va_map(&mut self, id: AllocId, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let _gpu = self.profile.gpu(device)?;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        if !a.devices.is_empty() {
+            return Err(SimError::Invalid {
+                why: "already mapped",
+            });
+        }
+        let bytes = a.bytes;
+        self.reserve_hbm(device, bytes)?;
+        let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        self.alloc_mut(id)?.devices.push(device);
+        Ok(())
+    }
+
+    /// `cuMemUnmap` + `cuMemRelease`. The VA stays reserved ([`Self::va_map`] again).
+    ///
+    /// Host-synchronous: in-flight kernels using this pointer complete first.
+    pub fn va_unmap(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        self.synchronize()?;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        if a.devices.is_empty() {
+            return Err(SimError::Invalid { why: "not mapped" });
+        }
+        let bytes = a.bytes;
+        let holders = a.devices.clone();
+        for d in holders {
+            self.refund_device(d, id, bytes)?;
+        }
+        self.alloc_mut(id)?.devices.clear();
+        Ok(())
+    }
+
+    /// `cuMemAddressFree`. Must already be unmapped and not leased.
+    pub fn va_free(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.vmm {
+            return Err(SimError::UnknownAlloc { alloc: id });
+        }
+        if !a.devices.is_empty() {
+            return Err(SimError::Invalid {
+                why: "VA still mapped",
+            });
+        }
+        self.alloc_mut(id)?.live = false;
+        Ok(())
+    }
+
+    fn first_alloc_ns(&self) -> u64 {
+        self.profile
+            .gpus
+            .first()
+            .map(|g| g.alloc_overhead_ns)
+            .unwrap_or(1)
+            .max(1)
     }
 
     /// `cudaMemPrefetchAsync` onto `device`. Stream-ordered; migrates, does not
@@ -874,7 +990,7 @@ impl Sim {
             });
         }
         let a = self.alloc_ref(id)?;
-        if a.host_pinned || a.host_pageable {
+        if a.host_pinned || a.host_pageable || a.vmm {
             return Err(SimError::UnknownAlloc { alloc: id });
         }
         let holders = a.devices.clone();
@@ -1480,6 +1596,7 @@ impl Sim {
                 host_mapped: mapped,
                 host_registered: registered,
                 managed: false,
+                vmm: false,
                 pool: None,
             },
         );
@@ -1794,6 +1911,7 @@ impl Sim {
                 host_mapped: false,
                 host_registered: false,
                 managed: false,
+                vmm: false,
                 pool: None,
             },
         );

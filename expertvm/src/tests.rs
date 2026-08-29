@@ -599,6 +599,24 @@ fn managed_prefetch_matches_h2d_hits() {
 }
 
 #[test]
+fn vmm_map_matches_h2d_hits() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let cfg = |vmm: bool| SimCfg {
+        slots: 1,
+        vmm,
+        ..SimCfg::lru(1, 1u64 << 20, 0)
+    };
+    let h2d = sim_replay_cfg(&t, p.clone(), cfg(false)).expect("h2d");
+    let vmm = sim_replay_cfg(&t, p, cfg(true)).expect("vmm");
+    assert_eq!(h2d.hits, vmm.hits);
+    assert_eq!(h2d.misses, vmm.misses);
+    assert!(vmm.hbm_peak > 0);
+    assert!(vmm.bytes_moved > 0);
+    assert_eq!(vmm.hbm_peak, h2d.hbm_peak);
+}
+
+#[test]
 fn max_batch_serializes_sequences_at_a_token() {
     let t = Trace {
         events: vec![
@@ -1286,6 +1304,7 @@ fn adversarial_workloads_are_named_and_measurable() {
     assert!(batch.render().contains("schedule-all"));
     assert!(batch.render().contains("schedule-1"));
     assert!(batch.render().contains("sim-managed"), "{}", batch.render());
+    assert!(batch.render().contains("sim-vmm"), "{}", batch.render());
     let mixed = rows.iter().find(|r| r.name == "prefill-batch").unwrap();
     assert!(mixed.chunk.is_some(), "{}", mixed.render());
     assert!(mixed.render().contains("schedule-chunk1"));

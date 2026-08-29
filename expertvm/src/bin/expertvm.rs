@@ -16,8 +16,8 @@ const USAGE: &str = "\
 usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
-  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--mapped] [--managed]
-  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--mapped] [--managed]
+  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm]
+  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--mapped] [--managed] [--vmm]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
@@ -105,6 +105,7 @@ struct Cfg {
     mempool: bool,
     mapped: bool,
     managed: bool,
+    vmm: bool,
     interarrival_ns: u64,
     ttft_slo_ns: Option<u64>,
     itl_slo_ns: Option<u64>,
@@ -142,6 +143,7 @@ where
     let mut mempool = false;
     let mut mapped = false;
     let mut managed = false;
+    let mut vmm = false;
     let mut plan_window = 0usize;
     let mut plan_threshold = 500u32;
     let mut max_batch = 0usize;
@@ -202,6 +204,9 @@ where
             }
             "--managed" => {
                 managed = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
+            "--vmm" => {
+                vmm = !matches!(inline.as_deref(), Some("0" | "false"));
             }
             "--plan-window" => {
                 plan_window = parse_usize("plan-window", &value("plan-window", inline, &mut it)?)?
@@ -274,6 +279,7 @@ where
         mempool,
         mapped,
         managed,
+        vmm,
         interarrival_ns,
         ttft_slo_ns,
         itl_slo_ns,
@@ -301,6 +307,7 @@ fn sim_cfg_from(cfg: &Cfg, prefetch: Prefetch, max_batch: usize) -> SimCfg {
         mempool: cfg.mempool,
         mapped: cfg.mapped,
         managed: cfg.managed,
+        vmm: cfg.vmm,
     }
 }
 

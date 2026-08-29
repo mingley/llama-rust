@@ -30,6 +30,9 @@
 //! [`Sim::alloc_managed`] is `cudaMallocManaged` (no HBM until first-touch or
 //! [`Sim::prefetch`] / [`prefetch_host`](Sim::prefetch_host)). Prefetch migrates;
 //! it does not replicate. A kernel page-faults managed memory onto that GPU.
+//! [`Sim::va_reserve`] / [`va_map`](Sim::va_map) / [`va_unmap`](Sim::va_unmap) /
+//! [`va_free`](Sim::va_free) are `cuMemAddressReserve` / `cuMemMap` /
+//! `cuMemUnmap` / `cuMemAddressFree` (one physical per VA; HBM charged while mapped).
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
 //! [`Sim::query_event`] is `cudaEventQuery` (no wait).
@@ -1319,6 +1322,10 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
             other => panic!("{other:?}"),
         }
+        match sim.va_reserve(4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -1834,5 +1841,109 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("managed")),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn va_reserve_does_not_charge_hbm() {
+        let mut sim = Sim::new(h100().restrict_hbm(4096));
+        let d = DeviceId(0);
+        let va = sim.va_reserve(4096).unwrap();
+        assert!(sim.is_vmm(va).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        let a = sim.malloc(d, 4096).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+        match sim.va_map(va, d) {
+            Err(SimError::Oom { device, need, free }) => {
+                assert_eq!(device, d);
+                assert_eq!(need, 4096);
+                assert_eq!(free, 0);
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.free_sync(a).unwrap();
+        sim.va_map(va, d).unwrap();
+        assert!(sim.is_resident(va, d).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+        sim.va_unmap(va).unwrap();
+        sim.va_free(va).unwrap();
+    }
+
+    #[test]
+    fn va_unmap_keeps_pointer_for_remap() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let va = sim.va_reserve(bytes).unwrap();
+        sim.va_map(va, d).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, va, bytes, s));
+        enq(sim.kernel(d, KernelKind::other(1 << 20, bytes), &[va], &[va], s));
+        sim.synchronize().unwrap();
+        sim.va_unmap(va).unwrap();
+        assert!(!sim.is_resident(va, d).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        assert!(sim.is_vmm(va).unwrap());
+        sim.va_map(va, d).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[va], &[va], s));
+        sim.synchronize().unwrap();
+        sim.va_unmap(va).unwrap();
+        sim.va_free(va).unwrap();
+    }
+
+    #[test]
+    fn kernel_on_unmapped_va_is_not_resident() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let va = sim.va_reserve(4096).unwrap();
+        sim.va_map(va, d).unwrap();
+        sim.va_unmap(va).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[va], &[va], s));
+        match sim.synchronize() {
+            Err(SimError::NotResident { alloc, device }) => {
+                assert_eq!(alloc, va);
+                assert_eq!(device, d);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn va_free_rejects_mapped_and_cuda_free() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let va = sim.va_reserve(4096).unwrap();
+        sim.va_map(va, d).unwrap();
+        match sim.va_free(va) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mapped")),
+            other => panic!("{other:?}"),
+        }
+        match sim.free_sync(va) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, va),
+            other => panic!("{other:?}"),
+        }
+        sim.va_unmap(va).unwrap();
+        sim.va_free(va).unwrap();
+    }
+
+    #[test]
+    fn va_map_rejects_already_mapped() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let va = sim.va_reserve(4096).unwrap();
+        sim.va_map(va, d).unwrap();
+        match sim.va_map(va, d) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("already")),
+            other => panic!("{other:?}"),
+        }
+        match sim.va_unmap(va) {
+            Ok(()) => {}
+            other => panic!("{other:?}"),
+        }
+        match sim.va_unmap(va) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not mapped")),
+            other => panic!("{other:?}"),
+        }
+        sim.va_free(va).unwrap();
     }
 }
