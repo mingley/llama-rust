@@ -76,6 +76,10 @@ pub struct LinkProfile {
     pub ramp_bytes: u64,
     /// What the link is.
     pub kind: LinkKind,
+    /// Pageable H2D/D2H achieved bandwidth vs pinned, ‰ (`500` = 2× duration).
+    ///
+    /// Example knob, not a capture. GPU↔GPU copies ignore this.
+    pub pageable_permille: u16,
 }
 
 impl LinkProfile {
@@ -83,10 +87,17 @@ impl LinkProfile {
     ///
     /// `T = fixed_ns + (bytes + ramp_bytes) / bps`.
     /// Tiny copies pay `ramp_bytes` as if they were large, so fragmenting a
-    /// transfer cannot increase effective bandwidth.
+    /// transfer cannot increase effective bandwidth. This is the pinned /
+    /// GPU-direct rate.
     #[must_use]
     pub fn copy_ns(&self, bytes: u64) -> u64 {
         ns_for_bytes(bytes.saturating_add(self.ramp_bytes), self.bps).saturating_add(self.fixed_ns)
+    }
+
+    /// Pageable host copy: [`Self::copy_ns`] scaled by `1000 / pageable_permille`.
+    #[must_use]
+    pub fn pageable_copy_ns(&self, bytes: u64) -> u64 {
+        scale_ns_permille(self.copy_ns(bytes), self.pageable_permille)
     }
 
     /// Whether this link connects `src` and `dst`.
@@ -303,7 +314,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ntdp_mw={}\ngemm_util_permille={}\ngrouped_moe_permille={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ntdp_mw={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -313,7 +324,8 @@ impl HardwareProfile {
             g0.copy_engines,
             g0.tdp_mw,
             g0.gemm_util_permille,
-            g0.grouped_moe_permille
+            g0.grouped_moe_permille,
+            self.host_pageable_permille(g0.id)
         )
     }
 
@@ -325,10 +337,29 @@ impl HardwareProfile {
             .unwrap_or(0)
     }
 
+    fn host_pageable_permille(&self, gpu: DeviceId) -> u16 {
+        self.links
+            .iter()
+            .find(|l| l.kind == LinkKind::Pcie && l.connects(None, Some(gpu)))
+            .map(|l| l.pageable_permille)
+            .unwrap_or(500)
+    }
+
     /// Parse a `key=value` profile. Unknown keys are errors so captures cannot silently drop fields.
     pub fn parse(text: &str) -> Result<Self, SimError> {
         parse_profile(text)
     }
+}
+
+/// Scale a duration by inverse achieved-permille (`1000` = identity).
+#[must_use]
+pub fn scale_ns_permille(ns: u64, achieved_permille: u16) -> u64 {
+    let p = u128::from(achieved_permille.max(1));
+    let n = u128::from(ns)
+        .saturating_mul(1000)
+        .checked_div(p)
+        .unwrap_or(u128::MAX);
+    u64::try_from(n).unwrap_or(u64::MAX)
 }
 
 /// `bytes / bps` in nanoseconds, saturating.
@@ -385,6 +416,7 @@ fn pcie_host(gpu: DeviceId) -> LinkProfile {
         fixed_ns: 8_000,
         ramp_bytes: 256 * 1024,
         kind: LinkKind::Pcie,
+        pageable_permille: 500,
     }
 }
 
@@ -396,6 +428,7 @@ fn nvlink(a: DeviceId, b: DeviceId) -> LinkProfile {
         fixed_ns: 2_000,
         ramp_bytes: 64 * 1024,
         kind: LinkKind::Nvlink,
+        pageable_permille: 1000,
     }
 }
 
@@ -407,6 +440,7 @@ fn pcie_peer(a: DeviceId, b: DeviceId) -> LinkProfile {
         fixed_ns: 12_000,
         ramp_bytes: 256 * 1024,
         kind: LinkKind::PciePeer,
+        pageable_permille: 1000,
     }
 }
 
@@ -418,6 +452,7 @@ fn rdma_peer(a: DeviceId, b: DeviceId) -> LinkProfile {
         fixed_ns: 25_000,
         ramp_bytes: 512 * 1024,
         kind: LinkKind::Rdma,
+        pageable_permille: 1000,
     }
 }
 
@@ -429,6 +464,7 @@ fn pcie_host_slow(gpu: DeviceId) -> LinkProfile {
         fixed_ns: 20_000,
         ramp_bytes: 256 * 1024,
         kind: LinkKind::Pcie,
+        pageable_permille: 500,
     }
 }
 
@@ -469,6 +505,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut tdp_mw = 700_000u64;
     let mut gemm_util_permille: u16 = 1000;
     let mut grouped_moe_permille: u16 = 1000;
+    let mut pageable_permille: u16 = 500;
     let mut mesh = MeshKind::NvlinkClique;
     let mut mesh_set = false;
     for raw in text.lines() {
@@ -496,6 +533,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             "tdp_mw" => tdp_mw = parse_u64(v)?,
             "gemm_util_permille" => gemm_util_permille = parse_u16(v)?,
             "grouped_moe_permille" => grouped_moe_permille = parse_u16(v)?,
+            "pageable_permille" => pageable_permille = parse_u16(v)?,
             "topology" => {
                 mesh = parse_mesh(v)?;
                 mesh_set = true;
@@ -536,6 +574,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             fixed_ns: if far { 20_000 } else { 8_000 },
             ramp_bytes: 256 * 1024,
             kind: LinkKind::Pcie,
+            pageable_permille,
         });
     }
     push_gpu_mesh(&mut links, n_gpus, mesh, nvlink_bps)?;
@@ -621,6 +660,7 @@ fn clique_links(
                 fixed_ns,
                 ramp_bytes,
                 kind,
+                pageable_permille: 1000,
             });
         }
     }
@@ -701,6 +741,21 @@ mod tests {
         let g = p.gpu(DeviceId(0)).unwrap();
         assert_eq!(g.gemm_util_permille, 500);
         assert_eq!(g.grouped_moe_permille, 2000);
+    }
+
+    #[test]
+    fn parse_pageable_permille_on_host_pcie() {
+        let p = HardwareProfile::parse("gpus=1\npageable_permille=250\n").unwrap();
+        let link = p.link(None, Some(DeviceId(0))).unwrap();
+        assert_eq!(link.pageable_permille, 250);
+        assert!(link.pageable_copy_ns(1 << 20) > link.copy_ns(1 << 20));
+    }
+
+    #[test]
+    fn pageable_copy_is_slower_than_pinned_at_default() {
+        let pcie = pcie_host(DeviceId(0));
+        assert_eq!(pcie.pageable_permille, 500);
+        assert!(pcie.pageable_copy_ns(8 << 20) > pcie.copy_ns(8 << 20));
     }
 
     #[test]

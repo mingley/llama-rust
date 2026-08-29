@@ -32,8 +32,8 @@ pub use planner::{
 pub use policy::Policy;
 pub use replay::{compare, format_table, replay, ReplayRow};
 pub use sim_replay::{
-    compare_ep, sim_placed, sim_remote_home, sim_replay, sim_replay_cfg, sim_static_ep, EpCompare,
-    SimCfg, SimReplay,
+    compare_ep, sim_placed, sim_remote_home, sim_remote_home_cfg, sim_replay, sim_replay_cfg,
+    sim_static_ep, EpCompare, SimCfg, SimReplay, DECODE_ACTIVATION_BYTES,
 };
 pub use store::{
     replay_accesses, CachedStore, DirectStore, ExpertParts, ExpertStore, StoreMetrics,

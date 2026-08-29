@@ -1,8 +1,8 @@
 //! `infer-bench adversarial | trace` — measured hit rates and sim scores.
 
 use infer_bench::{
-    adversarial_suite, report, sim_placed, sim_remote_home, striped, topology_suite,
-    HardwareProfile, Trace, Workload,
+    adversarial_suite, report, sim_placed, sim_remote_home_cfg, striped, topology_suite,
+    HardwareProfile, Trace, Workload, DECODE_ACTIVATION_BYTES,
 };
 use std::env;
 use std::fs::File;
@@ -15,7 +15,7 @@ usage: infer-bench <command> [args]
   trace <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
-  remote <trace.jsonl> [--expert-bytes N] [--profile NAME]
+  remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch
@@ -105,8 +105,14 @@ fn run() -> Result<(), String> {
             let map = striped(&trace, n);
             let local = sim_placed(&trace, profile.clone(), cfg.expert_bytes, &map)
                 .map_err(|e| e.to_string())?;
-            let remote = sim_remote_home(&trace, profile, cfg.expert_bytes, &map)
-                .map_err(|e| e.to_string())?;
+            let remote = sim_remote_home_cfg(
+                &trace,
+                profile,
+                cfg.expert_bytes,
+                cfg.activation_bytes,
+                &map,
+            )
+            .map_err(|e| e.to_string())?;
             println!("local {} | remote {}", local.line(), remote.line());
             Ok(())
         }
@@ -118,6 +124,7 @@ struct Cfg {
     path: Option<String>,
     capacity: usize,
     expert_bytes: u64,
+    activation_bytes: u64,
     profile: String,
     tokens: u32,
     experts: u32,
@@ -137,6 +144,7 @@ where
     let mut path = None;
     let mut capacity = 8usize;
     let mut expert_bytes = 4096u64;
+    let mut activation_bytes = DECODE_ACTIVATION_BYTES;
     let mut profile = default_profile.to_string();
     let mut tokens = 64u32;
     let mut experts = 16u32;
@@ -152,6 +160,12 @@ where
             }
             "--expert-bytes" => {
                 expert_bytes = parse_u64("expert-bytes", &value("expert-bytes", inline, &mut it)?)?
+            }
+            "--activation-bytes" => {
+                activation_bytes = parse_u64(
+                    "activation-bytes",
+                    &value("activation-bytes", inline, &mut it)?,
+                )?
             }
             "--profile" => profile = value("profile", inline, &mut it)?,
             "--tokens" => tokens = parse_u32("tokens", &value("tokens", inline, &mut it)?)?,
@@ -170,6 +184,7 @@ where
         path,
         capacity,
         expert_bytes,
+        activation_bytes,
         profile,
         tokens,
         experts,

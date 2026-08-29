@@ -14,7 +14,7 @@ struct GpuPage {
     ready: Option<EventId>,
 }
 
-/// Bounded cache whose misses pay a simulated H2D onto the striped home GPU.
+/// Bounded cache whose misses pay a simulated pinned H2D onto the striped home GPU.
 pub struct SimulatedGpuStore {
     cache: CachedStore,
     sim: Sim,
@@ -170,7 +170,7 @@ impl SimulatedGpuStore {
         let bytes = self.bytes_per_expert;
         let d = self.home(key);
         let id = self.sim.alloc(d, bytes, self.copy)?;
-        let _c = self.sim.memcpy_host_to_device(d, id, bytes, self.copy)?;
+        let _c = self.sim.memcpy_pinned_to_device(d, id, bytes, self.copy)?;
         let ev = EventId(self.next_event);
         self.next_event = self.next_event.saturating_add(1);
         let _r = self.sim.record_event(d, ev, self.copy)?;

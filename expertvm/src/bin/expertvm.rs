@@ -2,8 +2,8 @@
 
 use expertvm::{
     adversarial_suite, analyze, colocated, compare, compare_ep, format_table, generate, report,
-    sim_placed, sim_remote_home, sim_replay_cfg, striped, topology_suite, with_hot_replicas,
-    Policy, Prefetch, SimCfg, Trace, Workload,
+    sim_placed, sim_remote_home_cfg, sim_replay_cfg, striped, topology_suite, with_hot_replicas,
+    Policy, Prefetch, SimCfg, Trace, Workload, DECODE_ACTIVATION_BYTES,
 };
 use gpu_sim::HardwareProfile;
 use std::env;
@@ -22,7 +22,7 @@ usage: expertvm <command> [args]
   topology [--bytes N]
   ep       <trace.jsonl> [--capacity N] [--expert-bytes N] [--hbm-bytes N] [--profile NAME]
   place    <trace.jsonl> [--gpus N] [--hot-pt N]
-  remote   <trace.jsonl> [--expert-bytes N] [--profile NAME]
+  remote   <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch
@@ -97,6 +97,7 @@ struct Cfg {
     capacity: usize,
     lookahead: usize,
     expert_bytes: u64,
+    activation_bytes: u64,
     profile: String,
     tokens: u32,
     experts: u32,
@@ -119,6 +120,7 @@ where
     let mut capacity = 8usize;
     let mut lookahead = 8usize;
     let mut expert_bytes = 4096u64;
+    let mut activation_bytes = DECODE_ACTIVATION_BYTES;
     let mut profile = default_profile.to_string();
     let mut tokens = 64u32;
     let mut experts = 16u32;
@@ -139,6 +141,12 @@ where
             }
             "--expert-bytes" => {
                 expert_bytes = parse_u64("expert-bytes", &value("expert-bytes", inline, &mut it)?)?
+            }
+            "--activation-bytes" => {
+                activation_bytes = parse_u64(
+                    "activation-bytes",
+                    &value("activation-bytes", inline, &mut it)?,
+                )?
             }
             "--profile" => profile = value("profile", inline, &mut it)?,
             "--tokens" => tokens = parse_u32("tokens", &value("tokens", inline, &mut it)?)?,
@@ -164,6 +172,7 @@ where
         capacity,
         lookahead,
         expert_bytes,
+        activation_bytes,
         profile,
         tokens,
         experts,
@@ -382,8 +391,14 @@ where
     let map = striped(&trace, n);
     let local =
         sim_placed(&trace, profile.clone(), cfg.expert_bytes, &map).map_err(|e| e.to_string())?;
-    let remote =
-        sim_remote_home(&trace, profile, cfg.expert_bytes, &map).map_err(|e| e.to_string())?;
+    let remote = sim_remote_home_cfg(
+        &trace,
+        profile,
+        cfg.expert_bytes,
+        cfg.activation_bytes,
+        &map,
+    )
+    .map_err(|e| e.to_string())?;
     println!("local {} | remote {}", local.line(), remote.line());
     Ok(())
 }

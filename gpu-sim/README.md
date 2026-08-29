@@ -31,7 +31,8 @@ warp scheduler, L1, …   ← do not model
 | --- | --- |
 | HBM capacity, alloc/free, OOM | kernel microseconds |
 | stream order, event dependencies | memcpy microseconds |
-| residency: a kernel may only read local allocations | PCIe / NVLink bandwidth |
+| residency: a kernel may only read **device** allocations | PCIe / NVLink bandwidth |
+| HBM vs host-pinned: `alloc_host_pinned` does not charge HBM | pageable vs pinned H2D (`pageable_permille`) |
 | copy-engine occupancy | launch overhead |
 | peer accessibility | size-dependent efficiency |
 | graph capture does not execute; launch replays | GEMM util / grouped-MoE ‰ |
@@ -49,7 +50,9 @@ copies on the same link share bandwidth. Kernels on one GPU are exclusive
 in v0 (copy engines still overlap compute). Profile knobs
 `gemm_util_permille` (achieved/peak) and `grouped_moe_permille` (grouped vs
 dense duration) scale kernel time. Defaults are 1000 (identity roofline).
-They are parseable; they are not a capture.
+They are parseable; they are not a capture. Host PCIe links also carry
+`pageable_permille` (default `500`: pageable H2D takes twice pinned DMA).
+That is an example knob, not a capture.
 
 ## Example profiles
 
@@ -67,7 +70,7 @@ let mut sim = Sim::new(HardwareProfile::example_h100_sxm());
 let d0 = DeviceId(0);
 let s0 = StreamId(0);
 let a = sim.alloc(d0, 8 << 20, s0).expect("hbm");
-sim.memcpy_host_to_device(d0, a, 8 << 20, s0).expect("h2d");
+sim.memcpy_pinned_to_device(d0, a, 8 << 20, s0).expect("h2d");
 sim.kernel(d0, KernelKind::other(1 << 30, 8 << 20), &[a], &[a], s0)
     .expect("k");
 sim.synchronize().expect("sync");
@@ -109,8 +112,12 @@ Named example profiles (order-of-magnitude, **not captures**):
 | `asymmetric` | 3 GPU NVLink chain 0–1–2; 0↔2 is `NoPeer` |
 
 `HardwareProfile::by_name`, `probe_topology`, and `gpu-profile probe NAME`
-measure H2D per GPU and D2D per pair. Missing links print `p2p=0->2:none`.
-`restrict_hbm(bytes)` caps every GPU for the static-EP vs cache experiment.
+measure **pinned** H2D per GPU and D2D per pair. Missing links print
+`p2p=0->2:none`. `restrict_hbm(bytes)` caps every GPU for the static-EP vs
+cache experiment. `Place::{Host, HostPinned, Device}`: pageable H2D is
+`memcpy_host_to_device`; DMA is `memcpy_pinned_to_device`.
+`alloc_host_pinned` is live immediately, does not count toward HBM, and a
+kernel on it fails `NotResident` until a copy places it on a device.
 
 ## Faults
 

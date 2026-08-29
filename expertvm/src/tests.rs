@@ -594,7 +594,7 @@ fn remote_home_on_rdma_pays_peer_copy() {
     let bytes = 1u64 << 20;
     let map = striped(&t, 2);
     let local = sim_placed(&t, p.clone(), bytes, &map).expect("local");
-    let remote = sim_remote_home(&t, p, bytes, &map).expect("remote");
+    let remote = sim_remote_home(&t, p.clone(), bytes, &map).expect("remote");
     assert!(
         remote.bytes_moved > local.bytes_moved,
         "remote={} local={}",
@@ -607,6 +607,18 @@ fn remote_home_on_rdma_pays_peer_copy() {
         remote.sim_ns,
         local.sim_ns
     );
+    assert!(
+        remote.bytes_moved < bytes.saturating_mul(2),
+        "dispatch should not D2D the full expert; moved={}",
+        remote.bytes_moved
+    );
+    let moved = sim_remote_home_cfg(&t, p, bytes, bytes, &map).expect("move");
+    assert!(
+        moved.bytes_moved >= bytes.saturating_mul(2),
+        "equal act vs expert volume must move weights; moved={}",
+        moved.bytes_moved
+    );
+    assert!(moved.bytes_moved > remote.bytes_moved);
 }
 
 #[test]

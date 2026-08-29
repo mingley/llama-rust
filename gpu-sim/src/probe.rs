@@ -23,7 +23,7 @@ pub struct TopologyProbe {
     pub name: String,
     /// GPU count.
     pub n_gpus: usize,
-    /// Host→device copy time per GPU, in `gpus` order.
+    /// Host→device copy time per GPU, in `gpus` order (pinned DMA).
     pub h2d_ns: Vec<u64>,
     /// Pairwise device-to-device samples (`i < j`).
     pub p2p: Vec<P2pProbe>,
@@ -84,7 +84,7 @@ fn measure_h2d(profile: HardwareProfile, device: DeviceId, bytes: u64) -> Result
     let mut sim = Sim::new(profile);
     let s = StreamId(0);
     let a = sim.alloc(device, bytes, s)?;
-    let _c = sim.memcpy_host_to_device(device, a, bytes, s)?;
+    let _c = sim.memcpy_pinned_to_device(device, a, bytes, s)?;
     sim.synchronize()?;
     Ok(sim.clock_ns())
 }
@@ -98,7 +98,7 @@ fn measure_p2p(
     let mut sim = Sim::new(profile);
     let s = StreamId(0);
     let a = sim.alloc(src, bytes, s)?;
-    let _h = sim.memcpy_host_to_device(src, a, bytes, s)?;
+    let _h = sim.memcpy_pinned_to_device(src, a, bytes, s)?;
     sim.synchronize()?;
     let t0 = sim.clock_ns();
     match sim.memcpy_device_to_device(src, dst, a, bytes, s) {

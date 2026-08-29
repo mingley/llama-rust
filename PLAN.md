@@ -203,8 +203,9 @@ fixed latency and quality.
 **V1:** traffic-aware placement, co-activation placement, adaptive
 replication (`colocated`, `with_hot_replicas`, `expertvm place`).
 
-**V2:** RDMA, multi-node, remote expert residency (`sim_remote_home`,
-`SimulatedGpuStore::migrate`, `expertvm remote`).
+**V2:** RDMA, multi-node, remote expert residency (`sim_remote_home` +
+`plan_placement` on the home↔compute hop, `SimulatedGpuStore::migrate`,
+`expertvm remote`).
 
 **V3:** predictive residency:
 
@@ -395,7 +396,9 @@ Exact (mechanical invariants agents may rely on):
 - stream ordering, events, barriers
 - kernel enqueue, async copies
 - copy-engine availability, peer accessibility
-- HBM vs host-pinned residency
+- HBM vs host-pinned residency (`Place::{Host, HostPinned, Device}`,
+  `alloc_host_pinned`, `memcpy_pinned_to_device`; pageable timing is a
+  profile knob, `pageable_permille`)
 - P2P / NVLink / PCIe topology
 - concurrent transfer limits
 - OOM, data dependencies, collective / CUDA-graph dependencies
@@ -538,8 +541,8 @@ model, do not celebrate the sim.
    the blob path on writer tinies. Shared experts stay on the blob.
    Prefetch is copy-forward ∪ online [`Markov`] (`MoeTraceBuf` when a store is
    attached; `sim_replay_cfg` `Prefetch::{None, CopyForward, Markov}`).
-7. [x] `gpu-sim` workspace crate: streams, events, HBM, memcpy, leases,
-   virtual clock. No CUDA. `expertvm sim` is the first app.
+7. [x] `gpu-sim` workspace crate: streams, events, HBM vs host-pinned,
+   memcpy, leases, virtual clock. No CUDA. `expertvm sim` is the first app.
 8. [x] `infer-bench` crate: adversarial workloads + trace replay scores.
    Dual score is semantic (`Ok` vs illegal GPU state) and performance
    (`wall_ns`, `hbm_peak`, `bytes_moved`, `energy_uj`, optional `ns_per_token`,

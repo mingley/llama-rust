@@ -110,10 +110,29 @@ impl KernelKind {
 /// Where a buffer lives for memcpy.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Place {
-    /// Page-locked host memory.
+    /// Pageable host memory. H2D/D2H pays [`crate::LinkProfile::pageable_permille`].
     Host,
+    /// Page-locked host memory (`cudaMallocHost`). DMA at full link rate.
+    HostPinned,
     /// A GPU's HBM.
     Device(DeviceId),
+}
+
+impl Place {
+    /// Device id when this place is HBM.
+    #[must_use]
+    pub fn device(self) -> Option<DeviceId> {
+        match self {
+            Self::Host | Self::HostPinned => None,
+            Self::Device(d) => Some(d),
+        }
+    }
+
+    /// Pageable host (needs a bounce through pinned staging on real hardware).
+    #[must_use]
+    pub fn is_pageable(self) -> bool {
+        matches!(self, Self::Host)
+    }
 }
 
 /// One asynchronous copy.

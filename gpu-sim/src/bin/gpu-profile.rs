@@ -15,7 +15,7 @@ usage: gpu-profile <command> [args]
   names
   example <NAME>
   parse <file.profile>
-  probe <NAME> [--bytes N]
+  probe <NAME> [--bytes N]   pinned H2D per GPU + D2D per pair
   capture
 
 NAME: h100, h200, 8xh100, cheap, 2xh100-pcie, bad-numa, 2node-rdma, asymmetric

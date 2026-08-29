@@ -1,7 +1,7 @@
 //! Deterministic GPU-systems VM for inference.
 //!
-//! Mechanical invariants (streams, events, residency, OOM, topology,
-//! CUDA-graph capture/replay) are exact.
+//! Mechanical invariants (streams, events, HBM vs host-pinned residency, OOM,
+//! topology, CUDA-graph capture/replay) are exact.
 //! Operation durations come from a [`HardwareProfile`], so agents cannot invent
 //! hardware numbers inside policy code.
 //!
@@ -21,7 +21,9 @@ pub use error::SimError;
 pub use ids::{AllocId, DeviceId, EventId, GraphId, LinkId, OpId, StreamId};
 pub use ops::{DType, KernelKind, MemcpyOp, Place};
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
-pub use profile::{ns_for_bytes, GpuProfile, HardwareProfile, LinkKind, LinkProfile};
+pub use profile::{
+    ns_for_bytes, scale_ns_permille, GpuProfile, HardwareProfile, LinkKind, LinkProfile,
+};
 pub use score::Score;
 pub use sim::Sim;
 
@@ -539,6 +541,96 @@ mod tests {
         let s = StreamId(0);
         sim.begin_capture(d, s).unwrap();
         match sim.alloc(d, 4096, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("alloc")),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn pinned_h2d_is_faster_than_pageable() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 8u64 << 20;
+        let mut pageable = Sim::new(h100());
+        let a = pageable.alloc(d, bytes, s).unwrap();
+        enq(pageable.memcpy_host_to_device(d, a, bytes, s));
+        pageable.synchronize().unwrap();
+        let mut pinned = Sim::new(h100());
+        let b = pinned.alloc(d, bytes, s).unwrap();
+        enq(pinned.memcpy_pinned_to_device(d, b, bytes, s));
+        pinned.synchronize().unwrap();
+        assert!(
+            pageable.clock_ns() > pinned.clock_ns(),
+            "pageable={} pinned={}",
+            pageable.clock_ns(),
+            pinned.clock_ns()
+        );
+    }
+
+    #[test]
+    fn host_pinned_alloc_does_not_charge_hbm() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let h = sim.alloc_host_pinned(8 << 20).unwrap();
+        assert!(sim.is_host_pinned(h).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        assert_eq!(sim.hbm_peak(), 0);
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[h], &[h], StreamId(0)));
+        match sim.synchronize() {
+            Err(SimError::NotResident { alloc, device }) => {
+                assert_eq!(alloc, h);
+                assert_eq!(device, d);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn host_pinned_copy_onto_device_then_kernel() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let h = sim.alloc_host_pinned(bytes).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, h, bytes, s));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(h, d).unwrap());
+        assert!(sim.is_host_pinned(h).unwrap());
+        assert!(sim.hbm_used(d).unwrap() >= bytes);
+        enq(sim.kernel(d, KernelKind::other(8, bytes), &[h], &[h], s));
+        sim.synchronize().unwrap();
+        sim.free(d, h, s).unwrap();
+        sim.synchronize().unwrap();
+        assert!(!sim.is_resident(h, d).unwrap());
+        assert!(sim.is_host_pinned(h).unwrap());
+        sim.free_host_pinned(h).unwrap();
+        assert!(!sim.is_host_pinned(h).unwrap());
+    }
+
+    #[test]
+    fn device_to_pinned_keeps_hbm_and_marks_host() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+        sim.synchronize().unwrap();
+        let used = sim.hbm_used(d).unwrap();
+        enq(sim.memcpy_device_to_pinned(d, a, bytes, s));
+        sim.synchronize().unwrap();
+        assert!(sim.is_host_pinned(a).unwrap());
+        assert!(sim.is_resident(a, d).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), used);
+    }
+
+    #[test]
+    fn graph_cannot_capture_host_pinned_alloc() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.begin_capture(d, s).unwrap();
+        match sim.alloc_host_pinned(4096) {
             Err(SimError::Invalid { why }) => assert!(why.contains("alloc")),
             other => panic!("{other:?}"),
         }

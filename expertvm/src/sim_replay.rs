@@ -1,9 +1,11 @@
-//! Replay a trace through [`gpu_sim`] with H2D fills on miss.
+//! Replay a trace through [`gpu_sim`] with pinned H2D fills on miss.
 
 use crate::access::{ExpertAccess, ExpertKey, Trace};
 use crate::error::Error;
 use crate::place::PlaceMap;
-use crate::planner::{copy_forward, prefetch_keys, transition_pair, Markov, Prefetch};
+use crate::planner::{
+    copy_forward, plan_placement, prefetch_keys, transition_pair, Markov, Placement, Prefetch,
+};
 use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
 use gpu_sim::{
@@ -75,7 +77,7 @@ pub struct SimCfg {
 
 /// Replay `trace` on `profile` with a `slots`-entry expert cache.
 ///
-/// Each miss copies `bytes_per_expert` host→device, then a grouped GEMM runs
+/// Each miss copies `bytes_per_expert` pinned-host→device, then a grouped GEMM runs
 /// on the same stream (stream-ordered; no invented overlap). Hits skip the copy.
 /// The clock is sampled after each token so TTFT / ITL are real token boundaries.
 pub fn sim_replay(
@@ -206,7 +208,7 @@ fn apply_touch(
                 return Ok(());
             }
             let id = sim.alloc(args.d, args.bytes, args.s)?;
-            let _c = sim.memcpy_host_to_device(args.d, id, args.bytes, args.s)?;
+            let _c = sim.memcpy_pinned_to_device(args.d, id, args.bytes, args.s)?;
             if args.kernel {
                 kernel(sim, args.d, args.s, id)?;
             }
@@ -280,6 +282,9 @@ fn kernel(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Er
     Ok(())
 }
 
+/// Decode-shaped activation payload used by [`sim_remote_home`] (hidden=64 fp16).
+pub const DECODE_ACTIVATION_BYTES: u64 = 128;
+
 /// Place each expert per `map` (home H2D, replica D2D). HBM is the only cap.
 pub fn sim_placed(
     trace: &Trace,
@@ -304,7 +309,7 @@ pub fn sim_placed(
             } else {
                 misses = misses.saturating_add(1);
                 let id = sim.alloc(d, bytes, s)?;
-                let _c = sim.memcpy_host_to_device(d, id, bytes, s)?;
+                let _c = sim.memcpy_pinned_to_device(d, id, bytes, s)?;
                 if let Some(reps) = map.replicas.get(&key) {
                     for dst in reps {
                         let _c = sim.memcpy_device_to_device(d, *dst, id, bytes, s)?;
@@ -325,46 +330,74 @@ pub fn sim_placed(
     Ok(finish(&sim, &token_ends, hits, misses, 0))
 }
 
-/// Compute on GPU0; experts live on `map` homes. Miss: H2D to home, then peer
-/// copy (NVLink / PCIe P2P / RDMA) onto GPU0 before the GEMM.
+/// Compute on GPU0; experts live on `map` homes. Miss: pinned H2D to home, then
+/// [`plan_placement`] chooses D2D of weights onto GPU0 vs shipping activations
+/// to home (GEMM on home, small result D2D back). Online reuse is how many
+/// times this key has been seen so far (no future leak).
 ///
-/// Homes that are already GPU0 skip the peer hop (local H2D only). Hits GEMM
-/// on GPU0 against the replica left by the first fetch.
+/// Homes that are already GPU0 skip the peer hop. Hits GEMM where the first
+/// fetch left the weights.
 pub fn sim_remote_home(
     trace: &Trace,
     profile: HardwareProfile,
     bytes_per_expert: u64,
     map: &PlaceMap,
 ) -> Result<SimReplay, Error> {
+    sim_remote_home_cfg(
+        trace,
+        profile,
+        bytes_per_expert,
+        DECODE_ACTIVATION_BYTES,
+        map,
+    )
+}
+
+/// [`sim_remote_home`] with an explicit activation payload size.
+pub fn sim_remote_home_cfg(
+    trace: &Trace,
+    profile: HardwareProfile,
+    bytes_per_expert: u64,
+    activation_bytes: u64,
+    map: &PlaceMap,
+) -> Result<SimReplay, Error> {
     let n_gpus = u16::try_from(profile.n_gpus()).unwrap_or(1).max(1);
     let mut sim = Sim::new(profile);
     let compute = DeviceId(0);
     let s = StreamId(0);
-    let mut handles: BTreeMap<ExpertKey, AllocId> = BTreeMap::new();
+    let mut pages: BTreeMap<ExpertKey, RemotePage> = BTreeMap::new();
+    let mut seen: BTreeMap<ExpertKey, u64> = BTreeMap::new();
     let bytes = bytes_per_expert.max(1);
+    let act = activation_bytes.max(1);
     let mut hits = 0u64;
     let mut misses = 0u64;
     let mut next_event = 1u32;
     let mut token_ends: Vec<u64> = Vec::new();
     for (i, event) in trace.events.iter().enumerate() {
+        let fan_in = u64::try_from(event.experts.len()).unwrap_or(1).max(1);
         for key in event.keys() {
-            let home = map.home_of(key, n_gpus);
-            if let Some(id) = handles.get(&key).copied() {
+            let n = seen.entry(key).or_insert(0);
+            *n = n.saturating_add(1);
+            let reuse = *n;
+            if let Some(page) = pages.get(&key).copied() {
                 hits = hits.saturating_add(1);
-                kernel(&mut sim, compute, s, id)?;
+                remote_hit(&mut sim, page, compute, act, s, &mut next_event)?;
             } else {
                 misses = misses.saturating_add(1);
-                let id = sim.alloc(home, bytes, s)?;
-                let _c = sim.memcpy_host_to_device(home, id, bytes, s)?;
-                if home != compute {
-                    let _c = sim.memcpy_device_to_device(home, compute, id, bytes, s)?;
-                    let ev = EventId(next_event);
-                    next_event = next_event.saturating_add(1);
-                    let _r = sim.record_event(home, ev, s)?;
-                    let _w = sim.wait_event(compute, ev, s)?;
-                }
-                kernel(&mut sim, compute, s, id)?;
-                let _prev = handles.insert(key, id);
+                let home = map.home_of(key, n_gpus);
+                let page = fetch_remote(
+                    &mut sim,
+                    RemoteFetch {
+                        home,
+                        compute,
+                        expert_bytes: bytes,
+                        act_bytes: act,
+                        stream: s,
+                    },
+                    reuse,
+                    fan_in,
+                    &mut next_event,
+                )?;
+                let _prev = pages.insert(key, page);
             }
         }
         if last_of_token(&trace.events, i) {
@@ -376,6 +409,140 @@ pub fn sim_remote_home(
         sim.synchronize()?;
     }
     Ok(finish(&sim, &token_ends, hits, misses, 0))
+}
+
+#[derive(Clone, Copy)]
+struct RemotePage {
+    id: AllocId,
+    gemm: DeviceId,
+    home: DeviceId,
+    act: Option<AllocId>,
+}
+
+struct RemoteFetch {
+    home: DeviceId,
+    compute: DeviceId,
+    expert_bytes: u64,
+    act_bytes: u64,
+    stream: StreamId,
+}
+
+fn remote_hit(
+    sim: &mut Sim,
+    page: RemotePage,
+    compute: DeviceId,
+    act_bytes: u64,
+    stream: StreamId,
+    next_event: &mut u32,
+) -> Result<(), Error> {
+    if let Some(act) = page.act {
+        ship_act(sim, compute, page.home, act, act_bytes, stream, next_event)?;
+        kernel(sim, page.home, stream, page.id)?;
+        ship_act(sim, page.home, compute, act, act_bytes, stream, next_event)?;
+        return Ok(());
+    }
+    kernel(sim, page.gemm, stream, page.id)
+}
+
+fn fetch_remote(
+    sim: &mut Sim,
+    fetch: RemoteFetch,
+    reuse: u64,
+    fan_in: u64,
+    next_event: &mut u32,
+) -> Result<RemotePage, Error> {
+    let id = sim.alloc(fetch.home, fetch.expert_bytes, fetch.stream)?;
+    let _c = sim.memcpy_pinned_to_device(fetch.home, id, fetch.expert_bytes, fetch.stream)?;
+    if fetch.home == fetch.compute {
+        kernel(sim, fetch.compute, fetch.stream, id)?;
+        return Ok(RemotePage {
+            id,
+            gemm: fetch.compute,
+            home: fetch.home,
+            act: None,
+        });
+    }
+    let bps = sim
+        .profile()
+        .link(Some(fetch.home), Some(fetch.compute))?
+        .bps;
+    match plan_placement(fetch.expert_bytes, fetch.act_bytes, fan_in, reuse, bps) {
+        Placement::MoveWeights => {
+            let _c = sim.memcpy_device_to_device(
+                fetch.home,
+                fetch.compute,
+                id,
+                fetch.expert_bytes,
+                fetch.stream,
+            )?;
+            wait_peer(sim, fetch.home, fetch.compute, fetch.stream, next_event)?;
+            kernel(sim, fetch.compute, fetch.stream, id)?;
+            Ok(RemotePage {
+                id,
+                gemm: fetch.compute,
+                home: fetch.home,
+                act: None,
+            })
+        }
+        Placement::DispatchActivations => {
+            let act = sim.alloc(fetch.compute, fetch.act_bytes, fetch.stream)?;
+            ship_act(
+                sim,
+                fetch.compute,
+                fetch.home,
+                act,
+                fetch.act_bytes,
+                fetch.stream,
+                next_event,
+            )?;
+            kernel(sim, fetch.home, fetch.stream, id)?;
+            ship_act(
+                sim,
+                fetch.home,
+                fetch.compute,
+                act,
+                fetch.act_bytes,
+                fetch.stream,
+                next_event,
+            )?;
+            Ok(RemotePage {
+                id,
+                gemm: fetch.home,
+                home: fetch.home,
+                act: Some(act),
+            })
+        }
+    }
+}
+
+fn ship_act(
+    sim: &mut Sim,
+    src: DeviceId,
+    dst: DeviceId,
+    act: AllocId,
+    bytes: u64,
+    stream: StreamId,
+    next_event: &mut u32,
+) -> Result<(), Error> {
+    if src == dst {
+        return Ok(());
+    }
+    let _c = sim.memcpy_device_to_device(src, dst, act, bytes, stream)?;
+    wait_peer(sim, src, dst, stream, next_event)
+}
+
+fn wait_peer(
+    sim: &mut Sim,
+    src: DeviceId,
+    dst: DeviceId,
+    stream: StreamId,
+    next_event: &mut u32,
+) -> Result<(), Error> {
+    let ev = EventId(*next_event);
+    *next_event = next_event.saturating_add(1);
+    let _r = sim.record_event(src, ev, stream)?;
+    let _w = sim.wait_event(dst, ev, stream)?;
+    Ok(())
 }
 
 /// Cached LRU on GPU0 versus static EP across the profile's GPUs.

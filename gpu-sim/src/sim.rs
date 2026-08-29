@@ -13,6 +13,7 @@ struct Alloc {
     devices: Vec<DeviceId>,
     leases: u32,
     live: bool,
+    host_pinned: bool,
 }
 
 struct Op {
@@ -365,10 +366,72 @@ impl Sim {
                 devices: Vec::new(),
                 leases: 0,
                 live: false,
+                host_pinned: false,
             },
         );
         let _op = self.submit(device, stream, Kind::Alloc { id, bytes })?;
         Ok(id)
+    }
+
+    /// Immediate page-locked host allocation. Does not charge HBM.
+    ///
+    /// A kernel may not read this object until a copy has placed it on a
+    /// device. Capture cannot include host alloc.
+    pub fn alloc_host_pinned(&mut self, bytes: u64) -> Result<AllocId, SimError> {
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte alloc",
+            });
+        }
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture alloc/free",
+            });
+        }
+        let id = AllocId(self.next_alloc);
+        self.next_alloc = self.next_alloc.saturating_add(1);
+        let _prev = self.allocs.insert(
+            id,
+            Alloc {
+                bytes,
+                devices: Vec::new(),
+                leases: 0,
+                live: true,
+                host_pinned: true,
+            },
+        );
+        Ok(id)
+    }
+
+    /// Whether `alloc` is live in page-locked host memory.
+    pub fn is_host_pinned(&self, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.host_pinned)
+    }
+
+    /// Drop a host-pinned allocation that is not resident on any GPU.
+    pub fn free_host_pinned(&mut self, id: AllocId) -> Result<(), SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture alloc/free",
+            });
+        }
+        let a = self.alloc_ref(id)?;
+        if a.leases > 0 {
+            return Err(SimError::Leased { alloc: id });
+        }
+        if !a.live || !a.host_pinned {
+            return Err(SimError::UnknownAlloc { alloc: id });
+        }
+        if !a.devices.is_empty() {
+            return Err(SimError::Invalid {
+                why: "host-pinned still resident on a device",
+            });
+        }
+        let a = self.alloc_mut(id)?;
+        a.live = false;
+        a.host_pinned = false;
+        Ok(())
     }
 
     /// Stream-ordered free. Illegal while a kernel lease is held.
@@ -392,7 +455,7 @@ impl Sim {
         self.submit(device, stream, Kind::Memcpy(op))
     }
 
-    /// Host → `device` convenience.
+    /// Pageable host → `device`. Slower than [`Self::memcpy_pinned_to_device`].
     pub fn memcpy_host_to_device(
         &mut self,
         device: DeviceId,
@@ -405,6 +468,46 @@ impl Sim {
             MemcpyOp {
                 src: Place::Host,
                 dst: Place::Device(device),
+                alloc,
+                bytes,
+            },
+            stream,
+        )
+    }
+
+    /// Page-locked host → `device` (CUDA DMA / `cudaMallocHost` source).
+    pub fn memcpy_pinned_to_device(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy(
+            device,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(device),
+                alloc,
+                bytes,
+            },
+            stream,
+        )
+    }
+
+    /// `device` → page-locked host. Source HBM residency is kept (copy).
+    pub fn memcpy_device_to_pinned(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy(
+            device,
+            MemcpyOp {
+                src: Place::Device(device),
+                dst: Place::HostPinned,
                 alloc,
                 bytes,
             },
@@ -673,7 +776,7 @@ impl Sim {
                 self.gpu_rt_mut(device)?.used = self.gpu_rt(device)?.used.saturating_sub(bytes);
                 let a = self.alloc_mut(alloc)?;
                 a.devices.retain(|d| *d != device);
-                if a.devices.is_empty() {
+                if a.devices.is_empty() && !a.host_pinned {
                     a.live = false;
                 }
                 self.running.push(Running {
@@ -912,7 +1015,7 @@ impl Sim {
             return Err(SimError::UnknownAlloc { alloc: m.alloc });
         }
         match m.src {
-            Place::Host => Ok(()),
+            Place::Host | Place::HostPinned => Ok(()),
             Place::Device(d) => {
                 if a.devices.contains(&d) {
                     Ok(())
@@ -955,14 +1058,8 @@ impl Sim {
     }
 
     fn memcpy_ns(&self, m: &MemcpyOp) -> Result<(u64, usize), SimError> {
-        let src = match m.src {
-            Place::Host => None,
-            Place::Device(d) => Some(d),
-        };
-        let dst = match m.dst {
-            Place::Host => None,
-            Place::Device(d) => Some(d),
-        };
+        let src = m.src.device();
+        let dst = m.dst.device();
         let idx = self
             .profile
             .links
@@ -977,10 +1074,12 @@ impl Sim {
             .links
             .get(idx)
             .ok_or(SimError::Invalid { why: "link index" })?;
-        Ok((
-            link.copy_ns(m.bytes).saturating_add(self.extra_transfer_ns),
-            idx,
-        ))
+        let copy = if m.src.is_pageable() || m.dst.is_pageable() {
+            link.pageable_copy_ns(m.bytes)
+        } else {
+            link.copy_ns(m.bytes)
+        };
+        Ok((copy.saturating_add(self.extra_transfer_ns), idx))
     }
 
     fn share_n(&self, share: &Share) -> u64 {
@@ -1078,6 +1177,9 @@ impl Sim {
                 if !a.devices.contains(&dst) {
                     a.devices.push(dst);
                 }
+            }
+            if matches!(m.dst, Place::HostPinned) {
+                self.alloc_mut(m.alloc)?.host_pinned = true;
             }
         }
         if let Some(op) = self.ops.get_mut(&id) {

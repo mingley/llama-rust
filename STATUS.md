@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — HBM vs host-pinned residency
+
+`Place::{Host, HostPinned, Device}`: pageable H2D (`memcpy_host_to_device`)
+pays `LinkProfile::pageable_permille` (example default 500 = 2× pinned DMA);
+pinned H2D is `memcpy_pinned_to_device`. `alloc_host_pinned` is immediate,
+does not charge HBM, and a kernel on it is `NotResident` until a copy places
+the object on a device. `probe_topology` / expert loads use pinned DMA.
+`sim_remote_home` runs `plan_placement` on the home↔GPU0 hop (online reuse,
+no future leak): large experts dispatch activations; equal volume moves
+weights. CLI: `expertvm remote --activation-bytes N`. Dual score still has
+no `$/M tokens`.
+
 ## Shipped 2026-08-29 — router permille, decode Markov, RDMA remote-home
 
 `ExpertAccess.weight_pt` is optional router mass in permille (`w` in JSONL;
