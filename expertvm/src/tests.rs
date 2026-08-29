@@ -727,6 +727,9 @@ fn adversarial_workloads_are_named_and_measurable() {
     assert!(batch.render().contains("overlap"));
     assert!(batch.graphs.is_some(), "{}", batch.render());
     assert!(batch.render().contains("graphs"));
+    assert!(batch.schedule.is_some(), "{}", batch.render());
+    assert!(batch.render().contains("schedule-all"));
+    assert!(batch.render().contains("schedule-1"));
 }
 
 #[test]

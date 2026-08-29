@@ -752,6 +752,42 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaEventElapsedTime` in nanoseconds (this crate is ns, not milliseconds).
+    ///
+    /// Both events must be recorded and complete. Returns `end.done_ns -
+    /// start.done_ns`. An unknown event is [`SimError::UnknownEvent`]. If `end`
+    /// finished first, [`SimError::Invalid`].
+    pub fn event_elapsed_ns(&self, start: EventId, end: EventId) -> Result<u64, SimError> {
+        let start_ns = self.event_done_ns(start)?;
+        let end_ns = self.event_done_ns(end)?;
+        end_ns.checked_sub(start_ns).ok_or(SimError::Invalid {
+            why: "event elapsed: end before start",
+        })
+    }
+
+    fn event_done_ns(&self, event: EventId) -> Result<u64, SimError> {
+        if !self.events.contains_key(&event) {
+            return Err(SimError::UnknownEvent { event: event.0 });
+        }
+        if !self.event_complete(event) {
+            return Err(SimError::Invalid {
+                why: "event elapsed: not complete",
+            });
+        }
+        let rec = self.events.get(&event).and_then(|e| e.recorded_by);
+        let Some(id) = rec else {
+            return Err(SimError::Invalid {
+                why: "event elapsed: not recorded",
+            });
+        };
+        let op = self.ops.get(&id).ok_or(SimError::Invalid {
+            why: "event elapsed: missing record op",
+        })?;
+        op.done_ns.ok_or(SimError::Invalid {
+            why: "event elapsed: record has no done_ns",
+        })
+    }
+
     fn drive_until(&mut self, idle: impl Fn(&Self) -> bool) -> Result<(), SimError> {
         let mut steps = 0u32;
         loop {

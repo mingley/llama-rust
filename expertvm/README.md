@@ -39,7 +39,7 @@ llama-rust routers  →  ExpertAccess JSONL
                    expertvm schedule    open-loop batching; --interarrival-ns
                          │
                          ▼
-                   expertvm bench       replay table + sim score
+                   expertvm bench       replay table + sim + schedule-all/1
                          │
                          ▼
                    expertvm ep          static EP vs GPU0 LRU (8-GPU profile)
@@ -107,7 +107,9 @@ for the GEMV and releases before the next (so `slots < top-k` still
 works). `SimulatedGpuStore` holds a host-pinned staging alloc that does
 not count toward HBM. `HardwareProfile::restrict_hbm` is the knob. `topology_suite` /
 `probe_topology` compare H2D and P2P costs across named meshes (PCIe P2P,
-NVLink, bad NUMA, RDMA, asymmetric). `SimulatedGpuStore` can inject GPU
+NVLink, bad NUMA, RDMA, asymmetric). `expertvm bench` on a multi-sequence
+trace prints `schedule-all` vs `schedule-1` (open-loop running set of
+unlimited vs 1). `SimulatedGpuStore` can inject GPU
 unavailable, copy-stream cancel, transfer delay, and next-H2D load
 failure.
 

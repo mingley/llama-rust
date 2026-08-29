@@ -10,6 +10,7 @@
 //! ([`Sim::operations`]). [`Sim::synchronize_stream`] waits one stream.
 //! [`Sim::synchronize_event`] is `cudaEventSynchronize`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
+//! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
 //! [`Sim::set_stream_priority`] is `cudaStreamCreateWithPriority`.
 
 #![cfg_attr(not(test), deny(missing_docs))]
@@ -1007,5 +1008,33 @@ mod tests {
         assert_eq!(jumped, 0);
         assert!(sim.operation(k).unwrap().done);
         assert!(sim.clock_ns() > 0);
+    }
+
+    #[test]
+    fn event_elapsed_ns_is_record_done_delta() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let start = EventId(1);
+        let end = EventId(2);
+        enq(sim.record_event(d, start, s));
+        enq(sim.kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], s));
+        enq(sim.record_event(d, end, s));
+        match sim.event_elapsed_ns(start, end) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not complete"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.synchronize().unwrap();
+        let ns = sim.event_elapsed_ns(start, end).unwrap();
+        assert!(ns > 0, "elapsed={ns}");
+        match sim.event_elapsed_ns(end, start) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("end before start"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.event_elapsed_ns(EventId(99), end) {
+            Err(SimError::UnknownEvent { event: 99 }) => {}
+            other => panic!("{other:?}"),
+        }
     }
 }

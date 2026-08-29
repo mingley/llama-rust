@@ -537,8 +537,10 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   measure whether those fills were used. `memset`, directed peer enable, and
   the legacy null stream are mechanical CUDA invariants.
   `synchronize_stream` / `synchronize_event` are `cudaStreamSynchronize` /
-  `cudaEventSynchronize`. Public `GpuOp` / `Operation` is the compiled DAG
-  (`Sim::operations`).
+  `cudaEventSynchronize`. `event_elapsed_ns` is `cudaEventElapsedTime` in
+  nanoseconds. Public `GpuOp` / `Operation` is the compiled DAG
+  (`Sim::operations`). `expertvm bench` on a multi-sequence trace prints
+  `schedule-all` vs `schedule-1`.
 - performance model must include fixed overhead, size-dependent
   throughput, queueing, concurrency limits, alignment, startup latency
   (`LinkProfile::align_bytes` rounds the billed payload up; a 1-byte DMA

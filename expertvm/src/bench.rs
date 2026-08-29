@@ -3,6 +3,7 @@
 use crate::access::Trace;
 use crate::error::Error;
 use crate::replay::{compare, format_table};
+use crate::schedule::{schedule_replay, SchedCfg};
 use crate::sim_replay::{sim_replay_cfg, SimCfg};
 use crate::workload::{generate, Workload};
 use gpu_sim::HardwareProfile;
@@ -22,6 +23,8 @@ pub struct BenchReport {
     pub overlap: Option<String>,
     /// Serial vs `--cuda-graphs` on the same LRU config.
     pub graphs: Option<String>,
+    /// Closed-loop `schedule-all` vs `schedule-1` when the trace has >1 sequence.
+    pub schedule: Option<String>,
 }
 
 impl BenchReport {
@@ -41,6 +44,10 @@ impl BenchReport {
             s.push_str(g);
             s.push('\n');
         }
+        if let Some(sch) = &self.schedule {
+            s.push_str(sch);
+            s.push('\n');
+        }
         s
     }
 }
@@ -58,11 +65,13 @@ pub fn report(
     let mut sim = None;
     let mut overlap = None;
     let mut graphs = None;
+    let mut schedule = None;
     if let Some(p) = profile {
         let lines = sim_lines(trace, p, capacity, lookahead, expert_bytes)?;
         sim = Some(lines.serial);
         overlap = lines.overlap;
         graphs = lines.graphs;
+        schedule = lines.schedule;
     }
     Ok(BenchReport {
         name: name.to_string(),
@@ -71,6 +80,7 @@ pub fn report(
         sim,
         overlap,
         graphs,
+        schedule,
     })
 }
 
@@ -78,6 +88,7 @@ struct SimLines {
     serial: String,
     overlap: Option<String>,
     graphs: Option<String>,
+    schedule: Option<String>,
 }
 
 fn sim_lines(
@@ -97,6 +108,17 @@ fn sim_lines(
     } else {
         None
     };
+    let schedule = if trace.n_sequences() > 1 {
+        let all = schedule_replay(trace, profile.clone(), base, SchedCfg::closed(0))?;
+        let one = schedule_replay(trace, profile.clone(), base, SchedCfg::closed(1))?;
+        Some(format!(
+            "schedule-all {} | schedule-1 {}",
+            all.line(),
+            one.line()
+        ))
+    } else {
+        None
+    };
     let mut graphed = base;
     graphed.cuda_graphs = true;
     let g = sim_replay_cfg(trace, profile, graphed)?;
@@ -104,6 +126,7 @@ fn sim_lines(
         serial: serial.line(),
         overlap,
         graphs: Some(format!("serial {} | graphs {}", serial.line(), g.line())),
+        schedule,
     })
 }
 

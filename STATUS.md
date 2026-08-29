@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — event elapsed + schedule lines in benches
+
+`Sim::event_elapsed_ns` is `cudaEventElapsedTime` in nanoseconds (both
+records complete; end-before-start is invalid). `expertvm bench` /
+`infer-bench` on a multi-sequence trace print `schedule-all` vs
+`schedule-1` next to serial/overlap/graphs. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-29 — open-loop continuous batching (`expertvm schedule`)
 
 `Sim::idle_until` drains in-flight work, then jumps the virtual clock
