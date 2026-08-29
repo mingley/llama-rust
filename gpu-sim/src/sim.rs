@@ -88,6 +88,8 @@ struct Ev {
 
 struct Graph {
     steps: Vec<(DeviceId, Kind)>,
+    /// `cudaGraphInstantiate` has run (explicit or first launch).
+    instantiated: bool,
 }
 
 /// Deterministic GPU node.
@@ -569,16 +571,35 @@ impl Sim {
         let id = GraphId(self.next_graph);
         self.next_graph = self.next_graph.saturating_add(1);
         let steps = core::mem::take(&mut self.capture_buf);
-        let _prev = self.graphs.insert(id, Graph { steps });
+        let _prev = self.graphs.insert(
+            id,
+            Graph {
+                steps,
+                instantiated: false,
+            },
+        );
         Ok(id)
     }
 
     /// Enqueue every recorded op, stream-ordered, on `stream` of each step's device.
+    ///
+    /// First launch [`Self::instantiate_graph`]s if needed (`cudaGraphInstantiate`
+    /// then `cudaGraphLaunch`). Later launches skip instantiate.
     pub fn launch_graph(&mut self, graph: GraphId, stream: StreamId) -> Result<u32, SimError> {
         if self.capturing.is_some() {
             return Err(SimError::Invalid {
                 why: "cannot launch during capture",
             });
+        }
+        let instantiated = self
+            .graphs
+            .get(&graph)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .instantiated;
+        if !instantiated {
+            self.instantiate_graph(graph)?;
         }
         let steps = self
             .graphs
@@ -611,6 +632,86 @@ impl Sim {
             .ok_or(SimError::Invalid {
                 why: "unknown graph",
             })
+    }
+
+    /// Whether [`Self::instantiate_graph`] (or a first launch) has run.
+    pub fn graph_instantiated(&self, graph: GraphId) -> Result<bool, SimError> {
+        self.graphs
+            .get(&graph)
+            .map(|g| g.instantiated)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })
+    }
+
+    /// `cudaGraphInstantiate`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Already-instantiated ids are a no-op. The first [`Self::launch_graph`]
+    /// calls this when needed.
+    pub fn instantiate_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture graph instantiate")?;
+        let (device, already) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let device = g.steps.first().map(|(d, _)| *d).unwrap_or(DeviceId(0));
+            (device, g.instantiated)
+        };
+        if already {
+            return Ok(());
+        }
+        let ns = self.profile.gpu(device)?.graph_instantiate_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        self.graphs
+            .get_mut(&graph)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .instantiated = true;
+        Ok(())
+    }
+
+    /// `cudaGraphExecUpdate`: replace `exec` steps with `src` when topology matches.
+    ///
+    /// Same device sequence and op kinds; KernelBuf / memcpy sizes may change.
+    /// Pays `graph_update_ns`. Recapture if topology differs. Capture cannot
+    /// include it. `exec` must already be instantiated.
+    pub fn update_graph(&mut self, exec: GraphId, src: GraphId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture graph update")?;
+        if exec == src {
+            return Err(SimError::Invalid {
+                why: "graph update same id",
+            });
+        }
+        let (instantiated, exec_steps, src_steps, device) = {
+            let e = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let s = self.graphs.get(&src).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let device = e.steps.first().map(|(d, _)| *d).unwrap_or(DeviceId(0));
+            (e.instantiated, e.steps.clone(), s.steps.clone(), device)
+        };
+        if !instantiated {
+            return Err(SimError::Invalid {
+                why: "graph not instantiated",
+            });
+        }
+        if !graph_topology_eq(&exec_steps, &src_steps) {
+            return Err(SimError::Invalid {
+                why: "graph update topology",
+            });
+        }
+        let ns = self.profile.gpu(device)?.graph_update_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        self.graphs
+            .get_mut(&exec)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .steps = src_steps;
+        Ok(())
     }
 
     /// Stream-ordered allocation (`cudaMallocAsync`) from the device default pool.
@@ -3058,6 +3159,29 @@ fn seed_peers(profile: &HardwareProfile) -> BTreeSet<(DeviceId, DeviceId)> {
         let _ba = out.insert((b, a));
     }
     out
+}
+
+fn graph_topology_eq(a: &[(DeviceId, Kind)], b: &[(DeviceId, Kind)]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter()
+        .zip(b.iter())
+        .all(|((d0, k0), (d1, k1))| *d0 == *d1 && op_tag(k0) == op_tag(k1))
+}
+
+fn op_tag(k: &Kind) -> u8 {
+    match k {
+        Kind::Alloc { .. } => 0,
+        Kind::Free { .. } => 1,
+        Kind::Memcpy(_) => 2,
+        Kind::Kernel { .. } => 3,
+        Kind::Memset { .. } => 4,
+        Kind::HostFunc => 5,
+        Kind::EventRecord { .. } => 6,
+        Kind::EventWait { .. } => 7,
+        Kind::AllReduce { .. } => 8,
+    }
 }
 
 fn seed_pools(

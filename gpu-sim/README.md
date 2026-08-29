@@ -56,6 +56,8 @@ warp scheduler, L1, …   ← do not model
 | copy-engine occupancy | launch overhead |
 | peer accessibility | size-dependent efficiency |
 | graph capture does not execute; launch replays | GEMM util / grouped-MoE ‰ |
+| graph instantiate is host-sync; first launch pays it once | `graph_instantiate_ns` |
+| graph update replaces steps when topology matches | `graph_update_ns` |
 | graph launch amortizes per-kernel launch overhead | `graph_launch_ns` |
 | `synchronize_stream` waits one stream only | other streams keep running |
 | `synchronize_event` waits the record only | later ops on that stream keep running |
@@ -170,10 +172,16 @@ kernel on it fails `NotResident` until a copy places it on a device.
 | `Sim::set_extra_transfer_ns` | longer memcpy / allreduce, still `Ok` |
 | over-capacity alloc | `SimError::Oom` |
 
-CUDA graphs: `begin_capture` / `end_capture` / `launch_graph`. Capture does
+CUDA graphs: `begin_capture` / `end_capture` / `instantiate_graph` /
+`update_graph` / `launch_graph`. Capture does
 not advance the virtual clock. Alloc/free cannot be captured, including
 host-sync `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device`.
-Launch pays `graph_launch_ns` once; recorded kernels skip per-kernel launch overhead.
+Instantiate and update are host-synchronous and cannot run during capture.
+First launch instantiates if needed (`graph_instantiate_ns` once).
+`update_graph` copies source steps into an instantiated exec when the
+device sequence and op kinds match (`graph_update_ns`); a topology
+mismatch is `Invalid`. Launch pays `graph_launch_ns` once; recorded
+kernels skip per-kernel launch overhead.
 `memset` is an HBM-write kernel on a resident alloc. `host_func` is
 `cudaLaunchHostFunc`: stream-ordered host work that does not occupy compute
 or copy engines (other streams may GEMM). Peer D2D requires a

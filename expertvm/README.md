@@ -109,7 +109,8 @@ path with CUDA's default threshold (`0`), non-blocking streams, and
 `cudaEventDisableTiming` copy events. `--max-batch N` admits N sequences per engine
 iteration at a token (`0` = the whole token) and still samples TTFT once.
 `--cuda-graphs` captures grouped expert GEMMs after `synchronize_stream` on
-that stream and replays them (`graph_launch_ns` once per launch). `--plan-window
+that stream and replays them (first launch pays `graph_instantiate_ns`,
+then `graph_launch_ns` once per launch). `--plan-window
 N` runs [`plan_window`](crate::plan_window) Stay vs Fetch before prefetch (Stay
 does not evict a resident working set). Replay reports `prefetch_hits` /
 `prefetch_waste`. `schedule_replay` / `expertvm schedule` is open-loop

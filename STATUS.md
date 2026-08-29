@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — CUDA graph instantiate and exec update
+
+`Sim::instantiate_graph` is `cudaGraphInstantiate` (host-sync,
+`graph_instantiate_ns`). First `launch_graph` instantiates if needed;
+later launches skip it. `Sim::update_graph` is `cudaGraphExecUpdate`:
+same device sequence and op kinds, different KernelBuf / memcpy sizes.
+Topology mismatch / uninstantiated exec / same id / capture are
+`Invalid`. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — memset of a mapped VMM span (new KV block)
 
 `Sim::memset` fills `[0, bytes)`. `Sim::memset_buf` names an interior
@@ -297,7 +306,8 @@ leak: the window starts at the next event). Stay skips prefetch so a sticky
 working set is not evicted by copy-forward ghosts. Fetch still runs the
 configured Markov/copy-forward fill and also faults in `window_keys`.
 `SimCfg::cuda_graphs` captures grouped expert GEMMs on an idle stream and
-replays them with `launch_graph`; graph launch pays `graph_launch_ns` once
+replays them with `launch_graph`; first launch instantiates
+(`graph_instantiate_ns`), then each launch pays `graph_launch_ns` once
 instead of per-kernel `launch_overhead_ns`. `SimulatedGpuStore` does the same
 per resident page after a drain (completed copy event, idle compute stream).
 Replay lines report `prefetch_hits` / `prefetch_waste` / `graph_launches`.

@@ -580,12 +580,17 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   (`Sim::fail_next_memcpy` → `SimError::TransferFailed`).
 - ring `allreduce` as a collective with a real mesh: missing wrap-around
   links fail `NoPeer`.
-- CUDA-graph capture: `begin_capture` / `end_capture` / `launch_graph`.
+- CUDA-graph capture: `begin_capture` / `end_capture` / `instantiate_graph`
+  / `update_graph` / `launch_graph`.
   Recorded kernels and copies do not run until launch; alloc/free cannot
   be captured (`malloc` / `free_sync` / `memcpy_sync` / `synchronize_device`
   included); mempool create/trim/set-attribute cannot be captured;
-  capture requires an idle stream. Graph launch pays
-  `graph_launch_ns` once; recorded kernels skip per-launch overhead.
+  instantiate/update cannot be captured; capture requires an idle stream.
+  Instantiate is host-sync (`graph_instantiate_ns`); the first launch
+  instantiates if needed. `update_graph` replaces an instantiated exec's
+  steps when device sequence and op kinds match (`graph_update_ns`).
+  Graph launch pays `graph_launch_ns` once; recorded kernels skip
+  per-launch overhead.
   `sim_replay` / `SimulatedGpuStore` capture repeated expert GEMMs
   (`expertvm sim --cuda-graphs`). Capture after a miss waits with
   `synchronize_stream` so the compute stream is idle (CUDA). `--max-batch N`

@@ -1,7 +1,7 @@
 //! Deterministic GPU-systems VM for inference.
 //!
 //! Mechanical invariants (streams, events, HBM vs host-pinned residency, OOM,
-//! topology, CUDA-graph capture/replay) are exact.
+//! topology, CUDA-graph capture / instantiate / update / replay) are exact.
 //! Operation durations come from a [`HardwareProfile`], so agents cannot invent
 //! hardware numbers inside policy code.
 //!
@@ -50,6 +50,9 @@
 //! [`Sim::query_stream`] is `cudaStreamQuery` (no wait).
 //! [`Sim::mem_info`] is `cudaMemGetInfo` `(free, total)`.
 //! [`Sim::set_stream_priority`] is `cudaStreamCreateWithPriority`.
+//! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; first
+//! [`launch_graph`](Sim::launch_graph) calls it). [`Sim::update_graph`] is
+//! `cudaGraphExecUpdate` when device sequence and op kinds match.
 
 #![cfg_attr(not(test), deny(missing_docs))]
 
@@ -736,6 +739,159 @@ mod tests {
         sim.synchronize().unwrap();
         assert!(sim.bytes_moved() >= bytes);
         assert!(sim.is_resident(a, d).unwrap());
+    }
+
+    #[test]
+    fn first_graph_launch_instantiates_once() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_instantiate_ns = 25_000;
+            g.graph_launch_ns = 1_000;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let g = sim.end_capture().unwrap();
+        assert!(!sim.graph_instantiated(g).unwrap());
+        let t0 = sim.clock_ns();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        assert!(sim.graph_instantiated(g).unwrap());
+        assert!(sim.clock_ns() >= t0.saturating_add(25_000));
+        sim.synchronize().unwrap();
+        let first = sim.clock_ns().saturating_sub(t0);
+        let t1 = sim.clock_ns();
+        let n2 = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n2, 1);
+        assert_eq!(sim.clock_ns(), t1);
+        sim.synchronize().unwrap();
+        let second = sim.clock_ns().saturating_sub(t1);
+        assert!(second < first, "first={first} second={second}");
+    }
+
+    #[test]
+    fn instantiate_graph_is_host_sync_and_idempotent() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_instantiate_ns = 40_000;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let g = sim.end_capture().unwrap();
+        let t0 = sim.clock_ns();
+        sim.instantiate_graph(g).unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(40_000));
+        assert!(sim.graph_instantiated(g).unwrap());
+        sim.instantiate_graph(g).unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(40_000));
+        let t1 = sim.clock_ns();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(sim.clock_ns(), t1);
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn update_graph_swaps_allocs_when_topology_matches() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_update_ns = 7_000;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let exec = sim.end_capture().unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
+        let src = sim.end_capture().unwrap();
+        let t0 = sim.clock_ns();
+        sim.update_graph(exec, src).unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(7_000));
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn update_graph_rejects_topology_and_uninstantiated() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let exec = sim.end_capture().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        let memcpy_src = sim.end_capture().unwrap();
+        let err = sim.update_graph(exec, memcpy_src).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.instantiate_graph(exec).unwrap();
+        let err = sim.update_graph(exec, memcpy_src).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("topology"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim.update_graph(exec, exec).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("same id"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn instantiate_and_update_cannot_run_during_capture() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let exec = sim.end_capture().unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let src = sim.end_capture().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        let inst = sim.instantiate_graph(exec).unwrap_err();
+        match inst {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let upd = sim.update_graph(exec, src).unwrap_err();
+        match upd {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]
