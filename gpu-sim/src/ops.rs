@@ -149,6 +149,47 @@ pub struct MemcpyOp {
     pub alloc: AllocId,
     /// Payload bytes. Cost uses this, not a free full-link assumption.
     pub bytes: u64,
+    /// Byte offset into [`Self::alloc`].
+    ///
+    /// Host-to-device into a VMM VA copies this span (`cudaMemcpy` of
+    /// `ptr + offset`). `0` is the whole-object helpers
+    /// ([`crate::Sim::memcpy_pinned_to_device`]). A VMM destination must have
+    /// `[offset, offset+bytes)` mapped.
+    pub offset: u64,
+}
+
+/// One kernel buffer: a whole allocation or a mapped VMM span.
+///
+/// [`Self::whole`] is `offset = 0`, `bytes = 0` (remainder of the alloc).
+/// [`crate::Sim::kernel`] uses that. [`crate::Sim::kernel_bufs`] can name a
+/// mapped page of a reserved VA so a paged KV working set need not cover the
+/// whole pointer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KernelBuf {
+    /// Allocation (device, mapped-host, managed, or VMM VA).
+    pub id: AllocId,
+    /// Byte offset into `id`.
+    pub offset: u64,
+    /// Span length. `0` means from `offset` to the end of the allocation.
+    pub bytes: u64,
+}
+
+impl KernelBuf {
+    /// Whole allocation. [`crate::Sim::kernel`] uses this.
+    #[must_use]
+    pub fn whole(id: AllocId) -> Self {
+        Self {
+            id,
+            offset: 0,
+            bytes: 0,
+        }
+    }
+
+    /// Mapped span `[offset, offset+bytes)` of `id` (vLLM KV-block analog).
+    #[must_use]
+    pub fn span(id: AllocId, offset: u64, bytes: u64) -> Self {
+        Self { id, offset, bytes }
+    }
 }
 
 /// One submitted GPU primitive. PLAN's Kernel / Memcpy / Collective / Event /
@@ -173,10 +214,10 @@ pub enum GpuOp {
     Kernel {
         /// Structural work (roofline inputs).
         kind: KernelKind,
-        /// Allocations the kernel reads.
-        reads: Vec<AllocId>,
-        /// Allocations the kernel writes.
-        writes: Vec<AllocId>,
+        /// Buffers the kernel reads (whole alloc or a mapped VMM span).
+        reads: Vec<KernelBuf>,
+        /// Buffers the kernel writes (whole alloc or a mapped VMM span).
+        writes: Vec<KernelBuf>,
     },
     /// Device-side fill (`cudaMemsetAsync`).
     Memset {

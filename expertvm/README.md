@@ -46,6 +46,9 @@ llama-rust routers  →  ExpertAccess JSONL
                          │
                          ▼
                    expertvm remote      GPU0 compute vs remote-home RDMA fetch
+                         │
+                         ▼
+                   expertvm kv          paged VMM KV working set (map live pages)
 ```
 
 ## Library
@@ -91,7 +94,9 @@ HBM, prefetch migrates the page (same hits/misses as H2D). `--vmm` uses
 `va_acquire` (remap an idle VA, else reserve+map) then pinned H2D into that
 VA (evict `va_release`s the pointer so the next miss skips reserve).
 `--vmm-page N` maps each expert in `N`-byte physicals (`va_acquire_paged`,
-vLLM KV-block analog; implies `--vmm`).
+vLLM KV-block analog; implies `--vmm`). `expertvm kv` reserves a KV VA and
+maps only `capacity` pages (`kernel_bufs` + H2D at `MemcpyOp::offset`;
+peak HBM is the working set, not the reservation).
 `--host-func` enqueues `cudaLaunchHostFunc` after each event's GEMMs
 (`host_func_ns`; other streams can still compute). `--blocking-streams`
 marks created seq-streams as `cudaStreamCreate` (they serialize with the
@@ -199,6 +204,7 @@ expertvm ep       trace.jsonl --capacity 8 --expert-bytes 1048576 --profile 8xh1
 expertvm ep       trace.jsonl --hbm-bytes 4096 --profile 8xh100
 expertvm remote   trace.jsonl --expert-bytes 1048576 --profile 2node-rdma
 expertvm remote   trace.jsonl --expert-bytes 1048576 --activation-bytes 128
+expertvm kv       --pages 8 --page-bytes 4096 --capacity 2 --tokens 64
 gpu-profile probe 2xh100-pcie --bytes 1048576
 ```
 

@@ -37,6 +37,9 @@
 //! [`Sim::va_acquire`] remaps an idle VA of the same size (or reserves);
 //! [`va_acquire_paged`](Sim::va_acquire_paged) maps it in KV-block spans;
 //! [`va_release`](Sim::va_release) unmaps into that pool instead of freeing the VA.
+//! [`Sim::kernel`] still needs the whole VA mapped; [`Sim::kernel_bufs`] and
+//! [`MemcpyOp::offset`] touch a mapped span (paged KV). [`Sim::is_range_resident`]
+//! is that span check.
 //! [`Sim::host_func`] is `cudaLaunchHostFunc` (stream-ordered host work; no GPU occupancy).
 //! [`Sim::set_stream_blocking`] is `cudaStreamCreate` vs `cudaStreamNonBlocking`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
@@ -60,7 +63,7 @@ mod sim;
 
 pub use error::SimError;
 pub use ids::{AllocId, DeviceId, EventId, GraphId, LinkId, OpId, PoolId, StreamId};
-pub use ops::{DType, GpuOp, KernelKind, MemcpyOp, Operation, Place};
+pub use ops::{DType, GpuOp, KernelBuf, KernelKind, MemcpyOp, Operation, Place};
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
     align_up, ns_for_bytes, scale_ns_permille, GpuProfile, HardwareProfile, LinkKind, LinkProfile,
@@ -1223,6 +1226,7 @@ mod tests {
                     dst: Place::Device(d),
                     alloc: a,
                     bytes,
+                    offset: 0,
                 },
                 s,
             )
@@ -1295,6 +1299,7 @@ mod tests {
                 dst: Place::Device(d),
                 alloc: a,
                 bytes: 4096,
+                offset: 0,
             },
             s,
         ) {
@@ -2012,6 +2017,129 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn kernel_bufs_on_mapped_span_is_ok() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let va = sim.va_reserve(8192).unwrap();
+        sim.va_map_range(va, d, 4096, 4096).unwrap();
+        assert!(!sim.is_resident(va, d).unwrap());
+        assert!(sim.is_range_resident(va, d, 4096, 4096).unwrap());
+        assert!(!sim.is_range_resident(va, d, 0, 4096).unwrap());
+        let buf = KernelBuf::span(va, 4096, 4096);
+        enq(sim.kernel_bufs(d, KernelKind::other(8, 8), &[buf], &[buf], s));
+        sim.synchronize().unwrap();
+        sim.va_unmap_range(va, d, 4096, 4096).unwrap();
+        sim.va_free(va).unwrap();
+    }
+
+    #[test]
+    fn kernel_bufs_on_unmapped_span_is_not_resident() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let va = sim.va_reserve(8192).unwrap();
+        sim.va_map_range(va, d, 0, 4096).unwrap();
+        let buf = KernelBuf::span(va, 4096, 4096);
+        enq(sim.kernel_bufs(d, KernelKind::other(8, 8), &[buf], &[buf], s));
+        match sim.synchronize() {
+            Err(SimError::NotResident { alloc, device }) => {
+                assert_eq!(alloc, va);
+                assert_eq!(device, d);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn kernel_bufs_past_alloc_is_invalid() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let va = sim.va_reserve(4096).unwrap();
+        sim.va_map(va, d).unwrap();
+        let buf = KernelBuf::span(va, 0, 8192);
+        match sim.kernel_bufs(d, KernelKind::other(8, 8), &[buf], &[buf], s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("past")),
+            other => panic!("{other:?}"),
+        }
+        match sim.is_range_resident(va, d, 0, 8192) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("past")),
+            other => panic!("{other:?}"),
+        }
+        sim.va_unmap(va).unwrap();
+        sim.va_free(va).unwrap();
+    }
+
+    #[test]
+    fn h2d_into_interior_mapped_page_is_ok() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let va = sim.va_reserve(8192).unwrap();
+        sim.va_map_range(va, d, 4096, 4096).unwrap();
+        enq(sim.memcpy(
+            d,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(d),
+                alloc: va,
+                bytes: 4096,
+                offset: 4096,
+            },
+            s,
+        ));
+        sim.synchronize().unwrap();
+        sim.va_unmap_range(va, d, 4096, 4096).unwrap();
+        sim.va_free(va).unwrap();
+    }
+
+    #[test]
+    fn h2d_into_interior_unmapped_page_is_not_resident() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let va = sim.va_reserve(8192).unwrap();
+        sim.va_map_range(va, d, 0, 4096).unwrap();
+        enq(sim.memcpy(
+            d,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(d),
+                alloc: va,
+                bytes: 4096,
+                offset: 4096,
+            },
+            s,
+        ));
+        match sim.synchronize() {
+            Err(SimError::NotResident { alloc, device }) => {
+                assert_eq!(alloc, va);
+                assert_eq!(device, d);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_replays_kernel_bufs_span() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let va = sim.va_reserve(8192).unwrap();
+        sim.va_map_range(va, d, 0, 4096).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        let buf = KernelBuf::span(va, 0, 4096);
+        enq(sim.kernel_bufs(d, KernelKind::other(8, 8), &[buf], &[buf], s));
+        let g = sim.end_capture().unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        sim.va_unmap_range(va, d, 0, 4096).unwrap();
+        sim.va_free(va).unwrap();
     }
 
     #[test]

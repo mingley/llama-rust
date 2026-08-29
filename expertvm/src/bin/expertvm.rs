@@ -1,10 +1,10 @@
 //! `expertvm analyze | replay | sim` — traces in, measured tables out.
 
 use expertvm::{
-    adversarial_suite, analyze, colocated, compare, compare_ep, format_table, generate, report,
-    schedule_placed, schedule_remote, sim_placed, sim_remote_home_cfg, sim_replay_cfg, striped,
-    topology_suite, with_hot_replicas, Policy, Prefetch, SchedCfg, SimCfg, Trace, Workload,
-    DECODE_ACTIVATION_BYTES,
+    adversarial_suite, analyze, colocated, compare, compare_ep, cycling_pages, format_table,
+    generate, kv_replay, report, schedule_placed, schedule_remote, sim_placed, sim_remote_home_cfg,
+    sim_replay_cfg, striped, topology_suite, with_hot_replicas, Policy, Prefetch, SchedCfg, SimCfg,
+    Trace, Workload, DECODE_ACTIVATION_BYTES,
 };
 use gpu_sim::HardwareProfile;
 use std::env;
@@ -25,6 +25,7 @@ usage: expertvm <command> [args]
   ep       <trace.jsonl> [--capacity N] [--expert-bytes N] [--hbm-bytes N] [--profile NAME]
   place    <trace.jsonl> [--gpus N] [--hot-pt N]
   remote   <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
+  kv       [--pages N] [--page-bytes B] [--capacity C] [--tokens T] [--profile NAME]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch, prefill-batch, shared-prefix
@@ -81,6 +82,7 @@ fn run() -> Result<(), String> {
         "ep" => run_ep(args),
         "place" => run_place(args),
         "remote" => run_remote(args),
+        "kv" => run_kv(args),
         other => Err(format!("{USAGE}got {other}")),
     }
 }
@@ -552,6 +554,45 @@ where
     )
     .map_err(|e| e.to_string())?;
     println!("local {} | remote {}", local.line(), remote.line());
+    Ok(())
+}
+
+fn run_kv<I>(args: I) -> Result<(), String>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut pages = 8u32;
+    let mut page_bytes = 4096u64;
+    let mut capacity = 2usize;
+    let mut tokens = 64u32;
+    let mut profile = String::from("h100");
+    let mut it = args.into_iter();
+    while let Some(arg) = it.next() {
+        let (key, inline) = match arg.split_once('=') {
+            Some((k, v)) => (k.to_string(), Some(v.to_string())),
+            None => (arg, None),
+        };
+        match key.as_str() {
+            "--pages" => pages = parse_u32("pages", &value("pages", inline, &mut it)?)?,
+            "--page-bytes" => {
+                page_bytes = parse_u64("page-bytes", &value("page-bytes", inline, &mut it)?)?
+            }
+            "--capacity" | "-c" => {
+                capacity = parse_usize("capacity", &value("capacity", inline, &mut it)?)?
+            }
+            "--tokens" => tokens = parse_u32("tokens", &value("tokens", inline, &mut it)?)?,
+            "--profile" => profile = value("profile", inline, &mut it)?,
+            flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
+            other => return Err(format!("unexpected argument {other}\n{USAGE}")),
+        }
+    }
+    if pages == 0 {
+        return Err("pages must be > 0".to_string());
+    }
+    let accesses = cycling_pages(pages, tokens);
+    let hw = load_profile(&profile)?;
+    let row = kv_replay(&accesses, hw, page_bytes, capacity).map_err(|e| e.to_string())?;
+    println!("{}", row.line());
     Ok(())
 }
 

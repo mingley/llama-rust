@@ -368,6 +368,7 @@ fn hbm_h2d_pinned(
                 dst: Place::Device(device),
                 alloc,
                 bytes,
+                offset: 0,
             },
             stream,
         )?;

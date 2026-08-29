@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — kernel/copy of a mapped VMM span (paged KV)
+
+`Sim::kernel` still needs the whole VA covered. `Sim::kernel_bufs` /
+`KernelBuf` and `MemcpyOp::offset` touch `[offset, offset+bytes)` so a
+reserved KV pointer can keep only the working-set pages mapped.
+`is_range_resident` is that span check. `expertvm kv` LRU-pages a VA;
+`hbm_peak` is `slots * page_bytes`, not the reservation. Dual score still
+has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — paged VMM maps experts in KV-block physicals
 
 `Sim::va_acquire_paged` reserves (or remaps an idle VA) then `va_map_range`s

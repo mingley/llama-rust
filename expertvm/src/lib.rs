@@ -1,6 +1,7 @@
 //! Expert virtual memory: traces, policies, stores, GPU-sim replay,
 //! open-loop continuous batching (`schedule_replay` / `schedule_placed` /
-//! `schedule_remote`), optional prefix cache on content-addressed `"p"`.
+//! `schedule_remote`), optional prefix cache on content-addressed `"p"`,
+//! paged VMM KV (`kv_replay`).
 
 #![deny(missing_docs, unsafe_code)]
 
@@ -9,6 +10,7 @@ mod analyze;
 mod bench;
 mod error;
 mod gpu_store;
+mod kv;
 mod live;
 mod place;
 mod planner;
@@ -28,6 +30,7 @@ pub use gpu_sim::{
     probe_topology, DeviceId, GpuOp, HardwareProfile, Operation, PoolId, Score, TopologyProbe,
 };
 pub use gpu_store::SimulatedGpuStore;
+pub use kv::{cycling_pages, kv_replay, KvReplay};
 pub use live::LiveStore;
 pub use place::{colocated, home_gpu, striped, with_hot_replicas, PlaceMap};
 pub use planner::{

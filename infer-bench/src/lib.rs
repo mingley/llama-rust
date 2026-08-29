@@ -6,18 +6,18 @@
 #![deny(missing_docs, unsafe_code)]
 
 pub use expertvm::{
-    adversarial_suite, colocated, compare, format_table, generate, report, schedule_placed,
-    schedule_remote, schedule_replay, sim_placed, sim_remote_home, sim_remote_home_cfg, sim_replay,
-    striped, topology_suite, with_hot_replicas, BenchReport, Policy, SchedCfg, SimCfg, Trace,
-    Workload, DECODE_ACTIVATION_BYTES,
+    adversarial_suite, colocated, compare, cycling_pages, format_table, generate, kv_replay,
+    report, schedule_placed, schedule_remote, schedule_replay, sim_placed, sim_remote_home,
+    sim_remote_home_cfg, sim_replay, striped, topology_suite, with_hot_replicas, BenchReport,
+    KvReplay, Policy, SchedCfg, SimCfg, Trace, Workload, DECODE_ACTIVATION_BYTES,
 };
 pub use gpu_sim::{probe_topology, HardwareProfile, Score, TopologyProbe};
 
 #[cfg(test)]
 mod tests {
     use super::{
-        adversarial_suite, schedule_replay, sim_placed, sim_remote_home, striped, HardwareProfile,
-        SchedCfg, SimCfg, Trace,
+        adversarial_suite, cycling_pages, kv_replay, schedule_replay, sim_placed, sim_remote_home,
+        striped, HardwareProfile, SchedCfg, SimCfg, Trace,
     };
 
     #[test]
@@ -62,5 +62,19 @@ mod tests {
         .unwrap();
         assert_eq!(row.completed, 2);
         assert!(row.replay.misses >= 2);
+    }
+
+    #[test]
+    fn kv_replay_reexport_pages_working_set() {
+        let row = kv_replay(
+            &cycling_pages(4, 8),
+            HardwareProfile::example_cheap_48gb(),
+            4096,
+            2,
+        )
+        .unwrap();
+        assert_eq!(row.hbm_peak, 2 * 4096);
+        assert_eq!(row.pages, 4);
+        assert!(row.misses >= 4);
     }
 }

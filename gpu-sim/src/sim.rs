@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::SimError;
 use crate::ids::{AllocId, DeviceId, EventId, GraphId, OpId, PoolId, StreamId};
-use crate::ops::{GpuOp as Kind, KernelKind, MemcpyOp, Operation, Place};
+use crate::ops::{GpuOp as Kind, KernelBuf, KernelKind, MemcpyOp, Operation, Place};
 use crate::profile::{ns_for_bytes, HardwareProfile};
 
 struct Alloc {
@@ -242,11 +242,36 @@ impl Sim {
     /// Whether `alloc` currently has a copy on `device`.
     ///
     /// A VMM VA is resident only when mapped physicals cover the whole reserved
-    /// size (a hole is not kernel-readable).
+    /// size (a hole is not [`Self::kernel`]-readable). [`Self::kernel_bufs`]
+    /// of a mapped span uses [`Self::is_range_resident`].
     pub fn is_resident(&self, alloc: AllocId, device: DeviceId) -> Result<bool, SimError> {
         let a = self.alloc_ref(alloc)?;
         if a.vmm {
             Ok(a.live && vmm_covers(&a.vmm_maps, device, 0, a.bytes))
+        } else {
+            Ok(a.live && a.devices.contains(&device))
+        }
+    }
+
+    /// Whether `[offset, offset+bytes)` of `alloc` is mapped/resident on `device`.
+    ///
+    /// Non-VMM allocations ignore the span (the object is on the device or not).
+    /// A range past the reservation is [`SimError::Invalid`].
+    pub fn is_range_resident(
+        &self,
+        alloc: AllocId,
+        device: DeviceId,
+        offset: u64,
+        bytes: u64,
+    ) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if offset.saturating_add(bytes) > a.bytes {
+            return Err(SimError::Invalid {
+                why: "range past alloc",
+            });
+        }
+        if a.vmm {
+            Ok(a.live && vmm_covers(&a.vmm_maps, device, offset, bytes))
         } else {
             Ok(a.live && a.devices.contains(&device))
         }
@@ -805,8 +830,8 @@ impl Sim {
 
     /// `cuMemAddressReserve`: a VA with no physical pages. Does not charge HBM.
     ///
-    /// [`Self::va_map`] creates and maps one physical allocation (this crate
-    /// does not model sparse sub-range maps). Capture cannot include it.
+    /// [`Self::va_map`] maps the whole VA; [`Self::va_map_range`] maps a span.
+    /// Capture cannot include it.
     pub fn va_reserve(&mut self, bytes: u64) -> Result<AllocId, SimError> {
         if bytes == 0 {
             return Err(SimError::Invalid {
@@ -854,8 +879,9 @@ impl Sim {
     /// Map `[offset, offset+bytes)` of a reserved VA onto `device`.
     ///
     /// Host-synchronous. Charges `bytes` of HBM. Overlapping maps on the same
-    /// device fail. A kernel needs the full VA covered; a hole is
-    /// [`SimError::NotResident`]. Capture cannot include it.
+    /// device fail. [`Self::kernel`] needs the full VA covered; [`Self::kernel_bufs`]
+    /// may run on this span. A hole is [`SimError::NotResident`] for that API.
+    /// Capture cannot include it.
     pub fn va_map_range(
         &mut self,
         id: AllocId,
@@ -1032,8 +1058,10 @@ impl Sim {
 
     /// [`Self::va_acquire`] mapping `page` physicals that cover the VA (vLLM KV analog).
     ///
-    /// `page >= bytes` is [`Self::va_acquire`]. The kernel still needs the whole
-    /// VA covered; this splits `cuMemMap` so each block pays `alloc_overhead_ns`.
+    /// `page >= bytes` is [`Self::va_acquire`]. [`Self::kernel`] still needs the
+    /// whole VA covered; this splits `cuMemMap` so each block pays
+    /// `alloc_overhead_ns`. A paged working set that leaves holes uses
+    /// [`Self::va_map_range`] plus [`Self::kernel_bufs`].
     pub fn va_acquire_paged(
         &mut self,
         device: DeviceId,
@@ -1125,6 +1153,7 @@ impl Sim {
                 dst: Place::Device(device),
                 alloc,
                 bytes,
+                offset: 0,
             },
             stream,
         )
@@ -1152,6 +1181,7 @@ impl Sim {
                 dst: Place::HostPinned,
                 alloc,
                 bytes,
+                offset: 0,
             },
             stream,
         )
@@ -1388,6 +1418,7 @@ impl Sim {
                 dst: Place::Device(device),
                 alloc,
                 bytes,
+                offset: 0,
             },
             stream,
         )
@@ -1408,6 +1439,7 @@ impl Sim {
                 dst: Place::Device(device),
                 alloc,
                 bytes,
+                offset: 0,
             },
             stream,
         )
@@ -1428,6 +1460,7 @@ impl Sim {
                 dst: Place::Host,
                 alloc,
                 bytes,
+                offset: 0,
             },
             stream,
         )
@@ -1448,6 +1481,7 @@ impl Sim {
                 dst: Place::HostPinned,
                 alloc,
                 bytes,
+                offset: 0,
             },
             stream,
         )
@@ -1473,12 +1507,16 @@ impl Sim {
                 dst: Place::Device(dst),
                 alloc,
                 bytes,
+                offset: 0,
             },
             stream,
         )
     }
 
-    /// Enqueue a kernel. Reads/writes are leased until it completes.
+    /// Enqueue a kernel on whole allocations. Reads/writes are leased until it completes.
+    ///
+    /// A VMM VA must be fully mapped ([`Self::is_resident`]). For a mapped
+    /// page of a larger VA, use [`Self::kernel_bufs`].
     ///
     /// A managed allocation not yet on `device` is [`Self::prefetch`]'d on
     /// this stream first (page fault). Capture does not insert that migrate;
@@ -1491,14 +1529,34 @@ impl Sim {
         writes: &[AllocId],
         stream: StreamId,
     ) -> Result<OpId, SimError> {
+        let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
+        let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
+        self.kernel_bufs(device, kind, &reads, &writes, stream)
+    }
+
+    /// Enqueue a kernel on explicit buffer spans (vLLM paged-KV analog).
+    ///
+    /// Each [`KernelBuf`] must be mapped-host, device-resident, or a VMM span
+    /// covered by [`Self::va_map_range`]. `bytes == 0` means from `offset` to
+    /// the end of the allocation. A range past the reservation is `Invalid`.
+    pub fn kernel_bufs(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
         self.fault_managed(device, reads, writes, stream)?;
+        let reads = self.resolve_bufs(reads)?;
+        let writes = self.resolve_bufs(writes)?;
         self.submit(
             device,
             stream,
             Kind::Kernel {
                 kind,
-                reads: reads.to_vec(),
-                writes: writes.to_vec(),
+                reads,
+                writes,
             },
         )
     }
@@ -2020,19 +2078,19 @@ impl Sim {
     fn fault_managed(
         &mut self,
         device: DeviceId,
-        reads: &[AllocId],
-        writes: &[AllocId],
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
         stream: StreamId,
     ) -> Result<(), SimError> {
         let mut seen = BTreeSet::new();
         let mut wait = Vec::new();
-        for id in reads.iter().chain(writes.iter()) {
-            if !seen.insert(*id) {
+        for b in reads.iter().chain(writes.iter()) {
+            if !seen.insert(b.id) {
                 continue;
             }
-            let a = self.alloc_ref(*id)?;
+            let a = self.alloc_ref(b.id)?;
             if a.live && a.managed && !a.devices.contains(&device) {
-                wait.push(*id);
+                wait.push(b.id);
             }
         }
         if wait.is_empty() {
@@ -2048,6 +2106,20 @@ impl Sim {
             let _op = self.prefetch(device, id, stream)?;
         }
         Ok(())
+    }
+
+    fn resolve_bufs(&self, bufs: &[KernelBuf]) -> Result<Vec<KernelBuf>, SimError> {
+        let mut out = Vec::new();
+        for b in bufs {
+            let total = self.alloc_ref(b.id)?.bytes;
+            let (offset, bytes) = kernel_span(total, b)?;
+            out.push(KernelBuf {
+                id: b.id,
+                offset,
+                bytes,
+            });
+        }
+        Ok(out)
     }
 
     fn managed_local_copy(&self, m: &MemcpyOp) -> Result<bool, SimError> {
@@ -2358,7 +2430,7 @@ impl Sim {
                 }
                 let alloc = *alloc;
                 let bytes = *bytes;
-                self.lease_kernel(device, &[], &[alloc], false)?;
+                self.lease_kernel(device, &[], &[KernelBuf::whole(alloc)], false)?;
                 let ns = self.memset_ns(device, bytes, launch)?;
                 self.gpu_rt_mut(device)?.compute_busy = true;
                 self.running.push(Running {
@@ -2450,11 +2522,11 @@ impl Sim {
     fn uses_mapped_host(
         &self,
         device: DeviceId,
-        reads: &[AllocId],
-        writes: &[AllocId],
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
     ) -> Result<bool, SimError> {
-        for id in reads.iter().chain(writes.iter()) {
-            let a = self.alloc_ref(*id)?;
+        for b in reads.iter().chain(writes.iter()) {
+            let a = self.alloc_ref(b.id)?;
             if a.host_mapped && !a.devices.contains(&device) {
                 return Ok(true);
             }
@@ -2465,27 +2537,40 @@ impl Sim {
     fn lease_kernel(
         &mut self,
         device: DeviceId,
-        reads: &[AllocId],
-        writes: &[AllocId],
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
         mapped_ok: bool,
     ) -> Result<(), SimError> {
-        for id in reads.iter().chain(writes.iter()) {
-            let a = self.alloc_ref(*id)?;
-            let on_device = if a.vmm {
-                a.live && vmm_covers(&a.vmm_maps, device, 0, a.bytes)
-            } else {
-                a.live && a.devices.contains(&device)
-            };
-            let mapped = mapped_ok && a.live && a.host_mapped;
-            if !on_device && !mapped {
-                return Err(SimError::NotResident { alloc: *id, device });
+        for b in reads.iter().chain(writes.iter()) {
+            if !self.buf_on_device(b, device, mapped_ok)? {
+                return Err(SimError::NotResident {
+                    alloc: b.id,
+                    device,
+                });
             }
         }
-        for id in reads.iter().chain(writes.iter()) {
-            let a = self.alloc_mut(*id)?;
+        for b in reads.iter().chain(writes.iter()) {
+            let a = self.alloc_mut(b.id)?;
             a.leases = a.leases.saturating_add(1);
         }
         Ok(())
+    }
+
+    fn buf_on_device(
+        &self,
+        buf: &KernelBuf,
+        device: DeviceId,
+        mapped_ok: bool,
+    ) -> Result<bool, SimError> {
+        let a = self.alloc_ref(buf.id)?;
+        let (off, n) = kernel_span(a.bytes, buf)?;
+        let on_device = if a.vmm {
+            a.live && vmm_covers(&a.vmm_maps, device, off, n)
+        } else {
+            a.live && a.devices.contains(&device)
+        };
+        let mapped = mapped_ok && a.live && a.host_mapped;
+        Ok(on_device || mapped)
     }
 
     fn kernel_ns(
@@ -2658,6 +2743,11 @@ impl Sim {
         if !a.live {
             return Err(SimError::UnknownAlloc { alloc: m.alloc });
         }
+        if (a.vmm || m.offset > 0) && m.offset.saturating_add(m.bytes) > a.bytes {
+            return Err(SimError::Invalid {
+                why: "memcpy range past alloc",
+            });
+        }
         if a.managed && a.leases > 0 {
             let staying = match m.dst {
                 Place::Device(d) => a.devices.contains(&d),
@@ -2678,7 +2768,12 @@ impl Sim {
         match m.src {
             Place::Host | Place::HostPinned => {}
             Place::Device(d) => {
-                if !a.devices.contains(&d) {
+                let src_ok = if a.vmm {
+                    vmm_covers(&a.vmm_maps, d, m.offset, m.bytes)
+                } else {
+                    a.devices.contains(&d)
+                };
+                if !src_ok {
                     return Err(SimError::NotResident {
                         alloc: m.alloc,
                         device: d,
@@ -2687,7 +2782,7 @@ impl Sim {
             }
         }
         if let Place::Device(d) = m.dst {
-            if a.vmm && !vmm_covers(&a.vmm_maps, d, 0, m.bytes) {
+            if a.vmm && !vmm_covers(&a.vmm_maps, d, m.offset, m.bytes) {
                 return Err(SimError::NotResident {
                     alloc: m.alloc,
                     device: d,
@@ -2825,7 +2920,7 @@ impl Sim {
         }
         let kernel_ids: Option<Vec<AllocId>> = self.ops.get(&id).and_then(|op| match &op.kind {
             Kind::Kernel { reads, writes, .. } => {
-                Some(reads.iter().chain(writes.iter()).copied().collect())
+                Some(reads.iter().chain(writes.iter()).map(|b| b.id).collect())
             }
             Kind::Memset { id: alloc, .. } => Some(vec![*alloc]),
             Kind::AllReduce { parts, .. } => Some(parts.iter().map(|(_, a)| *a).collect()),
@@ -2851,6 +2946,25 @@ impl Sim {
         }
         Ok(())
     }
+}
+
+fn kernel_span(total: u64, buf: &KernelBuf) -> Result<(u64, u64), SimError> {
+    if buf.offset > total {
+        return Err(SimError::Invalid {
+            why: "kernel range past alloc",
+        });
+    }
+    let n = if buf.bytes == 0 {
+        total.saturating_sub(buf.offset)
+    } else {
+        buf.bytes
+    };
+    if n == 0 || buf.offset.saturating_add(n) > total {
+        return Err(SimError::Invalid {
+            why: "kernel range past alloc",
+        });
+    }
+    Ok((buf.offset, n))
 }
 
 fn snapshot_op(id: OpId, o: &Op) -> Operation {
