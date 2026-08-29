@@ -6,10 +6,10 @@ use crate::place::PlaceMap;
 use crate::planner::{plan_keys, predicted_keys, ChainState, Markov, Plan};
 use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
-    apply_stream_sms, apply_touch, drop_remote, fetch_remote, fill_remote, gemm_keys,
-    host_callbacks, note_touch, occupancy_slots, reclaim_victim, remote_hit, replay_from_sim,
-    sim_profile, sync_work, GraphBank, PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg,
-    SimReplay, StreamPlan, TouchArgs,
+    advise_pool_access_if_pinned, apply_stream_sms, apply_touch, drop_remote, fetch_remote,
+    fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots, reclaim_victim,
+    remote_hit, replay_from_sim, sim_profile, sync_work, GraphBank, PageHandle, RemoteFetch,
+    RemotePage, ReplayCounters, SimCfg, SimReplay, StreamPlan, TouchArgs,
 };
 use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -284,6 +284,7 @@ impl SchedRt {
         if cfg.mempool {
             sim.set_default_pool_release_threshold(u64::MAX)?;
         }
+        advise_pool_access_if_pinned(&mut sim, &cfg)?;
         let plan = StreamPlan::new(sim.profile(), cfg.seq_streams, cfg.decode_priority);
         if cfg.blocking_streams {
             sim.set_created_streams_blocking(plan.mark)?;
@@ -611,8 +612,8 @@ impl SchedRt {
         if self.args.mapped {
             return Ok(());
         }
-        if (self.args.managed || self.args.vmm) && self.cfg.accessed_by {
-            // SetAccessedBy / va_set_access already maps dest GPUs; no dest HBM.
+        if self.cfg.accessed_by && (self.args.managed || self.args.vmm || !self.args.sync_alloc) {
+            // SetAccessedBy / va_set_access / pool_set_access already maps dest.
             return Ok(());
         }
         let Some(map) = &self.place else {

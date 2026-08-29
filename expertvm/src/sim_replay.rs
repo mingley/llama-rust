@@ -194,9 +194,10 @@ pub struct SimCfg {
     /// Peer map without dest HBM at a managed or VMM fill.
     ///
     /// Dest GEMMs may read without migrating or charging dest HBM. `--place replicas`
-    /// skips dest prefetch (no extra HBM). No-op unless [`Self::managed`] or
-    /// [`Self::vmm`].
-    /// [`crate::GpuStoreCfg::accessed_by`] is the store path.
+    /// skips dest prefetch / VMM dest map+D2D / pinned D2D (no extra HBM). No-op unless
+    /// [`Self::managed`], [`Self::vmm`], or pinned-async (`cudaMallocAsync`). Host-sync
+    /// [`Self::sync_alloc`] (`cudaMalloc`) still D2Ds. [`crate::GpuStoreCfg::accessed_by`]
+    /// is the store path.
     pub accessed_by: bool,
     /// CUDA legacy null stream (`set_legacy_null_stream`): NULL serializes
     /// with every other stream. Off by default. [`crate::GpuStoreCfg::legacy_null`]
@@ -316,6 +317,7 @@ pub fn sim_replay_cfg(
     if cfg.mempool {
         sim.set_default_pool_release_threshold(u64::MAX)?;
     }
+    advise_pool_access_if_pinned(&mut sim, &cfg)?;
     let d = DeviceId(0);
     let s = StreamId(0);
     let bytes = cfg.bytes_per_expert.max(1);
@@ -453,7 +455,8 @@ pub(crate) struct TouchArgs {
     pub vmm_page: u64,
     /// [`SimCfg::pageable`]: host-sync pageable H2D.
     pub pageable: bool,
-    /// [`SimCfg::accessed_by`]: SetAccessedBy / VMM SetAccess on every GPU at fill.
+    /// [`SimCfg::accessed_by`]: SetAccessedBy / VMM SetAccess / mempool SetAccess
+    /// on every GPU (fill or default pools).
     pub accessed_by: bool,
 }
 
@@ -519,6 +522,27 @@ pub(crate) fn advise_vmm_access(sim: &mut Sim, id: AllocId) -> Result<(), Error>
     let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
     for g in 0..n {
         sim.va_set_access(id, DeviceId(g))?;
+    }
+    Ok(())
+}
+
+/// `cudaMemPoolSetAccess` ReadWrite on every default pool for every GPU.
+pub(crate) fn advise_pool_access(sim: &mut Sim) -> Result<(), Error> {
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        let home = DeviceId(g);
+        let pool = sim.default_pool(home)?;
+        for d in 0..n {
+            sim.pool_set_access(pool, DeviceId(d))?;
+        }
+    }
+    Ok(())
+}
+
+/// Pinned `cudaMallocAsync` + `--accessed-by` (not mapped/managed/VMM/`cudaMalloc`).
+pub(crate) fn advise_pool_access_if_pinned(sim: &mut Sim, cfg: &SimCfg) -> Result<(), Error> {
+    if cfg.accessed_by && !cfg.mapped && !cfg.managed && !cfg.vmm && !cfg.sync_alloc {
+        advise_pool_access(sim)?;
     }
     Ok(())
 }
@@ -1374,7 +1398,7 @@ pub(crate) struct RemoteFetch {
     pub(crate) sync_alloc: bool,
     /// `cudaMallocManaged` + PreferredLocation on home; compute GEMM reads remotely.
     pub(crate) managed: bool,
-    /// [`SimCfg::accessed_by`]: map compute without a dest migrate (managed or VMM).
+    /// [`SimCfg::accessed_by`]: map compute without a dest migrate (managed, VMM, or mempool).
     pub(crate) accessed_by: bool,
 }
 
@@ -1405,7 +1429,8 @@ pub(crate) fn remote_hit(
 }
 
 /// Pin weights on home (and D2D them onto compute when
-/// [`Placement::MoveWeights`]). [`RemoteFetch::managed`] prefetches a
+/// [`Placement::MoveWeights`], unless [`RemoteFetch::accessed_by`] already
+/// maps compute). [`RemoteFetch::managed`] prefetches a
 /// PreferredLocation page and leaves GEMM on compute as a remote read.
 /// No GEMM — that is [`remote_hit`] / demand.
 pub(crate) fn fill_remote(
@@ -1447,6 +1472,15 @@ pub(crate) fn fill_remote(
         .bps;
     match plan_placement(fetch.expert_bytes, fetch.act_bytes, fan_in, reuse, bps) {
         Placement::MoveWeights => {
+            if fetch.accessed_by && !fetch.sync_alloc {
+                wait_peer(sim, fetch.home, fetch.compute, fetch.stream, next_event)?;
+                return Ok(RemotePage {
+                    id,
+                    gemm: fetch.compute,
+                    home: fetch.home,
+                    act: None,
+                });
+            }
             let _c = sim.memcpy_device_to_device(
                 fetch.home,
                 fetch.compute,

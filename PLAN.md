@@ -1035,6 +1035,13 @@ model, do not celebrate the sim.
     `--accessed-by` skips dest HBM (`va_set_access` at fill). Dual score still
     has no `$/M tokens`.
 
+66. [x] Mempool `cudaMemPoolSetAccess`: `Sim::pool_set_access` lets a kernel
+    on GPU1 read **and write** a `cudaMallocAsync` pointer whose physicals
+    live on GPU0 without dest HBM (NVLink billed). `--accessed-by` on pinned
+    async applies it to every default pool (pin/migrate/replicas skip dest
+    D2D). `cudaMalloc` / `--sync-alloc` still D2Ds. Dual score still has no
+    `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

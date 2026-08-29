@@ -28,7 +28,10 @@
 //! `cudaMallocFromPoolAsync` / `cudaMemPoolAttrReleaseThreshold` /
 //! `cudaMemPoolTrimTo`. Unused pool bytes stay in `cudaMemGetInfo` used until
 //! trim when the release threshold is high (`u64::MAX`, vLLM-style).
-//! [`Sim::malloc`] cannot consume another pool's cache.
+//! [`Sim::pool_set_access`] / [`pool_unset_access`](Sim::pool_unset_access) are
+//! `cudaMemPoolSetAccess` ReadWrite / ProtNone: a kernel on a peer may read
+//! **and write** pool allocations without dest HBM (interconnect). Applies to
+//! existing and later allocs from that pool. [`Sim::malloc`] cannot consume another pool's cache.
 //! [`Sim::alloc_host`] is pageable; [`Sim::host_register`] / [`host_register_mapped`](Sim::host_register_mapped)
 //! are `cudaHostRegister` (host-synchronous mlock). [`Sim::alloc_host_mapped`] is
 //! `cudaHostAllocMapped`: a kernel may read it without H2D, billed at host PCIe.
@@ -1809,6 +1812,10 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
             other => panic!("{other:?}"),
         }
+        match sim.pool_set_access(pool, d) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
+            other => panic!("{other:?}"),
+        }
         match sim.alloc_host(4096) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture")),
             other => panic!("{other:?}"),
@@ -2520,6 +2527,125 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn pool_set_access_kernel_reads_and_writes_without_dest_hbm() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let bytes = 32u64 << 20;
+        let p0 = sim.default_pool(d0).unwrap();
+        let a = sim.alloc(d0, bytes, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d0, a, bytes, s));
+        sim.synchronize().unwrap();
+        sim.pool_set_access(p0, d1).unwrap();
+        assert!(sim.is_pool_accessed_by(p0, d1).unwrap());
+        assert!(sim.is_accessed_by(a, d1).unwrap());
+        assert!(!sim.is_resident(a, d1).unwrap());
+        let t0 = sim.clock_ns();
+        enq(sim.kernel(d1, KernelKind::other(8, bytes), &[a], &[a], s));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(a, d0).unwrap());
+        assert!(!sim.is_resident(a, d1).unwrap());
+        assert_eq!(sim.hbm_used(d1).unwrap(), 0);
+        let remote = sim.clock_ns().saturating_sub(t0);
+        let mut local = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let b = local.alloc(d0, bytes, s).unwrap();
+        enq(local.memcpy_pinned_to_device(d0, b, bytes, s));
+        local.synchronize().unwrap();
+        let t1 = local.clock_ns();
+        enq(local.kernel(d0, KernelKind::other(8, bytes), &[b], &[b], s));
+        local.synchronize().unwrap();
+        let hbm = local.clock_ns().saturating_sub(t1);
+        assert!(remote > hbm, "remote={remote} hbm={hbm}");
+        sim.free(d0, a, s).unwrap();
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn pool_set_access_covers_existing_and_later_allocs() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let p0 = sim.default_pool(d0).unwrap();
+        let first = sim.alloc(d0, 4096, s).unwrap();
+        sim.synchronize().unwrap();
+        sim.pool_set_access(p0, d1).unwrap();
+        let later = sim.alloc(d0, 4096, s).unwrap();
+        sim.synchronize().unwrap();
+        enq(sim.kernel(d1, KernelKind::other(8, 8), &[first], &[], s));
+        enq(sim.kernel(d1, KernelKind::other(8, 8), &[later], &[], s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d1).unwrap(), 0);
+    }
+
+    #[test]
+    fn pool_set_access_rejects_peer_disabled_malloc_and_capture() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let p0 = sim.default_pool(d0).unwrap();
+        sim.disable_peer(d0, d1).unwrap();
+        match sim.pool_set_access(p0, d1).unwrap_err() {
+            SimError::PeerDisabled { src, dst } => {
+                assert_eq!(src, d0);
+                assert_eq!(dst, d1);
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.enable_peer(d0, d1).unwrap();
+        sim.pool_set_access(p0, d1).unwrap();
+        sim.pool_unset_access(p0, d1).unwrap();
+        assert!(!sim.is_pool_accessed_by(p0, d1).unwrap());
+        let m = sim.malloc(d0, 4096).unwrap();
+        sim.pool_set_access(p0, d1).unwrap();
+        enq(sim.kernel(d1, KernelKind::other(8, 8), &[m], &[], s));
+        match sim.synchronize() {
+            Err(SimError::NotResident { alloc, device }) => {
+                assert_eq!(alloc, m);
+                assert_eq!(device, d1);
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut cap = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let p_cap = cap.default_pool(d0).unwrap();
+        cap.begin_capture(d0, s).unwrap();
+        match cap.pool_set_access(p_cap, d1).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = cap.end_capture().unwrap();
+        let mut chain = Sim::new(HardwareProfile::example_asymmetric_links());
+        let far = chain.default_pool(DeviceId(0)).unwrap();
+        match chain.pool_set_access(far, DeviceId(2)).unwrap_err() {
+            SimError::NoPeer { src, dst } => {
+                assert_eq!(src, DeviceId(0));
+                assert_eq!(dst, DeviceId(2));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn pool_set_access_memset_peer_skips_dest_hbm() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let p0 = sim.default_pool(d0).unwrap();
+        let a = sim.alloc(d0, bytes, s).unwrap();
+        sim.synchronize().unwrap();
+        sim.pool_set_access(p0, d1).unwrap();
+        enq(sim.memset(d1, a, bytes, s));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(a, d0).unwrap());
+        assert!(!sim.is_resident(a, d1).unwrap());
+        assert_eq!(sim.hbm_used(d1).unwrap(), 0);
     }
 
     #[test]

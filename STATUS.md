@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — Mempool `cudaMemPoolSetAccess` peer maps
+
+`Sim::pool_set_access` is `cudaMemPoolSetAccess` ReadWrite on a mapped
+mempool so a kernel on a peer can read **and write** home physicals
+without dest HBM (interconnect billed). `--accessed-by` on pinned
+`cudaMallocAsync` applies it to every default pool; pin/migrate/`--place
+replicas` skip dest D2D. `cudaMalloc` / `--sync-alloc` still D2Ds. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — Trace-walker VMM `--place replicas`
 
 `expertvm schedule --vmm --place replicas` maps dest then D2D like
@@ -1237,8 +1246,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 65 (trace-walker VMM
-`--place replicas`). `gguf_gemv serve --engine`
+Next code change is PLAN systems depth after item 66 (mempool
+`cudaMemPoolSetAccess`). `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover
 is a Llama NORM real-model fixture when a GGUF is on disk. Physical

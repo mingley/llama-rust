@@ -52,7 +52,7 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --sync-alloc      host-sync malloc/memcpy/free (`--expert-sim`)
       --mempool         hold unused cudaMallocAsync bytes (`--expert-sim`)
       --pageable        pageable H2D (`--expert-sim`)
-      --accessed-by     SetAccessedBy / VMM SetAccess (`--expert-sim`; no dest HBM)
+      --accessed-by     SetAccessedBy / VMM SetAccess / mempool SetAccess (`--expert-sim`; no dest HBM)
       --legacy-null     NULL copy serializes with compute (`--expert-sim`)
       --stream-priority cudaStreamCreateWithPriority on compute (`--expert-sim`)
       --seq-streams     per-sequence copy streams (`--expert-sim`; grouped GEMM stays fused)

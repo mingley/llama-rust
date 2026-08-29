@@ -33,7 +33,7 @@ struct Alloc {
     /// `cudaMemAdviseSetReadMostly`: prefetch replicates instead of moving.
     read_mostly: bool,
     /// GPUs that may read this alloc without a local copy (`SetAccessedBy` /
-    /// VMM `cuMemSetAccess` PROT_READ).
+    /// VMM `cuMemSetAccess` PROT_READ). Mempool peer access lives on [`Pool`].
     accessed_by: BTreeSet<DeviceId>,
     /// `cudaMemAdviseSetPreferredLocation` (host or one GPU).
     preferred: Preferred,
@@ -72,6 +72,8 @@ struct Pool {
     live: u64,
     cached: u64,
     release_threshold: u64,
+    /// GPUs granted [`Sim::pool_set_access`] (`cudaMemPoolSetAccess` ReadWrite).
+    accessed_by: BTreeSet<DeviceId>,
 }
 
 struct Op {
@@ -1106,6 +1108,7 @@ impl Sim {
                 live: 0,
                 cached: 0,
                 release_threshold: 0,
+                accessed_by: BTreeSet::new(),
             },
         );
         Ok(id)
@@ -1203,6 +1206,46 @@ impl Sim {
     /// Live bytes allocated from `pool` and not yet freed.
     pub fn pool_live(&self, pool: PoolId) -> Result<u64, SimError> {
         Ok(self.pool_ref(pool)?.live)
+    }
+
+    /// `cudaMemPoolSetAccess` ReadWrite on `device` for allocations from `pool`.
+    ///
+    /// Host-synchronous. Does not charge dest HBM. A kernel on `device` may
+    /// read **and write** pointers whose physicals live on the pool's GPU
+    /// (interconnect). Capture cannot include it. Needs a topology link and
+    /// directed peer access from the pool GPU, same as D2D. Same-device is a
+    /// no-op that still records access. Applies to existing and later allocs.
+    pub fn pool_set_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let _gpu = self.profile.gpu(device)?;
+        let owner = self.pool_ref(pool)?.device;
+        if owner != device {
+            let _link = self.profile.link(Some(owner), Some(device))?;
+            if !self.peer_access(owner, device) {
+                return Err(SimError::PeerDisabled {
+                    src: owner,
+                    dst: device,
+                });
+            }
+        }
+        let _ins = self.pool_mut(pool)?.accessed_by.insert(device);
+        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+        Ok(())
+    }
+
+    /// Drop [`Self::pool_set_access`] for `device` (`cudaMemAccessFlagsProtNone`).
+    pub fn pool_unset_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let _gpu = self.profile.gpu(device)?;
+        let _p = self.pool_ref(pool)?;
+        let _was = self.pool_mut(pool)?.accessed_by.remove(&device);
+        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+        Ok(())
+    }
+
+    /// Whether `device` has [`Self::pool_set_access`] on `pool`.
+    pub fn is_pool_accessed_by(&self, pool: PoolId, device: DeviceId) -> Result<bool, SimError> {
+        Ok(self.pool_ref(pool)?.accessed_by.contains(&device))
     }
 
     /// `cudaMalloc`: [`Self::synchronize_device`] then the pointer is usable.
@@ -1345,10 +1388,17 @@ impl Sim {
         Ok(a.live && a.managed && a.read_mostly)
     }
 
-    /// Whether `device` has [`MemAdvise::SetAccessedBy`] or [`Self::va_set_access`].
+    /// Whether `device` has [`MemAdvise::SetAccessedBy`], [`Self::va_set_access`],
+    /// or [`Self::pool_set_access`] on this alloc's mempool.
     pub fn is_accessed_by(&self, alloc: AllocId, device: DeviceId) -> Result<bool, SimError> {
         let a = self.alloc_ref(alloc)?;
-        Ok(a.live && a.accessed_by.contains(&device) && (a.managed || a.vmm))
+        if !a.live {
+            return Ok(false);
+        }
+        if a.accessed_by.contains(&device) && (a.managed || a.vmm) {
+            return Ok(true);
+        }
+        Ok(self.pool_peer_ok(a, device))
     }
 
     /// Whether [`MemAdvise::SetPreferredLocation`] names `device`.
@@ -2158,8 +2208,9 @@ impl Sim {
     /// Enqueue a kernel on whole allocations. Reads/writes are leased until it completes.
     ///
     /// A VMM VA must be fully mapped ([`Self::is_resident`]) or peer-readable
-    /// via [`Self::va_set_access`] (reads only). For a mapped page of a larger
-    /// VA, use [`Self::kernel_bufs`].
+    /// via [`Self::va_set_access`] (reads only). A mempool alloc may be read
+    /// **and written** on a peer after [`Self::pool_set_access`]. For a mapped
+    /// page of a larger VA, use [`Self::kernel_bufs`].
     ///
     /// A managed allocation not yet on `device` is [`Self::prefetch`]'d when
     /// the kernel starts (page fault after stream deps). Capture does not
@@ -2182,8 +2233,9 @@ impl Sim {
     /// Enqueue a kernel on explicit buffer spans (vLLM paged-KV analog).
     ///
     /// Each [`KernelBuf`] must be mapped-host, device-resident, a VMM span
-    /// covered by [`Self::va_map_range`], or a VMM peer [`Self::va_set_access`]
-    /// read. `bytes == 0` means from `offset` to
+    /// covered by [`Self::va_map_range`], a VMM peer [`Self::va_set_access`]
+    /// read, or a mempool peer [`Self::pool_set_access`] (read and write).
+    /// `bytes == 0` means from `offset` to
     /// the end of the allocation. A range past the reservation is `Invalid`.
     /// A live kernel (not a graph replay) page-faults managed memory when it
     /// *starts*, after stream deps, so a waited prefetch is visible.
@@ -2997,7 +3049,14 @@ impl Sim {
             self.drop_compute(device)?;
             return Err(e);
         }
-        let ns = match self.memset_ns(device, bytes, launch) {
+        let mem_bps = match self.kernel_mem_bps(device, &[], &writes) {
+            Ok(b) => b,
+            Err(e) => {
+                self.drop_compute(device)?;
+                return Err(e);
+            }
+        };
+        let ns = match self.memset_ns(device, bytes, launch, mem_bps) {
             Ok(n) => n,
             Err(e) => {
                 self.drop_compute(device)?;
@@ -3461,7 +3520,22 @@ impl Sim {
             .is_some_and(|h| vmm_covers(&a.vmm_maps, h, off, n));
         let accessed =
             mapped_ok && allow_remote && a.remote_read_ok(device) && (!a.vmm || home_span);
-        Ok(on_device || mapped || accessed)
+        let pool_ok = self.pool_peer_ok(a, device);
+        Ok(on_device || mapped || accessed || pool_ok)
+    }
+
+    /// Peer ReadWrite via [`Self::pool_set_access`]. Physicals stay on the pool GPU.
+    fn pool_peer_ok(&self, a: &Alloc, device: DeviceId) -> bool {
+        if !a.live {
+            return false;
+        }
+        let Some(pid) = a.pool else {
+            return false;
+        };
+        let Some(p) = self.pools.get(&pid) else {
+            return false;
+        };
+        p.device != device && p.accessed_by.contains(&device) && a.devices.contains(&p.device)
     }
 
     fn peer_or_host_bps(&self, src: DeviceId, dst: DeviceId) -> Result<u64, SimError> {
@@ -3491,9 +3565,12 @@ impl Sim {
                 remote = true;
                 continue;
             }
-            if a.remote_read_ok(device) {
+            if a.remote_read_ok(device) || self.pool_peer_ok(a, device) {
                 let src = if a.vmm {
                     a.vmm_home()
+                } else if self.pool_peer_ok(a, device) {
+                    a.pool
+                        .and_then(|p| self.pools.get(&p).map(|pool| pool.device))
                 } else {
                     match a.preferred {
                         Preferred::Gpu(p) if a.devices.contains(&p) => Some(p),
@@ -3549,14 +3626,20 @@ impl Sim {
         Ok(ns)
     }
 
-    fn memset_ns(&self, device: DeviceId, bytes: u64, launch: LaunchCost) -> Result<u64, SimError> {
+    fn memset_ns(
+        &self,
+        device: DeviceId,
+        bytes: u64,
+        launch: LaunchCost,
+        mem_bps: u64,
+    ) -> Result<u64, SimError> {
         let g = self.profile.gpu(device)?;
         let overhead = match launch {
             LaunchCost::Kernel => g.launch_overhead_ns,
             LaunchCost::GraphHead => g.graph_launch_ns,
             LaunchCost::GraphBody => 0,
         };
-        Ok(overhead.saturating_add(ns_for_bytes(bytes, g.hbm_bps)))
+        Ok(overhead.saturating_add(ns_for_bytes(bytes, mem_bps.max(1))))
     }
 
     fn host_func_ns(&self, device: DeviceId, launch: LaunchCost) -> Result<u64, SimError> {
@@ -4037,6 +4120,7 @@ fn seed_pools(
                 live: 0,
                 cached: 0,
                 release_threshold: 0,
+                accessed_by: BTreeSet::new(),
             },
         );
         let _dup = replaced.is_some();

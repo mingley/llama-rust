@@ -32,6 +32,7 @@ warp scheduler, L1, …   ← do not model
 | HBM capacity, alloc/free, OOM | kernel microseconds |
 | `cudaMallocAsync` (`alloc`) is stream-ordered; pointer not usable until the stream catches up | `alloc_overhead_ns` (first touch) / `pool_reuse_ns` (cached) |
 | `cudaMallocAsync` from a pool reuses cached bytes; `cudaMemGetInfo` still counts them used until `pool_trim_to` | `pool_reuse_ns` |
+| `cudaMemPoolSetAccess` (`pool_set_access`) ReadWrite on a peer; dest HBM stays 0; writes allowed | interconnect, not local HBM |
 | `cudaMalloc` (`malloc`) device-syncs that GPU, then the pointer is usable; it cannot consume another pool's cache | `alloc_overhead_ns` (charged at the call) |
 | `cudaHostRegister` pins pageable host for DMA (`host_register`) | `alloc_overhead_ns` (mlock, host-sync) |
 | `cudaHostAllocMapped` / `host_register_mapped`: kernel may read host with no H2D | host PCIe vs HBM |
@@ -57,7 +58,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemcpy` (`memcpy_sync`) waits that stream | pinned `memcpy` does not |
 | `synchronize_device` waits one GPU | other GPUs keep running |
 | stream order, event dependencies | memcpy microseconds |
-| residency: a kernel may only read **device**, **mapped-host**, or VMM peer `va_set_access` allocations; managed first-touch at kernel start | PCIe / NVLink / HBM bandwidth |
+| residency: a kernel may only read **device**, **mapped-host**, VMM peer `va_set_access` (reads), or mempool peer `pool_set_access` (read/write) allocations; managed first-touch at kernel start | PCIe / NVLink / HBM bandwidth |
 | HBM vs host-pinned: `alloc_host_pinned` does not charge HBM | pageable vs pinned H2D (`pageable_permille`) |
 | copy-engine occupancy | launch overhead |
 | peer accessibility | size-dependent efficiency |
@@ -261,7 +262,8 @@ before the kernel unless AccessedBy or PreferredLocation covers that GPU.
 any size; a 2 MiB profile rejects unaligned reserve/map).
 `va_map_range` / `va_unmap_range` map sparse physicals (HBM is the mapped
 span). `va_set_access` is `cuMemSetAccess` PROT_READ on a peer (no dest HBM;
-writes still need a local map). `kernel()` needs the whole VA covered; `kernel_bufs`, `memset_buf`, and
+writes still need a local map). `pool_set_access` is `cudaMemPoolSetAccess`
+ReadWrite on a peer (no dest HBM; kernels may write). `kernel()` needs the whole VA covered; `kernel_bufs`, `memset_buf`, and
 `MemcpyOp::offset` touch a mapped page (paged KV). `va_acquire` remaps an idle VA of the same
 size (or reserves); `va_acquire_paged` maps KV-block physicals covering the VA;
 `va_release` unmaps into that pool. Capture cannot

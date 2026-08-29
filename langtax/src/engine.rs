@@ -3031,6 +3031,23 @@ mod tests {
     }
 
     #[test]
+    fn engine_gpu_pinned_accessed_by_maps_peer_on_8gpu() {
+        let off = two_seq_gpu_store(8, GpuStoreCfg::default(), GpuFill::Pinned);
+        assert!(!off.accessed_peer, "1-GPU pinned must not map a peer");
+        let on = two_seq_gpu_on(
+            8,
+            GpuStoreCfg {
+                accessed_by: true,
+                ..GpuStoreCfg::default()
+            },
+            GpuFill::Pinned,
+            HardwareProfile::example_8xh100_nvlink(),
+        );
+        assert!(on.accessed_peer, "accessed_by must map a peer GPU");
+        assert!(on.launches >= 2, "launches={}", on.launches);
+    }
+
+    #[test]
     fn engine_gpu_managed_8gpu_place_hot_migrates() {
         // 64-byte pages: weight D2D beats activation volume, so place_hot
         // migrates onto GPU0. Previously pin_hot replica prefetch and
