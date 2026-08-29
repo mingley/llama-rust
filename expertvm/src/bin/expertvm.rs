@@ -30,7 +30,8 @@ usage: expertvm <command> [args]
   store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-clone] [--timing-events]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
-      prefill-heavy, decode-heavy, batch, prefill-batch, shared-prefix
+      prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
+      shared-prefix
 profiles: h100 (default), h200, 8xh100, cheap, 2xh100-pcie, bad-numa,
           2node-rdma, asymmetric, or a path to a .profile file
 ";

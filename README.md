@@ -92,10 +92,15 @@ cargo build --release --bin gguf_gemv
 ./target/release/expertvm replay tests/traces/cycling.jsonl --capacity 2
 ./target/release/expertvm bench adversarial --capacity 2 --profile cheap
 ./target/release/infer-bench adversarial --capacity 2 --profile cheap
+./target/release/infer-bench workload batch-1 --tokens 32
+./target/release/infer-bench workload batch-128 --tokens 8
+./target/release/infer-bench trace tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 4
+./target/release/infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 4
 ./target/release/infer-bench trace tests/traces/cycling.jsonl --capacity 2
 ./target/release/infer-bench remote tests/traces/cycling.jsonl --expert-bytes 1048576
 ./target/release/expertvm topology --bytes 1048576
 ./target/release/expertvm remote tests/traces/cycling.jsonl --expert-bytes 1048576
+./target/release/expertvm schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 4 --prefetch copy-forward
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 2 --max-batch 1 --interarrival-ns 1000000
 ./target/release/gpu-profile probe bad-numa
 cargo run -p llama-rust --example session

@@ -9,7 +9,7 @@ pub use expertvm::{
     adversarial_suite, colocated, compare, cycling_pages, format_table, generate, kv_paged,
     kv_replay, report, schedule_placed, schedule_remote, schedule_replay, sim_placed,
     sim_remote_home, sim_remote_home_cfg, sim_replay, striped, topology_suite, with_hot_replicas,
-    BenchReport, KvCfg, KvFill, KvReplay, Policy, SchedCfg, SimCfg, Trace, Workload,
+    BenchReport, KvCfg, KvFill, KvReplay, Policy, Prefetch, SchedCfg, SimCfg, Trace, Workload,
     DECODE_ACTIVATION_BYTES,
 };
 pub use gpu_sim::{probe_topology, HardwareProfile, Score, TopologyProbe};
@@ -27,6 +27,14 @@ mod tests {
         assert_eq!(rows.len(), super::Workload::ALL.len());
         assert!(rows.iter().any(|r| r.name == "thrash"));
         assert!(rows.iter().any(|r| r.name == "batch"));
+        assert!(rows.iter().any(|r| r.name == "batch-1"));
+        assert!(rows.iter().any(|r| r.name == "batch-128"));
+        let b1 = rows.iter().find(|r| r.name == "batch-1").unwrap();
+        assert!(b1.overlap.is_none(), "{}", b1.render());
+        let b128 = rows.iter().find(|r| r.name == "batch-128").unwrap();
+        assert!(b128.schedule.is_some(), "{}", b128.render());
+        assert!(b128.render().contains("schedule-all"));
+        assert!(b128.render().contains("schedule-1"));
         assert!(rows.iter().any(|r| r.name == "shared-prefix"));
     }
 
@@ -94,5 +102,53 @@ mod tests {
         assert_eq!(row.bytes_moved, 0);
         assert_eq!(row.fill, KvFill::Memset);
         assert_eq!(row.hbm_peak, 2 * 4096);
+    }
+
+    fn load_checked_in_trace(name: &str) -> Trace {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("tests")
+            .join("traces")
+            .join(name);
+        let mut f =
+            std::fs::File::open(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let mut text = String::new();
+        let _n = std::io::Read::read_to_string(&mut f, &mut text).expect("read");
+        Trace::parse(&text).expect("parse")
+    }
+
+    #[test]
+    fn two_layer_jsonl_report_and_schedule() {
+        let t = load_checked_in_trace("tiny-qwen3moe-2layer.jsonl");
+        assert!(t.events.iter().any(|e| e.layer == 0));
+        assert!(t.events.iter().any(|e| e.layer == 1));
+        let row = super::report(
+            "tiny-qwen3moe-2layer",
+            &t,
+            4,
+            8,
+            Some(HardwareProfile::example_cheap_48gb()),
+            4096,
+        )
+        .expect("report");
+        assert!(row.sim.is_some(), "{}", row.render());
+        assert!(row.render().contains("wall_ns="), "{}", row.render());
+        let sch = schedule_replay(
+            &t,
+            HardwareProfile::example_cheap_48gb(),
+            SimCfg {
+                prefetch: super::Prefetch::CopyForward,
+                ..SimCfg::lru(4, 4096, 8)
+            },
+            SchedCfg::closed(0),
+        )
+        .expect("schedule");
+        assert_eq!(sch.completed, 1);
+        assert!(sch.replay.sim_ns > 0, "{}", sch.replay.line());
+        assert!(
+            sch.replay.prefetch_hits > 0,
+            "2-layer copy-forward must hit L+1, {}",
+            sch.replay.line()
+        );
     }
 }

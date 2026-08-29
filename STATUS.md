@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — batch-1 vs batch-128 + 2-layer GPU store
+
+Adversarial `Workload::{Batch1, Batch, Batch128}` is 1 / 8 / 128 concurrent
+sequences. `schedule-all` beats `schedule-1` on batch-128. Engine
+SimulatedGpuStore on the two-layer tiny keeps greedy identity, bills
+`wall_ns`, `plan_placement`s L0 and L+1, and copy-forward-prefetches more
+than the 1-layer tiny. `infer-bench` / `expertvm schedule` replay
+`tests/traces/tiny-qwen3moe-2layer.jsonl` with copy-forward L+1 hits.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — multi-layer seq persist + 2-layer JSONL
 
 Layer-major MoE JSONL pairs `seq_persist‰` and lookback-2 Markov on the
@@ -861,8 +871,9 @@ off-by-one cannot hide.
 seek+read paging file, or synthetic bytes. Only `slots` `ExpertParts`
 live in the fast map. mmap stays parked (`WeightStorage::mmap` errors).
 Qwen3MoE Tiny identity: TieredStore logits match the blob path.
-Adversarial suite is eleven named workloads (coding/chat/long-context,
-prefill-heavy, decode-heavy, batch-8, prefill-batch) plus the original four. gpu-sim
+Adversarial suite is fourteen named workloads (coding/chat/long-context,
+prefill-heavy, decode-heavy, batch-1 / batch-8 / batch-128, prefill-batch)
+plus the original four. gpu-sim
 asserts concurrent H2D on two streams cannot finish in one-copy time.
 
 `llama-rust` is the correctness laboratory (GGUF math, oracle + llama.cpp
@@ -1018,6 +1029,9 @@ cargo clippy --all-targets --all-features -- -D warnings
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 2 --max-batch 1 --interarrival-ns 1000000 --prefill-chunk 1 --decode-first --slo-reject --ttft-slo-ns 1
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 8 --max-batch 1 --prefix-cache
 ./target/release/expertvm workload shared-prefix
+./target/release/expertvm workload batch-1
+./target/release/expertvm workload batch-128 --tokens 8
+./target/release/expertvm schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 4 --prefetch copy-forward
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 8 --place striped --profile 8xh100 --expert-bytes 1048576
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 8 --place replicas --profile 8xh100 --expert-bytes 1048576
 ./target/release/expertvm schedule tests/traces/cycling.jsonl --capacity 8 --place remote --profile 2node-rdma --expert-bytes 1048576 --prefetch copy-forward
@@ -1026,7 +1040,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth. `gguf_gemv serve --engine`
+Next code change is PLAN systems depth after item 40 (`batch-1` /
+`batch-128`, 2-layer SimulatedGpuStore, 2-layer infer-bench). `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover
 is a Llama NORM real-model fixture when a GGUF is on disk. Physical

@@ -19,6 +19,18 @@ fn ev_seq(seq: u64, token: u32, layer: u32, experts: &[u32]) -> ExpertAccess {
     }
 }
 
+fn load_checked_in_trace(name: &str) -> Trace {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("tests")
+        .join("traces")
+        .join(name);
+    let mut f = std::fs::File::open(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let mut text = String::new();
+    let _n = std::io::Read::read_to_string(&mut f, &mut text).expect("read");
+    Trace::parse(&text).expect("parse")
+}
+
 fn cycling_trace() -> Trace {
     // 3 experts, repeating: LRU with 2 slots thrashes; oracle does not.
     let mut events = Vec::new();
@@ -182,15 +194,7 @@ fn two_layer_layer_persist_same_ids() {
 
 #[test]
 fn checked_in_two_layer_qwen3moe_has_honest_persist() {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("tests")
-        .join("traces")
-        .join("tiny-qwen3moe-2layer.jsonl");
-    let mut f = std::fs::File::open(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let mut text = String::new();
-    let _n = std::io::Read::read_to_string(&mut f, &mut text).expect("read");
-    let t = Trace::parse(&text).expect("parse");
+    let t = load_checked_in_trace("tiny-qwen3moe-2layer.jsonl");
     assert!(t.events.iter().any(|e| e.layer == 0));
     assert!(t.events.iter().any(|e| e.layer == 1));
     let s = analyze(&t);
@@ -1863,6 +1867,19 @@ fn adversarial_workloads_are_named_and_measurable() {
     assert!(rows[0].render().contains("uniform"));
     assert!(rows.iter().any(|r| r.name == "prefill-heavy"));
     assert!(rows.iter().any(|r| r.name == "batch"));
+    assert!(rows.iter().any(|r| r.name == "batch-1"));
+    assert!(rows.iter().any(|r| r.name == "batch-128"));
+    let batch1 = rows.iter().find(|r| r.name == "batch-1").unwrap();
+    assert!(
+        batch1.overlap.is_none(),
+        "batch-1 is one sequence, {}",
+        batch1.render()
+    );
+    let batch128 = rows.iter().find(|r| r.name == "batch-128").unwrap();
+    assert!(batch128.overlap.is_some(), "{}", batch128.render());
+    assert!(batch128.schedule.is_some(), "{}", batch128.render());
+    assert!(batch128.render().contains("schedule-all"));
+    assert!(batch128.render().contains("schedule-1"));
     let batch = rows.iter().find(|r| r.name == "batch").unwrap();
     assert!(batch.overlap.is_some(), "{}", batch.render());
     assert!(batch.render().contains("overlap"));
@@ -1892,6 +1909,78 @@ fn adversarial_workloads_are_named_and_measurable() {
 }
 
 #[test]
+fn batch_1_vs_128_widths_and_schedule() {
+    let b1 = generate(Workload::Batch1, 4, 8, 1, 1);
+    let b8 = generate(Workload::Batch, 4, 8, 1, 1);
+    let b128 = generate(Workload::Batch128, 4, 8, 1, 1);
+    assert_eq!(Workload::Batch1.concurrent_seqs(), 1);
+    assert_eq!(Workload::Batch128.concurrent_seqs(), 128);
+    assert_eq!(b1.n_sequences(), 1);
+    assert_eq!(b8.n_sequences(), 8);
+    assert_eq!(b128.n_sequences(), 128);
+    assert_eq!(b1.events.len(), 4);
+    assert_eq!(b8.events.len(), 32);
+    assert_eq!(b128.events.len(), 512);
+    let p = HardwareProfile::example_cheap_48gb();
+    let cfg = SimCfg::lru(4, 4096, 0);
+    let all = schedule_replay(&b128, p.clone(), cfg, SchedCfg::closed(0)).expect("all");
+    let one = schedule_replay(&b128, p.clone(), cfg, SchedCfg::closed(1)).expect("one");
+    assert_eq!(all.completed, 128);
+    assert_eq!(one.completed, 128);
+    assert!(all.replay.sim_ns > 0, "{}", all.replay.line());
+    assert!(one.replay.sim_ns > 0, "{}", one.replay.line());
+    let row1 = report("batch-1", &b1, 4, 8, Some(p.clone()), 4096).expect("r1");
+    assert!(
+        row1.schedule.is_none(),
+        "batch-1 is one sequence so schedule-all vs schedule-1 is skipped, {}",
+        row1.render()
+    );
+    let row128 = report("batch-128", &b128, 4, 8, Some(p), 4096).expect("r128");
+    assert!(row128.schedule.is_some(), "{}", row128.render());
+    assert!(row128.render().contains("schedule-all"));
+    assert!(row128.render().contains("schedule-1"));
+}
+
+#[test]
+fn checked_in_two_layer_schedule_and_copy_forward() {
+    let t = load_checked_in_trace("tiny-qwen3moe-2layer.jsonl");
+    assert!(t.events.iter().any(|e| e.layer == 1));
+    assert_eq!(t.n_sequences(), 1);
+    let p = HardwareProfile::example_cheap_48gb();
+    let sch = schedule_replay(&t, p.clone(), SimCfg::lru(4, 4096, 8), SchedCfg::closed(0))
+        .expect("schedule");
+    assert_eq!(sch.completed, 1);
+    assert!(sch.replay.sim_ns > 0, "{}", sch.replay.line());
+    let cfg = |prefetch: Prefetch| SimCfg {
+        prefetch,
+        ..SimCfg::lru(4, 4096, 8)
+    };
+    let none = sim_replay_cfg(&t, p.clone(), cfg(Prefetch::None)).expect("none");
+    let fwd = sim_replay_cfg(&t, p.clone(), cfg(Prefetch::CopyForward)).expect("fwd");
+    assert!(
+        fwd.prefetches > none.prefetches,
+        "2-layer copy-forward must fill L+1, fwd={} none={}",
+        fwd.prefetches,
+        none.prefetches
+    );
+    assert!(
+        fwd.prefetch_hits > 0,
+        "L0 [1,2] → L1 [1,2] must hit a copy-forward fill, {}",
+        fwd.line()
+    );
+    let store = store_replay_cfg(
+        &t,
+        p,
+        StoreReplayCfg {
+            prefetch: Prefetch::CopyForward,
+            ..StoreReplayCfg::demand(4, 4096, GpuFill::Pinned)
+        },
+    )
+    .expect("store");
+    assert!(store.metrics.prefetches > 0, "{}", store.line());
+    assert!(store.score.wall_ns > 0, "{}", store.line());
+}
+
 fn shared_prefix_workload_reuses_token0_hash() {
     let t = generate(Workload::SharedPrefix, 4, 8, 1, 1);
     let p0: Vec<Option<u64>> = t

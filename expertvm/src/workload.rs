@@ -24,8 +24,12 @@ pub enum Workload {
     PrefillHeavy,
     /// Decode: one layer, one expert, cycling.
     DecodeHeavy,
+    /// One sequence (batch = 1). Contrast with [`Self::Batch128`].
+    Batch1,
     /// Eight interleaved sequences (batch > 1).
     Batch,
+    /// 128 interleaved sequences (vLLM-shaped batch width).
+    Batch128,
     /// Four sequences: token 0 is 4-layer prefill, later tokens are 1-layer decode.
     PrefillBatch,
     /// Four sequences share a content-addressed token-id prefix on token 0;
@@ -35,7 +39,7 @@ pub enum Workload {
 
 impl Workload {
     /// Every named workload, in CLI order.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 14] = [
         Self::Uniform,
         Self::Hotset,
         Self::ShiftingHotset,
@@ -45,7 +49,9 @@ impl Workload {
         Self::LongContext,
         Self::PrefillHeavy,
         Self::DecodeHeavy,
+        Self::Batch1,
         Self::Batch,
+        Self::Batch128,
         Self::PrefillBatch,
         Self::SharedPrefix,
     ];
@@ -63,9 +69,31 @@ impl Workload {
             Self::LongContext => "long-context",
             Self::PrefillHeavy => "prefill-heavy",
             Self::DecodeHeavy => "decode-heavy",
+            Self::Batch1 => "batch-1",
             Self::Batch => "batch",
+            Self::Batch128 => "batch-128",
             Self::PrefillBatch => "prefill-batch",
             Self::SharedPrefix => "shared-prefix",
+        }
+    }
+
+    /// Concurrent sequences this shape emits per token (batch width).
+    #[must_use]
+    pub fn concurrent_seqs(self) -> u32 {
+        match self {
+            Self::Batch1 => 1,
+            Self::Batch => 8,
+            Self::Batch128 => 128,
+            Self::PrefillBatch | Self::SharedPrefix => 4,
+            Self::Uniform
+            | Self::Hotset
+            | Self::ShiftingHotset
+            | Self::Thrash
+            | Self::Coding
+            | Self::Chat
+            | Self::LongContext
+            | Self::PrefillHeavy
+            | Self::DecodeHeavy => 1,
         }
     }
 
@@ -89,10 +117,8 @@ pub fn generate(kind: Workload, n_tokens: u32, n_experts: u32, top_k: u32, seed:
                     events.push(ev(0, tok, layer, pick_uniform(&mut rng, n_ex, k)));
                 }
             }
-            Workload::Batch => {
-                for seq in 0..8u64 {
-                    events.push(ev(seq, tok, 0, pick_uniform(&mut rng, n_ex, k)));
-                }
+            Workload::Batch | Workload::Batch1 | Workload::Batch128 => {
+                push_uniform_seqs(&mut events, kind.concurrent_seqs(), tok, &mut rng, n_ex, k);
             }
             Workload::PrefillBatch => {
                 for seq in 0..4u64 {
@@ -146,6 +172,8 @@ pub fn generate(kind: Workload, n_tokens: u32, n_experts: u32, top_k: u32, seed:
                     Workload::LongContext => vec![(tok / 4) % n_ex.max(1)],
                     Workload::PrefillHeavy
                     | Workload::Batch
+                    | Workload::Batch1
+                    | Workload::Batch128
                     | Workload::PrefillBatch
                     | Workload::SharedPrefix => vec![0],
                 };
@@ -154,6 +182,19 @@ pub fn generate(kind: Workload, n_tokens: u32, n_experts: u32, top_k: u32, seed:
         }
     }
     Trace { events }
+}
+
+fn push_uniform_seqs(
+    events: &mut Vec<ExpertAccess>,
+    n_seq: u32,
+    tok: u32,
+    rng: &mut u64,
+    n_ex: u32,
+    k: u32,
+) {
+    for seq in 0..n_seq {
+        events.push(ev(u64::from(seq), tok, 0, pick_uniform(rng, n_ex, k)));
+    }
 }
 
 fn ev(sequence: u64, token: u32, layer: u32, experts: Vec<u32>) -> ExpertAccess {

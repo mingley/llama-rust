@@ -1039,7 +1039,64 @@ mod tests {
     };
     use crate::gguf::load_gguf_owned;
     use crate::tok::Tokenizer;
-    use expertvm::{CachedStore, LiveStore, Trace};
+    use expertvm::{
+        CachedStore, HardwareProfile, LiveStore, Score, SimulatedGpuStore, StoreMetrics, Trace,
+    };
+
+    struct GpuEngineOut {
+        ids_a: Vec<u32>,
+        ids_b: Vec<u32>,
+        exp_a: Vec<u32>,
+        exp_b: Vec<u32>,
+        peak: usize,
+        metrics: StoreMetrics,
+        score: Score,
+        prefetches: u64,
+    }
+
+    fn run_two_seq_gpu(
+        bytes: Vec<u8>,
+        profile: HardwareProfile,
+        expert_bytes: u64,
+        min_slots: usize,
+    ) -> GpuEngineOut {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        let g = load_gguf_owned(bytes).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let exp_a = independent(&model, &tok, &tokens_a, 2);
+        let exp_b = independent(&model, &tok, &tokens_b, 2);
+        let n = model.expert_direct_store().expect("n").len().max(min_slots);
+        let mut cfg = EngineCfg::tiny();
+        cfg.eos = tok.eos;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        let gpu = SimulatedGpuStore::new(
+            model.expert_direct_store().expect("c"),
+            n,
+            profile,
+            expert_bytes,
+        )
+        .expect("gpu");
+        eng.attach_expert_store(LiveStore::simulated(gpu));
+        let a = eng.add(&tokens_a, 2).expect("a");
+        let b = eng.add(&tokens_b, 2).expect("b");
+        eng.run().expect("run");
+        let ids_a = eng.take(a).expect("ta").generated;
+        let ids_b = eng.take(b).expect("tb").generated;
+        let metrics = eng.expert_store_metrics().expect("metrics");
+        let score = eng.expert_store_score().expect("sc").expect("sim");
+        GpuEngineOut {
+            ids_a,
+            ids_b,
+            exp_a,
+            exp_b,
+            peak: eng.stats().gemm_peak,
+            prefetches: metrics.prefetches,
+            metrics,
+            score,
+        }
+    }
 
     fn independent(model: &Llama, tok: &Tokenizer, prompt: &[u32], n: usize) -> Vec<u32> {
         let mut cache = model.new_cache(16).expect("d");
@@ -1297,7 +1354,6 @@ mod tests {
 
     #[test]
     fn engine_simulated_gpu_store_matches_blob_and_scores() {
-        use expertvm::{HardwareProfile, SimulatedGpuStore};
         let tokens_a = [1u32, 2, 3, 4];
         let tokens_b = [5u32, 0, 5, 0];
         let g = load_gguf_owned(tiny_qwen3moe_gguf()).expect("owned");
@@ -1338,7 +1394,6 @@ mod tests {
 
     #[test]
     fn engine_simulated_gpu_store_dispatches_large_experts() {
-        use expertvm::{HardwareProfile, SimulatedGpuStore};
         let tokens_a = [1u32, 2, 3, 4];
         let tokens_b = [5u32, 0, 5, 0];
         let g = load_gguf_owned(tiny_qwen3moe_gguf()).expect("owned");
@@ -1383,7 +1438,6 @@ mod tests {
 
     #[test]
     fn engine_simulated_gpu_store_moves_tiny_experts_to_gpu0() {
-        use expertvm::{HardwareProfile, SimulatedGpuStore};
         let tokens_a = [1u32, 2, 3, 4];
         let tokens_b = [5u32, 0, 5, 0];
         let g = load_gguf_owned(tiny_qwen3moe_gguf()).expect("owned");
@@ -1420,6 +1474,92 @@ mod tests {
         );
         let score = eng.expert_store_score().expect("sc").expect("sim");
         assert!(score.wall_ns > 0, "virtual clock must advance");
+    }
+
+    #[test]
+    fn engine_simulated_gpu_store_two_layer_matches_blob_and_scores() {
+        let one = run_two_seq_gpu(
+            tiny_qwen3moe_gguf(),
+            HardwareProfile::example_h100_sxm(),
+            4096,
+            1,
+        );
+        let two = run_two_seq_gpu(
+            tiny_qwen3moe_2layer_gguf(),
+            HardwareProfile::example_h100_sxm(),
+            4096,
+            1,
+        );
+        assert_eq!(two.ids_a, two.exp_a);
+        assert_eq!(two.ids_b, two.exp_b);
+        assert!(
+            two.peak >= 8,
+            "2-layer SimulatedGpuStore must GEMM together, peak={}",
+            two.peak
+        );
+        assert!(two.score.wall_ns > 0, "virtual clock must advance");
+        assert!(
+            two.score.bytes_moved > 0 || two.score.hbm_peak > 0,
+            "H2D / HBM must be billed, {}",
+            two.score.line()
+        );
+        assert!(
+            two.prefetches > one.prefetches,
+            "copy-forward L+1 must prefetch on 2-layer, 1={} 2={}",
+            one.prefetches,
+            two.prefetches
+        );
+    }
+
+    #[test]
+    fn engine_simulated_gpu_store_two_layer_dispatches_large_experts() {
+        let out = run_two_seq_gpu(
+            tiny_qwen3moe_2layer_gguf(),
+            HardwareProfile::example_8xh100_nvlink(),
+            4096,
+            2,
+        );
+        assert_eq!(out.ids_a, out.exp_a);
+        assert_eq!(out.ids_b, out.exp_b);
+        assert!(
+            out.peak >= 8,
+            "2-layer dispatch must not force serial GEMM, peak={}",
+            out.peak
+        );
+        assert!(
+            out.metrics.dispatches > 0,
+            "4096-byte L0 and L+1 experts beat a short reuse window, {:?}",
+            out.metrics
+        );
+        assert_eq!(
+            out.metrics.migrates, 0,
+            "short Engine run must not D2D 4096-byte experts, {:?}",
+            out.metrics
+        );
+        assert!(out.score.wall_ns > 0, "virtual clock must advance");
+    }
+
+    #[test]
+    fn engine_simulated_gpu_store_two_layer_moves_tiny_experts_to_gpu0() {
+        let out = run_two_seq_gpu(
+            tiny_qwen3moe_2layer_gguf(),
+            HardwareProfile::example_8xh100_nvlink(),
+            64,
+            2,
+        );
+        assert_eq!(out.ids_a, out.exp_a);
+        assert_eq!(out.ids_b, out.exp_b);
+        assert!(
+            out.peak >= 8,
+            "2-layer migrate must not force serial GEMM, peak={}",
+            out.peak
+        );
+        assert!(
+            out.metrics.migrates > 0,
+            "tiny L0 and L+1 experts must D2D striped-home pins onto GPU0, {:?}",
+            out.metrics
+        );
+        assert!(out.score.wall_ns > 0, "virtual clock must advance");
     }
 
     #[test]

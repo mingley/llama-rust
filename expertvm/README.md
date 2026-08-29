@@ -222,6 +222,8 @@ expertvm bench    trace.jsonl --capacity 8 --profile h100
 expertvm bench    adversarial --tokens 64 --experts 16 --capacity 2 --profile cheap
 expertvm workload thrash --tokens 64 --experts 16 --capacity 2
 expertvm workload batch --tokens 32 --experts 16 --capacity 4
+expertvm workload batch-1 --tokens 32 --experts 16 --capacity 4
+expertvm workload batch-128 --tokens 8 --experts 16 --capacity 4
 expertvm workload prefill-batch --tokens 8 --experts 16 --capacity 4
 expertvm workload shared-prefix --tokens 8 --experts 16 --capacity 4
 expertvm topology --bytes 1048576
@@ -252,6 +254,7 @@ gguf_gemv trace tiny-qwen3moe.gguf -p ab -n 8 --out trace.jsonl
 gguf_gemv write-tiny-qwen3moe-2layer tiny-qwen3moe-2layer.gguf
 gguf_gemv trace tiny-qwen3moe-2layer.gguf -p ab -n 8 --out /tmp/tiny-qwen3moe-2layer.jsonl
 expertvm analyze /tmp/tiny-qwen3moe-2layer.jsonl
+expertvm schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 4 --prefetch copy-forward
 expertvm replay trace.jsonl --capacity 2
 ```
 

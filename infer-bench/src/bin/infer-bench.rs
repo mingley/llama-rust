@@ -20,7 +20,8 @@ usage: infer-bench <command> [args]
   schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
-      prefill-heavy, decode-heavy, batch, prefill-batch, shared-prefix
+      prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
+      shared-prefix
 profiles: h100 (default), h200, 8xh100, cheap, 2xh100-pcie, bad-numa,
           2node-rdma, asymmetric, or a path to a .profile file
 ";

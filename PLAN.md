@@ -582,7 +582,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
 ### Do not Goodhart the simulator
 
 - adversarial workloads: uniform, hotset, shifting hotset, cache
-  thrash, coding/chat/long-context traces, batch 1 vs 128,
+  thrash, coding/chat/long-context traces, batch 1 vs 128
+  (`batch-1` / `batch` / `batch-128`),
   prefill-heavy / decode-heavy / prefill-batch (4-seq mixed prefill+decode)
   / shared-prefix (identical token-0 prefix hash, diverging decode)
 - topologies: 1 GPU, 2 GPU PCIe, 8 GPU NVLink, bad NUMA, 2-node RDMA,
@@ -863,6 +864,11 @@ model, do not celebrate the sim.
     **same layer**, not adjacent lines. `tests/traces/tiny-qwen3moe-2layer.jsonl`
     measures `layer_persist‰` and `seq_persist‰`. Dual score still has no
     `$/M tokens`.
+40. [x] Adversarial `batch-1` vs `batch-128` (PLAN anti-Goodhart list).
+    Engine SimulatedGpuStore identity, `wall_ns`, and `plan_placement` on
+    the two-layer tiny (copy-forward L+1 prefetches more than 1-layer).
+    `infer-bench` / `expertvm schedule` replay the checked-in two-layer
+    JSONL; copy-forward hits L+1. Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

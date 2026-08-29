@@ -14,13 +14,15 @@ infer-bench adversarial --capacity 2 --tokens 64 --experts 16 --profile cheap
 infer-bench trace tests/traces/cycling.jsonl --capacity 2 --profile h100
 infer-bench workload thrash --capacity 2
 infer-bench workload batch --capacity 4
+infer-bench workload batch-1 --tokens 32
+infer-bench workload batch-128 --tokens 8
 infer-bench workload prefill-heavy --tokens 16
 infer-bench workload prefill-batch --tokens 8
 infer-bench workload shared-prefix --tokens 8
 infer-bench topology --bytes 1048576
 infer-bench remote tests/traces/cycling.jsonl --expert-bytes 1048576
 infer-bench remote tests/traces/cycling.jsonl --expert-bytes 1048576 --activation-bytes 128
-infer-bench schedule tests/traces/cycling.jsonl --capacity 2 --max-batch 1 --interarrival-ns 1000000
+infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 4
 infer-bench schedule tests/traces/cycling.jsonl --capacity 2 --prefill-chunk 1 --decode-first
 infer-bench schedule tests/traces/cycling.jsonl --capacity 2 --max-batch 1 --ttft-slo-ns 1 --slo-reject
 infer-bench schedule tests/traces/cycling.jsonl --capacity 2 --max-batch 1 --prefix-cache
