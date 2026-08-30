@@ -7,13 +7,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::SimError;
 use crate::ids::{
     AllocId, CondId, DeviceId, EventId, GraphId, IpcHandleId, MemHandleId, MulticastId, OpId,
-    PoolId, PtrExportId, ShareableHandleId, StreamId,
+    PoolId, PtrExportId, ShareableHandleId, StreamId, UserObjectId,
 };
 use crate::ops::{
     BatchMemOp, CaptureDepOp, GpuOp as Kind, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, HostNodeParams, KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach,
-    MemcpyOp, Operation, Place, StreamCaptureInfo, StreamCaptureMode, WaitValueCmp,
+    GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelBuf, KernelKind, KernelNodeParams,
+    MemAdvise, MemAttach, MemcpyOp, Operation, Place, StreamCaptureInfo, StreamCaptureMode,
+    UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{ns_for_bytes, HardwareProfile, LinkKind};
 
@@ -407,6 +408,15 @@ struct Cond {
     value: u32,
 }
 
+/// `cudaUserObject_t` refcounts. Destroy callback fires at zero.
+struct UserObject {
+    destroy_fn: u64,
+    /// References held by the creating thread (`cudaUserObjectRetain`).
+    caller: u32,
+    /// References held by graph definitions (`cudaGraphRetainUserObject`).
+    graphs: BTreeMap<GraphId, u32>,
+}
+
 /// Skip predicate for IF / WHILE / SWITCH body ops.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CondPred {
@@ -507,6 +517,10 @@ pub struct Sim {
     mailbox: BTreeMap<(AllocId, u64), u64>,
     /// `cudaThreadExchangeStreamCaptureMode` default for [`Self::begin_capture`].
     capture_mode: StreamCaptureMode,
+    next_user_object: u32,
+    user_objects: BTreeMap<UserObjectId, UserObject>,
+    /// `(id, destroy_fn)` in fire order. Handle is unknown after the last ref.
+    user_object_dtors: Vec<(UserObjectId, u64)>,
 }
 
 impl Sim {
@@ -580,6 +594,9 @@ impl Sim {
             enqueue_priority: None,
             mailbox: BTreeMap::new(),
             capture_mode: StreamCaptureMode::Relaxed,
+            next_user_object: 1,
+            user_objects: BTreeMap::new(),
+            user_object_dtors: Vec::new(),
         }
     }
 
@@ -4005,6 +4022,7 @@ impl Sim {
         } else {
             self.release_graph_allocs(graph)?;
         }
+        self.release_user_objects_for_graph(graph);
         let _src = self.clone_of.remove(&graph);
         self.clock = self.clock.saturating_add(1);
         Ok(())
@@ -4025,6 +4043,253 @@ impl Sim {
         let id = self.insert_graph(device, stream);
         self.clock = self.clock.saturating_add(1);
         Ok(id)
+    }
+
+    /// `cudaUserObjectCreate`. Host-synchronous. Capture cannot include it.
+    ///
+    /// `flags` must be [`UserObjectFlags::NO_DESTRUCTOR_SYNC`]. `initial_refcount`
+    /// must be non-zero. `destroy_fn` is the host callback id recorded when the
+    /// last reference is released (no Rust callback). Decode identity does not
+    /// create user objects.
+    pub fn user_object_create(
+        &mut self,
+        destroy_fn: u64,
+        initial_refcount: u32,
+        flags: u32,
+    ) -> Result<UserObjectId, SimError> {
+        self.fail_if_capturing("cannot capture user object")?;
+        if flags != UserObjectFlags::NO_DESTRUCTOR_SYNC {
+            return Err(SimError::Invalid {
+                why: "user object flags",
+            });
+        }
+        if initial_refcount == 0 {
+            return Err(SimError::Invalid {
+                why: "user object initial refs",
+            });
+        }
+        let id = UserObjectId(self.next_user_object);
+        self.next_user_object = self.next_user_object.saturating_add(1);
+        let _prev = self.user_objects.insert(
+            id,
+            UserObject {
+                destroy_fn,
+                caller: initial_refcount,
+                graphs: BTreeMap::new(),
+            },
+        );
+        self.clock = self.clock.saturating_add(1);
+        Ok(id)
+    }
+
+    /// `cudaUserObjectRetain`. Host-synchronous. Capture cannot include it.
+    pub fn user_object_retain(&mut self, object: UserObjectId, count: u32) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture user object")?;
+        if count == 0 {
+            return Err(SimError::Invalid {
+                why: "user object count",
+            });
+        }
+        let obj = self.user_object_mut(object)?;
+        obj.caller = obj.caller.checked_add(count).ok_or(SimError::Invalid {
+            why: "user object refs overflow",
+        })?;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaUserObjectRelease`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Releasing the last reference records [`Self::user_object_destructors`].
+    pub fn user_object_release(
+        &mut self,
+        object: UserObjectId,
+        count: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture user object")?;
+        if count == 0 {
+            return Err(SimError::Invalid {
+                why: "user object count",
+            });
+        }
+        {
+            let obj = self.user_object_mut(object)?;
+            if count > obj.caller {
+                return Err(SimError::Invalid {
+                    why: "user object refs",
+                });
+            }
+            obj.caller = obj.caller.saturating_sub(count);
+        }
+        self.maybe_destroy_user_object(object);
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphRetainUserObject` on a definition. Host-synchronous.
+    ///
+    /// Capture cannot include it. Illegal on an instantiated exec. Clone does
+    /// not copy retains. [`GraphUserObjectFlags::MOVE`] transfers one caller
+    /// reference (`count` ignored); otherwise the graph takes `count` extra refs.
+    pub fn graph_retain_user_object(
+        &mut self,
+        graph: GraphId,
+        object: UserObjectId,
+        count: u32,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture user object")?;
+        self.require_user_object_graph(graph)?;
+        if flags & !GraphUserObjectFlags::MOVE != 0 {
+            return Err(SimError::Invalid {
+                why: "user object graph flags",
+            });
+        }
+        let mv = flags & GraphUserObjectFlags::MOVE != 0;
+        if !mv && count == 0 {
+            return Err(SimError::Invalid {
+                why: "user object count",
+            });
+        }
+        let add = if mv { 1 } else { count };
+        let obj = self.user_object_mut(object)?;
+        if mv {
+            if obj.caller == 0 {
+                return Err(SimError::Invalid {
+                    why: "user object refs",
+                });
+            }
+            obj.caller = obj.caller.saturating_sub(1);
+        }
+        let held = obj.graphs.get(&graph).copied().unwrap_or(0);
+        let next = held.checked_add(add).ok_or(SimError::Invalid {
+            why: "user object refs overflow",
+        })?;
+        let _prev = obj.graphs.insert(graph, next);
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphReleaseUserObject` on a definition. Host-synchronous.
+    ///
+    /// Capture cannot include it. Illegal on an instantiated exec.
+    pub fn graph_release_user_object(
+        &mut self,
+        graph: GraphId,
+        object: UserObjectId,
+        count: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture user object")?;
+        self.require_user_object_graph(graph)?;
+        if count == 0 {
+            return Err(SimError::Invalid {
+                why: "user object count",
+            });
+        }
+        self.graph_release_user_object_inner(graph, object, count)?;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// Total remaining references (caller plus graphs).
+    pub fn user_object_refs(&self, object: UserObjectId) -> Result<u32, SimError> {
+        let obj = self.user_object(object)?;
+        Ok(obj
+            .caller
+            .saturating_add(obj.graphs.values().copied().fold(0, u32::saturating_add)))
+    }
+
+    /// References held by `graph` (`0` if the graph holds none).
+    pub fn user_object_graph_refs(
+        &self,
+        graph: GraphId,
+        object: UserObjectId,
+    ) -> Result<u32, SimError> {
+        let _g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        Ok(self
+            .user_object(object)?
+            .graphs
+            .get(&graph)
+            .copied()
+            .unwrap_or(0))
+    }
+
+    /// Destroy callbacks that have run, in order (`id`, `destroy_fn`).
+    #[must_use]
+    pub fn user_object_destructors(&self) -> &[(UserObjectId, u64)] {
+        &self.user_object_dtors
+    }
+
+    fn user_object(&self, object: UserObjectId) -> Result<&UserObject, SimError> {
+        self.user_objects.get(&object).ok_or(SimError::Invalid {
+            why: "unknown user object",
+        })
+    }
+
+    fn user_object_mut(&mut self, object: UserObjectId) -> Result<&mut UserObject, SimError> {
+        self.user_objects.get_mut(&object).ok_or(SimError::Invalid {
+            why: "unknown user object",
+        })
+    }
+
+    fn require_user_object_graph(&self, graph: GraphId) -> Result<(), SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if g.instantiated {
+            return Err(SimError::Invalid {
+                why: "graph instantiated",
+            });
+        }
+        Ok(())
+    }
+
+    fn graph_release_user_object_inner(
+        &mut self,
+        graph: GraphId,
+        object: UserObjectId,
+        count: u32,
+    ) -> Result<(), SimError> {
+        let obj = self.user_object_mut(object)?;
+        let held = obj.graphs.get(&graph).copied().unwrap_or(0);
+        if count > held {
+            return Err(SimError::Invalid {
+                why: "user object graph refs",
+            });
+        }
+        let next = held.saturating_sub(count);
+        if next == 0 {
+            let _gone = obj.graphs.remove(&graph);
+        } else {
+            let _prev = obj.graphs.insert(graph, next);
+        }
+        self.maybe_destroy_user_object(object);
+        Ok(())
+    }
+
+    fn release_user_objects_for_graph(&mut self, graph: GraphId) {
+        let ids: Vec<(UserObjectId, u32)> = self
+            .user_objects
+            .iter()
+            .filter_map(|(id, obj)| obj.graphs.get(&graph).copied().map(|n| (*id, n)))
+            .collect();
+        for (id, count) in ids {
+            drop(self.graph_release_user_object_inner(graph, id, count));
+        }
+    }
+
+    fn maybe_destroy_user_object(&mut self, object: UserObjectId) {
+        let Some(obj) = self.user_objects.get(&object) else {
+            return;
+        };
+        if obj.caller != 0 || !obj.graphs.is_empty() {
+            return;
+        }
+        if let Some(obj) = self.user_objects.remove(&object) {
+            self.user_object_dtors.push((object, obj.destroy_fn));
+        }
     }
 
     fn insert_graph(&mut self, device: DeviceId, stream: StreamId) -> GraphId {

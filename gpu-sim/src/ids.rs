@@ -127,6 +127,19 @@ impl fmt::Display for MulticastId {
     }
 }
 
+/// `cudaUserObject_t`. [`crate::Sim::user_object_create`] / `cudaUserObjectCreate`.
+///
+/// Graphs retain references with [`crate::Sim::graph_retain_user_object`].
+/// The destroy callback (`fn_id`) runs when the last reference is released.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UserObjectId(pub u32);
+
+impl fmt::Display for UserObjectId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "userobj{}", self.0)
+    }
+}
+
 /// `cudaGraphConditionalHandle`. Created on a graph; sampled by IF / WHILE / SWITCH.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CondId(pub u32);

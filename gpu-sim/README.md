@@ -94,7 +94,9 @@ warp scheduler, L1, …   ← do not model
 | `cudaStreamBeginCaptureToGraph` (`begin_capture_to_graph`) appends captured nodes onto an existing uninstantiated graph; empty deps are extra roots | not timed (capture) |
 | `cudaGraphGetRootNodes` / `GetEdges` / `NodeGetDependentNodes` | query |
 | `cudaGraphAddKernelNode` / memcpy / memset / host / empty / event / child / mem alloc/free / cooperative kernel / dependencies (`graph_add_*`) | not timed (host-side topology) |
-| graph destroy drops the id (`cudaGraphDestroy`); remaining graph mem is refunded | 1 ns host-sync |
+| graph destroy drops the id (`cudaGraphDestroy`); remaining graph mem is refunded; user-object refs held by the graph are released | 1 ns host-sync |
+| `cudaUserObjectCreate` / `Retain` / `Release`; last ref records the destroy `fn_id` | 1 ns host-sync |
+| `cudaGraphRetainUserObject` / `ReleaseUserObject` on a definition (`MOVE` transfers one caller ref); clone does not copy retains | 1 ns host-sync |
 | graph launch amortizes per-kernel launch overhead | `graph_launch_ns` |
 | `synchronize_stream` waits one stream only | other streams keep running |
 | `synchronize_event` waits the record only | later ops on that stream keep running |
@@ -272,7 +274,14 @@ uninstantiated copy; child-graph nodes are cloned recursively (a diamond
 of shared children becomes one cloned child). Destroying the original
 child still breaks a parent that names it; a recursive clone of that
 parent keeps working. `destroy_graph` is `cudaGraphDestroy` (1 ns;
-later launch is unknown; remaining graph mem is refunded). First launch instantiates if needed (`graph_instantiate_ns` once)
+later launch is unknown; remaining graph mem is refunded; user-object
+refs held by the graph are released).
+`user_object_create` is `cudaUserObjectCreate`
+(`UserObjectFlags::NO_DESTRUCTOR_SYNC`; last ref records `destroy_fn`).
+`graph_retain_user_object` / `graph_release_user_object` are
+`cudaGraphRetainUserObject` / `ReleaseUserObject` on a definition
+(`GraphUserObjectFlags::MOVE` transfers one caller ref). Clone does not
+copy retains. Capture cannot include them. First launch instantiates if needed (`graph_instantiate_ns` once)
 then uploads if needed (`graph_upload_ns`). `upload_graph` is `cudaGraphUpload`.
 `update_graph` copies source steps into the exec snapshot when the
 device, stream, op kinds, and dependency edges match (`graph_update_ns`); a topology

@@ -168,6 +168,13 @@
 //! [`update_graph_with_info`](Sim::update_graph_with_info) fills
 //! [`GraphExecUpdateResultInfo`] even on `Err` (node type, deps, mem nodes,
 //! device-launch).
+//! [`user_object_create`](Sim::user_object_create) is `cudaUserObjectCreate`
+//! ([`UserObjectFlags::NO_DESTRUCTOR_SYNC`]). [`graph_retain_user_object`](Sim::graph_retain_user_object) /
+//! [`graph_release_user_object`](Sim::graph_release_user_object) are
+//! `cudaGraphRetainUserObject` / `ReleaseUserObject` on a definition.
+//! [`GraphUserObjectFlags::MOVE`] transfers one caller ref. Destroy of the
+//! last reference records [`user_object_destructors`](Sim::user_object_destructors).
+//! Clone does not copy retains. Capture cannot include it.
 //! [`Sim::graph_exec_kernel_set_params`] is `cudaGraphExecKernelNodeSetParams`:
 //! patch one instantiated kernel node's pointers / [`KernelKind`] without a
 //! second graph (`graph_set_params_ns`). Cooperative flag and edges stay.
@@ -311,13 +318,14 @@ mod sim;
 pub use error::SimError;
 pub use ids::{
     AllocId, CondId, DeviceId, EventId, GraphId, IpcHandleId, LinkId, MemHandleId, MulticastId,
-    OpId, PoolId, PtrExportId, ShareableHandleId, StreamId,
+    OpId, PoolId, PtrExportId, ShareableHandleId, StreamId, UserObjectId,
 };
 pub use ops::{
     BatchMemOp, CaptureDepOp, DType, GpuOp, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, HostNodeParams, KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach,
-    MemcpyOp, Operation, Place, StreamCaptureInfo, StreamCaptureMode, WaitValueCmp,
+    GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelBuf, KernelKind, KernelNodeParams,
+    MemAdvise, MemAttach, MemcpyOp, Operation, Place, StreamCaptureInfo, StreamCaptureMode,
+    UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -3154,6 +3162,105 @@ mod tests {
         assert_eq!(info.result, GraphExecUpdateResult::TopologyChanged);
         assert_eq!(info.error_node, Some(0));
         assert_eq!(info.error_from_node, Some(0));
+    }
+
+    #[test]
+    fn user_object_release_fires_destructor() {
+        let mut sim = Sim::new(h100());
+        let t0 = sim.clock_ns();
+        let obj = sim
+            .user_object_create(7, 1, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(1));
+        assert_eq!(sim.user_object_refs(obj).unwrap(), 1);
+        sim.user_object_retain(obj, 1).unwrap();
+        assert_eq!(sim.user_object_refs(obj).unwrap(), 2);
+        sim.user_object_release(obj, 1).unwrap();
+        assert_eq!(sim.user_object_refs(obj).unwrap(), 1);
+        assert!(sim.user_object_destructors().is_empty());
+        sim.user_object_release(obj, 1).unwrap();
+        assert_eq!(sim.user_object_destructors(), &[(obj, 7)]);
+        match sim.user_object_refs(obj).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown user object"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim
+            .user_object_create(1, 0, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("initial"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.user_object_create(1, 1, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        match sim
+            .user_object_create(1, 1, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap_err()
+        {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_retain_user_object_move_and_clone() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        let obj = sim
+            .user_object_create(3, 1, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap();
+        sim.graph_retain_user_object(g, obj, 1, GraphUserObjectFlags::MOVE)
+            .unwrap();
+        assert_eq!(sim.user_object_refs(obj).unwrap(), 1);
+        assert_eq!(sim.user_object_graph_refs(g, obj).unwrap(), 1);
+        match sim.user_object_release(obj, 1).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("user object refs"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let clone = sim.clone_graph(g).unwrap();
+        assert_eq!(sim.user_object_graph_refs(clone, obj).unwrap(), 0);
+        sim.destroy_graph(g).unwrap();
+        assert_eq!(sim.user_object_destructors(), &[(obj, 3)]);
+        match sim.user_object_graph_refs(clone, obj).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("unknown user object"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g2 = sim.create_graph(d, s).unwrap();
+        let obj2 = sim
+            .user_object_create(9, 1, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap();
+        sim.graph_retain_user_object(g2, obj2, 1, 0).unwrap();
+        assert_eq!(sim.user_object_refs(obj2).unwrap(), 2);
+        sim.destroy_graph(g2).unwrap();
+        assert_eq!(sim.user_object_refs(obj2).unwrap(), 1);
+        sim.user_object_release(obj2, 1).unwrap();
+        assert_eq!(sim.user_object_destructors(), &[(obj, 3), (obj2, 9)]);
+        let g3 = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g3, KernelKind::other(8, 8), &[], &[])
+            .unwrap();
+        let exec = sim.instantiate_graph(g3).unwrap();
+        let obj3 = sim
+            .user_object_create(1, 1, UserObjectFlags::NO_DESTRUCTOR_SYNC)
+            .unwrap();
+        match sim.graph_retain_user_object(exec, obj3, 1, 0).unwrap_err() {
+            SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_retain_user_object(g3, obj3, 1, GraphUserObjectFlags::MOVE)
+            .unwrap();
+        sim.destroy_graph(exec).unwrap();
+        assert_eq!(sim.user_object_refs(obj3).unwrap(), 1);
+        sim.destroy_graph(g3).unwrap();
+        assert!(sim
+            .user_object_destructors()
+            .iter()
+            .any(|(id, fn_id)| *id == obj3 && *fn_id == 1));
     }
 
     #[test]

@@ -1490,6 +1490,17 @@ model, do not celebrate the sim.
     `why` strings. Decode identity stays `update_graph`. `gpu-profile
     capture` is still refused.
 
+111. [x] `cudaUserObjectCreate` / `cudaGraphRetainUserObject`:
+    `user_object_create` requires `UserObjectFlags::NO_DESTRUCTOR_SYNC`
+    and a non-zero initial refcount. `user_object_retain` /
+    `user_object_release` adjust caller refs. `graph_retain_user_object`
+    / `graph_release_user_object` are definition-only (`MOVE` transfers
+    one caller ref; extra flags and exec ids are Invalid). Destroy of
+    a graph releases its refs. The last remaining ref records
+    `user_object_destructors` (`fn_id`; no Rust callback). Clone does
+    not copy retains. Capture cannot include it. Decode identity does
+    not create user objects. `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

@@ -683,6 +683,23 @@ pub struct GraphExecUpdateResultInfo {
     pub error_from_node: Option<usize>,
 }
 
+/// `cudaUserObjectFlags` for [`crate::Sim::user_object_create`].
+pub struct UserObjectFlags;
+
+impl UserObjectFlags {
+    /// `cudaUserObjectNoDestructorSync`. Required; the destroy callback is not
+    /// device-synchronized.
+    pub const NO_DESTRUCTOR_SYNC: u32 = 1;
+}
+
+/// `cudaGraphUserObjectRetain` flags for [`crate::Sim::graph_retain_user_object`].
+pub struct GraphUserObjectFlags;
+
+impl GraphUserObjectFlags {
+    /// `cudaGraphUserObjectMove`: transfer one caller reference to the graph.
+    pub const MOVE: u32 = 1;
+}
+
 /// `cudaGraphMemAttributeType` for [`crate::Sim::graph_mem_get`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GraphMemAttr {

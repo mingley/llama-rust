@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaUserObjectCreate` / graph retain
+
+`user_object_create` is `cudaUserObjectCreate` (`NO_DESTRUCTOR_SYNC`).
+Graphs retain refs with `graph_retain_user_object` (`MOVE` transfers one
+caller ref). Last remaining ref records `user_object_destructors`. Clone
+does not copy retains. Exec ids and capture are Invalid. Decode identity
+does not create user objects. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaGraphExecUpdateResultInfo`
 
 `update_graph_with_info` fills `GraphExecUpdateResultInfo` even on `Err`.
