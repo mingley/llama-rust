@@ -275,9 +275,13 @@ struct GpuRt {
     /// `cudaDeviceGetLimit` values other than persisting L2.
     limits: DeviceLimits,
     /// `cudaDeviceSetSharedMemConfig`. [`SharedMemoryMode::Default`] kernels
-    /// inherit this (unset is unscaled).
+    /// inherit this when the function config is also Default (unset is
+    /// unscaled).
     shared_mem_config: SharedMemoryMode,
-    /// `cudaSetDeviceFlags` schedule mask. Auto streams inherit this tax.
+    /// `cudaFuncSetSharedMemConfig`. Launch Default inherits this before the
+    /// device config.
+    func_shared_mem_config: SharedMemoryMode,
+    /// `cudaSetDeviceFlags`. Auto streams inherit the schedule tax.
     device_flags: u32,
 }
 
@@ -760,6 +764,7 @@ impl Sim {
                     persist_lines: Vec::new(),
                     limits: DeviceLimits::sm80(),
                     shared_mem_config: SharedMemoryMode::Default,
+                    func_shared_mem_config: SharedMemoryMode::Default,
                     device_flags: DeviceFlags::SCHEDULE_AUTO,
                 },
             );
@@ -11123,12 +11128,12 @@ impl Sim {
     /// Pageable host (`Place::Host`) is host-synchronous: the driver bounces
     /// through pinned staging, so this call waits [`Self::synchronize_stream`]
     /// before returning. Capture cannot include a pageable copy.
-    /// [`PointerAttr::SyncMemops`] on [`MemcpyOp::alloc`] waits the stream the
-    /// same way; capture of that copy is `"cannot capture sync memops memcpy"`
-    /// (pageable still wins if both). Pinned DMA
-    /// ([`Self::memcpy_pinned_to_device`]) stays stream-ordered unless that
-    /// flag is set. Explicit [`Self::graph_add_memcpy`] / graph launch is not
-    /// refused.
+    /// [`PointerAttr::SyncMemops`] on [`MemcpyOp::alloc`] or
+    /// [`DeviceFlags::SYNC_MEMOPS`] waits the stream the same way; capture of
+    /// that copy is `"cannot capture sync memops memcpy"` (pageable still wins
+    /// if both). Pinned DMA ([`Self::memcpy_pinned_to_device`]) stays
+    /// stream-ordered unless those flags are set. Explicit
+    /// [`Self::graph_add_memcpy`] / graph launch is not refused.
     /// [`MemcpyOp::height`] `> 1` is `cudaMemcpy2DAsync`: billed bytes are
     /// `width * height`, not pitch padding. [`MemcpyOp::depth`] `> 1` is
     /// `cudaMemcpy3DAsync`: billed bytes are `width * height * depth`, not
@@ -11140,7 +11145,7 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         let pageable = op.src.is_pageable() || op.dst.is_pageable();
-        let sync_ops = self.is_sync_memops(op.alloc)?;
+        let sync_ops = self.is_sync_memops(op.alloc)? || self.device_has_sync_memops(device);
         if (pageable || sync_ops) && self.in_capture(device, stream) {
             return Err(SimError::Invalid {
                 why: if sync_ops && !pageable {
@@ -11866,8 +11871,9 @@ impl Sim {
     /// `cudaDeviceSetSharedMemConfig`. Host-synchronous. Capture cannot include it.
     ///
     /// [`SharedMemoryMode::Default`] kernels inherit this config at duration
-    /// time. Unset is [`SharedMemoryMode::Default`] (unscaled). Launch
-    /// FourByte / EightByte still override. Decode identity stays unset.
+    /// time when the function config is also Default. Unset is
+    /// [`SharedMemoryMode::Default`] (unscaled). Launch FourByte / EightByte
+    /// still override. Decode identity stays unset.
     pub fn set_shared_mem_config(
         &mut self,
         device: DeviceId,
@@ -11886,24 +11892,57 @@ impl Sim {
         Ok(self.gpu_rt(device)?.shared_mem_config)
     }
 
+    /// `cudaFuncSetSharedMemConfig`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Per device (this VM is not per kernel-function object). Launch Default
+    /// inherits this before the device config. Launch FourByte / EightByte
+    /// still override. Decode identity stays unset.
+    pub fn set_func_shared_mem_config(
+        &mut self,
+        device: DeviceId,
+        mode: SharedMemoryMode,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture func shared mem config")?;
+        let _gpu = self.profile.gpu(device)?;
+        self.gpu_rt_mut(device)?.func_shared_mem_config = mode;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaFuncGetSharedMemConfig`. Query; legal during capture.
+    pub fn get_func_shared_mem_config(
+        &self,
+        device: DeviceId,
+    ) -> Result<SharedMemoryMode, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.func_shared_mem_config)
+    }
+
     /// `cudaSetDeviceFlags`. Host-synchronous. Capture cannot include it.
     ///
     /// Schedule bits [`DeviceFlags::SCHEDULE_AUTO`] / [`DeviceFlags::SCHEDULE_SPIN`] /
     /// [`DeviceFlags::SCHEDULE_YIELD`] /
-    /// [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`] only.
-    /// Combined schedule bits Invalid `"device schedule"`. Other bits Invalid
-    /// `"device flags"`. This VM does not model `cudaErrorSetOnActiveProcess`.
-    /// Auto streams inherit the schedule as host-wait tax; explicit stream
-    /// policy wins. Default `0` is identity.
+    /// [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`] are exclusive (combined
+    /// Invalid `"device schedule"`). [`DeviceFlags::MAP_HOST`] /
+    /// [`DeviceFlags::LMEM_RESIZE_TO_MAX`] are stored.
+    /// [`DeviceFlags::SYNC_MEMOPS`] makes runtime memcpy/memset wait the
+    /// stream like pointer [`crate::PointerAttr::SyncMemops`]. Unknown bits
+    /// Invalid `"device flags"`. This VM does not model
+    /// `cudaErrorSetOnActiveProcess`. Auto streams inherit the schedule as
+    /// host-wait tax; explicit stream policy wins. Default `0` is identity.
     pub fn set_device_flags(&mut self, device: DeviceId, flags: u32) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture device flags")?;
         let _gpu = self.profile.gpu(device)?;
-        if flags & !DeviceFlags::SCHEDULE_MASK != 0 {
+        const KNOWN: u32 = DeviceFlags::SCHEDULE_MASK
+            | DeviceFlags::MAP_HOST
+            | DeviceFlags::LMEM_RESIZE_TO_MAX
+            | DeviceFlags::SYNC_MEMOPS;
+        if flags & !KNOWN != 0 {
             return Err(SimError::Invalid {
                 why: "device flags",
             });
         }
-        match flags {
+        match flags & DeviceFlags::SCHEDULE_MASK {
             DeviceFlags::SCHEDULE_AUTO
             | DeviceFlags::SCHEDULE_SPIN
             | DeviceFlags::SCHEDULE_YIELD
@@ -12401,8 +12440,9 @@ impl Sim {
     /// [`MemsetOp::height`] `> 1` bills `width * height` as an HBM write (pitch
     /// padding is not written). [`MemsetOp::depth`] `> 1` is `cudaMemset3DAsync`
     /// (`width * height * depth`). The mapped span is the 2D/3D extent. Capture
-    /// is allowed unless [`PointerAttr::SyncMemops`] is set (`"cannot capture
-    /// sync memops memset"`); that flag also waits the stream after submit.
+    /// is allowed unless [`PointerAttr::SyncMemops`] or
+    /// [`DeviceFlags::SYNC_MEMOPS`] is set (`"cannot capture
+    /// sync memops memset"`); those flags also wait the stream after submit.
     /// Explicit [`Self::graph_add_memset`] / graph launch is not refused.
     /// Mapped host is not a memset dest.
     pub fn memset_op(
@@ -12412,7 +12452,7 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         let op = self.resolve_memset_op(op)?;
-        let sync_ops = self.is_sync_memops(op.id)?;
+        let sync_ops = self.is_sync_memops(op.id)? || self.device_has_sync_memops(device);
         if sync_ops && self.in_capture(device, stream) {
             return Err(SimError::Invalid {
                 why: "cannot capture sync memops memset",
@@ -13085,7 +13125,7 @@ impl Sim {
             .get(&device)
             .map(|g| g.device_flags)
             .unwrap_or(DeviceFlags::SCHEDULE_AUTO);
-        match flags {
+        match flags & DeviceFlags::SCHEDULE_MASK {
             DeviceFlags::SCHEDULE_SPIN => SynchronizationPolicy::Spin,
             DeviceFlags::SCHEDULE_YIELD => SynchronizationPolicy::Yield,
             DeviceFlags::SCHEDULE_BLOCKING_SYNC => SynchronizationPolicy::BlockingSync,
@@ -13489,6 +13529,12 @@ impl Sim {
     fn is_sync_memops(&self, id: AllocId) -> Result<bool, SimError> {
         let a = self.alloc_ref(id)?;
         Ok(a.live && a.sync_memops)
+    }
+
+    fn device_has_sync_memops(&self, device: DeviceId) -> bool {
+        self.gpus
+            .get(&device)
+            .is_some_and(|g| g.device_flags & DeviceFlags::SYNC_MEMOPS != 0)
     }
 
     fn fail_if_capturing(&self, why: &'static str) -> Result<(), SimError> {
@@ -14999,7 +15045,13 @@ impl Sim {
     ) -> Result<u64, SimError> {
         let g = self.profile.gpu(device)?;
         let mode = match mode {
-            SharedMemoryMode::Default => self.gpu_rt(device)?.shared_mem_config,
+            SharedMemoryMode::Default => {
+                let rt = self.gpu_rt(device)?;
+                match rt.func_shared_mem_config {
+                    SharedMemoryMode::Default => rt.shared_mem_config,
+                    other => other,
+                }
+            }
             other => other,
         };
         let permille = match mode {

@@ -2512,7 +2512,33 @@ model, do not celebrate the sim.
     Decode identity unchanged. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-230. [ ] Next numbered PLAN item after 229 is the next `gpu-sim` / Engine /
+230. [x] `cudaFuncSetSharedMemConfig` / `GetSharedMemConfig`:
+    [`set_func_shared_mem_config`] / [`get_func_shared_mem_config`].
+    Per device (this VM is not per kernel-function object). Launch Default
+    inherits the function config, then the device
+    [`set_shared_mem_config`]. Launch FourByte / EightByte still override.
+    Set is host-sync (1 ns); capture refused. Get is a query. Decode
+    identity unchanged. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+231. [x] Remaining `cudaSetDeviceFlags` stored bits:
+    [`DeviceFlags::MAP_HOST`] (`cudaDeviceMapHost`) /
+    [`DeviceFlags::LMEM_RESIZE_TO_MAX`] (`cudaDeviceLmemResizeToMax`).
+    Schedule bits stay exclusive via `flags & SCHEDULE_MASK`. MapHost /
+    Lmem are stored (CanMapHostMemory is already 1; local-memory resize
+    is not modeled). Unknown bits Invalid `"device flags"`. Decode
+    identity unchanged (default `0`). `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+232. [x] `cudaDeviceSyncMemops` ([`DeviceFlags::SYNC_MEMOPS`] `0x80`):
+    runtime memcpy/memset wait the stream like pointer
+    [`PointerAttr::SyncMemops`]. Capture of those copies is refused
+    (pageable still wins if both). Graph-add / graph launch are not
+    refused. Decode identity unchanged (default flags `0`).
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+233. [ ] Next numbered PLAN item after 232 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

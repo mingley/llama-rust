@@ -126,8 +126,9 @@ warp scheduler, L1, …   ← do not model
 | `device_count` is the profile GPU count | `cudaGetDeviceCount` |
 | `flush_gpu_direct_rdma_writes` is a 1 ns host-sync barrier on RDMA SKUs (no write-visibility) | 1 ns |
 | `set_limit` / `get_limit` wrap persisting L2 plus stack / printf / heap / CDP / L2 fetch | `cudaDeviceSetLimit` / `GetLimit` |
-| `set_shared_mem_config` / `get_shared_mem_config`; Default kernels inherit | `cudaDeviceSetSharedMemConfig` / `GetSharedMemConfig` |
-| `set_device_flags` / `get_device_flags` schedule mask; Auto streams inherit the tax | `cudaSetDeviceFlags` / `GetDeviceFlags` |
+| `set_shared_mem_config` / `get_shared_mem_config`; Default kernels inherit function then device | `cudaDeviceSetSharedMemConfig` / `GetSharedMemConfig` |
+| `set_func_shared_mem_config` / `get_func_shared_mem_config`; per-device function config | `cudaFuncSetSharedMemConfig` / `GetSharedMemConfig` |
+| `set_device_flags` / `get_device_flags` schedule + MapHost / Lmem / SyncMemops; Auto streams inherit the tax | `cudaSetDeviceFlags` / `GetDeviceFlags` |
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128) | exact |
 | `malloc_pitch` charges `pitch * height`; pitch is `align_up(width, 512)` | `cudaMallocPitch` |
 | `MemcpyOp` height/pitches bill `width * height` (not pitch padding) | `cudaMemcpy2DAsync` |
@@ -149,7 +150,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaFuncAttributeNonPortableClusterSizeAllowed` | sizes above `portable_cluster_size` until the SKU `max_blocks_per_cluster` |
 | `cudaLaunchAttributeSynchronizationPolicy` (stream-only) | host-wait tax on `synchronize_stream` / `synchronize_event`; Auto inherits `set_device_flags` (unset / profile default 0) |
 | `cudaLaunchAttributeDeviceUpdatableKernelNode` | graphs-only; `graph_exec_kernel_set_params` keeps the exec uploaded; device-launch graphs allow it |
-| `cudaLaunchAttributeSharedMemoryMode` | Default uses device `set_shared_mem_config` (unset never scales); FourByte / EightByte scale duration by `1000 / shared_mem_*_permille` (default 1000) |
+| `cudaLaunchAttributeSharedMemoryMode` | Default uses function `set_func_shared_mem_config` then device `set_shared_mem_config` (unset never scales); FourByte / EightByte scale duration by `1000 / shared_mem_*_permille` (default 1000) |
 | `cudaLaunchAttributePortableClusterSizeMode` | Default uses the function attr; RequirePortable always refuses oversize; AllowNonPortable allows up to SKU max |
 | CUDA 13 `cudaLaunchAttributeSharedMemoryMode` (`PortableSharedMode`) | Default uses `MaxDynamicSharedMemorySize`; RequirePortable refuses oversize; AllowNonPortable allows up to opt-in max |
 | `cudaLaunchKernel` `sharedMemBytes` | `0` is identity; above `max_shared_mem_per_block` needs the function attr or AllowNonPortable |
@@ -529,9 +530,13 @@ query (capture-legal). This VM does not cap stream-priority range.
 `set_limit` / `get_limit` are `cudaDeviceSetLimit` / `GetLimit`.
 `set_shared_mem_config` / `get_shared_mem_config` are
 `cudaDeviceSetSharedMemConfig` / `GetSharedMemConfig` (Default kernels
-inherit; unset is unscaled). `set_device_flags` / `get_device_flags` are
-`cudaSetDeviceFlags` / `GetDeviceFlags` (schedule mask only; Auto streams
-inherit the tax). This VM does not model `cudaErrorSetOnActiveProcess`.
+inherit the function config, then this; unset is unscaled).
+`set_func_shared_mem_config` / `get_func_shared_mem_config` are
+`cudaFuncSetSharedMemConfig` / `GetSharedMemConfig` (per device).
+`set_device_flags` / `get_device_flags` are
+`cudaSetDeviceFlags` / `GetDeviceFlags` (`DeviceFlags` schedule plus stored
+MapHost / LmemResizeToMax; `SYNC_MEMOPS` waits memcpy/memset like pointer
+SyncMemops; Auto streams inherit the tax). This VM does not model `cudaErrorSetOnActiveProcess`.
 Persisting L2 is `cudaLimitPersistingL2CacheSize`. Access-policy windows
 must align to `cudaLimitMaxL2FetchGranularity` (SM 8.0+ default 128).
 `malloc_pitch` is `cudaMallocPitch`. `MemcpyOp` `height` / pitches are
@@ -713,7 +718,8 @@ A non-capturing `kernel_with` with that attr is Invalid (graphs-only).
 graphs with `DEVICE_LAUNCH` and skip re-upload after set-params.
 `expertvm sim --kernel-priority N` is `cudaLaunchAttributePriority`.
 `SharedMemoryMode` is `cudaLaunchAttributeSharedMemoryMode`: Default uses
-`set_shared_mem_config` (`cudaDeviceSetSharedMemConfig`; unset never
+`set_func_shared_mem_config` then `set_shared_mem_config`
+(`cudaFuncSetSharedMemConfig` / `cudaDeviceSetSharedMemConfig`; unset never
 scales); FourByte / EightByte scale by
 `1000 / shared_mem_*_permille` (profile default 1000 is identity).
 `PortableClusterMode` is `cudaLaunchAttributePortableClusterSizeMode`: Default
@@ -734,7 +740,7 @@ carveout (occupies every Hyper-Q slot). `--non-portable-cluster` is
 is `cudaLaunchAttributeSynchronizationPolicy` on created streams (host-wait
 tax on `synchronize_stream`; Auto inherits `set_device_flags`, unset tax 0). `--shared-mem default|four|eight` is
 `cudaLaunchAttributeSharedMemoryMode` on grouped expert GEMMs (Default uses
-device `set_shared_mem_config`; unset never scales duration). `--portable-cluster default|portable|non-portable` is
+function then device shared-mem config; unset never scales duration). `--portable-cluster default|portable|non-portable` is
 `cudaLaunchAttributePortableClusterSizeMode` on grouped expert GEMMs (Default
 uses the function attribute; `portable` always refuses oversize; `non-portable`
 allows up to the SKU max). `--optin-shared` is

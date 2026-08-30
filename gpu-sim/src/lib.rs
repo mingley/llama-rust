@@ -287,9 +287,15 @@
 //! default 128 on SM 8.0+). [`set_shared_mem_config`](Sim::set_shared_mem_config) /
 //! [`get_shared_mem_config`](Sim::get_shared_mem_config) are
 //! `cudaDeviceSetSharedMemConfig` / `GetSharedMemConfig` (Default kernels
-//! inherit; unset is unscaled). [`set_device_flags`](Sim::set_device_flags) /
+//! inherit the function config, then this; unset is unscaled).
+//! [`set_func_shared_mem_config`](Sim::set_func_shared_mem_config) /
+//! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config) are
+//! `cudaFuncSetSharedMemConfig` / `GetSharedMemConfig` (per device).
+//! [`set_device_flags`](Sim::set_device_flags) /
 //! [`get_device_flags`](Sim::get_device_flags) are `cudaSetDeviceFlags` /
-//! `GetDeviceFlags` (schedule mask only; Auto streams inherit the tax).
+//! `GetDeviceFlags` ([`DeviceFlags`] schedule plus stored MapHost /
+//! LmemResizeToMax; [`DeviceFlags::SYNC_MEMOPS`] waits memcpy/memset like
+//! pointer SyncMemops; Auto streams inherit the tax).
 //! [`Sim::malloc_pitch`] is `cudaMallocPitch`.
 //! [`MemcpyOp`] `height` / pitches are `cudaMemcpy2DAsync` (payload `width *
 //! height`, not pitch padding). [`MemsetOp`] `height` / `pitch` are
@@ -395,8 +401,10 @@
 //! exec uploaded so [`device_launch_graph`](Sim::device_launch_graph) needs no host
 //! re-upload (device-launch graphs allow it).
 //! [`SharedMemoryMode`] is `cudaLaunchAttributeSharedMemoryMode`: Default uses
-//! [`set_shared_mem_config`](Sim::set_shared_mem_config) (`cudaDeviceSetSharedMemConfig`;
-//! unset never scales); FourByte / EightByte scale by
+//! [`set_func_shared_mem_config`](Sim::set_func_shared_mem_config) then
+//! [`set_shared_mem_config`](Sim::set_shared_mem_config)
+//! (`cudaFuncSetSharedMemConfig` / `cudaDeviceSetSharedMemConfig`; unset
+//! never scales); FourByte / EightByte scale by
 //! `1000 / GpuProfile::shared_mem_*_permille` (profile default `1000`).
 //! [`PortableClusterMode`] is `cudaLaunchAttributePortableClusterSizeMode`:
 //! Default uses the function attribute; RequirePortable always refuses a
@@ -5769,6 +5777,125 @@ mod tests {
     }
 
     #[test]
+    fn func_shared_mem_config_inherits_before_device() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |func: SharedMemoryMode,
+                   device: SharedMemoryMode,
+                   launch: SharedMemoryMode,
+                   four: u16,
+                   eight: u16| {
+            let mut p = h100();
+            for g in &mut p.gpus {
+                g.shared_mem_four_byte_permille = four;
+                g.shared_mem_eight_byte_permille = eight;
+            }
+            let mut sim = Sim::new(p);
+            let d = DeviceId(0);
+            sim.set_shared_mem_config(d, device).unwrap();
+            sim.set_func_shared_mem_config(d, func).unwrap();
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel_with(
+                d,
+                kind.clone(),
+                &[a],
+                &[a],
+                StreamId(1),
+                KernelAttrs {
+                    shared_mem: launch,
+                    ..KernelAttrs::default()
+                },
+            ));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let unset = run(
+            SharedMemoryMode::Default,
+            SharedMemoryMode::Default,
+            SharedMemoryMode::Default,
+            500,
+            1000,
+        );
+        let func_four = run(
+            SharedMemoryMode::FourByte,
+            SharedMemoryMode::Default,
+            SharedMemoryMode::Default,
+            500,
+            1000,
+        );
+        let launch_four = run(
+            SharedMemoryMode::Default,
+            SharedMemoryMode::Default,
+            SharedMemoryMode::FourByte,
+            500,
+            1000,
+        );
+        assert!(
+            func_four > unset,
+            "func FourByte must scale Default kernels; unset={unset} func={func_four}"
+        );
+        assert_eq!(
+            func_four, launch_four,
+            "func inherit matches launch FourByte"
+        );
+        let device_four = run(
+            SharedMemoryMode::Default,
+            SharedMemoryMode::FourByte,
+            SharedMemoryMode::Default,
+            500,
+            1000,
+        );
+        assert_eq!(device_four, launch_four, "device FourByte still scales");
+        let launch_eight = run(
+            SharedMemoryMode::FourByte,
+            SharedMemoryMode::Default,
+            SharedMemoryMode::EightByte,
+            500,
+            250,
+        );
+        let eight = run(
+            SharedMemoryMode::Default,
+            SharedMemoryMode::Default,
+            SharedMemoryMode::EightByte,
+            500,
+            250,
+        );
+        assert_eq!(launch_eight, eight, "launch EightByte overrides func");
+        let func_wins = run(
+            SharedMemoryMode::FourByte,
+            SharedMemoryMode::EightByte,
+            SharedMemoryMode::Default,
+            500,
+            250,
+        );
+        assert_eq!(func_wins, func_four, "func config wins over device");
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(
+            sim.get_func_shared_mem_config(d).unwrap(),
+            SharedMemoryMode::Default
+        );
+        sim.set_func_shared_mem_config(d, SharedMemoryMode::FourByte)
+            .unwrap();
+        assert_eq!(
+            sim.get_func_shared_mem_config(d).unwrap(),
+            SharedMemoryMode::FourByte
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.get_func_shared_mem_config(d).unwrap(),
+            SharedMemoryMode::FourByte
+        );
+        match sim.set_func_shared_mem_config(d, SharedMemoryMode::EightByte) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
     fn kernel_with_capture_records_shared_mem() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
@@ -7412,6 +7539,11 @@ mod tests {
         let t0 = spin.clock_ns();
         spin.synchronize_stream(d, s).unwrap();
         assert_eq!(spin.clock_ns(), t0.saturating_add(1_000));
+        spin.set_device_flags(d, DeviceFlags::SCHEDULE_SPIN | DeviceFlags::MAP_HOST)
+            .unwrap();
+        let t_map = spin.clock_ns();
+        spin.synchronize_stream(d, s).unwrap();
+        assert_eq!(spin.clock_ns(), t_map.saturating_add(1_000));
         let mut override_p = Sim::new(p);
         override_p
             .set_device_flags(d, DeviceFlags::SCHEDULE_SPIN)
@@ -7427,10 +7559,19 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("device schedule"), "{why}"),
             other => panic!("{other:?}"),
         }
-        match sim.set_device_flags(d, 8) {
+        sim.set_device_flags(d, DeviceFlags::MAP_HOST).unwrap();
+        assert_eq!(sim.get_device_flags(d).unwrap(), DeviceFlags::MAP_HOST);
+        sim.set_device_flags(d, DeviceFlags::LMEM_RESIZE_TO_MAX)
+            .unwrap();
+        assert_eq!(
+            sim.get_device_flags(d).unwrap(),
+            DeviceFlags::LMEM_RESIZE_TO_MAX
+        );
+        match sim.set_device_flags(d, 0x20) {
             Err(SimError::Invalid { why }) => assert!(why.contains("device flags"), "{why}"),
             other => panic!("{other:?}"),
         }
+        sim.set_device_flags(d, DeviceFlags::SCHEDULE_AUTO).unwrap();
         sim.begin_capture(d, s).unwrap();
         assert_eq!(sim.get_device_flags(d).unwrap(), DeviceFlags::SCHEDULE_AUTO);
         match sim.set_device_flags(d, DeviceFlags::SCHEDULE_SPIN) {
@@ -10366,6 +10507,53 @@ mod tests {
             Err(SimError::UnknownAlloc { .. }) => {}
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn device_sync_memops_makes_memcpy_host_synchronous() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 8u64 << 20;
+        let mut sim = Sim::new(h100());
+        let a = sim.alloc(d, bytes, s).unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        assert_eq!(sim.get_device_flags(d).unwrap(), DeviceFlags::SCHEDULE_AUTO);
+        let t0 = sim.clock_ns();
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+        assert!(!sim.query_stream(d, s).unwrap());
+        assert_eq!(sim.clock_ns(), t0);
+        sim.synchronize_stream(d, s).unwrap();
+        sim.set_device_flags(d, DeviceFlags::SYNC_MEMOPS).unwrap();
+        assert_eq!(sim.get_device_flags(d).unwrap(), DeviceFlags::SYNC_MEMOPS);
+        let t1 = sim.clock_ns();
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+        assert!(sim.query_stream(d, s).unwrap());
+        assert!(sim.clock_ns() > t1);
+        sim.begin_capture(d, s).unwrap();
+        match sim.memcpy_pinned_to_device(d, a, bytes, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("sync memops memcpy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_host_to_device(d, a, bytes, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("pageable memcpy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memset(d, a, 64, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("sync memops memset"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset(g, KernelBuf::whole(a)).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
     }
 
     #[test]

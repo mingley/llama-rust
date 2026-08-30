@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — Func shared-mem config, remaining device flags, SyncMemops
+
+`set_func_shared_mem_config` / `get_func_shared_mem_config` are
+`cudaFuncSetSharedMemConfig` / `GetSharedMemConfig` (per device; Default
+kernels inherit function then device). `DeviceFlags::MAP_HOST` /
+`LMEM_RESIZE_TO_MAX` are stored. `SYNC_MEMOPS` makes runtime memcpy/memset
+wait the stream like pointer SyncMemops (graph-add is not refused).
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — HostAlloc Portable / WriteCombined stored flags
 
 `alloc_host_with_flags` stores `PORTABLE` / `WRITE_COMBINED` (no DMA
@@ -2415,7 +2424,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 229 (`HostAllocFlags::PORTABLE`).
+Next code change is PLAN systems depth after item 232 (`DeviceFlags::SYNC_MEMOPS`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

@@ -1084,11 +1084,13 @@ pub enum SynchronizationPolicy {
 
 /// `cudaSetDeviceFlags` bits for [`crate::Sim::set_device_flags`].
 ///
-/// Only the schedule mask is mechanical ([`Self::SCHEDULE_AUTO`] /
-/// [`Self::SCHEDULE_SPIN`] / [`Self::SCHEDULE_YIELD`] /
-/// [`Self::SCHEDULE_BLOCKING_SYNC`]). Combined schedule bits
-/// are Invalid `"device schedule"`. MapHost / LmemResizeToMax / SyncMemops
-/// are Invalid `"device flags"`. Default `0` is Auto (host-wait tax 0).
+/// Schedule bits [`Self::SCHEDULE_AUTO`] / [`Self::SCHEDULE_SPIN`] /
+/// [`Self::SCHEDULE_YIELD`] / [`Self::SCHEDULE_BLOCKING_SYNC`] are exclusive
+/// (combined schedule bits Invalid `"device schedule"`). [`Self::MAP_HOST`]
+/// / [`Self::LMEM_RESIZE_TO_MAX`] are stored. [`Self::SYNC_MEMOPS`] makes
+/// runtime memcpy/memset wait the stream like pointer
+/// [`PointerAttr::SyncMemops`]. Unknown bits Invalid `"device flags"`.
+/// Default `0` is Auto (host-wait tax 0).
 pub struct DeviceFlags;
 
 impl DeviceFlags {
@@ -1102,6 +1104,13 @@ impl DeviceFlags {
     pub const SCHEDULE_BLOCKING_SYNC: u32 = 4;
     /// `cudaDeviceScheduleMask`.
     pub const SCHEDULE_MASK: u32 = 7;
+    /// `cudaDeviceMapHost`. Stored; [`DeviceAttr::CanMapHostMemory`] is already 1.
+    pub const MAP_HOST: u32 = 8;
+    /// `cudaDeviceLmemResizeToMax`. Stored; local-memory resize is not modeled.
+    pub const LMEM_RESIZE_TO_MAX: u32 = 16;
+    /// `cudaDeviceSyncMemops`. Runtime memcpy/memset wait like pointer
+    /// [`PointerAttr::SyncMemops`].
+    pub const SYNC_MEMOPS: u32 = 128;
 }
 
 impl SynchronizationPolicy {
@@ -1339,14 +1348,16 @@ impl SharedMemCarveout {
 /// `cudaSharedMemoryConfig` (`cudaLaunchAttributeSharedMemoryMode`).
 ///
 /// Bank width for shared-memory accesses. [`Self::Default`] uses
-/// [`crate::Sim::set_shared_mem_config`] (`cudaDeviceSetSharedMemConfig`);
-/// an unset device config never scales (decode identity). [`Self::FourByte`] /
-/// [`Self::EightByte`] scale duration by
+/// [`crate::Sim::set_func_shared_mem_config`] (`cudaFuncSetSharedMemConfig`)
+/// when that is not Default, else [`crate::Sim::set_shared_mem_config`]
+/// (`cudaDeviceSetSharedMemConfig`); both unset never scale (decode
+/// identity). [`Self::FourByte`] / [`Self::EightByte`] scale duration by
 /// `1000 / GpuProfile::shared_mem_*_permille` (profile default `1000` is
 /// identity). Not occupancy.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum SharedMemoryMode {
-    /// `cudaSharedMemoryBankSizeDefault`. Uses the device config.
+    /// `cudaSharedMemoryBankSizeDefault`. Uses the function config, then
+    /// the device config.
     #[default]
     Default,
     /// `cudaSharedMemoryBankSizeFourByte`. Scale by
