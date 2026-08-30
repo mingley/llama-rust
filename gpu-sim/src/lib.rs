@@ -406,7 +406,7 @@
 //! [`memcpy_peer_3d_async`](Sim::memcpy_peer_3d_async) / [`memcpy_peer_3d`](Sim::memcpy_peer_3d)
 //! are `cudaMemcpy3DPeerAsync` / `cudaMemcpy3DPeer` ([`MemcpyOp`] height/depth).
 //! [`memcpy_peer_2d_async`](Sim::memcpy_peer_2d_async) / [`memcpy_peer_2d`](Sim::memcpy_peer_2d)
-//! are `cudaMemcpy2DPeerAsync` / `cudaMemcpy2DPeer` ([`MemcpyOp`] height/pitches).
+//! are `cudaMemcpy2DPeerAsync` / `cudaMemcpy2DPeer` ([`MemcpyOp::is_2d`]).
 //! [`memcpy_2d_async`](Sim::memcpy_2d_async) / [`memcpy_2d`](Sim::memcpy_2d)
 //! are `cudaMemcpy2DAsync` / `cudaMemcpy2D` ([`MemcpyOp::is_2d`]).
 //! [`memcpy_3d_async`](Sim::memcpy_3d_async) / [`memcpy_3d`](Sim::memcpy_3d)
@@ -4265,6 +4265,53 @@ mod tests {
         enq(sim.memcpy_peer_2d_async(d0, d1, op, s));
         let g = sim.end_capture().unwrap();
         assert_eq!(sim.graph_len(g).unwrap(), 1);
+    }
+
+    #[test]
+    fn memcpy_peer_2d_async_requires_is_2d() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_pitch(d0, 256, 8).unwrap();
+        let op = MemcpyOp {
+            alloc: a,
+            bytes: 256,
+            height: 8,
+            src_pitch: pitch,
+            dst_pitch: pitch,
+            ..MemcpyOp::default()
+        };
+        enq(sim.memcpy_peer_2d_async(d0, d1, op.clone(), s));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(a, d1).unwrap());
+        assert_eq!(sim.bytes_moved(), 2048);
+        match sim.memcpy_peer_2d_async(
+            d0,
+            d1,
+            MemcpyOp {
+                height: 1,
+                ..op.clone()
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy2d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_peer_2d_async(
+            d0,
+            d1,
+            MemcpyOp {
+                depth: 2,
+                src_height: 8,
+                dst_height: 8,
+                ..op
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy2d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

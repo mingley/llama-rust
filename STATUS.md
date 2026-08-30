@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaMemcpy2DPeer` requires `is_2d`
+
+`memcpy_peer_2d` / `memcpy_peer_2d_async` require a 2D `MemcpyOp`
+(`height > 1`, not 3D). Typed `memcpy_peer` stays. `gpu-profile capture`
+is still refused.
+
 ## Shipped 2026-08-30 — `cudaMemset3D` / `Memset3DAsync`
 
 `memset_3d` / `memset_3d_async` require a 3D `MemsetOp` (`depth > 1`).

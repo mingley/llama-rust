@@ -12253,9 +12253,10 @@ impl Sim {
         self.memcpy_peer_extent(src, dst, op, stream)
     }
 
-    /// `cudaMemcpy2DPeerAsync`. Replica copy; [`MemcpyOp`] height/pitches are
-    /// the 2D extent. `op.src` / `op.dst` are forced to `src` / `dst`. Capture
-    /// records a memcpy node. Typed [`Self::memcpy`] stays.
+    /// `cudaMemcpy2DPeerAsync`. Replica copy; [`MemcpyOp`] must be
+    /// [`MemcpyOp::is_2d`] (`height > 1`, not 3D). `op.src` / `op.dst` are
+    /// forced to `src` / `dst`. Capture records a memcpy node. Typed
+    /// [`Self::memcpy`] stays.
     pub fn memcpy_peer_2d_async(
         &mut self,
         src: DeviceId,
@@ -12263,6 +12264,11 @@ impl Sim {
         op: MemcpyOp,
         stream: StreamId,
     ) -> Result<OpId, SimError> {
+        if !op.is_2d() {
+            return Err(SimError::Invalid {
+                why: "memcpy2d height",
+            });
+        }
         self.memcpy_peer_extent_async(src, dst, op, stream)
     }
 
@@ -12274,7 +12280,14 @@ impl Sim {
         op: MemcpyOp,
         stream: StreamId,
     ) -> Result<OpId, SimError> {
-        self.memcpy_peer_extent(src, dst, op, stream)
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memcpy",
+            });
+        }
+        let id = self.memcpy_peer_2d_async(src, dst, op, stream)?;
+        self.synchronize_stream(src, stream)?;
+        Ok(id)
     }
 
     /// `cudaMemcpy2DAsync`. [`MemcpyOp`] must be [`MemcpyOp::is_2d`] (`height > 1`,

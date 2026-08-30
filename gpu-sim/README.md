@@ -478,7 +478,8 @@ link; `disable_peer` → `PeerDisabled`). `enable_peer_with_flags` is
 `memcpy_peer_async` are `cudaMemcpyPeer` / `cudaMemcpyPeerAsync` (replica
 copy; Peer is host-synchronous). `memcpy_peer_3d` / `memcpy_peer_3d_async`
 are `cudaMemcpy3DPeer` / `cudaMemcpy3DPeerAsync`. `memcpy_peer_2d` /
-`memcpy_peer_2d_async` are `cudaMemcpy2DPeer` / `cudaMemcpy2DPeerAsync`. `memcpy_2d` /
+`memcpy_peer_2d_async` are `cudaMemcpy2DPeer` / `cudaMemcpy2DPeerAsync`
+(`MemcpyOp` must be 2D). `memcpy_2d` /
 `memcpy_2d_async` are `cudaMemcpy2D` / `cudaMemcpy2DAsync` (`MemcpyOp` must
 be 2D). `memcpy_3d` / `memcpy_3d_async` are `cudaMemcpy3D` /
 `cudaMemcpy3DAsync` (`MemcpyOp` must be 3D). Typed `memcpy` stays. [`StreamId::NULL`] is the CUDA null
