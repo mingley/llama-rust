@@ -450,6 +450,16 @@ pub struct SimCfg {
     /// edges serialize). [`crate::GpuStoreCfg::graph_piecewise`] is the store
     /// path (leaf capture-to-graph into `create_graph`).
     pub graph_piecewise: bool,
+    /// `cudaGraphNodeSetEnabled` on a wide combo parent instead of recapture.
+    ///
+    /// A later token that GEMMs a subset of a stored combo (or of currently
+    /// resident experts on that origin) skips extra child graphs instead of
+    /// instantiating a new parent. Implies [`Self::cuda_graphs`]. Illegal with
+    /// [`Self::device_launch`] (that path already splits combos to singles).
+    /// Decode identity stays exact combo recapture.
+    /// [`crate::GpuStoreCfg::graph_enable`] is the store CLI field (store GEMM
+    /// stays per-leaf).
+    pub graph_enable: bool,
     /// Leaf GEMM graphs include a scratch `cudaMallocAsync` + free.
     ///
     /// Models in-graph workspace (`cudaGraphAddMemAllocNode`). Hits/misses
@@ -660,6 +670,7 @@ impl SimCfg {
             graph_clone: false,
             graph_build: false,
             graph_piecewise: false,
+            graph_enable: false,
             graph_mem: false,
             graph_auto_free: false,
             graph_mem_trim: false,
@@ -704,6 +715,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     )?;
     if cfg.graph_build && cfg.graph_piecewise {
         return Err(Error::Store("choose one of graph-build, graph-piecewise"));
+    }
+    if cfg.graph_enable && cfg.device_launch {
+        return Err(Error::Store("graph-enable cannot device-launch"));
     }
     if cfg.pdl && cfg.cooperative {
         return Err(Error::Store("choose one of pdl, cooperative"));
@@ -831,7 +845,8 @@ pub fn sim_replay_cfg(
         .with_kernel_priority(cfg.kernel_priority)
         .with_device_launch(cfg.device_launch)
         .with_set_params(cfg.graph_set_params)
-        .with_piecewise(cfg.graph_piecewise);
+        .with_piecewise(cfg.graph_piecewise)
+        .with_enable(cfg.graph_enable);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
     let mut next_event = 1u32;
     for (i, event) in trace.events.iter().enumerate() {
@@ -1145,6 +1160,7 @@ pub(crate) struct GraphBank {
     kernel_priority: Option<i32>,
     device_launch: bool,
     set_params: bool,
+    enable: bool,
     pub updates: u64,
     pub clones: u64,
     pub kernel_sets: u64,
@@ -1176,6 +1192,7 @@ impl GraphBank {
             kernel_priority: None,
             device_launch: false,
             set_params: false,
+            enable: false,
             updates: 0,
             clones: 0,
             kernel_sets: 0,
@@ -1286,8 +1303,78 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_enable(mut self, yes: bool) -> Self {
+        self.enable = yes;
+        self
+    }
+
     pub(crate) fn get(&self, ids: &[AllocId]) -> Option<GraphId> {
         self.graphs.get(ids).map(|(g, _)| *g)
+    }
+
+    fn alloc_of(&self, gid: GraphId) -> Option<AllocId> {
+        self.graphs.iter().find_map(|(ids, (g, _))| {
+            if *g == gid && ids.len() == 1 {
+                ids.first().copied()
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Smallest stored combo (`len >= 2`, same origin) that is a set superset of `want`.
+    fn find_cover(&self, origin: (DeviceId, StreamId), want: &[AllocId]) -> Option<GraphId> {
+        let want: BTreeSet<AllocId> = want.iter().copied().collect();
+        if want.is_empty() {
+            return None;
+        }
+        let mut best: Option<(&Vec<AllocId>, GraphId)> = None;
+        for (ids, (gid, o)) in &self.graphs {
+            if *o != origin || ids.len() < 2 {
+                continue;
+            }
+            if !want.iter().all(|id| ids.contains(id)) {
+                continue;
+            }
+            let better = match best {
+                None => true,
+                Some((b, _)) if ids.len() < b.len() => true,
+                Some((b, _)) if ids.len() == b.len() && ids.as_slice() < b.as_slice() => true,
+                _ => false,
+            };
+            if better {
+                best = Some((ids, *gid));
+            }
+        }
+        best.map(|(_, g)| g)
+    }
+
+    /// Enable child graphs whose leaf alloc is in `want`; skip the rest.
+    ///
+    /// Child index is not cover order: first-token expert order may differ
+    /// from a later sorted resident cover. Only bills `graph_set_params_ns`
+    /// when [`gpu_sim::Sim::graph_node_get_enabled`] disagrees.
+    fn apply_child_enable(
+        &self,
+        sim: &mut Sim,
+        exec: GraphId,
+        want: &[AllocId],
+    ) -> Result<(), Error> {
+        if !self.enable {
+            return Ok(());
+        }
+        let want: BTreeSet<AllocId> = want.iter().copied().collect();
+        let children = sim.graph_child_nodes(exec)?;
+        for (node, child) in children {
+            let Some(alloc) = self.alloc_of(child) else {
+                return Err(Error::Store("combo child alloc"));
+            };
+            let on = want.contains(&alloc);
+            if sim.graph_node_get_enabled(exec, node)? != on {
+                sim.graph_node_set_enabled(exec, node, on)?;
+            }
+        }
+        Ok(())
     }
 
     /// Instantiate `src`, or `update_graph` / SetParams a parked leaf on `origin`.
@@ -1802,9 +1889,36 @@ pub(crate) fn gemm_keys(
             .push(page.id);
     }
     for ((d, stream), ids) in by_dev {
-        gemm_ids(sim, graphs, d, stream, ids, cuda_graphs, ctr)?;
+        let cover = if graphs.enable {
+            resident_cover(handles, d, stream, work)
+        } else {
+            Vec::new()
+        };
+        gemm_ids(sim, graphs, (d, stream), ids, cover, cuda_graphs, ctr)?;
     }
     Ok(())
+}
+
+fn resident_cover(
+    handles: &BTreeMap<ExpertKey, PageHandle>,
+    d: DeviceId,
+    stream: StreamId,
+    work: Option<StreamId>,
+) -> Vec<AllocId> {
+    let mut ids: Vec<AllocId> = handles
+        .values()
+        .filter(|page| page.device == d && work.unwrap_or(page.stream) == stream)
+        .map(|page| page.id)
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+fn is_strict_superset(cover: &[AllocId], want: &[AllocId]) -> bool {
+    let cover: BTreeSet<AllocId> = cover.iter().copied().collect();
+    let want: BTreeSet<AllocId> = want.iter().copied().collect();
+    !want.is_empty() && want.iter().all(|id| cover.contains(id)) && cover.len() > want.len()
 }
 
 pub(crate) fn host_callbacks(
@@ -1829,35 +1943,58 @@ pub(crate) fn host_callbacks(
 fn gemm_ids(
     sim: &mut Sim,
     graphs: &mut GraphBank,
-    d: DeviceId,
-    stream: StreamId,
+    origin: (DeviceId, StreamId),
     ids: Vec<AllocId>,
+    cover: Vec<AllocId>,
     cuda_graphs: bool,
     ctr: &mut ReplayCounters,
 ) -> Result<(), Error> {
     if ids.is_empty() {
         return Ok(());
     }
+    let (d, stream) = origin;
     if graphs.device_launch && ids.len() > 1 {
         for id in ids {
-            gemm_ids(sim, graphs, d, stream, vec![id], cuda_graphs, ctr)?;
+            gemm_ids(
+                sim,
+                graphs,
+                origin,
+                vec![id],
+                Vec::new(),
+                cuda_graphs,
+                ctr,
+            )?;
         }
         return Ok(());
     }
     if let Some(g) = graphs.get(&ids) {
+        graphs.apply_child_enable(sim, g, &ids)?;
         replay_exec(sim, g, d, stream, graphs.device_launch)?;
         ctr.graph_launches = ctr.graph_launches.saturating_add(1);
         return Ok(());
     }
+    if graphs.enable {
+        if let Some(g) = graphs.find_cover(origin, &ids) {
+            graphs.apply_child_enable(sim, g, &ids)?;
+            replay_exec(sim, g, d, stream, graphs.device_launch)?;
+            ctr.graph_launches = ctr.graph_launches.saturating_add(1);
+            return Ok(());
+        }
+    }
     if ids.len() == 1 {
         if let Some(id) = ids.first().copied() {
-            if let Some(g) = graphs.try_retarget(sim, (d, stream), id)? {
+            if let Some(g) = graphs.try_retarget(sim, origin, id)? {
                 replay_exec(sim, g, d, stream, graphs.device_launch)?;
                 ctr.graph_launches = ctr.graph_launches.saturating_add(1);
                 return Ok(());
             }
         }
     }
+    let capture_ids = if graphs.enable && cover.len() > 1 && is_strict_superset(&cover, &ids) {
+        cover
+    } else {
+        ids.clone()
+    };
     if cuda_graphs
         || graphs.build
         || graphs.piecewise
@@ -1865,11 +2002,13 @@ fn gemm_ids(
         || graphs.set_params
         || graphs.device_launch
         || graphs.device_updatable
+        || graphs.enable
     {
-        if let Some(g) = capture_expert_graph(sim, graphs, d, stream, &ids)? {
-            if ids.len() > 1 {
+        if let Some(g) = capture_expert_graph(sim, graphs, d, stream, &capture_ids)? {
+            if capture_ids.len() > 1 {
                 ctr.child_graphs = ctr.child_graphs.saturating_add(1);
             }
+            graphs.apply_child_enable(sim, g, &ids)?;
             replay_exec(sim, g, d, stream, graphs.device_launch)?;
             ctr.graph_launches = ctr.graph_launches.saturating_add(1);
             return Ok(());

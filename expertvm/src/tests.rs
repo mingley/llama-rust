@@ -2574,6 +2574,177 @@ fn cuda_graphs_reuse_leaf_graphs_across_combos() {
 }
 
 #[test]
+fn cuda_graphs_graph_enable_skips_combo_recapture() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1, 2]), ev(1, 0, &[0, 1])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nlaunch_overhead_ns=1000\ngraph_launch_ns=1000\ngraph_instantiate_ns=100000\ngraph_set_params_ns=1000\ngraph_upload_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let base = SimCfg {
+        cuda_graphs: true,
+        ..SimCfg::lru(3, 4096, 0)
+    };
+    let recapture = sim_replay_cfg(&t, p.clone(), base).expect("recapture");
+    let enable = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            graph_enable: true,
+            ..base
+        },
+    )
+    .expect("enable");
+    assert_eq!(recapture.child_graphs, 2);
+    assert_eq!(enable.child_graphs, 1);
+    assert_eq!(enable.graph_launches, 2);
+    assert_eq!(recapture.graph_launches, 2);
+    assert!(
+        enable.sim_ns < recapture.sim_ns,
+        "enable={} recapture={}",
+        enable.sim_ns,
+        recapture.sim_ns
+    );
+}
+
+#[test]
+fn cuda_graphs_graph_enable_restores_disabled_children() {
+    let t = Trace {
+        events: vec![
+            ev(0, 0, &[0, 1, 2]),
+            ev(1, 0, &[0, 1]),
+            ev(2, 0, &[0, 1, 2]),
+        ],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nlaunch_overhead_ns=1000\ngraph_launch_ns=1000\ngraph_instantiate_ns=100000\ngraph_set_params_ns=1000\ngraph_upload_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let enable = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            cuda_graphs: true,
+            graph_enable: true,
+            ..SimCfg::lru(3, 4096, 0)
+        },
+    )
+    .expect("enable");
+    assert_eq!(enable.child_graphs, 1);
+    assert_eq!(enable.graph_launches, 3);
+}
+
+#[test]
+fn cuda_graphs_graph_enable_captures_resident_cover() {
+    let t = Trace {
+        events: vec![
+            ev(0, 0, &[0, 1]),
+            ev(1, 0, &[1, 2]),
+            ev(2, 0, &[0, 2]),
+        ],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nlaunch_overhead_ns=1000\ngraph_launch_ns=1000\ngraph_instantiate_ns=100000\ngraph_set_params_ns=1000\ngraph_upload_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let recapture = sim_replay_cfg(
+        &t,
+        p.clone(),
+        SimCfg {
+            cuda_graphs: true,
+            ..SimCfg::lru(3, 4096, 0)
+        },
+    )
+    .expect("recapture");
+    let enable = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            cuda_graphs: true,
+            graph_enable: true,
+            ..SimCfg::lru(3, 4096, 0)
+        },
+    )
+    .expect("enable");
+    assert_eq!(recapture.child_graphs, 3);
+    assert_eq!(enable.child_graphs, 2);
+    assert_eq!(enable.graph_launches, 3);
+}
+
+#[test]
+fn sim_cfg_graph_enable_refuses_device_launch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let err = match sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            cuda_graphs: true,
+            graph_enable: true,
+            device_launch: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("graph-enable + device-launch must fail"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string().contains("graph-enable cannot device-launch"),
+        "{err}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_graph_enable_refuses_device_launch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_enable: true,
+            device_launch: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("graph-enable + device-launch must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("graph-enable cannot device-launch"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn graph_enable_implies_cuda_graphs() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1]), ev(1, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nlaunch_overhead_ns=1000\ngraph_launch_ns=1000\ngraph_instantiate_ns=1000\ngraph_set_params_ns=1000\ngraph_upload_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let g = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            graph_enable: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    )
+    .expect("enable");
+    assert!(g.graph_launches > 0, "line={}", g.line());
+    assert_eq!(g.child_graphs, 1);
+}
+
+#[test]
 fn cuda_graphs_graph_update_reuses_parked_leaves() {
     let t = Trace {
         events: vec![

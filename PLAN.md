@@ -3357,7 +3357,20 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no `$/M
     tokens`.
 
-324. [ ] Next numbered PLAN item after 323 is the next `gpu-sim` / Engine /
+324. [x] `cudaGraphNodeSetEnabled` combo reuse:
+    [`GpuStoreCfg::graph_enable`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::graph_enable`](expertvm/src/sim_replay.rs) capture a wide
+    walker combo parent of resident expert leaves, then
+    [`graph_node_set_enabled`](gpu-sim/src/sim.rs) skips extra children on
+    a later subset instead of instantiating a new parent. Child index is
+    not cover order. Implies `--cuda-graphs`. Illegal with
+    `--device-launch` (that path already splits combos to singles). Store
+    GEMM stays per-leaf. `--graph-enable` on `expertvm sim` / `schedule` /
+    `store` and `gguf_gemv engine --expert-sim`. Decode identity stays
+    exact combo recapture. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+325. [ ] Next numbered PLAN item after 324 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

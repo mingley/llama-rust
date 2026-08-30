@@ -139,6 +139,14 @@ pub struct GpuStoreCfg {
     /// into `create_graph`. Illegal with [`Self::graph_build`]. Decode identity
     /// stays `begin_capture` / `end_capture`.
     pub graph_piecewise: bool,
+    /// `cudaGraphNodeSetEnabled` on walker combo parents instead of recapture.
+    ///
+    /// A later token that GEMMs a subset of a stored combo skips extra child
+    /// graphs (`graph_set_params_ns`) instead of instantiate. Implies CUDA
+    /// graphs on the walker. Illegal with [`Self::device_launch`]. Store GEMM
+    /// stays per-leaf (`gemm_resident`). Decode identity stays exact combo
+    /// recapture.
+    pub graph_enable: bool,
     /// Leaf GEMM graphs include a scratch `cudaMallocAsync` + free.
     ///
     /// CUDA cannot `cudaGraphExecUpdate` mem nodes, so [`Self::graph_update`]
@@ -498,7 +506,9 @@ impl SimulatedGpuStore {
     /// is `cudaGraphCreate` / `cudaGraphAdd*`; [`GpuStoreCfg::graph_mem`]
     /// records in-graph scratch with a matching free;
     /// [`GpuStoreCfg::graph_auto_free`] is AutoFreeOnLaunch without a free;
-    /// [`GpuStoreCfg::graph_set_params`] retargets a parked kernel node),
+    /// [`GpuStoreCfg::graph_set_params`] retargets a parked kernel node;
+    /// [`GpuStoreCfg::graph_enable`] is walker combo `cudaGraphNodeSetEnabled`
+    /// (store GEMM stays per-leaf; illegal with device-launch)),
     /// disable-timing copy events.
     /// [`GpuStoreCfg::cooperative`] launches GEMMs with
     /// `cudaLaunchCooperativeKernel` (exclusive compute).
@@ -552,6 +562,9 @@ impl SimulatedGpuStore {
         )?;
         if cfg.graph_build && cfg.graph_piecewise {
             return Err(Error::Store("choose one of graph-build, graph-piecewise"));
+        }
+        if cfg.graph_enable && cfg.device_launch {
+            return Err(Error::Store("graph-enable cannot device-launch"));
         }
         if cfg.pdl && cfg.cooperative {
             return Err(Error::Store("choose one of pdl, cooperative"));

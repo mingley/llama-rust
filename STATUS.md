@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaGraphNodeSetEnabled` combo reuse
+
+`GpuStoreCfg::graph_enable` / `SimCfg::graph_enable` capture a wide walker
+combo parent of resident expert leaves, then `cudaGraphNodeSetEnabled`
+skips extra children on a later subset instead of instantiating a new
+parent. Child index is not cover order. Implies `--cuda-graphs`. Illegal
+with `--device-launch`. Store GEMM stays per-leaf. `--graph-enable` is
+off by default (decode identity). `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — memcpy-batch expert prefetch
 
 `GpuStoreCfg::memcpy_batch` / `SimCfg::memcpy_batch` fill a multi-expert

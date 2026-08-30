@@ -352,7 +352,8 @@ impl SchedRt {
             .with_kernel_priority(cfg.kernel_priority)
             .with_device_launch(cfg.device_launch)
             .with_set_params(cfg.graph_set_params)
-            .with_piecewise(cfg.graph_piecewise),
+            .with_piecewise(cfg.graph_piecewise)
+            .with_enable(cfg.graph_enable),
             ctr: ReplayCounters::default(),
             prefetched: BTreeSet::new(),
             markov: Markov::new(),
