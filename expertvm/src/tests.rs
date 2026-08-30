@@ -5673,6 +5673,56 @@ fn simulated_gpu_store_non_portable_cluster_allows_oversize() {
 }
 
 #[test]
+fn simulated_gpu_store_portable_cluster_overrides_func_attribute() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nmax_blocks_per_cluster=16\n")
+        .expect("open cluster profile");
+    let key = ExpertKey::new(0, 0);
+    let mut allowed = match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile.clone(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            cluster: 16,
+            portable_cluster: PortableClusterMode::AllowNonPortable,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(gpu) => gpu,
+        Err(err) => panic!("gpu: {err}"),
+    };
+    match allowed.acquire(key) {
+        Ok(_) => {}
+        Err(err) => panic!("AllowNonPortable must launch oversize without func attr: {err}"),
+    }
+    allowed.release(key);
+    let mut refused = match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            cluster: 16,
+            non_portable_cluster: true,
+            portable_cluster: PortableClusterMode::RequirePortable,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(gpu) => gpu,
+        Err(err) => panic!("gpu: {err}"),
+    };
+    match refused.acquire(key) {
+        Ok(_) => panic!("RequirePortable must refuse oversize even with func attr"),
+        Err(err) => assert!(err.to_string().contains("non-portable cluster"), "{err}"),
+    }
+}
+
+#[test]
 fn simulated_gpu_store_sync_policy_taxes_decode_stream() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],
@@ -6049,6 +6099,38 @@ fn sim_replay_non_portable_cluster_allows_oversize() {
     };
     let err = sim_replay_cfg(&t, profile, too_big).expect_err("max");
     assert!(err.to_string().contains("cluster size"), "{err}");
+}
+
+#[test]
+fn sim_replay_portable_cluster_overrides_func_attribute() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nmax_blocks_per_cluster=16\n")
+        .expect("open cluster profile");
+    let oversize = SimCfg {
+        cluster: 16,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let allowed = SimCfg {
+        portable_cluster: PortableClusterMode::AllowNonPortable,
+        ..oversize
+    };
+    let ok = match sim_replay_cfg(&t, profile.clone(), allowed) {
+        Ok(row) => row,
+        Err(err) => panic!("AllowNonPortable: {err}"),
+    };
+    assert!(ok.misses > 0, "{}", ok.line());
+    let refused = SimCfg {
+        non_portable_cluster: true,
+        portable_cluster: PortableClusterMode::RequirePortable,
+        ..oversize
+    };
+    let err = match sim_replay_cfg(&t, profile, refused) {
+        Ok(_) => panic!("RequirePortable must refuse oversize even with func attr"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("non-portable cluster"), "{err}");
 }
 
 #[test]

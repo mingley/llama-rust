@@ -204,6 +204,13 @@ pub struct GpuStoreCfg {
     /// time by `1000 / GpuProfile::shared_mem_*_permille` (profile default
     /// 1000). Decode identity stays Default.
     pub shared_mem: gpu_sim::SharedMemoryMode,
+    /// Portable-cluster size mode (`cudaLaunchAttributePortableClusterSizeMode`).
+    ///
+    /// Default uses the current function attribute. RequirePortable always
+    /// refuses a cluster larger than `portable_cluster_size`. AllowNonPortable
+    /// allows up to `max_blocks_per_cluster` even when
+    /// [`Self::non_portable_cluster`] is off. Decode identity stays Default.
+    pub portable_cluster: gpu_sim::PortableClusterMode,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// [`Self::pin_hot`] and walker `--place replicas` map dest VMM physicals
@@ -282,6 +289,7 @@ pub struct SimulatedGpuStore {
     cluster_spread: bool,
     max_shared: bool,
     shared_mem: gpu_sim::SharedMemoryMode,
+    portable_cluster: gpu_sim::PortableClusterMode,
     multicast: bool,
     next_event: u32,
     pages: BTreeMap<ExpertKey, GpuPage>,
@@ -439,6 +447,8 @@ impl SimulatedGpuStore {
     /// (`cudaLaunchAttributeSynchronizationPolicy`; Auto tax 0).
     /// [`GpuStoreCfg::shared_mem`] is kernel-node bank width
     /// (`cudaLaunchAttributeSharedMemoryMode`; Default never scales).
+    /// [`GpuStoreCfg::portable_cluster`] is launch-time portable cluster mode
+    /// (`cudaLaunchAttributePortableClusterSizeMode`; Default uses the function attr).
     /// [`GpuStoreCfg::multicast`] is Hopper NVLS replica fanout (requires
     /// [`GpuFill::Vmm`] and NVLink).
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
@@ -555,6 +565,7 @@ impl SimulatedGpuStore {
             cluster_spread: cfg.cluster_spread,
             max_shared: cfg.max_shared,
             shared_mem: cfg.shared_mem,
+            portable_cluster: cfg.portable_cluster,
             multicast: cfg.multicast,
             next_event: 1,
             pages: BTreeMap::new(),
@@ -674,6 +685,7 @@ impl SimulatedGpuStore {
             cluster_spread: self.cluster_spread,
             max_shared: self.max_shared,
             shared_mem: self.shared_mem,
+            portable_cluster: self.portable_cluster,
         }
     }
 

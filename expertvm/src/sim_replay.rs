@@ -45,6 +45,8 @@ pub(crate) struct GemmFlags {
     pub max_shared: bool,
     /// `cudaLaunchAttributeSharedMemoryMode`. Decode identity stays Default.
     pub shared_mem: gpu_sim::SharedMemoryMode,
+    /// `cudaLaunchAttributePortableClusterSizeMode`. Decode identity stays Default.
+    pub portable_cluster: gpu_sim::PortableClusterMode,
 }
 
 impl GemmFlags {
@@ -95,6 +97,7 @@ impl GemmFlags {
             cluster_policy: self.cluster_policy(),
             carveout: self.carveout(),
             shared_mem: self.shared_mem,
+            portable_cluster: self.portable_cluster,
             ..KernelAttrs::default()
         }
     }
@@ -128,8 +131,8 @@ use crate::replay::{Touch, Walker};
 use gpu_sim::{
     AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceId, EventId, GraphId,
     HardwareProfile, KernelAttrs, KernelBuf, KernelKind, MemcpyOp, Place, PoolId,
-    ProgrammaticLaunch, Score, SharedMemCarveout, SharedMemoryMode, Sim, StreamId,
-    SynchronizationPolicy,
+    PortableClusterMode, ProgrammaticLaunch, Score, SharedMemCarveout, SharedMemoryMode, Sim,
+    StreamId, SynchronizationPolicy,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -479,6 +482,14 @@ pub struct SimCfg {
     /// Decode identity stays Default. [`crate::GpuStoreCfg::shared_mem`] is
     /// the store path.
     pub shared_mem: gpu_sim::SharedMemoryMode,
+    /// Portable-cluster size mode (`cudaLaunchAttributePortableClusterSizeMode`).
+    ///
+    /// Default uses the current function attribute. RequirePortable always
+    /// refuses a cluster larger than `portable_cluster_size`. AllowNonPortable
+    /// allows up to `max_blocks_per_cluster` even when
+    /// [`Self::non_portable_cluster`] is off. Decode identity stays Default.
+    /// [`crate::GpuStoreCfg::portable_cluster`] is the store path.
+    pub portable_cluster: gpu_sim::PortableClusterMode,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// `--place replicas` maps dest VMM physicals then one NVLS kernel instead
@@ -554,6 +565,7 @@ impl SimCfg {
             non_portable_cluster: false,
             sync_policy: gpu_sim::SynchronizationPolicy::Auto,
             shared_mem: gpu_sim::SharedMemoryMode::Default,
+            portable_cluster: gpu_sim::PortableClusterMode::Default,
             multicast: false,
             compute_slots: 0,
             decode_sm_permille: 0,
@@ -683,6 +695,7 @@ pub fn sim_replay_cfg(
         .with_cluster_spread(cfg.cluster_spread)
         .with_max_shared(cfg.max_shared)
         .with_shared_mem(cfg.shared_mem)
+        .with_portable_cluster(cfg.portable_cluster)
         .with_set_params(cfg.graph_set_params)
         .with_piecewise(cfg.graph_piecewise);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
@@ -941,6 +954,7 @@ pub(crate) struct GraphBank {
     cluster_spread: bool,
     max_shared: bool,
     shared_mem: gpu_sim::SharedMemoryMode,
+    portable_cluster: gpu_sim::PortableClusterMode,
     set_params: bool,
     pub updates: u64,
     pub clones: u64,
@@ -965,6 +979,7 @@ impl GraphBank {
             cluster_spread: false,
             max_shared: false,
             shared_mem: gpu_sim::SharedMemoryMode::Default,
+            portable_cluster: gpu_sim::PortableClusterMode::Default,
             set_params: false,
             updates: 0,
             clones: 0,
@@ -1012,6 +1027,11 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_portable_cluster(mut self, mode: PortableClusterMode) -> Self {
+        self.portable_cluster = mode;
+        self
+    }
+
     fn gemm_flags(&self) -> GemmFlags {
         GemmFlags {
             cooperative: self.cooperative,
@@ -1022,6 +1042,7 @@ impl GraphBank {
             cluster_spread: self.cluster_spread,
             max_shared: self.max_shared,
             shared_mem: self.shared_mem,
+            portable_cluster: self.portable_cluster,
         }
     }
 
@@ -1998,6 +2019,10 @@ fn add_gemm_kernel(
     if flags.shared_mem != SharedMemoryMode::Default {
         let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_shared_mem(graph, node, flags.shared_mem)?;
+    }
+    if flags.portable_cluster != PortableClusterMode::Default {
+        let node = usize::from(!writes.is_empty());
+        sim.graph_kernel_node_set_portable_cluster(graph, node, flags.portable_cluster)?;
     }
     Ok(())
 }

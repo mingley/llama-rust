@@ -1685,6 +1685,14 @@ model, do not celebrate the sim.
     stays Default (function attr disallowed). `gpu-profile capture` is
     still refused.
 
+134. [x] expertvm / Engine `--portable-cluster default|portable|non-portable`:
+    `cudaLaunchAttributePortableClusterSizeMode` on grouped expert GEMMs.
+    Default uses the current function attribute. RequirePortable always
+    refuses a cluster larger than `portable_cluster_size`. AllowNonPortable
+    allows up to `max_blocks_per_cluster` even when `--non-portable-cluster`
+    is off. Legal with `--pdl` and `--cooperative`. Decode identity stays
+    Default. `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.
