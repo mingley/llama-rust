@@ -11493,13 +11493,13 @@ mod tests {
         }
         sim.begin_capture(d, s).unwrap();
         enq(sim.memcpy_2d_async(d, op.clone(), s));
-        let _g = sim.end_capture().unwrap();
         match sim.memcpy_2d(d, op, s) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("cannot capture host-sync memcpy"), "{why}");
             }
             other => panic!("{other:?}"),
         }
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]
