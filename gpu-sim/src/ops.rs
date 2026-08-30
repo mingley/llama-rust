@@ -1449,6 +1449,20 @@ pub enum MemAttach {
     Single,
 }
 
+/// `cudaMemAttach*` bits for [`crate::Sim::alloc_managed_with_flags`].
+///
+/// [`Self::SINGLE`] is stream-attach only; mallocManaged of it is Invalid `"managed flags"`.
+pub struct MemAttachFlags;
+
+impl MemAttachFlags {
+    /// `cudaMemAttachGlobal`.
+    pub const GLOBAL: u32 = 1;
+    /// `cudaMemAttachHost`.
+    pub const HOST: u32 = 2;
+    /// `cudaMemAttachSingle` ([`crate::Sim::stream_attach`] only).
+    pub const SINGLE: u32 = 4;
+}
+
 /// `CU_STREAM_WAIT_VALUE_*` compare for [`GpuOp::WaitValue`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WaitValueCmp {

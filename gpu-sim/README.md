@@ -41,7 +41,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaDeviceSetMemPool` rebinds `alloc` (`set_device_mempool`); GetDefaultMemPool stays | `alloc_overhead_ns` |
 | `cudaHostRegister` pins pageable host for DMA (`host_register`) | `alloc_overhead_ns` (mlock, host-sync) |
 | `cudaHostAllocMapped` / `host_register_mapped`: kernel may read host with no H2D | host PCIe vs HBM |
-| `cudaMallocManaged` (`alloc_managed`) does not charge HBM until migrate | `alloc_overhead_ns` (VA reserve at the call) |
+| `cudaMallocManaged` (`alloc_managed` / `alloc_managed_with_flags` Global/Host) does not charge HBM until migrate | `alloc_overhead_ns` (VA reserve at the call) |
 | `cudaStreamAttachMemAsync` (`stream_attach`) Host/Single visibility | 1 ns stream-ordered |
 | `cudaMemAdviseSetReadMostly`: prefetch replicates | same DMA as a move |
 | `drop_managed_copy`: dest eviction of one ReadMostly GPU | other copies stay |
@@ -555,7 +555,8 @@ export/import.
 PCIe, and it does not charge HBM. Capture cannot include host
 alloc/register. `alloc_managed` is `cudaMallocManaged` (no HBM until
 `prefetch` / first-touch at kernel start). Default attach is Global.
-`alloc_managed_host` is `cudaMemAttachHost`. `stream_attach` is
+`alloc_managed_host` is `cudaMemAttachHost`. `alloc_managed_with_flags` is
+`cudaMallocManaged` (`MemAttachFlags::GLOBAL` / `HOST`; Single is Invalid). `stream_attach` is
 `cudaStreamAttachMemAsync` (stream-ordered; Host and other-stream Single
 fail device kernels / memset / device prefetch; Single cannot use the NULL
 stream; capture is refused). `mem_advise` is `cudaMemAdvise` (host-sync).

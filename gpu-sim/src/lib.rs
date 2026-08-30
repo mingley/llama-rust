@@ -78,6 +78,9 @@
 //! [`Sim::alloc_managed`] is `cudaMallocManaged` (no HBM until first-touch or
 //! [`Sim::prefetch`] / [`prefetch_host`](Sim::prefetch_host)). Default attach is
 //! [`MemAttach::Global`]. [`Sim::alloc_managed_host`] is `cudaMemAttachHost`.
+//! [`alloc_managed_with_flags`](Sim::alloc_managed_with_flags) is
+//! `cudaMallocManaged` ([`MemAttachFlags::GLOBAL`] / [`HOST`](MemAttachFlags::HOST);
+//! Single is Invalid). Typed helpers stay.
 //! [`Sim::stream_attach`] is `cudaStreamAttachMemAsync` (stream-ordered;
 //! Host and other-stream Single fail device kernels / memset / device prefetch
 //! with `not attached`; Single cannot use [`StreamId::NULL`]; capture is
@@ -568,12 +571,12 @@ pub use ops::{
     GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags,
     HostGetDevicePointerFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
     KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise,
-    MemAttach, MemHandleType, MemPoolAttr, MemRangeAttr, MemRangeAttrValue, MemSyncDomain,
-    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
-    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp,
+    MemAttach, MemAttachFlags, MemHandleType, MemPoolAttr, MemRangeAttr, MemRangeAttrValue,
+    MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch,
+    PeerAccessFlags, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
+    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -10309,6 +10312,35 @@ mod tests {
         assert_eq!(sim.hbm_used(d).unwrap(), 0);
         assert!(!sim.is_resident(m, d).unwrap());
         sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn alloc_managed_with_flags_is_cuda_malloc_managed() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let g = sim
+            .alloc_managed_with_flags(4096, MemAttachFlags::GLOBAL)
+            .unwrap();
+        assert_eq!(sim.mem_attach(g).unwrap(), MemAttach::Global);
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        let h = sim
+            .alloc_managed_with_flags(4096, MemAttachFlags::HOST)
+            .unwrap();
+        assert_eq!(sim.mem_attach(h).unwrap(), MemAttach::Host);
+        match sim.alloc_managed_with_flags(4096, MemAttachFlags::SINGLE) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.alloc_managed_with_flags(4096, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.alloc_managed_with_flags(4096, MemAttachFlags::GLOBAL) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
     }
 
     #[test]

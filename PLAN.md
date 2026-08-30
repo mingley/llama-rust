@@ -2311,7 +2311,13 @@ model, do not celebrate the sim.
     legal during capture. Decode identity unchanged. `gpu-profile capture`
     is still refused. Dual score still has no `$/M tokens`.
 
-208. [ ] Next numbered PLAN item after 207 is the next `gpu-sim` / Engine /
+208. [x] `cudaMallocManaged` flags: `Sim::alloc_managed_with_flags` takes
+    [`MemAttachFlags::GLOBAL`] / `HOST`. Single and other bits are Invalid
+    `"managed flags"`. Typed [`alloc_managed`] / [`alloc_managed_host`] stay.
+    Capture refused. Decode identity unchanged. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+209. [ ] Next numbered PLAN item after 208 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

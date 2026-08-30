@@ -18,12 +18,12 @@ use crate::ops::{
     GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags,
     HostGetDevicePointerFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
     KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise,
-    MemAttach, MemHandleType, MemPoolAttr, MemRangeAttr, MemRangeAttrValue, MemSyncDomain,
-    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
-    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp,
+    MemAttach, MemAttachFlags, MemHandleType, MemPoolAttr, MemRangeAttr, MemRangeAttrValue,
+    MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch,
+    PeerAccessFlags, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
+    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -9250,6 +9250,26 @@ impl Sim {
         let id = self.alloc_managed(bytes)?;
         self.alloc_mut(id)?.attach = Attach::Host;
         Ok(id)
+    }
+
+    /// `cudaMallocManaged` with a flags word.
+    ///
+    /// [`MemAttachFlags::GLOBAL`] is [`Self::alloc_managed`].
+    /// [`MemAttachFlags::HOST`] is [`Self::alloc_managed_host`].
+    /// [`MemAttachFlags::SINGLE`] and other bits are Invalid `"managed flags"`.
+    /// Capture cannot include it. Typed helpers stay.
+    pub fn alloc_managed_with_flags(
+        &mut self,
+        bytes: u64,
+        flags: u32,
+    ) -> Result<AllocId, SimError> {
+        match flags {
+            MemAttachFlags::GLOBAL => self.alloc_managed(bytes),
+            MemAttachFlags::HOST => self.alloc_managed_host(bytes),
+            _ => Err(SimError::Invalid {
+                why: "managed flags",
+            }),
+        }
     }
 
     /// Current `cudaMemAttach*` visibility of a live managed allocation.
