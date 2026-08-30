@@ -35,6 +35,16 @@ enum Preferred {
     Gpu(DeviceId),
 }
 
+impl Preferred {
+    fn to_place(self) -> Option<Place> {
+        match self {
+            Self::None => None,
+            Self::Host => Some(Place::Host),
+            Self::Gpu(d) => Some(Place::Device(d)),
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Attach {
     Global,
@@ -70,6 +80,8 @@ struct Alloc {
     vmm_write_by: BTreeSet<DeviceId>,
     /// `cudaMemAdviseSetPreferredLocation` (host or one GPU).
     preferred: Preferred,
+    /// `cudaMemRangeAttributeLastPrefetchLocation` (`None` never prefetched).
+    last_prefetch: Preferred,
     /// `CU_POINTER_ATTRIBUTE_SYNC_MEMOPS`: memcpy/memset wait the stream.
     sync_memops: bool,
     /// `cuMemAddressReserve` VA. HBM is charged only while mapped (possibly sparse).
@@ -5276,6 +5288,7 @@ impl Sim {
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
+                last_prefetch: Preferred::None,
                 sync_memops: false,
                 vmm: false,
                 vmm_maps: Vec::new(),
@@ -8903,6 +8916,7 @@ impl Sim {
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
+                last_prefetch: Preferred::None,
                 sync_memops: false,
                 vmm: false,
                 vmm_maps: Vec::new(),
@@ -9327,6 +9341,7 @@ impl Sim {
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
+                last_prefetch: Preferred::None,
                 sync_memops: false,
                 vmm: false,
                 vmm_maps: Vec::new(),
@@ -9439,6 +9454,7 @@ impl Sim {
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
+                last_prefetch: Preferred::None,
                 sync_memops: false,
                 vmm: false,
                 vmm_maps: Vec::new(),
@@ -9600,8 +9616,7 @@ impl Sim {
     /// `cudaMemRangeGetAttribute`. Query; legal during capture.
     ///
     /// This VM tracks advice per live managed allocation, not per byte range.
-    /// Non-managed pointers are Invalid `"not managed"`. Last-prefetch location
-    /// is not modeled.
+    /// Non-managed pointers are Invalid `"not managed"`.
     pub fn mem_range_get_attribute(
         &self,
         alloc: AllocId,
@@ -9614,15 +9629,13 @@ impl Sim {
         Ok(match attr {
             MemRangeAttr::ReadMostly => MemRangeAttrValue::ReadMostly(a.read_mostly),
             MemRangeAttr::PreferredLocation => {
-                let loc = match a.preferred {
-                    Preferred::None => None,
-                    Preferred::Host => Some(Place::Host),
-                    Preferred::Gpu(d) => Some(Place::Device(d)),
-                };
-                MemRangeAttrValue::PreferredLocation(loc)
+                MemRangeAttrValue::PreferredLocation(a.preferred.to_place())
             }
             MemRangeAttr::AccessedBy => {
                 MemRangeAttrValue::AccessedBy(a.accessed_by.iter().copied().collect())
+            }
+            MemRangeAttr::LastPrefetchLocation => {
+                MemRangeAttrValue::LastPrefetchLocation(a.last_prefetch.to_place())
             }
         })
     }
@@ -9631,7 +9644,7 @@ impl Sim {
     ///
     /// Same per-alloc rules as [`Self::mem_range_get_attribute`]. Empty
     /// `attrs` is an empty vec. All-or-nothing: a non-managed pointer fails
-    /// the whole call. Last-prefetch is not modeled.
+    /// the whole call.
     pub fn mem_range_get_attributes(
         &self,
         alloc: AllocId,
@@ -9749,6 +9762,7 @@ impl Sim {
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
+                last_prefetch: Preferred::None,
                 sync_memops: false,
                 vmm: true,
                 vmm_maps: Vec::new(),
@@ -10659,6 +10673,7 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         let (bytes, src) = self.managed_move_src(alloc, Some(device))?;
+        self.alloc_mut(alloc)?.last_prefetch = Preferred::Gpu(device);
         self.memcpy(
             device,
             MemcpyOp {
@@ -10684,6 +10699,7 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         let (bytes, src) = self.managed_move_src(alloc, None)?;
+        self.alloc_mut(alloc)?.last_prefetch = Preferred::Host;
         let submit = match src {
             Place::Device(d) => d,
             Place::Host | Place::HostPinned => device,
@@ -10947,6 +10963,7 @@ impl Sim {
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
+                last_prefetch: Preferred::None,
                 sync_memops: false,
                 vmm: false,
                 vmm_maps: Vec::new(),
@@ -13812,6 +13829,7 @@ impl Sim {
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
+                last_prefetch: Preferred::None,
                 sync_memops: false,
                 vmm: false,
                 vmm_maps: Vec::new(),
@@ -14591,6 +14609,7 @@ impl Sim {
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
+                last_prefetch: Preferred::None,
                 sync_memops: false,
                 vmm: false,
                 vmm_maps: Vec::new(),

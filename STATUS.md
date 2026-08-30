@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — Last-prefetch range attribute
+
+`mem_range_get_attribute` reports `LastPrefetchLocation` from
+`prefetch` / `prefetch_host` (unset until the first prefetch).
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — PointerAttr capability queries
 
 `pointer_get_attribute` reports IsLegacyCudaIpcCapable /
@@ -2463,7 +2469,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 238 (`PointerAttr` capability).
+Next code change is PLAN systems depth after item 239 (`LastPrefetchLocation`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

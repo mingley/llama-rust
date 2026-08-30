@@ -626,7 +626,8 @@ that GPU there on a remote read (writes still migrate; host preferred
 does not skip kernel first-touch). `mem_range_get_attribute` /
 `mem_range_get_attributes` are `cudaMemRangeGetAttribute` /
 `GetAttributes` of modeled per-alloc advice (`MemRangeAttr`;
-not per byte range; last-prefetch is not modeled). Query; legal during
+not per byte range). Last-prefetch is the dest of `prefetch` /
+`prefetch_host`. Query; legal during
 capture. `prefetch` / `prefetch_host` / `prefetch_with_flags` are
 `cudaMemPrefetchAsync` and **move** unless ReadMostly.
 `prefetch_with_flags` requires `flags == 0` (`PrefetchFlags::DEFAULT`) and

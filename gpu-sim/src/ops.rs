@@ -29,7 +29,6 @@ pub enum MemAdvise {
 /// [`crate::Sim::mem_range_get_attributes`].
 ///
 /// This VM tracks advice per allocation, not per byte range.
-/// `cudaMemRangeAttributeLastPrefetchLocation` is not modeled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemRangeAttr {
     /// `cudaMemRangeAttributeReadMostly`.
@@ -38,6 +37,8 @@ pub enum MemRangeAttr {
     PreferredLocation,
     /// `cudaMemRangeAttributeAccessedBy`.
     AccessedBy,
+    /// `cudaMemRangeAttributeLastPrefetchLocation`.
+    LastPrefetchLocation,
 }
 
 /// Value of [`crate::Sim::mem_range_get_attribute`] /
@@ -51,6 +52,9 @@ pub enum MemRangeAttrValue {
     PreferredLocation(Option<Place>),
     /// [`MemRangeAttr::AccessedBy`]. Device ids that may remote-read.
     AccessedBy(Vec<DeviceId>),
+    /// [`MemRangeAttr::LastPrefetchLocation`]. `None` is never prefetched
+    /// (`cudaInvalidDeviceId`). [`Place::Host`] is `cudaCpuDeviceId`.
+    LastPrefetchLocation(Option<Place>),
 }
 
 /// Element type for roofline math. Maps onto a peak-FLOP field in the profile.

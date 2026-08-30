@@ -117,8 +117,7 @@
 //! there on a remote read (same interconnect billing; writes still migrate).
 //! Host preferred does not skip a kernel first-touch.
 //! [`Sim::mem_range_get_attribute`] is `cudaMemRangeGetAttribute` of modeled
-//! per-alloc advice ([`MemRangeAttr`]; not per byte range; last-prefetch is
-//! not modeled). Query; legal during capture.
+//! per-alloc advice ([`MemRangeAttr`]; not per byte range). Query; legal during capture.
 //! [`mem_range_get_attributes`](Sim::mem_range_get_attributes) is
 //! `cudaMemRangeGetAttributes` (batch of those attrs; all-or-nothing).
 //! [`Sim::drop_managed_copy`] refunds one ReadMostly GPU copy (dest eviction).
@@ -12719,6 +12718,25 @@ mod tests {
                 .unwrap(),
             MemRangeAttrValue::AccessedBy(Vec::new())
         );
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::LastPrefetchLocation)
+                .unwrap(),
+            MemRangeAttrValue::LastPrefetchLocation(None)
+        );
+        enq(sim.prefetch(d, m, s));
+        sim.synchronize().unwrap();
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::LastPrefetchLocation)
+                .unwrap(),
+            MemRangeAttrValue::LastPrefetchLocation(Some(Place::Device(d)))
+        );
+        enq(sim.prefetch_host(d, m, s));
+        sim.synchronize().unwrap();
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::LastPrefetchLocation)
+                .unwrap(),
+            MemRangeAttrValue::LastPrefetchLocation(Some(Place::Host))
+        );
         sim.mem_advise(m, MemAdvise::SetReadMostly, d).unwrap();
         sim.mem_advise(m, MemAdvise::SetPreferredLocation, d)
             .unwrap();
@@ -12758,6 +12776,7 @@ mod tests {
                     MemRangeAttr::ReadMostly,
                     MemRangeAttr::PreferredLocation,
                     MemRangeAttr::AccessedBy,
+                    MemRangeAttr::LastPrefetchLocation,
                 ]
             )
             .unwrap(),
@@ -12765,6 +12784,7 @@ mod tests {
                 MemRangeAttrValue::ReadMostly(true),
                 MemRangeAttrValue::PreferredLocation(Some(Place::Host)),
                 MemRangeAttrValue::AccessedBy(vec![d]),
+                MemRangeAttrValue::LastPrefetchLocation(Some(Place::Host)),
             ]
         );
         assert!(sim.mem_range_get_attributes(m, &[]).unwrap().is_empty());
