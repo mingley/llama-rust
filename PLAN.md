@@ -2115,7 +2115,15 @@ model, do not celebrate the sim.
     is Invalid. Decode identity unchanged. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-184. [ ] Next numbered PLAN item after 183 is the next `gpu-sim` / Engine /
+184. [x] `cudaStreamGetCaptureInfo_v2` dependencies:
+    [`StreamCaptureInfo::dependencies`] is the last same-stream captured
+    node (destination-graph index) union extra `pending_deps`. Empty until
+    a node is captured or `stream_update_capture_dependencies`. Query;
+    `pending_deps` stays extras-only. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+185. [ ] Next numbered PLAN item after 184 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

@@ -1738,6 +1738,10 @@ pub struct StreamCaptureInfo {
     /// Indices are existing graph nodes, then this-session nodes at
     /// `graph_len + i`. Empty until [`crate::Sim::stream_update_capture_dependencies`].
     pub pending_deps: Vec<usize>,
+    /// Next captured node's full dependency set (`cudaStreamGetCaptureInfo_v2`
+    /// `dependencies`): last same-stream captured node (destination-graph
+    /// index) union [`Self::pending_deps`].
+    pub dependencies: Vec<usize>,
     /// Mode this capture started with (`cudaStreamGetCaptureInfo` status).
     pub mode: StreamCaptureMode,
 }

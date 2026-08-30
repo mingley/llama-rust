@@ -1929,8 +1929,10 @@ impl Sim {
     ///
     /// `pending_deps` are extra [`Self::stream_update_capture_dependencies`]
     /// indices not yet consumed (not stream-order predecessors).
-    /// [`Self::graph_len`] of `info.graph` during capture excludes this
-    /// session's buffer until [`Self::end_capture`].
+    /// `dependencies` is the v2 array: last same-stream captured node union
+    /// those extras (destination-graph indices). [`Self::graph_len`] of
+    /// `info.graph` during capture excludes this session's buffer until
+    /// [`Self::end_capture`].
     #[must_use]
     pub fn stream_capture_info(
         &self,
@@ -1941,14 +1943,30 @@ impl Sim {
         if !cap.streams.contains(&(device, stream)) {
             return None;
         }
+        let pending_deps = cap
+            .pending
+            .get(&(device, stream))
+            .cloned()
+            .unwrap_or_default();
+        let existing = self
+            .graphs
+            .get(&cap.into.graph)
+            .map_or(0, |g| g.steps.len());
+        let mut dependencies = pending_deps.clone();
+        if let Some(i) = self
+            .capture_buf
+            .iter()
+            .rposition(|s| s.device == device && s.stream == stream)
+        {
+            dependencies.push(existing.saturating_add(i));
+        }
+        dependencies.sort_unstable();
+        dependencies.dedup();
         Some(StreamCaptureInfo {
             graph: cap.into.graph,
             origin: cap.origin,
-            pending_deps: cap
-                .pending
-                .get(&(device, stream))
-                .cloned()
-                .unwrap_or_default(),
+            pending_deps,
+            dependencies,
             mode: cap.mode,
         })
     }

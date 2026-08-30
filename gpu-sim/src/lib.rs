@@ -421,7 +421,8 @@
 //! node **in addition to** stream-order (`Set` replaces, `Add` unions).
 //! [`stream_is_capturing`](Sim::stream_is_capturing) /
 //! [`stream_capture_info`](Sim::stream_capture_info) are `cudaStreamIsCapturing`
-//! / `cudaStreamGetCaptureInfo`. [`begin_capture_with_mode`](Sim::begin_capture_with_mode)
+//! / `cudaStreamGetCaptureInfo`. [`StreamCaptureInfo::dependencies`] is the v2
+//! array (last same-stream captured node union extra pending deps). [`begin_capture_with_mode`](Sim::begin_capture_with_mode)
 //! is `cudaStreamBeginCapture` with [`StreamCaptureMode`] (default
 //! [`StreamCaptureMode::Relaxed`]: independent streams stay live; a wait of a
 //! captured record still joins. [`StreamCaptureMode::ThreadLocal`] /
@@ -13057,15 +13058,22 @@ mod tests {
         assert_eq!(info.graph, g);
         assert_eq!(info.origin, (d, s));
         assert!(info.pending_deps.is_empty());
+        assert!(info.dependencies.is_empty());
         assert_eq!(info.mode, StreamCaptureMode::Relaxed);
         assert_eq!(sim.graph_len(g).unwrap(), 0);
         let _end = sim.end_capture().unwrap();
         assert!(!sim.stream_is_capturing(d, s));
         assert!(sim.stream_capture_info(d, s).is_none());
+        let a = sim.malloc(d, 4096).unwrap();
         sim.begin_capture(d, s).unwrap();
         let info = sim.stream_capture_info(d, s).expect("vanilla capture");
         assert_eq!(info.mode, StreamCaptureMode::Relaxed);
+        assert!(info.dependencies.is_empty());
         assert_eq!(sim.graph_len(info.graph).unwrap(), 0);
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let info = sim.stream_capture_info(d, s).expect("after kernel");
+        assert_eq!(info.dependencies, vec![0]);
+        assert!(info.pending_deps.is_empty());
         let _end = sim.end_capture().unwrap();
         assert!(!sim.stream_is_capturing(d, s));
     }
@@ -13086,22 +13094,18 @@ mod tests {
             .unwrap();
         sim.stream_update_capture_dependencies(d, s, &[1], CaptureDepOp::Add)
             .unwrap();
-        assert_eq!(
-            sim.stream_capture_info(d, s).expect("pending").pending_deps,
-            vec![0, 1]
-        );
+        let info = sim.stream_capture_info(d, s).expect("pending");
+        assert_eq!(info.pending_deps, vec![0, 1]);
+        assert_eq!(info.dependencies, vec![0, 1]);
         sim.stream_update_capture_dependencies(d, s, &[1], CaptureDepOp::Set)
             .unwrap();
-        assert_eq!(
-            sim.stream_capture_info(d, s).expect("set").pending_deps,
-            vec![1]
-        );
+        let info = sim.stream_capture_info(d, s).expect("set");
+        assert_eq!(info.pending_deps, vec![1]);
+        assert_eq!(info.dependencies, vec![1]);
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
-        assert!(sim
-            .stream_capture_info(d, s)
-            .expect("consumed")
-            .pending_deps
-            .is_empty());
+        let info = sim.stream_capture_info(d, s).expect("consumed");
+        assert!(info.pending_deps.is_empty());
+        assert_eq!(info.dependencies, vec![2]);
         assert_eq!(sim.end_capture().unwrap(), g);
         assert_eq!(sim.graph_node_deps(g, 2).unwrap(), vec![1]);
     }

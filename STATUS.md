@@ -5,6 +5,11 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaStreamGetCaptureInfo_v2` dependencies
+
+`StreamCaptureInfo::dependencies` is the last same-stream captured node
+union extra `pending_deps`. Query. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaGraphNodeGetParams`
 
 `Sim::graph_node_get_params` / `graph_exec_node_get_params` return
@@ -2155,7 +2160,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 183 (`cudaGraphNodeGetParams`).
+Next code change is PLAN systems depth after item 184 (`GetCaptureInfo_v2` dependencies).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover
