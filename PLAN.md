@@ -1370,6 +1370,17 @@ model, do not celebrate the sim.
     is still Invalid. Decode identity stays default flags. Dual score still
     has no `$/M tokens`.
 
+99. [x] Graph vs exec snapshot: `instantiate_graph` clones steps into an
+    exec snapshot (`cudaGraph_t` vs `cudaGraphExec_t` on the same GraphId).
+    `launch_graph` / `cudaGraphExec*SetParams` / `cudaGraphNodeSetEnabled`
+    use the snapshot. `graph_kernel_set_params` is
+    `cudaGraphKernelNodeSetParams` on the graph and does not retarget an
+    already-instantiated exec. `graph_exec_kernel_node_set_priority` is
+    the exec attribute; `graph_kernel_node_set_priority` stays graph-side.
+    `update_graph` replaces the snapshot, not the graph. Decode identity
+    stays destroy+instantiate / ExecSetParams. Dual score still has no
+    `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

@@ -443,7 +443,8 @@ impl GraphInstantiateFlags {
     pub const UPLOAD: u32 = 2;
     /// `cudaGraphInstantiateFlagDeviceLaunch` (not implemented).
     pub const DEVICE_LAUNCH: u32 = 4;
-    /// `cudaGraphInstantiateFlagUseNodePriority` (not implemented).
+    /// `cudaGraphInstantiateFlagUseNodePriority`: recorded kernels keep the
+    /// priority snapshotted at add/capture instead of the launch stream.
     pub const USE_NODE_PRIORITY: u32 = 8;
 }
 

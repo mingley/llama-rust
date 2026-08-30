@@ -123,11 +123,19 @@
 //! `cudaGraphInstantiateWithFlags` ([`GraphInstantiateFlags::UPLOAD`] uploads
 //! during instantiate; [`GraphInstantiateFlags::USE_NODE_PRIORITY`] schedules
 //! recorded kernels with the add/capture priority). [`graph_exec_get_flags`](Sim::graph_exec_get_flags) is
-//! `cudaGraphExecGetFlags`. [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
+//! `cudaGraphExecGetFlags`. Instantiate snapshots the graph into an exec
+//! (same [`GraphId`]); [`launch_graph`](Sim::launch_graph) and
+//! `cudaGraphExec*SetParams` use that snapshot.
+//! [`graph_kernel_set_params`](Sim::graph_kernel_set_params) is
+//! `cudaGraphKernelNodeSetParams` on the graph and does not retarget an
+//! already-instantiated exec.
+//! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
 //! are `cudaGraphKernelNodeGetAttribute` / `SetAttribute` / `CopyAttributes`
-//! for priority. [`Sim::upload_graph`] is
+//! for priority. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
+//! [`graph_exec_kernel_node_set_priority`](Sim::graph_exec_kernel_node_set_priority)
+//! are the exec-snapshot attributes. [`Sim::upload_graph`] is
 //! `cudaGraphUpload` (host-sync; first launch after instantiate calls it).
 //! [`Sim::update_graph`] is
 //! `cudaGraphExecUpdate` when device, stream, and op kinds match.
@@ -3090,6 +3098,149 @@ mod tests {
             e => panic!("{e:?}"),
         }
         let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_kernel_set_params_does_not_retarget_instantiated_exec() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph(g).unwrap();
+        let params = KernelNodeParams {
+            kind: KernelKind::other(8, 8),
+            reads: vec![KernelBuf::whole(b)],
+            writes: vec![KernelBuf::whole(b)],
+            cooperative: false,
+        };
+        sim.graph_kernel_set_params(g, 0, &params).unwrap();
+        let (_, now) = sim.graph_unique_kernel(g).unwrap();
+        assert_eq!(
+            now.reads[0].id, a,
+            "unique kernel on an instantiated id is the exec snapshot"
+        );
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        let err = sim.synchronize().unwrap_err();
+        match err {
+            SimError::NotResident { alloc, device } => {
+                assert_eq!(alloc, a);
+                assert_eq!(device, d);
+            }
+            e => panic!("{e:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_kernel_set_params_before_instantiate_is_snapshotted() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let params = KernelNodeParams {
+            kind: KernelKind::other(8, 8),
+            reads: vec![KernelBuf::whole(b)],
+            writes: vec![KernelBuf::whole(b)],
+            cooperative: false,
+        };
+        sim.graph_kernel_set_params(g, 0, &params).unwrap();
+        sim.instantiate_graph(g).unwrap();
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn graph_kernel_node_set_priority_does_not_retarget_instantiated_exec() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let mut sim = Sim::new(h100().with_compute_slots(1));
+        let d = DeviceId(0);
+        sim.set_stream_priority(d, StreamId(0), 0).unwrap();
+        sim.set_stream_priority(d, StreamId(1), 0).unwrap();
+        sim.set_stream_priority(d, StreamId(2), 5).unwrap();
+        let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+        let b = sim.alloc(d, 4096, StreamId(0)).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, StreamId(0)));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, StreamId(2)).unwrap();
+        enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(2)));
+        let g = sim.end_capture().unwrap();
+        sim.instantiate_graph_with_flags(g, GraphInstantiateFlags::USE_NODE_PRIORITY)
+            .unwrap();
+        assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 5);
+        assert_eq!(sim.graph_exec_kernel_node_get_priority(g, 0).unwrap(), 5);
+        sim.graph_kernel_node_set_priority(g, 0, 0).unwrap();
+        assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 0);
+        assert_eq!(sim.graph_exec_kernel_node_get_priority(g, 0).unwrap(), 5);
+        enq(sim.kernel(d, kind.clone(), &[b], &[b], StreamId(1)));
+        let n = sim.launch_graph(g, StreamId(0)).unwrap();
+        assert_eq!(n, 1);
+        sim.start_ready().unwrap();
+        let started: Vec<StreamId> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.start_ns.is_some())
+            .map(|o| o.stream)
+            .collect();
+        assert_eq!(
+            started,
+            vec![StreamId(0)],
+            "graph-side SetAttribute must not drop the exec snapshot priority; {started:?}"
+        );
+    }
+
+    #[test]
+    fn graph_exec_kernel_node_set_priority_retargets_launch() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let mut sim = Sim::new(h100().with_compute_slots(1));
+        let d = DeviceId(0);
+        sim.set_stream_priority(d, StreamId(0), 0).unwrap();
+        sim.set_stream_priority(d, StreamId(1), 0).unwrap();
+        sim.set_stream_priority(d, StreamId(2), 5).unwrap();
+        let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+        let b = sim.alloc(d, 4096, StreamId(0)).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, StreamId(0)));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, StreamId(2)).unwrap();
+        enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(2)));
+        let g = sim.end_capture().unwrap();
+        sim.instantiate_graph_with_flags(g, GraphInstantiateFlags::USE_NODE_PRIORITY)
+            .unwrap();
+        sim.graph_exec_kernel_node_set_priority(g, 0, 0).unwrap();
+        assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 5);
+        assert_eq!(sim.graph_exec_kernel_node_get_priority(g, 0).unwrap(), 0);
+        enq(sim.kernel(d, kind, &[b], &[b], StreamId(1)));
+        let n = sim.launch_graph(g, StreamId(0)).unwrap();
+        assert_eq!(n, 1);
+        sim.start_ready().unwrap();
+        let started: Vec<StreamId> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.start_ns.is_some())
+            .map(|o| o.stream)
+            .collect();
+        assert_eq!(
+            started,
+            vec![StreamId(1)],
+            "exec SetAttribute must drop node priority so the live kernel wins; {started:?}"
+        );
     }
 
     #[test]

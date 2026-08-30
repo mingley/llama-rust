@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — graph vs exec snapshot
+
+`instantiate_graph` clones graph steps into an exec snapshot on the same
+`GraphId`. Launch, `cudaGraphExec*SetParams`, and `cudaGraphNodeSetEnabled`
+use the snapshot. `graph_kernel_set_params` is
+`cudaGraphKernelNodeSetParams` on the graph and does not retarget an
+already-instantiated exec. `graph_exec_kernel_node_set_priority` is the
+exec attribute. `update_graph` replaces the snapshot. Graph and exec still
+share one id (no separate exec handle). Device-launch is still Invalid.
+Decode identity stays destroy+instantiate. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-30 — `cudaGraphInstantiateFlagUseNodePriority`
 
 `instantiate_graph_with_flags(USE_NODE_PRIORITY)` schedules recorded

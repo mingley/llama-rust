@@ -73,9 +73,10 @@ warp scheduler, L1, …   ← do not model
 | `cudaEventRecordExternal` / `cudaEventWaitExternal` do not join capture | live waiters overlap graph launch |
 | `launch_graph` during capture is a child-graph node | nested exec expanded at parent launch |
 | independent streams stay live during capture | query/sync of a capturing stream is Invalid |
-| graph instantiate is host-sync; first launch pays it once; `instantiate_graph_auto_free` is AutoFreeOnLaunch | `graph_instantiate_ns` |
+| graph instantiate is host-sync and snapshots steps into an exec (same GraphId); first launch pays it once; `instantiate_graph_auto_free` is AutoFreeOnLaunch | `graph_instantiate_ns` |
 | graph upload is host-sync after instantiate; first launch pays it once | `graph_upload_ns` |
-| graph update replaces steps when topology matches (device, stream, kind, deps); mem nodes are Invalid | `graph_update_ns` |
+| `cudaGraphKernelNodeSetParams` (`graph_kernel_set_params`) patches the graph, not an already-instantiated exec | 1 ns host-sync |
+| graph update replaces the exec snapshot when topology matches (device, stream, kind, deps); mem nodes are Invalid | `graph_update_ns` |
 | `cudaGraphExecKernelNodeSetParams` patches one instantiated kernel node's pointers / kind (mem nodes legal) | `graph_set_params_ns` |
 | `cudaGraphExecMemcpyNodeSetParams` patches one instantiated memcpy node's `MemcpyOp` (mem nodes legal) | `graph_set_params_ns` |
 | `cudaGraphExecMemsetNodeSetParams` patches one instantiated memset node's dest span (mem nodes legal) | `graph_set_params_ns` |
@@ -255,9 +256,11 @@ child still breaks a parent that names it; a recursive clone of that
 parent keeps working. `destroy_graph` is `cudaGraphDestroy` (1 ns;
 later launch is unknown; remaining graph mem is refunded). First launch instantiates if needed (`graph_instantiate_ns` once)
 then uploads if needed (`graph_upload_ns`). `upload_graph` is `cudaGraphUpload`.
-`update_graph` copies source steps into an instantiated exec when the
+`update_graph` copies source steps into the exec snapshot when the
 device, stream, op kinds, and dependency edges match (`graph_update_ns`); a topology
 mismatch is `Invalid`. Graphs with mem alloc/free nodes cannot be updated.
+`graph_kernel_set_params` is `cudaGraphKernelNodeSetParams` on the graph
+definition (does not retarget an already-instantiated exec).
 `graph_exec_kernel_set_params` / `graph_exec_memcpy_set_params` /
 `graph_exec_memset_set_params` are
 `cudaGraphExecKernelNodeSetParams` / `cudaGraphExecMemcpyNodeSetParams` /

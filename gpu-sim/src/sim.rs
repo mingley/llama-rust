@@ -247,7 +247,11 @@ struct GraphStep {
 }
 
 struct Graph {
+    /// `cudaGraph_t` definition. [`Sim::graph_add_*`] / graph-side SetParams.
     steps: Vec<GraphStep>,
+    /// `cudaGraphExec_t` snapshot, cloned at instantiate. Launch and
+    /// `cudaGraphExec*SetParams` use this. Same [`GraphId`] as [`Self::steps`].
+    exec: Option<Vec<GraphStep>>,
     origin: (DeviceId, StreamId),
     /// `cudaGraphInstantiate` has run (explicit or first launch).
     instantiated: bool,
@@ -257,6 +261,23 @@ struct Graph {
     auto_free_on_launch: bool,
     /// Flags passed to [`Sim::instantiate_graph_with_flags`] (`cudaGraphExecGetFlags`).
     instantiate_flags: u32,
+}
+
+impl Graph {
+    fn view(&self) -> &[GraphStep] {
+        self.exec.as_deref().unwrap_or(&self.steps)
+    }
+
+    fn exec_mut(&mut self) -> Result<&mut Vec<GraphStep>, SimError> {
+        if !self.instantiated {
+            return Err(SimError::Invalid {
+                why: "graph not instantiated",
+            });
+        }
+        self.exec.as_mut().ok_or(SimError::Invalid {
+            why: "graph not instantiated",
+        })
+    }
 }
 
 /// Record vs wait for [`Sim::graph_exec_event_record_set_event`].
@@ -1412,7 +1433,7 @@ impl Sim {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            (g.origin, g.steps.clone())
+            (g.origin, g.view().to_vec())
         };
         let order = graph_topo_order(&steps)?;
         let launch_tail = self.tail.get(&(origin.0, stream)).copied();
@@ -1856,6 +1877,7 @@ impl Sim {
             g.instantiated = true;
             g.auto_free_on_launch = auto_free;
             g.instantiate_flags = flags;
+            g.exec = Some(g.steps.clone());
             g.steps
                 .iter()
                 .flat_map(|s| cond_body_graphs(&s.kind))
@@ -1922,7 +1944,7 @@ impl Sim {
                 why: "unknown graph",
             })?;
             let device = e.steps.first().map(|s| s.device).unwrap_or(DeviceId(0));
-            (e.instantiated, e.steps.clone(), s.steps.clone(), device)
+            (e.instantiated, e.view().to_vec(), s.steps.clone(), device)
         };
         if !instantiated {
             return Err(SimError::Invalid {
@@ -1944,7 +1966,7 @@ impl Sim {
         let exec = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        exec.steps = src_steps;
+        exec.exec = Some(src_steps);
         exec.uploaded = false;
         Ok(())
     }
@@ -1968,7 +1990,7 @@ impl Sim {
             let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            let step = g.steps.get(node).ok_or(SimError::Invalid {
+            let step = g.view().get(node).ok_or(SimError::Invalid {
                 why: "unknown graph node",
             })?;
             let Kind::Kernel { cooperative, .. } = &step.kind else {
@@ -1995,7 +2017,7 @@ impl Sim {
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+        let step = g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
             why: "unknown graph node",
         })?;
         step.kind = Kind::Kernel {
@@ -2005,6 +2027,56 @@ impl Sim {
             cooperative,
         };
         g.uploaded = false;
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeSetParams` on the graph definition.
+    ///
+    /// After [`Self::instantiate_graph`], this does not retarget the exec
+    /// snapshot; use [`Self::graph_exec_kernel_set_params`]. Cooperative flag
+    /// must match (topology). Capture cannot include it. Host-sync 1 ns.
+    pub fn graph_kernel_set_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: &KernelNodeParams,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set params")?;
+        let (device, cooperative) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            let Kind::Kernel { cooperative, .. } = &step.kind else {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            };
+            if *cooperative != params.cooperative {
+                return Err(SimError::Invalid {
+                    why: "cooperative is topology",
+                });
+            }
+            (step.device, *cooperative)
+        };
+        let reads = self.resolve_bufs(&params.reads)?;
+        let writes = self.resolve_bufs(&params.writes)?;
+        let _gpu = self.profile.gpu(device)?;
+        self.clock = self.clock.saturating_add(1);
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.kind = Kind::Kernel {
+            kind: params.kind.clone(),
+            reads,
+            writes,
+            cooperative,
+        };
         Ok(())
     }
 
@@ -2030,7 +2102,7 @@ impl Sim {
             let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            let step = g.steps.get(node).ok_or(SimError::Invalid {
+            let step = g.view().get(node).ok_or(SimError::Invalid {
                 why: "unknown graph node",
             })?;
             if !matches!(step.kind, Kind::Memcpy(_)) {
@@ -2051,7 +2123,7 @@ impl Sim {
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+        let step = g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
             why: "unknown graph node",
         })?;
         step.kind = Kind::Memcpy(op.clone());
@@ -2076,7 +2148,7 @@ impl Sim {
             let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            let step = g.steps.get(node).ok_or(SimError::Invalid {
+            let step = g.view().get(node).ok_or(SimError::Invalid {
                 why: "unknown graph node",
             })?;
             if !matches!(step.kind, Kind::Memset { .. }) {
@@ -2103,7 +2175,7 @@ impl Sim {
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+        let step = g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
             why: "unknown graph node",
         })?;
         step.kind = Kind::Memset {
@@ -2142,7 +2214,7 @@ impl Sim {
             let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            let step = g.steps.get(node).ok_or(SimError::Invalid {
+            let step = g.view().get(node).ok_or(SimError::Invalid {
                 why: "unknown graph node",
             })?;
             let Kind::ChildGraph { graph } = &step.kind else {
@@ -2194,7 +2266,7 @@ impl Sim {
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+        let step = g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
             why: "unknown graph node",
         })?;
         step.kind = Kind::ChildGraph { graph: child };
@@ -2250,7 +2322,7 @@ impl Sim {
             let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            let step = g.steps.get(node).ok_or(SimError::Invalid {
+            let step = g.view().get(node).ok_or(SimError::Invalid {
                 why: "unknown graph node",
             })?;
             let external = match (kind, &step.kind) {
@@ -2279,7 +2351,7 @@ impl Sim {
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+        let step = g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
             why: "unknown graph node",
         })?;
         step.kind = match kind {
@@ -2302,7 +2374,7 @@ impl Sim {
             why: "unknown graph",
         })?;
         let mut found = None;
-        for (i, step) in g.steps.iter().enumerate() {
+        for (i, step) in g.view().iter().enumerate() {
             let Kind::Kernel {
                 kind,
                 reads,
@@ -2356,7 +2428,7 @@ impl Sim {
             why: "unknown graph",
         })?;
         let mut found = None;
-        for (i, step) in g.steps.iter().enumerate() {
+        for (i, step) in g.view().iter().enumerate() {
             let Kind::Memcpy(op) = &step.kind else {
                 continue;
             };
@@ -2394,7 +2466,7 @@ impl Sim {
             why: "unknown graph",
         })?;
         let mut found = None;
-        for (i, step) in g.steps.iter().enumerate() {
+        for (i, step) in g.view().iter().enumerate() {
             let Kind::Memset { id, offset, bytes } = &step.kind else {
                 continue;
             };
@@ -2421,7 +2493,7 @@ impl Sim {
             why: "unknown graph",
         })?;
         let mut out = Vec::new();
-        for (i, step) in g.steps.iter().enumerate() {
+        for (i, step) in g.view().iter().enumerate() {
             if let Kind::ChildGraph { graph: child } = step.kind {
                 out.push((i, child));
             }
@@ -2504,7 +2576,7 @@ impl Sim {
             why: "unknown graph",
         })?;
         let mut found = None;
-        for (i, step) in g.steps.iter().enumerate() {
+        for (i, step) in g.view().iter().enumerate() {
             let ev = if record {
                 match &step.kind {
                     Kind::EventRecord { event, .. } => Some(*event),
@@ -2550,7 +2622,7 @@ impl Sim {
             let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
-            let step = g.steps.get(node).ok_or(SimError::Invalid {
+            let step = g.view().get(node).ok_or(SimError::Invalid {
                 why: "unknown graph node",
             })?;
             let mem = matches!(step.kind, Kind::Alloc { .. } | Kind::Free { .. });
@@ -2571,7 +2643,7 @@ impl Sim {
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+        let step = g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
             why: "unknown graph node",
         })?;
         step.enabled = enabled;
@@ -2588,7 +2660,7 @@ impl Sim {
                 why: "graph not instantiated",
             });
         }
-        let step = g.steps.get(node).ok_or(SimError::Invalid {
+        let step = g.view().get(node).ok_or(SimError::Invalid {
             why: "unknown graph node",
         })?;
         Ok(step.enabled)
@@ -2642,6 +2714,7 @@ impl Sim {
                 cloned,
                 Graph {
                     steps,
+                    exec: None,
                     origin,
                     instantiated: false,
                     uploaded: false,
@@ -2751,7 +2824,7 @@ impl Sim {
             return true;
         }
         self.graphs.get(&graph).is_some_and(|g| {
-            g.steps
+            g.view()
                 .iter()
                 .any(|s| matches!(&s.kind, Kind::Alloc { .. } | Kind::Free { .. }))
         })
@@ -2910,6 +2983,7 @@ impl Sim {
             id,
             Graph {
                 steps: Vec::new(),
+                exec: None,
                 origin: (device, stream),
                 instantiated: false,
                 uploaded: false,
@@ -3439,16 +3513,40 @@ impl Sim {
         Ok(node_kind(&st.kind))
     }
 
-    /// `cudaKernelNodeAttributePriority` on a kernel node.
+    /// `cudaGraphKernelNodeGetAttribute` for priority on the graph definition.
     pub fn graph_kernel_node_get_priority(
         &self,
         graph: GraphId,
         node: usize,
     ) -> Result<i32, SimError> {
+        self.kernel_node_priority(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for priority on the exec snapshot.
+    pub fn graph_exec_kernel_node_get_priority(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<i32, SimError> {
+        self.kernel_node_priority(exec, node, true)
+    }
+
+    fn kernel_node_priority(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<i32, SimError> {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        let step = g.steps.get(node).ok_or(SimError::Invalid {
+        if exec && !g.instantiated {
+            return Err(SimError::Invalid {
+                why: "graph not instantiated",
+            });
+        }
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = steps.get(node).ok_or(SimError::Invalid {
             why: "unknown graph node",
         })?;
         if !matches!(step.kind, Kind::Kernel { .. }) {
@@ -3459,8 +3557,10 @@ impl Sim {
         Ok(step.priority)
     }
 
-    /// `cudaGraphKernelNodeSetAttribute` / `cudaGraphExecKernelNodeSetAttribute`
-    /// for priority. Capture cannot include it.
+    /// `cudaGraphKernelNodeSetAttribute` for priority on the graph definition.
+    ///
+    /// After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_kernel_node_set_priority`]. Capture cannot include it.
     pub fn graph_kernel_node_set_priority(
         &mut self,
         graph: GraphId,
@@ -3472,6 +3572,30 @@ impl Sim {
             why: "unknown graph",
         })?;
         let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.priority = priority;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for priority on the exec snapshot.
+    pub fn graph_exec_kernel_node_set_priority(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        priority: i32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
             why: "unknown graph node",
         })?;
         if !matches!(step.kind, Kind::Kernel { .. }) {
