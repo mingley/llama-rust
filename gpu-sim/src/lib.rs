@@ -161,7 +161,8 @@
 //! are `cudaGraphKernelNodeGetAttribute` / `SetAttribute` / `CopyAttributes`
 //! for priority, programmatic dependent launch ([`ProgrammaticLaunch`]),
 //! programmatic event ([`ProgrammaticEvent`]), access-policy window,
-//! mem-sync domain/map, and cluster dimension.
+//! mem-sync domain/map, cluster dimension, cluster scheduling policy, and
+//! preferred cluster dimension.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
 //! may start after the previous same-stream kernel's trigger
 //! (`GpuProfile::pdl_trigger_permille`) instead of its completion. Overlap
@@ -181,6 +182,10 @@
 //! `mem_sync_domain_count` is 4; tax default is 0 (identity).
 //! [`ClusterDim`] (`cudaLaunchAttributeClusterDimension`) occupies
 //! `min(blocks, compute_slots)` Hyper-Q slots (Hopper portable max 8).
+//! [`ClusterSchedulingPolicy::Spread`] occupies every slot.
+//! [`KernelAttrs::preferred_cluster`] is used when that size fits in
+//! `compute_slots`. Sizes above [`GpuProfile::portable_cluster_size`] need
+//! [`set_non_portable_cluster_size_allowed`](Sim::set_non_portable_cluster_size_allowed).
 //! Decode identity stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
 //! [`graph_exec_kernel_node_set_priority`](Sim::graph_exec_kernel_node_set_priority)
 //! are the exec-snapshot attributes. [`Sim::upload_graph`] is
@@ -343,13 +348,13 @@ pub use ids::{
     OpId, PoolId, PtrExportId, ShareableHandleId, StreamId, UserObjectId,
 };
 pub use ops::{
-    AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim, DType, GpuOp,
-    GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
-    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind,
-    GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeParams,
-    LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
-    Operation, PdlLaunch, Place, ProgrammaticEvent, ProgrammaticLaunch, StreamCaptureInfo,
-    StreamCaptureMode, UserObjectFlags, WaitValueCmp,
+    AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
+    ClusterSchedulingPolicy, DType, GpuOp, GraphExecUpdateResult, GraphExecUpdateResultInfo,
+    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
+    GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
+    KernelNodeParams, LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap,
+    MemcpyOp, Operation, PdlLaunch, Place, ProgrammaticEvent, ProgrammaticLaunch,
+    StreamCaptureInfo, StreamCaptureMode, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -4759,6 +4764,214 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("cluster size"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn non_portable_cluster_size_requires_func_attribute() {
+        let p = HardwareProfile::parse("gpus=1\nmax_blocks_per_cluster=16\n").unwrap();
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        let err = sim
+            .kernel_with(
+                d,
+                KernelKind::other(8, 8),
+                &[a],
+                &[a],
+                s,
+                KernelAttrs {
+                    cluster: Some(ClusterDim::x(16)),
+                    ..KernelAttrs::default()
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("non-portable cluster"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.set_non_portable_cluster_size_allowed(d, true).unwrap();
+        assert!(sim.non_portable_cluster_size_allowed(d));
+        enq(sim.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            KernelAttrs {
+                cluster: Some(ClusterDim::x(16)),
+                ..KernelAttrs::default()
+            },
+        ));
+        let err = sim
+            .kernel_with(
+                d,
+                KernelKind::other(8, 8),
+                &[a],
+                &[a],
+                s,
+                KernelAttrs {
+                    cluster: Some(ClusterDim::x(17)),
+                    ..KernelAttrs::default()
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("cluster size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn cluster_spread_occupies_all_compute_slots() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |policy: ClusterSchedulingPolicy| {
+            let mut sim = Sim::new(h100().with_compute_slots(4));
+            let d = DeviceId(0);
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+            enq(sim.kernel_with(
+                d,
+                kind.clone(),
+                &[a],
+                &[a],
+                StreamId(2),
+                KernelAttrs {
+                    cluster: Some(ClusterDim::x(2)),
+                    cluster_policy: policy,
+                    ..KernelAttrs::default()
+                },
+            ));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let packed = run(ClusterSchedulingPolicy::Default);
+        let spread = run(ClusterSchedulingPolicy::Spread);
+        assert!(
+            packed < spread,
+            "spread cluster of 2 must occupy all 4 Hyper-Q slots; packed={packed} spread={spread}"
+        );
+        let balanced = run(ClusterSchedulingPolicy::LoadBalancing);
+        assert_eq!(packed, balanced, "load-balancing matches default occupancy");
+    }
+
+    #[test]
+    fn preferred_cluster_occupies_preferred_when_it_fits() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |preferred: Option<ClusterDim>| {
+            let mut sim = Sim::new(h100().with_compute_slots(4));
+            let d = DeviceId(0);
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+            enq(sim.kernel_with(
+                d,
+                kind.clone(),
+                &[a],
+                &[a],
+                StreamId(2),
+                KernelAttrs {
+                    cluster: Some(ClusterDim::x(2)),
+                    preferred_cluster: preferred,
+                    ..KernelAttrs::default()
+                },
+            ));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let required = run(None);
+        let preferred = run(Some(ClusterDim::x(4)));
+        assert!(
+            required < preferred,
+            "preferred cluster of 4 must occupy all 4 slots; required={required} preferred={preferred}"
+        );
+        let mut sim = Sim::new(h100().with_compute_slots(4));
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        let err = sim
+            .kernel_with(
+                d,
+                KernelKind::other(8, 8),
+                &[a],
+                &[a],
+                s,
+                KernelAttrs {
+                    preferred_cluster: Some(ClusterDim::x(2)),
+                    ..KernelAttrs::default()
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("preferred cluster"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim
+            .kernel_with(
+                d,
+                KernelKind::other(8, 8),
+                &[a],
+                &[a],
+                s,
+                KernelAttrs {
+                    cluster: Some(ClusterDim::x(2)),
+                    preferred_cluster: Some(ClusterDim { x: 3, y: 1, z: 1 }),
+                    ..KernelAttrs::default()
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("preferred cluster"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_cluster_policy_and_preferred_copy_and_device_launch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let dim = ClusterDim::x(2);
+        sim.graph_kernel_node_set_cluster(g, 0, Some(dim)).unwrap();
+        sim.graph_kernel_node_set_cluster_policy(g, 0, ClusterSchedulingPolicy::Spread)
+            .unwrap();
+        sim.graph_kernel_node_set_preferred_cluster(g, 0, Some(ClusterDim::x(4)))
+            .unwrap();
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_copy_attributes(h, 0, g, 0).unwrap();
+        assert_eq!(sim.graph_kernel_node_get_cluster(h, 0).unwrap(), Some(dim));
+        assert_eq!(
+            sim.graph_kernel_node_get_cluster_policy(h, 0).unwrap(),
+            ClusterSchedulingPolicy::Spread
+        );
+        assert_eq!(
+            sim.graph_kernel_node_get_preferred_cluster(h, 0).unwrap(),
+            Some(ClusterDim::x(4))
+        );
+        let exec = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .expect("device-launch allows cluster policy");
+        assert_eq!(
+            sim.graph_exec_kernel_node_get_cluster_policy(exec, 0)
+                .unwrap(),
+            ClusterSchedulingPolicy::Spread
+        );
+        assert_eq!(
+            sim.graph_exec_kernel_node_get_preferred_cluster(exec, 0)
+                .unwrap(),
+            Some(ClusterDim::x(4))
+        );
     }
 
     #[test]

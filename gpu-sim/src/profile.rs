@@ -102,9 +102,12 @@ pub struct GpuProfile {
     /// peer's leftover (`1000` = wait for the peer). Default `0` keeps decode
     /// identity and existing Hyper-Q overlap tests. Not a capture.
     pub same_domain_fence_permille: u16,
-    /// Portable `cudaDevAttrMaxBlocksPerCluster`. Example H100 is 8. `1` refuses
+    /// Hardware `cudaDevAttrMaxBlocksPerCluster`. Example H100 is 8. `1` refuses
     /// a cluster larger than one block. Not a capture.
     pub max_blocks_per_cluster: u8,
+    /// Portable cluster size (`sm_90` is 8). A larger launch needs
+    /// [`crate::Sim::set_non_portable_cluster_size_allowed`]. Not a capture.
+    pub portable_cluster_size: u8,
 }
 
 impl GpuProfile {
@@ -501,7 +504,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npdl_trigger_permille={}\nl2_bytes={}\nl2_persist_hit_permille={}\nmem_sync_domain_count={}\nsame_domain_fence_permille={}\nmax_blocks_per_cluster={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npdl_trigger_permille={}\nl2_bytes={}\nl2_persist_hit_permille={}\nmem_sync_domain_count={}\nsame_domain_fence_permille={}\nmax_blocks_per_cluster={}\nportable_cluster_size={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -527,6 +530,7 @@ impl HardwareProfile {
             g0.mem_sync_domain_count,
             g0.same_domain_fence_permille,
             g0.max_blocks_per_cluster,
+            g0.portable_cluster_size,
             self.host_pageable_permille(g0.id),
             self.host_align_bytes(g0.id),
             g0.pool_reuse_ns,
@@ -649,6 +653,7 @@ fn h100_gpu(id: DeviceId) -> GpuProfile {
         mem_sync_domain_count: 4,
         same_domain_fence_permille: 0,
         max_blocks_per_cluster: 8,
+        portable_cluster_size: 8,
     }
 }
 
@@ -784,6 +789,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut mem_sync_domain_count: Option<u8> = None;
     let mut same_domain_fence_permille: Option<u16> = None;
     let mut max_blocks_per_cluster: Option<u8> = None;
+    let mut portable_cluster_size: Option<u8> = None;
     let mut pageable_permille: u16 = 500;
     let mut align_bytes: u64 = 128;
     let mut pool_reuse_ns: Option<u64> = None;
@@ -873,6 +879,15 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
                 }
                 max_blocks_per_cluster = Some(n);
             }
+            "portable_cluster_size" => {
+                let n = parse_u8(v)?;
+                if n == 0 {
+                    return Err(SimError::Invalid {
+                        why: "portable_cluster_size must be > 0",
+                    });
+                }
+                portable_cluster_size = Some(n);
+            }
             "pageable_permille" => pageable_permille = parse_u16(v)?,
             "align_bytes" => align_bytes = parse_u64(v)?,
             "pool_reuse_ns" => pool_reuse_ns = Some(parse_u64(v)?),
@@ -946,6 +961,17 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         }
         if let Some(n) = max_blocks_per_cluster {
             g.max_blocks_per_cluster = n;
+        }
+        if let Some(n) = portable_cluster_size {
+            g.portable_cluster_size = n;
+        }
+        if g.portable_cluster_size > g.max_blocks_per_cluster {
+            if portable_cluster_size.is_some() {
+                return Err(SimError::Invalid {
+                    why: "portable_cluster_size must be <= max_blocks_per_cluster",
+                });
+            }
+            g.portable_cluster_size = g.max_blocks_per_cluster;
         }
         if let Some(ns) = pool_reuse_ns {
             g.pool_reuse_ns = ns;
@@ -1255,6 +1281,25 @@ mod tests {
         let err = HardwareProfile::parse("gpus=1\nmax_blocks_per_cluster=0\n").unwrap_err();
         assert!(
             format!("{err:?}").contains("max_blocks_per_cluster must be > 0"),
+            "{err:?}"
+        );
+        let p = HardwareProfile::parse("gpus=1\nportable_cluster_size=4\n").unwrap();
+        assert_eq!(p.gpu(DeviceId(0)).unwrap().portable_cluster_size, 4);
+        assert!(p.to_profile_text().contains("portable_cluster_size=4"));
+        let open = HardwareProfile::parse("gpus=1\n").unwrap();
+        assert_eq!(open.gpu(DeviceId(0)).unwrap().portable_cluster_size, 8);
+        let err = HardwareProfile::parse("gpus=1\nportable_cluster_size=0\n").unwrap_err();
+        assert!(
+            format!("{err:?}").contains("portable_cluster_size must be > 0"),
+            "{err:?}"
+        );
+        let p = HardwareProfile::parse("gpus=1\nmax_blocks_per_cluster=4\n").unwrap();
+        assert_eq!(p.gpu(DeviceId(0)).unwrap().portable_cluster_size, 4);
+        let err =
+            HardwareProfile::parse("gpus=1\nmax_blocks_per_cluster=4\nportable_cluster_size=8\n")
+                .unwrap_err();
+        assert!(
+            format!("{err:?}").contains("portable_cluster_size must be <= max_blocks_per_cluster"),
             "{err:?}"
         );
     }

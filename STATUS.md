@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — cluster scheduling, preferred dim, non-portable size
+
+`cudaLaunchAttributeClusterSchedulingPolicyPreference` Spread occupies every
+Hyper-Q slot. Default and LoadBalancing keep `min(blocks, compute_slots)`.
+`cudaLaunchAttributePreferredClusterDimension` occupies the preferred size when
+it fits. `cudaFuncAttributeNonPortableClusterSizeAllowed` is required for a
+cluster larger than `portable_cluster_size` (Hopper 8) up to the SKU
+`max_blocks_per_cluster`. Decode identity stays no cluster / Default policy /
+disallowed non-portable. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — expertvm `--cluster`
 
 `expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and

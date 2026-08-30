@@ -10,13 +10,13 @@ use crate::ids::{
     PoolId, PtrExportId, ShareableHandleId, StreamId, UserObjectId,
 };
 use crate::ops::{
-    AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim, GpuOp as Kind,
-    GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
-    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind,
-    GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeParams,
-    LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
-    Operation, PdlLaunch, Place, ProgrammaticEvent, ProgrammaticLaunch, StreamCaptureInfo,
-    StreamCaptureMode, UserObjectFlags, WaitValueCmp,
+    AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
+    ClusterSchedulingPolicy, GpuOp as Kind, GraphExecUpdateResult, GraphExecUpdateResultInfo,
+    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
+    GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
+    KernelNodeParams, LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap,
+    MemcpyOp, Operation, PdlLaunch, Place, ProgrammaticEvent, ProgrammaticLaunch,
+    StreamCaptureInfo, StreamCaptureMode, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{ns_for_bytes, HardwareProfile, LinkKind};
 
@@ -187,6 +187,10 @@ struct Op {
     domain_fence_paid: bool,
     /// `cudaLaunchAttributeClusterDimension` on this kernel, if any.
     cluster: Option<ClusterDim>,
+    /// `cudaLaunchAttributeClusterSchedulingPolicyPreference`.
+    cluster_policy: ClusterSchedulingPolicy,
+    /// `cudaLaunchAttributePreferredClusterDimension`.
+    preferred_cluster: Option<ClusterDim>,
 }
 
 /// How a submitted op pays kernel/graph launch overhead.
@@ -290,6 +294,10 @@ struct GraphStep {
     mem_sync_map: MemSyncDomainMap,
     /// `cudaLaunchAttributeClusterDimension` on this kernel node.
     cluster: Option<ClusterDim>,
+    /// `cudaLaunchAttributeClusterSchedulingPolicyPreference`.
+    cluster_policy: ClusterSchedulingPolicy,
+    /// `cudaLaunchAttributePreferredClusterDimension`.
+    preferred_cluster: Option<ClusterDim>,
 }
 
 struct Graph {
@@ -573,6 +581,12 @@ pub struct Sim {
     enqueue_mem_sync_map: Option<MemSyncDomainMap>,
     /// Cluster dimension for the next kernel submit / graph replay.
     enqueue_cluster: Option<ClusterDim>,
+    /// Cluster scheduling policy for the next kernel submit / graph replay.
+    enqueue_cluster_policy: ClusterSchedulingPolicy,
+    /// Preferred cluster dimension for the next kernel submit / graph replay.
+    enqueue_preferred_cluster: Option<ClusterDim>,
+    /// Devices with `cudaFuncAttributeNonPortableClusterSizeAllowed`.
+    non_portable_cluster: BTreeSet<DeviceId>,
     /// Wait/write-value mailbox: `(alloc, offset) → word`. Missing is `0`.
     mailbox: BTreeMap<(AllocId, u64), u64>,
     /// `cudaThreadExchangeStreamCaptureMode` default for [`Self::begin_capture`].
@@ -663,6 +677,9 @@ impl Sim {
             enqueue_mem_sync_domain: None,
             enqueue_mem_sync_map: None,
             enqueue_cluster: None,
+            enqueue_cluster_policy: ClusterSchedulingPolicy::Default,
+            enqueue_preferred_cluster: None,
+            non_portable_cluster: BTreeSet::new(),
             mailbox: BTreeMap::new(),
             capture_mode: StreamCaptureMode::Relaxed,
             next_user_object: 1,
@@ -1127,23 +1144,44 @@ impl Sim {
     }
 
     /// Slots a kernel occupies: cooperative grids need the whole GPU. A
-    /// cluster occupies `min(blocks, compute_slots)` so leftover Hyper-Q
-    /// work cannot start until those slots free.
+    /// Default/LoadBalancing cluster occupies `min(blocks, compute_slots)`.
+    /// Spread occupies every slot. Preferred cluster size is used when it
+    /// fits in `compute_slots`.
     fn kernel_slots(
         &self,
         device: DeviceId,
         cooperative: bool,
-        cluster_blocks: u32,
+        cluster: Option<ClusterDim>,
+        preferred: Option<ClusterDim>,
+        policy: ClusterSchedulingPolicy,
     ) -> Result<u8, SimError> {
         let cap = self.profile.gpu(device)?.compute_slots.max(1);
         if cooperative {
             return Ok(cap);
         }
-        if cluster_blocks <= 1 {
+        let blocks = self.effective_cluster_blocks(device, cluster, preferred)?;
+        if blocks <= 1 {
             return Ok(1);
         }
-        let n = cluster_blocks.min(u32::from(cap));
+        if policy == ClusterSchedulingPolicy::Spread {
+            return Ok(cap);
+        }
+        let n = blocks.min(u32::from(cap));
         Ok(u8::try_from(n).unwrap_or(cap).max(1))
+    }
+
+    fn op_kernel_slots(&self, op: &Op) -> Result<u8, SimError> {
+        let cooperative = match &op.kind {
+            Kind::Kernel { cooperative, .. } => *cooperative,
+            _ => return Ok(1),
+        };
+        self.kernel_slots(
+            op.device,
+            cooperative,
+            op.cluster,
+            op.preferred_cluster,
+            op.cluster_policy,
+        )
     }
 
     /// `cudaDevAttrCooperativeLaunch` must be set on `device`.
@@ -1900,6 +1938,8 @@ impl Sim {
             self.enqueue_mem_sync_domain = Some(step.mem_sync_domain);
             self.enqueue_mem_sync_map = Some(step.mem_sync_map);
             self.enqueue_cluster = step.cluster;
+            self.enqueue_cluster_policy = step.cluster_policy;
+            self.enqueue_preferred_cluster = step.preferred_cluster;
             let wait = graph_node_waits(step, extra_wait, launch_tail, &node_ops)?;
             let s = self.graph_exec_stream(origin, stream, step, &node_stream, &mut worker);
             if let Some(slot) = node_stream.get_mut(idx) {
@@ -2077,6 +2117,8 @@ impl Sim {
         self.enqueue_mem_sync_domain = None;
         self.enqueue_mem_sync_map = None;
         self.enqueue_cluster = None;
+        self.enqueue_cluster_policy = ClusterSchedulingPolicy::Default;
+        self.enqueue_preferred_cluster = None;
         Ok(n)
     }
 
@@ -5899,9 +5941,203 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphKernelNodeGetAttribute` for cluster scheduling policy.
+    pub fn graph_kernel_node_get_cluster_policy(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<ClusterSchedulingPolicy, SimError> {
+        self.kernel_node_cluster_policy(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for cluster scheduling policy.
+    pub fn graph_exec_kernel_node_get_cluster_policy(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<ClusterSchedulingPolicy, SimError> {
+        self.kernel_node_cluster_policy(exec, node, true)
+    }
+
+    fn kernel_node_cluster_policy(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<ClusterSchedulingPolicy, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.cluster_policy)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for cluster scheduling policy.
+    pub fn graph_kernel_node_set_cluster_policy(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        policy: ClusterSchedulingPolicy,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_cluster_policy(graph, node, false, policy)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for cluster scheduling policy.
+    pub fn graph_exec_kernel_node_set_cluster_policy(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        policy: ClusterSchedulingPolicy,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_cluster_policy(exec, node, true, policy)
+    }
+
+    fn set_kernel_node_cluster_policy(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        policy: ClusterSchedulingPolicy,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.cluster_policy = policy;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for preferred cluster dimension.
+    pub fn graph_kernel_node_get_preferred_cluster(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Option<ClusterDim>, SimError> {
+        self.kernel_node_preferred_cluster(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for preferred cluster dimension.
+    pub fn graph_exec_kernel_node_get_preferred_cluster(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<Option<ClusterDim>, SimError> {
+        self.kernel_node_preferred_cluster(exec, node, true)
+    }
+
+    fn kernel_node_preferred_cluster(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<Option<ClusterDim>, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.preferred_cluster)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for preferred cluster dimension.
+    pub fn graph_kernel_node_set_preferred_cluster(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        preferred: Option<ClusterDim>,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_preferred_cluster(graph, node, false, preferred)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for preferred cluster dimension.
+    pub fn graph_exec_kernel_node_set_preferred_cluster(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        preferred: Option<ClusterDim>,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_preferred_cluster(exec, node, true, preferred)
+    }
+
+    fn set_kernel_node_preferred_cluster(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        preferred: Option<ClusterDim>,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let device = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let steps = if exec { g.view() } else { &g.steps };
+            let step = steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+            step.device
+        };
+        let cluster = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let steps = if exec { g.view() } else { &g.steps };
+            let step = steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            step.cluster
+        };
+        self.validate_cluster_attrs(device, cluster, preferred)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.preferred_cluster = preferred;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// `cudaGraphKernelNodeCopyAttributes`: copy priority, PDL, programmatic
     /// event, launch-completion event, access-policy window, mem-sync
-    /// domain/map, and cluster dimension from `src` to `dst`.
+    /// domain/map, cluster dimension, cluster scheduling policy, and preferred
+    /// cluster dimension from `src` to `dst`.
     ///
     /// Both nodes must be kernels. Capture cannot include it.
     pub fn graph_kernel_node_copy_attributes(
@@ -5927,7 +6163,11 @@ impl Sim {
         self.graph_kernel_node_set_mem_sync_domain(dst_graph, dst, domain)?;
         self.graph_kernel_node_set_mem_sync_domain_map(dst_graph, dst, map)?;
         let cluster = self.graph_kernel_node_get_cluster(src_graph, src)?;
-        self.graph_kernel_node_set_cluster(dst_graph, dst, cluster)
+        self.graph_kernel_node_set_cluster(dst_graph, dst, cluster)?;
+        let policy = self.graph_kernel_node_get_cluster_policy(src_graph, src)?;
+        self.graph_kernel_node_set_cluster_policy(dst_graph, dst, policy)?;
+        let preferred = self.graph_kernel_node_get_preferred_cluster(src_graph, src)?;
+        self.graph_kernel_node_set_preferred_cluster(dst_graph, dst, preferred)
     }
 
     /// `cudaGraphNodeFindInClone`: index in `cloned` of the node that was `node`
@@ -6012,6 +6252,8 @@ impl Sim {
             mem_sync_domain,
             mem_sync_map,
             cluster: self.enqueue_cluster,
+            cluster_policy: self.enqueue_cluster_policy,
+            preferred_cluster: self.enqueue_preferred_cluster,
         });
         Ok(())
     }
@@ -8294,6 +8536,7 @@ impl Sim {
         if let Some(c) = attrs.cluster {
             let _n = self.validate_cluster(device, c)?;
         }
+        self.validate_cluster_attrs(device, attrs.cluster, attrs.preferred_cluster)?;
         if attrs.cooperative {
             self.require_cooperative(device)?;
         }
@@ -8302,17 +8545,23 @@ impl Sim {
         let prev_dom = self.enqueue_mem_sync_domain;
         let prev_map = self.enqueue_mem_sync_map;
         let prev_cl = self.enqueue_cluster;
+        let prev_pol = self.enqueue_cluster_policy;
+        let prev_pref = self.enqueue_preferred_cluster;
         self.enqueue_pdl = attrs.pdl;
         self.enqueue_access_policy = attrs.access_policy;
         self.enqueue_mem_sync_domain = attrs.mem_sync_domain;
         self.enqueue_mem_sync_map = attrs.mem_sync_map;
         self.enqueue_cluster = attrs.cluster;
+        self.enqueue_cluster_policy = attrs.cluster_policy;
+        self.enqueue_preferred_cluster = attrs.preferred_cluster;
         let out = self.submit_kernel(device, kind, reads, writes, stream, attrs.cooperative);
         self.enqueue_pdl = prev_pdl;
         self.enqueue_access_policy = prev_win;
         self.enqueue_mem_sync_domain = prev_dom;
         self.enqueue_mem_sync_map = prev_map;
         self.enqueue_cluster = prev_cl;
+        self.enqueue_cluster_policy = prev_pol;
+        self.enqueue_preferred_cluster = prev_pref;
         out
     }
 
@@ -9173,6 +9422,8 @@ impl Sim {
             mem_sync_domain,
             mem_sync_map,
             cluster: self.enqueue_cluster,
+            cluster_policy: self.enqueue_cluster_policy,
+            preferred_cluster: self.enqueue_preferred_cluster,
         });
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
@@ -9276,6 +9527,8 @@ impl Sim {
                 mem_sync_physical,
                 domain_fence_paid: false,
                 cluster: self.enqueue_cluster,
+                cluster_policy: self.enqueue_cluster_policy,
+                preferred_cluster: self.enqueue_preferred_cluster,
             },
         );
         if let Some(pe) = pde {
@@ -9660,6 +9913,8 @@ impl Sim {
                 mem_sync_physical: 0,
                 domain_fence_paid: false,
                 cluster: None,
+                cluster_policy: ClusterSchedulingPolicy::Default,
+                preferred_cluster: None,
             },
         );
         self.add_op_dep(kernel, id);
@@ -9667,7 +9922,7 @@ impl Sim {
     }
 
     fn start_kernel(&mut self, id: OpId) -> Result<bool, SimError> {
-        let (device, stream, launch, reads, writes, kind, cooperative) = {
+        let (device, stream, launch, reads, writes, kind) = {
             let op = self
                 .ops
                 .get(&id)
@@ -9677,7 +9932,7 @@ impl Sim {
                     reads,
                     writes,
                     kind,
-                    cooperative,
+                    ..
                 } => (
                     op.device,
                     op.stream,
@@ -9685,7 +9940,6 @@ impl Sim {
                     reads.clone(),
                     writes.clone(),
                     kind.clone(),
-                    *cooperative,
                 ),
                 _ => {
                     return Err(SimError::Invalid {
@@ -9700,15 +9954,13 @@ impl Sim {
         {
             return Ok(true);
         }
-        let slots = self.kernel_slots(
-            device,
-            cooperative,
-            self.ops
+        let slots = {
+            let op = self
+                .ops
                 .get(&id)
-                .and_then(|o| o.cluster)
-                .and_then(ClusterDim::blocks)
-                .unwrap_or(0),
-        )?;
+                .ok_or(SimError::Invalid { why: "unknown op" })?;
+            self.op_kernel_slots(op)?
+        };
         if !self.take_compute_n(device, slots)? {
             return Ok(false);
         }
@@ -11235,13 +11487,94 @@ impl Sim {
         let n = dim.blocks().ok_or(SimError::Invalid {
             why: "cluster dimension",
         })?;
-        let max = u32::from(self.profile.gpu(device)?.max_blocks_per_cluster.max(1));
+        let gpu = self.profile.gpu(device)?;
+        let max = u32::from(gpu.max_blocks_per_cluster.max(1));
+        let portable = u32::from(gpu.portable_cluster_size.max(1));
         if n > max {
             return Err(SimError::Invalid {
                 why: "cluster size",
             });
         }
+        if n > portable && !self.non_portable_cluster.contains(&device) {
+            return Err(SimError::Invalid {
+                why: "non-portable cluster",
+            });
+        }
         Ok(n)
+    }
+
+    fn validate_cluster_attrs(
+        &self,
+        device: DeviceId,
+        cluster: Option<ClusterDim>,
+        preferred: Option<ClusterDim>,
+    ) -> Result<(), SimError> {
+        if let Some(c) = cluster {
+            let _n = self.validate_cluster(device, c)?;
+        }
+        if let Some(p) = preferred {
+            let Some(c) = cluster else {
+                return Err(SimError::Invalid {
+                    why: "preferred cluster",
+                });
+            };
+            if !p.multiple_of(c) {
+                return Err(SimError::Invalid {
+                    why: "preferred cluster",
+                });
+            }
+            let _n = self.validate_cluster(device, p)?;
+        }
+        Ok(())
+    }
+
+    fn effective_cluster_blocks(
+        &self,
+        device: DeviceId,
+        cluster: Option<ClusterDim>,
+        preferred: Option<ClusterDim>,
+    ) -> Result<u32, SimError> {
+        self.validate_cluster_attrs(device, cluster, preferred)?;
+        let Some(c) = cluster else {
+            return Ok(0);
+        };
+        let required = self.validate_cluster(device, c)?;
+        let Some(p) = preferred else {
+            return Ok(required);
+        };
+        let preferred_n = self.validate_cluster(device, p)?;
+        let cap = u32::from(self.profile.gpu(device)?.compute_slots.max(1));
+        if preferred_n <= cap {
+            Ok(preferred_n)
+        } else {
+            Ok(required)
+        }
+    }
+
+    /// `cudaFuncSetAttribute(..., cudaFuncAttributeNonPortableClusterSizeAllowed)`.
+    ///
+    /// Default is disallowed. A cluster larger than
+    /// [`crate::GpuProfile::portable_cluster_size`] is Invalid until this is
+    /// true. Decode identity stays disallowed.
+    pub fn set_non_portable_cluster_size_allowed(
+        &mut self,
+        device: DeviceId,
+        allowed: bool,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if allowed {
+            let _ins = self.non_portable_cluster.insert(device);
+        } else {
+            let _rm = self.non_portable_cluster.remove(&device);
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// Current [`Self::set_non_portable_cluster_size_allowed`] for `device`.
+    #[must_use]
+    pub fn non_portable_cluster_size_allowed(&self, device: DeviceId) -> bool {
+        self.non_portable_cluster.contains(&device)
     }
 
     fn advance_to_next_completion(&mut self) -> Result<(), SimError> {
@@ -11351,14 +11684,14 @@ impl Sim {
         if let Some((alloc, flags, stream)) = attach {
             self.alloc_mut(alloc)?.attach = attach_state(flags, stream);
         }
-        if let Some((ids, cooperative)) = kernel_work {
-            let cluster_blocks = self
-                .ops
-                .get(&id)
-                .and_then(|o| o.cluster)
-                .and_then(ClusterDim::blocks)
-                .unwrap_or(0);
-            let n = self.kernel_slots(device, cooperative, cluster_blocks)?;
+        if let Some((ids, _)) = kernel_work {
+            let n = {
+                let op = self
+                    .ops
+                    .get(&id)
+                    .ok_or(SimError::Invalid { why: "unknown op" })?;
+                self.op_kernel_slots(op)?
+            };
             self.drop_compute_n(device, n)?;
             for a in ids {
                 let cur = self.alloc_mut(a)?;
@@ -12127,6 +12460,8 @@ fn remap_nested_graphs(
             mem_sync_domain: step.mem_sync_domain,
             mem_sync_map: step.mem_sync_map,
             cluster: step.cluster,
+            cluster_policy: step.cluster_policy,
+            preferred_cluster: step.preferred_cluster,
         });
     }
     Ok(out)

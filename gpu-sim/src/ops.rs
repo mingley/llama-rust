@@ -445,7 +445,7 @@ impl Default for MemSyncDomainMap {
 /// [`crate::Sim::kernel_with`] applies these on one submit so PDL, an
 /// access-policy window, and a mem-sync domain can share a launch (7 arguments
 /// including `self`). Decode identity stays [`crate::Sim::kernel`] ([`Default`]:
-/// no cooperative, no PDL, no window, inherit stream mem-sync).
+/// no cooperative, no PDL, no window, inherit stream mem-sync, no cluster).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KernelAttrs {
     /// `cudaLaunchCooperativeKernel`.
@@ -460,13 +460,36 @@ pub struct KernelAttrs {
     pub mem_sync_map: Option<MemSyncDomainMap>,
     /// `cudaLaunchAttributeClusterDimension`. `None` is a non-cluster launch.
     pub cluster: Option<ClusterDim>,
+    /// `cudaLaunchAttributeClusterSchedulingPolicyPreference`.
+    pub cluster_policy: ClusterSchedulingPolicy,
+    /// `cudaLaunchAttributePreferredClusterDimension`. `None` uses [`Self::cluster`].
+    pub preferred_cluster: Option<ClusterDim>,
+}
+
+/// `cudaClusterSchedulingPolicy` (`cudaLaunchAttributeClusterSchedulingPolicyPreference`).
+///
+/// Spread occupies every Hyper-Q slot so leftover kernels cannot overlap a
+/// clustered launch. Default and LoadBalancing occupy
+/// `min(blocks, compute_slots)` (the current cluster occupancy). Decode
+/// identity stays [`Self::Default`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ClusterSchedulingPolicy {
+    /// `cudaClusterSchedulingPolicyDefault`.
+    #[default]
+    Default,
+    /// `cudaClusterSchedulingPolicySpread`: spread cluster blocks across SMs.
+    Spread,
+    /// `cudaClusterSchedulingPolicyLoadBalancing`: hardware may pack blocks.
+    LoadBalancing,
 }
 
 /// `cudaLaunchAttributeClusterDimension` (`clusterDim`).
 ///
 /// All three dimensions must be `>= 1`. Product is the cluster block count and
-/// must be `<= GpuProfile::max_blocks_per_cluster` (Hopper portable default 8).
-/// Decode identity stays [`None`] (not a cluster). Capture records the attribute.
+/// must be `<= GpuProfile::max_blocks_per_cluster`. Sizes above
+/// [`crate::GpuProfile::portable_cluster_size`] also need
+/// [`crate::Sim::set_non_portable_cluster_size_allowed`]. Decode identity stays
+/// [`None`] (not a cluster). Capture records the attribute.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClusterDim {
     /// Blocks in X.
@@ -493,6 +516,17 @@ impl ClusterDim {
         self.x
             .checked_mul(self.y)
             .and_then(|p| p.checked_mul(self.z))
+    }
+
+    /// True when each axis of `self` is a positive integer multiple of `min`.
+    #[must_use]
+    pub fn multiple_of(self, min: Self) -> bool {
+        min.x > 0
+            && min.y > 0
+            && min.z > 0
+            && self.x.is_multiple_of(min.x)
+            && self.y.is_multiple_of(min.y)
+            && self.z.is_multiple_of(min.z)
     }
 }
 

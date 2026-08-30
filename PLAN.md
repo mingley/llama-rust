@@ -1574,6 +1574,27 @@ model, do not celebrate the sim.
     `--cooperative`. Decode identity stays `kernel` (no cluster).
     `gpu-profile capture` is still refused.
 
+120. [x] `cudaFuncAttributeNonPortableClusterSizeAllowed`:
+    `set_non_portable_cluster_size_allowed` lets a cluster exceed
+    `GpuProfile::portable_cluster_size` up to `max_blocks_per_cluster`.
+    Default is disallowed (Hopper portable 8). Example H100 keeps both at 8.
+    Decode identity stays disallowed. `gpu-profile capture` is still refused.
+
+121. [x] `cudaLaunchAttributeClusterSchedulingPolicyPreference`:
+    Default / LoadBalancing occupy `min(blocks, compute_slots)`. Spread
+    occupies every Hyper-Q slot so leftover kernels cannot overlap.
+    Graph SetAttribute / CopyAttributes carry it. Device-launch graphs
+    allow it. Decode identity stays Default. `gpu-profile capture` is
+    still refused.
+
+122. [x] `cudaLaunchAttributePreferredClusterDimension`: a preferred
+    cluster must be an integer multiple of the required
+    `ClusterDim` (CUDA: minimum must also be specified). Occupancy uses
+    the preferred size when it fits in `compute_slots`, else the required
+    size. Graph SetAttribute / CopyAttributes carry it. Device-launch
+    graphs allow it. Decode identity stays no preferred dim.
+    `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.
