@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — expertvm `--pdl`
+
+`expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and
+`infer-bench schedule` take `--pdl`. Consecutive same-stream expert GEMMs
+launch with wait+trigger so they may overlap after the previous kernel's
+PDL trigger when `--compute-slots` is `>=2`. Illegal with `--cooperative`.
+`cudaFreeAsync` on that stream still waits for the overlapped primary
+(all preceding work). Decode identity stays `cudaLaunchKernel`.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — programmatic dependent launch
 
 `kernel_pdl` / `graph_kernel_node_set_pdl` model CUDA PDL. A wait kernel

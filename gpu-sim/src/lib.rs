@@ -3711,6 +3711,41 @@ mod tests {
     }
 
     #[test]
+    fn pdl_stream_free_waits_for_overlapped_primary() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.compute_slots = 2;
+            g.pdl_trigger_permille = 250;
+            g.graph_launch_ns = 100_000;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+        sim.synchronize().unwrap();
+        let k = KernelKind::other(1 << 20, 4096);
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, k.clone(), &[a], &[a]).unwrap();
+        sim.graph_add_kernel(g, k, &[b], &[b]).unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        let both = ProgrammaticLaunch {
+            wait: true,
+            trigger: true,
+        };
+        sim.graph_kernel_node_set_pdl(g, 0, both).unwrap();
+        sim.graph_kernel_node_set_pdl(g, 1, both).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 2);
+        sim.free(d, a, s)
+            .expect("free waits for overlapped primary");
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
     fn higher_stream_priority_starts_first_when_compute_contends() {
         let d = DeviceId(0);
         let kind = KernelKind::other(1 << 40, 4096);

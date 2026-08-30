@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params, timing events, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `compute_slots`, `decode_sm_permille`, `cooperative`) are the same mechanical
+//! `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -47,6 +47,9 @@
 //! exclusive (`1`), which keeps decode identity and stream-priority contention.
 //! `--cooperative` is `cudaLaunchCooperativeKernel`: GEMMs occupy every Hyper-Q
 //! slot, so leftover prefill cannot overlap even with `--compute-slots 2`.
+//! `--pdl` is programmatic dependent launch: consecutive same-stream expert
+//! GEMMs may overlap after the previous kernel's trigger (needs
+//! `--compute-slots` >= 2; illegal with `--cooperative`).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode
@@ -3589,6 +3592,37 @@ mod tests {
             serial.1.wall_ns,
             overlap.1.line(),
             serial.1.line()
+        );
+    }
+
+    #[test]
+    fn engine_gpu_pdl_overlaps_same_stream_wall() {
+        let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+            .expect("slow gemm profile");
+        let serial = two_seq_gpu_on(
+            8,
+            GpuStoreCfg {
+                compute_slots: 2,
+                ..GpuStoreCfg::default()
+            },
+            GpuFill::Pinned,
+            profile.clone(),
+        );
+        let overlap = two_seq_gpu_on(
+            8,
+            GpuStoreCfg {
+                compute_slots: 2,
+                pdl: true,
+                ..GpuStoreCfg::default()
+            },
+            GpuFill::Pinned,
+            profile,
+        );
+        assert!(
+            overlap.wall_ns < serial.wall_ns,
+            "PDL must overlap consecutive same-stream expert GEMMs; pdl={} serial={}",
+            overlap.wall_ns,
+            serial.wall_ns
         );
     }
 

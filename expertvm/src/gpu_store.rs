@@ -9,7 +9,7 @@ use crate::planner::{
     Prefetch, DECODE_ACTIVATION_BYTES,
 };
 use crate::sim_replay::{
-    bind_shareable_mempools, replay_streams, retarget_parked_kernel, stream_of, LeafMem,
+    bind_shareable_mempools, replay_streams, retarget_parked_kernel, stream_of, GemmFlags, LeafMem,
     GRAPH_SCRATCH_BYTES,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
@@ -149,6 +149,13 @@ pub struct GpuStoreCfg {
     /// even when [`Self::compute_slots`] is `>=2`. Decode identity stays
     /// `cudaLaunchKernel`.
     pub cooperative: bool,
+    /// Same-stream programmatic dependent launch for grouped GEMMs.
+    ///
+    /// Consecutive expert kernels on one compute stream may overlap after the
+    /// previous kernel's PDL trigger when [`Self::compute_slots`] is `>=2`.
+    /// Illegal with [`Self::cooperative`]. Decode identity stays
+    /// `cudaLaunchKernel`.
+    pub pdl: bool,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// [`Self::pin_hot`] and walker `--place replicas` map dest VMM physicals
@@ -220,6 +227,7 @@ pub struct SimulatedGpuStore {
     decode: StreamId,
     decode_priority: bool,
     cooperative: bool,
+    pdl: bool,
     multicast: bool,
     next_event: u32,
     pages: BTreeMap<ExpertKey, GpuPage>,
@@ -367,6 +375,8 @@ impl SimulatedGpuStore {
     /// disable-timing copy events.
     /// [`GpuStoreCfg::cooperative`] launches GEMMs with
     /// `cudaLaunchCooperativeKernel` (exclusive compute).
+    /// [`GpuStoreCfg::pdl`] is same-stream programmatic dependent launch
+    /// (illegal with cooperative).
     /// [`GpuStoreCfg::multicast`] is Hopper NVLS replica fanout (requires
     /// [`GpuFill::Vmm`] and NVLink).
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
@@ -386,6 +396,9 @@ impl SimulatedGpuStore {
         }
         if cfg.graph_build && cfg.graph_piecewise {
             return Err(Error::Store("choose one of graph-build, graph-piecewise"));
+        }
+        if cfg.pdl && cfg.cooperative {
+            return Err(Error::Store("choose one of pdl, cooperative"));
         }
         if cfg.shareable && (cfg.sync_alloc || fill != GpuFill::Pinned) {
             return Err(Error::Store("shareable needs cudaMallocAsync"));
@@ -466,6 +479,7 @@ impl SimulatedGpuStore {
             decode,
             decode_priority: cfg.decode_priority,
             cooperative: cfg.cooperative,
+            pdl: cfg.pdl,
             multicast: cfg.multicast,
             next_event: 1,
             pages: BTreeMap::new(),
@@ -573,6 +587,13 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn compute_stream(&self) -> StreamId {
         self.compute
+    }
+
+    fn gemm_flags(&self) -> GemmFlags {
+        GemmFlags {
+            cooperative: self.cooperative,
+            pdl: self.pdl,
+        }
     }
 
     /// Prefill grouped-GEMM stream (same as [`Self::compute_stream`] unless decode-priority).
@@ -1265,6 +1286,7 @@ impl SimulatedGpuStore {
     }
 
     fn launch_or_gemm(&mut self, device: DeviceId, id: AllocId) -> Result<(), Error> {
+        let flags = self.gemm_flags();
         if let Some(g) = self.graphs.get(&id).copied() {
             self.graph_launches = self.graph_launches.saturating_add(1);
             let _n = self.sim.launch_graph(g, self.compute)?;
@@ -1302,14 +1324,7 @@ impl SimulatedGpuStore {
                 return Ok(());
             }
             self.sim.begin_capture(device, self.compute)?;
-            gemm_leaf(
-                &mut self.sim,
-                device,
-                self.compute,
-                id,
-                self.leaf,
-                self.cooperative,
-            )?;
+            gemm_leaf(&mut self.sim, device, self.compute, id, self.leaf, flags)?;
             let src = self.sim.end_capture()?;
             let g = self.bind_graph(device, src)?;
             let _prev = self.graphs.insert(id, g);
@@ -1323,28 +1338,23 @@ impl SimulatedGpuStore {
             self.compute,
             id,
             LeafMem::None,
-            self.cooperative,
+            flags,
         )
     }
 
     fn build_gemm_graph(&mut self, device: DeviceId, id: AllocId) -> Result<GraphId, Error> {
+        let flags = self.gemm_flags();
         let g = self.sim.create_graph(device, self.compute)?;
-        add_leaf_gemm(&mut self.sim, g, id, self.leaf, self.cooperative)?;
+        add_leaf_gemm(&mut self.sim, g, id, self.leaf, flags)?;
         Ok(g)
     }
 
     fn piecewise_gemm_graph(&mut self, device: DeviceId, id: AllocId) -> Result<GraphId, Error> {
+        let flags = self.gemm_flags();
         let g = self.sim.create_graph(device, self.compute)?;
         self.sim
             .begin_capture_to_graph(device, self.compute, g, &[])?;
-        gemm_leaf(
-            &mut self.sim,
-            device,
-            self.compute,
-            id,
-            self.leaf,
-            self.cooperative,
-        )?;
+        gemm_leaf(&mut self.sim, device, self.compute, id, self.leaf, flags)?;
         let ended = self.sim.end_capture()?;
         if ended != g {
             return Err(Error::Store("capture-to-graph id"));
@@ -1908,14 +1918,14 @@ fn gemm_leaf(
     s: StreamId,
     id: AllocId,
     mem: LeafMem,
-    cooperative: bool,
+    flags: GemmFlags,
 ) -> Result<(), Error> {
     if mem == LeafMem::None {
-        launch_store_gemm(sim, d, s, id, &[], cooperative)?;
+        launch_store_gemm(sim, d, s, id, &[], flags)?;
         return Ok(());
     }
     let scratch = sim.alloc(d, GRAPH_SCRATCH_BYTES, s)?;
-    launch_store_gemm(sim, d, s, id, &[scratch], cooperative)?;
+    launch_store_gemm(sim, d, s, id, &[scratch], flags)?;
     if mem == LeafMem::Free {
         sim.free(d, scratch, s)?;
     }
@@ -1928,10 +1938,12 @@ fn launch_store_gemm(
     s: StreamId,
     id: AllocId,
     writes: &[AllocId],
-    cooperative: bool,
+    flags: GemmFlags,
 ) -> Result<(), Error> {
-    if cooperative {
+    if flags.cooperative {
         let _k = sim.cooperative_kernel(d, gemm_kind(), &[id], writes, s)?;
+    } else if let Some(pdl) = flags.pdl_attr() {
+        let _k = sim.kernel_pdl(d, gemm_kind(), &[id], writes, s, pdl)?;
     } else {
         let _k = sim.kernel(d, gemm_kind(), &[id], writes, s)?;
     }
@@ -1943,13 +1955,13 @@ fn add_leaf_gemm(
     graph: GraphId,
     id: AllocId,
     mem: LeafMem,
-    cooperative: bool,
+    flags: GemmFlags,
 ) -> Result<(), Error> {
     if mem == LeafMem::None {
-        return add_store_gemm(sim, graph, id, &[], cooperative);
+        return add_store_gemm(sim, graph, id, &[], flags);
     }
     let scratch = sim.graph_add_alloc(graph, GRAPH_SCRATCH_BYTES)?;
-    add_store_gemm(sim, graph, id, &[scratch], cooperative)?;
+    add_store_gemm(sim, graph, id, &[scratch], flags)?;
     sim.graph_add_dependencies(graph, 0, 1)?;
     if mem == LeafMem::Free {
         sim.graph_add_free(graph, scratch)?;
@@ -1963,15 +1975,19 @@ fn add_store_gemm(
     graph: GraphId,
     id: AllocId,
     writes: &[AllocId],
-    cooperative: bool,
+    flags: GemmFlags,
 ) -> Result<(), Error> {
-    if cooperative {
-        sim.graph_add_cooperative_kernel(graph, gemm_kind(), &[id], writes)
-            .map_err(Error::from)
-    } else {
-        sim.graph_add_kernel(graph, gemm_kind(), &[id], writes)
-            .map_err(Error::from)
+    if flags.cooperative {
+        return sim
+            .graph_add_cooperative_kernel(graph, gemm_kind(), &[id], writes)
+            .map_err(Error::from);
     }
+    sim.graph_add_kernel(graph, gemm_kind(), &[id], writes)?;
+    if let Some(pdl) = flags.pdl_attr() {
+        let node = usize::from(!writes.is_empty());
+        sim.graph_kernel_node_set_pdl(graph, node, pdl)?;
+    }
+    Ok(())
 }
 
 /// Copy is NULL; prefill compute is stream 1. Seq-streams: copy `0 .. n_copy-1`,

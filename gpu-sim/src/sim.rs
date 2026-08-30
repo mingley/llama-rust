@@ -8194,6 +8194,19 @@ impl Sim {
         if let Some(prev) = self.tail.get(&(device, stream)) {
             deps.push(*prev);
         }
+        // PDL can finish a later wait kernel while an earlier trigger kernel
+        // is still running. `cudaFreeAsync` and other non-wait submits still
+        // wait for every preceding op on the stream (CUDA: all preceding work).
+        for (id, o) in &self.ops {
+            if o.device == device
+                && o.stream == stream
+                && !o.done
+                && !o.cancelled
+                && !deps.contains(id)
+            {
+                deps.push(*id);
+            }
+        }
         if let Some(joins) = self.graph_joins.get(&(device, stream)) {
             for id in joins {
                 if !deps.contains(id) {

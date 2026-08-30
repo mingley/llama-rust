@@ -5563,6 +5563,168 @@ fn sim_replay_cooperative_serializes_seq_streams() {
 }
 
 #[test]
+fn sim_replay_pdl_overlaps_same_stream_gemms() {
+    let t = Trace {
+        events: vec![ev_seq(0, 0, 0, &[0, 1]), ev_seq(0, 1, 0, &[0, 1])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("slow gemm profile");
+    let serial = SimCfg {
+        compute_slots: 2,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let pdl = SimCfg {
+        pdl: true,
+        ..serial
+    };
+    let off = sim_replay_cfg(&t, profile.clone(), serial).expect("serial");
+    let on = sim_replay_cfg(&t, profile, pdl).expect("pdl");
+    assert_eq!(off.hits, on.hits);
+    assert_eq!(off.misses, on.misses);
+    assert!(
+        on.sim_ns < off.sim_ns,
+        "PDL must overlap consecutive same-stream GEMMs; pdl={} serial={}",
+        on.sim_ns,
+        off.sim_ns
+    );
+}
+
+#[test]
+fn sim_replay_pdl_cuda_graphs_overlaps_same_stream() {
+    let t = Trace {
+        events: vec![ev_seq(0, 0, 0, &[0, 1]), ev_seq(0, 1, 0, &[0, 1])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("slow gemm profile");
+    let serial = SimCfg {
+        compute_slots: 2,
+        cuda_graphs: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let pdl = SimCfg {
+        pdl: true,
+        ..serial
+    };
+    let off = sim_replay_cfg(&t, profile.clone(), serial).expect("serial");
+    let on = sim_replay_cfg(&t, profile, pdl).expect("pdl");
+    assert_eq!(off.hits, on.hits);
+    assert_eq!(off.misses, on.misses);
+    assert!(
+        on.sim_ns < off.sim_ns,
+        "PDL graph leaves must overlap consecutive same-stream GEMMs; pdl={} serial={}",
+        on.sim_ns,
+        off.sim_ns
+    );
+}
+
+#[test]
+fn sim_replay_pdl_cuda_graphs_evicts_without_lease() {
+    let t = load_checked_in_trace("tiny-qwen3moe-2layer.jsonl");
+    let row = sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            compute_slots: 2,
+            cuda_graphs: true,
+            pdl: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    )
+    .expect("pdl graphs");
+    assert_eq!(row.misses, 36);
+    assert!(row.graph_launches > 0);
+}
+
+#[test]
+fn sim_replay_pdl_rejects_cooperative() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            pdl: true,
+            cooperative: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    )
+    .expect_err("conflict");
+    assert!(
+        err.to_string().contains("choose one of pdl, cooperative"),
+        "{err}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_pdl_overlaps_same_stream_gemms() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("slow gemm profile");
+    let run = |pdl: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            profile.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                compute_slots: 2,
+                pdl,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let k0 = ExpertKey::new(0, 0);
+        let k1 = ExpertKey::new(0, 1);
+        let _w0 = gpu.acquire(k0).expect("warm 0");
+        gpu.release(k0);
+        let _w1 = gpu.acquire(k1).expect("warm 1");
+        gpu.release(k1);
+        let t0 = gpu.clock_ns().expect("drain");
+        let _a = gpu.acquire(k0).expect("hit 0");
+        gpu.release(k0);
+        let _b = gpu.acquire(k1).expect("hit 1");
+        gpu.release(k1);
+        gpu.score().expect("score").wall_ns.saturating_sub(t0)
+    };
+    let serial = run(false);
+    let overlap = run(true);
+    assert!(
+        overlap < serial,
+        "PDL must overlap consecutive same-stream store GEMMs; pdl={overlap} serial={serial}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_pdl_rejects_cooperative() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            pdl: true,
+            cooperative: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .err()
+    .expect("conflict");
+    assert!(
+        err.to_string().contains("choose one of pdl, cooperative"),
+        "{err}"
+    );
+}
+
+#[test]
 fn sim_replay_decode_sms_lengthens_compute_bound() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],

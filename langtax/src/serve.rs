@@ -22,7 +22,7 @@ use expertvm::{GpuFill, GpuStoreCfg, Prefetch};
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
@@ -66,6 +66,7 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --kv-bytes N      KV page bytes for `--kv-sim` (default: f32 K+V of one intern block)
       --decode-priority decode GEMMs on a higher-priority compute stream (`--expert-sim`; implies `--stream-priority`; ITL samples that stream)
       --cooperative     cudaLaunchCooperativeKernel for grouped GEMMs (`--expert-sim`; exclusive compute; no Hyper-Q overlap)
+      --pdl             programmatic dependent launch for consecutive same-stream GEMMs (`--expert-sim`; overlap needs `--compute-slots` >= 2; illegal with `--cooperative`)
       --multicast       cuMulticastCreate NVLS replica fanout (`--expert-sim`; implies `--vmm`; needs NVLink)
       --compute-slots N Hyper-Q occupancy (`--expert-sim`; `1` exclusive, `>=2` overlaps leftover prefill with decode on two streams; default profile `1`)
       --decode-sms N    decode-stream SM permille (`--expert-sim`; `1..=1000`; leftover prefill gets the remainder; implies `--decode-priority`; default full chip)
@@ -92,13 +93,15 @@ leftover prefill while any live sequence is already decoding. `--slo-reject` /
 the same SimulatedGpuStore knobs as `gguf_gemv engine`. `--host-func` /
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--shareable` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` / `--seq-streams` /
-`--kv-sim` / `--kv-bytes` / `--decode-priority` / `--cooperative` / `--multicast` /
+`--kv-sim` / `--kv-bytes` / `--decode-priority` / `--cooperative` / `--pdl` / `--multicast` /
 `--compute-slots` / `--decode-sms` match
 `GpuStoreCfg`. `--kv-sim` bills interned KV on the same clock as expert H2D
 (distinct from `expertvm kv`; default off). `--decode-priority` ITL samples
 the decode compute stream so leftover prefill does not inflate it.
 `--compute-slots N` (`N>=2`, with `--decode-priority`) lets leftover prefill
-and decode GEMMs overlap at full issue rate. `--cooperative` is
+and decode GEMMs overlap at full issue rate. `--pdl` lets consecutive
+same-stream expert GEMMs overlap after the previous kernel's programmatic
+trigger (needs `--compute-slots` >= 2; illegal with `--cooperative`). `--cooperative` is
 `cudaLaunchCooperativeKernel`: those GEMMs occupy every Hyper-Q slot, so
 leftover prefill cannot overlap even with `--compute-slots 2`. `--multicast`
 is Hopper NVLS replica fanout (`cuMulticastCreate`; implies `--vmm`; needs
@@ -303,6 +306,9 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
     if n.plan.gpu.graph_build && n.plan.gpu.graph_piecewise {
         return usage_err("choose one of --graph-build, --graph-piecewise");
     }
+    if n.plan.gpu.pdl && n.plan.gpu.cooperative {
+        return usage_err("choose one of --pdl, --cooperative");
+    }
     if n.plan.gpu.shareable
         && (n.plan.gpu.sync_alloc || n.plan.gpu.mapped || n.plan.gpu.managed || n.plan.gpu.vmm)
     {
@@ -321,7 +327,7 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -1702,6 +1708,21 @@ mod tests {
         assert!(err.contains("--cooperative requires --expert-sim"), "{err}");
         let a = run(&["m.gguf", "--engine", "--expert-sim", "--cooperative"]);
         assert!(a.gpu_cfg.cooperative);
+        let err = parse_serve_args(["m.gguf", "--pdl"]).unwrap_err();
+        assert!(err.contains("--pdl requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--pdl"]).unwrap_err();
+        assert!(err.contains("--pdl requires --expert-sim"), "{err}");
+        let a = run(&["m.gguf", "--engine", "--expert-sim", "--pdl"]);
+        assert!(a.gpu_cfg.pdl);
+        let err = parse_serve_args([
+            "m.gguf",
+            "--engine",
+            "--expert-sim",
+            "--pdl",
+            "--cooperative",
+        ])
+        .unwrap_err();
+        assert!(err.contains("choose one of --pdl, --cooperative"), "{err}");
         let err = parse_serve_args(["m.gguf", "--multicast"]).unwrap_err();
         assert!(err.contains("--multicast requires --engine"), "{err}");
         let err = parse_serve_args(["m.gguf", "--engine", "--multicast"]).unwrap_err();

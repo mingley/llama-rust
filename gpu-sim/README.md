@@ -457,7 +457,9 @@ compute contends). `stream_copy_attributes` is `cudaStreamCopyAttributes`
 launch (`ProgrammaticLaunch`). `kernel_pdl` is `cudaLaunchKernelEx` PDL:
 a wait kernel may start after the previous same-stream kernel's trigger
 (`pdl_trigger_permille`) instead of its completion. Overlap needs
-`compute_slots >= 2`. Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
+`compute_slots >= 2`. A later `cudaFreeAsync` on that stream still waits
+for the overlapped primary (all preceding work). `expertvm sim --pdl` / `gguf_gemv engine --expert-sim --pdl`
+launch grouped expert GEMMs that way. Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
 instantiate schedules those node priorities instead of the launch stream. `set_created_streams_priority` assigns created streams
 their id. `set_stream_sm_permille` is a green-context SM fraction
 (compute-bound kernels scale; memory-bound keep full HBM; default unset is

@@ -58,6 +58,8 @@ pub(crate) struct GpuCli {
     pub decode_priority: bool,
     /// `cudaLaunchCooperativeKernel` (`GpuStoreCfg::cooperative`).
     pub cooperative: bool,
+    /// Same-stream PDL wait+trigger (`GpuStoreCfg::pdl`).
+    pub pdl: bool,
     /// Hopper NVLS replica fanout (`GpuStoreCfg::multicast`). Implies vmm.
     pub multicast: bool,
     /// Hyper-Q occupancy (`GpuStoreCfg::compute_slots`). `0` keeps the profile.
@@ -105,6 +107,7 @@ impl GpuCli {
             "--kv-sim" => &mut self.kv_sim,
             "--decode-priority" => &mut self.decode_priority,
             "--cooperative" => &mut self.cooperative,
+            "--pdl" => &mut self.pdl,
             "--multicast" => &mut self.multicast,
             _ => return Ok(false),
         };
@@ -204,6 +207,7 @@ impl GpuCli {
             (self.kv_sim, "--kv-sim"),
             (self.decode_priority, "--decode-priority"),
             (self.cooperative, "--cooperative"),
+            (self.pdl, "--pdl"),
             (self.multicast, "--multicast"),
             (self.vmm_page_set, "--vmm-page"),
             (self.compute_slots_set, "--compute-slots"),
@@ -413,6 +417,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         kv_sim: gpu.kv_sim,
         decode_priority: gpu.decode_priority,
         cooperative: gpu.cooperative,
+        pdl: gpu.pdl,
         multicast: gpu.multicast,
         compute_slots: gpu.compute_slots,
         decode_sm_permille: gpu.decode_sm_permille,

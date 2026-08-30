@@ -699,7 +699,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--shareable`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-piecewise`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--cooperative`, and `--multicast`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-piecewise`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--cooperative`, `--pdl`, and `--multicast`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--shareable` is POSIX-FD mempool IPC
   (implies `--mempool`; illegal with `--sync-alloc` / mapped / managed / vmm). `--mapped` is `cudaHostAllocMapped`
@@ -1509,6 +1509,13 @@ model, do not celebrate the sim.
     `compute_slots >= 2` (example H100 stays exclusive). CopyAttributes
     copies PDL. Decode identity stays `kernel` (both flags false).
     `gpu-profile capture` is still refused.
+
+113. [x] expertvm / Engine `--pdl`: grouped expert GEMMs launch with
+    `kernel_pdl` wait+trigger (graph leaves `graph_kernel_node_set_pdl`)
+    so consecutive same-stream kernels may overlap after the previous
+    trigger when `compute_slots >= 2`. Illegal with `--cooperative`.
+    `cudaFreeAsync` still waits for the overlapped primary. Decode identity
+    stays `kernel`. `gpu-profile capture` is still refused.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
