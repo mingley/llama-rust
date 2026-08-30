@@ -135,6 +135,11 @@
 //! mailbox address are not modeled. Device-resident and mapped-host are legal;
 //! remote AccessedBy maps are not. Capture records a batch-mem-op node.
 //! [`Sim::set_stream_blocking`] is `cudaStreamCreate` vs `cudaStreamNonBlocking`.
+//! [`Sim::stream_create_with_flags`] / [`stream_create_with_priority`](Sim::stream_create_with_priority)
+//! are `cudaStreamCreateWithFlags` / `CreateWithPriority`
+//! ([`StreamCreateFlags::NON_BLOCKING`]; unknown bits Invalid). Capture cannot
+//! include them. Typed [`set_stream_blocking`](Sim::set_stream_blocking) /
+//! [`set_stream_priority`](Sim::set_stream_priority) stay.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
@@ -201,7 +206,9 @@
 //! [`graph_mem_trim`](Sim::graph_mem_trim) are `cudaDeviceGetGraphMemAttribute` /
 //! `SetGraphMemAttribute` / `GraphMemTrim` (graph-memory pool only; unused
 //! reserved bytes return on trim). [`graph_pool`](Sim::graph_pool) is that pool.
-//! [`Sim::set_stream_priority`] is `cudaStreamCreateWithPriority`.
+//! [`Sim::set_stream_priority`] is the priority-only helper;
+//! [`stream_create_with_priority`](Sim::stream_create_with_priority) is
+//! `cudaStreamCreateWithPriority` (flags + priority).
 //! [`stream_copy_attributes`](Sim::stream_copy_attributes) is
 //! `cudaStreamCopyAttributes` (priority, SM permille, mem-sync domain/map,
 //! synchronization policy, and NVLink-util-centric scheduling).
@@ -533,7 +540,8 @@ pub use ops::{
     MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, Place,
     PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
     ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
-    StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -7943,6 +7951,48 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(sim.stream_get_flags(d, StreamId(1)).unwrap(), 1);
         assert_eq!(sim.device_get_properties(d).unwrap().async_engine_count, 2);
+    }
+
+    #[test]
+    fn stream_create_with_flags_and_priority() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(1);
+        sim.stream_create_with_flags(d, s, StreamCreateFlags::DEFAULT)
+            .unwrap();
+        assert!(sim.stream_is_blocking(d, s));
+        assert_eq!(sim.stream_get_flags(d, s).unwrap(), 0);
+        sim.stream_create_with_flags(d, s, StreamCreateFlags::NON_BLOCKING)
+            .unwrap();
+        assert!(!sim.stream_is_blocking(d, s));
+        assert_eq!(sim.stream_get_flags(d, s).unwrap(), 1);
+        sim.stream_create_with_priority(d, s, StreamCreateFlags::DEFAULT, 7)
+            .unwrap();
+        assert!(sim.stream_is_blocking(d, s));
+        assert_eq!(sim.stream_get_flags(d, s).unwrap(), 0);
+        assert_eq!(sim.stream_get_priority(d, s).unwrap(), 7);
+        match sim.stream_create_with_flags(d, s, 2) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("stream create flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_create_with_flags(d, StreamId::NULL, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("null stream"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.stream_create_with_flags(d, s, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_create_with_priority(d, s, 0, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.set_stream_blocking(d, s, true).unwrap();
+        assert!(sim.stream_is_blocking(d, s));
     }
 
     #[test]

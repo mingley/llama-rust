@@ -21,7 +21,8 @@ use crate::ops::{
     MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, Place,
     PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
     ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
-    StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -1287,6 +1288,45 @@ impl Sim {
             let _was = self.blocking.remove(&(device, stream));
         }
         Ok(())
+    }
+
+    /// `cudaStreamCreateWithFlags`. Capture cannot include it.
+    ///
+    /// Known bit: [`StreamCreateFlags::NON_BLOCKING`]. Other bits are Invalid
+    /// `"stream create flags"`. [`StreamId::NULL`] is Invalid (use
+    /// [`Self::set_legacy_null_stream`]). Typed [`Self::set_stream_blocking`]
+    /// stays. Created streams still default to non-blocking until this is
+    /// called with [`StreamCreateFlags::DEFAULT`].
+    pub fn stream_create_with_flags(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture stream create")?;
+        const KNOWN: u32 = StreamCreateFlags::NON_BLOCKING;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "stream create flags",
+            });
+        }
+        self.set_stream_blocking(device, stream, flags & StreamCreateFlags::NON_BLOCKING == 0)
+    }
+
+    /// `cudaStreamCreateWithPriority`. Capture cannot include it.
+    ///
+    /// Flags are [`Self::stream_create_with_flags`]. Priority is
+    /// [`Self::set_stream_priority`]. This VM does not cap the range
+    /// (`cudaDeviceGetStreamPriorityRange` is not modeled).
+    pub fn stream_create_with_priority(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        flags: u32,
+        priority: i32,
+    ) -> Result<(), SimError> {
+        self.stream_create_with_flags(device, stream, flags)?;
+        self.set_stream_priority(device, stream, priority)
     }
 
     /// Whether `stream` is a blocking `cudaStreamCreate` stream on `device`.

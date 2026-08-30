@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaStreamCreateWithFlags` / `CreateWithPriority`
+
+`Sim::stream_create_with_flags` / `stream_create_with_priority` take
+`StreamCreateFlags`. Known bit: NonBlocking. Unknown bits are Invalid.
+NULL is Invalid. Capture cannot include them. Typed `set_stream_blocking`
+/ `set_stream_priority` stay. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaIpcGetEventHandle` / `OpenEventHandle`
 
 `Sim::ipc_get_event` / `ipc_open_event` export an Interprocess event and
@@ -2227,7 +2234,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 194 (`cudaIpcGetEventHandle`).
+Next code change is PLAN systems depth after item 195 (`cudaStreamCreateWithFlags`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

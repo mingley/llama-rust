@@ -577,12 +577,15 @@ kernel/memset/memcpy stores are not modeled; no compute/copy occupancy).
 writes in that vector).
 `set_stream_blocking` is `cudaStreamCreate` vs `cudaStreamNonBlocking`
 (NULL serializes with blocking streams; created streams default to
-non-blocking). `set_legacy_null_stream` is the CUDA legacy default
+non-blocking). `stream_create_with_flags` / `stream_create_with_priority`
+are the CUDA flag-word twins (`StreamCreateFlags::NON_BLOCKING`; unknown
+bits Invalid; capture refused). `set_legacy_null_stream` is the CUDA legacy default
 stream (NULL serializes with every stream).
 `host_pin_bytes` caps page-locked host (`cudaMallocHost` / `cudaHostRegister`);
 overflow is `PinOom`. Example default is unlimited.
-`set_stream_priority` is `cudaStreamCreateWithPriority` (higher first when
-compute contends). `KernelAttrs::priority` is `cudaLaunchAttributePriority`
+`set_stream_priority` is the priority-only helper.
+`stream_create_with_priority` is `cudaStreamCreateWithPriority` (flags +
+priority; higher first when compute contends). `KernelAttrs::priority` is `cudaLaunchAttributePriority`
 (`None` inherits the stream; `Some` overrides that kernel only).
 `stream_copy_attributes` is `cudaStreamCopyAttributes`
 (priority, SM permille, mem-sync domain/map, and synchronization policy).

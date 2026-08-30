@@ -2213,7 +2213,16 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-195. [ ] Next numbered PLAN item after 194 is the next `gpu-sim` / Engine /
+195. [x] `cudaStreamCreateWithFlags` / `cudaStreamCreateWithPriority`:
+    `Sim::stream_create_with_flags` / `stream_create_with_priority` take
+    [`StreamCreateFlags`]. Known bit is [`StreamCreateFlags::NON_BLOCKING`].
+    Unknown bits are Invalid `"stream create flags"`. NULL is Invalid
+    (use `set_legacy_null_stream`). Capture cannot include them. Typed
+    `set_stream_blocking` / `set_stream_priority` stay. This VM does not
+    cap the priority range. Decode identity unchanged. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+196. [ ] Next numbered PLAN item after 195 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

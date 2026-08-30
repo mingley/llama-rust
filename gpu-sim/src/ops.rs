@@ -1721,6 +1721,16 @@ impl EventWaitFlags {
     pub const EXTERNAL: u32 = 1;
 }
 
+/// `cudaStreamCreateWithFlags` bits for [`crate::Sim::stream_create_with_flags`].
+pub struct StreamCreateFlags;
+
+impl StreamCreateFlags {
+    /// `cudaStreamDefault` (blocking; serializes with NULL).
+    pub const DEFAULT: u32 = 0;
+    /// `cudaStreamNonBlocking`.
+    pub const NON_BLOCKING: u32 = 1;
+}
+
 /// `cudaEventCreateWithFlags` bits for [`crate::Sim::create_event_with_flags`].
 ///
 /// `cudaEventBlockingSync` is not modeled (Invalid). [`INTERPROCESS`] requires
