@@ -5,6 +5,11 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — stream wait-value NOR
+
+`DeviceAttr::CanUseStreamWaitValueNor` is always 1 (`WaitValueCmp::Nor`).
+Query; capture-legal. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — 64-bit stream memops
 
 `DeviceAttr::CanUse64BitStreamMemOps` is always 1 (`wait_value64` /
