@@ -18016,10 +18016,16 @@ fn memcpy_batch_attrs(
             why: "memcpy batch attrs",
         });
     }
-    if attrs_idxs.windows(2).any(|w| w[1] <= w[0]) {
-        return Err(SimError::Invalid {
-            why: "memcpy batch attrs",
-        });
+    let mut prev_idx: Option<usize> = None;
+    for &idx in attrs_idxs {
+        if let Some(p) = prev_idx {
+            if idx <= p {
+                return Err(SimError::Invalid {
+                    why: "memcpy batch attrs",
+                });
+            }
+        }
+        prev_idx = Some(idx);
     }
     let Some(&last) = attrs_idxs.last() else {
         return Err(SimError::Invalid {
@@ -18039,7 +18045,10 @@ fn memcpy_batch_attrs(
             .ok_or(SimError::Invalid {
                 why: "memcpy batch attrs",
             })?;
-        out.push(attrs[k]);
+        let attr = attrs.get(k).copied().ok_or(SimError::Invalid {
+            why: "memcpy batch attrs",
+        })?;
+        out.push(attr);
     }
     Ok(out)
 }
