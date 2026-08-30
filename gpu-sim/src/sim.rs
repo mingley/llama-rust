@@ -10975,6 +10975,40 @@ impl Sim {
         )
     }
 
+    /// `cudaMemcpyPeerAsync`. Same replica copy as [`Self::memcpy_device_to_device`].
+    ///
+    /// Capture records a memcpy node. [`Self::memcpy_peer`] is the
+    /// host-synchronous `cudaMemcpyPeer`.
+    pub fn memcpy_peer_async(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_device_to_device(src, dst, alloc, bytes, stream)
+    }
+
+    /// `cudaMemcpyPeer`. Host-synchronous; capture cannot include it.
+    pub fn memcpy_peer(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memcpy",
+            });
+        }
+        let id = self.memcpy_peer_async(src, dst, alloc, bytes, stream)?;
+        self.synchronize_stream(src, stream)?;
+        Ok(id)
+    }
+
     /// Enqueue a kernel on whole allocations. Reads/writes are leased until it completes.
     ///
     /// A VMM VA must be fully mapped ([`Self::is_resident`]) or peer-readable

@@ -206,6 +206,10 @@
 //! [`enable_peer_with_flags`](Sim::enable_peer_with_flags) is
 //! `cudaDeviceEnablePeerAccess` ([`PeerAccessFlags::DEFAULT`] only; typed
 //! [`enable_peer`](Sim::enable_peer) stays; capture is legal).
+//! [`memcpy_peer_async`](Sim::memcpy_peer_async) / [`memcpy_peer`](Sim::memcpy_peer)
+//! are `cudaMemcpyPeerAsync` / `cudaMemcpyPeer` (hot replica; typed
+//! [`memcpy_device_to_device`](Sim::memcpy_device_to_device) stays; Peer is
+//! host-synchronous and capture-illegal).
 //! [`Sim::set_limit`] / [`get_limit`](Sim::get_limit) are `cudaDeviceSetLimit` /
 //! `GetLimit`. [`DeviceLimit::PersistingL2CacheSize`] wraps
 //! [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size).
@@ -3906,6 +3910,32 @@ mod tests {
         }
         let _g = sim.end_capture().unwrap();
         sim.enable_peer(d0, d1).unwrap();
+    }
+
+    #[test]
+    fn memcpy_peer_is_host_sync_cuda_memcpy_peer() {
+        let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let a = sim.alloc(d0, bytes, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d0, a, bytes, s));
+        sim.synchronize().unwrap();
+        let t0 = sim.clock_ns();
+        let id = sim.memcpy_peer(d0, d1, a, bytes, s).unwrap();
+        assert!(sim.stream_is_idle(d0, s).unwrap());
+        assert!(sim.is_resident(a, d1).unwrap());
+        assert!(sim.clock_ns() > t0);
+        assert_eq!(sim.op_stream(id), Some(s));
+        sim.begin_capture(d0, s).unwrap();
+        match sim.memcpy_peer(d0, d1, a, bytes, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        enq(sim.memcpy_peer_async(d0, d1, a, bytes, s));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 1);
     }
 
     #[test]

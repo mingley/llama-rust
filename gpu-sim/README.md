@@ -66,6 +66,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemcpyAsync` of pageable host memory is host-synchronous | `pageable_permille` (bounce + DMA) |
 | `cudaMemcpyAsync` of pinned / device memory is stream-ordered | PCIe / NVLink bandwidth |
 | `cudaMemcpy` (`memcpy_sync`) waits that stream | pinned `memcpy` does not |
+| `cudaMemcpyPeer` (`memcpy_peer`) waits that stream; `memcpy_peer_async` is stream-ordered | NVLink / PCIe P2P |
 | `synchronize_device` waits one GPU | other GPUs keep running |
 | stream order, event dependencies | memcpy microseconds |
 | residency: a kernel may only read **device**, **mapped-host**, VMM peer `va_set_access` (reads) / `va_set_access_write` (read/write), or mempool peer `pool_set_access` (read/write) allocations; managed first-touch at kernel start | PCIe / NVLink / HBM bandwidth |
@@ -446,7 +447,9 @@ are `cuStreamWriteValue64` / `WaitValue64` (mailbox; no occupancy).
 `batch_mem_op` is `cuStreamBatchMemOp`. Peer D2D requires a
 topology link **and** directed `enable_peer` (seeded on for every GPU↔GPU
 link; `disable_peer` → `PeerDisabled`). `enable_peer_with_flags` is
-`cudaDeviceEnablePeerAccess` (`flags` must be 0). [`StreamId::NULL`] is the CUDA null
+`cudaDeviceEnablePeerAccess` (`flags` must be 0). `memcpy_peer` /
+`memcpy_peer_async` are `cudaMemcpyPeer` / `cudaMemcpyPeerAsync` (replica
+copy; Peer is host-synchronous). [`StreamId::NULL`] is the CUDA null
 stream; `set_legacy_null_stream(true)` serializes it with every other stream
 on that device (CUDA legacy default stream). Off by default is the
 per-thread default: NULL serializes only with `set_stream_blocking`
