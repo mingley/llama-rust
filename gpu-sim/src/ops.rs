@@ -458,6 +458,42 @@ pub struct KernelAttrs {
     pub mem_sync_domain: Option<MemSyncDomain>,
     /// `cudaLaunchAttributeMemSyncDomainMap`. `None` inherits the stream.
     pub mem_sync_map: Option<MemSyncDomainMap>,
+    /// `cudaLaunchAttributeClusterDimension`. `None` is a non-cluster launch.
+    pub cluster: Option<ClusterDim>,
+}
+
+/// `cudaLaunchAttributeClusterDimension` (`clusterDim`).
+///
+/// All three dimensions must be `>= 1`. Product is the cluster block count and
+/// must be `<= GpuProfile::max_blocks_per_cluster` (Hopper portable default 8).
+/// Decode identity stays [`None`] (not a cluster). Capture records the attribute.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClusterDim {
+    /// Blocks in X.
+    pub x: u32,
+    /// Blocks in Y.
+    pub y: u32,
+    /// Blocks in Z.
+    pub z: u32,
+}
+
+impl ClusterDim {
+    /// One-dimensional cluster of `n` blocks (`{n,1,1}`).
+    #[must_use]
+    pub fn x(n: u32) -> Self {
+        Self { x: n, y: 1, z: 1 }
+    }
+
+    /// Cluster block count. `None` if a dimension is 0 or the product overflows.
+    #[must_use]
+    pub fn blocks(self) -> Option<u32> {
+        if self.x == 0 || self.y == 0 || self.z == 0 {
+            return None;
+        }
+        self.x
+            .checked_mul(self.y)
+            .and_then(|p| p.checked_mul(self.z))
+    }
 }
 
 /// `cudaStreamAttachMemAsync` flags (`cudaMemAttachGlobal` / `Host` / `Single`).

@@ -114,6 +114,7 @@ warp scheduler, L1, …   ← do not model
 | programmatic dependent launch: wait kernel starts after the previous same-stream trigger (`pdl_trigger_permille`) | overlap needs `compute_slots >= 2` |
 | `cudaLaunchAttributeAccessPolicyWindow` persisting hits (`kernel_access_policy`) | HBM discount after `set_persisting_l2_cache_size`; CUDA default size is 0 |
 | `cudaLaunchAttributeMemSyncDomain` fence isolation (`kernel_with` / allreduce Remote) | `same_domain_fence_permille` of leftover same-domain traffic; tax default 0 |
+| `cudaLaunchAttributeClusterDimension` (`kernel_with` cluster) | occupies `min(blocks, compute_slots)`; Hopper portable max 8 |
 | `set_stream_sm_permille` is a green-context SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host) | HBM write + launch overhead |
 | peer D2D needs topology + `enable_peer` | link bandwidth |
@@ -474,7 +475,9 @@ enables the persist limit and attaches a window to expert GEMMs.
 `kernel_with` also accepts `cudaLaunchAttributeMemSyncDomain` /
 `MemSyncDomainMap`: a completing kernel waits `same_domain_fence_permille` of
 leftover same-physical-domain traffic (default tax 0). Remote (and allreduce)
-isolates communication. Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
+isolates communication. `ClusterDim` is `cudaLaunchAttributeClusterDimension`:
+the launch occupies `min(blocks, compute_slots)` Hyper-Q slots (Hopper portable
+max 8). Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
 instantiate schedules those node priorities instead of the launch stream. `set_created_streams_priority` assigns created streams
 their id. `set_stream_sm_permille` is a green-context SM fraction
 (compute-bound kernels scale; memory-bound keep full HBM; default unset is

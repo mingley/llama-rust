@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaLaunchAttributeClusterDimension`
+
+`kernel_with` / graph SetAttribute launch a Hopper thread-block cluster.
+The product of `{x,y,z}` occupies `min(blocks, compute_slots)` Hyper-Q slots.
+Hopper portable max is 8 (`max_blocks_per_cluster`). Zero dims and oversize
+clusters are Invalid. Device-launch graphs allow it. Decode identity stays
+`cudaLaunchKernel` (no cluster). `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaLaunchAttributeMemSyncDomain`
 
 `kernel_with` / stream and graph SetAttribute select Default vs Remote and a

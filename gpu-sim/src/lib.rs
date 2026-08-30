@@ -160,8 +160,8 @@
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
 //! are `cudaGraphKernelNodeGetAttribute` / `SetAttribute` / `CopyAttributes`
 //! for priority, programmatic dependent launch ([`ProgrammaticLaunch`]),
-//! programmatic event ([`ProgrammaticEvent`]), access-policy window, and
-//! mem-sync domain/map.
+//! programmatic event ([`ProgrammaticEvent`]), access-policy window,
+//! mem-sync domain/map, and cluster dimension.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
 //! may start after the previous same-stream kernel's trigger
 //! (`GpuProfile::pdl_trigger_permille`) instead of its completion. Overlap
@@ -178,8 +178,10 @@
 //! `GpuProfile::same_domain_fence_permille` of leftover traffic from another
 //! same-physical-domain kernel. [`MemSyncDomain::Remote`] (and allreduce, which
 //! tags Remote like NCCL) isolates that traffic. Example H100
-//! `mem_sync_domain_count` is 4; tax default is 0 (identity). Decode identity
-//! stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
+//! `mem_sync_domain_count` is 4; tax default is 0 (identity).
+//! [`ClusterDim`] (`cudaLaunchAttributeClusterDimension`) occupies
+//! `min(blocks, compute_slots)` Hyper-Q slots (Hopper portable max 8).
+//! Decode identity stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
 //! [`graph_exec_kernel_node_set_priority`](Sim::graph_exec_kernel_node_set_priority)
 //! are the exec-snapshot attributes. [`Sim::upload_graph`] is
 //! `cudaGraphUpload` (host-sync; first launch after instantiate calls it).
@@ -341,7 +343,7 @@ pub use ids::{
     OpId, PoolId, PtrExportId, ShareableHandleId, StreamId, UserObjectId,
 };
 pub use ops::{
-    AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, DType, GpuOp,
+    AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim, DType, GpuOp,
     GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
     GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind,
     GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeParams,
@@ -4649,6 +4651,139 @@ mod tests {
         assert!(
             kd * 4 < ad,
             "NCCL-style Remote allreduce must not tax default GEMM; k={kd} ar={ad}"
+        );
+    }
+
+    #[test]
+    fn cluster_kernel_occupies_min_blocks_compute_slots() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |cluster: Option<ClusterDim>| {
+            let mut sim = Sim::new(h100().with_compute_slots(2));
+            let d = DeviceId(0);
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+            enq(sim.kernel_with(
+                d,
+                kind.clone(),
+                &[a],
+                &[a],
+                StreamId(2),
+                KernelAttrs {
+                    cluster,
+                    ..KernelAttrs::default()
+                },
+            ));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let overlap = run(None);
+        let clustered = run(Some(ClusterDim::x(2)));
+        assert!(
+            overlap < clustered,
+            "cluster of 2 must occupy both Hyper-Q slots; overlap={overlap} cluster={clustered}"
+        );
+    }
+
+    #[test]
+    fn cluster_rejects_zero_dim_and_over_max() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        let err = sim
+            .kernel_with(
+                d,
+                KernelKind::other(8, 8),
+                &[a],
+                &[a],
+                s,
+                KernelAttrs {
+                    cluster: Some(ClusterDim { x: 2, y: 0, z: 1 }),
+                    ..KernelAttrs::default()
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("cluster dimension"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim
+            .kernel_with(
+                d,
+                KernelKind::other(8, 8),
+                &[a],
+                &[a],
+                s,
+                KernelAttrs {
+                    cluster: Some(ClusterDim::x(9)),
+                    ..KernelAttrs::default()
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("cluster size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mut one = h100();
+        one.gpus.first_mut().expect("gpu0").max_blocks_per_cluster = 1;
+        let mut sim = Sim::new(one);
+        let a = sim.malloc(d, 8).unwrap();
+        enq(sim.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            KernelAttrs {
+                cluster: Some(ClusterDim::x(1)),
+                ..KernelAttrs::default()
+            },
+        ));
+        let err = sim
+            .kernel_with(
+                d,
+                KernelKind::other(8, 8),
+                &[a],
+                &[a],
+                s,
+                KernelAttrs {
+                    cluster: Some(ClusterDim::x(2)),
+                    ..KernelAttrs::default()
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("cluster size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_cluster_copies_and_device_launch_allows() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        assert!(sim.graph_kernel_node_get_cluster(g, 0).unwrap().is_none());
+        let dim = ClusterDim::x(4);
+        sim.graph_kernel_node_set_cluster(g, 0, Some(dim)).unwrap();
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_copy_attributes(h, 0, g, 0).unwrap();
+        assert_eq!(sim.graph_kernel_node_get_cluster(h, 0).unwrap(), Some(dim));
+        let exec = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .expect("device-launch allows cluster");
+        assert_eq!(
+            sim.graph_exec_kernel_node_get_cluster(exec, 0).unwrap(),
+            Some(dim)
         );
     }
 

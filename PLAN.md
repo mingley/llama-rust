@@ -1556,6 +1556,15 @@ model, do not celebrate the sim.
     stays `kernel` (Default, identity map, tax 0). `gpu-profile capture` is
     still refused.
 
+118. [x] `cudaLaunchAttributeClusterDimension`: `kernel_with` /
+    `graph_kernel_node_set_cluster` launch a Hopper thread-block cluster.
+    Product of `{x,y,z}` occupies `min(blocks, compute_slots)` Hyper-Q slots
+    so leftover kernels cannot overlap a cluster that fills the cap. Zero
+    dims and product `> GpuProfile::max_blocks_per_cluster` (example H100
+    portable 8) are Invalid. Device-launch graphs allow it. CopyAttributes
+    copies it. Decode identity stays `kernel` (no cluster). `gpu-profile
+    capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.
