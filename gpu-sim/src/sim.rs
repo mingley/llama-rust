@@ -12,18 +12,19 @@ use crate::ids::{
 use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
     ClusterSchedulingPolicy, DeviceAttr, DeviceLimit, DeviceP2pAttr, DeviceProperties,
-    EventCreateFlags, EventRecordFlags, EventWaitFlags, FuncAttr, FuncAttributes, GpuOp as Kind,
-    GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo,
-    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags,
-    HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind,
-    KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags,
-    MemAdvise, MemAllocationType, MemAttach, MemAttachFlags, MemHandleType, MemPoolAttr,
-    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
-    MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttributes,
-    PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
-    SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo,
-    StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    EventCreateFlags, EventRecordFlags, EventWaitFlags, FlushGpuDirectRdmaScope,
+    FlushGpuDirectRdmaTarget, FuncAttr, FuncAttributes, GpuOp as Kind, GraphAddNode,
+    GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
+    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
+    GraphUserObjectFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags,
+    KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
+    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAllocationType, MemAttach, MemAttachFlags,
+    MemHandleType, MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain,
+    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
+    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -136,6 +137,12 @@ struct Pool {
     destroyed: bool,
     /// `cudaMemPoolProps::maxSize`. `0` is unlimited.
     max_size: u64,
+    /// `cudaMemPoolReuseFollowEventDependencies`. Default on.
+    reuse_follow_event: bool,
+    /// `cudaMemPoolReuseAllowOpportunistic`. Default on; off skips cache reuse.
+    reuse_opportunistic: bool,
+    /// `cudaMemPoolReuseAllowInternalDependencies`. Default on.
+    reuse_internal: bool,
 }
 
 impl Pool {
@@ -151,6 +158,9 @@ impl Pool {
             graph: false,
             destroyed: false,
             max_size: 0,
+            reuse_follow_event: true,
+            reuse_opportunistic: true,
+            reuse_internal: true,
         }
     }
 }
@@ -8839,27 +8849,30 @@ impl Sim {
     /// `cudaMemPoolGetAttribute`. Query; legal during capture.
     ///
     /// [`MemPoolAttr::UsedMemCurrent`] is [`Self::pool_live`]. Reserved is live
-    /// plus [`Self::pool_cached`]. An imported pool reports the exporter.
-    /// The graph-memory pool is Invalid (use [`Self::graph_mem_get`]).
+    /// plus [`Self::pool_cached`]. Reuse flags default to 1. An imported pool
+    /// reports the exporter. The graph-memory pool is Invalid (use
+    /// [`Self::graph_mem_get`]).
     pub fn pool_get_attribute(&self, pool: PoolId, attr: MemPoolAttr) -> Result<u64, SimError> {
         self.refuse_graph_pool(pool)?;
         self.refuse_destroyed_pool(pool)?;
+        let p = self.pool_ref(self.pool_root(pool)?)?;
         match attr {
-            MemPoolAttr::ReleaseThreshold => {
-                Ok(self.pool_ref(self.pool_root(pool)?)?.release_threshold)
-            }
-            MemPoolAttr::UsedMemCurrent => self.pool_live(pool),
-            MemPoolAttr::ReservedMemCurrent => Ok(self
-                .pool_live(pool)?
-                .saturating_add(self.pool_cached(pool)?)),
+            MemPoolAttr::ReleaseThreshold => Ok(p.release_threshold),
+            MemPoolAttr::UsedMemCurrent => Ok(p.live),
+            MemPoolAttr::ReservedMemCurrent => Ok(p.live.saturating_add(p.cached)),
+            MemPoolAttr::ReuseFollowEventDependencies => Ok(u64::from(p.reuse_follow_event)),
+            MemPoolAttr::ReuseAllowOpportunistic => Ok(u64::from(p.reuse_opportunistic)),
+            MemPoolAttr::ReuseAllowInternalDependencies => Ok(u64::from(p.reuse_internal)),
         }
     }
 
     /// `cudaMemPoolSetAttribute`. Host-synchronous. Capture cannot include it.
     ///
-    /// Only [`MemPoolAttr::ReleaseThreshold`] is writable (same as
-    /// [`Self::set_pool_release_threshold`]). Used/Reserved are read-only.
-    /// The graph-memory pool is Invalid (use [`Self::graph_mem_set`]).
+    /// [`MemPoolAttr::ReleaseThreshold`] is [`Self::set_pool_release_threshold`].
+    /// Reuse flags are 0 or 1 (other values Invalid `"pool reuse attr"`). Only
+    /// [`MemPoolAttr::ReuseAllowOpportunistic`] `0` changes acquire (skip cache
+    /// reuse). Used/Reserved are read-only. The graph-memory pool is Invalid
+    /// (use [`Self::graph_mem_set`]).
     pub fn pool_set_attribute(
         &mut self,
         pool: PoolId,
@@ -8876,7 +8889,44 @@ impl Sim {
                     why: "read-only pool attr",
                 })
             }
+            MemPoolAttr::ReuseFollowEventDependencies
+            | MemPoolAttr::ReuseAllowOpportunistic
+            | MemPoolAttr::ReuseAllowInternalDependencies => {
+                self.set_pool_reuse_attr(pool, attr, value)
+            }
         }
+    }
+
+    fn set_pool_reuse_attr(
+        &mut self,
+        pool: PoolId,
+        attr: MemPoolAttr,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let root = self.pool_root(pool)?;
+        self.refuse_graph_pool(root)?;
+        self.refuse_destroyed_pool(root)?;
+        if value > 1 {
+            return Err(SimError::Invalid {
+                why: "pool reuse attr",
+            });
+        }
+        let on = value == 1;
+        let p = self.pool_mut(root)?;
+        match attr {
+            MemPoolAttr::ReuseFollowEventDependencies => p.reuse_follow_event = on,
+            MemPoolAttr::ReuseAllowOpportunistic => p.reuse_opportunistic = on,
+            MemPoolAttr::ReuseAllowInternalDependencies => p.reuse_internal = on,
+            MemPoolAttr::ReleaseThreshold
+            | MemPoolAttr::UsedMemCurrent
+            | MemPoolAttr::ReservedMemCurrent => {
+                return Err(SimError::Invalid {
+                    why: "pool reuse attr",
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Set every device's current mempool release threshold (`cudaDeviceGetMemPool`).
@@ -11800,10 +11850,14 @@ impl Sim {
             | DeviceAttr::IpcEventSupport
             | DeviceAttr::CanUseHostPointerForRegisteredMem => 1,
             DeviceAttr::MemoryPoolSupportedHandleTypes => MemHandleType::POSIX_FILE_DESCRIPTOR,
-            DeviceAttr::GpuDirectRdmaSupported => {
+            DeviceAttr::GpuDirectRdmaSupported | DeviceAttr::CanFlushRemoteWrites => {
                 u64::from(self.profile.gpu_direct_rdma_supported(device))
             }
-            DeviceAttr::HostRegisterReadOnlySupported | DeviceAttr::PageableMemoryAccess => 0,
+            DeviceAttr::HostRegisterReadOnlySupported
+            | DeviceAttr::PageableMemoryAccess
+            | DeviceAttr::ConcurrentManagedAccess
+            | DeviceAttr::DirectManagedMemAccessFromHost
+            | DeviceAttr::PageableMemoryAccessUsesHostPageTables => 0,
             DeviceAttr::StreamPrioritiesSupported | DeviceAttr::UnifiedAddressing => 1,
             DeviceAttr::GpuOverlap => u64::from(gpu.copy_engines > 0),
         })
@@ -11841,6 +11895,10 @@ impl Sim {
             stream_priorities_supported: true,
             gpu_overlap: gpu.copy_engines > 0,
             unified_addressing: true,
+            concurrent_managed_access: false,
+            direct_managed_mem_access_from_host: false,
+            pageable_memory_access_uses_host_page_tables: false,
+            can_flush_remote_writes: self.profile.gpu_direct_rdma_supported(device),
         })
     }
 
@@ -11890,6 +11948,43 @@ impl Sim {
             DeviceP2pAttr::PerformanceRank => self.profile.p2p_performance_rank(src, dst),
             DeviceP2pAttr::NativeAtomicSupported | DeviceP2pAttr::CudaArrayAccessFromDevice => 0,
         })
+    }
+
+    /// `cudaDeviceFlushGPUDirectRDMAWrites`. Host-synchronous 1 ns barrier.
+    ///
+    /// Capture cannot include it. Devices without a GPU↔GPU
+    /// [`crate::LinkKind::Rdma`] link are Invalid `"gpu direct rdma"`. Target
+    /// must be [`FlushGpuDirectRdmaTarget::CURRENT_DEVICE`]; scope
+    /// [`FlushGpuDirectRdmaScope::TO_OWNER`] or
+    /// [`FlushGpuDirectRdmaScope::TO_ALL_DEVICES`]. No
+    /// write-visibility model; write-ordering options are not modeled.
+    pub fn flush_gpu_direct_rdma_writes(
+        &mut self,
+        device: DeviceId,
+        target: u32,
+        scope: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture flush rdma")?;
+        let _gpu = self.profile.gpu(device)?;
+        if !self.profile.gpu_direct_rdma_supported(device) {
+            return Err(SimError::Invalid {
+                why: "gpu direct rdma",
+            });
+        }
+        if target != FlushGpuDirectRdmaTarget::CURRENT_DEVICE {
+            return Err(SimError::Invalid {
+                why: "flush rdma target",
+            });
+        }
+        if scope != FlushGpuDirectRdmaScope::TO_OWNER
+            && scope != FlushGpuDirectRdmaScope::TO_ALL_DEVICES
+        {
+            return Err(SimError::Invalid {
+                why: "flush rdma scope",
+            });
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
     }
 
     /// `cudaMallocPitch`: aligned 2D allocation. Returns `(ptr, pitch)`.
@@ -13639,33 +13734,45 @@ impl Sim {
 
     fn pool_acquire(&mut self, pool: PoolId, bytes: u64) -> Result<u64, SimError> {
         let pool = self.pool_root(pool)?;
-        let (device, cached, live, max_size) = {
+        let (device, cached, live, max_size, opportunistic) = {
             let p = self.pool_ref(pool)?;
-            (p.device, p.cached, p.live, p.max_size)
+            (
+                p.device,
+                p.cached,
+                p.live,
+                p.max_size,
+                p.reuse_opportunistic,
+            )
         };
         let first = self.profile.gpu(device)?.alloc_overhead_ns;
         let reuse = self.profile.gpu(device)?.pool_reuse_ns;
-        if cached >= bytes {
+        if opportunistic && cached >= bytes {
             let p = self.pool_mut(pool)?;
             p.cached = cached.saturating_sub(bytes);
             p.live = p.live.saturating_add(bytes);
             return Ok(reuse.max(1));
         }
+        let extra = if opportunistic {
+            bytes.saturating_sub(cached)
+        } else {
+            bytes
+        };
         if max_size > 0 {
-            let new_reserved = live.saturating_add(bytes);
+            let reserved = live.saturating_add(cached);
+            let new_reserved = reserved.saturating_add(extra);
             if new_reserved > max_size {
-                let reserved = live.saturating_add(cached);
                 return Err(SimError::Oom {
                     device,
-                    need: bytes.saturating_sub(cached),
+                    need: extra,
                     free: max_size.saturating_sub(reserved),
                 });
             }
         }
-        let extra = bytes.saturating_sub(cached);
         self.reserve_hbm(device, extra)?;
         let p = self.pool_mut(pool)?;
-        p.cached = 0;
+        if opportunistic {
+            p.cached = 0;
+        }
         p.live = p.live.saturating_add(bytes);
         Ok(first.max(1))
     }

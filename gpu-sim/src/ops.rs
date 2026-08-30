@@ -626,6 +626,16 @@ pub enum DeviceAttr {
     GpuOverlap,
     /// `cudaDevAttrUnifiedAddressing` (always 1; this VM has one pointer space).
     UnifiedAddressing,
+    /// `cudaDevAttrConcurrentManagedAccess` (always 0; host cannot touch managed
+    /// while a kernel runs).
+    ConcurrentManagedAccess,
+    /// `cudaDevAttrDirectManagedMemAccessFromHost` (always 0).
+    DirectManagedMemAccessFromHost,
+    /// `cudaDevAttrPageableMemoryAccessUsesHostPageTables` (always 0; pageable
+    /// is bounce-buffer).
+    PageableMemoryAccessUsesHostPageTables,
+    /// `cudaDevAttrCanFlushRemoteWrites` ([`Self::GpuDirectRdmaSupported`]).
+    CanFlushRemoteWrites,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -695,6 +705,14 @@ pub struct DeviceProperties {
     pub gpu_overlap: bool,
     /// `cudaDevAttrUnifiedAddressing` (one pointer space).
     pub unified_addressing: bool,
+    /// `cudaDevAttrConcurrentManagedAccess` (host cannot touch managed during a kernel).
+    pub concurrent_managed_access: bool,
+    /// `cudaDevAttrDirectManagedMemAccessFromHost`.
+    pub direct_managed_mem_access_from_host: bool,
+    /// `cudaDevAttrPageableMemoryAccessUsesHostPageTables` (pageable is bounce-buffer).
+    pub pageable_memory_access_uses_host_page_tables: bool,
+    /// `cudaDevAttrCanFlushRemoteWrites` (a GPU↔GPU [`crate::LinkKind::Rdma`] link).
+    pub can_flush_remote_writes: bool,
 }
 
 /// `cudaFuncAttribute` for [`crate::Sim::func_set_attribute`] / `GetAttribute`.
@@ -1854,6 +1872,26 @@ impl StreamCreateFlags {
     pub const NON_BLOCKING: u32 = 1;
 }
 
+/// `cudaDeviceFlushGPUDirectRDMAWrites` target for
+/// [`crate::Sim::flush_gpu_direct_rdma_writes`].
+pub struct FlushGpuDirectRdmaTarget;
+
+impl FlushGpuDirectRdmaTarget {
+    /// `cudaFlushGPUDirectRDMAWritesTargetCurrentDevice`.
+    pub const CURRENT_DEVICE: u32 = 0;
+}
+
+/// `cudaDeviceFlushGPUDirectRDMAWrites` scope for
+/// [`crate::Sim::flush_gpu_direct_rdma_writes`].
+pub struct FlushGpuDirectRdmaScope;
+
+impl FlushGpuDirectRdmaScope {
+    /// `cudaFlushGPUDirectRDMAWritesToOwner`.
+    pub const TO_OWNER: u32 = 100;
+    /// `cudaFlushGPUDirectRDMAWritesToAllDevices`.
+    pub const TO_ALL_DEVICES: u32 = 200;
+}
+
 /// `cudaDeviceEnablePeerAccess` flags for [`crate::Sim::enable_peer_with_flags`].
 ///
 /// CUDA requires 0. Unknown bits are Invalid `"peer access flags"`.
@@ -2114,6 +2152,15 @@ pub enum MemPoolAttr {
     UsedMemCurrent,
     /// Live plus unused cached (`cudaMemPoolAttrReservedMemCurrent`).
     ReservedMemCurrent,
+    /// `cudaMemPoolReuseFollowEventDependencies`. Default 1. This VM's reuse is
+    /// completion-based; 0 does not insert event waits.
+    ReuseFollowEventDependencies,
+    /// `cudaMemPoolReuseAllowOpportunistic`. Default 1. `0` skips cache reuse
+    /// (OS alloc; unused cached bytes stay reserved).
+    ReuseAllowOpportunistic,
+    /// `cudaMemPoolReuseAllowInternalDependencies`. Default 1. This VM does not
+    /// insert extra sync; 0 does not change opportunistic reuse.
+    ReuseAllowInternalDependencies,
 }
 
 /// `cudaMemAccessFlags` for [`crate::Sim::pool_get_access`].

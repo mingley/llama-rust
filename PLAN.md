@@ -2379,7 +2379,38 @@ model, do not celebrate the sim.
     identity unchanged. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-216. [ ] Next numbered PLAN item after 215 is the next `gpu-sim` / Engine /
+216. [x] `cudaMemPoolAttr` reuse flags:
+    [`ReuseFollowEventDependencies`] / [`ReuseAllowOpportunistic`] /
+    [`ReuseAllowInternalDependencies`]. Default 1. Get/Set via
+    [`pool_get_attribute`] / [`pool_set_attribute`] (0 or 1; other values
+    Invalid `"pool reuse attr"`). Graph pool Invalid. Imported pools use
+    the exporter. Set capture-refused; Get is legal during capture. Only
+    `ReuseAllowOpportunistic=0` is mechanical: [`pool_acquire`] skips cache
+    reuse (OS alloc; unused cached bytes stay reserved). FollowEvent and
+    Internal are stored but do not insert event waits or extra sync.
+    Decode identity unchanged. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+217. [x] `cudaDevAttrConcurrentManagedAccess` /
+    `cudaDevAttrDirectManagedMemAccessFromHost` /
+    `cudaDevAttrPageableMemoryAccessUsesHostPageTables`: always 0.
+    `cudaDevAttrCanFlushRemoteWrites` is
+    [`gpu_direct_rdma_supported`] (same as GpuDirectRdmaSupported). Query;
+    legal during capture. Decode identity unchanged. `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+218. [x] `cudaDeviceFlushGPUDirectRDMAWrites`:
+    `Sim::flush_gpu_direct_rdma_writes`. Target
+    [`FlushGpuDirectRdmaTarget::CURRENT_DEVICE`]; scope
+    [`FlushGpuDirectRdmaScope::TO_OWNER`] / `TO_ALL_DEVICES`. Unsupported
+    devices Invalid `"gpu direct rdma"`. Bad target/scope Invalid
+    `"flush rdma target"` / `"flush rdma scope"`. Capture refused
+    `"cannot capture flush rdma"`. 1 ns host-sync barrier; no
+    write-visibility model. Write-ordering options are not modeled.
+    Decode identity unchanged. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+219. [ ] Next numbered PLAN item after 218 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

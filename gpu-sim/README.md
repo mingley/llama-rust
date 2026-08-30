@@ -32,6 +32,7 @@ warp scheduler, L1, …   ← do not model
 | HBM capacity, alloc/free, OOM | kernel microseconds |
 | `cudaMallocAsync` (`alloc`) is stream-ordered; pointer not usable until the stream catches up | `alloc_overhead_ns` (first touch) / `pool_reuse_ns` (cached) |
 | `cudaMallocAsync` from a pool reuses cached bytes; `cudaMemGetInfo` still counts them used until `pool_trim_to` | `pool_reuse_ns` |
+| `ReuseAllowOpportunistic=0` skips that cache reuse (OS alloc; cache stays reserved) | `alloc_overhead_ns` |
 | `cudaMemPoolSetAccess` (`pool_set_access`) ReadWrite on a peer; dest HBM stays 0; writes allowed | interconnect, not local HBM |
 | `cudaMalloc` (`malloc`) device-syncs that GPU, then the pointer is usable; it cannot consume another pool's cache | `alloc_overhead_ns` (charged at the call) |
 | `cudaIpcGetMemHandle` / `ipc_open` / `ipc_close` share physicals (`ipc_open_with_flags` lazy-peer is a no-op) | `alloc_overhead_ns` (export/import) |
@@ -116,14 +117,14 @@ warp scheduler, L1, …   ← do not model
 | `host_get_device_pointer` of mapped host returns the same id (`flags` must be 0) | `cudaHostGetDevicePointer` |
 | `host_get_flags` is 0 default / `HostAllocFlags::MAPPED` | `cudaHostGetFlags` |
 | `alloc_host_with_flags` / `host_register_with_flags` (MAPPED known; Portable Invalid) | `cudaHostAlloc` / `cudaHostRegister` |
-| `device_get_attribute` exposes modeled SKU caps (incl. GPUDirect RDMA from `LinkKind::Rdma`) | `cudaDeviceGetAttribute` |
+| `device_get_attribute` exposes modeled SKU caps (incl. GPUDirect RDMA / CanFlushRemoteWrites from `LinkKind::Rdma`; ConcurrentManaged / DirectManagedHost / PageableHostPageTables always 0) | `cudaDeviceGetAttribute` |
 | `device_get_properties` wraps the same SKU caps | `cudaGetDeviceProperties` |
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
 | `stream_get_priority` is the create priority | `cudaStreamGetPriority` |
 | `stream_get_id` is unique per device/stream | `cudaStreamGetId` |
 | `stream_get_attribute` / `stream_set_attribute` wrap existing stream state | `cudaStreamGetAttribute` / `SetAttribute` |
 | `device_count` is the profile GPU count | `cudaGetDeviceCount` |
-| `device_can_access_peer` / `device_get_p2p_attribute` are topology links (`AccessSupported`, `PerformanceRank` from GPU↔GPU `bps`; NativeAtomic / CudaArrayAccess always 0) | `cudaDeviceCanAccessPeer` / `GetP2PAttribute` |
+| `flush_gpu_direct_rdma_writes` is a 1 ns host-sync barrier on RDMA SKUs (no write-visibility) | 1 ns |
 | `set_limit` / `get_limit` wrap persisting L2 plus stack / printf / heap / CDP / L2 fetch | `cudaDeviceSetLimit` / `GetLimit` |
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128) | exact |
 | `malloc_pitch` charges `pitch * height`; pitch is `align_up(width, 512)` | `cudaMallocPitch` |
@@ -487,10 +488,14 @@ stream is `Ok(false)`; the clock does not advance).
 `ClusterLaunch` is `max_blocks_per_cluster > 0`. `HostRegisterSupported` /
 `IpcEventSupport` / `CanUseHostPointerForRegisteredMem` are always 1.
 `MemoryPoolSupportedHandleTypes` is POSIX-FD (`MemHandleType`).
-`GpuDirectRdmaSupported` is a GPU↔GPU RDMA link (flush/write-ordering
-are not modeled). `HostRegisterReadOnlySupported` /
-`PageableMemoryAccess` are always 0 (ReadOnly host register is Invalid;
-pageable is bounce-buffer). `StreamPrioritiesSupported` /
+`GpuDirectRdmaSupported` / `CanFlushRemoteWrites` are a GPU↔GPU RDMA link.
+`flush_gpu_direct_rdma_writes` is `cudaDeviceFlushGPUDirectRDMAWrites` (1 ns
+host-sync barrier; capture refused; write-ordering options are not modeled).
+`HostRegisterReadOnlySupported` /
+`PageableMemoryAccess` / `ConcurrentManagedAccess` /
+`DirectManagedMemAccessFromHost` /
+`PageableMemoryAccessUsesHostPageTables` are always 0 (ReadOnly host register is Invalid;
+pageable is bounce-buffer; host cannot touch managed while a kernel runs). `StreamPrioritiesSupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
 (no SM count or clock). `func_get_attributes` is `cudaFuncGetAttributes`
@@ -530,7 +535,10 @@ completes). `create_pool` / `create_pool_with_props` / `alloc_from_pool` /
 location, and `max_size` (`0` unlimited; otherwise reserved cannot grow
 past it). Typed `create_pool` / `create_shareable_pool` stay.
 `MemPoolAttr` is ReleaseThreshold / UsedMemCurrent / ReservedMemCurrent
-(no invented ordinary-pool high-water; graph mem stays `GraphMemAttr`).
+plus reuse flags (default 1). Only `ReuseAllowOpportunistic=0` skips
+cache reuse (OS alloc; unused cached bytes stay reserved). FollowEvent /
+Internal do not insert event waits or extra sync. No invented ordinary-pool
+high-water; graph mem stays `GraphMemAttr`.
 `u64::MAX` holds unused bytes so `malloc` can OOM
 until trim. Destroying a user pool (`destroy_pool` / `cudaMemPoolDestroy`)
 returns unused cache to the OS; outstanding allocs stay valid; the default

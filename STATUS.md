@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — MemPool reuse attrs, managed/flush DeviceAttr, RDMA flush
+
+`MemPoolAttr` reuse flags default to 1. Only `ReuseAllowOpportunistic=0`
+skips cache reuse (OS alloc; cached bytes stay reserved). FollowEvent /
+Internal are stored and do not insert waits. ConcurrentManagedAccess /
+DirectManagedMemAccessFromHost / PageableMemoryAccessUsesHostPageTables
+are always 0. `CanFlushRemoteWrites` follows GPUDirect RDMA.
+`flush_gpu_direct_rdma_writes` is a 1 ns host-sync barrier (capture
+refused; no write-visibility). `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — Prefetch flags and P2P NativeAtomic/CudaArray = 0
 
 `prefetch_with_flags` requires `PrefetchFlags::DEFAULT` (`0`). Device dest
@@ -2363,7 +2373,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 215 (`prefetch_with_flags`).
+Next code change is PLAN systems depth after item 218 (`flush_gpu_direct_rdma_writes`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

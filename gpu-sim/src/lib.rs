@@ -67,7 +67,10 @@
 //! `cudaMemPoolTrimTo` / `cudaMemPoolGetAttribute` / `SetAttribute` /
 //! `cudaMemPoolDestroy`.
 //! [`MemPoolAttr`] is ReleaseThreshold / UsedMemCurrent / ReservedMemCurrent
-//! (no invented pool high-water; graph mem stays [`GraphMemAttr`]). Unused
+//! plus reuse flags (default 1; only [`MemPoolAttr::ReuseAllowOpportunistic`]
+//! `0` skips cache reuse — OS alloc, unused cached bytes stay reserved).
+//! FollowEvent / Internal do not insert event waits or extra sync (no invented
+//! pool high-water; graph mem stays [`GraphMemAttr`]). Unused
 //! pool bytes stay in `cudaMemGetInfo` used until trim when the release
 //! threshold is high (`u64::MAX`, vLLM-style). Destroying a user pool returns
 //! unused cache to the OS; outstanding allocs stay valid; the default pool
@@ -199,10 +202,17 @@
 //! [`CanUseHostPointerForRegisteredMem`](DeviceAttr::CanUseHostPointerForRegisteredMem)
 //! are always 1. [`DeviceAttr::MemoryPoolSupportedHandleTypes`] is
 //! [`MemHandleType::POSIX_FILE_DESCRIPTOR`]. [`DeviceAttr::GpuDirectRdmaSupported`]
-//! is a GPU↔GPU [`crate::LinkKind::Rdma`] link (flush/write-ordering are not
-//! modeled). [`DeviceAttr::HostRegisterReadOnlySupported`] /
-//! [`PageableMemoryAccess`](DeviceAttr::PageableMemoryAccess) are always 0
-//! (ReadOnly host register is Invalid; pageable is bounce-buffer).
+//! / [`CanFlushRemoteWrites`](DeviceAttr::CanFlushRemoteWrites) are a GPU↔GPU
+//! [`crate::LinkKind::Rdma`] link. [`Sim::flush_gpu_direct_rdma_writes`] is
+//! `cudaDeviceFlushGPUDirectRDMAWrites` (1 ns host-sync barrier; capture refused;
+//! write-ordering options are not modeled). [`DeviceAttr::HostRegisterReadOnlySupported`] /
+//! [`PageableMemoryAccess`](DeviceAttr::PageableMemoryAccess) /
+//! [`ConcurrentManagedAccess`](DeviceAttr::ConcurrentManagedAccess) /
+//! [`DirectManagedMemAccessFromHost`](DeviceAttr::DirectManagedMemAccessFromHost) /
+//! [`PageableMemoryAccessUsesHostPageTables`](DeviceAttr::PageableMemoryAccessUsesHostPageTables)
+//! are always 0
+//! (ReadOnly host register is Invalid; pageable is bounce-buffer; host cannot
+//! touch managed while a kernel runs).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -580,18 +590,19 @@ pub use ids::{
 pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp,
     ClusterDim, ClusterSchedulingPolicy, DType, DeviceAttr, DeviceLimit, DeviceP2pAttr,
-    DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags, FuncAttr, FuncAttributes,
-    GpuOp, GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo,
-    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags,
-    HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind,
-    KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags,
-    MemAdvise, MemAllocationType, MemAttach, MemAttachFlags, MemHandleType, MemPoolAttr,
-    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
-    MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttributes,
-    PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
-    SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo,
-    StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags, FlushGpuDirectRdmaScope,
+    FlushGpuDirectRdmaTarget, FuncAttr, FuncAttributes, GpuOp, GraphAddNode, GraphDebugDotFlags,
+    GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
+    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
+    GraphUserObjectFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags,
+    KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
+    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAllocationType, MemAttach, MemAttachFlags,
+    MemHandleType, MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain,
+    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
+    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -9428,17 +9439,25 @@ mod tests {
                 .unwrap(),
             0
         );
+        assert_eq!(
+            nv.device_get_attribute(DeviceId(0), DeviceAttr::CanFlushRemoteWrites)
+                .unwrap(),
+            0
+        );
         let rdma = Sim::new(HardwareProfile::example_2node_rdma());
         assert_eq!(
             rdma.device_get_attribute(DeviceId(0), DeviceAttr::GpuDirectRdmaSupported)
                 .unwrap(),
             1
         );
-        assert!(
-            rdma.device_get_properties(DeviceId(0))
-                .unwrap()
-                .gpu_direct_rdma_supported
+        assert_eq!(
+            rdma.device_get_attribute(DeviceId(0), DeviceAttr::CanFlushRemoteWrites)
+                .unwrap(),
+            1
         );
+        let rdma_props = rdma.device_get_properties(DeviceId(0)).unwrap();
+        assert!(rdma_props.gpu_direct_rdma_supported);
+        assert!(rdma_props.can_flush_remote_writes);
         let mut mixed = HardwareProfile::example_8xh100_nvlink();
         for l in &mut mixed.links {
             if l.connects(Some(DeviceId(0)), Some(DeviceId(1))) {
@@ -9466,6 +9485,79 @@ mod tests {
             1
         );
         let _g = mixed.end_capture().unwrap();
+    }
+
+    #[test]
+    fn flush_gpu_direct_rdma_writes_is_host_sync_barrier() {
+        let d = DeviceId(0);
+        let mut h100 = Sim::new(h100());
+        let hp = h100.device_get_properties(d).unwrap();
+        assert!(!hp.concurrent_managed_access);
+        assert!(!hp.direct_managed_mem_access_from_host);
+        assert!(!hp.pageable_memory_access_uses_host_page_tables);
+        assert!(!hp.can_flush_remote_writes);
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::ConcurrentManagedAccess)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::DirectManagedMemAccessFromHost)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::PageableMemoryAccessUsesHostPageTables)
+                .unwrap(),
+            0
+        );
+        match h100.flush_gpu_direct_rdma_writes(
+            d,
+            FlushGpuDirectRdmaTarget::CURRENT_DEVICE,
+            FlushGpuDirectRdmaScope::TO_OWNER,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("gpu direct rdma"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mut sim = Sim::new(HardwareProfile::example_2node_rdma());
+        let t0 = sim.clock_ns();
+        sim.flush_gpu_direct_rdma_writes(
+            d,
+            FlushGpuDirectRdmaTarget::CURRENT_DEVICE,
+            FlushGpuDirectRdmaScope::TO_OWNER,
+        )
+        .unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(1));
+        sim.flush_gpu_direct_rdma_writes(
+            d,
+            FlushGpuDirectRdmaTarget::CURRENT_DEVICE,
+            FlushGpuDirectRdmaScope::TO_ALL_DEVICES,
+        )
+        .unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(2));
+        match sim.flush_gpu_direct_rdma_writes(d, 1, FlushGpuDirectRdmaScope::TO_OWNER) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("flush rdma target"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.flush_gpu_direct_rdma_writes(d, FlushGpuDirectRdmaTarget::CURRENT_DEVICE, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("flush rdma scope"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::CanFlushRemoteWrites)
+                .unwrap(),
+            1
+        );
+        match sim.flush_gpu_direct_rdma_writes(
+            d,
+            FlushGpuDirectRdmaTarget::CURRENT_DEVICE,
+            FlushGpuDirectRdmaScope::TO_OWNER,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]
@@ -10294,6 +10386,125 @@ mod tests {
             "cached cudaMallocFromPoolAsync must beat first-touch; hold={} release={}",
             run(true),
             run(false)
+        );
+    }
+
+    #[test]
+    fn pool_reuse_attr_skips_opportunistic_cache() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let mut sim = Sim::new(h100());
+        let p = sim.default_pool(d).unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReuseFollowEventDependencies)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReuseAllowOpportunistic)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReuseAllowInternalDependencies)
+                .unwrap(),
+            1
+        );
+        sim.pool_set_attribute(p, MemPoolAttr::ReleaseThreshold, u64::MAX)
+            .unwrap();
+        let a = sim.alloc(d, bytes, s).unwrap();
+        sim.synchronize().unwrap();
+        sim.free(d, a, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        sim.pool_set_attribute(p, MemPoolAttr::ReuseFollowEventDependencies, 0)
+            .unwrap();
+        sim.pool_set_attribute(p, MemPoolAttr::ReuseAllowInternalDependencies, 0)
+            .unwrap();
+        let b = sim.alloc(d, bytes, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        sim.free(d, b, s).unwrap();
+        sim.synchronize().unwrap();
+        sim.pool_set_attribute(p, MemPoolAttr::ReuseAllowOpportunistic, 0)
+            .unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReuseAllowOpportunistic)
+                .unwrap(),
+            0
+        );
+        let c = sim.alloc(d, bytes, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes.saturating_mul(2));
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::UsedMemCurrent)
+                .unwrap(),
+            bytes
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReservedMemCurrent)
+                .unwrap(),
+            bytes.saturating_mul(2)
+        );
+        match sim.pool_set_attribute(p, MemPoolAttr::ReuseAllowOpportunistic, 2) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pool reuse attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let gp = sim.graph_pool(d).unwrap();
+        match sim.pool_get_attribute(gp, MemPoolAttr::ReuseAllowOpportunistic) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph mem"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.free(d, c, s).unwrap();
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReuseAllowOpportunistic)
+                .unwrap(),
+            0
+        );
+        match sim.pool_set_attribute(p, MemPoolAttr::ReuseAllowOpportunistic, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        {
+            let mut capped = Sim::new(h100());
+            let q = capped
+                .create_pool_with_props(MemPoolProps {
+                    max_size: 4096,
+                    ..MemPoolProps::default()
+                })
+                .unwrap();
+            capped
+                .pool_set_attribute(q, MemPoolAttr::ReleaseThreshold, u64::MAX)
+                .unwrap();
+            let x = capped.alloc_from_pool(d, q, 4096, s).unwrap();
+            capped.synchronize().unwrap();
+            capped.free(d, x, s).unwrap();
+            capped.synchronize().unwrap();
+            capped
+                .pool_set_attribute(q, MemPoolAttr::ReuseAllowOpportunistic, 0)
+                .unwrap();
+            let _over = capped.alloc_from_pool(d, q, 4096, s).unwrap();
+            match capped.synchronize() {
+                Err(SimError::Oom { need, free, .. }) => {
+                    assert_eq!(need, 4096);
+                    assert_eq!(free, 0);
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        let sp = sim.create_shareable_pool(d).unwrap();
+        let h = sim.pool_export(sp).unwrap();
+        let imp = sim.pool_import(d, h).unwrap();
+        sim.pool_set_attribute(imp, MemPoolAttr::ReuseAllowOpportunistic, 0)
+            .unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(sp, MemPoolAttr::ReuseAllowOpportunistic)
+                .unwrap(),
+            0
         );
     }
 

@@ -318,7 +318,8 @@ impl HardwareProfile {
     /// `cudaDevAttrGPUDirectRDMASupported` for `device`.
     ///
     /// True when this profile has a GPU↔GPU [`LinkKind::Rdma`] incident on
-    /// `device`. Flush/write-ordering attrs are not modeled.
+    /// `device`. [`crate::Sim::flush_gpu_direct_rdma_writes`] is a 1 ns barrier;
+    /// write-ordering options are not modeled.
     #[must_use]
     pub fn gpu_direct_rdma_supported(&self, device: DeviceId) -> bool {
         self.links
