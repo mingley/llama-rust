@@ -1352,6 +1352,14 @@ model, do not celebrate the sim.
     on an instantiated exec. Decode identity stays default flags. Dual score
     still has no `$/M tokens`.
 
+97. [x] `cudaDeviceGetGraphMemAttribute`: `Sim::graph_mem_get` counts live
+    graph-mem allocs (`graph_add_alloc` / captured `cudaMallocAsync`), not
+    `malloc` / live `alloc`. Reserved equals used (those allocs charge
+    device HBM directly). `graph_mem_set` resets a High attr when `value` is
+    `0`. `graph_mem_trim` is host-sync and does not change `mem_info`.
+    Capture cannot include set/trim. Decode identity stays kernel-only
+    graphs. Dual score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

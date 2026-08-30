@@ -10,8 +10,9 @@ use crate::ids::{
     PoolId, PtrExportId, ShareableHandleId, StreamId,
 };
 use crate::ops::{
-    CaptureDepOp, GpuOp as Kind, GraphInstantiateFlags, GraphNodeKind, KernelBuf, KernelKind,
-    KernelNodeParams, MemAdvise, MemAttach, MemcpyOp, Operation, Place, StreamCaptureInfo,
+    CaptureDepOp, GpuOp as Kind, GraphInstantiateFlags, GraphMemAttr, GraphNodeKind, KernelBuf,
+    KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp, Operation, Place,
+    StreamCaptureInfo,
 };
 use crate::profile::{ns_for_bytes, HardwareProfile, LinkKind};
 
@@ -193,6 +194,10 @@ struct GpuRt {
     /// In-flight kernels / memset / allreduce occupying Hyper-Q slots.
     compute: u8,
     copies: u8,
+    /// High-water of live graph-mem alloc bytes on this GPU.
+    graph_used_high: u64,
+    /// High-water of reserved graph-mem bytes (same as used in this model).
+    graph_reserved_high: u64,
 }
 
 struct Ev {
@@ -354,6 +359,8 @@ impl Sim {
                     used: 0,
                     compute: 0,
                     copies: 0,
+                    graph_used_high: 0,
+                    graph_reserved_high: 0,
                 },
             );
             let _dup = replaced.is_some();
@@ -474,6 +481,90 @@ impl Sim {
         let total = self.profile.gpu(device)?.hbm_bytes;
         let used = self.hbm_used(device)?;
         Ok((total.saturating_sub(used), total))
+    }
+
+    /// `cudaDeviceGetGraphMemAttribute` for live graph-mem allocs on `device`.
+    ///
+    /// Counts [`Self::graph_add_alloc`] / captured `cudaMallocAsync` ids, not
+    /// ordinary [`Self::malloc`] / [`Self::alloc`]. Reserved equals used:
+    /// those allocs charge device HBM directly. Capture is allowed (query).
+    pub fn graph_mem_get(&self, device: DeviceId, attr: GraphMemAttr) -> Result<u64, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        let used = self.graph_mem_used(device);
+        let rt = self.gpu_rt(device)?;
+        Ok(match attr {
+            GraphMemAttr::UsedMemCurrent | GraphMemAttr::ReservedMemCurrent => used,
+            GraphMemAttr::UsedMemHigh => rt.graph_used_high.max(used),
+            GraphMemAttr::ReservedMemHigh => rt.graph_reserved_high.max(used),
+        })
+    }
+
+    /// `cudaDeviceSetGraphMemAttribute`. Only the High attrs; `value` must be `0`
+    /// (reset that high-water to the current used/reserved). Host-synchronous.
+    /// Capture cannot include it.
+    pub fn graph_mem_set(
+        &mut self,
+        device: DeviceId,
+        attr: GraphMemAttr,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture graph mem set")?;
+        let _gpu = self.profile.gpu(device)?;
+        if value != 0 {
+            return Err(SimError::Invalid {
+                why: "graph mem attribute value",
+            });
+        }
+        let used = self.graph_mem_used(device);
+        let rt = self.gpu_rt_mut(device)?;
+        match attr {
+            GraphMemAttr::UsedMemHigh => rt.graph_used_high = used,
+            GraphMemAttr::ReservedMemHigh => rt.graph_reserved_high = used,
+            GraphMemAttr::UsedMemCurrent | GraphMemAttr::ReservedMemCurrent => {
+                return Err(SimError::Invalid {
+                    why: "graph mem attribute",
+                });
+            }
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaDeviceGraphMemTrim`. Host-synchronous. Capture cannot include it.
+    ///
+    /// No unused reserved graph mem in this model (reserved equals used), so
+    /// [`Self::mem_info`] does not change.
+    pub fn graph_mem_trim(&mut self, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture graph mem trim")?;
+        let _gpu = self.profile.gpu(device)?;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    fn graph_mem_used(&self, device: DeviceId) -> u64 {
+        let mut n = 0u64;
+        for ids in self.graph_allocs.values() {
+            for id in ids {
+                if let Some(a) = self.allocs.get(id) {
+                    if a.live && a.devices.contains(&device) {
+                        n = n.saturating_add(a.bytes);
+                    }
+                }
+            }
+        }
+        n
+    }
+
+    fn is_graph_alloc(&self, id: AllocId) -> bool {
+        self.graph_allocs.values().any(|v| v.contains(&id))
+    }
+
+    fn bump_graph_mem_high(&mut self, device: DeviceId) -> Result<(), SimError> {
+        let used = self.graph_mem_used(device);
+        let rt = self.gpu_rt_mut(device)?;
+        rt.graph_used_high = rt.graph_used_high.max(used);
+        rt.graph_reserved_high = rt.graph_reserved_high.max(used);
+        Ok(())
     }
 
     /// Whether `alloc` currently has a copy on `device`.
@@ -7752,8 +7843,23 @@ impl Sim {
             op.done = true;
             op.done_ns = Some(self.clock);
         }
+        self.bump_graph_mem_from_op(id)?;
         self.continue_while(id)?;
         Ok(())
+    }
+
+    fn bump_graph_mem_from_op(&mut self, id: OpId) -> Result<(), SimError> {
+        let Some(op) = self.ops.get(&id) else {
+            return Ok(());
+        };
+        let alloc = match &op.kind {
+            Kind::Alloc { id, .. } | Kind::Free { id } => *id,
+            _ => return Ok(()),
+        };
+        if !self.is_graph_alloc(alloc) {
+            return Ok(());
+        }
+        self.bump_graph_mem_high(op.device)
     }
 
     fn continue_while(&mut self, id: OpId) -> Result<(), SimError> {

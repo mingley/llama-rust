@@ -108,6 +108,10 @@
 //! [`Sim::query_event`] is `cudaEventQuery` (no wait).
 //! [`Sim::query_stream`] is `cudaStreamQuery` (no wait).
 //! [`Sim::mem_info`] is `cudaMemGetInfo` `(free, total)`.
+//! [`graph_mem_get`](Sim::graph_mem_get) / [`graph_mem_set`](Sim::graph_mem_set) /
+//! [`graph_mem_trim`](Sim::graph_mem_trim) are `cudaDeviceGetGraphMemAttribute` /
+//! `SetGraphMemAttribute` / `GraphMemTrim` (graph allocs only; reserved equals
+//! used).
 //! [`Sim::set_stream_priority`] is `cudaStreamCreateWithPriority`.
 //! [`Sim::set_created_streams_priority`] assigns created streams their id.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; first
@@ -234,8 +238,9 @@ pub use ids::{
     OpId, PoolId, PtrExportId, ShareableHandleId, StreamId,
 };
 pub use ops::{
-    CaptureDepOp, DType, GpuOp, GraphInstantiateFlags, GraphNodeKind, KernelBuf, KernelKind,
-    KernelNodeParams, MemAdvise, MemAttach, MemcpyOp, Operation, Place, StreamCaptureInfo,
+    CaptureDepOp, DType, GpuOp, GraphInstantiateFlags, GraphMemAttr, GraphNodeKind, KernelBuf,
+    KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp, Operation, Place,
+    StreamCaptureInfo,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -1029,6 +1034,77 @@ mod tests {
         sim.destroy_graph(live).unwrap();
         assert_eq!(sim.hbm_used(d).unwrap(), 0);
         assert!(!sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn graph_mem_attr_counts_graph_allocs_not_malloc() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let host = sim.malloc(d, 8192).unwrap();
+        assert_eq!(
+            sim.graph_mem_get(d, GraphMemAttr::UsedMemCurrent).unwrap(),
+            0
+        );
+        assert!(sim.hbm_used(d).unwrap() >= 8192);
+        sim.begin_capture(d, s).unwrap();
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let g = sim.end_capture().unwrap();
+        sim.instantiate_graph(g).unwrap();
+        assert_eq!(
+            sim.graph_mem_get(d, GraphMemAttr::UsedMemCurrent).unwrap(),
+            0
+        );
+        let n = sim.launch_graph(g, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(
+            sim.graph_mem_get(d, GraphMemAttr::UsedMemCurrent).unwrap(),
+            4096
+        );
+        assert_eq!(
+            sim.graph_mem_get(d, GraphMemAttr::ReservedMemCurrent)
+                .unwrap(),
+            4096
+        );
+        assert_eq!(
+            sim.graph_mem_get(d, GraphMemAttr::UsedMemHigh).unwrap(),
+            4096
+        );
+        let (free_before, _) = sim.mem_info(d).unwrap();
+        sim.graph_mem_trim(d).unwrap();
+        let (free_after, _) = sim.mem_info(d).unwrap();
+        assert_eq!(free_before, free_after);
+        sim.graph_mem_set(d, GraphMemAttr::UsedMemHigh, 0).unwrap();
+        assert_eq!(
+            sim.graph_mem_get(d, GraphMemAttr::UsedMemHigh).unwrap(),
+            4096
+        );
+        let err = sim
+            .graph_mem_set(d, GraphMemAttr::UsedMemCurrent, 0)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("graph mem attribute"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        sim.destroy_graph(g).unwrap();
+        assert_eq!(
+            sim.graph_mem_get(d, GraphMemAttr::UsedMemCurrent).unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.graph_mem_get(d, GraphMemAttr::UsedMemHigh).unwrap(),
+            4096
+        );
+        sim.free_sync(host).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        let err = sim.graph_mem_trim(d).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
     }
 
     #[test]

@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaDeviceGetGraphMemAttribute`
+
+`Sim::graph_mem_get` counts live graph-mem allocs, not ordinary
+`malloc` / `alloc`. Reserved equals used. `graph_mem_set` resets a High
+attr at `0`. `graph_mem_trim` is host-sync and does not change
+`mem_info`. Decode identity stays kernel-only graphs. Dual score still
+has no `$/M tokens`.
+
 ## Shipped 2026-08-30 — `cudaGraphInstantiateWithFlags` / `GetFlags`
 
 `Sim::instantiate_graph_with_flags` is `cudaGraphInstantiateWithFlags`:

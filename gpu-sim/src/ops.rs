@@ -447,6 +447,21 @@ impl GraphInstantiateFlags {
     pub const USE_NODE_PRIORITY: u32 = 8;
 }
 
+/// `cudaGraphMemAttributeType` for [`crate::Sim::graph_mem_get`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GraphMemAttr {
+    /// Live graph-mem alloc bytes on the device (`UsedMemCurrent`).
+    UsedMemCurrent,
+    /// High-water of [`Self::UsedMemCurrent`].
+    UsedMemHigh,
+    /// Reserved graph-mem bytes. Equal to used: graph allocs charge device HBM
+    /// (async pool / OS) directly, so [`crate::Sim::graph_mem_trim`] has nothing
+    /// unused to return.
+    ReservedMemCurrent,
+    /// High-water of [`Self::ReservedMemCurrent`].
+    ReservedMemHigh,
+}
+
 /// Active stream capture (`cudaStreamGetCaptureInfo`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StreamCaptureInfo {
