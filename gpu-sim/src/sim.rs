@@ -11677,6 +11677,7 @@ impl Sim {
             DeviceAttr::GpuDirectRdmaSupported => {
                 u64::from(self.profile.gpu_direct_rdma_supported(device))
             }
+            DeviceAttr::HostRegisterReadOnlySupported | DeviceAttr::PageableMemoryAccess => 0,
         })
     }
 
@@ -11707,6 +11708,8 @@ impl Sim {
             can_use_host_pointer_for_registered_mem: true,
             memory_pool_supported_handle_types: MemHandleType::POSIX_FILE_DESCRIPTOR,
             gpu_direct_rdma_supported: self.profile.gpu_direct_rdma_supported(device),
+            host_register_read_only_supported: false,
+            pageable_memory_access: false,
         })
     }
 

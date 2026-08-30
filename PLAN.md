@@ -2298,7 +2298,14 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-206. [ ] Next numbered PLAN item after 205 is the next `gpu-sim` / Engine /
+206. [x] `cudaDevAttrHostRegisterReadOnlySupported` /
+    `cudaDevAttrPageableMemoryAccess`: both 0. ReadOnly host register is
+    Invalid; pageable H2D/D2H is bounce-buffer (not coherent). Do not
+    report `PageableMemoryAccess=1`. Query; legal during capture. Decode
+    identity unchanged. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+207. [ ] Next numbered PLAN item after 206 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

@@ -184,7 +184,9 @@
 //! are always 1. [`DeviceAttr::MemoryPoolSupportedHandleTypes`] is
 //! [`MemHandleType::POSIX_FILE_DESCRIPTOR`]. [`DeviceAttr::GpuDirectRdmaSupported`]
 //! is a GPU↔GPU [`crate::LinkKind::Rdma`] link (flush/write-ordering are not
-//! modeled). [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
+//! modeled). [`DeviceAttr::HostRegisterReadOnlySupported`] /
+//! [`PageableMemoryAccess`](DeviceAttr::PageableMemoryAccess) are always 0
+//! (ReadOnly host register is Invalid; pageable is bounce-buffer). [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
 //! [`func_set_attribute`](Sim::func_set_attribute) /
 //! [`func_get_attribute`](Sim::func_get_attribute) are `cudaFuncSetAttribute` /
@@ -8150,6 +8152,18 @@ mod tests {
             0
         );
         assert!(!props.gpu_direct_rdma_supported);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::HostRegisterReadOnlySupported)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::PageableMemoryAccess)
+                .unwrap(),
+            0
+        );
+        assert!(!props.host_register_read_only_supported);
+        assert!(!props.pageable_memory_access);
         match sim.device_get_properties(DeviceId(1)) {
             Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
             other => panic!("{other:?}"),

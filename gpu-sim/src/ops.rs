@@ -615,6 +615,10 @@ pub enum DeviceAttr {
     MemoryPoolSupportedHandleTypes,
     /// `cudaDevAttrGPUDirectRDMASupported` (a [`crate::LinkKind::Rdma`] link).
     GpuDirectRdmaSupported,
+    /// `cudaDevAttrHostRegisterReadOnlySupported` (always 0; ReadOnly is Invalid).
+    HostRegisterReadOnlySupported,
+    /// `cudaDevAttrPageableMemoryAccess` (always 0; pageable is bounce-buffer).
+    PageableMemoryAccess,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -674,6 +678,10 @@ pub struct DeviceProperties {
     pub memory_pool_supported_handle_types: u64,
     /// `cudaDevAttrGPUDirectRDMASupported` (a GPU↔GPU [`crate::LinkKind::Rdma`] link).
     pub gpu_direct_rdma_supported: bool,
+    /// `cudaDevAttrHostRegisterReadOnlySupported` (ReadOnly host register is Invalid).
+    pub host_register_read_only_supported: bool,
+    /// `cudaDevAttrPageableMemoryAccess` (pageable H2D/D2H is bounce-buffer).
+    pub pageable_memory_access: bool,
 }
 
 /// `cudaFuncAttribute` for [`crate::Sim::func_set_attribute`] / `GetAttribute`.

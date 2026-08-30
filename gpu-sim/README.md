@@ -484,7 +484,9 @@ stream is `Ok(false)`; the clock does not advance).
 `IpcEventSupport` / `CanUseHostPointerForRegisteredMem` are always 1.
 `MemoryPoolSupportedHandleTypes` is POSIX-FD (`MemHandleType`).
 `GpuDirectRdmaSupported` is a GPU↔GPU RDMA link (flush/write-ordering
-are not modeled).
+are not modeled). `HostRegisterReadOnlySupported` /
+`PageableMemoryAccess` are always 0 (ReadOnly host register is Invalid;
+pageable is bounce-buffer).
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
 (no SM count or clock). `func_get_attributes` is `cudaFuncGetAttributes`
 of modeled per-device function attrs (`maxDynamicSharedSizeBytes` and

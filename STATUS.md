@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — HostRegisterReadOnly / PageableMemoryAccess are 0
+
+`DeviceAttr::HostRegisterReadOnlySupported` and `PageableMemoryAccess`
+are 0. ReadOnly host register is Invalid; pageable is bounce-buffer.
+Do not report coherent pageable access. Query; legal during capture.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaMemcpy2DPeer` / `cudaMemcpy2DPeerAsync`
 
 `memcpy_peer_2d` is host-synchronous; capture refused.
@@ -2301,7 +2308,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 205 (`cudaMemcpy2DPeer`).
+Next code change is PLAN systems depth after item 206 (`PageableMemoryAccess=0`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover
