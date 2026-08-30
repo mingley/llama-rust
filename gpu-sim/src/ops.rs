@@ -39,6 +39,14 @@ pub enum MemRangeAttr {
     AccessedBy,
     /// `cudaMemRangeAttributeLastPrefetchLocation`.
     LastPrefetchLocation,
+    /// `cudaMemRangeAttributePreferredLocationType`.
+    PreferredLocationType,
+    /// `cudaMemRangeAttributePreferredLocationId`.
+    PreferredLocationId,
+    /// `cudaMemRangeAttributeLastPrefetchLocationType`.
+    LastPrefetchLocationType,
+    /// `cudaMemRangeAttributeLastPrefetchLocationId`.
+    LastPrefetchLocationId,
 }
 
 /// Value of [`crate::Sim::mem_range_get_attribute`] /
@@ -55,6 +63,64 @@ pub enum MemRangeAttrValue {
     /// [`MemRangeAttr::LastPrefetchLocation`]. `None` is never prefetched
     /// (`cudaInvalidDeviceId`). [`Place::Host`] is `cudaCpuDeviceId`.
     LastPrefetchLocation(Option<Place>),
+    /// [`MemRangeAttr::PreferredLocationType`].
+    PreferredLocationType(MemLocationType),
+    /// [`MemRangeAttr::PreferredLocationId`]. Device ordinal when the type is
+    /// [`MemLocationType::Device`]; `0` (ignored) otherwise. Host NUMA is not
+    /// modeled.
+    PreferredLocationId(u32),
+    /// [`MemRangeAttr::LastPrefetchLocationType`].
+    LastPrefetchLocationType(MemLocationType),
+    /// [`MemRangeAttr::LastPrefetchLocationId`]. Device ordinal when the type is
+    /// [`MemLocationType::Device`]; `0` (ignored) otherwise.
+    LastPrefetchLocationId(u32),
+}
+
+/// `cudaMemLocationType` for [`MemRangeAttr::PreferredLocationType`] /
+/// [`LastPrefetchLocationType`](MemRangeAttr::LastPrefetchLocationType).
+///
+/// Host NUMA / NUMA-current / Invisible are not modeled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemLocationType {
+    /// `cudaMemLocationTypeInvalid` / `None` (`0`). Unset preferred location
+    /// or never prefetched.
+    Invalid,
+    /// `cudaMemLocationTypeDevice` (`1`).
+    Device,
+    /// `cudaMemLocationTypeHost` (`2`).
+    Host,
+}
+
+impl MemLocationType {
+    /// Map a stored [`Place`]. [`None`] is [`Self::Invalid`]. Host-pinned
+    /// prefetch dest is [`Self::Host`]. Host NUMA is not modeled.
+    #[must_use]
+    pub fn from_place(place: Option<Place>) -> Self {
+        match place {
+            None => Self::Invalid,
+            Some(Place::Device(_)) => Self::Device,
+            Some(Place::Host | Place::HostPinned) => Self::Host,
+        }
+    }
+
+    /// CUDA `int`: [`Self::Invalid`] `0`, [`Self::Device`] `1`, [`Self::Host`] `2`.
+    #[must_use]
+    pub fn to_cuda(self) -> i32 {
+        match self {
+            Self::Invalid => 0,
+            Self::Device => 1,
+            Self::Host => 2,
+        }
+    }
+
+    /// Device ordinal when `place` is [`Place::Device`]; `0` (ignored) otherwise.
+    #[must_use]
+    pub fn id_from_place(place: Option<Place>) -> u32 {
+        match place {
+            Some(Place::Device(d)) => u32::from(d.0),
+            _ => 0,
+        }
+    }
 }
 
 /// Element type for roofline math. Maps onto a peak-FLOP field in the profile.

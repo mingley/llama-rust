@@ -627,7 +627,9 @@ does not skip kernel first-touch). `mem_range_get_attribute` /
 `mem_range_get_attributes` are `cudaMemRangeGetAttribute` /
 `GetAttributes` of modeled per-alloc advice (`MemRangeAttr`;
 not per byte range). Last-prefetch is the dest of `prefetch` /
-`prefetch_host`. Query; legal during
+`prefetch_host`. Preferred/last-prefetch location type (`0` Invalid /
+`1` Device / `2` Host) and id (device ordinal, else `0`) wrap that
+`Place`. Host NUMA is not modeled. Query; legal during
 capture. `prefetch` / `prefetch_host` / `prefetch_with_flags` are
 `cudaMemPrefetchAsync` and **move** unless ReadMostly.
 `prefetch_with_flags` requires `flags == 0` (`PrefetchFlags::DEFAULT`) and

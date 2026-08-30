@@ -2606,7 +2606,15 @@ model, do not celebrate the sim.
     no-ops. Query; capture-legal. Decode identity stays unset. `gpu-profile
     capture` is still refused. Dual score still has no `$/M tokens`.
 
-240. [ ] Next numbered PLAN item after 239 is the next `gpu-sim` / Engine /
+240. [x] `cudaMemRangeAttributePreferredLocationType` / `Id` /
+    `LastPrefetchLocationType` / `Id`:
+    [`MemLocationType`] wraps the stored [`Place`] (`0` Invalid / `1`
+    Device / `2` Host). Id is the device ordinal when the type is Device,
+    else `0` (ignored). Host NUMA is not modeled. Query; capture-legal.
+    Decode identity stays Invalid / `0`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+241. [ ] Next numbered PLAN item after 240 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

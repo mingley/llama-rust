@@ -117,7 +117,8 @@
 //! there on a remote read (same interconnect billing; writes still migrate).
 //! Host preferred does not skip a kernel first-touch.
 //! [`Sim::mem_range_get_attribute`] is `cudaMemRangeGetAttribute` of modeled
-//! per-alloc advice ([`MemRangeAttr`]; not per byte range). Query; legal during capture.
+//! per-alloc advice ([`MemRangeAttr`]; not per byte range; location type/id
+//! wrap preferred and last-prefetch [`Place`]). Query; legal during capture.
 //! [`mem_range_get_attributes`](Sim::mem_range_get_attributes) is
 //! `cudaMemRangeGetAttributes` (batch of those attrs; all-or-nothing).
 //! [`Sim::drop_managed_copy`] refunds one ReadMostly GPU copy (dest eviction).
@@ -648,9 +649,9 @@ pub use ops::{
     GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags,
     HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind,
     KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags,
-    MemAdvise, MemAllocationType, MemAttach, MemAttachFlags, MemHandleType, MemPoolAttr,
-    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
-    MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
+    MemAdvise, MemAllocationType, MemAttach, MemAttachFlags, MemHandleType, MemLocationType,
+    MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap,
+    MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
     PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
     ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
     StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
@@ -12777,6 +12778,8 @@ mod tests {
                     MemRangeAttr::PreferredLocation,
                     MemRangeAttr::AccessedBy,
                     MemRangeAttr::LastPrefetchLocation,
+                    MemRangeAttr::PreferredLocationType,
+                    MemRangeAttr::LastPrefetchLocationType,
                 ]
             )
             .unwrap(),
@@ -12785,6 +12788,8 @@ mod tests {
                 MemRangeAttrValue::PreferredLocation(Some(Place::Host)),
                 MemRangeAttrValue::AccessedBy(vec![d]),
                 MemRangeAttrValue::LastPrefetchLocation(Some(Place::Host)),
+                MemRangeAttrValue::PreferredLocationType(MemLocationType::Host),
+                MemRangeAttrValue::LastPrefetchLocationType(MemLocationType::Host),
             ]
         );
         assert!(sim.mem_range_get_attributes(m, &[]).unwrap().is_empty());
@@ -12793,6 +12798,98 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn mem_range_get_attribute_location_type_and_id() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let m = sim.alloc_managed(64).unwrap();
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::PreferredLocationType)
+                .unwrap(),
+            MemRangeAttrValue::PreferredLocationType(MemLocationType::Invalid)
+        );
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::PreferredLocationId)
+                .unwrap(),
+            MemRangeAttrValue::PreferredLocationId(0)
+        );
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::LastPrefetchLocationType)
+                .unwrap(),
+            MemRangeAttrValue::LastPrefetchLocationType(MemLocationType::Invalid)
+        );
+        sim.mem_advise(m, MemAdvise::SetPreferredLocation, d)
+            .unwrap();
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::PreferredLocationType)
+                .unwrap(),
+            MemRangeAttrValue::PreferredLocationType(MemLocationType::Device)
+        );
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::PreferredLocationId)
+                .unwrap(),
+            MemRangeAttrValue::PreferredLocationId(u32::from(d.0))
+        );
+        enq(sim.prefetch(d, m, s));
+        sim.synchronize().unwrap();
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::LastPrefetchLocationType)
+                .unwrap(),
+            MemRangeAttrValue::LastPrefetchLocationType(MemLocationType::Device)
+        );
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::LastPrefetchLocationId)
+                .unwrap(),
+            MemRangeAttrValue::LastPrefetchLocationId(u32::from(d.0))
+        );
+        sim.mem_advise(m, MemAdvise::SetPreferredLocationHost, d)
+            .unwrap();
+        enq(sim.prefetch_host(d, m, s));
+        sim.synchronize().unwrap();
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::PreferredLocationType)
+                .unwrap(),
+            MemRangeAttrValue::PreferredLocationType(MemLocationType::Host)
+        );
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::LastPrefetchLocationType)
+                .unwrap(),
+            MemRangeAttrValue::LastPrefetchLocationType(MemLocationType::Host)
+        );
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::LastPrefetchLocationId)
+                .unwrap(),
+            MemRangeAttrValue::LastPrefetchLocationId(0)
+        );
+        assert_eq!(MemLocationType::Device.to_cuda(), 1);
+        assert_eq!(MemLocationType::Host.to_cuda(), 2);
+        let mut dual = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d1 = DeviceId(1);
+        let n = dual.alloc_managed(64).unwrap();
+        dual.mem_advise(n, MemAdvise::SetPreferredLocation, d1)
+            .unwrap();
+        enq(dual.prefetch(d1, n, StreamId(0)));
+        dual.synchronize().unwrap();
+        assert_eq!(
+            dual.mem_range_get_attribute(n, MemRangeAttr::PreferredLocationId)
+                .unwrap(),
+            MemRangeAttrValue::PreferredLocationId(u32::from(d1.0))
+        );
+        assert_eq!(
+            dual.mem_range_get_attribute(n, MemRangeAttr::LastPrefetchLocationId)
+                .unwrap(),
+            MemRangeAttrValue::LastPrefetchLocationId(u32::from(d1.0))
+        );
+        dual.begin_capture(d1, StreamId(0)).unwrap();
+        assert_eq!(
+            dual.mem_range_get_attribute(n, MemRangeAttr::PreferredLocationType)
+                .unwrap(),
+            MemRangeAttrValue::PreferredLocationType(MemLocationType::Device)
+        );
+        let _g = dual.end_capture().unwrap();
     }
 
     #[test]

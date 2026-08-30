@@ -19,12 +19,12 @@ use crate::ops::{
     GraphUserObjectFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags,
     KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
     LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAllocationType, MemAttach, MemAttachFlags,
-    MemHandleType, MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain,
-    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place,
-    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
-    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    MemHandleType, MemLocationType, MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
+    MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch,
+    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
+    SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
+    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -9637,6 +9637,18 @@ impl Sim {
             MemRangeAttr::LastPrefetchLocation => {
                 MemRangeAttrValue::LastPrefetchLocation(a.last_prefetch.to_place())
             }
+            MemRangeAttr::PreferredLocationType => MemRangeAttrValue::PreferredLocationType(
+                MemLocationType::from_place(a.preferred.to_place()),
+            ),
+            MemRangeAttr::PreferredLocationId => MemRangeAttrValue::PreferredLocationId(
+                MemLocationType::id_from_place(a.preferred.to_place()),
+            ),
+            MemRangeAttr::LastPrefetchLocationType => MemRangeAttrValue::LastPrefetchLocationType(
+                MemLocationType::from_place(a.last_prefetch.to_place()),
+            ),
+            MemRangeAttr::LastPrefetchLocationId => MemRangeAttrValue::LastPrefetchLocationId(
+                MemLocationType::id_from_place(a.last_prefetch.to_place()),
+            ),
         })
     }
 
