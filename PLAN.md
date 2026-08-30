@@ -2997,7 +2997,16 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-288. [ ] Next numbered PLAN item after 287 is the next `gpu-sim` / Engine /
+288. [x] `cudaDevAttrHostNumaVirtualMemoryManagementSupported`: always 0
+    (host NUMA VMM is not modeled; [`va_create_with_prop`](Sim::va_create_with_prop)
+    refuses host location). Distinct from
+    [`DeviceAttr::VirtualMemoryManagementSupported`] (device VMM is 1)
+    and [`DeviceAttr::HostMemoryPoolsSupported`] (host pools are already
+    0). Do not invent HostNuma IDs. Query; capture-legal. Decode
+    identity unchanged. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+289. [ ] Next numbered PLAN item after 288 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

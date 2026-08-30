@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — host NUMA VMM unsupported
+
+`DeviceAttr::HostNumaVirtualMemoryManagementSupported` is always 0
+(host NUMA VMM is not modeled; `va_create_with_prop` refuses host
+location). Distinct from device VMM (always 1). Query; capture-legal.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaMemPoolSetAccess` descriptor array
 
 `pool_set_access_n` takes `cudaMemAccessDesc` (`descList`, `count`).

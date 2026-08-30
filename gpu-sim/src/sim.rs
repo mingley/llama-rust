@@ -13171,7 +13171,8 @@ impl Sim {
             | DeviceAttr::UnifiedFunctionPointers
             | DeviceAttr::TimelineSemaphoreInteropSupported
             | DeviceAttr::MemDecompressAlgorithmMask
-            | DeviceAttr::MemDecompressMaximumLength => 0,
+            | DeviceAttr::MemDecompressMaximumLength
+            | DeviceAttr::HostNumaVirtualMemoryManagementSupported => 0,
             DeviceAttr::StreamPrioritiesSupported
             | DeviceAttr::UnifiedAddressing
             | DeviceAttr::CanUse64BitStreamMemOps
@@ -13250,6 +13251,7 @@ impl Sim {
             timeline_semaphore_interop_supported: false,
             mem_decompress_algorithm_mask: 0,
             mem_decompress_maximum_length: 0,
+            host_numa_virtual_memory_management_supported: false,
         })
     }
 

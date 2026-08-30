@@ -871,6 +871,10 @@ pub enum DeviceAttr {
     /// `cudaDevAttrMemDecompressMaximumLength` (always 0; hardware decompress
     /// is not modeled).
     MemDecompressMaximumLength,
+    /// `cudaDevAttrHostNumaVirtualMemoryManagementSupported` (always 0; host
+    /// NUMA VMM is not modeled; [`crate::Sim::va_create_with_prop`] refuses
+    /// host location). Distinct from [`Self::VirtualMemoryManagementSupported`].
+    HostNumaVirtualMemoryManagementSupported,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -1017,6 +1021,10 @@ pub struct DeviceProperties {
     /// `cudaDevAttrMemDecompressMaximumLength` (hardware decompress is not
     /// modeled).
     pub mem_decompress_maximum_length: u64,
+    /// `cudaDevAttrHostNumaVirtualMemoryManagementSupported` (host NUMA VMM
+    /// is not modeled). Distinct from
+    /// [`Self::virtual_memory_management_supported`].
+    pub host_numa_virtual_memory_management_supported: bool,
 }
 
 /// `cudaComputeMode` for [`DeviceAttr::ComputeMode`].
