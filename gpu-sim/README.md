@@ -261,6 +261,10 @@ not advance the virtual clock. Independent streams stay live. A stream that
 `wait_event`s an event recorded in this capture joins (CUDA forked capture);
 `record_event_external` / `wait_event_external` (`cudaEventRecordExternal` /
 `cudaEventWaitExternal`) do not join, so a live waiter can overlap graph launch.
+`record_event_with_flags` / `wait_event_with_flags` / `create_event_with_flags`
+are the flags-parameter twins (`EventRecordFlags::EXTERNAL` /
+`EventWaitFlags::EXTERNAL` / `EventCreateFlags::DISABLE_TIMING`). Unknown bits
+are Invalid. BlockingSync / Interprocess are not modeled. Typed helpers stay.
 `launch_graph` remaps origin-stream nodes onto the launch stream so copy and
 compute can overlap. Query or `synchronize_stream` of a capturing stream, and
 node `synchronize`, are `Invalid`. `launch_graph` during capture records a

@@ -12,15 +12,16 @@ use crate::ids::{
 use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
     ClusterSchedulingPolicy, DeviceAttr, DeviceLimit, DeviceP2pAttr, DeviceProperties,
-    FuncAttributes, GpuOp as Kind, GraphAddNode, GraphExecUpdateResult, GraphExecUpdateResultInfo,
-    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf,
-    KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
-    MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
-    MemoryType, MemsetOp, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
-    StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp,
+    EventCreateFlags, EventRecordFlags, EventWaitFlags, FuncAttributes, GpuOp as Kind,
+    GraphAddNode, GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
+    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
+    GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
+    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise,
+    MemAttach, MemPoolAttr, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp,
+    Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
+    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags,
+    WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -1590,7 +1591,7 @@ impl Sim {
     /// `cudaEventCreate` (timing enabled). Implicit on first [`Self::record_event`]
     /// if the id was never created.
     pub fn create_event(&mut self, event: EventId) -> Result<(), SimError> {
-        self.insert_event(event, true)
+        self.create_event_with_flags(event, EventCreateFlags::DEFAULT)
     }
 
     /// `cudaEventCreateWithFlags(..., cudaEventDisableTiming)`.
@@ -1598,7 +1599,21 @@ impl Sim {
     /// Record / wait / query still work. [`Self::event_elapsed_ns`] is
     /// [`SimError::Invalid`].
     pub fn create_event_disable_timing(&mut self, event: EventId) -> Result<(), SimError> {
-        self.insert_event(event, false)
+        self.create_event_with_flags(event, EventCreateFlags::DISABLE_TIMING)
+    }
+
+    /// `cudaEventCreateWithFlags`. Capture cannot include it.
+    ///
+    /// Known bits: [`EventCreateFlags::DISABLE_TIMING`]. Other bits (BlockingSync,
+    /// Interprocess) are Invalid `"event create flags"`.
+    pub fn create_event_with_flags(&mut self, event: EventId, flags: u32) -> Result<(), SimError> {
+        const KNOWN: u32 = EventCreateFlags::DISABLE_TIMING;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "event create flags",
+            });
+        }
+        self.insert_event(event, flags & EventCreateFlags::DISABLE_TIMING == 0)
     }
 
     /// `cudaEventDestroy`. Host-synchronous. Capture cannot include it.
@@ -11433,7 +11448,7 @@ impl Sim {
         event: EventId,
         stream: StreamId,
     ) -> Result<OpId, SimError> {
-        self.record_event_flags(device, event, stream, false)
+        self.record_event_with_flags(device, event, stream, EventRecordFlags::DEFAULT)
     }
 
     /// `cudaEventRecordWithFlags(..., cudaEventRecordExternal)`.
@@ -11447,7 +11462,29 @@ impl Sim {
         event: EventId,
         stream: StreamId,
     ) -> Result<OpId, SimError> {
-        self.record_event_flags(device, event, stream, true)
+        self.record_event_with_flags(device, event, stream, EventRecordFlags::EXTERNAL)
+    }
+
+    /// `cudaEventRecordWithFlags`. Unknown bits are Invalid `"event record flags"`.
+    pub fn record_event_with_flags(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        const KNOWN: u32 = EventRecordFlags::EXTERNAL;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "event record flags",
+            });
+        }
+        self.record_event_flags(
+            device,
+            event,
+            stream,
+            flags & EventRecordFlags::EXTERNAL != 0,
+        )
     }
 
     fn record_event_flags(
@@ -11471,7 +11508,7 @@ impl Sim {
         event: EventId,
         stream: StreamId,
     ) -> Result<OpId, SimError> {
-        self.wait_event_flags(device, event, stream, false)
+        self.wait_event_with_flags(device, event, stream, EventWaitFlags::DEFAULT)
     }
 
     /// `cudaStreamWaitEvent(..., cudaEventWaitExternal)`.
@@ -11486,7 +11523,25 @@ impl Sim {
         event: EventId,
         stream: StreamId,
     ) -> Result<OpId, SimError> {
-        self.wait_event_flags(device, event, stream, true)
+        self.wait_event_with_flags(device, event, stream, EventWaitFlags::EXTERNAL)
+    }
+
+    /// `cudaStreamWaitEvent` with flags. Unknown bits are Invalid
+    /// `"event wait flags"`.
+    pub fn wait_event_with_flags(
+        &mut self,
+        device: DeviceId,
+        event: EventId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        const KNOWN: u32 = EventWaitFlags::EXTERNAL;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "event wait flags",
+            });
+        }
+        self.wait_event_flags(device, event, stream, flags & EventWaitFlags::EXTERNAL != 0)
     }
 
     fn wait_event_flags(

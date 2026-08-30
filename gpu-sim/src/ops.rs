@@ -1680,6 +1680,38 @@ impl GraphInstantiateFlags {
     pub const USE_NODE_PRIORITY: u32 = 8;
 }
 
+/// `cudaEventRecordWithFlags` bits for [`crate::Sim::record_event_with_flags`].
+pub struct EventRecordFlags;
+
+impl EventRecordFlags {
+    /// `cudaEventRecordDefault`.
+    pub const DEFAULT: u32 = 0;
+    /// `cudaEventRecordExternal` ([`crate::Sim::record_event_external`]).
+    pub const EXTERNAL: u32 = 1;
+}
+
+/// `cudaStreamWaitEvent` flags for [`crate::Sim::wait_event_with_flags`].
+pub struct EventWaitFlags;
+
+impl EventWaitFlags {
+    /// `cudaEventWaitDefault`.
+    pub const DEFAULT: u32 = 0;
+    /// `cudaEventWaitExternal` ([`crate::Sim::wait_event_external`]).
+    pub const EXTERNAL: u32 = 1;
+}
+
+/// `cudaEventCreateWithFlags` bits for [`crate::Sim::create_event_with_flags`].
+///
+/// `cudaEventBlockingSync` / `cudaEventInterprocess` are not modeled.
+pub struct EventCreateFlags;
+
+impl EventCreateFlags {
+    /// `cudaEventDefault` (timing enabled).
+    pub const DEFAULT: u32 = 0;
+    /// `cudaEventDisableTiming` ([`crate::Sim::create_event_disable_timing`]).
+    pub const DISABLE_TIMING: u32 = 2;
+}
+
 /// `cudaGraphInstantiateResult` from [`crate::Sim::instantiate_graph_with_params`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GraphInstantiateResult {

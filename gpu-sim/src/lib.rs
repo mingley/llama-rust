@@ -137,6 +137,12 @@
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
 //! [`Sim::create_event_disable_timing`] is `cudaEventDisableTiming` (elapsed fails).
+//! [`Sim::create_event_with_flags`] is `cudaEventCreateWithFlags`
+//! ([`EventCreateFlags::DISABLE_TIMING`] only; BlockingSync / Interprocess are
+//! Invalid). [`Sim::record_event_with_flags`] / [`wait_event_with_flags`](Sim::wait_event_with_flags)
+//! are `cudaEventRecordWithFlags` / `cudaStreamWaitEvent` flags
+//! ([`EventRecordFlags::EXTERNAL`] / [`EventWaitFlags::EXTERNAL`]). Typed
+//! helpers stay.
 //! [`Sim::destroy_event`] is `cudaEventDestroy` (waits a recorded incomplete
 //! event; never-recorded returns immediately; capture refused).
 //! [`Sim::query_event`] is `cudaEventQuery` (no wait).
@@ -494,15 +500,16 @@ pub use ids::{
 pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp,
     ClusterDim, ClusterSchedulingPolicy, DType, DeviceAttr, DeviceLimit, DeviceP2pAttr,
-    DeviceProperties, FuncAttributes, GpuOp, GraphAddNode, GraphExecUpdateResult,
-    GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
-    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
-    HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue,
-    KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr,
-    MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, Place,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
-    StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags, FuncAttributes, GpuOp,
+    GraphAddNode, GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
+    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
+    GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
+    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise,
+    MemAttach, MemPoolAttr, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp,
+    Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
+    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags,
+    WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -12026,6 +12033,49 @@ mod tests {
         sim.synchronize().unwrap();
         assert!(sim.event_complete(ev));
         assert!(sim.query_stream(d, compute).unwrap());
+    }
+
+    #[test]
+    fn event_record_wait_create_with_flags_dispatch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let copy = StreamId(0);
+        let compute = StreamId(1);
+        let ev = EventId(3);
+        let a = sim.alloc(d, 4096, copy).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, copy));
+        sim.synchronize().unwrap();
+        sim.create_event_with_flags(ev, EventCreateFlags::DEFAULT)
+            .unwrap();
+        assert!(sim.event_timing(ev).unwrap());
+        sim.begin_capture(d, copy).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], copy));
+        enq(sim.record_event_with_flags(d, ev, copy, EventRecordFlags::EXTERNAL));
+        enq(sim.wait_event_with_flags(d, ev, compute, EventWaitFlags::DEFAULT));
+        assert!(!sim.query_stream(d, compute).unwrap());
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
+        match sim.record_event_with_flags(d, ev, copy, 2) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("event record flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.wait_event_with_flags(d, ev, copy, 2) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("event wait flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.create_event_with_flags(EventId(9), 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("event create flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.create_event_with_flags(EventId(8), EventCreateFlags::DISABLE_TIMING)
+            .unwrap();
+        assert!(!sim.event_timing(EventId(8)).unwrap());
+        sim.begin_capture(d, copy).unwrap();
+        match sim.create_event_with_flags(EventId(10), 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

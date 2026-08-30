@@ -2148,7 +2148,16 @@ model, do not celebrate the sim.
     helpers stay. Decode identity unchanged. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-188. [ ] Next numbered PLAN item after 187 is the next `gpu-sim` / Engine /
+188. [x] `cudaEventRecordWithFlags` / `cudaStreamWaitEvent` flags /
+    `cudaEventCreateWithFlags`: `Sim::record_event_with_flags` /
+    `wait_event_with_flags` / `create_event_with_flags` take the CUDA flag
+    words. Known bits are [`EventRecordFlags::EXTERNAL`],
+    [`EventWaitFlags::EXTERNAL`], [`EventCreateFlags::DISABLE_TIMING`].
+    Unknown bits (including BlockingSync / Interprocess) are Invalid.
+    Typed helpers stay. Decode identity unchanged. `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+189. [ ] Next numbered PLAN item after 188 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
