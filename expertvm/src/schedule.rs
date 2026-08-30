@@ -7,8 +7,8 @@ use crate::planner::{plan_keys, predicted_keys, ChainState, Markov, Plan};
 use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
     advise_pool_access_if_pinned, allow_non_portable_cluster_if, allow_optin_shared_if,
-    apply_stream_sms, apply_stream_sync_policy, apply_touch, bind_shareable_mempools, drop_remote,
-    fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots,
+    apply_misses, apply_stream_sms, apply_stream_sync_policy, apply_touch, bind_shareable_mempools,
+    drop_remote, fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots,
     reclaim_victim, remote_hit, replay_from_sim, sim_profile, sync_work, trim_graph_pools,
     validate_sim_cfg, GraphBank, LeafMem, PageHandle, RemoteFetch, RemotePage, ReplayCounters,
     SimCfg, SimReplay, StreamPlan, TouchArgs,
@@ -325,6 +325,7 @@ impl SchedRt {
                 vmm: cfg.vmm,
                 vmm_page: cfg.vmm_page,
                 pageable: cfg.pageable,
+                memcpy_batch: cfg.memcpy_batch,
                 accessed_by: cfg.accessed_by,
             },
             sim,
@@ -476,6 +477,7 @@ impl SchedRt {
         } else {
             Vec::new()
         };
+        let mut groups: BTreeMap<DeviceId, Vec<(ExpertKey, Touch)>> = BTreeMap::new();
         for key in predicted.into_iter().chain(planned) {
             let home = self.home(key);
             match self.walker_mut(home).prefetch_touch(key) {
@@ -484,22 +486,26 @@ impl SchedRt {
                     self.ctr.prefetches = self.ctr.prefetches.saturating_add(1);
                     let _ins = self.prefetched.insert(key);
                     self.make_room(home, self.args.bytes)?;
-                    let args = self.args_for(key);
-                    apply_touch(
-                        &mut self.sim,
-                        &mut self.handles,
-                        &mut self.graphs,
-                        args,
-                        key,
-                        miss,
-                        &mut self.next_event,
-                    )?;
-                    if let Touch::Miss { evicted: Some(v) } = miss {
-                        self.forget_peer_if_home_dropped(v);
-                    }
-                    if !self.cfg.sync_alloc {
-                        self.replicate_key(key)?;
-                    }
+                    groups.entry(home).or_default().push((key, miss));
+                }
+            }
+        }
+        for (home, misses) in groups {
+            let args = self.args_on(home);
+            apply_misses(
+                &mut self.sim,
+                &mut self.handles,
+                &mut self.graphs,
+                args,
+                &misses,
+                &mut self.next_event,
+            )?;
+            for (key, miss) in misses {
+                if let Touch::Miss { evicted: Some(v) } = miss {
+                    self.forget_peer_if_home_dropped(v);
+                }
+                if !self.cfg.sync_alloc {
+                    self.replicate_key(key)?;
                 }
             }
         }

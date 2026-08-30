@@ -49,6 +49,8 @@ pub(crate) struct GpuCli {
     /// POSIX-FD shareable mempool IPC (`GpuStoreCfg::shareable`). Implies mempool.
     pub shareable: bool,
     pub pageable: bool,
+    /// `cudaMemcpyBatchAsync` prefetch (`GpuStoreCfg::memcpy_batch`).
+    pub memcpy_batch: bool,
     pub accessed_by: bool,
     pub legacy_null: bool,
     pub stream_priority: bool,
@@ -149,6 +151,7 @@ impl GpuCli {
             "--mempool" => &mut self.mempool,
             "--shareable" => &mut self.shareable,
             "--pageable" => &mut self.pageable,
+            "--memcpy-batch" => &mut self.memcpy_batch,
             "--accessed-by" => &mut self.accessed_by,
             "--legacy-null" => &mut self.legacy_null,
             "--stream-priority" => &mut self.stream_priority,
@@ -339,6 +342,7 @@ impl GpuCli {
             (self.mempool, "--mempool"),
             (self.shareable, "--shareable"),
             (self.pageable, "--pageable"),
+            (self.memcpy_batch, "--memcpy-batch"),
             (self.accessed_by, "--accessed-by"),
             (self.legacy_null, "--legacy-null"),
             (self.stream_priority, "--stream-priority"),
@@ -609,6 +613,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         shareable: gpu.shareable,
         vmm_page: gpu.vmm_page,
         pageable: gpu.pageable,
+        memcpy_batch: gpu.memcpy_batch,
         accessed_by: gpu.accessed_by,
         legacy_null: gpu.legacy_null,
         stream_priority: gpu.stream_priority,

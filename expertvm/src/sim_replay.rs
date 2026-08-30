@@ -177,9 +177,9 @@ use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
 use gpu_sim::{
     AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceId, EventId, GraphId,
-    GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf, KernelKind, MemcpyOp, Place,
-    PoolId, PortableClusterMode, PortableSharedMode, ProgrammaticLaunch, Score, SharedMemCarveout,
-    SharedMemoryMode, Sim, StreamId, SynchronizationPolicy,
+    GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf, KernelKind, MemcpyAttributes,
+    MemcpyOp, Place, PoolId, PortableClusterMode, PortableSharedMode, ProgrammaticLaunch, Score,
+    SharedMemCarveout, SharedMemoryMode, Sim, StreamId, SynchronizationPolicy,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -376,6 +376,13 @@ pub struct SimCfg {
     /// Host-synchronous (`pageable_permille`). [`crate::SimulatedGpuStore::new`]
     /// stays pinned; [`crate::GpuStoreCfg::pageable`] is the store path.
     pub pageable: bool,
+    /// `cudaMemcpyBatchAsync` for a multi-expert pinned/VMM prefetch window.
+    ///
+    /// Sibling H2D copies share one stream-order snapshot. Illegal with
+    /// pageable, host-sync, mapped, or managed fills. Decode identity stays
+    /// sequential `memcpy_pinned_to_device`. [`crate::GpuStoreCfg::memcpy_batch`]
+    /// is the store path.
+    pub memcpy_batch: bool,
     /// Peer map without dest HBM at a managed or VMM fill.
     ///
     /// Dest GEMMs may read without migrating or charging dest HBM. `--place replicas`
@@ -678,6 +685,7 @@ impl SimCfg {
             compute_slots: 0,
             decode_sm_permille: 0,
             decode_priority: false,
+            memcpy_batch: false,
         }
     }
 }
@@ -702,6 +710,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     }
     if cfg.shareable && (cfg.sync_alloc || cfg.mapped || cfg.managed || cfg.vmm) {
         return Err(Error::Store("shareable needs cudaMallocAsync"));
+    }
+    if cfg.memcpy_batch && (cfg.pageable || cfg.sync_alloc || cfg.mapped || cfg.managed) {
+        return Err(Error::Store("memcpy-batch needs async pinned/vmm H2D"));
     }
     if !cfg.multicast {
         return Ok(());
@@ -794,6 +805,7 @@ pub fn sim_replay_cfg(
         vmm: cfg.vmm,
         vmm_page: cfg.vmm_page,
         pageable: cfg.pageable,
+        memcpy_batch: cfg.memcpy_batch,
         accessed_by: cfg.accessed_by,
     };
     let mut token_ends: Vec<u64> = Vec::new();
@@ -866,24 +878,25 @@ pub fn sim_replay_cfg(
                 Vec::new()
             };
             let fill = args;
+            let mut misses = Vec::new();
             for key in predicted.into_iter().chain(planned) {
                 match w.prefetch_touch(key) {
                     Touch::Hit => {}
                     miss @ Touch::Miss { .. } => {
                         ctr.prefetches = ctr.prefetches.saturating_add(1);
                         let _ins = prefetched.insert(key);
-                        apply_touch(
-                            &mut sim,
-                            &mut handles,
-                            &mut graphs,
-                            fill,
-                            key,
-                            miss,
-                            &mut next_event,
-                        )?;
+                        misses.push((key, miss));
                     }
                 }
             }
+            apply_misses(
+                &mut sim,
+                &mut handles,
+                &mut graphs,
+                fill,
+                &misses,
+                &mut next_event,
+            )?;
         }
         chain.observe(&mut markov, event);
         let _ins = admitted.insert(event.sequence);
@@ -925,6 +938,8 @@ pub(crate) struct TouchArgs {
     pub vmm_page: u64,
     /// [`SimCfg::pageable`]: host-sync pageable H2D.
     pub pageable: bool,
+    /// [`SimCfg::memcpy_batch`]: multi-expert prefetch uses `cudaMemcpyBatchAsync`.
+    pub memcpy_batch: bool,
     /// [`SimCfg::accessed_by`]: SetAccessedBy / VMM SetAccess / mempool SetAccess
     /// on every GPU (fill or default pools).
     pub accessed_by: bool,
@@ -971,12 +986,36 @@ fn hbm_h2d_pinned(
     Ok(())
 }
 
-fn hbm_h2d(sim: &mut Sim, args: TouchArgs, alloc: AllocId) -> Result<(), Error> {
-    if args.pageable {
-        let _id = sim.memcpy_host_to_device(args.d, alloc, args.bytes, args.s)?;
+fn hbm_h2d_many(sim: &mut Sim, args: TouchArgs, allocs: &[AllocId]) -> Result<(), Error> {
+    if allocs.is_empty() {
         return Ok(());
     }
-    hbm_h2d_pinned(sim, args.d, alloc, args.bytes, args.s, args.sync_alloc)
+    let batch = args.memcpy_batch
+        && !args.pageable
+        && !args.sync_alloc
+        && !args.mapped
+        && !args.managed
+        && allocs.len() >= 2;
+    if batch {
+        let ops: Vec<MemcpyOp> = allocs
+            .iter()
+            .map(|id| {
+                MemcpyOp::packed_1d(Place::HostPinned, Place::Device(args.d), *id, args.bytes)
+            })
+            .collect();
+        let attr = MemcpyAttributes::default();
+        let _ids =
+            sim.memcpy_batch_async(args.d, &ops, std::slice::from_ref(&attr), &[0], args.s)?;
+        return Ok(());
+    }
+    for id in allocs {
+        if args.pageable {
+            let _id = sim.memcpy_host_to_device(args.d, *id, args.bytes, args.s)?;
+        } else {
+            hbm_h2d_pinned(sim, args.d, *id, args.bytes, args.s, args.sync_alloc)?;
+        }
+    }
+    Ok(())
 }
 
 /// `cudaMemAdviseSetAccessedBy` on every GPU so a remote read does not migrate.
@@ -1560,58 +1599,87 @@ pub(crate) fn apply_touch(
     touch: Touch,
     next_event: &mut u32,
 ) -> Result<(), Error> {
-    match touch {
-        Touch::Hit => Ok(()),
-        Touch::Miss { evicted } => {
-            if let Some(v) = evicted {
-                reclaim_victim(sim, handles, graphs, args, v, next_event)?;
-            }
-            if args.slots == 0 {
-                return Ok(());
-            }
-            let id = if args.mapped {
-                sim.alloc_host_mapped(args.bytes)?
-            } else if args.managed {
-                let id = sim.alloc_managed(args.bytes)?;
-                sim.mem_advise(id, gpu_sim::MemAdvise::SetReadMostly, args.d)?;
-                sim.mem_advise(id, gpu_sim::MemAdvise::SetPreferredLocation, args.d)?;
-                if args.accessed_by {
-                    advise_accessed_by(sim, id)?;
+    apply_misses(sim, handles, graphs, args, &[(key, touch)], next_event)
+}
+
+pub(crate) fn apply_misses(
+    sim: &mut Sim,
+    handles: &mut BTreeMap<ExpertKey, PageHandle>,
+    graphs: &mut GraphBank,
+    args: TouchArgs,
+    misses: &[(ExpertKey, Touch)],
+    next_event: &mut u32,
+) -> Result<(), Error> {
+    let mut filled: Vec<(ExpertKey, AllocId)> = Vec::new();
+    for (key, touch) in misses {
+        match touch {
+            Touch::Hit => {}
+            Touch::Miss { evicted } => {
+                if let Some(v) = evicted {
+                    reclaim_victim(sim, handles, graphs, args, *v, next_event)?;
                 }
-                id
-            } else if args.vmm {
-                if args.vmm_page > 0 && args.vmm_page < args.bytes {
-                    sim.va_acquire_paged(args.d, args.bytes, args.vmm_page)?
-                } else {
-                    sim.va_acquire(args.d, args.bytes)?
+                if args.slots == 0 {
+                    continue;
                 }
-            } else {
-                hbm_alloc(sim, args.d, args.bytes, args.s, args.sync_alloc)?
-            };
-            match (args.mapped, args.managed) {
-                (true, _) => {}
-                (false, true) => {
-                    let _p = sim.prefetch(args.d, id, args.s)?;
-                }
-                (false, false) => {
-                    hbm_h2d(sim, args, id)?;
-                }
+                let id = alloc_touch_page(sim, args)?;
+                filled.push((*key, id));
             }
-            if args.vmm && args.accessed_by {
-                advise_vmm_access(sim, id)?;
-            }
-            let _prev = handles.insert(
-                key,
-                PageHandle {
-                    id,
-                    stream: args.s,
-                    device: args.d,
-                    replicas: Vec::new(),
-                },
-            );
-            Ok(())
         }
     }
+    let h2d: Vec<AllocId> = filled
+        .iter()
+        .filter_map(|(_, id)| {
+            if args.mapped || args.managed {
+                None
+            } else {
+                Some(*id)
+            }
+        })
+        .collect();
+    if args.managed {
+        for (_, id) in &filled {
+            let _p = sim.prefetch(args.d, *id, args.s)?;
+        }
+    } else if !args.mapped {
+        hbm_h2d_many(sim, args, &h2d)?;
+    }
+    for (key, id) in filled {
+        if args.vmm && args.accessed_by {
+            advise_vmm_access(sim, id)?;
+        }
+        let _prev = handles.insert(
+            key,
+            PageHandle {
+                id,
+                stream: args.s,
+                device: args.d,
+                replicas: Vec::new(),
+            },
+        );
+    }
+    Ok(())
+}
+
+fn alloc_touch_page(sim: &mut Sim, args: TouchArgs) -> Result<AllocId, Error> {
+    if args.mapped {
+        return Ok(sim.alloc_host_mapped(args.bytes)?);
+    }
+    if args.managed {
+        let id = sim.alloc_managed(args.bytes)?;
+        sim.mem_advise(id, gpu_sim::MemAdvise::SetReadMostly, args.d)?;
+        sim.mem_advise(id, gpu_sim::MemAdvise::SetPreferredLocation, args.d)?;
+        if args.accessed_by {
+            advise_accessed_by(sim, id)?;
+        }
+        return Ok(id);
+    }
+    if args.vmm {
+        if args.vmm_page > 0 && args.vmm_page < args.bytes {
+            return Ok(sim.va_acquire_paged(args.d, args.bytes, args.vmm_page)?);
+        }
+        return Ok(sim.va_acquire(args.d, args.bytes)?);
+    }
+    hbm_alloc(sim, args.d, args.bytes, args.s, args.sync_alloc)
 }
 
 /// Free `victim` on `device` only (replica) or the whole page (home).

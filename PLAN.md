@@ -3343,7 +3343,19 @@ model, do not celebrate the sim.
     include Set. Decode identity unchanged. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-323. [ ] Next numbered PLAN item after 322 is the next `gpu-sim` / Engine /
+323. [x] `cudaMemcpyBatchAsync` expert prefetch:
+    [`GpuStoreCfg::memcpy_batch`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::memcpy_batch`](expertvm/src/sim_replay.rs) fill a
+    multi-expert pinned/VMM prefetch window with
+    [`memcpy_batch_async`](gpu-sim/src/sim.rs) so sibling H2D copies share
+    one stream-order snapshot (copy engines together). Demand acquire
+    stays sequential. Illegal with pageable, host-sync, mapped, or
+    managed fills. `--memcpy-batch` on `expertvm sim` / `schedule` /
+    `store` and `gguf_gemv engine --expert-sim`. Decode identity stays
+    sequential `memcpy_pinned_to_device`. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+324. [ ] Next numbered PLAN item after 323 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

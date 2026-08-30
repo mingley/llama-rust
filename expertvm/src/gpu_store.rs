@@ -17,7 +17,7 @@ use crate::sim_replay::{
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
     AllocId, DeviceId, EventId, GraphId, GraphMemAttr, HardwareProfile, KernelBuf, KernelKind,
-    MemAdvise, MemHandleId, MemcpyOp, Place, PoolId, Score, Sim, StreamId,
+    MemAdvise, MemHandleId, MemcpyAttributes, MemcpyOp, Place, PoolId, Score, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -77,6 +77,12 @@ pub struct GpuStoreCfg {
     /// Host-synchronous and slower (`pageable_permille`). Decode identity stays
     /// on pinned H2D.
     pub pageable: bool,
+    /// `cudaMemcpyBatchAsync` for a multi-expert pinned/VMM prefetch on one stream.
+    ///
+    /// Sibling H2D copies share one stream-order snapshot so they can occupy
+    /// copy engines together. Illegal with pageable, host-sync, mapped, or
+    /// managed fills. Decode identity stays sequential `memcpy_pinned_to_device`.
+    pub memcpy_batch: bool,
     /// Peer map without dest HBM: managed [`gpu_sim::MemAdvise::SetAccessedBy`],
     /// VMM [`gpu_sim::Sim::va_set_access`], or pinned-async
     /// [`gpu_sim::Sim::pool_set_access`] on every GPU.
@@ -377,6 +383,8 @@ pub struct SimulatedGpuStore {
     vmm_page: u64,
     /// Pageable H2D (`memcpy_host_to_device`) instead of pinned DMA.
     pageable: bool,
+    /// [`GpuStoreCfg::memcpy_batch`]: prefetch uses `cudaMemcpyBatchAsync`.
+    memcpy_batch: bool,
     /// [`GpuStoreCfg::accessed_by`]: managed/VMM/mempool pages stay on the home GPU.
     accessed_by: bool,
     /// Successful D2D [`Self::migrate`] calls (source device ≠ dest).
@@ -516,6 +524,10 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::device_launch`] is `cudaGraphInstantiateFlagDeviceLaunch`.
     /// [`GpuStoreCfg::multicast`] is Hopper NVLS replica fanout (requires
     /// [`GpuFill::Vmm`] and NVLink).
+    /// [`GpuStoreCfg::memcpy_batch`] fills a multi-expert pinned/VMM prefetch
+    /// with `cudaMemcpyBatchAsync` (sibling H2D copies share one stream-order
+    /// snapshot). Demand [`ExpertStore::acquire`] stays sequential. Illegal
+    /// with pageable, host-sync, mapped, or managed fills.
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
     /// exclusive compute). [`GpuStoreCfg::decode_sm_permille`] `0` keeps a
     /// full chip. `1..=1000` without [`GpuStoreCfg::decode_priority`] caps the
@@ -547,6 +559,14 @@ impl SimulatedGpuStore {
         check_cluster_preferred(cfg.cluster, cfg.preferred_cluster)?;
         if cfg.shareable && (cfg.sync_alloc || fill != GpuFill::Pinned) {
             return Err(Error::Store("shareable needs cudaMallocAsync"));
+        }
+        if cfg.memcpy_batch
+            && (cfg.pageable
+                || cfg.sync_alloc
+                || fill == GpuFill::Mapped
+                || fill == GpuFill::Managed)
+        {
+            return Err(Error::Store("memcpy-batch needs async pinned/vmm H2D"));
         }
         if cfg.multicast {
             if fill != GpuFill::Vmm {
@@ -672,6 +692,7 @@ impl SimulatedGpuStore {
             sync_alloc: cfg.sync_alloc,
             vmm_page: cfg.vmm_page,
             pageable: cfg.pageable,
+            memcpy_batch: cfg.memcpy_batch,
             accessed_by: cfg.accessed_by,
             migrates: 0,
             dispatches: 0,
@@ -699,6 +720,15 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn uses_vmm(&self) -> bool {
         matches!(self.mode, GpuFill::Vmm)
+    }
+
+    /// Stream memcpy ops (H2D / D2D) currently in the attached Sim.
+    #[must_use]
+    pub fn memcpy_operations(&self) -> Vec<gpu_sim::Operation> {
+        self.sim
+            .operations()
+            .filter(|o| matches!(o.kind, gpu_sim::GpuOp::Memcpy(_)))
+            .collect()
     }
 
     /// Page-locked staging buffer from construction; does not count toward HBM.
@@ -873,9 +903,13 @@ impl SimulatedGpuStore {
     pub fn prefetch(&mut self, keys: &[ExpertKey]) -> Result<u64, Error> {
         self.sweep_evicts();
         let n = self.cache.prefetch(keys)?;
-        for key in keys {
-            if self.cache.is_resident(*key) && !self.pages.contains_key(key) {
-                self.place(*key)?;
+        if self.memcpy_batch {
+            self.place_pending(keys)?;
+        } else {
+            for key in keys {
+                if self.cache.is_resident(*key) && !self.pages.contains_key(key) {
+                    self.place(*key)?;
+                }
             }
         }
         Ok(n)
@@ -1351,6 +1385,96 @@ impl SimulatedGpuStore {
             },
         );
         Ok(())
+    }
+
+    fn place_pending(&mut self, keys: &[ExpertKey]) -> Result<(), Error> {
+        let mut by_dev: BTreeMap<DeviceId, Vec<ExpertKey>> = BTreeMap::new();
+        for key in keys {
+            if self.cache.is_resident(*key) && !self.pages.contains_key(key) {
+                by_dev.entry(self.home(*key)).or_default().push(*key);
+            }
+        }
+        for (d, group) in by_dev {
+            self.place_group(d, &group)?;
+        }
+        Ok(())
+    }
+
+    fn place_group(&mut self, d: DeviceId, keys: &[ExpertKey]) -> Result<(), Error> {
+        if keys.len() < 2 {
+            for key in keys {
+                self.place(*key)?;
+            }
+            return Ok(());
+        }
+        let mut pending: Vec<(ExpertKey, AllocId, Option<EventId>)> = Vec::new();
+        for key in keys {
+            if self.pages.contains_key(key) {
+                continue;
+            }
+            if let Some(v) = self.cache.take_victim() {
+                self.drop_gpu(v)?;
+            }
+            let start = self.record_copy_start(d)?;
+            let id = self.alloc_page_no_fill(d)?;
+            pending.push((*key, id, start));
+        }
+        if pending.len() < 2 {
+            for (key, id, start) in pending {
+                self.fill_hbm(d, id)?;
+                if self.mode == GpuFill::Vmm && self.accessed_by {
+                    advise_vmm_access(&mut self.sim, id)?;
+                }
+                let ev = self.create_copy_event()?;
+                let _r = self.sim.record_event(d, ev, self.copy)?;
+                let _prev = self.pages.insert(
+                    key,
+                    GpuPage {
+                        id,
+                        device: d,
+                        ready: Some(ev),
+                        start,
+                    },
+                );
+            }
+            return Ok(());
+        }
+        let bytes = self.bytes_per_expert;
+        let ops: Vec<MemcpyOp> = pending
+            .iter()
+            .map(|(_, id, _)| MemcpyOp::packed_1d(Place::HostPinned, Place::Device(d), *id, bytes))
+            .collect();
+        let attr = MemcpyAttributes::default();
+        let _ids =
+            self.sim
+                .memcpy_batch_async(d, &ops, std::slice::from_ref(&attr), &[0], self.copy)?;
+        for (key, id, start) in pending {
+            if self.mode == GpuFill::Vmm && self.accessed_by {
+                advise_vmm_access(&mut self.sim, id)?;
+            }
+            let ev = self.create_copy_event()?;
+            let _r = self.sim.record_event(d, ev, self.copy)?;
+            let _prev = self.pages.insert(
+                key,
+                GpuPage {
+                    id,
+                    device: d,
+                    ready: Some(ev),
+                    start,
+                },
+            );
+        }
+        Ok(())
+    }
+
+    fn alloc_page_no_fill(&mut self, d: DeviceId) -> Result<AllocId, Error> {
+        match self.mode {
+            GpuFill::Vmm => Ok(self.vmm_alloc(d)?),
+            GpuFill::Pinned => self.hbm_alloc(d),
+            GpuFill::Mapped | GpuFill::Managed => {
+                Err(Error::Store("memcpy-batch needs async pinned/vmm H2D"))
+            }
+        }
     }
 
     fn create_copy_event(&mut self) -> Result<EventId, Error> {

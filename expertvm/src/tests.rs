@@ -841,6 +841,7 @@ fn vmm_evict_reacquires_same_va() {
         vmm: true,
         vmm_page: 0,
         pageable: false,
+        memcpy_batch: false,
         accessed_by: false,
     };
     let mut next_event = 1u32;
@@ -4695,6 +4696,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         vmm: false,
         vmm_page: 0,
         pageable: false,
+        memcpy_batch: false,
         accessed_by: true,
     };
     let mut next_event = 1u32;
@@ -4754,6 +4756,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         vmm: true,
         vmm_page: 0,
         pageable: false,
+        memcpy_batch: false,
         accessed_by: true,
     };
     let mut next_event = 1u32;
@@ -4814,6 +4817,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         vmm: false,
         vmm_page: 0,
         pageable: false,
+        memcpy_batch: false,
         accessed_by: true,
     };
     let mut next_event = 1u32;
@@ -5158,6 +5162,196 @@ fn simulated_gpu_store_seq_streams_overlaps_h2d() {
 }
 
 #[test]
+fn memcpy_batch_prefetch_siblings_share_stream_order_snapshot() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        2,
+        HardwareProfile::example_h100_sxm(),
+        4 << 20,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            memcpy_batch: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let _n = gpu
+        .prefetch(&[ExpertKey::new(0, 0), ExpertKey::new(0, 1)])
+        .expect("prefetch");
+    let copies: Vec<_> = gpu.memcpy_operations();
+    assert_eq!(copies.len(), 2, "{copies:?}");
+    let a = &copies[0];
+    let b = &copies[1];
+    assert_eq!(a.deps, b.deps, "batch siblings share stream-order deps");
+    assert!(!a.deps.contains(&b.id));
+    assert!(!b.deps.contains(&a.id));
+    let _s = gpu.score().expect("drain");
+    let copies: Vec<_> = gpu.memcpy_operations();
+    assert_eq!(copies[0].start_ns, copies[1].start_ns);
+}
+
+#[test]
+fn memcpy_batch_demand_acquire_stays_sequential() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        2,
+        HardwareProfile::example_h100_sxm(),
+        4 << 20,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            memcpy_batch: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let _a = gpu.acquire(ExpertKey::new(0, 0)).expect("a");
+    let _b = gpu.acquire(ExpertKey::new(0, 1)).expect("b");
+    let _s = gpu.score().expect("drain");
+    let copies: Vec<_> = gpu.memcpy_operations();
+    assert_eq!(copies.len(), 2, "{copies:?}");
+    assert_ne!(
+        copies[0].start_ns, copies[1].start_ns,
+        "demand H2D stays stream-ordered, not a batch snapshot"
+    );
+}
+
+#[test]
+fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
+    use crate::replay::Touch;
+    use crate::sim_replay::{apply_misses, GraphBank, PageHandle, TouchArgs};
+    use gpu_sim::{Sim, StreamId};
+    use std::collections::BTreeMap;
+
+    let mut sim = Sim::new(HardwareProfile::example_h100_sxm());
+    let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
+    let mut graphs = GraphBank::new(false, false, false, crate::sim_replay::LeafMem::None);
+    let args = TouchArgs {
+        d: DeviceId(0),
+        s: StreamId(0),
+        bytes: 4096,
+        slots: 2,
+        sync_alloc: false,
+        mapped: false,
+        managed: false,
+        vmm: false,
+        vmm_page: 0,
+        pageable: false,
+        memcpy_batch: true,
+        accessed_by: false,
+    };
+    let mut next_event = 1u32;
+    apply_misses(
+        &mut sim,
+        &mut handles,
+        &mut graphs,
+        args,
+        &[
+            (ExpertKey::new(0, 0), Touch::Miss { evicted: None }),
+            (ExpertKey::new(0, 1), Touch::Miss { evicted: None }),
+        ],
+        &mut next_event,
+    )
+    .expect("misses");
+    let copies: Vec<_> = sim
+        .operations()
+        .filter(|o| matches!(o.kind, gpu_sim::GpuOp::Memcpy(_)))
+        .collect();
+    assert_eq!(copies.len(), 2, "{copies:?}");
+    assert_eq!(copies[0].deps, copies[1].deps);
+    assert!(!copies[0].deps.contains(&copies[1].id));
+    assert!(!copies[1].deps.contains(&copies[0].id));
+    sim.synchronize().expect("drain");
+    let copies: Vec<_> = sim
+        .operations()
+        .filter(|o| matches!(o.kind, gpu_sim::GpuOp::Memcpy(_)))
+        .collect();
+    assert_eq!(copies[0].start_ns, copies[1].start_ns);
+}
+
+#[test]
+fn memcpy_batch_sim_replay_copy_forward() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let row = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            slots: 2,
+            prefetch: Prefetch::CopyForward,
+            memcpy_batch: true,
+            ..SimCfg::lru(2, 4096, 8)
+        },
+    )
+    .expect("batch");
+    assert!(row.prefetches > 0, "{}", row.line());
+}
+
+#[test]
+fn memcpy_batch_rejects_pageable_and_managed() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let refuse = |fill: GpuFill, cfg: GpuStoreCfg| match SimulatedGpuStore::with_cfg(
+        inner.clone(),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        fill,
+        cfg,
+    ) {
+        Ok(_) => panic!("memcpy-batch should refuse {fill:?} {cfg:?}"),
+        Err(e) => e,
+    };
+    for err in [
+        refuse(
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                memcpy_batch: true,
+                pageable: true,
+                ..GpuStoreCfg::default()
+            },
+        ),
+        refuse(
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                memcpy_batch: true,
+                sync_alloc: true,
+                ..GpuStoreCfg::default()
+            },
+        ),
+        refuse(
+            GpuFill::Mapped,
+            GpuStoreCfg {
+                memcpy_batch: true,
+                ..GpuStoreCfg::default()
+            },
+        ),
+        refuse(
+            GpuFill::Managed,
+            GpuStoreCfg {
+                memcpy_batch: true,
+                ..GpuStoreCfg::default()
+            },
+        ),
+    ] {
+        assert!(
+            err.to_string()
+                .contains("memcpy-batch needs async pinned/vmm H2D"),
+            "{err}"
+        );
+    }
+}
+
+#[test]
 fn seq_stream_priority_starts_higher_stream_first() {
     use crate::replay::Touch;
     use crate::sim_replay::{
@@ -5185,6 +5379,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             vmm: false,
             vmm_page: 0,
             pageable: false,
+            memcpy_batch: false,
             accessed_by: false,
         };
         let mut next_event = 1u32;
