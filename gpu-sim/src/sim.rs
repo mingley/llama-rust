@@ -12,7 +12,7 @@ use crate::ids::{
 use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
     ClusterSchedulingPolicy, DeviceAttr, DeviceLimit, DeviceP2pAttr, DeviceProperties,
-    EventCreateFlags, EventRecordFlags, EventWaitFlags, FuncAttributes, GpuOp as Kind,
+    EventCreateFlags, EventRecordFlags, EventWaitFlags, FuncAttr, FuncAttributes, GpuOp as Kind,
     GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags, HostNodeParams,
@@ -14770,6 +14770,50 @@ impl Sim {
             max_dynamic_shared_size_bytes: self.max_dynamic_shared_memory(device),
             non_portable_cluster_size_allowed: self.non_portable_cluster_size_allowed(device),
         })
+    }
+
+    /// `cudaFuncSetAttribute`. Host-side; not a graph node.
+    ///
+    /// Dispatches [`FuncAttr`] onto the typed setters. Capture-legal like those
+    /// setters. Negative [`FuncAttr::MaxDynamicSharedMemorySize`] or a
+    /// non-0/1 [`FuncAttr::NonPortableClusterSizeAllowed`] is Invalid
+    /// `"func attr"`. Typed helpers stay. Decode identity stays `0` / disallowed.
+    pub fn func_set_attribute(
+        &mut self,
+        device: DeviceId,
+        attr: FuncAttr,
+        value: i32,
+    ) -> Result<(), SimError> {
+        match attr {
+            FuncAttr::MaxDynamicSharedMemorySize => {
+                let bytes =
+                    u32::try_from(value).map_err(|_| SimError::Invalid { why: "func attr" })?;
+                self.set_max_dynamic_shared_memory(device, bytes)
+            }
+            FuncAttr::NonPortableClusterSizeAllowed => {
+                if value != 0 && value != 1 {
+                    return Err(SimError::Invalid { why: "func attr" });
+                }
+                self.set_non_portable_cluster_size_allowed(device, value != 0)
+            }
+        }
+    }
+
+    /// `cudaFuncGetAttribute`. Query; legal during capture.
+    ///
+    /// Unknown devices are Invalid. This VM has one function-attr set per
+    /// device, not per kernel function.
+    pub fn func_get_attribute(&self, device: DeviceId, attr: FuncAttr) -> Result<i32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        match attr {
+            FuncAttr::MaxDynamicSharedMemorySize => {
+                i32::try_from(self.max_dynamic_shared_memory(device))
+                    .map_err(|_| SimError::Invalid { why: "func attr" })
+            }
+            FuncAttr::NonPortableClusterSizeAllowed => {
+                Ok(i32::from(self.non_portable_cluster_size_allowed(device)))
+            }
+        }
     }
 
     fn advance_to_next_completion(&mut self) -> Result<(), SimError> {

@@ -612,6 +612,17 @@ pub struct DeviceProperties {
     pub managed_memory: bool,
 }
 
+/// `cudaFuncAttribute` for [`crate::Sim::func_set_attribute`] / `GetAttribute`.
+///
+/// Only attributes this VM already models. Value is CUDA's `int`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FuncAttr {
+    /// `cudaFuncAttributeMaxDynamicSharedMemorySize`.
+    MaxDynamicSharedMemorySize,
+    /// `cudaFuncAttributeNonPortableClusterSizeAllowed`.
+    NonPortableClusterSizeAllowed,
+}
+
 /// Modeled `cudaFuncGetAttributes` / `cudaFuncGetAttribute` fields.
 ///
 /// This VM has one function-attr set **per device**, not per kernel

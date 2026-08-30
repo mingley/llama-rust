@@ -2222,7 +2222,16 @@ model, do not celebrate the sim.
     cap the priority range. Decode identity unchanged. `gpu-profile
     capture` is still refused. Dual score still has no `$/M tokens`.
 
-196. [ ] Next numbered PLAN item after 195 is the next `gpu-sim` / Engine /
+196. [x] `cudaFuncSetAttribute` / `cudaFuncGetAttribute`:
+    `Sim::func_set_attribute` / `func_get_attribute` dispatch [`FuncAttr`]
+    onto the typed per-device setters/getters. Negative max-dynamic-shared
+    or a non-0/1 non-portable-cluster value is Invalid `"func attr"`. Get
+    is a query (capture-legal); Set is host-side like the typed helpers.
+    Typed helpers stay. Decode identity stays `0` / disallowed.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+197. [ ] Next numbered PLAN item after 196 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

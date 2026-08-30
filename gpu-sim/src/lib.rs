@@ -175,6 +175,10 @@
 //! / [`DeviceAttr::ManagedMemory`] are always 1 (this VM has mapped host and
 //! UM). [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
+//! [`func_set_attribute`](Sim::func_set_attribute) /
+//! [`func_get_attribute`](Sim::func_get_attribute) are `cudaFuncSetAttribute` /
+//! `GetAttribute` ([`FuncAttr`]). Typed setters stay. Get is a query
+//! (capture-legal); Set is host-side like those setters.
 //! [`Sim::stream_get_flags`] is `cudaStreamGetFlags` (`0` blocking / `1`
 //! NonBlocking; NULL follows [`legacy_null_stream`](Sim::legacy_null_stream)).
 //! [`Sim::stream_get_priority`] is `cudaStreamGetPriority`.
@@ -531,8 +535,8 @@ pub use ids::{
 pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp,
     ClusterDim, ClusterSchedulingPolicy, DType, DeviceAttr, DeviceLimit, DeviceP2pAttr,
-    DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags, FuncAttributes, GpuOp,
-    GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo,
+    DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags, FuncAttr, FuncAttributes,
+    GpuOp, GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags, HostNodeParams,
     KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
@@ -8816,6 +8820,61 @@ mod tests {
             49_152
         );
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn func_set_get_attribute_dispatch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(
+            sim.func_get_attribute(d, FuncAttr::MaxDynamicSharedMemorySize)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.func_get_attribute(d, FuncAttr::NonPortableClusterSizeAllowed)
+                .unwrap(),
+            0
+        );
+        sim.func_set_attribute(d, FuncAttr::MaxDynamicSharedMemorySize, 49_152)
+            .unwrap();
+        sim.func_set_attribute(d, FuncAttr::NonPortableClusterSizeAllowed, 1)
+            .unwrap();
+        assert_eq!(
+            sim.func_get_attribute(d, FuncAttr::MaxDynamicSharedMemorySize)
+                .unwrap(),
+            49_152
+        );
+        assert_eq!(
+            sim.func_get_attribute(d, FuncAttr::NonPortableClusterSizeAllowed)
+                .unwrap(),
+            1
+        );
+        let a = sim.func_get_attributes(d).unwrap();
+        assert_eq!(a.max_dynamic_shared_size_bytes, 49_152);
+        assert!(a.non_portable_cluster_size_allowed);
+        match sim.func_set_attribute(d, FuncAttr::MaxDynamicSharedMemorySize, -1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("func attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.func_set_attribute(d, FuncAttr::NonPortableClusterSizeAllowed, 2) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("func attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.func_get_attribute(DeviceId(1), FuncAttr::MaxDynamicSharedMemorySize) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.func_get_attribute(d, FuncAttr::MaxDynamicSharedMemorySize)
+                .unwrap(),
+            49_152
+        );
+        sim.func_set_attribute(d, FuncAttr::NonPortableClusterSizeAllowed, 0)
+            .unwrap();
+        let _g = sim.end_capture().unwrap();
+        assert!(!sim.non_portable_cluster_size_allowed(d));
     }
 
     #[test]

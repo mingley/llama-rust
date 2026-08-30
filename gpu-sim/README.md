@@ -475,7 +475,9 @@ stream is `Ok(false)`; the clock does not advance).
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
 (no SM count or clock). `func_get_attributes` is `cudaFuncGetAttributes`
 of modeled per-device function attrs (`maxDynamicSharedSizeBytes` and
-`nonPortableClusterSizeAllowed`; not per kernel). `stream_get_flags` is `cudaStreamGetFlags`
+`nonPortableClusterSizeAllowed`; not per kernel). `func_set_attribute` /
+`func_get_attribute` are `cudaFuncSetAttribute` / `GetAttribute` (`FuncAttr`).
+Typed setters stay. `stream_get_flags` is `cudaStreamGetFlags`
 (`0` `cudaStreamDefault` / `1` `cudaStreamNonBlocking`; NULL follows
 `set_legacy_null_stream`). `stream_get_priority` is `cudaStreamGetPriority`.
 `stream_get_id` is `cudaStreamGetId` (unique per device/stream; not the
