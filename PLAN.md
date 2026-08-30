@@ -1758,8 +1758,10 @@ model, do not celebrate the sim.
 141. [x] expertvm / Engine `--kernel-priority N`:
     `cudaLaunchAttributePriority` on grouped expert GEMMs. `None` inherits
     `cudaStreamCreateWithPriority`. `N` (including `0`) overrides that kernel
-    when compute contends (higher first). Distinct from `--stream-priority`.
-    Legal with `--pdl` and `--cooperative`. Decode identity stays inherit-stream.
+    when compute contends (higher first). Graph instantiate uses
+    `cudaGraphInstantiateFlagUseNodePriority` so captured node values are
+    used at replay. Distinct from `--stream-priority`. Legal with `--pdl`
+    and `--cooperative`. Decode identity stays inherit-stream.
     `gpu-profile capture` is still refused.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

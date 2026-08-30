@@ -246,8 +246,9 @@ pub struct GpuStoreCfg {
     /// [`None`] inherits [`Self::stream_priority`] / stream create priority.
     /// [`Some`] overrides that kernel (memcpy stays on the stream). Higher
     /// first when compute contends. Flattening leftover-prefill vs decode
-    /// stream ranking is expected when this is set. Decode identity stays
-    /// inherit-stream.
+    /// stream ranking is expected when this is set. Instantiates with
+    /// `cudaGraphInstantiateFlagUseNodePriority` so captured node values are
+    /// used at replay. Decode identity stays inherit-stream.
     pub kernel_priority: Option<i32>,
     /// `cudaGraphInstantiateFlagDeviceLaunch` + [`gpu_sim::Sim::device_launch_graph`].
     ///
@@ -1561,6 +1562,7 @@ impl SimulatedGpuStore {
             exec,
             self.leaf == LeafMem::AutoFree,
             self.device_launch,
+            self.kernel_priority.is_some(),
         )
     }
 

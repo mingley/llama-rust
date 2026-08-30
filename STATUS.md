@@ -11,7 +11,8 @@ Work lands on `main`. No PRs.
 `infer-bench schedule` take `--kernel-priority N`. Grouped expert GEMMs launch
 with `cudaLaunchAttributePriority`. `None` inherits stream create priority.
 `N` (including `0`) overrides that kernel when compute contends. Distinct from
-`--stream-priority`. Legal with `--pdl` and `--cooperative`. Decode identity
+`--stream-priority`. Graph instantiate uses `UseNodePriority` so captured node
+values are used at replay. Legal with `--pdl` and `--cooperative`. Decode identity
 stays inherit-stream. `gpu-profile capture` is still refused.
 
 ## Shipped 2026-08-30 — `cudaLaunchAttributePriority`

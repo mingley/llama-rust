@@ -573,7 +573,9 @@ pub struct SimCfg {
     ///
     /// [`None`] inherits `cudaStreamCreateWithPriority`. [`Some`] overrides
     /// that kernel (memcpy stays on the stream). Higher first when compute
-    /// contends. Decode identity stays inherit-stream.
+    /// contends. Decode identity stays inherit-stream. Instantiates with
+    /// `cudaGraphInstantiateFlagUseNodePriority` so captured node values are
+    /// used at replay.
     /// [`crate::GpuStoreCfg::kernel_priority`] is the store path.
     pub kernel_priority: Option<i32>,
     /// `cudaGraphInstantiateFlagDeviceLaunch` + [`gpu_sim::Sim::device_launch_graph`].
@@ -1320,7 +1322,13 @@ impl GraphBank {
         } else {
             src
         };
-        instantiate_exec(sim, exec, self.mem == LeafMem::AutoFree, self.device_launch)
+        instantiate_exec(
+            sim,
+            exec,
+            self.mem == LeafMem::AutoFree,
+            self.device_launch,
+            self.kernel_priority.is_some(),
+        )
     }
 
     fn parks(&self, n_ids: usize) -> bool {
@@ -1381,13 +1389,22 @@ pub(crate) fn instantiate_exec(
     src: GraphId,
     auto_free: bool,
     device_launch: bool,
+    use_node_priority: bool,
 ) -> Result<GraphId, Error> {
-    let exec = if auto_free {
-        sim.instantiate_graph_auto_free(src)?
-    } else if device_launch {
-        sim.instantiate_graph_with_flags(src, GraphInstantiateFlags::DEVICE_LAUNCH)?
-    } else {
+    let mut flags = 0u32;
+    if auto_free {
+        flags |= GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH;
+    }
+    if device_launch {
+        flags |= GraphInstantiateFlags::DEVICE_LAUNCH;
+    }
+    if use_node_priority {
+        flags |= GraphInstantiateFlags::USE_NODE_PRIORITY;
+    }
+    let exec = if flags == 0 {
         sim.instantiate_graph(src)?
+    } else {
+        sim.instantiate_graph_with_flags(src, flags)?
     };
     sim.upload_graph(exec)?;
     Ok(exec)
