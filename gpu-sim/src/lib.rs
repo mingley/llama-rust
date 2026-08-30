@@ -159,7 +159,11 @@
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
 //! are `cudaGraphKernelNodeGetAttribute` / `SetAttribute` / `CopyAttributes`
-//! for priority. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
+//! for priority and programmatic dependent launch ([`ProgrammaticLaunch`]).
+//! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
+//! may start after the previous same-stream kernel's trigger
+//! (`GpuProfile::pdl_trigger_permille`) instead of its completion. Overlap
+//! needs `compute_slots >= 2`. Decode identity stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
 //! [`graph_exec_kernel_node_set_priority`](Sim::graph_exec_kernel_node_set_priority)
 //! are the exec-snapshot attributes. [`Sim::upload_graph`] is
 //! `cudaGraphUpload` (host-sync; first launch after instantiate calls it).
@@ -324,8 +328,8 @@ pub use ops::{
     BatchMemOp, CaptureDepOp, DType, GpuOp, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelBuf, KernelKind, KernelNodeParams,
-    MemAdvise, MemAttach, MemcpyOp, Operation, Place, StreamCaptureInfo, StreamCaptureMode,
-    UserObjectFlags, WaitValueCmp,
+    MemAdvise, MemAttach, MemcpyOp, Operation, Place, ProgrammaticLaunch, StreamCaptureInfo,
+    StreamCaptureMode, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -3555,6 +3559,155 @@ mod tests {
             a1 >= d0,
             "stream[i+1].start >= stream[i].finish; start1={a1} done0={d0} start0={a0}"
         );
+    }
+
+    #[test]
+    fn pdl_same_stream_overlaps_after_trigger() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.compute_slots = 2;
+            g.pdl_trigger_permille = 250;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+        sim.synchronize().unwrap();
+        let k = KernelKind::other(1 << 30, 4096);
+        enq(sim.kernel_pdl(
+            d,
+            k.clone(),
+            &[a],
+            &[a],
+            s,
+            ProgrammaticLaunch {
+                wait: false,
+                trigger: true,
+            },
+        ));
+        enq(sim.kernel_pdl(
+            d,
+            k,
+            &[b],
+            &[b],
+            s,
+            ProgrammaticLaunch {
+                wait: true,
+                trigger: false,
+            },
+        ));
+        sim.synchronize().unwrap();
+        let kernels: Vec<Operation> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .collect();
+        assert_eq!(kernels.len(), 2);
+        let a0 = kernels[0].start_ns.expect("k0 start");
+        let d0 = kernels[0].done_ns.expect("k0 done");
+        let a1 = kernels[1].start_ns.expect("k1 start");
+        assert!(
+            a1 < d0,
+            "PDL secondary must start before primary done; start1={a1} done0={d0}"
+        );
+        assert!(
+            a1 >= a0,
+            "secondary cannot start before primary; start1={a1} start0={a0}"
+        );
+    }
+
+    #[test]
+    fn pdl_wait_without_trigger_stays_serial() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.compute_slots = 2;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let k = KernelKind::other(1 << 20, 4096);
+        enq(sim.kernel(d, k.clone(), &[a], &[a], s));
+        enq(sim.kernel_pdl(
+            d,
+            k,
+            &[a],
+            &[a],
+            s,
+            ProgrammaticLaunch {
+                wait: true,
+                trigger: false,
+            },
+        ));
+        sim.synchronize().unwrap();
+        let kernels: Vec<Operation> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .collect();
+        let d0 = kernels[0].done_ns.expect("k0 done");
+        let a1 = kernels[1].start_ns.expect("k1 start");
+        assert!(
+            a1 >= d0,
+            "wait without trigger is serial; start1={a1} done0={d0}"
+        );
+    }
+
+    #[test]
+    fn graph_pdl_attributes_overlap_dependent_kernels() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.compute_slots = 2;
+            g.pdl_trigger_permille = 250;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+        sim.synchronize().unwrap();
+        let k = KernelKind::other(1 << 30, 4096);
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, k.clone(), &[a], &[a]).unwrap();
+        sim.graph_add_kernel(g, k, &[b], &[b]).unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        sim.graph_kernel_node_set_pdl(
+            g,
+            0,
+            ProgrammaticLaunch {
+                wait: false,
+                trigger: true,
+            },
+        )
+        .unwrap();
+        sim.graph_kernel_node_set_pdl(
+            g,
+            1,
+            ProgrammaticLaunch {
+                wait: true,
+                trigger: false,
+            },
+        )
+        .unwrap();
+        assert!(sim.graph_kernel_node_get_pdl(g, 0).unwrap().trigger);
+        assert!(sim.graph_kernel_node_get_pdl(g, 1).unwrap().wait);
+        let _ = sim.instantiate_graph(g).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        let kernels: Vec<Operation> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .collect();
+        assert_eq!(kernels.len(), 2);
+        let d0 = kernels[0].done_ns.expect("k0 done");
+        let a1 = kernels[1].start_ns.expect("k1 start");
+        assert!(a1 < d0, "graph PDL must overlap; start1={a1} done0={d0}");
     }
 
     #[test]

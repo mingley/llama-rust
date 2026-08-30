@@ -1501,6 +1501,15 @@ model, do not celebrate the sim.
     not copy retains. Capture cannot include it. Decode identity does
     not create user objects. `gpu-profile capture` is still refused.
 
+112. [x] Programmatic dependent launch: `kernel_pdl` /
+    `graph_kernel_node_set_pdl` are `cudaLaunchAttributeProgrammaticStreamSerialization`
+    plus an implicit `cudaTriggerProgrammaticLaunchCompletion` at
+    `GpuProfile::pdl_trigger_permille` of the primary. A wait kernel's
+    same-stream dep is that trigger, not completion. Overlap needs
+    `compute_slots >= 2` (example H100 stays exclusive). CopyAttributes
+    copies PDL. Decode identity stays `kernel` (both flags false).
+    `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

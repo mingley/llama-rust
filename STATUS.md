@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — programmatic dependent launch
+
+`kernel_pdl` / `graph_kernel_node_set_pdl` model CUDA PDL. A wait kernel
+may start after the previous same-stream kernel's trigger
+(`pdl_trigger_permille`) instead of its completion. Overlap needs
+`compute_slots >= 2`. Decode identity stays `kernel`. `gpu-profile capture`
+is still refused.
+
 ## Shipped 2026-08-30 — `cudaUserObjectCreate` / graph retain
 
 `user_object_create` is `cudaUserObjectCreate` (`NO_DESTRUCTOR_SYNC`).

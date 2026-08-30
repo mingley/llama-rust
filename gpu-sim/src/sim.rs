@@ -13,8 +13,8 @@ use crate::ops::{
     BatchMemOp, CaptureDepOp, GpuOp as Kind, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelBuf, KernelKind, KernelNodeParams,
-    MemAdvise, MemAttach, MemcpyOp, Operation, Place, StreamCaptureInfo, StreamCaptureMode,
-    UserObjectFlags, WaitValueCmp,
+    MemAdvise, MemAttach, MemcpyOp, Operation, Place, ProgrammaticLaunch, StreamCaptureInfo,
+    StreamCaptureMode, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{ns_for_bytes, HardwareProfile, LinkKind};
 
@@ -169,6 +169,10 @@ struct Op {
     /// Scheduling priority (`cudaStreamCreateWithPriority` or a kernel-node
     /// attribute when the exec used `cudaGraphInstantiateFlagUseNodePriority`).
     priority: i32,
+    /// Programmatic dependent launch flags for this op.
+    pdl: ProgrammaticLaunch,
+    /// Clock when a [`ProgrammaticLaunch::trigger`] kernel signals completion.
+    pdl_trigger_ns: Option<u64>,
 }
 
 /// How a submitted op pays kernel/graph launch overhead.
@@ -248,6 +252,8 @@ struct GraphStep {
     enabled: bool,
     /// Stream priority snapshotted at add/capture (`cudaKernelNodeAttributePriority`).
     priority: i32,
+    /// Programmatic dependent launch (`cudaLaunchAttributeProgrammaticStreamSerialization`).
+    pdl: ProgrammaticLaunch,
 }
 
 struct Graph {
@@ -513,6 +519,8 @@ pub struct Sim {
     clone_of: BTreeMap<GraphId, GraphId>,
     /// Override [`Op::priority`] for ops submitted by [`Self::enqueue_graph`].
     enqueue_priority: Option<i32>,
+    /// PDL flags for the next submit ([`Self::kernel_pdl`] / graph replay).
+    enqueue_pdl: ProgrammaticLaunch,
     /// Wait/write-value mailbox: `(alloc, offset) → word`. Missing is `0`.
     mailbox: BTreeMap<(AllocId, u64), u64>,
     /// `cudaThreadExchangeStreamCaptureMode` default for [`Self::begin_capture`].
@@ -592,6 +600,7 @@ impl Sim {
             enqueue_preds: Vec::new(),
             clone_of: BTreeMap::new(),
             enqueue_priority: None,
+            enqueue_pdl: ProgrammaticLaunch::default(),
             mailbox: BTreeMap::new(),
             capture_mode: StreamCaptureMode::Relaxed,
             next_user_object: 1,
@@ -1723,6 +1732,7 @@ impl Sim {
             } else {
                 self.enqueue_priority = None;
             }
+            self.enqueue_pdl = step.pdl;
             let wait = graph_node_waits(step, extra_wait, launch_tail, &node_ops)?;
             let s = self.graph_exec_stream(origin, stream, step, &node_stream, &mut worker);
             if let Some(slot) = node_stream.get_mut(idx) {
@@ -1890,6 +1900,7 @@ impl Sim {
         }
         let _gone = stack.remove(&graph);
         self.enqueue_priority = None;
+        self.enqueue_pdl = ProgrammaticLaunch::default();
         Ok(n)
     }
 
@@ -5046,7 +5057,96 @@ impl Sim {
         Ok(())
     }
 
-    /// `cudaGraphKernelNodeCopyAttributes`: copy priority from `src` to `dst`.
+    /// `cudaGraphKernelNodeGetAttribute` for programmatic stream serialization.
+    pub fn graph_kernel_node_get_pdl(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<ProgrammaticLaunch, SimError> {
+        self.kernel_node_pdl(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for PDL on the exec snapshot.
+    pub fn graph_exec_kernel_node_get_pdl(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<ProgrammaticLaunch, SimError> {
+        self.kernel_node_pdl(exec, node, true)
+    }
+
+    fn kernel_node_pdl(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<ProgrammaticLaunch, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.pdl)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for PDL on the graph definition.
+    pub fn graph_kernel_node_set_pdl(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        pdl: ProgrammaticLaunch,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.pdl = pdl;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for PDL on the exec snapshot.
+    pub fn graph_exec_kernel_node_set_pdl(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        pdl: ProgrammaticLaunch,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let exec = self.as_exec(exec)?;
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.pdl = pdl;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeCopyAttributes`: copy priority and PDL from `src` to `dst`.
     ///
     /// Both nodes must be kernels. Capture cannot include it.
     pub fn graph_kernel_node_copy_attributes(
@@ -5058,7 +5158,9 @@ impl Sim {
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node copy attributes")?;
         let pri = self.graph_kernel_node_get_priority(src_graph, src)?;
-        self.graph_kernel_node_set_priority(dst_graph, dst, pri)
+        let pdl = self.graph_kernel_node_get_pdl(src_graph, src)?;
+        self.graph_kernel_node_set_priority(dst_graph, dst, pri)?;
+        self.graph_kernel_node_set_pdl(dst_graph, dst, pdl)
     }
 
     /// `cudaGraphNodeFindInClone`: index in `cloned` of the node that was `node`
@@ -5135,6 +5237,7 @@ impl Sim {
             deps: Vec::new(),
             enabled: true,
             priority,
+            pdl: self.enqueue_pdl,
         });
         Ok(())
     }
@@ -7266,6 +7369,45 @@ impl Sim {
         self.submit_kernel(device, kind, reads, writes, stream, false)
     }
 
+    /// Same as [`Self::kernel`] with [`ProgrammaticLaunch`] (CUDA PDL).
+    ///
+    /// [`ProgrammaticLaunch::wait`] lets this kernel start after the previous
+    /// same-stream kernel's programmatic trigger instead of its completion.
+    /// [`ProgrammaticLaunch::trigger`] fires that trigger at
+    /// [`crate::GpuProfile::pdl_trigger_permille`]. Overlap needs
+    /// [`crate::GpuProfile::compute_slots`] `>= 2`. Capture records the flags.
+    /// Decode identity stays [`Self::kernel`] (both flags false).
+    pub fn kernel_pdl(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+        pdl: ProgrammaticLaunch,
+    ) -> Result<OpId, SimError> {
+        let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
+        let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
+        self.kernel_pdl_bufs(device, kind, &reads, &writes, stream, pdl)
+    }
+
+    /// [`Self::kernel_bufs`] with [`ProgrammaticLaunch`].
+    pub fn kernel_pdl_bufs(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+        pdl: ProgrammaticLaunch,
+    ) -> Result<OpId, SimError> {
+        let prev = self.enqueue_pdl;
+        self.enqueue_pdl = pdl;
+        let out = self.submit_kernel(device, kind, reads, writes, stream, false);
+        self.enqueue_pdl = prev;
+        out
+    }
+
     /// `cudaLaunchCooperativeKernel` on whole allocations.
     ///
     /// Same lease / residency rules as [`Self::kernel`]. The grid occupies
@@ -7959,6 +8101,7 @@ impl Sim {
             deps,
             enabled: true,
             priority,
+            pdl: self.enqueue_pdl,
         });
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
@@ -8038,6 +8181,8 @@ impl Sim {
                 preds: self.enqueue_preds.clone(),
                 skipped: false,
                 priority,
+                pdl: self.enqueue_pdl,
+                pdl_trigger_ns: None,
             },
         );
         let _prev_tail = self.tail.insert((device, stream), id);
@@ -8391,6 +8536,8 @@ impl Sim {
                 preds: Vec::new(),
                 skipped: false,
                 priority,
+                pdl: ProgrammaticLaunch::default(),
+                pdl_trigger_ns: None,
             },
         );
         self.add_op_dep(kernel, id);
@@ -8456,6 +8603,18 @@ impl Sim {
             remaining_ns: ns.max(1),
             share: Share::Solo,
         });
+        if let Some(op) = self.ops.get_mut(&id) {
+            if op.pdl.trigger {
+                let permille = u64::from(
+                    self.profile
+                        .gpu(device)
+                        .map(|g| g.pdl_trigger_permille.min(1000))
+                        .unwrap_or(1000),
+                );
+                let delay = ns.saturating_mul(permille) / 1000;
+                op.pdl_trigger_ns = Some(self.clock.saturating_add(delay));
+            }
+        }
         Ok(true)
     }
 
@@ -8921,7 +9080,45 @@ impl Sim {
     }
 
     fn deps_ready(&self, op: &Op) -> bool {
-        op.deps.iter().all(|d| self.op_done(*d))
+        op.deps.iter().all(|d| self.dep_satisfied(op, *d))
+    }
+
+    fn dep_satisfied(&self, op: &Op, dep: OpId) -> bool {
+        if self.op_done(dep) {
+            return true;
+        }
+        if !op.pdl.wait {
+            return false;
+        }
+        let Some(prev) = self.ops.get(&dep) else {
+            return false;
+        };
+        if !prev.pdl.trigger || prev.device != op.device || prev.stream != op.stream {
+            return false;
+        }
+        prev.pdl_trigger_ns.is_some_and(|t| self.clock >= t)
+    }
+
+    fn next_pdl_wake(&self) -> Option<u64> {
+        let mut soonest = None;
+        for (id, o) in &self.ops {
+            if o.done || !o.pdl.wait || self.is_running(*id) {
+                continue;
+            }
+            for d in &o.deps {
+                let Some(prev) = self.ops.get(d) else {
+                    continue;
+                };
+                let Some(t) = prev.pdl_trigger_ns else {
+                    continue;
+                };
+                if t <= self.clock {
+                    continue;
+                }
+                soonest = Some(soonest.map_or(t, |s: u64| s.min(t)));
+            }
+        }
+        soonest
     }
 
     fn is_running(&self, id: OpId) -> bool {
@@ -9745,6 +9942,12 @@ impl Sim {
                 min_dt = dt;
             }
         }
+        if let Some(wake) = self.next_pdl_wake() {
+            let dt = wake.saturating_sub(self.clock);
+            if dt < min_dt {
+                min_dt = dt;
+            }
+        }
         if min_dt == 0 || min_dt == u64::MAX {
             min_dt = 1;
         }
@@ -10498,6 +10701,7 @@ fn remap_nested_graphs(
             deps: step.deps.clone(),
             enabled: step.enabled,
             priority: step.priority,
+            pdl: step.pdl,
         });
     }
     Ok(out)

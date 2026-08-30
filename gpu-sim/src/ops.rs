@@ -251,6 +251,23 @@ pub struct KernelNodeParams {
     pub cooperative: bool,
 }
 
+/// `cudaLaunchAttributeProgrammaticStreamSerialization` / programmatic
+/// dependent launch (PDL).
+///
+/// [`Self::wait`] is the secondary (`programmaticStreamSerializationAllowed`):
+/// same-stream start may wait for the previous kernel's programmatic trigger
+/// instead of its completion. [`Self::trigger`] means this kernel calls
+/// `cudaTriggerProgrammaticLaunchCompletion` at
+/// [`crate::GpuProfile::pdl_trigger_permille`] of its duration. Decode identity
+/// stays both flags false. Capture records the flags.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ProgrammaticLaunch {
+    /// Secondary: overlap the previous same-stream kernel after its PDL trigger.
+    pub wait: bool,
+    /// Primary: signal programmatic completion before the kernel finishes.
+    pub trigger: bool,
+}
+
 /// `cudaStreamAttachMemAsync` flags (`cudaMemAttachGlobal` / `Host` / `Single`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemAttach {

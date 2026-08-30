@@ -78,6 +78,11 @@ pub struct GpuProfile {
     pub gemm_util_permille: u16,
     /// Grouped-MoE duration vs dense roofline, ‰ (`1000` = no extra). Not a capture.
     pub grouped_moe_permille: u16,
+    /// When a PDL primary ([`crate::ops::ProgrammaticLaunch::trigger`]) signals
+    /// `cudaTriggerProgrammaticLaunchCompletion`, as ‰ of kernel duration
+    /// after start (`0` = at start, `1000` = at completion). Example default
+    /// `250`, not a capture. Overlap still needs [`Self::compute_slots`] `>= 2`.
+    pub pdl_trigger_permille: u16,
 }
 
 impl GpuProfile {
@@ -474,7 +479,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npdl_trigger_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -494,6 +499,7 @@ impl HardwareProfile {
             g0.graph_upload_ns,
             g0.gemm_util_permille,
             g0.grouped_moe_permille,
+            g0.pdl_trigger_permille,
             self.host_pageable_permille(g0.id),
             self.host_align_bytes(g0.id),
             g0.pool_reuse_ns,
@@ -610,6 +616,7 @@ fn h100_gpu(id: DeviceId) -> GpuProfile {
         tdp_mw: 700_000,
         gemm_util_permille: 1000,
         grouped_moe_permille: 1000,
+        pdl_trigger_permille: 250,
     }
 }
 
@@ -739,6 +746,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut graph_upload_ns: Option<u64> = None;
     let mut gemm_util_permille: u16 = 1000;
     let mut grouped_moe_permille: u16 = 1000;
+    let mut pdl_trigger_permille: u16 = 250;
     let mut pageable_permille: u16 = 500;
     let mut align_bytes: u64 = 128;
     let mut pool_reuse_ns: Option<u64> = None;
@@ -798,6 +806,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             "graph_upload_ns" => graph_upload_ns = Some(parse_u64(v)?),
             "gemm_util_permille" => gemm_util_permille = parse_u16(v)?,
             "grouped_moe_permille" => grouped_moe_permille = parse_u16(v)?,
+            "pdl_trigger_permille" => pdl_trigger_permille = parse_u16(v)?,
             "pageable_permille" => pageable_permille = parse_u16(v)?,
             "align_bytes" => align_bytes = parse_u64(v)?,
             "pool_reuse_ns" => pool_reuse_ns = Some(parse_u64(v)?),
@@ -856,6 +865,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         }
         g.gemm_util_permille = gemm_util_permille;
         g.grouped_moe_permille = grouped_moe_permille;
+        g.pdl_trigger_permille = pdl_trigger_permille;
         if let Some(ns) = pool_reuse_ns {
             g.pool_reuse_ns = ns;
         }

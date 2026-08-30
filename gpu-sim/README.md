@@ -111,6 +111,7 @@ warp scheduler, L1, …   ← do not model
 | higher `set_stream_priority` starts first under contention | launch overhead |
 | `compute_slots>=2` overlaps independent kernels at full issue rate | kernel duration (not SM-partition) |
 | `cudaLaunchCooperativeKernel` occupies every compute slot (`cooperative_kernel`) | leftover kernels cannot Hyper-Q overlap |
+| programmatic dependent launch: wait kernel starts after the previous same-stream trigger (`pdl_trigger_permille`) | overlap needs `compute_slots >= 2` |
 | `set_stream_sm_permille` is a green-context SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host) | HBM write + launch overhead |
 | peer D2D needs topology + `enable_peer` | link bandwidth |
@@ -452,7 +453,11 @@ overflow is `PinOom`. Example default is unlimited.
 compute contends). `stream_copy_attributes` is `cudaStreamCopyAttributes`
 (priority and SM permille). `graph_kernel_node_get_priority` /
 `set_priority` / `copy_attributes` are `cudaGraphKernelNodeGetAttribute` /
-`SetAttribute` / `CopyAttributes` for priority. `USE_NODE_PRIORITY` at
+`SetAttribute` / `CopyAttributes` for priority and programmatic dependent
+launch (`ProgrammaticLaunch`). `kernel_pdl` is `cudaLaunchKernelEx` PDL:
+a wait kernel may start after the previous same-stream kernel's trigger
+(`pdl_trigger_permille`) instead of its completion. Overlap needs
+`compute_slots >= 2`. Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
 instantiate schedules those node priorities instead of the launch stream. `set_created_streams_priority` assigns created streams
 their id. `set_stream_sm_permille` is a green-context SM fraction
 (compute-bound kernels scale; memory-bound keep full HBM; default unset is
