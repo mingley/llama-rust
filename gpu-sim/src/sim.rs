@@ -10236,6 +10236,24 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMemRelease` of a [`MulticastId`] (`cuMulticastCreate` handle).
+    ///
+    /// Host-synchronous. Capture cannot include it. Live
+    /// [`Self::va_map_multicast`] maps are Invalid `"still mapped"`. Remaining
+    /// binds are dropped (handles stay live). Unknown ids are Invalid
+    /// `"unknown multicast"`.
+    pub fn multicast_destroy(&mut self, mc: MulticastId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if self.mc_ref(mc)?.maps > 0 {
+            return Err(SimError::Invalid {
+                why: "still mapped",
+            });
+        }
+        let _gone = self.multicasts.remove(&mc);
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// `cuMemMap` of a multicast object into a reserved VA (no extra HBM).
     ///
     /// Host-synchronous. Capture cannot include it. Every team device must

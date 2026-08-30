@@ -130,6 +130,7 @@ impl fmt::Display for PtrExportId {
 ///
 /// [`crate::Sim::multicast_bind_mem`] binds a [`MemHandleId`] per device.
 /// [`crate::Sim::multicast_unbind`] drops that bind (not while mapped).
+/// [`crate::Sim::multicast_destroy`] releases the object (`cuMemRelease`).
 /// [`crate::Sim::va_map_multicast`] maps the object into a reserved VA so a
 /// kernel write fans out over NVLink (NVLS), not N sequential P2P copies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

@@ -143,15 +143,15 @@
 //! [`Sim::va_map`] still Create+Maps in one call.
 //! [`Sim::multicast_create`] / [`multicast_add_device`](Sim::multicast_add_device) /
 //! [`multicast_bind_mem`](Sim::multicast_bind_mem) / [`multicast_unbind`](Sim::multicast_unbind) /
-//! [`va_map_multicast`](Sim::va_map_multicast)
-//! are `cuMulticastCreate` / `cuMulticastAddDevice` / `cuMulticastBindMem` /
-//! `cuMulticastUnbind` / `cuMemMap` of a multicast handle. [`multicast_get_granularity`](Sim::multicast_get_granularity)
+//! [`multicast_destroy`](Sim::multicast_destroy) / [`va_map_multicast`](Sim::va_map_multicast)
+//! are `cuMulticastCreate` / `AddDevice` / `BindMem` / `Unbind` /
+//! `cuMemRelease` / `cuMemMap` of a multicast handle. [`multicast_get_granularity`](Sim::multicast_get_granularity)
 //! is `cuMulticastGetGranularity` (minimum and recommended are the same
 //! profile value; `0`/`1` → `1`). Query; legal during capture. The team must be an NVLink clique (PCIe P2P
 //! and RDMA refuse). Bind uses existing [`MemHandleId`] physicals (dest HBM is
 //! already charged). A kernel write to the multicast VA is one NVLS hop on
 //! compute, not N sequential copy-engine D2Ds. Capture cannot include
-//! create/add/bind/unbind/map. [`Sim::multicast_store`] binds whole-VA maps of one
+//! create/add/bind/unbind/destroy/map. [`Sim::multicast_store`] binds whole-VA maps of one
 //! alloc and enqueues that kernel.
 //! [`Sim::va_set_access`] is `cuMemSetAccess` PROT_READ on a peer (no dest HBM;
 //! interconnect). [`va_set_access_write`](Sim::va_set_access_write) is
@@ -17194,6 +17194,46 @@ mod tests {
         assert_eq!(sim.multicast_binds(mc).unwrap(), 1);
         sim.begin_capture(d0, StreamId(0)).unwrap();
         match sim.multicast_unbind(mc, d1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn multicast_destroy_releases_object() {
+        let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let bytes = 4096u64;
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let mc = sim.multicast_create(bytes, 2).unwrap();
+        sim.multicast_add_device(mc, d0).unwrap();
+        sim.multicast_add_device(mc, d1).unwrap();
+        let h0 = sim.va_create(d0, bytes).unwrap();
+        let h1 = sim.va_create(d1, bytes).unwrap();
+        sim.multicast_bind_mem(mc, d0, h0).unwrap();
+        sim.multicast_bind_mem(mc, d1, h1).unwrap();
+        sim.multicast_destroy(mc).unwrap();
+        match sim.multicast_binds(mc) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown multicast"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mc = sim.multicast_create(bytes, 2).unwrap();
+        sim.multicast_add_device(mc, d0).unwrap();
+        sim.multicast_add_device(mc, d1).unwrap();
+        sim.multicast_bind_mem(mc, d0, h0).unwrap();
+        sim.multicast_bind_mem(mc, d1, h1).unwrap();
+        let va = sim.va_reserve(bytes).unwrap();
+        sim.va_map_multicast(va, d0, 0, mc).unwrap();
+        match sim.multicast_destroy(mc) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mapped"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.va_unmap(va).unwrap();
+        sim.multicast_destroy(mc).unwrap();
+        let mc = sim.multicast_create(bytes, 2).unwrap();
+        sim.begin_capture(d0, StreamId(0)).unwrap();
+        match sim.multicast_destroy(mc) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
