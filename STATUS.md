@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — conditional IF graphs
+
+`Sim::graph_conditional_create` is `cudaGraphConditionalHandleCreate`.
+`graph_add_if` is an IF node whose body skips at start when the handle is
+`0`. `set_conditional` is device `cudaGraphSetConditional` (capture
+allowed; each launch resets to the create-time default). Decode identity
+stays kernel-only graphs. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-30 — `cudaStreamUpdateCaptureDependencies`
 
 `Sim::stream_update_capture_dependencies` is

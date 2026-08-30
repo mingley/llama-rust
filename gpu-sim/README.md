@@ -270,6 +270,10 @@ parameter; External is topology).
 replaces, `Add` unions). `stream_is_capturing` / `stream_capture_info` are
 `cudaStreamIsCapturing` / `GetCaptureInfo`. `graph_node_kind` is
 `cudaGraphNodeGetType`.
+`graph_conditional_create` / `graph_add_if` are
+`cudaGraphConditionalHandleCreate` and an IF node. Body ops skip at
+start when the handle is `0`. `set_conditional` is device
+`cudaGraphSetConditional` (each launch resets to the create-time default).
 `expertvm --graph-set-params` parks a leaf and retargets the unique kernel
 (and a unique memcpy or memset if present). `expertvm --graph-update` parks a leaf GEMM on
 evict and updates the next miss instead of instantiate. `--graph-clone`

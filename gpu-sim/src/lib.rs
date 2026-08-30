@@ -181,6 +181,12 @@
 //! [`stream_capture_info`](Sim::stream_capture_info) are `cudaStreamIsCapturing`
 //! / `cudaStreamGetCaptureInfo`. [`graph_node_kind`](Sim::graph_node_kind) is
 //! `cudaGraphNodeGetType`.
+//! [`graph_conditional_create`](Sim::graph_conditional_create) /
+//! [`graph_add_if`](Sim::graph_add_if) are `cudaGraphConditionalHandleCreate`
+//! and an IF node (`cudaGraphCondTypeIf`). Body ops skip at start when the
+//! handle is `0`. [`set_conditional`](Sim::set_conditional) is device
+//! `cudaGraphSetConditional` (capture allowed; each launch resets to the
+//! create-time default first).
 //! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`.
 //! Capture records every stream that [`wait_event`](Sim::wait_event)s an
 //! event recorded in this capture (CUDA forked capture). [`record_event_external`](Sim::record_event_external)
@@ -212,8 +218,8 @@ mod sim;
 
 pub use error::SimError;
 pub use ids::{
-    AllocId, DeviceId, EventId, GraphId, IpcHandleId, LinkId, MemHandleId, MulticastId, OpId,
-    PoolId, PtrExportId, ShareableHandleId, StreamId,
+    AllocId, CondId, DeviceId, EventId, GraphId, IpcHandleId, LinkId, MemHandleId, MulticastId,
+    OpId, PoolId, PtrExportId, ShareableHandleId, StreamId,
 };
 pub use ops::{
     CaptureDepOp, DType, GpuOp, GraphNodeKind, KernelBuf, KernelKind, KernelNodeParams, MemAdvise,
@@ -7123,6 +7129,113 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("graph dependency"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn graph_if_default_skips_or_runs_body() {
+        let long = KernelKind::other(1 << 40, 4096);
+        let run = |default: u32| {
+            let mut sim = Sim::new(h100());
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let a = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+            sim.synchronize().unwrap();
+            let g = sim.create_graph(d, s).unwrap();
+            let h = sim.graph_conditional_create(g, default).unwrap();
+            let body = sim.graph_add_if(g, h).unwrap();
+            sim.graph_add_kernel(body, long.clone(), &[a], &[a])
+                .unwrap();
+            assert_eq!(sim.graph_node_kind(g, 0).unwrap(), GraphNodeKind::If);
+            sim.instantiate_graph(g).unwrap();
+            assert!(sim.graph_instantiated(body).unwrap());
+            sim.upload_graph(g).unwrap();
+            let t0 = sim.clock_ns();
+            let n = sim.launch_graph(g, s).unwrap();
+            sim.synchronize().unwrap();
+            assert_eq!(n, 1);
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let skipped = run(0);
+        let ran = run(1);
+        assert!(
+            skipped < ran,
+            "IF default 0 must skip the body GEMM; skip={skipped} run={ran}"
+        );
+    }
+
+    #[test]
+    fn graph_set_conditional_enables_if_body() {
+        let long = KernelKind::other(1 << 40, 4096);
+        let run = |write: bool| {
+            let mut sim = Sim::new(h100());
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let a = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+            sim.synchronize().unwrap();
+            let g = sim.create_graph(d, s).unwrap();
+            let h = sim.graph_conditional_create(g, 0).unwrap();
+            sim.begin_capture_to_graph(d, s, g, &[]).unwrap();
+            if write {
+                enq(sim.set_conditional(d, h, 1, s));
+            } else {
+                enq(sim.kernel(d, KernelKind::other(8, 4096), &[a], &[a], s));
+            }
+            assert_eq!(sim.end_capture().unwrap(), g);
+            let body = sim.graph_add_if(g, h).unwrap();
+            sim.graph_add_kernel(body, long.clone(), &[a], &[a])
+                .unwrap();
+            sim.graph_add_dependencies(g, 0, 1).unwrap();
+            sim.instantiate_graph(g).unwrap();
+            sim.upload_graph(g).unwrap();
+            let t0 = sim.clock_ns();
+            let n = sim.launch_graph(g, s).unwrap();
+            sim.synchronize().unwrap();
+            assert_eq!(n, 2);
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let enabled = run(true);
+        let skipped = run(false);
+        assert!(
+            skipped < enabled,
+            "device set_conditional(1) must run the IF body; set={enabled} skip={skipped}"
+        );
+    }
+
+    #[test]
+    fn graph_add_if_rejects_instantiated_capture_and_mismatch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        let other = sim.create_graph(d, s).unwrap();
+        let h = sim.graph_conditional_create(g, 0).unwrap();
+        let err = sim.graph_add_if(other, h).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("mismatch"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        let body = sim.graph_add_if(g, h).unwrap();
+        assert_eq!(sim.graph_if_nodes(g).unwrap().len(), 1);
+        sim.instantiate_graph(g).unwrap();
+        let err = sim.graph_add_if(g, h).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        let err = sim.graph_conditional_create(g, 1).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        let err = sim.graph_conditional_create(body, 0).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
     }
 
     #[test]

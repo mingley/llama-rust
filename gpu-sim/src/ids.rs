@@ -126,3 +126,13 @@ impl fmt::Display for MulticastId {
         write!(f, "mc{}", self.0)
     }
 }
+
+/// `cudaGraphConditionalHandle`. Created on a graph; sampled by an IF node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CondId(pub u32);
+
+impl fmt::Display for CondId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "cond{}", self.0)
+    }
+}

@@ -1,6 +1,6 @@
 //! Structural GPU operations. Timing is derived from a [`crate::HardwareProfile`].
 
-use crate::ids::{AllocId, DeviceId, EventId, GraphId, OpId, StreamId};
+use crate::ids::{AllocId, CondId, DeviceId, EventId, GraphId, OpId, StreamId};
 
 /// `cudaMemAdvise` hint on a [`crate::Sim::alloc_managed`] pointer.
 ///
@@ -253,7 +253,8 @@ pub enum MemAttach {
 
 /// One submitted GPU primitive. PLAN's Kernel / Memcpy / Collective / Event /
 /// Alloc / Free, plus `cudaMemsetAsync`, `cudaLaunchHostFunc`, stream attach,
-/// empty graph nodes, and nested [`Self::ChildGraph`]. Timing is not stored here.
+/// empty graph nodes, nested [`Self::ChildGraph`], and conditional IF /
+/// [`Self::SetConditional`]. Timing is not stored here.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GpuOp {
     /// Stream-ordered device allocation (`cudaMallocAsync`). Capacity is
@@ -337,6 +338,22 @@ pub enum GpuOp {
     ChildGraph {
         /// Instantiated exec launched as a child node.
         graph: GraphId,
+    },
+    /// Conditional IF node (`cudaGraphNodeTypeConditional` / `If`). Expanded at
+    /// parent launch. Body ops skip at start when the handle is `0`.
+    If {
+        /// Handle created with [`crate::Sim::graph_conditional_create`].
+        handle: CondId,
+        /// Body graph returned by [`crate::Sim::graph_add_if`].
+        body: GraphId,
+    },
+    /// Device `cudaGraphSetConditional` (captured or live). Writes the handle
+    /// when the op starts. Does not occupy compute or copy engines.
+    SetConditional {
+        /// Handle to write.
+        handle: CondId,
+        /// Non-zero runs a later IF body; `0` skips it.
+        value: u32,
     },
 }
 
@@ -429,4 +446,8 @@ pub enum GraphNodeKind {
     AllReduce,
     /// Captured `cudaStreamAttachMemAsync` (illegal to capture; defensive).
     Attach,
+    /// Conditional IF node (`cudaGraphNodeTypeConditional`).
+    If,
+    /// Captured [`crate::GpuOp::SetConditional`] (`cudaGraphSetConditional`).
+    SetConditional,
 }

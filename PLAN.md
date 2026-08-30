@@ -1321,6 +1321,15 @@ model, do not celebrate the sim.
     `cudaGraphNodeGetType`. Decode identity stays stream-capture edges (no
     extra pending). Dual score still has no `$/M tokens`.
 
+93. [x] Conditional IF graphs: `Sim::graph_conditional_create` is
+    `cudaGraphConditionalHandleCreate` (create-time default applied on each
+    `launch_graph`). `graph_add_if` adds an IF node and returns the body
+    graph. Body ops skip at start when the handle is `0` (no compute/copy
+    occupancy, no alloc side effects). `set_conditional` is device
+    `cudaGraphSetConditional` (capture allowed). Decode identity stays
+    kernel-only graphs with no IF nodes. Dual score still has no `$/M
+    tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

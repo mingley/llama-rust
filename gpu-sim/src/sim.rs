@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::SimError;
 use crate::ids::{
-    AllocId, DeviceId, EventId, GraphId, IpcHandleId, MemHandleId, MulticastId, OpId, PoolId,
-    PtrExportId, ShareableHandleId, StreamId,
+    AllocId, CondId, DeviceId, EventId, GraphId, IpcHandleId, MemHandleId, MulticastId, OpId,
+    PoolId, PtrExportId, ShareableHandleId, StreamId,
 };
 use crate::ops::{
     CaptureDepOp, GpuOp as Kind, GraphNodeKind, KernelBuf, KernelKind, KernelNodeParams, MemAdvise,
@@ -159,6 +159,10 @@ struct Op {
     submit_ns: u64,
     start_ns: Option<u64>,
     done_ns: Option<u64>,
+    /// Conditional handles that skip this op at start when any is `0`.
+    preds: Vec<CondId>,
+    /// Predicates skipped this op; completion has no alloc/kernel/memcpy effects.
+    skipped: bool,
 }
 
 /// How a submitted op pays kernel/graph launch overhead.
@@ -250,6 +254,13 @@ enum EventSetKind {
     Wait,
 }
 
+/// `cudaGraphConditionalHandle`.
+struct Cond {
+    graph: GraphId,
+    default: u32,
+    value: u32,
+}
+
 /// DFS state for [`Sim::clone_graph`]: unique graphs in post-order, ancestor stack.
 struct CloneWalk {
     order: Vec<GraphId>,
@@ -312,6 +323,10 @@ pub struct Sim {
     pinned_used: u64,
     /// Unmapped live VAs waiting for [`Self::va_acquire`].
     vmm_idle: Vec<AllocId>,
+    next_cond: u32,
+    conds: BTreeMap<CondId, Cond>,
+    /// IF-body predicates applied to ops submitted by [`Self::enqueue_graph`].
+    enqueue_preds: Vec<CondId>,
 }
 
 impl Sim {
@@ -376,6 +391,9 @@ impl Sim {
             mc_vas: BTreeMap::new(),
             pinned_used: 0,
             vmm_idle: Vec::new(),
+            next_cond: 1,
+            conds: BTreeMap::new(),
+            enqueue_preds: Vec::new(),
         }
     }
 
@@ -1124,12 +1142,14 @@ impl Sim {
         steps: &[GraphStep],
     ) -> Result<(), SimError> {
         for step in steps {
-            if let Kind::ChildGraph { graph: child } = &step.kind {
-                if *child == parent || self.graph_tree_contains(*child, parent)? {
-                    return Err(SimError::Invalid {
-                        why: "cyclic child graph",
-                    });
-                }
+            let child = match &step.kind {
+                Kind::ChildGraph { graph: child } | Kind::If { body: child, .. } => *child,
+                _ => continue,
+            };
+            if child == parent || self.graph_tree_contains(child, parent)? {
+                return Err(SimError::Invalid {
+                    why: "cyclic child graph",
+                });
             }
         }
         Ok(())
@@ -1165,8 +1185,38 @@ impl Sim {
         if !uploaded && self.capturing.is_none() {
             self.upload_graph(graph)?;
         }
+        self.reset_graph_tree_conds(graph)?;
         let mut stack = BTreeSet::new();
         self.enqueue_graph(graph, stream, true, &mut stack, &[])
+    }
+
+    fn reset_graph_tree_conds(&mut self, root: GraphId) -> Result<(), SimError> {
+        let mut stack = vec![root];
+        let mut seen = BTreeSet::new();
+        while let Some(g) = stack.pop() {
+            if !seen.insert(g) {
+                continue;
+            }
+            for c in self.conds.values_mut() {
+                if c.graph == g {
+                    c.value = c.default;
+                }
+            }
+            let steps = self
+                .graphs
+                .get(&g)
+                .map(|x| x.steps.clone())
+                .unwrap_or_default();
+            for step in steps {
+                match &step.kind {
+                    Kind::ChildGraph { graph } | Kind::If { body: graph, .. } => {
+                        stack.push(*graph);
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
     }
 
     fn capture_child_graph(
@@ -1257,6 +1307,28 @@ impl Sim {
             }
             if let Kind::ChildGraph { graph: child } = &step.kind {
                 let add = self.enqueue_graph(*child, s, head, stack, &wait)?;
+                head = false;
+                n = n.saturating_add(add);
+                if let Some(id) = self.tail.get(&(step.device, s)).copied() {
+                    if let Some(ops) = node_ops.get_mut(idx) {
+                        ops.push(id);
+                    }
+                    if s != stream {
+                        pending_joins.push(id);
+                    }
+                }
+                if s != stream {
+                    if let Some(ids) = self.graph_joins.get(&(step.device, s)).cloned() {
+                        pending_joins.extend(ids);
+                    }
+                }
+                continue;
+            }
+            if let Kind::If { handle, body } = &step.kind {
+                self.enqueue_preds.push(*handle);
+                let nested = self.enqueue_graph(*body, s, head, stack, &wait);
+                let _pop = self.enqueue_preds.pop();
+                let add = nested?;
                 head = false;
                 n = n.saturating_add(add);
                 if let Some(id) = self.tail.get(&(step.device, s)).copied() {
@@ -1462,11 +1534,23 @@ impl Sim {
         }
         let ns = self.profile.gpu(device)?.graph_instantiate_ns.max(1);
         self.clock = self.clock.saturating_add(ns);
-        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
-        g.instantiated = true;
-        g.auto_free_on_launch = auto_free;
+        let bodies = {
+            let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            g.instantiated = true;
+            g.auto_free_on_launch = auto_free;
+            g.steps
+                .iter()
+                .filter_map(|s| match &s.kind {
+                    Kind::If { body, .. } => Some(*body),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        for body in bodies {
+            self.instantiate_graph_inner(body, auto_free)?;
+        }
         Ok(())
     }
 
@@ -2236,7 +2320,7 @@ impl Sim {
                 })?;
                 (g.origin, g.steps.clone())
             };
-            let steps = remap_child_graphs(&raw, &remap)?;
+            let steps = remap_nested_graphs(&raw, &remap)?;
             let cloned = remap.get(&src).copied().ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
@@ -2258,9 +2342,58 @@ impl Sim {
             self.clock = self.clock.saturating_add(ns);
             let _prev = self.graphs.insert(id, cloned);
         }
+        self.clone_conditionals(&remap)?;
         remap.get(&graph).copied().ok_or(SimError::Invalid {
             why: "unknown graph",
         })
+    }
+
+    fn clone_conditionals(&mut self, remap: &BTreeMap<GraphId, GraphId>) -> Result<(), SimError> {
+        let mut cond_remap = BTreeMap::new();
+        let src: Vec<(CondId, Cond)> = self
+            .conds
+            .iter()
+            .filter(|(_, c)| remap.contains_key(&c.graph))
+            .map(|(id, c)| {
+                (
+                    *id,
+                    Cond {
+                        graph: c.graph,
+                        default: c.default,
+                        value: c.default,
+                    },
+                )
+            })
+            .collect();
+        for (old, mut cond) in src {
+            let new_g = remap.get(&cond.graph).copied().ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            cond.graph = new_g;
+            let id = CondId(self.next_cond);
+            self.next_cond = self.next_cond.saturating_add(1);
+            let _prev = cond_remap.insert(old, id);
+            let _ins = self.conds.insert(id, cond);
+        }
+        if cond_remap.is_empty() {
+            return Ok(());
+        }
+        for dst in remap.values() {
+            let g = self.graphs.get_mut(dst).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            for step in &mut g.steps {
+                match &mut step.kind {
+                    Kind::If { handle, .. } | Kind::SetConditional { handle, .. } => {
+                        if let Some(h) = cond_remap.get(handle) {
+                            *handle = *h;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Post-order unique graphs in `graph`'s child-graph tree. Diamonds reuse
@@ -2282,8 +2415,11 @@ impl Sim {
         };
         walk.stack.push(graph);
         for step in &steps {
-            if let Kind::ChildGraph { graph: child } = &step.kind {
-                self.collect_clone_tree(*child, walk)?;
+            match &step.kind {
+                Kind::ChildGraph { graph: child } | Kind::If { body: child, .. } => {
+                    self.collect_clone_tree(*child, walk)?;
+                }
+                _ => {}
             }
         }
         let _popped = walk.stack.pop();
@@ -2314,8 +2450,19 @@ impl Sim {
             if !seen.insert(g) {
                 continue;
             }
-            for (_, child) in self.graph_child_nodes(g)? {
-                stack.push(child);
+            let steps = {
+                let gr = self.graphs.get(&g).ok_or(SimError::Invalid {
+                    why: "unknown graph",
+                })?;
+                gr.steps.clone()
+            };
+            for step in steps {
+                match &step.kind {
+                    Kind::ChildGraph { graph: child } | Kind::If { body: child, .. } => {
+                        stack.push(*child);
+                    }
+                    _ => {}
+                }
             }
         }
         Ok(false)
@@ -2566,6 +2713,105 @@ impl Sim {
     pub fn graph_add_empty(&mut self, graph: GraphId) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         self.graph_push(graph, device, stream, Kind::Empty)
+    }
+
+    /// `cudaGraphConditionalHandleCreate` on an uninstantiated graph.
+    ///
+    /// `default` is applied at each [`Self::launch_graph`] of that graph tree
+    /// (`cudaGraphCondAssignDefault`). Capture cannot include it. Illegal after
+    /// instantiate.
+    pub fn graph_conditional_create(
+        &mut self,
+        graph: GraphId,
+        default: u32,
+    ) -> Result<CondId, SimError> {
+        self.fail_if_capturing("cannot capture conditional create")?;
+        let origin = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            if g.instantiated {
+                return Err(SimError::Invalid {
+                    why: "graph instantiated",
+                });
+            }
+            g.origin.0
+        };
+        let _gpu = self.profile.gpu(origin)?;
+        let id = CondId(self.next_cond);
+        self.next_cond = self.next_cond.saturating_add(1);
+        let _prev = self.conds.insert(
+            id,
+            Cond {
+                graph,
+                default,
+                value: default,
+            },
+        );
+        self.clock = self.clock.saturating_add(1);
+        Ok(id)
+    }
+
+    /// `cudaGraphAddNode` IF (`cudaGraphCondTypeIf`). Returns the body graph.
+    ///
+    /// Add nodes to the body, then instantiate the parent. Body ops skip at
+    /// start when `handle` is `0`. `handle` must have been created on `graph`.
+    /// Capture cannot include it. Illegal after instantiate.
+    pub fn graph_add_if(&mut self, graph: GraphId, handle: CondId) -> Result<GraphId, SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        let cond_graph = self
+            .conds
+            .get(&handle)
+            .ok_or(SimError::Invalid {
+                why: "unknown conditional",
+            })?
+            .graph;
+        if cond_graph != graph {
+            return Err(SimError::Invalid {
+                why: "conditional graph mismatch",
+            });
+        }
+        let body = self.insert_graph(device, stream);
+        self.graph_push(graph, device, stream, Kind::If { handle, body })?;
+        Ok(body)
+    }
+
+    /// Device `cudaGraphSetConditional`: write `handle` when this op starts.
+    ///
+    /// Capture is allowed. Does not occupy compute or copy engines. A later IF
+    /// body in the same launch waits for this op if the IF node depends on it
+    /// (stream order / edges). Each [`Self::launch_graph`] resets handles to
+    /// their create-time default first, so a live set before launch is wiped.
+    pub fn set_conditional(
+        &mut self,
+        device: DeviceId,
+        handle: CondId,
+        value: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if !self.conds.contains_key(&handle) {
+            return Err(SimError::Invalid {
+                why: "unknown conditional",
+            });
+        }
+        self.submit(device, stream, Kind::SetConditional { handle, value })
+    }
+
+    /// IF nodes on `graph` as `(index, handle, body)` in add order.
+    pub fn graph_if_nodes(
+        &self,
+        graph: GraphId,
+    ) -> Result<Vec<(usize, CondId, GraphId)>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut out = Vec::new();
+        for (i, step) in g.steps.iter().enumerate() {
+            if let Kind::If { handle, body } = step.kind {
+                out.push((i, handle, body));
+            }
+        }
+        Ok(out)
     }
 
     /// `cudaGraphAddEventRecordNode`. `external` is `cudaEventRecordExternal`.
@@ -5513,6 +5759,8 @@ impl Sim {
                 submit_ns: self.clock,
                 start_ns: None,
                 done_ns: None,
+                preds: self.enqueue_preds.clone(),
+                skipped: false,
             },
         );
         let _prev_tail = self.tail.insert((device, stream), id);
@@ -5858,6 +6106,8 @@ impl Sim {
                 submit_ns: self.clock,
                 start_ns: None,
                 done_ns: None,
+                preds: Vec::new(),
+                skipped: false,
             },
         );
         self.add_op_dep(kernel, id);
@@ -6412,15 +6662,29 @@ impl Sim {
     }
 
     fn try_start(&mut self, id: OpId) -> Result<bool, SimError> {
-        let Some(op) = self.ops.get(&id) else {
-            return Err(SimError::Invalid { why: "unknown op" });
+        let (device, launch, stream, preds) = {
+            let Some(op) = self.ops.get(&id) else {
+                return Err(SimError::Invalid { why: "unknown op" });
+            };
+            (op.device, op.launch, op.stream, op.preds.clone())
         };
-        let device = op.device;
-        let launch = op.launch;
-        let stream = op.stream;
         if self.unavailable.contains(&device) {
             return Err(SimError::Unavailable { device });
         }
+        if self.cond_skip(&preds) {
+            if let Some(op) = self.ops.get_mut(&id) {
+                op.skipped = true;
+            }
+            self.running.push(Running {
+                op: id,
+                remaining_ns: 1,
+                share: Share::Solo,
+            });
+            return Ok(true);
+        }
+        let Some(op) = self.ops.get(&id) else {
+            return Err(SimError::Invalid { why: "unknown op" });
+        };
         match &op.kind {
             Kind::Alloc { id: alloc, bytes } => self.start_alloc(id, device, *alloc, *bytes),
             Kind::Free { id: alloc } => self.start_free(id, device, *alloc),
@@ -6520,7 +6784,30 @@ impl Sim {
             Kind::ChildGraph { .. } => Err(SimError::Invalid {
                 why: "child graph must be expanded",
             }),
+            Kind::If { .. } => Err(SimError::Invalid {
+                why: "conditional if must be expanded",
+            }),
+            Kind::SetConditional { handle, value } => {
+                let handle = *handle;
+                let value = *value;
+                let c = self.conds.get_mut(&handle).ok_or(SimError::Invalid {
+                    why: "unknown conditional",
+                })?;
+                c.value = value;
+                self.running.push(Running {
+                    op: id,
+                    remaining_ns: 1,
+                    share: Share::Solo,
+                });
+                Ok(true)
+            }
         }
+    }
+
+    fn cond_skip(&self, preds: &[CondId]) -> bool {
+        preds
+            .iter()
+            .any(|h| self.conds.get(h).is_some_and(|c| c.value == 0))
     }
 
     fn invalidate_read_mostly_writes(
@@ -7072,6 +7359,13 @@ impl Sim {
                 why: "complete unknown op",
             })?
             .device;
+        if self.ops.get(&id).is_some_and(|o| o.skipped) {
+            if let Some(op) = self.ops.get_mut(&id) {
+                op.done = true;
+                op.done_ns = Some(self.clock);
+            }
+            return Ok(());
+        }
         let alloc_done = self.ops.get(&id).and_then(|op| match &op.kind {
             Kind::Alloc { id: alloc, .. } => Some((*alloc, device)),
             _ => None,
@@ -7322,18 +7616,27 @@ fn remap_alloc_kind(kind: Kind, map: &BTreeMap<AllocId, AllocId>) -> Kind {
     }
 }
 
-fn remap_child_graphs(
+fn remap_nested_graphs(
     steps: &[GraphStep],
     remap: &BTreeMap<GraphId, GraphId>,
 ) -> Result<Vec<GraphStep>, SimError> {
     let mut out = Vec::with_capacity(steps.len());
     for step in steps {
         let kind = match &step.kind {
-            Kind::ChildGraph { graph } => {
-                let cloned = remap.get(graph).copied().ok_or(SimError::Invalid {
+            Kind::ChildGraph { graph: child } => {
+                let cloned = remap.get(child).copied().ok_or(SimError::Invalid {
                     why: "unknown graph",
                 })?;
                 Kind::ChildGraph { graph: cloned }
+            }
+            Kind::If { handle, body } => {
+                let cloned = remap.get(body).copied().ok_or(SimError::Invalid {
+                    why: "unknown graph",
+                })?;
+                Kind::If {
+                    handle: *handle,
+                    body: cloned,
+                }
             }
             other => other.clone(),
         };
@@ -7392,6 +7695,8 @@ fn node_kind(kind: &Kind) -> GraphNodeKind {
         Kind::Free { .. } => GraphNodeKind::Free,
         Kind::AllReduce { .. } => GraphNodeKind::AllReduce,
         Kind::Attach { .. } => GraphNodeKind::Attach,
+        Kind::If { .. } => GraphNodeKind::If,
+        Kind::SetConditional { .. } => GraphNodeKind::SetConditional,
     }
 }
 
@@ -7525,6 +7830,17 @@ fn alloc_graph_worker(launch: StreamId, worker: &mut u16) -> StreamId {
 fn op_eq(a: &Kind, b: &Kind) -> bool {
     match (a, b) {
         (Kind::ChildGraph { graph: x }, Kind::ChildGraph { graph: y }) => x == y,
+        (
+            Kind::If {
+                handle: hx,
+                body: bx,
+            },
+            Kind::If {
+                handle: hy,
+                body: by,
+            },
+        ) => hx == hy && bx == by,
+        (Kind::SetConditional { handle: x, .. }, Kind::SetConditional { handle: y, .. }) => x == y,
         (Kind::EventRecord { external: x, .. }, Kind::EventRecord { external: y, .. }) => x == y,
         (Kind::EventWait { external: x, .. }, Kind::EventWait { external: y, .. }) => x == y,
         (Kind::Kernel { cooperative: x, .. }, Kind::Kernel { cooperative: y, .. }) => x == y,
@@ -7546,6 +7862,8 @@ fn op_tag(k: &Kind) -> u8 {
         Kind::AllReduce { .. } => 8,
         Kind::ChildGraph { .. } => 9,
         Kind::Attach { .. } => 10,
+        Kind::If { .. } => 12,
+        Kind::SetConditional { .. } => 13,
     }
 }
 
