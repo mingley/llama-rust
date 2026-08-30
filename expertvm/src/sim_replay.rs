@@ -284,8 +284,18 @@ pub struct SimCfg {
     /// independent expert GEMMs may Hyper-Q overlap (`compute_slots >= 2`).
     /// Does not require an idle stream. Implies [`Self::cuda_graphs`]. Decode
     /// identity stays stream capture. [`crate::GpuStoreCfg::graph_build`] is
-    /// the store path.
+    /// the store path. Illegal with [`Self::graph_piecewise`].
     pub graph_build: bool,
+    /// `cudaStreamBeginCaptureToGraph` combo parents (independent child roots).
+    ///
+    /// Each instantiated leaf is captured into one parent as an extra root
+    /// (`numDependencies = 0`), so sibling expert GEMMs may Hyper-Q overlap
+    /// (`compute_slots >= 2`). Leaves still use stream capture. Implies
+    /// [`Self::cuda_graphs`]. Illegal with [`Self::graph_build`]. Decode
+    /// identity stays a single `begin_capture` of child launches (same-stream
+    /// edges serialize). [`crate::GpuStoreCfg::graph_piecewise`] is the store
+    /// path (leaf capture-to-graph into `create_graph`).
+    pub graph_piecewise: bool,
     /// Leaf GEMM graphs include a scratch `cudaMallocAsync` + free.
     ///
     /// Models in-graph workspace (`cudaGraphAddMemAllocNode`). Hits/misses
@@ -372,6 +382,7 @@ impl SimCfg {
             graph_set_params: false,
             graph_clone: false,
             graph_build: false,
+            graph_piecewise: false,
             graph_mem: false,
             graph_auto_free: false,
             cooperative: false,
@@ -386,6 +397,9 @@ impl SimCfg {
 pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Result<(), Error> {
     if cfg.graph_update && cfg.graph_set_params {
         return Err(Error::Store("choose one of graph-update, graph-set-params"));
+    }
+    if cfg.graph_build && cfg.graph_piecewise {
+        return Err(Error::Store("choose one of graph-build, graph-piecewise"));
     }
     if cfg.shareable && (cfg.sync_alloc || cfg.mapped || cfg.managed || cfg.vmm) {
         return Err(Error::Store("shareable needs cudaMallocAsync"));
@@ -485,7 +499,8 @@ pub fn sim_replay_cfg(
     let leaf = LeafMem::from_flags(cfg.graph_mem, cfg.graph_auto_free)?;
     let mut graphs = GraphBank::new(cfg.graph_update, cfg.graph_clone, cfg.graph_build, leaf)
         .with_cooperative(cfg.cooperative)
-        .with_set_params(cfg.graph_set_params);
+        .with_set_params(cfg.graph_set_params)
+        .with_piecewise(cfg.graph_piecewise);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
     let mut next_event = 1u32;
     for (i, event) in trace.events.iter().enumerate() {
@@ -716,6 +731,7 @@ pub(crate) struct GraphBank {
     update: bool,
     clone: bool,
     build: bool,
+    piecewise: bool,
     mem: LeafMem,
     cooperative: bool,
     set_params: bool,
@@ -732,6 +748,7 @@ impl GraphBank {
             update,
             clone,
             build,
+            piecewise: false,
             mem,
             cooperative: false,
             set_params: false,
@@ -748,6 +765,11 @@ impl GraphBank {
 
     pub(crate) fn with_set_params(mut self, yes: bool) -> Self {
         self.set_params = yes;
+        self
+    }
+
+    pub(crate) fn with_piecewise(mut self, yes: bool) -> Self {
+        self.piecewise = yes;
         self
     }
 
@@ -1236,7 +1258,12 @@ fn gemm_ids(
             }
         }
     }
-    if cuda_graphs || graphs.build || graphs.mem != LeafMem::None || graphs.set_params {
+    if cuda_graphs
+        || graphs.build
+        || graphs.piecewise
+        || graphs.mem != LeafMem::None
+        || graphs.set_params
+    {
         if let Some(g) = capture_expert_graph(sim, graphs, d, stream, &ids)? {
             if ids.len() > 1 {
                 ctr.child_graphs = ctr.child_graphs.saturating_add(1);
@@ -1288,12 +1315,35 @@ fn capture_expert_graph(
     if ids.len() == 1 {
         return Ok(leaves.first().copied());
     }
+    if graphs.piecewise {
+        return piecewise_expert_graph(sim, graphs, d, stream, ids, &leaves);
+    }
     sim.begin_capture(d, stream)?;
     for g in leaves {
         let _n = sim.launch_graph(g, stream)?;
     }
     let src = sim.end_capture()?;
     Ok(Some(graphs.bind(sim, origin, ids.to_vec(), src)?))
+}
+
+fn piecewise_expert_graph(
+    sim: &mut Sim,
+    graphs: &mut GraphBank,
+    d: DeviceId,
+    stream: StreamId,
+    ids: &[AllocId],
+    leaves: &[GraphId],
+) -> Result<Option<GraphId>, Error> {
+    let parent = sim.create_graph(d, stream)?;
+    for g in leaves {
+        sim.begin_capture_to_graph(d, stream, parent, &[])?;
+        let _n = sim.launch_graph(*g, stream)?;
+        let ended = sim.end_capture()?;
+        if ended != parent {
+            return Err(Error::Store("capture-to-graph id"));
+        }
+    }
+    Ok(Some(graphs.bind(sim, (d, stream), ids.to_vec(), parent)?))
 }
 
 fn build_expert_graph(

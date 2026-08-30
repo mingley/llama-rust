@@ -3069,6 +3069,33 @@ fn simulated_gpu_store_graph_update_and_set_params_conflict() {
 }
 
 #[test]
+fn simulated_gpu_store_graph_build_and_piecewise_conflict() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_build: true,
+            graph_piecewise: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("both flags"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string()
+            .contains("choose one of graph-build, graph-piecewise"),
+        "{err}"
+    );
+}
+
+#[test]
 fn cuda_graphs_graph_clone_copies_leaf_before_instantiate() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],
@@ -3167,6 +3194,60 @@ fn cuda_graphs_graph_build_independent_children_overlap() {
 }
 
 #[test]
+fn cuda_graphs_graph_piecewise_independent_children_overlap() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000\nhbm_bps=1000000000000\ngraph_instantiate_ns=1\ngraph_upload_ns=1\ngraph_launch_ns=1\nlaunch_overhead_ns=1\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let run = |graph_piecewise: bool| {
+        sim_replay_cfg(
+            &t,
+            p.clone(),
+            SimCfg {
+                cuda_graphs: true,
+                graph_piecewise,
+                compute_slots: 2,
+                ..SimCfg::lru(2, 4096, 0)
+            },
+        )
+        .expect("replay")
+        .sim_ns
+    };
+    let cap = run(false);
+    let piece = run(true);
+    assert!(
+        piece < cap,
+        "graph-piecewise combo roots must Hyper-Q overlap capture; piecewise={piece} capture={cap}"
+    );
+}
+
+#[test]
+fn sim_cfg_graph_build_and_piecewise_conflict() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let err = sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            cuda_graphs: true,
+            graph_build: true,
+            graph_piecewise: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    )
+    .expect_err("conflict");
+    assert!(
+        err.to_string()
+            .contains("choose one of graph-build, graph-piecewise"),
+        "{err}"
+    );
+}
+
+#[test]
 fn simulated_gpu_store_graph_build_launches() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],
@@ -3200,6 +3281,43 @@ fn simulated_gpu_store_graph_build_launches() {
     let (n_cap, h1, _wall_c) = run(false);
     assert!(n_build > 0);
     assert_eq!(n_build, n_cap);
+    assert_eq!(h0, h1);
+}
+
+#[test]
+fn simulated_gpu_store_graph_piecewise_launches() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_instantiate_ns=1000\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let run = |graph_piecewise: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            1,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                graph_piecewise,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let k0 = ExpertKey::new(0, 0);
+        let _n = gpu.prefetch(&[k0]).expect("prefetch");
+        let _s = gpu.score().expect("drain");
+        let _a = gpu.acquire(k0).expect("acq");
+        let score = gpu.score().expect("final");
+        (gpu.graph_launches(), gpu.metrics().hits, score.wall_ns)
+    };
+    let (n_piece, h0, _wall_p) = run(true);
+    let (n_cap, h1, _wall_c) = run(false);
+    assert!(n_piece > 0);
+    assert_eq!(n_piece, n_cap);
     assert_eq!(h0, h1);
 }
 

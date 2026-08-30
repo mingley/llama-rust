@@ -22,7 +22,7 @@ use expertvm::{GpuFill, GpuStoreCfg, Prefetch};
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
@@ -43,7 +43,8 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --graph-update    cudaGraphExecUpdate parked leaves (`--expert-sim`)
       --graph-set-params  cudaGraphExecKernelNodeSetParams parked leaves (`--expert-sim`; not with `--graph-update`)
       --graph-clone     cudaGraphClone before instantiate (`--expert-sim`)
-      --graph-build     cudaGraphCreate / cudaGraphAdd* instead of capture (`--expert-sim`; independent children may Hyper-Q overlap)
+      --graph-build     cudaGraphCreate / cudaGraphAdd* instead of capture (`--expert-sim`; independent children may Hyper-Q overlap; not with `--graph-piecewise`)
+      --graph-piecewise cudaStreamBeginCaptureToGraph combo parents (`--expert-sim`; independent child roots may Hyper-Q overlap; not with `--graph-build`)
       --graph-mem       in-graph scratch cudaMallocAsync (`--expert-sim`; skips `--graph-update`)
       --graph-auto-free AutoFreeOnLaunch scratch without in-graph free (`--expert-sim`; not with `--graph-mem`)
       --timing-events   cudaEventElapsedTime on copy start/end (`--expert-sim`)
@@ -87,7 +88,7 @@ completed blocks so a later prompt can hit them after a rewind (`page_hits`).
 leftover prefill while any live sequence is already decoding. `--slo-reject` /
 `--ttft-slo-ns` drop a waiter whose gpu-sim queue wait meets the TTFT budget
 (`--expert-sim`). `--itl-slo-ns` counts later-token ITL misses (does not drop).
-`--cuda-graphs` / `--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-mem` / `--graph-auto-free` / `--timing-events` are
+`--cuda-graphs` / `--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-piecewise` / `--graph-mem` / `--graph-auto-free` / `--timing-events` are
 the same SimulatedGpuStore knobs as `gguf_gemv engine`. `--host-func` /
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--shareable` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` / `--seq-streams` /
@@ -299,6 +300,9 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
     if n.plan.gpu.graph_update && n.plan.gpu.graph_set_params {
         return usage_err("choose one of --graph-update, --graph-set-params");
     }
+    if n.plan.gpu.graph_build && n.plan.gpu.graph_piecewise {
+        return usage_err("choose one of --graph-build, --graph-piecewise");
+    }
     if n.plan.gpu.shareable
         && (n.plan.gpu.sync_alloc || n.plan.gpu.mapped || n.plan.gpu.managed || n.plan.gpu.vmm)
     {
@@ -317,7 +321,7 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -1545,6 +1549,13 @@ mod tests {
         assert!(err.contains("--graph-build requires --engine"), "{err}");
         let err = parse_serve_args(["m.gguf", "--engine", "--graph-build"]).unwrap_err();
         assert!(err.contains("--graph-build requires --expert-sim"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--graph-piecewise"]).unwrap_err();
+        assert!(err.contains("--graph-piecewise requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--graph-piecewise"]).unwrap_err();
+        assert!(
+            err.contains("--graph-piecewise requires --expert-sim"),
+            "{err}"
+        );
         let err = parse_serve_args(["m.gguf", "--graph-mem"]).unwrap_err();
         assert!(err.contains("--graph-mem requires --engine"), "{err}");
         let err = parse_serve_args(["m.gguf", "--engine", "--graph-mem"]).unwrap_err();
@@ -1582,6 +1593,20 @@ mod tests {
             err.contains("choose one of --graph-update, --graph-set-params"),
             "{err}"
         );
+        let err = parse_serve_args([
+            "m.gguf",
+            "--engine",
+            "--expert-sim",
+            "--graph-build",
+            "--graph-piecewise",
+        ])
+        .unwrap_err();
+        assert!(
+            err.contains("choose one of --graph-build, --graph-piecewise"),
+            "{err}"
+        );
+        let a = run(&["m.gguf", "--engine", "--expert-sim", "--graph-piecewise"]);
+        assert!(a.gpu_cfg.graph_piecewise);
         let a = run(&["m.gguf", "--engine", "--expert-sim", "--graph-set-params"]);
         assert!(a.gpu_cfg.graph_set_params);
         let a = run(&[

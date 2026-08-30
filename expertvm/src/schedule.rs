@@ -329,7 +329,8 @@ impl SchedRt {
                 LeafMem::from_flags(cfg.graph_mem, cfg.graph_auto_free)?,
             )
             .with_cooperative(cfg.cooperative)
-            .with_set_params(cfg.graph_set_params),
+            .with_set_params(cfg.graph_set_params)
+            .with_piecewise(cfg.graph_piecewise),
             ctr: ReplayCounters::default(),
             prefetched: BTreeSet::new(),
             markov: Markov::new(),

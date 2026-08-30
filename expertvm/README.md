@@ -138,7 +138,7 @@ mapped experts (`PinOom` only when even one expert cannot lock). `SimulatedGpuSt
 uses the same occupancy cap (pageable staging so construction does not steal mlock). `SimulatedGpuStore::new`
 stays on the async H2D path with CUDA's default threshold (`0`), non-blocking
 streams, and `cudaEventDisableTiming` copy events. `with_cfg` opts into the
-`sim` knobs (`host_func`, blocking compute, `sync_alloc`, mempool, `shareable`, `vmm_page`, pageable H2D, AccessedBy, legacy NULL, stream priority, `graph_update`, `graph_set_params`, `graph_clone`, `graph_build`, `graph_mem`, `graph_auto_free`, `timing_events`, `cooperative`). `--max-batch N` admits N sequences per engine
+`sim` knobs (`host_func`, blocking compute, `sync_alloc`, mempool, `shareable`, `vmm_page`, pageable H2D, AccessedBy, legacy NULL, stream priority, `graph_update`, `graph_set_params`, `graph_clone`, `graph_build`, `graph_piecewise`, `graph_mem`, `graph_auto_free`, `timing_events`, `cooperative`). `--max-batch N` admits N sequences per engine
 iteration at a token (`0` = the whole token) and still samples TTFT once.
 `--cuda-graphs` captures a leaf GEMM per resident expert alloc, instantiates
 it, then a parent of `launch_graph` child nodes for a grouped launch
@@ -155,7 +155,9 @@ destroyed). `--graph-build` is `cudaGraphCreate` / `cudaGraphAdd*` instead of
 stream capture (no idle-stream wait; implies `--cuda-graphs` on the walker;
 combo parents are `graph_add_child` of instantiated leaves with no
 `graph_add_dependencies` edge, so independent expert GEMMs may Hyper-Q
-overlap). `--graph-mem`
+overlap). `--graph-piecewise` is `cudaStreamBeginCaptureToGraph` combo
+parents (each leaf is an extra root on one parent; same Hyper-Q overlap;
+illegal with `--graph-build`). `--graph-mem`
 records a scratch `cudaMallocAsync` + free in each leaf GEMM graph (HBM peak
 includes the workspace; `--graph-update` is skipped). `--graph-auto-free` is
 the same scratch without a matching free, instantiated
@@ -194,7 +196,7 @@ same Stay vs Fetch predictor on real decode; upcoming keys are the
 online predicted list, not this walker's JSONL future window.
 `--expert-sim` captures
 per-page GEMM graphs (`graph_launches=`; `--cuda-graphs` documents that).
-`--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-mem` / `--graph-auto-free` / `--timing-events` are `GpuStoreCfg`
+`--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-piecewise` / `--graph-mem` / `--graph-auto-free` / `--timing-events` are `GpuStoreCfg`
 on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 (`gguf_gemv engine --expert-sim --managed`). `--host-func` /
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--shareable` / `--vmm-page` /
@@ -292,6 +294,7 @@ expertvm sim      trace.jsonl --capacity 1 --cuda-graphs --graph-update
 expertvm sim      trace.jsonl --capacity 1 --graph-set-params
 expertvm sim      trace.jsonl --capacity 1 --cuda-graphs --graph-clone
 expertvm sim      trace.jsonl --capacity 1 --graph-build
+expertvm sim      trace.jsonl --capacity 1 --graph-piecewise
 expertvm sim      trace.jsonl --capacity 1 --graph-mem
 expertvm sim      trace.jsonl --capacity 1 --graph-auto-free
 expertvm sim      trace.jsonl --capacity 8 --seq-streams --max-batch 2
@@ -326,6 +329,7 @@ expertvm store    trace.jsonl --capacity 1 --graph-update
 expertvm store    trace.jsonl --capacity 1 --graph-set-params
 expertvm store    trace.jsonl --capacity 1 --graph-clone
 expertvm store    trace.jsonl --capacity 1 --graph-build
+expertvm store    trace.jsonl --capacity 1 --graph-piecewise
 expertvm store    trace.jsonl --capacity 1 --graph-mem
 expertvm store    trace.jsonl --capacity 1 --graph-auto-free
 expertvm store    trace.jsonl --capacity 1 --timing-events

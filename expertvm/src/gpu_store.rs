@@ -122,8 +122,15 @@ pub struct GpuStoreCfg {
     /// Does not require an idle compute stream (`cudaStreamBeginCapture` does).
     /// Combo parents add children without [`gpu_sim::Sim::graph_add_dependencies`]
     /// so independent expert GEMMs may Hyper-Q overlap. Decode identity stays
-    /// `begin_capture` / `end_capture`.
+    /// `begin_capture` / `end_capture`. Illegal with [`Self::graph_piecewise`].
     pub graph_build: bool,
+    /// `cudaStreamBeginCaptureToGraph` combo parents (independent child roots).
+    ///
+    /// Walker combo parents capture each instantiated leaf into one parent as
+    /// an extra root. Sibling GEMMs may Hyper-Q overlap. Store leaves capture
+    /// into `create_graph`. Illegal with [`Self::graph_build`]. Decode identity
+    /// stays `begin_capture` / `end_capture`.
+    pub graph_piecewise: bool,
     /// Leaf GEMM graphs include a scratch `cudaMallocAsync` + free.
     ///
     /// CUDA cannot `cudaGraphExecUpdate` mem nodes, so [`Self::graph_update`]
@@ -232,6 +239,7 @@ pub struct SimulatedGpuStore {
     graph_set_params: bool,
     graph_clone: bool,
     graph_build: bool,
+    graph_piecewise: bool,
     leaf: LeafMem,
     timing_events: bool,
     copy_elapsed_ns: u64,
@@ -376,6 +384,9 @@ impl SimulatedGpuStore {
         if cfg.graph_update && cfg.graph_set_params {
             return Err(Error::Store("choose one of graph-update, graph-set-params"));
         }
+        if cfg.graph_build && cfg.graph_piecewise {
+            return Err(Error::Store("choose one of graph-build, graph-piecewise"));
+        }
         if cfg.shareable && (cfg.sync_alloc || fill != GpuFill::Pinned) {
             return Err(Error::Store("shareable needs cudaMallocAsync"));
         }
@@ -472,6 +483,7 @@ impl SimulatedGpuStore {
             graph_set_params: cfg.graph_set_params,
             graph_clone: cfg.graph_clone,
             graph_build: cfg.graph_build,
+            graph_piecewise: cfg.graph_piecewise,
             leaf,
             timing_events: cfg.timing_events,
             copy_elapsed_ns: 0,
@@ -1281,6 +1293,14 @@ impl SimulatedGpuStore {
             self.sim.synchronize_stream(device, self.compute)?;
         }
         if self.sim.query_stream(device, self.compute)? {
+            if self.graph_piecewise {
+                let src = self.piecewise_gemm_graph(device, id)?;
+                let g = self.bind_graph(device, src)?;
+                let _prev = self.graphs.insert(id, g);
+                self.graph_launches = self.graph_launches.saturating_add(1);
+                let _n = self.sim.launch_graph(g, self.compute)?;
+                return Ok(());
+            }
             self.sim.begin_capture(device, self.compute)?;
             gemm_leaf(
                 &mut self.sim,
@@ -1310,6 +1330,25 @@ impl SimulatedGpuStore {
     fn build_gemm_graph(&mut self, device: DeviceId, id: AllocId) -> Result<GraphId, Error> {
         let g = self.sim.create_graph(device, self.compute)?;
         add_leaf_gemm(&mut self.sim, g, id, self.leaf, self.cooperative)?;
+        Ok(g)
+    }
+
+    fn piecewise_gemm_graph(&mut self, device: DeviceId, id: AllocId) -> Result<GraphId, Error> {
+        let g = self.sim.create_graph(device, self.compute)?;
+        self.sim
+            .begin_capture_to_graph(device, self.compute, g, &[])?;
+        gemm_leaf(
+            &mut self.sim,
+            device,
+            self.compute,
+            id,
+            self.leaf,
+            self.cooperative,
+        )?;
+        let ended = self.sim.end_capture()?;
+        if ended != g {
+            return Err(Error::Store("capture-to-graph id"));
+        }
         Ok(g)
     }
 

@@ -49,14 +49,14 @@ usage: gguf_gemv <command> [args]
   infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]
   trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE [--capacity N]
   chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--kv-page N] [--show-prompt]
-  serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--trace-out FILE]
-  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--trace-out FILE] [--bench] [--capacity N]
+  serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--trace-out FILE]
+  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--trace-out FILE] [--bench] [--capacity N]
   write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|write-tiny-qwen3|write-tiny-gemma|write-tiny-llama4|write-tiny-llama-moe|write-tiny-qwen2moe|write-tiny-qwen3moe|write-tiny-qwen3moe-2layer|write-tiny-qwen2vl|write-tiny-qwen3vl|write-tiny-qwen3next|write-tiny-qwen35|write-tiny-phi2 <path>
 ";
 
 /// Usage for the `engine` verb.
 pub const ENGINE_USAGE: &str = "\
-usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE] [--bench] [--capacity N]
+usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE] [--bench] [--capacity N]
   -p, --prompt TEXT     prompt (repeatable; default: one `ab`)
   -n, --n-predict N     tokens to generate per sequence (default: 2)
       --n-ctx N         KV capacity (default: longest prompt + n_predict + 1)
@@ -78,7 +78,8 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
       --graph-update    cudaGraphExecUpdate parked leaves (`--expert-sim`)
       --graph-set-params  cudaGraphExecKernelNodeSetParams parked leaves (`--expert-sim`; not with `--graph-update`)
       --graph-clone     cudaGraphClone before instantiate (`--expert-sim`)
-      --graph-build     cudaGraphCreate / cudaGraphAdd* instead of capture (`--expert-sim`; independent children may Hyper-Q overlap)
+      --graph-build     cudaGraphCreate / cudaGraphAdd* instead of capture (`--expert-sim`; independent children may Hyper-Q overlap; not with `--graph-piecewise`)
+      --graph-piecewise cudaStreamBeginCaptureToGraph combo parents (`--expert-sim`; independent child roots may Hyper-Q overlap; not with `--graph-build`)
       --graph-mem       in-graph scratch cudaMallocAsync (`--expert-sim`; skips `--graph-update`)
       --graph-auto-free AutoFreeOnLaunch scratch without in-graph free (`--expert-sim`; not with `--graph-mem`)
       --timing-events   cudaEventElapsedTime on copy start/end (`--expert-sim`)
@@ -120,7 +121,7 @@ drops a waiter whose gpu-sim queue wait already meets the TTFT budget
 `--itl-slo-ns` counts later-token gaps over the budget (`itl_slo_miss=`;
 does not drop). `--expert-sim` captures per-page GEMM graphs (same
 mechanical path as `expertvm sim --cuda-graphs`). `--graph-update` /
-`--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-mem` / `--graph-auto-free` / `--timing-events` / `--host-func` / `--blocking-streams` /
+`--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-piecewise` / `--graph-mem` / `--graph-auto-free` / `--timing-events` / `--host-func` / `--blocking-streams` /
 `--sync-alloc` / `--mempool` / `--shareable` / `--vmm-page` / `--pageable` / `--accessed-by` /
 `--legacy-null` / `--stream-priority` / `--seq-streams` / `--kv-sim` /
 `--kv-bytes` / `--decode-priority` / `--cooperative` / `--multicast` / `--compute-slots` / `--decode-sms` match `GpuStoreCfg` / `expertvm sim`. `--kv-sim` bills interned
@@ -572,6 +573,9 @@ fn check_engine_sim_opts(n: &EngineSimNeed) -> Result<(), String> {
     }
     if n.gpu.graph_update && n.gpu.graph_set_params {
         return engine_err("choose one of --graph-update, --graph-set-params");
+    }
+    if n.gpu.graph_build && n.gpu.graph_piecewise {
+        return engine_err("choose one of --graph-build, --graph-piecewise");
     }
     if n.gpu.shareable && (n.gpu.sync_alloc || n.gpu.mapped || n.gpu.managed || n.gpu.vmm) {
         return engine_err("shareable needs cudaMallocAsync");
@@ -1625,6 +1629,11 @@ mod tests {
         assert!(err.contains("--graph-clone requires --expert-sim"), "{err}");
         let err = parse_engine_args(["m.gguf", "--graph-build"]).unwrap_err();
         assert!(err.contains("--graph-build requires --expert-sim"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--graph-piecewise"]).unwrap_err();
+        assert!(
+            err.contains("--graph-piecewise requires --expert-sim"),
+            "{err}"
+        );
         let err = parse_engine_args(["m.gguf", "--graph-mem"]).unwrap_err();
         assert!(err.contains("--graph-mem requires --expert-sim"), "{err}");
         let err = parse_engine_args(["m.gguf", "--graph-auto-free"]).unwrap_err();
@@ -1653,6 +1662,21 @@ mod tests {
             err.contains("choose one of --graph-update, --graph-set-params"),
             "{err}"
         );
+        let err = parse_engine_args([
+            "m.gguf",
+            "--expert-sim",
+            "--graph-build",
+            "--graph-piecewise",
+        ])
+        .unwrap_err();
+        assert!(
+            err.contains("choose one of --graph-build, --graph-piecewise"),
+            "{err}"
+        );
+        match parse_engine_args(["m.gguf", "--expert-sim", "--graph-piecewise"]).expect("pw") {
+            EngineCmd::Run(a) => assert!(a.gpu_cfg.graph_piecewise),
+            EngineCmd::Help => panic!("expected Run"),
+        }
         match parse_engine_args(["m.gguf", "--expert-sim", "--graph-set-params"]).expect("sp") {
             EngineCmd::Run(a) => assert!(a.gpu_cfg.graph_set_params),
             EngineCmd::Help => panic!("expected Run"),

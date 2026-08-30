@@ -696,7 +696,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--shareable`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--cooperative`, and `--multicast`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-piecewise`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--cooperative`, and `--multicast`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--shareable` is POSIX-FD mempool IPC
   (implies `--mempool`; illegal with `--sync-alloc` / mapped / managed / vmm). `--mapped` is `cudaHostAllocMapped`
@@ -725,7 +725,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   parked leaf (no second capture; legal with mem nodes). `--graph-clone` is `cudaGraphClone` of a leaf capture before
   instantiate (graph vs exec). `--graph-build` is `cudaGraphCreate` /
   `cudaGraphAddKernelNode` (and child add for combo parents; independent
-  children may Hyper-Q overlap).   `--graph-mem`
+  children may Hyper-Q overlap). `--graph-piecewise` is
+  `cudaStreamBeginCaptureToGraph` combo parents (independent child roots;
+  not with `--graph-build`).   `--graph-mem`
   is in-graph scratch (`cudaGraphAddMemAllocNode` / capture `cudaMallocAsync`);
   `--graph-update` is skipped because CUDA cannot update mem nodes.
   `--graph-auto-free` is AutoFreeOnLaunch scratch without a matching free
@@ -967,7 +969,7 @@ model, do not celebrate the sim.
     Dual score still has no `$/M tokens`.
 48. [x] Engine SimulatedGpuStore CUDA graphs: default `--expert-sim` captures
     per-page GEMM graphs (`Engine::graph_launches`). `--graph-update` /
-    `--graph-clone` / `--graph-build` / `--graph-mem` / `--graph-auto-free` / `--timing-events` / `--cuda-graphs` match
+    `--graph-clone` / `--graph-build` / `--graph-piecewise` / `--graph-mem` / `--graph-auto-free` / `--timing-events` / `--cuda-graphs` match
     `GpuStoreCfg` / `expertvm sim`. Tight slots park+update. Identity stays.
     Dual score still has no `$/M tokens`.
 49. [x] Engine `itl_slo_ns`: count later-token gaps over a virtual-ns budget
@@ -1286,6 +1288,20 @@ model, do not celebrate the sim.
     instantiate and during capture). Missing edges are a no-op. Independent
     nodes may Hyper-Q overlap at launch. `cudaGraphExecUpdate` treats remaining
     edges as topology. Decode identity stays stream-capture edges. Dual score
+    still has no `$/M tokens`.
+
+90. [x] `cudaStreamBeginCaptureToGraph`: `Sim::begin_capture_to_graph`
+    records later submits into an existing uninstantiated graph. Capture
+    roots additionally depend on the given node indices; empty `deps` makes
+    those nodes extra roots so they may Hyper-Q overlap prior work.
+    `end_capture` returns that graph. Nested capture, instantiated graphs,
+    and GPU mismatch are Invalid. `graph_root_nodes` / `graph_edges` /
+    `graph_node_dependents` are `cudaGraphGetRootNodes` / `GetEdges` /
+    `NodeGetDependentNodes`. `--graph-piecewise` on `expertvm sim` /
+    `schedule` / `store`, `gguf_gemv engine` / `serve --engine --expert-sim`
+    captures combo parents as independent child roots (implies
+    `--cuda-graphs` on the walker). Illegal with `--graph-build`. Decode
+    identity stays a single `begin_capture` of child launches. Dual score
     still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

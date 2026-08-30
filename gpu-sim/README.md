@@ -85,6 +85,8 @@ warp scheduler, L1, …   ← do not model
 | graph mem alloc/free nodes (`cudaMallocAsync` / `cudaFreeAsync` during capture, or `graph_add_alloc` / `graph_add_free`) | `pool_reuse_ns` on relaunch without free |
 | graph clone is an independent uninstantiated copy; child graphs cloned recursively; mem alloc nodes get new ids | `graph_clone_ns` |
 | `cudaGraphCreate` (`create_graph`) is an empty uninstantiated graph | 1 ns host-sync |
+| `cudaStreamBeginCaptureToGraph` (`begin_capture_to_graph`) appends captured nodes onto an existing uninstantiated graph; empty deps are extra roots | not timed (capture) |
+| `cudaGraphGetRootNodes` / `GetEdges` / `NodeGetDependentNodes` | query |
 | `cudaGraphAddKernelNode` / memcpy / memset / host / event / child / mem alloc/free / cooperative kernel / dependencies (`graph_add_*`) | not timed (host-side topology) |
 | graph destroy drops the id (`cudaGraphDestroy`); remaining graph mem is refunded | 1 ns host-sync |
 | graph launch amortizes per-kernel launch overhead | `graph_launch_ns` |
@@ -207,7 +209,8 @@ kernel on it fails `NotResident` until a copy places it on a device.
 | `Sim::set_extra_transfer_ns` | longer memcpy / allreduce, still `Ok` |
 | over-capacity alloc | `SimError::Oom` |
 
-CUDA graphs: `begin_capture` / `end_capture` / `instantiate_graph` /
+CUDA graphs: `begin_capture` / `begin_capture_to_graph` / `end_capture` /
+`instantiate_graph` /
 `update_graph` / `clone_graph` / `destroy_graph` / `launch_graph`. Capture does
 not advance the virtual clock. Independent streams stay live. A stream that
 `wait_event`s an event recorded in this capture joins (CUDA forked capture);
@@ -224,7 +227,12 @@ it. Independent streams still launch live. `cudaMallocAsync` / `cudaFreeAsync`
 `graph_add_dependencies` is `cudaGraphAddDependencies` (independent nodes
 may Hyper-Q overlap at launch; capture records same-stream edges).
 `graph_remove_dependencies` is `cudaGraphRemoveDependencies` (illegal after
-instantiate and during capture). Host-sync
+instantiate and during capture). `begin_capture_to_graph` is
+`cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
+uninstantiated graph; capture roots additionally depend on the given node
+indices (empty `deps` means extra roots, so they may Hyper-Q overlap).
+`graph_root_nodes` / `graph_edges` / `graph_node_dependents` are
+`cudaGraphGetRootNodes` / `GetEdges` / `NodeGetDependentNodes`. Host-sync
 `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device` / VMM / mempool
 create cannot be captured. A graph that allocates without a matching free
 reuses the pointer on later launches (no second HBM charge) unless
@@ -261,7 +269,9 @@ parameter; External is topology).
 evict and updates the next miss instead of instantiate. `--graph-clone`
 copies the capture (`cudaGraphClone`) before instantiate. `--graph-build` is
 `cudaGraphCreate` / `cudaGraphAdd*` (no idle stream; combo children may
-Hyper-Q overlap unless `graph_add_dependencies` chains them). `--graph-mem` is in-graph
+Hyper-Q overlap unless `graph_add_dependencies` chains them). `--graph-piecewise`
+is `cudaStreamBeginCaptureToGraph` combo parents (independent child roots).
+`--graph-mem` is in-graph
 scratch (`graph_add_alloc` / capture `alloc`). `--graph-auto-free` is
 AutoFreeOnLaunch (relaunch recharges HBM; not with `--graph-mem`).
 `cooperative_kernel` / `graph_add_cooperative_kernel` are

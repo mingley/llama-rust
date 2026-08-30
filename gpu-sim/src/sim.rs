@@ -203,6 +203,15 @@ struct Capture {
     events: BTreeSet<EventId>,
     /// `cudaMallocAsync` ids recorded as graph mem alloc nodes.
     mem_allocs: Vec<AllocId>,
+    /// `cudaStreamBeginCaptureToGraph` target. `None` is [`Sim::begin_capture`].
+    into: Option<CaptureInto>,
+}
+
+/// Existing graph plus extra root deps for [`Capture::into`].
+struct CaptureInto {
+    graph: GraphId,
+    /// Existing node indices that capture roots additionally depend on.
+    deps: Vec<usize>,
 }
 
 /// One `cudaGraphAdd*` / captured node plus [`Sim::graph_add_dependencies`] edges.
@@ -840,7 +849,36 @@ impl Sim {
     /// and compute can overlap inside one [`Self::launch_graph`].
     /// [`Self::record_event_external`] / [`Self::wait_event_external`] do not
     /// join (`cudaEventRecordExternal` / `cudaEventWaitExternal`).
+    /// [`Self::end_capture`] creates a new graph. For an existing graph see
+    /// [`Self::begin_capture_to_graph`].
     pub fn begin_capture(&mut self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
+        self.begin_capture_inner(device, stream, None)
+    }
+
+    /// `cudaStreamBeginCaptureToGraph`: record later submits into `graph`.
+    ///
+    /// `graph` must already exist and must not be instantiated. Capture roots
+    /// (nodes with no predecessors in this fragment) additionally depend on
+    /// `deps` (existing node indices). Empty `deps` makes those nodes extra
+    /// roots, so they may Hyper-Q overlap prior nodes at launch. Same device
+    /// as `graph`'s origin. Nested capture is Invalid. Capture does not run
+    /// recorded ops. [`Self::end_capture`] returns `graph`.
+    pub fn begin_capture_to_graph(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+        deps: &[usize],
+    ) -> Result<(), SimError> {
+        self.begin_capture_inner(device, stream, Some((graph, deps)))
+    }
+
+    fn begin_capture_inner(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        into: Option<(GraphId, &[usize])>,
+    ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         if self.capturing.is_some() {
             return Err(SimError::Invalid {
@@ -852,6 +890,10 @@ impl Sim {
                 why: "capture requires idle stream",
             });
         }
+        let into = match into {
+            None => None,
+            Some((graph, deps)) => Some(self.capture_into(device, graph, deps)?),
+        };
         let mut streams = BTreeSet::new();
         let _ins = streams.insert((device, stream));
         self.capturing = Some(Capture {
@@ -859,27 +901,80 @@ impl Sim {
             streams,
             events: BTreeSet::new(),
             mem_allocs: Vec::new(),
+            into,
         });
         self.capture_buf.clear();
         Ok(())
     }
 
+    fn capture_into(
+        &self,
+        device: DeviceId,
+        graph: GraphId,
+        deps: &[usize],
+    ) -> Result<CaptureInto, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if g.instantiated {
+            return Err(SimError::Invalid {
+                why: "graph instantiated",
+            });
+        }
+        if g.origin.0 != device {
+            return Err(SimError::Invalid {
+                why: "capture gpu mismatch",
+            });
+        }
+        let n = g.steps.len();
+        let mut extra = Vec::new();
+        for &d in deps {
+            if d >= n {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+            if !extra.contains(&d) {
+                extra.push(d);
+            }
+        }
+        extra.sort_unstable();
+        Ok(CaptureInto { graph, deps: extra })
+    }
+
     /// Finish capture. The graph is empty of side effects until [`Self::launch_graph`].
+    ///
+    /// After [`Self::begin_capture`] this creates a new id. After
+    /// [`Self::begin_capture_to_graph`] this appends nodes onto that graph and
+    /// returns it.
     pub fn end_capture(&mut self) -> Result<GraphId, SimError> {
         let Some(cap) = self.capturing.take() else {
             return Err(SimError::Invalid {
                 why: "end_capture without begin_capture",
             });
         };
-        let id = GraphId(self.next_graph);
-        self.next_graph = self.next_graph.saturating_add(1);
         let steps = core::mem::take(&mut self.capture_buf);
         let mem_allocs = cap.mem_allocs;
+        if let Some(into) = cap.into {
+            self.append_captured(into, steps, mem_allocs)
+        } else {
+            self.insert_captured_graph(cap.origin, steps, mem_allocs)
+        }
+    }
+
+    fn insert_captured_graph(
+        &mut self,
+        origin: (DeviceId, StreamId),
+        steps: Vec<GraphStep>,
+        mem_allocs: Vec<AllocId>,
+    ) -> Result<GraphId, SimError> {
+        let id = GraphId(self.next_graph);
+        self.next_graph = self.next_graph.saturating_add(1);
         let _prev = self.graphs.insert(
             id,
             Graph {
                 steps,
-                origin: cap.origin,
+                origin,
                 instantiated: false,
                 uploaded: false,
                 auto_free_on_launch: false,
@@ -887,6 +982,63 @@ impl Sim {
         );
         let _old = self.graph_allocs.insert(id, mem_allocs);
         Ok(id)
+    }
+
+    fn append_captured(
+        &mut self,
+        into: CaptureInto,
+        steps: Vec<GraphStep>,
+        mem_allocs: Vec<AllocId>,
+    ) -> Result<GraphId, SimError> {
+        self.fail_capture_child_cycles(into.graph, &steps)?;
+        let g = self.graphs.get_mut(&into.graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if g.instantiated {
+            return Err(SimError::Invalid {
+                why: "graph instantiated",
+            });
+        }
+        let offset = g.steps.len();
+        for mut step in steps {
+            let was_root = step.deps.is_empty();
+            for d in &mut step.deps {
+                *d = d.saturating_add(offset);
+            }
+            if was_root {
+                for extra in &into.deps {
+                    if !step.deps.contains(extra) {
+                        step.deps.push(*extra);
+                    }
+                }
+                step.deps.sort_unstable();
+            }
+            g.steps.push(step);
+        }
+        match self.graph_allocs.entry(into.graph) {
+            Entry::Occupied(mut e) => e.get_mut().extend(mem_allocs),
+            Entry::Vacant(e) => {
+                let _prev = e.insert(mem_allocs);
+            }
+        }
+        Ok(into.graph)
+    }
+
+    fn fail_capture_child_cycles(
+        &self,
+        parent: GraphId,
+        steps: &[GraphStep],
+    ) -> Result<(), SimError> {
+        for step in steps {
+            if let Kind::ChildGraph { graph: child } = &step.kind {
+                if *child == parent || self.graph_tree_contains(*child, parent)? {
+                    return Err(SimError::Invalid {
+                        why: "cyclic child graph",
+                    });
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Enqueue every recorded op. Origin-stream nodes use `stream`; forked
@@ -2457,7 +2609,7 @@ impl Sim {
         Ok(())
     }
 
-    /// Predecessor indices of node `i` (`cudaGraphAddDependencies`).
+    /// Predecessor indices of node `i` (`cudaGraphNodeGetDependencies`).
     pub fn graph_node_deps(&self, graph: GraphId, i: usize) -> Result<Vec<usize>, SimError> {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -2468,6 +2620,51 @@ impl Sim {
             .ok_or(SimError::Invalid {
                 why: "graph dependency",
             })
+    }
+
+    /// Root node indices (`cudaGraphGetRootNodes`): nodes with no predecessors.
+    pub fn graph_root_nodes(&self, graph: GraphId) -> Result<Vec<usize>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        Ok(g.steps
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.deps.is_empty())
+            .map(|(i, _)| i)
+            .collect())
+    }
+
+    /// Edges (`cudaGraphGetEdges`): `(from, to)` in node-add order.
+    pub fn graph_edges(&self, graph: GraphId) -> Result<Vec<(usize, usize)>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut edges = Vec::new();
+        for (to, step) in g.steps.iter().enumerate() {
+            for &from in &step.deps {
+                edges.push((from, to));
+            }
+        }
+        Ok(edges)
+    }
+
+    /// Successors of node `i` (`cudaGraphNodeGetDependentNodes`).
+    pub fn graph_node_dependents(&self, graph: GraphId, i: usize) -> Result<Vec<usize>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if i >= g.steps.len() {
+            return Err(SimError::Invalid {
+                why: "graph dependency",
+            });
+        }
+        Ok(g.steps
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.deps.contains(&i))
+            .map(|(j, _)| j)
+            .collect())
     }
 
     fn graph_origin_for_add(&self, graph: GraphId) -> Result<(DeviceId, StreamId), SimError> {

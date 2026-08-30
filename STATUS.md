@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaStreamBeginCaptureToGraph`
+
+`Sim::begin_capture_to_graph` is `cudaStreamBeginCaptureToGraph`: capture
+into an existing uninstantiated graph. Capture roots additionally depend
+on the given node indices; empty `deps` makes extra roots so independent
+nodes may Hyper-Q overlap. `end_capture` returns that graph.
+`graph_root_nodes` / `graph_edges` / `graph_node_dependents` query
+topology. `--graph-piecewise` captures combo parents as independent child
+roots (illegal with `--graph-build`). Decode identity stays a single
+`begin_capture` of child launches. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-30 — `cudaGraphRemoveDependencies`
 
 `Sim::graph_remove_dependencies` is `cudaGraphRemoveDependencies`: drop a

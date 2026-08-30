@@ -166,6 +166,13 @@
 //! edges). [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
 //! `cudaGraphRemoveDependencies` (illegal after instantiate and during capture).
 //! `cudaGraphExecUpdate` treats those edges as topology.
+//! [`graph_root_nodes`](Sim::graph_root_nodes) / [`graph_edges`](Sim::graph_edges) /
+//! [`graph_node_dependents`](Sim::graph_node_dependents) are
+//! `cudaGraphGetRootNodes` / `GetEdges` / `NodeGetDependentNodes`.
+//! [`begin_capture_to_graph`](Sim::begin_capture_to_graph) is
+//! `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
+//! uninstantiated graph; capture roots additionally depend on the given node
+//! indices (empty means extra roots). [`Sim::end_capture`] returns that graph.
 //! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`.
 //! Capture records every stream that [`wait_event`](Sim::wait_event)s an
 //! event recorded in this capture (CUDA forked capture). [`record_event_external`](Sim::record_event_external)
@@ -6718,6 +6725,154 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn capture_to_graph_extra_deps_serialize_hyperq() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |chain: bool| {
+            let mut sim = Sim::new(h100().with_compute_slots(2));
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let a = sim.alloc(d, 4096, s).unwrap();
+            let b = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+            enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+            sim.synchronize().unwrap();
+            let g = sim.create_graph(d, s).unwrap();
+            sim.graph_add_kernel(g, kind.clone(), &[a], &[a]).unwrap();
+            let extra: &[usize] = if chain { &[0] } else { &[] };
+            sim.begin_capture_to_graph(d, s, g, extra).unwrap();
+            enq(sim.kernel(d, kind.clone(), &[b], &[b], s));
+            assert_eq!(sim.end_capture().unwrap(), g);
+            if chain {
+                assert_eq!(sim.graph_root_nodes(g).unwrap(), vec![0]);
+                assert_eq!(sim.graph_edges(g).unwrap(), vec![(0, 1)]);
+                assert_eq!(sim.graph_node_dependents(g, 0).unwrap(), vec![1]);
+            } else {
+                assert_eq!(sim.graph_root_nodes(g).unwrap(), vec![0, 1]);
+                assert!(sim.graph_edges(g).unwrap().is_empty());
+            }
+            sim.instantiate_graph(g).unwrap();
+            sim.upload_graph(g).unwrap();
+            let t0 = sim.clock_ns();
+            let n = sim.launch_graph(g, s).unwrap();
+            sim.synchronize().unwrap();
+            assert_eq!(n, 2);
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let chained = run(true);
+        let free = run(false);
+        assert!(
+            free < chained,
+            "empty capture-to-graph deps must Hyper-Q overlap; free={free} chained={chained}"
+        );
+    }
+
+    #[test]
+    fn capture_to_graph_piecewise_sessions_are_independent_roots() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |piecewise: bool| {
+            let mut sim = Sim::new(h100().with_compute_slots(2));
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let a = sim.alloc(d, 4096, s).unwrap();
+            let b = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+            enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+            sim.synchronize().unwrap();
+            let g = if piecewise {
+                let g = sim.create_graph(d, s).unwrap();
+                sim.begin_capture_to_graph(d, s, g, &[]).unwrap();
+                enq(sim.kernel(d, kind.clone(), &[a], &[a], s));
+                assert_eq!(sim.end_capture().unwrap(), g);
+                sim.begin_capture_to_graph(d, s, g, &[]).unwrap();
+                enq(sim.kernel(d, kind.clone(), &[b], &[b], s));
+                assert_eq!(sim.end_capture().unwrap(), g);
+                g
+            } else {
+                sim.begin_capture(d, s).unwrap();
+                enq(sim.kernel(d, kind.clone(), &[a], &[a], s));
+                enq(sim.kernel(d, kind.clone(), &[b], &[b], s));
+                sim.end_capture().unwrap()
+            };
+            sim.instantiate_graph(g).unwrap();
+            sim.upload_graph(g).unwrap();
+            let t0 = sim.clock_ns();
+            let n = sim.launch_graph(g, s).unwrap();
+            sim.synchronize().unwrap();
+            assert_eq!(n, 2);
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let serial = run(false);
+        let piece = run(true);
+        assert!(
+            piece < serial,
+            "piecewise capture-to-graph roots must overlap serial capture; piece={piece} serial={serial}"
+        );
+    }
+
+    #[test]
+    fn capture_to_graph_rejects_instantiated_nested_and_mismatch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let err = sim.begin_capture_to_graph(d, s, g, &[1]).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("graph dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.instantiate_graph(g).unwrap();
+        let err = sim.begin_capture_to_graph(d, s, g, &[0]).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        let err = sim.begin_capture_to_graph(d, s, g, &[]).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("nested"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+        let mut dual = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let g0 = dual.create_graph(d, s).unwrap();
+        let err = dual
+            .begin_capture_to_graph(DeviceId(1), s, g0, &[])
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("gpu mismatch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = dual
+            .begin_capture_to_graph(d, s, GraphId(99), &[])
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn capture_to_graph_appends_mem_alloc_nodes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.begin_capture_to_graph(d, s, g, &[0]).unwrap();
+        let scratch = sim.alloc(d, 64, s).unwrap();
+        let id = sim.end_capture().unwrap();
+        assert_eq!(id, g);
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
+        assert_eq!(sim.graph_mem_allocs(g).unwrap(), vec![scratch]);
+        assert_eq!(sim.graph_node_deps(g, 1).unwrap(), vec![0]);
     }
 
     #[test]
