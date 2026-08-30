@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — Func cluster scheduling policy preference
+
+`set_func_cluster_policy` / `get_func_cluster_policy` are
+`cudaFuncAttributeClusterSchedulingPolicyPreference` (per device; Default
+launches inherit occupancy). CUDA ints `0`/`1`/`2`.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — Required cluster dim function attributes
 
 `set_cluster_dim_must_be_set` and `set_required_cluster_width` / height /
@@ -2444,7 +2451,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 235 (`ClusterDimMustBeSet`).
+Next code change is PLAN systems depth after item 236 (`ClusterSchedulingPolicyPreference`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

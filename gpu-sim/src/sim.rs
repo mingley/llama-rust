@@ -292,6 +292,9 @@ struct GpuRt {
     required_cluster_y: u32,
     /// `cudaFuncAttributeRequiredClusterDepth` (`0` unset).
     required_cluster_z: u32,
+    /// `cudaFuncAttributeClusterSchedulingPolicyPreference`. Launch Default
+    /// inherits this occupancy.
+    func_cluster_policy: ClusterSchedulingPolicy,
     /// `cudaSetDeviceFlags`. Auto streams inherit the schedule tax.
     device_flags: u32,
 }
@@ -781,6 +784,7 @@ impl Sim {
                     required_cluster_x: 0,
                     required_cluster_y: 0,
                     required_cluster_z: 0,
+                    func_cluster_policy: ClusterSchedulingPolicy::Default,
                     device_flags: DeviceFlags::SCHEDULE_AUTO,
                 },
             );
@@ -1560,7 +1564,8 @@ impl Sim {
     /// Slots a kernel occupies: cooperative grids and MaxShared carveout need
     /// the whole GPU. A Default/LoadBalancing cluster occupies
     /// `min(blocks, compute_slots)`. Spread occupies every slot. Preferred
-    /// cluster size is used when it fits in `compute_slots`.
+    /// cluster size is used when it fits in `compute_slots`. Launch Default
+    /// cluster policy uses [`Self::set_func_cluster_policy`].
     fn kernel_slots(
         &self,
         device: DeviceId,
@@ -1582,6 +1587,10 @@ impl Sim {
         if blocks <= 1 {
             return Ok(1);
         }
+        let policy = match policy {
+            ClusterSchedulingPolicy::Default => self.gpu_rt(device)?.func_cluster_policy,
+            other => other,
+        };
         if policy == ClusterSchedulingPolicy::Spread {
             return Ok(cap);
         }
@@ -11960,6 +11969,31 @@ impl Sim {
         Ok(self.gpu_rt(device)?.func_carveout)
     }
 
+    /// `cudaFuncSetAttribute(..., cudaFuncAttributeClusterSchedulingPolicyPreference)`.
+    ///
+    /// Per device. Launch [`ClusterSchedulingPolicy::Default`] inherits this
+    /// occupancy. Launch Spread / LoadBalancing still override. Capture-legal
+    /// like other function attributes. Decode identity stays Default.
+    pub fn set_func_cluster_policy(
+        &mut self,
+        device: DeviceId,
+        policy: ClusterSchedulingPolicy,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.gpu_rt_mut(device)?.func_cluster_policy = policy;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// Current [`Self::set_func_cluster_policy`]. Query; legal during capture.
+    pub fn get_func_cluster_policy(
+        &self,
+        device: DeviceId,
+    ) -> Result<ClusterSchedulingPolicy, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.func_cluster_policy)
+    }
+
     /// `cudaFuncSetAttribute(..., cudaFuncAttributeClusterDimMustBeSet)`.
     ///
     /// Per device. When true, a kernel without
@@ -15867,6 +15901,7 @@ impl Sim {
             required_cluster_width: rt.required_cluster_x,
             required_cluster_height: rt.required_cluster_y,
             required_cluster_depth: rt.required_cluster_z,
+            cluster_scheduling_policy_preference: rt.func_cluster_policy,
         })
     }
 
@@ -15874,10 +15909,11 @@ impl Sim {
     ///
     /// Dispatches [`FuncAttr`] onto the typed setters. Capture-legal like those
     /// setters. Negative [`FuncAttr::MaxDynamicSharedMemorySize`], a non-0/1
-    /// [`FuncAttr::NonPortableClusterSizeAllowed`], or a carveout other than
-    /// `-1`/`0`/`100` is Invalid `"func attr"`. Cluster-dim-must-be-set is
-    /// `0`/`1`. Required cluster axes are nonnegative (`0` unset). Typed
-    /// helpers stay. Decode identity stays `0` / disallowed / Default / unset.
+    /// [`FuncAttr::NonPortableClusterSizeAllowed`], a carveout other than
+    /// `-1`/`0`/`100`, or a cluster policy other than `0`/`1`/`2` is Invalid
+    /// `"func attr"`. Cluster-dim-must-be-set is `0`/`1`. Required cluster
+    /// axes are nonnegative (`0` unset). Typed helpers stay. Decode identity
+    /// stays `0` / disallowed / Default / unset.
     pub fn func_set_attribute(
         &mut self,
         device: DeviceId,
@@ -15918,6 +15954,10 @@ impl Sim {
                 let n = u32::try_from(value).map_err(|_| SimError::Invalid { why: "func attr" })?;
                 self.set_required_cluster_depth(device, n)
             }
+            FuncAttr::ClusterSchedulingPolicyPreference => {
+                let policy = ClusterSchedulingPolicy::from_cuda(value)?;
+                self.set_func_cluster_policy(device, policy)
+            }
         }
     }
 
@@ -15945,6 +15985,9 @@ impl Sim {
                 .map_err(|_| SimError::Invalid { why: "func attr" }),
             FuncAttr::RequiredClusterDepth => i32::try_from(self.required_cluster_depth(device)?)
                 .map_err(|_| SimError::Invalid { why: "func attr" }),
+            FuncAttr::ClusterSchedulingPolicyPreference => {
+                Ok(self.get_func_cluster_policy(device)?.to_cuda())
+            }
         }
     }
 

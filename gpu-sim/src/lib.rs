@@ -391,6 +391,8 @@
 //! [`ClusterDim`] (`cudaLaunchAttributeClusterDimension`) occupies
 //! `min(blocks, compute_slots)` Hyper-Q slots (Hopper portable max 8).
 //! [`ClusterSchedulingPolicy::Spread`] occupies every slot.
+//! [`ClusterSchedulingPolicy::Default`] uses [`set_func_cluster_policy`](Sim::set_func_cluster_policy)
+//! (`cudaFuncAttributeClusterSchedulingPolicyPreference`).
 //! [`KernelAttrs::preferred_cluster`] is used when that size fits in
 //! `compute_slots`. [`SharedMemCarveout::MaxShared`] occupies every slot.
 //! [`SharedMemCarveout::Default`] uses [`set_func_carveout`](Sim::set_func_carveout)
@@ -5622,6 +5624,107 @@ mod tests {
     }
 
     #[test]
+    fn func_cluster_policy_inherits_into_default_launch() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |func: ClusterSchedulingPolicy, launch: ClusterSchedulingPolicy| {
+            let mut sim = Sim::new(h100().with_compute_slots(4));
+            let d = DeviceId(0);
+            sim.set_func_cluster_policy(d, func).unwrap();
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+            enq(sim.kernel_with(
+                d,
+                kind.clone(),
+                &[a],
+                &[a],
+                StreamId(2),
+                KernelAttrs {
+                    cluster: Some(ClusterDim::x(2)),
+                    cluster_policy: launch,
+                    ..KernelAttrs::default()
+                },
+            ));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let packed = run(
+            ClusterSchedulingPolicy::Default,
+            ClusterSchedulingPolicy::Default,
+        );
+        let func_spread = run(
+            ClusterSchedulingPolicy::Spread,
+            ClusterSchedulingPolicy::Default,
+        );
+        let launch_spread = run(
+            ClusterSchedulingPolicy::Default,
+            ClusterSchedulingPolicy::Spread,
+        );
+        assert!(
+            packed < func_spread,
+            "func Spread must occupy all slots; packed={packed} func={func_spread}"
+        );
+        assert_eq!(
+            func_spread, launch_spread,
+            "func inherit matches launch Spread"
+        );
+        let launch_balanced = run(
+            ClusterSchedulingPolicy::Spread,
+            ClusterSchedulingPolicy::LoadBalancing,
+        );
+        assert_eq!(
+            launch_balanced, packed,
+            "launch LoadBalancing overrides func Spread"
+        );
+        let func_balanced = run(
+            ClusterSchedulingPolicy::LoadBalancing,
+            ClusterSchedulingPolicy::Default,
+        );
+        assert_eq!(
+            func_balanced, packed,
+            "func LoadBalancing matches default occupancy"
+        );
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(
+            sim.get_func_cluster_policy(d).unwrap(),
+            ClusterSchedulingPolicy::Default
+        );
+        assert_eq!(
+            sim.func_get_attribute(d, FuncAttr::ClusterSchedulingPolicyPreference)
+                .unwrap(),
+            0
+        );
+        sim.func_set_attribute(d, FuncAttr::ClusterSchedulingPolicyPreference, 1)
+            .unwrap();
+        assert_eq!(
+            sim.get_func_cluster_policy(d).unwrap(),
+            ClusterSchedulingPolicy::Spread
+        );
+        assert_eq!(
+            sim.func_get_attributes(d)
+                .unwrap()
+                .cluster_scheduling_policy_preference,
+            ClusterSchedulingPolicy::Spread
+        );
+        match sim.func_set_attribute(d, FuncAttr::ClusterSchedulingPolicyPreference, 3) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("func attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        sim.set_func_cluster_policy(d, ClusterSchedulingPolicy::LoadBalancing)
+            .unwrap();
+        assert_eq!(
+            sim.func_get_attribute(d, FuncAttr::ClusterSchedulingPolicyPreference)
+                .unwrap(),
+            2
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
     fn preferred_cluster_occupies_preferred_when_it_fits() {
         let kind = KernelKind::other(1 << 40, 4096);
         let run = |preferred: Option<ClusterDim>| {
@@ -9784,14 +9887,24 @@ mod tests {
         assert_eq!(a0.max_dynamic_shared_size_bytes, 0);
         assert!(!a0.non_portable_cluster_size_allowed);
         assert_eq!(a0.preferred_shmem_carveout, SharedMemCarveout::Default);
+        assert_eq!(
+            a0.cluster_scheduling_policy_preference,
+            ClusterSchedulingPolicy::Default
+        );
         sim.set_max_dynamic_shared_memory(d, 49_152).unwrap();
         sim.set_non_portable_cluster_size_allowed(d, true).unwrap();
         sim.set_func_carveout(d, SharedMemCarveout::MaxShared)
+            .unwrap();
+        sim.set_func_cluster_policy(d, ClusterSchedulingPolicy::Spread)
             .unwrap();
         let a1 = sim.func_get_attributes(d).unwrap();
         assert_eq!(a1.max_dynamic_shared_size_bytes, 49_152);
         assert!(a1.non_portable_cluster_size_allowed);
         assert_eq!(a1.preferred_shmem_carveout, SharedMemCarveout::MaxShared);
+        assert_eq!(
+            a1.cluster_scheduling_policy_preference,
+            ClusterSchedulingPolicy::Spread
+        );
         match sim.func_get_attributes(DeviceId(1)) {
             Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
             other => panic!("{other:?}"),

@@ -146,7 +146,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchAttributeAccessPolicyWindow` persisting hits (`kernel_access_policy`) | HBM discount after `set_persisting_l2_cache_size`; CUDA default size is 0 |
 | `cudaLaunchAttributeMemSyncDomain` fence isolation (`kernel_with` / allreduce Remote) | `same_domain_fence_permille` of leftover same-domain traffic; tax default 0 |
 | `cudaLaunchAttributeClusterDimension` (`kernel_with` cluster) | occupies `min(blocks, compute_slots)`; Hopper portable max 8 |
-| `cudaLaunchAttributeClusterSchedulingPolicyPreference` Spread | occupies every Hyper-Q slot |
+| `cudaLaunchAttributeClusterSchedulingPolicyPreference` Spread | occupies every Hyper-Q slot; Default uses `set_func_cluster_policy` (`cudaFuncAttributeClusterSchedulingPolicyPreference`) |
 | `cudaLaunchAttributePreferredClusterDimension` | occupies preferred size when it fits in `compute_slots` |
 | `cudaFuncAttributeNonPortableClusterSizeAllowed` | sizes above `portable_cluster_size` until the SKU `max_blocks_per_cluster` |
 | `cudaFuncAttributeClusterDimMustBeSet` / `RequiredClusterWidth` / Height / Depth | no cluster is Invalid; a nonzero required axis must match the launch |
@@ -520,7 +520,8 @@ modeled; example SKUs are discrete). `SparseCudaArraySupported` /
 (no SM count or clock). `func_get_attributes` is `cudaFuncGetAttributes`
 of modeled per-device function attrs (`maxDynamicSharedSizeBytes`,
 `nonPortableClusterSizeAllowed`, `preferredShmemCarveout`, cluster-dim
-must-be-set, and required cluster width/height/depth; not per kernel). `func_set_attribute` /
+must-be-set, required cluster width/height/depth, and
+`clusterSchedulingPolicyPreference`; not per kernel). `func_set_attribute` /
 `func_get_attribute` are `cudaFuncSetAttribute` / `GetAttribute` (`FuncAttr`).
 Typed setters stay. `stream_get_flags` is `cudaStreamGetFlags`
 (`0` `cudaStreamDefault` / `1` `cudaStreamNonBlocking`; NULL follows
@@ -713,6 +714,8 @@ leftover same-physical-domain traffic (default tax 0). Remote (and allreduce)
 isolates communication. `ClusterDim` is `cudaLaunchAttributeClusterDimension`:
 the launch occupies `min(blocks, compute_slots)` Hyper-Q slots (Hopper portable
 max 8). `ClusterSchedulingPolicy::Spread` occupies every slot.
+Launch Default uses `set_func_cluster_policy`
+(`cudaFuncAttributeClusterSchedulingPolicyPreference`).
 `preferred_cluster` is used when that size fits in `compute_slots`.
 `SharedMemCarveout::MaxShared` occupies every slot (`cudaLaunchAttributePreferredSharedMemoryCarveout`).
 Default uses `set_func_carveout` (`cudaFuncAttributePreferredSharedMemoryCarveout`).

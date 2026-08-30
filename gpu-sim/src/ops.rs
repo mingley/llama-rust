@@ -808,6 +808,9 @@ pub enum FuncAttr {
     RequiredClusterHeight,
     /// `cudaFuncAttributeRequiredClusterDepth`. `0` unset.
     RequiredClusterDepth,
+    /// `cudaFuncAttributeClusterSchedulingPolicyPreference`.
+    /// `0` Default / `1` Spread / `2` LoadBalancing.
+    ClusterSchedulingPolicyPreference,
 }
 
 /// Modeled `cudaFuncGetAttributes` / `cudaFuncGetAttribute` fields.
@@ -831,6 +834,8 @@ pub struct FuncAttributes {
     pub required_cluster_height: u32,
     /// `cudaFuncAttributeRequiredClusterDepth` (`0` unset).
     pub required_cluster_depth: u32,
+    /// `cudaFuncAttributeClusterSchedulingPolicyPreference`.
+    pub cluster_scheduling_policy_preference: ClusterSchedulingPolicy,
 }
 
 /// `cudaDeviceP2PAttr` for [`crate::Sim::device_get_p2p_attribute`].
@@ -1326,6 +1331,10 @@ pub struct KernelAttrs {
     /// match that axis.
     pub cluster: Option<ClusterDim>,
     /// `cudaLaunchAttributeClusterSchedulingPolicyPreference`.
+    ///
+    /// [`ClusterSchedulingPolicy::Default`] uses
+    /// [`crate::Sim::set_func_cluster_policy`]
+    /// (`cudaFuncAttributeClusterSchedulingPolicyPreference`).
     pub cluster_policy: ClusterSchedulingPolicy,
     /// `cudaLaunchAttributePreferredClusterDimension`. `None` uses [`Self::cluster`].
     pub preferred_cluster: Option<ClusterDim>,
@@ -1568,21 +1577,46 @@ impl PortableSharedMode {
     }
 }
 
-/// `cudaClusterSchedulingPolicy` (`cudaLaunchAttributeClusterSchedulingPolicyPreference`).
+/// `cudaClusterSchedulingPolicy` (`cudaLaunchAttributeClusterSchedulingPolicyPreference`
+/// / `cudaFuncAttributeClusterSchedulingPolicyPreference`).
 ///
 /// Spread occupies every Hyper-Q slot so leftover kernels cannot overlap a
 /// clustered launch. Default and LoadBalancing occupy
-/// `min(blocks, compute_slots)` (the current cluster occupancy). Decode
-/// identity stays [`Self::Default`].
+/// `min(blocks, compute_slots)` (the current cluster occupancy). Launch
+/// [`Self::Default`] uses the function attribute. Decode identity stays
+/// [`Self::Default`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ClusterSchedulingPolicy {
-    /// `cudaClusterSchedulingPolicyDefault`.
+    /// `cudaClusterSchedulingPolicyDefault` (`0`). Uses the function attribute.
     #[default]
     Default,
-    /// `cudaClusterSchedulingPolicySpread`: spread cluster blocks across SMs.
+    /// `cudaClusterSchedulingPolicySpread` (`1`): spread cluster blocks across SMs.
     Spread,
-    /// `cudaClusterSchedulingPolicyLoadBalancing`: hardware may pack blocks.
+    /// `cudaClusterSchedulingPolicyLoadBalancing` (`2`): hardware may pack blocks.
     LoadBalancing,
+}
+
+impl ClusterSchedulingPolicy {
+    /// CUDA `int`: [`Self::Default`] `0`, [`Self::Spread`] `1`,
+    /// [`Self::LoadBalancing`] `2`. Other values are Invalid `"func attr"`.
+    pub fn from_cuda(value: i32) -> Result<Self, crate::error::SimError> {
+        match value {
+            0 => Ok(Self::Default),
+            1 => Ok(Self::Spread),
+            2 => Ok(Self::LoadBalancing),
+            _ => Err(crate::error::SimError::Invalid { why: "func attr" }),
+        }
+    }
+
+    /// Inverse of [`Self::from_cuda`].
+    #[must_use]
+    pub fn to_cuda(self) -> i32 {
+        match self {
+            Self::Default => 0,
+            Self::Spread => 1,
+            Self::LoadBalancing => 2,
+        }
+    }
 }
 
 /// `cudaLaunchAttributeClusterDimension` (`clusterDim`).

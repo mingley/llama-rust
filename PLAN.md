@@ -2570,7 +2570,17 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-236. [ ] Next numbered PLAN item after 235 is the next `gpu-sim` / Engine /
+236. [x] `cudaFuncAttributeClusterSchedulingPolicyPreference`:
+    [`set_func_cluster_policy`] / [`get_func_cluster_policy`]. Per device.
+    Launch [`ClusterSchedulingPolicy::Default`] inherits this occupancy;
+    launch Spread / LoadBalancing still override. CUDA ints `0`/`1`/`2`
+    (other values Invalid `"func attr"`). Capture-legal like other
+    function attributes. [`func_get_attributes`] reports
+    `clusterSchedulingPolicyPreference`. Decode identity stays Default.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+237. [ ] Next numbered PLAN item after 236 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
