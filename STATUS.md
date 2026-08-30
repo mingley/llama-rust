@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cuMemGetAllocationGranularity`
+
+`va_get_allocation_granularity` reports the profile VA granularity
+(minimum and recommended are the same; `0`/`1` → `1`).
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cuMemGetAllocationPropertiesFromHandle`
 
 `va_get_allocation_properties` reports pinned device location and RDMA
@@ -2494,7 +2500,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 243 (`MemAllocationProp`).
+Next code change is PLAN systems depth after item 244 (`va_get_allocation_granularity`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

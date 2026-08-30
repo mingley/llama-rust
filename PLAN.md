@@ -2642,7 +2642,16 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-244. [ ] Next numbered PLAN item after 243 is the next `gpu-sim` / Engine /
+244. [x] `cuMemGetAllocationGranularity`:
+    [`Sim::va_get_allocation_granularity`] returns the profile
+    [`va_granularity_bytes`](HardwareProfile::va_granularity_bytes)
+    (`0`/`1` → `1`). Minimum and recommended flags are the same value
+    (this VM has one granularity). Other flags Invalid
+    `"granularity flags"`. Prop must be pinned device in the profile.
+    Query; capture-legal. Decode identity unchanged. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+245. [ ] Next numbered PLAN item after 244 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

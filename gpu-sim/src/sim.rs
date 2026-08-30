@@ -18,13 +18,14 @@ use crate::ops::{
     GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
     GraphUserObjectFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags,
     KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
-    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAllocationProp, MemAllocationType,
-    MemAttach, MemAttachFlags, MemHandleType, MemLocationType, MemPoolAttr, MemPoolProps,
-    MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType,
-    MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes,
-    PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
-    SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo,
-    StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp,
+    MemAllocationType, MemAttach, MemAttachFlags, MemHandleType, MemLocationType, MemPoolAttr,
+    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
+    MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
+    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -10017,6 +10018,42 @@ impl Sim {
             location: Place::Device(h.device),
             gpu_direct_rdma_capable: self.profile.gpu_direct_rdma_supported(h.device),
         })
+    }
+
+    /// `cuMemGetAllocationGranularity`. Query; legal during capture.
+    ///
+    /// [`MemAllocationGranularity::MINIMUM`] and [`RECOMMENDED`](MemAllocationGranularity::RECOMMENDED)
+    /// return [`HardwareProfile::va_granularity_bytes`] (`0`/`1` → `1`; this VM
+    /// has one granularity). Other flags Invalid `"granularity flags"`.
+    /// [`MemAllocationProp::alloc_type`] must be pinned;
+    /// [`MemAllocationProp::location`] must be a device in the profile.
+    /// Handle types / RDMA on `prop` are ignored.
+    pub fn va_get_allocation_granularity(
+        &self,
+        prop: MemAllocationProp,
+        flags: u32,
+    ) -> Result<u64, SimError> {
+        if flags != MemAllocationGranularity::MINIMUM
+            && flags != MemAllocationGranularity::RECOMMENDED
+        {
+            return Err(SimError::Invalid {
+                why: "granularity flags",
+            });
+        }
+        if prop.alloc_type != MemAllocationType::PINNED {
+            return Err(SimError::Invalid { why: "alloc type" });
+        }
+        let device = match prop.location {
+            Place::Device(d) => d,
+            Place::Host | Place::HostPinned => {
+                return Err(SimError::Invalid {
+                    why: "granularity location",
+                });
+            }
+        };
+        let _gpu = self.profile.gpu(device)?;
+        let g = self.profile.va_granularity_bytes;
+        Ok(if g <= 1 { 1 } else { g })
     }
 
     /// `cuMulticastCreate`: an NVLS multicast object. Does not charge HBM.

@@ -2424,6 +2424,29 @@ pub struct MemAllocationProp {
     pub gpu_direct_rdma_capable: bool,
 }
 
+impl Default for MemAllocationProp {
+    fn default() -> Self {
+        Self {
+            alloc_type: MemAllocationType::PINNED,
+            handle_types: MemHandleType::NONE,
+            location: Place::Device(DeviceId(0)),
+            gpu_direct_rdma_capable: false,
+        }
+    }
+}
+
+/// `CUmemAllocationGranularity_flags` for
+/// [`crate::Sim::va_get_allocation_granularity`].
+pub struct MemAllocationGranularity;
+
+impl MemAllocationGranularity {
+    /// `CU_MEM_ALLOC_GRANULARITY_MINIMUM` (`0`).
+    pub const MINIMUM: u32 = 0;
+    /// `CU_MEM_ALLOC_GRANULARITY_RECOMMENDED` (`1`). This VM has one
+    /// granularity; same as [`Self::MINIMUM`].
+    pub const RECOMMENDED: u32 = 1;
+}
+
 /// `cudaMemPoolProps` for [`crate::Sim::create_pool_with_props`].
 ///
 /// [`Self::alloc_type`] must be [`MemAllocationType::PINNED`].

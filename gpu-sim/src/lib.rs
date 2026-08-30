@@ -136,7 +136,11 @@
 //! [`va_get_allocation_properties`](Sim::va_get_allocation_properties) is
 //! `cuMemGetAllocationPropertiesFromHandle` ([`MemAllocationProp`]; pinned
 //! device location; handle types always none; RDMA capable wraps the SKU).
-//! Query; legal during capture. [`Sim::va_map`] still Create+Maps in one call.
+//! [`Sim::va_get_allocation_granularity`] is
+//! `cuMemGetAllocationGranularity` ([`MemAllocationGranularity::MINIMUM`] /
+//! [`RECOMMENDED`](MemAllocationGranularity::RECOMMENDED) are the same
+//! profile value; `0`/`1` → `1`). Both are queries; legal during capture.
+//! [`Sim::va_map`] still Create+Maps in one call.
 //! [`Sim::multicast_create`] / [`multicast_add_device`](Sim::multicast_add_device) /
 //! [`multicast_bind_mem`](Sim::multicast_bind_mem) / [`va_map_multicast`](Sim::va_map_multicast)
 //! are `cuMulticastCreate` / `cuMulticastAddDevice` / `cuMulticastBindMem` /
@@ -656,13 +660,13 @@ pub use ops::{
     GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags,
     HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind,
     KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags,
-    MemAdvise, MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemHandleType,
-    MemLocationType, MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain,
-    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place,
-    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
-    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach,
+    MemAttachFlags, MemHandleType, MemLocationType, MemPoolAttr, MemPoolProps, MemRangeAttr,
+    MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation,
+    PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
+    SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
+    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -13283,6 +13287,72 @@ mod tests {
         assert_eq!(
             sim.va_get_allocation_properties(h).unwrap().location,
             Place::Device(d)
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn va_get_allocation_granularity_wraps_profile() {
+        let mut sim = Sim::new(h100());
+        let prop = MemAllocationProp::default();
+        assert_eq!(
+            sim.va_get_allocation_granularity(prop, MemAllocationGranularity::MINIMUM)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sim.va_get_allocation_granularity(prop, MemAllocationGranularity::RECOMMENDED)
+                .unwrap(),
+            1
+        );
+        match sim.va_get_allocation_granularity(prop, 2) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("granularity flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.va_get_allocation_granularity(
+            MemAllocationProp {
+                alloc_type: 0,
+                ..MemAllocationProp::default()
+            },
+            MemAllocationGranularity::MINIMUM,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("alloc type"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.va_get_allocation_granularity(
+            MemAllocationProp {
+                location: Place::Host,
+                ..MemAllocationProp::default()
+            },
+            MemAllocationGranularity::MINIMUM,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("granularity location"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.va_get_allocation_granularity(
+            MemAllocationProp {
+                location: Place::Device(DeviceId(9)),
+                ..MemAllocationProp::default()
+            },
+            MemAllocationGranularity::MINIMUM,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let aligned = Sim::new(h100().with_va_granularity(2u64 << 20));
+        assert_eq!(
+            aligned
+                .va_get_allocation_granularity(prop, MemAllocationGranularity::MINIMUM)
+                .unwrap(),
+            2u64 << 20
+        );
+        sim.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        assert_eq!(
+            sim.va_get_allocation_granularity(prop, MemAllocationGranularity::MINIMUM)
+                .unwrap(),
+            1
         );
         let _g = sim.end_capture().unwrap();
     }
