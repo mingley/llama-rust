@@ -38,7 +38,9 @@
 //! is `cudaMemset2D` / `cudaMemset3D`. Typed [`memset`](Sim::memset) /
 //! [`memset_op`](Sim::memset_op) stay Async.
 //! [`memset_2d_async`](Sim::memset_2d_async) / [`memset_2d`](Sim::memset_2d)
-//! are `cudaMemset2DAsync` / `cudaMemset2D` ([`MemsetOp::is_2d`]). Typed
+//! are `cudaMemset2DAsync` / `cudaMemset2D` ([`MemsetOp::is_2d`]).
+//! [`memset_3d_async`](Sim::memset_3d_async) / [`memset_3d`](Sim::memset_3d)
+//! are `cudaMemset3DAsync` / `cudaMemset3D` ([`MemsetOp::is_3d`]). Typed
 //! [`memset_op`](Sim::memset_op) stays.
 //! [`Sim::ipc_get`] / [`ipc_open`](Sim::ipc_open) / [`ipc_close`](Sim::ipc_close)
 //! are `cudaIpcGetMemHandle` / `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`:
@@ -11601,6 +11603,52 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         enq(sim.memset_2d_async(d, op, s));
         match sim.memset_2d(d, op, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cannot capture host-sync memset"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn memset_3d_async_is_cuda_memset3d_async() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_3d(d, 256, 4, 4).unwrap();
+        let op = MemsetOp {
+            id: a,
+            bytes: 256,
+            height: 4,
+            pitch,
+            depth: 4,
+            ysize: 4,
+            ..MemsetOp::default()
+        };
+        let t0 = sim.clock_ns();
+        enq(sim.memset_3d_async(d, op, s));
+        sim.synchronize().unwrap();
+        assert!(sim.clock_ns() > t0);
+        match sim.memset_3d_async(d, MemsetOp { depth: 1, ..op }, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset3d depth"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memset_3d_async(
+            d,
+            MemsetOp {
+                depth: 0,
+                ysize: 0,
+                ..op
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset3d depth"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.memset_3d_async(d, op, s));
+        match sim.memset_3d(d, op, s) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("cannot capture host-sync memset"), "{why}");
             }

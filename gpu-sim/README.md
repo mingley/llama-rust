@@ -73,6 +73,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemcpy2D` (`memcpy_2d`) waits that stream; `memcpy_2d_async` bills payload not padding | PCIe / NVLink / HBM |
 | `cudaMemcpy3D` (`memcpy_3d`) waits that stream; `memcpy_3d_async` bills payload not padding | PCIe / NVLink / HBM |
 | `cudaMemset2D` (`memset_2d`) waits that stream; `memset_2d_async` bills payload not padding | HBM write |
+| `cudaMemset3D` (`memset_3d`) waits that stream; `memset_3d_async` bills payload not padding | HBM write |
 | `synchronize_device` waits one GPU | other GPUs keep running |
 | stream order, event dependencies | memcpy microseconds |
 | residency: a kernel may only read **device**, **mapped-host**, VMM peer `va_set_access` (reads) / `va_set_access_write` (read/write), or mempool peer `pool_set_access` (read/write) allocations; managed first-touch at kernel start | PCIe / NVLink / HBM bandwidth |
@@ -464,7 +465,8 @@ kernels skip per-kernel launch overhead.
 `memset_op_sync` are host-synchronous `cudaMemset` / `2D` / `3D` (capture
 refused). Typed `memset` / `memset_op` stay Async. `memset_2d` /
 `memset_2d_async` are `cudaMemset2D` / `cudaMemset2DAsync` (`MemsetOp` must
-be 2D). `host_func` is
+be 2D). `memset_3d` / `memset_3d_async` are `cudaMemset3D` /
+`cudaMemset3DAsync` (`MemsetOp` must be 3D). `host_func` is
 `cudaLaunchHostFunc`: stream-ordered host work that does not occupy compute
 or copy engines (other streams may GEMM). Unnamed callback by default;
 `host_func_params` records `HostNodeParams`. `write_value64` / `wait_value64`

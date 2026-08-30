@@ -13802,6 +13802,39 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cudaMemset3DAsync`. [`MemsetOp`] must be [`MemsetOp::is_3d`] (`depth > 1`).
+    /// Typed [`Self::memset_op`] stays.
+    pub fn memset_3d_async(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if !op.is_3d() {
+            return Err(SimError::Invalid {
+                why: "memset3d depth",
+            });
+        }
+        self.memset_op(device, op, stream)
+    }
+
+    /// `cudaMemset3D`. Host-synchronous; capture cannot include it.
+    pub fn memset_3d(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memset",
+            });
+        }
+        let id = self.memset_3d_async(device, op, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
     /// `cudaLaunchHostFunc`. Stream-ordered host work; does not occupy compute
     /// or copy engines. Other streams can run GPU kernels at the same virtual
     /// time. Capture records a graph host node. Unnamed callback (`fn_id = 0`,

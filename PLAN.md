@@ -3113,7 +3113,15 @@ model, do not celebrate the sim.
     refused. Decode identity unchanged. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-301. [ ] Next numbered PLAN item after 300 is the next `gpu-sim` / Engine /
+301. [x] `cudaMemset3D` / `cudaMemset3DAsync`:
+    [`memset_3d`](Sim::memset_3d) / [`memset_3d_async`](Sim::memset_3d_async)
+    require [`MemsetOp::is_3d`] (`depth > 1`). Other extents Invalid
+    `"memset3d depth"`. Typed [`memset_op`](Sim::memset_op) /
+    [`memset_op_sync`](Sim::memset_op_sync) stay. Host-sync twin capture
+    refused. Decode identity unchanged. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+302. [ ] Next numbered PLAN item after 301 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
