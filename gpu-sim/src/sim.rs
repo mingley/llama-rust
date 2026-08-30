@@ -12277,6 +12277,39 @@ impl Sim {
         self.memcpy_peer_extent(src, dst, op, stream)
     }
 
+    /// `cudaMemcpy2DAsync`. [`MemcpyOp`] must be [`MemcpyOp::is_2d`] (`height > 1`,
+    /// not 3D). Typed [`Self::memcpy`] stays.
+    pub fn memcpy_2d_async(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if !op.is_2d() {
+            return Err(SimError::Invalid {
+                why: "memcpy2d height",
+            });
+        }
+        self.memcpy(device, op, stream)
+    }
+
+    /// `cudaMemcpy2D`. Host-synchronous; capture cannot include it.
+    pub fn memcpy_2d(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memcpy",
+            });
+        }
+        let id = self.memcpy_2d_async(device, op, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
     /// Enqueue a kernel on whole allocations. Reads/writes are leased until it completes.
     ///
     /// A VMM VA must be fully mapped ([`Self::is_resident`]) or peer-readable

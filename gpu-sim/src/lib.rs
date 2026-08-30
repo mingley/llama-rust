@@ -402,6 +402,9 @@
 //! are `cudaMemcpy3DPeerAsync` / `cudaMemcpy3DPeer` ([`MemcpyOp`] height/depth).
 //! [`memcpy_peer_2d_async`](Sim::memcpy_peer_2d_async) / [`memcpy_peer_2d`](Sim::memcpy_peer_2d)
 //! are `cudaMemcpy2DPeerAsync` / `cudaMemcpy2DPeer` ([`MemcpyOp`] height/pitches).
+//! [`memcpy_2d_async`](Sim::memcpy_2d_async) / [`memcpy_2d`](Sim::memcpy_2d)
+//! are `cudaMemcpy2DAsync` / `cudaMemcpy2D` ([`MemcpyOp::is_2d`]). Typed
+//! [`memcpy`](Sim::memcpy) stays.
 //! [`Sim::set_limit`] / [`get_limit`](Sim::get_limit) are `cudaDeviceSetLimit` /
 //! `GetLimit`. [`DeviceLimit::PersistingL2CacheSize`] wraps
 //! [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size).
@@ -11440,6 +11443,61 @@ mod tests {
             s,
         ) {
             Err(SimError::Invalid { why }) => assert!(why.contains("memcpy2d pitch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn memcpy_2d_async_is_cuda_memcpy2d_async() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_pitch(d, 256, 8).unwrap();
+        let op = MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: a,
+            bytes: 256,
+            offset: 0,
+            height: 8,
+            src_pitch: 256,
+            dst_pitch: pitch,
+            ..MemcpyOp::default()
+        };
+        enq(sim.memcpy_2d_async(d, op.clone(), s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), 2048);
+        match sim.memcpy_2d_async(
+            d,
+            MemcpyOp {
+                height: 1,
+                ..op.clone()
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy2d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_2d_async(
+            d,
+            MemcpyOp {
+                depth: 2,
+                src_height: 8,
+                dst_height: 8,
+                ..op.clone()
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy2d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.memcpy_2d_async(d, op.clone(), s));
+        let _g = sim.end_capture().unwrap();
+        match sim.memcpy_2d(d, op, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cannot capture host-sync memcpy"), "{why}");
+            }
             other => panic!("{other:?}"),
         }
     }

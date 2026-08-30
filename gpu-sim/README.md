@@ -70,6 +70,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemcpyPeer` (`memcpy_peer`) waits that stream; `memcpy_peer_async` is stream-ordered | NVLink / PCIe P2P |
 | `cudaMemcpy3DPeer` (`memcpy_peer_3d`) waits that stream; `memcpy_peer_3d_async` bills payload not padding | NVLink / PCIe P2P |
 | `cudaMemcpy2DPeer` (`memcpy_peer_2d`) waits that stream; `memcpy_peer_2d_async` bills payload not padding | NVLink / PCIe P2P |
+| `cudaMemcpy2D` (`memcpy_2d`) waits that stream; `memcpy_2d_async` bills payload not padding | PCIe / NVLink / HBM |
 | `synchronize_device` waits one GPU | other GPUs keep running |
 | stream order, event dependencies | memcpy microseconds |
 | residency: a kernel may only read **device**, **mapped-host**, VMM peer `va_set_access` (reads) / `va_set_access_write` (read/write), or mempool peer `pool_set_access` (read/write) allocations; managed first-touch at kernel start | PCIe / NVLink / HBM bandwidth |
@@ -471,7 +472,9 @@ link; `disable_peer` → `PeerDisabled`). `enable_peer_with_flags` is
 `memcpy_peer_async` are `cudaMemcpyPeer` / `cudaMemcpyPeerAsync` (replica
 copy; Peer is host-synchronous). `memcpy_peer_3d` / `memcpy_peer_3d_async`
 are `cudaMemcpy3DPeer` / `cudaMemcpy3DPeerAsync`. `memcpy_peer_2d` /
-`memcpy_peer_2d_async` are `cudaMemcpy2DPeer` / `cudaMemcpy2DPeerAsync`. [`StreamId::NULL`] is the CUDA null
+`memcpy_peer_2d_async` are `cudaMemcpy2DPeer` / `cudaMemcpy2DPeerAsync`. `memcpy_2d` /
+`memcpy_2d_async` are `cudaMemcpy2D` / `cudaMemcpy2DAsync` (`MemcpyOp` must
+be 2D). Typed `memcpy` stays. [`StreamId::NULL`] is the CUDA null
 stream; `set_legacy_null_stream(true)` serializes it with every other stream
 on that device (CUDA legacy default stream). Off by default is the
 per-thread default: NULL serializes only with `set_stream_blocking`

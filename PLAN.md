@@ -3089,7 +3089,15 @@ model, do not celebrate the sim.
     refused. Decode identity unchanged. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-298. [ ] Next numbered PLAN item after 297 is the next `gpu-sim` / Engine /
+298. [x] `cudaMemcpy2D` / `cudaMemcpy2DAsync`:
+    [`memcpy_2d`](Sim::memcpy_2d) / [`memcpy_2d_async`](Sim::memcpy_2d_async)
+    require [`MemcpyOp::is_2d`] (`height > 1`, not 3D). Other extents Invalid
+    `"memcpy2d height"`. Typed [`memcpy`](Sim::memcpy) /
+    [`memcpy_sync`](Sim::memcpy_sync) stay. Host-sync twin capture refused.
+    Decode identity unchanged. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+299. [ ] Next numbered PLAN item after 298 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
