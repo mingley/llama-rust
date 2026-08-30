@@ -590,7 +590,10 @@ export/import.
 `alloc_host` is pageable; `host_register` / `host_register_mapped` are
 `cudaHostRegister` (host-synchronous). `alloc_host_mapped` is
 `cudaHostAllocMapped`: a kernel may read it with no H2D, billed at host
-PCIe, and it does not charge HBM. Capture cannot include host
+PCIe, and it does not charge HBM. `alloc_host_with_flags` /
+`host_register_with_flags` store `PORTABLE` / `WRITE_COMBINED` (alloc) and
+`PORTABLE` (register); those bits do not change DMA. IoMemory / ReadOnly
+are Invalid. Capture cannot include host
 alloc/register. `alloc_managed` is `cudaMallocManaged` (no HBM until
 `prefetch` / first-touch at kernel start). Default attach is Global.
 `alloc_managed_host` is `cudaMemAttachHost`. `alloc_managed_with_flags` is
