@@ -10614,7 +10614,20 @@ impl Sim {
     /// `cuMemUnmap` + `cuMemRelease` for every physical on this VA.
     ///
     /// Host-synchronous: in-flight kernels using this pointer complete first.
+    /// Typed helper; [`Self::va_unmap_with_size`] is the CUDA size argument
+    /// (must match the reservation).
     pub fn va_unmap(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let bytes = self.alloc_ref(id)?.bytes;
+        self.va_unmap_with_size(id, bytes)
+    }
+
+    /// [`Self::va_unmap`] with the CUDA reservation size.
+    ///
+    /// `size` must equal the reserved bytes. Other sizes Invalid `"unmap size"`.
+    /// Partial unmap is [`Self::va_unmap_range`]. Host-synchronous; capture
+    /// refused.
+    pub fn va_unmap_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         self.synchronize()?;
         let a = self.alloc_ref(id)?;
@@ -10627,6 +10640,9 @@ impl Sim {
         let maps = a.vmm_maps.clone();
         if maps.is_empty() {
             return Err(SimError::Invalid { why: "not mapped" });
+        }
+        if size != a.bytes {
+            return Err(SimError::Invalid { why: "unmap size" });
         }
         for (d, o, n) in maps {
             self.drop_vmm_physical(id, d, o, n)?;

@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cuMemUnmap` size
+
+`va_unmap_with_size` requires the CUDA reservation size. Partial unmap
+stays `va_unmap_range`. Typed `va_unmap` stays. `gpu-profile capture` is
+still refused.
+
 ## Shipped 2026-08-30 — PointerAttr memory-block id
 
 `pointer_get_attribute` reports MemoryBlockId as the VMM `MemHandleId`

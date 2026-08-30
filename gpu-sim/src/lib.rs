@@ -124,7 +124,8 @@
 //! [`Sim::drop_managed_copy`] refunds one ReadMostly GPU copy (dest eviction).
 //! [`Sim::va_reserve`] / [`va_map`](Sim::va_map) / [`va_unmap`](Sim::va_unmap) /
 //! [`va_free`](Sim::va_free) are `cuMemAddressReserve` / `cuMemMap` /
-//! `cuMemUnmap` / `cuMemAddressFree`. [`va_free_with_size`](Sim::va_free_with_size)
+//! `cuMemUnmap` / `cuMemAddressFree`. [`va_unmap_with_size`](Sim::va_unmap_with_size)
+//! is the CUDA size argument (must match the reservation). [`va_free_with_size`](Sim::va_free_with_size)
 //! is the CUDA size argument (must match the reservation). [`va_reserve_with_flags`](Sim::va_reserve_with_flags)
 //! is alignment / addr / flags (flags 0; nonzero addr Invalid; nonzero
 //! alignment must be a power of two that divides size). Size and map offsets must be multiples of
@@ -13587,6 +13588,40 @@ mod tests {
         sim.synchronize().unwrap();
         sim.va_unmap(va).unwrap();
         sim.va_free(va).unwrap();
+    }
+
+    #[test]
+    fn va_unmap_with_size_is_cu_mem_unmap() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let va = sim.va_reserve(4096).unwrap();
+        sim.va_map(va, d).unwrap();
+        match sim.va_unmap_with_size(va, 2048) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unmap size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(sim.is_resident(va, d).unwrap());
+        sim.va_unmap_with_size(va, 4096).unwrap();
+        assert!(!sim.is_resident(va, d).unwrap());
+        match sim.va_unmap_with_size(va, 4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not mapped"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let malloc = sim.malloc(d, 4096).unwrap();
+        match sim.va_unmap_with_size(malloc, 4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not a VA"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.va_map(va, d).unwrap();
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.va_unmap_with_size(va, 4096) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.va_unmap(va).unwrap();
+        sim.va_free(va).unwrap();
+        sim.free_sync(malloc).unwrap();
     }
 
     #[test]
