@@ -11,10 +11,10 @@ use crate::ids::{
 };
 use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
-    ClusterSchedulingPolicy, ComputeMode, DeviceAttr, DeviceFlags, DeviceLimit, DeviceP2pAttr,
-    DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags, FlushGpuDirectRdmaScope,
-    FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes,
-    GpuOp as Kind, GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult,
+    ClusterSchedulingPolicy, ComputeMode, DeviceAttr, DeviceFlags, DeviceLimit, DeviceNumaConfig,
+    DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags,
+    FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr,
+    FuncAttributes, GpuOp as Kind, GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult,
     GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
     GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
     HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf,
@@ -13174,7 +13174,8 @@ impl Sim {
             | DeviceAttr::MemDecompressMaximumLength
             | DeviceAttr::HostNumaVirtualMemoryManagementSupported
             | DeviceAttr::HostNumaMemoryPoolsSupported
-            | DeviceAttr::HostNumaMultinodeIpcSupported => 0,
+            | DeviceAttr::HostNumaMultinodeIpcSupported
+            | DeviceAttr::NumaConfig => 0,
             DeviceAttr::StreamPrioritiesSupported
             | DeviceAttr::UnifiedAddressing
             | DeviceAttr::CanUse64BitStreamMemOps
@@ -13258,6 +13259,7 @@ impl Sim {
             host_numa_virtual_memory_management_supported: false,
             host_numa_memory_pools_supported: false,
             host_numa_multinode_ipc_supported: false,
+            numa_config: DeviceNumaConfig::NONE,
         })
     }
 

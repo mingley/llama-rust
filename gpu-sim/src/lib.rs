@@ -348,6 +348,8 @@
 //! is same-node; [`ipc_open`](Sim::ipc_open) requires the dest GPU already
 //! in the allocation). Distinct from
 //! [`IpcEventSupport`](DeviceAttr::IpcEventSupport).
+//! [`DeviceAttr::NumaConfig`] is always [`DeviceNumaConfig::NONE`] (GPU memory
+//! NUMA nodes are not modeled). Do not invent `cudaDevAttrNumaId`.
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -745,19 +747,19 @@ pub use ids::{
 pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp,
     ClusterDim, ClusterSchedulingPolicy, ComputeMode, DType, DeviceAttr, DeviceFlags, DeviceLimit,
-    DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags,
-    FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr,
-    FuncAttributes, GpuOp, GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult,
-    GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
-    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
-    HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf,
-    KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
-    MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp,
-    MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType,
-    MemMapFlags, MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags,
-    MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, MulticastBindFlags,
-    MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch,
-    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    DeviceNumaConfig, DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags,
+    EventWaitFlags, FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget,
+    FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, GpuOp, GraphAddNode,
+    GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
+    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
+    GraphUserObjectFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags,
+    KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
+    LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity,
+    MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType,
+    MemLocationType, MemMapFlags, MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
+    MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp,
+    MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation,
+    PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
     PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
     SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
     StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
@@ -11221,6 +11223,24 @@ mod tests {
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::HostNumaMultinodeIpcSupported)
                 .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_numa_config_is_none() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.numa_config, DeviceNumaConfig::NONE);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::NumaConfig).unwrap(),
+            u64::from(DeviceNumaConfig::NONE)
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::NumaConfig).unwrap(),
             0
         );
         let _g = sim.end_capture().unwrap();

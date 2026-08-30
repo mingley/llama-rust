@@ -887,6 +887,9 @@ pub enum DeviceAttr {
     /// same-node; [`crate::Sim::ipc_open`] requires the dest GPU already in
     /// the allocation). Distinct from [`Self::IpcEventSupport`].
     HostNumaMultinodeIpcSupported,
+    /// `cudaDevAttrNumaConfig` (always [`DeviceNumaConfig::NONE`]; GPU memory
+    /// NUMA nodes are not modeled). Do not invent `cudaDevAttrNumaId`.
+    NumaConfig,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -1047,6 +1050,8 @@ pub struct DeviceProperties {
     /// `cudaDevAttrHostNumaMultinodeIpcSupported` (this VM's IPC is
     /// same-node). Distinct from [`Self::ipc_event_support`].
     pub host_numa_multinode_ipc_supported: bool,
+    /// `cudaDevAttrNumaConfig` (always [`DeviceNumaConfig::NONE`]).
+    pub numa_config: u32,
 }
 
 /// `cudaComputeMode` for [`DeviceAttr::ComputeMode`].
@@ -1056,6 +1061,14 @@ impl ComputeMode {
     /// `cudaComputeModeDefault` (`0`). This VM has no exclusive-process or
     /// prohibited modes.
     pub const DEFAULT: u32 = 0;
+}
+
+/// `cudaDeviceNumaConfig` for [`DeviceAttr::NumaConfig`].
+pub struct DeviceNumaConfig;
+
+impl DeviceNumaConfig {
+    /// `cudaDeviceNumaConfigNone` (`0`). This VM has no GPU-memory NUMA nodes.
+    pub const NONE: u32 = 0;
 }
 
 /// `cudaFuncAttribute` for [`crate::Sim::func_set_attribute`] / `GetAttribute`.
