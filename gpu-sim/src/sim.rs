@@ -1398,6 +1398,62 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphExecMemsetNodeSetParams` on an instantiated exec.
+    ///
+    /// Node `node` must already be a memset. [`KernelBuf`] dest/span may change.
+    /// Zero-byte fills stay illegal. Pays `graph_set_params_ns` and clears the
+    /// upload flag. Capture cannot include it. Graphs with mem alloc/free nodes
+    /// are legal (unlike [`Self::update_graph`]).
+    pub fn graph_exec_memset_set_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        buf: KernelBuf,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture memset set params")?;
+        let (instantiated, device) = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            if !matches!(step.kind, Kind::Memset { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a memset node",
+                });
+            }
+            (g.instantiated, step.device)
+        };
+        if !instantiated {
+            return Err(SimError::Invalid {
+                why: "graph not instantiated",
+            });
+        }
+        let total = self.alloc_ref(buf.id)?.bytes;
+        let (offset, bytes) = kernel_span(total, &buf)?;
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte memset",
+            });
+        }
+        let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.kind = Kind::Memset {
+            id: buf.id,
+            offset,
+            bytes,
+        };
+        g.uploaded = false;
+        Ok(())
+    }
+
     /// Unique kernel node on `graph` plus its current [`KernelNodeParams`].
     ///
     /// Zero or more than one kernel node is Invalid. Used by
@@ -1474,6 +1530,51 @@ impl Sim {
                 });
             }
             found = Some((i, op.clone()));
+        }
+        Ok(found)
+    }
+
+    /// Unique memset node on `graph` plus its current [`KernelBuf`].
+    ///
+    /// Zero memset nodes is Invalid (`not a memset node`). More than one is
+    /// `not unique memset node`.
+    pub fn graph_unique_memset(&self, graph: GraphId) -> Result<(usize, KernelBuf), SimError> {
+        match self.graph_try_unique_memset(graph)? {
+            Some(v) => Ok(v),
+            None => Err(SimError::Invalid {
+                why: "not a memset node",
+            }),
+        }
+    }
+
+    /// Unique memset node, or `None` when the graph has no memset.
+    ///
+    /// More than one memset node is Invalid.
+    pub fn graph_try_unique_memset(
+        &self,
+        graph: GraphId,
+    ) -> Result<Option<(usize, KernelBuf)>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut found = None;
+        for (i, step) in g.steps.iter().enumerate() {
+            let Kind::Memset { id, offset, bytes } = &step.kind else {
+                continue;
+            };
+            if found.is_some() {
+                return Err(SimError::Invalid {
+                    why: "not unique memset node",
+                });
+            }
+            found = Some((
+                i,
+                KernelBuf {
+                    id: *id,
+                    offset: *offset,
+                    bytes: *bytes,
+                },
+            ));
         }
         Ok(found)
     }

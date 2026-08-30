@@ -107,7 +107,7 @@ pub struct GpuStoreCfg {
     ///
     /// Evict parks the instantiated GEMM graph. The next miss retargets the
     /// unique kernel node (`graph_set_params_ns`) without recapture, and a
-    /// unique memcpy if the leaf has one. Works with
+    /// unique memcpy or memset if the leaf has one. Works with
     /// [`Self::graph_mem`] / [`Self::graph_auto_free`]. Illegal with
     /// [`Self::graph_update`]. Decode identity stays destroy+instantiate.
     pub graph_set_params: bool,

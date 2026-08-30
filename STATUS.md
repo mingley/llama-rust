@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — `cudaGraphExecMemsetNodeSetParams`
+
+`Sim::graph_exec_memset_set_params` is `cudaGraphExecMemsetNodeSetParams`:
+patch one instantiated memset node's destination span without a second
+graph. Cheaper than `cudaGraphExecUpdate`. Legal with mem alloc/free
+nodes. `--graph-set-params` retargets a unique memset if the parked leaf
+has one. Decode identity stays destroy+instantiate. Dual score still has
+no `$/M tokens`.
+
 ## Shipped 2026-08-29 — `cudaGraphExecMemcpyNodeSetParams`
 
 `Sim::graph_exec_memcpy_set_params` is `cudaGraphExecMemcpyNodeSetParams`:

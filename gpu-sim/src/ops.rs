@@ -190,7 +190,8 @@ pub struct MemcpyOp {
 /// [`Self::whole`] is `offset = 0`, `bytes = 0` (remainder of the alloc).
 /// [`crate::Sim::kernel`] uses that. [`crate::Sim::kernel_bufs`] can name a
 /// mapped page of a reserved VA so a paged KV working set need not cover the
-/// whole pointer.
+/// whole pointer. [`crate::Sim::graph_exec_memset_set_params`] patches this on
+/// an instantiated memset node (`cudaGraphExecMemsetNodeSetParams`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KernelBuf {
     /// Allocation (device, mapped-host, managed, or VMM VA).

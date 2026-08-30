@@ -260,7 +260,7 @@ pub struct SimCfg {
     ///
     /// Evict parks the instantiated GEMM graph. The next miss retargets the
     /// unique kernel node (`graph_set_params_ns`) without a second capture,
-    /// and a unique memcpy if the leaf has one. Works with
+    /// and a unique memcpy or memset if the leaf has one. Works with
     /// [`Self::graph_mem`] / [`Self::graph_auto_free`] (CUDA cannot
     /// `cudaGraphExecUpdate` mem nodes). Illegal with [`Self::graph_update`].
     /// Implies [`Self::cuda_graphs`]. Decode identity stays destroy+instantiate.
@@ -865,8 +865,9 @@ fn instantiate_src(sim: &mut Sim, src: GraphId, auto_free: bool) -> Result<Graph
 
 /// Patch a parked leaf GEMM so it reads/writes `expert` instead of the evicted alloc.
 ///
-/// Also retargets a unique memcpy node's [`gpu_sim::MemcpyOp::alloc`] when the
-/// leaf has one (not the default compute GEMM capture).
+/// Also retargets a unique memcpy node's [`gpu_sim::MemcpyOp::alloc`] or a
+/// unique memset node's [`gpu_sim::KernelBuf`] when the leaf has one (not the
+/// default compute GEMM capture).
 pub(crate) fn retarget_parked_kernel(
     sim: &mut Sim,
     exec: GraphId,
@@ -885,6 +886,12 @@ pub(crate) fn retarget_parked_kernel(
             mop.alloc = expert;
         }
         sim.graph_exec_memcpy_set_params(exec, mnode, &mop)?;
+    }
+    if let Some((znode, mut zbuf)) = sim.graph_try_unique_memset(exec)? {
+        if !owned.contains(&zbuf.id) {
+            zbuf.id = expert;
+        }
+        sim.graph_exec_memset_set_params(exec, znode, zbuf)?;
     }
     Ok(())
 }

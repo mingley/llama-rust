@@ -125,6 +125,10 @@
 //! `cudaGraphExecMemcpyNodeSetParams` (same `graph_set_params_ns`; pageable
 //! still illegal; mem nodes legal). [`graph_unique_memcpy`](Sim::graph_unique_memcpy)
 //! / [`graph_try_unique_memcpy`](Sim::graph_try_unique_memcpy) find that node.
+//! [`graph_exec_memset_set_params`](Sim::graph_exec_memset_set_params) is
+//! `cudaGraphExecMemsetNodeSetParams` (same cost; zero-byte still illegal).
+//! [`graph_unique_memset`](Sim::graph_unique_memset) /
+//! [`graph_try_unique_memset`](Sim::graph_try_unique_memset) find that node.
 //! [`Sim::clone_graph`] is `cudaGraphClone` (independent, not instantiated;
 //! child-graph nodes are cloned recursively).
 //! [`Sim::create_graph`] is `cudaGraphCreate` (empty, not instantiated).
@@ -1625,6 +1629,166 @@ mod tests {
         sim.graph_add_memcpy(two, op).unwrap();
         sim.instantiate_graph(two).unwrap();
         match sim.graph_try_unique_memcpy(two) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not unique"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_exec_memset_set_params_retargets_without_second_graph() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset(exec, KernelBuf::whole(a)).unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        let t0 = sim.clock_ns();
+        let (node, mut buf) = sim.graph_unique_memset(exec).unwrap();
+        assert_eq!(node, 0);
+        assert_eq!(buf.id, a);
+        buf.id = b;
+        sim.graph_exec_memset_set_params(exec, node, buf).unwrap();
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert!(sim.clock_ns() > t0);
+        assert!(sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn graph_exec_memset_set_params_beats_exec_update_wall() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_instantiate_ns = 80_000;
+            g.graph_update_ns = 9_000;
+            g.graph_set_params_ns = 300;
+            g.graph_upload_ns = 1_000;
+            g.graph_launch_ns = 1_000;
+        }
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let run_update = {
+            let mut sim = Sim::new(p.clone());
+            let a = sim.malloc(d, 4096).unwrap();
+            let b = sim.malloc(d, 4096).unwrap();
+            let exec = sim.create_graph(d, s).unwrap();
+            sim.graph_add_memset(exec, KernelBuf::whole(a)).unwrap();
+            sim.instantiate_graph(exec).unwrap();
+            sim.upload_graph(exec).unwrap();
+            let src = sim.create_graph(d, s).unwrap();
+            sim.graph_add_memset(src, KernelBuf::whole(b)).unwrap();
+            let t0 = sim.clock_ns();
+            sim.update_graph(exec, src).unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let run_set = {
+            let mut sim = Sim::new(p);
+            let a = sim.malloc(d, 4096).unwrap();
+            let b = sim.malloc(d, 4096).unwrap();
+            let exec = sim.create_graph(d, s).unwrap();
+            sim.graph_add_memset(exec, KernelBuf::whole(a)).unwrap();
+            sim.instantiate_graph(exec).unwrap();
+            sim.upload_graph(exec).unwrap();
+            let (node, mut buf) = sim.graph_unique_memset(exec).unwrap();
+            buf.id = b;
+            let t0 = sim.clock_ns();
+            sim.graph_exec_memset_set_params(exec, node, buf).unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        assert!(
+            run_set < run_update,
+            "set_params={run_set} update={run_update}"
+        );
+        assert_eq!(run_set, 300);
+        assert_eq!(run_update, 9_000);
+    }
+
+    #[test]
+    fn graph_exec_memset_set_params_allows_mem_nodes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        let scratch = sim.graph_add_alloc(exec, 4096).unwrap();
+        sim.graph_add_memset(exec, KernelBuf::whole(a)).unwrap();
+        sim.graph_add_dependencies(exec, 0, 1).unwrap();
+        sim.graph_add_free(exec, scratch).unwrap();
+        sim.graph_add_dependencies(exec, 1, 2).unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        let scratch2 = sim.graph_add_alloc(src, 4096).unwrap();
+        sim.graph_add_memset(src, KernelBuf::whole(b)).unwrap();
+        sim.graph_add_dependencies(src, 0, 1).unwrap();
+        sim.graph_add_free(src, scratch2).unwrap();
+        sim.graph_add_dependencies(src, 1, 2).unwrap();
+        let err = sim.update_graph(exec, src).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("mem"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let (node, mut buf) = sim.graph_unique_memset(exec).unwrap();
+        assert_eq!(node, 1);
+        buf.id = b;
+        sim.graph_exec_memset_set_params(exec, node, buf).unwrap();
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 3);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn graph_exec_memset_set_params_rejects_uninstantiated_and_kernel() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let buf = KernelBuf::whole(a);
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset(exec, buf).unwrap();
+        let err = sim.graph_exec_memset_set_params(exec, 0, buf).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.instantiate_graph(exec).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let kern = sim.end_capture().unwrap();
+        sim.instantiate_graph(kern).unwrap();
+        let err = sim.graph_exec_memset_set_params(kern, 0, buf).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not a memset"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        let err = sim.graph_exec_memset_set_params(exec, 0, buf).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.graph_try_unique_memset(kern) {
+            Ok(None) => {}
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_unique_memset(kern) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not a memset"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let two = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset(two, buf).unwrap();
+        sim.graph_add_memset(two, buf).unwrap();
+        sim.instantiate_graph(two).unwrap();
+        match sim.graph_try_unique_memset(two) {
             Err(SimError::Invalid { why }) => assert!(why.contains("not unique"), "{why}"),
             other => panic!("{other:?}"),
         }
