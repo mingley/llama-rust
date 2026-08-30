@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — graph node GetGraph / GetEvent / GetParams
+
+`Sim::graph_child_get_graph` is `cudaGraphChildGraphNodeGetGraph`.
+`graph_event_record_get_event` / `graph_event_wait_get_event` are
+`cudaGraphEventRecordNodeGetEvent` / `WaitNodeGetEvent`.
+`graph_alloc_get_params` is `cudaGraphMemAllocNodeGetParams` of stored
+id and bytes. Query; legal during capture. `gpu-profile capture` is
+still refused.
+
 ## Shipped 2026-08-30 — `POST /tokenize` / `POST /detokenize`
 
 `gguf_gemv serve` (default and `--engine`) maps `POST /tokenize` onto the
@@ -2088,7 +2097,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 168 (`POST /tokenize`).
+Next code change is PLAN systems depth after item 171 (`cudaGraphMemAllocNodeGetParams`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

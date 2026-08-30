@@ -335,6 +335,12 @@
 //! treats child ids as topology. [`graph_child_nodes`](Sim::graph_child_nodes) /
 //! [`graph_unique_child`](Sim::graph_unique_child) /
 //! [`graph_try_unique_child`](Sim::graph_try_unique_child) find those nodes.
+//! [`graph_child_get_graph`](Sim::graph_child_get_graph) is
+//! `cudaGraphChildGraphNodeGetGraph`. [`graph_event_record_get_event`](Sim::graph_event_record_get_event) /
+//! [`graph_event_wait_get_event`](Sim::graph_event_wait_get_event) are
+//! `cudaGraphEventRecordNodeGetEvent` / `WaitNodeGetEvent`.
+//! [`graph_alloc_get_params`](Sim::graph_alloc_get_params) is
+//! `cudaGraphMemAllocNodeGetParams` (stored id and bytes).
 //! [`graph_exec_event_record_set_event`](Sim::graph_exec_event_record_set_event) /
 //! [`graph_exec_event_wait_set_event`](Sim::graph_exec_event_wait_set_event) are
 //! `cudaGraphExecEventRecordNodeSetEvent` / `WaitNodeSetEvent` (event id is the
@@ -7685,6 +7691,49 @@ mod tests {
         assert_eq!(sim.graph_nodes(g).unwrap(), vec![0, 1]);
         let _end = sim.end_capture().unwrap();
         assert_eq!(sim.graph_nodes(g).unwrap(), vec![0, 1]);
+    }
+
+    #[test]
+    fn graph_node_getters_wrap_child_event_and_alloc() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let leaf = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(leaf).unwrap();
+        let _ = sim.instantiate_graph(leaf).unwrap();
+        let parent = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(parent, leaf).unwrap();
+        assert_eq!(sim.graph_child_get_graph(parent, 0).unwrap(), leaf);
+        match sim.graph_child_get_graph(leaf, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("child graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.create_event(EventId(1)).unwrap();
+        sim.create_event(EventId(2)).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_event_record(g, EventId(1), false).unwrap();
+        sim.graph_add_event_wait(g, EventId(2), false).unwrap();
+        assert_eq!(sim.graph_event_record_get_event(g, 0).unwrap(), EventId(1));
+        assert_eq!(sim.graph_event_wait_get_event(g, 1).unwrap(), EventId(2));
+        match sim.graph_event_record_get_event(g, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("event record"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mem = sim.create_graph(d, s).unwrap();
+        let id = sim.graph_add_alloc(mem, 4096).unwrap();
+        assert_eq!(sim.graph_alloc_get_params(mem, 0).unwrap(), (id, 4096));
+        match sim.graph_alloc_get_params(g, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mem alloc"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(sim.graph_child_get_graph(parent, 0).unwrap(), leaf);
+        assert_eq!(sim.graph_event_record_get_event(g, 0).unwrap(), EventId(1));
+        let _end = sim.end_capture().unwrap();
+        match sim.graph_child_get_graph(GraphId(99), 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

@@ -93,6 +93,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaGraphCreate` (`create_graph`) is an empty uninstantiated graph | 1 ns host-sync |
 | `cudaStreamBeginCaptureToGraph` (`begin_capture_to_graph`) appends captured nodes onto an existing uninstantiated graph; empty deps are extra roots | not timed (capture) |
 | `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes` | query |
+| `cudaGraphChildGraphNodeGetGraph` / `EventRecordNodeGetEvent` / `WaitNodeGetEvent` / `MemAllocNodeGetParams` | query |
 | `cudaGraphAddKernelNode` / memcpy / memset / host / empty / event / child / mem alloc/free / cooperative kernel / dependencies (`graph_add_*`) | not timed (host-side topology) |
 | graph destroy drops the id (`cudaGraphDestroy`); remaining graph mem is refunded; user-object refs held by the graph are released | 1 ns host-sync |
 | `cudaUserObjectCreate` / `Retain` / `Release`; last ref records the destroy `fn_id` | 1 ns host-sync |
@@ -347,6 +348,10 @@ mem alloc/free cannot be disabled).
 `graph_exec_child_set_params` is `cudaGraphExecChildGraphNodeSetParams`
 (swap the nested graph; nested topology must match; child ids are topology
 for `update_graph`; mem nodes legal).
+`graph_child_get_graph` is `cudaGraphChildGraphNodeGetGraph`.
+`graph_event_record_get_event` / `graph_event_wait_get_event` are
+`cudaGraphEventRecordNodeGetEvent` / `WaitNodeGetEvent`.
+`graph_alloc_get_params` is `cudaGraphMemAllocNodeGetParams` (id and bytes).
 `graph_exec_event_record_set_event` / `graph_exec_event_wait_set_event` are
 `cudaGraphExecEventRecordNodeSetEvent` / `WaitNodeSetEvent` (event id is the
 parameter; External is topology).

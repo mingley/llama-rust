@@ -3874,6 +3874,16 @@ impl Sim {
         })
     }
 
+    fn graph_view_step(&self, graph: GraphId, node: usize) -> Result<&GraphStep, SimError> {
+        let graph = self.resolved_graph(graph)?;
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        g.view().get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })
+    }
+
     fn graph_exec_step(&self, exec: GraphId, node: usize) -> Result<&GraphStep, SimError> {
         let exec = self.as_exec(exec)?;
         let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
@@ -3997,6 +4007,62 @@ impl Sim {
             }
         }
         Ok(out)
+    }
+
+    /// `cudaGraphChildGraphNodeGetGraph`. Query; legal during capture.
+    ///
+    /// Instantiated ids use the exec snapshot (same as [`Self::graph_child_nodes`]).
+    pub fn graph_child_get_graph(&self, graph: GraphId, node: usize) -> Result<GraphId, SimError> {
+        match &self.graph_view_step(graph, node)?.kind {
+            Kind::ChildGraph { graph: child } => Ok(*child),
+            _ => Err(SimError::Invalid {
+                why: "not a child graph node",
+            }),
+        }
+    }
+
+    /// `cudaGraphEventRecordNodeGetEvent`. Query; legal during capture.
+    pub fn graph_event_record_get_event(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<EventId, SimError> {
+        match &self.graph_view_step(graph, node)?.kind {
+            Kind::EventRecord { event, .. } => Ok(*event),
+            _ => Err(SimError::Invalid {
+                why: "not an event record node",
+            }),
+        }
+    }
+
+    /// `cudaGraphEventWaitNodeGetEvent`. Query; legal during capture.
+    pub fn graph_event_wait_get_event(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<EventId, SimError> {
+        match &self.graph_view_step(graph, node)?.kind {
+            Kind::EventWait { event, .. } => Ok(*event),
+            _ => Err(SimError::Invalid {
+                why: "not an event wait node",
+            }),
+        }
+    }
+
+    /// `cudaGraphMemAllocNodeGetParams` of stored id and bytes.
+    ///
+    /// Query; legal during capture. Pool identity stays the graph-memory pool.
+    pub fn graph_alloc_get_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<(AllocId, u64), SimError> {
+        match &self.graph_view_step(graph, node)?.kind {
+            Kind::Alloc { id, bytes } => Ok((*id, *bytes)),
+            _ => Err(SimError::Invalid {
+                why: "not a mem alloc node",
+            }),
+        }
     }
 
     /// Unique child-graph node on `graph`.

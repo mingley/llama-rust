@@ -1993,6 +1993,25 @@ model, do not celebrate the sim.
     identity unchanged. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
+169. [x] `cudaGraphChildGraphNodeGetGraph`:
+    `Sim::graph_child_get_graph` is the nested graph id of one child-graph
+    node. Instantiated ids use the exec snapshot (same as
+    `graph_child_nodes`). Not-a-child is Invalid. Query; legal during
+    capture. Decode identity unchanged. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+170. [x] `cudaGraphEventRecordNodeGetEvent` / `WaitNodeGetEvent`:
+    `Sim::graph_event_record_get_event` / `graph_event_wait_get_event`
+    wrap the stored event id. Wrong node kind is Invalid. Query; legal
+    during capture. Decode identity unchanged. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+171. [x] `cudaGraphMemAllocNodeGetParams`:
+    `Sim::graph_alloc_get_params` returns stored `(AllocId, bytes)`. Pool
+    identity stays the graph-memory pool. Wrong node kind is Invalid.
+    Query; legal during capture. Decode identity unchanged. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.
