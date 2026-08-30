@@ -9344,6 +9344,11 @@ impl Sim {
         if attrs.cooperative {
             self.require_cooperative(device)?;
         }
+        if attrs.device_updatable && self.capturing.is_none() {
+            return Err(SimError::Invalid {
+                why: "device-updatable is graphs-only",
+            });
+        }
         let prev_pdl = self.enqueue_pdl;
         let prev_win = self.enqueue_access_policy;
         let prev_dom = self.enqueue_mem_sync_domain;

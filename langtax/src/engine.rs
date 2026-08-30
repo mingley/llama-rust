@@ -3907,6 +3907,37 @@ mod tests {
     }
 
     #[test]
+    fn engine_gpu_device_launch_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::example_h100_sxm();
+        let off = mixed_gpu_decode_itl_at(
+            bytes.clone(),
+            false,
+            None,
+            GpuStoreCfg::default(),
+            profile.clone(),
+        );
+        let on = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                device_launch: true,
+                device_updatable: true,
+                graph_set_params: true,
+                ..GpuStoreCfg::default()
+            },
+            profile,
+        );
+        assert_eq!(off.2, 4);
+        assert_eq!(on.2, 4);
+        assert_eq!(
+            off.4, on.4,
+            "device-launch + device-updatable must keep greedy identity"
+        );
+    }
+
+    #[test]
     fn engine_gpu_sync_policy_taxes_decode_itl() {
         let bytes = tiny_qwen3moe_2layer_gguf();
         let profile = HardwareProfile::parse(

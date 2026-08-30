@@ -119,7 +119,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchAttributePreferredClusterDimension` | occupies preferred size when it fits in `compute_slots` |
 | `cudaFuncAttributeNonPortableClusterSizeAllowed` | sizes above `portable_cluster_size` until the SKU `max_blocks_per_cluster` |
 | `cudaLaunchAttributeSynchronizationPolicy` (stream-only) | host-wait tax on `synchronize_stream` / `synchronize_event`; Auto / profile default 0 |
-| `cudaLaunchAttributeDeviceUpdatableKernelNode` | `graph_exec_kernel_set_params` keeps the exec uploaded; device-launch graphs allow it |
+| `cudaLaunchAttributeDeviceUpdatableKernelNode` | graphs-only; `graph_exec_kernel_set_params` keeps the exec uploaded; device-launch graphs allow it |
 | `cudaLaunchAttributeSharedMemoryMode` | Default never scales; FourByte / EightByte scale duration by `1000 / shared_mem_*_permille` (default 1000) |
 | `cudaLaunchAttributePortableClusterSizeMode` | Default uses the function attr; RequirePortable always refuses oversize; AllowNonPortable allows up to SKU max |
 | CUDA 13 `cudaLaunchAttributeSharedMemoryMode` (`PortableSharedMode`) | Default uses `MaxDynamicSharedMemorySize`; RequirePortable refuses oversize; AllowNonPortable allows up to opt-in max |
@@ -506,6 +506,9 @@ max 8). `ClusterSchedulingPolicy::Spread` occupies every slot.
 `cudaLaunchAttributeDeviceUpdatableKernelNode` lets
 `graph_exec_kernel_set_params` keep the exec uploaded so
 `device_launch_graph` needs no host re-upload (device-launch graphs allow it).
+A non-capturing `kernel_with` with that attr is Invalid (graphs-only).
+`expertvm sim --device-launch` / `--device-updatable` instantiate leaf GEMM
+graphs with `DEVICE_LAUNCH` and skip re-upload after set-params.
 `SharedMemoryMode` is `cudaLaunchAttributeSharedMemoryMode`: Default never
 scales kernel duration; FourByte / EightByte scale by
 `1000 / shared_mem_*_permille` (profile default 1000 is identity).
@@ -535,7 +538,10 @@ allows up to the SKU max). `--optin-shared` is
 `cudaLaunchKernel` `sharedMemBytes`. `--portable-shared default|portable|non-portable`
 is CUDA 13 `cudaLaunchAttributeSharedMemoryMode`. `--nvlink-util` is
 `cudaLaunchAttributeNvlinkUtilCentricScheduling` (`0`/`1`; occupies every
-Hyper-Q slot when the profile has NVLink). Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
+Hyper-Q slot when the profile has NVLink). `--device-launch` is
+`cudaGraphInstantiateFlagDeviceLaunch` plus `device_launch_graph`.
+`--device-updatable` is `cudaLaunchAttributeDeviceUpdatableKernelNode`.
+Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
 instantiate schedules those node priorities instead of the launch stream. `set_created_streams_priority` assigns created streams
 their id. `set_stream_sm_permille` is a green-context SM fraction
 (compute-bound kernels scale; memory-bound keep full HBM; default unset is

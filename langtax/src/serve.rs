@@ -22,7 +22,7 @@ use expertvm::{GpuFill, GpuStoreCfg, Prefetch};
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
@@ -80,6 +80,8 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --dynamic-shared N  cudaLaunchKernel sharedMemBytes (`--expert-sim`; must be > 0; legal with `--pdl` and `--cooperative`)
       --portable-shared MODE  CUDA 13 portable-shared default|portable|non-portable (`--expert-sim`; `cudaLaunchAttributeSharedMemoryMode`; Default uses the function attr; legal with `--pdl` and `--cooperative`)
       --nvlink-util     NvlinkUtilCentricScheduling occupancy (`--expert-sim`; occupies every Hyper-Q slot when the profile has NVLink; legal with `--pdl` and `--cooperative`)
+      --device-launch   cudaGraphInstantiateFlagDeviceLaunch + device_launch_graph (`--expert-sim`; no mem nodes / graph-update; legal with `--pdl` and `--cooperative`)
+      --device-updatable  cudaLaunchAttributeDeviceUpdatableKernelNode (`--expert-sim`; set-params keeps the exec uploaded; not with `--graph-update`; legal with `--pdl` and `--cooperative`)
       --multicast       cuMulticastCreate NVLS replica fanout (`--expert-sim`; implies `--vmm`; needs NVLink)
       --compute-slots N Hyper-Q occupancy (`--expert-sim`; `1` exclusive, `>=2` overlaps leftover prefill with decode on two streams; default profile `1`)
       --decode-sms N    decode-stream SM permille (`--expert-sim`; `1..=1000`; leftover prefill gets the remainder; implies `--decode-priority`; default full chip)
@@ -106,7 +108,7 @@ leftover prefill while any live sequence is already decoding. `--slo-reject` /
 the same SimulatedGpuStore knobs as `gguf_gemv engine`. `--host-func` /
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--shareable` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` / `--seq-streams` /
-`--kv-sim` / `--kv-bytes` / `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--non-portable-cluster` / `--sync-policy` / `--shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--multicast` /
+`--kv-sim` / `--kv-bytes` / `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--non-portable-cluster` / `--sync-policy` / `--shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--multicast` /
 `--compute-slots` / `--decode-sms` match
 `GpuStoreCfg`. `--kv-sim` bills interned KV on the same clock as expert H2D
 (distinct from `expertvm kv`; default off). `--decode-priority` ITL samples
@@ -146,7 +148,13 @@ function attribute; `portable` always refuses oversize; `non-portable` allows
 up to the SKU opt-in even when `--optin-shared` is off). `--nvlink-util` is
 `cudaLaunchAttributeNvlinkUtilCentricScheduling`: occupies every Hyper-Q slot
 when the profile has NVLink (`--expert-8gpu`); without NVLink occupancy is
-unchanged (legal with `--pdl` and `--cooperative`). `--cooperative` is
+unchanged (legal with `--pdl` and `--cooperative`). `--device-launch` is
+`cudaGraphInstantiateFlagDeviceLaunch` plus `device_launch_graph` after upload
+(illegal with `--graph-mem` / `--graph-auto-free` / `--graph-update`; combo
+parents stay leaf launches). `--device-updatable` is
+`cudaLaunchAttributeDeviceUpdatableKernelNode` so `--graph-set-params` keeps
+the exec uploaded (illegal with `--graph-update`; legal with `--pdl` and
+`--cooperative`). `--cooperative` is
 `cudaLaunchCooperativeKernel`: those GEMMs occupy every Hyper-Q slot, so
 leftover prefill cannot overlap even with `--compute-slots 2`. `--multicast`
 is Hopper NVLS replica fanout (`cuMulticastCreate`; implies `--vmm`; needs
@@ -348,6 +356,15 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
     if n.plan.gpu.graph_update && n.plan.gpu.graph_set_params {
         return usage_err("choose one of --graph-update, --graph-set-params");
     }
+    if n.plan.gpu.graph_update && n.plan.gpu.device_launch {
+        return usage_err("choose one of --graph-update, --device-launch");
+    }
+    if n.plan.gpu.graph_update && n.plan.gpu.device_updatable {
+        return usage_err("choose one of --graph-update, --device-updatable");
+    }
+    if n.plan.gpu.device_launch && (n.plan.gpu.graph_mem || n.plan.gpu.graph_auto_free) {
+        return usage_err("device-launch cannot graph-mem");
+    }
     if n.plan.gpu.graph_build && n.plan.gpu.graph_piecewise {
         return usage_err("choose one of --graph-build, --graph-piecewise");
     }
@@ -375,7 +392,7 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -1992,6 +2009,30 @@ mod tests {
         let err = parse_serve_args(["m.gguf", "--engine", "--expert-sim", "--nvlink-util=1"])
             .unwrap_err();
         assert!(err.contains("--nvlink-util does not take a value"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--device-launch"]).unwrap_err();
+        assert!(err.contains("--device-launch requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--device-launch"]).unwrap_err();
+        assert!(
+            err.contains("--device-launch requires --expert-sim"),
+            "{err}"
+        );
+        let a = run(&["m.gguf", "--engine", "--expert-sim", "--device-launch"]);
+        assert!(a.gpu_cfg.device_launch);
+        let a = run(&[
+            "m.gguf",
+            "--engine",
+            "--expert-sim",
+            "--device-updatable",
+            "--pdl",
+        ]);
+        assert!(a.gpu_cfg.device_updatable);
+        assert!(a.gpu_cfg.pdl);
+        let err = parse_serve_args(["m.gguf", "--engine", "--expert-sim", "--device-launch=1"])
+            .unwrap_err();
+        assert!(
+            err.contains("--device-launch does not take a value"),
+            "{err}"
+        );
         let err = parse_serve_args([
             "m.gguf",
             "--engine",

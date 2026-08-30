@@ -509,9 +509,10 @@ pub struct KernelAttrs {
     pub carveout: SharedMemCarveout,
     /// `cudaLaunchAttributeDeviceUpdatableKernelNode`.
     ///
-    /// When true, [`crate::Sim::graph_exec_kernel_set_params`] keeps the exec
-    /// uploaded so a later [`crate::Sim::device_launch_graph`] needs no host
-    /// re-upload. Decode identity stays `false`.
+    /// Graphs-only: a non-capturing launch is Invalid. When true,
+    /// [`crate::Sim::graph_exec_kernel_set_params`] keeps the exec uploaded so a
+    /// later [`crate::Sim::device_launch_graph`] needs no host re-upload.
+    /// Decode identity stays `false`.
     pub device_updatable: bool,
     /// `cudaLaunchAttributeSharedMemoryMode`.
     pub shared_mem: SharedMemoryMode,

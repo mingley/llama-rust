@@ -1733,6 +1733,19 @@ model, do not celebrate the sim.
     `--cooperative`. Decode identity stays disabled. `gpu-profile capture` is
     still refused.
 
+139. [x] expertvm / Engine `--device-launch` / `--device-updatable`:
+    grouped expert GEMM graphs instantiate with
+    `cudaGraphInstantiateFlagDeviceLaunch` and launch via
+    `device_launch_graph` after upload. `--device-updatable` is
+    `cudaLaunchAttributeDeviceUpdatableKernelNode` so
+    `--graph-set-params` keeps the exec uploaded (no host re-upload).
+    Illegal with `--graph-update` and with `--graph-mem` /
+    `--graph-auto-free` (mem nodes). Combo parents stay per-leaf launches.
+    A non-capturing `kernel_with` with the attr is Invalid (graphs-only).
+    Legal with `--pdl` and `--cooperative`. Decode identity stays host
+    `launch_graph` / not device-updatable. `gpu-profile capture` is still
+    refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

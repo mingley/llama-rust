@@ -5704,6 +5704,92 @@ fn simulated_gpu_store_nvlink_util_serializes_leftover_prefill() {
 }
 
 #[test]
+fn simulated_gpu_store_device_updatable_skips_reupload() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_instantiate_ns=1000\ngraph_set_params_ns=100\ngraph_upload_ns=50000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let run = |device_updatable: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = match SimulatedGpuStore::with_cfg(
+            inner,
+            1,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                graph_set_params: true,
+                device_launch: true,
+                device_updatable,
+                ..GpuStoreCfg::default()
+            },
+        ) {
+            Ok(gpu) => gpu,
+            Err(err) => panic!("gpu: {err}"),
+        };
+        let k0 = ExpertKey::new(0, 0);
+        let k1 = ExpertKey::new(0, 1);
+        let _n = match gpu.prefetch(&[k0]) {
+            Ok(v) => v,
+            Err(err) => panic!("p0: {err}"),
+        };
+        let _s = gpu.score().expect("d0");
+        let _a = match gpu.acquire(k0) {
+            Ok(v) => v,
+            Err(err) => panic!("a0: {err}"),
+        };
+        let _s = gpu.score().expect("drain0");
+        gpu.evict(k0).expect("evict");
+        let _s = gpu.score().expect("free");
+        let _n = match gpu.prefetch(&[k1]) {
+            Ok(v) => v,
+            Err(err) => panic!("p1: {err}"),
+        };
+        let _s = gpu.score().expect("d1");
+        let _b = match gpu.acquire(k1) {
+            Ok(v) => v,
+            Err(err) => panic!("a1: {err}"),
+        };
+        gpu.score().expect("final").wall_ns
+    };
+    let skip = run(true);
+    let reupload = run(false);
+    assert!(
+        skip < reupload,
+        "device-updatable set-params must skip re-upload; skip={skip} reupload={reupload}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_device_launch_refuses_graph_update() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            device_launch: true,
+            graph_update: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("device-launch + graph-update must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("choose one of graph-update, device-launch"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
 fn simulated_gpu_store_non_portable_cluster_allows_oversize() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],
@@ -6292,6 +6378,62 @@ fn sim_replay_nvlink_util_serializes_seq_streams() {
         "without NVLink the hint must not change occupancy; off={} on={}",
         off.sim_ns, on.sim_ns
     );
+}
+
+#[test]
+fn sim_replay_device_launch_keeps_hits() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let base = SimCfg {
+        cuda_graphs: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let host = match sim_replay_cfg(&t, p.clone(), base) {
+        Ok(row) => row,
+        Err(err) => panic!("host: {err}"),
+    };
+    let device = match sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            device_launch: true,
+            ..base
+        },
+    ) {
+        Ok(row) => row,
+        Err(err) => panic!("device-launch: {err}"),
+    };
+    assert_eq!(host.hits, device.hits);
+    assert_eq!(host.misses, device.misses);
+    assert!(
+        device.graph_launches > 0,
+        "device-launch must replay GEMM graphs"
+    );
+}
+
+#[test]
+fn sim_replay_device_launch_refuses_graph_mem() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            device_launch: true,
+            graph_mem: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    );
+    match err {
+        Err(e) => assert!(
+            e.to_string().contains("device-launch cannot graph-mem"),
+            "{e}"
+        ),
+        Ok(_) => panic!("device-launch + graph-mem must fail"),
+    }
 }
 
 #[test]

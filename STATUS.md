@@ -5,6 +5,23 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — expertvm `--device-launch` / `--device-updatable`
+
+`expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and
+`infer-bench schedule` take `--device-launch` and `--device-updatable`.
+Leaf GEMM graphs instantiate with `cudaGraphInstantiateFlagDeviceLaunch`
+and launch via `device_launch_graph`. `--device-updatable` is
+`cudaLaunchAttributeDeviceUpdatableKernelNode` so `--graph-set-params`
+keeps the exec uploaded. Illegal with `--graph-update` and with
+`--graph-mem` / `--graph-auto-free`. Combo parents stay per-leaf launches.
+Legal with `--pdl` and `--cooperative`. Decode identity stays host launch /
+not device-updatable. `gpu-profile capture` is still refused.
+
+## Shipped 2026-08-30 — device-updatable is graphs-only
+
+A non-capturing `kernel_with` with `cudaLaunchAttributeDeviceUpdatableKernelNode`
+is Invalid. Capture still records the attr. Decode identity stays disabled.
+
 ## Shipped 2026-08-30 — Llama NORM real-model fixture
 
 `tests/reference/llama-3.2-1b-instruct-q4_k_m.json` is a llama.cpp capture of

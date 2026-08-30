@@ -101,6 +101,10 @@ pub(crate) struct GpuCli {
     pub portable_shared_set: bool,
     /// `cudaLaunchAttributeNvlinkUtilCentricScheduling` (`GpuStoreCfg::nvlink_util_centric`).
     pub nvlink_util: bool,
+    /// `cudaLaunchAttributeDeviceUpdatableKernelNode` (`GpuStoreCfg::device_updatable`).
+    pub device_updatable: bool,
+    /// `cudaGraphInstantiateFlagDeviceLaunch` (`GpuStoreCfg::device_launch`).
+    pub device_launch: bool,
     /// Hopper NVLS replica fanout (`GpuStoreCfg::multicast`). Implies vmm.
     pub multicast: bool,
     /// Hyper-Q occupancy (`GpuStoreCfg::compute_slots`). `0` keeps the profile.
@@ -155,6 +159,8 @@ impl GpuCli {
             "--non-portable-cluster" => &mut self.non_portable_cluster,
             "--optin-shared" => &mut self.optin_shared,
             "--nvlink-util" => &mut self.nvlink_util,
+            "--device-updatable" => &mut self.device_updatable,
+            "--device-launch" => &mut self.device_launch,
             "--multicast" => &mut self.multicast,
             _ => return Ok(false),
         };
@@ -347,6 +353,8 @@ impl GpuCli {
             (self.dynamic_shared_set, "--dynamic-shared"),
             (self.portable_shared_set, "--portable-shared"),
             (self.nvlink_util, "--nvlink-util"),
+            (self.device_updatable, "--device-updatable"),
+            (self.device_launch, "--device-launch"),
             (self.decode_sm_set, "--decode-sms"),
         ]
         .into_iter()
@@ -610,6 +618,8 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         dynamic_shared: gpu.dynamic_shared,
         portable_shared: gpu.portable_shared,
         nvlink_util_centric: gpu.nvlink_util,
+        device_updatable: gpu.device_updatable,
+        device_launch: gpu.device_launch,
         multicast: gpu.multicast,
         compute_slots: gpu.compute_slots,
         decode_sm_permille: gpu.decode_sm_permille,

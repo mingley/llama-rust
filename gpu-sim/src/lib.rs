@@ -198,7 +198,11 @@
 //! Sizes above [`GpuProfile::portable_cluster_size`] need
 //! [`set_non_portable_cluster_size_allowed`](Sim::set_non_portable_cluster_size_allowed)
 //! or [`PortableClusterMode::AllowNonPortable`].
-//! [`KernelAttrs::device_updatable`] is `cudaLaunchAttributeDeviceUpdatableKernelNode`.
+//! [`KernelAttrs::device_updatable`] is `cudaLaunchAttributeDeviceUpdatableKernelNode`
+//! (graphs-only; a non-capturing launch is Invalid). When true,
+//! [`graph_exec_kernel_set_params`](Sim::graph_exec_kernel_set_params) keeps the
+//! exec uploaded so [`device_launch_graph`](Sim::device_launch_graph) needs no host
+//! re-upload (device-launch graphs allow it).
 //! [`SharedMemoryMode`] is `cudaLaunchAttributeSharedMemoryMode`: Default never
 //! scales duration; FourByte / EightByte scale by
 //! `1000 / GpuProfile::shared_mem_*_permille` (profile default `1000`).
@@ -12942,6 +12946,23 @@ mod tests {
         ));
         let g = sim.end_capture().unwrap();
         assert!(sim.graph_kernel_node_get_device_updatable(g, 0).unwrap());
+        let live = sim.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            KernelAttrs {
+                device_updatable: true,
+                ..KernelAttrs::default()
+            },
+        );
+        match live {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graphs-only"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
         sim.begin_capture(d, s).unwrap();
         let err = sim
             .graph_kernel_node_set_device_updatable(g, 0, false)

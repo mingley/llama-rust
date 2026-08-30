@@ -54,6 +54,9 @@ pub(crate) struct GemmFlags {
     /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`. Occupies every Hyper-Q
     /// slot when the profile has NVLink. Decode identity stays disabled.
     pub nvlink_util_centric: bool,
+    /// `cudaLaunchAttributeDeviceUpdatableKernelNode`. Graphs-only.
+    /// Decode identity stays disabled.
+    pub device_updatable: bool,
 }
 
 impl GemmFlags {
@@ -108,7 +111,16 @@ impl GemmFlags {
             dynamic_shared: self.dynamic_shared,
             portable_shared: self.portable_shared,
             nvlink_util_centric: self.nvlink_util_centric,
+            device_updatable: self.device_updatable,
             ..KernelAttrs::default()
+        }
+    }
+
+    /// Stream launch cannot carry the graphs-only device-updatable attr.
+    pub(crate) fn for_stream(self) -> Self {
+        Self {
+            device_updatable: false,
+            ..self
         }
     }
 }
@@ -129,6 +141,27 @@ pub(crate) fn check_cluster_preferred(cluster: u8, preferred: u8) -> Result<(), 
     Ok(())
 }
 
+/// Device-launch graphs refuse mem nodes and `cudaGraphExecUpdate`.
+/// Device-updatable nodes also cannot `cudaGraphExecUpdate`.
+pub(crate) fn check_device_graph_flags(
+    device_launch: bool,
+    device_updatable: bool,
+    graph_update: bool,
+    graph_mem: bool,
+    graph_auto_free: bool,
+) -> Result<(), Error> {
+    if graph_update && device_launch {
+        return Err(Error::Store("choose one of graph-update, device-launch"));
+    }
+    if graph_update && device_updatable {
+        return Err(Error::Store("choose one of graph-update, device-updatable"));
+    }
+    if device_launch && (graph_mem || graph_auto_free) {
+        return Err(Error::Store("device-launch cannot graph-mem"));
+    }
+    Ok(())
+}
+
 use crate::access::{ExpertAccess, ExpertKey, Trace};
 use crate::error::Error;
 use crate::place::PlaceMap;
@@ -140,8 +173,8 @@ use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
 use gpu_sim::{
     AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceId, EventId, GraphId,
-    HardwareProfile, KernelAttrs, KernelBuf, KernelKind, MemcpyOp, Place, PoolId,
-    PortableClusterMode, PortableSharedMode, ProgrammaticLaunch, Score, SharedMemCarveout,
+    GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf, KernelKind, MemcpyOp, Place,
+    PoolId, PortableClusterMode, PortableSharedMode, ProgrammaticLaunch, Score, SharedMemCarveout,
     SharedMemoryMode, Sim, StreamId, SynchronizationPolicy,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -526,6 +559,19 @@ pub struct SimCfg {
     /// Decode identity stays disabled. [`crate::GpuStoreCfg::nvlink_util_centric`]
     /// is the store path.
     pub nvlink_util_centric: bool,
+    /// `cudaLaunchAttributeDeviceUpdatableKernelNode` on grouped expert GEMMs.
+    ///
+    /// [`gpu_sim::Sim::graph_exec_kernel_set_params`] keeps the exec uploaded.
+    /// Illegal with [`Self::graph_update`]. Decode identity stays disabled.
+    /// [`crate::GpuStoreCfg::device_updatable`] is the store path.
+    pub device_updatable: bool,
+    /// `cudaGraphInstantiateFlagDeviceLaunch` + [`gpu_sim::Sim::device_launch_graph`].
+    ///
+    /// Leaf GEMM graphs only (no combo-parent child graphs, no mem nodes).
+    /// Illegal with [`Self::graph_update`] / [`Self::graph_mem`] /
+    /// [`Self::graph_auto_free`]. Decode identity stays host `launch_graph`.
+    /// [`crate::GpuStoreCfg::device_launch`] is the store path.
+    pub device_launch: bool,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// `--place replicas` maps dest VMM physicals then one NVLS kernel instead
@@ -606,6 +652,8 @@ impl SimCfg {
             dynamic_shared: 0,
             portable_shared: gpu_sim::PortableSharedMode::Default,
             nvlink_util_centric: false,
+            device_updatable: false,
+            device_launch: false,
             multicast: false,
             compute_slots: 0,
             decode_sm_permille: 0,
@@ -619,6 +667,13 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     if cfg.graph_update && cfg.graph_set_params {
         return Err(Error::Store("choose one of graph-update, graph-set-params"));
     }
+    check_device_graph_flags(
+        cfg.device_launch,
+        cfg.device_updatable,
+        cfg.graph_update,
+        cfg.graph_mem,
+        cfg.graph_auto_free,
+    )?;
     if cfg.graph_build && cfg.graph_piecewise {
         return Err(Error::Store("choose one of graph-build, graph-piecewise"));
     }
@@ -740,6 +795,8 @@ pub fn sim_replay_cfg(
         .with_dynamic_shared(cfg.dynamic_shared)
         .with_portable_shared(cfg.portable_shared)
         .with_nvlink_util(cfg.nvlink_util_centric)
+        .with_device_updatable(cfg.device_updatable)
+        .with_device_launch(cfg.device_launch)
         .with_set_params(cfg.graph_set_params)
         .with_piecewise(cfg.graph_piecewise);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
@@ -1020,6 +1077,8 @@ pub(crate) struct GraphBank {
     dynamic_shared: u32,
     portable_shared: gpu_sim::PortableSharedMode,
     nvlink_util_centric: bool,
+    device_updatable: bool,
+    device_launch: bool,
     set_params: bool,
     pub updates: u64,
     pub clones: u64,
@@ -1048,6 +1107,8 @@ impl GraphBank {
             dynamic_shared: 0,
             portable_shared: gpu_sim::PortableSharedMode::Default,
             nvlink_util_centric: false,
+            device_updatable: false,
+            device_launch: false,
             set_params: false,
             updates: 0,
             clones: 0,
@@ -1115,6 +1176,16 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_device_updatable(mut self, yes: bool) -> Self {
+        self.device_updatable = yes;
+        self
+    }
+
+    pub(crate) fn with_device_launch(mut self, yes: bool) -> Self {
+        self.device_launch = yes;
+        self
+    }
+
     fn gemm_flags(&self) -> GemmFlags {
         GemmFlags {
             cooperative: self.cooperative,
@@ -1129,6 +1200,7 @@ impl GraphBank {
             dynamic_shared: self.dynamic_shared,
             portable_shared: self.portable_shared,
             nvlink_util_centric: self.nvlink_util_centric,
+            device_updatable: self.device_updatable,
         }
     }
 
@@ -1171,7 +1243,7 @@ impl GraphBank {
                 }
                 sim.destroy_graph(src)?;
                 self.kernel_sets = self.kernel_sets.saturating_add(1);
-                sim.upload_graph(exec)?;
+                upload_after_set_params(sim, exec, self.device_updatable)?;
                 let _prev = self.graphs.insert(ids, (exec, origin));
                 return Ok(exec);
             }
@@ -1208,7 +1280,7 @@ impl GraphBank {
         };
         retarget_parked_kernel(sim, exec, id)?;
         self.kernel_sets = self.kernel_sets.saturating_add(1);
-        sim.upload_graph(exec)?;
+        upload_after_set_params(sim, exec, self.device_updatable)?;
         let _prev = self.graphs.insert(vec![id], (exec, origin));
         Ok(Some(exec))
     }
@@ -1227,7 +1299,7 @@ impl GraphBank {
         } else {
             src
         };
-        instantiate_src(sim, exec, self.mem == LeafMem::AutoFree)
+        instantiate_exec(sim, exec, self.mem == LeafMem::AutoFree, self.device_launch)
     }
 
     fn parks(&self, n_ids: usize) -> bool {
@@ -1283,14 +1355,51 @@ impl GraphBank {
     }
 }
 
-fn instantiate_src(sim: &mut Sim, src: GraphId, auto_free: bool) -> Result<GraphId, Error> {
+pub(crate) fn instantiate_exec(
+    sim: &mut Sim,
+    src: GraphId,
+    auto_free: bool,
+    device_launch: bool,
+) -> Result<GraphId, Error> {
     let exec = if auto_free {
         sim.instantiate_graph_auto_free(src)?
+    } else if device_launch {
+        sim.instantiate_graph_with_flags(src, GraphInstantiateFlags::DEVICE_LAUNCH)?
     } else {
         sim.instantiate_graph(src)?
     };
     sim.upload_graph(exec)?;
     Ok(exec)
+}
+
+pub(crate) fn upload_after_set_params(
+    sim: &mut Sim,
+    exec: GraphId,
+    device_updatable: bool,
+) -> Result<(), Error> {
+    if device_updatable && sim.graph_uploaded(exec)? {
+        return Ok(());
+    }
+    sim.upload_graph(exec)?;
+    Ok(())
+}
+
+pub(crate) fn replay_exec(
+    sim: &mut Sim,
+    exec: GraphId,
+    device: DeviceId,
+    stream: StreamId,
+    device_launch: bool,
+) -> Result<(), Error> {
+    if device_launch {
+        if !sim.query_stream(device, stream)? {
+            sim.synchronize_stream(device, stream)?;
+        }
+        let _n = sim.device_launch_graph(exec, stream)?;
+    } else {
+        let _n = sim.launch_graph(exec, stream)?;
+    }
+    Ok(())
 }
 
 /// Patch a parked leaf GEMM so it reads/writes `expert` instead of the evicted alloc.
@@ -1613,15 +1722,21 @@ fn gemm_ids(
     if ids.is_empty() {
         return Ok(());
     }
+    if graphs.device_launch && ids.len() > 1 {
+        for id in ids {
+            gemm_ids(sim, graphs, d, stream, vec![id], cuda_graphs, ctr)?;
+        }
+        return Ok(());
+    }
     if let Some(g) = graphs.get(&ids) {
-        let _n = sim.launch_graph(g, stream)?;
+        replay_exec(sim, g, d, stream, graphs.device_launch)?;
         ctr.graph_launches = ctr.graph_launches.saturating_add(1);
         return Ok(());
     }
     if ids.len() == 1 {
         if let Some(id) = ids.first().copied() {
             if let Some(g) = graphs.try_retarget(sim, (d, stream), id)? {
-                let _n = sim.launch_graph(g, stream)?;
+                replay_exec(sim, g, d, stream, graphs.device_launch)?;
                 ctr.graph_launches = ctr.graph_launches.saturating_add(1);
                 return Ok(());
             }
@@ -1632,18 +1747,27 @@ fn gemm_ids(
         || graphs.piecewise
         || graphs.mem != LeafMem::None
         || graphs.set_params
+        || graphs.device_launch
+        || graphs.device_updatable
     {
         if let Some(g) = capture_expert_graph(sim, graphs, d, stream, &ids)? {
             if ids.len() > 1 {
                 ctr.child_graphs = ctr.child_graphs.saturating_add(1);
             }
-            let _n = sim.launch_graph(g, stream)?;
+            replay_exec(sim, g, d, stream, graphs.device_launch)?;
             ctr.graph_launches = ctr.graph_launches.saturating_add(1);
             return Ok(());
         }
     }
     for id in ids {
-        kernel_leaf(sim, d, stream, id, LeafMem::None, graphs.gemm_flags())?;
+        kernel_leaf(
+            sim,
+            d,
+            stream,
+            id,
+            LeafMem::None,
+            graphs.gemm_flags().for_stream(),
+        )?;
     }
     Ok(())
 }
@@ -2014,7 +2138,7 @@ fn kernel(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Er
     kernel_leaf(sim, d, s, id, LeafMem::None, GemmFlags::default())
 }
 
-fn kernel_leaf(
+pub(crate) fn kernel_leaf(
     sim: &mut Sim,
     d: DeviceId,
     s: StreamId,
@@ -2046,7 +2170,7 @@ fn launch_gemm_kernel(
     Ok(())
 }
 
-fn add_leaf_gemm(
+pub(crate) fn add_leaf_gemm(
     sim: &mut Sim,
     graph: GraphId,
     id: AllocId,
@@ -2117,6 +2241,10 @@ fn add_gemm_kernel(
     if flags.nvlink_util_centric {
         let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_nvlink_util_centric(graph, node, true)?;
+    }
+    if flags.device_updatable {
+        let node = usize::from(!writes.is_empty());
+        sim.graph_kernel_node_set_device_updatable(graph, node, true)?;
     }
     if flags.dynamic_shared > 0 {
         let node = usize::from(!writes.is_empty());

@@ -9,13 +9,14 @@ use crate::planner::{
     Prefetch, DECODE_ACTIVATION_BYTES,
 };
 use crate::sim_replay::{
-    allow_non_portable_cluster_if, allow_optin_shared_if, apply_stream_sync_policy,
-    bind_shareable_mempools, check_cluster_preferred, replay_streams, retarget_parked_kernel,
-    stream_of, GemmFlags, LeafMem, StreamPlan, GRAPH_SCRATCH_BYTES,
+    add_leaf_gemm, allow_non_portable_cluster_if, allow_optin_shared_if, apply_stream_sync_policy,
+    bind_shareable_mempools, check_cluster_preferred, check_device_graph_flags, instantiate_exec,
+    kernel_leaf, replay_exec, replay_streams, retarget_parked_kernel, stream_of,
+    upload_after_set_params, GemmFlags, LeafMem, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
-    AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelBuf, KernelKind, MemAdvise,
+    AllocId, DeviceId, EventId, GraphId, HardwareProfile, KernelBuf, KernelKind, MemAdvise,
     MemHandleId, MemcpyOp, Place, PoolId, Score, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -233,6 +234,19 @@ pub struct GpuStoreCfg {
     /// Without NVLink the flag is stored and occupancy is unchanged.
     /// Decode identity stays disabled.
     pub nvlink_util_centric: bool,
+    /// `cudaLaunchAttributeDeviceUpdatableKernelNode` on grouped expert GEMMs.
+    ///
+    /// [`gpu_sim::Sim::graph_exec_kernel_set_params`] keeps the exec uploaded
+    /// so a later [`gpu_sim::Sim::device_launch_graph`] needs no host
+    /// `upload_graph`. Illegal with [`Self::graph_update`]. Decode identity
+    /// stays not device-updatable.
+    pub device_updatable: bool,
+    /// `cudaGraphInstantiateFlagDeviceLaunch` + [`gpu_sim::Sim::device_launch_graph`].
+    ///
+    /// Host [`gpu_sim::Sim::launch_graph`] stays legal. Illegal with
+    /// [`Self::graph_update`] / [`Self::graph_mem`] / [`Self::graph_auto_free`]
+    /// (mem nodes and ExecUpdate). Decode identity stays host launch.
+    pub device_launch: bool,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// [`Self::pin_hot`] and walker `--place replicas` map dest VMM physicals
@@ -315,6 +329,8 @@ pub struct SimulatedGpuStore {
     dynamic_shared: u32,
     portable_shared: gpu_sim::PortableSharedMode,
     nvlink_util_centric: bool,
+    device_updatable: bool,
+    device_launch: bool,
     multicast: bool,
     next_event: u32,
     pages: BTreeMap<ExpertKey, GpuPage>,
@@ -478,6 +494,9 @@ impl SimulatedGpuStore {
     /// to the SKU opt-in max. [`GpuStoreCfg::dynamic_shared`] is
     /// `cudaLaunchKernel` `sharedMemBytes`. [`GpuStoreCfg::portable_shared`] is
     /// CUDA 13 `cudaLaunchAttributeSharedMemoryMode`.
+    /// [`GpuStoreCfg::device_updatable`] is
+    /// `cudaLaunchAttributeDeviceUpdatableKernelNode`.
+    /// [`GpuStoreCfg::device_launch`] is `cudaGraphInstantiateFlagDeviceLaunch`.
     /// [`GpuStoreCfg::multicast`] is Hopper NVLS replica fanout (requires
     /// [`GpuFill::Vmm`] and NVLink).
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
@@ -495,6 +514,13 @@ impl SimulatedGpuStore {
         if cfg.graph_update && cfg.graph_set_params {
             return Err(Error::Store("choose one of graph-update, graph-set-params"));
         }
+        check_device_graph_flags(
+            cfg.device_launch,
+            cfg.device_updatable,
+            cfg.graph_update,
+            cfg.graph_mem,
+            cfg.graph_auto_free,
+        )?;
         if cfg.graph_build && cfg.graph_piecewise {
             return Err(Error::Store("choose one of graph-build, graph-piecewise"));
         }
@@ -599,6 +625,8 @@ impl SimulatedGpuStore {
             dynamic_shared: cfg.dynamic_shared,
             portable_shared: cfg.portable_shared,
             nvlink_util_centric: cfg.nvlink_util_centric,
+            device_updatable: cfg.device_updatable,
+            device_launch: cfg.device_launch,
             multicast: cfg.multicast,
             next_event: 1,
             pages: BTreeMap::new(),
@@ -722,6 +750,7 @@ impl SimulatedGpuStore {
             dynamic_shared: self.dynamic_shared,
             portable_shared: self.portable_shared,
             nvlink_util_centric: self.nvlink_util_centric,
+            device_updatable: self.device_updatable,
         }
     }
 
@@ -1418,17 +1447,23 @@ impl SimulatedGpuStore {
         let flags = self.gemm_flags();
         if let Some(g) = self.graphs.get(&id).copied() {
             self.graph_launches = self.graph_launches.saturating_add(1);
-            let _n = self.sim.launch_graph(g, self.compute)?;
+            replay_exec(&mut self.sim, g, device, self.compute, self.device_launch)?;
             return Ok(());
         }
         if self.graph_set_params {
             if let Some(exec) = self.idle_execs.get_mut(&device).and_then(Vec::pop) {
                 retarget_parked_kernel(&mut self.sim, exec, id)?;
                 self.graph_set_params_n = self.graph_set_params_n.saturating_add(1);
-                self.sim.upload_graph(exec)?;
+                upload_after_set_params(&mut self.sim, exec, self.device_updatable)?;
                 let _prev = self.graphs.insert(id, exec);
                 self.graph_launches = self.graph_launches.saturating_add(1);
-                let _n = self.sim.launch_graph(exec, self.compute)?;
+                replay_exec(
+                    &mut self.sim,
+                    exec,
+                    device,
+                    self.compute,
+                    self.device_launch,
+                )?;
                 return Ok(());
             }
         }
@@ -1437,7 +1472,7 @@ impl SimulatedGpuStore {
             let g = self.bind_graph(device, src)?;
             let _prev = self.graphs.insert(id, g);
             self.graph_launches = self.graph_launches.saturating_add(1);
-            let _n = self.sim.launch_graph(g, self.compute)?;
+            replay_exec(&mut self.sim, g, device, self.compute, self.device_launch)?;
             return Ok(());
         }
         if !self.sim.query_stream(device, self.compute)? {
@@ -1449,25 +1484,25 @@ impl SimulatedGpuStore {
                 let g = self.bind_graph(device, src)?;
                 let _prev = self.graphs.insert(id, g);
                 self.graph_launches = self.graph_launches.saturating_add(1);
-                let _n = self.sim.launch_graph(g, self.compute)?;
+                replay_exec(&mut self.sim, g, device, self.compute, self.device_launch)?;
                 return Ok(());
             }
             self.sim.begin_capture(device, self.compute)?;
-            gemm_leaf(&mut self.sim, device, self.compute, id, self.leaf, flags)?;
+            kernel_leaf(&mut self.sim, device, self.compute, id, self.leaf, flags)?;
             let src = self.sim.end_capture()?;
             let g = self.bind_graph(device, src)?;
             let _prev = self.graphs.insert(id, g);
             self.graph_launches = self.graph_launches.saturating_add(1);
-            let _n = self.sim.launch_graph(g, self.compute)?;
+            replay_exec(&mut self.sim, g, device, self.compute, self.device_launch)?;
             return Ok(());
         }
-        gemm_leaf(
+        kernel_leaf(
             &mut self.sim,
             device,
             self.compute,
             id,
             LeafMem::None,
-            flags,
+            flags.for_stream(),
         )
     }
 
@@ -1483,7 +1518,7 @@ impl SimulatedGpuStore {
         let g = self.sim.create_graph(device, self.compute)?;
         self.sim
             .begin_capture_to_graph(device, self.compute, g, &[])?;
-        gemm_leaf(&mut self.sim, device, self.compute, id, self.leaf, flags)?;
+        kernel_leaf(&mut self.sim, device, self.compute, id, self.leaf, flags)?;
         let ended = self.sim.end_capture()?;
         if ended != g {
             return Err(Error::Store("capture-to-graph id"));
@@ -1509,13 +1544,12 @@ impl SimulatedGpuStore {
         } else {
             src
         };
-        let exec = if self.leaf == LeafMem::AutoFree {
-            self.sim.instantiate_graph_auto_free(exec)?
-        } else {
-            self.sim.instantiate_graph(exec)?
-        };
-        self.sim.upload_graph(exec)?;
-        Ok(exec)
+        instantiate_exec(
+            &mut self.sim,
+            exec,
+            self.leaf == LeafMem::AutoFree,
+            self.device_launch,
+        )
     }
 
     fn drop_gpu(&mut self, key: ExpertKey) -> Result<(), Error> {
@@ -2029,91 +2063,6 @@ fn store_should_prefetch(
         ),
         Plan::Stay
     )
-}
-
-fn gemm_kind() -> KernelKind {
-    KernelKind::GroupedMoeGemm {
-        experts: 1,
-        tokens_per_expert: 1,
-        hidden: 64,
-        ff: 64,
-        dtype: DType::Fp16,
-    }
-}
-
-fn gemm_leaf(
-    sim: &mut Sim,
-    d: DeviceId,
-    s: StreamId,
-    id: AllocId,
-    mem: LeafMem,
-    flags: GemmFlags,
-) -> Result<(), Error> {
-    if mem == LeafMem::None {
-        launch_store_gemm(sim, d, s, id, &[], flags)?;
-        return Ok(());
-    }
-    let scratch = sim.alloc(d, GRAPH_SCRATCH_BYTES, s)?;
-    launch_store_gemm(sim, d, s, id, &[scratch], flags)?;
-    if mem == LeafMem::Free {
-        sim.free(d, scratch, s)?;
-    }
-    Ok(())
-}
-
-fn launch_store_gemm(
-    sim: &mut Sim,
-    d: DeviceId,
-    s: StreamId,
-    id: AllocId,
-    writes: &[AllocId],
-    flags: GemmFlags,
-) -> Result<(), Error> {
-    let _k = sim.kernel_with(d, gemm_kind(), &[id], writes, s, flags.kernel_attrs(id))?;
-    Ok(())
-}
-
-fn add_leaf_gemm(
-    sim: &mut Sim,
-    graph: GraphId,
-    id: AllocId,
-    mem: LeafMem,
-    flags: GemmFlags,
-) -> Result<(), Error> {
-    if mem == LeafMem::None {
-        return add_store_gemm(sim, graph, id, &[], flags);
-    }
-    let scratch = sim.graph_add_alloc(graph, GRAPH_SCRATCH_BYTES)?;
-    add_store_gemm(sim, graph, id, &[scratch], flags)?;
-    sim.graph_add_dependencies(graph, 0, 1)?;
-    if mem == LeafMem::Free {
-        sim.graph_add_free(graph, scratch)?;
-        sim.graph_add_dependencies(graph, 1, 2)?;
-    }
-    Ok(())
-}
-
-fn add_store_gemm(
-    sim: &mut Sim,
-    graph: GraphId,
-    id: AllocId,
-    writes: &[AllocId],
-    flags: GemmFlags,
-) -> Result<(), Error> {
-    if flags.cooperative {
-        sim.graph_add_cooperative_kernel(graph, gemm_kind(), &[id], writes)?;
-    } else {
-        sim.graph_add_kernel(graph, gemm_kind(), &[id], writes)?;
-        if let Some(pdl) = flags.pdl_attr() {
-            let node = usize::from(!writes.is_empty());
-            sim.graph_kernel_node_set_pdl(graph, node, pdl)?;
-        }
-    }
-    if let Some(w) = flags.persist_window(id) {
-        let node = usize::from(!writes.is_empty());
-        sim.graph_kernel_node_set_access_policy(graph, node, Some(w))?;
-    }
-    Ok(())
 }
 
 /// Copy is NULL; prefill compute is stream 1. Seq-streams: copy `0 .. n_copy-1`,

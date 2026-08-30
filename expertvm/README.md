@@ -118,6 +118,11 @@ up to the SKU opt-in even when `--optin-shared` is off).
 `--nvlink-util` is `cudaLaunchAttributeNvlinkUtilCentricScheduling`: occupies
 every Hyper-Q slot when the profile has NVLink (`8xh100`); without NVLink
 occupancy is unchanged.
+`--device-launch` is `cudaGraphInstantiateFlagDeviceLaunch` plus
+`device_launch_graph` (illegal with `--graph-mem` / `--graph-auto-free` /
+`--graph-update`). `--device-updatable` is
+`cudaLaunchAttributeDeviceUpdatableKernelNode` so `--graph-set-params` keeps
+the exec uploaded (illegal with `--graph-update`).
 Expert GEMMs stay
 on the Default mem-sync domain; gpu-sim allreduce tags Remote so a
 non-zero `same_domain_fence_permille` does not flush expert compute behind
@@ -243,9 +248,9 @@ on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--shareable` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` /
 `--seq-streams` / `--kv-sim` / `--kv-bytes` / `--decode-priority` /
-`--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--non-portable-cluster` / `--sync-policy` / `--shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
+`--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--non-portable-cluster` / `--sync-policy` / `--shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
 `expertvm sim` / `schedule` / `store` take `--compute-slots` / `--decode-sms`
-/ `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--non-portable-cluster` / `--sync-policy` / `--shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--multicast` / `--shareable` (Hyper-Q occupancy, green-context SM fraction,
+/ `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--non-portable-cluster` / `--sync-policy` / `--shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--multicast` / `--shareable` (Hyper-Q occupancy, green-context SM fraction,
 decode-stream ITL, exclusive cooperative GEMMs, same-stream PDL overlap, Hopper cluster occupancy / preferred dim / Spread scheduling / non-portable size, NVLS replica fanout, and POSIX-FD mempool IPC on the trace walker). Walker `--decode-sms` does **not**
 imply `--decode-priority` (token 0 is prefill). `--decode-priority` implies
 `--stream-priority` so leftover prefill does not inflate decode ITL.
@@ -274,7 +279,9 @@ launch-time portable cluster mode (Default uses the function attribute).
 `--dynamic-shared N` is `sharedMemBytes` (`N` > 0). `--portable-shared
 default|portable|non-portable` is CUDA 13 portable-shared mode (Default uses the
 function attribute). `--nvlink-util` occupies every Hyper-Q slot when the
-profile has NVLink (no-op occupancy without NVLink).
+profile has NVLink (no-op occupancy without NVLink). `--device-launch` /
+`--device-updatable` instantiate leaf GEMM graphs for `device_launch_graph`
+and keep the exec uploaded after set-params.
 `--cooperative` is
 `cudaLaunchCooperativeKernel`: those GEMMs occupy every Hyper-Q slot, so
 leftover prefill cannot overlap even with `--compute-slots 2`. `--decode-sms N` (`1..=1000`)
