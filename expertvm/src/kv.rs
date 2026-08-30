@@ -2,8 +2,8 @@
 
 use crate::error::Error;
 use gpu_sim::{
-    AllocId, DeviceId, HardwareProfile, KernelBuf, KernelKind, MemHandleId, MemcpyOp, Place, Score,
-    Sim, StreamId,
+    AllocId, DeviceId, HardwareProfile, KernelBuf, KernelKind, MemHandleId, MemcpyOp, MemsetOp,
+    Place, Score, Sim, StreamId,
 };
 use std::collections::BTreeMap;
 use std::fmt::{self, Write};
@@ -115,9 +115,10 @@ pub struct KvCfg {
     /// `1` is a single reserved VA. `2+` is the vLLM intern analog: unique pages
     /// charge HBM once; each sequence maps the same handle into its own VA.
     pub sequences: u32,
-    /// `cudaMemcpy2D` row width. `0` with [`Self::pitch`] `0` is packed 1D H2D.
+    /// `cudaMemcpy2D` / `cudaMemset2D` row width. `0` with [`Self::pitch`] `0`
+    /// is packed 1D.
     pub row_width: u64,
-    /// `cudaMemcpy2D` destination pitch. `0` is packed 1D.
+    /// Destination pitch. `0` is packed 1D.
     pub pitch: u64,
 }
 
@@ -149,8 +150,9 @@ impl KvCfg {
         self
     }
 
-    /// `cudaMemcpy2DAsync` miss fill: `height = page_bytes / pitch` rows of
-    /// `row_width` (payload `row_width * height`, not pitch padding).
+    /// Pitched miss fill: `height = page_bytes / pitch` rows of `row_width`
+    /// (payload `row_width * height`, not pitch padding). [`KvFill::H2d`] is
+    /// `cudaMemcpy2DAsync`; [`KvFill::Memset`] is `cudaMemset2DAsync`.
     #[must_use]
     pub fn with_pitch(mut self, row_width: u64, pitch: u64) -> Self {
         self.row_width = row_width;
@@ -192,9 +194,6 @@ pub fn kv_paged(accesses: &[u32], profile: HardwareProfile, cfg: KvCfg) -> Resul
         return Err(Error::Store("kv pitch needs row-width"));
     }
     if cfg.pitch > 0 {
-        if cfg.fill != KvFill::H2d {
-            return Err(Error::Store("kv pitch needs h2d"));
-        }
         if cfg.row_width > cfg.pitch {
             return Err(Error::Store("kv row-width"));
         }
@@ -388,7 +387,7 @@ fn recency_touch(order: &mut Vec<u32>, page: u32) -> bool {
 fn fill_page(sim: &mut Sim, va: AllocId, off: u64, cfg: KvCfg) -> Result<(), Error> {
     match cfg.fill {
         KvFill::H2d => h2d_page(sim, va, off, cfg),
-        KvFill::Memset => memset_page(sim, va, off, cfg.page_bytes),
+        KvFill::Memset => memset_page(sim, va, off, cfg),
     }
 }
 
@@ -424,10 +423,30 @@ fn h2d_page(sim: &mut Sim, va: AllocId, off: u64, cfg: KvCfg) -> Result<(), Erro
     Ok(())
 }
 
-fn memset_page(sim: &mut Sim, va: AllocId, off: u64, page_bytes: u64) -> Result<(), Error> {
+fn memset_page(sim: &mut Sim, va: AllocId, off: u64, cfg: KvCfg) -> Result<(), Error> {
     let d = DeviceId(0);
     let s = StreamId(0);
-    let _op = sim.memset_buf(d, KernelBuf::span(va, off, page_bytes), s)?;
+    let op = if cfg.pitch > 0 {
+        let height = cfg
+            .page_bytes
+            .checked_div(cfg.pitch)
+            .ok_or(Error::Store("kv page-bytes pitch"))?;
+        MemsetOp {
+            id: va,
+            offset: off,
+            bytes: cfg.row_width,
+            height,
+            pitch: cfg.pitch,
+        }
+    } else {
+        MemsetOp {
+            id: va,
+            offset: off,
+            bytes: cfg.page_bytes,
+            ..MemsetOp::default()
+        }
+    };
+    let _op = sim.memset_op(d, op, s)?;
     Ok(())
 }
 
@@ -525,6 +544,36 @@ mod tests {
         );
         let err = kv_paged(&accesses, p, KvCfg::h2d(4096, 4).with_pitch(256, 0)).unwrap_err();
         assert!(matches!(err, Error::Store(_)));
+    }
+
+    #[test]
+    fn pitched_memset_bills_payload_not_padding() {
+        let p = HardwareProfile::example_h100_sxm();
+        let accesses = cycling_pages(4, 8);
+        let packed = kv_paged(
+            &accesses,
+            p.clone(),
+            KvCfg::h2d(4096, 4).with_fill(KvFill::Memset),
+        )
+        .expect("packed");
+        let pitched = kv_paged(
+            &accesses,
+            p,
+            KvCfg::h2d(4096, 4)
+                .with_fill(KvFill::Memset)
+                .with_pitch(256, 512),
+        )
+        .expect("pitched");
+        assert_eq!(packed.bytes_moved, 0);
+        assert_eq!(pitched.bytes_moved, 0);
+        assert_eq!(packed.misses, pitched.misses);
+        assert_eq!(packed.hbm_peak, pitched.hbm_peak);
+        assert!(
+            pitched.sim_ns < packed.sim_ns,
+            "pitched={} packed={}",
+            pitched.sim_ns,
+            packed.sim_ns
+        );
     }
 
     #[test]

@@ -273,6 +273,100 @@ impl MemcpyOp {
     }
 }
 
+/// Device-side fill (`cudaMemsetAsync` / `cudaMemset2DAsync`).
+///
+/// [`Self::height`] `0` or `1` is `cudaMemsetAsync` of [`Self::bytes`].
+/// `height > 1` is `cudaMemset2DAsync`: [`Self::bytes`] is the row width,
+/// billed payload is `width * height` (pitch padding is not written).
+/// [`crate::Sim::graph_exec_memset_set_params`] patches this on an instantiated
+/// memset node (`cudaGraphExecMemsetNodeSetParams`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemsetOp {
+    /// Allocation to fill.
+    pub id: AllocId,
+    /// Byte offset into [`Self::id`].
+    pub offset: u64,
+    /// Payload bytes for a 1D fill, or row width for [`Self::height`] `> 1`.
+    pub bytes: u64,
+    /// Row count for `cudaMemset2D`. `0` or `1` is a 1D fill of [`Self::bytes`].
+    pub height: u64,
+    /// Destination pitch in bytes. `0` means packed (`width`).
+    pub pitch: u64,
+}
+
+impl Default for MemsetOp {
+    fn default() -> Self {
+        Self {
+            id: AllocId(0),
+            offset: 0,
+            bytes: 0,
+            height: 0,
+            pitch: 0,
+        }
+    }
+}
+
+impl From<KernelBuf> for MemsetOp {
+    fn from(buf: KernelBuf) -> Self {
+        Self {
+            id: buf.id,
+            offset: buf.offset,
+            bytes: buf.bytes,
+            ..Self::default()
+        }
+    }
+}
+
+impl MemsetOp {
+    /// `cudaMemset2D` / `height > 1`.
+    #[must_use]
+    pub fn is_2d(&self) -> bool {
+        self.height > 1
+    }
+
+    /// Bytes the fill engine writes (pitch padding is not billed).
+    #[must_use]
+    pub fn payload_bytes(&self) -> u64 {
+        if self.height > 1 {
+            self.bytes.saturating_mul(self.height)
+        } else {
+            self.bytes
+        }
+    }
+
+    /// Pitch, or packed width when [`Self::pitch`] is `0`.
+    #[must_use]
+    pub fn pitch_or_width(&self) -> u64 {
+        if self.pitch == 0 {
+            self.bytes
+        } else {
+            self.pitch
+        }
+    }
+
+    /// Contiguous span in [`Self::id`] covering the 1D fill or 2D rectangle.
+    #[must_use]
+    pub fn extent_bytes(&self) -> u64 {
+        if self.height <= 1 {
+            return self.bytes;
+        }
+        self.height
+            .saturating_sub(1)
+            .saturating_mul(self.pitch_or_width())
+            .saturating_add(self.bytes)
+    }
+
+    /// 1D [`KernelBuf`] view (payload span). Pitch is not represented.
+    #[must_use]
+    pub fn buf(&self) -> KernelBuf {
+        KernelBuf {
+            id: self.id,
+            offset: self.offset,
+            bytes: self.payload_bytes(),
+        }
+    }
+}
+
 /// `cudaLimit` for [`crate::Sim::set_limit`] / [`get_limit`](crate::Sim::get_limit).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DeviceLimit {
@@ -352,8 +446,10 @@ pub enum DeviceAttr {
 /// [`Self::whole`] is `offset = 0`, `bytes = 0` (remainder of the alloc).
 /// [`crate::Sim::kernel`] uses that. [`crate::Sim::kernel_bufs`] can name a
 /// mapped page of a reserved VA so a paged KV working set need not cover the
-/// whole pointer. [`crate::Sim::graph_exec_memset_set_params`] patches this on
-/// an instantiated memset node (`cudaGraphExecMemsetNodeSetParams`).
+/// whole pointer. [`crate::Sim::graph_exec_memset_set_params`] patches a
+/// [`MemsetOp`] on an instantiated memset node
+/// (`cudaGraphExecMemsetNodeSetParams`); [`MemsetOp::from`] builds a 1D fill
+/// from this span.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KernelBuf {
     /// Allocation (device, mapped-host, managed, or VMM VA).
@@ -1053,15 +1149,8 @@ pub enum GpuOp {
         /// Hyper-Q overlap it. Capture is allowed (CUDA 11+).
         cooperative: bool,
     },
-    /// Device-side fill (`cudaMemsetAsync`).
-    Memset {
-        /// Allocation to fill.
-        id: AllocId,
-        /// Byte offset into `id`.
-        offset: u64,
-        /// Bytes billed as an HBM write and the mapped span that must be resident.
-        bytes: u64,
-    },
+    /// Device-side fill (`cudaMemsetAsync` / `cudaMemset2DAsync`).
+    Memset(MemsetOp),
     /// Host callback (`cudaLaunchHostFunc`). Stream-ordered; does not occupy
     /// compute or copy engines. `fn_id` / `user_data` are
     /// [`HostNodeParams`] (parameters, not topology).

@@ -113,6 +113,7 @@ warp scheduler, L1, …   ← do not model
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128) | exact |
 | `malloc_pitch` charges `pitch * height`; pitch is `align_up(width, 512)` | `cudaMallocPitch` |
 | `MemcpyOp` height/pitches bill `width * height` (not pitch padding) | `cudaMemcpy2DAsync` |
+| `MemsetOp` height/pitch bill `width * height` (not pitch padding) | `cudaMemset2DAsync` |
 | graph-mem used is live graph allocs; reserved holds unused until trim | `cudaDeviceGetGraphMemAttribute` / `GraphMemTrim` |
 | stream[i+1].start ≥ stream[i].finish (`Operation` timestamps) | queue wait vs run |
 | higher `set_stream_priority` starts first under contention | launch overhead |
@@ -134,7 +135,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchAttributeNvlinkUtilCentricScheduling` | hint `0`/`1`; occupies every Hyper-Q slot when the profile has NVLink |
 | `cudaLaunchAttributePriority` (`kernel_with` / `KernelAttrs::priority`) | `None` inherits stream create priority; `Some` overrides that kernel; higher starts first under contention |
 | `set_stream_sm_permille` is a green-context SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM |
-| `memset` / `memset_buf` needs the filled span resident (not mapped host) | HBM write + launch overhead |
+| `memset` / `memset_buf` needs the filled span resident (not mapped host); `memset_op` height/pitch is 2D | HBM write of payload + launch overhead |
 | peer D2D needs topology + `enable_peer` | link bandwidth |
 | legacy null stream serializes (opt-in) | copy/compute overlap |
 | `cudaStreamCreate` blocking stream serializes with NULL | `cudaStreamNonBlocking` overlap |
@@ -406,7 +407,8 @@ stream is `Ok(false)`; the clock does not advance).
 Persisting L2 is `cudaLimitPersistingL2CacheSize`. Access-policy windows
 must align to `cudaLimitMaxL2FetchGranularity` (SM 8.0+ default 128).
 `malloc_pitch` is `cudaMallocPitch`. `MemcpyOp` `height` / pitches are
-`cudaMemcpy2DAsync` (payload `width * height`).
+`cudaMemcpy2DAsync` (payload `width * height`). `MemsetOp` `height` / `pitch`
+are `cudaMemset2DAsync` (payload `width * height`; padding is not written).
 `graph_mem_get` / `graph_mem_set` / `graph_mem_trim` are
 `cudaDeviceGetGraphMemAttribute` / `SetGraphMemAttribute` / `GraphMemTrim`
 (device graph-memory pool only; unused reserved bytes return on trim).

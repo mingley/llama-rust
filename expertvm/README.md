@@ -170,8 +170,9 @@ VA (evict `va_release`s the pointer so the next miss skips reserve).
 vLLM KV-block analog; implies `--vmm`). `expertvm kv` reserves per-sequence
 KV VAs and `cuMemCreate`s interned pages (`kernel_bufs` plus H2D or
 `--fill memset`; `--sequences N` maps the same physical into N VAs;
-`--row-width W --pitch P` is `cudaMemcpy2DAsync` on a miss (payload `W *
-height`, not pitch padding). Peak HBM is unique pages, not the reservation. That is **simulated
+`--row-width W --pitch P` is a 2D miss fill (payload `W *
+height`, not pitch padding): `cudaMemcpy2DAsync` with `--fill h2d`,
+`cudaMemset2DAsync` with `--fill memset`. Peak HBM is unique pages, not the reservation. That is **simulated
 VMM**, not the reference engine's paged KV (`Llama::new_paged_cache` /
 `gguf_gemv serve --kv-page`, interned decode blocks).
 `--host-func` enqueues `cudaLaunchHostFunc` after each event's GEMMs

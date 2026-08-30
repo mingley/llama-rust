@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaMemset2DAsync`
+
+`MemsetOp` height/pitch is `cudaMemset2DAsync`: billed HBM write is
+`width * height` (pitch padding is not written). The mapped span is the 2D
+extent. `Sim::memset_op` / `graph_add_memset_op` take that struct. Packed 1D
+(`height` 0/1) is unchanged. `expertvm kv --fill memset --row-width W --pitch P`
+uses the 2D fill. Decode identity stays packed 1D. `gpu-profile capture` is
+still refused.
+
 ## Shipped 2026-08-30 — `cudaHostGetDevicePointer` / `cudaDeviceGetAttribute`
 
 `Sim::host_get_device_pointer` of mapped host returns the same id. Unmapped

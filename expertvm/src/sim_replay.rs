@@ -1453,7 +1453,7 @@ pub(crate) fn replay_exec(
 /// Patch a parked leaf GEMM so it reads/writes `expert` instead of the evicted alloc.
 ///
 /// Also retargets a unique memcpy node's [`gpu_sim::MemcpyOp::alloc`] or a
-/// unique memset node's [`gpu_sim::KernelBuf`] when the leaf has one (not the
+/// unique memset node's [`gpu_sim::MemsetOp`] when the leaf has one (not the
 /// default compute GEMM capture).
 pub(crate) fn retarget_parked_kernel(
     sim: &mut Sim,

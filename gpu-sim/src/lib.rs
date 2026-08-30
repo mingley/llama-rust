@@ -136,7 +136,8 @@
 //! [`DeviceLimit::MaxL2FetchGranularity`] aligns access-policy windows (CUDA
 //! default 128 on SM 8.0+). [`Sim::malloc_pitch`] is `cudaMallocPitch`.
 //! [`MemcpyOp`] `height` / pitches are `cudaMemcpy2DAsync` (payload `width *
-//! height`, not pitch padding).
+//! height`, not pitch padding). [`MemsetOp`] `height` / `pitch` are
+//! `cudaMemset2DAsync` (payload `width * height`; padding is not written).
 //! [`graph_mem_get`](Sim::graph_mem_get) / [`graph_mem_set`](Sim::graph_mem_set) /
 //! [`graph_mem_trim`](Sim::graph_mem_trim) are `cudaDeviceGetGraphMemAttribute` /
 //! `SetGraphMemAttribute` / `GraphMemTrim` (graph-memory pool only; unused
@@ -309,6 +310,7 @@
 //! [`Sim::create_graph`] is `cudaGraphCreate` (empty, not instantiated).
 //! [`Sim::graph_add_kernel`] / [`graph_add_memcpy`](Sim::graph_add_memcpy) /
 //! [`graph_add_memset`](Sim::graph_add_memset) /
+//! [`graph_add_memset_op`](Sim::graph_add_memset_op) /
 //! [`graph_add_host_func`](Sim::graph_add_host_func) /
 //! [`graph_add_empty`](Sim::graph_add_empty) /
 //! [`graph_add_event_record`](Sim::graph_add_event_record) /
@@ -408,7 +410,7 @@ pub use ops::{
     GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind,
     GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeParams,
     LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
-    MemoryType, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
+    MemsetOp, MemoryType, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
     PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
     StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
@@ -7568,6 +7570,89 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("memcpy2d pitch"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn malloc_pitch_and_memset2d_bills_payload_not_padding() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_pitch(d, 256, 8).unwrap();
+        assert_eq!(pitch, 512);
+        let t0 = sim.clock_ns();
+        enq(sim.memset_op(
+            d,
+            MemsetOp {
+                id: a,
+                offset: 0,
+                bytes: 256,
+                height: 8,
+                pitch,
+            },
+            s,
+        ));
+        sim.synchronize().unwrap();
+        let pitched_ns = sim.clock_ns().saturating_sub(t0);
+        let mut packed = Sim::new(h100());
+        let b = packed.malloc(d, 4096).unwrap();
+        let t1 = packed.clock_ns();
+        enq(packed.memset(d, b, 4096, s));
+        packed.synchronize().unwrap();
+        let packed_ns = packed.clock_ns().saturating_sub(t1);
+        assert!(
+            pitched_ns < packed_ns,
+            "pitched={pitched_ns} packed={packed_ns}"
+        );
+        assert_eq!(sim.bytes_moved(), 0);
+        match sim.memset_op(
+            d,
+            MemsetOp {
+                id: a,
+                offset: 0,
+                bytes: 600,
+                height: 8,
+                pitch,
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset2d pitch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let small = sim.malloc(d, 2048).unwrap();
+        match sim.memset_op(
+            d,
+            MemsetOp {
+                id: small,
+                offset: 0,
+                bytes: 256,
+                height: 8,
+                pitch: 512,
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset range"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset_op(
+            g,
+            MemsetOp {
+                id: a,
+                offset: 0,
+                bytes: 256,
+                height: 8,
+                pitch,
+            },
+        )
+        .unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        let got = sim.graph_memset_get_params(g, 0).unwrap();
+        assert_eq!(got.height, 8);
+        assert_eq!(got.pitch, pitch);
+        assert_eq!(got.payload_bytes(), 2048);
+        assert_eq!(got.extent_bytes(), 7 * 512 + 256);
     }
 
     #[test]

@@ -15,7 +15,8 @@ use crate::ops::{
     GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
     GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphUserObjectFlags, HostNodeParams,
     KernelAttrs, KernelBuf, KernelKind, KernelNodeParams, LaunchCompletionEvent, MemAdvise,
-    MemAttach, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, Operation, PdlLaunch, Place,
+    MemAttach, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemsetOp, MemoryType, Operation,
+    PdlLaunch, Place,
     PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
     ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
     SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
@@ -3077,12 +3078,13 @@ impl Sim {
     ///
     /// After instantiate this does not retarget the exec; use
     /// [`Self::graph_exec_memset_set_params`]. Zero-byte fills stay illegal.
-    /// Capture cannot include it. Host-sync 1 ns.
+    /// Capture cannot include it. Host-sync 1 ns. [`KernelBuf`] converts to a
+    /// packed 1D [`MemsetOp`].
     pub fn graph_memset_set_params(
         &mut self,
         graph: GraphId,
         node: usize,
-        buf: KernelBuf,
+        op: impl Into<MemsetOp>,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture memset node set params")?;
         let device = {
@@ -3092,20 +3094,14 @@ impl Sim {
             let step = g.steps.get(node).ok_or(SimError::Invalid {
                 why: "unknown graph node",
             })?;
-            if !matches!(step.kind, Kind::Memset { .. }) {
+            if !matches!(step.kind, Kind::Memset(_)) {
                 return Err(SimError::Invalid {
                     why: "not a memset node",
                 });
             }
             step.device
         };
-        let total = self.alloc_ref(buf.id)?.bytes;
-        let (offset, bytes) = kernel_span(total, &buf)?;
-        if bytes == 0 {
-            return Err(SimError::Invalid {
-                why: "zero-byte memset",
-            });
-        }
+        let op = self.resolve_memset_op(op.into())?;
         let _gpu = self.profile.gpu(device)?;
         self.clock = self.clock.saturating_add(1);
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
@@ -3114,11 +3110,7 @@ impl Sim {
         let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
             why: "unknown graph node",
         })?;
-        step.kind = Kind::Memset {
-            id: buf.id,
-            offset,
-            bytes,
-        };
+        step.kind = Kind::Memset(op);
         Ok(())
     }
 
@@ -3243,15 +3235,16 @@ impl Sim {
 
     /// `cudaGraphExecMemsetNodeSetParams` on an instantiated exec.
     ///
-    /// Node `node` must already be a memset. [`KernelBuf`] dest/span may change.
+    /// Node `node` must already be a memset. Dest/span/pitch may change.
     /// Zero-byte fills stay illegal. Pays `graph_set_params_ns` and clears the
     /// upload flag. Capture cannot include it. Graphs with mem alloc/free nodes
-    /// are legal (unlike [`Self::update_graph`]).
+    /// are legal (unlike [`Self::update_graph`]). [`KernelBuf`] converts to a
+    /// packed 1D [`MemsetOp`].
     pub fn graph_exec_memset_set_params(
         &mut self,
         exec: GraphId,
         node: usize,
-        buf: KernelBuf,
+        op: impl Into<MemsetOp>,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture memset set params")?;
         let exec = self.as_exec(exec)?;
@@ -3262,20 +3255,14 @@ impl Sim {
             let step = g.view().get(node).ok_or(SimError::Invalid {
                 why: "unknown graph node",
             })?;
-            if !matches!(step.kind, Kind::Memset { .. }) {
+            if !matches!(step.kind, Kind::Memset(_)) {
                 return Err(SimError::Invalid {
                     why: "not a memset node",
                 });
             }
             step.device
         };
-        let total = self.alloc_ref(buf.id)?.bytes;
-        let (offset, bytes) = kernel_span(total, &buf)?;
-        if bytes == 0 {
-            return Err(SimError::Invalid {
-                why: "zero-byte memset",
-            });
-        }
+        let op = self.resolve_memset_op(op.into())?;
         let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
         self.clock = self.clock.saturating_add(ns);
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
@@ -3284,11 +3271,7 @@ impl Sim {
         let step = g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
             why: "unknown graph node",
         })?;
-        step.kind = Kind::Memset {
-            id: buf.id,
-            offset,
-            bytes,
-        };
+        step.kind = Kind::Memset(op);
         g.uploaded = false;
         Ok(())
     }
@@ -3676,11 +3659,11 @@ impl Sim {
         Ok(found)
     }
 
-    /// Unique memset node on `graph` plus its current [`KernelBuf`].
+    /// Unique memset node on `graph` plus its current [`MemsetOp`].
     ///
     /// Zero memset nodes is Invalid (`not a memset node`). More than one is
     /// `not unique memset node`.
-    pub fn graph_unique_memset(&self, graph: GraphId) -> Result<(usize, KernelBuf), SimError> {
+    pub fn graph_unique_memset(&self, graph: GraphId) -> Result<(usize, MemsetOp), SimError> {
         match self.graph_try_unique_memset(graph)? {
             Some(v) => Ok(v),
             None => Err(SimError::Invalid {
@@ -3695,14 +3678,14 @@ impl Sim {
     pub fn graph_try_unique_memset(
         &self,
         graph: GraphId,
-    ) -> Result<Option<(usize, KernelBuf)>, SimError> {
+    ) -> Result<Option<(usize, MemsetOp)>, SimError> {
         let graph = self.resolved_graph(graph)?;
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
         let mut found = None;
         for (i, step) in g.view().iter().enumerate() {
-            let Kind::Memset { id, offset, bytes } = &step.kind else {
+            let Kind::Memset(op) = &step.kind else {
                 continue;
             };
             if found.is_some() {
@@ -3710,14 +3693,7 @@ impl Sim {
                     why: "not unique memset node",
                 });
             }
-            found = Some((
-                i,
-                KernelBuf {
-                    id: *id,
-                    offset: *offset,
-                    bytes: *bytes,
-                },
-            ));
+            found = Some((i, *op));
         }
         Ok(found)
     }
@@ -3831,7 +3807,7 @@ impl Sim {
         &self,
         graph: GraphId,
         node: usize,
-    ) -> Result<KernelBuf, SimError> {
+    ) -> Result<MemsetOp, SimError> {
         memset_params_of(&self.graph_def_step(graph, node)?.kind)
     }
 
@@ -3840,7 +3816,7 @@ impl Sim {
         &self,
         exec: GraphId,
         node: usize,
-    ) -> Result<KernelBuf, SimError> {
+    ) -> Result<MemsetOp, SimError> {
         memset_params_of(&self.graph_exec_step(exec, node)?.kind)
     }
 
@@ -4830,26 +4806,16 @@ impl Sim {
         self.graph_push(graph, device, stream, Kind::Memcpy(op))
     }
 
-    /// `cudaGraphAddMemsetNode` of a [`KernelBuf`] span.
+    /// `cudaGraphAddMemsetNode` of a [`KernelBuf`] span (packed 1D).
     pub fn graph_add_memset(&mut self, graph: GraphId, buf: KernelBuf) -> Result<(), SimError> {
+        self.graph_add_memset_op(graph, MemsetOp::from(buf))
+    }
+
+    /// `cudaGraphAddMemsetNode` / `cudaMemset2D` params ([`MemsetOp`]).
+    pub fn graph_add_memset_op(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
-        let total = self.alloc_ref(buf.id)?.bytes;
-        let (offset, bytes) = kernel_span(total, &buf)?;
-        if bytes == 0 {
-            return Err(SimError::Invalid {
-                why: "zero-byte memset",
-            });
-        }
-        self.graph_push(
-            graph,
-            device,
-            stream,
-            Kind::Memset {
-                id: buf.id,
-                offset,
-                bytes,
-            },
-        )
+        let op = self.resolve_memset_op(op)?;
+        self.graph_push(graph, device, stream, Kind::Memset(op))
     }
 
     /// `cudaGraphAddHostNode` (`cudaLaunchHostFunc`) with the unnamed callback.
@@ -9897,6 +9863,7 @@ impl Sim {
     /// [`Self::kernel`] still needs the whole VA. [`Self::memset_buf`] names an
     /// interior page. Capture is allowed. Host-sync `cudaMalloc` / VMM / mempool
     /// create still cannot be captured; [`Self::alloc`] may be a mem alloc node.
+    /// [`Self::memset_op`] is `cudaMemset2DAsync` when [`MemsetOp::height`] `> 1`.
     pub fn memset(
         &mut self,
         device: DeviceId,
@@ -9922,22 +9889,22 @@ impl Sim {
         buf: KernelBuf,
         stream: StreamId,
     ) -> Result<OpId, SimError> {
-        let total = self.alloc_ref(buf.id)?.bytes;
-        let (offset, bytes) = kernel_span(total, &buf)?;
-        if bytes == 0 {
-            return Err(SimError::Invalid {
-                why: "zero-byte memset",
-            });
-        }
-        self.submit(
-            device,
-            stream,
-            Kind::Memset {
-                id: buf.id,
-                offset,
-                bytes,
-            },
-        )
+        self.memset_op(device, MemsetOp::from(buf), stream)
+    }
+
+    /// `cudaMemsetAsync` / `cudaMemset2DAsync`.
+    ///
+    /// [`MemsetOp::height`] `> 1` bills `width * height` as an HBM write (pitch
+    /// padding is not written). The mapped span is the 2D extent. Capture is
+    /// allowed. Mapped host is not a memset dest.
+    pub fn memset_op(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let op = self.resolve_memset_op(op)?;
+        self.submit(device, stream, Kind::Memset(op))
     }
 
     /// `cudaLaunchHostFunc`. Stream-ordered host work; does not occupy compute
@@ -11225,17 +11192,13 @@ impl Sim {
     }
 
     fn start_memset(&mut self, id: OpId) -> Result<bool, SimError> {
-        let (device, stream, launch, alloc, offset, bytes) = {
-            let op = self
+        let (device, stream, launch, op) = {
+            let row = self
                 .ops
                 .get(&id)
                 .ok_or(SimError::Invalid { why: "unknown op" })?;
-            match &op.kind {
-                Kind::Memset {
-                    id: alloc,
-                    offset,
-                    bytes,
-                } => (op.device, op.stream, op.launch, *alloc, *offset, *bytes),
+            match &row.kind {
+                Kind::Memset(op) => (row.device, row.stream, row.launch, *op),
                 _ => {
                     return Err(SimError::Invalid {
                         why: "not a memset",
@@ -11243,11 +11206,11 @@ impl Sim {
                 }
             }
         };
-        self.require_device_attach(alloc, stream)?;
+        self.require_device_attach(op.id, stream)?;
         if !self.take_compute(device)? {
             return Ok(false);
         }
-        let writes = [KernelBuf::span(alloc, offset, bytes)];
+        let writes = [KernelBuf::span(op.id, op.offset, op.extent_bytes())];
         if let Err(e) = self.lease_kernel(device, &[], &writes, false) {
             self.drop_compute(device)?;
             return Err(e);
@@ -11263,7 +11226,7 @@ impl Sim {
                 return Err(e);
             }
         };
-        let ns = match self.memset_ns(device, bytes, launch, mem_bps) {
+        let ns = match self.memset_ns(device, op.payload_bytes(), launch, mem_bps) {
             Ok(n) => n,
             Err(e) => {
                 self.drop_compute(device)?;
@@ -11798,7 +11761,7 @@ impl Sim {
             Kind::Alloc { id: alloc, bytes } => self.start_alloc(id, device, *alloc, *bytes),
             Kind::Free { id: alloc } => self.start_free(id, device, *alloc),
             Kind::Kernel { .. } => self.start_kernel(id),
-            Kind::Memset { .. } => self.start_memset(id),
+            Kind::Memset(_) => self.start_memset(id),
             Kind::HostFunc { .. } => {
                 let ns = self.host_func_ns(device, launch)?;
                 self.running.push(Running {
@@ -12501,6 +12464,42 @@ impl Sim {
             .saturating_add(self.extra_transfer_ns))
     }
 
+    fn resolve_memset_op(&self, op: MemsetOp) -> Result<MemsetOp, SimError> {
+        memset_2d_check(&op)?;
+        let total = self.alloc_ref(op.id)?.bytes;
+        if op.is_2d() {
+            let span = op.extent_bytes();
+            if span == 0 {
+                return Err(SimError::Invalid {
+                    why: "zero-byte memset",
+                });
+            }
+            if op.offset.saturating_add(span) > total {
+                return Err(SimError::Invalid {
+                    why: "memset range past alloc",
+                });
+            }
+            return Ok(op);
+        }
+        let buf = KernelBuf {
+            id: op.id,
+            offset: op.offset,
+            bytes: op.bytes,
+        };
+        let (offset, bytes) = kernel_span(total, &buf)?;
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte memset",
+            });
+        }
+        Ok(MemsetOp {
+            id: op.id,
+            offset,
+            bytes,
+            ..MemsetOp::default()
+        })
+    }
+
     fn memcpy_precheck(&self, m: &MemcpyOp) -> Result<(), SimError> {
         memcpy_2d_check(m)?;
         let a = self.alloc_ref(m.alloc)?;
@@ -13002,7 +13001,7 @@ impl Sim {
                 reads.iter().chain(writes.iter()).map(|b| b.id).collect(),
                 *cooperative,
             )),
-            Kind::Memset { id: alloc, .. } => Some((vec![*alloc], false)),
+            Kind::Memset(op) => Some((vec![op.id], false)),
             Kind::AllReduce { parts, .. } => Some((parts.iter().map(|(_, a)| *a).collect(), false)),
             Kind::DeviceLaunch { .. } => Some((Vec::new(), false)),
             _ => None,
@@ -13197,6 +13196,23 @@ fn memcpy_2d_check(m: &MemcpyOp) -> Result<(), SimError> {
     if m.bytes > m.src_pitch_or_width() || m.bytes > m.dst_pitch_or_width() {
         return Err(SimError::Invalid {
             why: "memcpy2d pitch",
+        });
+    }
+    Ok(())
+}
+
+fn memset_2d_check(op: &MemsetOp) -> Result<(), SimError> {
+    if !op.is_2d() {
+        return Ok(());
+    }
+    if op.bytes == 0 {
+        return Err(SimError::Invalid {
+            why: "memset2d width",
+        });
+    }
+    if op.bytes > op.pitch_or_width() {
+        return Err(SimError::Invalid {
+            why: "memset2d pitch",
         });
     }
     Ok(())
@@ -13484,17 +13500,13 @@ fn memcpy_params_of(kind: &Kind) -> Result<MemcpyOp, SimError> {
     Ok(op.clone())
 }
 
-fn memset_params_of(kind: &Kind) -> Result<KernelBuf, SimError> {
-    let Kind::Memset { id, offset, bytes } = kind else {
+fn memset_params_of(kind: &Kind) -> Result<MemsetOp, SimError> {
+    let Kind::Memset(op) = kind else {
         return Err(SimError::Invalid {
             why: "not a memset node",
         });
     };
-    Ok(KernelBuf {
-        id: *id,
-        offset: *offset,
-        bytes: *bytes,
-    })
+    Ok(*op)
 }
 
 fn host_params_of(kind: &Kind) -> Result<HostNodeParams, SimError> {
@@ -13712,11 +13724,13 @@ fn remap_alloc_kind(kind: Kind, map: &BTreeMap<AllocId, AllocId>) -> Kind {
             writes: writes.into_iter().map(|b| remap_buf(b, map)).collect(),
             cooperative,
         },
-        Kind::Memset { id, offset, bytes } => Kind::Memset {
-            id: remap_alloc_id(id, map),
-            offset,
-            bytes,
-        },
+        Kind::Memset(op) => Kind::Memset(MemsetOp {
+            id: remap_alloc_id(op.id, map),
+            offset: op.offset,
+            bytes: op.bytes,
+            height: op.height,
+            pitch: op.pitch,
+        }),
         Kind::Attach { id, flags } => Kind::Attach {
             id: remap_alloc_id(id, map),
             flags,
@@ -13962,7 +13976,7 @@ fn node_kind(kind: &Kind) -> GraphNodeKind {
     match kind {
         Kind::Kernel { .. } => GraphNodeKind::Kernel,
         Kind::Memcpy(_) => GraphNodeKind::Memcpy,
-        Kind::Memset { .. } => GraphNodeKind::Memset,
+        Kind::Memset(_) => GraphNodeKind::Memset,
         Kind::HostFunc { .. } => GraphNodeKind::Host,
         Kind::Empty => GraphNodeKind::Empty,
         Kind::EventRecord { .. } => GraphNodeKind::EventRecord,
@@ -14190,7 +14204,7 @@ fn op_tag(k: &Kind) -> u8 {
         Kind::Free { .. } => 1,
         Kind::Memcpy(_) => 2,
         Kind::Kernel { .. } => 3,
-        Kind::Memset { .. } => 4,
+        Kind::Memset(_) => 4,
         Kind::HostFunc { .. } => 5,
         Kind::Empty => 11,
         Kind::EventRecord { .. } => 6,

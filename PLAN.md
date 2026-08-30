@@ -1839,6 +1839,18 @@ model, do not celebrate the sim.
     legal during capture. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
+152. [x] `cudaMemset2DAsync`: `MemsetOp` `height` / `pitch` fill `width *
+    height` payload (padding is not written). Width above pitch is Invalid.
+    The mapped span is the 2D extent. Packed 1D (`height` 0/1) is unchanged.
+    Decode identity stays packed 1D. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+153. [x] `expertvm kv --row-width W --pitch P` with `--fill memset` is
+    `cudaMemset2DAsync` so a padded KV page bills `W * height` of HBM write,
+    not pitch padding. Packed memset (`pitch = 0`) is unchanged. Decode
+    identity stays packed 1D. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.
