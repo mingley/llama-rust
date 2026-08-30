@@ -85,7 +85,9 @@
 //! FollowEvent / Internal do not insert event waits or extra sync. High-water
 //! Set `0` resets to current; graph mem stays [`GraphMemAttr`]. Unused
 //! pool bytes stay in `cudaMemGetInfo` used until trim when the release
-//! threshold is high (`u64::MAX`, vLLM-style). Destroying a user pool returns
+//! threshold is high (`u64::MAX`, vLLM-style). `expertvm sim --mempool-trim`
+//! is [`pool_trim_to`](Sim::pool_trim_to) `(device_mempool, 0)` after score.
+//! Destroying a user pool returns
 //! unused cache to the OS; outstanding allocs stay valid; the default pool
 //! cannot be destroyed; destroying the current pool rebinds GetMemPool to
 //! GetDefaultMemPool.

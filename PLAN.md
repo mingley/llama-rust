@@ -3418,7 +3418,21 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no `$/M
     tokens`.
 
-328. [ ] Next numbered PLAN item after 327 is the next `gpu-sim` / Engine /
+328. [x] `cudaMemPoolTrimTo` idle return:
+    [`GpuStoreCfg::mempool_trim`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::mempool_trim`](expertvm/src/sim_replay.rs) hold unused
+    `cudaMallocAsync` bytes (`u64::MAX` release threshold) then
+    [`pool_trim_to`](gpu-sim/src/sim.rs) `0` on every GPU's current
+    device mempool after [`SimulatedGpuStore::score`](expertvm/src/gpu_store.rs)
+    / walker / schedule finish. Implies `--mempool`. Illegal with
+    `--sync-alloc` (`cudaMalloc` is not a mempool). Hits/misses and
+    [`hbm_peak`](gpu-sim/src/lib.rs) stay the same; token ITL (`clock_ns`) does not
+    trim. `--mempool-trim` on `expertvm sim` / `schedule` / `store` and
+    `gguf_gemv engine --expert-sim`. Decode identity stays CUDA's default
+    threshold 0 (free already returns). `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+329. [ ] Next numbered PLAN item after 328 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

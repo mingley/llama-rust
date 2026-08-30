@@ -4389,6 +4389,171 @@ fn simulated_gpu_store_mempool_holds_after_evict() {
 }
 
 #[test]
+fn simulated_gpu_store_mempool_trim_returns_cached() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let bytes = 4096u64;
+    let k0 = ExpertKey::new(0, 0);
+    let mut hold = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        p.clone(),
+        bytes,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            mempool: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("hold");
+    let _a = hold.acquire(k0).expect("hold acq");
+    hold.evict(k0).expect("hold evict");
+    let hold_score = hold.score().expect("hold score");
+    assert!(
+        hold.default_pool_cached().expect("hold cached") >= bytes,
+        "mempool without trim must keep cache"
+    );
+    let mut trim = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        p,
+        bytes,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            mempool_trim: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("trim");
+    let _a = trim.acquire(k0).expect("trim acq");
+    trim.evict(k0).expect("trim evict");
+    assert!(
+        trim.default_pool_cached().expect("pre-score") >= bytes,
+        "mempool-trim must hold until score"
+    );
+    let _clk = trim.clock_ns().expect("itl");
+    assert!(
+        trim.default_pool_cached().expect("after clock") >= bytes,
+        "token ITL must not cudaMemPoolTrimTo"
+    );
+    let trim_score = trim.score().expect("trim score");
+    assert_eq!(
+        hold_score.hbm_peak, trim_score.hbm_peak,
+        "trim must not change peak HBM"
+    );
+    assert_eq!(
+        trim.default_pool_cached().expect("trimmed"),
+        0,
+        "cudaMemPoolTrimTo(0) must return cached bytes"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_mempool_trim_refuses_sync_alloc() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            mempool_trim: true,
+            sync_alloc: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("mempool-trim + sync-alloc must fail"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("mempool-trim"), "{s}");
+        }
+    }
+}
+
+#[test]
+fn sim_replay_mempool_trim_keeps_hits() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg::lru(1, 4096, 0);
+    let on = SimCfg {
+        mempool_trim: true,
+        ..off
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("off");
+    let b = sim_replay_cfg(&t, profile.clone(), on).expect("on");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+    assert_eq!(a.hbm_peak, b.hbm_peak);
+    let sched_off = schedule_replay(&t, profile.clone(), off, SchedCfg::closed(0)).expect("soff");
+    let sched_on = schedule_replay(&t, profile, on, SchedCfg::closed(0)).expect("son");
+    assert_eq!(sched_off.replay.hits, sched_on.replay.hits);
+    assert_eq!(sched_off.replay.misses, sched_on.replay.misses);
+    assert_eq!(sched_off.replay.hbm_peak, sched_on.replay.hbm_peak);
+}
+
+#[test]
+fn simulated_gpu_store_shareable_mempool_trim_returns_cached() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let bytes = 4096u64;
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        bytes,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            shareable: true,
+            mempool_trim: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("share trim");
+    let k0 = ExpertKey::new(0, 0);
+    let _a = gpu.acquire(k0).expect("acq");
+    gpu.evict(k0).expect("evict");
+    assert!(
+        gpu.default_pool_cached().expect("pre-score") >= bytes,
+        "shareable mempool-trim must hold until score"
+    );
+    let _s = gpu.score().expect("score");
+    assert_eq!(
+        gpu.default_pool_cached().expect("trimmed"),
+        0,
+        "trim of device_mempool must return shared cache"
+    );
+}
+
+#[test]
+fn sim_replay_mempool_trim_refuses_sync_alloc() {
+    match sim_replay_cfg(
+        &Trace {
+            events: vec![ev(0, 0, &[0])],
+        },
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            mempool_trim: true,
+            sync_alloc: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("mempool-trim + sync-alloc must fail"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("mempool-trim"), "{s}");
+        }
+    }
+}
+
+#[test]
 fn simulated_gpu_store_shareable_imported_pool_reuses_cache() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],

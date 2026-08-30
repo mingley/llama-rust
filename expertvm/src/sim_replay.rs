@@ -418,6 +418,12 @@ pub struct SimCfg {
     /// [`crate::SimulatedGpuStore::with_cfg`] with [`crate::GpuStoreCfg::mempool`]
     /// raises it.
     pub mempool: bool,
+    /// `cudaMemPoolTrimTo(0)` unused cached bytes after the walk.
+    ///
+    /// Implies [`Self::mempool`]. Illegal with [`Self::sync_alloc`]. Hits stay
+    /// the same; peak HBM is unchanged. Decode identity stays no trim.
+    /// [`crate::GpuStoreCfg::mempool_trim`] is the store path.
+    pub mempool_trim: bool,
     /// POSIX-FD shareable mempool IPC (`cudaMemPoolExportToShareableHandle`).
     ///
     /// Creates a shareable pool, exports it, imports a sibling that shares
@@ -779,6 +785,7 @@ impl SimCfg {
             max_batch: 0,
             sync_alloc: false,
             mempool: false,
+            mempool_trim: false,
             shareable: false,
             mapped: false,
             managed: false,
@@ -856,6 +863,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     if cfg.shareable && (cfg.sync_alloc || cfg.mapped || cfg.managed || cfg.vmm) {
         return Err(Error::Store("shareable needs cudaMallocAsync"));
     }
+    if cfg.mempool_trim && cfg.sync_alloc {
+        return Err(Error::Store("mempool-trim needs cudaMallocAsync"));
+    }
     if cfg.memcpy_batch && (cfg.pageable || cfg.sync_alloc || cfg.mapped || cfg.managed) {
         return Err(Error::Store("memcpy-batch needs async pinned/vmm H2D"));
     }
@@ -912,7 +922,7 @@ pub fn sim_replay_cfg(
     if cfg.shareable {
         let _imported = bind_shareable_mempools(&mut sim)?;
     }
-    if cfg.mempool || cfg.shareable {
+    if cfg.mempool || cfg.shareable || cfg.mempool_trim {
         sim.set_default_pool_release_threshold(u64::MAX)?;
     }
     advise_pool_access_if_pinned(&mut sim, &cfg)?;
@@ -1067,6 +1077,9 @@ pub fn sim_replay_cfg(
     ctr.graph_set_params = graphs.kernel_sets;
     if cfg.graph_mem_trim {
         trim_graph_pools(&mut sim)?;
+    }
+    if cfg.mempool_trim {
+        trim_device_pools(&mut sim)?;
     }
     Ok(finish(&sim, &token_ends, ctr))
 }
@@ -2320,6 +2333,17 @@ pub(crate) fn trim_graph_pools(sim: &mut Sim) -> Result<(), Error> {
     let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
     for g in 0..n {
         sim.graph_mem_trim(DeviceId(g))?;
+    }
+    Ok(())
+}
+
+/// `cudaMemPoolTrimTo(0)` on every GPU's current device mempool.
+pub(crate) fn trim_device_pools(sim: &mut Sim) -> Result<(), Error> {
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        let d = DeviceId(g);
+        let pool = sim.device_mempool(d)?;
+        let _dropped = sim.pool_trim_to(pool, 0)?;
     }
     Ok(())
 }

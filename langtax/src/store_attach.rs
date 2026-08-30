@@ -49,6 +49,8 @@ pub(crate) struct GpuCli {
     pub blocking_streams: bool,
     pub sync_alloc: bool,
     pub mempool: bool,
+    /// `cudaMemPoolTrimTo(0)` after score (`GpuStoreCfg::mempool_trim`). Implies mempool.
+    pub mempool_trim: bool,
     /// POSIX-FD shareable mempool IPC (`GpuStoreCfg::shareable`). Implies mempool.
     pub shareable: bool,
     pub pageable: bool,
@@ -161,6 +163,7 @@ impl GpuCli {
             "--blocking-streams" => &mut self.blocking_streams,
             "--sync-alloc" => &mut self.sync_alloc,
             "--mempool" => &mut self.mempool,
+            "--mempool-trim" => &mut self.mempool_trim,
             "--shareable" => &mut self.shareable,
             "--pageable" => &mut self.pageable,
             "--memcpy-batch" => &mut self.memcpy_batch,
@@ -205,9 +208,9 @@ impl GpuCli {
         }
     }
 
-    /// `--shareable` implies [`Self::mempool`]. Call after sim-flag checks.
+    /// `--shareable` / `--mempool-trim` imply [`Self::mempool`]. Call after sim-flag checks.
     pub(crate) fn imply_shareable(&mut self) {
-        if self.shareable {
+        if self.shareable || self.mempool_trim {
             self.mempool = true;
         }
     }
@@ -363,6 +366,7 @@ impl GpuCli {
             (self.blocking_streams, "--blocking-streams"),
             (self.sync_alloc, "--sync-alloc"),
             (self.mempool, "--mempool"),
+            (self.mempool_trim, "--mempool-trim"),
             (self.shareable, "--shareable"),
             (self.pageable, "--pageable"),
             (self.memcpy_batch, "--memcpy-batch"),
@@ -640,6 +644,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         blocking_streams: gpu.blocking_streams,
         sync_alloc: gpu.sync_alloc,
         mempool: gpu.mempool,
+        mempool_trim: gpu.mempool_trim,
         shareable: gpu.shareable,
         vmm_page: gpu.vmm_page,
         pageable: gpu.pageable,

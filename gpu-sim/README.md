@@ -654,7 +654,8 @@ bytes stay reserved). FollowEvent / Internal do not insert event waits
 or extra sync. High-water Set `0` resets to current; graph mem stays
 `GraphMemAttr`.
 `u64::MAX` holds unused bytes so `malloc` can OOM
-until trim. Destroying a user pool (`destroy_pool` / `cudaMemPoolDestroy`)
+until trim. `expertvm sim --mempool-trim` is `pool_trim_to(device_mempool, 0)`
+after score (hold during the run, return cache at idle). Destroying a user pool (`destroy_pool` / `cudaMemPoolDestroy`)
 returns unused cache to the OS; outstanding allocs stay valid; the default
 pool cannot be destroyed; destroying the current pool rebinds GetMemPool
 to GetDefaultMemPool. Capture cannot include pool create/trim/set-attribute

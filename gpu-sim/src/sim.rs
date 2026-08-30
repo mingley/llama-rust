@@ -9551,6 +9551,9 @@ impl Sim {
     ///
     /// Only completed frees are cached; in-flight [`Self::free`] has not entered
     /// the pool yet. Applied immediately to `mem_info` (no extra device sync).
+    /// `expertvm sim --mempool-trim` / `GpuStoreCfg::mempool_trim` is
+    /// [`Self::pool_trim_to`] `(device_mempool, 0)` after score (idle), not
+    /// token ITL.
     pub fn pool_trim_to(&mut self, pool: PoolId, min_bytes: u64) -> Result<u64, SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         let root = self.pool_root(pool)?;

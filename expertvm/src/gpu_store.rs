@@ -66,6 +66,14 @@ pub struct GpuStoreCfg {
     pub sync_alloc: bool,
     /// Hold unused `cudaMallocAsync` bytes in the default pool (`u64::MAX` threshold).
     pub mempool: bool,
+    /// `cudaMemPoolTrimTo(0)` unused cached bytes after [`SimulatedGpuStore::score`].
+    ///
+    /// Implies [`Self::mempool`] (hold during the run, return cache at idle).
+    /// Illegal with [`Self::sync_alloc`] (`cudaMalloc` is not a mempool).
+    /// Hits/misses stay the same; [`gpu_sim::Score::hbm_peak`] is unchanged.
+    /// Decode identity stays no trim (CUDA default threshold 0 already
+    /// returns on free).
+    pub mempool_trim: bool,
     /// POSIX-FD shareable mempool IPC (`cudaMemPoolExportToShareableHandle`).
     ///
     /// Creates a shareable pool, exports it, imports a sibling that shares
@@ -414,6 +422,7 @@ pub struct SimulatedGpuStore {
     graph_piecewise: bool,
     leaf: LeafMem,
     graph_mem_trim: bool,
+    mempool_trim: bool,
     timing_events: bool,
     copy_elapsed_ns: u64,
     mode: GpuFill,
@@ -580,6 +589,9 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::wait_value`] is `cuStreamWaitValue64` / `WriteValue64`
     /// for the copy-ready handshake (8-byte `cudaMallocAsync` mailbox, copy
     /// stream waited before H2D; decode identity stays events).
+    /// [`GpuStoreCfg::mempool_trim`] is `cudaMemPoolTrimTo(0)` after
+    /// [`Self::score`] (implies mempool hold; illegal with
+    /// [`GpuStoreCfg::sync_alloc`]; [`Self::clock_ns`] / token ITL do not trim).
     /// [`GpuStoreCfg::multicast`] is Hopper NVLS replica fanout (requires
     /// [`GpuFill::Vmm`] and NVLink).
     /// [`GpuStoreCfg::memcpy_batch`] fills a multi-expert pinned/VMM prefetch
@@ -623,6 +635,9 @@ impl SimulatedGpuStore {
         check_cluster_preferred(cfg.cluster, cfg.preferred_cluster)?;
         if cfg.shareable && (cfg.sync_alloc || fill != GpuFill::Pinned) {
             return Err(Error::Store("shareable needs cudaMallocAsync"));
+        }
+        if cfg.mempool_trim && cfg.sync_alloc {
+            return Err(Error::Store("mempool-trim needs cudaMallocAsync"));
         }
         if cfg.memcpy_batch
             && (cfg.pageable
@@ -669,7 +684,7 @@ impl SimulatedGpuStore {
         } else {
             None
         };
-        if cfg.mempool || cfg.shareable {
+        if cfg.mempool || cfg.shareable || cfg.mempool_trim {
             sim.set_default_pool_release_threshold(u64::MAX)?;
         }
         if cfg.accessed_by && fill == GpuFill::Pinned && !cfg.sync_alloc {
@@ -752,6 +767,7 @@ impl SimulatedGpuStore {
             graph_piecewise: cfg.graph_piecewise,
             leaf,
             graph_mem_trim: cfg.graph_mem_trim,
+            mempool_trim: cfg.mempool_trim,
             timing_events: cfg.timing_events,
             copy_elapsed_ns: 0,
             mode: fill,
@@ -912,11 +928,17 @@ impl SimulatedGpuStore {
     }
 
     /// Drain the simulator and return its performance vector.
+    ///
+    /// [`GpuStoreCfg::graph_mem_trim`] / [`GpuStoreCfg::mempool_trim`] return
+    /// unused reserved / cached bytes here (idle), not at token ITL.
     pub fn score(&mut self) -> Result<gpu_sim::Score, Error> {
         self.sim.synchronize()?;
         self.sweep_evicts();
         if self.graph_mem_trim {
             self.trim_graph_mem()?;
+        }
+        if self.mempool_trim {
+            crate::sim_replay::trim_device_pools(&mut self.sim)?;
         }
         Ok(gpu_sim::Score::from_sim(&self.sim))
     }

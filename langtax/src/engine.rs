@@ -27,7 +27,7 @@
 //! (`ttft_ns` / `itl_ns` / `ns_per_token`; not `$/M tokens`). Default GPU
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
-//! shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `memcpy_batch`, `SetAccessedBy`, legacy NULL, stream priority,
+//! `mempool_trim`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `memcpy_batch`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/enable, timing events, `seq_streams`, `kv_sim`, `decode_priority`,
 //! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `cluster`, `shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `launch_completion`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
@@ -85,11 +85,13 @@
 //! D2D waits kernel start; illegal with `--device-launch`). `--wait-value` is
 //! `cuStreamWaitValue64` / `WriteValue64` for the copy-ready handshake (8-byte
 //! `cudaMallocAsync` mailbox, copy stream waited before H2D; decode identity
-//! stays events). Decode
+//! stays events). `--mempool-trim` is `cudaMemPoolTrimTo(0)` after
+//! [`Engine::expert_store_score`] (implies `--mempool`; illegal with
+//! `--sync-alloc`; token ITL does not trim). Decode
 //! identity stays `cudaLaunchKernel` (no cluster / Default policy / no preferred
 //! dim / Default carveout / non-portable disallowed / Auto sync policy /
 //! Default mem-sync domain / Default shared-mem / Default portable-cluster / 0 dynamic shared / Default
-//! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event / events copy-ready).
+//! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event / events copy-ready / no mempool trim).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode
@@ -3302,6 +3304,56 @@ mod tests {
         assert!(
             held >= 4096,
             "mempool must hold an evicted expert page, cached={held}"
+        );
+    }
+
+    #[test]
+    fn engine_gpu_mempool_trim_returns_after_score() {
+        let tokens_a = [1u32, 2, 3, 4];
+        let tokens_b = [5u32, 0, 5, 0];
+        let g = load_gguf_owned(tiny_qwen3moe_2layer_gguf()).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let exp_a = independent(&model, &tok, &tokens_a, 2);
+        let exp_b = independent(&model, &tok, &tokens_b, 2);
+        let mut cfg = EngineCfg::tiny();
+        cfg.eos = tok.eos;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        let gpu = SimulatedGpuStore::with_cfg(
+            model.expert_direct_store().expect("c"),
+            2,
+            HardwareProfile::example_h100_sxm(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                mempool_trim: true,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        eng.attach_expert_store(LiveStore::simulated(gpu));
+        let a = eng.add(&tokens_a, 2).expect("a");
+        let b = eng.add(&tokens_b, 2).expect("b");
+        eng.run().expect("run");
+        assert_eq!(eng.take(a).expect("ta").generated, exp_a);
+        assert_eq!(eng.take(b).expect("tb").generated, exp_b);
+        let mut store = eng.take_expert_store().expect("store");
+        store.unpin_all();
+        for layer in 0..2u32 {
+            for expert in 0..4u32 {
+                let k = ExpertKey::new(layer, expert);
+                if store.is_resident(k) {
+                    store.evict(k).expect("evict");
+                }
+            }
+        }
+        let held = store.default_pool_cached().expect("pool").unwrap_or(0);
+        assert!(held >= 4096, "Engine run ITL must not trim; cached={held}");
+        let _s = store.score().expect("score");
+        assert_eq!(
+            store.default_pool_cached().expect("trimmed").unwrap_or(0),
+            0,
+            "expert_store_score must cudaMemPoolTrimTo(0)"
         );
     }
 

@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaMemPoolTrimTo` after score
+
+`GpuStoreCfg::mempool_trim` / `SimCfg::mempool_trim` hold unused
+`cudaMallocAsync` bytes (`u64::MAX` release threshold) then
+`cudaMemPoolTrimTo(0)` on every GPU's current device mempool after
+`score()` / walker / schedule finish. Implies `--mempool`. Illegal with
+`--sync-alloc`. Hits/misses and `hbm_peak` stay the same. Token ITL
+(`clock_ns`) does not trim. `--mempool-trim` is off by default (decode
+identity: CUDA default threshold 0 already returns on free).
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cuStreamWaitValue64` copy-ready
 
 `GpuStoreCfg::wait_value` / `SimCfg::wait_value` allocate an 8-byte device
