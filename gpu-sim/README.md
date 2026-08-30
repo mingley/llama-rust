@@ -81,7 +81,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaGraphKernelNodeSetParams` / `MemcpyNodeSetParams` / `MemsetNodeSetParams` / `HostNodeSetParams` patch the graph, not an already-instantiated exec | 1 ns host-sync |
 | `cudaGraph*NodeGetParams` reads the definition; `graph_exec_*_get_params` reads the exec snapshot | query |
 | graph update replaces the exec snapshot when topology matches (device, stream, kind, deps); mem nodes are Invalid; `update_graph_with_info` fills `cudaGraphExecUpdateResultInfo` | `graph_update_ns` |
-| `cudaGraphExecKernelNodeSetParams` patches one instantiated kernel node's pointers / kind (mem nodes legal) | `graph_set_params_ns` |
+| `cudaGraphExecKernelNodeSetParams` patches one instantiated kernel node's pointers / kind (mem nodes legal; device-updatable nodes keep the exec uploaded) | `graph_set_params_ns` |
 | `cudaGraphExecMemcpyNodeSetParams` patches one instantiated memcpy node's `MemcpyOp` (mem nodes legal) | `graph_set_params_ns` |
 | `cudaGraphExecMemsetNodeSetParams` patches one instantiated memset node's dest span (mem nodes legal) | `graph_set_params_ns` |
 | `cudaGraphExecHostNodeSetParams` patches one instantiated host node's `fn_id` / `userData` (mem nodes legal) | `graph_set_params_ns` |
@@ -119,6 +119,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchAttributePreferredClusterDimension` | occupies preferred size when it fits in `compute_slots` |
 | `cudaFuncAttributeNonPortableClusterSizeAllowed` | sizes above `portable_cluster_size` until the SKU `max_blocks_per_cluster` |
 | `cudaLaunchAttributeSynchronizationPolicy` (stream-only) | host-wait tax on `synchronize_stream` / `synchronize_event`; Auto / profile default 0 |
+| `cudaLaunchAttributeDeviceUpdatableKernelNode` | `graph_exec_kernel_set_params` keeps the exec uploaded; device-launch graphs allow it |
 | `set_stream_sm_permille` is a green-context SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host) | HBM write + launch overhead |
 | peer D2D needs topology + `enable_peer` | link bandwidth |
@@ -316,7 +317,8 @@ the launched/primary snapshot.
 `cudaGraphExecKernelNodeSetParams` / `cudaGraphExecMemcpyNodeSetParams` /
 `cudaGraphExecMemsetNodeSetParams` / `cudaGraphExecBatchMemOpNodeSetParams`
 (`graph_set_params_ns`; mem nodes legal; pageable memcpy stays illegal;
-a `GpuOp::BatchMem` item list is a parameter).
+a `GpuOp::BatchMem` item list is a parameter; kernel SetParams keeps the
+exec uploaded when the node is device-updatable).
 `graph_node_set_enabled` is `cudaGraphNodeSetEnabled` (skip a node at launch;
 mem alloc/free cannot be disabled).
 `graph_exec_child_set_params` is `cudaGraphExecChildGraphNodeSetParams`
@@ -467,7 +469,9 @@ compute contends). `stream_copy_attributes` is `cudaStreamCopyAttributes`
 `set_priority` / `copy_attributes` are `cudaGraphKernelNodeGetAttribute` /
 `SetAttribute` / `CopyAttributes` for priority, programmatic dependent
 launch (`ProgrammaticLaunch`), programmatic event (`ProgrammaticEvent`),
-access-policy window (`AccessPolicyWindow`), and mem-sync domain/map.
+access-policy window (`AccessPolicyWindow`), mem-sync domain/map,
+cluster, preferred cluster, shared-memory carveout, and
+device-updatable kernel node (`cudaLaunchAttributeDeviceUpdatableKernelNode`).
 `kernel_pdl` is `cudaLaunchKernelEx` PDL:
 a wait kernel may start after the previous same-stream kernel's trigger
 (`pdl_trigger_permille`) instead of its completion. Overlap needs
@@ -489,6 +493,9 @@ the launch occupies `min(blocks, compute_slots)` Hyper-Q slots (Hopper portable
 max 8). `ClusterSchedulingPolicy::Spread` occupies every slot.
 `preferred_cluster` is used when that size fits in `compute_slots`.
 `SharedMemCarveout::MaxShared` occupies every slot (`cudaLaunchAttributePreferredSharedMemoryCarveout`).
+`cudaLaunchAttributeDeviceUpdatableKernelNode` lets
+`graph_exec_kernel_set_params` keep the exec uploaded so
+`device_launch_graph` needs no host re-upload (device-launch graphs allow it).
 `set_non_portable_cluster_size_allowed` is
 `cudaFuncAttributeNonPortableClusterSizeAllowed` (default disallowed).
 `expertvm sim --cluster N` / `gguf_gemv engine --expert-sim --cluster N`

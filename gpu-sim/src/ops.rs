@@ -484,8 +484,8 @@ impl SynchronizationPolicy {
 /// access-policy window, and a mem-sync domain can share a launch (7 arguments
 /// including `self`). Decode identity stays [`crate::Sim::kernel`] ([`Default`]:
 /// no cooperative, no PDL, no window, inherit stream mem-sync, no cluster,
-/// Default carveout). [`SynchronizationPolicy`] is a stream attribute, not a
-/// field here.
+/// Default carveout, not device-updatable). [`SynchronizationPolicy`] is a
+/// stream attribute, not a field here.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KernelAttrs {
     /// `cudaLaunchCooperativeKernel`.
@@ -506,6 +506,12 @@ pub struct KernelAttrs {
     pub preferred_cluster: Option<ClusterDim>,
     /// `cudaLaunchAttributePreferredSharedMemoryCarveout`.
     pub carveout: SharedMemCarveout,
+    /// `cudaLaunchAttributeDeviceUpdatableKernelNode`.
+    ///
+    /// When true, [`crate::Sim::graph_exec_kernel_set_params`] keeps the exec
+    /// uploaded so a later [`crate::Sim::device_launch_graph`] needs no host
+    /// re-upload. Decode identity stays `false`.
+    pub device_updatable: bool,
 }
 
 /// `cudaFuncCache` / `cudaSharedmemCarveout` preference

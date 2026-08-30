@@ -169,8 +169,9 @@
 //! are `cudaGraphKernelNodeGetAttribute` / `SetAttribute` / `CopyAttributes`
 //! for priority, programmatic dependent launch ([`ProgrammaticLaunch`]),
 //! programmatic event ([`ProgrammaticEvent`]), access-policy window,
-//! mem-sync domain/map, cluster dimension, cluster scheduling policy, and
-//! preferred cluster dimension.
+//! mem-sync domain/map, cluster dimension, cluster scheduling policy,
+//! preferred cluster dimension, shared-memory carveout, and
+//! device-updatable kernel node.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
 //! may start after the previous same-stream kernel's trigger
 //! (`GpuProfile::pdl_trigger_permille`) instead of its completion. Overlap
@@ -195,6 +196,7 @@
 //! `compute_slots`. [`SharedMemCarveout::MaxShared`] occupies every slot.
 //! Sizes above [`GpuProfile::portable_cluster_size`] need
 //! [`set_non_portable_cluster_size_allowed`](Sim::set_non_portable_cluster_size_allowed).
+//! [`KernelAttrs::device_updatable`] is `cudaLaunchAttributeDeviceUpdatableKernelNode`.
 //! Decode identity stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
 //! [`graph_exec_kernel_node_set_priority`](Sim::graph_exec_kernel_node_set_priority)
 //! are the exec-snapshot attributes. [`Sim::upload_graph`] is
@@ -214,8 +216,10 @@
 //! [`Sim::graph_exec_kernel_set_params`] is `cudaGraphExecKernelNodeSetParams`:
 //! patch one instantiated kernel node's pointers / [`KernelKind`] without a
 //! second graph (`graph_set_params_ns`). Cooperative flag and edges stay.
-//! Works on graphs with mem alloc/free nodes (CUDA cannot `cudaGraphExecUpdate`
-//! those). Capture cannot include it.
+//! Clears the upload flag unless the node is device-updatable
+//! (`cudaLaunchAttributeDeviceUpdatableKernelNode`). Works on graphs with mem
+//! alloc/free nodes (CUDA cannot `cudaGraphExecUpdate` those). Capture cannot
+//! include it.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) is
 //! `cudaGraphExecMemcpyNodeSetParams` (same `graph_set_params_ns`; pageable
 //! still illegal; mem nodes legal). [`graph_unique_memcpy`](Sim::graph_unique_memcpy)
@@ -5055,6 +5059,45 @@ mod tests {
             sim.graph_exec_kernel_node_get_carveout(exec, 0).unwrap(),
             SharedMemCarveout::MaxL1
         );
+    }
+
+    #[test]
+    fn graph_device_updatable_copy_and_device_launch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        assert!(!sim.graph_kernel_node_get_device_updatable(g, 0).unwrap());
+        sim.graph_kernel_node_set_device_updatable(g, 0, true)
+            .unwrap();
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_copy_attributes(h, 0, g, 0).unwrap();
+        assert!(sim.graph_kernel_node_get_device_updatable(h, 0).unwrap());
+        let exec = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .expect("device-launch allows device-updatable");
+        assert!(sim
+            .graph_exec_kernel_node_get_device_updatable(exec, 0)
+            .unwrap());
+        sim.graph_exec_kernel_node_set_device_updatable(exec, 0, false)
+            .unwrap();
+        assert!(!sim
+            .graph_exec_kernel_node_get_device_updatable(exec, 0)
+            .unwrap());
+        let empty = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(empty).unwrap();
+        let err = sim
+            .graph_kernel_node_get_device_updatable(empty, 0)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not a kernel node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -12028,6 +12071,162 @@ mod tests {
         sim.free_sync(a).unwrap();
         enq(sim.device_launch_graph(g, s));
         sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn device_launch_device_updatable_set_params_skips_reupload() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_set_device_updatable(g, 0, true)
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(
+                g,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        assert!(sim.graph_uploaded(g).unwrap());
+        let (node, mut params) = sim.graph_unique_kernel(g).unwrap();
+        params.reads = vec![KernelBuf::whole(b)];
+        params.writes = vec![KernelBuf::whole(b)];
+        let t0 = sim.clock_ns();
+        sim.graph_exec_kernel_set_params(g, node, &params).unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(1_000));
+        assert!(sim.graph_uploaded(g).unwrap());
+        sim.free_sync(a).unwrap();
+        enq(sim.device_launch_graph(g, s));
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn device_updatable_mixed_nodes_set_params_clears_upload() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_set_device_updatable(g, 0, true)
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(
+                g,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        let mut params = sim.graph_exec_kernel_get_params(g, 0).unwrap();
+        params.reads = vec![KernelBuf::whole(b)];
+        params.writes = vec![KernelBuf::whole(b)];
+        sim.graph_exec_kernel_set_params(g, 0, &params).unwrap();
+        assert!(sim.graph_uploaded(g).unwrap());
+        let mut params = sim.graph_exec_kernel_get_params(g, 1).unwrap();
+        params.reads = vec![KernelBuf::whole(b)];
+        params.writes = vec![KernelBuf::whole(b)];
+        sim.graph_exec_kernel_set_params(g, 1, &params).unwrap();
+        assert!(!sim.graph_uploaded(g).unwrap());
+        let err = sim.device_launch_graph(g, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not uploaded"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_exec_set_device_updatable_then_set_params_skips_reupload() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(
+                g,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        sim.graph_exec_kernel_node_set_device_updatable(g, 0, true)
+            .unwrap();
+        let (node, mut params) = sim.graph_unique_kernel(g).unwrap();
+        params.reads = vec![KernelBuf::whole(b)];
+        params.writes = vec![KernelBuf::whole(b)];
+        sim.graph_exec_kernel_set_params(g, node, &params).unwrap();
+        assert!(sim.graph_uploaded(g).unwrap());
+        sim.free_sync(a).unwrap();
+        enq(sim.device_launch_graph(g, s));
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn device_updatable_after_set_params_does_not_restore_upload() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(
+                g,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
+        let (node, mut params) = sim.graph_unique_kernel(g).unwrap();
+        params.reads = vec![KernelBuf::whole(b)];
+        params.writes = vec![KernelBuf::whole(b)];
+        sim.graph_exec_kernel_set_params(g, node, &params).unwrap();
+        assert!(!sim.graph_uploaded(g).unwrap());
+        sim.graph_exec_kernel_node_set_device_updatable(g, 0, true)
+            .unwrap();
+        let err = sim.device_launch_graph(g, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not uploaded"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn kernel_with_capture_records_device_updatable() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            KernelAttrs {
+                device_updatable: true,
+                ..KernelAttrs::default()
+            },
+        ));
+        let g = sim.end_capture().unwrap();
+        assert!(sim.graph_kernel_node_get_device_updatable(g, 0).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        let err = sim
+            .graph_kernel_node_set_device_updatable(g, 0, false)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("cannot capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

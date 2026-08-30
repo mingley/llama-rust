@@ -303,6 +303,8 @@ struct GraphStep {
     preferred_cluster: Option<ClusterDim>,
     /// `cudaLaunchAttributePreferredSharedMemoryCarveout`.
     carveout: SharedMemCarveout,
+    /// `cudaLaunchAttributeDeviceUpdatableKernelNode`.
+    device_updatable: bool,
 }
 
 struct Graph {
@@ -594,6 +596,8 @@ pub struct Sim {
     enqueue_preferred_cluster: Option<ClusterDim>,
     /// Shared-memory carveout for the next kernel submit / graph replay.
     enqueue_carveout: SharedMemCarveout,
+    /// Device-updatable kernel node for the next submit / graph replay.
+    enqueue_device_updatable: bool,
     /// Devices with `cudaFuncAttributeNonPortableClusterSizeAllowed`.
     non_portable_cluster: BTreeSet<DeviceId>,
     /// Wait/write-value mailbox: `(alloc, offset) → word`. Missing is `0`.
@@ -690,6 +694,7 @@ impl Sim {
             enqueue_cluster_policy: ClusterSchedulingPolicy::Default,
             enqueue_preferred_cluster: None,
             enqueue_carveout: SharedMemCarveout::Default,
+            enqueue_device_updatable: false,
             non_portable_cluster: BTreeSet::new(),
             mailbox: BTreeMap::new(),
             capture_mode: StreamCaptureMode::Relaxed,
@@ -2002,6 +2007,7 @@ impl Sim {
             self.enqueue_cluster_policy = step.cluster_policy;
             self.enqueue_preferred_cluster = step.preferred_cluster;
             self.enqueue_carveout = step.carveout;
+            self.enqueue_device_updatable = step.device_updatable;
             let wait = graph_node_waits(step, extra_wait, launch_tail, &node_ops)?;
             let s = self.graph_exec_stream(origin, stream, step, &node_stream, &mut worker);
             if let Some(slot) = node_stream.get_mut(idx) {
@@ -2182,6 +2188,7 @@ impl Sim {
         self.enqueue_cluster_policy = ClusterSchedulingPolicy::Default;
         self.enqueue_preferred_cluster = None;
         self.enqueue_carveout = SharedMemCarveout::Default;
+        self.enqueue_device_updatable = false;
         Ok(n)
     }
 
@@ -2785,8 +2792,10 @@ impl Sim {
     /// Node `node` must already be a kernel. [`KernelNodeParams::cooperative`]
     /// must match the existing node (cooperative vs `cudaLaunchKernel` is
     /// topology). Pointers and [`KernelKind`] may change. Pays
-    /// `graph_set_params_ns` and clears the upload flag. Capture cannot include
-    /// it. Graphs with mem alloc/free nodes are legal (unlike
+    /// `graph_set_params_ns`. Clears the upload flag unless the node is
+    /// device-updatable (`cudaLaunchAttributeDeviceUpdatableKernelNode`), so a
+    /// later [`Self::device_launch_graph`] needs no host re-upload. Capture
+    /// cannot include it. Graphs with mem alloc/free nodes are legal (unlike
     /// [`Self::update_graph`]).
     pub fn graph_exec_kernel_set_params(
         &mut self,
@@ -2796,7 +2805,7 @@ impl Sim {
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel set params")?;
         let exec = self.as_exec(exec)?;
-        let (device, cooperative) = {
+        let (device, cooperative, device_updatable) = {
             let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
@@ -2813,7 +2822,7 @@ impl Sim {
                     why: "cooperative is topology",
                 });
             }
-            (step.device, *cooperative)
+            (step.device, *cooperative, step.device_updatable)
         };
         let reads = self.resolve_bufs(&params.reads)?;
         let writes = self.resolve_bufs(&params.writes)?;
@@ -2831,7 +2840,9 @@ impl Sim {
             writes,
             cooperative,
         };
-        g.uploaded = false;
+        if !device_updatable {
+            g.uploaded = false;
+        }
         Ok(())
     }
 
@@ -6283,10 +6294,97 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphKernelNodeGetAttribute` for device-updatable kernel node.
+    pub fn graph_kernel_node_get_device_updatable(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<bool, SimError> {
+        self.kernel_node_device_updatable(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for device-updatable kernel node.
+    pub fn graph_exec_kernel_node_get_device_updatable(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<bool, SimError> {
+        self.kernel_node_device_updatable(exec, node, true)
+    }
+
+    fn kernel_node_device_updatable(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<bool, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.device_updatable)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for device-updatable kernel node.
+    pub fn graph_kernel_node_set_device_updatable(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        device_updatable: bool,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_device_updatable(graph, node, false, device_updatable)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for device-updatable kernel node.
+    pub fn graph_exec_kernel_node_set_device_updatable(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        device_updatable: bool,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_device_updatable(exec, node, true, device_updatable)
+    }
+
+    fn set_kernel_node_device_updatable(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        device_updatable: bool,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.device_updatable = device_updatable;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// `cudaGraphKernelNodeCopyAttributes`: copy priority, PDL, programmatic
     /// event, launch-completion event, access-policy window, mem-sync
     /// domain/map, cluster dimension, cluster scheduling policy, preferred
-    /// cluster dimension, and shared-memory carveout from `src` to `dst`.
+    /// cluster dimension, shared-memory carveout, and device-updatable kernel
+    /// node from `src` to `dst`.
     ///
     /// Both nodes must be kernels. Capture cannot include it.
     pub fn graph_kernel_node_copy_attributes(
@@ -6318,7 +6416,9 @@ impl Sim {
         let preferred = self.graph_kernel_node_get_preferred_cluster(src_graph, src)?;
         self.graph_kernel_node_set_preferred_cluster(dst_graph, dst, preferred)?;
         let carveout = self.graph_kernel_node_get_carveout(src_graph, src)?;
-        self.graph_kernel_node_set_carveout(dst_graph, dst, carveout)
+        self.graph_kernel_node_set_carveout(dst_graph, dst, carveout)?;
+        let upd = self.graph_kernel_node_get_device_updatable(src_graph, src)?;
+        self.graph_kernel_node_set_device_updatable(dst_graph, dst, upd)
     }
 
     /// `cudaGraphNodeFindInClone`: index in `cloned` of the node that was `node`
@@ -6406,6 +6506,7 @@ impl Sim {
             cluster_policy: self.enqueue_cluster_policy,
             preferred_cluster: self.enqueue_preferred_cluster,
             carveout: self.enqueue_carveout,
+            device_updatable: self.enqueue_device_updatable,
         });
         Ok(())
     }
@@ -8653,7 +8754,8 @@ impl Sim {
     /// [`Self::kernel`] plus packed [`KernelAttrs`] (`cudaLaunchKernelEx`).
     ///
     /// Combines cooperative, PDL, an access-policy window, mem-sync
-    /// domain/map, cluster, and shared-memory carveout on one submit.
+    /// domain/map, cluster, shared-memory carveout, and device-updatable
+    /// kernel node on one submit.
     /// Decode identity stays [`Self::kernel`] ([`KernelAttrs::default`]).
     pub fn kernel_with(
         &mut self,
@@ -8700,6 +8802,7 @@ impl Sim {
         let prev_pol = self.enqueue_cluster_policy;
         let prev_pref = self.enqueue_preferred_cluster;
         let prev_carve = self.enqueue_carveout;
+        let prev_upd = self.enqueue_device_updatable;
         self.enqueue_pdl = attrs.pdl;
         self.enqueue_access_policy = attrs.access_policy;
         self.enqueue_mem_sync_domain = attrs.mem_sync_domain;
@@ -8708,6 +8811,7 @@ impl Sim {
         self.enqueue_cluster_policy = attrs.cluster_policy;
         self.enqueue_preferred_cluster = attrs.preferred_cluster;
         self.enqueue_carveout = attrs.carveout;
+        self.enqueue_device_updatable = attrs.device_updatable;
         let out = self.submit_kernel(device, kind, reads, writes, stream, attrs.cooperative);
         self.enqueue_pdl = prev_pdl;
         self.enqueue_access_policy = prev_win;
@@ -8717,6 +8821,7 @@ impl Sim {
         self.enqueue_cluster_policy = prev_pol;
         self.enqueue_preferred_cluster = prev_pref;
         self.enqueue_carveout = prev_carve;
+        self.enqueue_device_updatable = prev_upd;
         out
     }
 
@@ -9617,6 +9722,7 @@ impl Sim {
             cluster_policy: self.enqueue_cluster_policy,
             preferred_cluster: self.enqueue_preferred_cluster,
             carveout: self.enqueue_carveout,
+            device_updatable: self.enqueue_device_updatable,
         });
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
@@ -12658,6 +12764,7 @@ fn remap_nested_graphs(
             cluster_policy: step.cluster_policy,
             preferred_cluster: step.preferred_cluster,
             carveout: step.carveout,
+            device_updatable: step.device_updatable,
         });
     }
     Ok(out)

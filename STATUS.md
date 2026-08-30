@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaLaunchAttributeDeviceUpdatableKernelNode`
+
+Kernel-node flag (graph SetAttribute / CopyAttributes / `KernelAttrs`).
+Default false. `graph_exec_kernel_set_params` keeps the exec uploaded so a
+later `device_launch_graph` needs no host re-upload. Control without the
+flag still requires `upload_graph`. Device-launch graphs allow it.
+Decode identity stays not device-updatable. `gpu-profile capture` is still
+refused.
+
 ## Shipped 2026-08-30 — expertvm `--sync-policy`
 
 `expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and

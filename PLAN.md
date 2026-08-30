@@ -1651,6 +1651,14 @@ model, do not celebrate the sim.
     Legal with `--pdl` and `--cooperative`. Decode identity stays Auto.
     `gpu-profile capture` is still refused.
 
+130. [x] `cudaLaunchAttributeDeviceUpdatableKernelNode`: kernel-node flag
+    (graph SetAttribute / CopyAttributes / `KernelAttrs`). Default false.
+    `graph_exec_kernel_set_params` skips clearing the upload flag so a
+    later `device_launch_graph` needs no host `upload_graph`. Control
+    without the flag still requires re-upload. Device-launch graphs allow
+    it (unlike programmatic/launch-completion events). Decode identity
+    stays not device-updatable. `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.
