@@ -152,6 +152,7 @@ warp scheduler, L1, …   ← do not model
 | higher `set_stream_priority` starts first under contention | launch overhead |
 | `compute_slots>=2` overlaps independent kernels at full issue rate | kernel duration (not SM-partition) |
 | `cudaLaunchCooperativeKernel` occupies every compute slot (`cooperative_kernel`) | leftover kernels cannot Hyper-Q overlap |
+| `cudaLaunchAttributeCooperative` (`KernelNodeAttr::Cooperative`) | same occupancy; `graph_exec_kernel_set_params` still refuses a mismatch |
 | programmatic dependent launch: wait kernel starts after the previous same-stream trigger (`pdl_trigger_permille`) | overlap needs `compute_slots >= 2` |
 | `cudaLaunchAttributeAccessPolicyWindow` persisting hits (`kernel_access_policy`) | HBM discount after `set_persisting_l2_cache_size`; CUDA default size is 0 |
 | `cudaStreamAttributeAccessPolicyWindow` inherited by `kernel` / `kernel_bufs` | same persist billing as `kernel_access_policy`; `kernel_with` / graph replay use launch / node |
@@ -465,8 +466,9 @@ scratch (`graph_add_alloc` / capture `alloc`). `--graph-auto-free` is
 AutoFreeOnLaunch (relaunch recharges HBM; not with `--graph-mem`).
 `cooperative_kernel` / `graph_add_cooperative_kernel` are
 `cudaLaunchCooperativeKernel` (occupy every Hyper-Q slot; capture allowed).
-Launch pays `graph_launch_ns` once; recorded
-kernels skip per-kernel launch overhead.
+`graph_kernel_node_set_cooperative` is `cudaLaunchAttributeCooperative` on
+graph kernel nodes (`CopyAttributes` copies it). Launch pays `graph_launch_ns`
+once; recorded kernels skip per-kernel launch overhead.
 `memset` is an HBM-write kernel on a resident alloc. `memset_sync` /
 `memset_op_sync` are host-synchronous `cudaMemset` / `2D` / `3D` (capture
 refused). Typed `memset` / `memset_op` stay Async. `memset_2d` /
@@ -828,6 +830,7 @@ NVLink-util-centric scheduling, and access-policy window).
 `graph_kernel_node_get_priority` /
 `set_priority` / `copy_attributes` are `cudaGraphKernelNodeGetAttribute` /
 `SetAttribute` / `CopyAttributes` for priority (`cudaLaunchAttributePriority`),
+cooperative launch (`cudaLaunchAttributeCooperative`),
 programmatic dependent launch (`ProgrammaticLaunch`), programmatic event (`ProgrammaticEvent`),
 access-policy window (`AccessPolicyWindow`), mem-sync domain/map,
 cluster, preferred cluster, shared-memory carveout,

@@ -23,6 +23,8 @@
 //! every compute slot so leftover kernels cannot Hyper-Q overlap it. Capture is
 //! allowed (CUDA 11+). [`GpuProfile::cooperative_launch`] is
 //! `cudaDevAttrCooperativeLaunch` (example H100 is true).
+//! [`KernelNodeAttr::Cooperative`] is `cudaLaunchAttributeCooperative` on graph
+//! kernel nodes (Get/Set/CopyAttributes).
 //! [`Sim::set_stream_sm_permille`] is a green-context SM fraction (compute-bound
 //! kernels scale; memory-bound keep full HBM). Default unset is a full chip.
 //! [`Sim::synchronize_device`] is `cudaDeviceSynchronize` (one GPU).
@@ -521,6 +523,7 @@
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
 //! are `cudaGraphKernelNodeGetAttribute` / `SetAttribute` / `CopyAttributes`
 //! for priority (`cudaLaunchAttributePriority` / `cudaKernelNodeAttributePriority`),
+//! cooperative launch ([`KernelNodeAttr::Cooperative`]),
 //! programmatic dependent launch ([`ProgrammaticLaunch`]),
 //! programmatic event ([`ProgrammaticEvent`]), access-policy window,
 //! mem-sync domain/map, cluster dimension, cluster scheduling policy,
@@ -8624,6 +8627,172 @@ mod tests {
         let n = built.launch_graph(h, s).unwrap();
         assert_eq!(n, 1);
         built.synchronize().unwrap();
+        assert!(built.graph_kernel_node_get_cooperative(h, 0).unwrap());
+        assert!(cap.graph_kernel_node_get_cooperative(g, 0).unwrap());
+    }
+
+    #[test]
+    fn graph_kernel_node_cooperative_attribute_get_set_copy() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        assert!(!sim.graph_kernel_node_get_cooperative(g, 0).unwrap());
+        assert_eq!(
+            sim.graph_kernel_node_get_attribute(g, 0, KernelNodeAttr::Cooperative)
+                .unwrap(),
+            KernelNodeAttrValue::Cooperative(false)
+        );
+        sim.graph_kernel_node_set_attribute(
+            g,
+            0,
+            KernelNodeAttr::Cooperative,
+            KernelNodeAttrValue::Cooperative(true),
+        )
+        .unwrap();
+        assert!(sim.graph_kernel_node_get_cooperative(g, 0).unwrap());
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        assert!(!sim.graph_kernel_node_get_cooperative(h, 0).unwrap());
+        sim.graph_kernel_node_copy_attributes(h, 0, g, 0).unwrap();
+        assert!(sim.graph_kernel_node_get_cooperative(h, 0).unwrap());
+        let coop = sim.create_graph(d, s).unwrap();
+        sim.graph_add_cooperative_kernel(coop, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        assert!(sim.graph_kernel_node_get_cooperative(coop, 0).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_kernel_node_set_cooperative(g, 0, false) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(sim.graph_kernel_node_get_cooperative(g, 0).unwrap());
+        let _end = sim.end_capture().unwrap();
+        let empty = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(empty).unwrap();
+        match sim.graph_kernel_node_get_cooperative(empty, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not a kernel node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mut no = Sim::new(h100().with_cooperative_launch(false));
+        let blocked = no.malloc(d, 8).unwrap();
+        let ng = no.create_graph(d, s).unwrap();
+        no.graph_add_kernel(ng, KernelKind::other(8, 8), &[blocked], &[blocked])
+            .unwrap();
+        match no.graph_kernel_node_set_cooperative(ng, 0, true) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cooperative launch not supported"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_kernel_node_set_cooperative_occupies_every_hyperq_slot() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |set_before: bool, set_exec: bool, set_def_after: bool| {
+            let mut sim = Sim::new(h100().with_compute_slots(2));
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let a = sim.alloc(d, 4096, s).unwrap();
+            let b = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+            enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+            sim.synchronize().unwrap();
+            let g = sim.create_graph(d, s).unwrap();
+            sim.graph_add_kernel(g, kind.clone(), &[a], &[a]).unwrap();
+            sim.graph_add_kernel(g, kind.clone(), &[b], &[b]).unwrap();
+            if set_before {
+                sim.graph_kernel_node_set_cooperative(g, 1, true).unwrap();
+            }
+            let exec = sim.instantiate_graph(g).unwrap();
+            if set_exec {
+                sim.graph_exec_kernel_node_set_cooperative(exec, 1, true)
+                    .unwrap();
+            }
+            if set_def_after {
+                sim.graph_kernel_node_set_cooperative(g, 1, true).unwrap();
+                assert!(!sim.graph_exec_kernel_node_get_cooperative(exec, 1).unwrap());
+            }
+            let t0 = sim.clock_ns();
+            let _ = sim.launch_graph(exec, s).unwrap();
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let overlap = run(false, false, false);
+        let serial_def = run(true, false, false);
+        let serial_exec = run(false, true, false);
+        let no_retarget = run(false, false, true);
+        assert!(
+            overlap < serial_def,
+            "SetAttribute cooperative before instantiate must serialize; overlap={overlap} serial={serial_def}"
+        );
+        assert!(
+            overlap < serial_exec,
+            "exec SetAttribute cooperative must serialize; overlap={overlap} serial={serial_exec}"
+        );
+        assert_eq!(
+            no_retarget, overlap,
+            "definition Set after instantiate must not retarget exec occupancy; no_retarget={no_retarget} overlap={overlap}"
+        );
+    }
+
+    #[test]
+    fn graph_exec_kernel_set_params_still_refuses_cooperative_mismatch_after_attribute() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.graph_exec_kernel_node_set_cooperative(exec, 0, true)
+            .unwrap();
+        assert!(sim.graph_exec_kernel_node_get_cooperative(exec, 0).unwrap());
+        let params = KernelNodeParams {
+            kind: KernelKind::other(8, 8),
+            reads: vec![KernelBuf::whole(a)],
+            writes: vec![KernelBuf::whole(a)],
+            cooperative: false,
+        };
+        match sim.graph_exec_kernel_set_params(exec, 0, &params) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cooperative is topology"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.graph_exec_kernel_set_params(
+            exec,
+            0,
+            &KernelNodeParams {
+                cooperative: true,
+                ..params
+            },
+        )
+        .unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(src, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_set_cooperative(src, 0, true).unwrap();
+        let exec2 = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(exec2, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let _ = sim.instantiate_graph(exec2).unwrap();
+        let mut info = GraphExecUpdateResultInfo::default();
+        let err = sim
+            .update_graph_with_info(exec2, src, &mut info)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("topology"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(info.result, GraphExecUpdateResult::ParametersChanged);
+        assert_eq!(info.error_node, Some(0));
+        assert_eq!(info.error_from_node, Some(0));
     }
 
     #[test]

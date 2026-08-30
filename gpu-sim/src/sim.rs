@@ -8582,13 +8582,125 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphKernelNodeGetAttribute` for `cudaLaunchAttributeCooperative`.
+    pub fn graph_kernel_node_get_cooperative(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<bool, SimError> {
+        self.kernel_node_cooperative(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for `cudaLaunchAttributeCooperative`.
+    pub fn graph_exec_kernel_node_get_cooperative(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<bool, SimError> {
+        self.kernel_node_cooperative(exec, node, true)
+    }
+
+    fn kernel_node_cooperative(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<bool, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        let Kind::Kernel { cooperative, .. } = &step.kind else {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        };
+        Ok(*cooperative)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for `cudaLaunchAttributeCooperative`.
+    ///
+    /// `true` requires [`crate::GpuProfile::cooperative_launch`] and occupies
+    /// every Hyper-Q slot at launch like [`Self::cooperative_kernel`].
+    /// [`Self::graph_exec_kernel_set_params`] still refuses a mismatch
+    /// (`"cooperative is topology"`). Capture cannot include it.
+    pub fn graph_kernel_node_set_cooperative(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        cooperative: bool,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_cooperative(graph, node, false, cooperative)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for `cudaLaunchAttributeCooperative`.
+    pub fn graph_exec_kernel_node_set_cooperative(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        cooperative: bool,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_cooperative(exec, node, true, cooperative)
+    }
+
+    fn set_kernel_node_cooperative(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        cooperative: bool,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let device = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let steps = if exec { g.view() } else { &g.steps };
+            let step = live_ok(steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+            step.device
+        };
+        if cooperative {
+            self.require_cooperative(device)?;
+        }
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = live_ok_mut(steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        let Kind::Kernel {
+            cooperative: flag, ..
+        } = &mut step.kind
+        else {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        };
+        *flag = cooperative;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// `cudaGraphKernelNodeCopyAttributes`: copy priority, PDL, programmatic
     /// event, launch-completion event, access-policy window, mem-sync
     /// domain/map, cluster dimension, cluster scheduling policy, preferred
     /// cluster dimension, portable-cluster mode, shared-memory carveout,
     /// device-updatable kernel node, shared-memory bank mode, CUDA 13
-    /// portable-shared mode, and NVLink-util-centric scheduling from `src`
-    /// to `dst`.
+    /// portable-shared mode, NVLink-util-centric scheduling, and cooperative
+    /// launch from `src` to `dst`.
     ///
     /// Both nodes must be kernels. Capture cannot include it.
     pub fn graph_kernel_node_copy_attributes(
@@ -8630,7 +8742,9 @@ impl Sim {
         let ps = self.graph_kernel_node_get_portable_shared(src_graph, src)?;
         self.graph_kernel_node_set_portable_shared(dst_graph, dst, ps)?;
         let nv = self.graph_kernel_node_get_nvlink_util_centric(src_graph, src)?;
-        self.graph_kernel_node_set_nvlink_util_centric(dst_graph, dst, nv)
+        self.graph_kernel_node_set_nvlink_util_centric(dst_graph, dst, nv)?;
+        let coop = self.graph_kernel_node_get_cooperative(src_graph, src)?;
+        self.graph_kernel_node_set_cooperative(dst_graph, dst, coop)
     }
 
     /// `cudaGraphKernelNodeGetAttribute` on the graph definition.
@@ -8668,6 +8782,9 @@ impl Sim {
         Ok(match attr {
             KernelNodeAttr::Priority => {
                 KernelNodeAttrValue::Priority(self.kernel_node_priority(graph, node, exec)?)
+            }
+            KernelNodeAttr::Cooperative => {
+                KernelNodeAttrValue::Cooperative(self.kernel_node_cooperative(graph, node, exec)?)
             }
             KernelNodeAttr::Pdl => {
                 KernelNodeAttrValue::Pdl(self.kernel_node_pdl(graph, node, exec)?)
@@ -8761,6 +8878,13 @@ impl Sim {
                     self.graph_exec_kernel_node_set_priority(graph, node, p)
                 } else {
                     self.graph_kernel_node_set_priority(graph, node, p)
+                }
+            }
+            (KernelNodeAttr::Cooperative, KernelNodeAttrValue::Cooperative(yes)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_cooperative(graph, node, yes)
+                } else {
+                    self.graph_kernel_node_set_cooperative(graph, node, yes)
                 }
             }
             (KernelNodeAttr::Pdl, KernelNodeAttrValue::Pdl(pdl)) => {

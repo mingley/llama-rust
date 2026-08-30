@@ -3328,7 +3328,22 @@ model, do not celebrate the sim.
     not modeled. Decode identity unchanged. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-322. [ ] Next numbered PLAN item after 321 is the next `gpu-sim` / Engine /
+322. [x] `cudaLaunchAttributeCooperative`:
+    [`KernelNodeAttr::Cooperative`](gpu-sim/src/ops.rs) is
+    `cudaGraphKernelNodeGetAttribute` / `SetAttribute` / `CopyAttributes`
+    for cooperative launch. Typed
+    [`graph_kernel_node_get_cooperative`](gpu-sim/src/sim.rs) /
+    [`graph_kernel_node_set_cooperative`](gpu-sim/src/sim.rs) stay.
+    Setting `true` requires [`GpuProfile::cooperative_launch`] and occupies
+    every Hyper-Q slot at launch like
+    [`cooperative_kernel`](gpu-sim/src/sim.rs). Definition Set does not
+    retarget exec.
+    [`graph_exec_kernel_set_params`](gpu-sim/src/sim.rs) still refuses a
+    cooperative mismatch (`"cooperative is topology"`). Capture cannot
+    include Set. Decode identity unchanged. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+323. [ ] Next numbered PLAN item after 322 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

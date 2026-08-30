@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaLaunchAttributeCooperative`
+
+`KernelNodeAttr::Cooperative` is `cudaGraphKernelNodeGetAttribute` /
+`SetAttribute` / `CopyAttributes` for cooperative launch. Typed
+`graph_kernel_node_get_cooperative` / `set_cooperative` stay. Setting
+`true` requires `cooperative_launch` and occupies every Hyper-Q slot at
+launch. Definition Set does not retarget exec.
+`graph_exec_kernel_set_params` still refuses a cooperative mismatch.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — managed batch prefetch/discard require CMA
 
 `prefetch_batch_async` / `discard_batch_async` /

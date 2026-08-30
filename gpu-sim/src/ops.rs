@@ -1576,6 +1576,8 @@ pub enum StreamAttrValue {
 pub enum KernelNodeAttr {
     /// `cudaKernelNodeAttributePriority`.
     Priority,
+    /// `cudaLaunchAttributeCooperative`.
+    Cooperative,
     /// `cudaLaunchAttributeProgrammaticStreamSerialization`.
     Pdl,
     /// `cudaLaunchAttributeProgrammaticEvent`.
@@ -1615,6 +1617,8 @@ pub enum KernelNodeAttr {
 pub enum KernelNodeAttrValue {
     /// [`KernelNodeAttr::Priority`].
     Priority(i32),
+    /// [`KernelNodeAttr::Cooperative`].
+    Cooperative(bool),
     /// [`KernelNodeAttr::Pdl`].
     Pdl(ProgrammaticLaunch),
     /// [`KernelNodeAttr::ProgrammaticEvent`].
