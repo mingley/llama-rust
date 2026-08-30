@@ -68,6 +68,7 @@ struct Conn {
     keep_alive: bool,
     api: ServeApi,
     n_predict: usize,
+    echo: bool,
 }
 
 enum AdmitOut {
@@ -76,6 +77,8 @@ enum AdmitOut {
         ndjson: bool,
         api: ServeApi,
         n_predict: usize,
+        echo: bool,
+        echo_prefix: Option<String>,
     },
     Bytes(Vec<u8>),
 }
@@ -165,6 +168,7 @@ impl Conn {
             keep_alive: false,
             api: ServeApi::Generate,
             n_predict: 0,
+            echo: false,
         }
     }
 
@@ -423,14 +427,18 @@ impl<'a> EngineHttp<'a> {
                     ndjson,
                     api,
                     n_predict,
+                    echo,
+                    echo_prefix,
                 } => {
                     let hits = self.engine.pool().hits();
+                    let model = self.model_id.clone();
                     if let Some(c) = self.conns.get_mut(i) {
                         c.seq = Some(id);
                         c.intern_hits_at_add = hits;
                         c.ndjson = ndjson;
                         c.api = api;
                         c.n_predict = n_predict;
+                        c.echo = echo;
                         c.keep_alive = req.keep_alive;
                         if ndjson {
                             let head = if api.is_openai() {
@@ -439,6 +447,11 @@ impl<'a> EngineHttp<'a> {
                                 http_chunked_headers(req.keep_alive)
                             };
                             c.write.extend(head);
+                            if let Some(prefix) = echo_prefix {
+                                c.write.extend(http_chunk(
+                                    sse_completion_delta(&prefix, None, &model).as_bytes(),
+                                ));
+                            }
                         }
                     }
                 }
@@ -504,12 +517,22 @@ impl<'a> EngineHttp<'a> {
             }
         };
         match self.engine.add(&ids, n_predict) {
-            Ok(id) => AdmitOut::Seq {
-                id,
-                ndjson: gen.stream,
-                api,
-                n_predict,
-            },
+            Ok(id) => {
+                let echo = gen.echo && api == ServeApi::Completions;
+                let echo_prefix = if echo && gen.stream {
+                    Some(self.tok.decode(&ids))
+                } else {
+                    None
+                };
+                AdmitOut::Seq {
+                    id,
+                    ndjson: gen.stream,
+                    api,
+                    n_predict,
+                    echo,
+                    echo_prefix,
+                }
+            }
             Err(LlamaError::EmptyPrompt) => {
                 AdmitOut::http(400, "Bad Request", "empty prompt", ka, Some(api))
             }
@@ -590,9 +613,16 @@ impl<'a> EngineHttp<'a> {
     }
 
     fn finish_seq(&mut self, i: usize) -> Result<(), ServeError> {
-        let (id, at, ndjson, api, n_predict) = match self.conns.get(i) {
+        let (id, at, ndjson, api, n_predict, echo) = match self.conns.get(i) {
             Some(c) => match c.seq {
-                Some(id) => (id, c.intern_hits_at_add, c.ndjson, c.api, c.n_predict),
+                Some(id) => (
+                    id,
+                    c.intern_hits_at_add,
+                    c.ndjson,
+                    c.api,
+                    c.n_predict,
+                    c.echo,
+                ),
                 None => return Ok(()),
             },
             None => return Ok(()),
@@ -611,13 +641,14 @@ impl<'a> EngineHttp<'a> {
         let model = self.model_id.clone();
         let json = match api {
             ServeApi::Generate => json_generated(&decode_seq(self.tok, &out), 0, pages),
-            ServeApi::Completions => json_openai_completion(
-                &self.tok.decode(&out.generated),
-                out.prompt.len(),
-                out.generated.len(),
-                reason,
-                &model,
-            ),
+            ServeApi::Completions => {
+                let text = if echo {
+                    decode_seq(self.tok, &out)
+                } else {
+                    self.tok.decode(&out.generated)
+                };
+                json_openai_completion(&text, out.prompt.len(), out.generated.len(), reason, &model)
+            }
             ServeApi::Chat => json_openai_chat(
                 &self.tok.decode(&out.generated),
                 out.prompt.len(),
@@ -1179,6 +1210,24 @@ mod tests {
         let end = rest.find('"').expect("end");
         let got = rest.get(..end).expect("slice");
         assert_eq!(got, want, "{body}");
+        let expect = greedy_generate_ctx(&model, &tok, "ab", 2, Some(64)).expect("full");
+        let mut streams = [connect_nb(addr)];
+        write_all_nb(
+            &mut streams[0],
+            &post_path(
+                "/v1/completions",
+                r#"{"prompt":"ab","max_tokens":2,"echo":true}"#,
+            ),
+        );
+        let mut bufs = [Vec::new()];
+        drive(&mut http, &mut streams, &mut bufs);
+        let (status, body) = response_parts(&bufs[0]).expect("echo");
+        assert_eq!(status, 200, "{body}");
+        let i = body.find(pat).expect("echo text");
+        let rest = body.get(i.saturating_add(pat.len())..).expect("echo rest");
+        let end = rest.find('"').expect("echo end");
+        let got = rest.get(..end).expect("echo slice");
+        assert_eq!(got, expect, "{body}");
     }
 
     #[test]
@@ -1264,6 +1313,20 @@ mod tests {
         assert_eq!(status, 200, "{body}");
         assert!(body.contains("\"tokens\":["), "{body}");
         assert!(body.contains(&format!("\"count\":{}", ids.len())), "{body}");
+        let ordinary = tok.encode("ab").expect("encode");
+        let mut streams = [connect_nb(addr)];
+        write_all_nb(
+            &mut streams[0],
+            &post_path("/tokenize", r#"{"prompt":"ab","add_special_tokens":false}"#),
+        );
+        let mut bufs = [Vec::new()];
+        drive(&mut http, &mut streams, &mut bufs);
+        let (status, body) = response_done(&bufs[0]).expect("ordinary");
+        assert_eq!(status, 200, "{body}");
+        assert!(
+            body.contains(&format!("\"count\":{}", ordinary.len())),
+            "{body}"
+        );
         let mut streams = [connect_nb(addr)];
         write_all_nb(
             &mut streams[0],

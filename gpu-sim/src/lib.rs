@@ -341,6 +341,13 @@
 //! `cudaGraphEventRecordNodeGetEvent` / `WaitNodeGetEvent`.
 //! [`graph_alloc_get_params`](Sim::graph_alloc_get_params) is
 //! `cudaGraphMemAllocNodeGetParams` (stored id and bytes).
+//! [`graph_free_get_params`](Sim::graph_free_get_params) is
+//! `cudaGraphMemFreeNodeGetParams` (stored [`AllocId`]).
+//! [`graph_free_set_params`](Sim::graph_free_set_params) /
+//! [`graph_exec_free_set_params`](Sim::graph_exec_free_set_params) are
+//! `cudaGraphMemFreeNodeSetParams` / `cudaGraphExecMemFreeNodeSetParams`
+//! (definition SetParams does not retarget an exec; `graph_allocs` stays
+//! alloc-node ids).
 //! [`graph_exec_event_record_set_event`](Sim::graph_exec_event_record_set_event) /
 //! [`graph_exec_event_wait_set_event`](Sim::graph_exec_event_wait_set_event) are
 //! `cudaGraphExecEventRecordNodeSetEvent` / `WaitNodeSetEvent` (event id is the
@@ -7734,6 +7741,93 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn graph_free_get_set_params_wraps_stored_id() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_free(g, a).unwrap();
+        assert_eq!(sim.graph_free_get_params(g, 0).unwrap(), a);
+        sim.graph_free_set_params(g, 0, b).unwrap();
+        assert_eq!(sim.graph_free_get_params(g, 0).unwrap(), b);
+        match sim.graph_alloc_get_params(g, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mem alloc"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let kern = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(kern, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        match sim.graph_free_get_params(kern, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mem free"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_free_set_params(kern, 0, b) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mem free"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_free_set_params(g, 0, AllocId(99)) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        let _ = sim.instantiate_graph(g).unwrap();
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert!(!sim.is_resident(b, d).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(sim.graph_free_get_params(g, 0).unwrap(), b);
+        match sim.graph_free_set_params(g, 0, b) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_exec_free_set_params_retargets_exec_not_definition() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_free(g, a).unwrap();
+        let err = sim.graph_exec_free_set_params(g, 0, b).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.graph_free_set_params(g, 0, b).unwrap();
+        assert_eq!(sim.graph_free_get_params(exec, 0).unwrap(), a);
+        let t0 = sim.clock_ns();
+        sim.graph_exec_free_set_params(exec, 0, b).unwrap();
+        assert_eq!(
+            sim.clock_ns().saturating_sub(t0),
+            h100().gpu(d).unwrap().graph_set_params_ns.max(1)
+        );
+        assert_eq!(sim.graph_free_get_params(exec, 0).unwrap(), b);
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(a, d).unwrap());
+        assert!(!sim.is_resident(b, d).unwrap());
+        match sim.graph_exec_free_set_params(exec, 0, AllocId(99)) {
+            Err(SimError::UnknownAlloc { alloc }) => assert_eq!(alloc, AllocId(99)),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_exec_free_set_params(exec, 0, a) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
     }
 
     #[test]

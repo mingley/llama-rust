@@ -2012,6 +2012,38 @@ model, do not celebrate the sim.
     Query; legal during capture. Decode identity unchanged. `gpu-profile
     capture` is still refused. Dual score still has no `$/M tokens`.
 
+172. [x] `cudaGraphMemFreeNodeGetParams`:
+    `Sim::graph_free_get_params` returns the stored `AllocId`. Instantiated
+    ids use the exec snapshot (same as `graph_alloc_get_params`). Wrong
+    node kind is Invalid `"not a mem free node"`. Query; legal during
+    capture. `graph_allocs` stays alloc-node ids. Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+173. [x] `cudaGraphMemFreeNodeSetParams` / `cudaGraphExecMemFreeNodeSetParams`:
+    `Sim::graph_free_set_params` mutates the definition (`g.steps`, 1 ns
+    host-sync) and does not retarget an already-instantiated exec.
+    `graph_exec_free_set_params` mutates the exec snapshot
+    (`graph_set_params_ns`, clears upload). Node must already be
+    `Kind::Free`. Unknown ids are `UnknownAlloc`. Capture refused.
+    `update_graph` of mem nodes stays Invalid. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no `$/M
+    tokens`.
+
+174. [x] Serve OpenAI `echo` on `POST /v1/completions`:
+    `GenReq.echo` (default false) selects `GreedyParts.full` vs
+    `completion` for `choices[].text`. Chat ignores `echo`. `--engine`
+    non-stream Completions decode prompt+generated when echo is set;
+    streaming Completions emit the prompt as the first SSE delta.
+    Decode identity unchanged. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+175. [x] Serve tokenize `add_special_tokens`:
+    Default true is `prompt_ids` (BOS when `add_bos`). False is
+    `Tokenizer::encode` without extra BOS. Do not invent `max_model_len`
+    or `/v1/tokenize`. Decode identity unchanged. `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

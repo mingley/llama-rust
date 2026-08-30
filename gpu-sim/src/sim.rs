@@ -3278,6 +3278,46 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphMemFreeNodeSetParams` on the graph definition.
+    ///
+    /// After [`Self::instantiate_graph`], this does not retarget the exec
+    /// snapshot; use [`Self::graph_exec_free_set_params`]. Capture cannot
+    /// include it. Host-sync 1 ns. The node must already be a mem free node.
+    /// [`Sim::graph_allocs`] stays the alloc-node ids.
+    pub fn graph_free_set_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        id: AllocId,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mem free node set params")?;
+        let _a = self.alloc_ref(id)?;
+        let device = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            if !matches!(step.kind, Kind::Free { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a mem free node",
+                });
+            }
+            step.device
+        };
+        let _gpu = self.profile.gpu(device)?;
+        self.clock = self.clock.saturating_add(1);
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.kind = Kind::Free { id };
+        Ok(())
+    }
+
     /// `cudaGraphBatchMemOpNodeSetParams` on the graph definition.
     ///
     /// After instantiate this does not retarget the exec; use
@@ -3699,6 +3739,48 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphExecMemFreeNodeSetParams` on an instantiated exec.
+    ///
+    /// Node `node` must already be a mem free node. The freed id may change.
+    /// Pays `graph_set_params_ns` and clears the upload flag. Capture cannot
+    /// include it. Graphs with mem alloc/free nodes are legal (unlike
+    /// [`Self::update_graph`]). [`Sim::graph_allocs`] stays the alloc-node ids.
+    pub fn graph_exec_free_set_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        id: AllocId,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mem free node set params")?;
+        let _a = self.alloc_ref(id)?;
+        let exec = self.as_exec(exec)?;
+        let device = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.view().get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            if !matches!(step.kind, Kind::Free { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a mem free node",
+                });
+            }
+            step.device
+        };
+        let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.kind = Kind::Free { id };
+        g.uploaded = false;
+        Ok(())
+    }
+
     /// Unique kernel node on `graph` plus its current [`KernelNodeParams`].
     ///
     /// Zero or more than one kernel node is Invalid. Used by
@@ -4061,6 +4143,20 @@ impl Sim {
             Kind::Alloc { id, bytes } => Ok((*id, *bytes)),
             _ => Err(SimError::Invalid {
                 why: "not a mem alloc node",
+            }),
+        }
+    }
+
+    /// `cudaGraphMemFreeNodeGetParams` of the stored [`AllocId`].
+    ///
+    /// Query; legal during capture. Instantiated ids use the exec snapshot
+    /// (same as [`Self::graph_alloc_get_params`]). [`Sim::graph_allocs`] is
+    /// alloc-node ids for AutoFree / destroy refund, not this free target.
+    pub fn graph_free_get_params(&self, graph: GraphId, node: usize) -> Result<AllocId, SimError> {
+        match &self.graph_view_step(graph, node)?.kind {
+            Kind::Free { id } => Ok(*id),
+            _ => Err(SimError::Invalid {
+                why: "not a mem free node",
             }),
         }
     }

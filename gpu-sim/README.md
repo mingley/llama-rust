@@ -352,6 +352,11 @@ for `update_graph`; mem nodes legal).
 `graph_event_record_get_event` / `graph_event_wait_get_event` are
 `cudaGraphEventRecordNodeGetEvent` / `WaitNodeGetEvent`.
 `graph_alloc_get_params` is `cudaGraphMemAllocNodeGetParams` (id and bytes).
+`graph_free_get_params` is `cudaGraphMemFreeNodeGetParams` (stored id).
+`graph_free_set_params` / `graph_exec_free_set_params` are
+`cudaGraphMemFreeNodeSetParams` / `cudaGraphExecMemFreeNodeSetParams`
+(definition SetParams does not retarget an exec; `graph_allocs` stays
+alloc-node ids).
 `graph_exec_event_record_set_event` / `graph_exec_event_wait_set_event` are
 `cudaGraphExecEventRecordNodeSetEvent` / `WaitNodeSetEvent` (event id is the
 parameter; External is topology).

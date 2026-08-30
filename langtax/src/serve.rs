@@ -9,8 +9,12 @@
 //! `GET /v1/models` and `GET /v1/models/{id}` are the OpenAI list/retrieve
 //! objects (`--model-id`, default GGUF stem). `GET /health` is `{"status":"ok"}`.
 //! `GET /metrics` is `{"engine":false}` here, or Engine counters with `--engine`.
-//! `POST /tokenize` is `{"tokens","count"}` of the same prompt path as generate.
-//! `POST /detokenize` is `{"text"}` from a token-id array. No crates.io HTTP stack.
+//! `POST /tokenize` is `{"tokens","count"}` of the same prompt path as generate
+//! (`add_special_tokens`, default true, is BOS via `prompt_ids`; false is
+//! `Tokenizer::encode` without extra BOS). `POST /detokenize` is `{"text"}`
+//! from a token-id array. `POST /v1/completions` `echo` (default false) returns
+//! prompt plus completion in `choices[].text`. Chat ignores `echo`. No crates.io
+//! HTTP stack.
 
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
@@ -698,6 +702,10 @@ pub(crate) struct GenReq {
     add_generation_prompt: bool,
     pub(crate) n_predict: Option<usize>,
     pub(crate) stream: bool,
+    /// OpenAI `/v1/completions` only: include the prompt in `choices[].text`.
+    pub(crate) echo: bool,
+    /// Tokenize: insert BOS when the tokenizer's `add_bos` is set (default true).
+    pub(crate) add_special_tokens: bool,
 }
 
 impl GenReq {
@@ -818,7 +826,11 @@ fn dispatch(
         Ok(parts) => {
             let hit = cache.as_ref().map_or(0, KvCache::last_prefix_hit);
             let pages = cache.as_ref().map_or(0, KvCache::page_hits);
-            (200, "OK", json_ok(api, &parts, hit, pages, &args.model_id))
+            (
+                200,
+                "OK",
+                json_ok(api, &parts, hit, pages, &args.model_id, gen.echo),
+            )
         }
         Err(LlamaError::EmptyPrompt) => (400, "Bad Request", json_err(Some(api), "empty prompt")),
         Err(e) => (
@@ -929,11 +941,19 @@ fn tokenize_body(tok: &Tokenizer, body: &str) -> (u16, &'static str, String) {
     if prompt.is_empty() {
         return (400, "Bad Request", json_error("empty prompt"));
     }
-    match prompt_ids(tok, &prompt) {
+    match tokenize_ids(tok, &prompt, gen.add_special_tokens) {
         Ok(ids) if !ids.is_empty() => (200, "OK", json_tokens(&ids)),
         Ok(_) => (400, "Bad Request", json_error("empty prompt")),
         Err(LlamaError::EmptyPrompt) => (400, "Bad Request", json_error("empty prompt")),
         Err(e) => (500, "Internal Server Error", json_error(&e.to_string())),
+    }
+}
+
+fn tokenize_ids(tok: &Tokenizer, prompt: &str, add_special: bool) -> Result<Vec<u32>, LlamaError> {
+    if add_special {
+        prompt_ids(tok, prompt)
+    } else {
+        Ok(tok.encode(prompt)?)
     }
 }
 
@@ -1002,11 +1022,18 @@ pub(crate) fn finish_reason(generated: usize, n_predict: usize) -> &'static str 
     }
 }
 
-fn json_ok(api: ServeApi, parts: &GreedyParts, hit: usize, pages: u64, model: &str) -> String {
+fn json_ok(
+    api: ServeApi,
+    parts: &GreedyParts,
+    hit: usize,
+    pages: u64,
+    model: &str,
+    echo: bool,
+) -> String {
     match api {
         ServeApi::Generate => json_generated(&parts.full, hit, pages),
         ServeApi::Completions => json_openai_completion(
-            &parts.completion,
+            if echo { &parts.full } else { &parts.completion },
             parts.prompt_tokens,
             parts.completion_tokens,
             parts.finish,
@@ -1717,6 +1744,8 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
     let mut add_generation_prompt = None;
     let mut n_predict = None;
     let mut stream = None;
+    let mut echo = None;
+    let mut add_special_tokens = None;
     let mut need_comma = false;
     loop {
         scan.skip_ws();
@@ -1740,6 +1769,8 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
             "n_predict" => set_n_predict(&mut n_predict, scan.parse_usize()?, "n_predict")?,
             "max_tokens" => set_n_predict(&mut n_predict, scan.parse_usize()?, "max_tokens")?,
             "stream" => stream = Some(scan.parse_bool()?),
+            "echo" => echo = Some(scan.parse_bool()?),
+            "add_special_tokens" => add_special_tokens = Some(scan.parse_bool()?),
             _ => scan.skip_value()?,
         }
         need_comma = true;
@@ -1756,6 +1787,8 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
         add_generation_prompt: add_generation_prompt.unwrap_or(true),
         n_predict,
         stream: stream.unwrap_or(false),
+        echo: echo.unwrap_or(false),
+        add_special_tokens: add_special_tokens.unwrap_or(true),
     })
 }
 
@@ -2795,9 +2828,15 @@ mod tests {
         assert_eq!(a.prompt.as_deref(), Some("ab"));
         assert_eq!(a.n_predict, None);
         assert!(!a.stream);
+        assert!(!a.echo);
+        assert!(a.add_special_tokens);
         assert_eq!(a.resolve(&tok).unwrap(), "ab");
         let streamed = parse_gen_req(r#"{"prompt":"ab","stream":true}"#).unwrap();
         assert!(streamed.stream);
+        let echoed = parse_gen_req(r#"{"prompt":"ab","echo":true}"#).unwrap();
+        assert!(echoed.echo);
+        let no_special = parse_gen_req(r#"{"prompt":"ab","add_special_tokens":false}"#).unwrap();
+        assert!(!no_special.add_special_tokens);
         let unstreamed = parse_gen_req(r#"{"prompt":"ab","stream":false}"#).unwrap();
         assert!(!unstreamed.stream);
         let b = parse_gen_req(r#"{ "prompt" : "ab", "n_predict" : 4 }"#).unwrap();
@@ -3211,6 +3250,24 @@ mod tests {
         );
         assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
         assert_eq!(body, json_tokens(&chat_ids));
+        let ordinary = tok.encode("ab").expect("encode");
+        let special = prompt_ids(&tok, "ab").expect("special");
+        let (head, body) = exchange(
+            &post_path("/tokenize", r#"{"prompt":"ab","add_special_tokens":false}"#),
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(body, json_tokens(&ordinary));
+        let (head, body) = exchange(
+            &post_path("/tokenize", r#"{"prompt":"ab","add_special_tokens":true}"#),
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(body, json_tokens(&special));
     }
 
     fn ids_csv(ids: &[u32]) -> String {
@@ -3253,6 +3310,17 @@ mod tests {
         assert!(body.contains("\"object\":\"text_completion\""), "{body}");
         assert!(body.contains("\"model\":\"tiny\""), "{body}");
         assert_eq!(json_string_at(&body, "text").unwrap(), completion);
+        let (head, body) = exchange(
+            &post_v1(
+                "/v1/completions",
+                r#"{"prompt":"ab","max_tokens":2,"echo":true}"#,
+            ),
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(json_string_at(&body, "text").unwrap(), expect);
         let (head, native) = exchange(&post_json(r#"{"prompt":"ab"}"#), &model, &tok, &args);
         assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
         assert_eq!(json_field_string(&native, "generated").unwrap(), expect);
@@ -3278,6 +3346,17 @@ mod tests {
         );
         assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
         assert!(body.contains("\"object\":\"chat.completion\""), "{body}");
+        assert_eq!(json_string_at(&body, "content").unwrap(), completion);
+        let (head, body) = exchange(
+            &post_v1(
+                "/v1/chat/completions",
+                r#"{"messages":[{"role":"user","content":"ab"}],"max_tokens":2,"echo":true}"#,
+            ),
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
         assert_eq!(json_string_at(&body, "content").unwrap(), completion);
         let (head, native) = exchange(&post_json(r#"{"prompt":"ab"}"#), &model, &tok, &args);
         assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
