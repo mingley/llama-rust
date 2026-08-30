@@ -2918,7 +2918,13 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-278. [ ] Next numbered PLAN item after 277 is the next `gpu-sim` / Engine /
+278. [x] `cudaDevAttrKernelExecTimeout`:
+    [`DeviceAttr::KernelExecTimeout`] is always 0 (example SKUs have no
+    display watchdog). [`DeviceProperties::kernel_exec_timeout`] matches.
+    Query; capture-legal. Decode identity unchanged. `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+279. [ ] Next numbered PLAN item after 278 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

@@ -847,6 +847,9 @@ pub enum DeviceAttr {
     ComputeMode,
     /// `cudaDevAttrTccDriver` (always 0; example SKUs are not Windows TCC).
     TccDriver,
+    /// `cudaDevAttrKernelExecTimeout` (always 0; example SKUs have no display
+    /// watchdog).
+    KernelExecTimeout,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -970,6 +973,8 @@ pub struct DeviceProperties {
     pub compute_mode: u32,
     /// `cudaDevAttrTccDriver` (example SKUs are not Windows TCC).
     pub tcc_driver: bool,
+    /// `cudaDevAttrKernelExecTimeout` (example SKUs have no display watchdog).
+    pub kernel_exec_timeout: bool,
 }
 
 /// `cudaComputeMode` for [`DeviceAttr::ComputeMode`].

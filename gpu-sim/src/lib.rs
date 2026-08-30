@@ -312,6 +312,8 @@
 //! [`DeviceAttr::ComputeMode`] is always [`ComputeMode::DEFAULT`] (exclusive
 //! process / prohibited are not modeled).
 //! [`DeviceAttr::TccDriver`] is always 0 (example SKUs are not Windows TCC).
+//! [`DeviceAttr::KernelExecTimeout`] is always 0 (example SKUs have no display
+//! watchdog).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -10942,6 +10944,26 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::TccDriver).unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_has_no_kernel_exec_timeout() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert!(!hp.kernel_exec_timeout);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::KernelExecTimeout)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::KernelExecTimeout)
+                .unwrap(),
             0
         );
         let _g = sim.end_capture().unwrap();
