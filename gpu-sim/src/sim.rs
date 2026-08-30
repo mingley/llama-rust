@@ -13059,7 +13059,9 @@ impl Sim {
             | DeviceAttr::ComputeMode
             | DeviceAttr::TccDriver
             | DeviceAttr::KernelExecTimeout => 0,
-            DeviceAttr::StreamPrioritiesSupported | DeviceAttr::UnifiedAddressing => 1,
+            DeviceAttr::StreamPrioritiesSupported
+            | DeviceAttr::UnifiedAddressing
+            | DeviceAttr::CanUse64BitStreamMemOps => 1,
             DeviceAttr::GpuOverlap => u64::from(gpu.copy_engines > 0),
             DeviceAttr::MulticastSupported => u64::from(self.profile.multicast_supported(device)),
         })
@@ -13127,6 +13129,7 @@ impl Sim {
             compute_mode: ComputeMode::DEFAULT,
             tcc_driver: false,
             kernel_exec_timeout: false,
+            can_use_64_bit_stream_mem_ops: true,
         })
     }
 

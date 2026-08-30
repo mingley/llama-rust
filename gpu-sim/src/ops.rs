@@ -850,6 +850,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrKernelExecTimeout` (always 0; example SKUs have no display
     /// watchdog).
     KernelExecTimeout,
+    /// `cudaDevAttrCanUse64BitStreamMemOps` (always 1; this VM has
+    /// [`crate::Sim::wait_value64`] / [`crate::Sim::write_value64`]).
+    CanUse64BitStreamMemOps,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -975,6 +978,9 @@ pub struct DeviceProperties {
     pub tcc_driver: bool,
     /// `cudaDevAttrKernelExecTimeout` (example SKUs have no display watchdog).
     pub kernel_exec_timeout: bool,
+    /// `cudaDevAttrCanUse64BitStreamMemOps` (this VM has
+    /// [`crate::Sim::wait_value64`] / [`crate::Sim::write_value64`]).
+    pub can_use_64_bit_stream_mem_ops: bool,
 }
 
 /// `cudaComputeMode` for [`DeviceAttr::ComputeMode`].

@@ -314,6 +314,8 @@
 //! [`DeviceAttr::TccDriver`] is always 0 (example SKUs are not Windows TCC).
 //! [`DeviceAttr::KernelExecTimeout`] is always 0 (example SKUs have no display
 //! watchdog).
+//! [`DeviceAttr::CanUse64BitStreamMemOps`] is always 1 (this VM has
+//! [`wait_value64`](Sim::wait_value64) / [`write_value64`](Sim::write_value64)).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -10965,6 +10967,26 @@ mod tests {
             sim.device_get_attribute(d, DeviceAttr::KernelExecTimeout)
                 .unwrap(),
             0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_can_use_64_bit_stream_mem_ops() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert!(hp.can_use_64_bit_stream_mem_ops);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::CanUse64BitStreamMemOps)
+                .unwrap(),
+            1
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::CanUse64BitStreamMemOps)
+                .unwrap(),
+            1
         );
         let _g = sim.end_capture().unwrap();
     }
