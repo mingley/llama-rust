@@ -2080,6 +2080,99 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphMemcpyNodeSetParams` on the graph definition.
+    ///
+    /// After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_memcpy_set_params`]. Pageable copies stay illegal.
+    /// Capture cannot include it. Host-sync 1 ns.
+    pub fn graph_memcpy_set_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: &MemcpyOp,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture memcpy node set params")?;
+        if op.src.is_pageable() || op.dst.is_pageable() {
+            return Err(SimError::Invalid {
+                why: "cannot add pageable memcpy",
+            });
+        }
+        let device = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            if !matches!(step.kind, Kind::Memcpy(_)) {
+                return Err(SimError::Invalid {
+                    why: "not a memcpy node",
+                });
+            }
+            step.device
+        };
+        self.memcpy_precheck(op)?;
+        let _gpu = self.profile.gpu(device)?;
+        self.clock = self.clock.saturating_add(1);
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.kind = Kind::Memcpy(op.clone());
+        Ok(())
+    }
+
+    /// `cudaGraphMemsetNodeSetParams` on the graph definition.
+    ///
+    /// After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_memset_set_params`]. Zero-byte fills stay illegal.
+    /// Capture cannot include it. Host-sync 1 ns.
+    pub fn graph_memset_set_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        buf: KernelBuf,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture memset node set params")?;
+        let device = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            if !matches!(step.kind, Kind::Memset { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a memset node",
+                });
+            }
+            step.device
+        };
+        let total = self.alloc_ref(buf.id)?.bytes;
+        let (offset, bytes) = kernel_span(total, &buf)?;
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "zero-byte memset",
+            });
+        }
+        let _gpu = self.profile.gpu(device)?;
+        self.clock = self.clock.saturating_add(1);
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.kind = Kind::Memset {
+            id: buf.id,
+            offset,
+            bytes,
+        };
+        Ok(())
+    }
+
     /// `cudaGraphExecMemcpyNodeSetParams` on an instantiated exec.
     ///
     /// Node `node` must already be a memcpy. [`MemcpyOp`] src/dst/alloc/bytes

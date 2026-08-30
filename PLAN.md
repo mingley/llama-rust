@@ -1389,6 +1389,12 @@ model, do not celebrate the sim.
     rent * wall_ns * 1e6 / (hour_ns * n_tokens)` microdollars per million
     tokens. Not a capture. `gpu-profile capture` is still refused.
 
+101. [x] Graph-side memcpy/memset SetParams: `graph_memcpy_set_params` /
+    `graph_memset_set_params` are `cudaGraphMemcpyNodeSetParams` /
+    `cudaGraphMemsetNodeSetParams` on the graph definition. After
+    instantiate they do not retarget the exec snapshot. Decode identity
+    stays ExecSetParams. `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

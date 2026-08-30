@@ -126,9 +126,11 @@
 //! `cudaGraphExecGetFlags`. Instantiate snapshots the graph into an exec
 //! (same [`GraphId`]); [`launch_graph`](Sim::launch_graph) and
 //! `cudaGraphExec*SetParams` use that snapshot.
-//! [`graph_kernel_set_params`](Sim::graph_kernel_set_params) is
-//! `cudaGraphKernelNodeSetParams` on the graph and does not retarget an
-//! already-instantiated exec.
+//! [`graph_kernel_set_params`](Sim::graph_kernel_set_params) /
+//! [`graph_memcpy_set_params`](Sim::graph_memcpy_set_params) /
+//! [`graph_memset_set_params`](Sim::graph_memset_set_params) are
+//! `cudaGraphKernelNodeSetParams` / `MemcpyNodeSetParams` / `MemsetNodeSetParams`
+//! on the graph and do not retarget an already-instantiated exec.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -3147,6 +3149,63 @@ mod tests {
             now.reads[0].id, a,
             "unique kernel on an instantiated id is the exec snapshot"
         );
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        let err = sim.synchronize().unwrap_err();
+        match err {
+            SimError::NotResident { alloc, device } => {
+                assert_eq!(alloc, a);
+                assert_eq!(device, d);
+            }
+            e => panic!("{e:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_memcpy_set_params_does_not_retarget_instantiated_exec() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        let op_a = MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: a,
+            bytes: 4096,
+            offset: 0,
+        };
+        sim.graph_add_memcpy(g, op_a.clone()).unwrap();
+        sim.instantiate_graph(g).unwrap();
+        let mut op_b = op_a;
+        op_b.alloc = b;
+        sim.graph_memcpy_set_params(g, 0, &op_b).unwrap();
+        let (_, now) = sim.graph_unique_memcpy(g).unwrap();
+        assert_eq!(now.alloc, a, "unique memcpy is the exec snapshot");
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        let err = sim.synchronize().unwrap_err();
+        match err {
+            SimError::UnknownAlloc { alloc } | SimError::NotResident { alloc, .. } => {
+                assert_eq!(alloc, a);
+            }
+            e => panic!("{e:?}"),
+        }
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset(g, KernelBuf::whole(a)).unwrap();
+        sim.instantiate_graph(g).unwrap();
+        sim.graph_memset_set_params(g, 0, KernelBuf::whole(b))
+            .unwrap();
+        let (_, now) = sim.graph_unique_memset(g).unwrap();
+        assert_eq!(now.id, a, "unique memset is the exec snapshot");
         sim.free_sync(a).unwrap();
         let n = sim.launch_graph(g, s).unwrap();
         assert_eq!(n, 1);

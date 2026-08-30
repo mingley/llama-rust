@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — graph-side memcpy/memset SetParams
+
+`graph_memcpy_set_params` / `graph_memset_set_params` are
+`cudaGraphMemcpyNodeSetParams` / `MemsetNodeSetParams` on the graph
+definition. After instantiate they do not retarget the exec snapshot.
+Decode identity stays ExecSetParams. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — dual-score `$/M tokens` from profile rent
 
 `HardwareProfile::rent_usd_micros_per_hour` is an example list-price knob
