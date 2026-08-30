@@ -2560,7 +2560,17 @@ model, do not celebrate the sim.
     unchanged. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-235. [ ] Next numbered PLAN item after 234 is the next `gpu-sim` / Engine /
+235. [x] `cudaFuncAttributeClusterDimMustBeSet` /
+    `RequiredClusterWidth` / `Height` / `Depth`:
+    [`set_cluster_dim_must_be_set`] / [`set_required_cluster_width`]
+    (height/depth). A kernel without cluster is Invalid `"cluster dim must
+    be set"` or `"required cluster"`. A nonzero required axis must match
+    the launch. `0` clears a required axis. Over-SKU sizes Invalid
+    `"cluster size"` at Set. Capture-legal. Decode identity stays unset.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+236. [ ] Next numbered PLAN item after 235 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

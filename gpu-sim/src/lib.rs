@@ -5433,6 +5433,103 @@ mod tests {
     }
 
     #[test]
+    fn cluster_dim_must_be_set_and_required_size() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        assert!(!sim.cluster_dim_must_be_set(d).unwrap());
+        sim.set_cluster_dim_must_be_set(d, true).unwrap();
+        match sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cluster dim must be set"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        enq(sim.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            KernelAttrs {
+                cluster: Some(ClusterDim::x(2)),
+                ..KernelAttrs::default()
+            },
+        ));
+        sim.set_required_cluster_width(d, 2).unwrap();
+        enq(sim.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            KernelAttrs {
+                cluster: Some(ClusterDim::x(2)),
+                ..KernelAttrs::default()
+            },
+        ));
+        match sim.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            KernelAttrs {
+                cluster: Some(ClusterDim::x(4)),
+                ..KernelAttrs::default()
+            },
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("required cluster"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.set_cluster_dim_must_be_set(d, false).unwrap();
+        sim.set_required_cluster_width(d, 0).unwrap();
+        sim.set_required_cluster_height(d, 2).unwrap();
+        match sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("required cluster"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        enq(sim.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            KernelAttrs {
+                cluster: Some(ClusterDim { x: 1, y: 2, z: 1 }),
+                ..KernelAttrs::default()
+            },
+        ));
+        match sim.set_required_cluster_width(d, 9) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("cluster size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.func_get_attribute(d, FuncAttr::RequiredClusterHeight)
+                .unwrap(),
+            2
+        );
+        let attrs = sim.func_get_attributes(d).unwrap();
+        assert!(!attrs.cluster_dim_must_be_set);
+        assert_eq!(attrs.required_cluster_height, 2);
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        sim.func_set_attribute(d, FuncAttr::ClusterDimMustBeSet, 1)
+            .unwrap();
+        assert!(sim.cluster_dim_must_be_set(d).unwrap());
+        let _g = sim.end_capture().unwrap();
+        match sim.func_set_attribute(d, FuncAttr::ClusterDimMustBeSet, 2) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("func attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.func_set_attribute(d, FuncAttr::RequiredClusterDepth, -1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("func attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn non_portable_cluster_size_requires_func_attribute() {
         let p = HardwareProfile::parse("gpus=1\nmax_blocks_per_cluster=16\n").unwrap();
         let mut sim = Sim::new(p);

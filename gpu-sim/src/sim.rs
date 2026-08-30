@@ -284,6 +284,14 @@ struct GpuRt {
     /// `cudaFuncAttributePreferredSharedMemoryCarveout`. Launch Default inherits
     /// this occupancy.
     func_carveout: SharedMemCarveout,
+    /// `cudaFuncAttributeClusterDimMustBeSet`.
+    cluster_dim_must_be_set: bool,
+    /// `cudaFuncAttributeRequiredClusterWidth` (`0` unset).
+    required_cluster_x: u32,
+    /// `cudaFuncAttributeRequiredClusterHeight` (`0` unset).
+    required_cluster_y: u32,
+    /// `cudaFuncAttributeRequiredClusterDepth` (`0` unset).
+    required_cluster_z: u32,
     /// `cudaSetDeviceFlags`. Auto streams inherit the schedule tax.
     device_flags: u32,
 }
@@ -769,6 +777,10 @@ impl Sim {
                     shared_mem_config: SharedMemoryMode::Default,
                     func_shared_mem_config: SharedMemoryMode::Default,
                     func_carveout: SharedMemCarveout::Default,
+                    cluster_dim_must_be_set: false,
+                    required_cluster_x: 0,
+                    required_cluster_y: 0,
+                    required_cluster_z: 0,
                     device_flags: DeviceFlags::SCHEDULE_AUTO,
                 },
             );
@@ -11948,6 +11960,102 @@ impl Sim {
         Ok(self.gpu_rt(device)?.func_carveout)
     }
 
+    /// `cudaFuncSetAttribute(..., cudaFuncAttributeClusterDimMustBeSet)`.
+    ///
+    /// Per device. When true, a kernel without
+    /// [`KernelAttrs::cluster`] is Invalid `"cluster dim must be set"`.
+    /// Capture-legal. Decode identity stays false.
+    pub fn set_cluster_dim_must_be_set(
+        &mut self,
+        device: DeviceId,
+        required: bool,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.gpu_rt_mut(device)?.cluster_dim_must_be_set = required;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// Current [`Self::set_cluster_dim_must_be_set`]. Query; legal during capture.
+    pub fn cluster_dim_must_be_set(&self, device: DeviceId) -> Result<bool, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.cluster_dim_must_be_set)
+    }
+
+    /// `cudaFuncSetAttribute(..., cudaFuncAttributeRequiredClusterWidth)`.
+    ///
+    /// `0` clears the requirement. A launch cluster must match a nonzero
+    /// width. Capture-legal. Decode identity stays `0`.
+    pub fn set_required_cluster_width(
+        &mut self,
+        device: DeviceId,
+        width: u32,
+    ) -> Result<(), SimError> {
+        self.set_required_cluster_axis(device, 0, width)
+    }
+
+    /// Current [`Self::set_required_cluster_width`]. Query; legal during capture.
+    pub fn required_cluster_width(&self, device: DeviceId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.required_cluster_x)
+    }
+
+    /// `cudaFuncSetAttribute(..., cudaFuncAttributeRequiredClusterHeight)`.
+    pub fn set_required_cluster_height(
+        &mut self,
+        device: DeviceId,
+        height: u32,
+    ) -> Result<(), SimError> {
+        self.set_required_cluster_axis(device, 1, height)
+    }
+
+    /// Current [`Self::set_required_cluster_height`]. Query; legal during capture.
+    pub fn required_cluster_height(&self, device: DeviceId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.required_cluster_y)
+    }
+
+    /// `cudaFuncSetAttribute(..., cudaFuncAttributeRequiredClusterDepth)`.
+    pub fn set_required_cluster_depth(
+        &mut self,
+        device: DeviceId,
+        depth: u32,
+    ) -> Result<(), SimError> {
+        self.set_required_cluster_axis(device, 2, depth)
+    }
+
+    /// Current [`Self::set_required_cluster_depth`]. Query; legal during capture.
+    pub fn required_cluster_depth(&self, device: DeviceId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.required_cluster_z)
+    }
+
+    fn set_required_cluster_axis(
+        &mut self,
+        device: DeviceId,
+        axis: u8,
+        n: u32,
+    ) -> Result<(), SimError> {
+        if n != 0 {
+            let dim = match axis {
+                0 => ClusterDim::x(n),
+                1 => ClusterDim { x: 1, y: n, z: 1 },
+                _ => ClusterDim { x: 1, y: 1, z: n },
+            };
+            let _c = self.cluster_block_count(device, dim)?;
+        } else {
+            let _gpu = self.profile.gpu(device)?;
+        }
+        let rt = self.gpu_rt_mut(device)?;
+        match axis {
+            0 => rt.required_cluster_x = n,
+            1 => rt.required_cluster_y = n,
+            _ => rt.required_cluster_z = n,
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// `cudaSetDeviceFlags`. Host-synchronous. Capture cannot include it.
     ///
     /// Schedule bits [`DeviceFlags::SCHEDULE_AUTO`] / [`DeviceFlags::SCHEDULE_SPIN`] /
@@ -15576,7 +15684,34 @@ impl Sim {
         preferred: Option<ClusterDim>,
         mode: PortableClusterMode,
     ) -> Result<(), SimError> {
+        let (must, req_x, req_y, req_z) = {
+            let rt = self.gpu_rt(device)?;
+            (
+                rt.cluster_dim_must_be_set,
+                rt.required_cluster_x,
+                rt.required_cluster_y,
+                rt.required_cluster_z,
+            )
+        };
+        if must && cluster.is_none() {
+            return Err(SimError::Invalid {
+                why: "cluster dim must be set",
+            });
+        }
+        if (req_x != 0 || req_y != 0 || req_z != 0) && cluster.is_none() {
+            return Err(SimError::Invalid {
+                why: "required cluster",
+            });
+        }
         if let Some(c) = cluster {
+            if (req_x != 0 && c.x != req_x)
+                || (req_y != 0 && c.y != req_y)
+                || (req_z != 0 && c.z != req_z)
+            {
+                return Err(SimError::Invalid {
+                    why: "required cluster",
+                });
+            }
             let _n = self.validate_cluster(device, c, mode)?;
         }
         if let Some(p) = preferred {
@@ -15723,10 +15858,15 @@ impl Sim {
     /// one function-attr set per device, not per kernel function.
     pub fn func_get_attributes(&self, device: DeviceId) -> Result<FuncAttributes, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        let rt = self.gpu_rt(device)?;
         Ok(FuncAttributes {
             max_dynamic_shared_size_bytes: self.max_dynamic_shared_memory(device),
             non_portable_cluster_size_allowed: self.non_portable_cluster_size_allowed(device),
-            preferred_shmem_carveout: self.gpu_rt(device)?.func_carveout,
+            preferred_shmem_carveout: rt.func_carveout,
+            cluster_dim_must_be_set: rt.cluster_dim_must_be_set,
+            required_cluster_width: rt.required_cluster_x,
+            required_cluster_height: rt.required_cluster_y,
+            required_cluster_depth: rt.required_cluster_z,
         })
     }
 
@@ -15735,8 +15875,9 @@ impl Sim {
     /// Dispatches [`FuncAttr`] onto the typed setters. Capture-legal like those
     /// setters. Negative [`FuncAttr::MaxDynamicSharedMemorySize`], a non-0/1
     /// [`FuncAttr::NonPortableClusterSizeAllowed`], or a carveout other than
-    /// `-1`/`0`/`100` is Invalid `"func attr"`. Typed helpers stay. Decode
-    /// identity stays `0` / disallowed / Default.
+    /// `-1`/`0`/`100` is Invalid `"func attr"`. Cluster-dim-must-be-set is
+    /// `0`/`1`. Required cluster axes are nonnegative (`0` unset). Typed
+    /// helpers stay. Decode identity stays `0` / disallowed / Default / unset.
     pub fn func_set_attribute(
         &mut self,
         device: DeviceId,
@@ -15759,6 +15900,24 @@ impl Sim {
                 let carveout = SharedMemCarveout::from_cuda(value)?;
                 self.set_func_carveout(device, carveout)
             }
+            FuncAttr::ClusterDimMustBeSet => {
+                if value != 0 && value != 1 {
+                    return Err(SimError::Invalid { why: "func attr" });
+                }
+                self.set_cluster_dim_must_be_set(device, value != 0)
+            }
+            FuncAttr::RequiredClusterWidth => {
+                let n = u32::try_from(value).map_err(|_| SimError::Invalid { why: "func attr" })?;
+                self.set_required_cluster_width(device, n)
+            }
+            FuncAttr::RequiredClusterHeight => {
+                let n = u32::try_from(value).map_err(|_| SimError::Invalid { why: "func attr" })?;
+                self.set_required_cluster_height(device, n)
+            }
+            FuncAttr::RequiredClusterDepth => {
+                let n = u32::try_from(value).map_err(|_| SimError::Invalid { why: "func attr" })?;
+                self.set_required_cluster_depth(device, n)
+            }
         }
     }
 
@@ -15779,6 +15938,13 @@ impl Sim {
             FuncAttr::PreferredSharedMemoryCarveout => {
                 Ok(self.get_func_carveout(device)?.to_cuda())
             }
+            FuncAttr::ClusterDimMustBeSet => Ok(i32::from(self.cluster_dim_must_be_set(device)?)),
+            FuncAttr::RequiredClusterWidth => i32::try_from(self.required_cluster_width(device)?)
+                .map_err(|_| SimError::Invalid { why: "func attr" }),
+            FuncAttr::RequiredClusterHeight => i32::try_from(self.required_cluster_height(device)?)
+                .map_err(|_| SimError::Invalid { why: "func attr" }),
+            FuncAttr::RequiredClusterDepth => i32::try_from(self.required_cluster_depth(device)?)
+                .map_err(|_| SimError::Invalid { why: "func attr" }),
         }
     }
 

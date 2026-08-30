@@ -149,6 +149,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchAttributeClusterSchedulingPolicyPreference` Spread | occupies every Hyper-Q slot |
 | `cudaLaunchAttributePreferredClusterDimension` | occupies preferred size when it fits in `compute_slots` |
 | `cudaFuncAttributeNonPortableClusterSizeAllowed` | sizes above `portable_cluster_size` until the SKU `max_blocks_per_cluster` |
+| `cudaFuncAttributeClusterDimMustBeSet` / `RequiredClusterWidth` / Height / Depth | no cluster is Invalid; a nonzero required axis must match the launch |
 | `cudaLaunchAttributeSynchronizationPolicy` (stream-only) | host-wait tax on `synchronize_stream` / `synchronize_event`; Auto inherits `set_device_flags` (unset / profile default 0) |
 | `cudaLaunchAttributeDeviceUpdatableKernelNode` | graphs-only; `graph_exec_kernel_set_params` keeps the exec uploaded; device-launch graphs allow it |
 | `cudaLaunchAttributePreferredSharedMemoryCarveout` | MaxShared occupies every Hyper-Q slot; Default uses `set_func_carveout` (`cudaFuncAttributePreferredSharedMemoryCarveout`; unset never occupies) |
@@ -518,8 +519,8 @@ modeled; example SKUs are discrete). `SparseCudaArraySupported` /
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
 (no SM count or clock). `func_get_attributes` is `cudaFuncGetAttributes`
 of modeled per-device function attrs (`maxDynamicSharedSizeBytes`,
-`nonPortableClusterSizeAllowed`, and `preferredShmemCarveout`; not per
-kernel). `func_set_attribute` /
+`nonPortableClusterSizeAllowed`, `preferredShmemCarveout`, cluster-dim
+must-be-set, and required cluster width/height/depth; not per kernel). `func_set_attribute` /
 `func_get_attribute` are `cudaFuncSetAttribute` / `GetAttribute` (`FuncAttr`).
 Typed setters stay. `stream_get_flags` is `cudaStreamGetFlags`
 (`0` `cudaStreamDefault` / `1` `cudaStreamNonBlocking`; NULL follows

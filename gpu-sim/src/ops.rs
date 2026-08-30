@@ -800,6 +800,14 @@ pub enum FuncAttr {
     /// (`-1` Default / `0` MaxL1 / `100` MaxShared). Other percentages are
     /// Invalid `"func attr"`.
     PreferredSharedMemoryCarveout,
+    /// `cudaFuncAttributeClusterDimMustBeSet`. `0`/`1`.
+    ClusterDimMustBeSet,
+    /// `cudaFuncAttributeRequiredClusterWidth`. `0` unset.
+    RequiredClusterWidth,
+    /// `cudaFuncAttributeRequiredClusterHeight`. `0` unset.
+    RequiredClusterHeight,
+    /// `cudaFuncAttributeRequiredClusterDepth`. `0` unset.
+    RequiredClusterDepth,
 }
 
 /// Modeled `cudaFuncGetAttributes` / `cudaFuncGetAttribute` fields.
@@ -815,6 +823,14 @@ pub struct FuncAttributes {
     pub non_portable_cluster_size_allowed: bool,
     /// `cudaFuncAttributePreferredSharedMemoryCarveout`.
     pub preferred_shmem_carveout: SharedMemCarveout,
+    /// `cudaFuncAttributeClusterDimMustBeSet`.
+    pub cluster_dim_must_be_set: bool,
+    /// `cudaFuncAttributeRequiredClusterWidth` (`0` unset).
+    pub required_cluster_width: u32,
+    /// `cudaFuncAttributeRequiredClusterHeight` (`0` unset).
+    pub required_cluster_height: u32,
+    /// `cudaFuncAttributeRequiredClusterDepth` (`0` unset).
+    pub required_cluster_depth: u32,
 }
 
 /// `cudaDeviceP2PAttr` for [`crate::Sim::device_get_p2p_attribute`].
@@ -1304,6 +1320,10 @@ pub struct KernelAttrs {
     /// `cudaLaunchAttributeMemSyncDomainMap`. `None` inherits the stream.
     pub mem_sync_map: Option<MemSyncDomainMap>,
     /// `cudaLaunchAttributeClusterDimension`. `None` is a non-cluster launch.
+    ///
+    /// [`crate::Sim::set_cluster_dim_must_be_set`] makes `None` Invalid.
+    /// Nonzero [`crate::Sim::set_required_cluster_width`] (height/depth) must
+    /// match that axis.
     pub cluster: Option<ClusterDim>,
     /// `cudaLaunchAttributeClusterSchedulingPolicyPreference`.
     pub cluster_policy: ClusterSchedulingPolicy,
