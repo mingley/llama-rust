@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cuMulticastBindAddr`
+
+`multicast_bind_addr` binds a mapped VMM VA (retain + BindMem).
+`multicast_store` uses BindAddr. Flags must be 0.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — multicast destroy
 
 `multicast_destroy` is `cuMemRelease` of a `cuMulticastCreate` handle.
@@ -2556,7 +2562,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 253 (`multicast_destroy`).
+Next code change is PLAN systems depth after item 254 (`multicast_bind_addr`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

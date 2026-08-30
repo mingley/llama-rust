@@ -22,11 +22,11 @@ use crate::ops::{
     MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType,
     MemAttach, MemAttachFlags, MemHandleType, MemLocationType, MemPoolAttr, MemPoolProps,
     MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType,
-    MemsetOp, MulticastGranularity, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
-    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp,
+    MemsetOp, MulticastBindFlags, MulticastGranularity, Operation, PdlLaunch, PeerAccessFlags,
+    Place, PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
+    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -10210,6 +10210,40 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMulticastBindAddr` of a mapped VMM VA on `device`.
+    ///
+    /// Retains a [`MemHandleId`] for the map at offset 0, then
+    /// [`Self::multicast_bind_mem`]. Partial offset/size bind is not modeled.
+    /// Typed helper; flags must be [`MulticastBindFlags::DEFAULT`].
+    pub fn multicast_bind_addr(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        id: AllocId,
+    ) -> Result<(), SimError> {
+        self.multicast_bind_addr_with_flags(mc, device, id, MulticastBindFlags::DEFAULT)
+    }
+
+    /// [`Self::multicast_bind_addr`] with a flags word.
+    ///
+    /// CUDA requires 0. Unknown bits are Invalid `"multicast bind flags"`.
+    pub fn multicast_bind_addr_with_flags(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        id: AllocId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MulticastBindFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "multicast bind flags",
+            });
+        }
+        let h = self.handle_for_bind(id, device)?;
+        self.multicast_bind_mem(mc, device, h)
+    }
+
     /// `cuMulticastUnbind` of a whole-handle bind on `device`.
     ///
     /// Host-synchronous. Capture cannot include it. Partial offset/size unbind
@@ -10363,8 +10397,7 @@ impl Sim {
             self.multicast_add_device(mc, *d)?;
         }
         for d in team {
-            let h = self.handle_for_bind(id, d)?;
-            self.multicast_bind_mem(mc, d, h)?;
+            self.multicast_bind_addr(mc, d, id)?;
         }
         let va = self.va_reserve(bytes)?;
         self.va_map_multicast(va, src, 0, mc)?;
