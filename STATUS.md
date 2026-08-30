@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaMemPoolSetAccess` descriptor array
+
+`pool_set_access_n` takes `cudaMemAccessDesc` (`descList`, `count`).
+All-or-nothing. Empty is a no-op after pool checks. Typed
+`pool_set_access` stays. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cuMemSetAccess` descriptor array
 
 `va_set_access_n` takes `CUmemAccessDesc` (`desc`, `count`). All-or-nothing.

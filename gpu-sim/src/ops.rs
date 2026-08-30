@@ -2778,7 +2778,8 @@ impl MemAccessFlags {
     pub const PROT_READ_WRITE: u32 = 3;
 }
 
-/// `CUmemAccessDesc` / `cudaMemAccessDesc` for [`crate::Sim::va_set_access_n`].
+/// `CUmemAccessDesc` / `cudaMemAccessDesc` for [`crate::Sim::va_set_access_n`]
+/// / [`crate::Sim::pool_set_access_n`].
 ///
 /// [`Self::location`] must be [`Place::Device`]. Host is Invalid
 /// `"access location"`. Flags are [`MemAccessFlags`].

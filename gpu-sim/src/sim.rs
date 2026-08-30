@@ -9142,6 +9142,58 @@ impl Sim {
         }
     }
 
+    /// `cudaMemPoolSetAccess` with a descriptor array (`descList`, `count`).
+    ///
+    /// Host location Invalid `"access location"`. Flags match
+    /// [`Self::pool_set_access_with_flags`] (`PROT_READ` Invalid `"pool prot
+    /// read"`). All-or-nothing: a later Invalid leaves earlier descriptors
+    /// unapplied. Empty `descs` is a no-op after pool checks. Host-synchronous;
+    /// capture refused. Typed helpers stay.
+    pub fn pool_set_access_n(
+        &mut self,
+        pool: PoolId,
+        descs: &[MemAccessDesc],
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        self.refuse_graph_pool(pool)?;
+        self.refuse_destroyed_pool(pool)?;
+        let owner = self.pool_ref(pool)?.device;
+        let mut ops = Vec::with_capacity(descs.len());
+        for desc in descs {
+            match desc.flags {
+                MemAccessFlags::PROT_READ_WRITE | MemAccessFlags::PROT_NONE => {}
+                MemAccessFlags::PROT_READ => {
+                    return Err(SimError::Invalid {
+                        why: "pool prot read",
+                    });
+                }
+                _ => {
+                    return Err(SimError::Invalid {
+                        why: "pool access flags",
+                    });
+                }
+            }
+            let device = desc.location.device().ok_or(SimError::Invalid {
+                why: "access location",
+            })?;
+            let _gpu = self.profile.gpu(device)?;
+            if desc.flags == MemAccessFlags::PROT_READ_WRITE && owner != device {
+                let _link = self.profile.link(Some(owner), Some(device))?;
+                if !self.peer_access(owner, device) {
+                    return Err(SimError::PeerDisabled {
+                        src: owner,
+                        dst: device,
+                    });
+                }
+            }
+            ops.push((device, desc.flags));
+        }
+        for (device, flags) in ops {
+            self.pool_set_access_with_flags(pool, device, flags)?;
+        }
+        Ok(())
+    }
+
     /// Drop [`Self::pool_set_access`] for `device` (`cudaMemAccessFlagsProtNone`).
     pub fn pool_unset_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;

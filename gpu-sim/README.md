@@ -728,7 +728,9 @@ check). Typed helpers stay.
 `va_get_access` is `cuMemGetAccess` (local map ReadWrite; peer Read /
 ReadWrite / None). Query; legal during capture.
 `pool_set_access` is `cudaMemPoolSetAccess`
-ReadWrite on a peer (no dest HBM; kernels may write). `kernel()` needs the whole VA covered; `kernel_bufs`, `memset_buf`, and
+ReadWrite on a peer (no dest HBM; kernels may write). `pool_set_access_n`
+is the CUDA descriptor array (all-or-nothing; empty is a no-op after
+pool checks). Typed helpers stay. `kernel()` needs the whole VA covered; `kernel_bufs`, `memset_buf`, and
 `MemcpyOp::offset` touch a mapped page (paged KV). `va_acquire` remaps an idle VA of the same
 size (or reserves); `va_acquire_paged` maps KV-block physicals covering the VA;
 `va_release` unmaps into that pool. Capture cannot

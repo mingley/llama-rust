@@ -2986,7 +2986,18 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-287. [ ] Next numbered PLAN item after 286 is the next `gpu-sim` / Engine /
+287. [x] `cudaMemPoolSetAccess` descriptor array:
+    [`pool_set_access_n`](Sim::pool_set_access_n) takes [`MemAccessDesc`]
+    (`descList`, `count`). Host location Invalid `"access location"`.
+    Flags match [`pool_set_access_with_flags`](Sim::pool_set_access_with_flags).
+    All-or-nothing. Empty `descs` is a no-op after pool checks. Typed
+    [`pool_set_access`](Sim::pool_set_access) /
+    [`pool_set_access_with_flags`](Sim::pool_set_access_with_flags) stay.
+    Host-synchronous; capture refused. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+288. [ ] Next numbered PLAN item after 287 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
