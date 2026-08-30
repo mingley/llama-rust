@@ -470,6 +470,7 @@
 //! [`graph_memcpy_set_params_2d`](Sim::graph_memcpy_set_params_2d) /
 //! [`graph_memcpy_set_params_3d`](Sim::graph_memcpy_set_params_3d) /
 //! [`graph_memset_set_params`](Sim::graph_memset_set_params) /
+//! [`graph_memset_set_params_2d`](Sim::graph_memset_set_params_2d) /
 //! [`graph_host_set_params`](Sim::graph_host_set_params) /
 //! [`graph_batch_mem_op_set_params`](Sim::graph_batch_mem_op_set_params) /
 //! [`graph_batch_mem_ops_set_params`](Sim::graph_batch_mem_ops_set_params) /
@@ -596,8 +597,10 @@
 //! convert a 2D/3D node; 2D requires [`MemcpyOp::is_2d`]; 3D requires
 //! [`MemcpyOp::is_3d`]). [`graph_unique_memcpy`](Sim::graph_unique_memcpy)
 //! / [`graph_try_unique_memcpy`](Sim::graph_try_unique_memcpy) find that node.
-//! [`graph_exec_memset_set_params`](Sim::graph_exec_memset_set_params) is
-//! `cudaGraphExecMemsetNodeSetParams` (same cost; zero-byte still illegal).
+//! [`graph_exec_memset_set_params`](Sim::graph_exec_memset_set_params) /
+//! [`graph_exec_memset_set_params_2d`](Sim::graph_exec_memset_set_params_2d)
+//! are `cudaGraphExecMemsetNodeSetParams` / 2D helper (same cost; zero-byte still
+//! illegal; 2D requires [`MemsetOp::is_2d`]).
 //! [`graph_unique_memset`](Sim::graph_unique_memset) /
 //! [`graph_try_unique_memset`](Sim::graph_try_unique_memset) find that node.
 //! [`graph_exec_host_set_params`](Sim::graph_exec_host_set_params) is
@@ -11887,6 +11890,55 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("memset2d height"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn graph_memset_set_params_2d_requires_is_2d() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_pitch(d, 256, 8).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        let op = MemsetOp {
+            id: a,
+            bytes: 256,
+            height: 8,
+            pitch,
+            ..MemsetOp::default()
+        };
+        sim.graph_add_memset_2d(g, op).unwrap();
+        let patched = MemsetOp { height: 4, ..op };
+        sim.graph_memset_set_params_2d(g, 0, patched).unwrap();
+        assert_eq!(sim.graph_memset_get_params(g, 0).unwrap().height, 4);
+        match sim.graph_memset_set_params_2d(g, 0, MemsetOp { height: 1, ..op }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset2d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_memset_set_params_2d(
+            g,
+            0,
+            MemsetOp {
+                depth: 2,
+                ysize: 8,
+                ..op
+            },
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset2d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.graph_exec_memset_set_params_2d(exec, 0, op).unwrap();
+        assert_eq!(sim.graph_exec_memset_get_params(exec, 0).unwrap().height, 8);
+        match sim.graph_exec_memset_set_params_2d(exec, 0, MemsetOp { height: 1, ..op }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset2d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_memset_set_params_2d(g, 0, op) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

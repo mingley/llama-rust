@@ -3587,7 +3587,8 @@ impl Sim {
     /// After instantiate this does not retarget the exec; use
     /// [`Self::graph_exec_memset_set_params`]. Zero-byte fills stay illegal.
     /// Capture cannot include it. Host-sync 1 ns. [`KernelBuf`] converts to a
-    /// packed 1D [`MemsetOp`].
+    /// packed 1D [`MemsetOp`]. [`Self::graph_memset_set_params_2d`] requires
+    /// [`MemsetOp::is_2d`].
     pub fn graph_memset_set_params(
         &mut self,
         graph: GraphId,
@@ -3620,6 +3621,23 @@ impl Sim {
         })?)?;
         step.kind = Kind::Memset(op);
         Ok(())
+    }
+
+    /// `cudaGraphMemsetNodeSetParams` whose [`MemsetOp`] is [`MemsetOp::is_2d`]
+    /// (`height > 1`, not 3D). Other extents Invalid `"memset2d height"`.
+    /// Typed [`Self::graph_memset_set_params`] stays.
+    pub fn graph_memset_set_params_2d(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: MemsetOp,
+    ) -> Result<(), SimError> {
+        if !op.is_2d() {
+            return Err(SimError::Invalid {
+                why: "memset2d height",
+            });
+        }
+        self.graph_memset_set_params(graph, node, op)
     }
 
     /// `cudaGraphHostNodeSetParams` on the graph definition.
@@ -4158,6 +4176,23 @@ impl Sim {
         step.kind = Kind::Memset(op);
         g.uploaded = false;
         Ok(())
+    }
+
+    /// `cudaGraphExecMemsetNodeSetParams` whose [`MemsetOp`] is [`MemsetOp::is_2d`]
+    /// (`height > 1`, not 3D). Other extents Invalid `"memset2d height"`.
+    /// Typed [`Self::graph_exec_memset_set_params`] stays.
+    pub fn graph_exec_memset_set_params_2d(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: MemsetOp,
+    ) -> Result<(), SimError> {
+        if !op.is_2d() {
+            return Err(SimError::Invalid {
+                why: "memset2d height",
+            });
+        }
+        self.graph_exec_memset_set_params(exec, node, op)
     }
 
     /// `cudaGraphExecHostNodeSetParams` on an instantiated exec.
