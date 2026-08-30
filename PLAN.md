@@ -2257,7 +2257,13 @@ model, do not celebrate the sim.
     Decode identity unchanged. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-200. [ ] Next numbered PLAN item after 199 is the next `gpu-sim` / Engine /
+200. [x] `cudaDeviceEnablePeerAccess` flags: `Sim::enable_peer_with_flags`
+    requires [`PeerAccessFlags::DEFAULT`] (`0`). Unknown bits are Invalid
+    `"peer access flags"`. Typed [`enable_peer`] stays. Capture is legal
+    (same as the typed helper). Decode identity unchanged. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+201. [ ] Next numbered PLAN item after 200 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

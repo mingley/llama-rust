@@ -151,7 +151,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchAttributePriority` (`kernel_with` / `KernelAttrs::priority`) | `None` inherits stream create priority; `Some` overrides that kernel; higher starts first under contention |
 | `set_stream_sm_permille` is a green-context SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host); `memset_op` height/pitch is 2D | HBM write of payload + launch overhead |
-| peer D2D needs topology + `enable_peer` | link bandwidth |
+| peer D2D needs topology + `enable_peer` (`enable_peer_with_flags` must be 0) | link bandwidth |
 | legacy null stream serializes (opt-in) | copy/compute overlap |
 | `cudaStreamCreate` blocking stream serializes with NULL | `cudaStreamNonBlocking` overlap |
 
@@ -445,7 +445,8 @@ or copy engines (other streams may GEMM). Unnamed callback by default;
 are `cuStreamWriteValue64` / `WaitValue64` (mailbox; no occupancy).
 `batch_mem_op` is `cuStreamBatchMemOp`. Peer D2D requires a
 topology link **and** directed `enable_peer` (seeded on for every GPU↔GPU
-link; `disable_peer` → `PeerDisabled`). [`StreamId::NULL`] is the CUDA null
+link; `disable_peer` → `PeerDisabled`). `enable_peer_with_flags` is
+`cudaDeviceEnablePeerAccess` (`flags` must be 0). [`StreamId::NULL`] is the CUDA null
 stream; `set_legacy_null_stream(true)` serializes it with every other stream
 on that device (CUDA legacy default stream). Off by default is the
 per-thread default: NULL serializes only with `set_stream_blocking`

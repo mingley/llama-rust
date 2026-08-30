@@ -19,7 +19,7 @@ use crate::ops::{
     KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
     LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemHandleType, MemPoolAttr,
     MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType,
-    MemsetOp, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
+    MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttributes, PortableClusterMode,
     PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
     StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
     SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
@@ -1572,6 +1572,25 @@ impl Sim {
         let _link = self.profile.link(Some(src), Some(dst))?;
         let _was = self.peer_enabled.insert((src, dst));
         Ok(())
+    }
+
+    /// `cudaDeviceEnablePeerAccess` with a flags word.
+    ///
+    /// CUDA requires `flags == 0` ([`PeerAccessFlags::DEFAULT`]). Other bits
+    /// are Invalid `"peer access flags"`. Typed [`Self::enable_peer`] stays.
+    /// Capture is legal (same as the typed helper).
+    pub fn enable_peer_with_flags(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        if flags != PeerAccessFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "peer access flags",
+            });
+        }
+        self.enable_peer(src, dst)
     }
 
     /// `cudaDeviceDisablePeerAccess(dst)` from `src`. Later D2D is [`SimError::PeerDisabled`].

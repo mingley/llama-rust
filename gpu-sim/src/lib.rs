@@ -203,6 +203,9 @@
 //! are `cudaDeviceCanAccessPeer` / `cudaDeviceGetP2PAttribute` (topology links;
 //! [`DeviceP2pAttr::AccessSupported`] and [`PerformanceRank`](DeviceP2pAttr::PerformanceRank)
 //! from GPU↔GPU `bps`; native atomics are not modeled).
+//! [`enable_peer_with_flags`](Sim::enable_peer_with_flags) is
+//! `cudaDeviceEnablePeerAccess` ([`PeerAccessFlags::DEFAULT`] only; typed
+//! [`enable_peer`](Sim::enable_peer) stays; capture is legal).
 //! [`Sim::set_limit`] / [`get_limit`](Sim::get_limit) are `cudaDeviceSetLimit` /
 //! `GetLimit`. [`DeviceLimit::PersistingL2CacheSize`] wraps
 //! [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size).
@@ -550,7 +553,7 @@ pub use ops::{
     KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
     LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemHandleType, MemPoolAttr,
     MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType,
-    MemsetOp, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
+    MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttributes, PortableClusterMode,
     PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
     StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
     SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
@@ -3871,6 +3874,38 @@ mod tests {
         enq(sim.memcpy_device_to_device(d0, d1, a, bytes, s));
         sim.synchronize().unwrap();
         assert!(sim.is_resident(a, d1).unwrap());
+    }
+
+    #[test]
+    fn enable_peer_with_flags_requires_zero() {
+        let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        sim.disable_peer(d0, d1).unwrap();
+        assert!(!sim.peer_access(d0, d1));
+        match sim.enable_peer_with_flags(d0, d1, 1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("peer access flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(!sim.peer_access(d0, d1));
+        sim.enable_peer_with_flags(d0, d1, PeerAccessFlags::DEFAULT)
+            .unwrap();
+        assert!(sim.peer_access(d0, d1));
+        sim.disable_peer(d0, d1).unwrap();
+        sim.begin_capture(d0, StreamId(0)).unwrap();
+        sim.enable_peer_with_flags(d0, d1, PeerAccessFlags::DEFAULT)
+            .unwrap();
+        assert!(sim.peer_access(d0, d1));
+        match sim.enable_peer_with_flags(d0, d1, 1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("peer access flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.enable_peer(d0, d1).unwrap();
     }
 
     #[test]

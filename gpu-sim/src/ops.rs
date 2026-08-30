@@ -1804,6 +1804,16 @@ impl StreamCreateFlags {
     pub const NON_BLOCKING: u32 = 1;
 }
 
+/// `cudaDeviceEnablePeerAccess` flags for [`crate::Sim::enable_peer_with_flags`].
+///
+/// CUDA requires 0. Unknown bits are Invalid `"peer access flags"`.
+pub struct PeerAccessFlags;
+
+impl PeerAccessFlags {
+    /// `cudaDeviceEnablePeerAccess` `flags` must be 0.
+    pub const DEFAULT: u32 = 0;
+}
+
 /// `cudaEventCreateWithFlags` bits for [`crate::Sim::create_event_with_flags`].
 ///
 /// `cudaEventBlockingSync` is not modeled (Invalid). [`INTERPROCESS`] requires
