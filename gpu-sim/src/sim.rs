@@ -12,7 +12,7 @@ use crate::ids::{
 use crate::ops::{
     BatchMemOp, CaptureDepOp, GpuOp as Kind, GraphInstantiateFlags, GraphMemAttr, GraphNodeKind,
     HostNodeParams, KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp,
-    Operation, Place, StreamCaptureInfo, WaitValueCmp,
+    Operation, Place, StreamCaptureInfo, StreamCaptureMode, WaitValueCmp,
 };
 use crate::profile::{ns_for_bytes, HardwareProfile, LinkKind};
 
@@ -223,6 +223,8 @@ struct Capture {
     pending: BTreeMap<(DeviceId, StreamId), Vec<usize>>,
     /// `capture_buf` index → extra deps in destination-graph index space.
     extra_abs: BTreeMap<usize, Vec<usize>>,
+    /// Mode this session started with.
+    mode: StreamCaptureMode,
 }
 
 /// Existing graph plus extra root deps for [`Capture::into`].
@@ -499,6 +501,8 @@ pub struct Sim {
     enqueue_priority: Option<i32>,
     /// Wait/write-value mailbox: `(alloc, offset) → word`. Missing is `0`.
     mailbox: BTreeMap<(AllocId, u64), u64>,
+    /// `cudaThreadExchangeStreamCaptureMode` default for [`Self::begin_capture`].
+    capture_mode: StreamCaptureMode,
 }
 
 impl Sim {
@@ -571,6 +575,7 @@ impl Sim {
             clone_of: BTreeMap::new(),
             enqueue_priority: None,
             mailbox: BTreeMap::new(),
+            capture_mode: StreamCaptureMode::Relaxed,
         }
     }
 
@@ -1156,14 +1161,15 @@ impl Sim {
 
     /// Start recording later submits on `(device, stream)`. Recorded ops do not run.
     ///
-    /// Other streams keep running. A stream that [`Self::wait_event`]s an
-    /// event recorded in this capture **joins** (CUDA forked capture) so copy
-    /// and compute can overlap inside one [`Self::launch_graph`].
-    /// [`Self::record_event_external`] / [`Self::wait_event_external`] do not
-    /// join (`cudaEventRecordExternal` / `cudaEventWaitExternal`).
-    /// Creates an empty graph (no clock tick); [`Self::end_capture`] appends
-    /// recorded nodes and returns that id. For an existing graph see
-    /// [`Self::begin_capture_to_graph`].
+    /// Default mode is [`StreamCaptureMode::Relaxed`] (or the last
+    /// [`Self::thread_exchange_stream_capture_mode`]). Independent streams keep
+    /// running. A stream that [`Self::wait_event`]s an event recorded in this
+    /// capture **joins** (CUDA forked capture) so copy and compute can overlap
+    /// inside one [`Self::launch_graph`]. [`Self::record_event_external`] /
+    /// [`Self::wait_event_external`] do not join. Creates an empty graph (no
+    /// clock tick); [`Self::end_capture`] appends recorded nodes and returns
+    /// that id. For an existing graph see [`Self::begin_capture_to_graph`].
+    /// [`Self::begin_capture_with_mode`] picks the mode for this capture only.
     pub fn begin_capture(&mut self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
         if self.capturing.is_some() {
             return Err(SimError::Invalid {
@@ -1177,7 +1183,31 @@ impl Sim {
             });
         }
         let graph = self.insert_graph(device, stream);
-        self.begin_capture_inner(device, stream, graph, &[])
+        self.begin_capture_inner(device, stream, graph, &[], self.capture_mode)
+    }
+
+    /// `cudaStreamBeginCapture` with an explicit [`StreamCaptureMode`].
+    ///
+    /// Does not change the thread default ([`Self::thread_exchange_stream_capture_mode`]).
+    pub fn begin_capture_with_mode(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        mode: StreamCaptureMode,
+    ) -> Result<(), SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "nested graph capture",
+            });
+        }
+        let _gpu = self.profile.gpu(device)?;
+        if !self.stream_idle(device, stream) {
+            return Err(SimError::Invalid {
+                why: "capture requires idle stream",
+            });
+        }
+        let graph = self.insert_graph(device, stream);
+        self.begin_capture_inner(device, stream, graph, &[], mode)
     }
 
     /// `cudaStreamBeginCaptureToGraph`: record later submits into `graph`.
@@ -1195,7 +1225,19 @@ impl Sim {
         graph: GraphId,
         deps: &[usize],
     ) -> Result<(), SimError> {
-        self.begin_capture_inner(device, stream, graph, deps)
+        self.begin_capture_inner(device, stream, graph, deps, self.capture_mode)
+    }
+
+    /// `cudaStreamBeginCaptureToGraph` with an explicit [`StreamCaptureMode`].
+    pub fn begin_capture_to_graph_with_mode(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        graph: GraphId,
+        deps: &[usize],
+        mode: StreamCaptureMode,
+    ) -> Result<(), SimError> {
+        self.begin_capture_inner(device, stream, graph, deps, mode)
     }
 
     fn begin_capture_inner(
@@ -1204,6 +1246,7 @@ impl Sim {
         stream: StreamId,
         graph: GraphId,
         deps: &[usize],
+        mode: StreamCaptureMode,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         if self.capturing.is_some() {
@@ -1227,6 +1270,7 @@ impl Sim {
             into,
             pending: BTreeMap::new(),
             extra_abs: BTreeMap::new(),
+            mode,
         });
         self.capture_buf.clear();
         Ok(())
@@ -1372,7 +1416,27 @@ impl Sim {
                 .get(&(device, stream))
                 .cloned()
                 .unwrap_or_default(),
+            mode: cap.mode,
         })
+    }
+
+    /// `cudaThreadExchangeStreamCaptureMode`. Returns the previous default.
+    ///
+    /// The next [`Self::begin_capture`] / [`Self::begin_capture_to_graph`] uses
+    /// `mode`. An in-flight capture keeps the mode it started with.
+    pub fn thread_exchange_stream_capture_mode(
+        &mut self,
+        mode: StreamCaptureMode,
+    ) -> StreamCaptureMode {
+        let prev = self.capture_mode;
+        self.capture_mode = mode;
+        prev
+    }
+
+    /// Thread default [`StreamCaptureMode`] for [`Self::begin_capture`].
+    #[must_use]
+    pub fn stream_capture_mode(&self) -> StreamCaptureMode {
+        self.capture_mode
     }
 
     fn append_captured(
@@ -7312,7 +7376,16 @@ impl Sim {
             }
         }
         if !self.in_capture(device, stream) {
-            return self.submit_live(device, stream, kind, LaunchCost::Kernel);
+            let live = self
+                .capturing
+                .as_ref()
+                .is_some_and(|c| c.mode.live_uncaptured());
+            if live {
+                return self.submit_live(device, stream, kind, LaunchCost::Kernel);
+            }
+            return Err(SimError::Invalid {
+                why: "stream not capturing",
+            });
         }
         if let Kind::EventRecord { event, external } = &kind {
             if !*external {

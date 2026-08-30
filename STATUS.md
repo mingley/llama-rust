@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaStreamCaptureMode`
+
+`begin_capture` defaults to Relaxed: independent streams stay live, and a
+wait of a captured record still joins an idle stream. `begin_capture_with_mode`
+accepts Global / ThreadLocal / Relaxed. Global and ThreadLocal refuse
+uncaptured-stream submits (`stream not capturing`) except a joining wait.
+`thread_exchange_stream_capture_mode` is the thread default for the next
+`begin_capture`. Decode identity stays Relaxed. `gpu-profile capture` is
+still refused.
+
 ## Shipped 2026-08-30 — host-node SetParams
 
 `HostNodeParams` (`fn_id` / `user_data`) is `cudaHostNodeParams` on

@@ -75,7 +75,7 @@ warp scheduler, L1, …   ← do not model
 | forked capture: `wait_event` on a captured record joins that stream | copy/compute overlap inside one launch |
 | `cudaEventRecordExternal` / `cudaEventWaitExternal` do not join capture | live waiters overlap graph launch |
 | `launch_graph` during capture is a child-graph node | nested exec expanded at parent launch |
-| independent streams stay live during capture | query/sync of a capturing stream is Invalid |
+| independent streams stay live during Relaxed capture (default); ThreadLocal/Global refuse uncaptured-stream submits | query/sync of a capturing stream is Invalid |
 | graph instantiate is host-sync and returns a new exec id; first launch of a definition creates a primary exec; `instantiate_graph_auto_free` is AutoFreeOnLaunch | `graph_instantiate_ns` |
 | graph upload is host-sync after instantiate; first launch pays it once | `graph_upload_ns` |
 | `cudaGraphKernelNodeSetParams` / `MemcpyNodeSetParams` / `MemsetNodeSetParams` / `HostNodeSetParams` patch the graph, not an already-instantiated exec | 1 ns host-sync |
@@ -298,7 +298,12 @@ parameter; External is topology).
 `stream_update_capture_dependencies` is `cudaStreamUpdateCaptureDependencies`
 (extra deps for the next captured node, in addition to stream-order; `Set`
 replaces, `Add` unions). `stream_is_capturing` / `stream_capture_info` are
-`cudaStreamIsCapturing` / `GetCaptureInfo`. `graph_node_kind` is
+`cudaStreamIsCapturing` / `GetCaptureInfo` (includes capture mode).
+`begin_capture_with_mode` is `cudaStreamBeginCapture` with
+`StreamCaptureMode` (default Relaxed: independent streams stay live; a wait
+of a captured record still joins. ThreadLocal/Global refuse uncaptured-stream
+submits). `thread_exchange_stream_capture_mode` is
+`cudaThreadExchangeStreamCaptureMode`. `graph_node_kind` is
 `cudaGraphNodeGetType`.
 `graph_conditional_create` / `graph_add_if` are
 `cudaGraphConditionalHandleCreate` and an IF node. Body ops skip at

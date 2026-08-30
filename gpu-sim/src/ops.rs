@@ -564,6 +564,35 @@ pub enum CaptureDepOp {
     Set,
 }
 
+/// `cudaStreamCaptureMode` for [`crate::Sim::begin_capture_with_mode`].
+///
+/// [`Self::Relaxed`] is the default for [`crate::Sim::begin_capture`]:
+/// independent streams may run live work, and `wait_event` of a captured
+/// record still joins an idle stream (forked capture). [`Self::Global`] and
+/// [`Self::ThreadLocal`] are the same in this single-threaded VM: submits on
+/// a stream not in the capture set are Invalid (`stream not capturing`),
+/// except a joining wait.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StreamCaptureMode {
+    /// `cudaStreamCaptureModeGlobal`. Same as [`Self::ThreadLocal`] here.
+    Global,
+    /// `cudaStreamCaptureModeThreadLocal`. Uncaptured-stream submits are Invalid.
+    ThreadLocal,
+    /// `cudaStreamCaptureModeRelaxed`. Uncaptured-stream submits run live.
+    ///
+    /// Default for [`crate::Sim::begin_capture`]. Forked capture still joins.
+    #[default]
+    Relaxed,
+}
+
+impl StreamCaptureMode {
+    /// Independent streams may run live CUDA work during this capture.
+    #[must_use]
+    pub fn live_uncaptured(self) -> bool {
+        matches!(self, Self::Relaxed)
+    }
+}
+
 /// `cudaGraphInstantiateFlags` bit names (`cudaGraphExecGetFlags`).
 pub struct GraphInstantiateFlags;
 
@@ -609,6 +638,8 @@ pub struct StreamCaptureInfo {
     /// Indices are existing graph nodes, then this-session nodes at
     /// `graph_len + i`. Empty until [`crate::Sim::stream_update_capture_dependencies`].
     pub pending_deps: Vec<usize>,
+    /// Mode this capture started with (`cudaStreamGetCaptureInfo` status).
+    pub mode: StreamCaptureMode,
 }
 
 /// `cudaGraphNodeGetType` tag for one graph node.

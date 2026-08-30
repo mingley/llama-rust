@@ -239,7 +239,13 @@
 //! node **in addition to** stream-order (`Set` replaces, `Add` unions).
 //! [`stream_is_capturing`](Sim::stream_is_capturing) /
 //! [`stream_capture_info`](Sim::stream_capture_info) are `cudaStreamIsCapturing`
-//! / `cudaStreamGetCaptureInfo`. [`graph_node_kind`](Sim::graph_node_kind) is
+//! / `cudaStreamGetCaptureInfo`. [`begin_capture_with_mode`](Sim::begin_capture_with_mode)
+//! is `cudaStreamBeginCapture` with [`StreamCaptureMode`] (default
+//! [`StreamCaptureMode::Relaxed`]: independent streams stay live; a wait of a
+//! captured record still joins. [`StreamCaptureMode::ThreadLocal`] /
+//! [`StreamCaptureMode::Global`] refuse uncaptured-stream submits).
+//! [`thread_exchange_stream_capture_mode`](Sim::thread_exchange_stream_capture_mode)
+//! is `cudaThreadExchangeStreamCaptureMode`. [`graph_node_kind`](Sim::graph_node_kind) is
 //! `cudaGraphNodeGetType`.
 //! [`graph_conditional_create`](Sim::graph_conditional_create) /
 //! [`graph_add_if`](Sim::graph_add_if) are `cudaGraphConditionalHandleCreate`
@@ -292,7 +298,7 @@ pub use ids::{
 pub use ops::{
     BatchMemOp, CaptureDepOp, DType, GpuOp, GraphInstantiateFlags, GraphMemAttr, GraphNodeKind,
     HostNodeParams, KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp,
-    Operation, Place, StreamCaptureInfo, WaitValueCmp,
+    Operation, Place, StreamCaptureInfo, StreamCaptureMode, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -6825,6 +6831,124 @@ mod tests {
     }
 
     #[test]
+    fn thread_local_capture_refuses_independent_stream() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let cap = StreamId(0);
+        let live = StreamId(1);
+        let a = sim.alloc(d, 4096, cap).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, cap));
+        sim.synchronize().unwrap();
+        sim.begin_capture_with_mode(d, cap, StreamCaptureMode::ThreadLocal)
+            .unwrap();
+        let err = sim
+            .kernel(d, KernelKind::other(1 << 20, 4096), &[a], &[a], live)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not capturing"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 0);
+        sim.begin_capture_with_mode(d, cap, StreamCaptureMode::Global)
+            .unwrap();
+        let err = sim
+            .kernel(d, KernelKind::other(8, 8), &[a], &[a], live)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not capturing"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn thread_local_capture_still_forks() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let copy = StreamId(0);
+        let compute = StreamId(1);
+        let ev = EventId(1);
+        let a = sim.alloc(d, 4096, copy).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, copy));
+        sim.synchronize().unwrap();
+        sim.create_event(ev).unwrap();
+        sim.begin_capture_with_mode(d, copy, StreamCaptureMode::ThreadLocal)
+            .unwrap();
+        enq(sim.record_event(d, ev, copy));
+        enq(sim.wait_event(d, ev, compute));
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], compute));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 3);
+        let info_mode = {
+            sim.begin_capture_with_mode(d, copy, StreamCaptureMode::ThreadLocal)
+                .unwrap();
+            let mode = sim.stream_capture_info(d, copy).expect("cap").mode;
+            let _g = sim.end_capture().unwrap();
+            mode
+        };
+        assert_eq!(info_mode, StreamCaptureMode::ThreadLocal);
+    }
+
+    #[test]
+    fn thread_local_fork_requires_idle_stream() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let copy = StreamId(0);
+        let compute = StreamId(1);
+        let ev = EventId(1);
+        let a = sim.alloc(d, 4096, copy).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, copy));
+        sim.synchronize().unwrap();
+        sim.create_event(ev).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 40, 4096), &[a], &[a], compute));
+        sim.begin_capture_with_mode(d, copy, StreamCaptureMode::ThreadLocal)
+            .unwrap();
+        enq(sim.record_event(d, ev, copy));
+        let err = sim.wait_event(d, ev, compute).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("idle"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn thread_exchange_capture_mode_applies_to_next_begin() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let cap = StreamId(0);
+        let live = StreamId(1);
+        let a = sim.alloc(d, 4096, cap).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, cap));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.stream_capture_mode(), StreamCaptureMode::Relaxed);
+        sim.begin_capture(d, cap).unwrap();
+        let prev = sim.thread_exchange_stream_capture_mode(StreamCaptureMode::ThreadLocal);
+        assert_eq!(prev, StreamCaptureMode::Relaxed);
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], live));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 0);
+        assert_eq!(sim.stream_capture_mode(), StreamCaptureMode::ThreadLocal);
+        sim.begin_capture(d, cap).unwrap();
+        assert_eq!(
+            sim.stream_capture_info(d, cap).expect("cap").mode,
+            StreamCaptureMode::ThreadLocal
+        );
+        let err = sim
+            .kernel(d, KernelKind::other(8, 8), &[a], &[a], live)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not capturing"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        let prev = sim.thread_exchange_stream_capture_mode(StreamCaptureMode::Relaxed);
+        assert_eq!(prev, StreamCaptureMode::ThreadLocal);
+    }
+
+    #[test]
     fn capturing_stream_cannot_query_or_sync() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
@@ -8040,12 +8164,14 @@ mod tests {
         assert_eq!(info.graph, g);
         assert_eq!(info.origin, (d, s));
         assert!(info.pending_deps.is_empty());
+        assert_eq!(info.mode, StreamCaptureMode::Relaxed);
         assert_eq!(sim.graph_len(g).unwrap(), 0);
         let _end = sim.end_capture().unwrap();
         assert!(!sim.stream_is_capturing(d, s));
         assert!(sim.stream_capture_info(d, s).is_none());
         sim.begin_capture(d, s).unwrap();
         let info = sim.stream_capture_info(d, s).expect("vanilla capture");
+        assert_eq!(info.mode, StreamCaptureMode::Relaxed);
         assert_eq!(sim.graph_len(info.graph).unwrap(), 0);
         let _end = sim.end_capture().unwrap();
         assert!(!sim.stream_is_capturing(d, s));

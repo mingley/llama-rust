@@ -633,7 +633,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `create_graph` / `graph_add_kernel` / `graph_add_memcpy` / `graph_add_memset`
   / `graph_add_host_func` / `graph_add_event_record` / `graph_add_event_wait`
   / `graph_add_child` are `cudaGraphCreate` / `cudaGraphAdd*` (empty graph,
-  then nodes; illegal after instantiate and during capture).
+  then nodes; illegal on an instantiated exec and during capture; legal on
+  the definition after instantiate).
   `graph_add_dependencies` is `cudaGraphAddDependencies` (independent nodes
   may Hyper-Q overlap at launch; capture records same-stream edges).
   Recorded kernels and copies do not run until launch; `cudaMallocAsync` /
@@ -1449,6 +1450,17 @@ model, do not celebrate the sim.
     Device-launch graphs still refuse host nodes. Decode identity stays
     kernel-only graphs (expertvm `--host-func` still uses the unnamed live
     callback). `gpu-profile capture` is still refused.
+
+107. [x] `cudaStreamCaptureMode`: `begin_capture` / `begin_capture_to_graph`
+    default to Relaxed (independent streams stay live; `wait_event` of a
+    captured record still joins an idle stream). `begin_capture_with_mode` /
+    `begin_capture_to_graph_with_mode` accept Global / ThreadLocal / Relaxed.
+    Global and ThreadLocal are the same in this single-threaded VM: submits
+    on a stream not in the capture set are Invalid (`stream not capturing`),
+    except a joining wait. `thread_exchange_stream_capture_mode` is
+    `cudaThreadExchangeStreamCaptureMode` (next `begin_capture`; in-flight
+    capture keeps its mode). `stream_capture_info` reports the mode.
+    Decode identity stays Relaxed. `gpu-profile capture` is still refused.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
