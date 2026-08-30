@@ -1851,6 +1851,15 @@ model, do not celebrate the sim.
     identity stays packed 1D. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
+154. [x] `cudaMalloc3D` / `cudaMemcpy3DAsync`: `Sim::malloc_3d` returns
+    `(ptr, pitch)` with pitch `align_up(width, 512)` and charges
+    `pitch * height * depth`. `MemcpyOp` `depth` / slice heights copy
+    `width * height * depth` payload (row and slice padding are not billed).
+    Width above pitch or height above `ysize` is Invalid. Packed 1D / 2D
+    (`depth` 0/1) is unchanged. Decode identity stays packed 1D.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

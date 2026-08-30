@@ -9079,7 +9079,9 @@ impl Sim {
     /// before returning. Capture cannot include a pageable copy. Pinned DMA
     /// ([`Self::memcpy_pinned_to_device`]) stays stream-ordered.
     /// [`MemcpyOp::height`] `> 1` is `cudaMemcpy2DAsync`: billed bytes are
-    /// `width * height`, not pitch padding.
+    /// `width * height`, not pitch padding. [`MemcpyOp::depth`] `> 1` is
+    /// `cudaMemcpy3DAsync`: billed bytes are `width * height * depth`, not
+    /// row or slice padding.
     pub fn memcpy(
         &mut self,
         device: DeviceId,
@@ -9797,6 +9799,28 @@ impl Sim {
         }
         let pitch = align_up(width, 512);
         let bytes = pitch.saturating_mul(height);
+        let id = self.malloc(device, bytes)?;
+        Ok((id, pitch))
+    }
+
+    /// `cudaMalloc3D`: aligned 3D allocation. Returns `(ptr, pitch)`.
+    ///
+    /// Pitch is `align_up(width, 512)`. Size charged is `pitch * height * depth`.
+    /// Host-synchronous like [`Self::malloc`]. Capture cannot include it.
+    pub fn malloc_3d(
+        &mut self,
+        device: DeviceId,
+        width: u64,
+        height: u64,
+        depth: u64,
+    ) -> Result<(AllocId, u64), SimError> {
+        if width == 0 || height == 0 || depth == 0 {
+            return Err(SimError::Invalid {
+                why: "malloc 3d",
+            });
+        }
+        let pitch = align_up(width, 512);
+        let bytes = pitch.saturating_mul(height).saturating_mul(depth);
         let id = self.malloc(device, bytes)?;
         Ok((id, pitch))
     }
@@ -12507,7 +12531,9 @@ impl Sim {
             return Err(SimError::UnknownAlloc { alloc: m.alloc });
         }
         let span = m.extent_bytes();
-        if (a.vmm || m.offset > 0 || m.is_2d()) && m.offset.saturating_add(span) > a.bytes {
+        if (a.vmm || m.offset > 0 || m.is_2d() || m.is_3d())
+            && m.offset.saturating_add(span) > a.bytes
+        {
             return Err(SimError::Invalid {
                 why: "memcpy range past alloc",
             });
@@ -13185,6 +13211,29 @@ fn kernel_span(total: u64, buf: &KernelBuf) -> Result<(u64, u64), SimError> {
 }
 
 fn memcpy_2d_check(m: &MemcpyOp) -> Result<(), SimError> {
+    if m.is_3d() {
+        if m.bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "memcpy3d width",
+            });
+        }
+        if m.height == 0 {
+            return Err(SimError::Invalid {
+                why: "memcpy3d height",
+            });
+        }
+        if m.bytes > m.src_pitch_or_width() || m.bytes > m.dst_pitch_or_width() {
+            return Err(SimError::Invalid {
+                why: "memcpy3d pitch",
+            });
+        }
+        if m.height > m.src_height_or_extent() || m.height > m.dst_height_or_extent() {
+            return Err(SimError::Invalid {
+                why: "memcpy3d height",
+            });
+        }
+        return Ok(());
+    }
     if !m.is_2d() {
         return Ok(());
     }
@@ -13712,6 +13761,9 @@ fn remap_alloc_kind(kind: Kind, map: &BTreeMap<AllocId, AllocId>) -> Kind {
             height: op.height,
             src_pitch: op.src_pitch,
             dst_pitch: op.dst_pitch,
+            depth: op.depth,
+            src_height: op.src_height,
+            dst_height: op.dst_height,
         }),
         Kind::Kernel {
             kind,

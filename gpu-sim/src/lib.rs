@@ -138,6 +138,8 @@
 //! [`MemcpyOp`] `height` / pitches are `cudaMemcpy2DAsync` (payload `width *
 //! height`, not pitch padding). [`MemsetOp`] `height` / `pitch` are
 //! `cudaMemset2DAsync` (payload `width * height`; padding is not written).
+//! [`Sim::malloc_3d`] is `cudaMalloc3D`. [`MemcpyOp`] `depth` / slice heights
+//! are `cudaMemcpy3DAsync` (payload `width * height * depth`).
 //! [`graph_mem_get`](Sim::graph_mem_get) / [`graph_mem_set`](Sim::graph_mem_set) /
 //! [`graph_mem_trim`](Sim::graph_mem_trim) are `cudaDeviceGetGraphMemAttribute` /
 //! `SetGraphMemAttribute` / `GraphMemTrim` (graph-memory pool only; unused
@@ -7544,6 +7546,7 @@ mod tests {
                 height: 8,
                 src_pitch: 256,
                 dst_pitch: pitch,
+                ..MemcpyOp::default()
             },
             s,
         ));
@@ -7564,6 +7567,7 @@ mod tests {
                 height: 8,
                 src_pitch: 256,
                 dst_pitch: pitch,
+                ..MemcpyOp::default()
             },
             s,
         ) {
@@ -7653,6 +7657,105 @@ mod tests {
         assert_eq!(got.pitch, pitch);
         assert_eq!(got.payload_bytes(), 2048);
         assert_eq!(got.extent_bytes(), 7 * 512 + 256);
+    }
+
+    #[test]
+    fn malloc_3d_and_memcpy3d_bills_payload_not_padding() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_3d(d, 256, 4, 4).unwrap();
+        assert_eq!(pitch, 512);
+        assert_eq!(sim.hbm_used(d).unwrap(), 8192);
+        enq(sim.memcpy(
+            d,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(d),
+                alloc: a,
+                bytes: 256,
+                offset: 0,
+                height: 4,
+                src_pitch: 256,
+                dst_pitch: pitch,
+                depth: 4,
+                src_height: 4,
+                dst_height: 4,
+            },
+            s,
+        ));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), 4096);
+        match sim.malloc_3d(d, 256, 4, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("malloc 3d"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy(
+            d,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(d),
+                alloc: a,
+                bytes: 600,
+                offset: 0,
+                height: 4,
+                src_pitch: 256,
+                dst_pitch: pitch,
+                depth: 4,
+                src_height: 4,
+                dst_height: 4,
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy3d pitch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy(
+            d,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(d),
+                alloc: a,
+                bytes: 256,
+                offset: 0,
+                height: 4,
+                src_pitch: 256,
+                dst_pitch: pitch,
+                depth: 4,
+                src_height: 2,
+                dst_height: 4,
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy3d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memcpy(
+            g,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(d),
+                alloc: a,
+                bytes: 256,
+                offset: 0,
+                height: 4,
+                src_pitch: 256,
+                dst_pitch: pitch,
+                depth: 4,
+                src_height: 4,
+                dst_height: 4,
+            },
+        )
+        .unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), 8192);
+        let got = sim.graph_memcpy_get_params(g, 0).unwrap();
+        assert_eq!(got.depth, 4);
+        assert_eq!(got.payload_bytes(), 4096);
+        assert_eq!(got.extent_bytes(), 3 * 512 * 4 + 3 * 512 + 256);
     }
 
     #[test]

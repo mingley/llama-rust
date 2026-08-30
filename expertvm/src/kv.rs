@@ -408,6 +408,7 @@ fn h2d_page(sim: &mut Sim, va: AllocId, off: u64, cfg: KvCfg) -> Result<(), Erro
             height,
             src_pitch: cfg.row_width,
             dst_pitch: cfg.pitch,
+            ..MemcpyOp::default()
         }
     } else {
         MemcpyOp {

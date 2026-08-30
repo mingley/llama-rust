@@ -167,9 +167,12 @@ impl Place {
 /// memcpy node (`cudaGraphExecMemcpyNodeSetParams`). Pageable src/dst stay
 /// illegal as graph params.
 ///
-/// [`Self::height`] `0` or `1` is `cudaMemcpyAsync` of [`Self::bytes`].
-/// `height > 1` is `cudaMemcpy2DAsync`: [`Self::bytes`] is the row width,
-/// billed payload is `width * height` (pitch padding is not transferred).
+    /// [`Self::height`] `0` or `1` is `cudaMemcpyAsync` of [`Self::bytes`].
+    /// `height > 1` and [`Self::depth`] `<= 1` is `cudaMemcpy2DAsync`:
+    /// [`Self::bytes`] is the row width, billed payload is `width * height`
+    /// (pitch padding is not transferred). [`Self::depth`] `> 1` is
+    /// `cudaMemcpy3DAsync`: billed payload is `width * height * depth`
+    /// (row and slice padding are not transferred).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemcpyOp {
     /// Source.
@@ -194,6 +197,14 @@ pub struct MemcpyOp {
     pub src_pitch: u64,
     /// Destination pitch in bytes (`dpitch`). `0` means packed (`width`).
     pub dst_pitch: u64,
+    /// Slice count for `cudaMemcpy3D`. `0` or `1` is a 1D or 2D copy.
+    pub depth: u64,
+    /// Source 2D-slice height (`cudaPitchedPtr::ysize`). `0` means packed
+    /// ([`Self::height`]).
+    pub src_height: u64,
+    /// Destination 2D-slice height (`cudaPitchedPtr::ysize`). `0` means packed
+    /// ([`Self::height`]).
+    pub dst_height: u64,
 }
 
 impl Default for MemcpyOp {
@@ -207,21 +218,34 @@ impl Default for MemcpyOp {
             height: 0,
             src_pitch: 0,
             dst_pitch: 0,
+            depth: 0,
+            src_height: 0,
+            dst_height: 0,
         }
     }
 }
 
 impl MemcpyOp {
-    /// `cudaMemcpy2D` / `height > 1`.
+    /// `cudaMemcpy2D` / `height > 1` and not [`Self::is_3d`].
     #[must_use]
     pub fn is_2d(&self) -> bool {
-        self.height > 1
+        self.height > 1 && self.depth <= 1
     }
 
-    /// Bytes the copy engine moves (pitch padding is not billed).
+    /// `cudaMemcpy3D` / `depth > 1`.
+    #[must_use]
+    pub fn is_3d(&self) -> bool {
+        self.depth > 1
+    }
+
+    /// Bytes the copy engine moves (pitch and slice padding are not billed).
     #[must_use]
     pub fn payload_bytes(&self) -> u64 {
-        if self.height > 1 {
+        if self.depth > 1 {
+            self.bytes
+                .saturating_mul(self.height.max(1))
+                .saturating_mul(self.depth)
+        } else if self.height > 1 {
             self.bytes.saturating_mul(self.height)
         } else {
             self.bytes
@@ -248,16 +272,47 @@ impl MemcpyOp {
         }
     }
 
-    /// Contiguous span in [`Self::alloc`] covering the 1D copy or 2D rectangle.
+    /// Source 2D-slice height, or packed [`Self::height`] when [`Self::src_height`] is `0`.
+    #[must_use]
+    pub fn src_height_or_extent(&self) -> u64 {
+        if self.src_height == 0 {
+            self.height.max(1)
+        } else {
+            self.src_height
+        }
+    }
+
+    /// Destination 2D-slice height, or packed [`Self::height`] when [`Self::dst_height`] is `0`.
+    #[must_use]
+    pub fn dst_height_or_extent(&self) -> u64 {
+        if self.dst_height == 0 {
+            self.height.max(1)
+        } else {
+            self.dst_height
+        }
+    }
+
+    /// Contiguous span in [`Self::alloc`] covering the 1D copy, 2D rectangle, or
+    /// 3D box.
     #[must_use]
     pub fn extent_bytes(&self) -> u64 {
-        if self.height <= 1 {
+        if !self.is_2d() && !self.is_3d() {
             return self.bytes;
         }
-        self.height
+        let pitch = self.device_pitch();
+        let h = self.height.max(1);
+        let plane = h
             .saturating_sub(1)
-            .saturating_mul(self.device_pitch())
-            .saturating_add(self.bytes)
+            .saturating_mul(pitch)
+            .saturating_add(self.bytes);
+        if !self.is_3d() {
+            return plane;
+        }
+        let slice = pitch.saturating_mul(self.device_ysize());
+        self.depth
+            .saturating_sub(1)
+            .saturating_mul(slice)
+            .saturating_add(plane)
     }
 
     fn device_pitch(&self) -> u64 {
@@ -269,6 +324,19 @@ impl MemcpyOp {
             self.src_pitch_or_width()
         } else {
             self.src_pitch_or_width().max(self.dst_pitch_or_width())
+        }
+    }
+
+    fn device_ysize(&self) -> u64 {
+        let dst_dev = matches!(self.dst, Place::Device(_));
+        let src_dev = matches!(self.src, Place::Device(_));
+        if dst_dev && !src_dev {
+            self.dst_height_or_extent()
+        } else if src_dev && !dst_dev {
+            self.src_height_or_extent()
+        } else {
+            self.src_height_or_extent()
+                .max(self.dst_height_or_extent())
         }
     }
 }
