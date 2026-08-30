@@ -654,6 +654,7 @@
 //! [`graph_add_memset`](Sim::graph_add_memset) /
 //! [`graph_add_memset_op`](Sim::graph_add_memset_op) /
 //! [`graph_add_memset_2d`](Sim::graph_add_memset_2d) /
+//! [`graph_add_memset_3d`](Sim::graph_add_memset_3d) /
 //! [`graph_add_host_func`](Sim::graph_add_host_func) /
 //! [`graph_add_empty`](Sim::graph_add_empty) /
 //! [`graph_add_event_record`](Sim::graph_add_event_record) /
@@ -11736,6 +11737,44 @@ mod tests {
             },
         ) {
             Err(SimError::Invalid { why }) => assert!(why.contains("memset2d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_add_memset_3d_requires_is_3d() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_3d(d, 256, 4, 4).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        let op = MemsetOp {
+            id: a,
+            bytes: 256,
+            height: 4,
+            pitch,
+            depth: 4,
+            ysize: 4,
+            ..MemsetOp::default()
+        };
+        sim.graph_add_memset_3d(g, op).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert!(sim.clock_ns() > 0);
+        match sim.graph_add_memset_3d(g, MemsetOp { depth: 1, ..op }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset3d depth"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_add_memset_3d(
+            g,
+            MemsetOp {
+                depth: 0,
+                ysize: 0,
+                ..op
+            },
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset3d depth"), "{why}"),
             other => panic!("{other:?}"),
         }
     }

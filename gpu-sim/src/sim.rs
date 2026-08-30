@@ -5953,6 +5953,7 @@ impl Sim {
 
     /// `cudaGraphAddMemsetNode` / `cudaMemset2D` params ([`MemsetOp`]).
     /// [`Self::graph_add_memset_2d`] requires [`MemsetOp::is_2d`].
+    /// [`Self::graph_add_memset_3d`] requires [`MemsetOp::is_3d`].
     pub fn graph_add_memset_op(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         let op = self.resolve_memset_op(op)?;
@@ -5966,6 +5967,18 @@ impl Sim {
         if !op.is_2d() {
             return Err(SimError::Invalid {
                 why: "memset2d height",
+            });
+        }
+        self.graph_add_memset_op(graph, op)
+    }
+
+    /// `cudaGraphAddMemsetNode` whose [`MemsetOp`] is [`MemsetOp::is_3d`]
+    /// (`depth > 1`). Other extents Invalid `"memset3d depth"`. Typed
+    /// [`Self::graph_add_memset_op`] stays.
+    pub fn graph_add_memset_3d(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
+        if !op.is_3d() {
+            return Err(SimError::Invalid {
+                why: "memset3d depth",
             });
         }
         self.graph_add_memset_op(graph, op)

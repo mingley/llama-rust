@@ -103,7 +103,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaStreamBeginCaptureToGraph` (`begin_capture_to_graph`) appends captured nodes onto an existing uninstantiated graph; empty deps are extra roots | not timed (capture) |
 | `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes` | query |
 | `cudaGraphChildGraphNodeGetGraph` / `EventRecordNodeGetEvent` / `WaitNodeGetEvent` / `MemAllocNodeGetParams` | query |
-| `cudaGraphAddKernelNode` / memcpy / `AddMemcpyNode1D` / `graph_add_memcpy_2d` / `graph_add_memcpy_3d` / `graph_add_memset_2d` / memset / host / empty / event / child / mem alloc/free / cooperative kernel / dependencies (`graph_add_*`) | not timed (host-side topology) |
+| `cudaGraphAddKernelNode` / memcpy / `AddMemcpyNode1D` / `graph_add_memcpy_2d` / `graph_add_memcpy_3d` / `graph_add_memset_2d` / `graph_add_memset_3d` / memset / host / empty / event / child / mem alloc/free / cooperative kernel / dependencies (`graph_add_*`) | not timed (host-side topology) |
 | `cudaGraphDestroyNode` (`graph_destroy_node`) drops a definition node and incident edges; remaining indices stay valid | not timed (host-side topology) |
 | graph destroy drops the id (`cudaGraphDestroy`); remaining graph mem is refunded; user-object refs held by the graph are released | 1 ns host-sync |
 | `cudaUserObjectCreate` / `Retain` / `Release`; last ref records the destroy `fn_id` | 1 ns host-sync |
