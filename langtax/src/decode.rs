@@ -5723,7 +5723,8 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
         }))
     };
     let (wq, bq, wk, bk, wv, bv) = if h.bloom {
-        load_bloom_qkv(g, i)?
+        let qkv = load_bloom_qkv(g, i)?;
+        (qkv.wq, qkv.bq, qkv.wk, qkv.bk, qkv.wv, qkv.bv)
     } else {
         (
             quant_mat(need(g, &format!("blk.{i}.attn_q.weight"))?)?,
@@ -5784,20 +5785,16 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
 
 /// Official bloom fused `attn_qkv` is concatenated Q then K then V
 /// (`bloom.cpp` view after `wqkv`; convert restacks HF interleaved heads).
-fn load_bloom_qkv(
-    g: &Gguf,
-    i: usize,
-) -> Result<
-    (
-        QuantMat,
-        Option<Vec<f32>>,
-        QuantMat,
-        Option<Vec<f32>>,
-        QuantMat,
-        Option<Vec<f32>>,
-    ),
-    LlamaError,
-> {
+struct BloomQkv {
+    wq: QuantMat,
+    bq: Option<Vec<f32>>,
+    wk: QuantMat,
+    bk: Option<Vec<f32>>,
+    wv: QuantMat,
+    bv: Option<Vec<f32>>,
+}
+
+fn load_bloom_qkv(g: &Gguf, i: usize) -> Result<BloomQkv, LlamaError> {
     let name = format!("blk.{i}.attn_qkv.weight");
     let qkv = quant_mat(need(g, &name)?)?;
     if qkv.n_parts != 1 || qkv.n_cols == 0 || qkv.n_rows <= qkv.n_cols {
@@ -5828,9 +5825,16 @@ fn load_bloom_qkv(
         .to_vec();
     let bv = bias
         .get(n_q.saturating_add(n_kv)..)
-        .ok_or_else(|| LlamaError::Shape(bname))?
+        .ok_or(LlamaError::Shape(bname))?
         .to_vec();
-    Ok((wq, Some(bq), wk, Some(bk), wv, Some(bv)))
+    Ok(BloomQkv {
+        wq,
+        bq: Some(bq),
+        wk,
+        bk: Some(bk),
+        wv,
+        bv: Some(bv),
+    })
 }
 
 fn load_llama_moe(g: &Gguf, i: usize, h: &LlamaMoeHparams) -> Result<LlamaMoe, LlamaError> {
