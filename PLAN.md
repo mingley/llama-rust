@@ -2659,7 +2659,14 @@ model, do not celebrate the sim.
     capture-legal. Decode identity unchanged. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-246. [ ] Next numbered PLAN item after 245 is the next `gpu-sim` / Engine /
+246. [x] `cudaDevAttrMulticastSupported`:
+    [`DeviceAttr::MulticastSupported`] is a GPU↔GPU NVLink on that
+    device ([`HardwareProfile::multicast_supported`]). PCIe P2P and RDMA
+    are not NVLS. Also on [`DeviceProperties`]. Query; capture-legal.
+    Decode identity unchanged. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+247. [ ] Next numbered PLAN item after 246 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

@@ -327,6 +327,17 @@ impl HardwareProfile {
             .any(|l| l.kind == LinkKind::Rdma && (l.a == Some(device) || l.b == Some(device)))
     }
 
+    /// `cudaDevAttrMulticastSupported` for `device`.
+    ///
+    /// True when this profile has a GPU↔GPU [`LinkKind::Nvlink`] incident on
+    /// `device`. PCIe P2P and RDMA are not NVLS.
+    #[must_use]
+    pub fn multicast_supported(&self, device: DeviceId) -> bool {
+        self.links
+            .iter()
+            .any(|l| l.kind == LinkKind::Nvlink && (l.a == Some(device) || l.b == Some(device)))
+    }
+
     /// Hyper-Q occupancy on every GPU (`1` is exclusive compute).
     #[must_use]
     pub fn with_compute_slots(mut self, slots: u8) -> Self {

@@ -792,6 +792,9 @@ pub enum DeviceAttr {
     DeferredMappingCudaArraySupported,
     /// `cudaDevAttrDmaBufSupported` (always 0; dma-buf is not modeled).
     DmaBufSupported,
+    /// `cudaDevAttrMulticastSupported` (a GPU↔GPU [`crate::LinkKind::Nvlink`]
+    /// link on this device). PCIe P2P and RDMA are not NVLS.
+    MulticastSupported,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -881,6 +884,9 @@ pub struct DeviceProperties {
     pub deferred_mapping_cuda_array_supported: bool,
     /// `cudaDevAttrDmaBufSupported` (dma-buf is not modeled).
     pub dma_buf_supported: bool,
+    /// `cudaDevAttrMulticastSupported` (a GPU↔GPU [`crate::LinkKind::Nvlink`]
+    /// link on this device).
+    pub multicast_supported: bool,
 }
 
 /// `cudaFuncAttribute` for [`crate::Sim::func_set_attribute`] / `GetAttribute`.

@@ -118,7 +118,7 @@ warp scheduler, L1, …   ← do not model
 | `host_get_device_pointer` of mapped host returns the same id (`flags` must be 0) | `cudaHostGetDevicePointer` |
 | `host_get_flags` returns the stored `HostAllocFlags` word | `cudaHostGetFlags` |
 | `alloc_host_with_flags` / `host_register_with_flags` (MAPPED / PORTABLE / WRITE_COMBINED stored; IoMemory / ReadOnly Invalid) | `cudaHostAlloc` / `cudaHostRegister` |
-| `device_get_attribute` exposes modeled SKU caps (incl. GPUDirect RDMA / CanFlushRemoteWrites from `LinkKind::Rdma`; ConcurrentManaged / DirectManagedHost / PageableHostPageTables / HostNativeAtomic / CooperativeMultiDevice / Integrated always 0) | `cudaDeviceGetAttribute` |
+| `device_get_attribute` exposes modeled SKU caps (incl. GPUDirect RDMA / CanFlushRemoteWrites from `LinkKind::Rdma`; MulticastSupported from `LinkKind::Nvlink`; ConcurrentManaged / DirectManagedHost / PageableHostPageTables / HostNativeAtomic / CooperativeMultiDevice / Integrated always 0) | `cudaDeviceGetAttribute` |
 | `device_get_properties` wraps the same SKU caps | `cudaGetDeviceProperties` |
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
 | `stream_get_priority` is the create priority | `cudaStreamGetPriority` |
@@ -517,7 +517,9 @@ pageable is bounce-buffer; host cannot touch managed while a kernel runs).
 are always 0 (host-mapped atomics and multi-device cooperative are not
 modeled; example SKUs are discrete). `SparseCudaArraySupported` /
 `DeferredMappingCudaArraySupported` / `DmaBufSupported` are always 0
-(CUDA arrays and dma-buf are not modeled). `StreamPrioritiesSupported` /
+(CUDA arrays and dma-buf are not modeled). `MulticastSupported` is a
+GPU↔GPU NVLink on that device (PCIe P2P and RDMA are not NVLS).
+`StreamPrioritiesSupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
 (no SM count or clock). `func_get_attributes` is `cudaFuncGetAttributes`

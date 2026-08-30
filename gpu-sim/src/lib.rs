@@ -259,6 +259,8 @@
 //! [`DeferredMappingCudaArraySupported`](DeviceAttr::DeferredMappingCudaArraySupported) /
 //! [`DmaBufSupported`](DeviceAttr::DmaBufSupported) are always 0 (CUDA arrays
 //! and dma-buf are not modeled).
+//! [`DeviceAttr::MulticastSupported`] is a GPU↔GPU [`crate::LinkKind::Nvlink`]
+//! link on that device (PCIe P2P and RDMA are not NVLS).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -10516,6 +10518,60 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_multicast_supported() {
+        let mut h100 = Sim::new(h100());
+        let d = DeviceId(0);
+        assert!(!h100.device_get_properties(d).unwrap().multicast_supported);
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::MulticastSupported)
+                .unwrap(),
+            0
+        );
+        let pcie = Sim::new(HardwareProfile::example_2xh100_pcie());
+        assert_eq!(
+            pcie.device_get_attribute(DeviceId(0), DeviceAttr::MulticastSupported)
+                .unwrap(),
+            0
+        );
+        let rdma = Sim::new(HardwareProfile::example_2node_rdma());
+        assert_eq!(
+            rdma.device_get_attribute(DeviceId(0), DeviceAttr::MulticastSupported)
+                .unwrap(),
+            0
+        );
+        let mut nv = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        assert_eq!(
+            nv.device_get_attribute(DeviceId(0), DeviceAttr::MulticastSupported)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            nv.device_get_attribute(DeviceId(7), DeviceAttr::MulticastSupported)
+                .unwrap(),
+            1
+        );
+        assert!(
+            nv.device_get_properties(DeviceId(7))
+                .unwrap()
+                .multicast_supported
+        );
+        nv.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        assert_eq!(
+            nv.device_get_attribute(DeviceId(0), DeviceAttr::MulticastSupported)
+                .unwrap(),
+            1
+        );
+        let _g = nv.end_capture().unwrap();
+        h100.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::MulticastSupported)
+                .unwrap(),
+            0
+        );
+        let _h = h100.end_capture().unwrap();
     }
 
     #[test]
