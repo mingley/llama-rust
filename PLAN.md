@@ -1272,6 +1272,15 @@ model, do not celebrate the sim.
     nested leaves. Decode identity stays destroy+instantiate. Dual score
     still has no `$/M tokens`.
 
+88. [x] `cudaGraphExecEventRecordNodeSetEvent` /
+    `cudaGraphExecEventWaitNodeSetEvent`:
+    `Sim::graph_exec_event_record_set_event` /
+    `graph_exec_event_wait_set_event` patch the event id on an instantiated
+    record or wait node (`graph_set_params_ns`). The External flag stays
+    (topology). Capture cannot include it. Graphs with mem alloc/free nodes
+    are legal. Decode identity stays kernel-only graphs. Dual score still
+    has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

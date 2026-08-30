@@ -228,6 +228,13 @@ struct Graph {
     auto_free_on_launch: bool,
 }
 
+/// Record vs wait for [`Sim::graph_exec_event_record_set_event`].
+#[derive(Clone, Copy)]
+enum EventSetKind {
+    Record,
+    Wait,
+}
+
 /// DFS state for [`Sim::clone_graph`]: unique graphs in post-order, ancestor stack.
 struct CloneWalk {
     order: Vec<GraphId>,
@@ -1549,6 +1556,94 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphExecEventRecordNodeSetEvent` on an instantiated exec.
+    ///
+    /// Node `node` must already be an event-record node. The event id may
+    /// change; the External flag stays (topology). Pays `graph_set_params_ns`
+    /// and clears the upload flag. Capture cannot include it. Graphs with mem
+    /// alloc/free nodes are legal.
+    pub fn graph_exec_event_record_set_event(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        event: EventId,
+    ) -> Result<(), SimError> {
+        self.graph_exec_event_set(exec, node, event, EventSetKind::Record)
+    }
+
+    /// `cudaGraphExecEventWaitNodeSetEvent` on an instantiated exec.
+    ///
+    /// Node `node` must already be an event-wait node. The event id may change;
+    /// the External flag stays (topology). Pays `graph_set_params_ns` and
+    /// clears the upload flag. Capture cannot include it.
+    pub fn graph_exec_event_wait_set_event(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        event: EventId,
+    ) -> Result<(), SimError> {
+        self.graph_exec_event_set(exec, node, event, EventSetKind::Wait)
+    }
+
+    fn graph_exec_event_set(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        event: EventId,
+        kind: EventSetKind,
+    ) -> Result<(), SimError> {
+        let capture = match kind {
+            EventSetKind::Record => "cannot capture event record set event",
+            EventSetKind::Wait => "cannot capture event wait set event",
+        };
+        self.fail_if_capturing(capture)?;
+        if !self.events.contains_key(&event) {
+            return Err(SimError::UnknownEvent { event: event.0 });
+        }
+        let (instantiated, device, external) = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            let external = match (kind, &step.kind) {
+                (EventSetKind::Record, Kind::EventRecord { external, .. }) => *external,
+                (EventSetKind::Wait, Kind::EventWait { external, .. }) => *external,
+                (EventSetKind::Record, _) => {
+                    return Err(SimError::Invalid {
+                        why: "not an event record node",
+                    });
+                }
+                (EventSetKind::Wait, _) => {
+                    return Err(SimError::Invalid {
+                        why: "not an event wait node",
+                    });
+                }
+            };
+            (g.instantiated, step.device, external)
+        };
+        if !instantiated {
+            return Err(SimError::Invalid {
+                why: "graph not instantiated",
+            });
+        }
+        let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.kind = match kind {
+            EventSetKind::Record => Kind::EventRecord { event, external },
+            EventSetKind::Wait => Kind::EventWait { event, external },
+        };
+        g.uploaded = false;
+        Ok(())
+    }
+
     /// Unique kernel node on `graph` plus its current [`KernelNodeParams`].
     ///
     /// Zero or more than one kernel node is Invalid. Used by
@@ -1716,6 +1811,80 @@ impl Sim {
                 why: "not unique child graph node",
             }),
         }
+    }
+
+    /// Unique event-record node on `graph` plus its current [`EventId`].
+    pub fn graph_unique_event_record(&self, graph: GraphId) -> Result<(usize, EventId), SimError> {
+        match self.graph_try_unique_event_record(graph)? {
+            Some(v) => Ok(v),
+            None => Err(SimError::Invalid {
+                why: "not an event record node",
+            }),
+        }
+    }
+
+    /// Unique event-record node, or `None` when the graph has no record node.
+    pub fn graph_try_unique_event_record(
+        &self,
+        graph: GraphId,
+    ) -> Result<Option<(usize, EventId)>, SimError> {
+        self.graph_try_unique_event(graph, true)
+    }
+
+    /// Unique event-wait node on `graph` plus its current [`EventId`].
+    pub fn graph_unique_event_wait(&self, graph: GraphId) -> Result<(usize, EventId), SimError> {
+        match self.graph_try_unique_event_wait(graph)? {
+            Some(v) => Ok(v),
+            None => Err(SimError::Invalid {
+                why: "not an event wait node",
+            }),
+        }
+    }
+
+    /// Unique event-wait node, or `None` when the graph has no wait node.
+    pub fn graph_try_unique_event_wait(
+        &self,
+        graph: GraphId,
+    ) -> Result<Option<(usize, EventId)>, SimError> {
+        self.graph_try_unique_event(graph, false)
+    }
+
+    fn graph_try_unique_event(
+        &self,
+        graph: GraphId,
+        record: bool,
+    ) -> Result<Option<(usize, EventId)>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut found = None;
+        for (i, step) in g.steps.iter().enumerate() {
+            let ev = if record {
+                match &step.kind {
+                    Kind::EventRecord { event, .. } => Some(*event),
+                    _ => None,
+                }
+            } else {
+                match &step.kind {
+                    Kind::EventWait { event, .. } => Some(*event),
+                    _ => None,
+                }
+            };
+            let Some(event) = ev else {
+                continue;
+            };
+            if found.is_some() {
+                return Err(SimError::Invalid {
+                    why: if record {
+                        "not unique event record node"
+                    } else {
+                        "not unique event wait node"
+                    },
+                });
+            }
+            found = Some((i, event));
+        }
+        Ok(found)
     }
 
     /// `cudaGraphNodeSetEnabled` on an instantiated exec.

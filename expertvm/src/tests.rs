@@ -2769,6 +2769,31 @@ fn cuda_graphs_graph_set_params_retargets_combo_parent() {
 }
 
 #[test]
+fn graph_exec_event_record_set_event_retargets() {
+    use gpu_sim::{EventId, Sim, StreamId};
+
+    let mut sim = Sim::new(HardwareProfile::example_h100_sxm());
+    let d = DeviceId(0);
+    let s = StreamId(0);
+    let e1 = EventId(1);
+    let e2 = EventId(2);
+    sim.create_event(e1).expect("e1");
+    sim.create_event(e2).expect("e2");
+    let exec = sim.create_graph(d, s).expect("g");
+    sim.graph_add_event_record(exec, e1, false).expect("rec");
+    sim.instantiate_graph(exec).expect("i");
+    let (node, ev) = sim.graph_unique_event_record(exec).expect("u");
+    assert_eq!(ev, e1);
+    sim.graph_exec_event_record_set_event(exec, node, e2)
+        .expect("set");
+    let n = sim.launch_graph(exec, s).expect("launch");
+    assert_eq!(n, 1);
+    sim.synchronize().expect("sync");
+    assert!(sim.query_event(e2).expect("q2"));
+    assert!(!sim.query_event(e1).expect("q1"));
+}
+
+#[test]
 fn cuda_graphs_graph_set_params_reuses_parked_leaves() {
     let t = Trace {
         events: vec![

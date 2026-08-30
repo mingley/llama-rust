@@ -136,6 +136,10 @@
 //! treats child ids as topology. [`graph_child_nodes`](Sim::graph_child_nodes) /
 //! [`graph_unique_child`](Sim::graph_unique_child) /
 //! [`graph_try_unique_child`](Sim::graph_try_unique_child) find those nodes.
+//! [`graph_exec_event_record_set_event`](Sim::graph_exec_event_record_set_event) /
+//! [`graph_exec_event_wait_set_event`](Sim::graph_exec_event_wait_set_event) are
+//! `cudaGraphExecEventRecordNodeSetEvent` / `WaitNodeSetEvent` (event id is the
+//! parameter; External flag is topology).
 //! [`graph_node_set_enabled`](Sim::graph_node_set_enabled) /
 //! [`graph_node_get_enabled`](Sim::graph_node_get_enabled) are
 //! `cudaGraphNodeSetEnabled` / `GetEnabled` (skip launch; mem nodes illegal).
@@ -2239,6 +2243,198 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("gpu"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn graph_exec_event_record_set_event_retargets_without_second_graph() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_set_params_ns = 400;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let e1 = EventId(1);
+        let e2 = EventId(2);
+        sim.create_event(e1).unwrap();
+        sim.create_event(e2).unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_event_record(exec, e1, false).unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        sim.upload_graph(exec).unwrap();
+        let (node, ev) = sim.graph_unique_event_record(exec).unwrap();
+        assert_eq!(node, 0);
+        assert_eq!(ev, e1);
+        let t0 = sim.clock_ns();
+        sim.graph_exec_event_record_set_event(exec, node, e2)
+            .unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(400));
+        assert!(!sim.graph_uploaded(exec).unwrap());
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert!(sim.query_event(e2).unwrap());
+        assert!(!sim.query_event(e1).unwrap());
+    }
+
+    #[test]
+    fn graph_exec_event_wait_set_event_retargets_live_record() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let e1 = EventId(1);
+        let e2 = EventId(2);
+        sim.create_event(e1).unwrap();
+        sim.create_event(e2).unwrap();
+        enq(sim.record_event(d, e2, s));
+        sim.synchronize().unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_event_wait(exec, e1, false).unwrap();
+        sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_dependencies(exec, 0, 1).unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        let (node, ev) = sim.graph_unique_event_wait(exec).unwrap();
+        assert_eq!(ev, e1);
+        sim.graph_exec_event_wait_set_event(exec, node, e2).unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(a, d).unwrap());
+    }
+
+    #[test]
+    fn graph_exec_event_set_event_beats_exec_update_wall() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_instantiate_ns = 80_000;
+            g.graph_update_ns = 9_000;
+            g.graph_set_params_ns = 300;
+            g.graph_upload_ns = 1_000;
+            g.graph_launch_ns = 1_000;
+        }
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let run_update = {
+            let mut sim = Sim::new(p.clone());
+            sim.create_event(EventId(1)).unwrap();
+            sim.create_event(EventId(2)).unwrap();
+            let exec = sim.create_graph(d, s).unwrap();
+            sim.graph_add_event_record(exec, EventId(1), false).unwrap();
+            sim.instantiate_graph(exec).unwrap();
+            sim.upload_graph(exec).unwrap();
+            let src = sim.create_graph(d, s).unwrap();
+            sim.graph_add_event_record(src, EventId(2), false).unwrap();
+            let t0 = sim.clock_ns();
+            sim.update_graph(exec, src).unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let run_set = {
+            let mut sim = Sim::new(p);
+            sim.create_event(EventId(1)).unwrap();
+            sim.create_event(EventId(2)).unwrap();
+            let exec = sim.create_graph(d, s).unwrap();
+            sim.graph_add_event_record(exec, EventId(1), false).unwrap();
+            sim.instantiate_graph(exec).unwrap();
+            sim.upload_graph(exec).unwrap();
+            let t0 = sim.clock_ns();
+            sim.graph_exec_event_record_set_event(exec, 0, EventId(2))
+                .unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        assert!(
+            run_set < run_update,
+            "set_params={run_set} update={run_update}"
+        );
+        assert_eq!(run_set, 300);
+        assert_eq!(run_update, 9_000);
+    }
+
+    #[test]
+    fn graph_exec_event_set_event_allows_mem_nodes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.create_event(EventId(1)).unwrap();
+        sim.create_event(EventId(2)).unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        let scratch = sim.graph_add_alloc(exec, 4096).unwrap();
+        sim.graph_add_event_record(exec, EventId(1), false).unwrap();
+        sim.graph_add_dependencies(exec, 0, 1).unwrap();
+        sim.graph_add_free(exec, scratch).unwrap();
+        sim.graph_add_dependencies(exec, 1, 2).unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        let scratch2 = sim.graph_add_alloc(src, 4096).unwrap();
+        sim.graph_add_event_record(src, EventId(1), false).unwrap();
+        sim.graph_add_dependencies(src, 0, 1).unwrap();
+        sim.graph_add_free(src, scratch2).unwrap();
+        sim.graph_add_dependencies(src, 1, 2).unwrap();
+        let err = sim.update_graph(exec, src).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("mem"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_exec_event_record_set_event(exec, 1, EventId(2))
+            .unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 3);
+        sim.synchronize().unwrap();
+        assert!(sim.query_event(EventId(2)).unwrap());
+        assert!(!sim.is_resident(scratch, d).unwrap());
+    }
+
+    #[test]
+    fn graph_exec_event_set_event_rejects_uninstantiated_and_capture() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        sim.create_event(EventId(1)).unwrap();
+        sim.create_event(EventId(2)).unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_event_record(exec, EventId(1), false).unwrap();
+        let err = sim
+            .graph_exec_event_record_set_event(exec, 0, EventId(2))
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.instantiate_graph(exec).unwrap();
+        let kern = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(kern, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph(kern).unwrap();
+        let err = sim
+            .graph_exec_event_record_set_event(kern, 0, EventId(2))
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not an event record"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim
+            .graph_exec_event_wait_set_event(exec, 0, EventId(2))
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not an event wait"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_exec_event_record_set_event(exec, 0, EventId(9)) {
+            Err(SimError::UnknownEvent { event: 9 }) => {}
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        let err = sim
+            .graph_exec_event_record_set_event(exec, 0, EventId(2))
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        assert!(sim.graph_try_unique_event_wait(exec).unwrap().is_none());
     }
 
     #[test]

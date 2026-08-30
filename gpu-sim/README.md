@@ -81,6 +81,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaGraphExecMemsetNodeSetParams` patches one instantiated memset node's dest span (mem nodes legal) | `graph_set_params_ns` |
 | `cudaGraphNodeSetEnabled` skips an instantiated node at launch (mem nodes illegal) | `graph_set_params_ns` |
 | `cudaGraphExecChildGraphNodeSetParams` swaps one instantiated child-graph node's nested graph (nested topology must match; child ids are topology for ExecUpdate) | `graph_set_params_ns` |
+| `cudaGraphExecEventRecordNodeSetEvent` / `WaitNodeSetEvent` retarget the event on an instantiated record/wait node (External flag is topology) | `graph_set_params_ns` |
 | graph mem alloc/free nodes (`cudaMallocAsync` / `cudaFreeAsync` during capture, or `graph_add_alloc` / `graph_add_free`) | `pool_reuse_ns` on relaunch without free |
 | graph clone is an independent uninstantiated copy; child graphs cloned recursively; mem alloc nodes get new ids | `graph_clone_ns` |
 | `cudaGraphCreate` (`create_graph`) is an empty uninstantiated graph | 1 ns host-sync |
@@ -250,6 +251,9 @@ mem alloc/free cannot be disabled).
 `graph_exec_child_set_params` is `cudaGraphExecChildGraphNodeSetParams`
 (swap the nested graph; nested topology must match; child ids are topology
 for `update_graph`; mem nodes legal).
+`graph_exec_event_record_set_event` / `graph_exec_event_wait_set_event` are
+`cudaGraphExecEventRecordNodeSetEvent` / `WaitNodeSetEvent` (event id is the
+parameter; External is topology).
 `expertvm --graph-set-params` parks a leaf and retargets the unique kernel
 (and a unique memcpy or memset if present). `expertvm --graph-update` parks a leaf GEMM on
 evict and updates the next miss instead of instantiate. `--graph-clone`
