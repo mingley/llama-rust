@@ -129,6 +129,13 @@
 //! `cudaGraphExecMemsetNodeSetParams` (same cost; zero-byte still illegal).
 //! [`graph_unique_memset`](Sim::graph_unique_memset) /
 //! [`graph_try_unique_memset`](Sim::graph_try_unique_memset) find that node.
+//! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params) is
+//! `cudaGraphExecChildGraphNodeSetParams`: swap the nested graph of one
+//! instantiated child-graph node (`graph_set_params_ns`; nested topology must
+//! match; nested child ids are parameters; mem nodes legal). `cudaGraphExecUpdate`
+//! treats child ids as topology. [`graph_child_nodes`](Sim::graph_child_nodes) /
+//! [`graph_unique_child`](Sim::graph_unique_child) /
+//! [`graph_try_unique_child`](Sim::graph_try_unique_child) find those nodes.
 //! [`graph_node_set_enabled`](Sim::graph_node_set_enabled) /
 //! [`graph_node_get_enabled`](Sim::graph_node_get_enabled) are
 //! `cudaGraphNodeSetEnabled` / `GetEnabled` (skip launch; mem nodes illegal).
@@ -1948,6 +1955,290 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_exec_child_set_params_swaps_without_second_graph() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_set_params_ns = 400;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let leaf_a = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(leaf_a, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph(leaf_a).unwrap();
+        let leaf_b = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(leaf_b, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        sim.instantiate_graph(leaf_b).unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(exec, leaf_a).unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        sim.upload_graph(exec).unwrap();
+        assert!(sim.graph_uploaded(exec).unwrap());
+        let (node, nested) = sim.graph_unique_child(exec).unwrap();
+        assert_eq!(node, 0);
+        assert_eq!(nested, leaf_a);
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(src, leaf_b).unwrap();
+        let err = sim.update_graph(exec, src).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("topology"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let t0 = sim.clock_ns();
+        sim.graph_exec_child_set_params(exec, node, leaf_b).unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(400));
+        assert!(!sim.graph_uploaded(exec).unwrap());
+        let (_, nested) = sim.graph_unique_child(exec).unwrap();
+        assert_eq!(nested, leaf_b);
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn graph_exec_child_set_params_beats_instantiate_wall() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_instantiate_ns = 80_000;
+            g.graph_update_ns = 9_000;
+            g.graph_set_params_ns = 300;
+            g.graph_upload_ns = 1_000;
+            g.graph_launch_ns = 1_000;
+        }
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let run_inst = {
+            let mut sim = Sim::new(p.clone());
+            let a = sim.malloc(d, 4096).unwrap();
+            let b = sim.malloc(d, 4096).unwrap();
+            let leaf_a = sim.create_graph(d, s).unwrap();
+            sim.graph_add_kernel(leaf_a, KernelKind::other(8, 8), &[a], &[a])
+                .unwrap();
+            sim.instantiate_graph(leaf_a).unwrap();
+            let leaf_b = sim.create_graph(d, s).unwrap();
+            sim.graph_add_kernel(leaf_b, KernelKind::other(8, 8), &[b], &[b])
+                .unwrap();
+            sim.instantiate_graph(leaf_b).unwrap();
+            let exec = sim.create_graph(d, s).unwrap();
+            sim.graph_add_child(exec, leaf_a).unwrap();
+            sim.instantiate_graph(exec).unwrap();
+            sim.upload_graph(exec).unwrap();
+            let t0 = sim.clock_ns();
+            sim.destroy_graph(exec).unwrap();
+            let next = sim.create_graph(d, s).unwrap();
+            sim.graph_add_child(next, leaf_b).unwrap();
+            sim.instantiate_graph(next).unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let run_set = {
+            let mut sim = Sim::new(p);
+            let a = sim.malloc(d, 4096).unwrap();
+            let b = sim.malloc(d, 4096).unwrap();
+            let leaf_a = sim.create_graph(d, s).unwrap();
+            sim.graph_add_kernel(leaf_a, KernelKind::other(8, 8), &[a], &[a])
+                .unwrap();
+            sim.instantiate_graph(leaf_a).unwrap();
+            let leaf_b = sim.create_graph(d, s).unwrap();
+            sim.graph_add_kernel(leaf_b, KernelKind::other(8, 8), &[b], &[b])
+                .unwrap();
+            sim.instantiate_graph(leaf_b).unwrap();
+            let exec = sim.create_graph(d, s).unwrap();
+            sim.graph_add_child(exec, leaf_a).unwrap();
+            sim.instantiate_graph(exec).unwrap();
+            sim.upload_graph(exec).unwrap();
+            let t0 = sim.clock_ns();
+            sim.graph_exec_child_set_params(exec, 0, leaf_b).unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        assert!(
+            run_set < run_inst,
+            "set_params={run_set} instantiate={run_inst}"
+        );
+        assert_eq!(run_set, 300);
+    }
+
+    #[test]
+    fn graph_exec_child_set_params_allows_mem_nodes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let leaf_a = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(leaf_a, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph(leaf_a).unwrap();
+        let leaf_b = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(leaf_b, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        sim.instantiate_graph(leaf_b).unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        let scratch = sim.graph_add_alloc(exec, 4096).unwrap();
+        sim.graph_add_child(exec, leaf_a).unwrap();
+        sim.graph_add_dependencies(exec, 0, 1).unwrap();
+        sim.graph_add_free(exec, scratch).unwrap();
+        sim.graph_add_dependencies(exec, 1, 2).unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        let scratch2 = sim.graph_add_alloc(src, 4096).unwrap();
+        sim.graph_add_child(src, leaf_a).unwrap();
+        sim.graph_add_dependencies(src, 0, 1).unwrap();
+        sim.graph_add_free(src, scratch2).unwrap();
+        sim.graph_add_dependencies(src, 1, 2).unwrap();
+        let err = sim.update_graph(exec, src).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("mem"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_exec_child_set_params(exec, 1, leaf_b).unwrap();
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 3);
+        sim.synchronize().unwrap();
+        assert!(!sim.is_resident(scratch, d).unwrap());
+        assert!(sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn graph_exec_child_set_params_rejects_uninstantiated_topology_and_capture() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let leaf_a = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(leaf_a, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph(leaf_a).unwrap();
+        let leaf_b = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(leaf_b, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        sim.instantiate_graph(leaf_b).unwrap();
+        let memcpy = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memcpy(
+            memcpy,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(d),
+                alloc: b,
+                bytes: 4096,
+                offset: 0,
+            },
+        )
+        .unwrap();
+        sim.instantiate_graph(memcpy).unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(exec, leaf_a).unwrap();
+        let err = sim
+            .graph_exec_child_set_params(exec, 0, leaf_b)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.instantiate_graph(exec).unwrap();
+        let raw = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(raw, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        let err = sim.graph_exec_child_set_params(exec, 0, raw).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let kern = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(kern, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph(kern).unwrap();
+        let err = sim
+            .graph_exec_child_set_params(kern, 0, leaf_b)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not a child"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim
+            .graph_exec_child_set_params(exec, 0, memcpy)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("topology"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim.graph_exec_child_set_params(exec, 0, exec).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("self"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mid = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(mid, leaf_a).unwrap();
+        sim.instantiate_graph(mid).unwrap();
+        let outer = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(outer, mid).unwrap();
+        sim.instantiate_graph(outer).unwrap();
+        let wrap = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(wrap, outer).unwrap();
+        sim.instantiate_graph(wrap).unwrap();
+        let err = sim.graph_exec_child_set_params(outer, 0, wrap).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("cyclic"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        let err = sim
+            .graph_exec_child_set_params(exec, 0, leaf_b)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        let two = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(two, leaf_a).unwrap();
+        sim.graph_add_child(two, leaf_b).unwrap();
+        match sim.graph_try_unique_child(two) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not unique"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(sim.graph_try_unique_child(leaf_a).unwrap().is_none());
+        let err = sim.graph_unique_child(leaf_a).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not a child"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_exec_child_set_params_rejects_gpu_mismatch() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let a = sim.malloc(d0, 4096).unwrap();
+        let b = sim.malloc(d1, 4096).unwrap();
+        let leaf0 = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_kernel(leaf0, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph(leaf0).unwrap();
+        let leaf1 = sim.create_graph(d1, s).unwrap();
+        sim.graph_add_kernel(leaf1, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        sim.instantiate_graph(leaf1).unwrap();
+        let exec = sim.create_graph(d0, s).unwrap();
+        sim.graph_add_child(exec, leaf0).unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        let err = sim.graph_exec_child_set_params(exec, 0, leaf1).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("gpu"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

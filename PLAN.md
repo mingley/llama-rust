@@ -1261,6 +1261,17 @@ model, do not celebrate the sim.
     (default `--expert-slots`, or 8). Does not add llama-rust as an
     infer-bench dep. Dual score still has no `$/M tokens`.
 
+87. [x] `cudaGraphExecChildGraphNodeSetParams`:
+    `Sim::graph_exec_child_set_params` patches one instantiated child-graph
+    node's nested graph without a second parent (`graph_set_params_ns`).
+    Nested topology (device, stream, op kinds, cooperative flag, deps) must
+    match; nested child ids are parameters (`cudaGraphExecUpdate` treats
+    those ids as topology). The new child must already be instantiated on
+    the same GPU. Capture cannot include it. Graphs with mem alloc/free
+    nodes are legal. `--graph-set-params` parks combo parents and retargets
+    nested leaves. Decode identity stays destroy+instantiate. Dual score
+    still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

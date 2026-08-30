@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaGraphExecChildGraphNodeSetParams`
+
+`Sim::graph_exec_child_set_params` is `cudaGraphExecChildGraphNodeSetParams`:
+swap the nested graph of one instantiated child-graph node without a
+second parent. Nested topology must match; child ids are topology for
+`cudaGraphExecUpdate`. Cheaper than instantiate. Legal with mem alloc/free
+nodes. `--graph-set-params` parks combo parents and retargets nested
+leaves. Decode identity stays destroy+instantiate. Dual score still has
+no `$/M tokens`.
+
 ## Shipped 2026-08-30 — Engine `--bench` infer-bench report
 
 `gguf_gemv engine --bench` records the Engine's batched MoE traces and

@@ -260,7 +260,10 @@ pub struct SimCfg {
     ///
     /// Evict parks the instantiated GEMM graph. The next miss retargets the
     /// unique kernel node (`graph_set_params_ns`) without a second capture,
-    /// and a unique memcpy or memset if the leaf has one. Works with
+    /// and a unique memcpy or memset if the leaf has one. Combo parents park
+    /// too: [`gpu_sim::Sim::graph_exec_child_set_params`] swaps nested leaf
+    /// ids (`cudaGraphExecChildGraphNodeSetParams`; child ids are topology for
+    /// [`gpu_sim::Sim::update_graph`]). Works with
     /// [`Self::graph_mem`] / [`Self::graph_auto_free`] (CUDA cannot
     /// `cudaGraphExecUpdate` mem nodes). Illegal with [`Self::graph_update`].
     /// Implies [`Self::cuda_graphs`]. Decode identity stays destroy+instantiate.
@@ -765,15 +768,21 @@ impl GraphBank {
             return Ok(gid);
         }
         if self.set_params {
-            if let Some(id) = ids.first().copied().filter(|_| ids.len() == 1) {
-                if let Some(exec) = self.idle.entry(origin).or_default().pop() {
+            if let Some(exec) = self.pop_matching(sim, origin, ids.len())? {
+                if ids.len() == 1 {
+                    let id = ids
+                        .first()
+                        .copied()
+                        .ok_or(Error::Store("empty graph bind"))?;
                     retarget_parked_kernel(sim, exec, id)?;
-                    sim.destroy_graph(src)?;
-                    self.kernel_sets = self.kernel_sets.saturating_add(1);
-                    sim.upload_graph(exec)?;
-                    let _prev = self.graphs.insert(ids, (exec, origin));
-                    return Ok(exec);
+                } else {
+                    retarget_parked_children(sim, exec, src)?;
                 }
+                sim.destroy_graph(src)?;
+                self.kernel_sets = self.kernel_sets.saturating_add(1);
+                sim.upload_graph(exec)?;
+                let _prev = self.graphs.insert(ids, (exec, origin));
+                return Ok(exec);
             }
         }
         let gid = if self.update && self.mem == LeafMem::None && ids.len() == 1 {
@@ -803,7 +812,7 @@ impl GraphBank {
         if !self.set_params {
             return Ok(None);
         }
-        let Some(exec) = self.idle.entry(origin).or_default().pop() else {
+        let Some(exec) = self.pop_matching(sim, origin, 1)? else {
             return Ok(None);
         };
         retarget_parked_kernel(sim, exec, id)?;
@@ -830,8 +839,38 @@ impl GraphBank {
         instantiate_src(sim, exec, self.mem == LeafMem::AutoFree)
     }
 
-    fn parks_leaf(&self, n_ids: usize) -> bool {
-        n_ids == 1 && (self.set_params || (self.update && self.mem == LeafMem::None))
+    fn parks(&self, n_ids: usize) -> bool {
+        self.set_params || (n_ids == 1 && self.update && self.mem == LeafMem::None)
+    }
+
+    /// Pop a parked exec whose child-graph count matches a leaf (`n_ids == 1`)
+    /// or a combo parent (`n_ids` children).
+    fn pop_matching(
+        &mut self,
+        sim: &Sim,
+        origin: (DeviceId, StreamId),
+        n_ids: usize,
+    ) -> Result<Option<GraphId>, Error> {
+        let idle = self.idle.entry(origin).or_default();
+        let mut skipped = Vec::new();
+        let mut found = None;
+        while let Some(exec) = idle.pop() {
+            let n_child = sim.graph_child_nodes(exec)?.len();
+            let ok = if n_ids == 1 {
+                n_child == 0
+            } else {
+                n_child == n_ids
+            };
+            if ok {
+                found = Some(exec);
+                break;
+            }
+            skipped.push(exec);
+        }
+        for e in skipped.into_iter().rev() {
+            idle.push(e);
+        }
+        Ok(found)
     }
 
     pub(crate) fn drop_alloc(&mut self, sim: &mut Sim, id: AllocId) -> Result<(), Error> {
@@ -843,7 +882,7 @@ impl GraphBank {
             .collect();
         for (ids, gid, origin) in victims {
             let _gone = self.graphs.remove(&ids);
-            if self.parks_leaf(ids.len()) {
+            if self.parks(ids.len()) {
                 self.idle.entry(origin).or_default().push(gid);
             } else {
                 sim.destroy_graph(gid)?;
@@ -892,6 +931,19 @@ pub(crate) fn retarget_parked_kernel(
             zbuf.id = expert;
         }
         sim.graph_exec_memset_set_params(exec, znode, zbuf)?;
+    }
+    Ok(())
+}
+
+/// Patch a parked combo parent so its child-graph nodes name `src`'s children.
+fn retarget_parked_children(sim: &mut Sim, exec: GraphId, src: GraphId) -> Result<(), Error> {
+    let parked = sim.graph_child_nodes(exec)?;
+    let fresh = sim.graph_child_nodes(src)?;
+    if parked.len() != fresh.len() || parked.is_empty() {
+        return Err(Error::Sim("child graph topology".into()));
+    }
+    for ((node, _), (_, child)) in parked.iter().zip(fresh.iter()) {
+        sim.graph_exec_child_set_params(exec, *node, *child)?;
     }
     Ok(())
 }

@@ -1462,6 +1462,93 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphExecChildGraphNodeSetParams` on an instantiated exec.
+    ///
+    /// Node `node` must already be a child-graph node. `child` must already be
+    /// instantiated, on the same GPU, and have matching topology with the
+    /// current nested graph (device, stream, op kinds, cooperative flag, deps).
+    /// Nested child-graph ids may differ (the nested graph is the
+    /// parameter). Pays `graph_set_params_ns` and clears the upload flag.
+    /// Capture cannot include it. Graphs with mem alloc/free nodes are legal
+    /// (unlike [`Self::update_graph`], which treats child ids as topology).
+    /// Nesting `exec` under itself, or a child whose tree already names `exec`,
+    /// is Invalid.
+    pub fn graph_exec_child_set_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        child: GraphId,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture child set params")?;
+        if child == exec {
+            return Err(SimError::Invalid {
+                why: "graph child is self",
+            });
+        }
+        let (instantiated, device, old_child) = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            let Kind::ChildGraph { graph } = &step.kind else {
+                return Err(SimError::Invalid {
+                    why: "not a child graph node",
+                });
+            };
+            (g.instantiated, step.device, *graph)
+        };
+        if !instantiated {
+            return Err(SimError::Invalid {
+                why: "graph not instantiated",
+            });
+        }
+        let (child_ok, child_gpu, child_steps) = {
+            let c = self.graphs.get(&child).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            (c.instantiated, c.origin.0, c.steps.clone())
+        };
+        if !child_ok {
+            return Err(SimError::Invalid {
+                why: "child graph not instantiated",
+            });
+        }
+        if child_gpu != device {
+            return Err(SimError::Invalid {
+                why: "graph child gpu mismatch",
+            });
+        }
+        let old_steps = {
+            let old = self.graphs.get(&old_child).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            old.steps.clone()
+        };
+        if !child_param_topology_eq(&old_steps, &child_steps) {
+            return Err(SimError::Invalid {
+                why: "child graph topology",
+            });
+        }
+        if self.graph_tree_contains(child, exec)? {
+            return Err(SimError::Invalid {
+                why: "cyclic child graph",
+            });
+        }
+        let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.kind = Kind::ChildGraph { graph: child };
+        g.uploaded = false;
+        Ok(())
+    }
+
     /// Unique kernel node on `graph` plus its current [`KernelNodeParams`].
     ///
     /// Zero or more than one kernel node is Invalid. Used by
@@ -1585,6 +1672,50 @@ impl Sim {
             ));
         }
         Ok(found)
+    }
+
+    /// Child-graph nodes on `graph` as `(index, nested GraphId)` in add order.
+    pub fn graph_child_nodes(&self, graph: GraphId) -> Result<Vec<(usize, GraphId)>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut out = Vec::new();
+        for (i, step) in g.steps.iter().enumerate() {
+            if let Kind::ChildGraph { graph: child } = step.kind {
+                out.push((i, child));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Unique child-graph node on `graph`.
+    ///
+    /// Zero child nodes is Invalid (`not a child graph node`). More than one is
+    /// `not unique child graph node`.
+    pub fn graph_unique_child(&self, graph: GraphId) -> Result<(usize, GraphId), SimError> {
+        match self.graph_try_unique_child(graph)? {
+            Some(v) => Ok(v),
+            None => Err(SimError::Invalid {
+                why: "not a child graph node",
+            }),
+        }
+    }
+
+    /// Unique child-graph node, or `None` when the graph has no child.
+    ///
+    /// More than one child-graph node is Invalid.
+    pub fn graph_try_unique_child(
+        &self,
+        graph: GraphId,
+    ) -> Result<Option<(usize, GraphId)>, SimError> {
+        let nodes = self.graph_child_nodes(graph)?;
+        match nodes.len() {
+            0 => Ok(None),
+            1 => Ok(nodes.into_iter().next()),
+            _ => Err(SimError::Invalid {
+                why: "not unique child graph node",
+            }),
+        }
     }
 
     /// `cudaGraphNodeSetEnabled` on an instantiated exec.
@@ -1752,6 +1883,24 @@ impl Sim {
                 .iter()
                 .any(|s| matches!(&s.kind, Kind::Alloc { .. } | Kind::Free { .. }))
         })
+    }
+
+    /// True when `target` is `root` or nested under it via child-graph nodes.
+    fn graph_tree_contains(&self, root: GraphId, target: GraphId) -> Result<bool, SimError> {
+        let mut seen = BTreeSet::new();
+        let mut stack = vec![root];
+        while let Some(g) = stack.pop() {
+            if g == target {
+                return Ok(true);
+            }
+            if !seen.insert(g) {
+                continue;
+            }
+            for (_, child) in self.graph_child_nodes(g)? {
+                stack.push(child);
+            }
+        }
+        Ok(false)
     }
 
     fn fork_alloc(&mut self, src: AllocId) -> Result<AllocId, SimError> {
@@ -6639,6 +6788,27 @@ fn graph_topology_eq(a: &[GraphStep], b: &[GraphStep]) -> bool {
     a.iter().zip(b.iter()).all(|(x, y)| {
         x.device == y.device && x.stream == y.stream && op_eq(&x.kind, &y.kind) && x.deps == y.deps
     })
+}
+
+/// Topology for [`Sim::graph_exec_child_set_params`]: nested child-graph ids are
+/// parameters, not topology (unlike [`graph_topology_eq`] / `cudaGraphExecUpdate`).
+fn child_param_topology_eq(a: &[GraphStep], b: &[GraphStep]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b.iter()).all(|(x, y)| {
+        x.device == y.device
+            && x.stream == y.stream
+            && child_param_op_eq(&x.kind, &y.kind)
+            && x.deps == y.deps
+    })
+}
+
+fn child_param_op_eq(a: &Kind, b: &Kind) -> bool {
+    if matches!((a, b), (Kind::ChildGraph { .. }, Kind::ChildGraph { .. })) {
+        return true;
+    }
+    op_eq(a, b)
 }
 
 fn capture_step_deps(

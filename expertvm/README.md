@@ -148,7 +148,8 @@ that leaf on evict and `cudaGraphExecUpdate`s the next miss on the same
 parks that leaf and `cudaGraphExecKernelNodeSetParams` the unique kernel
 (`graph_set_params_ns`; no second capture; legal with `--graph-mem`; also
 `cudaGraphExecMemcpyNodeSetParams` / `cudaGraphExecMemsetNodeSetParams` a
-unique memcpy or memset if present). `--graph-clone`
+unique memcpy or memset if present; combo parents use
+`cudaGraphExecChildGraphNodeSetParams`). `--graph-clone`
 clones a leaf capture before instantiate (`graph_clone_ns`; the src is
 destroyed). `--graph-build` is `cudaGraphCreate` / `cudaGraphAdd*` instead of
 stream capture (no idle-stream wait; implies `--cuda-graphs` on the walker;

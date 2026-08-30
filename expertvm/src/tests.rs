@@ -2701,6 +2701,74 @@ fn graph_node_set_enabled_skips_combo_child() {
 }
 
 #[test]
+fn graph_exec_child_set_params_swaps_combo_child() {
+    use gpu_sim::{KernelKind, Sim, StreamId};
+
+    let mut sim = Sim::new(HardwareProfile::example_h100_sxm());
+    let d = DeviceId(0);
+    let s = StreamId(0);
+    let a = sim.malloc(d, 4096).expect("a");
+    let b = sim.malloc(d, 4096).expect("b");
+    let leaf_a = sim.create_graph(d, s).expect("la");
+    sim.graph_add_kernel(leaf_a, KernelKind::other(8, 8), &[a], &[a])
+        .expect("ka");
+    sim.instantiate_graph(leaf_a).expect("ia");
+    let leaf_b = sim.create_graph(d, s).expect("lb");
+    sim.graph_add_kernel(leaf_b, KernelKind::other(8, 8), &[b], &[b])
+        .expect("kb");
+    sim.instantiate_graph(leaf_b).expect("ib");
+    let parent = sim.create_graph(d, s).expect("p");
+    sim.graph_add_child(parent, leaf_a).expect("c");
+    sim.instantiate_graph(parent).expect("ip");
+    let (node, nested) = sim.graph_unique_child(parent).expect("u");
+    assert_eq!(nested, leaf_a);
+    sim.graph_exec_child_set_params(parent, node, leaf_b)
+        .expect("set");
+    sim.free_sync(a).expect("free");
+    let n = sim.launch_graph(parent, s).expect("launch");
+    assert_eq!(n, 1);
+    sim.synchronize().expect("sync");
+}
+
+#[test]
+fn cuda_graphs_graph_set_params_retargets_combo_parent() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1]), ev(1, 0, &[2, 3])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_instantiate_ns=100000\ngraph_update_ns=1000\ngraph_set_params_ns=100\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let base = SimCfg {
+        cuda_graphs: true,
+        graph_build: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let inst = sim_replay_cfg(&t, p.clone(), base).expect("inst");
+    let set = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            graph_set_params: true,
+            ..base
+        },
+    )
+    .expect("set");
+    assert_eq!(inst.hits, set.hits);
+    assert_eq!(inst.misses, set.misses);
+    assert_eq!(inst.child_graphs, set.child_graphs);
+    assert_eq!(inst.graph_set_params, 0);
+    assert_eq!(set.graph_set_params, 3);
+    assert!(
+        set.sim_ns < inst.sim_ns,
+        "set={} instantiate={}",
+        set.sim_ns,
+        inst.sim_ns
+    );
+    assert!(set.line().contains("graph_set_params="));
+}
+
+#[test]
 fn cuda_graphs_graph_set_params_reuses_parked_leaves() {
     let t = Trace {
         events: vec![
