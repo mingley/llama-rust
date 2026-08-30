@@ -600,6 +600,28 @@ pub enum DeviceAttr {
     TotalGlobalMem,
     /// `cudaDevAttrAsyncEngineCount` ([`crate::GpuProfile::copy_engines`]).
     AsyncEngineCount,
+    /// `cudaDevAttrClusterLaunch` (`max_blocks_per_cluster > 0`).
+    ClusterLaunch,
+    /// `cudaDevAttrHostRegisterSupported` (always 1; this VM has `cudaHostRegister`).
+    HostRegisterSupported,
+    /// `cudaDevAttrIpcEventSupport` (always 1; this VM has event IPC).
+    IpcEventSupport,
+    /// `cudaDevAttrCanUseHostPointerForRegisteredMem` (always 1; mapped registered host).
+    CanUseHostPointerForRegisteredMem,
+    /// `cudaDevAttrMemoryPoolSupportedHandleTypes`
+    /// ([`MemHandleType::POSIX_FILE_DESCRIPTOR`]).
+    MemoryPoolSupportedHandleTypes,
+}
+
+/// `cudaMemAllocationHandleType` bits for
+/// [`DeviceAttr::MemoryPoolSupportedHandleTypes`].
+pub struct MemHandleType;
+
+impl MemHandleType {
+    /// `cudaMemHandleTypeNone`.
+    pub const NONE: u64 = 0;
+    /// `cudaMemHandleTypePosixFileDescriptor` ([`crate::Sim::create_shareable_pool`]).
+    pub const POSIX_FILE_DESCRIPTOR: u64 = 1;
 }
 
 /// `cudaDeviceProp` fields this VM already models.
@@ -636,6 +658,16 @@ pub struct DeviceProperties {
     pub can_map_host_memory: bool,
     /// This VM always has managed memory (`cudaMallocManaged`).
     pub managed_memory: bool,
+    /// `cudaDevAttrClusterLaunch` ([`crate::GpuProfile::max_blocks_per_cluster`] `> 0`).
+    pub cluster_launch: bool,
+    /// This VM always has `cudaHostRegister`.
+    pub host_register_supported: bool,
+    /// This VM always has event IPC (`cudaIpcGetEventHandle`).
+    pub ipc_event_support: bool,
+    /// Mapped registered host may be used as a device pointer.
+    pub can_use_host_pointer_for_registered_mem: bool,
+    /// `cudaMemHandleTypePosixFileDescriptor` ([`MemHandleType::POSIX_FILE_DESCRIPTOR`]).
+    pub memory_pool_supported_handle_types: u64,
 }
 
 /// `cudaFuncAttribute` for [`crate::Sim::func_set_attribute`] / `GetAttribute`.

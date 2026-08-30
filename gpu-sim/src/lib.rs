@@ -176,7 +176,11 @@
 //! [`Sim::device_get_properties`] is `cudaGetDeviceProperties` ([`DeviceProperties`];
 //! modeled caps only — no SM count or clock). [`DeviceAttr::CanMapHostMemory`]
 //! / [`DeviceAttr::ManagedMemory`] are always 1 (this VM has mapped host and
-//! UM). [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
+//! UM). [`DeviceAttr::ClusterLaunch`] is `max_blocks_per_cluster > 0`.
+//! [`DeviceAttr::HostRegisterSupported`] / [`IpcEventSupport`](DeviceAttr::IpcEventSupport) /
+//! [`CanUseHostPointerForRegisteredMem`](DeviceAttr::CanUseHostPointerForRegisteredMem)
+//! are always 1. [`DeviceAttr::MemoryPoolSupportedHandleTypes`] is
+//! [`MemHandleType::POSIX_FILE_DESCRIPTOR`]. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
 //! [`func_set_attribute`](Sim::func_set_attribute) /
 //! [`func_get_attribute`](Sim::func_get_attribute) are `cudaFuncSetAttribute` /
@@ -543,11 +547,11 @@ pub use ops::{
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags, HostNodeParams,
     KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
-    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr, MemRangeAttr,
-    MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation,
-    PdlLaunch, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
-    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemHandleType, MemPoolAttr,
+    MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType,
+    MemsetOp, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
+    StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
     SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
@@ -7921,6 +7925,14 @@ mod tests {
         assert!(props.memory_pools_supported);
         assert!(props.can_map_host_memory);
         assert!(props.managed_memory);
+        assert_eq!(props.cluster_launch, gpu.max_blocks_per_cluster > 0);
+        assert!(props.host_register_supported);
+        assert!(props.ipc_event_support);
+        assert!(props.can_use_host_pointer_for_registered_mem);
+        assert_eq!(
+            props.memory_pool_supported_handle_types,
+            MemHandleType::POSIX_FILE_DESCRIPTOR
+        );
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::CanMapHostMemory)
                 .unwrap(),
@@ -7930,6 +7942,31 @@ mod tests {
             sim.device_get_attribute(d, DeviceAttr::ManagedMemory)
                 .unwrap(),
             1
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::ClusterLaunch)
+                .unwrap(),
+            u64::from(gpu.max_blocks_per_cluster > 0)
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::HostRegisterSupported)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::IpcEventSupport)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::CanUseHostPointerForRegisteredMem)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MemoryPoolSupportedHandleTypes)
+                .unwrap(),
+            MemHandleType::POSIX_FILE_DESCRIPTOR
         );
         match sim.device_get_properties(DeviceId(1)) {
             Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),

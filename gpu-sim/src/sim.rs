@@ -17,11 +17,11 @@ use crate::ops::{
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags, HostNodeParams,
     KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
-    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr, MemRangeAttr,
-    MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation,
-    PdlLaunch, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
-    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemHandleType, MemPoolAttr,
+    MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType,
+    MemsetOp, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
+    StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
     SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
@@ -11522,6 +11522,11 @@ impl Sim {
             DeviceAttr::CanMapHostMemory | DeviceAttr::ManagedMemory => 1,
             DeviceAttr::TotalGlobalMem => gpu.hbm_bytes,
             DeviceAttr::AsyncEngineCount => u64::from(gpu.copy_engines),
+            DeviceAttr::ClusterLaunch => u64::from(gpu.max_blocks_per_cluster > 0),
+            DeviceAttr::HostRegisterSupported
+            | DeviceAttr::IpcEventSupport
+            | DeviceAttr::CanUseHostPointerForRegisteredMem => 1,
+            DeviceAttr::MemoryPoolSupportedHandleTypes => MemHandleType::POSIX_FILE_DESCRIPTOR,
         })
     }
 
@@ -11546,6 +11551,11 @@ impl Sim {
             memory_pools_supported: true,
             can_map_host_memory: true,
             managed_memory: true,
+            cluster_launch: gpu.max_blocks_per_cluster > 0,
+            host_register_supported: true,
+            ipc_event_support: true,
+            can_use_host_pointer_for_registered_mem: true,
+            memory_pool_supported_handle_types: MemHandleType::POSIX_FILE_DESCRIPTOR,
         })
     }
 

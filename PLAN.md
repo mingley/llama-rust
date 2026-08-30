@@ -2239,7 +2239,18 @@ model, do not celebrate the sim.
     unchanged. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-198. [ ] Next numbered PLAN item after 197 is the next `gpu-sim` / Engine /
+198. [x] `cudaDeviceGetAttribute` / `cudaGetDeviceProperties` modeled
+    caps: [`DeviceAttr::ClusterLaunch`] (`max_blocks_per_cluster > 0`),
+    [`DeviceAttr::HostRegisterSupported`],
+    [`DeviceAttr::IpcEventSupport`],
+    [`DeviceAttr::CanUseHostPointerForRegisteredMem`] (always 1), and
+    [`DeviceAttr::MemoryPoolSupportedHandleTypes`]
+    ([`MemHandleType::POSIX_FILE_DESCRIPTOR`]). Query; legal during
+    capture. No SM count or clock. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+199. [ ] Next numbered PLAN item after 198 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

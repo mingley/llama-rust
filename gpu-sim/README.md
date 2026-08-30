@@ -472,6 +472,9 @@ stream is `Ok(false)`; the clock does not advance).
 `device_get_attribute` is `cudaDeviceGetAttribute` (modeled caps only;
 `TotalGlobalMem` is HBM, `AsyncEngineCount` is copy engines,
 `CanMapHostMemory` / `ManagedMemory` are always 1).
+`ClusterLaunch` is `max_blocks_per_cluster > 0`. `HostRegisterSupported` /
+`IpcEventSupport` / `CanUseHostPointerForRegisteredMem` are always 1.
+`MemoryPoolSupportedHandleTypes` is POSIX-FD (`MemHandleType`).
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
 (no SM count or clock). `func_get_attributes` is `cudaFuncGetAttributes`
 of modeled per-device function attrs (`maxDynamicSharedSizeBytes` and
