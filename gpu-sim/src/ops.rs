@@ -859,6 +859,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrTensorMapAccessSupported` (always 0; `CUtensorMap` / TMA
     /// is not modeled).
     TensorMapAccessSupported,
+    /// `cudaDevAttrUnifiedFunctionPointers` (always 0; device-side function
+    /// pointers are not modeled).
+    UnifiedFunctionPointers,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -993,6 +996,9 @@ pub struct DeviceProperties {
     /// `cudaDevAttrTensorMapAccessSupported` (`CUtensorMap` / TMA is not
     /// modeled).
     pub tensor_map_access_supported: bool,
+    /// `cudaDevAttrUnifiedFunctionPointers` (device-side function pointers
+    /// are not modeled).
+    pub unified_function_pointers: bool,
 }
 
 /// `cudaComputeMode` for [`DeviceAttr::ComputeMode`].

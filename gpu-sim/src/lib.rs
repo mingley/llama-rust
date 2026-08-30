@@ -320,6 +320,8 @@
 //! [`WaitValueCmp::Nor`]).
 //! [`DeviceAttr::TensorMapAccessSupported`] is always 0 (`CUtensorMap` / TMA
 //! is not modeled).
+//! [`DeviceAttr::UnifiedFunctionPointers`] is always 0 (device-side function
+//! pointers are not modeled).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -11029,6 +11031,26 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::TensorMapAccessSupported)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_unified_function_pointers_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert!(!hp.unified_function_pointers);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::UnifiedFunctionPointers)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::UnifiedFunctionPointers)
                 .unwrap(),
             0
         );

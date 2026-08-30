@@ -2945,7 +2945,14 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-282. [ ] Next numbered PLAN item after 281 is the next `gpu-sim` / Engine /
+282. [x] `cudaDevAttrUnifiedFunctionPointers`:
+    [`DeviceAttr::UnifiedFunctionPointers`] is always 0 (device-side
+    function pointers are not modeled).
+    [`DeviceProperties::unified_function_pointers`] matches. Query;
+    capture-legal. Decode identity unchanged. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+283. [ ] Next numbered PLAN item after 282 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

@@ -13059,7 +13059,8 @@ impl Sim {
             | DeviceAttr::ComputeMode
             | DeviceAttr::TccDriver
             | DeviceAttr::KernelExecTimeout
-            | DeviceAttr::TensorMapAccessSupported => 0,
+            | DeviceAttr::TensorMapAccessSupported
+            | DeviceAttr::UnifiedFunctionPointers => 0,
             DeviceAttr::StreamPrioritiesSupported
             | DeviceAttr::UnifiedAddressing
             | DeviceAttr::CanUse64BitStreamMemOps
@@ -13134,6 +13135,7 @@ impl Sim {
             can_use_64_bit_stream_mem_ops: true,
             can_use_stream_wait_value_nor: true,
             tensor_map_access_supported: false,
+            unified_function_pointers: false,
         })
     }
 
