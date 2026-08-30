@@ -2864,15 +2864,21 @@ impl Default for MemPoolProps {
 /// `cudaMemPoolAttr` for [`crate::Sim::pool_get_attribute`].
 ///
 /// Ordinary pools only. Graph-memory high-water stays on [`GraphMemAttr`].
-/// This VM does not invent `UsedMemHigh` / `ReservedMemHigh` here.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemPoolAttr {
     /// `cudaMemPoolAttrReleaseThreshold` ([`crate::Sim::set_pool_release_threshold`]).
     ReleaseThreshold,
     /// Live alloc bytes not yet freed (`cudaMemPoolAttrUsedMemCurrent`).
     UsedMemCurrent,
+    /// High-water of [`Self::UsedMemCurrent`] (`cudaMemPoolAttrUsedMemHigh`).
+    /// Set `0` resets to the current used bytes.
+    UsedMemHigh,
     /// Live plus unused cached (`cudaMemPoolAttrReservedMemCurrent`).
     ReservedMemCurrent,
+    /// High-water of [`Self::ReservedMemCurrent`]
+    /// (`cudaMemPoolAttrReservedMemHigh`). Set `0` resets to the current
+    /// reserved bytes.
+    ReservedMemHigh,
     /// `cudaMemPoolReuseFollowEventDependencies`. Default 1. This VM's reuse is
     /// completion-based; 0 does not insert event waits.
     ReuseFollowEventDependencies,

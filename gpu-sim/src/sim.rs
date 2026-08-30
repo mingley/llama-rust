@@ -194,6 +194,10 @@ struct Pool {
     reuse_opportunistic: bool,
     /// `cudaMemPoolReuseAllowInternalDependencies`. Default on.
     reuse_internal: bool,
+    /// `cudaMemPoolAttrUsedMemHigh`.
+    used_high: u64,
+    /// `cudaMemPoolAttrReservedMemHigh`.
+    reserved_high: u64,
 }
 
 impl Pool {
@@ -212,7 +216,16 @@ impl Pool {
             reuse_follow_event: true,
             reuse_opportunistic: true,
             reuse_internal: true,
+            used_high: 0,
+            reserved_high: 0,
         }
+    }
+
+    fn bump_high(&mut self) {
+        self.used_high = self.used_high.max(self.live);
+        self.reserved_high = self
+            .reserved_high
+            .max(self.live.saturating_add(self.cached));
     }
 }
 
@@ -9234,9 +9247,10 @@ impl Sim {
     /// `cudaMemPoolGetAttribute`. Query; legal during capture.
     ///
     /// [`MemPoolAttr::UsedMemCurrent`] is [`Self::pool_live`]. Reserved is live
-    /// plus [`Self::pool_cached`]. Reuse flags default to 1. An imported pool
-    /// reports the exporter. The graph-memory pool is Invalid (use
-    /// [`Self::graph_mem_get`]).
+    /// plus [`Self::pool_cached`]. [`MemPoolAttr::UsedMemHigh`] /
+    /// [`MemPoolAttr::ReservedMemHigh`] are high-water of those. Reuse flags
+    /// default to 1. An imported pool reports the exporter. The graph-memory
+    /// pool is Invalid (use [`Self::graph_mem_get`]).
     pub fn pool_get_attribute(&self, pool: PoolId, attr: MemPoolAttr) -> Result<u64, SimError> {
         self.refuse_graph_pool(pool)?;
         self.refuse_destroyed_pool(pool)?;
@@ -9244,7 +9258,11 @@ impl Sim {
         match attr {
             MemPoolAttr::ReleaseThreshold => Ok(p.release_threshold),
             MemPoolAttr::UsedMemCurrent => Ok(p.live),
+            MemPoolAttr::UsedMemHigh => Ok(p.used_high.max(p.live)),
             MemPoolAttr::ReservedMemCurrent => Ok(p.live.saturating_add(p.cached)),
+            MemPoolAttr::ReservedMemHigh => {
+                Ok(p.reserved_high.max(p.live.saturating_add(p.cached)))
+            }
             MemPoolAttr::ReuseFollowEventDependencies => Ok(u64::from(p.reuse_follow_event)),
             MemPoolAttr::ReuseAllowOpportunistic => Ok(u64::from(p.reuse_opportunistic)),
             MemPoolAttr::ReuseAllowInternalDependencies => Ok(u64::from(p.reuse_internal)),
@@ -9256,8 +9274,9 @@ impl Sim {
     /// [`MemPoolAttr::ReleaseThreshold`] is [`Self::set_pool_release_threshold`].
     /// Reuse flags are 0 or 1 (other values Invalid `"pool reuse attr"`). Only
     /// [`MemPoolAttr::ReuseAllowOpportunistic`] `0` changes acquire (skip cache
-    /// reuse). Used/Reserved are read-only. The graph-memory pool is Invalid
-    /// (use [`Self::graph_mem_set`]).
+    /// reuse). Used/Reserved current are read-only. High-water Set `0` resets
+    /// to current (other values Invalid `"pool high attr"`). The graph-memory
+    /// pool is Invalid (use [`Self::graph_mem_set`]).
     pub fn pool_set_attribute(
         &mut self,
         pool: PoolId,
@@ -9274,12 +9293,48 @@ impl Sim {
                     why: "read-only pool attr",
                 })
             }
+            MemPoolAttr::UsedMemHigh | MemPoolAttr::ReservedMemHigh => {
+                self.set_pool_high_attr(pool, attr, value)
+            }
             MemPoolAttr::ReuseFollowEventDependencies
             | MemPoolAttr::ReuseAllowOpportunistic
             | MemPoolAttr::ReuseAllowInternalDependencies => {
                 self.set_pool_reuse_attr(pool, attr, value)
             }
         }
+    }
+
+    fn set_pool_high_attr(
+        &mut self,
+        pool: PoolId,
+        attr: MemPoolAttr,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        let root = self.pool_root(pool)?;
+        self.refuse_graph_pool(root)?;
+        self.refuse_destroyed_pool(root)?;
+        if value != 0 {
+            return Err(SimError::Invalid {
+                why: "pool high attr",
+            });
+        }
+        let p = self.pool_mut(root)?;
+        match attr {
+            MemPoolAttr::UsedMemHigh => p.used_high = p.live,
+            MemPoolAttr::ReservedMemHigh => p.reserved_high = p.live.saturating_add(p.cached),
+            MemPoolAttr::ReleaseThreshold
+            | MemPoolAttr::UsedMemCurrent
+            | MemPoolAttr::ReservedMemCurrent
+            | MemPoolAttr::ReuseFollowEventDependencies
+            | MemPoolAttr::ReuseAllowOpportunistic
+            | MemPoolAttr::ReuseAllowInternalDependencies => {
+                return Err(SimError::Invalid {
+                    why: "pool high attr",
+                });
+            }
+        }
+        Ok(())
     }
 
     fn set_pool_reuse_attr(
@@ -9305,7 +9360,9 @@ impl Sim {
             MemPoolAttr::ReuseAllowInternalDependencies => p.reuse_internal = on,
             MemPoolAttr::ReleaseThreshold
             | MemPoolAttr::UsedMemCurrent
-            | MemPoolAttr::ReservedMemCurrent => {
+            | MemPoolAttr::UsedMemHigh
+            | MemPoolAttr::ReservedMemCurrent
+            | MemPoolAttr::ReservedMemHigh => {
                 return Err(SimError::Invalid {
                     why: "pool reuse attr",
                 });
@@ -9339,7 +9396,11 @@ impl Sim {
         if drop == 0 {
             return Ok(0);
         }
-        self.pool_mut(root)?.cached = cached.saturating_sub(drop);
+        {
+            let p = self.pool_mut(root)?;
+            p.cached = cached.saturating_sub(drop);
+            p.bump_high();
+        }
         let used = self.gpu_rt(device)?.used;
         self.gpu_rt_mut(device)?.used = used.saturating_sub(drop);
         Ok(drop)
@@ -15777,6 +15838,7 @@ impl Sim {
             let p = self.pool_mut(pool)?;
             p.cached = cached.saturating_sub(bytes);
             p.live = p.live.saturating_add(bytes);
+            p.bump_high();
             return Ok(reuse.max(1));
         }
         let extra = if opportunistic {
@@ -15801,6 +15863,7 @@ impl Sim {
             p.cached = 0;
         }
         p.live = p.live.saturating_add(bytes);
+        p.bump_high();
         Ok(first.max(1))
     }
 
@@ -15821,6 +15884,7 @@ impl Sim {
             let p = self.pool_mut(pool)?;
             p.live = live;
             p.cached = cached;
+            p.bump_high();
         }
         if drop > 0 {
             let used = self.gpu_rt(device)?.used;

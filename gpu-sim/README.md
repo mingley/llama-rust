@@ -627,11 +627,12 @@ completes). `create_pool` / `create_pool_with_props` / `alloc_from_pool` /
 `MemPoolProps` is pinned alloc type, NONE or POSIX-FD handles, a device
 location, and `max_size` (`0` unlimited; otherwise reserved cannot grow
 past it). Typed `create_pool` / `create_shareable_pool` stay.
-`MemPoolAttr` is ReleaseThreshold / UsedMemCurrent / ReservedMemCurrent
-plus reuse flags (default 1). Only `ReuseAllowOpportunistic=0` skips
-cache reuse (OS alloc; unused cached bytes stay reserved). FollowEvent /
-Internal do not insert event waits or extra sync. No invented ordinary-pool
-high-water; graph mem stays `GraphMemAttr`.
+`MemPoolAttr` is ReleaseThreshold / UsedMemCurrent / UsedMemHigh /
+ReservedMemCurrent / ReservedMemHigh plus reuse flags (default 1). Only
+`ReuseAllowOpportunistic=0` skips cache reuse (OS alloc; unused cached
+bytes stay reserved). FollowEvent / Internal do not insert event waits
+or extra sync. High-water Set `0` resets to current; graph mem stays
+`GraphMemAttr`.
 `u64::MAX` holds unused bytes so `malloc` can OOM
 until trim. Destroying a user pool (`destroy_pool` / `cudaMemPoolDestroy`)
 returns unused cache to the OS; outstanding allocs stay valid; the default

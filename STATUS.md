@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — mempool UsedMemHigh / ReservedMemHigh
+
+`MemPoolAttr::UsedMemHigh` / `ReservedMemHigh` are ordinary-pool
+high-water. Set `0` resets to current. Graph mem stays `GraphMemAttr`.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — graph MemsetNodeSetParams 3D helper
 
 `graph_memset_set_params_3d` / `graph_exec_memset_set_params_3d` require

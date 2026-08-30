@@ -76,11 +76,12 @@
 //! `cudaMallocFromPoolAsync` / `cudaMemPoolAttrReleaseThreshold` /
 //! `cudaMemPoolTrimTo` / `cudaMemPoolGetAttribute` / `SetAttribute` /
 //! `cudaMemPoolDestroy`.
-//! [`MemPoolAttr`] is ReleaseThreshold / UsedMemCurrent / ReservedMemCurrent
-//! plus reuse flags (default 1; only [`MemPoolAttr::ReuseAllowOpportunistic`]
+//! [`MemPoolAttr`] is ReleaseThreshold / UsedMemCurrent / UsedMemHigh /
+//! ReservedMemCurrent / ReservedMemHigh plus reuse flags (default 1; only
+//! [`MemPoolAttr::ReuseAllowOpportunistic`]
 //! `0` skips cache reuse — OS alloc, unused cached bytes stay reserved).
-//! FollowEvent / Internal do not insert event waits or extra sync (no invented
-//! pool high-water; graph mem stays [`GraphMemAttr`]). Unused
+//! FollowEvent / Internal do not insert event waits or extra sync. High-water
+//! Set `0` resets to current; graph mem stays [`GraphMemAttr`]. Unused
 //! pool bytes stay in `cudaMemGetInfo` used until trim when the release
 //! threshold is high (`u64::MAX`, vLLM-style). Destroying a user pool returns
 //! unused cache to the OS; outstanding allocs stay valid; the default pool
@@ -10355,6 +10356,139 @@ mod tests {
             0
         );
         match sim.pool_set_attribute(p, MemPoolAttr::ReleaseThreshold, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn pool_get_set_attribute_used_reserved_high() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let p = sim.default_pool(d).unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::UsedMemHigh).unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReservedMemHigh)
+                .unwrap(),
+            0
+        );
+        let a = sim.alloc(d, 256, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::UsedMemHigh).unwrap(),
+            256
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReservedMemHigh)
+                .unwrap(),
+            256
+        );
+        sim.free(d, a, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::UsedMemCurrent)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReservedMemCurrent)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::UsedMemHigh).unwrap(),
+            256
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReservedMemHigh)
+                .unwrap(),
+            256
+        );
+        sim.pool_set_attribute(p, MemPoolAttr::UsedMemHigh, 0)
+            .unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::UsedMemHigh).unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReservedMemHigh)
+                .unwrap(),
+            256
+        );
+        sim.pool_set_attribute(p, MemPoolAttr::ReservedMemHigh, 0)
+            .unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReservedMemHigh)
+                .unwrap(),
+            0
+        );
+        sim.pool_set_attribute(p, MemPoolAttr::ReleaseThreshold, u64::MAX)
+            .unwrap();
+        let b = sim.alloc(d, 128, s).unwrap();
+        sim.synchronize().unwrap();
+        sim.free(d, b, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::UsedMemCurrent)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReservedMemCurrent)
+                .unwrap(),
+            128
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::UsedMemHigh).unwrap(),
+            128
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReservedMemHigh)
+                .unwrap(),
+            128
+        );
+        sim.pool_set_attribute(p, MemPoolAttr::UsedMemHigh, 0)
+            .unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::UsedMemHigh).unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReservedMemHigh)
+                .unwrap(),
+            128
+        );
+        sim.pool_set_attribute(p, MemPoolAttr::ReservedMemHigh, 0)
+            .unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReservedMemHigh)
+                .unwrap(),
+            128
+        );
+        match sim.pool_set_attribute(p, MemPoolAttr::UsedMemHigh, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pool high"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_set_attribute(p, MemPoolAttr::ReservedMemHigh, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pool high"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let gp = sim.graph_pool(d).unwrap();
+        match sim.pool_get_attribute(gp, MemPoolAttr::UsedMemHigh) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph mem"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::UsedMemHigh).unwrap(),
+            0
+        );
+        match sim.pool_set_attribute(p, MemPoolAttr::UsedMemHigh, 0) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }

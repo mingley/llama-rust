@@ -434,7 +434,9 @@ Exact (mechanical invariants agents may rely on):
   threshold `0` returns unused bytes on free; `u64::MAX` holds them so
   `malloc` can OOM until trim; `cudaMalloc` cannot consume pool cache;
   `MemPoolProps::max_size` caps reserved (`live + cached`) or is unlimited (`0`);
-  GetAttribute Used/Reserved wrap live+cached (no invented pool high-water);
+  GetAttribute Used/Reserved wrap live+cached; UsedMemHigh /
+  ReservedMemHigh are CUDA high-water (Set `0` resets); graph mem stays
+  `GraphMemAttr`;
   GetAccess is ReadWrite on the owner and after SetAccess on peers;
   Destroy returns unused cache to the OS, keeps outstanding allocs, cannot
   destroy the default pool, and rebinds the current pool to the default
@@ -3210,7 +3212,16 @@ model, do not celebrate the sim.
     Decode identity unchanged. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-313. [ ] Next numbered PLAN item after 312 is the next `gpu-sim` / Engine /
+313. [x] `cudaMemPoolAttrUsedMemHigh` / `ReservedMemHigh`:
+    [`MemPoolAttr::UsedMemHigh`] / [`MemPoolAttr::ReservedMemHigh`] track
+    ordinary-pool high-water (live / live+cached). Set `0` resets to
+    current; other values Invalid `"pool high attr"`. Current used/reserved
+    stay read-only. Graph-memory pool still Invalid (use
+    [`GraphMemAttr`]). Get is capture-legal; Set capture refused. Decode
+    identity unchanged. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+314. [ ] Next numbered PLAN item after 313 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
