@@ -9573,18 +9573,18 @@ mod tests {
     ///
     /// Skips unless `LLAMA_RUST_REAL_MODEL_DIR` names a directory holding the
     /// GGUF named in the sidecar JSON. Reference values live in
-    /// `tests/reference/*.json` so a second (NORM Llama) capture is drop-in.
+    /// `tests/reference/*.json` (NEOX Qwen + NORM Llama).
     #[test]
     fn real_model_matches_llama_cpp_reference() {
         check_real_fixture("qwen2.5-0.5b-instruct-q4_k_m.json", true);
     }
 
-    /// NORM-RoPE Llama control. Skips until the sidecar JSON is captured.
-    /// When the JSON is present, a set `LLAMA_RUST_REAL_MODEL_DIR` must contain
-    /// the GGUF (fail-loud, same as Qwen). Do not invent the capture.
+    /// NORM-RoPE Llama control (`llama-3.2-1b-instruct-q4_k_m.json`).
+    /// A set `LLAMA_RUST_REAL_MODEL_DIR` must contain the GGUF (fail-loud,
+    /// same as Qwen). Do not invent the capture.
     #[test]
     fn real_llama_norm_matches_llama_cpp_reference() {
-        check_real_fixture("llama-3.2-1b-instruct-q4_k_m.json", false);
+        check_real_fixture("llama-3.2-1b-instruct-q4_k_m.json", true);
     }
 
     struct RealRef {
@@ -9632,7 +9632,7 @@ mod tests {
         );
 
         let tok = Tokenizer::from_gguf(&g).expect("tokenizer");
-        let ids = tok.encode(&spec.prompt).expect("encode");
+        let ids = prompt_ids(&tok, &spec.prompt).expect("encode");
         assert_eq!(ids, spec.tokens, "tokenization diverged from llama.cpp");
 
         let model = Llama::from_gguf(g).expect("model");
@@ -9766,6 +9766,27 @@ mod tests {
         assert_eq!(spec.greedy_ids.len(), 8);
         assert_eq!(spec.greedy_text, " Paris. It is the largest city in");
         assert!((spec.max_logit - 17.504_87).abs() < 1e-5);
+        assert_eq!(spec.prompt, "The capital of France is");
+    }
+
+    #[test]
+    fn real_llama_sidecar_json_parses() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("tests")
+            .join("reference")
+            .join("llama-3.2-1b-instruct-q4_k_m.json");
+        let spec = load_real_ref(&path);
+        assert_eq!(spec.file, "Llama-3.2-1B-Instruct-Q4_K_M.gguf");
+        assert_eq!(spec.architecture, "llama");
+        assert_eq!(spec.n_vocab, 128_256);
+        assert_eq!(spec.tokens, vec![128000, 791, 6864, 315, 9822, 374]);
+        assert_eq!(spec.greedy_ids.len(), 24);
+        assert_eq!(
+            spec.greedy_text,
+            " Paris. The Eiffel Tower is a famous landmark in Paris. The Eiffel Tower is a symbol of France"
+        );
+        assert!((spec.max_logit - 18.816_57).abs() < 1e-5);
         assert_eq!(spec.prompt, "The capital of France is");
     }
 

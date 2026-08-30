@@ -14,7 +14,13 @@ greedy-identity check on a real checkpoint.
 ## Files
 
 `qwen2.5-0.5b-instruct-q4_k_m.json` — tokenization, prefill logit summary, the
-top-20 logits, and the greedy continuation for one fixed prompt.
+top-20 logits, and the greedy continuation for one fixed prompt (NEOX RoPE).
+
+`llama-3.2-1b-instruct-q4_k_m.json` — the same capture for
+`Llama-3.2-1B-Instruct-Q4_K_M.gguf` (NORM RoPE Llama control). Greedy window
+is 24 tokens: token ids, argmax, and continuation match llama.cpp. A 32-step
+window can drift by one id from K-quant activation rounding; that is not a
+RoPE pairing miss.
 
 ## Model identity
 
@@ -26,8 +32,9 @@ top-20 logits, and the greedy continuation for one fixed prompt.
 | tensor dtypes | Q5_0 x133, F32 x121, Q8_0 x13, Q6_K x12, Q4_K x12 |
 
 The Rust tests read this JSON (not hardcoded logits) so a second fixture is
-drop-in. `real_qwen_sidecar_json_parses` always loads the file; the GGUF
-differential still skips unless `LLAMA_RUST_REAL_MODEL_DIR` is set.
+drop-in. `real_qwen_sidecar_json_parses` / `real_llama_sidecar_json_parses`
+always load the sidecars; the GGUF differential still skips unless
+`LLAMA_RUST_REAL_MODEL_DIR` is set.
 
 ## Running the test
 
@@ -46,28 +53,27 @@ green.
 mkdir -p models
 curl -L -o models/qwen2.5-0.5b-instruct-q4_k_m.gguf \
   "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf?download=true"
+curl -L -o models/Llama-3.2-1B-Instruct-Q4_K_M.gguf \
+  "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf?download=true"
 
-LLAMA_RUST_REAL_MODEL_DIR="$PWD/models" cargo test --release --lib real_model -- --nocapture
+LLAMA_RUST_REAL_MODEL_DIR="$PWD/models" cargo test --release --lib matches_llama_cpp_reference -- --nocapture
 ```
 
 When it really runs it prints the resolved model path and takes seconds, not
-milliseconds. A 0.00 s pass means it skipped.
+milliseconds. A 0.00 s pass means it skipped. A set env var must contain
+**both** GGUFs named in the sidecar JSON files (fail-loud).
 
 ## Second fixture (Llama NORM control)
 
-The Qwen2.5-0.5B capture is **NEOX** RoPE. PLAN.md also wants a **NORM**
-Llama control so the two official pairing conventions cannot silently
-swap. Intended file once someone has it on disk:
-
-`Llama-3.2-1B-Instruct-Q4_K_M.gguf` (or another small official `llama`
-GGUF whose `rope.scaling` / `rope.type` is the Llama NORM walk).
-
-Capture with the same `ref.cpp` command below, write
-`llama-3.2-1b-instruct-q4_k_m.json` next to this README, and point
-`LLAMA_RUST_REAL_MODEL_DIR` at the directory. The test
-`real_llama_norm_matches_llama_cpp_reference` skips until that JSON
-exists; once it does, a set env var must contain the GGUF (fail-loud).
-Do not download Hugging Face checkpoints in CI. Do not invent the capture.
+The Qwen2.5-0.5B capture is **NEOX** RoPE. The Llama 3.2 1B Instruct capture is
+the **NORM** control so the two official pairing conventions cannot silently
+swap. Sidecar: `llama-3.2-1b-instruct-q4_k_m.json`. GGUF:
+`Llama-3.2-1B-Instruct-Q4_K_M.gguf` from `bartowski/Llama-3.2-1B-Instruct-GGUF`
+(architecture `llama`, `llama.rope.freq_base=500000`, no YaRN). Capture with
+the same `ref.cpp` command (`n_predict` 24). `llama.cpp` `tokenize` with
+`add_special=true` prepends BOS `128000`; the Rust check uses `prompt_ids`
+(default `add_bos_token=true` when the GGUF omits the key). Do not download
+Hugging Face checkpoints in CI. Do not invent the capture.
 
 ## Regenerating the reference
 

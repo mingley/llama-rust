@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — Llama NORM real-model fixture
+
+`tests/reference/llama-3.2-1b-instruct-q4_k_m.json` is a llama.cpp capture of
+`Llama-3.2-1B-Instruct-Q4_K_M.gguf` (architecture `llama`, NORM RoPE). Token
+ids (including BOS 128000), argmax, and a 24-token greedy continuation match.
+`real_llama_norm_matches_llama_cpp_reference` fail-louds when
+`LLAMA_RUST_REAL_MODEL_DIR` is set. Does not download Hugging Face in CI.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — expertvm `--nvlink-util`
 
 `expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and
@@ -1593,9 +1602,9 @@ legacy CUDA null stream (`set_legacy_null_stream`). Dual score still has no
 ## Shipped 2026-08-29 — real-model sidecar JSON drives the llama.cpp check
 
 `tests/reference/qwen2.5-0.5b-instruct-q4_k_m.json` is the source of tokens,
-greedy ids, and the max-logit band (not hardcoded). A NORM Llama capture
-drops in as `llama-3.2-1b-instruct-q4_k_m.json`; the test skips until that
-file exists and still does not download Hugging Face in CI. Dual score still
+greedy ids, and the max-logit band (not hardcoded). The NORM Llama control is
+`llama-3.2-1b-instruct-q4_k_m.json`. A set `LLAMA_RUST_REAL_MODEL_DIR` must
+contain both GGUFs (fail-loud). Tests still do not download Hugging Face in CI. Dual score still
 has no `$/M tokens`.
 
 ## Shipped 2026-08-29 — order2 persist + batch stream overlap in benches
