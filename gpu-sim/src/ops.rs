@@ -709,6 +709,9 @@ pub enum PointerAttr {
     /// VMM is the `cuMemMap` span at offset 0, not the reserved VA. Unmapped
     /// VMM or maps that skip offset 0 are Invalid `"pointer attr"`.
     MappingSize,
+    /// `CU_POINTER_ATTRIBUTE_IS_HW_DECOMPRESS_CAPABLE` (always 0; compression
+    /// is not modeled).
+    IsHwDecompressCapable,
 }
 
 /// `cudaDeviceAttr` for [`crate::Sim::device_get_attribute`].

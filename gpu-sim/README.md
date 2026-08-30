@@ -114,7 +114,7 @@ warp scheduler, L1, …   ← do not model
 | `query_stream` is non-blocking | `cudaStreamQuery` |
 | `mem_info` is `(free, total)` HBM | `cudaMemGetInfo` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
-| `pointer_get_attribute` wraps type / mapped / pool / range / ordinal / start / buffer id / IPC / RDMA / handle types; SyncMemops is settable | `cuPointerGetAttribute` / `SetAttribute` |
+| `pointer_get_attribute` wraps type / mapped / pool / range / ordinal / start / buffer id / IPC / RDMA / handle types / VMM map / hw decompress 0; SyncMemops is settable | `cuPointerGetAttribute` / `SetAttribute` |
 | `host_get_device_pointer` of mapped host returns the same id (`flags` must be 0) | `cudaHostGetDevicePointer` |
 | `host_get_flags` returns the stored `HostAllocFlags` word | `cudaHostGetFlags` |
 | `alloc_host_with_flags` / `host_register_with_flags` (MAPPED / PORTABLE / WRITE_COMBINED stored; IoMemory / ReadOnly Invalid) | `cudaHostAlloc` / `cudaHostRegister` |
@@ -492,9 +492,10 @@ stream is `Ok(false)`; the clock does not advance).
 settable; MemoryType / DevicePointer / HostPointer / IsManaged /
 RangeSize / Mapped / MemPoolHandle / DeviceOrdinal / RangeStartAddr /
 BufferId / IsLegacyCudaIpcCapable / IsGpuDirectRdmaCapable /
-AllowedHandleTypes / MappingBaseAddr / MappingSize are query-only;
+AllowedHandleTypes / MappingBaseAddr / MappingSize /
+IsHwDecompressCapable are query-only;
 VMM mapping size is the `cuMemMap` span at offset 0, not the reserved
-VA). Set is capture-refused; Get is a query.
+VA; hardware decompress is always 0). Set is capture-refused; Get is a query.
 `mem_get_address_range` is `cudaMemGetAddressRange` (base is the alloc id;
 interior offsets are not modeled). Query; legal during capture.
 `host_get_device_pointer` is `cudaHostGetDevicePointer` (mapped host;

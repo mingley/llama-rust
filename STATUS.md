@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — PointerAttr hardware decompress
+
+`pointer_get_attribute` reports IsHwDecompressCapable always 0
+(compression is not modeled). Set stays SyncMemops only.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — Win32 / fabric handle-type device attributes
 
 `device_get_attribute` / `device_get_properties` report Win32, Win32 KMT,
@@ -2538,7 +2544,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 250 (`HandleTypeWin32HandleSupported` / Win32Kmt / Fabric).
+Next code change is PLAN systems depth after item 251 (`PointerAttr::IsHwDecompressCapable`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

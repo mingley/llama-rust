@@ -215,9 +215,11 @@
 //! settable; MemoryType / DevicePointer / HostPointer / IsManaged /
 //! RangeSize / Mapped / MemPoolHandle / DeviceOrdinal / RangeStartAddr /
 //! BufferId / IsLegacyCudaIpcCapable / IsGpuDirectRdmaCapable /
-//! AllowedHandleTypes / MappingBaseAddr / MappingSize are query-only
+//! AllowedHandleTypes / MappingBaseAddr / MappingSize /
+//! IsHwDecompressCapable are query-only
 //! wrappers of existing pointer state; VMM mapping size is the
-//! `cuMemMap` span at offset 0, not the reserved VA). Set is
+//! `cuMemMap` span at offset 0, not the reserved VA; hardware decompress
+//! is always 0). Set is
 //! capture-refused; Get is a query.
 //! [`Sim::mem_get_address_range`] is `cudaMemGetAddressRange` (base is the
 //! alloc id; interior offsets are not modeled). Query; legal during capture.
@@ -8929,6 +8931,30 @@ mod tests {
             whole.0
         );
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn pointer_get_attribute_hw_decompress_is_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::IsHwDecompressCapable)
+                .unwrap(),
+            0
+        );
+        match sim.pointer_set_attribute(a, PointerAttr::IsHwDecompressCapable, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::IsHwDecompressCapable)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
     }
 
     #[test]

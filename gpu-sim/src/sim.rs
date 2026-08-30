@@ -12385,7 +12385,8 @@ impl Sim {
             | PointerAttr::IsGpuDirectRdmaCapable
             | PointerAttr::AllowedHandleTypes
             | PointerAttr::MappingBaseAddr
-            | PointerAttr::MappingSize => Err(SimError::Invalid {
+            | PointerAttr::MappingSize
+            | PointerAttr::IsHwDecompressCapable => Err(SimError::Invalid {
                 why: "pointer attr",
             }),
         }
@@ -12395,8 +12396,8 @@ impl Sim {
     /// capture-legal. Reports 0/1 for [`PointerAttr::SyncMemops`]. Other
     /// attrs wrap [`Self::pointer_get_attributes`], range size, mapped host,
     /// the backing pool, device ordinal, range start, buffer id, legacy IPC /
-    /// GPUDirect RDMA capability, allowed handle types, and VMM mapping
-    /// base/size at offset 0.
+    /// GPUDirect RDMA capability, allowed handle types, VMM mapping
+    /// base/size at offset 0, and hardware decompress (always 0).
     pub fn pointer_get_attribute(
         &self,
         alloc: AllocId,
@@ -12455,6 +12456,7 @@ impl Sim {
             PointerAttr::MappingSize => a.mapping_size_at_zero().ok_or(SimError::Invalid {
                 why: "pointer attr",
             }),
+            PointerAttr::IsHwDecompressCapable => Ok(0),
         }
     }
 

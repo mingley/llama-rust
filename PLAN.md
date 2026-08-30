@@ -2698,7 +2698,13 @@ model, do not celebrate the sim.
     unchanged. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-251. [ ] Next numbered PLAN item after 250 is the next `gpu-sim` / Engine /
+251. [x] `CU_POINTER_ATTRIBUTE_IS_HW_DECOMPRESS_CAPABLE`:
+    [`PointerAttr::IsHwDecompressCapable`] is always 0 (compression is
+    not modeled). Query-only; Set is Invalid `"pointer attr"`. Query;
+    capture-legal. Decode identity unchanged. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+252. [ ] Next numbered PLAN item after 251 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
