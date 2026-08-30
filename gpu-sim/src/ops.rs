@@ -795,6 +795,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrMulticastSupported` (a GPU↔GPU [`crate::LinkKind::Nvlink`]
     /// link on this device). PCIe P2P and RDMA are not NVLS.
     MulticastSupported,
+    /// `cudaDevAttrVirtualMemoryManagementSupported` (always 1; this VM has
+    /// [`crate::Sim::va_reserve`]).
+    VirtualMemoryManagementSupported,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -887,6 +890,9 @@ pub struct DeviceProperties {
     /// `cudaDevAttrMulticastSupported` (a GPU↔GPU [`crate::LinkKind::Nvlink`]
     /// link on this device).
     pub multicast_supported: bool,
+    /// `cudaDevAttrVirtualMemoryManagementSupported` (this VM has
+    /// `cuMemAddressReserve`).
+    pub virtual_memory_management_supported: bool,
 }
 
 /// `cudaFuncAttribute` for [`crate::Sim::func_set_attribute`] / `GetAttribute`.

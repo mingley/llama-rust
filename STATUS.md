@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaDevAttrVirtualMemoryManagementSupported`
+
+`device_get_attribute` / `device_get_properties` report VMM supported
+(always 1; this VM has `va_reserve`). `gpu-profile capture` is still
+refused.
+
 ## Shipped 2026-08-30 — `cudaDevAttrMulticastSupported`
 
 `device_get_attribute` / `device_get_properties` report MulticastSupported
@@ -2512,7 +2518,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 246 (`MulticastSupported`).
+Next code change is PLAN systems depth after item 247 (`VirtualMemoryManagementSupported`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

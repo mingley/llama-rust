@@ -12528,7 +12528,7 @@ impl Sim {
             DeviceAttr::L2CacheSize | DeviceAttr::MaxPersistingL2CacheSize => gpu.l2_bytes,
             DeviceAttr::MaxBlocksPerCluster => u64::from(gpu.max_blocks_per_cluster),
             DeviceAttr::MemSyncDomainCount => u64::from(gpu.mem_sync_domain_count),
-            DeviceAttr::MemoryPoolsSupported => 1,
+            DeviceAttr::MemoryPoolsSupported | DeviceAttr::VirtualMemoryManagementSupported => 1,
             DeviceAttr::CanMapHostMemory | DeviceAttr::ManagedMemory => 1,
             DeviceAttr::TotalGlobalMem => gpu.hbm_bytes,
             DeviceAttr::AsyncEngineCount => u64::from(gpu.copy_engines),
@@ -12600,6 +12600,7 @@ impl Sim {
             deferred_mapping_cuda_array_supported: false,
             dma_buf_supported: false,
             multicast_supported: self.profile.multicast_supported(device),
+            virtual_memory_management_supported: true,
         })
     }
 
