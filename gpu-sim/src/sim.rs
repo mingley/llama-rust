@@ -10785,7 +10785,22 @@ impl Sim {
     }
 
     /// `cuMemAddressFree`. Must already be unmapped and not leased.
+    ///
+    /// Typed helper; [`Self::va_free_with_size`] is the CUDA size argument
+    /// (must match the reservation).
     pub fn va_free(&mut self, id: AllocId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let bytes = self.alloc_ref(id)?.bytes;
+        self.va_free_with_size(id, bytes)
+    }
+
+    /// [`Self::va_free`] with the CUDA reservation size.
+    ///
+    /// `size` must equal the reserved bytes. Other sizes Invalid `"free size"`.
+    /// Partial free is not modeled. Still mapped is Invalid `"VA still mapped"`.
+    /// Non-VMM / freed is [`SimError::UnknownAlloc`]. Host-synchronous;
+    /// capture refused.
+    pub fn va_free_with_size(&mut self, id: AllocId, size: u64) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
         let a = self.alloc_ref(id)?;
         if a.leases > 0 {
@@ -10798,6 +10813,9 @@ impl Sim {
             return Err(SimError::Invalid {
                 why: "VA still mapped",
             });
+        }
+        if size != a.bytes {
+            return Err(SimError::Invalid { why: "free size" });
         }
         self.vmm_idle.retain(|&x| x != id);
         self.alloc_mut(id)?.live = false;

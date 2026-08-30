@@ -651,6 +651,8 @@ a `Place` dest. Typed helpers stay. Capture of
 `alloc_managed` / `mem_advise` / `stream_attach` is refused; a graph must record prefetch
 before the kernel unless AccessedBy or PreferredLocation covers that GPU.
 `va_reserve` / `va_map` / `va_unmap` / `va_free` are CUDA virtual memory.
+`va_free_with_size` is `cuMemAddressFree` with the reservation size
+(must match; partial free is not modeled).
 `va_reserve_with_flags` is `cuMemAddressReserve` alignment / addr / flags
 (flags 0; nonzero addr Invalid; nonzero alignment must be a power of two
 that divides size).
