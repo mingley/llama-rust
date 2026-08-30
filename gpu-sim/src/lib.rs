@@ -205,6 +205,12 @@
 //! [`PortableClusterMode`] is `cudaLaunchAttributePortableClusterSizeMode`:
 //! Default uses the function attribute; RequirePortable always refuses a
 //! non-portable size; AllowNonPortable allows up to `max_blocks_per_cluster`.
+//! [`KernelAttrs::dynamic_shared`] is `cudaLaunchKernel` `sharedMemBytes`.
+//! Sizes above [`GpuProfile::max_shared_mem_per_block`] need
+//! [`set_max_dynamic_shared_memory`](Sim::set_max_dynamic_shared_memory) or
+//! [`PortableSharedMode::AllowNonPortable`]. [`PortableSharedMode`] is CUDA 13
+//! `cudaLaunchAttributeSharedMemoryMode` (`cudaSharedMemoryMode`), distinct
+//! from bank-width [`SharedMemoryMode`].
 //! Decode identity stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
 //! [`graph_exec_kernel_node_set_priority`](Sim::graph_exec_kernel_node_set_priority)
 //! are the exec-snapshot attributes. [`Sim::upload_graph`] is
@@ -374,9 +380,9 @@ pub use ops::{
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
     KernelNodeParams, LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap,
-    MemcpyOp, Operation, PdlLaunch, Place, PortableClusterMode, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    MemcpyOp, Operation, PdlLaunch, Place, PortableClusterMode, PortableSharedMode,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo,
+    StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -5392,6 +5398,207 @@ mod tests {
         );
     }
 
+    fn open_shared_profile() -> HardwareProfile {
+        HardwareProfile::parse("gpus=1\nmax_shared_mem_per_block_optin=232448\n").unwrap()
+    }
+
+    #[test]
+    fn portable_shared_mode_overrides_func_attribute() {
+        let mut sim = Sim::new(open_shared_profile());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        let over = KernelAttrs {
+            dynamic_shared: 65_536,
+            ..KernelAttrs::default()
+        };
+        let err = sim
+            .kernel_with(d, KernelKind::other(8, 8), &[a], &[a], s, over)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("non-portable shared"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        enq(sim.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            KernelAttrs {
+                dynamic_shared: 65_536,
+                portable_shared: PortableSharedMode::AllowNonPortable,
+                ..KernelAttrs::default()
+            },
+        ));
+        sim.set_max_dynamic_shared_memory(d, 65_536).unwrap();
+        let err = sim
+            .kernel_with(
+                d,
+                KernelKind::other(8, 8),
+                &[a],
+                &[a],
+                s,
+                KernelAttrs {
+                    dynamic_shared: 65_536,
+                    portable_shared: PortableSharedMode::RequirePortable,
+                    ..KernelAttrs::default()
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("non-portable shared"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim
+            .kernel_with(
+                d,
+                KernelKind::other(8, 8),
+                &[a],
+                &[a],
+                s,
+                KernelAttrs {
+                    dynamic_shared: 300_000,
+                    portable_shared: PortableSharedMode::AllowNonPortable,
+                    ..KernelAttrs::default()
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("dynamic shared"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn default_portable_shared_uses_func_attr_at_launch() {
+        let mut sim = Sim::new(open_shared_profile());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        sim.set_max_dynamic_shared_memory(d, 65_536).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_set_dynamic_shared(g, 0, 65_536)
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.set_max_dynamic_shared_memory(d, 0).unwrap();
+        let err = sim.launch_graph(exec, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("non-portable shared"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.set_max_dynamic_shared_memory(d, 65_536).unwrap();
+        sim.graph_exec_kernel_node_set_portable_shared(
+            exec,
+            0,
+            PortableSharedMode::AllowNonPortable,
+        )
+        .unwrap();
+        sim.set_max_dynamic_shared_memory(d, 0).unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert!(n >= 1);
+    }
+
+    #[test]
+    fn graph_portable_shared_copy_and_device_launch() {
+        let mut sim = Sim::new(open_shared_profile());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_portable_shared(g, 0).unwrap(),
+            PortableSharedMode::Default
+        );
+        assert_eq!(sim.graph_kernel_node_get_dynamic_shared(g, 0).unwrap(), 0);
+        sim.graph_kernel_node_set_portable_shared(g, 0, PortableSharedMode::AllowNonPortable)
+            .unwrap();
+        sim.graph_kernel_node_set_dynamic_shared(g, 0, 65_536)
+            .unwrap();
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_copy_attributes(h, 0, g, 0).unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_portable_shared(h, 0).unwrap(),
+            PortableSharedMode::AllowNonPortable
+        );
+        assert_eq!(
+            sim.graph_kernel_node_get_dynamic_shared(h, 0).unwrap(),
+            0,
+            "sharedMemBytes is KernelNodeParams, not CopyAttributes"
+        );
+        sim.graph_kernel_node_set_dynamic_shared(h, 0, 65_536)
+            .unwrap();
+        let exec = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .expect("device-launch allows portable-shared");
+        assert_eq!(
+            sim.graph_exec_kernel_node_get_portable_shared(exec, 0)
+                .unwrap(),
+            PortableSharedMode::AllowNonPortable
+        );
+        assert_eq!(
+            sim.graph_exec_kernel_node_get_dynamic_shared(exec, 0)
+                .unwrap(),
+            65_536
+        );
+        let err = sim
+            .graph_exec_kernel_node_set_portable_shared(
+                exec,
+                0,
+                PortableSharedMode::RequirePortable,
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("non-portable shared"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let empty = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(empty).unwrap();
+        let err = sim
+            .graph_kernel_node_get_portable_shared(empty, 0)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not a kernel node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn kernel_with_capture_records_portable_shared() {
+        let mut sim = Sim::new(open_shared_profile());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            KernelAttrs {
+                dynamic_shared: 65_536,
+                portable_shared: PortableSharedMode::AllowNonPortable,
+                ..KernelAttrs::default()
+            },
+        ));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_portable_shared(g, 0).unwrap(),
+            PortableSharedMode::AllowNonPortable
+        );
+        assert_eq!(
+            sim.graph_kernel_node_get_dynamic_shared(g, 0).unwrap(),
+            65_536
+        );
+    }
+
     #[test]
     fn graph_cluster_copies_and_device_launch_allows() {
         let mut sim = Sim::new(h100());
@@ -6018,6 +6225,27 @@ mod tests {
         let err = PortableClusterMode::parse("bogus").unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("unknown portable-cluster"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+    }
+
+    #[test]
+    fn portable_shared_mode_parse() {
+        assert_eq!(
+            PortableSharedMode::parse("default").unwrap(),
+            PortableSharedMode::Default
+        );
+        assert_eq!(
+            PortableSharedMode::parse("portable").unwrap(),
+            PortableSharedMode::RequirePortable
+        );
+        assert_eq!(
+            PortableSharedMode::parse("non-portable").unwrap(),
+            PortableSharedMode::AllowNonPortable
+        );
+        let err = PortableSharedMode::parse("bogus").unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown portable-shared"), "{why}"),
             e => panic!("{e:?}"),
         }
     }

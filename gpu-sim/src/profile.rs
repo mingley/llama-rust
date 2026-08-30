@@ -128,6 +128,16 @@ pub struct GpuProfile {
     /// (`1000` = identity duration). [`crate::ops::SharedMemoryMode::Default`]
     /// ignores this. Not a capture.
     pub shared_mem_eight_byte_permille: u16,
+    /// Portable dynamic shared (`cudaDevAttrMaxSharedMemoryPerBlock`). Example
+    /// H100 is 48 KiB. A larger launch needs
+    /// [`crate::Sim::set_max_dynamic_shared_memory`] or
+    /// [`crate::ops::PortableSharedMode::AllowNonPortable`]. Not a capture.
+    pub max_shared_mem_per_block: u32,
+    /// Opt-in dynamic shared (`cudaDevAttrMaxSharedMemoryPerBlockOptin`).
+    /// Example H100 keeps this equal to [`Self::max_shared_mem_per_block`] so
+    /// decode identity stays portable. Tests open it (Hopper 227 KiB).
+    /// Not a capture.
+    pub max_shared_mem_per_block_optin: u32,
 }
 
 impl GpuProfile {
@@ -524,7 +534,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npdl_trigger_permille={}\nl2_bytes={}\nl2_persist_hit_permille={}\nmem_sync_domain_count={}\nsame_domain_fence_permille={}\nmax_blocks_per_cluster={}\nportable_cluster_size={}\nhost_sync_spin_ns={}\nhost_sync_yield_ns={}\nhost_sync_blocking_ns={}\nshared_mem_four_byte_permille={}\nshared_mem_eight_byte_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npdl_trigger_permille={}\nl2_bytes={}\nl2_persist_hit_permille={}\nmem_sync_domain_count={}\nsame_domain_fence_permille={}\nmax_blocks_per_cluster={}\nportable_cluster_size={}\nhost_sync_spin_ns={}\nhost_sync_yield_ns={}\nhost_sync_blocking_ns={}\nshared_mem_four_byte_permille={}\nshared_mem_eight_byte_permille={}\nmax_shared_mem_per_block={}\nmax_shared_mem_per_block_optin={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -556,6 +566,8 @@ impl HardwareProfile {
             g0.host_sync_blocking_ns,
             g0.shared_mem_four_byte_permille,
             g0.shared_mem_eight_byte_permille,
+            g0.max_shared_mem_per_block,
+            g0.max_shared_mem_per_block_optin,
             self.host_pageable_permille(g0.id),
             self.host_align_bytes(g0.id),
             g0.pool_reuse_ns,
@@ -684,6 +696,8 @@ fn h100_gpu(id: DeviceId) -> GpuProfile {
         host_sync_blocking_ns: 0,
         shared_mem_four_byte_permille: 1000,
         shared_mem_eight_byte_permille: 1000,
+        max_shared_mem_per_block: 49_152,
+        max_shared_mem_per_block_optin: 49_152,
     }
 }
 
@@ -825,6 +839,8 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut host_sync_blocking_ns: Option<u64> = None;
     let mut shared_mem_four_byte_permille: Option<u16> = None;
     let mut shared_mem_eight_byte_permille: Option<u16> = None;
+    let mut max_shared_mem_per_block: Option<u32> = None;
+    let mut max_shared_mem_per_block_optin: Option<u32> = None;
     let mut pageable_permille: u16 = 500;
     let mut align_bytes: u64 = 128;
     let mut pool_reuse_ns: Option<u64> = None;
@@ -944,6 +960,24 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
                 }
                 shared_mem_eight_byte_permille = Some(n);
             }
+            "max_shared_mem_per_block" => {
+                let n = parse_u32(v)?;
+                if n == 0 {
+                    return Err(SimError::Invalid {
+                        why: "max_shared_mem_per_block must be > 0",
+                    });
+                }
+                max_shared_mem_per_block = Some(n);
+            }
+            "max_shared_mem_per_block_optin" => {
+                let n = parse_u32(v)?;
+                if n == 0 {
+                    return Err(SimError::Invalid {
+                        why: "max_shared_mem_per_block_optin must be > 0",
+                    });
+                }
+                max_shared_mem_per_block_optin = Some(n);
+            }
             "pageable_permille" => pageable_permille = parse_u16(v)?,
             "align_bytes" => align_bytes = parse_u64(v)?,
             "pool_reuse_ns" => pool_reuse_ns = Some(parse_u64(v)?),
@@ -1035,6 +1069,26 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         }
         if let Some(n) = shared_mem_eight_byte_permille {
             g.shared_mem_eight_byte_permille = n;
+        }
+        if let Some(n) = max_shared_mem_per_block {
+            g.max_shared_mem_per_block = n;
+        }
+        if let Some(n) = max_shared_mem_per_block_optin {
+            g.max_shared_mem_per_block_optin = n;
+        }
+        if g.max_shared_mem_per_block > g.max_shared_mem_per_block_optin {
+            if max_shared_mem_per_block.is_some() && max_shared_mem_per_block_optin.is_some() {
+                return Err(SimError::Invalid {
+                    why: "max_shared_mem_per_block must be <= max_shared_mem_per_block_optin",
+                });
+            }
+            if max_shared_mem_per_block_optin.is_none() {
+                g.max_shared_mem_per_block_optin = g.max_shared_mem_per_block;
+            } else {
+                return Err(SimError::Invalid {
+                    why: "max_shared_mem_per_block must be <= max_shared_mem_per_block_optin",
+                });
+            }
         }
         if g.portable_cluster_size > g.max_blocks_per_cluster {
             if portable_cluster_size.is_some() {
@@ -1168,6 +1222,11 @@ fn clique_links(
 fn parse_u64(s: &str) -> Result<u64, SimError> {
     s.parse::<u64>()
         .map_err(|_| SimError::Invalid { why: "not a u64" })
+}
+
+fn parse_u32(s: &str) -> Result<u32, SimError> {
+    s.parse::<u32>()
+        .map_err(|_| SimError::Invalid { why: "not a u32" })
 }
 
 fn parse_u16(s: &str) -> Result<u16, SimError> {
@@ -1420,6 +1479,43 @@ mod tests {
         let err = HardwareProfile::parse("gpus=1\nshared_mem_eight_byte_permille=0\n").unwrap_err();
         assert!(
             format!("{err:?}").contains("shared_mem_eight_byte_permille must be > 0"),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_max_shared_mem_per_block() {
+        let p = HardwareProfile::parse(
+            "gpus=1\nmax_shared_mem_per_block=49152\nmax_shared_mem_per_block_optin=232448\n",
+        )
+        .unwrap();
+        let g = p.gpu(DeviceId(0)).unwrap();
+        assert_eq!(g.max_shared_mem_per_block, 49_152);
+        assert_eq!(g.max_shared_mem_per_block_optin, 232_448);
+        let text = p.to_profile_text();
+        assert!(text.contains("max_shared_mem_per_block=49152"));
+        assert!(text.contains("max_shared_mem_per_block_optin=232448"));
+        let open = HardwareProfile::parse("gpus=1\n").unwrap();
+        let g0 = open.gpu(DeviceId(0)).unwrap();
+        assert_eq!(g0.max_shared_mem_per_block, 49_152);
+        assert_eq!(g0.max_shared_mem_per_block_optin, 49_152);
+        let p = HardwareProfile::parse("gpus=1\nmax_shared_mem_per_block=102400\n").unwrap();
+        assert_eq!(
+            p.gpu(DeviceId(0)).unwrap().max_shared_mem_per_block_optin,
+            102_400
+        );
+        let err = HardwareProfile::parse("gpus=1\nmax_shared_mem_per_block=0\n").unwrap_err();
+        assert!(
+            format!("{err:?}").contains("max_shared_mem_per_block must be > 0"),
+            "{err:?}"
+        );
+        let err = HardwareProfile::parse(
+            "gpus=1\nmax_shared_mem_per_block=232448\nmax_shared_mem_per_block_optin=49152\n",
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err:?}")
+                .contains("max_shared_mem_per_block must be <= max_shared_mem_per_block_optin"),
             "{err:?}"
         );
     }

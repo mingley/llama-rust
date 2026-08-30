@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — CUDA 13 portable dynamic shared memory
+
+`PortableSharedMode` is CUDA 13 `cudaLaunchAttributeSharedMemoryMode`
+(`cudaSharedMemoryMode`), distinct from bank-width `SharedMemoryMode`.
+`KernelAttrs::dynamic_shared` is `cudaLaunchKernel` `sharedMemBytes`.
+Default uses `cudaFuncAttributeMaxDynamicSharedMemorySize` (`0` = portable
+`max_shared_mem_per_block`). RequirePortable always refuses oversize.
+AllowNonPortable allows up to `max_shared_mem_per_block_optin`. Example
+H100 keeps portable == optin so decode identity stays 0 bytes / Default.
+Device-launch graphs allow it. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — expertvm `--portable-cluster`
 
 `expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and

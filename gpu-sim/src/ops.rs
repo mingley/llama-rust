@@ -484,8 +484,8 @@ impl SynchronizationPolicy {
 /// access-policy window, and a mem-sync domain can share a launch (7 arguments
 /// including `self`). Decode identity stays [`crate::Sim::kernel`] ([`Default`]:
 /// no cooperative, no PDL, no window, inherit stream mem-sync, no cluster,
-/// Default carveout, not device-updatable, Default shared-memory mode,
-/// Default portable-cluster mode).
+/// Default carveout, not device-updatable, Default shared-memory bank mode,
+/// Default portable-cluster mode, 0 dynamic shared, Default portable-shared).
 /// [`SynchronizationPolicy`] is a stream attribute, not a field here.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KernelAttrs {
@@ -521,6 +521,20 @@ pub struct KernelAttrs {
     /// [`crate::Sim::set_non_portable_cluster_size_allowed`]. Decode identity
     /// stays Default (function attr disallowed).
     pub portable_cluster: PortableClusterMode,
+    /// `cudaLaunchKernel` / `cudaKernelNodeParams::sharedMemBytes`.
+    ///
+    /// Decode identity stays `0`. Sizes above
+    /// [`crate::GpuProfile::max_shared_mem_per_block`] need
+    /// [`crate::Sim::set_max_dynamic_shared_memory`] or
+    /// [`PortableSharedMode::AllowNonPortable`].
+    pub dynamic_shared: u32,
+    /// CUDA 13 `cudaLaunchAttributeSharedMemoryMode` (`cudaSharedMemoryMode`).
+    ///
+    /// Distinct from [`SharedMemoryMode`] (bank width / `cudaSharedMemConfig`).
+    /// [`PortableSharedMode::Default`] uses the current
+    /// [`crate::Sim::set_max_dynamic_shared_memory`]. Decode identity stays
+    /// Default (function attr 0).
+    pub portable_shared: PortableSharedMode,
 }
 
 /// `cudaFuncCache` / `cudaSharedmemCarveout` preference
@@ -618,6 +632,54 @@ impl PortableClusterMode {
     pub fn allows_non_portable(self, func_allowed: bool) -> bool {
         match self {
             Self::Default => func_allowed,
+            Self::RequirePortable => false,
+            Self::AllowNonPortable => true,
+        }
+    }
+}
+
+/// CUDA 13 `cudaLaunchAttributeSharedMemoryMode` (`cudaSharedMemoryMode`).
+///
+/// Launch-time override of [`crate::Sim::set_max_dynamic_shared_memory`].
+/// [`Self::Default`] uses the current function attribute.
+/// [`Self::RequirePortable`] refuses dynamic shared larger than
+/// [`crate::GpuProfile::max_shared_mem_per_block`] even when the function
+/// attribute allows it. [`Self::AllowNonPortable`] allows up to
+/// [`crate::GpuProfile::max_shared_mem_per_block_optin`] even when the
+/// function attribute is 0. Distinct from [`SharedMemoryMode`] (bank width).
+/// Decode identity stays [`Self::Default`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum PortableSharedMode {
+    /// `cudaSharedMemoryModeDefault`. Use the function attribute.
+    #[default]
+    Default,
+    /// `cudaSharedMemoryModeRequirePortable`.
+    RequirePortable,
+    /// `cudaSharedMemoryModeAllowNonPortable`.
+    AllowNonPortable,
+}
+
+impl PortableSharedMode {
+    /// CLI token: `default` / `portable` / `non-portable`.
+    pub fn parse(s: &str) -> Result<Self, crate::error::SimError> {
+        match s {
+            "default" => Ok(Self::Default),
+            "portable" => Ok(Self::RequirePortable),
+            "non-portable" => Ok(Self::AllowNonPortable),
+            _ => Err(crate::error::SimError::Invalid {
+                why: "unknown portable-shared",
+            }),
+        }
+    }
+
+    /// Whether `mode` plus the function-attribute max allows `bytes` above portable.
+    #[must_use]
+    pub fn allows_oversize(self, func_max: u32, bytes: u32, portable: u32) -> bool {
+        if bytes <= portable {
+            return true;
+        }
+        match self {
+            Self::Default => func_max >= bytes,
             Self::RequirePortable => false,
             Self::AllowNonPortable => true,
         }

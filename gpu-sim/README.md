@@ -122,6 +122,8 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchAttributeDeviceUpdatableKernelNode` | `graph_exec_kernel_set_params` keeps the exec uploaded; device-launch graphs allow it |
 | `cudaLaunchAttributeSharedMemoryMode` | Default never scales; FourByte / EightByte scale duration by `1000 / shared_mem_*_permille` (default 1000) |
 | `cudaLaunchAttributePortableClusterSizeMode` | Default uses the function attr; RequirePortable always refuses oversize; AllowNonPortable allows up to SKU max |
+| CUDA 13 `cudaLaunchAttributeSharedMemoryMode` (`PortableSharedMode`) | Default uses `MaxDynamicSharedMemorySize`; RequirePortable refuses oversize; AllowNonPortable allows up to opt-in max |
+| `cudaLaunchKernel` `sharedMemBytes` | `0` is identity; above `max_shared_mem_per_block` needs the function attr or AllowNonPortable |
 | `set_stream_sm_permille` is a green-context SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host) | HBM write + launch overhead |
 | peer D2D needs topology + `enable_peer` | link bandwidth |
@@ -475,7 +477,9 @@ access-policy window (`AccessPolicyWindow`), mem-sync domain/map,
 cluster, preferred cluster, shared-memory carveout,
 device-updatable kernel node (`cudaLaunchAttributeDeviceUpdatableKernelNode`),
 shared-memory bank mode (`cudaLaunchAttributeSharedMemoryMode`), and
-portable-cluster size mode (`cudaLaunchAttributePortableClusterSizeMode`).
+portable-cluster size mode (`cudaLaunchAttributePortableClusterSizeMode`),
+and CUDA 13 portable-shared mode (`cudaLaunchAttributeSharedMemoryMode` /
+`PortableSharedMode`).
 `kernel_pdl` is `cudaLaunchKernelEx` PDL:
 a wait kernel may start after the previous same-stream kernel's trigger
 (`pdl_trigger_permille`) instead of its completion. Overlap needs
@@ -507,7 +511,12 @@ scales kernel duration; FourByte / EightByte scale by
 uses the function attribute; RequirePortable always refuses oversize;
 AllowNonPortable allows up to the SKU max. `set_non_portable_cluster_size_allowed` is
 `cudaFuncAttributeNonPortableClusterSizeAllowed` (default disallowed).
-`expertvm sim --cluster N` / `gguf_gemv engine --expert-sim --cluster N`
+`PortableSharedMode` is CUDA 13 `cudaLaunchAttributeSharedMemoryMode`
+(`cudaSharedMemoryMode`), distinct from bank-width `SharedMemoryMode`.
+`dynamic_shared` is `cudaLaunchKernel` `sharedMemBytes`. Default uses
+`set_max_dynamic_shared_memory` (`cudaFuncAttributeMaxDynamicSharedMemorySize`;
+`0` = portable `max_shared_mem_per_block`). Example H100 keeps portable ==
+opt-in. `expertvm sim --cluster N` / `gguf_gemv engine --expert-sim --cluster N`
 launch grouped expert GEMMs that way. `--preferred-cluster N` occupies the
 preferred size when it fits (needs `--cluster`). `--cluster-spread` is Spread
 scheduling (occupies every Hyper-Q slot). `--max-shared` is MaxShared

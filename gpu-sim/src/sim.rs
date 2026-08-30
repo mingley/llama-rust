@@ -15,9 +15,9 @@ use crate::ops::{
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
     KernelNodeParams, LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap,
-    MemcpyOp, Operation, PdlLaunch, Place, PortableClusterMode, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    MemcpyOp, Operation, PdlLaunch, Place, PortableClusterMode, PortableSharedMode,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo,
+    StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -311,6 +311,10 @@ struct GraphStep {
     shared_mem: SharedMemoryMode,
     /// `cudaLaunchAttributePortableClusterSizeMode`.
     portable_cluster: PortableClusterMode,
+    /// `cudaLaunchKernel` / `cudaKernelNodeParams::sharedMemBytes`.
+    dynamic_shared: u32,
+    /// CUDA 13 `cudaLaunchAttributeSharedMemoryMode` (`cudaSharedMemoryMode`).
+    portable_shared: PortableSharedMode,
 }
 
 struct Graph {
@@ -608,8 +612,14 @@ pub struct Sim {
     enqueue_shared_mem: SharedMemoryMode,
     /// Portable-cluster mode for the next submit / graph replay.
     enqueue_portable_cluster: PortableClusterMode,
+    /// Dynamic shared bytes for the next submit / graph replay.
+    enqueue_dynamic_shared: u32,
+    /// Portable-shared mode for the next submit / graph replay.
+    enqueue_portable_shared: PortableSharedMode,
     /// Devices with `cudaFuncAttributeNonPortableClusterSizeAllowed`.
     non_portable_cluster: BTreeSet<DeviceId>,
+    /// `cudaFuncAttributeMaxDynamicSharedMemorySize` per device (`0` = portable).
+    max_dynamic_shared: BTreeMap<DeviceId, u32>,
     /// Wait/write-value mailbox: `(alloc, offset) → word`. Missing is `0`.
     mailbox: BTreeMap<(AllocId, u64), u64>,
     /// `cudaThreadExchangeStreamCaptureMode` default for [`Self::begin_capture`].
@@ -707,7 +717,10 @@ impl Sim {
             enqueue_device_updatable: false,
             enqueue_shared_mem: SharedMemoryMode::Default,
             enqueue_portable_cluster: PortableClusterMode::Default,
+            enqueue_dynamic_shared: 0,
+            enqueue_portable_shared: PortableSharedMode::Default,
             non_portable_cluster: BTreeSet::new(),
+            max_dynamic_shared: BTreeMap::new(),
             mailbox: BTreeMap::new(),
             capture_mode: StreamCaptureMode::Relaxed,
             next_user_object: 1,
@@ -2022,6 +2035,8 @@ impl Sim {
             self.enqueue_device_updatable = step.device_updatable;
             self.enqueue_shared_mem = step.shared_mem;
             self.enqueue_portable_cluster = step.portable_cluster;
+            self.enqueue_dynamic_shared = step.dynamic_shared;
+            self.enqueue_portable_shared = step.portable_shared;
             let wait = graph_node_waits(step, extra_wait, launch_tail, &node_ops)?;
             let s = self.graph_exec_stream(origin, stream, step, &node_stream, &mut worker);
             if let Some(slot) = node_stream.get_mut(idx) {
@@ -2205,6 +2220,8 @@ impl Sim {
         self.enqueue_device_updatable = false;
         self.enqueue_shared_mem = SharedMemoryMode::Default;
         self.enqueue_portable_cluster = PortableClusterMode::Default;
+        self.enqueue_dynamic_shared = 0;
+        self.enqueue_portable_shared = PortableSharedMode::Default;
         Ok(n)
     }
 
@@ -6569,12 +6586,202 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphKernelNodeGetAttribute` for CUDA 13 portable-shared mode.
+    pub fn graph_kernel_node_get_portable_shared(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<PortableSharedMode, SimError> {
+        self.kernel_node_portable_shared(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for CUDA 13 portable-shared mode.
+    pub fn graph_exec_kernel_node_get_portable_shared(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<PortableSharedMode, SimError> {
+        self.kernel_node_portable_shared(exec, node, true)
+    }
+
+    fn kernel_node_portable_shared(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<PortableSharedMode, SimError> {
+        Ok(self.kernel_node_shared_launch(graph, node, exec)?.1)
+    }
+
+    /// `cudaKernelNodeParams::sharedMemBytes` on the graph definition.
+    pub fn graph_kernel_node_get_dynamic_shared(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<u32, SimError> {
+        self.kernel_node_dynamic_shared(graph, node, false)
+    }
+
+    /// `cudaKernelNodeParams::sharedMemBytes` on the exec snapshot.
+    pub fn graph_exec_kernel_node_get_dynamic_shared(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<u32, SimError> {
+        self.kernel_node_dynamic_shared(exec, node, true)
+    }
+
+    fn kernel_node_dynamic_shared(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<u32, SimError> {
+        Ok(self.kernel_node_shared_launch(graph, node, exec)?.0)
+    }
+
+    fn kernel_node_shared_launch(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<(u32, PortableSharedMode), SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok((step.dynamic_shared, step.portable_shared))
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for CUDA 13 portable-shared mode.
+    pub fn graph_kernel_node_set_portable_shared(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        mode: PortableSharedMode,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_portable_shared(graph, node, false, mode)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for CUDA 13 portable-shared mode.
+    pub fn graph_exec_kernel_node_set_portable_shared(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        mode: PortableSharedMode,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_portable_shared(exec, node, true, mode)
+    }
+
+    fn set_kernel_node_portable_shared(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        mode: PortableSharedMode,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let (device, bytes) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let steps = if exec { g.view() } else { &g.steps };
+            let step = steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+            (step.device, step.dynamic_shared)
+        };
+        self.validate_dynamic_shared(device, bytes, mode)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.portable_shared = mode;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaKernelNodeParams::sharedMemBytes` on the graph definition.
+    pub fn graph_kernel_node_set_dynamic_shared(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        bytes: u32,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_dynamic_shared(graph, node, false, bytes)
+    }
+
+    /// `cudaKernelNodeParams::sharedMemBytes` on the exec snapshot.
+    pub fn graph_exec_kernel_node_set_dynamic_shared(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        bytes: u32,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_dynamic_shared(exec, node, true, bytes)
+    }
+
+    fn set_kernel_node_dynamic_shared(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        bytes: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let (device, mode) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let steps = if exec { g.view() } else { &g.steps };
+            let step = steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+            (step.device, step.portable_shared)
+        };
+        self.validate_dynamic_shared(device, bytes, mode)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.dynamic_shared = bytes;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// `cudaGraphKernelNodeCopyAttributes`: copy priority, PDL, programmatic
     /// event, launch-completion event, access-policy window, mem-sync
     /// domain/map, cluster dimension, cluster scheduling policy, preferred
     /// cluster dimension, portable-cluster mode, shared-memory carveout,
-    /// device-updatable kernel node, and shared-memory bank mode from `src`
-    /// to `dst`.
+    /// device-updatable kernel node, shared-memory bank mode, and CUDA 13
+    /// portable-shared mode from `src` to `dst`.
     ///
     /// Both nodes must be kernels. Capture cannot include it.
     pub fn graph_kernel_node_copy_attributes(
@@ -6612,7 +6819,9 @@ impl Sim {
         let upd = self.graph_kernel_node_get_device_updatable(src_graph, src)?;
         self.graph_kernel_node_set_device_updatable(dst_graph, dst, upd)?;
         let sm = self.graph_kernel_node_get_shared_mem(src_graph, src)?;
-        self.graph_kernel_node_set_shared_mem(dst_graph, dst, sm)
+        self.graph_kernel_node_set_shared_mem(dst_graph, dst, sm)?;
+        let ps = self.graph_kernel_node_get_portable_shared(src_graph, src)?;
+        self.graph_kernel_node_set_portable_shared(dst_graph, dst, ps)
     }
 
     /// `cudaGraphNodeFindInClone`: index in `cloned` of the node that was `node`
@@ -6703,6 +6912,8 @@ impl Sim {
             device_updatable: self.enqueue_device_updatable,
             shared_mem: self.enqueue_shared_mem,
             portable_cluster: self.enqueue_portable_cluster,
+            dynamic_shared: self.enqueue_dynamic_shared,
+            portable_shared: self.enqueue_portable_shared,
         });
         Ok(())
     }
@@ -8989,6 +9200,7 @@ impl Sim {
             attrs.preferred_cluster,
             attrs.portable_cluster,
         )?;
+        self.validate_dynamic_shared(device, attrs.dynamic_shared, attrs.portable_shared)?;
         if attrs.cooperative {
             self.require_cooperative(device)?;
         }
@@ -9003,6 +9215,8 @@ impl Sim {
         let prev_upd = self.enqueue_device_updatable;
         let prev_sm = self.enqueue_shared_mem;
         let prev_pc = self.enqueue_portable_cluster;
+        let prev_ds = self.enqueue_dynamic_shared;
+        let prev_ps = self.enqueue_portable_shared;
         self.enqueue_pdl = attrs.pdl;
         self.enqueue_access_policy = attrs.access_policy;
         self.enqueue_mem_sync_domain = attrs.mem_sync_domain;
@@ -9014,6 +9228,8 @@ impl Sim {
         self.enqueue_device_updatable = attrs.device_updatable;
         self.enqueue_shared_mem = attrs.shared_mem;
         self.enqueue_portable_cluster = attrs.portable_cluster;
+        self.enqueue_dynamic_shared = attrs.dynamic_shared;
+        self.enqueue_portable_shared = attrs.portable_shared;
         let out = self.submit_kernel(device, kind, reads, writes, stream, attrs.cooperative);
         self.enqueue_pdl = prev_pdl;
         self.enqueue_access_policy = prev_win;
@@ -9026,6 +9242,8 @@ impl Sim {
         self.enqueue_device_updatable = prev_upd;
         self.enqueue_shared_mem = prev_sm;
         self.enqueue_portable_cluster = prev_pc;
+        self.enqueue_dynamic_shared = prev_ds;
+        self.enqueue_portable_shared = prev_ps;
         out
     }
 
@@ -9929,6 +10147,8 @@ impl Sim {
             device_updatable: self.enqueue_device_updatable,
             shared_mem: self.enqueue_shared_mem,
             portable_cluster: self.enqueue_portable_cluster,
+            dynamic_shared: self.enqueue_dynamic_shared,
+            portable_shared: self.enqueue_portable_shared,
         });
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
@@ -9985,6 +10205,11 @@ impl Sim {
                 self.enqueue_cluster,
                 self.enqueue_preferred_cluster,
                 self.enqueue_portable_cluster,
+            )?;
+            self.validate_dynamic_shared(
+                device,
+                self.enqueue_dynamic_shared,
+                self.enqueue_portable_shared,
             )?;
         }
         let id = OpId(self.next_op);
@@ -12141,6 +12366,67 @@ impl Sim {
         self.non_portable_cluster.contains(&device)
     }
 
+    fn validate_dynamic_shared(
+        &self,
+        device: DeviceId,
+        bytes: u32,
+        mode: PortableSharedMode,
+    ) -> Result<(), SimError> {
+        if bytes == 0 {
+            return Ok(());
+        }
+        let gpu = self.profile.gpu(device)?;
+        let portable = gpu.max_shared_mem_per_block.max(1);
+        let optin = gpu.max_shared_mem_per_block_optin.max(portable);
+        if bytes > optin {
+            return Err(SimError::Invalid {
+                why: "dynamic shared",
+            });
+        }
+        let func = self.max_dynamic_shared.get(&device).copied().unwrap_or(0);
+        if !mode.allows_oversize(func, bytes, portable) {
+            return Err(SimError::Invalid {
+                why: "non-portable shared",
+            });
+        }
+        Ok(())
+    }
+
+    /// `cudaFuncSetAttribute(..., cudaFuncAttributeMaxDynamicSharedMemorySize)`.
+    ///
+    /// Default `0` allows only [`crate::GpuProfile::max_shared_mem_per_block`].
+    /// `bytes` above [`crate::GpuProfile::max_shared_mem_per_block_optin`] is
+    /// Invalid. Decode identity stays `0`.
+    pub fn set_max_dynamic_shared_memory(
+        &mut self,
+        device: DeviceId,
+        bytes: u32,
+    ) -> Result<(), SimError> {
+        let optin = self
+            .profile
+            .gpu(device)?
+            .max_shared_mem_per_block_optin
+            .max(1);
+        if bytes > optin {
+            return Err(SimError::Invalid {
+                why: "max dynamic shared",
+            });
+        }
+        if bytes == 0 {
+            let _rm = self.max_dynamic_shared.remove(&device);
+        } else {
+            let _prev = self.max_dynamic_shared.insert(device, bytes);
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// Current [`Self::set_max_dynamic_shared_memory`] for `device`.
+    #[must_use]
+    pub fn max_dynamic_shared_memory(&self, device: DeviceId) -> u32 {
+        self.max_dynamic_shared.get(&device).copied().unwrap_or(0)
+    }
+
     fn advance_to_next_completion(&mut self) -> Result<(), SimError> {
         if self.running.is_empty() {
             return Ok(());
@@ -13030,6 +13316,8 @@ fn remap_nested_graphs(
             device_updatable: step.device_updatable,
             shared_mem: step.shared_mem,
             portable_cluster: step.portable_cluster,
+            dynamic_shared: step.dynamic_shared,
+            portable_shared: step.portable_shared,
         });
     }
     Ok(out)

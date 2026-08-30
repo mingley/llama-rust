@@ -1693,6 +1693,17 @@ model, do not celebrate the sim.
     is off. Legal with `--pdl` and `--cooperative`. Decode identity stays
     Default. `gpu-profile capture` is still refused.
 
+135. [x] CUDA 13 `cudaLaunchAttributeSharedMemoryMode` (`cudaSharedMemoryMode`)
+    as `PortableSharedMode`, plus `cudaLaunchKernel` `sharedMemBytes`
+    (`KernelAttrs::dynamic_shared`) and
+    `cudaFuncAttributeMaxDynamicSharedMemorySize`. Distinct from bank-width
+    `SharedMemoryMode`. Default uses the function attribute (`0` = portable
+    `max_shared_mem_per_block`). RequirePortable always refuses oversize.
+    AllowNonPortable allows up to `max_shared_mem_per_block_optin`.
+    Example H100 keeps portable == optin (48 KiB) so decode identity stays
+    0 bytes / Default. Default is resolved at launch / graph replay.
+    Device-launch graphs allow it. `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.
