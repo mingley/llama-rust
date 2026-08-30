@@ -280,8 +280,10 @@ exec and during capture). `begin_capture_to_graph` is
 `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
 uninstantiated graph; capture roots additionally depend on the given node
 indices (empty `deps` means extra roots, so they may Hyper-Q overlap).
-`graph_nodes` / `graph_root_nodes` / `graph_edges` / `graph_node_dependents` are
-`cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes`. Host-sync
+`graph_nodes` / `graph_root_nodes` / `graph_edges` / `graph_node_dependents` /
+`graph_debug_dot` are `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` /
+`NodeGetDependentNodes` / `cudaGraphDebugDotPrint` (kinds and edges; no
+verbose kernel-param flags). Host-sync
 `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device` / VMM / mempool
 create cannot be captured. A graph that allocates without a matching free
 reuses the pointer on later launches (no second HBM charge) unless

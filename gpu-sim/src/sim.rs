@@ -5618,6 +5618,37 @@ impl Sim {
         Ok(edges)
     }
 
+    /// `cudaGraphDebugDotPrint` of stored node kinds and edges.
+    ///
+    /// Query; legal during capture. Destination graph only during capture
+    /// (same as [`Self::graph_len`]). No verbose kernel-param flags.
+    pub fn graph_debug_dot(&self, graph: GraphId) -> Result<String, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut out = String::from("digraph {\n");
+        for (i, step) in g.steps.iter().enumerate() {
+            out.push_str("  n");
+            out.push_str(&i.to_string());
+            out.push_str(" [label=\"");
+            out.push_str(&i.to_string());
+            out.push(' ');
+            out.push_str(&format!("{:?}", node_kind(&step.kind)));
+            out.push_str("\"];\n");
+        }
+        for (to, step) in g.steps.iter().enumerate() {
+            for from in &step.deps {
+                out.push_str("  n");
+                out.push_str(&from.to_string());
+                out.push_str(" -> n");
+                out.push_str(&to.to_string());
+                out.push_str(";\n");
+            }
+        }
+        out.push_str("}\n");
+        Ok(out)
+    }
+
     /// Successors of node `i` (`cudaGraphNodeGetDependentNodes`).
     pub fn graph_node_dependents(&self, graph: GraphId, i: usize) -> Result<Vec<usize>, SimError> {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {

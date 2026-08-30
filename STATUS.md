@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaGraphDebugDotPrint`
+
+`Sim::graph_debug_dot` prints stored node kinds and edges as DOT. Query;
+legal during capture. No verbose kernel-param flags. `gpu-profile capture`
+is still refused.
+
 ## Shipped 2026-08-30 — graph mem-free Get/SetParams; serve `echo` / `add_special_tokens`
 
 `Sim::graph_free_get_params` is `cudaGraphMemFreeNodeGetParams`.
@@ -2108,7 +2114,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 175 (`add_special_tokens`).
+Next code change is PLAN systems depth after item 176 (`cudaGraphDebugDotPrint`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

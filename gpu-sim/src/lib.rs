@@ -386,8 +386,10 @@
 //! `cudaGraphExecUpdate` treats those edges as topology.
 //! [`graph_nodes`](Sim::graph_nodes) / [`graph_root_nodes`](Sim::graph_root_nodes) /
 //! [`graph_edges`](Sim::graph_edges) /
-//! [`graph_node_dependents`](Sim::graph_node_dependents) are
-//! `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes`.
+//! [`graph_node_dependents`](Sim::graph_node_dependents) /
+//! [`graph_debug_dot`](Sim::graph_debug_dot) are
+//! `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes`
+//! / `cudaGraphDebugDotPrint` (kinds and edges; no verbose param flags).
 //! [`begin_capture_to_graph`](Sim::begin_capture_to_graph) is
 //! `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
 //! uninstantiated graph; capture roots additionally depend on the given node
@@ -7828,6 +7830,31 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_debug_dot_prints_kinds_and_edges() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        assert_eq!(sim.graph_debug_dot(g).unwrap(), "digraph {\n}\n");
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_empty(g).unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        let dot = sim.graph_debug_dot(g).unwrap();
+        assert!(dot.contains("n0 [label=\"0 Kernel\"]"), "{dot}");
+        assert!(dot.contains("n1 [label=\"1 Empty\"]"), "{dot}");
+        assert!(dot.contains("n0 -> n1;"), "{dot}");
+        sim.begin_capture(d, s).unwrap();
+        assert!(sim.graph_debug_dot(g).unwrap().contains("n0 -> n1;"));
+        let _end = sim.end_capture().unwrap();
+        match sim.graph_debug_dot(GraphId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

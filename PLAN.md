@@ -2044,6 +2044,13 @@ model, do not celebrate the sim.
     or `/v1/tokenize`. Decode identity unchanged. `gpu-profile capture`
     is still refused. Dual score still has no `$/M tokens`.
 
+176. [x] `cudaGraphDebugDotPrint`:
+    `Sim::graph_debug_dot` prints stored node kinds and edges as DOT.
+    Query; legal during capture (destination graph only, same as
+    `graph_len`). No verbose kernel-param flags. Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.
