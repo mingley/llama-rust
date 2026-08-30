@@ -54,6 +54,9 @@ struct Alloc {
     host_mapped: bool,
     /// Came from `cudaHostRegister`, not `cudaMallocHost`.
     host_registered: bool,
+    /// `cudaHostAlloc` / `cudaHostRegister` flag word (Portable / Mapped /
+    /// WriteCombined). Stored; Portable / WriteCombined do not change DMA.
+    host_flags: u32,
     /// `cudaMallocManaged`: one location; [`Sim::prefetch`] migrates it.
     managed: bool,
     /// Stream visibility for managed memory ([`Sim::stream_attach`]).
@@ -5215,6 +5218,7 @@ impl Sim {
                 host_pageable: false,
                 host_mapped: false,
                 host_registered: false,
+                host_flags: 0,
                 managed: false,
                 attach: Attach::Global,
                 read_mostly: false,
@@ -8841,6 +8845,7 @@ impl Sim {
                 host_pageable: false,
                 host_mapped: false,
                 host_registered: false,
+                host_flags: 0,
                 managed: false,
                 attach: Attach::Global,
                 read_mostly: false,
@@ -9264,6 +9269,7 @@ impl Sim {
                 host_pageable: false,
                 host_mapped: false,
                 host_registered: false,
+                host_flags: 0,
                 managed: false,
                 attach: Attach::Global,
                 read_mostly: false,
@@ -9320,7 +9326,7 @@ impl Sim {
 
     /// Pageable host allocation (`malloc`). Pin it with [`Self::host_register`].
     pub fn alloc_host(&mut self, bytes: u64) -> Result<AllocId, SimError> {
-        self.insert_host(bytes, true, false, false, false)
+        self.insert_host(bytes, true, false, false, false, HostAllocFlags::DEFAULT)
     }
 
     /// `cudaHostAllocMapped`: pinned, mapped, no HBM. A kernel may read it
@@ -9331,18 +9337,21 @@ impl Sim {
 
     /// `cudaHostAlloc` with [`HostAllocFlags`].
     ///
-    /// Known bits: [`HostAllocFlags::MAPPED`]. Portable / WriteCombined are
-    /// Invalid `"host alloc flags"`. Typed helpers stay. Capture cannot include
+    /// Known bits: [`HostAllocFlags::MAPPED`] / [`HostAllocFlags::PORTABLE`] /
+    /// [`HostAllocFlags::WRITE_COMBINED`]. Portable and
+    /// WriteCombined are stored (no DMA/pin change). Other bits Invalid
+    /// `"host alloc flags"`. Typed helpers stay. Capture cannot include
     /// host alloc.
     pub fn alloc_host_with_flags(&mut self, bytes: u64, flags: u32) -> Result<AllocId, SimError> {
-        const KNOWN: u32 = HostAllocFlags::MAPPED;
+        const KNOWN: u32 =
+            HostAllocFlags::MAPPED | HostAllocFlags::PORTABLE | HostAllocFlags::WRITE_COMBINED;
         if flags & !KNOWN != 0 {
             return Err(SimError::Invalid {
                 why: "host alloc flags",
             });
         }
         let mapped = flags & HostAllocFlags::MAPPED != 0;
-        self.insert_host(bytes, false, true, mapped, false)
+        self.insert_host(bytes, false, true, mapped, false, flags)
     }
 
     /// `cudaMallocManaged`: pointer is live immediately, no HBM until a
@@ -9372,6 +9381,7 @@ impl Sim {
                 host_pageable: false,
                 host_mapped: false,
                 host_registered: false,
+                host_flags: 0,
                 managed: true,
                 attach: Attach::Global,
                 read_mostly: false,
@@ -9681,6 +9691,7 @@ impl Sim {
                 host_pageable: false,
                 host_mapped: false,
                 host_registered: false,
+                host_flags: 0,
                 managed: false,
                 attach: Attach::Global,
                 read_mostly: false,
@@ -10700,16 +10711,17 @@ impl Sim {
 
     /// `cudaHostRegister` with [`HostAllocFlags`].
     ///
-    /// Known bits: [`HostAllocFlags::MAPPED`]. Portable / IoMemory / ReadOnly
-    /// are Invalid `"host register flags"`. Typed helpers stay.
+    /// Known bits: [`HostAllocFlags::MAPPED`] / [`HostAllocFlags::PORTABLE`].
+    /// Portable is stored (no DMA/pin change). IoMemory / ReadOnly are Invalid
+    /// `"host register flags"`. Typed helpers stay.
     pub fn host_register_with_flags(&mut self, id: AllocId, flags: u32) -> Result<(), SimError> {
-        const KNOWN: u32 = HostAllocFlags::MAPPED;
+        const KNOWN: u32 = HostAllocFlags::MAPPED | HostAllocFlags::PORTABLE;
         if flags & !KNOWN != 0 {
             return Err(SimError::Invalid {
                 why: "host register flags",
             });
         }
-        self.host_register_flags(id, flags & HostAllocFlags::MAPPED != 0)
+        self.host_register_flags(id, flags)
     }
 
     /// `cudaHostUnregister`. Only ids from [`Self::host_register`]. Must not be leased
@@ -10738,6 +10750,7 @@ impl Sim {
         a.host_mapped = false;
         a.host_registered = false;
         a.host_pageable = true;
+        a.host_flags = HostAllocFlags::DEFAULT;
         Ok(())
     }
 
@@ -10890,6 +10903,7 @@ impl Sim {
                 host_pageable: false,
                 host_mapped: false,
                 host_registered: false,
+                host_flags: 0,
                 managed: false,
                 attach: Attach::Global,
                 read_mostly: false,
@@ -12057,11 +12071,9 @@ impl Sim {
 
     /// `cudaHostGetFlags`. Query; legal during capture.
     ///
-    /// Returns [`HostAllocFlags::MAPPED`] when the pointer is
-    /// `cudaHostAllocMapped` / `cudaHostRegisterMapped`, else `0` for pinned
-    /// or registered host. Device, managed, VMM, and unregistered pageable
-    /// pointers are Invalid `"not host alloc"`. Portable / WriteCombined are
-    /// not modeled.
+    /// Returns the flag word passed to [`Self::alloc_host_with_flags`] /
+    /// [`Self::host_register_with_flags`]. Device, managed, VMM, and
+    /// unregistered pageable pointers are Invalid `"not host alloc"`.
     pub fn host_get_flags(&self, id: AllocId) -> Result<u32, SimError> {
         let a = self.alloc_ref(id)?;
         if !a.live {
@@ -12072,11 +12084,7 @@ impl Sim {
                 why: "not host alloc",
             });
         }
-        if a.host_mapped {
-            Ok(HostAllocFlags::MAPPED)
-        } else {
-            Ok(HostAllocFlags::DEFAULT)
-        }
+        Ok(a.host_flags)
     }
 
     /// `cudaDeviceGetAttribute`. Query; legal during capture.
@@ -13498,6 +13506,7 @@ impl Sim {
         pinned: bool,
         mapped: bool,
         registered: bool,
+        flags: u32,
     ) -> Result<AllocId, SimError> {
         if bytes == 0 {
             return Err(SimError::Invalid {
@@ -13521,6 +13530,7 @@ impl Sim {
                 host_pageable: pageable,
                 host_mapped: mapped,
                 host_registered: registered,
+                host_flags: flags,
                 managed: false,
                 attach: Attach::Global,
                 read_mostly: false,
@@ -13555,7 +13565,7 @@ impl Sim {
         self.pinned_used = self.pinned_used.saturating_sub(bytes);
     }
 
-    fn host_register_flags(&mut self, id: AllocId, mapped: bool) -> Result<(), SimError> {
+    fn host_register_flags(&mut self, id: AllocId, flags: u32) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture host register")?;
         let a = self.alloc_ref(id)?;
         if a.leases > 0 {
@@ -13569,11 +13579,13 @@ impl Sim {
         let bytes = a.bytes;
         self.charge_pin(bytes)?;
         self.clock = self.clock.saturating_add(self.first_alloc_ns());
+        let mapped = flags & HostAllocFlags::MAPPED != 0;
         let a = self.alloc_mut(id)?;
         a.host_pageable = false;
         a.host_pinned = true;
         a.host_mapped = mapped;
         a.host_registered = true;
+        a.host_flags = flags;
         Ok(())
     }
 
@@ -14297,6 +14309,7 @@ impl Sim {
                 host_pageable: false,
                 host_mapped: false,
                 host_registered: false,
+                host_flags: 0,
                 managed: false,
                 attach: Attach::Global,
                 read_mostly: false,

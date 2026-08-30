@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — HostAlloc Portable / WriteCombined stored flags
+
+`alloc_host_with_flags` stores `PORTABLE` / `WRITE_COMBINED` (no DMA
+change). `host_register_with_flags` accepts Portable. `host_get_flags`
+returns the stored word. IoMemory / ReadOnly stay Invalid.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — SharedMemConfig, event BlockingSync, device schedule flags
 
 `set_shared_mem_config` / `get_shared_mem_config` are
@@ -2408,7 +2415,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 228 (`set_device_flags`).
+Next code change is PLAN systems depth after item 229 (`HostAllocFlags::PORTABLE`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

@@ -2022,14 +2022,19 @@ impl EventCreateFlags {
 
 /// `cudaHostAlloc*` / `cudaHostRegister*` bits for [`crate::Sim::host_get_flags`].
 ///
-/// Portable / WriteCombined / IoMemory / ReadOnly are not modeled.
+/// Portable / WriteCombined are stored (no DMA change). IoMemory / ReadOnly
+/// stay Invalid.
 pub struct HostAllocFlags;
 
 impl HostAllocFlags {
     /// `cudaHostAllocDefault` / `cudaHostRegisterDefault`.
     pub const DEFAULT: u32 = 0;
+    /// `cudaHostAllocPortable` / `cudaHostRegisterPortable`.
+    pub const PORTABLE: u32 = 1;
     /// `cudaHostAllocMapped` / `cudaHostRegisterMapped`.
     pub const MAPPED: u32 = 2;
+    /// `cudaHostAllocWriteCombined` (alloc only; register IoMemory is Invalid).
+    pub const WRITE_COMBINED: u32 = 4;
 }
 
 /// `cudaGraphDebugDotFlags` for [`crate::Sim::graph_debug_dot_with_flags`].

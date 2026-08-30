@@ -115,8 +115,8 @@ warp scheduler, L1, …   ← do not model
 | `mem_info` is `(free, total)` HBM | `cudaMemGetInfo` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
 | `host_get_device_pointer` of mapped host returns the same id (`flags` must be 0) | `cudaHostGetDevicePointer` |
-| `host_get_flags` is 0 default / `HostAllocFlags::MAPPED` | `cudaHostGetFlags` |
-| `alloc_host_with_flags` / `host_register_with_flags` (MAPPED known; Portable Invalid) | `cudaHostAlloc` / `cudaHostRegister` |
+| `host_get_flags` returns the stored `HostAllocFlags` word | `cudaHostGetFlags` |
+| `alloc_host_with_flags` / `host_register_with_flags` (MAPPED / PORTABLE / WRITE_COMBINED stored; IoMemory / ReadOnly Invalid) | `cudaHostAlloc` / `cudaHostRegister` |
 | `device_get_attribute` exposes modeled SKU caps (incl. GPUDirect RDMA / CanFlushRemoteWrites from `LinkKind::Rdma`; ConcurrentManaged / DirectManagedHost / PageableHostPageTables / HostNativeAtomic / CooperativeMultiDevice / Integrated always 0) | `cudaDeviceGetAttribute` |
 | `device_get_properties` wraps the same SKU caps | `cudaGetDeviceProperties` |
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |

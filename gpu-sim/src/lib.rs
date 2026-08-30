@@ -208,12 +208,14 @@
 //! [`Sim::host_get_device_pointer`] is `cudaHostGetDevicePointer` (mapped host).
 //! [`host_get_device_pointer_with_flags`](Sim::host_get_device_pointer_with_flags)
 //! requires [`HostGetDevicePointerFlags::DEFAULT`] (`0`). Typed helper stays.
-//! [`Sim::host_get_flags`] is `cudaHostGetFlags` (`HostAllocFlags::MAPPED` or
-//! default `0`; Portable / WriteCombined are not modeled).
+//! [`Sim::host_get_flags`] is `cudaHostGetFlags` (the stored
+//! [`HostAllocFlags`] word).
 //! [`Sim::alloc_host_with_flags`] / [`host_register_with_flags`](Sim::host_register_with_flags)
-//! are `cudaHostAlloc` / `cudaHostRegister` flag words (known bit
-//! [`HostAllocFlags::MAPPED`]; Portable / WriteCombined / IoMemory / ReadOnly
-//! are Invalid). Typed helpers stay.
+//! are `cudaHostAlloc` / `cudaHostRegister` flag words
+//! ([`HostAllocFlags::MAPPED`] / [`HostAllocFlags::PORTABLE`] /
+//! [`HostAllocFlags::WRITE_COMBINED`] on alloc; register
+//! accepts Mapped / Portable). Portable / WriteCombined are stored (no DMA
+//! change). IoMemory / ReadOnly are Invalid. Typed helpers stay.
 //! [`Sim::device_get_attribute`] is `cudaDeviceGetAttribute` ([`DeviceAttr`]).
 //! [`Sim::device_get_properties`] is `cudaGetDeviceProperties` ([`DeviceProperties`];
 //! modeled caps only — no SM count or clock). [`DeviceAttr::CanMapHostMemory`]
@@ -8234,11 +8236,21 @@ mod tests {
             .alloc_host_with_flags(64, HostAllocFlags::MAPPED)
             .unwrap();
         assert_eq!(sim.host_get_flags(mapped).unwrap(), HostAllocFlags::MAPPED);
-        match sim.alloc_host_with_flags(64, 1) {
-            Err(SimError::Invalid { why }) => assert!(why.contains("host alloc flags"), "{why}"),
-            other => panic!("{other:?}"),
-        }
-        match sim.alloc_host_with_flags(64, 4) {
+        let portable = sim
+            .alloc_host_with_flags(64, HostAllocFlags::PORTABLE)
+            .unwrap();
+        assert_eq!(
+            sim.host_get_flags(portable).unwrap(),
+            HostAllocFlags::PORTABLE
+        );
+        let wc = sim
+            .alloc_host_with_flags(64, HostAllocFlags::WRITE_COMBINED)
+            .unwrap();
+        assert_eq!(
+            sim.host_get_flags(wc).unwrap(),
+            HostAllocFlags::WRITE_COMBINED
+        );
+        match sim.alloc_host_with_flags(64, 8) {
             Err(SimError::Invalid { why }) => assert!(why.contains("host alloc flags"), "{why}"),
             other => panic!("{other:?}"),
         }
@@ -8257,7 +8269,14 @@ mod tests {
             HostAllocFlags::MAPPED
         );
         sim.host_unregister(pageable).unwrap();
-        match sim.host_register_with_flags(pageable, 1) {
+        sim.host_register_with_flags(pageable, HostAllocFlags::PORTABLE)
+            .unwrap();
+        assert_eq!(
+            sim.host_get_flags(pageable).unwrap(),
+            HostAllocFlags::PORTABLE
+        );
+        sim.host_unregister(pageable).unwrap();
+        match sim.host_register_with_flags(pageable, 8) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("host register flags"), "{why}")
             }

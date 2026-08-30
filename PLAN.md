@@ -2503,7 +2503,16 @@ model, do not celebrate the sim.
     Decode identity unchanged. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-229. [ ] Next numbered PLAN item after 228 is the next `gpu-sim` / Engine /
+229. [x] `cudaHostAllocPortable` / `cudaHostAllocWriteCombined`:
+    [`HostAllocFlags::PORTABLE`] / [`WRITE_COMBINED`](HostAllocFlags::WRITE_COMBINED)
+    are stored on [`alloc_host_with_flags`] (no DMA/pin change).
+    [`host_register_with_flags`] accepts Portable (not WriteCombined;
+    register IoMemory stays Invalid). [`host_get_flags`] returns the
+    stored word. IoMemory / ReadOnly stay Invalid. Typed helpers stay.
+    Decode identity unchanged. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+230. [ ] Next numbered PLAN item after 229 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
