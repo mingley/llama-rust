@@ -167,6 +167,12 @@ pub struct GpuStoreCfg {
     /// Occupies `min(N, compute_slots)` Hyper-Q slots. Decode identity stays
     /// `cudaLaunchKernel` (no cluster).
     pub cluster: u8,
+    /// Spread cluster scheduling (`cudaLaunchAttributeClusterSchedulingPolicyPreference`).
+    ///
+    /// Occupies every Hyper-Q slot so leftover kernels cannot overlap even
+    /// when [`Self::cluster`] is smaller than [`Self::compute_slots`]. A no-op
+    /// unless cluster blocks `> 1`. Decode identity stays Default.
+    pub cluster_spread: bool,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// [`Self::pin_hot`] and walker `--place replicas` map dest VMM physicals
@@ -241,6 +247,7 @@ pub struct SimulatedGpuStore {
     pdl: bool,
     l2_persist: bool,
     cluster: u8,
+    cluster_spread: bool,
     multicast: bool,
     next_event: u32,
     pages: BTreeMap<ExpertKey, GpuPage>,
@@ -500,6 +507,7 @@ impl SimulatedGpuStore {
             pdl: cfg.pdl,
             l2_persist: cfg.l2_persist,
             cluster: cfg.cluster,
+            cluster_spread: cfg.cluster_spread,
             multicast: cfg.multicast,
             next_event: 1,
             pages: BTreeMap::new(),
@@ -615,6 +623,7 @@ impl SimulatedGpuStore {
             pdl: self.pdl,
             l2_persist: self.l2_persist,
             cluster: self.cluster,
+            cluster_spread: self.cluster_spread,
         }
     }
 

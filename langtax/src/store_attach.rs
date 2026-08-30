@@ -66,6 +66,8 @@ pub(crate) struct GpuCli {
     pub cluster: u8,
     /// True when `--cluster` appeared.
     pub cluster_set: bool,
+    /// Spread cluster scheduling (`GpuStoreCfg::cluster_spread`).
+    pub cluster_spread: bool,
     /// Hopper NVLS replica fanout (`GpuStoreCfg::multicast`). Implies vmm.
     pub multicast: bool,
     /// Hyper-Q occupancy (`GpuStoreCfg::compute_slots`). `0` keeps the profile.
@@ -115,6 +117,7 @@ impl GpuCli {
             "--cooperative" => &mut self.cooperative,
             "--pdl" => &mut self.pdl,
             "--l2-persist" => &mut self.l2_persist,
+            "--cluster-spread" => &mut self.cluster_spread,
             "--multicast" => &mut self.multicast,
             _ => return Ok(false),
         };
@@ -230,6 +233,7 @@ impl GpuCli {
             (self.vmm_page_set, "--vmm-page"),
             (self.compute_slots_set, "--compute-slots"),
             (self.cluster_set, "--cluster"),
+            (self.cluster_spread, "--cluster-spread"),
             (self.decode_sm_set, "--decode-sms"),
         ]
         .into_iter()
@@ -448,6 +452,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         pdl: gpu.pdl,
         l2_persist: gpu.l2_persist,
         cluster: gpu.cluster,
+        cluster_spread: gpu.cluster_spread,
         multicast: gpu.multicast,
         compute_slots: gpu.compute_slots,
         decode_sm_permille: gpu.decode_sm_permille,

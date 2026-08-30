@@ -37,6 +37,8 @@ pub(crate) struct GemmFlags {
     pub l2_persist: bool,
     /// Hopper cluster X size (`cudaLaunchAttributeClusterDimension`). `0` is off.
     pub cluster: u8,
+    /// `cudaLaunchAttributeClusterSchedulingPolicyPreference` Spread.
+    pub cluster_spread: bool,
 }
 
 impl GemmFlags {
@@ -56,12 +58,21 @@ impl GemmFlags {
         (self.cluster >= 1).then_some(gpu_sim::ClusterDim::x(u32::from(self.cluster)))
     }
 
+    pub(crate) fn cluster_policy(self) -> ClusterSchedulingPolicy {
+        if self.cluster_spread {
+            ClusterSchedulingPolicy::Spread
+        } else {
+            ClusterSchedulingPolicy::Default
+        }
+    }
+
     pub(crate) fn kernel_attrs(self, id: AllocId) -> KernelAttrs {
         KernelAttrs {
             cooperative: self.cooperative,
             pdl: self.pdl_attr().unwrap_or_default(),
             access_policy: self.persist_window(id),
             cluster: self.cluster_dim(),
+            cluster_policy: self.cluster_policy(),
             ..KernelAttrs::default()
         }
     }
@@ -77,8 +88,9 @@ use crate::planner::{
 use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
 use gpu_sim::{
-    AccessPolicyWindow, AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelAttrs,
-    KernelBuf, KernelKind, MemcpyOp, Place, PoolId, ProgrammaticLaunch, Score, Sim, StreamId,
+    AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceId, EventId, GraphId,
+    HardwareProfile, KernelAttrs, KernelBuf, KernelKind, MemcpyOp, Place, PoolId,
+    ProgrammaticLaunch, Score, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -388,6 +400,13 @@ pub struct SimCfg {
     /// `cudaLaunchKernel` (no cluster). [`crate::GpuStoreCfg::cluster`] is the
     /// store path.
     pub cluster: u8,
+    /// Spread cluster scheduling (`cudaLaunchAttributeClusterSchedulingPolicyPreference`).
+    ///
+    /// Occupies every Hyper-Q slot so leftover kernels cannot overlap even
+    /// when [`Self::cluster`] is smaller than [`Self::compute_slots`]. A no-op
+    /// unless cluster blocks `> 1`. Decode identity stays Default.
+    /// [`crate::GpuStoreCfg::cluster_spread`] is the store path.
+    pub cluster_spread: bool,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// `--place replicas` maps dest VMM physicals then one NVLS kernel instead
@@ -457,6 +476,7 @@ impl SimCfg {
             pdl: false,
             l2_persist: false,
             cluster: 0,
+            cluster_spread: false,
             multicast: false,
             compute_slots: 0,
             decode_sm_permille: 0,
@@ -579,6 +599,7 @@ pub fn sim_replay_cfg(
         .with_pdl(cfg.pdl)
         .with_l2_persist(cfg.l2_persist)
         .with_cluster(cfg.cluster)
+        .with_cluster_spread(cfg.cluster_spread)
         .with_set_params(cfg.graph_set_params)
         .with_piecewise(cfg.graph_piecewise);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
@@ -817,6 +838,7 @@ pub(crate) struct GraphBank {
     pdl: bool,
     l2_persist: bool,
     cluster: u8,
+    cluster_spread: bool,
     set_params: bool,
     pub updates: u64,
     pub clones: u64,
@@ -837,6 +859,7 @@ impl GraphBank {
             pdl: false,
             l2_persist: false,
             cluster: 0,
+            cluster_spread: false,
             set_params: false,
             updates: 0,
             clones: 0,
@@ -864,12 +887,18 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_cluster_spread(mut self, yes: bool) -> Self {
+        self.cluster_spread = yes;
+        self
+    }
+
     fn gemm_flags(&self) -> GemmFlags {
         GemmFlags {
             cooperative: self.cooperative,
             pdl: self.pdl,
             l2_persist: self.l2_persist,
             cluster: self.cluster,
+            cluster_spread: self.cluster_spread,
         }
     }
 
@@ -1807,6 +1836,10 @@ fn add_gemm_kernel(
     if let Some(c) = flags.cluster_dim() {
         let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_cluster(graph, node, Some(c))?;
+    }
+    if flags.cluster_spread {
+        let node = usize::from(!writes.is_empty());
+        sim.graph_kernel_node_set_cluster_policy(graph, node, ClusterSchedulingPolicy::Spread)?;
     }
     Ok(())
 }

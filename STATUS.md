@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — expertvm `--cluster-spread`
+
+`expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and
+`infer-bench schedule` take `--cluster-spread`. Grouped expert GEMMs launch
+with Hopper cluster scheduling Spread so the launch occupies every Hyper-Q
+slot even when `--cluster N` is smaller than `--compute-slots`. A no-op
+without `--cluster` of at least 2. Legal with `--pdl` and `--cooperative`.
+Decode identity stays Default. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — cluster scheduling, preferred dim, non-portable size
 
 `cudaLaunchAttributeClusterSchedulingPolicyPreference` Spread occupies every

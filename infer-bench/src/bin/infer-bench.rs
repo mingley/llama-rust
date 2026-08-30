@@ -17,7 +17,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--cluster-spread] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -133,6 +133,7 @@ fn run() -> Result<(), String> {
             sim_cfg.pdl = cfg.pdl;
             sim_cfg.l2_persist = cfg.l2_persist;
             sim_cfg.cluster = cfg.cluster;
+            sim_cfg.cluster_spread = cfg.cluster_spread;
             sim_cfg.multicast = cfg.multicast;
             if cfg.multicast {
                 sim_cfg.vmm = true;
@@ -204,6 +205,7 @@ struct Cfg {
     pdl: bool,
     l2_persist: bool,
     cluster: u8,
+    cluster_spread: bool,
     multicast: bool,
 }
 
@@ -241,6 +243,7 @@ where
     let mut pdl = false;
     let mut l2_persist = false;
     let mut cluster = 0u8;
+    let mut cluster_spread = false;
     let mut multicast = false;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
@@ -305,6 +308,9 @@ where
                 l2_persist = !matches!(inline.as_deref(), Some("0" | "false"));
             }
             "--cluster" => cluster = parse_cluster(&value("cluster", inline, &mut it)?)?,
+            "--cluster-spread" => {
+                cluster_spread = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
             "--multicast" => {
                 multicast = !matches!(inline.as_deref(), Some("0" | "false"));
             }
@@ -372,6 +378,7 @@ where
         pdl,
         l2_persist,
         cluster,
+        cluster_spread,
         multicast,
     })
 }

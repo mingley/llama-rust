@@ -485,7 +485,8 @@ max 8). `ClusterSchedulingPolicy::Spread` occupies every slot.
 `set_non_portable_cluster_size_allowed` is
 `cudaFuncAttributeNonPortableClusterSizeAllowed` (default disallowed).
 `expertvm sim --cluster N` / `gguf_gemv engine --expert-sim --cluster N`
-launch grouped expert GEMMs that way. Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
+launch grouped expert GEMMs that way. `--cluster-spread` is Spread
+scheduling (occupies every Hyper-Q slot). Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
 instantiate schedules those node priorities instead of the launch stream. `set_created_streams_priority` assigns created streams
 their id. `set_stream_sm_permille` is a green-context SM fraction
 (compute-bound kernels scale; memory-bound keep full HBM; default unset is

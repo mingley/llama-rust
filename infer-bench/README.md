@@ -33,6 +33,7 @@ infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --comp
 infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --compute-slots 2 --pdl
 infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --l2-persist
 infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --seq-streams --compute-slots 2 --cluster 2
+infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --seq-streams --compute-slots 4 --cluster 2 --cluster-spread
 infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --prefill-chunk 1 --decode-priority --compute-slots 2
 ```
 
