@@ -468,6 +468,7 @@
 //! [`graph_memcpy_set_params`](Sim::graph_memcpy_set_params) /
 //! [`graph_memcpy_set_params_1d`](Sim::graph_memcpy_set_params_1d) /
 //! [`graph_memcpy_set_params_2d`](Sim::graph_memcpy_set_params_2d) /
+//! [`graph_memcpy_set_params_3d`](Sim::graph_memcpy_set_params_3d) /
 //! [`graph_memset_set_params`](Sim::graph_memset_set_params) /
 //! [`graph_host_set_params`](Sim::graph_host_set_params) /
 //! [`graph_batch_mem_op_set_params`](Sim::graph_batch_mem_op_set_params) /
@@ -588,10 +589,12 @@
 //! include it.
 //! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
 //! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d) /
-//! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d)
-//! are `cudaGraphExecMemcpyNodeSetParams` / `SetParams1D` / 2D helper (same
+//! [`graph_exec_memcpy_set_params_2d`](Sim::graph_exec_memcpy_set_params_2d) /
+//! [`graph_exec_memcpy_set_params_3d`](Sim::graph_exec_memcpy_set_params_3d)
+//! are `cudaGraphExecMemcpyNodeSetParams` / `SetParams1D` / 2D / 3D helpers (same
 //! `graph_set_params_ns`; pageable still illegal; mem nodes legal; 1D may
-//! convert a 2D/3D node; 2D requires [`MemcpyOp::is_2d`]). [`graph_unique_memcpy`](Sim::graph_unique_memcpy)
+//! convert a 2D/3D node; 2D requires [`MemcpyOp::is_2d`]; 3D requires
+//! [`MemcpyOp::is_3d`]). [`graph_unique_memcpy`](Sim::graph_unique_memcpy)
 //! / [`graph_try_unique_memcpy`](Sim::graph_try_unique_memcpy) find that node.
 //! [`graph_exec_memset_set_params`](Sim::graph_exec_memset_set_params) is
 //! `cudaGraphExecMemsetNodeSetParams` (same cost; zero-byte still illegal).
@@ -11722,6 +11725,79 @@ mod tests {
         }
         sim.begin_capture(d, s).unwrap();
         match sim.graph_memcpy_set_params_2d(g, 0, &op) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_memcpy_set_params_3d_requires_is_3d() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_3d(d, 256, 4, 4).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        let op = MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: a,
+            bytes: 256,
+            height: 4,
+            src_pitch: 256,
+            dst_pitch: pitch,
+            depth: 4,
+            src_height: 4,
+            dst_height: 4,
+            ..MemcpyOp::default()
+        };
+        sim.graph_add_memcpy_3d(g, op.clone()).unwrap();
+        let patched = MemcpyOp {
+            depth: 2,
+            ..op.clone()
+        };
+        sim.graph_memcpy_set_params_3d(g, 0, &patched).unwrap();
+        assert_eq!(sim.graph_memcpy_get_params(g, 0).unwrap().depth, 2);
+        match sim.graph_memcpy_set_params_3d(
+            g,
+            0,
+            &MemcpyOp {
+                depth: 1,
+                ..op.clone()
+            },
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy3d depth"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_memcpy_set_params_3d(
+            g,
+            0,
+            &MemcpyOp {
+                depth: 0,
+                src_height: 0,
+                dst_height: 0,
+                ..op.clone()
+            },
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy3d depth"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.graph_exec_memcpy_set_params_3d(exec, 0, &op).unwrap();
+        assert_eq!(sim.graph_exec_memcpy_get_params(exec, 0).unwrap().depth, 4);
+        match sim.graph_exec_memcpy_set_params_3d(
+            exec,
+            0,
+            &MemcpyOp {
+                depth: 1,
+                ..op.clone()
+            },
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy3d depth"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_memcpy_set_params_3d(g, 0, &op) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }

@@ -3489,7 +3489,8 @@ impl Sim {
     /// Capture cannot include it. Host-sync 1 ns. [`Self::graph_memcpy_set_params_1d`]
     /// is `cudaGraphMemcpyNodeSetParams1D` (packed 1D, including converting a
     /// 2D/3D node). [`Self::graph_memcpy_set_params_2d`] requires
-    /// [`MemcpyOp::is_2d`].
+    /// [`MemcpyOp::is_2d`]. [`Self::graph_memcpy_set_params_3d`] requires
+    /// [`MemcpyOp::is_3d`].
     pub fn graph_memcpy_set_params(
         &mut self,
         graph: GraphId,
@@ -3559,6 +3560,23 @@ impl Sim {
         if !op.is_2d() {
             return Err(SimError::Invalid {
                 why: "memcpy2d height",
+            });
+        }
+        self.graph_memcpy_set_params(graph, node, op)
+    }
+
+    /// `cudaGraphMemcpyNodeSetParams` whose [`MemcpyOp`] is [`MemcpyOp::is_3d`]
+    /// (`depth > 1`). Other extents Invalid `"memcpy3d depth"`. Typed
+    /// [`Self::graph_memcpy_set_params`] stays.
+    pub fn graph_memcpy_set_params_3d(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: &MemcpyOp,
+    ) -> Result<(), SimError> {
+        if !op.is_3d() {
+            return Err(SimError::Invalid {
+                why: "memcpy3d depth",
             });
         }
         self.graph_memcpy_set_params(graph, node, op)
@@ -4006,7 +4024,8 @@ impl Sim {
     /// mem alloc/free nodes are legal (unlike [`Self::update_graph`]).
     /// [`Self::graph_exec_memcpy_set_params_1d`] is
     /// `cudaGraphExecMemcpyNodeSetParams1D`. [`Self::graph_exec_memcpy_set_params_2d`]
-    /// requires [`MemcpyOp::is_2d`].
+    /// requires [`MemcpyOp::is_2d`]. [`Self::graph_exec_memcpy_set_params_3d`]
+    /// requires [`MemcpyOp::is_3d`].
     pub fn graph_exec_memcpy_set_params(
         &mut self,
         exec: GraphId,
@@ -4076,6 +4095,23 @@ impl Sim {
         if !op.is_2d() {
             return Err(SimError::Invalid {
                 why: "memcpy2d height",
+            });
+        }
+        self.graph_exec_memcpy_set_params(exec, node, op)
+    }
+
+    /// `cudaGraphExecMemcpyNodeSetParams` whose [`MemcpyOp`] is [`MemcpyOp::is_3d`]
+    /// (`depth > 1`). Other extents Invalid `"memcpy3d depth"`. Typed
+    /// [`Self::graph_exec_memcpy_set_params`] stays.
+    pub fn graph_exec_memcpy_set_params_3d(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: &MemcpyOp,
+    ) -> Result<(), SimError> {
+        if !op.is_3d() {
+            return Err(SimError::Invalid {
+                why: "memcpy3d depth",
             });
         }
         self.graph_exec_memcpy_set_params(exec, node, op)
