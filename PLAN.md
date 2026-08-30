@@ -3387,7 +3387,21 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no `$/M
     tokens`.
 
-326. [ ] Next numbered PLAN item after 325 is the next `gpu-sim` / Engine /
+326. [x] `cudaLaunchAttributeLaunchCompletionEvent` replica overlap:
+    [`GpuStoreCfg::launch_completion`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::launch_completion`](expertvm/src/sim_replay.rs) attach
+    [`kernel_with`](gpu-sim/src/sim.rs) /
+    [`graph_kernel_node_set_launch_completion`](gpu-sim/src/sim.rs) on
+    grouped expert GEMMs so other streams may `wait_event` at kernel
+    *start*. Store [`pin_hot`](expertvm/src/gpu_store.rs) replica D2D on
+    `n_gpus >= 2` waits that event on the copy stream instead of draining
+    the GEMM, so leftover compute overlaps the replica. Illegal with
+    `--device-launch`. `--launch-completion` on `expertvm sim` /
+    `schedule` / `store` and `gguf_gemv engine --expert-sim`. Decode
+    identity stays no launch-completion event. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+327. [ ] Next numbered PLAN item after 326 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

@@ -13305,6 +13305,7 @@ impl Sim {
         let prev_ps = self.enqueue_portable_shared;
         let prev_nv = self.enqueue_nvlink_util_centric;
         let prev_pri = self.enqueue_priority;
+        let prev_lce = self.enqueue_launch_completion;
         self.enqueue_pdl = attrs.pdl;
         self.enqueue_access_policy = attrs.access_policy;
         self.enqueue_mem_sync_domain = attrs.mem_sync_domain;
@@ -13320,6 +13321,7 @@ impl Sim {
         self.enqueue_portable_shared = attrs.portable_shared;
         self.enqueue_nvlink_util_centric = attrs.nvlink_util_centric;
         self.enqueue_priority = attrs.priority;
+        self.enqueue_launch_completion = attrs.launch_completion;
         let out = self.submit_kernel(device, kind, reads, writes, stream, attrs.cooperative);
         self.enqueue_pdl = prev_pdl;
         self.enqueue_access_policy = prev_win;
@@ -13336,6 +13338,7 @@ impl Sim {
         self.enqueue_portable_shared = prev_ps;
         self.enqueue_nvlink_util_centric = prev_nv;
         self.enqueue_priority = prev_pri;
+        self.enqueue_launch_completion = prev_lce;
         out
     }
 

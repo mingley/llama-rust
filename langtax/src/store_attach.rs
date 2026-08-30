@@ -117,6 +117,8 @@ pub(crate) struct GpuCli {
     pub kernel_priority: Option<i32>,
     /// `cudaGraphInstantiateFlagDeviceLaunch` (`GpuStoreCfg::device_launch`).
     pub device_launch: bool,
+    /// `cudaLaunchAttributeLaunchCompletionEvent` (`GpuStoreCfg::launch_completion`).
+    pub launch_completion: bool,
     /// Hopper NVLS replica fanout (`GpuStoreCfg::multicast`). Implies vmm.
     pub multicast: bool,
     /// Hyper-Q occupancy (`GpuStoreCfg::compute_slots`). `0` keeps the profile.
@@ -176,6 +178,7 @@ impl GpuCli {
             "--nvlink-util" => &mut self.nvlink_util,
             "--device-updatable" => &mut self.device_updatable,
             "--device-launch" => &mut self.device_launch,
+            "--launch-completion" => &mut self.launch_completion,
             "--multicast" => &mut self.multicast,
             _ => return Ok(false),
         };
@@ -388,6 +391,7 @@ impl GpuCli {
             (self.device_updatable, "--device-updatable"),
             (self.kernel_priority.is_some(), "--kernel-priority"),
             (self.device_launch, "--device-launch"),
+            (self.launch_completion, "--launch-completion"),
             (self.decode_sm_set, "--decode-sms"),
         ]
         .into_iter()
@@ -671,6 +675,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         device_updatable: gpu.device_updatable,
         kernel_priority: gpu.kernel_priority,
         device_launch: gpu.device_launch,
+        launch_completion: gpu.launch_completion,
         multicast: gpu.multicast,
         compute_slots: gpu.compute_slots,
         decode_sm_permille: gpu.decode_sm_permille,

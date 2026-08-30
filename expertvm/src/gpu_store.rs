@@ -9,7 +9,7 @@ use crate::planner::{
     Prefetch, DECODE_ACTIVATION_BYTES,
 };
 use crate::sim_replay::{
-    add_leaf_gemm, allow_non_portable_cluster_if, allow_optin_shared_if,
+    add_leaf_gemm, alloc_launch_completion, allow_non_portable_cluster_if, allow_optin_shared_if,
     apply_exec_mem_sync_domain, apply_stream_mem_sync_domain, apply_stream_sync_policy,
     bind_shareable_mempools, check_cluster_preferred, check_device_graph_flags, instantiate_exec,
     kernel_leaf, replay_exec, replay_streams, retarget_parked_kernel, stream_of,
@@ -18,7 +18,8 @@ use crate::sim_replay::{
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
     AllocId, DeviceId, EventId, GraphId, GraphMemAttr, HardwareProfile, KernelBuf, KernelKind,
-    MemAdvise, MemHandleId, MemcpyAttributes, MemcpyOp, Place, PoolId, Score, Sim, StreamId,
+    LaunchCompletionEvent, MemAdvise, MemHandleId, MemcpyAttributes, MemcpyOp, Place, PoolId,
+    Score, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -284,6 +285,13 @@ pub struct GpuStoreCfg {
     /// [`Self::graph_update`] / [`Self::graph_mem`] / [`Self::graph_auto_free`]
     /// (mem nodes and ExecUpdate). Decode identity stays host launch.
     pub device_launch: bool,
+    /// `cudaLaunchAttributeLaunchCompletionEvent` on grouped expert GEMMs.
+    ///
+    /// Other streams may `wait_event` when the kernel *starts*. [`Self::pin_hot`]
+    /// replica D2D on `n_gpus >= 2` waits that event on the copy stream instead
+    /// of draining the GEMM, so leftover compute overlaps the replica copy.
+    /// Illegal with [`Self::device_launch`]. Decode identity stays no event.
+    pub launch_completion: bool,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// [`Self::pin_hot`] and walker `--place replicas` map dest VMM physicals
@@ -417,6 +425,11 @@ pub struct SimulatedGpuStore {
     kv: Option<KvGpu>,
     /// Imported sibling of GPU0's shareable device mempool.
     share_import: Option<PoolId>,
+    /// [`GpuStoreCfg::launch_completion`]: event recorded at GEMM kernel start
+    /// so replica D2D can wait start instead of completion.
+    launch_completion_event: Option<EventId>,
+    /// A grouped GEMM with [`Self::launch_completion_event`] has been submitted.
+    launch_completion_armed: bool,
 }
 
 struct KvGpu {
@@ -544,6 +557,9 @@ impl SimulatedGpuStore {
     /// `cudaLaunchAttributeDeviceUpdatableKernelNode`.
     /// [`GpuStoreCfg::kernel_priority`] is `cudaLaunchAttributePriority`.
     /// [`GpuStoreCfg::device_launch`] is `cudaGraphInstantiateFlagDeviceLaunch`.
+    /// [`GpuStoreCfg::launch_completion`] is
+    /// `cudaLaunchAttributeLaunchCompletionEvent` on grouped GEMMs (replica
+    /// D2D waits kernel start; illegal with device-launch).
     /// [`GpuStoreCfg::multicast`] is Hopper NVLS replica fanout (requires
     /// [`GpuFill::Vmm`] and NVLink).
     /// [`GpuStoreCfg::memcpy_batch`] fills a multi-expert pinned/VMM prefetch
@@ -577,6 +593,9 @@ impl SimulatedGpuStore {
         }
         if cfg.graph_enable && cfg.device_launch {
             return Err(Error::Store("graph-enable cannot device-launch"));
+        }
+        if cfg.launch_completion && cfg.device_launch {
+            return Err(Error::Store("launch-completion cannot device-launch"));
         }
         if cfg.pdl && cfg.cooperative {
             return Err(Error::Store("choose one of pdl, cooperative"));
@@ -667,6 +686,8 @@ impl SimulatedGpuStore {
         } else {
             sim.alloc_host_pinned(bytes)?
         };
+        let mut next_event = 1u32;
+        let launch_ev = alloc_launch_completion(&mut sim, cfg.launch_completion, &mut next_event)?;
         Ok(Self {
             cache: CachedStore::new(inner, cache_slots)?,
             sim,
@@ -692,7 +713,7 @@ impl SimulatedGpuStore {
             kernel_priority: cfg.kernel_priority,
             device_launch: cfg.device_launch,
             multicast: cfg.multicast,
-            next_event: 1,
+            next_event,
             pages: BTreeMap::new(),
             replicas: BTreeMap::new(),
             evicting: BTreeMap::new(),
@@ -727,6 +748,8 @@ impl SimulatedGpuStore {
             kv_sim: cfg.kv_sim,
             kv: None,
             share_import,
+            launch_completion_event: launch_ev.map(|e| e.event),
+            launch_completion_armed: false,
         })
     }
 
@@ -829,6 +852,12 @@ impl SimulatedGpuStore {
             nvlink_util_centric: self.nvlink_util_centric,
             device_updatable: self.device_updatable,
             priority: self.kernel_priority,
+            launch_completion: self
+                .launch_completion_event
+                .map(|event| LaunchCompletionEvent {
+                    event,
+                    external: false,
+                }),
         }
     }
 
@@ -951,7 +980,9 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::multicast`] maps dest VMM physicals then one NVLS kernel
     /// (`cuMulticastCreate`) instead of copy-engine D2D.
     /// 1-GPU profiles skip that wait so leftover prefill GEMMs can overlap
-    /// decode-priority ITL samples.
+    /// decode-priority ITL samples. [`GpuStoreCfg::launch_completion`] waits
+    /// kernel start on the copy stream instead of draining the GEMM, so a
+    /// pinned replica D2D can overlap leftover compute.
     pub fn pin_hot(&mut self, keys: &[ExpertKey]) -> Result<(), Error> {
         for key in keys {
             if !self.cache.contains_catalog(*key) {
@@ -966,9 +997,24 @@ impl SimulatedGpuStore {
             self.wait_copy(*key)?;
             // Replica prefetch / D2D cannot start while a GEMM still leases the
             // page. 1-GPU sticky pin does not copy, so leftover prefill GEMMs
-            // stay in flight for decode-priority ITL.
+            // stay in flight for decode-priority ITL. Launch-completion waits
+            // kernel start on the copy stream so pinned replica D2D overlaps
+            // leftover GEMM (managed prefetch still needs a full lease drain).
             if self.sim.profile().n_gpus() >= 2 {
-                self.wait_page_idle(*key)?;
+                if self.mode == GpuFill::Pinned && self.launch_completion_armed {
+                    if let Some(ev) = self.launch_completion_event {
+                        let device = self
+                            .pages
+                            .get(key)
+                            .ok_or(Error::Store("missing handle"))?
+                            .device;
+                        let _w = self.sim.wait_event(device, ev, self.copy)?;
+                    } else {
+                        self.wait_page_idle(*key)?;
+                    }
+                } else {
+                    self.wait_page_idle(*key)?;
+                }
             }
             self.cache.pin_hot(&[*key])?;
             self.replicate(*key)?;
@@ -1256,6 +1302,18 @@ impl SimulatedGpuStore {
         stream: StreamId,
     ) -> gpu_sim::MemSyncDomain {
         self.sim.stream_mem_sync_domain(device, stream)
+    }
+
+    /// Event recorded at grouped-GEMM kernel start when [`GpuStoreCfg::launch_completion`].
+    #[must_use]
+    pub fn launch_completion_event(&self) -> Option<EventId> {
+        self.launch_completion_event
+    }
+
+    /// Submitted simulator ops (GEMM vs replica overlap).
+    #[cfg(test)]
+    pub(crate) fn operations(&self) -> impl Iterator<Item = gpu_sim::Operation> + '_ {
+        self.sim.operations()
     }
 
     /// How many times a captured GEMM graph was launched.
@@ -1659,6 +1717,9 @@ impl SimulatedGpuStore {
     }
 
     fn launch_or_gemm(&mut self, device: DeviceId, id: AllocId) -> Result<(), Error> {
+        if self.launch_completion_event.is_some() {
+            self.launch_completion_armed = true;
+        }
         let flags = self.gemm_flags();
         if let Some(g) = self.graphs.get(&id).copied() {
             return self.launch_graph_exec(g, device);

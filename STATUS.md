@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaLaunchAttributeLaunchCompletionEvent` replica overlap
+
+`GpuStoreCfg::launch_completion` / `SimCfg::launch_completion` record
+`cudaLaunchAttributeLaunchCompletionEvent` on grouped expert GEMMs so
+other streams may `wait_event` at kernel start. Store `pin_hot` replica
+D2D on `n_gpus >= 2` waits that event on the copy stream instead of
+draining the GEMM, so leftover compute overlaps the replica. Illegal with
+`--device-launch`. `--launch-completion` is off by default (decode
+identity). `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaLaunchAttributeMemSyncDomain` decode isolation
 
 `GpuStoreCfg::mem_sync_domain` / `SimCfg::mem_sync_domain` set

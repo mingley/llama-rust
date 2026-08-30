@@ -6,12 +6,13 @@ use crate::place::PlaceMap;
 use crate::planner::{plan_keys, predicted_keys, ChainState, Markov, Plan};
 use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
-    advise_pool_access_if_pinned, allow_non_portable_cluster_if, allow_optin_shared_if,
-    apply_misses, apply_stream_mem_sync_domain, apply_stream_sms, apply_stream_sync_policy,
-    apply_touch, bind_shareable_mempools, drop_remote, fetch_remote, fill_remote, gemm_keys,
-    host_callbacks, note_touch, occupancy_slots, reclaim_victim, remote_hit, replay_from_sim,
-    sim_profile, sync_work, trim_graph_pools, validate_sim_cfg, GraphBank, LeafMem, PageHandle,
-    RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, StreamPlan, TouchArgs,
+    advise_pool_access_if_pinned, alloc_launch_completion, allow_non_portable_cluster_if,
+    allow_optin_shared_if, apply_misses, apply_stream_mem_sync_domain, apply_stream_sms,
+    apply_stream_sync_policy, apply_touch, bind_shareable_mempools, drop_remote, fetch_remote,
+    fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots, reclaim_victim,
+    remote_hit, replay_from_sim, sim_profile, sync_work, trim_graph_pools, validate_sim_cfg,
+    GraphBank, LeafMem, PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay,
+    StreamPlan, TouchArgs,
 };
 use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -313,6 +314,9 @@ impl SchedRt {
         let bytes = cfg.bytes_per_expert.max(1);
         let mut cfg = cfg;
         cfg.slots = occupancy_slots(&cfg, sim.pin_budget());
+        let mut next_event = 1u32;
+        let launch_completion =
+            alloc_launch_completion(&mut sim, cfg.launch_completion, &mut next_event)?;
         Ok(Self {
             walkers: BTreeMap::new(),
             args: TouchArgs {
@@ -352,6 +356,7 @@ impl SchedRt {
             .with_device_updatable(cfg.device_updatable)
             .with_kernel_priority(cfg.kernel_priority)
             .with_device_launch(cfg.device_launch)
+            .with_launch_completion(launch_completion)
             .with_set_params(cfg.graph_set_params)
             .with_piecewise(cfg.graph_piecewise)
             .with_enable(cfg.graph_enable),
@@ -367,7 +372,7 @@ impl SchedRt {
             remote_act,
             remotes: BTreeMap::new(),
             seen: BTreeMap::new(),
-            next_event: 1,
+            next_event,
             prefixes: BTreeSet::new(),
             prefix_hits: 0,
         })

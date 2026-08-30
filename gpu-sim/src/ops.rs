@@ -1753,6 +1753,11 @@ pub struct KernelAttrs {
     /// (`cudaKernelNodeAttributePriority`). Default graph replay still uses the
     /// launch stream unless `cudaGraphInstantiateFlagUseNodePriority`.
     pub priority: Option<i32>,
+    /// `cudaLaunchAttributeLaunchCompletionEvent`. [`None`] records nothing.
+    ///
+    /// Other streams may [`crate::Sim::wait_event`] when this kernel *starts*.
+    /// Decode identity stays [`None`]. Capture records the attribute.
+    pub launch_completion: Option<LaunchCompletionEvent>,
 }
 
 /// `cudaSharedmemCarveout` preference

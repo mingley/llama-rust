@@ -60,6 +60,9 @@ pub(crate) struct GemmFlags {
     /// `cudaLaunchAttributePriority`. [`None`] inherits the stream.
     /// Decode identity stays inherit-stream.
     pub priority: Option<i32>,
+    /// `cudaLaunchAttributeLaunchCompletionEvent`. [`None`] records nothing.
+    /// Decode identity stays no launch-completion event.
+    pub launch_completion: Option<LaunchCompletionEvent>,
 }
 
 impl GemmFlags {
@@ -116,6 +119,7 @@ impl GemmFlags {
             nvlink_util_centric: self.nvlink_util_centric,
             device_updatable: self.device_updatable,
             priority: self.priority,
+            launch_completion: self.launch_completion,
             ..KernelAttrs::default()
         }
     }
@@ -166,6 +170,24 @@ pub(crate) fn check_device_graph_flags(
     Ok(())
 }
 
+/// One `cudaEventCreate` for [`SimCfg::launch_completion`] / store GEMMs.
+pub(crate) fn alloc_launch_completion(
+    sim: &mut Sim,
+    on: bool,
+    next_event: &mut u32,
+) -> Result<Option<LaunchCompletionEvent>, Error> {
+    if !on {
+        return Ok(None);
+    }
+    let ev = EventId(*next_event);
+    *next_event = next_event.saturating_add(1);
+    sim.create_event_disable_timing(ev)?;
+    Ok(Some(LaunchCompletionEvent {
+        event: ev,
+        external: false,
+    }))
+}
+
 use crate::access::{ExpertAccess, ExpertKey, Trace};
 use crate::error::Error;
 use crate::place::PlaceMap;
@@ -177,9 +199,10 @@ use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
 use gpu_sim::{
     AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceId, EventId, GraphId,
-    GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf, KernelKind, MemcpyAttributes,
-    MemcpyOp, Place, PoolId, PortableClusterMode, PortableSharedMode, ProgrammaticLaunch, Score,
-    SharedMemCarveout, SharedMemoryMode, Sim, StreamId, SynchronizationPolicy,
+    GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf, KernelKind,
+    LaunchCompletionEvent, MemcpyAttributes, MemcpyOp, Place, PoolId, PortableClusterMode,
+    PortableSharedMode, ProgrammaticLaunch, Score, SharedMemCarveout, SharedMemoryMode, Sim,
+    StreamId, SynchronizationPolicy,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -615,6 +638,14 @@ pub struct SimCfg {
     /// [`Self::graph_auto_free`]. Decode identity stays host `launch_graph`.
     /// [`crate::GpuStoreCfg::device_launch`] is the store path.
     pub device_launch: bool,
+    /// `cudaLaunchAttributeLaunchCompletionEvent` on grouped expert GEMMs.
+    ///
+    /// Other streams may `wait_event` at kernel *start* instead of completion.
+    /// Store [`crate::SimulatedGpuStore::pin_hot`] replica D2D on `n_gpus >= 2`
+    /// waits that event on the copy stream so leftover GEMM overlaps the copy.
+    /// Illegal with [`Self::device_launch`]. Decode identity stays no event.
+    /// [`crate::GpuStoreCfg::launch_completion`] is the store path.
+    pub launch_completion: bool,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// `--place replicas` maps dest VMM physicals then one NVLS kernel instead
@@ -701,6 +732,7 @@ impl SimCfg {
             device_updatable: false,
             kernel_priority: None,
             device_launch: false,
+            launch_completion: false,
             multicast: false,
             compute_slots: 0,
             decode_sm_permille: 0,
@@ -727,6 +759,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     }
     if cfg.graph_enable && cfg.device_launch {
         return Err(Error::Store("graph-enable cannot device-launch"));
+    }
+    if cfg.launch_completion && cfg.device_launch {
+        return Err(Error::Store("launch-completion cannot device-launch"));
     }
     if cfg.pdl && cfg.cooperative {
         return Err(Error::Store("choose one of pdl, cooperative"));
@@ -838,6 +873,9 @@ pub fn sim_replay_cfg(
     let mut chain = ChainState::new();
     let mut prefetched: BTreeSet<ExpertKey> = BTreeSet::new();
     let leaf = LeafMem::from_flags(cfg.graph_mem, cfg.graph_auto_free)?;
+    let mut next_event = 1u32;
+    let launch_completion =
+        alloc_launch_completion(&mut sim, cfg.launch_completion, &mut next_event)?;
     let mut graphs = GraphBank::new(cfg.graph_update, cfg.graph_clone, cfg.graph_build, leaf)
         .with_cooperative(cfg.cooperative)
         .with_pdl(cfg.pdl)
@@ -854,11 +892,11 @@ pub fn sim_replay_cfg(
         .with_device_updatable(cfg.device_updatable)
         .with_kernel_priority(cfg.kernel_priority)
         .with_device_launch(cfg.device_launch)
+        .with_launch_completion(launch_completion)
         .with_set_params(cfg.graph_set_params)
         .with_piecewise(cfg.graph_piecewise)
         .with_enable(cfg.graph_enable);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
-    let mut next_event = 1u32;
     for (i, event) in trace.events.iter().enumerate() {
         args.s = plan.work(event.sequence, event.token);
         let ek = event.keys();
@@ -1169,6 +1207,7 @@ pub(crate) struct GraphBank {
     device_updatable: bool,
     kernel_priority: Option<i32>,
     device_launch: bool,
+    launch_completion: Option<LaunchCompletionEvent>,
     set_params: bool,
     enable: bool,
     pub updates: u64,
@@ -1201,6 +1240,7 @@ impl GraphBank {
             device_updatable: false,
             kernel_priority: None,
             device_launch: false,
+            launch_completion: None,
             set_params: false,
             enable: false,
             updates: 0,
@@ -1279,6 +1319,11 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_launch_completion(mut self, ev: Option<LaunchCompletionEvent>) -> Self {
+        self.launch_completion = ev;
+        self
+    }
+
     fn gemm_flags(&self) -> GemmFlags {
         GemmFlags {
             cooperative: self.cooperative,
@@ -1295,6 +1340,7 @@ impl GraphBank {
             nvlink_util_centric: self.nvlink_util_centric,
             device_updatable: self.device_updatable,
             priority: self.kernel_priority,
+            launch_completion: self.launch_completion,
         }
     }
 
@@ -2557,6 +2603,10 @@ fn add_gemm_kernel(
     if flags.dynamic_shared > 0 {
         let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_dynamic_shared(graph, node, flags.dynamic_shared)?;
+    }
+    if let Some(ev) = flags.launch_completion {
+        let node = usize::from(!writes.is_empty());
+        sim.graph_kernel_node_set_launch_completion(graph, node, Some(ev))?;
     }
     Ok(())
 }

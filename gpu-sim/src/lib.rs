@@ -546,7 +546,9 @@
 //! `cudaLaunchAttributeProgrammaticEvent`: other streams may wait that event
 //! at the trigger instead of kernel completion. [`kernel_launch_completion`](Sim::kernel_launch_completion)
 //! is `cudaLaunchAttributeLaunchCompletionEvent`: the event records when the
-//! kernel *starts*. [`kernel_access_policy`](Sim::kernel_access_policy) is
+//! kernel *starts*. `expertvm sim --launch-completion` / Engine
+//! `--expert-sim --launch-completion` attach it to grouped expert GEMMs.
+//! [`kernel_access_policy`](Sim::kernel_access_policy) is
 //! `cudaLaunchAttributeAccessPolicyWindow`: persisting hits reduce billed HBM
 //! after [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size)
 //! (CUDA default size is 0). [`set_stream_access_policy`](Sim::set_stream_access_policy)
@@ -5056,6 +5058,56 @@ mod tests {
         assert!(
             start_c < done_k,
             "copy must overlap leftover kernel; copy={start_c} kdone={done_k}"
+        );
+    }
+
+    #[test]
+    fn kernel_with_launch_completion_unblocks_copy_at_kernel_start() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s0 = StreamId(0);
+        let s1 = StreamId(1);
+        let a = sim.alloc(d, 4096, s0).unwrap();
+        let b = sim.alloc(d, 64 << 20, s1).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s0));
+        sim.synchronize().unwrap();
+        let ev = EventId(9);
+        enq(sim.kernel_with(
+            d,
+            KernelKind::other(1 << 30, 4096),
+            &[a],
+            &[a],
+            s0,
+            KernelAttrs {
+                launch_completion: Some(LaunchCompletionEvent {
+                    event: ev,
+                    external: false,
+                }),
+                ..KernelAttrs::default()
+            },
+        ));
+        enq(sim.wait_event(d, ev, s1));
+        enq(sim.memcpy_pinned_to_device(d, b, 64 << 20, s1));
+        sim.synchronize().unwrap();
+        let k0 = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .expect("kernel");
+        let copy = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Memcpy(_)))
+            .last()
+            .expect("copy");
+        let start_k = k0.start_ns.expect("k start");
+        let done_k = k0.done_ns.expect("k done");
+        let start_c = copy.start_ns.expect("copy start");
+        assert!(
+            start_c >= start_k,
+            "kernel_with copy must wait for launch completion; copy={start_c} kstart={start_k}"
+        );
+        assert!(
+            start_c < done_k,
+            "kernel_with copy must overlap leftover kernel; copy={start_c} kdone={done_k}"
         );
     }
 

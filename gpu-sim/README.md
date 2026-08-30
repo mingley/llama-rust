@@ -854,7 +854,11 @@ for the overlapped primary (all preceding work). `kernel_pdl_event` is
 at the trigger instead of kernel completion. `kernel_launch_completion` is
 `cudaLaunchAttributeLaunchCompletionEvent`: the event records when the
 kernel starts. `expertvm sim --pdl` / `gguf_gemv engine --expert-sim --pdl`
-launch grouped expert GEMMs that way. `kernel_access_policy` is
+launch grouped expert GEMMs that way. `kernel_with` also accepts
+`KernelAttrs::launch_completion` so captured expert GEMMs carry the
+attribute. `expertvm sim --launch-completion` /
+`gguf_gemv engine --expert-sim --launch-completion` attach it to grouped
+GEMMs; store `pin_hot` replica D2D waits kernel start. `kernel_access_policy` is
 `cudaLaunchAttributeAccessPolicyWindow`: persisting hits reduce billed HBM
 after `set_persisting_l2_cache_size` (CUDA default is 0).
 `set_stream_access_policy` is `cudaStreamAttributeAccessPolicyWindow`;

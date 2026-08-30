@@ -1,7 +1,7 @@
 //! Library tests: JSONL, Zipf-ish traces, policy order, leases, gpu-sim.
 
 use super::*;
-use gpu_sim::{AllocId, DeviceId, HardwareProfile};
+use gpu_sim::{AllocId, DeviceId, EventId, HardwareProfile, Place};
 use std::collections::BTreeSet;
 
 fn ev(token: u32, layer: u32, experts: &[u32]) -> ExpertAccess {
@@ -6196,6 +6196,25 @@ fn gemm_flags_priority_is_launch_attr() {
 }
 
 #[test]
+fn gemm_flags_launch_completion_is_launch_attr() {
+    use crate::sim_replay::GemmFlags;
+    use gpu_sim::LaunchCompletionEvent;
+    let id = AllocId(1);
+    let none = GemmFlags::default().kernel_attrs(id);
+    assert_eq!(none.launch_completion, None);
+    let ev = LaunchCompletionEvent {
+        event: EventId(7),
+        external: false,
+    };
+    let some = GemmFlags {
+        launch_completion: Some(ev),
+        ..GemmFlags::default()
+    }
+    .kernel_attrs(id);
+    assert_eq!(some.launch_completion, Some(ev));
+}
+
+#[test]
 fn simulated_gpu_store_device_updatable_skips_reupload() {
     let t = Trace {
         events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
@@ -7416,5 +7435,171 @@ fn simulated_gpu_store_mem_sync_domain_marks_decode_stream() {
     assert_eq!(
         gpu.stream_mem_sync_domain(d, gpu.prefill_stream()),
         MemSyncDomain::Default
+    );
+}
+
+#[test]
+fn sim_cfg_launch_completion_refuses_device_launch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = match sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            launch_completion: true,
+            device_launch: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("launch-completion + device-launch must fail"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string()
+            .contains("launch-completion cannot device-launch"),
+        "{err}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_launch_completion_refuses_device_launch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            launch_completion: true,
+            device_launch: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("launch-completion + device-launch must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("launch-completion cannot device-launch"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn sim_replay_launch_completion_keeps_hits() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg::lru(1, 4096, 0);
+    let on = SimCfg {
+        launch_completion: true,
+        ..off
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("off");
+    let b = sim_replay_cfg(&t, profile, on).expect("on");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+}
+
+#[test]
+fn simulated_gpu_store_launch_completion_pin_before_acquire_still_replicates() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        2,
+        HardwareProfile::example_8xh100_nvlink(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            launch_completion: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    gpu.pin_hot(&[k0]).expect("pin");
+    assert_eq!(gpu.replica_of(k0), Some(DeviceId(1)));
+    assert_eq!(gpu.metrics().replicates, 1);
+    let _s = gpu.score().expect("score");
+}
+
+#[test]
+fn simulated_gpu_store_launch_completion_overlaps_replica() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse("gpus=2\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("nvlink slow gemm");
+    assert!(profile.has_nvlink());
+    let run = |launch_completion: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = match SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            profile.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                launch_completion,
+                ..GpuStoreCfg::default()
+            },
+        ) {
+            Ok(gpu) => gpu,
+            Err(err) => panic!("gpu: {err}"),
+        };
+        let k0 = ExpertKey::new(0, 0);
+        let _p = match gpu.acquire(k0) {
+            Ok(v) => v,
+            Err(err) => panic!("acquire: {err}"),
+        };
+        gpu.pin_hot(&[k0]).expect("pin");
+        let score = gpu.score().expect("score");
+        let gemm = gpu
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .expect("kernel");
+        let copy = gpu
+            .operations()
+            .filter(|o| match &o.kind {
+                GpuOp::Memcpy(m) => {
+                    matches!((m.src, m.dst), (Place::Device(_), Place::Device(_)))
+                }
+                _ => false,
+            })
+            .last()
+            .expect("d2d");
+        (
+            score.wall_ns,
+            gpu.metrics().replicates,
+            gemm.start_ns.expect("k start"),
+            gemm.done_ns.expect("k done"),
+            copy.start_ns.expect("copy start"),
+        )
+    };
+    let (off_wall, off_rep, _, off_done, off_copy) = run(false);
+    let (on_wall, on_rep, on_start, on_done, on_copy) = run(true);
+    assert_eq!(off_rep, 1);
+    assert_eq!(on_rep, 1);
+    assert!(
+        off_copy >= off_done,
+        "identity pin_hot must wait GEMM done; copy={off_copy} kdone={off_done}"
+    );
+    assert!(
+        on_copy >= on_start,
+        "launch-completion copy must wait kernel start; copy={on_copy} kstart={on_start}"
+    );
+    assert!(
+        on_copy < on_done,
+        "launch-completion replica must overlap leftover GEMM; copy={on_copy} kdone={on_done}"
+    );
+    assert!(
+        on_wall < off_wall,
+        "launch-completion replica overlap must shorten wall; on={on_wall} off={off_wall}"
     );
 }
