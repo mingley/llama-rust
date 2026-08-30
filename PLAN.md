@@ -2974,7 +2974,19 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-286. [ ] Next numbered PLAN item after 285 is the next `gpu-sim` / Engine /
+286. [x] `cuMemSetAccess` descriptor array:
+    [`va_set_access_n`](Sim::va_set_access_n) takes [`MemAccessDesc`]
+    (`desc`, `count`). `size` must equal the reserved bytes. Host location
+    Invalid `"access location"`. Flags stay [`MemAccessFlags`]. All-or-nothing.
+    Empty `descs` is a no-op after the size check. Typed
+    [`va_set_access`](Sim::va_set_access) /
+    [`va_set_access_with_flags`](Sim::va_set_access_with_flags) /
+    [`va_set_access_with_size`](Sim::va_set_access_with_size) stay.
+    Host-synchronous; capture refused. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+287. [ ] Next numbered PLAN item after 286 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

@@ -182,7 +182,9 @@
 //! PROT_READWRITE (peer writes, no dest HBM). [`Sim::va_unset_access`] drops it.
 //! [`va_set_access_with_flags`](Sim::va_set_access_with_flags) is the flags
 //! word ([`MemAccessFlags`]). [`va_set_access_with_size`](Sim::va_set_access_with_size)
-//! is the CUDA size argument (must match the reserved VA). Typed helpers stay.
+//! is the CUDA size argument (must match the reserved VA). [`va_set_access_n`](Sim::va_set_access_n)
+//! is the CUDA descriptor array (all-or-nothing; empty is a no-op after the
+//! size check). Typed helpers stay.
 //! [`va_get_access`](Sim::va_get_access) is `cuMemGetAccess` (local map
 //! ReadWrite; peer Read / ReadWrite / None). Query; legal during capture.
 //! [`Sim::va_acquire`] remaps an idle VA of the same size (or reserves);
@@ -732,15 +734,15 @@ pub use ops::{
     GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
     HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf,
     KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
-    MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType,
-    MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType, MemMapFlags,
-    MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags, MemSyncDomain,
-    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, MulticastBindFlags, MulticastCreateFlags,
-    MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch, PeerAccessFlags, Place,
-    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
-    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp,
+    MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType,
+    MemMapFlags, MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags,
+    MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, MulticastBindFlags,
+    MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch,
+    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
+    SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
+    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -13068,6 +13070,83 @@ mod tests {
         assert!(sim.is_accessed_by(va, d1).unwrap());
         sim.begin_capture(d0, StreamId(0)).unwrap();
         match sim.va_set_access_with_size(va, d1, 4096, MemAccessFlags::PROT_NONE) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn va_set_access_n_is_cu_mem_set_access_descs() {
+        let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let d2 = DeviceId(2);
+        let va = sim.va_reserve(4096).unwrap();
+        sim.va_map(va, d0).unwrap();
+        sim.va_set_access_n(va, 4096, &[]).unwrap();
+        assert!(!sim.is_accessed_by(va, d1).unwrap());
+        match sim.va_set_access_n(
+            va,
+            2048,
+            &[MemAccessDesc {
+                location: Place::Device(d1),
+                flags: MemAccessFlags::PROT_READ,
+            }],
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("access size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(!sim.is_accessed_by(va, d1).unwrap());
+        match sim.va_set_access_n(
+            va,
+            4096,
+            &[
+                MemAccessDesc {
+                    location: Place::Device(d1),
+                    flags: MemAccessFlags::PROT_READ,
+                },
+                MemAccessDesc {
+                    location: Place::Device(d1),
+                    flags: 2,
+                },
+            ],
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("va access flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(!sim.is_accessed_by(va, d1).unwrap());
+        match sim.va_set_access_n(
+            va,
+            4096,
+            &[MemAccessDesc {
+                location: Place::Host,
+                flags: MemAccessFlags::PROT_READ,
+            }],
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("access location"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.va_set_access_n(
+            va,
+            4096,
+            &[
+                MemAccessDesc {
+                    location: Place::Device(d1),
+                    flags: MemAccessFlags::PROT_READ,
+                },
+                MemAccessDesc {
+                    location: Place::Device(d2),
+                    flags: MemAccessFlags::PROT_READ_WRITE,
+                },
+            ],
+        )
+        .unwrap();
+        assert!(sim.is_accessed_by(va, d1).unwrap());
+        assert!(!sim.is_va_write_accessed_by(va, d1).unwrap());
+        assert!(sim.is_va_write_accessed_by(va, d2).unwrap());
+        sim.begin_capture(d0, StreamId(0)).unwrap();
+        match sim.va_set_access_n(va, 4096, &[]) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }

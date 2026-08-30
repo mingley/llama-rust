@@ -19,15 +19,15 @@ use crate::ops::{
     GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
     HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf,
     KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
-    MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType,
-    MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType, MemMapFlags,
-    MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags, MemSyncDomain,
-    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, MulticastBindFlags, MulticastCreateFlags,
-    MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch, PeerAccessFlags, Place,
-    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
-    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp,
+    MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType,
+    MemMapFlags, MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags,
+    MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, MulticastBindFlags,
+    MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch,
+    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
+    SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
+    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -10967,6 +10967,62 @@ impl Sim {
             return self.va_set_access_write(id, device);
         }
         self.va_unset_access(id, device)
+    }
+
+    /// `cuMemSetAccess` with a descriptor array (`desc`, `count`).
+    ///
+    /// `size` must equal the reserved bytes. Host location Invalid
+    /// `"access location"`. Flags are [`MemAccessFlags`]. All-or-nothing: a
+    /// later Invalid leaves earlier descriptors unapplied. Empty `descs` is a
+    /// no-op after the size check. Host-synchronous; capture refused. Typed
+    /// helpers stay.
+    pub fn va_set_access_n(
+        &mut self,
+        id: AllocId,
+        size: u64,
+        descs: &[MemAccessDesc],
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let a = self.alloc_ref(id)?;
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        if size != a.bytes {
+            return Err(SimError::Invalid { why: "access size" });
+        }
+        let owner = a.vmm_home();
+        let mut ops = Vec::with_capacity(descs.len());
+        for desc in descs {
+            if desc.flags != MemAccessFlags::PROT_READ
+                && desc.flags != MemAccessFlags::PROT_READ_WRITE
+                && desc.flags != MemAccessFlags::PROT_NONE
+            {
+                return Err(SimError::Invalid {
+                    why: "va access flags",
+                });
+            }
+            let device = desc.location.device().ok_or(SimError::Invalid {
+                why: "access location",
+            })?;
+            let Some(owner) = owner else {
+                return Err(SimError::Invalid { why: "not mapped" });
+            };
+            let _gpu = self.profile.gpu(device)?;
+            if owner != device {
+                let _link = self.profile.link(Some(owner), Some(device))?;
+                if !self.peer_access(owner, device) {
+                    return Err(SimError::PeerDisabled {
+                        src: owner,
+                        dst: device,
+                    });
+                }
+            }
+            ops.push((device, desc.flags));
+        }
+        for (device, flags) in ops {
+            self.va_set_access_with_size(id, device, size, flags)?;
+        }
+        Ok(())
     }
 
     fn va_set_access_inner(

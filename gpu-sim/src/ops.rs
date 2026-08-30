@@ -2778,6 +2778,19 @@ impl MemAccessFlags {
     pub const PROT_READ_WRITE: u32 = 3;
 }
 
+/// `CUmemAccessDesc` / `cudaMemAccessDesc` for [`crate::Sim::va_set_access_n`].
+///
+/// [`Self::location`] must be [`Place::Device`]. Host is Invalid
+/// `"access location"`. Flags are [`MemAccessFlags`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemAccessDesc {
+    /// Device that gains or loses access (`CUmemLocation`).
+    pub location: Place,
+    /// [`MemAccessFlags::PROT_READ`] / [`PROT_READ_WRITE`](MemAccessFlags::PROT_READ_WRITE)
+    /// / [`PROT_NONE`](MemAccessFlags::PROT_NONE).
+    pub flags: u32,
+}
+
 /// Active stream capture (`cudaStreamGetCaptureInfo`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StreamCaptureInfo {
