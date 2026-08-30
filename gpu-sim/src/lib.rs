@@ -286,6 +286,8 @@
 //! [`HandleTypeFabricSupported`](DeviceAttr::HandleTypeFabricSupported) are
 //! always 0 (this VM has POSIX-FD shareable pools; fabric handles are not
 //! modeled).
+//! [`DeviceAttr::HostMemoryPoolsSupported`] is always 0 (pools are
+//! device-only; host location is Invalid).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -10766,6 +10768,26 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::HandleTypeFabricSupported)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_host_memory_pools_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert!(!hp.host_memory_pools_supported);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::HostMemoryPoolsSupported)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::HostMemoryPoolsSupported)
                 .unwrap(),
             0
         );

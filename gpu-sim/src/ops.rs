@@ -827,6 +827,10 @@ pub enum DeviceAttr {
     /// `cudaDevAttrHandleTypeFabricSupported` (always 0; fabric handles are not
     /// modeled).
     HandleTypeFabricSupported,
+    /// `cudaDevAttrHostMemoryPoolsSupported` (always 0; this VM's pools are
+    /// device-only; [`crate::Sim::create_pool_with_props`] refuses host
+    /// location).
+    HostMemoryPoolsSupported,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -938,6 +942,8 @@ pub struct DeviceProperties {
     pub handle_type_win32_kmt_handle_supported: bool,
     /// `cudaDevAttrHandleTypeFabricSupported` (fabric handles are not modeled).
     pub handle_type_fabric_supported: bool,
+    /// `cudaDevAttrHostMemoryPoolsSupported` (pools are device-only).
+    pub host_memory_pools_supported: bool,
 }
 
 /// `cudaFuncAttribute` for [`crate::Sim::func_set_attribute`] / `GetAttribute`.

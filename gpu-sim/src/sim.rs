@@ -12762,7 +12762,8 @@ impl Sim {
             | DeviceAttr::GenericCompressionSupported
             | DeviceAttr::HandleTypeWin32HandleSupported
             | DeviceAttr::HandleTypeWin32KmtHandleSupported
-            | DeviceAttr::HandleTypeFabricSupported => 0,
+            | DeviceAttr::HandleTypeFabricSupported
+            | DeviceAttr::HostMemoryPoolsSupported => 0,
             DeviceAttr::StreamPrioritiesSupported | DeviceAttr::UnifiedAddressing => 1,
             DeviceAttr::GpuOverlap => u64::from(gpu.copy_engines > 0),
             DeviceAttr::MulticastSupported => u64::from(self.profile.multicast_supported(device)),
@@ -12825,6 +12826,7 @@ impl Sim {
             handle_type_win32_handle_supported: false,
             handle_type_win32_kmt_handle_supported: false,
             handle_type_fabric_supported: false,
+            host_memory_pools_supported: false,
         })
     }
 
