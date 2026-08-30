@@ -311,7 +311,7 @@ use crate::replay::{Touch, Walker};
 use gpu_sim::{
     AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceId, EventId, GraphId,
     GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf, KernelKind,
-    LaunchCompletionEvent, MemPoolAttr, MemcpyAttributes, MemcpyOp, Place, PoolId,
+    LaunchCompletionEvent, MemAttach, MemPoolAttr, MemcpyAttributes, MemcpyOp, Place, PoolId,
     PortableClusterMode, PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, Score,
     SharedMemCarveout, SharedMemoryMode, Sim, StreamId, SynchronizationPolicy, WaitValueCmp,
 };
@@ -779,6 +779,15 @@ pub struct SimCfg {
     /// [`Self::device_launch`]. Decode identity stays no event.
     /// [`crate::GpuStoreCfg::programmatic_event`] is the store path.
     pub programmatic_event: bool,
+    /// `cudaStreamAttachMemAsync(..., cudaMemAttachSingle)` on managed experts.
+    ///
+    /// After alloc+advise, attach the page to the work stream and prefetch
+    /// there so GEMM stays legal under Single. NULL work becomes `StreamId(1)`
+    /// (Single cannot use the NULL stream). Identity stays Global + prefetch
+    /// on the work stream as today. Implies [`Self::managed`]. Illegal with
+    /// [`Self::seq_streams`]. [`crate::GpuStoreCfg::stream_attach`] is the
+    /// store path.
+    pub stream_attach: bool,
     /// `cuStreamWaitValue64` / `cuStreamWriteValue64` copy-ready handshake.
     ///
     /// After H2D / prefetch, write a generation into an 8-byte device mailbox
@@ -878,6 +887,7 @@ impl SimCfg {
             device_launch: false,
             launch_completion: false,
             programmatic_event: false,
+            stream_attach: false,
             wait_value: false,
             multicast: false,
             compute_slots: 0,
@@ -911,6 +921,12 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     }
     if cfg.programmatic_event && cfg.device_launch {
         return Err(Error::Store("programmatic-event cannot device-launch"));
+    }
+    if cfg.stream_attach && !cfg.managed {
+        return Err(Error::Store("stream-attach needs managed"));
+    }
+    if cfg.stream_attach && cfg.seq_streams {
+        return Err(Error::Store("stream-attach cannot seq-streams"));
     }
     if cfg.pdl && cfg.cooperative {
         return Err(Error::Store("choose one of pdl, cooperative"));
@@ -1025,6 +1041,7 @@ pub fn sim_replay_cfg(
         memcpy_batch: cfg.memcpy_batch,
         accessed_by: cfg.accessed_by,
         wait_value: cfg.wait_value,
+        stream_attach: cfg.stream_attach,
     };
     let mut token_ends: Vec<u64> = Vec::new();
     let mut ctr = ReplayCounters::default();
@@ -1060,7 +1077,7 @@ pub fn sim_replay_cfg(
         .with_enable(cfg.graph_enable);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
     for (i, event) in trace.events.iter().enumerate() {
-        args.s = plan.work(event.sequence, event.token);
+        args.s = bump_null_for_attach(plan.work(event.sequence, event.token), cfg.stream_attach);
         let ek = event.keys();
         for key in &ek {
             let (got, touch) = w.next_touch().ok_or(Error::Store("short walker"))?;
@@ -1173,6 +1190,9 @@ pub(crate) struct TouchArgs {
     pub accessed_by: bool,
     /// [`SimCfg::wait_value`]: per-page 8-byte mailbox + live wait/write-value.
     pub wait_value: bool,
+    /// [`SimCfg::stream_attach`]: `cudaStreamAttachMemAsync` Single then prefetch
+    /// on this work stream (`StreamId(1)` when the plan would use NULL).
+    pub stream_attach: bool,
 }
 
 fn hbm_alloc(
@@ -2016,6 +2036,9 @@ fn alloc_touch_page(sim: &mut Sim, args: TouchArgs) -> Result<AllocId, Error> {
         if args.accessed_by {
             advise_accessed_by(sim, id)?;
         }
+        if args.stream_attach {
+            let _a = sim.stream_attach(args.d, id, args.s, MemAttach::Single)?;
+        }
         return Ok(id);
     }
     if args.vmm {
@@ -2129,6 +2152,33 @@ fn page_is_vmm(sim: &Sim, id: AllocId) -> bool {
     sim.is_vmm(id).unwrap_or(false)
 }
 
+/// Single attach cannot use the NULL stream; store compute is `StreamId(1)`.
+pub(crate) fn bump_null_for_attach(s: StreamId, stream_attach: bool) -> StreamId {
+    if stream_attach && s == StreamId::NULL {
+        StreamId(1)
+    } else {
+        s
+    }
+}
+
+/// Live `cudaStreamAttachMemAsync` Single onto `stream` when the page is already
+/// Single-attached elsewhere (prefill vs decode). Capture cannot include attach.
+pub(crate) fn ensure_single_attach(
+    sim: &mut Sim,
+    device: DeviceId,
+    id: AllocId,
+    stream: StreamId,
+) -> Result<(), Error> {
+    if sim.mem_attach(id)? != MemAttach::Single {
+        return Ok(());
+    }
+    if sim.is_attached_to(id, stream)? {
+        return Ok(());
+    }
+    let _a = sim.stream_attach(device, id, stream, MemAttach::Single)?;
+    Ok(())
+}
+
 pub(crate) fn gemm_keys(
     sim: &mut Sim,
     handles: &mut BTreeMap<ExpertKey, PageHandle>,
@@ -2146,6 +2196,13 @@ pub(crate) fn gemm_keys(
             let stream = work.unwrap_or(page.stream);
             wait_copy_ready(sim, page.device, mb, gen, stream)?;
         }
+    }
+    for key in keys {
+        let Some(page) = handles.get(key) else {
+            continue;
+        };
+        let stream = work.unwrap_or(page.stream);
+        ensure_single_attach(sim, page.device, page.id, stream)?;
     }
     let mut by_dev: BTreeMap<(DeviceId, StreamId), Vec<AllocId>> = BTreeMap::new();
     for key in keys {
@@ -2725,6 +2782,7 @@ fn gemm_kind() -> KernelKind {
 }
 
 fn kernel(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Error> {
+    ensure_single_attach(sim, d, id, s)?;
     kernel_leaf(sim, d, s, id, LeafMem::None, GemmFlags::default())
 }
 
@@ -2972,6 +3030,7 @@ pub fn sim_remote_home_cfg(
                         sync_alloc: false,
                         managed: false,
                         accessed_by: false,
+                        stream_attach: false,
                     },
                     reuse,
                     fan_in,
@@ -3018,6 +3077,8 @@ pub(crate) struct RemoteFetch {
     pub(crate) managed: bool,
     /// [`SimCfg::accessed_by`]: map compute without a dest migrate (managed, VMM, or mempool).
     pub(crate) accessed_by: bool,
+    /// [`SimCfg::stream_attach`]: Single-attach then prefetch on `stream`.
+    pub(crate) stream_attach: bool,
 }
 
 pub(crate) fn remote_hit(
@@ -3134,9 +3195,13 @@ fn fill_remote_managed(
     if fetch.accessed_by {
         advise_accessed_by(sim, id)?;
     }
-    let _p = sim.prefetch(fetch.home, id, fetch.stream)?;
+    let stream = bump_null_for_attach(fetch.stream, fetch.stream_attach);
+    if fetch.stream_attach {
+        let _a = sim.stream_attach(fetch.home, id, stream, MemAttach::Single)?;
+    }
+    let _p = sim.prefetch(fetch.home, id, stream)?;
     if fetch.home != fetch.compute {
-        wait_peer(sim, fetch.home, fetch.compute, fetch.stream, next_event)?;
+        wait_peer(sim, fetch.home, fetch.compute, stream, next_event)?;
     }
     Ok(RemotePage {
         id,

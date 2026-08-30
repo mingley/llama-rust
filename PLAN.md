@@ -3461,7 +3461,21 @@ model, do not celebrate the sim.
     identity stays no programmatic event. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-331. [ ] Next numbered PLAN item after 330 is the next `gpu-sim` / Engine /
+331. [x] `cudaStreamAttachMemAsync` Single on managed experts:
+    [`GpuStoreCfg::stream_attach`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::stream_attach`](expertvm/src/sim_replay.rs) call
+    [`stream_attach`](gpu-sim/src/sim.rs) `MemAttach::Single` on the
+    compute stream after managed alloc+advise, then prefetch on that
+    stream so GEMM stays legal under Single. Identity managed prefetch
+    stays on the copy stream (overlaps leftover compute). Implies
+    `--managed`. Illegal with `--seq-streams` (Single is one stream;
+    seq-streams put walker GEMMs on per-sequence streams including NULL).
+    `--stream-attach` on `expertvm sim` / `schedule` / `store` and
+    `gguf_gemv engine --expert-sim`. Decode identity stays Global attach
+    + copy-stream prefetch. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+332. [ ] Next numbered PLAN item after 331 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

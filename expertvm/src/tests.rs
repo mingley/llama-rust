@@ -1,7 +1,7 @@
 //! Library tests: JSONL, Zipf-ish traces, policy order, leases, gpu-sim.
 
 use super::*;
-use gpu_sim::{AllocId, DeviceId, EventId, HardwareProfile, Place};
+use gpu_sim::{AllocId, DeviceId, EventId, GpuOp, HardwareProfile, Place};
 use std::collections::BTreeSet;
 
 fn ev(token: u32, layer: u32, experts: &[u32]) -> ExpertAccess {
@@ -844,6 +844,7 @@ fn vmm_evict_reacquires_same_va() {
         memcpy_batch: false,
         accessed_by: false,
         wait_value: false,
+        stream_attach: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -5202,6 +5203,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         memcpy_batch: false,
         accessed_by: true,
         wait_value: false,
+        stream_attach: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -5263,6 +5265,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         memcpy_batch: false,
         accessed_by: true,
         wait_value: false,
+        stream_attach: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -5325,6 +5328,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         memcpy_batch: false,
         accessed_by: true,
         wait_value: false,
+        stream_attach: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -5753,6 +5757,7 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         memcpy_batch: true,
         accessed_by: false,
         wait_value: false,
+        stream_attach: false,
     };
     let mut next_event = 1u32;
     apply_misses(
@@ -5889,6 +5894,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             memcpy_batch: false,
             accessed_by: false,
             wait_value: false,
+            stream_attach: false,
         };
         let mut next_event = 1u32;
         let k0 = ExpertKey::new(0, 0);
@@ -8251,4 +8257,232 @@ fn simulated_gpu_store_wait_value_pin_hot_still_replicates() {
     assert_eq!(gpu.replica_of(k0), Some(DeviceId(1)));
     assert_eq!(gpu.metrics().replicates, 1);
     let _s = gpu.score().expect("score");
+}
+
+#[test]
+fn sim_cfg_stream_attach_needs_managed() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = match sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            stream_attach: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("stream-attach without managed must fail"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string().contains("stream-attach needs managed"),
+        "{err}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_stream_attach_needs_managed() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            stream_attach: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("stream-attach without managed must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("stream-attach needs managed"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn sim_cfg_stream_attach_refuses_seq_streams() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = match sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            managed: true,
+            stream_attach: true,
+            seq_streams: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("stream-attach + seq-streams must fail"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string().contains("stream-attach cannot seq-streams"),
+        "{err}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_stream_attach_refuses_seq_streams() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Managed,
+        GpuStoreCfg {
+            stream_attach: true,
+            seq_streams: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("stream-attach + seq-streams must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("stream-attach cannot seq-streams"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn sim_replay_stream_attach_keeps_hits() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg {
+        managed: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let on = SimCfg {
+        managed: true,
+        stream_attach: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("off");
+    let b = sim_replay_cfg(&t, profile, on).expect("on");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+}
+
+#[test]
+fn simulated_gpu_store_stream_attach_pin_before_acquire_still_replicates() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        2,
+        HardwareProfile::example_8xh100_nvlink(),
+        4096,
+        GpuFill::Managed,
+        GpuStoreCfg {
+            stream_attach: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    gpu.pin_hot(&[k0]).expect("pin");
+    assert_eq!(gpu.replica_of(k0), Some(DeviceId(1)));
+    assert_eq!(gpu.metrics().replicates, 1);
+    let _s = gpu.score().expect("score");
+}
+
+#[test]
+fn simulated_gpu_store_stream_attach_serializes_miss_prefetch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("slow gemm");
+    let run = |stream_attach: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = match SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            profile.clone(),
+            4096,
+            GpuFill::Managed,
+            GpuStoreCfg {
+                stream_attach,
+                ..GpuStoreCfg::default()
+            },
+        ) {
+            Ok(gpu) => gpu,
+            Err(err) => panic!("gpu: {err}"),
+        };
+        let k0 = ExpertKey::new(0, 0);
+        let k1 = ExpertKey::new(0, 1);
+        let _p = match gpu.acquire(k0) {
+            Ok(v) => v,
+            Err(err) => panic!("warm: {err}"),
+        };
+        gpu.release(k0);
+        let _d = gpu.clock_ns().expect("drain");
+        let _p = match gpu.acquire(k0) {
+            Ok(v) => v,
+            Err(err) => panic!("leftover: {err}"),
+        };
+        gpu.release(k0);
+        let _p = match gpu.acquire(k1) {
+            Ok(v) => v,
+            Err(err) => panic!("miss: {err}"),
+        };
+        gpu.release(k1);
+        let score = gpu.score().expect("score");
+        let kernels: Vec<_> = gpu
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .collect();
+        let prefetches: Vec<_> = gpu
+            .operations()
+            .filter(|o| match &o.kind {
+                GpuOp::Memcpy(m) => {
+                    !matches!((m.src, m.dst), (Place::Device(_), Place::Device(_)))
+                }
+                _ => false,
+            })
+            .collect();
+        let attaches = gpu
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Attach { .. }))
+            .count();
+        let leftover = kernels
+            .get(kernels.len().saturating_sub(2))
+            .expect("leftover gemm");
+        let miss = prefetches.last().expect("miss prefetch");
+        (
+            score.wall_ns,
+            leftover.done_ns.expect("k done"),
+            miss.start_ns.expect("prefetch start"),
+            attaches,
+        )
+    };
+    let (off_wall, off_done, off_pf, off_att) = run(false);
+    let (on_wall, on_done, on_pf, on_att) = run(true);
+    assert_eq!(off_att, 0);
+    assert!(on_att >= 1, "stream-attach must submit Attach; n={on_att}");
+    assert!(
+        off_pf < off_done,
+        "identity managed prefetch must overlap leftover GEMM; pf={off_pf} kdone={off_done}"
+    );
+    assert!(
+        on_pf >= on_done,
+        "stream-attach prefetch must wait leftover GEMM; pf={on_pf} kdone={on_done}"
+    );
+    assert!(
+        on_wall > off_wall,
+        "stream-attach must lengthen wall; on={on_wall} off={off_wall}"
+    );
 }

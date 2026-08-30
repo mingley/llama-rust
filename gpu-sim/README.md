@@ -703,6 +703,9 @@ fail device kernels / memset / device prefetch; Single cannot use the NULL
 stream; capture is refused). `stream_attach_with_flags` maps
 `MemAttachFlags::{GLOBAL, HOST, SINGLE}` then typed `stream_attach`
 (other bits Invalid `"stream attach flags"`). Typed `stream_attach` stays.
+`expertvm sim --stream-attach` / `gguf_gemv engine --expert-sim --stream-attach`
+attach managed experts to the compute stream and prefetch there (identity
+stays Global + copy-stream prefetch).
 `mem_advise` is `cudaMemAdvise` (host-sync).
 `mem_advise_with_location` is `cudaMemAdvise_v2` (`Place` location;
 AccessedBy requires a device place; host preferred is

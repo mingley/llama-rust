@@ -118,6 +118,7 @@
 //! refused). [`stream_attach_with_flags`](Sim::stream_attach_with_flags) is
 //! the flags word ([`MemAttachFlags`]). Typed helper stays. Prefetch migrates;
 //! it does not replicate unless [`Sim::mem_advise`] [`MemAdvise::SetReadMostly`].
+//! `expertvm sim --stream-attach` attaches managed experts to the compute stream.
 //! [`mem_advise_with_location`](Sim::mem_advise_with_location) is
 //! `cudaMemAdvise_v2` ([`Place`] location; AccessedBy requires
 //! [`Place::Device`]; host preferred is [`MemAdvise::SetPreferredLocationHost`]).

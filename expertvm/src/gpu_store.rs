@@ -12,15 +12,16 @@ use crate::sim_replay::{
     add_leaf_gemm, alloc_launch_completion, alloc_programmatic_event, alloc_resident_copy_mailbox,
     allow_non_portable_cluster_if, allow_optin_shared_if, apply_exec_mem_sync_domain,
     apply_stream_mem_sync_domain, apply_stream_sync_policy, bind_shareable_mempools,
-    check_cluster_preferred, check_device_graph_flags, free_copy_mailbox, instantiate_exec,
-    kernel_leaf, replay_exec, replay_streams, retarget_parked_kernel, signal_copy_ready, stream_of,
-    upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
+    check_cluster_preferred, check_device_graph_flags, ensure_single_attach, free_copy_mailbox,
+    instantiate_exec, kernel_leaf, replay_exec, replay_streams, retarget_parked_kernel,
+    signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem,
+    StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
     AllocId, DeviceId, EventId, GraphId, GraphMemAttr, HardwareProfile, KernelBuf, KernelKind,
-    LaunchCompletionEvent, MemAdvise, MemHandleId, MemcpyAttributes, MemcpyOp, Place, PoolId,
-    ProgrammaticEvent, Score, Sim, StreamId,
+    LaunchCompletionEvent, MemAdvise, MemAttach, MemHandleId, MemcpyAttributes, MemcpyOp, Place,
+    PoolId, ProgrammaticEvent, Score, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -31,6 +32,9 @@ pub enum GpuFill {
     #[default]
     Pinned,
     /// `cudaMallocManaged` + ReadMostly + PreferredLocation + prefetch.
+    ///
+    /// [`GpuStoreCfg::stream_attach`] attaches Single to the compute stream
+    /// and prefetches there. Default is Global attach + copy-stream prefetch.
     Managed,
     /// `cudaHostAllocMapped` (PCIe kernel, no H2D).
     Mapped,
@@ -319,6 +323,15 @@ pub struct GpuStoreCfg {
     /// [`Self::pdl`]). Illegal with [`Self::device_launch`]. Decode identity
     /// stays no event.
     pub programmatic_event: bool,
+    /// `cudaStreamAttachMemAsync(..., cudaMemAttachSingle)` on managed experts.
+    ///
+    /// After alloc+advise, attach the page to the compute stream and prefetch
+    /// there so GEMM stays legal under Single. Identity managed prefetch stays
+    /// on the copy stream (overlaps leftover compute). Implies managed fill.
+    /// Illegal with [`Self::seq_streams`] (Single is one stream; seq-streams
+    /// put walker GEMMs on per-sequence streams including NULL). Decode
+    /// identity stays Global attach + copy-stream prefetch.
+    pub stream_attach: bool,
     /// `cuStreamWaitValue64` / `cuStreamWriteValue64` instead of copy-ready events.
     ///
     /// After H2D / prefetch, write a generation into an 8-byte device mailbox
@@ -478,6 +491,9 @@ pub struct SimulatedGpuStore {
     programmatic_event: Option<EventId>,
     /// A grouped GEMM with [`Self::programmatic_event`] has been submitted.
     programmatic_event_armed: bool,
+    /// [`GpuStoreCfg::stream_attach`]: managed pages are `MemAttach::Single`
+    /// on the compute stream; miss prefetch uses that stream.
+    stream_attach: bool,
 }
 
 struct KvGpu {
@@ -611,6 +627,8 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::programmatic_event`] is
     /// `cudaLaunchAttributeProgrammaticEvent` on grouped GEMMs (replica D2D
     /// waits the PDL trigger; illegal with device-launch).
+    /// [`GpuStoreCfg::stream_attach`] is `cudaStreamAttachMemAsync` Single
+    /// on managed experts (prefetch on compute; illegal with seq-streams).
     /// [`GpuStoreCfg::wait_value`] is `cuStreamWaitValue64` / `WriteValue64`
     /// for the copy-ready handshake (8-byte `cudaMallocAsync` mailbox, copy
     /// stream waited before H2D; decode identity stays events).
@@ -659,6 +677,12 @@ impl SimulatedGpuStore {
         }
         if cfg.programmatic_event && cfg.device_launch {
             return Err(Error::Store("programmatic-event cannot device-launch"));
+        }
+        if cfg.stream_attach && fill != GpuFill::Managed {
+            return Err(Error::Store("stream-attach needs managed"));
+        }
+        if cfg.stream_attach && cfg.seq_streams {
+            return Err(Error::Store("stream-attach cannot seq-streams"));
         }
         if cfg.pdl && cfg.cooperative {
             return Err(Error::Store("choose one of pdl, cooperative"));
@@ -827,6 +851,7 @@ impl SimulatedGpuStore {
             launch_completion_armed: false,
             programmatic_event: pde.map(|e| e.event),
             programmatic_event_armed: false,
+            stream_attach: cfg.stream_attach,
         })
     }
 
@@ -1261,8 +1286,8 @@ impl SimulatedGpuStore {
             return Ok(());
         }
         if !self.sim.is_resident(id, dst)? {
-            let _p = self.sim.prefetch(dst, id, self.copy)?;
-            self.sim.synchronize_stream(dst, self.copy)?;
+            let _p = self.sim.prefetch(dst, id, self.dma_stream())?;
+            self.sim.synchronize_stream(dst, self.dma_stream())?;
         }
         if self.sim.is_resident(id, src)? {
             self.sim.drop_managed_copy(id, src)?;
@@ -1570,14 +1595,16 @@ impl SimulatedGpuStore {
             )
         };
         if let (Some(mb), Some(gen)) = (mailbox, ready_gen) {
-            // Queue on the copy stream so replica D2D is stream-ordered after
+            // Queue on the DMA stream so replica copy is stream-ordered after
             // this page's write. Do not consume `ready_gen`: GEMM still waits
-            // on compute. Do not synchronize compute (leftover prefill).
-            wait_copy_ready(&mut self.sim, device, mb, gen, self.copy)?;
+            // on compute. Do not synchronize compute (leftover prefill) when
+            // DMA is the copy stream.
+            let dma = self.dma_stream();
+            wait_copy_ready(&mut self.sim, device, mb, gen, dma)?;
             if let Some(ev) = ready {
                 if self.timing_events {
                     if !self.sim.query_event(ev)? {
-                        self.sim.synchronize_stream(device, self.copy)?;
+                        self.sim.synchronize_stream(device, dma)?;
                     }
                     self.note_copy_elapsed(start, ev)?;
                     if let Some(page) = self.pages.get_mut(&key) {
@@ -1591,8 +1618,11 @@ impl SimulatedGpuStore {
         if let Some(ev) = ready {
             if !self.sim.query_event(ev)? {
                 // Wait the DMA stream only. Syncing compute here would drain
-                // leftover prefill GEMMs before decode-priority can overlap them.
-                self.sim.synchronize_stream(device, self.copy)?;
+                // leftover prefill GEMMs before decode-priority can overlap them
+                // (identity copy-stream prefetch). `--stream-attach` DMA is
+                // already on compute.
+                let dma = self.dma_stream();
+                self.sim.synchronize_stream(device, dma)?;
             }
             self.note_copy_elapsed(start, ev)?;
             if let Some(page) = self.pages.get_mut(&key) {
@@ -1607,10 +1637,11 @@ impl SimulatedGpuStore {
         if !self.wait_value {
             return Ok(None);
         }
+        let dma = self.dma_stream();
         Ok(Some(alloc_resident_copy_mailbox(
             &mut self.sim,
             d,
-            self.copy,
+            dma,
             self.sync_alloc,
         )?))
     }
@@ -1623,12 +1654,13 @@ impl SimulatedGpuStore {
         start: Option<EventId>,
         mailbox: Option<AllocId>,
     ) -> Result<(), Error> {
+        let dma = self.dma_stream();
         let (ready, mailbox, ready_gen) = if self.wait_value {
             let mb = mailbox.ok_or(Error::Store("missing mailbox"))?;
-            signal_copy_ready(&mut self.sim, d, mb, 1, self.copy)?;
+            signal_copy_ready(&mut self.sim, d, mb, 1, dma)?;
             let ev = if self.timing_events {
                 let ev = self.create_copy_event()?;
-                let _r = self.sim.record_event(d, ev, self.copy)?;
+                let _r = self.sim.record_event(d, ev, dma)?;
                 Some(ev)
             } else {
                 None
@@ -1636,7 +1668,7 @@ impl SimulatedGpuStore {
             (ev, Some(mb), Some(1))
         } else {
             let ev = self.create_copy_event()?;
-            let _r = self.sim.record_event(d, ev, self.copy)?;
+            let _r = self.sim.record_event(d, ev, dma)?;
             (Some(ev), None, None)
         };
         let _prev = self.pages.insert(
@@ -1661,11 +1693,12 @@ impl SimulatedGpuStore {
         let Some(mb) = mailbox else {
             return Ok(());
         };
+        let dma = self.dma_stream();
         free_copy_mailbox(
             &mut self.sim,
             device,
             mb,
-            self.copy,
+            dma,
             self.sync_alloc || self.mode != GpuFill::Pinned,
         )
     }
@@ -1683,10 +1716,11 @@ impl SimulatedGpuStore {
             }
             return Ok(());
         }
-        let mb = alloc_resident_copy_mailbox(&mut self.sim, dst, self.copy, self.sync_alloc)?;
+        let dma = self.dma_stream();
+        let mb = alloc_resident_copy_mailbox(&mut self.sim, dst, dma, self.sync_alloc)?;
         let gen = if signal {
             let g = old_gen.unwrap_or(0).saturating_add(1).max(1);
-            signal_copy_ready(&mut self.sim, dst, mb, g, self.copy)?;
+            signal_copy_ready(&mut self.sim, dst, mb, g, dma)?;
             Some(g)
         } else {
             None
@@ -1801,7 +1835,7 @@ impl SimulatedGpuStore {
             return Ok(None);
         }
         let ev = self.create_copy_event()?;
-        let _r = self.sim.record_event(d, ev, self.copy)?;
+        let _r = self.sim.record_event(d, ev, self.dma_stream())?;
         Ok(Some(ev))
     }
 
@@ -1830,9 +1864,14 @@ impl SimulatedGpuStore {
                 if self.accessed_by {
                     advise_accessed_by(&mut self.sim, id)?;
                 }
-                let _p = self.sim.prefetch(d, id, self.copy)?;
+                if self.stream_attach {
+                    let _a = self
+                        .sim
+                        .stream_attach(d, id, self.compute, MemAttach::Single)?;
+                }
+                let _p = self.sim.prefetch(d, id, self.dma_stream())?;
                 if self.sync_alloc {
-                    self.sim.synchronize_stream(d, self.copy)?;
+                    self.sim.synchronize_stream(d, self.dma_stream())?;
                 }
                 Ok(id)
             }
@@ -1901,6 +1940,15 @@ impl SimulatedGpuStore {
         home_gpu(key, n)
     }
 
+    /// Miss DMA stream: compute when [`Self::stream_attach`], else copy.
+    fn dma_stream(&self) -> StreamId {
+        if self.stream_attach {
+            self.compute
+        } else {
+            self.copy
+        }
+    }
+
     fn gemm_resident(&mut self, key: ExpertKey) -> Result<(), Error> {
         let (id, device, ready, start, mailbox, ready_gen) = {
             let page = self
@@ -1923,6 +1971,7 @@ impl SimulatedGpuStore {
             }
             self.note_copy_elapsed(start, ev)?;
         }
+        ensure_single_attach(&mut self.sim, device, id, self.compute)?;
         self.launch_or_gemm(device, id)?;
         if self.host_func {
             let _id = self.sim.host_func(device, self.compute)?;
@@ -2142,7 +2191,7 @@ impl SimulatedGpuStore {
         match self.mode {
             GpuFill::Managed => {
                 if !self.accessed_by {
-                    let _p = self.sim.prefetch(dst, id, self.copy)?;
+                    let _p = self.sim.prefetch(dst, id, self.dma_stream())?;
                     self.note_replicate();
                 }
                 let _prev = self.replicas.insert(key, dst);

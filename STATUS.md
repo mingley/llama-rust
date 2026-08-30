@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaStreamAttachMemAsync` Single on managed experts
+
+`GpuStoreCfg::stream_attach` / `SimCfg::stream_attach` call
+`cudaStreamAttachMemAsync(..., cudaMemAttachSingle)` on the compute
+stream after managed alloc+advise, then prefetch on that stream so GEMM
+stays legal under Single. Identity managed prefetch stays on the copy
+stream (overlaps leftover compute). Implies `--managed`. Illegal with
+`--seq-streams`. `--stream-attach` is off by default (decode identity:
+Global attach + copy-stream prefetch). `gpu-profile capture` is still
+refused.
+
 ## Shipped 2026-08-30 — `cudaLaunchAttributeProgrammaticEvent` replica overlap
 
 `GpuStoreCfg::programmatic_event` / `SimCfg::programmatic_event` record

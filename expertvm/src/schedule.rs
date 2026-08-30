@@ -9,8 +9,8 @@ use crate::sim_replay::{
     advise_pool_access_if_pinned, alloc_launch_completion, alloc_programmatic_event,
     allow_non_portable_cluster_if, allow_optin_shared_if, apply_misses,
     apply_stream_mem_sync_domain, apply_stream_sms, apply_stream_sync_policy, apply_touch,
-    bind_shareable_mempools, disable_pool_opportunistic_reuse, drop_remote, fetch_remote,
-    fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots, reclaim_victim,
+    bind_shareable_mempools, bump_null_for_attach, disable_pool_opportunistic_reuse, drop_remote,
+    fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots, reclaim_victim,
     remote_hit, replay_from_sim, sim_profile, sync_work, trim_device_pools, trim_graph_pools,
     validate_sim_cfg, GraphBank, LeafMem, PageHandle, RemoteFetch, RemotePage, ReplayCounters,
     SimCfg, SimReplay, StreamPlan, TouchArgs,
@@ -339,6 +339,7 @@ impl SchedRt {
                 memcpy_batch: cfg.memcpy_batch,
                 accessed_by: cfg.accessed_by,
                 wait_value: cfg.wait_value,
+                stream_attach: cfg.stream_attach,
             },
             sim,
             handles: BTreeMap::new(),
@@ -422,7 +423,8 @@ impl SchedRt {
             }
             return Ok(());
         }
-        self.args.s = self.plan.work(ev.sequence, ev.token);
+        self.args.s =
+            bump_null_for_attach(self.plan.work(ev.sequence, ev.token), self.cfg.stream_attach);
         let ek = ev.keys();
         for key in &ek {
             let home = self.home(*key);
@@ -579,6 +581,7 @@ impl SchedRt {
                             sync_alloc: self.cfg.sync_alloc,
                             managed: self.cfg.managed,
                             accessed_by: self.cfg.accessed_by,
+                            stream_attach: self.cfg.stream_attach,
                         },
                         reuse,
                         fan_in,
@@ -592,7 +595,8 @@ impl SchedRt {
     }
 
     fn touch_remote(&mut self, ev: &ExpertAccess) -> Result<(), Error> {
-        self.args.s = self.plan.work(ev.sequence, ev.token);
+        self.args.s =
+            bump_null_for_attach(self.plan.work(ev.sequence, ev.token), self.cfg.stream_attach);
         let ek = ev.keys();
         let fan_in = u64::try_from(ev.experts.len()).unwrap_or(1).max(1);
         let act = self.remote_act.unwrap_or(1);
@@ -651,6 +655,7 @@ impl SchedRt {
                             sync_alloc: self.cfg.sync_alloc,
                             managed: self.cfg.managed,
                             accessed_by: self.cfg.accessed_by,
+                            stream_attach: self.cfg.stream_attach,
                         },
                         reuse,
                         fan_in,

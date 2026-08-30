@@ -125,6 +125,8 @@ pub(crate) struct GpuCli {
     pub launch_completion: bool,
     /// `cudaLaunchAttributeProgrammaticEvent` (`GpuStoreCfg::programmatic_event`).
     pub programmatic_event: bool,
+    /// `cudaStreamAttachMemAsync` Single (`GpuStoreCfg::stream_attach`). Implies managed.
+    pub stream_attach: bool,
     /// `cuStreamWaitValue64` / `WriteValue64` copy-ready (`GpuStoreCfg::wait_value`).
     pub wait_value: bool,
     /// Hopper NVLS replica fanout (`GpuStoreCfg::multicast`). Implies vmm.
@@ -190,6 +192,7 @@ impl GpuCli {
             "--device-launch" => &mut self.device_launch,
             "--launch-completion" => &mut self.launch_completion,
             "--programmatic-event" => &mut self.programmatic_event,
+            "--stream-attach" => &mut self.stream_attach,
             "--wait-value" => &mut self.wait_value,
             "--multicast" => &mut self.multicast,
             _ => return Ok(false),
@@ -211,6 +214,13 @@ impl GpuCli {
     pub(crate) fn imply_vmm(&mut self) {
         if self.vmm_page > 0 || self.multicast {
             self.vmm = true;
+        }
+    }
+
+    /// `--stream-attach` implies [`Self::managed`]. Call after sim-flag checks.
+    pub(crate) fn imply_managed(&mut self) {
+        if self.stream_attach {
+            self.managed = true;
         }
     }
 
@@ -407,6 +417,7 @@ impl GpuCli {
             (self.device_launch, "--device-launch"),
             (self.launch_completion, "--launch-completion"),
             (self.programmatic_event, "--programmatic-event"),
+            (self.stream_attach, "--stream-attach"),
             (self.wait_value, "--wait-value"),
             (self.decode_sm_set, "--decode-sms"),
         ]
@@ -695,6 +706,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         device_launch: gpu.device_launch,
         launch_completion: gpu.launch_completion,
         programmatic_event: gpu.programmatic_event,
+        stream_attach: gpu.stream_attach,
         wait_value: gpu.wait_value,
         multicast: gpu.multicast,
         compute_slots: gpu.compute_slots,
