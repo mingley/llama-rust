@@ -127,6 +127,14 @@
 //! [`Sim::query_event`] is `cudaEventQuery` (no wait).
 //! [`Sim::query_stream`] is `cudaStreamQuery` (no wait).
 //! [`Sim::mem_info`] is `cudaMemGetInfo` `(free, total)`.
+//! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
+//! [`Sim::set_limit`] / [`get_limit`](Sim::get_limit) are `cudaDeviceSetLimit` /
+//! `GetLimit`. [`DeviceLimit::PersistingL2CacheSize`] wraps
+//! [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size).
+//! [`DeviceLimit::MaxL2FetchGranularity`] aligns access-policy windows (CUDA
+//! default 128 on SM 8.0+). [`Sim::malloc_pitch`] is `cudaMallocPitch`.
+//! [`MemcpyOp`] `height` / pitches are `cudaMemcpy2DAsync` (payload `width *
+//! height`, not pitch padding).
 //! [`graph_mem_get`](Sim::graph_mem_get) / [`graph_mem_set`](Sim::graph_mem_set) /
 //! [`graph_mem_trim`](Sim::graph_mem_trim) are `cudaDeviceGetGraphMemAttribute` /
 //! `SetGraphMemAttribute` / `GraphMemTrim` (graph-memory pool only; unused
@@ -393,13 +401,13 @@ pub use ids::{
 };
 pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp,
-    ClusterDim, ClusterSchedulingPolicy, DType, GpuOp, GraphExecUpdateResult,
+    ClusterDim, ClusterSchedulingPolicy, DType, DeviceLimit, GpuOp, GraphExecUpdateResult,
     GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
     GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphUserObjectFlags, HostNodeParams,
     KernelAttrs, KernelBuf, KernelKind, KernelNodeParams, LaunchCompletionEvent, MemAdvise,
-    MemAttach, MemSyncDomain, MemSyncDomainMap, MemcpyOp, Operation, PdlLaunch, Place,
-    PortableClusterMode, PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch,
-    SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
+    MemAttach, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, Operation, PdlLaunch, Place,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
     SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
@@ -2099,6 +2107,7 @@ mod tests {
                 alloc: a,
                 bytes: 4096,
                 offset: 0,
+                ..MemcpyOp::default()
             },
         )
         .unwrap();
@@ -2138,6 +2147,7 @@ mod tests {
             alloc,
             bytes: 4096,
             offset: 0,
+            ..MemcpyOp::default()
         };
         let run_update = {
             let mut sim = Sim::new(p.clone());
@@ -2192,6 +2202,7 @@ mod tests {
                 alloc: a,
                 bytes: 4096,
                 offset: 0,
+                ..MemcpyOp::default()
             },
         )
         .unwrap();
@@ -2209,6 +2220,7 @@ mod tests {
                 alloc: b,
                 bytes: 4096,
                 offset: 0,
+                ..MemcpyOp::default()
             },
         )
         .unwrap();
@@ -2244,6 +2256,7 @@ mod tests {
             alloc: a,
             bytes: 4096,
             offset: 0,
+            ..MemcpyOp::default()
         };
         let exec = sim.create_graph(d, s).unwrap();
         sim.graph_add_memcpy(exec, op.clone()).unwrap();
@@ -2784,6 +2797,7 @@ mod tests {
                 alloc: b,
                 bytes: 4096,
                 offset: 0,
+                ..MemcpyOp::default()
             },
         )
         .unwrap();
@@ -3154,6 +3168,7 @@ mod tests {
                 alloc: a,
                 bytes: 4096,
                 offset: 0,
+                ..MemcpyOp::default()
             },
         )
         .unwrap();
@@ -6351,6 +6366,7 @@ mod tests {
             alloc: a,
             bytes: 4096,
             offset: 0,
+            ..MemcpyOp::default()
         };
         sim.graph_add_memcpy(g, op_a.clone()).unwrap();
         let _ = sim.instantiate_graph(g).unwrap();
@@ -7355,6 +7371,7 @@ mod tests {
                     alloc: a,
                     bytes,
                     offset: 0,
+                    ..MemcpyOp::default()
                 },
                 s,
             )
@@ -7362,6 +7379,143 @@ mod tests {
         assert!(op.0 >= 1);
         assert!(sim.query_stream(d, s).unwrap());
         assert!(sim.is_resident(a, d).unwrap());
+    }
+
+    #[test]
+    fn pointer_get_attributes_classifies_host_device_managed() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let dev = sim.pointer_get_attributes(a).unwrap();
+        assert_eq!(dev.kind, MemoryType::Device);
+        assert_eq!(dev.device, Some(d));
+        assert!(dev.device_pointer);
+        assert!(!dev.host_pointer);
+        sim.free_sync(a).unwrap();
+        let gone = sim.pointer_get_attributes(a).unwrap();
+        assert_eq!(gone.kind, MemoryType::Unregistered);
+        let pin = sim.alloc_host_pinned(64).unwrap();
+        let host = sim.pointer_get_attributes(pin).unwrap();
+        assert_eq!(host.kind, MemoryType::Host);
+        assert!(!host.device_pointer);
+        assert!(host.host_pointer);
+        let mapped = sim.alloc_host_mapped(64).unwrap();
+        let m = sim.pointer_get_attributes(mapped).unwrap();
+        assert_eq!(m.kind, MemoryType::Host);
+        assert!(m.device_pointer);
+        assert!(m.host_pointer);
+        let um = sim.alloc_managed(64).unwrap();
+        let u = sim.pointer_get_attributes(um).unwrap();
+        assert_eq!(u.kind, MemoryType::Managed);
+        assert!(u.device_pointer);
+        assert!(u.host_pointer);
+        match sim.pointer_get_attributes(AllocId(u64::MAX)) {
+            Err(SimError::UnknownAlloc { .. }) => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn set_limit_wraps_persisting_l2_and_fetch_granularity() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(
+            sim.get_limit(d, DeviceLimit::PersistingL2CacheSize)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.get_limit(d, DeviceLimit::MaxL2FetchGranularity)
+                .unwrap(),
+            128
+        );
+        assert_eq!(sim.get_limit(d, DeviceLimit::StackSize).unwrap(), 1024);
+        assert_eq!(
+            sim.get_limit(d, DeviceLimit::MallocHeapSize).unwrap(),
+            8 << 20
+        );
+        let cap = sim.profile().gpu(d).unwrap().l2_bytes;
+        sim.set_limit(d, DeviceLimit::PersistingL2CacheSize, cap)
+            .unwrap();
+        assert_eq!(sim.persisting_l2_cache_size(d).unwrap(), cap);
+        sim.set_limit(d, DeviceLimit::MaxL2FetchGranularity, 32)
+            .unwrap();
+        assert_eq!(
+            sim.get_limit(d, DeviceLimit::MaxL2FetchGranularity)
+                .unwrap(),
+            32
+        );
+        match sim.set_limit(d, DeviceLimit::MaxL2FetchGranularity, 96) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("l2 fetch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_limit(d, DeviceLimit::StackSize, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device limit"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn access_policy_window_must_align_to_l2_fetch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let w = AccessPolicyWindow::persisting(KernelBuf::whole(a));
+        match sim.kernel_access_policy(d, KernelKind::other(8, 8), &[a], &[a], s, w) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("L2 fetch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.set_limit(d, DeviceLimit::MaxL2FetchGranularity, 32)
+            .unwrap();
+        enq(sim.kernel_access_policy(d, KernelKind::other(8, 8), &[a], &[a], s, w));
+    }
+
+    #[test]
+    fn malloc_pitch_and_memcpy2d_bills_payload_not_padding() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_pitch(d, 256, 8).unwrap();
+        assert_eq!(pitch, 512);
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+        enq(sim.memcpy(
+            d,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(d),
+                alloc: a,
+                bytes: 256,
+                offset: 0,
+                height: 8,
+                src_pitch: 256,
+                dst_pitch: pitch,
+            },
+            s,
+        ));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), 2048);
+        match sim.malloc_pitch(d, 0, 8) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("malloc pitch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy(
+            d,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(d),
+                alloc: a,
+                bytes: 300,
+                offset: 0,
+                height: 8,
+                src_pitch: 256,
+                dst_pitch: pitch,
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy2d pitch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -7428,6 +7582,7 @@ mod tests {
                 alloc: a,
                 bytes: 4096,
                 offset: 0,
+                ..MemcpyOp::default()
             },
             s,
         ) {
@@ -9258,6 +9413,7 @@ mod tests {
                 alloc: va,
                 bytes: 4096,
                 offset: 4096,
+                ..MemcpyOp::default()
             },
             s,
         ));
@@ -9281,6 +9437,7 @@ mod tests {
                 alloc: va,
                 bytes: 4096,
                 offset: 4096,
+                ..MemcpyOp::default()
             },
             s,
         ));
@@ -10772,6 +10929,7 @@ mod tests {
                 alloc: a,
                 bytes: 4096,
                 offset: 0,
+                ..MemcpyOp::default()
             },
         )
         .unwrap();
@@ -10792,6 +10950,7 @@ mod tests {
                     alloc: a,
                     bytes: 4096,
                     offset: 0,
+                    ..MemcpyOp::default()
                 },
             )
             .unwrap_err();

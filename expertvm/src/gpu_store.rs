@@ -1450,6 +1450,7 @@ impl SimulatedGpuStore {
                     alloc: id,
                     bytes,
                     offset: 0,
+                    ..MemcpyOp::default()
                 },
                 self.copy,
             )?;

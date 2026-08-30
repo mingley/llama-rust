@@ -11,15 +11,16 @@ use crate::ids::{
 };
 use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
-    ClusterSchedulingPolicy, GpuOp as Kind, GraphExecUpdateResult, GraphExecUpdateResultInfo,
-    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
-    KernelNodeParams, LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap,
-    MemcpyOp, Operation, PdlLaunch, Place, PortableClusterMode, PortableSharedMode,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo,
-    StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    ClusterSchedulingPolicy, DeviceLimit, GpuOp as Kind, GraphExecUpdateResult,
+    GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
+    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphUserObjectFlags, HostNodeParams,
+    KernelAttrs, KernelBuf, KernelKind, KernelNodeParams, LaunchCompletionEvent, MemAdvise,
+    MemAttach, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, Operation, PdlLaunch, Place,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
-use crate::profile::{ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
+use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Preferred {
@@ -245,6 +246,31 @@ struct GpuRt {
     persist_limit: u64,
     /// Filled persisting-L2 ranges (insertion order is LRU).
     persist_lines: Vec<PersistLine>,
+    /// `cudaDeviceGetLimit` values other than persisting L2.
+    limits: DeviceLimits,
+}
+
+/// CUDA `cudaDeviceGetLimit` defaults (SM 8.0+ fetch granularity).
+struct DeviceLimits {
+    stack_size: u64,
+    printf_fifo: u64,
+    malloc_heap: u64,
+    sync_depth: u64,
+    pending_launch: u64,
+    l2_fetch: u64,
+}
+
+impl DeviceLimits {
+    fn sm80() -> Self {
+        Self {
+            stack_size: 1024,
+            printf_fifo: 1 << 20,
+            malloc_heap: 8 << 20,
+            sync_depth: 2,
+            pending_launch: 2048,
+            l2_fetch: 128,
+        }
+    }
 }
 
 struct PersistLine {
@@ -667,6 +693,7 @@ impl Sim {
                     graph_reserved_high: 0,
                     persist_limit: 0,
                     persist_lines: Vec::new(),
+                    limits: DeviceLimits::sm80(),
                 },
             );
             let _dup = replaced.is_some();
@@ -4799,6 +4826,7 @@ impl Sim {
                 why: "cannot add pageable memcpy",
             });
         }
+        memcpy_2d_check(&op)?;
         self.graph_push(graph, device, stream, Kind::Memcpy(op))
     }
 
@@ -5816,8 +5844,22 @@ impl Sim {
         window: Option<AccessPolicyWindow>,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let device = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+            step.device
+        };
         if let Some(w) = window {
-            validate_access_policy(w)?;
+            self.validate_access_policy_window(device, w)?;
         }
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -5844,8 +5886,22 @@ impl Sim {
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
         let exec = self.as_exec(exec)?;
+        let device = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.view().get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+            step.device
+        };
         if let Some(w) = window {
-            validate_access_policy(w)?;
+            self.validate_access_policy_window(device, w)?;
         }
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -8717,6 +8773,7 @@ impl Sim {
                 alloc,
                 bytes,
                 offset: 0,
+                ..MemcpyOp::default()
             },
             stream,
         )
@@ -8745,6 +8802,7 @@ impl Sim {
                 alloc,
                 bytes,
                 offset: 0,
+                ..MemcpyOp::default()
             },
             stream,
         )
@@ -9054,6 +9112,8 @@ impl Sim {
     /// through pinned staging, so this call waits [`Self::synchronize_stream`]
     /// before returning. Capture cannot include a pageable copy. Pinned DMA
     /// ([`Self::memcpy_pinned_to_device`]) stays stream-ordered.
+    /// [`MemcpyOp::height`] `> 1` is `cudaMemcpy2DAsync`: billed bytes are
+    /// `width * height`, not pitch padding.
     pub fn memcpy(
         &mut self,
         device: DeviceId,
@@ -9066,6 +9126,7 @@ impl Sim {
                 why: "cannot capture pageable memcpy",
             });
         }
+        memcpy_2d_check(&op)?;
         let id = self.submit(device, stream, Kind::Memcpy(op))?;
         if pageable {
             self.synchronize_stream(device, stream)?;
@@ -9112,6 +9173,7 @@ impl Sim {
                 alloc,
                 bytes,
                 offset: 0,
+                ..MemcpyOp::default()
             },
             stream,
         )
@@ -9133,6 +9195,7 @@ impl Sim {
                 alloc,
                 bytes,
                 offset: 0,
+                ..MemcpyOp::default()
             },
             stream,
         )
@@ -9154,6 +9217,7 @@ impl Sim {
                 alloc,
                 bytes,
                 offset: 0,
+                ..MemcpyOp::default()
             },
             stream,
         )
@@ -9175,6 +9239,7 @@ impl Sim {
                 alloc,
                 bytes,
                 offset: 0,
+                ..MemcpyOp::default()
             },
             stream,
         )
@@ -9201,6 +9266,7 @@ impl Sim {
                 alloc,
                 bytes,
                 offset: 0,
+                ..MemcpyOp::default()
             },
             stream,
         )
@@ -9404,7 +9470,7 @@ impl Sim {
         attrs: KernelAttrs,
     ) -> Result<OpId, SimError> {
         if let Some(w) = attrs.access_policy {
-            validate_access_policy(w)?;
+            self.validate_access_policy_window(device, w)?;
         }
         if let Some(map) = attrs.mem_sync_map {
             self.validate_mem_sync_map(device, map)?;
@@ -9595,6 +9661,139 @@ impl Sim {
             self.set_persisting_l2_cache_size(id, bytes)?;
         }
         Ok(())
+    }
+
+    /// `cudaDeviceSetLimit`. Host-synchronous. Capture cannot include it.
+    ///
+    /// [`DeviceLimit::PersistingL2CacheSize`] is [`Self::set_persisting_l2_cache_size`].
+    /// [`DeviceLimit::MaxL2FetchGranularity`] must be 32, 64, or 128 (CUDA SM 8.0+
+    /// default 128). Access-policy windows must align to the current value.
+    /// Heap / stack / printf / CDP limits are stored; heap does not charge HBM.
+    pub fn set_limit(
+        &mut self,
+        device: DeviceId,
+        limit: DeviceLimit,
+        value: u64,
+    ) -> Result<(), SimError> {
+        if let DeviceLimit::PersistingL2CacheSize = limit {
+            return self.set_persisting_l2_cache_size(device, value);
+        }
+        self.fail_if_capturing("cannot capture set limit")?;
+        let _gpu = self.profile.gpu(device)?;
+        let rt = self.gpu_rt_mut(device)?;
+        match limit {
+            DeviceLimit::StackSize if value > 0 => rt.limits.stack_size = value,
+            DeviceLimit::PrintfFifoSize if value > 0 => rt.limits.printf_fifo = value,
+            DeviceLimit::MallocHeapSize => rt.limits.malloc_heap = value,
+            DeviceLimit::DevRuntimeSyncDepth if value >= 2 => rt.limits.sync_depth = value,
+            DeviceLimit::DevRuntimePendingLaunchCount if value > 0 => {
+                rt.limits.pending_launch = value;
+            }
+            DeviceLimit::MaxL2FetchGranularity if value == 32 || value == 64 || value == 128 => {
+                rt.limits.l2_fetch = value;
+            }
+            DeviceLimit::MaxL2FetchGranularity => {
+                return Err(SimError::Invalid {
+                    why: "l2 fetch granularity",
+                });
+            }
+            DeviceLimit::PersistingL2CacheSize => {}
+            DeviceLimit::StackSize
+            | DeviceLimit::PrintfFifoSize
+            | DeviceLimit::DevRuntimeSyncDepth
+            | DeviceLimit::DevRuntimePendingLaunchCount => {
+                return Err(SimError::Invalid {
+                    why: "device limit",
+                });
+            }
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaDeviceGetLimit`. Query; legal during capture.
+    pub fn get_limit(&self, device: DeviceId, limit: DeviceLimit) -> Result<u64, SimError> {
+        if limit == DeviceLimit::PersistingL2CacheSize {
+            return self.persisting_l2_cache_size(device);
+        }
+        let rt = self.gpu_rt(device)?;
+        Ok(match limit {
+            DeviceLimit::StackSize => rt.limits.stack_size,
+            DeviceLimit::PrintfFifoSize => rt.limits.printf_fifo,
+            DeviceLimit::MallocHeapSize => rt.limits.malloc_heap,
+            DeviceLimit::DevRuntimeSyncDepth => rt.limits.sync_depth,
+            DeviceLimit::DevRuntimePendingLaunchCount => rt.limits.pending_launch,
+            DeviceLimit::MaxL2FetchGranularity => rt.limits.l2_fetch,
+            DeviceLimit::PersistingL2CacheSize => rt.persist_limit,
+        })
+    }
+
+    /// `cudaPointerGetAttributes`. Query; legal during capture.
+    ///
+    /// A never-created id is [`SimError::UnknownAlloc`]. A freed id is
+    /// [`MemoryType::Unregistered`] (CUDA 11+).
+    pub fn pointer_get_attributes(&self, id: AllocId) -> Result<PointerAttributes, SimError> {
+        let a = self.alloc_ref(id)?;
+        if !a.live {
+            return Ok(PointerAttributes {
+                kind: MemoryType::Unregistered,
+                device: None,
+                device_pointer: false,
+                host_pointer: false,
+            });
+        }
+        if a.managed {
+            return Ok(PointerAttributes {
+                kind: MemoryType::Managed,
+                device: a.devices.first().copied(),
+                device_pointer: true,
+                host_pointer: true,
+            });
+        }
+        if a.host_pageable || a.host_pinned {
+            let mapped = a.host_mapped;
+            return Ok(PointerAttributes {
+                kind: MemoryType::Host,
+                device: if mapped {
+                    self.profile.gpus.first().map(|g| g.id)
+                } else {
+                    None
+                },
+                device_pointer: mapped,
+                host_pointer: true,
+            });
+        }
+        Ok(PointerAttributes {
+            kind: MemoryType::Device,
+            device: a
+                .devices
+                .first()
+                .copied()
+                .or_else(|| a.vmm_maps.first().map(|m| m.0)),
+            device_pointer: true,
+            host_pointer: false,
+        })
+    }
+
+    /// `cudaMallocPitch`: aligned 2D allocation. Returns `(ptr, pitch)`.
+    ///
+    /// Pitch is `align_up(width, 512)`. Size charged is `pitch * height`.
+    /// Host-synchronous like [`Self::malloc`]. Capture cannot include it.
+    pub fn malloc_pitch(
+        &mut self,
+        device: DeviceId,
+        width: u64,
+        height: u64,
+    ) -> Result<(AllocId, u64), SimError> {
+        if width == 0 || height == 0 {
+            return Err(SimError::Invalid {
+                why: "malloc pitch",
+            });
+        }
+        let pitch = align_up(width, 512);
+        let bytes = pitch.saturating_mul(height);
+        let id = self.malloc(device, bytes)?;
+        Ok((id, pitch))
     }
 
     /// `cudaLaunchCooperativeKernel` on whole allocations.
@@ -10860,6 +11059,7 @@ impl Sim {
                     alloc,
                     bytes,
                     offset: 0,
+                    ..MemcpyOp::default()
                 }),
                 deps: deps.to_vec(),
                 done: false,
@@ -11089,7 +11289,7 @@ impl Sim {
     fn finish_memcpy(&mut self, device: DeviceId, m: MemcpyOp, dma: bool) -> Result<(), SimError> {
         if dma {
             self.gpu_rt_mut(device)?.copies = self.gpu_rt(device)?.copies.saturating_sub(1);
-            self.bytes_moved = self.bytes_moved.saturating_add(m.bytes);
+            self.bytes_moved = self.bytes_moved.saturating_add(m.payload_bytes());
         }
         let managed = self.alloc_ref(m.alloc)?.managed;
         let read_mostly = self.alloc_ref(m.alloc)?.read_mostly;
@@ -12011,7 +12211,7 @@ impl Sim {
         let Some(window) = window else {
             return Ok(kind_bytes);
         };
-        validate_access_policy(window)?;
+        self.validate_access_policy_window(device, window)?;
         if window.hit != AccessProperty::Persisting {
             return Ok(kind_bytes);
         }
@@ -12263,11 +12463,13 @@ impl Sim {
     }
 
     fn memcpy_precheck(&self, m: &MemcpyOp) -> Result<(), SimError> {
+        memcpy_2d_check(m)?;
         let a = self.alloc_ref(m.alloc)?;
         if !a.live {
             return Err(SimError::UnknownAlloc { alloc: m.alloc });
         }
-        if (a.vmm || m.offset > 0) && m.offset.saturating_add(m.bytes) > a.bytes {
+        let span = m.extent_bytes();
+        if (a.vmm || m.offset > 0 || m.is_2d()) && m.offset.saturating_add(span) > a.bytes {
             return Err(SimError::Invalid {
                 why: "memcpy range past alloc",
             });
@@ -12293,7 +12495,7 @@ impl Sim {
             Place::Host | Place::HostPinned => {}
             Place::Device(d) => {
                 let src_ok = if a.vmm {
-                    vmm_covers(&a.vmm_maps, d, m.offset, m.bytes)
+                    vmm_covers(&a.vmm_maps, d, m.offset, span)
                 } else {
                     a.devices.contains(&d)
                 };
@@ -12306,7 +12508,7 @@ impl Sim {
             }
         }
         if let Place::Device(d) = m.dst {
-            if a.vmm && !vmm_covers(&a.vmm_maps, d, m.offset, m.bytes) {
+            if a.vmm && !vmm_covers(&a.vmm_maps, d, m.offset, span) {
                 return Err(SimError::NotResident {
                     alloc: m.alloc,
                     device: d,
@@ -12362,9 +12564,9 @@ impl Sim {
             .get(idx)
             .ok_or(SimError::Invalid { why: "link index" })?;
         let copy = if m.src.is_pageable() || m.dst.is_pageable() {
-            link.pageable_copy_ns(m.bytes)
+            link.pageable_copy_ns(m.payload_bytes())
         } else {
-            link.copy_ns(m.bytes)
+            link.copy_ns(m.payload_bytes())
         };
         Ok((copy.saturating_add(self.extra_transfer_ns), idx))
     }
@@ -12381,6 +12583,26 @@ impl Sim {
                 u64::try_from(n.max(1)).unwrap_or(1)
             }
         }
+    }
+
+    fn validate_access_policy_window(
+        &self,
+        device: DeviceId,
+        window: AccessPolicyWindow,
+    ) -> Result<(), SimError> {
+        validate_access_policy(window)?;
+        let gran = self.gpu_rt(device)?.limits.l2_fetch;
+        if gran <= 1 {
+            return Ok(());
+        }
+        let total = self.alloc_ref(window.buf.id)?.bytes;
+        let (off, n) = kernel_span(total, &window.buf)?;
+        if !off.is_multiple_of(gran) || !n.is_multiple_of(gran) {
+            return Err(SimError::Invalid {
+                why: "access policy L2 fetch",
+            });
+        }
+        Ok(())
     }
 
     fn validate_mem_sync_map(
@@ -12924,6 +13146,23 @@ fn kernel_span(total: u64, buf: &KernelBuf) -> Result<(u64, u64), SimError> {
     Ok((buf.offset, n))
 }
 
+fn memcpy_2d_check(m: &MemcpyOp) -> Result<(), SimError> {
+    if !m.is_2d() {
+        return Ok(());
+    }
+    if m.bytes == 0 {
+        return Err(SimError::Invalid {
+            why: "memcpy2d width",
+        });
+    }
+    if m.bytes > m.src_pitch_or_width() || m.bytes > m.dst_pitch_or_width() {
+        return Err(SimError::Invalid {
+            why: "memcpy2d pitch",
+        });
+    }
+    Ok(())
+}
+
 fn validate_access_policy(window: AccessPolicyWindow) -> Result<(), SimError> {
     if window.hit_ratio_permille > 1000 {
         return Err(SimError::Invalid {
@@ -13419,6 +13658,9 @@ fn remap_alloc_kind(kind: Kind, map: &BTreeMap<AllocId, AllocId>) -> Kind {
             dst: op.dst,
             bytes: op.bytes,
             offset: op.offset,
+            height: op.height,
+            src_pitch: op.src_pitch,
+            dst_pitch: op.dst_pitch,
         }),
         Kind::Kernel {
             kind,

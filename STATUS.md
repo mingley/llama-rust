@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaPointerGetAttributes` / `cudaDeviceGetLimit` / `cudaMemcpy2D`
+
+`Sim::pointer_get_attributes` classifies Unregistered / Host / Device / Managed
+(CUDA 11+ freed pointers are Unregistered). `Sim::set_limit` / `get_limit` wrap
+`cudaDeviceSetLimit` / `GetLimit`: persisting L2 is the existing API,
+`MaxL2FetchGranularity` is 32/64/128 (SM 8.0+ default 128) and access-policy
+windows must align to it. `Sim::malloc_pitch` is `cudaMallocPitch`.
+`MemcpyOp` height/pitches are `cudaMemcpy2DAsync` (payload `width * height`).
+`expertvm kv --row-width W --pitch P` uses that 2D fill. Decode identity stays
+packed 1D / persist limit 0. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — OpenAI `/v1/completions` and `/v1/chat/completions`
 
 `gguf_gemv serve` (default and `--engine`) maps `POST /v1/completions` and

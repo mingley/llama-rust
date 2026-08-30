@@ -2634,6 +2634,7 @@ fn retarget_parked_kernel_patches_unique_memcpy() {
             alloc: a,
             bytes: 4096,
             offset: 0,
+            ..MemcpyOp::default()
         },
     )
     .expect("m");

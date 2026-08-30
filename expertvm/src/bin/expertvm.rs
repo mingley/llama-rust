@@ -29,7 +29,7 @@ usage: expertvm <command> [args]
   ep       <trace.jsonl> [--capacity N] [--expert-bytes N] [--hbm-bytes N] [--profile NAME]
   place    <trace.jsonl> [--gpus N] [--hot-pt N]
   remote   <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  kv       [--pages N] [--page-bytes B] [--capacity C] [--tokens T] [--profile NAME] [--fill h2d|memset] [--sequences N]
+  kv       [--pages N] [--page-bytes B] [--capacity C] [--tokens T] [--profile NAME] [--fill h2d|memset] [--sequences N] [--row-width W] [--pitch P]
   store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--shareable] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
@@ -947,6 +947,8 @@ where
     let mut profile = String::from("h100");
     let mut fill = KvFill::H2d;
     let mut sequences = 1u32;
+    let mut row_width = 0u64;
+    let mut pitch = 0u64;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -969,6 +971,10 @@ where
             "--sequences" => {
                 sequences = parse_u32("sequences", &value("sequences", inline, &mut it)?)?
             }
+            "--row-width" => {
+                row_width = parse_u64("row-width", &value("row-width", inline, &mut it)?)?
+            }
+            "--pitch" => pitch = parse_u64("pitch", &value("pitch", inline, &mut it)?)?,
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => return Err(format!("unexpected argument {other}\n{USAGE}")),
         }
@@ -986,6 +992,8 @@ where
             slots: capacity,
             fill,
             sequences,
+            row_width,
+            pitch,
         },
     )
     .map_err(|e| e.to_string())?;

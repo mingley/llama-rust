@@ -166,6 +166,10 @@ impl Place {
 /// [`crate::Sim::graph_exec_memcpy_set_params`] patches this on an instantiated
 /// memcpy node (`cudaGraphExecMemcpyNodeSetParams`). Pageable src/dst stay
 /// illegal as graph params.
+///
+/// [`Self::height`] `0` or `1` is `cudaMemcpyAsync` of [`Self::bytes`].
+/// `height > 1` is `cudaMemcpy2DAsync`: [`Self::bytes`] is the row width,
+/// billed payload is `width * height` (pitch padding is not transferred).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemcpyOp {
     /// Source.
@@ -174,15 +178,148 @@ pub struct MemcpyOp {
     pub dst: Place,
     /// Object whose residency moves (or is replicated) on completion.
     pub alloc: AllocId,
-    /// Payload bytes. Cost uses this, not a free full-link assumption.
+    /// Payload bytes for a 1D copy, or row width for [`Self::height`] `> 1`.
     pub bytes: u64,
     /// Byte offset into [`Self::alloc`].
     ///
     /// Host-to-device into a VMM VA copies this span (`cudaMemcpy` of
     /// `ptr + offset`). `0` is the whole-object helpers
     /// ([`crate::Sim::memcpy_pinned_to_device`]). A VMM destination must have
-    /// `[offset, offset+bytes)` mapped.
+    /// `[offset, offset+extent)` mapped (`extent` is packed `bytes` or the
+    /// pitched 2D rectangle).
     pub offset: u64,
+    /// Row count for `cudaMemcpy2D`. `0` or `1` is a 1D copy of [`Self::bytes`].
+    pub height: u64,
+    /// Source pitch in bytes (`spitch`). `0` means packed (`width`).
+    pub src_pitch: u64,
+    /// Destination pitch in bytes (`dpitch`). `0` means packed (`width`).
+    pub dst_pitch: u64,
+}
+
+impl Default for MemcpyOp {
+    fn default() -> Self {
+        Self {
+            src: Place::Host,
+            dst: Place::Host,
+            alloc: AllocId(0),
+            bytes: 0,
+            offset: 0,
+            height: 0,
+            src_pitch: 0,
+            dst_pitch: 0,
+        }
+    }
+}
+
+impl MemcpyOp {
+    /// `cudaMemcpy2D` / `height > 1`.
+    #[must_use]
+    pub fn is_2d(&self) -> bool {
+        self.height > 1
+    }
+
+    /// Bytes the copy engine moves (pitch padding is not billed).
+    #[must_use]
+    pub fn payload_bytes(&self) -> u64 {
+        if self.height > 1 {
+            self.bytes.saturating_mul(self.height)
+        } else {
+            self.bytes
+        }
+    }
+
+    /// Source pitch, or packed width when [`Self::src_pitch`] is `0`.
+    #[must_use]
+    pub fn src_pitch_or_width(&self) -> u64 {
+        if self.src_pitch == 0 {
+            self.bytes
+        } else {
+            self.src_pitch
+        }
+    }
+
+    /// Destination pitch, or packed width when [`Self::dst_pitch`] is `0`.
+    #[must_use]
+    pub fn dst_pitch_or_width(&self) -> u64 {
+        if self.dst_pitch == 0 {
+            self.bytes
+        } else {
+            self.dst_pitch
+        }
+    }
+
+    /// Contiguous span in [`Self::alloc`] covering the 1D copy or 2D rectangle.
+    #[must_use]
+    pub fn extent_bytes(&self) -> u64 {
+        if self.height <= 1 {
+            return self.bytes;
+        }
+        self.height
+            .saturating_sub(1)
+            .saturating_mul(self.device_pitch())
+            .saturating_add(self.bytes)
+    }
+
+    fn device_pitch(&self) -> u64 {
+        let dst_dev = matches!(self.dst, Place::Device(_));
+        let src_dev = matches!(self.src, Place::Device(_));
+        if dst_dev && !src_dev {
+            self.dst_pitch_or_width()
+        } else if src_dev && !dst_dev {
+            self.src_pitch_or_width()
+        } else {
+            self.src_pitch_or_width().max(self.dst_pitch_or_width())
+        }
+    }
+}
+
+/// `cudaLimit` for [`crate::Sim::set_limit`] / [`get_limit`](crate::Sim::get_limit).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeviceLimit {
+    /// `cudaLimitStackSize`. CUDA default 1024.
+    StackSize,
+    /// `cudaLimitPrintfFifoSize`. CUDA default 1 MiB.
+    PrintfFifoSize,
+    /// `cudaLimitMallocHeapSize`. CUDA default 8 MiB.
+    ///
+    /// Stored; this VM does not charge HBM (no device-side `malloc` yet).
+    MallocHeapSize,
+    /// `cudaLimitDevRuntimeSyncDepth`. CUDA default 2. Minimum 2.
+    DevRuntimeSyncDepth,
+    /// `cudaLimitDevRuntimePendingLaunchCount`. CUDA default 2048.
+    DevRuntimePendingLaunchCount,
+    /// `cudaLimitMaxL2FetchGranularity`. Power of two in `[32, 128]`.
+    ///
+    /// CUDA default on SM 8.0+ is 128. Access-policy windows must align to it.
+    MaxL2FetchGranularity,
+    /// `cudaLimitPersistingL2CacheSize`. CUDA default 0.
+    PersistingL2CacheSize,
+}
+
+/// `cudaMemoryType` from [`crate::Sim::pointer_get_attributes`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemoryType {
+    /// Not a live allocation (`cudaMemoryTypeUnregistered`).
+    Unregistered,
+    /// Host pageable, pinned, or mapped (`cudaMemoryTypeHost`).
+    Host,
+    /// `cudaMalloc` / async / VMM (`cudaMemoryTypeDevice`).
+    Device,
+    /// `cudaMallocManaged` (`cudaMemoryTypeManaged`).
+    Managed,
+}
+
+/// `cudaPointerAttributes`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PointerAttributes {
+    /// `cudaPointerAttributes::type`.
+    pub kind: MemoryType,
+    /// Owning GPU. `None` for host-only or unregistered.
+    pub device: Option<DeviceId>,
+    /// Device mapping exists (`devicePointer != NULL`).
+    pub device_pointer: bool,
+    /// Host mapping exists (`hostPointer != NULL`).
+    pub host_pointer: bool,
 }
 
 /// One kernel buffer: a whole allocation or a mapped VMM span.

@@ -92,12 +92,7 @@ mod tests {
         let row = kv_paged(
             &cycling_pages(4, 8),
             HardwareProfile::example_cheap_48gb(),
-            KvCfg {
-                page_bytes: 4096,
-                slots: 2,
-                fill: KvFill::Memset,
-                sequences: 1,
-            },
+            KvCfg::h2d(4096, 2).with_fill(KvFill::Memset),
         )
         .unwrap();
         assert_eq!(row.bytes_moved, 0);

@@ -115,6 +115,10 @@ pub struct KvCfg {
     /// `1` is a single reserved VA. `2+` is the vLLM intern analog: unique pages
     /// charge HBM once; each sequence maps the same handle into its own VA.
     pub sequences: u32,
+    /// `cudaMemcpy2D` row width. `0` with [`Self::pitch`] `0` is packed 1D H2D.
+    pub row_width: u64,
+    /// `cudaMemcpy2D` destination pitch. `0` is packed 1D.
+    pub pitch: u64,
 }
 
 impl KvCfg {
@@ -126,6 +130,8 @@ impl KvCfg {
             slots,
             fill: KvFill::H2d,
             sequences: 1,
+            row_width: 0,
+            pitch: 0,
         }
     }
 
@@ -133,6 +139,22 @@ impl KvCfg {
     #[must_use]
     pub fn with_sequences(mut self, n: u32) -> Self {
         self.sequences = n;
+        self
+    }
+
+    /// Miss fill (`h2d` or `memset`).
+    #[must_use]
+    pub fn with_fill(mut self, fill: KvFill) -> Self {
+        self.fill = fill;
+        self
+    }
+
+    /// `cudaMemcpy2DAsync` miss fill: `height = page_bytes / pitch` rows of
+    /// `row_width` (payload `row_width * height`, not pitch padding).
+    #[must_use]
+    pub fn with_pitch(mut self, row_width: u64, pitch: u64) -> Self {
+        self.row_width = row_width;
+        self.pitch = pitch;
         self
     }
 }
@@ -165,6 +187,20 @@ pub fn kv_paged(accesses: &[u32], profile: HardwareProfile, cfg: KvCfg) -> Resul
     }
     if cfg.sequences == 0 {
         return Err(Error::Store("kv sequences must be > 0"));
+    }
+    if (cfg.pitch == 0) != (cfg.row_width == 0) {
+        return Err(Error::Store("kv pitch needs row-width"));
+    }
+    if cfg.pitch > 0 {
+        if cfg.fill != KvFill::H2d {
+            return Err(Error::Store("kv pitch needs h2d"));
+        }
+        if cfg.row_width > cfg.pitch {
+            return Err(Error::Store("kv row-width"));
+        }
+        if !cfg.page_bytes.is_multiple_of(cfg.pitch) {
+            return Err(Error::Store("kv page-bytes pitch"));
+        }
     }
     if accesses.is_empty() {
         return Ok(KvReplay {
@@ -277,9 +313,8 @@ fn kv_evict_if_full(sim: &mut Sim, rt: &mut KvRt, seq: usize) -> Result<(), Erro
 
 fn kv_finish_miss(sim: &mut Sim, rt: &mut KvRt, seq: usize, page: u32) -> Result<(), Error> {
     let page_bytes = rt.cfg.page_bytes;
-    let fill = rt.cfg.fill;
     let va = *rt.vas.get(seq).ok_or(Error::Store("kv sequence"))?;
-    kv_bind_map(sim, &mut rt.handles, va, page, page_bytes, fill)?;
+    kv_bind_map(sim, &mut rt.handles, va, page, rt.cfg)?;
     gemm_page(sim, va, page_offset(page, page_bytes), page_bytes)?;
     rt.orders
         .get_mut(seq)
@@ -313,10 +348,10 @@ fn kv_bind_map(
     handles: &mut BTreeMap<u32, MemHandleId>,
     va: AllocId,
     page: u32,
-    page_bytes: u64,
-    fill: KvFill,
+    cfg: KvCfg,
 ) -> Result<(), Error> {
     let d = DeviceId(0);
+    let page_bytes = cfg.page_bytes;
     let off = page_offset(page, page_bytes);
     if let Some(h) = handles.get(&page).copied() {
         sim.va_map_handle(va, d, off, h)?;
@@ -325,7 +360,7 @@ fn kv_bind_map(
     let h = sim.va_create(d, page_bytes)?;
     let _prev = handles.insert(page, h);
     sim.va_map_handle(va, d, off, h)?;
-    fill_page(sim, va, off, page_bytes, fill)
+    fill_page(sim, va, off, cfg)
 }
 
 /// Cycling page indices `0 .. pages` for `tokens` steps.
@@ -350,33 +385,42 @@ fn recency_touch(order: &mut Vec<u32>, page: u32) -> bool {
     true
 }
 
-fn fill_page(
-    sim: &mut Sim,
-    va: AllocId,
-    off: u64,
-    page_bytes: u64,
-    fill: KvFill,
-) -> Result<(), Error> {
-    match fill {
-        KvFill::H2d => h2d_page(sim, va, off, page_bytes),
-        KvFill::Memset => memset_page(sim, va, off, page_bytes),
+fn fill_page(sim: &mut Sim, va: AllocId, off: u64, cfg: KvCfg) -> Result<(), Error> {
+    match cfg.fill {
+        KvFill::H2d => h2d_page(sim, va, off, cfg),
+        KvFill::Memset => memset_page(sim, va, off, cfg.page_bytes),
     }
 }
 
-fn h2d_page(sim: &mut Sim, va: AllocId, off: u64, page_bytes: u64) -> Result<(), Error> {
+fn h2d_page(sim: &mut Sim, va: AllocId, off: u64, cfg: KvCfg) -> Result<(), Error> {
     let d = DeviceId(0);
     let s = StreamId(0);
-    let _id = sim.memcpy(
-        d,
+    let op = if cfg.pitch > 0 {
+        let height = cfg
+            .page_bytes
+            .checked_div(cfg.pitch)
+            .ok_or(Error::Store("kv page-bytes pitch"))?;
         MemcpyOp {
             src: Place::HostPinned,
             dst: Place::Device(d),
             alloc: va,
-            bytes: page_bytes,
+            bytes: cfg.row_width,
             offset: off,
-        },
-        s,
-    )?;
+            height,
+            src_pitch: cfg.row_width,
+            dst_pitch: cfg.pitch,
+        }
+    } else {
+        MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: va,
+            bytes: cfg.page_bytes,
+            offset: off,
+            ..MemcpyOp::default()
+        }
+    };
+    let _id = sim.memcpy(d, op, s)?;
     Ok(())
 }
 
@@ -435,6 +479,8 @@ mod tests {
             slots: 2,
             fill: KvFill::H2d,
             sequences: 1,
+            row_width: 0,
+            pitch: 0,
         };
         let h2d = kv_paged(&accesses, p.clone(), cfg).expect("h2d");
         let mut zero = cfg;
@@ -450,6 +496,35 @@ mod tests {
             h2d.sim_ns
         );
         assert!(mem.line().contains("fill=memset"));
+    }
+
+    #[test]
+    fn pitched_h2d_bills_payload_not_padding() {
+        let p = HardwareProfile::example_h100_sxm();
+        let accesses = cycling_pages(4, 8);
+        let packed = kv_paged(&accesses, p.clone(), KvCfg::h2d(4096, 4)).expect("packed");
+        let pitched = kv_paged(
+            &accesses,
+            p.clone(),
+            KvCfg::h2d(4096, 4).with_pitch(256, 512),
+        )
+        .expect("pitched");
+        assert_eq!(packed.misses, pitched.misses);
+        assert_eq!(
+            pitched.bytes_moved,
+            packed.bytes_moved / 2,
+            "packed={} pitched={}",
+            packed.bytes_moved,
+            pitched.bytes_moved
+        );
+        assert!(
+            pitched.sim_ns < packed.sim_ns,
+            "pitched={} packed={}",
+            pitched.sim_ns,
+            packed.sim_ns
+        );
+        let err = kv_paged(&accesses, p, KvCfg::h2d(4096, 4).with_pitch(256, 0)).unwrap_err();
+        assert!(matches!(err, Error::Store(_)));
     }
 
     #[test]

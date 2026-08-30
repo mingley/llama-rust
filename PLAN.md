@@ -1796,6 +1796,35 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
+146. [x] `cudaPointerGetAttributes`: `Sim::pointer_get_attributes` classifies
+    Unregistered / Host / Device / Managed. A freed id is Unregistered
+    (CUDA 11+). A never-created id is `UnknownAlloc`. Mapped host reports a
+    device pointer. Decode identity stays kernel-only graphs.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+147. [x] `cudaDeviceSetLimit` / `GetLimit`: `Sim::set_limit` / `get_limit`
+    wrap `DeviceLimit`. Persisting L2 is the existing
+    `set_persisting_l2_cache_size`. `MaxL2FetchGranularity` is 32, 64, or
+    128 (SM 8.0+ default 128); access-policy windows must align to it.
+    Stack / printf / heap / CDP limits are stored (heap does not charge
+    HBM). Capture cannot include SetLimit. Decode identity stays persist
+    limit 0. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+148. [x] `cudaMallocPitch` / `cudaMemcpy2DAsync`: `Sim::malloc_pitch` returns
+    `(ptr, pitch)` with pitch `align_up(width, 512)`. `MemcpyOp` `height` /
+    pitches copy `width * height` payload (padding is not billed). Width
+    above pitch is Invalid. Decode identity stays packed 1D copies.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+149. [x] `expertvm kv --row-width W --pitch P`: miss fill is
+    `cudaMemcpy2DAsync` so a padded KV page bills `W * height`, not pitch
+    padding. Packed H2D (`pitch = 0`) is unchanged. `memset` fill refuses
+    pitch. Decode identity stays packed 1D. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

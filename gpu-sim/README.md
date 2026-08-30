@@ -106,6 +106,11 @@ warp scheduler, L1, …   ← do not model
 | `query_event` is non-blocking | `cudaEventQuery` |
 | `query_stream` is non-blocking | `cudaStreamQuery` |
 | `mem_info` is `(free, total)` HBM | `cudaMemGetInfo` |
+| `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
+| `set_limit` / `get_limit` wrap persisting L2 plus stack / printf / heap / CDP / L2 fetch | `cudaDeviceSetLimit` / `GetLimit` |
+| access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128) | exact |
+| `malloc_pitch` charges `pitch * height`; pitch is `align_up(width, 512)` | `cudaMallocPitch` |
+| `MemcpyOp` height/pitches bill `width * height` (not pitch padding) | `cudaMemcpy2DAsync` |
 | graph-mem used is live graph allocs; reserved holds unused until trim | `cudaDeviceGetGraphMemAttribute` / `GraphMemTrim` |
 | stream[i+1].start ≥ stream[i].finish (`Operation` timestamps) | queue wait vs run |
 | higher `set_stream_priority` starts first under contention | launch overhead |
@@ -392,6 +397,12 @@ invalid; end-before-start is invalid).
 `query_stream` is `cudaStreamQuery` (unknown device is semantic; a busy
 stream is `Ok(false)`; the clock does not advance).
 `mem_info` is `cudaMemGetInfo` `(free, total)` HBM bytes.
+`pointer_get_attributes` is `cudaPointerGetAttributes`.
+`set_limit` / `get_limit` are `cudaDeviceSetLimit` / `GetLimit`.
+Persisting L2 is `cudaLimitPersistingL2CacheSize`. Access-policy windows
+must align to `cudaLimitMaxL2FetchGranularity` (SM 8.0+ default 128).
+`malloc_pitch` is `cudaMallocPitch`. `MemcpyOp` `height` / pitches are
+`cudaMemcpy2DAsync` (payload `width * height`).
 `graph_mem_get` / `graph_mem_set` / `graph_mem_trim` are
 `cudaDeviceGetGraphMemAttribute` / `SetGraphMemAttribute` / `GraphMemTrim`
 (device graph-memory pool only; unused reserved bytes return on trim).

@@ -961,6 +961,7 @@ fn hbm_h2d_pinned(
                 alloc,
                 bytes,
                 offset: 0,
+                ..MemcpyOp::default()
             },
             stream,
         )?;
