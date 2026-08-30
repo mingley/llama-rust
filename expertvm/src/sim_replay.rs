@@ -920,13 +920,13 @@ impl GraphBank {
 }
 
 fn instantiate_src(sim: &mut Sim, src: GraphId, auto_free: bool) -> Result<GraphId, Error> {
-    if auto_free {
-        sim.instantiate_graph_auto_free(src)?;
+    let exec = if auto_free {
+        sim.instantiate_graph_auto_free(src)?
     } else {
-        sim.instantiate_graph(src)?;
-    }
-    sim.upload_graph(src)?;
-    Ok(src)
+        sim.instantiate_graph(src)?
+    };
+    sim.upload_graph(exec)?;
+    Ok(exec)
 }
 
 /// Patch a parked leaf GEMM so it reads/writes `expert` instead of the evicted alloc.

@@ -1370,11 +1370,11 @@ impl SimulatedGpuStore {
         } else {
             src
         };
-        if self.leaf == LeafMem::AutoFree {
-            self.sim.instantiate_graph_auto_free(exec)?;
+        let exec = if self.leaf == LeafMem::AutoFree {
+            self.sim.instantiate_graph_auto_free(exec)?
         } else {
-            self.sim.instantiate_graph(exec)?;
-        }
+            self.sim.instantiate_graph(exec)?
+        };
         self.sim.upload_graph(exec)?;
         Ok(exec)
     }

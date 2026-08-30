@@ -238,8 +238,8 @@ it. Independent streams still launch live. `cudaMallocAsync` / `cudaFreeAsync`
 `batch_mem_op` is live `cuStreamBatchMemOp`.
 `graph_add_dependencies` is `cudaGraphAddDependencies` (independent nodes
 may Hyper-Q overlap at launch; capture records same-stream edges).
-`graph_remove_dependencies` is `cudaGraphRemoveDependencies` (illegal after
-instantiate and during capture). `begin_capture_to_graph` is
+`graph_remove_dependencies` is `cudaGraphRemoveDependencies` (illegal on an
+exec and during capture). `begin_capture_to_graph` is
 `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
 uninstantiated graph; capture roots additionally depend on the given node
 indices (empty `deps` means extra roots, so they may Hyper-Q overlap).
@@ -261,6 +261,8 @@ host `launch_graph` stays legal; mem alloc/free, events, child graphs,
 conditionals, and host nodes are Invalid; `update_graph` of a
 device-launch exec is Invalid).
 `graph_exec_get_flags` is `cudaGraphExecGetFlags`.
+Instantiate returns a new exec id (`cudaGraphExec_t`); the source graph
+stays a definition. `launch_graph` of a definition uses the primary exec.
 `clone_graph` is `cudaGraphClone` (`graph_clone_ns`): an independent
 uninstantiated copy; child-graph nodes are cloned recursively (a diamond
 of shared children becomes one cloned child). Destroying the original

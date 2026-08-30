@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — separate `cudaGraphExec_t` handles
+
+`instantiate_graph` / `instantiate_graph_with_flags` return a new exec id.
+The source graph stays a definition. A second instantiate of a kernel graph
+creates another exec; mem alloc/free graphs cannot. `launch_graph` of a
+definition uses the primary exec. `graph_add_*` is legal on the definition
+after instantiate and Invalid on the exec. Destroying the definition refunds
+graph mem and leaves execs launchable. Decode identity still launches the
+definition. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — true `cudaGraphAddBatchMemOpNode` / `cuStreamBatchMemOp`
 
 A multi-item batch is one `GpuOp::BatchMem` node, not sequential wait/write

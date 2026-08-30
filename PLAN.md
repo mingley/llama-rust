@@ -1428,6 +1428,16 @@ model, do not celebrate the sim.
     for `update_graph` and `graph_exec_batch_mem_ops_set_params`. Decode
     identity stays kernel-only graphs. `gpu-profile capture` is still refused.
 
+105. [x] Separate `cudaGraph_t` / `cudaGraphExec_t` handles: `instantiate_graph`
+    returns a new exec id. The source graph stays a definition and may be
+    instantiated again (kernel/memcpy graphs; mem alloc/free graphs are
+    Invalid — execs would need independent pointers). `launch_graph` of a
+    definition uses the primary exec. `graph_add_*` stays legal on the
+    definition after instantiate and is Invalid on the exec. Destroying the
+    definition refunds graph mem and leaves execs launchable. Decode identity
+    still launches the definition (primary exec). Dual score still has no
+    `$/M tokens`. `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

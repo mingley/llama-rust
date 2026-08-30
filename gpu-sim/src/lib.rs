@@ -126,8 +126,9 @@
 //! [`stream_copy_attributes`](Sim::stream_copy_attributes) is
 //! `cudaStreamCopyAttributes` (priority and SM permille).
 //! [`Sim::set_created_streams_priority`] assigns created streams their id.
-//! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; first
-//! [`launch_graph`](Sim::launch_graph) calls it). [`Sim::instantiate_graph_auto_free`]
+//! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
+//! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
+//! creates a primary exec). [`Sim::instantiate_graph_auto_free`]
 //! is `cudaGraphInstantiateFlagAutoFreeOnLaunch`.
 //! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags) is
 //! `cudaGraphInstantiateWithFlags` ([`GraphInstantiateFlags::UPLOAD`] uploads
@@ -137,9 +138,9 @@
 //! [`device_launch_graph`](Sim::device_launch_graph) after upload — host
 //! [`launch_graph`](Sim::launch_graph) stays legal; mem alloc/free, events,
 //! child graphs, conditionals, and host nodes are Invalid). [`graph_exec_get_flags`](Sim::graph_exec_get_flags) is
-//! `cudaGraphExecGetFlags`. Instantiate snapshots the graph into an exec
-//! (same [`GraphId`]); [`launch_graph`](Sim::launch_graph) and
-//! `cudaGraphExec*SetParams` use that snapshot.
+//! `cudaGraphExecGetFlags`. Instantiate returns a new exec id (`cudaGraphExec_t`);
+//! the source graph stays a definition. [`launch_graph`](Sim::launch_graph) of a
+//! definition uses the primary exec. `cudaGraphExec*SetParams` accept either id.
 //! [`graph_kernel_set_params`](Sim::graph_kernel_set_params) /
 //! [`graph_memcpy_set_params`](Sim::graph_memcpy_set_params) /
 //! [`graph_memset_set_params`](Sim::graph_memset_set_params) /
@@ -210,14 +211,14 @@
 //! [`graph_add_cooperative_kernel`](Sim::graph_add_cooperative_kernel) /
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies) are
 //! `cudaGraphAdd*` on that id.
-//! Illegal after instantiate and during capture.
+//! Illegal on an instantiated exec and during capture.
 //! [`Sim::graph_add_alloc`] / [`graph_add_free`](Sim::graph_add_free) are
 //! `cudaGraphAddMemAllocNode` / `cudaGraphAddMemFreeNode` (same reuse /
 //! AutoFreeOnLaunch rules as captured `cudaMallocAsync`).
 //! [`Sim::graph_add_dependencies`] is `cudaGraphAddDependencies` (node indices;
 //! independent nodes may Hyper-Q overlap at launch; capture records same-stream
 //! edges). [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
-//! `cudaGraphRemoveDependencies` (illegal after instantiate and during capture).
+//! `cudaGraphRemoveDependencies` (illegal on an exec and during capture).
 //! `cudaGraphExecUpdate` treats those edges as topology.
 //! [`graph_root_nodes`](Sim::graph_root_nodes) / [`graph_edges`](Sim::graph_edges) /
 //! [`graph_node_dependents`](Sim::graph_node_dependents) are
@@ -904,7 +905,7 @@ mod tests {
         let a = reuse.alloc(d, 4096, s).unwrap();
         enq(reuse.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let g = reuse.end_capture().unwrap();
-        reuse.instantiate_graph(g).unwrap();
+        let _ = reuse.instantiate_graph(g).unwrap();
         let n = reuse.launch_graph(g, s).unwrap();
         assert_eq!(n, 2);
         reuse.synchronize().unwrap();
@@ -919,7 +920,7 @@ mod tests {
         let b = af.alloc(d, 4096, s).unwrap();
         enq(af.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
         let h = af.end_capture().unwrap();
-        af.instantiate_graph_auto_free(h).unwrap();
+        let _ = af.instantiate_graph_auto_free(h).unwrap();
         assert!(af.graph_auto_free_on_launch(h).unwrap());
         let n = af.launch_graph(h, s).unwrap();
         assert_eq!(n, 2);
@@ -960,9 +961,10 @@ mod tests {
         let b = sim.alloc(d, 4096, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
         let g = sim.end_capture().unwrap();
-        sim.instantiate_graph(g).unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        assert_ne!(exec, g);
         assert!(!sim.graph_auto_free_on_launch(g).unwrap());
-        let err = sim.instantiate_graph_auto_free(g).unwrap_err();
+        let err = sim.instantiate_graph_auto_free(exec).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("flags"), "{why}"),
             other => panic!("{other:?}"),
@@ -996,8 +998,10 @@ mod tests {
             e => panic!("{e:?}"),
         }
         let t0 = sim.clock_ns();
-        sim.instantiate_graph_with_flags(g, GraphInstantiateFlags::UPLOAD)
+        let exec = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::UPLOAD)
             .unwrap();
+        assert_ne!(exec, g);
         assert_eq!(sim.clock_ns(), t0.saturating_add(27_000));
         assert!(sim.graph_uploaded(g).unwrap());
         assert_eq!(
@@ -1009,19 +1013,31 @@ mod tests {
         assert_eq!(n, 1);
         assert_eq!(sim.clock_ns(), t1);
         sim.synchronize().unwrap();
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let err = sim
-            .instantiate_graph_with_flags(g, GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH)
+            .instantiate_graph_with_flags(exec, GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH)
             .unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("flags"), "{why}"),
             e => panic!("{e:?}"),
         }
+        let extra = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH)
+            .unwrap();
+        assert_ne!(extra, exec);
+        assert_eq!(
+            sim.graph_exec_get_flags(g).unwrap(),
+            GraphInstantiateFlags::UPLOAD
+        );
+        assert_eq!(
+            sim.graph_exec_get_flags(extra).unwrap(),
+            GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH
+        );
 
         let h = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph_auto_free(h).unwrap();
+        let _ = sim.instantiate_graph_auto_free(h).unwrap();
         assert_eq!(
             sim.graph_exec_get_flags(h).unwrap(),
             GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH
@@ -1030,7 +1046,7 @@ mod tests {
         let k = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(k, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph_with_flags(k, both).unwrap();
+        let _ = sim.instantiate_graph_with_flags(k, both).unwrap();
         assert_eq!(sim.graph_exec_get_flags(k).unwrap(), both);
         assert!(sim.graph_uploaded(k).unwrap());
         assert!(sim.graph_auto_free_on_launch(k).unwrap());
@@ -1102,7 +1118,7 @@ mod tests {
         let a = sim.alloc(d, 4096, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let g = sim.end_capture().unwrap();
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         assert_eq!(
             sim.graph_mem_get(d, GraphMemAttr::UsedMemCurrent).unwrap(),
             0
@@ -1167,7 +1183,7 @@ mod tests {
         let a = sim.alloc(d, 4096, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let exec = sim.end_capture().unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         sim.begin_capture(d, s).unwrap();
         let b = sim.alloc(d, 4096, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
@@ -1378,22 +1394,137 @@ mod tests {
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let g = sim.end_capture().unwrap();
         let t0 = sim.clock_ns();
-        sim.instantiate_graph(g).unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        assert_ne!(exec, g);
         assert_eq!(sim.clock_ns(), t0.saturating_add(40_000));
         assert!(sim.graph_instantiated(g).unwrap());
         assert!(!sim.graph_uploaded(g).unwrap());
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         assert_eq!(sim.clock_ns(), t0.saturating_add(40_000));
+        let exec2 = sim.instantiate_graph(g).unwrap();
+        assert_ne!(exec2, exec);
+        assert_eq!(sim.clock_ns(), t0.saturating_add(80_000));
         sim.upload_graph(g).unwrap();
-        assert_eq!(sim.clock_ns(), t0.saturating_add(52_000));
+        assert_eq!(sim.clock_ns(), t0.saturating_add(92_000));
         assert!(sim.graph_uploaded(g).unwrap());
         sim.upload_graph(g).unwrap();
-        assert_eq!(sim.clock_ns(), t0.saturating_add(52_000));
+        assert_eq!(sim.clock_ns(), t0.saturating_add(92_000));
         let t1 = sim.clock_ns();
         let n = sim.launch_graph(g, s).unwrap();
         assert_eq!(n, 1);
         assert_eq!(sim.clock_ns(), t1);
         sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn instantiate_returns_separate_exec_ids() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let e1 = sim.instantiate_graph(g).unwrap();
+        let e2 = sim.instantiate_graph(g).unwrap();
+        assert_ne!(e1, g);
+        assert_ne!(e2, g);
+        assert_ne!(e1, e2);
+        let params = KernelNodeParams {
+            kind: KernelKind::other(8, 8),
+            reads: vec![KernelBuf::whole(b)],
+            writes: vec![KernelBuf::whole(b)],
+            cooperative: false,
+        };
+        sim.graph_exec_kernel_set_params(e2, 0, &params).unwrap();
+        let n = sim.launch_graph(e2, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(b, d).unwrap());
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(e1, s).unwrap();
+        assert_eq!(n, 1);
+        let err = sim.synchronize().unwrap_err();
+        match err {
+            SimError::NotResident { alloc, device } => {
+                assert_eq!(alloc, a);
+                assert_eq!(device, d);
+            }
+            e => panic!("{e:?}"),
+        }
+    }
+
+    #[test]
+    fn destroy_definition_leaves_exec_launchable() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.destroy_graph(g).unwrap();
+        let err = sim.launch_graph(g, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown graph"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn graph_add_on_definition_does_not_retarget_exec() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 2);
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        let err = sim.synchronize().unwrap_err();
+        match err {
+            SimError::NotResident { alloc, .. } => assert_eq!(alloc, a),
+            e => panic!("{e:?}"),
+        }
+    }
+
+    #[test]
+    fn second_instantiate_of_mem_graph_is_invalid() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        let _a = sim.graph_add_alloc(g, 4096).unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        assert_ne!(exec, g);
+        let err = sim.instantiate_graph(g).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("mem exec"), "{why}"),
+            e => panic!("{e:?}"),
+        }
     }
 
     #[test]
@@ -1412,7 +1543,7 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
             other => panic!("{other:?}"),
         }
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         sim.upload_graph(g).unwrap();
         assert!(sim.graph_uploaded(g).unwrap());
     }
@@ -1433,7 +1564,7 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let g = sim.end_capture().unwrap();
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         let t0 = sim.clock_ns();
         let n = sim.launch_graph(g, s).unwrap();
         assert_eq!(n, 1);
@@ -1463,7 +1594,7 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let exec = sim.end_capture().unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         sim.upload_graph(exec).unwrap();
         assert!(sim.graph_uploaded(exec).unwrap());
         sim.begin_capture(d, s).unwrap();
@@ -1497,7 +1628,7 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let exec = sim.end_capture().unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         sim.upload_graph(exec).unwrap();
         assert!(sim.graph_uploaded(exec).unwrap());
         let (node, mut params) = sim.graph_unique_kernel(exec).unwrap();
@@ -1538,7 +1669,7 @@ mod tests {
             sim.begin_capture(d, s).unwrap();
             enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
             let exec = sim.end_capture().unwrap();
-            sim.instantiate_graph(exec).unwrap();
+            let _ = sim.instantiate_graph(exec).unwrap();
             sim.upload_graph(exec).unwrap();
             sim.begin_capture(d, s).unwrap();
             enq(sim.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
@@ -1557,7 +1688,7 @@ mod tests {
             sim.begin_capture(d, s).unwrap();
             enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
             let exec = sim.end_capture().unwrap();
-            sim.instantiate_graph(exec).unwrap();
+            let _ = sim.instantiate_graph(exec).unwrap();
             sim.upload_graph(exec).unwrap();
             let (node, mut params) = sim.graph_unique_kernel(exec).unwrap();
             params.reads = vec![KernelBuf::whole(b)];
@@ -1590,7 +1721,7 @@ mod tests {
         sim.graph_add_dependencies(exec, 0, 1).unwrap();
         sim.graph_add_free(exec, scratch).unwrap();
         sim.graph_add_dependencies(exec, 1, 2).unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let src = sim.create_graph(d, s).unwrap();
         let scratch2 = sim.graph_add_alloc(src, 4096).unwrap();
         sim.graph_add_kernel(src, KernelKind::other(8, 8), &[b], &[scratch2])
@@ -1641,7 +1772,7 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
             other => panic!("{other:?}"),
         }
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let err = sim
             .graph_exec_kernel_set_params(
                 exec,
@@ -1659,7 +1790,7 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
         let memcpy_g = sim.end_capture().unwrap();
-        sim.instantiate_graph(memcpy_g).unwrap();
+        let _ = sim.instantiate_graph(memcpy_g).unwrap();
         let err = sim
             .graph_exec_kernel_set_params(memcpy_g, 0, &params)
             .unwrap_err();
@@ -1697,7 +1828,7 @@ mod tests {
             },
         )
         .unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let n = sim.launch_graph(exec, s).unwrap();
         assert_eq!(n, 1);
         sim.synchronize().unwrap();
@@ -1740,7 +1871,7 @@ mod tests {
             let b = sim.malloc(d, 4096).unwrap();
             let exec = sim.create_graph(d, s).unwrap();
             sim.graph_add_memcpy(exec, op(a)).unwrap();
-            sim.instantiate_graph(exec).unwrap();
+            let _ = sim.instantiate_graph(exec).unwrap();
             sim.upload_graph(exec).unwrap();
             let src = sim.create_graph(d, s).unwrap();
             sim.graph_add_memcpy(src, op(b)).unwrap();
@@ -1754,7 +1885,7 @@ mod tests {
             let b = sim.malloc(d, 4096).unwrap();
             let exec = sim.create_graph(d, s).unwrap();
             sim.graph_add_memcpy(exec, op(a)).unwrap();
-            sim.instantiate_graph(exec).unwrap();
+            let _ = sim.instantiate_graph(exec).unwrap();
             sim.upload_graph(exec).unwrap();
             let (node, mut m) = sim.graph_unique_memcpy(exec).unwrap();
             m.alloc = b;
@@ -1793,7 +1924,7 @@ mod tests {
         sim.graph_add_dependencies(exec, 0, 1).unwrap();
         sim.graph_add_free(exec, scratch).unwrap();
         sim.graph_add_dependencies(exec, 1, 2).unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let src = sim.create_graph(d, s).unwrap();
         let scratch2 = sim.graph_add_alloc(src, 4096).unwrap();
         sim.graph_add_memcpy(
@@ -1847,11 +1978,11 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
             other => panic!("{other:?}"),
         }
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         sim.begin_capture(d, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let kern = sim.end_capture().unwrap();
-        sim.instantiate_graph(kern).unwrap();
+        let _ = sim.instantiate_graph(kern).unwrap();
         let err = sim.graph_exec_memcpy_set_params(kern, 0, &op).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("not a memcpy"), "{why}"),
@@ -1884,7 +2015,7 @@ mod tests {
         let two = sim.create_graph(d, s).unwrap();
         sim.graph_add_memcpy(two, op.clone()).unwrap();
         sim.graph_add_memcpy(two, op).unwrap();
-        sim.instantiate_graph(two).unwrap();
+        let _ = sim.instantiate_graph(two).unwrap();
         match sim.graph_try_unique_memcpy(two) {
             Err(SimError::Invalid { why }) => assert!(why.contains("not unique"), "{why}"),
             other => panic!("{other:?}"),
@@ -1900,7 +2031,7 @@ mod tests {
         let b = sim.malloc(d, 4096).unwrap();
         let exec = sim.create_graph(d, s).unwrap();
         sim.graph_add_memset(exec, KernelBuf::whole(a)).unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let n = sim.launch_graph(exec, s).unwrap();
         assert_eq!(n, 1);
         sim.synchronize().unwrap();
@@ -1936,7 +2067,7 @@ mod tests {
             let b = sim.malloc(d, 4096).unwrap();
             let exec = sim.create_graph(d, s).unwrap();
             sim.graph_add_memset(exec, KernelBuf::whole(a)).unwrap();
-            sim.instantiate_graph(exec).unwrap();
+            let _ = sim.instantiate_graph(exec).unwrap();
             sim.upload_graph(exec).unwrap();
             let src = sim.create_graph(d, s).unwrap();
             sim.graph_add_memset(src, KernelBuf::whole(b)).unwrap();
@@ -1950,7 +2081,7 @@ mod tests {
             let b = sim.malloc(d, 4096).unwrap();
             let exec = sim.create_graph(d, s).unwrap();
             sim.graph_add_memset(exec, KernelBuf::whole(a)).unwrap();
-            sim.instantiate_graph(exec).unwrap();
+            let _ = sim.instantiate_graph(exec).unwrap();
             sim.upload_graph(exec).unwrap();
             let (node, mut buf) = sim.graph_unique_memset(exec).unwrap();
             buf.id = b;
@@ -1979,7 +2110,7 @@ mod tests {
         sim.graph_add_dependencies(exec, 0, 1).unwrap();
         sim.graph_add_free(exec, scratch).unwrap();
         sim.graph_add_dependencies(exec, 1, 2).unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let src = sim.create_graph(d, s).unwrap();
         let scratch2 = sim.graph_add_alloc(src, 4096).unwrap();
         sim.graph_add_memset(src, KernelBuf::whole(b)).unwrap();
@@ -2016,11 +2147,11 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
             other => panic!("{other:?}"),
         }
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         sim.begin_capture(d, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let kern = sim.end_capture().unwrap();
-        sim.instantiate_graph(kern).unwrap();
+        let _ = sim.instantiate_graph(kern).unwrap();
         let err = sim.graph_exec_memset_set_params(kern, 0, buf).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("not a memset"), "{why}"),
@@ -2044,7 +2175,7 @@ mod tests {
         let two = sim.create_graph(d, s).unwrap();
         sim.graph_add_memset(two, buf).unwrap();
         sim.graph_add_memset(two, buf).unwrap();
-        sim.instantiate_graph(two).unwrap();
+        let _ = sim.instantiate_graph(two).unwrap();
         match sim.graph_try_unique_memset(two) {
             Err(SimError::Invalid { why }) => assert!(why.contains("not unique"), "{why}"),
             other => panic!("{other:?}"),
@@ -2062,7 +2193,7 @@ mod tests {
             .unwrap();
         sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         assert!(sim.graph_node_get_enabled(exec, 1).unwrap());
         sim.graph_node_set_enabled(exec, 1, false).unwrap();
         assert!(!sim.graph_node_get_enabled(exec, 1).unwrap());
@@ -2095,7 +2226,7 @@ mod tests {
                 .unwrap();
             sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
                 .unwrap();
-            sim.instantiate_graph(exec).unwrap();
+            let _ = sim.instantiate_graph(exec).unwrap();
             sim.upload_graph(exec).unwrap();
             let src = sim.create_graph(d, s).unwrap();
             sim.graph_add_kernel(src, KernelKind::other(8, 8), &[a], &[a])
@@ -2114,7 +2245,7 @@ mod tests {
                 .unwrap();
             sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
                 .unwrap();
-            sim.instantiate_graph(exec).unwrap();
+            let _ = sim.instantiate_graph(exec).unwrap();
             sim.upload_graph(exec).unwrap();
             let t0 = sim.clock_ns();
             sim.graph_node_set_enabled(exec, 1, false).unwrap();
@@ -2141,7 +2272,7 @@ mod tests {
         sim.graph_add_dependencies(exec, 0, 1).unwrap();
         sim.graph_add_free(exec, scratch).unwrap();
         sim.graph_add_dependencies(exec, 1, 2).unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         sim.graph_node_set_enabled(exec, 1, false).unwrap();
         let n = sim.launch_graph(exec, s).unwrap();
         assert_eq!(n, 2);
@@ -2150,15 +2281,15 @@ mod tests {
         let leaf0 = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(leaf0, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(leaf0).unwrap();
+        let _ = sim.instantiate_graph(leaf0).unwrap();
         let leaf1 = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(leaf1, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(leaf1).unwrap();
+        let _ = sim.instantiate_graph(leaf1).unwrap();
         let parent = sim.create_graph(d, s).unwrap();
         sim.graph_add_child(parent, leaf0).unwrap();
         sim.graph_add_child(parent, leaf1).unwrap();
-        sim.instantiate_graph(parent).unwrap();
+        let _ = sim.instantiate_graph(parent).unwrap();
         sim.graph_node_set_enabled(parent, 1, false).unwrap();
         let n = sim.launch_graph(parent, s).unwrap();
         assert_eq!(n, 1);
@@ -2184,12 +2315,12 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
             other => panic!("{other:?}"),
         }
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let mem = sim.create_graph(d, s).unwrap();
         let scratch = sim.graph_add_alloc(mem, 4096).unwrap();
         sim.graph_add_free(mem, scratch).unwrap();
         sim.graph_add_dependencies(mem, 0, 1).unwrap();
-        sim.instantiate_graph(mem).unwrap();
+        let _ = sim.instantiate_graph(mem).unwrap();
         let err = sim.graph_node_set_enabled(mem, 0, false).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("mem"), "{why}"),
@@ -2218,19 +2349,19 @@ mod tests {
         let leaf_a = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(leaf_a, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(leaf_a).unwrap();
+        let leaf_a_exec = sim.instantiate_graph(leaf_a).unwrap();
         let leaf_b = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(leaf_b, KernelKind::other(8, 8), &[b], &[b])
             .unwrap();
-        sim.instantiate_graph(leaf_b).unwrap();
+        let leaf_b_exec = sim.instantiate_graph(leaf_b).unwrap();
         let exec = sim.create_graph(d, s).unwrap();
         sim.graph_add_child(exec, leaf_a).unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         sim.upload_graph(exec).unwrap();
         assert!(sim.graph_uploaded(exec).unwrap());
         let (node, nested) = sim.graph_unique_child(exec).unwrap();
         assert_eq!(node, 0);
-        assert_eq!(nested, leaf_a);
+        assert_eq!(nested, leaf_a_exec);
         let src = sim.create_graph(d, s).unwrap();
         sim.graph_add_child(src, leaf_b).unwrap();
         let err = sim.update_graph(exec, src).unwrap_err();
@@ -2243,7 +2374,7 @@ mod tests {
         assert_eq!(sim.clock_ns(), t0.saturating_add(400));
         assert!(!sim.graph_uploaded(exec).unwrap());
         let (_, nested) = sim.graph_unique_child(exec).unwrap();
-        assert_eq!(nested, leaf_b);
+        assert_eq!(nested, leaf_b_exec);
         sim.free_sync(a).unwrap();
         let n = sim.launch_graph(exec, s).unwrap();
         assert_eq!(n, 1);
@@ -2270,20 +2401,20 @@ mod tests {
             let leaf_a = sim.create_graph(d, s).unwrap();
             sim.graph_add_kernel(leaf_a, KernelKind::other(8, 8), &[a], &[a])
                 .unwrap();
-            sim.instantiate_graph(leaf_a).unwrap();
+            let _ = sim.instantiate_graph(leaf_a).unwrap();
             let leaf_b = sim.create_graph(d, s).unwrap();
             sim.graph_add_kernel(leaf_b, KernelKind::other(8, 8), &[b], &[b])
                 .unwrap();
-            sim.instantiate_graph(leaf_b).unwrap();
+            let _ = sim.instantiate_graph(leaf_b).unwrap();
             let exec = sim.create_graph(d, s).unwrap();
             sim.graph_add_child(exec, leaf_a).unwrap();
-            sim.instantiate_graph(exec).unwrap();
+            let _ = sim.instantiate_graph(exec).unwrap();
             sim.upload_graph(exec).unwrap();
             let t0 = sim.clock_ns();
             sim.destroy_graph(exec).unwrap();
             let next = sim.create_graph(d, s).unwrap();
             sim.graph_add_child(next, leaf_b).unwrap();
-            sim.instantiate_graph(next).unwrap();
+            let _ = sim.instantiate_graph(next).unwrap();
             sim.clock_ns().saturating_sub(t0)
         };
         let run_set = {
@@ -2293,14 +2424,14 @@ mod tests {
             let leaf_a = sim.create_graph(d, s).unwrap();
             sim.graph_add_kernel(leaf_a, KernelKind::other(8, 8), &[a], &[a])
                 .unwrap();
-            sim.instantiate_graph(leaf_a).unwrap();
+            let _ = sim.instantiate_graph(leaf_a).unwrap();
             let leaf_b = sim.create_graph(d, s).unwrap();
             sim.graph_add_kernel(leaf_b, KernelKind::other(8, 8), &[b], &[b])
                 .unwrap();
-            sim.instantiate_graph(leaf_b).unwrap();
+            let _ = sim.instantiate_graph(leaf_b).unwrap();
             let exec = sim.create_graph(d, s).unwrap();
             sim.graph_add_child(exec, leaf_a).unwrap();
-            sim.instantiate_graph(exec).unwrap();
+            let _ = sim.instantiate_graph(exec).unwrap();
             sim.upload_graph(exec).unwrap();
             let t0 = sim.clock_ns();
             sim.graph_exec_child_set_params(exec, 0, leaf_b).unwrap();
@@ -2323,18 +2454,18 @@ mod tests {
         let leaf_a = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(leaf_a, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(leaf_a).unwrap();
+        let _ = sim.instantiate_graph(leaf_a).unwrap();
         let leaf_b = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(leaf_b, KernelKind::other(8, 8), &[b], &[b])
             .unwrap();
-        sim.instantiate_graph(leaf_b).unwrap();
+        let _ = sim.instantiate_graph(leaf_b).unwrap();
         let exec = sim.create_graph(d, s).unwrap();
         let scratch = sim.graph_add_alloc(exec, 4096).unwrap();
         sim.graph_add_child(exec, leaf_a).unwrap();
         sim.graph_add_dependencies(exec, 0, 1).unwrap();
         sim.graph_add_free(exec, scratch).unwrap();
         sim.graph_add_dependencies(exec, 1, 2).unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let src = sim.create_graph(d, s).unwrap();
         let scratch2 = sim.graph_add_alloc(src, 4096).unwrap();
         sim.graph_add_child(src, leaf_a).unwrap();
@@ -2365,11 +2496,11 @@ mod tests {
         let leaf_a = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(leaf_a, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(leaf_a).unwrap();
+        let _ = sim.instantiate_graph(leaf_a).unwrap();
         let leaf_b = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(leaf_b, KernelKind::other(8, 8), &[b], &[b])
             .unwrap();
-        sim.instantiate_graph(leaf_b).unwrap();
+        let _ = sim.instantiate_graph(leaf_b).unwrap();
         let memcpy = sim.create_graph(d, s).unwrap();
         sim.graph_add_memcpy(
             memcpy,
@@ -2382,7 +2513,7 @@ mod tests {
             },
         )
         .unwrap();
-        sim.instantiate_graph(memcpy).unwrap();
+        let _ = sim.instantiate_graph(memcpy).unwrap();
         let exec = sim.create_graph(d, s).unwrap();
         sim.graph_add_child(exec, leaf_a).unwrap();
         let err = sim
@@ -2392,7 +2523,7 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
             other => panic!("{other:?}"),
         }
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let raw = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(raw, KernelKind::other(8, 8), &[b], &[b])
             .unwrap();
@@ -2404,7 +2535,7 @@ mod tests {
         let kern = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(kern, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(kern).unwrap();
+        let _ = sim.instantiate_graph(kern).unwrap();
         let err = sim
             .graph_exec_child_set_params(kern, 0, leaf_b)
             .unwrap_err();
@@ -2426,13 +2557,13 @@ mod tests {
         }
         let mid = sim.create_graph(d, s).unwrap();
         sim.graph_add_child(mid, leaf_a).unwrap();
-        sim.instantiate_graph(mid).unwrap();
+        let _ = sim.instantiate_graph(mid).unwrap();
         let outer = sim.create_graph(d, s).unwrap();
         sim.graph_add_child(outer, mid).unwrap();
-        sim.instantiate_graph(outer).unwrap();
+        let _ = sim.instantiate_graph(outer).unwrap();
         let wrap = sim.create_graph(d, s).unwrap();
         sim.graph_add_child(wrap, outer).unwrap();
-        sim.instantiate_graph(wrap).unwrap();
+        let _ = sim.instantiate_graph(wrap).unwrap();
         let err = sim.graph_exec_child_set_params(outer, 0, wrap).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("cyclic"), "{why}"),
@@ -2473,14 +2604,14 @@ mod tests {
         let leaf0 = sim.create_graph(d0, s).unwrap();
         sim.graph_add_kernel(leaf0, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(leaf0).unwrap();
+        let _ = sim.instantiate_graph(leaf0).unwrap();
         let leaf1 = sim.create_graph(d1, s).unwrap();
         sim.graph_add_kernel(leaf1, KernelKind::other(8, 8), &[b], &[b])
             .unwrap();
-        sim.instantiate_graph(leaf1).unwrap();
+        let _ = sim.instantiate_graph(leaf1).unwrap();
         let exec = sim.create_graph(d0, s).unwrap();
         sim.graph_add_child(exec, leaf0).unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let err = sim.graph_exec_child_set_params(exec, 0, leaf1).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("gpu"), "{why}"),
@@ -2503,7 +2634,7 @@ mod tests {
         sim.create_event(e2).unwrap();
         let exec = sim.create_graph(d, s).unwrap();
         sim.graph_add_event_record(exec, e1, false).unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         sim.upload_graph(exec).unwrap();
         let (node, ev) = sim.graph_unique_event_record(exec).unwrap();
         assert_eq!(node, 0);
@@ -2537,7 +2668,7 @@ mod tests {
         sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
         sim.graph_add_dependencies(exec, 0, 1).unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let (node, ev) = sim.graph_unique_event_wait(exec).unwrap();
         assert_eq!(ev, e1);
         sim.graph_exec_event_wait_set_event(exec, node, e2).unwrap();
@@ -2565,7 +2696,7 @@ mod tests {
             sim.create_event(EventId(2)).unwrap();
             let exec = sim.create_graph(d, s).unwrap();
             sim.graph_add_event_record(exec, EventId(1), false).unwrap();
-            sim.instantiate_graph(exec).unwrap();
+            let _ = sim.instantiate_graph(exec).unwrap();
             sim.upload_graph(exec).unwrap();
             let src = sim.create_graph(d, s).unwrap();
             sim.graph_add_event_record(src, EventId(2), false).unwrap();
@@ -2579,7 +2710,7 @@ mod tests {
             sim.create_event(EventId(2)).unwrap();
             let exec = sim.create_graph(d, s).unwrap();
             sim.graph_add_event_record(exec, EventId(1), false).unwrap();
-            sim.instantiate_graph(exec).unwrap();
+            let _ = sim.instantiate_graph(exec).unwrap();
             sim.upload_graph(exec).unwrap();
             let t0 = sim.clock_ns();
             sim.graph_exec_event_record_set_event(exec, 0, EventId(2))
@@ -2607,7 +2738,7 @@ mod tests {
         sim.graph_add_dependencies(exec, 0, 1).unwrap();
         sim.graph_add_free(exec, scratch).unwrap();
         sim.graph_add_dependencies(exec, 1, 2).unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let src = sim.create_graph(d, s).unwrap();
         let scratch2 = sim.graph_add_alloc(src, 4096).unwrap();
         sim.graph_add_event_record(src, EventId(1), false).unwrap();
@@ -2645,11 +2776,11 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
             other => panic!("{other:?}"),
         }
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let kern = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(kern, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(kern).unwrap();
+        let _ = sim.instantiate_graph(kern).unwrap();
         let err = sim
             .graph_exec_event_record_set_event(kern, 0, EventId(2))
             .unwrap_err();
@@ -2699,7 +2830,7 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
             other => panic!("{other:?}"),
         }
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let err = sim.update_graph(exec, memcpy_src).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("topology"), "{why}"),
@@ -2723,7 +2854,7 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let exec = sim.end_capture().unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         sim.begin_capture(d, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let src = sim.end_capture().unwrap();
@@ -2768,7 +2899,7 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let src = sim.end_capture().unwrap();
-        sim.instantiate_graph(src).unwrap();
+        let _ = sim.instantiate_graph(src).unwrap();
         let t0 = sim.clock_ns();
         let clone = sim.clone_graph(src).unwrap();
         assert_eq!(sim.clock_ns(), t0.saturating_add(9_000));
@@ -3080,7 +3211,7 @@ mod tests {
             } else {
                 0
             };
-            sim.instantiate_graph_with_flags(g, flags).unwrap();
+            let _ = sim.instantiate_graph_with_flags(g, flags).unwrap();
             enq(sim.kernel(d, kind.clone(), &[b], &[b], StreamId(1)));
             let n = sim.launch_graph(g, StreamId(0)).unwrap();
             assert_eq!(n, 1);
@@ -3128,8 +3259,10 @@ mod tests {
         assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 9);
         sim.graph_kernel_node_set_priority(g, 0, 1).unwrap();
         assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 1);
-        sim.instantiate_graph(g).unwrap();
-        let err = sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a]);
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let err = sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a]);
         match err {
             Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
             other => panic!("{other:?}"),
@@ -3156,7 +3289,7 @@ mod tests {
         let g = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         let params = KernelNodeParams {
             kind: KernelKind::other(8, 8),
             reads: vec![KernelBuf::whole(b)],
@@ -3198,7 +3331,7 @@ mod tests {
             offset: 0,
         };
         sim.graph_add_memcpy(g, op_a.clone()).unwrap();
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         let mut op_b = op_a;
         op_b.alloc = b;
         sim.graph_memcpy_set_params(g, 0, &op_b).unwrap();
@@ -3221,7 +3354,7 @@ mod tests {
         let b = sim.malloc(d, 4096).unwrap();
         let g = sim.create_graph(d, s).unwrap();
         sim.graph_add_memset(g, KernelBuf::whole(a)).unwrap();
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         sim.graph_memset_set_params(g, 0, KernelBuf::whole(b))
             .unwrap();
         let (_, now) = sim.graph_unique_memset(g).unwrap();
@@ -3259,7 +3392,7 @@ mod tests {
             cooperative: false,
         };
         sim.graph_kernel_set_params(g, 0, &params).unwrap();
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         sim.free_sync(a).unwrap();
         let n = sim.launch_graph(g, s).unwrap();
         assert_eq!(n, 1);
@@ -3283,7 +3416,8 @@ mod tests {
         sim.begin_capture(d, StreamId(2)).unwrap();
         enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(2)));
         let g = sim.end_capture().unwrap();
-        sim.instantiate_graph_with_flags(g, GraphInstantiateFlags::USE_NODE_PRIORITY)
+        let _ = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::USE_NODE_PRIORITY)
             .unwrap();
         assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 5);
         assert_eq!(sim.graph_exec_kernel_node_get_priority(g, 0).unwrap(), 5);
@@ -3322,7 +3456,8 @@ mod tests {
         sim.begin_capture(d, StreamId(2)).unwrap();
         enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(2)));
         let g = sim.end_capture().unwrap();
-        sim.instantiate_graph_with_flags(g, GraphInstantiateFlags::USE_NODE_PRIORITY)
+        let _ = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::USE_NODE_PRIORITY)
             .unwrap();
         sim.graph_exec_kernel_node_set_priority(g, 0, 0).unwrap();
         assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 5);
@@ -3544,7 +3679,7 @@ mod tests {
         built
             .graph_add_cooperative_kernel(h, kind, &[b], &[])
             .unwrap();
-        built.instantiate_graph(h).unwrap();
+        let _ = built.instantiate_graph(h).unwrap();
         let n = built.launch_graph(h, s).unwrap();
         assert_eq!(n, 1);
         built.synchronize().unwrap();
@@ -6428,7 +6563,7 @@ mod tests {
         ));
         let g = sim.end_capture().unwrap();
         assert_eq!(sim.graph_len(g).unwrap(), 4);
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         let n = sim.launch_graph(g, copy).unwrap();
         assert_eq!(n, 4);
         sim.synchronize().unwrap();
@@ -6603,7 +6738,7 @@ mod tests {
             enq(sim.kernel(d, k.clone(), &[resident], &[resident], copy));
             enq(sim.memcpy_pinned_to_device(d, extra2, bytes, copy));
             let g = sim.end_capture().unwrap();
-            sim.instantiate_graph(g).unwrap();
+            let _ = sim.instantiate_graph(g).unwrap();
             let t0 = sim.clock_ns();
             let n = sim.launch_graph(g, copy).unwrap();
             assert_eq!(n, 3);
@@ -6625,7 +6760,7 @@ mod tests {
             enq(sim.kernel(d, k, &[resident], &[resident], compute));
             enq(sim.memcpy_pinned_to_device(d, extra2, bytes, copy));
             let g = sim.end_capture().unwrap();
-            sim.instantiate_graph(g).unwrap();
+            let _ = sim.instantiate_graph(g).unwrap();
             let t0 = sim.clock_ns();
             let n = sim.launch_graph(g, copy).unwrap();
             assert_eq!(n, 5);
@@ -6653,7 +6788,7 @@ mod tests {
         enq(sim.wait_event(d, EventId(1), s1));
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s1));
         let exec = sim.end_capture().unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         sim.begin_capture(d, s0).unwrap();
         enq(sim.record_event(d, EventId(1), s0));
         enq(sim.wait_event(d, EventId(1), s0));
@@ -6677,13 +6812,13 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let child = sim.end_capture().unwrap();
-        sim.instantiate_graph(child).unwrap();
+        let _ = sim.instantiate_graph(child).unwrap();
         sim.begin_capture(d, s).unwrap();
         let recorded = sim.launch_graph(child, s).unwrap();
         assert_eq!(recorded, 1);
         let parent = sim.end_capture().unwrap();
         assert_eq!(sim.graph_len(parent).unwrap(), 1);
-        sim.instantiate_graph(parent).unwrap();
+        let _ = sim.instantiate_graph(parent).unwrap();
         let t0 = sim.clock_ns();
         let n = sim.launch_graph(parent, s).unwrap();
         assert_eq!(n, 1);
@@ -6723,7 +6858,7 @@ mod tests {
         sim.begin_capture(d, cap).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], cap));
         let child = sim.end_capture().unwrap();
-        sim.instantiate_graph(child).unwrap();
+        let _ = sim.instantiate_graph(child).unwrap();
         sim.begin_capture(d, cap).unwrap();
         let t0 = sim.clock_ns();
         let n = sim.launch_graph(child, live).unwrap();
@@ -6745,7 +6880,7 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let child = sim.end_capture().unwrap();
-        sim.instantiate_graph(child).unwrap();
+        let _ = sim.instantiate_graph(child).unwrap();
         sim.begin_capture(d, s).unwrap();
         let _n = sim.launch_graph(child, s).unwrap();
         let parent = sim.end_capture().unwrap();
@@ -6772,7 +6907,7 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let child = sim.end_capture().unwrap();
-        sim.instantiate_graph(child).unwrap();
+        let _ = sim.instantiate_graph(child).unwrap();
         sim.begin_capture(d, s).unwrap();
         let _once = sim.launch_graph(child, s).unwrap();
         let _twice = sim.launch_graph(child, s).unwrap();
@@ -6806,15 +6941,15 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let child_a = sim.end_capture().unwrap();
-        sim.instantiate_graph(child_a).unwrap();
+        let _ = sim.instantiate_graph(child_a).unwrap();
         sim.begin_capture(d, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
         let child_b = sim.end_capture().unwrap();
-        sim.instantiate_graph(child_b).unwrap();
+        let _ = sim.instantiate_graph(child_b).unwrap();
         sim.begin_capture(d, s).unwrap();
         let _n = sim.launch_graph(child_a, s).unwrap();
         let exec = sim.end_capture().unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         sim.begin_capture(d, s).unwrap();
         let _n = sim.launch_graph(child_b, s).unwrap();
         let src = sim.end_capture().unwrap();
@@ -6836,12 +6971,12 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let captured = sim.end_capture().unwrap();
-        sim.instantiate_graph(captured).unwrap();
+        let _ = sim.instantiate_graph(captured).unwrap();
         sim.upload_graph(captured).unwrap();
         let built = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(built, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(built).unwrap();
+        let _ = sim.instantiate_graph(built).unwrap();
         sim.upload_graph(built).unwrap();
         assert_eq!(
             sim.graph_len(captured).unwrap(),
@@ -6869,9 +7004,12 @@ mod tests {
         enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
         sim.synchronize().unwrap();
         let g = sim.create_graph(d, s).unwrap();
-        sim.instantiate_graph(g).unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        assert_ne!(exec, g);
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
         let err = sim
-            .graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
             .unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
@@ -6989,7 +7127,7 @@ mod tests {
         let exec = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let src = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(src, KernelKind::other(8, 8), &[b], &[b])
             .unwrap();
@@ -7010,7 +7148,7 @@ mod tests {
         let leaf = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(leaf, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(leaf).unwrap();
+        let _ = sim.instantiate_graph(leaf).unwrap();
         let parent = sim.create_graph(d, s).unwrap();
         sim.graph_add_child(parent, leaf).unwrap();
         let err = sim.graph_add_child(parent, parent).unwrap_err();
@@ -7024,7 +7162,7 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
             other => panic!("{other:?}"),
         }
-        sim.instantiate_graph(parent).unwrap();
+        let _ = sim.instantiate_graph(parent).unwrap();
         let n = sim.launch_graph(parent, s).unwrap();
         assert_eq!(n, 1);
         sim.synchronize().unwrap();
@@ -7043,7 +7181,7 @@ mod tests {
         let g = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         let n = sim.launch_graph(g, s).unwrap();
         assert_eq!(n, 1);
         sim.synchronize().unwrap();
@@ -7060,7 +7198,7 @@ mod tests {
         enq(cap.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         cap.free(d, a, s).unwrap();
         let captured = cap.end_capture().unwrap();
-        cap.instantiate_graph(captured).unwrap();
+        let _ = cap.instantiate_graph(captured).unwrap();
         cap.upload_graph(captured).unwrap();
         let built = bld.create_graph(d, s).unwrap();
         let b = bld.graph_add_alloc(built, 4096).unwrap();
@@ -7069,7 +7207,7 @@ mod tests {
         bld.graph_add_dependencies(built, 0, 1).unwrap();
         bld.graph_add_free(built, b).unwrap();
         bld.graph_add_dependencies(built, 1, 2).unwrap();
-        bld.instantiate_graph(built).unwrap();
+        let _ = bld.instantiate_graph(built).unwrap();
         bld.upload_graph(built).unwrap();
         assert_eq!(cap.graph_len(captured).unwrap(), 3);
         assert_eq!(bld.graph_len(built).unwrap(), 3);
@@ -7116,7 +7254,7 @@ mod tests {
         let a = sim.graph_add_alloc(exec, 4096).unwrap();
         sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let src = sim.create_graph(d, s).unwrap();
         let b = sim.graph_add_alloc(src, 4096).unwrap();
         sim.graph_add_kernel(src, KernelKind::other(8, 8), &[b], &[b])
@@ -7139,8 +7277,8 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("zero-byte"), "{why}"),
             other => panic!("{other:?}"),
         }
-        sim.instantiate_graph(g).unwrap();
-        let err = sim.graph_add_alloc(g, 4096).unwrap_err();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let err = sim.graph_add_alloc(exec, 4096).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
             other => panic!("{other:?}"),
@@ -7158,11 +7296,12 @@ mod tests {
             .unwrap();
         sim.graph_add_dependencies(g, 0, 1).unwrap();
         assert_eq!(sim.graph_node_deps(g, 1).unwrap(), vec![0]);
+        let exec = sim.instantiate_graph(g).unwrap();
         let n = sim.launch_graph(g, s).unwrap();
         assert_eq!(n, 2);
         sim.synchronize().unwrap();
         assert!(sim.is_resident(a, d).unwrap());
-        let err = sim.graph_add_dependencies(g, 0, 1).unwrap_err();
+        let err = sim.graph_add_dependencies(exec, 0, 1).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
             other => panic!("{other:?}"),
@@ -7216,7 +7355,7 @@ mod tests {
                 sim.graph_remove_dependencies(g, 0, 1).unwrap();
                 assert!(sim.graph_node_deps(g, 1).unwrap().is_empty());
             }
-            sim.instantiate_graph(g).unwrap();
+            let _ = sim.instantiate_graph(g).unwrap();
             sim.upload_graph(g).unwrap();
             let t0 = sim.clock_ns();
             let n = sim.launch_graph(g, s).unwrap();
@@ -7251,8 +7390,8 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("graph dependency"), "{why}"),
             other => panic!("{other:?}"),
         }
-        sim.instantiate_graph(g).unwrap();
-        let err = sim.graph_remove_dependencies(g, 0, 1).unwrap_err();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let err = sim.graph_remove_dependencies(exec, 0, 1).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
             other => panic!("{other:?}"),
@@ -7292,7 +7431,7 @@ mod tests {
                 assert_eq!(sim.graph_root_nodes(g).unwrap(), vec![0, 1]);
                 assert!(sim.graph_edges(g).unwrap().is_empty());
             }
-            sim.instantiate_graph(g).unwrap();
+            let _ = sim.instantiate_graph(g).unwrap();
             sim.upload_graph(g).unwrap();
             let t0 = sim.clock_ns();
             let n = sim.launch_graph(g, s).unwrap();
@@ -7335,7 +7474,7 @@ mod tests {
                 enq(sim.kernel(d, kind.clone(), &[b], &[b], s));
                 sim.end_capture().unwrap()
             };
-            sim.instantiate_graph(g).unwrap();
+            let _ = sim.instantiate_graph(g).unwrap();
             sim.upload_graph(g).unwrap();
             let t0 = sim.clock_ns();
             let n = sim.launch_graph(g, s).unwrap();
@@ -7365,8 +7504,8 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("graph dependency"), "{why}"),
             other => panic!("{other:?}"),
         }
-        sim.instantiate_graph(g).unwrap();
-        let err = sim.begin_capture_to_graph(d, s, g, &[0]).unwrap_err();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let err = sim.begin_capture_to_graph(d, s, exec, &[0]).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
             other => panic!("{other:?}"),
@@ -7434,7 +7573,7 @@ mod tests {
             } else {
                 sim.graph_add_kernel(g, kind.clone(), &[a], &[a]).unwrap();
             }
-            sim.instantiate_graph(g).unwrap();
+            let _ = sim.instantiate_graph(g).unwrap();
             sim.upload_graph(g).unwrap();
             let t0 = sim.clock_ns();
             let n = sim.launch_graph(g, s).unwrap();
@@ -7472,7 +7611,7 @@ mod tests {
         assert_eq!(sim.end_capture().unwrap(), g);
         assert_eq!(sim.graph_root_nodes(g).unwrap(), vec![0, 1]);
         assert_eq!(sim.graph_node_deps(g, 3).unwrap(), vec![2]);
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         sim.graph_node_set_enabled(g, 2, false).unwrap();
         assert!(!sim.graph_node_get_enabled(g, 2).unwrap());
     }
@@ -7484,8 +7623,8 @@ mod tests {
         let s = StreamId(0);
         let g = sim.create_graph(d, s).unwrap();
         sim.graph_add_empty(g).unwrap();
-        sim.instantiate_graph(g).unwrap();
-        let err = sim.graph_add_empty(g).unwrap_err();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let err = sim.graph_add_empty(exec).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
             other => panic!("{other:?}"),
@@ -7529,7 +7668,7 @@ mod tests {
             } else {
                 assert_eq!(sim.graph_node_deps(g, 2).unwrap(), vec![1]);
             }
-            sim.instantiate_graph(g).unwrap();
+            let _ = sim.instantiate_graph(g).unwrap();
             sim.upload_graph(g).unwrap();
             let t0 = sim.clock_ns();
             let n = sim.launch_graph(g, s).unwrap();
@@ -7672,7 +7811,7 @@ mod tests {
             sim.graph_add_kernel(body, long.clone(), &[a], &[a])
                 .unwrap();
             assert_eq!(sim.graph_node_kind(g, 0).unwrap(), GraphNodeKind::If);
-            sim.instantiate_graph(g).unwrap();
+            let _ = sim.instantiate_graph(g).unwrap();
             assert!(sim.graph_instantiated(body).unwrap());
             sim.upload_graph(g).unwrap();
             let t0 = sim.clock_ns();
@@ -7712,7 +7851,7 @@ mod tests {
             sim.graph_add_kernel(body, long.clone(), &[a], &[a])
                 .unwrap();
             sim.graph_add_dependencies(g, 0, 1).unwrap();
-            sim.instantiate_graph(g).unwrap();
+            let _ = sim.instantiate_graph(g).unwrap();
             sim.upload_graph(g).unwrap();
             let t0 = sim.clock_ns();
             let n = sim.launch_graph(g, s).unwrap();
@@ -7743,13 +7882,13 @@ mod tests {
         }
         let body = sim.graph_add_if(g, h).unwrap();
         assert_eq!(sim.graph_if_nodes(g).unwrap().len(), 1);
-        sim.instantiate_graph(g).unwrap();
-        let err = sim.graph_add_if(g, h).unwrap_err();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let err = sim.graph_add_if(exec, h).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
             e => panic!("{e:?}"),
         }
-        let err = sim.graph_conditional_create(g, 1).unwrap_err();
+        let err = sim.graph_conditional_create(exec, 1).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
             e => panic!("{e:?}"),
@@ -7782,7 +7921,7 @@ mod tests {
             enq(sim.set_conditional(d, h, 0, s));
             assert_eq!(sim.end_capture().unwrap(), body);
             assert_eq!(sim.graph_node_kind(g, 0).unwrap(), GraphNodeKind::While);
-            sim.instantiate_graph(g).unwrap();
+            let _ = sim.instantiate_graph(g).unwrap();
             sim.upload_graph(g).unwrap();
             let t0 = sim.clock_ns();
             let _n = sim.launch_graph(g, s).unwrap();
@@ -7810,7 +7949,7 @@ mod tests {
         let body = sim.graph_add_while(g, h).unwrap();
         sim.graph_add_kernel(body, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         let _n = sim.launch_graph(g, s).unwrap();
         let err = sim.synchronize().unwrap_err();
         match err {
@@ -7840,7 +7979,7 @@ mod tests {
             sim.graph_add_kernel(bodies[1], tiny.clone(), &[b], &[b])
                 .unwrap();
             assert_eq!(sim.graph_node_kind(g, 0).unwrap(), GraphNodeKind::Switch);
-            sim.instantiate_graph(g).unwrap();
+            let _ = sim.instantiate_graph(g).unwrap();
             sim.upload_graph(g).unwrap();
             let t0 = sim.clock_ns();
             let n = sim.launch_graph(g, s).unwrap();
@@ -7895,8 +8034,8 @@ mod tests {
         }
         let body = sim.graph_add_while(g, h).unwrap();
         assert_eq!(sim.graph_while_nodes(g).unwrap().len(), 1);
-        sim.instantiate_graph(g).unwrap();
-        let err = sim.graph_add_while(g, h).unwrap_err();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let err = sim.graph_add_while(exec, h).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
             e => panic!("{e:?}"),
@@ -7941,7 +8080,7 @@ mod tests {
         assert_ne!(cw[0].2, orig_w[0].2);
         assert_ne!(cs[0].1, orig_s[0].1);
         assert_ne!(cs[0].2, orig_s[0].2);
-        sim.instantiate_graph(cloned).unwrap();
+        let _ = sim.instantiate_graph(cloned).unwrap();
         let n = sim.launch_graph(cloned, s).unwrap();
         sim.synchronize().unwrap();
         assert!(
@@ -7990,7 +8129,7 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("not a clone"), "{why}"),
             e => panic!("{e:?}"),
         }
-        sim.instantiate_graph(clone).unwrap();
+        let _ = sim.instantiate_graph(clone).unwrap();
         let node = sim.graph_node_find_in_clone(orig, 0, clone).unwrap();
         let (_, mut params) = sim.graph_unique_kernel(clone).unwrap();
         params.reads = vec![KernelBuf::whole(b)];
@@ -8001,7 +8140,7 @@ mod tests {
         let n = sim.launch_graph(clone, s).unwrap();
         assert_eq!(n, 1);
         sim.synchronize().unwrap();
-        sim.instantiate_graph(orig).unwrap();
+        let _ = sim.instantiate_graph(orig).unwrap();
         let _n = sim.launch_graph(orig, s).unwrap();
         let err = sim.synchronize().unwrap_err();
         match err {
@@ -8024,7 +8163,7 @@ mod tests {
         sim.begin_capture(d, s).unwrap();
         enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
         let child = sim.end_capture().unwrap();
-        sim.instantiate_graph(child).unwrap();
+        let _ = sim.instantiate_graph(child).unwrap();
         let parent = sim.create_graph(d, s).unwrap();
         sim.graph_add_child(parent, child).unwrap();
         let cloned_parent = sim.clone_graph(parent).unwrap();
@@ -8079,7 +8218,7 @@ mod tests {
             if chain {
                 sim.graph_add_dependencies(g, 0, 1).unwrap();
             }
-            sim.instantiate_graph(g).unwrap();
+            let _ = sim.instantiate_graph(g).unwrap();
             sim.upload_graph(g).unwrap();
             let t0 = sim.clock_ns();
             let n = sim.launch_graph(g, s).unwrap();
@@ -8120,35 +8259,35 @@ mod tests {
             cap.begin_capture(d, s).unwrap();
             enq(cap.kernel(d, kind.clone(), &[ca], &[ca], s));
             let g = cap.end_capture().unwrap();
-            cap.instantiate_graph(g).unwrap();
+            let _ = cap.instantiate_graph(g).unwrap();
             g
         };
         let leaf1 = {
             cap.begin_capture(d, s).unwrap();
             enq(cap.kernel(d, kind.clone(), &[cb], &[cb], s));
             let g = cap.end_capture().unwrap();
-            cap.instantiate_graph(g).unwrap();
+            let _ = cap.instantiate_graph(g).unwrap();
             g
         };
         cap.begin_capture(d, s).unwrap();
         let _n0 = cap.launch_graph(leaf0, s).unwrap();
         let _n1 = cap.launch_graph(leaf1, s).unwrap();
         let captured = cap.end_capture().unwrap();
-        cap.instantiate_graph(captured).unwrap();
+        let _ = cap.instantiate_graph(captured).unwrap();
         cap.upload_graph(captured).unwrap();
 
         let (ba, bb) = setup(&mut bld);
         let l0 = bld.create_graph(d, s).unwrap();
         bld.graph_add_kernel(l0, kind.clone(), &[ba], &[ba])
             .unwrap();
-        bld.instantiate_graph(l0).unwrap();
+        let _ = bld.instantiate_graph(l0).unwrap();
         let l1 = bld.create_graph(d, s).unwrap();
         bld.graph_add_kernel(l1, kind, &[bb], &[bb]).unwrap();
-        bld.instantiate_graph(l1).unwrap();
+        let _ = bld.instantiate_graph(l1).unwrap();
         let parent = bld.create_graph(d, s).unwrap();
         bld.graph_add_child(parent, l0).unwrap();
         bld.graph_add_child(parent, l1).unwrap();
-        bld.instantiate_graph(parent).unwrap();
+        let _ = bld.instantiate_graph(parent).unwrap();
         bld.upload_graph(parent).unwrap();
 
         let t0 = cap.clock_ns();
@@ -8182,7 +8321,7 @@ mod tests {
             .unwrap();
         sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[b], &[b])
             .unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let src = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(src, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
@@ -8557,7 +8696,7 @@ mod tests {
             sim.graph_node_kind(g, 1).unwrap(),
             GraphNodeKind::BatchMemOp
         );
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         let n = sim.launch_graph(g, s).unwrap();
         assert_eq!(n, 2);
         sim.synchronize().unwrap();
@@ -8595,7 +8734,7 @@ mod tests {
             GraphNodeKind::BatchMemOp
         );
         assert!(sim.graph_node_deps(g, 0).unwrap().is_empty());
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         let n = sim.launch_graph(g, s).unwrap();
         assert_eq!(n, 1);
         sim.synchronize().unwrap();
@@ -8698,7 +8837,7 @@ mod tests {
             }],
         )
         .unwrap();
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         sim.graph_node_set_enabled(g, 0, false).unwrap();
         let n = sim.launch_graph(g, s).unwrap();
         assert_eq!(n, 0);
@@ -8737,7 +8876,7 @@ mod tests {
             ],
         )
         .unwrap();
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         sim.graph_batch_mem_ops_set_params(
             g,
             0,
@@ -8804,7 +8943,7 @@ mod tests {
             }],
         )
         .unwrap();
-        sim.instantiate_graph(exec).unwrap();
+        let _ = sim.instantiate_graph(exec).unwrap();
         let src = sim.create_graph(d, s).unwrap();
         sim.graph_add_batch_mem_op(
             src,
@@ -8861,7 +9000,7 @@ mod tests {
         ));
         let g = sim.end_capture().unwrap();
         assert_eq!(sim.graph_len(g).unwrap(), 1);
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         let n = sim.launch_graph(g, s).unwrap();
         assert_eq!(n, 1);
         sim.synchronize().unwrap();
@@ -8881,7 +9020,7 @@ mod tests {
             sim.graph_node_kind(g, 0).unwrap(),
             GraphNodeKind::BatchMemOp
         );
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         let n = sim.launch_graph(g, s).unwrap();
         assert_eq!(n, 2);
         sim.synchronize().unwrap();
@@ -8896,8 +9035,8 @@ mod tests {
         let g = sim.create_graph(d, s).unwrap();
         sim.graph_add_wait_value64(g, a, 0, 1, WaitValueCmp::Eq)
             .unwrap();
-        sim.instantiate_graph(g).unwrap();
-        let err = sim.graph_add_write_value64(g, a, 0, 1).unwrap_err();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let err = sim.graph_add_write_value64(exec, a, 0, 1).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
             other => panic!("{other:?}"),
@@ -8923,7 +9062,7 @@ mod tests {
         let g = sim.create_graph(d, s).unwrap();
         sim.graph_add_wait_value64(g, a, 0, 1, WaitValueCmp::Eq)
             .unwrap();
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         sim.graph_batch_mem_op_set_params(
             g,
             0,
@@ -8968,7 +9107,7 @@ mod tests {
         let g = sim.create_graph(d, s).unwrap();
         sim.graph_add_wait_value64(g, a, 0, 1, WaitValueCmp::Eq)
             .unwrap();
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         let (node, mut op) = sim.graph_unique_wait_value(g).unwrap();
         match &mut op {
             BatchMemOp::Wait { id, .. } => *id = b,
@@ -9022,7 +9161,8 @@ mod tests {
         let g = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+        let _ = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
             .unwrap();
         assert_eq!(
             sim.graph_exec_get_flags(g).unwrap(),
@@ -9078,7 +9218,7 @@ mod tests {
         let leaf = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(leaf, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(leaf).unwrap();
+        let _ = sim.instantiate_graph(leaf).unwrap();
         let parent = sim.create_graph(d, s).unwrap();
         sim.graph_add_child(parent, leaf).unwrap();
         let err = sim
@@ -9099,7 +9239,8 @@ mod tests {
         let g = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+        let _ = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
             .unwrap();
         assert!(!sim.graph_uploaded(g).unwrap());
         let n = sim.launch_graph(g, s).unwrap();
@@ -9118,7 +9259,8 @@ mod tests {
         let exec = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph_with_flags(exec, GraphInstantiateFlags::DEVICE_LAUNCH)
+        let _ = sim
+            .instantiate_graph_with_flags(exec, GraphInstantiateFlags::DEVICE_LAUNCH)
             .unwrap();
         let src = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(src, KernelKind::other(8, 8), &[b], &[b])
@@ -9139,11 +9281,12 @@ mod tests {
         let g = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph_with_flags(
-            g,
-            GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
-        )
-        .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(
+                g,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
         enq(sim.device_launch_graph(g, s));
         let err = sim.device_launch_graph(g, s).unwrap_err();
         match err {
@@ -9179,11 +9322,12 @@ mod tests {
         let g = sim.create_graph(d, launch_s).unwrap();
         sim.graph_add_kernel(g, KernelKind::other(8, 8), &[b], &[b])
             .unwrap();
-        sim.instantiate_graph_with_flags(
-            g,
-            GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
-        )
-        .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(
+                g,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
         enq(sim.device_launch_graph(g, launch_s));
         sim.synchronize().unwrap();
         let leftover = sim
@@ -9207,11 +9351,12 @@ mod tests {
         let g = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph_with_flags(
-            g,
-            GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
-        )
-        .unwrap();
+        let _ = sim
+            .instantiate_graph_with_flags(
+                g,
+                GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+            )
+            .unwrap();
         let (node, mut params) = sim.graph_unique_kernel(g).unwrap();
         params.reads = vec![KernelBuf::whole(b)];
         params.writes = vec![KernelBuf::whole(b)];
@@ -9236,7 +9381,7 @@ mod tests {
         let g = sim.create_graph(d, s).unwrap();
         sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
             .unwrap();
-        sim.instantiate_graph(g).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
         sim.upload_graph(g).unwrap();
         let err = sim.device_launch_graph(g, s).unwrap_err();
         match err {

@@ -2637,7 +2637,7 @@ fn retarget_parked_kernel_patches_unique_memcpy() {
         },
     )
     .expect("m");
-    sim.instantiate_graph(exec).expect("i");
+    let _ = sim.instantiate_graph(exec).expect("i");
     retarget_parked_kernel(&mut sim, exec, b).expect("retarget");
     let (_, params) = sim.graph_unique_kernel(exec).expect("k2");
     let read = params.reads.first().expect("read");
@@ -2662,7 +2662,7 @@ fn retarget_parked_kernel_patches_unique_memset() {
     sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
         .expect("k");
     sim.graph_add_memset(exec, KernelBuf::whole(a)).expect("z");
-    sim.instantiate_graph(exec).expect("i");
+    let _ = sim.instantiate_graph(exec).expect("i");
     retarget_parked_kernel(&mut sim, exec, b).expect("retarget");
     let (_, params) = sim.graph_unique_kernel(exec).expect("k2");
     let read = params.reads.first().expect("read");
@@ -2684,15 +2684,15 @@ fn graph_node_set_enabled_skips_combo_child() {
     let leaf0 = sim.create_graph(d, s).expect("l0");
     sim.graph_add_kernel(leaf0, KernelKind::other(8, 8), &[a], &[a])
         .expect("k0");
-    sim.instantiate_graph(leaf0).expect("i0");
+    let _ = sim.instantiate_graph(leaf0).expect("i0");
     let leaf1 = sim.create_graph(d, s).expect("l1");
     sim.graph_add_kernel(leaf1, KernelKind::other(8, 8), &[a], &[a])
         .expect("k1");
-    sim.instantiate_graph(leaf1).expect("i1");
+    let _ = sim.instantiate_graph(leaf1).expect("i1");
     let parent = sim.create_graph(d, s).expect("p");
     sim.graph_add_child(parent, leaf0).expect("c0");
     sim.graph_add_child(parent, leaf1).expect("c1");
-    sim.instantiate_graph(parent).expect("ip");
+    let _ = sim.instantiate_graph(parent).expect("ip");
     assert!(sim.graph_node_get_enabled(parent, 1).expect("on"));
     sim.graph_node_set_enabled(parent, 1, false).expect("off");
     let n = sim.launch_graph(parent, s).expect("launch");
@@ -2712,16 +2712,16 @@ fn graph_exec_child_set_params_swaps_combo_child() {
     let leaf_a = sim.create_graph(d, s).expect("la");
     sim.graph_add_kernel(leaf_a, KernelKind::other(8, 8), &[a], &[a])
         .expect("ka");
-    sim.instantiate_graph(leaf_a).expect("ia");
+    let leaf_a_exec = sim.instantiate_graph(leaf_a).expect("ia");
     let leaf_b = sim.create_graph(d, s).expect("lb");
     sim.graph_add_kernel(leaf_b, KernelKind::other(8, 8), &[b], &[b])
         .expect("kb");
-    sim.instantiate_graph(leaf_b).expect("ib");
+    let _ = sim.instantiate_graph(leaf_b).expect("ib");
     let parent = sim.create_graph(d, s).expect("p");
     sim.graph_add_child(parent, leaf_a).expect("c");
-    sim.instantiate_graph(parent).expect("ip");
+    let _ = sim.instantiate_graph(parent).expect("ip");
     let (node, nested) = sim.graph_unique_child(parent).expect("u");
-    assert_eq!(nested, leaf_a);
+    assert_eq!(nested, leaf_a_exec);
     sim.graph_exec_child_set_params(parent, node, leaf_b)
         .expect("set");
     sim.free_sync(a).expect("free");
@@ -2781,7 +2781,7 @@ fn graph_exec_event_record_set_event_retargets() {
     sim.create_event(e2).expect("e2");
     let exec = sim.create_graph(d, s).expect("g");
     sim.graph_add_event_record(exec, e1, false).expect("rec");
-    sim.instantiate_graph(exec).expect("i");
+    let _ = sim.instantiate_graph(exec).expect("i");
     let (node, ev) = sim.graph_unique_event_record(exec).expect("u");
     assert_eq!(ev, e1);
     sim.graph_exec_event_record_set_event(exec, node, e2)
