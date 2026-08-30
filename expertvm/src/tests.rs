@@ -3676,6 +3676,52 @@ fn simulated_gpu_store_graph_auto_free_keeps_scratch() {
 }
 
 #[test]
+fn graph_mem_trim_cfg_returns_reserved_on_score() {
+    use crate::sim_replay::GRAPH_SCRATCH_BYTES;
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_instantiate_ns=1000\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        p.clone(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_mem: true,
+            graph_mem_trim: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    let _n = gpu.prefetch(&[k0]).expect("prefetch");
+    let _s = gpu.score().expect("drain");
+    let _a = gpu.acquire(k0).expect("acq");
+    let score = gpu.score().expect("final");
+    assert_eq!(score.hbm_peak, 4096 + GRAPH_SCRATCH_BYTES);
+    assert_eq!(gpu.graph_mem_used(DeviceId(0)).expect("gused"), 0);
+    assert_eq!(gpu.graph_mem_reserved(DeviceId(0)).expect("gres"), 0);
+    assert_eq!(gpu.hbm_used(DeviceId(0)).expect("hbm"), 4096);
+    let replay = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            graph_mem: true,
+            graph_mem_trim: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    )
+    .expect("sim");
+    assert_eq!(replay.hbm_peak, 4096 + GRAPH_SCRATCH_BYTES);
+}
+
+#[test]
 fn graph_auto_free_implies_cuda_graphs() {
     use crate::sim_replay::GRAPH_SCRATCH_BYTES;
     let t = Trace {

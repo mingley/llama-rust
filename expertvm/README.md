@@ -244,7 +244,7 @@ same Stay vs Fetch predictor on real decode; upcoming keys are the
 online predicted list, not this walker's JSONL future window.
 `--expert-sim` captures
 per-page GEMM graphs (`graph_launches=`; `--cuda-graphs` documents that).
-`--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-piecewise` / `--graph-mem` / `--graph-auto-free` / `--timing-events` are `GpuStoreCfg`
+`--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-piecewise` / `--graph-mem` / `--graph-auto-free` / `--graph-mem-trim` / `--timing-events` are `GpuStoreCfg`
 on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 (`gguf_gemv engine --expert-sim --managed`). `--host-func` /
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--shareable` / `--vmm-page` /
@@ -368,6 +368,7 @@ expertvm sim      trace.jsonl --capacity 1 --cuda-graphs --graph-clone
 expertvm sim      trace.jsonl --capacity 1 --graph-build
 expertvm sim      trace.jsonl --capacity 1 --graph-piecewise
 expertvm sim      trace.jsonl --capacity 1 --graph-mem
+expertvm sim      trace.jsonl --capacity 1 --graph-mem --graph-mem-trim
 expertvm sim      trace.jsonl --capacity 1 --graph-auto-free
 expertvm sim      trace.jsonl --capacity 8 --seq-streams --max-batch 2
 expertvm schedule trace.jsonl --capacity 8 --max-batch 2 --interarrival-ns 1000000 --ttft-slo-ns 20000000

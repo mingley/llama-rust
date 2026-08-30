@@ -145,6 +145,11 @@ pub struct GpuStoreCfg {
     /// [`Self::graph_set_params`] still retargets. Decode
     /// identity stays kernel-only graphs.
     pub graph_auto_free: bool,
+    /// `cudaDeviceGraphMemTrim` unused reserved graph-mem after [`SimulatedGpuStore::score`].
+    ///
+    /// Does not change [`gpu_sim::Score::hbm_peak`]. Live graph allocs stay.
+    /// Decode identity stays off (reserved is billed until trim).
+    pub graph_mem_trim: bool,
     /// `cudaLaunchCooperativeKernel` for grouped GEMMs.
     ///
     /// Occupies every Hyper-Q slot so leftover prefill cannot overlap decode
@@ -362,6 +367,7 @@ pub struct SimulatedGpuStore {
     graph_build: bool,
     graph_piecewise: bool,
     leaf: LeafMem,
+    graph_mem_trim: bool,
     timing_events: bool,
     copy_elapsed_ns: u64,
     mode: GpuFill,
@@ -658,6 +664,7 @@ impl SimulatedGpuStore {
             graph_build: cfg.graph_build,
             graph_piecewise: cfg.graph_piecewise,
             leaf,
+            graph_mem_trim: cfg.graph_mem_trim,
             timing_events: cfg.timing_events,
             copy_elapsed_ns: 0,
             mode: fill,
@@ -800,7 +807,14 @@ impl SimulatedGpuStore {
     pub fn score(&mut self) -> Result<gpu_sim::Score, Error> {
         self.sim.synchronize()?;
         self.sweep_evicts();
+        if self.graph_mem_trim {
+            self.trim_graph_mem()?;
+        }
         Ok(gpu_sim::Score::from_sim(&self.sim))
+    }
+
+    fn trim_graph_mem(&mut self) -> Result<(), Error> {
+        crate::sim_replay::trim_graph_pools(&mut self.sim)
     }
 
     /// Drain and return the virtual clock (token-boundary sample).

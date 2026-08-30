@@ -5,12 +5,31 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — OpenAI `/v1/completions` and `/v1/chat/completions`
+
+`gguf_gemv serve` (default and `--engine`) maps `POST /v1/completions` and
+`POST /v1/chat/completions` onto the same greedy path as `POST /generate`.
+`max_tokens` aliases `n_predict`. The OpenAI `choices` envelope returns the
+completion only (`text` / `message.content`), not the prompt+decode string.
+`--engine` `"stream": true` on those routes is chunked SSE (`data:` lines,
+then `data: [DONE]`). Native `/generate` is unchanged. Keep-alive still
+applies. `gpu-profile capture` is still refused.
+
+## Shipped 2026-08-30 — expertvm `--graph-mem-trim`
+
+`expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and
+`infer-bench` inherit `GpuStoreCfg::graph_mem_trim` /
+`SimCfg::graph_mem_trim`. After the walk, `cudaDeviceGraphMemTrim` returns
+unused reserved graph-mem so live `hbm_used` is expert pages, not abandoned
+scratch. `hbm_peak` still includes scratch during launch. Decode identity
+stays off. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — HTTP/1.1 keep-alive
 
 `gguf_gemv serve` (default and `--engine`) keeps the TCP connection open after
 `POST /generate` unless the client sends `Connection: close` or HTTP/1.0.
-Pipelined requests reuse the persistent KV / Engine. Not OpenAI-compat.
-`gpu-profile capture` is still refused.
+Pipelined requests reuse the persistent KV / Engine. OpenAI `/v1` routes
+share the same keep-alive. `gpu-profile capture` is still refused.
 
 ## Shipped 2026-08-30 — dedicated graph-memory pool
 

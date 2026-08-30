@@ -9,7 +9,8 @@ use crate::sim_replay::{
     advise_pool_access_if_pinned, allow_non_portable_cluster_if, allow_optin_shared_if,
     apply_stream_sms, apply_stream_sync_policy, apply_touch, bind_shareable_mempools, drop_remote,
     fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots,
-    reclaim_victim, remote_hit, replay_from_sim, sim_profile, sync_work, validate_sim_cfg,
+    reclaim_victim, remote_hit, replay_from_sim, sim_profile, sync_work, trim_graph_pools,
+    validate_sim_cfg,
     GraphBank, LeafMem, PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay,
     StreamPlan, TouchArgs,
 };
@@ -1084,6 +1085,9 @@ fn finish_sched(mut rt: SchedRt, rec: Rec) -> Result<SchedReplay, Error> {
     rt.ctr.graph_updates = rt.graphs.updates;
     rt.ctr.graph_clones = rt.graphs.clones;
     rt.ctr.graph_set_params = rt.graphs.kernel_sets;
+    if rt.cfg.graph_mem_trim {
+        trim_graph_pools(&mut rt.sim)?;
+    }
     let replay = replay_from_sim(
         &rt.sim,
         rec.tokens_done,

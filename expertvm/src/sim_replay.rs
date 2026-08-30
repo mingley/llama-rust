@@ -460,6 +460,11 @@ pub struct SimCfg {
     /// Implies [`Self::cuda_graphs`]. Decode identity stays kernel-only graphs.
     /// [`crate::GpuStoreCfg::graph_auto_free`] is the store path.
     pub graph_auto_free: bool,
+    /// `cudaDeviceGraphMemTrim` unused reserved graph-mem after the walk.
+    ///
+    /// Peak HBM is unchanged. Live graph allocs stay. Decode identity stays
+    /// off. [`crate::GpuStoreCfg::graph_mem_trim`] is the store path.
+    pub graph_mem_trim: bool,
     /// `cudaLaunchCooperativeKernel` for grouped GEMMs.
     ///
     /// Occupies every Hyper-Q slot so leftover prefill cannot overlap decode
@@ -650,6 +655,7 @@ impl SimCfg {
             graph_piecewise: false,
             graph_mem: false,
             graph_auto_free: false,
+            graph_mem_trim: false,
             cooperative: false,
             pdl: false,
             l2_persist: false,
@@ -895,6 +901,9 @@ pub fn sim_replay_cfg(
     ctr.graph_updates = graphs.updates;
     ctr.graph_clones = graphs.clones;
     ctr.graph_set_params = graphs.kernel_sets;
+    if cfg.graph_mem_trim {
+        trim_graph_pools(&mut sim)?;
+    }
     Ok(finish(&sim, &token_ends, ctr))
 }
 
@@ -1919,6 +1928,15 @@ fn finish(sim: &Sim, token_ends: &[u64], ctr: ReplayCounters) -> SimReplay {
         itl_from_ends(token_ends),
         ctr,
     )
+}
+
+/// `cudaDeviceGraphMemTrim` on every GPU. Unused reserved returns to the OS.
+pub(crate) fn trim_graph_pools(sim: &mut Sim) -> Result<(), Error> {
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        sim.graph_mem_trim(DeviceId(g))?;
+    }
+    Ok(())
 }
 
 pub(crate) fn replay_from_sim(

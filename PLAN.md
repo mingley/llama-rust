@@ -1779,7 +1779,22 @@ model, do not celebrate the sim.
 143. [x] HTTP/1.1 keep-alive on `gguf_gemv serve` (default and `--engine`).
     Persistent connections reuse the TCP socket and the Engine / KV cache
     without a reconnect. `Connection: close` and HTTP/1.0 still close.
-    Not OpenAI-compat. Dual score still has no `$/M tokens`.
+    Dual score still has no `$/M tokens`.
+
+144. [x] OpenAI-shaped `POST /v1/completions` and `POST /v1/chat/completions`
+    on `gguf_gemv serve` (default and `--engine`). Same greedy path as
+    `/generate`. `max_tokens` aliases `n_predict`. `choices[].text` /
+    `choices[].message.content` is the completion, not the prompt+decode
+    string. `--engine` `"stream": true` is chunked SSE (`data:` then
+    `data: [DONE]`). Native `/generate` stays `{generated, prefix_hit,
+    page_hits}` / NDJSON. Dual score still has no `$/M tokens`.
+
+145. [x] expertvm / Engine `--graph-mem-trim`: `cudaDeviceGraphMemTrim` after
+    the walk / `SimulatedGpuStore::score` so unused reserved graph-mem
+    returns to the OS. `hbm_peak` is unchanged (scratch still counted).
+    Live graph allocs are not trimmed. Decode identity stays off.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

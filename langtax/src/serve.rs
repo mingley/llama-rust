@@ -2,9 +2,11 @@
 //!
 //! Default `gguf_gemv serve` accepts one connection at a time with a persistent
 //! KV cache. `--engine` admits concurrent `POST /generate` onto one [`Engine`]
-//! so prefills and decodes GEMM together. HTTP/1.1 keep-alive is on unless the
-//! client sends `Connection: close`. No OpenAI SDK surface, no crates.io HTTP
-//! stack.
+//! so prefills and decodes GEMM together. `POST /v1/completions` and
+//! `POST /v1/chat/completions` map onto the same greedy path (`max_tokens`
+//! aliases `n_predict`). HTTP/1.1 keep-alive is on unless the client sends
+//! `Connection: close`. `/v1/*` responses use the OpenAI `choices` envelope.
+//! No crates.io HTTP stack.
 
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
@@ -13,7 +15,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use crate::cli::InferArgs;
-use crate::decode::{greedy_generate_slot, KvCache, Llama, LlamaError};
+use crate::decode::{greedy_generate_cache, prompt_ids, KvCache, Llama, LlamaError};
 use crate::gguf::load_gguf_owned;
 use crate::serve_engine;
 use crate::store_attach::{gpu_knobs, PlannerCli};
@@ -23,7 +25,7 @@ use expertvm::{GpuFill, GpuStoreCfg, Prefetch};
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
@@ -48,6 +50,7 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --graph-piecewise cudaStreamBeginCaptureToGraph combo parents (`--expert-sim`; independent child roots may Hyper-Q overlap; not with `--graph-build`)
       --graph-mem       in-graph scratch cudaMallocAsync (`--expert-sim`; skips `--graph-update`)
       --graph-auto-free AutoFreeOnLaunch scratch without in-graph free (`--expert-sim`; not with `--graph-mem`)
+      --graph-mem-trim  cudaDeviceGraphMemTrim unused reserved after score (`--expert-sim`)
       --timing-events   cudaEventElapsedTime on copy start/end (`--expert-sim`)
       --mapped          cudaHostAllocMapped miss pages (`--expert-sim`)
       --managed         cudaMallocManaged miss pages (`--expert-sim`)
@@ -94,8 +97,12 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
 
 POST /generate takes {\"prompt\": TEXT} or, to render the model's own
 tokenizer.chat_template, {\"messages\": [{\"role\": R, \"content\": C}, ...]}
-with optional \"add_generation_prompt\" (default true), \"n_predict\", and
-\"stream\" (NDJSON token lines then a final generated object; `--engine` only).
+with optional \"add_generation_prompt\" (default true), \"n_predict\" or
+\"max_tokens\", and \"stream\" (NDJSON token lines then a final generated
+object; `--engine` only). POST /v1/completions and POST /v1/chat/completions
+are the same greedy path with an OpenAI `choices` envelope (`text` /
+`message.content` is the completion, not the prompt). `--engine` stream on
+those routes is chunked SSE (`data:` lines, then `data: [DONE]`).
 Default serve keeps one KV cache across requests (`prefix_hit` in the JSON).
 `--engine` admits several connections onto one interned pool so they GEMM
 together (`gguf_gemv engine` is the same scheduler). `--kv-page N` interned
@@ -106,7 +113,7 @@ completed blocks so a later prompt can hit them after a rewind (`page_hits`).
 leftover prefill while any live sequence is already decoding. `--slo-reject` /
 `--ttft-slo-ns` drop a waiter whose gpu-sim queue wait meets the TTFT budget
 (`--expert-sim`). `--itl-slo-ns` counts later-token ITL misses (does not drop).
-`--cuda-graphs` / `--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-piecewise` / `--graph-mem` / `--graph-auto-free` / `--timing-events` are
+`--cuda-graphs` / `--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-piecewise` / `--graph-mem` / `--graph-auto-free` / `--graph-mem-trim` / `--timing-events` are
 the same SimulatedGpuStore knobs as `gguf_gemv engine`. `--host-func` /
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--shareable` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` / `--seq-streams` /
@@ -396,7 +403,7 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -735,29 +742,34 @@ fn dispatch(
     args: &ServeArgs,
     cache: &mut Option<KvCache>,
 ) -> (u16, &'static str, String) {
+    let api = ServeApi::from_path(&req.path);
     if req.method != "POST" {
-        return (405, "Method Not Allowed", json_error("method must be POST"));
+        return (
+            405,
+            "Method Not Allowed",
+            json_err(api, "method must be POST"),
+        );
     }
-    if normalize_path(&req.path) != "/generate" {
+    let Some(api) = api else {
         return (404, "Not Found", json_error("not found"));
-    }
+    };
     let body = match std::str::from_utf8(&req.body) {
         Ok(s) => s,
-        Err(_) => return (400, "Bad Request", json_error("body must be utf-8")),
+        Err(_) => return (400, "Bad Request", json_err(Some(api), "body must be utf-8")),
     };
     let gen = match parse_gen_req(body) {
         Ok(g) => g,
-        Err(e) => return (400, "Bad Request", json_error(&e)),
+        Err(e) => return (400, "Bad Request", json_err(Some(api), &e)),
     };
     let prompt = match gen.resolve(tok) {
         Ok(p) => p,
-        Err(e) => return (400, "Bad Request", json_error(&e)),
+        Err(e) => return (400, "Bad Request", json_err(Some(api), &e)),
     };
     if prompt.is_empty() {
-        return (400, "Bad Request", json_error("empty prompt"));
+        return (400, "Bad Request", json_err(Some(api), "empty prompt"));
     }
     let n_predict = gen.n_predict.unwrap_or(args.n_predict);
-    match greedy_generate_slot(
+    match greedy_parts(
         model,
         tok,
         cache,
@@ -766,20 +778,130 @@ fn dispatch(
         args.n_ctx,
         args.kv_page,
     ) {
-        Ok(text) => {
+        Ok(parts) => {
             let hit = cache.as_ref().map_or(0, KvCache::last_prefix_hit);
             let pages = cache.as_ref().map_or(0, KvCache::page_hits);
-            (200, "OK", json_generated(&text, hit, pages))
+            (200, "OK", json_ok(api, &parts, hit, pages))
         }
-        Err(LlamaError::EmptyPrompt) => (400, "Bad Request", json_error("empty prompt")),
-        Err(e) => (500, "Internal Server Error", json_error(&e.to_string())),
+        Err(LlamaError::EmptyPrompt) => {
+            (400, "Bad Request", json_err(Some(api), "empty prompt"))
+        }
+        Err(e) => (
+            500,
+            "Internal Server Error",
+            json_err(Some(api), &e.to_string()),
+        ),
     }
+}
+
+/// Route identity for `/generate` vs the OpenAI `/v1/*` aliases.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ServeApi {
+    /// Native `{generated, prefix_hit, page_hits}`.
+    Generate,
+    /// `POST /v1/completions` (`choices[].text`).
+    Completions,
+    /// `POST /v1/chat/completions` (`choices[].message.content`).
+    Chat,
+}
+
+impl ServeApi {
+    pub(crate) fn from_path(path: &str) -> Option<Self> {
+        match normalize_path(path_only(path)) {
+            "/generate" => Some(Self::Generate),
+            "/v1/completions" => Some(Self::Completions),
+            "/v1/chat/completions" => Some(Self::Chat),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub(crate) fn is_openai(self) -> bool {
+        !matches!(self, Self::Generate)
+    }
+}
+
+fn path_only(path: &str) -> &str {
+    path.split(['?', '#']).next().unwrap_or(path)
 }
 
 pub(crate) fn normalize_path(path: &str) -> &str {
     path.strip_suffix('/')
         .filter(|p| !p.is_empty())
         .unwrap_or(path)
+}
+
+struct GreedyParts {
+    full: String,
+    completion: String,
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    finish: &'static str,
+}
+
+fn greedy_parts(
+    model: &Llama,
+    tok: &Tokenizer,
+    cache: &mut Option<KvCache>,
+    prompt: &str,
+    n_predict: usize,
+    n_ctx: Option<usize>,
+    kv_page: Option<usize>,
+) -> Result<GreedyParts, LlamaError> {
+    if prompt.is_empty() {
+        return Err(LlamaError::EmptyPrompt);
+    }
+    let mut ids = prompt_ids(tok, prompt)?;
+    if ids.is_empty() {
+        return Err(LlamaError::EmptyPrompt);
+    }
+    let prompt_n = ids.len();
+    let needed = ids.len().saturating_add(n_predict);
+    let kv = model.ensure_cache_page(cache, needed, n_ctx, kv_page)?;
+    let full = greedy_generate_cache(model, tok, kv, &mut ids, n_predict)?;
+    let completion = tok.decode(ids.get(prompt_n..).unwrap_or(&[]));
+    let completion_n = ids.len().saturating_sub(prompt_n);
+    Ok(GreedyParts {
+        full,
+        completion,
+        prompt_tokens: prompt_n,
+        completion_tokens: completion_n,
+        finish: finish_reason(completion_n, n_predict),
+    })
+}
+
+pub(crate) fn finish_reason(generated: usize, n_predict: usize) -> &'static str {
+    if generated < n_predict {
+        "stop"
+    } else {
+        "length"
+    }
+}
+
+fn json_ok(api: ServeApi, parts: &GreedyParts, hit: usize, pages: u64) -> String {
+    match api {
+        ServeApi::Generate => json_generated(&parts.full, hit, pages),
+        ServeApi::Completions => json_openai_completion(
+            &parts.completion,
+            parts.prompt_tokens,
+            parts.completion_tokens,
+            parts.finish,
+        ),
+        ServeApi::Chat => json_openai_chat(
+            &parts.completion,
+            parts.prompt_tokens,
+            parts.completion_tokens,
+            parts.finish,
+        ),
+    }
+}
+
+fn json_err(api: Option<ServeApi>, msg: &str) -> String {
+    if api.is_some_and(ServeApi::is_openai) {
+        json_openai_error(msg)
+    } else {
+        json_error(msg)
+    }
 }
 
 fn read_request_into<R: Read>(
@@ -972,9 +1094,18 @@ pub(crate) fn json_token(token: &str) -> String {
 
 /// HTTP/1.1 chunked NDJSON headers.
 pub(crate) fn http_chunked_headers(keep_alive: bool) -> Vec<u8> {
+    http_chunked_typed(keep_alive, "application/x-ndjson")
+}
+
+/// HTTP/1.1 chunked SSE headers (`text/event-stream`).
+pub(crate) fn http_sse_headers(keep_alive: bool) -> Vec<u8> {
+    http_chunked_typed(keep_alive, "text/event-stream")
+}
+
+fn http_chunked_typed(keep_alive: bool, content_type: &str) -> Vec<u8> {
     let conn = connection_value(keep_alive);
     format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\nConnection: {conn}\r\n\r\n"
+        "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nTransfer-Encoding: chunked\r\nConnection: {conn}\r\n\r\n"
     )
     .into_bytes()
 }
@@ -997,6 +1128,126 @@ pub(crate) fn json_error(msg: &str) -> String {
     let mut s = String::from("{\"error\":");
     append_json_string(&mut s, msg);
     s.push('}');
+    s
+}
+
+pub(crate) fn json_openai_error(msg: &str) -> String {
+    let mut s = String::from("{\"error\":{\"message\":");
+    append_json_string(&mut s, msg);
+    s.push_str(",\"type\":\"invalid_request_error\"}}");
+    s
+}
+
+pub(crate) fn json_openai_completion(
+    text: &str,
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    finish: &str,
+) -> String {
+    openai_choice_body(
+        "cmpl-0",
+        "text_completion",
+        false,
+        text,
+        prompt_tokens,
+        completion_tokens,
+        finish,
+    )
+}
+
+pub(crate) fn json_openai_chat(
+    text: &str,
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    finish: &str,
+) -> String {
+    openai_choice_body(
+        "chatcmpl-0",
+        "chat.completion",
+        true,
+        text,
+        prompt_tokens,
+        completion_tokens,
+        finish,
+    )
+}
+
+fn openai_choice_body(
+    id: &str,
+    object: &str,
+    chat: bool,
+    text: &str,
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    finish: &str,
+) -> String {
+    let total = prompt_tokens.saturating_add(completion_tokens);
+    let mut s = String::from("{\"id\":");
+    append_json_string(&mut s, id);
+    s.push_str(",\"object\":");
+    append_json_string(&mut s, object);
+    s.push_str(",\"choices\":[{");
+    if chat {
+        s.push_str("\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":");
+        append_json_string(&mut s, text);
+        s.push_str("},\"finish_reason\":");
+    } else {
+        s.push_str("\"text\":");
+        append_json_string(&mut s, text);
+        s.push_str(",\"index\":0,\"finish_reason\":");
+    }
+    append_json_string(&mut s, finish);
+    s.push_str("}],\"usage\":{\"prompt_tokens\":");
+    s.push_str(&prompt_tokens.to_string());
+    s.push_str(",\"completion_tokens\":");
+    s.push_str(&completion_tokens.to_string());
+    s.push_str(",\"total_tokens\":");
+    s.push_str(&total.to_string());
+    s.push_str("}}");
+    s
+}
+
+/// One SSE `data:` line for `/v1/completions` streaming.
+pub(crate) fn sse_completion_delta(text: &str, finish: Option<&str>) -> String {
+    let mut json = String::from(
+        "{\"id\":\"cmpl-0\",\"object\":\"text_completion\",\"choices\":[{\"text\":",
+    );
+    append_json_string(&mut json, text);
+    json.push_str(",\"index\":0,\"finish_reason\":");
+    match finish {
+        Some(f) => append_json_string(&mut json, f),
+        None => json.push_str("null"),
+    }
+    json.push_str("}]}");
+    sse_data(&json)
+}
+
+/// One SSE `data:` line for `/v1/chat/completions` streaming.
+pub(crate) fn sse_chat_delta(text: &str, finish: Option<&str>) -> String {
+    let mut json =
+        String::from("{\"id\":\"chatcmpl-0\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{");
+    if !text.is_empty() {
+        json.push_str("\"content\":");
+        append_json_string(&mut json, text);
+    }
+    json.push_str("},\"finish_reason\":");
+    match finish {
+        Some(f) => append_json_string(&mut json, f),
+        None => json.push_str("null"),
+    }
+    json.push_str("}]}");
+    sse_data(&json)
+}
+
+/// OpenAI stream terminator.
+pub(crate) fn sse_done() -> String {
+    String::from("data: [DONE]\n\n")
+}
+
+fn sse_data(json: &str) -> String {
+    let mut s = String::from("data: ");
+    s.push_str(json);
+    s.push_str("\n\n");
     s
 }
 
@@ -1238,7 +1489,8 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
             "prompt" => prompt = Some(scan.parse_string()?),
             "messages" => messages = Some(scan.parse_messages()?),
             "add_generation_prompt" => add_generation_prompt = Some(scan.parse_bool()?),
-            "n_predict" => n_predict = Some(scan.parse_usize()?),
+            "n_predict" => set_n_predict(&mut n_predict, scan.parse_usize()?, "n_predict")?,
+            "max_tokens" => set_n_predict(&mut n_predict, scan.parse_usize()?, "max_tokens")?,
             "stream" => stream = Some(scan.parse_bool()?),
             _ => scan.skip_value()?,
         }
@@ -1257,6 +1509,16 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
         n_predict,
         stream: stream.unwrap_or(false),
     })
+}
+
+fn set_n_predict(slot: &mut Option<usize>, v: usize, name: &str) -> Result<(), String> {
+    if let Some(old) = *slot {
+        if old != v {
+            return Err(format!("{name} disagrees with n_predict/max_tokens"));
+        }
+    }
+    *slot = Some(v);
+    Ok(())
 }
 
 fn usage_err<T>(msg: &str) -> Result<T, String> {
@@ -1290,7 +1552,10 @@ fn parse_u64(name: &str, s: &str) -> Result<u64, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decode::{greedy_generate_ctx, greedy_generate_slot, tiny_llama_gguf};
+    use crate::decode::{
+        greedy_generate_cache, greedy_generate_ctx, greedy_generate_slot, prompt_ids,
+        tiny_llama_gguf,
+    };
     use expertvm::{
         PortableClusterMode, PortableSharedMode, SharedMemoryMode, SynchronizationPolicy,
     };
@@ -1391,26 +1656,22 @@ mod tests {
     }
 
     fn json_field_string(s: &str, want: &str) -> Result<String, String> {
-        let mut scan = Scan { s, i: 0 };
-        scan.expect_char('{')?;
-        let mut need_comma = false;
-        loop {
-            scan.skip_ws();
-            if scan.peek() == Some('}') {
-                break;
-            }
-            if need_comma {
-                scan.expect_char(',')?;
-            }
-            let key = scan.parse_string()?;
-            scan.expect_char(':')?;
-            if key == want {
-                return scan.parse_string();
-            }
-            scan.skip_value()?;
-            need_comma = true;
-        }
-        Err(format!("missing {want}"))
+        json_string_at(s, want)
+    }
+
+    fn json_string_at(s: &str, want: &str) -> Result<String, String> {
+        let pat = format!("\"{want}\":");
+        let i = s.find(&pat).ok_or_else(|| format!("missing {want}"))?;
+        let rest = s.get(i.saturating_add(pat.len())..).ok_or("rest")?;
+        let mut scan = Scan { s: rest, i: 0 };
+        scan.parse_string()
+    }
+
+    fn post_v1(path: &str, json: &str) -> String {
+        format!(
+            "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n{json}",
+            json.len()
+        )
     }
 
     #[test]
@@ -1684,6 +1945,13 @@ mod tests {
             err.contains("--graph-piecewise requires --expert-sim"),
             "{err}"
         );
+        let err = parse_serve_args(["m.gguf", "--graph-mem-trim"]).unwrap_err();
+        assert!(err.contains("--graph-mem-trim requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--graph-mem-trim"]).unwrap_err();
+        assert!(
+            err.contains("--graph-mem-trim requires --expert-sim"),
+            "{err}"
+        );
         let err = parse_serve_args(["m.gguf", "--graph-mem"]).unwrap_err();
         assert!(err.contains("--graph-mem requires --engine"), "{err}");
         let err = parse_serve_args(["m.gguf", "--engine", "--graph-mem"]).unwrap_err();
@@ -1746,6 +2014,7 @@ mod tests {
             "--graph-clone",
             "--graph-build",
             "--graph-mem",
+            "--graph-mem-trim",
             "--timing-events",
             "--itl-slo-ns=4",
         ]);
@@ -1753,6 +2022,7 @@ mod tests {
         assert!(a.gpu_cfg.graph_clone);
         assert!(a.gpu_cfg.graph_build);
         assert!(a.gpu_cfg.graph_mem);
+        assert!(a.gpu_cfg.graph_mem_trim);
         assert!(a.gpu_cfg.timing_events);
         assert_eq!(a.itl_slo_ns, Some(4));
         let err = parse_serve_args(["m.gguf", "--managed"]).unwrap_err();
@@ -2277,6 +2547,13 @@ mod tests {
         let b = parse_gen_req(r#"{ "prompt" : "ab", "n_predict" : 4 }"#).unwrap();
         assert_eq!(b.prompt.as_deref(), Some("ab"));
         assert_eq!(b.n_predict, Some(4));
+        let mt = parse_gen_req(r#"{"prompt":"ab","max_tokens":4}"#).unwrap();
+        assert_eq!(mt.n_predict, Some(4));
+        let both = parse_gen_req(r#"{"prompt":"ab","n_predict":4,"max_tokens":4}"#).unwrap();
+        assert_eq!(both.n_predict, Some(4));
+        assert!(parse_gen_req(r#"{"prompt":"ab","n_predict":2,"max_tokens":4}"#)
+            .unwrap_err()
+            .contains("disagree"));
         let c = parse_gen_req(r#"{"prompt":"a\"b","extra":true}"#).unwrap();
         assert_eq!(c.prompt.as_deref(), Some("a\"b"));
         assert_eq!(
@@ -2428,6 +2705,18 @@ mod tests {
         );
         assert_eq!(json_error("empty prompt"), r#"{"error":"empty prompt"}"#);
         assert_eq!(
+            json_openai_error("empty prompt"),
+            r#"{"error":{"message":"empty prompt","type":"invalid_request_error"}}"#
+        );
+        assert_eq!(
+            json_openai_completion("hi", 1, 2, "length"),
+            r#"{"id":"cmpl-0","object":"text_completion","choices":[{"text":"hi","index":0,"finish_reason":"length"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}"#
+        );
+        assert_eq!(
+            json_openai_chat("hi", 1, 2, "stop"),
+            r#"{"id":"chatcmpl-0","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}"#
+        );
+        assert_eq!(
             json_field_string(&json_generated("a\"b\n", 0, 0), "generated").unwrap(),
             "a\"b\n"
         );
@@ -2506,10 +2795,82 @@ mod tests {
         let (head, body) = exchange(get, &model, &tok, &args);
         assert!(head.starts_with("HTTP/1.1 405 "), "{head}");
         assert!(json_field_string(&body, "error").unwrap().contains("POST"));
-        let openai =
-            "POST /v1/completions HTTP/1.1\r\nContent-Length: 15\r\n\r\n{\"prompt\":\"ab\"}";
-        let (head, _body) = exchange(openai, &model, &tok, &args);
+        let missing = "POST /v1/models HTTP/1.1\r\nContent-Length: 0\r\n\r\n";
+        let (head, _body) = exchange(missing, &model, &tok, &args);
         assert!(head.starts_with("HTTP/1.1 404 "), "{head}");
+        let get_v1 = "GET /v1/completions HTTP/1.1\r\nContent-Length: 0\r\n\r\n";
+        let (head, body) = exchange(get_v1, &model, &tok, &args);
+        assert!(head.starts_with("HTTP/1.1 405 "), "{head}");
+        assert!(body.contains("invalid_request_error"), "{body}");
+        assert!(body.contains("method must be POST"), "{body}");
+    }
+
+    fn expect_completion(model: &Llama, tok: &Tokenizer, prompt: &str, n: usize) -> String {
+        let mut ids = prompt_ids(tok, prompt).expect("ids");
+        let prompt_n = ids.len();
+        let mut slot = None;
+        let needed = ids.len().saturating_add(n);
+        let cache = model
+            .ensure_cache_page(&mut slot, needed, None, None)
+            .expect("kv");
+        let _full = greedy_generate_cache(model, tok, cache, &mut ids, n).expect("g");
+        tok.decode(ids.get(prompt_n..).unwrap_or(&[]))
+    }
+
+    #[test]
+    fn v1_completions_and_chat_map_onto_greedy() {
+        let (model, tok) = tiny_model();
+        let args = defaults();
+        let expect = greedy_generate_ctx(&model, &tok, "ab", 2, None).expect("greedy");
+        let completion = expect_completion(&model, &tok, "ab", 2);
+        assert_ne!(completion, expect);
+        let (head, body) = exchange(
+            &post_v1("/v1/completions", r#"{"prompt":"ab","max_tokens":2}"#),
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert!(body.contains("\"object\":\"text_completion\""), "{body}");
+        assert_eq!(json_string_at(&body, "text").unwrap(), completion);
+        let (head, native) = exchange(&post_json(r#"{"prompt":"ab"}"#), &model, &tok, &args);
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(json_field_string(&native, "generated").unwrap(), expect);
+        let (head, body) = exchange(
+            &post_v1("/v1/completions/", r#"{"prompt":"ab"}"#),
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(json_string_at(&body, "text").unwrap(), completion);
+        let (model, tok) = chat_model(ECHO_TEMPLATE);
+        let expect = greedy_generate_ctx(&model, &tok, "ab", 2, None).expect("greedy");
+        let completion = expect_completion(&model, &tok, "ab", 2);
+        let (head, body) = exchange(
+            &post_v1(
+                "/v1/chat/completions",
+                r#"{"messages":[{"role":"user","content":"ab"}],"max_tokens":2}"#,
+            ),
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert!(body.contains("\"object\":\"chat.completion\""), "{body}");
+        assert_eq!(json_string_at(&body, "content").unwrap(), completion);
+        let (head, native) = exchange(&post_json(r#"{"prompt":"ab"}"#), &model, &tok, &args);
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(json_field_string(&native, "generated").unwrap(), expect);
+        let empty = exchange(
+            &post_v1("/v1/completions", r#"{"prompt":""}"#),
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(empty.0.starts_with("HTTP/1.1 400 "), "{}", empty.0);
+        assert!(empty.1.contains("invalid_request_error"), "{}", empty.1);
+        assert!(empty.1.contains("empty prompt"), "{}", empty.1);
     }
 
     #[test]

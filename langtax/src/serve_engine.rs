@@ -3,10 +3,12 @@
 //! Default `gguf_gemv serve` stays one connection at a time. `--engine` admits
 //! several `POST /generate` bodies onto one interned pool so prefills and
 //! decodes GEMM together. `"stream": true` is HTTP/1.1 chunked NDJSON token
-//! lines then a final `generated` object. `--prefill-chunk`, `--decode-first`,
+//! lines then a final `generated` object. `/v1/completions` and
+//! `/v1/chat/completions` use the same scheduler with an OpenAI `choices`
+//! envelope; stream is chunked SSE. `--prefill-chunk`, `--decode-first`,
 //! `--slo-reject`, `--itl-slo-ns`, graph knobs, fill modes, `GpuStoreCfg`
 //! CUDA knobs, `--prefetch` / `--plan-window` / `--plan-threshold`, `--seq-streams`, and
-//! `--trace-out` match `gguf_gemv engine`. No Tokio, no OpenAI SDK surface.
+//! `--trace-out` match `gguf_gemv engine`. No Tokio.
 //! HTTP/1.1 keep-alive is on unless the client sends `Connection: close`.
 
 use std::fs::OpenOptions;
@@ -16,9 +18,11 @@ use std::net::{TcpListener, TcpStream};
 use crate::decode::{prompt_ids, Llama, LlamaError};
 use crate::engine::{Engine, EngineCfg, SeqId, SeqOutput};
 use crate::serve::{
-    http_chunk, http_chunk_end, http_chunked_headers, http_err_status, http_json_bytes, json_error,
-    json_generated, json_token, normalize_path, parse_gen_req, try_parse_http_request, HttpRequest,
-    ServeArgs, ServeError, MAX_REQ,
+    finish_reason, http_chunk, http_chunk_end, http_chunked_headers, http_err_status,
+    http_json_bytes, http_sse_headers, json_error, json_generated, json_openai_chat,
+    json_openai_completion, json_openai_error, json_token, parse_gen_req,
+    sse_chat_delta, sse_completion_delta, sse_done, try_parse_http_request, HttpRequest,
+    ServeApi, ServeArgs, ServeError, MAX_REQ,
 };
 use crate::store_attach::{attach_store, StoreAttach};
 use crate::tok::Tokenizer;
@@ -59,21 +63,34 @@ struct Conn {
     streamed: usize,
     finalized: bool,
     keep_alive: bool,
+    api: ServeApi,
+    n_predict: usize,
 }
 
 enum AdmitOut {
-    Seq { id: SeqId, ndjson: bool },
+    Seq {
+        id: SeqId,
+        ndjson: bool,
+        api: ServeApi,
+        n_predict: usize,
+    },
     Bytes(Vec<u8>),
 }
 
 impl AdmitOut {
-    fn http(status: u16, reason: &'static str, msg: &str, keep_alive: bool) -> Self {
-        Self::Bytes(http_json_bytes(
-            status,
-            reason,
-            &json_error(msg),
-            keep_alive,
-        ))
+    fn http(
+        status: u16,
+        reason: &'static str,
+        msg: &str,
+        keep_alive: bool,
+        api: Option<ServeApi>,
+    ) -> Self {
+        let body = if api.is_some_and(ServeApi::is_openai) {
+            json_openai_error(msg)
+        } else {
+            json_error(msg)
+        };
+        Self::Bytes(http_json_bytes(status, reason, &body, keep_alive))
     }
 }
 
@@ -124,6 +141,8 @@ impl Conn {
             streamed: 0,
             finalized: false,
             keep_alive: false,
+            api: ServeApi::Generate,
+            n_predict: 0,
         }
     }
 
@@ -247,15 +266,21 @@ fn finish_write(c: &mut Conn) {
     c.streamed = 0;
     c.finalized = false;
     c.intern_hits_at_add = 0;
+    c.api = ServeApi::Generate;
+    c.n_predict = 0;
     c.req = None;
     let _ = try_take_request(c);
 }
 
-fn queue_missing(c: Option<&mut Conn>, ndjson: bool) {
+fn queue_missing(c: Option<&mut Conn>, ndjson: bool, api: ServeApi) {
     let Some(c) = c else {
         return;
     };
-    let err = json_error("missing sequence");
+    let err = if api.is_openai() {
+        json_openai_error("missing sequence")
+    } else {
+        json_error("missing sequence")
+    };
     if ndjson {
         c.write.extend(http_chunk(err.as_bytes()));
         c.write.extend(http_chunk_end());
@@ -370,15 +395,27 @@ impl<'a> EngineHttp<'a> {
                 continue;
             };
             match self.admit_req(&req) {
-                AdmitOut::Seq { id, ndjson } => {
+                AdmitOut::Seq {
+                    id,
+                    ndjson,
+                    api,
+                    n_predict,
+                } => {
                     let hits = self.engine.pool().hits();
                     if let Some(c) = self.conns.get_mut(i) {
                         c.seq = Some(id);
                         c.intern_hits_at_add = hits;
                         c.ndjson = ndjson;
+                        c.api = api;
+                        c.n_predict = n_predict;
                         c.keep_alive = req.keep_alive;
                         if ndjson {
-                            c.write.extend(http_chunked_headers(req.keep_alive));
+                            let head = if api.is_openai() {
+                                http_sse_headers(req.keep_alive)
+                            } else {
+                                http_chunked_headers(req.keep_alive)
+                            };
+                            c.write.extend(head);
                         }
                     }
                 }
@@ -394,40 +431,61 @@ impl<'a> EngineHttp<'a> {
 
     fn admit_req(&mut self, req: &HttpRequest) -> AdmitOut {
         let ka = req.keep_alive;
+        let api = ServeApi::from_path(&req.path);
         if req.method != "POST" {
-            return AdmitOut::http(405, "Method Not Allowed", "method must be POST", ka);
+            return AdmitOut::http(405, "Method Not Allowed", "method must be POST", ka, api);
         }
-        if normalize_path(&req.path) != "/generate" {
-            return AdmitOut::http(404, "Not Found", "not found", ka);
-        }
+        let Some(api) = api else {
+            return AdmitOut::http(404, "Not Found", "not found", ka, None);
+        };
         let body = match std::str::from_utf8(&req.body) {
             Ok(s) => s,
-            Err(_) => return AdmitOut::http(400, "Bad Request", "body must be utf-8", ka),
+            Err(_) => {
+                return AdmitOut::http(400, "Bad Request", "body must be utf-8", ka, Some(api))
+            }
         };
         let gen = match parse_gen_req(body) {
             Ok(g) => g,
-            Err(e) => return AdmitOut::http(400, "Bad Request", &e, ka),
+            Err(e) => return AdmitOut::http(400, "Bad Request", &e, ka, Some(api)),
         };
         let prompt = match gen.resolve(self.tok) {
             Ok(p) => p,
-            Err(e) => return AdmitOut::http(400, "Bad Request", &e, ka),
+            Err(e) => return AdmitOut::http(400, "Bad Request", &e, ka, Some(api)),
         };
         if prompt.is_empty() {
-            return AdmitOut::http(400, "Bad Request", "empty prompt", ka);
+            return AdmitOut::http(400, "Bad Request", "empty prompt", ka, Some(api));
         }
         let n_predict = gen.n_predict.unwrap_or(self.n_predict);
         let ids = match prompt_ids(self.tok, &prompt) {
             Ok(ids) if !ids.is_empty() => ids,
-            Ok(_) => return AdmitOut::http(400, "Bad Request", "empty prompt", ka),
-            Err(e) => return AdmitOut::http(500, "Internal Server Error", &e.to_string(), ka),
+            Ok(_) => return AdmitOut::http(400, "Bad Request", "empty prompt", ka, Some(api)),
+            Err(e) => {
+                return AdmitOut::http(
+                    500,
+                    "Internal Server Error",
+                    &e.to_string(),
+                    ka,
+                    Some(api),
+                )
+            }
         };
         match self.engine.add(&ids, n_predict) {
             Ok(id) => AdmitOut::Seq {
                 id,
                 ndjson: gen.stream,
+                api,
+                n_predict,
             },
-            Err(LlamaError::EmptyPrompt) => AdmitOut::http(400, "Bad Request", "empty prompt", ka),
-            Err(e) => AdmitOut::http(500, "Internal Server Error", &e.to_string(), ka),
+            Err(LlamaError::EmptyPrompt) => {
+                AdmitOut::http(400, "Bad Request", "empty prompt", ka, Some(api))
+            }
+            Err(e) => AdmitOut::http(
+                500,
+                "Internal Server Error",
+                &e.to_string(),
+                ka,
+                Some(api),
+            ),
         }
     }
 
@@ -463,7 +521,12 @@ impl<'a> EngineHttp<'a> {
             }
             let next = ids.len();
             let piece = self.tok.decode(new_ids);
-            let payload = json_token(&piece);
+            let api = self.conns.get(i).map_or(ServeApi::Generate, |c| c.api);
+            let payload = match api {
+                ServeApi::Generate => json_token(&piece),
+                ServeApi::Completions => sse_completion_delta(&piece, None),
+                ServeApi::Chat => sse_chat_delta(&piece, None),
+            };
             if let Some(c) = self.conns.get_mut(i) {
                 c.write.extend(http_chunk(payload.as_bytes()));
                 c.streamed = next;
@@ -498,9 +561,9 @@ impl<'a> EngineHttp<'a> {
     }
 
     fn finish_seq(&mut self, i: usize) -> Result<(), ServeError> {
-        let (id, at, ndjson) = match self.conns.get(i) {
+        let (id, at, ndjson, api, n_predict) = match self.conns.get(i) {
             Some(c) => match c.seq {
-                Some(id) => (id, c.intern_hits_at_add, c.ndjson),
+                Some(id) => (id, c.intern_hits_at_add, c.ndjson, c.api, c.n_predict),
                 None => return Ok(()),
             },
             None => return Ok(()),
@@ -511,18 +574,46 @@ impl<'a> EngineHttp<'a> {
             }
         }
         let pages = self.engine.pool().hits().saturating_sub(at);
-        let json = match self.engine.take(id) {
-            Some(out) => json_generated(&decode_seq(self.tok, &out), 0, pages),
-            None => {
-                queue_missing(self.conns.get_mut(i), ndjson);
-                return Ok(());
-            }
+        let Some(out) = self.engine.take(id) else {
+            queue_missing(self.conns.get_mut(i), ndjson, api);
+            return Ok(());
+        };
+        let reason = finish_reason(out.generated.len(), n_predict);
+        let json = match api {
+            ServeApi::Generate => json_generated(&decode_seq(self.tok, &out), 0, pages),
+            ServeApi::Completions => json_openai_completion(
+                &self.tok.decode(&out.generated),
+                out.prompt.len(),
+                out.generated.len(),
+                reason,
+            ),
+            ServeApi::Chat => json_openai_chat(
+                &self.tok.decode(&out.generated),
+                out.prompt.len(),
+                out.generated.len(),
+                reason,
+            ),
         };
         if let Some(c) = self.conns.get_mut(i) {
             if ndjson {
-                let mut line = json;
-                line.push('\n');
-                c.write.extend(http_chunk(line.as_bytes()));
+                match api {
+                    ServeApi::Generate => {
+                        let mut line = json;
+                        line.push('\n');
+                        c.write.extend(http_chunk(line.as_bytes()));
+                    }
+                    ServeApi::Completions => {
+                        c.write.extend(http_chunk(
+                            sse_completion_delta("", Some(reason)).as_bytes(),
+                        ));
+                        c.write.extend(http_chunk(sse_done().as_bytes()));
+                    }
+                    ServeApi::Chat => {
+                        c.write
+                            .extend(http_chunk(sse_chat_delta("", Some(reason)).as_bytes()));
+                        c.write.extend(http_chunk(sse_done().as_bytes()));
+                    }
+                }
                 c.write.extend(http_chunk_end());
                 c.finalized = true;
             } else {
@@ -595,8 +686,12 @@ mod tests {
     }
 
     fn post_json(json: &str) -> Vec<u8> {
+        post_path("/generate", json)
+    }
+
+    fn post_path(path: &str, json: &str) -> Vec<u8> {
         format!(
-            "POST /generate HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n{json}",
+            "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n{json}",
             json.len()
         )
         .into_bytes()
@@ -1015,5 +1110,64 @@ mod tests {
             "two concurrent streams must GEMM together, peak={}",
             http.stats().gemm_peak
         );
+    }
+
+    #[test]
+    fn engine_http_v1_completions_matches_greedy_completion() {
+        use crate::decode::{greedy_generate_cache, prompt_ids};
+        let (model, tok) = tiny_model();
+        let args = engine_args();
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nb");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let mut streams = [connect_nb(addr)];
+        write_all_nb(
+            &mut streams[0],
+            &post_path("/v1/completions", r#"{"prompt":"ab","max_tokens":2}"#),
+        );
+        let mut bufs = [Vec::new()];
+        drive(&mut http, &mut streams, &mut bufs);
+        let (status, body) = response_parts(&bufs[0]).expect("resp");
+        assert_eq!(status, 200, "{body}");
+        assert!(body.contains("\"object\":\"text_completion\""), "{body}");
+        let mut ids = prompt_ids(&tok, "ab").expect("ids");
+        let prompt_n = ids.len();
+        let mut slot = None;
+        let cache = model
+            .ensure_cache_page(&mut slot, ids.len().saturating_add(2), Some(64), Some(16))
+            .expect("kv");
+        let _full = greedy_generate_cache(&model, &tok, cache, &mut ids, 2).expect("g");
+        let want = tok.decode(ids.get(prompt_n..).unwrap_or(&[]));
+        let pat = "\"text\":\"";
+        let i = body.find(pat).expect("text");
+        let rest = body.get(i.saturating_add(pat.len())..).expect("rest");
+        let end = rest.find('"').expect("end");
+        let got = rest.get(..end).expect("slice");
+        assert_eq!(got, want, "{body}");
+    }
+
+    #[test]
+    fn engine_http_v1_stream_is_sse() {
+        let (model, tok) = tiny_model();
+        let args = engine_args();
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nb");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let mut streams = [connect_nb(addr)];
+        write_all_nb(
+            &mut streams[0],
+            &post_path("/v1/completions", r#"{"prompt":"ab","stream":true}"#),
+        );
+        let mut bufs = [Vec::new()];
+        drive(&mut http, &mut streams, &mut bufs);
+        let raw = std::str::from_utf8(&bufs[0]).expect("utf8");
+        assert!(raw.contains("text/event-stream"), "{raw}");
+        assert!(raw.contains("data: "), "{raw}");
+        assert!(raw.contains("[DONE]"), "{raw}");
+        let (status, body) = response_done(&bufs[0]).expect("resp");
+        assert_eq!(status, 200, "{body}");
+        assert!(body.contains("text_completion"), "{body}");
     }
 }
