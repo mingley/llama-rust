@@ -459,6 +459,54 @@ impl MemcpyOp {
     }
 }
 
+/// `cudaMemcpySrcAccessOrder` for [`MemcpyAttributes`].
+///
+/// Destination access stays stream-ordered. Source access follows this enum.
+/// `0` (`cudaMemcpySrcAccessOrderInvalid`) is not constructible.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MemcpySrcAccessOrder {
+    /// `cudaMemcpySrcAccessOrderStream` (`1`). Source waits for prior stream work.
+    #[default]
+    Stream,
+    /// `cudaMemcpySrcAccessOrderDuringApiCall` (`2`). Source may be read out of
+    /// stream order; the API waits until those copies complete (ephemeral /
+    /// stack sources). Capture cannot include it.
+    DuringApiCall,
+    /// `cudaMemcpySrcAccessOrderAny` (`3`). Source may be read out of stream
+    /// order after the API returns (`malloc` host pointers). Capture cannot
+    /// include it.
+    Any,
+}
+
+/// `cudaMemcpyFlags` for [`MemcpyAttributes::flags`].
+///
+/// Unknown bits are Invalid `"memcpy flags"`.
+/// [`Self::PREFER_OVERLAP_WITH_COMPUTE`] is a hint; this VM ignores it
+/// (example H100 is discrete, not Tegra).
+pub struct MemcpyFlags;
+
+impl MemcpyFlags {
+    /// `cudaMemcpyFlagDefault`.
+    pub const DEFAULT: u32 = 0;
+    /// `cudaMemcpyFlagPreferOverlapWithCompute`. Hint; ignored here.
+    pub const PREFER_OVERLAP_WITH_COMPUTE: u32 = 1;
+}
+
+/// `cudaMemcpyAttributes` for [`crate::Sim::memcpy_batch_async`] /
+/// [`crate::Sim::memcpy_with_attributes`].
+///
+/// Location hints (`srcLocHint` / `dstLocHint`) are omitted:
+/// [`crate::DeviceAttr::ConcurrentManagedAccess`] and
+/// [`crate::DeviceAttr::PageableMemoryAccess`] are 0, so CUDA ignores them.
+/// Host NUMA ids are not modeled.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MemcpyAttributes {
+    /// `cudaMemcpyAttributes::srcAccessOrder`.
+    pub src_access_order: MemcpySrcAccessOrder,
+    /// `cudaMemcpyAttributes::flags` ([`MemcpyFlags`]).
+    pub flags: u32,
+}
+
 /// Device-side fill (`cudaMemsetAsync` / `cudaMemset2DAsync` / `cudaMemset3DAsync`).
 ///
 /// [`Self::height`] `0` or `1` is `cudaMemsetAsync` of [`Self::bytes`].

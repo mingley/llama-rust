@@ -22,12 +22,13 @@ use crate::ops::{
     MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp,
     MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType,
     MemMapFlags, MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
-    MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp,
-    MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation,
-    PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
-    SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
-    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WriteValueFlags,
+    MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyFlags, MemcpyOp,
+    MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags, MulticastCreateFlags,
+    MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch, PeerAccessFlags, Place,
+    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
+    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WriteValueFlags,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -12651,6 +12652,127 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cudaMemcpyWithAttributesAsync`.
+    ///
+    /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy`] (`cudaMemcpyAsync`),
+    /// including pageable host-sync and stream capture of pinned copies.
+    /// [`MemcpySrcAccessOrder::DuringApiCall`] / [`MemcpySrcAccessOrder::Any`]
+    /// are a one-copy [`Self::memcpy_batch_async`]. Location hints are not
+    /// modeled ([`DeviceAttr::ConcurrentManagedAccess`] /
+    /// [`DeviceAttr::PageableMemoryAccess`] are 0).
+    /// [`MemcpyFlags::PREFER_OVERLAP_WITH_COMPUTE`] is accepted and ignored
+    /// (discrete GPU). Unknown flags Invalid `"memcpy flags"`.
+    pub fn memcpy_with_attributes(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        attr: MemcpyAttributes,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        memcpy_flags_ok(attr.flags)?;
+        match attr.src_access_order {
+            MemcpySrcAccessOrder::Stream => self.memcpy(device, op, stream),
+            MemcpySrcAccessOrder::DuringApiCall | MemcpySrcAccessOrder::Any => self
+                .memcpy_batch_async(device, std::slice::from_ref(&op), &[attr], &[0], stream)?
+                .into_iter()
+                .next()
+                .ok_or(SimError::Invalid {
+                    why: "memcpy attributes empty",
+                }),
+        }
+    }
+
+    /// `cudaMemcpyBatchAsync`. Pointer-to-pointer 1D copies only.
+    ///
+    /// The batch as a whole is stream-ordered: later submits wait for every
+    /// copy. Copies inside the batch share one snapshotted predecessor list
+    /// ([`MemcpySrcAccessOrder::Stream`]) or empty deps (DuringApiCall / Any)
+    /// so they do not wait for each other. 2D/3D Invalid `"memcpy batch 1d"`
+    /// (`cudaMemcpy3DBatchAsync` is not this API). Capture cannot include it
+    /// (`"cannot capture memcpy batch"`).
+    ///
+    /// `attrs_idxs[0]` must be `0`; indexes strictly increase; the last is
+    /// `< ops.len()`; `attrs.len() == attrs_idxs.len() <= ops.len()`. An empty
+    /// batch requires empty attrs. [`MemcpySrcAccessOrder::DuringApiCall`]
+    /// waits those copies before return (not the whole stream). Any does not
+    /// wait. Stream-order pageable / SyncMemops copies still
+    /// [`Self::synchronize_stream`].
+    pub fn memcpy_batch_async(
+        &mut self,
+        device: DeviceId,
+        ops: &[MemcpyOp],
+        attrs: &[MemcpyAttributes],
+        attrs_idxs: &[usize],
+        stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if self.unavailable.contains(&device) {
+            return Err(SimError::Unavailable { device });
+        }
+        let per = memcpy_batch_attrs(ops.len(), attrs, attrs_idxs)?;
+        for (op, attr) in ops.iter().zip(per.iter()) {
+            memcpy_flags_ok(attr.flags)?;
+            if !op.is_1d() {
+                return Err(SimError::Invalid {
+                    why: "memcpy batch 1d",
+                });
+            }
+            self.memcpy_precheck(op)?;
+        }
+        if self.capturing.is_some() {
+            if self.in_capture(device, stream) {
+                return Err(SimError::Invalid {
+                    why: "cannot capture memcpy batch",
+                });
+            }
+            let live = self
+                .capturing
+                .as_ref()
+                .is_some_and(|c| c.mode.live_uncaptured());
+            if !live {
+                return Err(SimError::Invalid {
+                    why: "stream not capturing",
+                });
+            }
+        }
+        if ops.is_empty() {
+            return Ok(Vec::new());
+        }
+        let stream_deps = self.stream_order_deps(device, stream);
+        let mut ids = Vec::with_capacity(ops.len());
+        let mut during = Vec::new();
+        let mut wait_stream = false;
+        for (op, attr) in ops.iter().zip(per.iter()) {
+            let deps = match attr.src_access_order {
+                MemcpySrcAccessOrder::Stream => stream_deps.clone(),
+                MemcpySrcAccessOrder::DuringApiCall | MemcpySrcAccessOrder::Any => Vec::new(),
+            };
+            let id = self.submit_live_with_deps(
+                device,
+                stream,
+                Kind::Memcpy(op.clone()),
+                LaunchCost::Kernel,
+                deps,
+            )?;
+            if attr.src_access_order == MemcpySrcAccessOrder::DuringApiCall {
+                during.push(id);
+            }
+            let pageable = op.src.is_pageable() || op.dst.is_pageable();
+            let sync_ops = self.is_sync_memops(op.alloc)? || self.device_has_sync_memops(device);
+            if attr.src_access_order == MemcpySrcAccessOrder::Stream && (pageable || sync_ops) {
+                wait_stream = true;
+            }
+            ids.push(id);
+        }
+        if !during.is_empty() {
+            self.drive_until(|sim| during.iter().all(|id| sim.op_done(*id)))?;
+        }
+        if wait_stream {
+            self.synchronize_stream(device, stream)?;
+        }
+        Ok(ids)
+    }
+
     /// Enqueue a kernel on whole allocations. Reads/writes are leased until it completes.
     ///
     /// A VMM VA must be fully mapped ([`Self::is_resident`]) or peer-readable
@@ -15079,6 +15201,28 @@ impl Sim {
         kind: Kind,
         launch: LaunchCost,
     ) -> Result<OpId, SimError> {
+        let mut deps = self.stream_order_deps(device, stream);
+        if let Kind::EventWait { event, .. } = &kind {
+            if let Some(rec) = self.event_recorded_by(*event) {
+                deps.push(rec);
+            }
+        }
+        self.submit_live_with_deps(device, stream, kind, launch, deps)
+    }
+
+    /// Live submit with an explicit predecessor list.
+    ///
+    /// [`Self::memcpy_batch_async`] snapshots [`Self::stream_order_deps`] once
+    /// so copies in one batch do not wait for each other (`cudaMemcpyBatchAsync`
+    /// intra-batch order is undefined).
+    fn submit_live_with_deps(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        kind: Kind,
+        launch: LaunchCost,
+        deps: Vec<OpId>,
+    ) -> Result<OpId, SimError> {
         let _gpu = self.profile.gpu(device)?;
         if matches!(kind, Kind::Kernel { .. }) {
             self.validate_cluster_attrs(
@@ -15102,12 +15246,6 @@ impl Sim {
         }
         if let Some(lc) = lce {
             let _ev = self.events.entry(lc.event).or_insert(Ev::new(true));
-        }
-        let mut deps = self.stream_order_deps(device, stream);
-        if let Kind::EventWait { event, .. } = &kind {
-            if let Some(rec) = self.event_recorded_by(*event) {
-                deps.push(rec);
-            }
         }
         let priority = self.snap_priority(device, stream);
         let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
@@ -17831,6 +17969,79 @@ fn kernel_span(total: u64, buf: &KernelBuf) -> Result<(u64, u64), SimError> {
         });
     }
     Ok((buf.offset, n))
+}
+
+fn memcpy_flags_ok(flags: u32) -> Result<(), SimError> {
+    if flags & !MemcpyFlags::PREFER_OVERLAP_WITH_COMPUTE != 0 {
+        Err(SimError::Invalid {
+            why: "memcpy flags",
+        })
+    } else {
+        Ok(())
+    }
+}
+
+fn memcpy_batch_attrs(
+    count: usize,
+    attrs: &[MemcpyAttributes],
+    attrs_idxs: &[usize],
+) -> Result<Vec<MemcpyAttributes>, SimError> {
+    if attrs.len() != attrs_idxs.len() {
+        return Err(SimError::Invalid {
+            why: "memcpy batch attrs",
+        });
+    }
+    let num_attrs = attrs.len();
+    if count == 0 {
+        return if num_attrs == 0 {
+            Ok(Vec::new())
+        } else {
+            Err(SimError::Invalid {
+                why: "memcpy batch attrs",
+            })
+        };
+    }
+    if num_attrs == 0 || num_attrs > count {
+        return Err(SimError::Invalid {
+            why: "memcpy batch attrs",
+        });
+    }
+    let Some(&first) = attrs_idxs.first() else {
+        return Err(SimError::Invalid {
+            why: "memcpy batch attrs",
+        });
+    };
+    if first != 0 {
+        return Err(SimError::Invalid {
+            why: "memcpy batch attrs",
+        });
+    }
+    if attrs_idxs.windows(2).any(|w| w[1] <= w[0]) {
+        return Err(SimError::Invalid {
+            why: "memcpy batch attrs",
+        });
+    }
+    let Some(&last) = attrs_idxs.last() else {
+        return Err(SimError::Invalid {
+            why: "memcpy batch attrs",
+        });
+    };
+    if last >= count {
+        return Err(SimError::Invalid {
+            why: "memcpy batch attrs",
+        });
+    }
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count {
+        let k = attrs_idxs
+            .iter()
+            .rposition(|&idx| idx <= i)
+            .ok_or(SimError::Invalid {
+                why: "memcpy batch attrs",
+            })?;
+        out.push(attrs[k]);
+    }
+    Ok(out)
 }
 
 fn memcpy_2d_check(m: &MemcpyOp) -> Result<(), SimError> {

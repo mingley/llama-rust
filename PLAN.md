@@ -3285,16 +3285,34 @@ model, do not celebrate the sim.
     rejected. Decode identity vs oracle. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-319. [ ] Next numbered PLAN item after 318 is the next `gpu-sim` / Engine /
+319. [x] `cudaMemcpyBatchAsync` / `cudaMemcpyWithAttributesAsync`:
+    [`memcpy_batch_async`](gpu-sim/src/sim.rs) is 1D pointer-to-pointer
+    only (2D/3D Invalid `"memcpy batch 1d"`; `cudaMemcpy3DBatchAsync` is
+    not this API). Copies in one batch share a snapshotted stream-order
+    predecessor list (`MemcpySrcAccessOrder::Stream`) or empty deps
+    (`DuringApiCall` / `Any`) so they do not wait for each other; later
+    submits still wait for the whole batch. `attrs_idxs[0] == 0`, strictly increasing, last `< count`,
+    `numAttrs <= count`; empty batch requires empty attrs. DuringApiCall
+    waits those copies before return (not the stream). Any does not wait.
+    [`memcpy_with_attributes`](gpu-sim/src/sim.rs) Stream is [`memcpy`](gpu-sim/src/sim.rs).
+    [`MemcpyFlags::PREFER_OVERLAP_WITH_COMPUTE`] is ignored (discrete).
+    Location hints omitted (`ConcurrentManagedAccess` /
+    `PageableMemoryAccess` are 0). Capture cannot include a batch
+    (`"cannot capture memcpy batch"`). Unknown flags Invalid
+    `"memcpy flags"`. Decode identity unchanged. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+320. [ ] Next numbered PLAN item after 319 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
-    decode family (`gemma4`). Do not invent
+    decode family (`gemma4`). Prefer remaining CUDA-shaped twins
+    (`cudaMemcpy3DBatchAsync`, `cudaMemPrefetchBatchAsync`,
+    `cudaMemDiscardBatchAsync`) over more OpenAI HTTP veneer. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
     numbers, example `$/M tokens` rents, or `cudaStreamDestroy`.
     **`best_of` / `use_beam_search` stay out of `parse_gen_req` until a
-    real beam Engine exists.** Prefer remaining CUDA-shaped twins over more
-    OpenAI HTTP veneer. Do not default `--engine`. Do not invent
-    `max_model_len` or `/v1/tokenize`.
+    real beam Engine exists.** Do not default `--engine`. Do not invent
+    `max_model_len` or `/v1/tokenize`. Do not invent `gemma4`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

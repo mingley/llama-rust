@@ -72,6 +72,8 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemcpy2DPeer` (`memcpy_peer_2d`) waits that stream; `memcpy_peer_2d_async` bills payload not padding | NVLink / PCIe P2P |
 | `cudaMemcpy2D` (`memcpy_2d`) waits that stream; `memcpy_2d_async` bills payload not padding | PCIe / NVLink / HBM |
 | `cudaMemcpy3D` (`memcpy_3d`) waits that stream; `memcpy_3d_async` bills payload not padding | PCIe / NVLink / HBM |
+| `cudaMemcpyBatchAsync` (`memcpy_batch_async`) 1D only; intra-batch copies share one stream-order snapshot (or empty DuringApiCall/Any deps) | copy-engine occupancy; DuringApiCall waits those copies |
+| `cudaMemcpyWithAttributesAsync` (`memcpy_with_attributes`) Stream is `memcpy`; DuringApiCall/Any are a one-copy batch | `PreferOverlapWithCompute` ignored (discrete) |
 | `cudaMemset2D` (`memset_2d`) waits that stream; `memset_2d_async` bills payload not padding | HBM write |
 | `cudaMemset3D` (`memset_3d`) waits that stream; `memset_3d_async` bills payload not padding | HBM write |
 | `synchronize_device` waits one GPU | other GPUs keep running |
@@ -484,7 +486,11 @@ are `cudaMemcpy3DPeer` / `cudaMemcpy3DPeerAsync`
 (`MemcpyOp` must be 2D). `memcpy_2d` /
 `memcpy_2d_async` are `cudaMemcpy2D` / `cudaMemcpy2DAsync` (`MemcpyOp` must
 be 2D). `memcpy_3d` / `memcpy_3d_async` are `cudaMemcpy3D` /
-`cudaMemcpy3DAsync` (`MemcpyOp` must be 3D). Typed `memcpy` stays. [`StreamId::NULL`] is the CUDA null
+`cudaMemcpy3DAsync` (`MemcpyOp` must be 3D). `memcpy_batch_async` is
+`cudaMemcpyBatchAsync` (1D pointer-to-pointer; copies in one batch do not
+wait for each other; `cudaMemcpy3DBatchAsync` is not this API; capture
+cannot include it). `memcpy_with_attributes` is
+`cudaMemcpyWithAttributesAsync` (Stream is `memcpy`). Typed `memcpy` stays. [`StreamId::NULL`] is the CUDA null
 stream; `set_legacy_null_stream(true)` serializes it with every other stream
 on that device (CUDA legacy default stream). Off by default is the
 per-thread default: NULL serializes only with `set_stream_blocking`

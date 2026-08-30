@@ -417,6 +417,16 @@
 //! [`memcpy_3d_async`](Sim::memcpy_3d_async) / [`memcpy_3d`](Sim::memcpy_3d)
 //! are `cudaMemcpy3DAsync` / `cudaMemcpy3D` ([`MemcpyOp::is_3d`]). Typed
 //! [`memcpy`](Sim::memcpy) stays.
+//! [`memcpy_batch_async`](Sim::memcpy_batch_async) is `cudaMemcpyBatchAsync`
+//! (1D pointer-to-pointer; copies in one batch share one stream-order snapshot
+//! or empty DuringApiCall/Any deps so they do not wait for each other; 2D/3D
+//! Invalid `"memcpy batch 1d"`; capture is `"cannot capture memcpy batch"`).
+//! [`memcpy_with_attributes`](Sim::memcpy_with_attributes) is
+//! `cudaMemcpyWithAttributesAsync` (Stream is [`memcpy`](Sim::memcpy);
+//! DuringApiCall waits those copies; Any does not). [`MemcpyFlags::PREFER_OVERLAP_WITH_COMPUTE`]
+//! is ignored (discrete). Location hints are omitted
+//! ([`DeviceAttr::ConcurrentManagedAccess`] / [`PageableMemoryAccess`](DeviceAttr::PageableMemoryAccess)
+//! are 0).
 //! [`Sim::set_limit`] / [`get_limit`](Sim::get_limit) are `cudaDeviceSetLimit` /
 //! `GetLimit`. [`DeviceLimit::PersistingL2CacheSize`] wraps
 //! [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size).
@@ -804,13 +814,14 @@ pub use ops::{
     LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity,
     MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType,
     MemLocationType, MemMapFlags, MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr,
-    MemRangeAttrValue, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType,
-    MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
-    Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes,
-    PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
-    SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo,
-    StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
-    WaitValueFlags, WriteValueFlags,
+    MemRangeAttrValue, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
+    MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags,
+    MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch,
+    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
+    SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
+    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags,
+    WriteValueFlags,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -12475,6 +12486,233 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    fn pinned_h2d(d: DeviceId, a: AllocId, bytes: u64) -> MemcpyOp {
+        MemcpyOp::packed_1d(Place::HostPinned, Place::Device(d), a, bytes)
+    }
+
+    #[test]
+    fn memcpy_batch_async_is_cuda_memcpy_batch_async() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 4u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        let b = sim.alloc(d, bytes, s).unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        let k = sim
+            .kernel(d, KernelKind::other(1 << 28, bytes), &[a], &[a], s)
+            .unwrap();
+        let attr = MemcpyAttributes::default();
+        let ids = sim
+            .memcpy_batch_async(
+                d,
+                &[pinned_h2d(d, a, bytes), pinned_h2d(d, b, bytes)],
+                &[attr],
+                &[0],
+                s,
+            )
+            .unwrap();
+        assert_eq!(ids.len(), 2);
+        let oa = sim.operation(ids[0]).unwrap();
+        let ob = sim.operation(ids[1]).unwrap();
+        assert_eq!(oa.deps, ob.deps);
+        assert!(oa.deps.contains(&k), "{oa:?}");
+        assert!(ob.deps.contains(&k), "{ob:?}");
+        assert!(!oa.deps.contains(&ids[1]));
+        assert!(!ob.deps.contains(&ids[0]));
+        let kn = sim
+            .kernel(d, KernelKind::other(8, bytes), &[a], &[a], s)
+            .unwrap();
+        let kd = sim.operation(kn).unwrap().deps;
+        assert!(kd.contains(&ids[0]), "{kd:?}");
+        assert!(kd.contains(&ids[1]), "{kd:?}");
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), bytes.saturating_mul(2));
+        let oa = sim.operation(ids[0]).unwrap();
+        let ob = sim.operation(ids[1]).unwrap();
+        assert_eq!(oa.start_ns, ob.start_ns);
+        match sim.memcpy_batch_async(
+            d,
+            &[MemcpyOp {
+                height: 2,
+                ..pinned_h2d(d, a, 256)
+            }],
+            &[attr],
+            &[0],
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy batch 1d"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_batch_async(d, &[pinned_h2d(d, a, bytes)], &[attr], &[1], s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy batch attrs"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_batch_async(d, &[pinned_h2d(d, a, bytes)], &[], &[], s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy batch attrs"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let empty = sim.memcpy_batch_async(d, &[], &[], &[], s).unwrap();
+        assert!(empty.is_empty());
+        sim.begin_capture(d, s).unwrap();
+        match sim.memcpy_batch_async(d, &[pinned_h2d(d, a, bytes)], &[attr], &[0], s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cannot capture memcpy batch"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn memcpy_batch_during_api_call_waits_copies_not_the_stream() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 16u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        let b = sim.alloc(d, bytes, s).unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 50, 8), &[a], &[a], s));
+        let during = MemcpyAttributes {
+            src_access_order: MemcpySrcAccessOrder::DuringApiCall,
+            flags: MemcpyFlags::DEFAULT,
+        };
+        let t0 = sim.clock_ns();
+        let ids = sim
+            .memcpy_batch_async(d, &[pinned_h2d(d, b, bytes)], &[during], &[0], s)
+            .unwrap();
+        let t1 = sim.clock_ns();
+        assert!(t1 > t0, "DuringApiCall must wait the copy; t0={t0} t1={t1}");
+        assert!(sim.operation(ids[0]).unwrap().done);
+        assert_eq!(sim.bytes_moved(), bytes);
+        assert!(
+            !sim.query_stream(d, s).unwrap(),
+            "kernel must still be running"
+        );
+        let copy_wait = t1.saturating_sub(t0);
+        sim.synchronize().unwrap();
+        let leftover = sim.clock_ns().saturating_sub(t1);
+        assert!(
+            leftover > copy_wait,
+            "stream sync must wait leftover kernel; copy_wait={copy_wait} leftover={leftover}"
+        );
+    }
+
+    #[test]
+    fn memcpy_batch_any_does_not_wait_for_return() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 8u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        let any = MemcpyAttributes {
+            src_access_order: MemcpySrcAccessOrder::Any,
+            flags: 0,
+        };
+        let t0 = sim.clock_ns();
+        let ids = sim
+            .memcpy_batch_async(d, &[pinned_h2d(d, a, bytes)], &[any], &[0], s)
+            .unwrap();
+        assert_eq!(sim.clock_ns(), t0);
+        assert!(!sim.operation(ids[0]).unwrap().done);
+        sim.synchronize_stream(d, s).unwrap();
+        assert!(sim.operation(ids[0]).unwrap().done);
+        assert_eq!(sim.bytes_moved(), bytes);
+    }
+
+    #[test]
+    fn memcpy_with_attributes_stream_is_memcpy() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let attr = MemcpyAttributes {
+            src_access_order: MemcpySrcAccessOrder::Stream,
+            flags: MemcpyFlags::PREFER_OVERLAP_WITH_COMPUTE,
+        };
+        enq(sim.memcpy_with_attributes(d, pinned_h2d(d, a, 4096), attr, s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), 4096);
+        match sim.memcpy_with_attributes(
+            d,
+            pinned_h2d(d, a, 4096),
+            MemcpyAttributes { flags: 2, ..attr },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.memcpy_with_attributes(d, pinned_h2d(d, a, 4096), attr, s));
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn memcpy_batch_mixed_attrs_and_unknown_alloc_are_all_or_nothing() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        let b = sim.alloc(d, bytes, s).unwrap();
+        let c = sim.alloc(d, bytes, s).unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        let k = sim
+            .kernel(d, KernelKind::other(1 << 50, 8), &[a], &[a], s)
+            .unwrap();
+        let during = MemcpyAttributes {
+            src_access_order: MemcpySrcAccessOrder::DuringApiCall,
+            flags: 0,
+        };
+        let stream = MemcpyAttributes::default();
+        let ids = sim
+            .memcpy_batch_async(
+                d,
+                &[pinned_h2d(d, b, bytes), pinned_h2d(d, c, bytes)],
+                &[during, stream],
+                &[0, 1],
+                s,
+            )
+            .unwrap();
+        assert!(sim.operation(ids[0]).unwrap().done);
+        assert!(sim.operation(ids[0]).unwrap().deps.is_empty());
+        assert!(!sim.operation(ids[1]).unwrap().done);
+        assert!(
+            sim.operation(ids[1]).unwrap().deps.contains(&k),
+            "{:?}",
+            sim.operation(ids[1]).unwrap().deps
+        );
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), bytes.saturating_mul(2));
+        let before = sim.operations().count();
+        match sim.memcpy_batch_async(
+            d,
+            &[
+                pinned_h2d(d, a, bytes),
+                pinned_h2d(d, AllocId(u64::MAX), bytes),
+            ],
+            &[stream],
+            &[0],
+            s,
+        ) {
+            Err(SimError::UnknownAlloc { .. }) => {}
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.operations().count(), before);
+        match sim.memcpy_batch_async(
+            d,
+            &[pinned_h2d(d, a, bytes), pinned_h2d(d, b, bytes)],
+            &[stream, stream],
+            &[0, 0],
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy batch attrs"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

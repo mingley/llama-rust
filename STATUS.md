@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaMemcpyBatchAsync`
+
+`memcpy_batch_async` is 1D pointer-to-pointer `cudaMemcpyBatchAsync`.
+Copies in one batch share a snapshotted stream-order predecessor list
+(or empty DuringApiCall/Any deps) so they occupy copy engines together;
+later submits wait for the whole batch. DuringApiCall waits those copies
+before return. Any does not. `memcpy_with_attributes` Stream is `memcpy`.
+`PreferOverlapWithCompute` is ignored (discrete). Location hints are
+omitted (`ConcurrentManagedAccess` / `PageableMemoryAccess` are 0).
+Capture cannot include a batch. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — official gemma3n
 
 `general.architecture=gemma3n` with convert-shaped `gemma3n.*` KV. Decode
