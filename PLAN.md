@@ -2821,7 +2821,19 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-266. [ ] Next numbered PLAN item after 265 is the next `gpu-sim` / Engine /
+266. [x] `cuMulticastBindMem` size:
+    [`multicast_bind_mem_with_size`](Sim::multicast_bind_mem_with_size)
+    requires `size` equal to the handle bytes. Other sizes Invalid
+    `"bind size"`. CUDA `mcOffset` / `memOffset` are 0 (partial bind is
+    not modeled). Handle vs object mismatch stays `"handle size mismatch"`.
+    Flags still [`MulticastBindFlags::DEFAULT`]. Typed
+    [`multicast_bind_mem`](Sim::multicast_bind_mem) /
+    [`multicast_bind_mem_with_flags`](Sim::multicast_bind_mem_with_flags)
+    stay. Host-synchronous; capture refused. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+267. [ ] Next numbered PLAN item after 266 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

@@ -10279,6 +10279,30 @@ impl Sim {
                 why: "multicast bind flags",
             });
         }
+        let bytes = self.handle_ref(handle)?.bytes;
+        self.multicast_bind_mem_with_size(mc, device, handle, bytes, flags)
+    }
+
+    /// [`Self::multicast_bind_mem`] with the CUDA size and flags.
+    ///
+    /// `size` must equal the handle bytes. Other sizes Invalid `"bind size"`.
+    /// CUDA `mcOffset` / `memOffset` are 0 (partial bind is not modeled).
+    /// Flags must be [`MulticastBindFlags::DEFAULT`]. Handle vs multicast
+    /// object size mismatch stays `"handle size mismatch"`.
+    pub fn multicast_bind_mem_with_size(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        handle: MemHandleId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MulticastBindFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "multicast bind flags",
+            });
+        }
         let h = self.handle_ref(handle)?;
         if h.refs == 0 {
             return Err(SimError::Invalid {
@@ -10291,7 +10315,10 @@ impl Sim {
             });
         }
         let h_bytes = h.bytes;
-        let (n_dev, n_added, in_team, already, size, team) = {
+        if size != h_bytes {
+            return Err(SimError::Invalid { why: "bind size" });
+        }
+        let (n_dev, n_added, in_team, already, obj_bytes, team) = {
             let obj = self.mc_ref(mc)?;
             (
                 obj.n_dev,
@@ -10317,7 +10344,7 @@ impl Sim {
                 why: "already bound",
             });
         }
-        if h_bytes != size {
+        if h_bytes != obj_bytes {
             return Err(SimError::Invalid {
                 why: "handle size mismatch",
             });
