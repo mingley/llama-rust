@@ -843,6 +843,7 @@ fn vmm_evict_reacquires_same_va() {
         pageable: false,
         memcpy_batch: false,
         accessed_by: false,
+        wait_value: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -4909,6 +4910,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         pageable: false,
         memcpy_batch: false,
         accessed_by: true,
+        wait_value: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -4969,6 +4971,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         pageable: false,
         memcpy_batch: false,
         accessed_by: true,
+        wait_value: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -5030,6 +5033,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         pageable: false,
         memcpy_batch: false,
         accessed_by: true,
+        wait_value: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -5457,6 +5461,7 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         pageable: false,
         memcpy_batch: true,
         accessed_by: false,
+        wait_value: false,
     };
     let mut next_event = 1u32;
     apply_misses(
@@ -5592,6 +5597,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             pageable: false,
             memcpy_batch: false,
             accessed_by: false,
+            wait_value: false,
         };
         let mut next_event = 1u32;
         let k0 = ExpertKey::new(0, 0);
@@ -5621,7 +5627,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
         let mut ctr = ReplayCounters::default();
         gemm_keys(
             &mut sim,
-            &handles,
+            &mut handles,
             &mut graphs,
             &[k0, k1],
             false,
@@ -7602,4 +7608,163 @@ fn simulated_gpu_store_launch_completion_overlaps_replica() {
         on_wall < off_wall,
         "launch-completion replica overlap must shorten wall; on={on_wall} off={off_wall}"
     );
+}
+
+#[test]
+fn sim_replay_wait_value_keeps_hits() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg::lru(1, 4096, 0);
+    let on = SimCfg {
+        wait_value: true,
+        ..off
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("off");
+    let b = sim_replay_cfg(&t, profile, on).expect("on");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+}
+
+#[test]
+fn sim_replay_wait_value_decode_priority_keeps_hits() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 1, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg {
+        decode_priority: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let on = SimCfg {
+        wait_value: true,
+        ..off
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("off");
+    let b = sim_replay_cfg(&t, profile, on).expect("on");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+}
+
+#[test]
+fn simulated_gpu_store_wait_value_compute_waits_copy_write() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            wait_value: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    let _p = gpu.acquire(k0).expect("acquire");
+    let _s = gpu.score().expect("score");
+    let write = gpu
+        .operations()
+        .find(|o| matches!(o.kind, GpuOp::WriteValue { .. }))
+        .expect("write-value");
+    let wait = gpu
+        .operations()
+        .find(|o| matches!(o.kind, GpuOp::WaitValue { .. }))
+        .expect("wait-value");
+    let gemm = gpu
+        .operations()
+        .find(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+        .expect("kernel");
+    assert_eq!(write.stream, gpu.copy_stream());
+    assert_eq!(wait.stream, gpu.compute_stream());
+    let write_done = write.done_ns.expect("write done");
+    let wait_start = wait.start_ns.expect("wait start");
+    let gemm_start = gemm.start_ns.expect("gemm start");
+    assert!(
+        wait_start >= write_done,
+        "wait must see the copy-stream write; wait={wait_start} write={write_done}"
+    );
+    assert!(
+        gemm_start >= wait_start,
+        "GEMM must wait the mailbox; gemm={gemm_start} wait={wait_start}"
+    );
+    let mb = match write.kind {
+        GpuOp::WriteValue { id, .. } => id,
+        other => panic!("write-value: {other:?}"),
+    };
+    let expert = match &gemm.kind {
+        GpuOp::Kernel { reads, .. } => reads.first().expect("read").id,
+        other => panic!("kernel: {other:?}"),
+    };
+    assert_ne!(mb, expert, "mailbox must not be the expert page");
+}
+
+#[test]
+fn simulated_gpu_store_wait_value_does_not_drain_leftover_prefill() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        2,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            wait_value: true,
+            decode_priority: true,
+            stream_priority: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let pre = ExpertKey::new(0, 0);
+    let dec = ExpertKey::new(0, 1);
+    gpu.bind_decode_compute(false);
+    let _warm_pre = gpu.acquire(pre).expect("warm pre");
+    gpu.release(pre);
+    let _warm_dec = gpu.acquire(dec).expect("warm dec");
+    gpu.release(dec);
+    let _drained = gpu.clock_ns().expect("drain h2d");
+    gpu.bind_decode_compute(false);
+    let _prefill = gpu.acquire(pre).expect("prefill");
+    gpu.release(pre);
+    gpu.bind_decode_compute(true);
+    let _decode = gpu.acquire(dec).expect("decode");
+    gpu.release(dec);
+    let token = gpu.token_clock_ns().expect("token");
+    let full = gpu.clock_ns().expect("full");
+    assert!(
+        token < full,
+        "wait-value must not cudaMalloc-drain leftover prefill; token={token} full={full}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_wait_value_pin_hot_still_replicates() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        2,
+        HardwareProfile::example_8xh100_nvlink(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            wait_value: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    let _p = gpu.acquire(k0).expect("acquire");
+    gpu.pin_hot(&[k0]).expect("pin");
+    assert_eq!(gpu.replica_of(k0), Some(DeviceId(1)));
+    assert_eq!(gpu.metrics().replicates, 1);
+    let _s = gpu.score().expect("score");
 }

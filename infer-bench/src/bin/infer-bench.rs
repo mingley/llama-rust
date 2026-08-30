@@ -18,7 +18,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -149,6 +149,7 @@ fn run() -> Result<(), String> {
             sim_cfg.kernel_priority = cfg.kernel_priority;
             sim_cfg.device_launch = cfg.device_launch;
             sim_cfg.launch_completion = cfg.launch_completion;
+            sim_cfg.wait_value = cfg.wait_value;
             sim_cfg.multicast = cfg.multicast;
             if cfg.multicast {
                 sim_cfg.vmm = true;
@@ -235,6 +236,7 @@ struct Cfg {
     kernel_priority: Option<i32>,
     device_launch: bool,
     launch_completion: bool,
+    wait_value: bool,
     multicast: bool,
 }
 
@@ -287,6 +289,7 @@ where
     let mut kernel_priority = None;
     let mut device_launch = false;
     let mut launch_completion = false;
+    let mut wait_value = false;
     let mut multicast = false;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
@@ -403,6 +406,9 @@ where
             "--launch-completion" => {
                 launch_completion = !matches!(inline.as_deref(), Some("0" | "false"));
             }
+            "--wait-value" => {
+                wait_value = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
             "--multicast" => {
                 multicast = !matches!(inline.as_deref(), Some("0" | "false"));
             }
@@ -494,6 +500,7 @@ where
         kernel_priority,
         device_launch,
         launch_completion,
+        wait_value,
         multicast,
     })
 }

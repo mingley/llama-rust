@@ -3401,7 +3401,24 @@ model, do not celebrate the sim.
     identity stays no launch-completion event. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-327. [ ] Next numbered PLAN item after 326 is the next `gpu-sim` / Engine /
+327. [x] `cuStreamWaitValue64` / `cuStreamWriteValue64` copy-ready:
+    [`GpuStoreCfg::wait_value`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::wait_value`](expertvm/src/sim_replay.rs) allocate an 8-byte
+    device mailbox per expert page (not the weight alloc) and
+    [`write_value64`](gpu-sim/src/sim.rs) generation 1 after H2D / prefetch
+    instead of `record_event`. The mailbox is `cudaMallocAsync` on the copy
+    stream; that stream is waited *before* H2D so the pointer is resident
+    for a compute [`wait_value64`](gpu-sim/src/sim.rs) during DMA
+    (`cudaMalloc` would `synchronize_device` and drain leftover prefill).
+    Store GEMM [`wait_value64`](gpu-sim/src/sim.rs)
+    Eq on the compute stream; replica D2D waits that mailbox on the copy
+    stream. Walker wait/write are live stream ops (GEMM graphs stay
+    kernel-only). `--wait-value` on `expertvm sim` / `schedule` / `store`
+    and `gguf_gemv engine --expert-sim`. Decode identity stays CUDA events.
+    `gpu-profile capture` is still refused. Dual score still has no `$/M
+    tokens`.
+
+328. [ ] Next numbered PLAN item after 327 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

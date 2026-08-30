@@ -235,6 +235,10 @@
 //! [`BatchMemOpFlags::DEFAULT`]). Typed helper stays. Kernel / memset / memcpy stores to the
 //! mailbox address are not modeled. Device-resident and mapped-host are legal;
 //! remote AccessedBy maps are not. Capture records a batch-mem-op node.
+//! `expertvm sim --wait-value` / Engine `--expert-sim --wait-value` use an
+//! 8-byte `cudaMallocAsync` mailbox (copy stream waited before H2D) so compute
+//! waits Eq instead of a copy event (decode identity stays events; GEMM graphs
+//! stay kernel-only).
 //! [`Sim::set_stream_blocking`] is `cudaStreamCreate` vs `cudaStreamNonBlocking`.
 //! [`Sim::stream_create_with_flags`] / [`stream_create_with_priority`](Sim::stream_create_with_priority)
 //! are `cudaStreamCreateWithFlags` / `CreateWithPriority`

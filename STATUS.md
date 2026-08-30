@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cuStreamWaitValue64` copy-ready
+
+`GpuStoreCfg::wait_value` / `SimCfg::wait_value` allocate an 8-byte device
+mailbox per expert page (`cudaMallocAsync` on the copy stream, waited
+before H2D so compute `wait_value64` is resident during DMA) and
+`cuStreamWriteValue64` after H2D so compute `cuStreamWaitValue64` Eq waits
+that mailbox instead of a copy event. Replica D2D waits the mailbox on the
+copy stream. Walker wait/write are live stream ops (GEMM graphs stay
+kernel-only). `--wait-value` is off by default (decode identity).
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaLaunchAttributeLaunchCompletionEvent` replica overlap
 
 `GpuStoreCfg::launch_completion` / `SimCfg::launch_completion` record

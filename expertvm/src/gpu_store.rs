@@ -9,11 +9,12 @@ use crate::planner::{
     Prefetch, DECODE_ACTIVATION_BYTES,
 };
 use crate::sim_replay::{
-    add_leaf_gemm, alloc_launch_completion, allow_non_portable_cluster_if, allow_optin_shared_if,
-    apply_exec_mem_sync_domain, apply_stream_mem_sync_domain, apply_stream_sync_policy,
-    bind_shareable_mempools, check_cluster_preferred, check_device_graph_flags, instantiate_exec,
-    kernel_leaf, replay_exec, replay_streams, retarget_parked_kernel, stream_of,
-    upload_after_set_params, GemmFlags, LeafMem, StreamPlan,
+    add_leaf_gemm, alloc_launch_completion, alloc_resident_copy_mailbox,
+    allow_non_portable_cluster_if, allow_optin_shared_if, apply_exec_mem_sync_domain,
+    apply_stream_mem_sync_domain, apply_stream_sync_policy, bind_shareable_mempools,
+    check_cluster_preferred, check_device_graph_flags, free_copy_mailbox, instantiate_exec,
+    kernel_leaf, replay_exec, replay_streams, retarget_parked_kernel, signal_copy_ready, stream_of,
+    upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -292,6 +293,16 @@ pub struct GpuStoreCfg {
     /// of draining the GEMM, so leftover compute overlaps the replica copy.
     /// Illegal with [`Self::device_launch`]. Decode identity stays no event.
     pub launch_completion: bool,
+    /// `cuStreamWaitValue64` / `cuStreamWriteValue64` instead of copy-ready events.
+    ///
+    /// After H2D / prefetch, write a generation into an 8-byte device mailbox
+    /// (not the expert page). The mailbox is `cudaMallocAsync` on the copy
+    /// stream and that stream is waited *before* H2D so the pointer is
+    /// resident for a compute `wait_value64` during DMA (`cudaMalloc` would
+    /// drain leftover prefill). GEMM waits Eq on the compute stream. Replica
+    /// D2D waits that mailbox on the copy stream. Decode identity stays
+    /// `record_event` / `wait_event`. Graphs stay kernel-only.
+    pub wait_value: bool,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// [`Self::pin_hot`] and walker `--place replicas` map dest VMM physicals
@@ -350,6 +361,10 @@ struct GpuPage {
     ready: Option<EventId>,
     /// Timing-on record before the copy, when [`GpuStoreCfg::timing_events`].
     start: Option<EventId>,
+    /// 8-byte device mailbox when [`GpuStoreCfg::wait_value`].
+    mailbox: Option<AllocId>,
+    /// Generation [`signal_copy_ready`] wrote; [`None`] after GEMM waited.
+    ready_gen: Option<u64>,
 }
 
 /// Bounded cache whose misses pay pinned H2D, mapped host, managed prefetch, or VMM.
@@ -410,6 +425,8 @@ pub struct SimulatedGpuStore {
     pageable: bool,
     /// [`GpuStoreCfg::memcpy_batch`]: prefetch uses `cudaMemcpyBatchAsync`.
     memcpy_batch: bool,
+    /// [`GpuStoreCfg::wait_value`]: copy-ready is wait/write-value, not events.
+    wait_value: bool,
     /// [`GpuStoreCfg::accessed_by`]: managed/VMM/mempool pages stay on the home GPU.
     accessed_by: bool,
     /// Successful D2D [`Self::migrate`] calls (source device ≠ dest).
@@ -560,6 +577,9 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::launch_completion`] is
     /// `cudaLaunchAttributeLaunchCompletionEvent` on grouped GEMMs (replica
     /// D2D waits kernel start; illegal with device-launch).
+    /// [`GpuStoreCfg::wait_value`] is `cuStreamWaitValue64` / `WriteValue64`
+    /// for the copy-ready handshake (8-byte `cudaMallocAsync` mailbox, copy
+    /// stream waited before H2D; decode identity stays events).
     /// [`GpuStoreCfg::multicast`] is Hopper NVLS replica fanout (requires
     /// [`GpuFill::Vmm`] and NVLink).
     /// [`GpuStoreCfg::memcpy_batch`] fills a multi-expert pinned/VMM prefetch
@@ -740,6 +760,7 @@ impl SimulatedGpuStore {
             vmm_page: cfg.vmm_page,
             pageable: cfg.pageable,
             memcpy_batch: cfg.memcpy_batch,
+            wait_value: cfg.wait_value,
             accessed_by: cfg.accessed_by,
             migrates: 0,
             dispatches: 0,
@@ -1080,9 +1101,14 @@ impl SimulatedGpuStore {
         let _w = self.sim.wait_event(src, ev_compute, self.copy)?;
         self.sim.free(src, id, self.copy)?;
         let _gone = self.replicas.remove(&key);
+        self.rehome_mailbox(key, dst, true)?;
         if let Some(page) = self.pages.get_mut(&key) {
             page.device = dst;
-            page.ready = Some(ev_copy);
+            if self.wait_value && !self.timing_events {
+                page.ready = None;
+            } else {
+                page.ready = Some(ev_copy);
+            }
         }
         self.note_migrate();
         Ok(())
@@ -1091,6 +1117,7 @@ impl SimulatedGpuStore {
     /// GEMM retarget only — [`gpu_sim::Sim::pool_set_access`] already maps `dst`.
     fn migrate_pool_peer(&mut self, key: ExpertKey, dst: DeviceId) -> Result<(), Error> {
         let _gone = self.replicas.remove(&key);
+        self.rehome_mailbox(key, dst, false)?;
         if let Some(page) = self.pages.get_mut(&key) {
             page.device = dst;
             page.ready = None;
@@ -1156,6 +1183,7 @@ impl SimulatedGpuStore {
     ) -> Result<(), Error> {
         if self.accessed_by {
             let _gone = self.replicas.remove(&key);
+            self.rehome_mailbox(key, dst, false)?;
             if let Some(page) = self.pages.get_mut(&key) {
                 page.device = dst;
                 page.ready = None;
@@ -1171,6 +1199,7 @@ impl SimulatedGpuStore {
             self.sim.drop_managed_copy(id, src)?;
         }
         let _gone = self.replicas.remove(&key);
+        self.rehome_mailbox(key, dst, false)?;
         if let Some(page) = self.pages.get_mut(&key) {
             page.device = dst;
             page.ready = None;
@@ -1182,6 +1211,7 @@ impl SimulatedGpuStore {
     /// Mapped host is already kernel-readable on every GPU; only the GEMM device changes.
     fn migrate_mapped(&mut self, key: ExpertKey, dst: DeviceId) -> Result<(), Error> {
         let _gone = self.replicas.remove(&key);
+        self.rehome_mailbox(key, dst, false)?;
         if let Some(page) = self.pages.get_mut(&key) {
             page.device = dst;
             page.ready = None;
@@ -1202,6 +1232,7 @@ impl SimulatedGpuStore {
     ) -> Result<(), Error> {
         if self.accessed_by {
             let _gone = self.replicas.remove(&key);
+            self.rehome_mailbox(key, dst, false)?;
             if let Some(page) = self.pages.get_mut(&key) {
                 page.device = dst;
                 page.ready = None;
@@ -1224,6 +1255,7 @@ impl SimulatedGpuStore {
             self.sim.va_unmap_range(id, src, 0, self.bytes_per_expert)?;
         }
         let _gone = self.replicas.remove(&key);
+        self.rehome_mailbox(key, dst, false)?;
         if let Some(page) = self.pages.get_mut(&key) {
             page.device = dst;
             page.ready = None;
@@ -1383,7 +1415,8 @@ impl SimulatedGpuStore {
         self.cache.unpin_all();
     }
 
-    /// PLAN state: GPU copies are Transferring until the copy-stream event completes.
+    /// PLAN state: GPU copies are Transferring until the copy-stream event
+    /// completes, or until the wait-value mailbox generation is consumed.
     #[must_use]
     pub fn phase(&self, key: ExpertKey) -> ExpertPhase {
         if let Some(page) = self.evicting.get(&key) {
@@ -1393,6 +1426,9 @@ impl SimulatedGpuStore {
             return ExpertPhase::Cold;
         }
         if let Some(page) = self.pages.get(&key) {
+            if page.ready_gen.is_some() {
+                return ExpertPhase::Transferring;
+            }
             if let Some(ev) = page.ready {
                 if !self.sim.query_event(ev).unwrap_or(false) {
                     return ExpertPhase::Transferring;
@@ -1438,10 +1474,35 @@ impl SimulatedGpuStore {
     }
 
     fn wait_copy(&mut self, key: ExpertKey) -> Result<(), Error> {
-        let (device, ready, start) = {
+        let (device, ready, start, mailbox, ready_gen) = {
             let page = self.pages.get(&key).ok_or(Error::Store("missing handle"))?;
-            (page.device, page.ready, page.start)
+            (
+                page.device,
+                page.ready,
+                page.start,
+                page.mailbox,
+                page.ready_gen,
+            )
         };
+        if let (Some(mb), Some(gen)) = (mailbox, ready_gen) {
+            // Queue on the copy stream so replica D2D is stream-ordered after
+            // this page's write. Do not consume `ready_gen`: GEMM still waits
+            // on compute. Do not synchronize compute (leftover prefill).
+            wait_copy_ready(&mut self.sim, device, mb, gen, self.copy)?;
+            if let Some(ev) = ready {
+                if self.timing_events {
+                    if !self.sim.query_event(ev)? {
+                        self.sim.synchronize_stream(device, self.copy)?;
+                    }
+                    self.note_copy_elapsed(start, ev)?;
+                    if let Some(page) = self.pages.get_mut(&key) {
+                        page.ready = None;
+                        page.start = None;
+                    }
+                }
+            }
+            return Ok(());
+        }
         if let Some(ev) = ready {
             if !self.sim.query_event(ev)? {
                 // Wait the DMA stream only. Syncing compute here would drain
@@ -1457,6 +1518,101 @@ impl SimulatedGpuStore {
         Ok(())
     }
 
+    fn alloc_resident_mailbox(&mut self, d: DeviceId) -> Result<Option<AllocId>, Error> {
+        if !self.wait_value {
+            return Ok(None);
+        }
+        Ok(Some(alloc_resident_copy_mailbox(
+            &mut self.sim,
+            d,
+            self.copy,
+            self.sync_alloc,
+        )?))
+    }
+
+    fn insert_page(
+        &mut self,
+        key: ExpertKey,
+        id: AllocId,
+        d: DeviceId,
+        start: Option<EventId>,
+        mailbox: Option<AllocId>,
+    ) -> Result<(), Error> {
+        let (ready, mailbox, ready_gen) = if self.wait_value {
+            let mb = mailbox.ok_or(Error::Store("missing mailbox"))?;
+            signal_copy_ready(&mut self.sim, d, mb, 1, self.copy)?;
+            let ev = if self.timing_events {
+                let ev = self.create_copy_event()?;
+                let _r = self.sim.record_event(d, ev, self.copy)?;
+                Some(ev)
+            } else {
+                None
+            };
+            (ev, Some(mb), Some(1))
+        } else {
+            let ev = self.create_copy_event()?;
+            let _r = self.sim.record_event(d, ev, self.copy)?;
+            (Some(ev), None, None)
+        };
+        let _prev = self.pages.insert(
+            key,
+            GpuPage {
+                id,
+                device: d,
+                ready,
+                start,
+                mailbox,
+                ready_gen,
+            },
+        );
+        Ok(())
+    }
+
+    fn free_page_mailbox(
+        &mut self,
+        device: DeviceId,
+        mailbox: Option<AllocId>,
+    ) -> Result<(), Error> {
+        let Some(mb) = mailbox else {
+            return Ok(());
+        };
+        free_copy_mailbox(
+            &mut self.sim,
+            device,
+            mb,
+            self.copy,
+            self.sync_alloc || self.mode != GpuFill::Pinned,
+        )
+    }
+
+    fn rehome_mailbox(&mut self, key: ExpertKey, dst: DeviceId, signal: bool) -> Result<(), Error> {
+        let (old_dev, old_mb, old_gen) = {
+            let page = self.pages.get(&key).ok_or(Error::Store("missing handle"))?;
+            (page.device, page.mailbox, page.ready_gen)
+        };
+        self.free_page_mailbox(old_dev, old_mb)?;
+        if !self.wait_value {
+            if let Some(page) = self.pages.get_mut(&key) {
+                page.mailbox = None;
+                page.ready_gen = None;
+            }
+            return Ok(());
+        }
+        let mb = alloc_resident_copy_mailbox(&mut self.sim, dst, self.copy, self.sync_alloc)?;
+        let gen = if signal {
+            let g = old_gen.unwrap_or(0).saturating_add(1).max(1);
+            signal_copy_ready(&mut self.sim, dst, mb, g, self.copy)?;
+            Some(g)
+        } else {
+            None
+        };
+        if let Some(page) = self.pages.get_mut(&key) {
+            page.mailbox = Some(mb);
+            page.ready_gen = gen;
+        }
+        Ok(())
+    }
+
     fn place(&mut self, key: ExpertKey) -> Result<(), Error> {
         if let Some(v) = self.cache.take_victim() {
             self.drop_gpu(v)?;
@@ -1465,20 +1621,10 @@ impl SimulatedGpuStore {
             return Ok(());
         }
         let d = self.home(key);
+        let mailbox = self.alloc_resident_mailbox(d)?;
         let start = self.record_copy_start(d)?;
         let id = self.fill_page(d)?;
-        let ev = self.create_copy_event()?;
-        let _r = self.sim.record_event(d, ev, self.copy)?;
-        let _prev = self.pages.insert(
-            key,
-            GpuPage {
-                id,
-                device: d,
-                ready: Some(ev),
-                start,
-            },
-        );
-        Ok(())
+        self.insert_page(key, id, d, start, mailbox)
     }
 
     fn place_pending(&mut self, keys: &[ExpertKey]) -> Result<(), Error> {
@@ -1501,7 +1647,7 @@ impl SimulatedGpuStore {
             }
             return Ok(());
         }
-        let mut pending: Vec<(ExpertKey, AllocId, Option<EventId>)> = Vec::new();
+        let mut pending: Vec<(ExpertKey, AllocId, Option<EventId>, Option<AllocId>)> = Vec::new();
         for key in keys {
             if self.pages.contains_key(key) {
                 continue;
@@ -1509,54 +1655,37 @@ impl SimulatedGpuStore {
             if let Some(v) = self.cache.take_victim() {
                 self.drop_gpu(v)?;
             }
+            let mailbox = self.alloc_resident_mailbox(d)?;
             let start = self.record_copy_start(d)?;
             let id = self.alloc_page_no_fill(d)?;
-            pending.push((*key, id, start));
+            pending.push((*key, id, start, mailbox));
         }
         if pending.len() < 2 {
-            for (key, id, start) in pending {
+            for (key, id, start, mailbox) in pending {
                 self.fill_hbm(d, id)?;
                 if self.mode == GpuFill::Vmm && self.accessed_by {
                     advise_vmm_access(&mut self.sim, id)?;
                 }
-                let ev = self.create_copy_event()?;
-                let _r = self.sim.record_event(d, ev, self.copy)?;
-                let _prev = self.pages.insert(
-                    key,
-                    GpuPage {
-                        id,
-                        device: d,
-                        ready: Some(ev),
-                        start,
-                    },
-                );
+                self.insert_page(key, id, d, start, mailbox)?;
             }
             return Ok(());
         }
         let bytes = self.bytes_per_expert;
         let ops: Vec<MemcpyOp> = pending
             .iter()
-            .map(|(_, id, _)| MemcpyOp::packed_1d(Place::HostPinned, Place::Device(d), *id, bytes))
+            .map(|(_, id, _, _)| {
+                MemcpyOp::packed_1d(Place::HostPinned, Place::Device(d), *id, bytes)
+            })
             .collect();
         let attr = MemcpyAttributes::default();
         let _ids =
             self.sim
                 .memcpy_batch_async(d, &ops, std::slice::from_ref(&attr), &[0], self.copy)?;
-        for (key, id, start) in pending {
+        for (key, id, start, mailbox) in pending {
             if self.mode == GpuFill::Vmm && self.accessed_by {
                 advise_vmm_access(&mut self.sim, id)?;
             }
-            let ev = self.create_copy_event()?;
-            let _r = self.sim.record_event(d, ev, self.copy)?;
-            let _prev = self.pages.insert(
-                key,
-                GpuPage {
-                    id,
-                    device: d,
-                    ready: Some(ev),
-                    start,
-                },
-            );
+            self.insert_page(key, id, d, start, mailbox)?;
         }
         Ok(())
     }
@@ -1688,16 +1817,22 @@ impl SimulatedGpuStore {
     }
 
     fn gemm_resident(&mut self, key: ExpertKey) -> Result<(), Error> {
-        let (id, device, ready, start) = {
+        let (id, device, ready, start, mailbox, ready_gen) = {
             let page = self
                 .pages
                 .get_mut(&key)
                 .ok_or(Error::Store("missing handle"))?;
             let ready = page.ready.take();
             let start = page.start.take();
-            (page.id, page.device, ready, start)
+            let ready_gen = page.ready_gen.take();
+            (page.id, page.device, ready, start, page.mailbox, ready_gen)
         };
-        if let Some(ev) = ready {
+        if let (Some(mb), Some(gen)) = (mailbox, ready_gen) {
+            wait_copy_ready(&mut self.sim, device, mb, gen, self.compute)?;
+            if let Some(ev) = ready {
+                self.note_copy_elapsed(start, ev)?;
+            }
+        } else if let Some(ev) = ready {
             if !self.sim.query_event(ev)? {
                 let _w = self.sim.wait_event(device, ev, self.compute)?;
             }
@@ -1853,23 +1988,27 @@ impl SimulatedGpuStore {
                 if let Some(dst) = self.replicas.remove(&key) {
                     self.sim.synchronize_stream(dst, self.copy)?;
                 }
+                self.free_page_mailbox(page.device, page.mailbox)?;
                 self.sim.free_sync(page.id)?;
                 return Ok(());
             }
             GpuFill::Mapped => {
                 self.wait_compute(page.device)?;
+                self.free_page_mailbox(page.device, page.mailbox)?;
                 self.sim.free_host_pinned(page.id)?;
                 let _gone = self.replicas.remove(&key);
                 return Ok(());
             }
             GpuFill::Vmm => {
                 self.wait_compute(page.device)?;
+                self.free_page_mailbox(page.device, page.mailbox)?;
                 self.sim.va_release(page.id)?;
                 let _gone = self.replicas.remove(&key);
                 return Ok(());
             }
             GpuFill::Pinned if self.sync_alloc => {
                 self.wait_compute(page.device)?;
+                self.free_page_mailbox(page.device, page.mailbox)?;
                 self.sim.free_sync(page.id)?;
                 let _gone = self.replicas.remove(&key);
                 return Ok(());
@@ -1889,6 +2028,7 @@ impl SimulatedGpuStore {
                 self.sim.free(dst, page.id, self.copy)?;
             }
         }
+        self.free_page_mailbox(page.device, page.mailbox)?;
         self.sim.free(page.device, page.id, self.copy)?;
         Ok(())
     }

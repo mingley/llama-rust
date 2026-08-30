@@ -801,6 +801,10 @@ unnamed callback). `host_func_params` / `graph_add_host_func_params` record
 `write_value64` / `wait_value64` are `cuStreamWriteValue64` /
 `cuStreamWaitValue64` (mailbox on complete; unwritten locations read as 0;
 kernel/memset/memcpy stores are not modeled; no compute/copy occupancy).
+`expertvm sim --wait-value` / `gguf_gemv engine --expert-sim --wait-value`
+use an 8-byte `cudaMallocAsync` mailbox (copy stream waited before H2D)
+so compute waits Eq instead of a copy event (decode identity stays
+events; GEMM graphs stay kernel-only).
 `write_value64_with_flags` / `write_value32_with_flags` are the CUDA flags
 word (`WriteValueFlags`; NO_MEMORY_BARRIER Invalid). Typed helpers stay.
 `wait_value64_with_flags` / `wait_value32_with_flags` are the CUDA flags

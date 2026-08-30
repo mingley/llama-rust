@@ -332,6 +332,7 @@ impl SchedRt {
                 pageable: cfg.pageable,
                 memcpy_batch: cfg.memcpy_batch,
                 accessed_by: cfg.accessed_by,
+                wait_value: cfg.wait_value,
             },
             sim,
             handles: BTreeMap::new(),
@@ -442,7 +443,7 @@ impl SchedRt {
         }
         gemm_keys(
             &mut self.sim,
-            &self.handles,
+            &mut self.handles,
             &mut self.graphs,
             &ek,
             self.cfg.cuda_graphs,

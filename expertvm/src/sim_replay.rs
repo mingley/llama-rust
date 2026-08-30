@@ -188,6 +188,83 @@ pub(crate) fn alloc_launch_completion(
     }))
 }
 
+/// 8-byte device mailbox for [`SimCfg::wait_value`] / store copy-ready.
+pub(crate) const MAILBOX_BYTES: u64 = 8;
+
+/// `cudaMallocAsync` (or host-sync `cudaMalloc`) for a wait/write-value mailbox.
+///
+/// The pointer is not usable for [`wait_copy_ready`] / [`signal_copy_ready`] on
+/// another stream until this stream catches up ([`gpu_sim::Sim::alloc`]).
+/// Store [`crate::SimulatedGpuStore`] waits the copy stream after this alloc
+/// *before* H2D so compute `wait_value64` is legal during DMA.
+/// [`gpu_sim::Sim::malloc`] would `synchronize_device` and drain leftover
+/// prefill.
+pub(crate) fn alloc_copy_mailbox(
+    sim: &mut Sim,
+    device: DeviceId,
+    stream: StreamId,
+    sync: bool,
+) -> Result<AllocId, Error> {
+    hbm_alloc(sim, device, MAILBOX_BYTES, stream, sync)
+}
+
+/// [`alloc_copy_mailbox`] then wait `stream` so the pointer is device-resident.
+///
+/// No-op extra wait when `sync` (`cudaMalloc` is already live). Does not
+/// [`gpu_sim::Sim::synchronize_device`].
+pub(crate) fn alloc_resident_copy_mailbox(
+    sim: &mut Sim,
+    device: DeviceId,
+    stream: StreamId,
+    sync: bool,
+) -> Result<AllocId, Error> {
+    let id = alloc_copy_mailbox(sim, device, stream, sync)?;
+    if !sync {
+        sim.synchronize_stream(device, stream)?;
+    }
+    Ok(id)
+}
+
+/// `cuStreamWriteValue64` after H2D / prefetch so compute can wait without an event.
+pub(crate) fn signal_copy_ready(
+    sim: &mut Sim,
+    device: DeviceId,
+    mailbox: AllocId,
+    gen: u64,
+    stream: StreamId,
+) -> Result<(), Error> {
+    let _w = sim.write_value64(device, mailbox, 0, gen, stream)?;
+    Ok(())
+}
+
+/// `cuStreamWaitValue64` Eq until [`signal_copy_ready`] completes on another stream.
+pub(crate) fn wait_copy_ready(
+    sim: &mut Sim,
+    device: DeviceId,
+    mailbox: AllocId,
+    gen: u64,
+    stream: StreamId,
+) -> Result<(), Error> {
+    let _w = sim.wait_value64(device, mailbox, 0, gen, WaitValueCmp::Eq, stream)?;
+    Ok(())
+}
+
+/// Free a copy-ready mailbox. Host-sync `cudaFree` when `sync`.
+pub(crate) fn free_copy_mailbox(
+    sim: &mut Sim,
+    device: DeviceId,
+    mailbox: AllocId,
+    stream: StreamId,
+    sync: bool,
+) -> Result<(), Error> {
+    if sync {
+        sim.free_sync(mailbox)?;
+    } else {
+        sim.free(device, mailbox, stream)?;
+    }
+    Ok(())
+}
+
 use crate::access::{ExpertAccess, ExpertKey, Trace};
 use crate::error::Error;
 use crate::place::PlaceMap;
@@ -202,7 +279,7 @@ use gpu_sim::{
     GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf, KernelKind,
     LaunchCompletionEvent, MemcpyAttributes, MemcpyOp, Place, PoolId, PortableClusterMode,
     PortableSharedMode, ProgrammaticLaunch, Score, SharedMemCarveout, SharedMemoryMode, Sim,
-    StreamId, SynchronizationPolicy,
+    StreamId, SynchronizationPolicy, WaitValueCmp,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -646,6 +723,15 @@ pub struct SimCfg {
     /// Illegal with [`Self::device_launch`]. Decode identity stays no event.
     /// [`crate::GpuStoreCfg::launch_completion`] is the store path.
     pub launch_completion: bool,
+    /// `cuStreamWaitValue64` / `cuStreamWriteValue64` copy-ready handshake.
+    ///
+    /// After H2D / prefetch, write a generation into an 8-byte device mailbox
+    /// instead of `record_event`. The mailbox is `cudaMallocAsync` on the copy
+    /// stream and that stream is waited before H2D so compute wait is resident
+    /// during DMA. GEMM waits Eq on the compute stream. Decode identity stays
+    /// CUDA events. Graphs stay kernel-only (wait/write are live stream ops).
+    /// [`crate::GpuStoreCfg::wait_value`] is the store path.
+    pub wait_value: bool,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// `--place replicas` maps dest VMM physicals then one NVLS kernel instead
@@ -733,6 +819,7 @@ impl SimCfg {
             kernel_priority: None,
             device_launch: false,
             launch_completion: false,
+            wait_value: false,
             multicast: false,
             compute_slots: 0,
             decode_sm_permille: 0,
@@ -866,6 +953,7 @@ pub fn sim_replay_cfg(
         pageable: cfg.pageable,
         memcpy_batch: cfg.memcpy_batch,
         accessed_by: cfg.accessed_by,
+        wait_value: cfg.wait_value,
     };
     let mut token_ends: Vec<u64> = Vec::new();
     let mut ctr = ReplayCounters::default();
@@ -918,7 +1006,7 @@ pub fn sim_replay_cfg(
         }
         gemm_keys(
             &mut sim,
-            &handles,
+            &mut handles,
             &mut graphs,
             &ek,
             cfg.cuda_graphs,
@@ -1006,6 +1094,8 @@ pub(crate) struct TouchArgs {
     /// [`SimCfg::accessed_by`]: SetAccessedBy / VMM SetAccess / mempool SetAccess
     /// on every GPU (fill or default pools).
     pub accessed_by: bool,
+    /// [`SimCfg::wait_value`]: per-page 8-byte mailbox + live wait/write-value.
+    pub wait_value: bool,
 }
 
 fn hbm_alloc(
@@ -1684,6 +1774,10 @@ pub(crate) struct PageHandle {
     pub(crate) device: DeviceId,
     /// Extra devices that hold a D2D / VMM-map replica of `id`.
     pub(crate) replicas: Vec<DeviceId>,
+    /// 8-byte device mailbox when [`TouchArgs::wait_value`].
+    pub(crate) mailbox: Option<AllocId>,
+    /// Generation [`signal_copy_ready`] wrote; [`None`] after GEMM waited.
+    pub(crate) ready_gen: Option<u64>,
 }
 
 pub(crate) fn note_touch(
@@ -1753,7 +1847,7 @@ pub(crate) fn apply_misses(
     misses: &[(ExpertKey, Touch)],
     next_event: &mut u32,
 ) -> Result<(), Error> {
-    let mut filled: Vec<(ExpertKey, AllocId)> = Vec::new();
+    let mut pending: Vec<(ExpertKey, Option<AllocId>)> = Vec::new();
     for (key, touch) in misses {
         match touch {
             Touch::Hit => {}
@@ -1764,14 +1858,29 @@ pub(crate) fn apply_misses(
                 if args.slots == 0 {
                     continue;
                 }
-                let id = alloc_touch_page(sim, args)?;
-                filled.push((*key, id));
+                let mailbox = if args.wait_value {
+                    Some(alloc_copy_mailbox(sim, args.d, args.s, args.sync_alloc)?)
+                } else {
+                    None
+                };
+                pending.push((*key, mailbox));
             }
         }
     }
+    if args.wait_value && !args.sync_alloc && pending.iter().any(|(_, mb)| mb.is_some()) {
+        // Pointer must be resident before a later compute-stream wait
+        // (`decode_priority` GEMM stream ≠ H2D stream). Do this before H2D
+        // so the host wait is the 8-byte alloc, not the DMA.
+        sim.synchronize_stream(args.d, args.s)?;
+    }
+    let mut filled: Vec<(ExpertKey, AllocId, Option<AllocId>)> = Vec::new();
+    for (key, mailbox) in pending {
+        let id = alloc_touch_page(sim, args)?;
+        filled.push((key, id, mailbox));
+    }
     let h2d: Vec<AllocId> = filled
         .iter()
-        .filter_map(|(_, id)| {
+        .filter_map(|(_, id, _)| {
             if args.mapped || args.managed {
                 None
             } else {
@@ -1780,16 +1889,22 @@ pub(crate) fn apply_misses(
         })
         .collect();
     if args.managed {
-        for (_, id) in &filled {
+        for (_, id, _) in &filled {
             let _p = sim.prefetch(args.d, *id, args.s)?;
         }
     } else if !args.mapped {
         hbm_h2d_many(sim, args, &h2d)?;
     }
-    for (key, id) in filled {
+    for (key, id, mailbox) in filled {
         if args.vmm && args.accessed_by {
             advise_vmm_access(sim, id)?;
         }
+        let (mailbox, ready_gen) = if let Some(mb) = mailbox {
+            signal_copy_ready(sim, args.d, mb, 1, args.s)?;
+            (Some(mb), Some(1))
+        } else {
+            (None, None)
+        };
         let _prev = handles.insert(
             key,
             PageHandle {
@@ -1797,6 +1912,8 @@ pub(crate) fn apply_misses(
                 stream: args.s,
                 device: args.d,
                 replicas: Vec::new(),
+                mailbox,
+                ready_gen,
             },
         );
     }
@@ -1860,6 +1977,9 @@ fn drop_handle(
     sync: bool,
 ) -> Result<(), Error> {
     graphs.drop_alloc(sim, page.id)?;
+    if let Some(mb) = page.mailbox {
+        free_copy_mailbox(sim, page.device, mb, page.stream, sync)?;
+    }
     if page_is_mapped(sim, page.id) {
         // cudaFreeHost waits GPU work on this pointer, then the mapping is gone.
         sim.synchronize_stream(page.device, page.stream)?;
@@ -1926,13 +2046,22 @@ fn page_is_vmm(sim: &Sim, id: AllocId) -> bool {
 
 pub(crate) fn gemm_keys(
     sim: &mut Sim,
-    handles: &BTreeMap<ExpertKey, PageHandle>,
+    handles: &mut BTreeMap<ExpertKey, PageHandle>,
     graphs: &mut GraphBank,
     keys: &[ExpertKey],
     cuda_graphs: bool,
     ctr: &mut ReplayCounters,
     work: Option<StreamId>,
 ) -> Result<(), Error> {
+    for key in keys {
+        let Some(page) = handles.get_mut(key) else {
+            continue;
+        };
+        if let (Some(mb), Some(gen)) = (page.mailbox, page.ready_gen.take()) {
+            let stream = work.unwrap_or(page.stream);
+            wait_copy_ready(sim, page.device, mb, gen, stream)?;
+        }
+    }
     let mut by_dev: BTreeMap<(DeviceId, StreamId), Vec<AllocId>> = BTreeMap::new();
     for key in keys {
         let Some(page) = handles.get(key) else {

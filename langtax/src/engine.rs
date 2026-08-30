@@ -82,11 +82,14 @@
 //! `--kernel-priority N` is `cudaLaunchAttributePriority` on grouped expert
 //! GEMMs (`None` inherits stream create priority). `--launch-completion` is
 //! `cudaLaunchAttributeLaunchCompletionEvent` on those GEMMs (store replica
-//! D2D waits kernel start; illegal with `--device-launch`). Decode
+//! D2D waits kernel start; illegal with `--device-launch`). `--wait-value` is
+//! `cuStreamWaitValue64` / `WriteValue64` for the copy-ready handshake (8-byte
+//! `cudaMallocAsync` mailbox, copy stream waited before H2D; decode identity
+//! stays events). Decode
 //! identity stays `cudaLaunchKernel` (no cluster / Default policy / no preferred
 //! dim / Default carveout / non-portable disallowed / Auto sync policy /
 //! Default mem-sync domain / Default shared-mem / Default portable-cluster / 0 dynamic shared / Default
-//! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event).
+//! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event / events copy-ready).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode
