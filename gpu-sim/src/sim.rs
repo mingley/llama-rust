@@ -12782,7 +12782,9 @@ impl Sim {
             | DeviceAttr::HandleTypeWin32HandleSupported
             | DeviceAttr::HandleTypeWin32KmtHandleSupported
             | DeviceAttr::HandleTypeFabricSupported
-            | DeviceAttr::HostMemoryPoolsSupported => 0,
+            | DeviceAttr::HostMemoryPoolsSupported
+            | DeviceAttr::IsMultiGpuBoard
+            | DeviceAttr::MultiGpuBoardGroupID => 0,
             DeviceAttr::StreamPrioritiesSupported | DeviceAttr::UnifiedAddressing => 1,
             DeviceAttr::GpuOverlap => u64::from(gpu.copy_engines > 0),
             DeviceAttr::MulticastSupported => u64::from(self.profile.multicast_supported(device)),
@@ -12846,6 +12848,8 @@ impl Sim {
             handle_type_win32_kmt_handle_supported: false,
             handle_type_fabric_supported: false,
             host_memory_pools_supported: false,
+            is_multi_gpu_board: false,
+            multi_gpu_board_group_id: 0,
         })
     }
 

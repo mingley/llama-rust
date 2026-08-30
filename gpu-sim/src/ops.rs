@@ -831,6 +831,12 @@ pub enum DeviceAttr {
     /// device-only; [`crate::Sim::create_pool_with_props`] refuses host
     /// location).
     HostMemoryPoolsSupported,
+    /// `cudaDevAttrIsMultiGpuBoard` (always 0; example SKUs are discrete
+    /// single-GPU packages).
+    IsMultiGpuBoard,
+    /// `cudaDevAttrMultiGpuBoardGroupID` (always 0; example SKUs are not on
+    /// a multi-GPU board).
+    MultiGpuBoardGroupID,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -944,6 +950,12 @@ pub struct DeviceProperties {
     pub handle_type_fabric_supported: bool,
     /// `cudaDevAttrHostMemoryPoolsSupported` (pools are device-only).
     pub host_memory_pools_supported: bool,
+    /// `cudaDevAttrIsMultiGpuBoard` (example SKUs are discrete single-GPU
+    /// packages).
+    pub is_multi_gpu_board: bool,
+    /// `cudaDevAttrMultiGpuBoardGroupID` (example SKUs are not on a multi-GPU
+    /// board).
+    pub multi_gpu_board_group_id: u32,
 }
 
 /// `cudaFuncAttribute` for [`crate::Sim::func_set_attribute`] / `GetAttribute`.

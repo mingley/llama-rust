@@ -531,6 +531,8 @@ bit (VMM is always on). `GenericCompressionSupported` is always 0
 `HandleTypeFabricSupported` are always 0 (POSIX-FD shareable pools;
 fabric handles are not modeled).
 `HostMemoryPoolsSupported` is always 0 (pools are device-only).
+`IsMultiGpuBoard` / `MultiGpuBoardGroupID` are always 0 (example SKUs
+are discrete single-GPU packages).
 `StreamPrioritiesSupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields

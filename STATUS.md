@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — multi-GPU board attributes
+
+`device_get_attribute` / `device_get_properties` report IsMultiGpuBoard
+and MultiGpuBoardGroupID always 0 (example SKUs are discrete single-GPU
+packages). `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cuMulticastBindMem` flags
 
 `multicast_bind_mem_with_flags` requires flags 0. Typed `multicast_bind_mem`

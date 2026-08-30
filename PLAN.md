@@ -2778,7 +2778,13 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-261. [ ] Next numbered PLAN item after 260 is the next `gpu-sim` / Engine /
+261. [x] `cudaDevAttrIsMultiGpuBoard` / `MultiGpuBoardGroupID`: always 0
+    (example SKUs are discrete single-GPU packages). Also on
+    [`DeviceProperties`]. Query; capture-legal. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+262. [ ] Next numbered PLAN item after 261 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
