@@ -265,6 +265,11 @@
 //! `cuMemAddressReserve`).
 //! [`DeviceAttr::HandleTypePosixFileDescriptorSupported`] is always 1 (this VM
 //! has POSIX-FD shareable pools).
+//! [`DeviceAttr::GpuDirectRdmaFlushWritesOptions`] is
+//! [`FlushGpuDirectRdmaWritesOptions::HOST`] on an RDMA SKU (MemOps is never
+//! reported). [`DeviceAttr::GpuDirectRdmaWithCudaVMMSupported`] is the same
+//! RDMA SKU bit (VMM is always on). [`DeviceAttr::GenericCompressionSupported`]
+//! is always 0 (compression is not modeled).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -662,16 +667,16 @@ pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp,
     ClusterDim, ClusterSchedulingPolicy, DType, DeviceAttr, DeviceFlags, DeviceLimit,
     DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags,
-    FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget, FuncAttr, FuncAttributes, GpuOp,
-    GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo,
-    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags,
-    HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind,
-    KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags,
-    MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach,
-    MemAttachFlags, MemHandleType, MemLocationType, MemPoolAttr, MemPoolProps, MemRangeAttr,
-    MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp,
-    MulticastGranularity, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
+    FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr,
+    FuncAttributes, GpuOp, GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult,
+    GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
+    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
+    HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf,
+    KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
+    MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType,
+    MemAttach, MemAttachFlags, MemHandleType, MemLocationType, MemPoolAttr, MemPoolProps,
+    MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType,
+    MemsetOp, MulticastGranularity, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
     PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
     ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
     StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
@@ -10622,6 +10627,77 @@ mod tests {
             1
         );
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_rdma_flush_options_and_compression() {
+        let mut h100 = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = h100.device_get_properties(d).unwrap();
+        assert_eq!(hp.gpu_direct_rdma_flush_writes_options, 0);
+        assert!(!hp.gpu_direct_rdma_with_cuda_vmm_supported);
+        assert!(!hp.generic_compression_supported);
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::GpuDirectRdmaFlushWritesOptions)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::GpuDirectRdmaWithCudaVMMSupported)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::GenericCompressionSupported)
+                .unwrap(),
+            0
+        );
+        let nv = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        assert_eq!(
+            nv.device_get_attribute(DeviceId(0), DeviceAttr::GpuDirectRdmaFlushWritesOptions)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            nv.device_get_attribute(DeviceId(0), DeviceAttr::GpuDirectRdmaWithCudaVMMSupported)
+                .unwrap(),
+            0
+        );
+        let rdma = Sim::new(HardwareProfile::example_2node_rdma());
+        assert_eq!(
+            rdma.device_get_attribute(DeviceId(0), DeviceAttr::GpuDirectRdmaFlushWritesOptions)
+                .unwrap(),
+            FlushGpuDirectRdmaWritesOptions::HOST
+        );
+        assert_eq!(
+            rdma.device_get_attribute(DeviceId(0), DeviceAttr::GpuDirectRdmaWithCudaVMMSupported)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            rdma.device_get_attribute(DeviceId(0), DeviceAttr::GenericCompressionSupported)
+                .unwrap(),
+            0
+        );
+        let rp = rdma.device_get_properties(DeviceId(0)).unwrap();
+        assert_eq!(
+            rp.gpu_direct_rdma_flush_writes_options,
+            FlushGpuDirectRdmaWritesOptions::HOST
+        );
+        assert!(rp.gpu_direct_rdma_with_cuda_vmm_supported);
+        assert!(!rp.generic_compression_supported);
+        h100.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::GpuDirectRdmaFlushWritesOptions)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::GenericCompressionSupported)
+                .unwrap(),
+            0
+        );
+        let _g = h100.end_capture().unwrap();
     }
 
     #[test]

@@ -2679,7 +2679,18 @@ model, do not celebrate the sim.
     unchanged. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-249. [ ] Next numbered PLAN item after 248 is the next `gpu-sim` / Engine /
+249. [x] `cudaDevAttrGPUDirectRDMAFlushWritesOptions` /
+    `GPUDirectRDMAWithCudaVMMSupported` /
+    `GenericCompressionSupported`: FlushWritesOptions is
+    [`FlushGpuDirectRdmaWritesOptions::HOST`] (`1`) on an RDMA SKU
+    (`flush_gpu_direct_rdma_writes` is a host-sync barrier; MemOps is
+    never reported). WithCudaVMM is the same RDMA SKU bit (VMM is always
+    on). GenericCompression is always 0 (compression is not modeled).
+    Write-ordering options stay unmodeled. Also on [`DeviceProperties`].
+    Query; capture-legal. Decode identity unchanged. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+250. [ ] Next numbered PLAN item after 249 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

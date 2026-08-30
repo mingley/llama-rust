@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — RDMA flush-options / VMM / compression attrs
+
+`device_get_attribute` / `device_get_properties` report
+GPUDirectRDMAFlushWritesOptions (Host on an RDMA SKU; MemOps never),
+GPUDirectRDMAWithCudaVMMSupported (same RDMA SKU; VMM always on), and
+GenericCompressionSupported (always 0). Write-ordering stays unmodeled.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaDevAttrHandleTypePosixFileDescriptorSupported`
 
 `device_get_attribute` / `device_get_properties` report POSIX-FD handle
@@ -2524,7 +2532,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 248 (`HandleTypePosixFileDescriptorSupported`).
+Next code change is PLAN systems depth after item 249 (`GpuDirectRdmaFlushWritesOptions` / WithCudaVMM / GenericCompression).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

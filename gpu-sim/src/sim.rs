@@ -13,19 +13,20 @@ use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
     ClusterSchedulingPolicy, DeviceAttr, DeviceFlags, DeviceLimit, DeviceP2pAttr, DeviceProperties,
     EventCreateFlags, EventRecordFlags, EventWaitFlags, FlushGpuDirectRdmaScope,
-    FlushGpuDirectRdmaTarget, FuncAttr, FuncAttributes, GpuOp as Kind, GraphAddNode,
-    GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
-    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
-    GraphUserObjectFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags,
-    KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
-    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp,
-    MemAllocationType, MemAttach, MemAttachFlags, MemHandleType, MemLocationType, MemPoolAttr,
-    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
-    MemoryType, MemsetOp, MulticastGranularity, Operation, PdlLaunch, PeerAccessFlags, Place,
-    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
-    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes,
+    GpuOp as Kind, GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult,
+    GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
+    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
+    HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf,
+    KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
+    MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType,
+    MemAttach, MemAttachFlags, MemHandleType, MemLocationType, MemPoolAttr, MemPoolProps,
+    MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType,
+    MemsetOp, MulticastGranularity, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
+    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -12539,8 +12540,17 @@ impl Sim {
             | DeviceAttr::IpcEventSupport
             | DeviceAttr::CanUseHostPointerForRegisteredMem => 1,
             DeviceAttr::MemoryPoolSupportedHandleTypes => MemHandleType::POSIX_FILE_DESCRIPTOR,
-            DeviceAttr::GpuDirectRdmaSupported | DeviceAttr::CanFlushRemoteWrites => {
+            DeviceAttr::GpuDirectRdmaSupported
+            | DeviceAttr::CanFlushRemoteWrites
+            | DeviceAttr::GpuDirectRdmaWithCudaVMMSupported => {
                 u64::from(self.profile.gpu_direct_rdma_supported(device))
+            }
+            DeviceAttr::GpuDirectRdmaFlushWritesOptions => {
+                if self.profile.gpu_direct_rdma_supported(device) {
+                    FlushGpuDirectRdmaWritesOptions::HOST
+                } else {
+                    0
+                }
             }
             DeviceAttr::HostRegisterReadOnlySupported
             | DeviceAttr::PageableMemoryAccess
@@ -12552,7 +12562,8 @@ impl Sim {
             | DeviceAttr::Integrated
             | DeviceAttr::SparseCudaArraySupported
             | DeviceAttr::DeferredMappingCudaArraySupported
-            | DeviceAttr::DmaBufSupported => 0,
+            | DeviceAttr::DmaBufSupported
+            | DeviceAttr::GenericCompressionSupported => 0,
             DeviceAttr::StreamPrioritiesSupported | DeviceAttr::UnifiedAddressing => 1,
             DeviceAttr::GpuOverlap => u64::from(gpu.copy_engines > 0),
             DeviceAttr::MulticastSupported => u64::from(self.profile.multicast_supported(device)),
@@ -12604,6 +12615,14 @@ impl Sim {
             multicast_supported: self.profile.multicast_supported(device),
             virtual_memory_management_supported: true,
             handle_type_posix_file_descriptor_supported: true,
+            gpu_direct_rdma_flush_writes_options: if self.profile.gpu_direct_rdma_supported(device)
+            {
+                FlushGpuDirectRdmaWritesOptions::HOST
+            } else {
+                0
+            },
+            gpu_direct_rdma_with_cuda_vmm_supported: self.profile.gpu_direct_rdma_supported(device),
+            generic_compression_supported: false,
         })
     }
 

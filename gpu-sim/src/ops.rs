@@ -801,6 +801,20 @@ pub enum DeviceAttr {
     /// `cudaDevAttrHandleTypePosixFileDescriptorSupported` (always 1; this VM
     /// has [`crate::Sim::create_shareable_pool`]).
     HandleTypePosixFileDescriptorSupported,
+    /// `cudaDevAttrGPUDirectRDMAFlushWritesOptions`.
+    ///
+    /// [`FlushGpuDirectRdmaWritesOptions::HOST`] when this device has a
+    /// GPU↔GPU [`crate::LinkKind::Rdma`] link ([`crate::Sim::flush_gpu_direct_rdma_writes`]
+    /// is a host-sync barrier). [`FlushGpuDirectRdmaWritesOptions::MEMOPS`]
+    /// is not modeled and is never reported. Write-ordering options are not
+    /// modeled.
+    GpuDirectRdmaFlushWritesOptions,
+    /// `cudaDevAttrGPUDirectRDMAWithCudaVMMSupported` (same RDMA SKU bit as
+    /// [`Self::GpuDirectRdmaSupported`]; this VM always has VMM).
+    GpuDirectRdmaWithCudaVMMSupported,
+    /// `cudaDevAttrGenericCompressionSupported` (always 0; compression is not
+    /// modeled).
+    GenericCompressionSupported,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -899,6 +913,13 @@ pub struct DeviceProperties {
     /// `cudaDevAttrHandleTypePosixFileDescriptorSupported` (this VM has
     /// POSIX-FD shareable pools).
     pub handle_type_posix_file_descriptor_supported: bool,
+    /// `cudaDevAttrGPUDirectRDMAFlushWritesOptions` ([`FlushGpuDirectRdmaWritesOptions::HOST`]
+    /// on an RDMA SKU; MemOps is never set).
+    pub gpu_direct_rdma_flush_writes_options: u64,
+    /// `cudaDevAttrGPUDirectRDMAWithCudaVMMSupported` (RDMA SKU; VMM is always on).
+    pub gpu_direct_rdma_with_cuda_vmm_supported: bool,
+    /// `cudaDevAttrGenericCompressionSupported` (compression is not modeled).
+    pub generic_compression_supported: bool,
 }
 
 /// `cudaFuncAttribute` for [`crate::Sim::func_set_attribute`] / `GetAttribute`.
@@ -2178,6 +2199,21 @@ impl StreamCreateFlags {
     pub const DEFAULT: u32 = 0;
     /// `cudaStreamNonBlocking`.
     pub const NON_BLOCKING: u32 = 1;
+}
+
+/// `cudaFlushGPUDirectRDMAWritesOptions` bits for
+/// [`DeviceAttr::GpuDirectRdmaFlushWritesOptions`].
+///
+/// Host (`1`) is the only option this crate models
+/// ([`crate::Sim::flush_gpu_direct_rdma_writes`] is a host-sync barrier).
+/// MemOps (`2`) is not modeled and is never reported.
+pub struct FlushGpuDirectRdmaWritesOptions;
+
+impl FlushGpuDirectRdmaWritesOptions {
+    /// `cudaFlushGPUDirectRDMAWritesOptionHost`.
+    pub const HOST: u64 = 1;
+    /// `cudaFlushGPUDirectRDMAWritesOptionMemOps`. Not modeled.
+    pub const MEMOPS: u64 = 2;
 }
 
 /// `cudaDeviceFlushGPUDirectRDMAWrites` target for
