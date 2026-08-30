@@ -149,6 +149,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchCooperativeKernel` occupies every compute slot (`cooperative_kernel`) | leftover kernels cannot Hyper-Q overlap |
 | programmatic dependent launch: wait kernel starts after the previous same-stream trigger (`pdl_trigger_permille`) | overlap needs `compute_slots >= 2` |
 | `cudaLaunchAttributeAccessPolicyWindow` persisting hits (`kernel_access_policy`) | HBM discount after `set_persisting_l2_cache_size`; CUDA default size is 0 |
+| `cudaStreamAttributeAccessPolicyWindow` inherited by `kernel` / `kernel_bufs` | same persist billing as `kernel_access_policy`; `kernel_with` / graph replay use launch / node |
 | `cudaLaunchAttributeMemSyncDomain` fence isolation (`kernel_with` / allreduce Remote) | `same_domain_fence_permille` of leftover same-domain traffic; tax default 0 |
 | `cudaLaunchAttributeClusterDimension` (`kernel_with` cluster) | occupies `min(blocks, compute_slots)`; Hopper portable max 8 |
 | `cudaLaunchAttributeClusterSchedulingPolicyPreference` Spread | occupies every Hyper-Q slot; Default uses `set_func_cluster_policy` (`cudaFuncAttributeClusterSchedulingPolicyPreference`) |
@@ -593,9 +594,13 @@ Typed setters stay. `stream_get_flags` is `cudaStreamGetFlags`
 caller-chosen `StreamId`).
 `stream_get_attribute` / `stream_set_attribute` are `cudaStreamGetAttribute` /
 `SetAttribute` of existing stream state (`StreamAttr`: priority, synchronization
-policy, mem-sync domain/map, NVLink-util-centric). Green-context SM permille is
-not a CUDA stream attribute. Type mismatch is Invalid `"stream attr"`. Get is a
-query (capture-legal). This VM does not cap stream-priority range.
+policy, mem-sync domain/map, NVLink-util-centric, access-policy window).
+Green-context SM permille is not a CUDA stream attribute. Type mismatch is
+Invalid `"stream attr"`. Get is a query (capture-legal).
+`set_stream_access_policy` is `cudaStreamAttributeAccessPolicyWindow`:
+`kernel` / `kernel_bufs` inherit it; `kernel_with` and graph replay use the
+launch / node window. Set `None` clears. This VM does not cap stream-priority
+range.
 `set_limit` / `get_limit` are `cudaDeviceSetLimit` / `GetLimit`.
 `set_shared_mem_config` / `get_shared_mem_config` are
 `cudaDeviceSetSharedMemConfig` / `GetSharedMemConfig` (Default kernels
@@ -795,7 +800,8 @@ overflow is `PinOom`. Example default is unlimited.
 priority; higher first when compute contends). `KernelAttrs::priority` is `cudaLaunchAttributePriority`
 (`None` inherits the stream; `Some` overrides that kernel only).
 `stream_copy_attributes` is `cudaStreamCopyAttributes`
-(priority, SM permille, mem-sync domain/map, and synchronization policy).
+(priority, SM permille, mem-sync domain/map, synchronization policy,
+NVLink-util-centric scheduling, and access-policy window).
 `set_stream_sync_policy` is `cudaLaunchAttributeSynchronizationPolicy`
 (stream-only; Auto tax 0). `synchronize_stream` / `synchronize_event` add
 `host_sync_spin_ns` / `yield` / `blocking` after the GPU drain (default 0).
@@ -828,7 +834,9 @@ at the trigger instead of kernel completion. `kernel_launch_completion` is
 kernel starts. `expertvm sim --pdl` / `gguf_gemv engine --expert-sim --pdl`
 launch grouped expert GEMMs that way. `kernel_access_policy` is
 `cudaLaunchAttributeAccessPolicyWindow`: persisting hits reduce billed HBM
-after `set_persisting_l2_cache_size` (CUDA default is 0). `expertvm sim --l2-persist`
+after `set_persisting_l2_cache_size` (CUDA default is 0).
+`set_stream_access_policy` is `cudaStreamAttributeAccessPolicyWindow`;
+`kernel` inherits it. `expertvm sim --l2-persist`
 enables the persist limit and attaches a window to expert GEMMs.
 `kernel_with` also accepts `cudaLaunchAttributeMemSyncDomain` /
 `MemSyncDomainMap`: a completing kernel waits `same_domain_fence_permille` of

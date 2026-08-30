@@ -3232,7 +3232,18 @@ model, do not celebrate the sim.
     identity vs oracle. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-315. [ ] Next numbered PLAN item after 314 is the next `gpu-sim` / Engine /
+315. [x] `cudaStreamAttributeAccessPolicyWindow`:
+    [`set_stream_access_policy`](Sim::set_stream_access_policy) /
+    [`stream_access_policy`](Sim::stream_access_policy) plus
+    [`StreamAttr::AccessPolicy`]. Inherited by [`kernel`](Sim::kernel) /
+    [`kernel_bufs`](Sim::kernel_bufs) on that stream. [`kernel_with`](Sim::kernel_with)
+    and graph replay use the launch / node window. Set `None` clears.
+    [`stream_copy_attributes`](Sim::stream_copy_attributes) copies or
+    clears. Validate on Some. Decode identity stays [`kernel`](Sim::kernel)
+    with no stream window. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+316. [ ] Next numbered PLAN item after 315 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

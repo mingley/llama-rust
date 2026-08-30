@@ -386,9 +386,13 @@
 //! [`stream_set_attribute`](Sim::stream_set_attribute) are
 //! `cudaStreamGetAttribute` / `SetAttribute` of existing stream state
 //! ([`StreamAttr`]: priority, synchronization policy, mem-sync domain/map,
-//! NVLink-util-centric). Green-context SM permille is not a CUDA stream
-//! attribute. Type mismatch is Invalid `"stream attr"`. Get is a query
-//! (capture-legal); Set is host-side like the dedicated setters.
+//! NVLink-util-centric, access-policy window). Green-context SM permille is
+//! not a CUDA stream attribute. Type mismatch is Invalid `"stream attr"`.
+//! Get is a query (capture-legal); Set is host-side like the dedicated
+//! setters. [`set_stream_access_policy`](Sim::set_stream_access_policy) is
+//! `cudaStreamAttributeAccessPolicyWindow`: [`kernel`](Sim::kernel) /
+//! [`kernel_bufs`](Sim::kernel_bufs) inherit it; [`kernel_with`](Sim::kernel_with)
+//! and graph replay use the launch / node window. Set [`None`] clears.
 //! [`Sim::device_count`] is `cudaGetDeviceCount`.
 //! [`device_get`](Sim::device_get) is `cuDeviceGet` (ordinal in range).
 //! [`Sim::device_can_access_peer`] / [`device_get_p2p_attribute`](Sim::device_get_p2p_attribute)
@@ -445,7 +449,8 @@
 //! `cudaStreamCreateWithPriority` (flags + priority).
 //! [`stream_copy_attributes`](Sim::stream_copy_attributes) is
 //! `cudaStreamCopyAttributes` (priority, SM permille, mem-sync domain/map,
-//! synchronization policy, and NVLink-util-centric scheduling).
+//! synchronization policy, NVLink-util-centric scheduling, and access-policy
+//! window).
 //! [`Sim::set_created_streams_priority`] assigns created streams their id.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
@@ -517,7 +522,9 @@
 //! kernel *starts*. [`kernel_access_policy`](Sim::kernel_access_policy) is
 //! `cudaLaunchAttributeAccessPolicyWindow`: persisting hits reduce billed HBM
 //! after [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size)
-//! (CUDA default size is 0). [`kernel_with`](Sim::kernel_with) also accepts
+//! (CUDA default size is 0). [`set_stream_access_policy`](Sim::set_stream_access_policy)
+//! is the stream twin (`cudaStreamAttributeAccessPolicyWindow`);
+//! [`kernel`](Sim::kernel) inherits it. [`kernel_with`](Sim::kernel_with) also accepts
 //! [`MemSyncDomain`] / [`MemSyncDomainMap`] (`cudaLaunchAttributeMemSyncDomain`):
 //! a completing kernel's implicit fence waits
 //! `GpuProfile::same_domain_fence_permille` of leftover traffic from another
@@ -5176,6 +5183,252 @@ mod tests {
         let d0 = ks[0].duration_ns().expect("k0");
         let d1 = ks[1].duration_ns().expect("k1");
         assert_eq!(d0, d1, "reset must refill; d0={d0} d1={d1}");
+    }
+
+    fn persist_kernel_durations(sim: &Sim) -> (u64, u64) {
+        let ks: Vec<_> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .collect();
+        (
+            ks[0].duration_ns().expect("k0"),
+            ks[1].duration_ns().expect("k1"),
+        )
+    }
+
+    #[test]
+    fn stream_access_policy_inherits_on_kernel() {
+        let run = |inherit: bool| {
+            let mut sim = Sim::new(persist_mem_profile());
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            sim.enable_persisting_l2().unwrap();
+            let bytes = 8u64 << 20;
+            let a = sim.alloc(d, bytes, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+            sim.synchronize().unwrap();
+            let kind = KernelKind::other(1, bytes);
+            let w = AccessPolicyWindow::persisting(KernelBuf::whole(a));
+            if inherit {
+                sim.set_stream_access_policy(d, s, Some(w)).unwrap();
+                enq(sim.kernel(d, kind.clone(), &[a], &[a], s));
+                enq(sim.kernel(d, kind, &[a], &[a], s));
+            } else {
+                enq(sim.kernel_access_policy(d, kind.clone(), &[a], &[a], s, w));
+                enq(sim.kernel_access_policy(d, kind, &[a], &[a], s, w));
+            }
+            sim.synchronize().unwrap();
+            persist_kernel_durations(&sim)
+        };
+        let inherited = run(true);
+        let launch = run(false);
+        assert_eq!(
+            inherited, launch,
+            "stream window on kernel() must match kernel_access_policy; inherit={inherited:?} launch={launch:?}"
+        );
+        assert!(
+            inherited.1 < inherited.0 / 2,
+            "warm persist must cut HBM; cold={} warm={}",
+            inherited.0,
+            inherited.1
+        );
+    }
+
+    #[test]
+    fn kernel_with_does_not_inherit_stream_access_policy() {
+        let mut sim = Sim::new(persist_mem_profile());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.enable_persisting_l2().unwrap();
+        let bytes = 8u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+        sim.synchronize().unwrap();
+        let kind = KernelKind::other(1, bytes);
+        let w = AccessPolicyWindow::persisting(KernelBuf::whole(a));
+        sim.set_stream_access_policy(d, s, Some(w)).unwrap();
+        enq(sim.kernel_with(d, kind.clone(), &[a], &[a], s, KernelAttrs::default()));
+        enq(sim.kernel_with(d, kind, &[a], &[a], s, KernelAttrs::default()));
+        sim.synchronize().unwrap();
+        let (d0, d1) = persist_kernel_durations(&sim);
+        assert_eq!(
+            d0, d1,
+            "kernel_with default must not inherit stream window; d0={d0} d1={d1}"
+        );
+    }
+
+    #[test]
+    fn kernel_pdl_does_not_inherit_stream_access_policy() {
+        let mut sim = Sim::new(persist_mem_profile());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.enable_persisting_l2().unwrap();
+        let bytes = 8u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+        sim.synchronize().unwrap();
+        let kind = KernelKind::other(1, bytes);
+        let w = AccessPolicyWindow::persisting(KernelBuf::whole(a));
+        sim.set_stream_access_policy(d, s, Some(w)).unwrap();
+        enq(sim.kernel_pdl(
+            d,
+            kind.clone(),
+            &[a],
+            &[a],
+            s,
+            ProgrammaticLaunch::default(),
+        ));
+        enq(sim.kernel_pdl(d, kind, &[a], &[a], s, ProgrammaticLaunch::default()));
+        sim.synchronize().unwrap();
+        let (d0, d1) = persist_kernel_durations(&sim);
+        assert_eq!(
+            d0, d1,
+            "kernel_pdl must not inherit stream window; d0={d0} d1={d1}"
+        );
+    }
+
+    #[test]
+    fn graph_replay_ignores_stream_access_policy() {
+        let mut sim = Sim::new(persist_mem_profile());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.enable_persisting_l2().unwrap();
+        let bytes = 8u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+        sim.synchronize().unwrap();
+        let w = AccessPolicyWindow::persisting(KernelBuf::whole(a));
+        sim.set_stream_access_policy(d, s, Some(w)).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1, bytes), &[a], &[a])
+            .unwrap();
+        assert_eq!(sim.graph_kernel_node_get_access_policy(g, 0).unwrap(), None);
+        let exec = sim.instantiate_graph(g).unwrap();
+        let _n = sim.launch_graph(exec, s).unwrap();
+        sim.synchronize().unwrap();
+        let _n = sim.launch_graph(exec, s).unwrap();
+        sim.synchronize().unwrap();
+        let (d0, d1) = persist_kernel_durations(&sim);
+        assert_eq!(
+            d0, d1,
+            "graph replay must use the node window, not the stream; d0={d0} d1={d1}"
+        );
+    }
+
+    #[test]
+    fn stream_access_policy_capture_records_on_kernel() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let w = AccessPolicyWindow::persisting(KernelBuf::whole(a));
+        sim.set_stream_access_policy(d, s, Some(w)).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_access_policy(g, 0).unwrap(),
+            Some(w)
+        );
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            KernelAttrs::default(),
+        ));
+        let h = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_kernel_node_get_access_policy(h, 0).unwrap(), None);
+    }
+
+    #[test]
+    fn stream_copy_attributes_copies_access_policy() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let w = AccessPolicyWindow::persisting(KernelBuf::whole(a));
+        sim.set_stream_access_policy(d, StreamId(1), Some(w))
+            .unwrap();
+        sim.stream_copy_attributes(d, StreamId(2), d, StreamId(1))
+            .unwrap();
+        assert_eq!(sim.stream_access_policy(d, StreamId(2)), Some(w));
+        sim.set_stream_access_policy(d, StreamId(1), None).unwrap();
+        sim.stream_copy_attributes(d, StreamId(2), d, StreamId(1))
+            .unwrap();
+        assert_eq!(sim.stream_access_policy(d, StreamId(2)), None);
+    }
+
+    #[test]
+    fn stream_get_set_attribute_access_policy() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(1);
+        let a = sim.malloc(d, 4096).unwrap();
+        let w = AccessPolicyWindow::persisting(KernelBuf::whole(a));
+        assert_eq!(
+            sim.stream_get_attribute(d, s, StreamAttr::AccessPolicy)
+                .unwrap(),
+            StreamAttrValue::AccessPolicy(None)
+        );
+        sim.stream_set_attribute(
+            d,
+            s,
+            StreamAttr::AccessPolicy,
+            StreamAttrValue::AccessPolicy(Some(w)),
+        )
+        .unwrap();
+        assert_eq!(sim.stream_access_policy(d, s), Some(w));
+        assert_eq!(
+            sim.stream_get_attribute(d, s, StreamAttr::AccessPolicy)
+                .unwrap(),
+            StreamAttrValue::AccessPolicy(Some(w))
+        );
+        sim.stream_set_attribute(
+            d,
+            s,
+            StreamAttr::AccessPolicy,
+            StreamAttrValue::AccessPolicy(None),
+        )
+        .unwrap();
+        assert_eq!(sim.stream_access_policy(d, s), None);
+        let bad = AccessPolicyWindow {
+            buf: KernelBuf::whole(a),
+            hit_ratio_permille: 1000,
+            hit: AccessProperty::Persisting,
+            miss: AccessProperty::Persisting,
+        };
+        match sim.set_stream_access_policy(d, s, Some(bad)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("miss persisting"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let tiny = sim.malloc(d, 64).unwrap();
+        match sim.set_stream_access_policy(
+            d,
+            s,
+            Some(AccessPolicyWindow::persisting(KernelBuf::whole(tiny))),
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("L2 fetch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_set_attribute(
+            d,
+            s,
+            StreamAttr::AccessPolicy,
+            StreamAttrValue::NvlinkUtilCentric(true),
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("stream attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        sim.set_stream_access_policy(d, s, Some(w)).unwrap();
+        assert_eq!(sim.stream_access_policy(d, s), Some(w));
+        let _g = sim.end_capture().unwrap();
+        match sim.set_stream_access_policy(DeviceId(1), s, Some(w)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

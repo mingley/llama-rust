@@ -809,6 +809,8 @@ pub struct Sim {
     max_dynamic_shared: BTreeMap<DeviceId, u32>,
     /// Streams with `cudaLaunchAttributeNvlinkUtilCentricScheduling` enabled.
     stream_nvlink_util_centric: BTreeSet<(DeviceId, StreamId)>,
+    /// `cudaStreamAttributeAccessPolicyWindow` per stream. Missing is none.
+    stream_access_policy: BTreeMap<(DeviceId, StreamId), AccessPolicyWindow>,
     /// Wait/write-value mailbox: `(alloc, offset) → word`. Missing is `0`.
     mailbox: BTreeMap<(AllocId, u64), u64>,
     /// `cudaThreadExchangeStreamCaptureMode` default for [`Self::begin_capture`].
@@ -941,6 +943,7 @@ impl Sim {
             non_portable_cluster: BTreeSet::new(),
             max_dynamic_shared: BTreeMap::new(),
             stream_nvlink_util_centric: BTreeSet::new(),
+            stream_access_policy: BTreeMap::new(),
             mailbox: BTreeMap::new(),
             capture_mode: StreamCaptureMode::Relaxed,
             next_user_object: 1,
@@ -1318,9 +1321,40 @@ impl Sim {
         self.stream_nvlink_util_centric.contains(&(device, stream))
     }
 
+    /// `cudaStreamSetAttribute` for `cudaStreamAttributeAccessPolicyWindow`.
+    ///
+    /// Inherited by [`Self::kernel`] / [`Self::kernel_bufs`] on this stream.
+    /// [`Self::kernel_with`] and graph replay use the launch / node window.
+    /// [`None`] clears. Decode identity stays no window.
+    pub fn set_stream_access_policy(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        window: Option<AccessPolicyWindow>,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if let Some(w) = window {
+            self.validate_access_policy_window(device, w)?;
+            let _prev = self.stream_access_policy.insert((device, stream), w);
+        } else {
+            let _rm = self.stream_access_policy.remove(&(device, stream));
+        }
+        Ok(())
+    }
+
+    /// Stream access-policy window, or [`None`] if unset.
+    #[must_use]
+    pub fn stream_access_policy(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Option<AccessPolicyWindow> {
+        self.stream_access_policy.get(&(device, stream)).copied()
+    }
+
     /// `cudaStreamCopyAttributes`: copy priority, SM permille, mem-sync
-    /// domain/map, synchronization policy, and NVLink-util-centric scheduling
-    /// from `src` to `dst`.
+    /// domain/map, synchronization policy, NVLink-util-centric scheduling,
+    /// and access-policy window from `src` to `dst`.
     ///
     /// Same device required. Capture is allowed (host-side, not a graph node).
     pub fn stream_copy_attributes(
@@ -1342,6 +1376,7 @@ impl Sim {
         let map = self.stream_mem_sync_map.get(&(src_device, src)).copied();
         let sync = self.stream_sync_policy.get(&(src_device, src)).copied();
         let nvlink = self.stream_nvlink_util_centric.contains(&(src_device, src));
+        let access = self.stream_access_policy.get(&(src_device, src)).copied();
         self.set_stream_priority(dst_device, dst, pri)?;
         if let Some(sm) = sm {
             self.set_stream_sm_permille(dst_device, dst, sm)?;
@@ -1364,6 +1399,7 @@ impl Sim {
             let _gone = self.stream_sync_policy.remove(&(dst_device, dst));
         }
         self.set_stream_nvlink_util_centric(dst_device, dst, nvlink)?;
+        self.set_stream_access_policy(dst_device, dst, access)?;
         Ok(())
     }
 
@@ -1512,6 +1548,9 @@ impl Sim {
             StreamAttr::NvlinkUtilCentric => {
                 StreamAttrValue::NvlinkUtilCentric(self.stream_nvlink_util_centric(device, stream))
             }
+            StreamAttr::AccessPolicy => {
+                StreamAttrValue::AccessPolicy(self.stream_access_policy(device, stream))
+            }
         })
     }
 
@@ -1541,6 +1580,9 @@ impl Sim {
             }
             (StreamAttr::NvlinkUtilCentric, StreamAttrValue::NvlinkUtilCentric(yes)) => {
                 self.set_stream_nvlink_util_centric(device, stream, yes)
+            }
+            (StreamAttr::AccessPolicy, StreamAttrValue::AccessPolicy(w)) => {
+                self.set_stream_access_policy(device, stream, w)
             }
             _ => Err(SimError::Invalid { why: "stream attr" }),
         }
@@ -12623,7 +12665,8 @@ impl Sim {
     /// the graph omitted it. Prefetch before [`Self::begin_capture`], or
     /// record [`Self::prefetch`] in the graph. Host attach and Single attach
     /// on another stream fail [`SimError::Invalid`] (`not attached`) instead
-    /// of paging.
+    /// of paging. Inherits [`Self::set_stream_nvlink_util_centric`] and
+    /// [`Self::set_stream_access_policy`] on `stream` via [`Self::kernel_bufs`].
     pub fn kernel(
         &mut self,
         device: DeviceId,
@@ -12648,6 +12691,8 @@ impl Sim {
     /// A live kernel (not a graph replay) page-faults managed memory when it
     /// *starts*, after stream deps, so a waited prefetch is visible.
     /// Host attach and Single attach on another stream fail `not attached`.
+    /// Inherits [`Self::set_stream_nvlink_util_centric`] and
+    /// [`Self::set_stream_access_policy`] on `stream`.
     pub fn kernel_bufs(
         &mut self,
         device: DeviceId,
@@ -12656,10 +12701,17 @@ impl Sim {
         writes: &[KernelBuf],
         stream: StreamId,
     ) -> Result<OpId, SimError> {
-        let prev = self.enqueue_nvlink_util_centric;
+        let window = self.stream_access_policy(device, stream);
+        if let Some(w) = window {
+            self.validate_access_policy_window(device, w)?;
+        }
+        let prev_nv = self.enqueue_nvlink_util_centric;
+        let prev_win = self.enqueue_access_policy;
         self.enqueue_nvlink_util_centric = self.stream_nvlink_util_centric(device, stream);
+        self.enqueue_access_policy = window;
         let out = self.submit_kernel(device, kind, reads, writes, stream, false);
-        self.enqueue_nvlink_util_centric = prev;
+        self.enqueue_nvlink_util_centric = prev_nv;
+        self.enqueue_access_policy = prev_win;
         out
     }
 
@@ -12781,7 +12833,8 @@ impl Sim {
     /// Combines cooperative, PDL, an access-policy window, mem-sync
     /// domain/map, cluster, shared-memory carveout, device-updatable kernel
     /// node, shared-memory bank mode, and launch-attribute priority on one
-    /// submit. Decode identity stays [`Self::kernel`] ([`KernelAttrs::default`]).
+    /// submit. Does not inherit [`Self::set_stream_access_policy`]. Decode
+    /// identity stays [`Self::kernel`] ([`KernelAttrs::default`]).
     pub fn kernel_with(
         &mut self,
         device: DeviceId,

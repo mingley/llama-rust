@@ -1311,9 +1311,13 @@ pub enum AccessProperty {
     Persisting,
 }
 
-/// `cudaAccessPolicyWindow` / `cudaLaunchAttributeAccessPolicyWindow`.
+/// `cudaAccessPolicyWindow` / `cudaLaunchAttributeAccessPolicyWindow` /
+/// `cudaStreamAttributeAccessPolicyWindow`.
 ///
 /// [`crate::Sim::kernel_access_policy`] applies this window to one launch.
+/// [`crate::Sim::set_stream_access_policy`] stores it on the stream so
+/// [`crate::Sim::kernel`] / [`crate::Sim::kernel_bufs`] inherit it.
+/// [`crate::Sim::kernel_with`] and graph replay use the launch / node window.
 /// Persisting hits are billed at `1000 - GpuProfile::l2_persist_hit_permille`
 /// of HBM after the first kernel has filled
 /// [`crate::Sim::set_persisting_l2_cache_size`] (CUDA default size is 0).
@@ -1494,6 +1498,8 @@ pub enum StreamAttr {
     MemSyncDomainMap,
     /// `cudaLaunchAttributeNvlinkUtilCentricScheduling` as a stream attribute.
     NvlinkUtilCentric,
+    /// `cudaStreamAttributeAccessPolicyWindow`.
+    AccessPolicy,
 }
 
 /// `cudaStreamAttrValue` for [`crate::Sim::stream_get_attribute`] /
@@ -1510,6 +1516,8 @@ pub enum StreamAttrValue {
     MemSyncDomainMap(MemSyncDomainMap),
     /// [`StreamAttr::NvlinkUtilCentric`].
     NvlinkUtilCentric(bool),
+    /// [`StreamAttr::AccessPolicy`]. [`None`] clears.
+    AccessPolicy(Option<AccessPolicyWindow>),
 }
 
 /// `cudaKernelNodeAttrID` / `cudaLaunchAttribute_t` for graph kernel nodes.

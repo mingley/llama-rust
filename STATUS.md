@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaStreamAttributeAccessPolicyWindow`
+
+`set_stream_access_policy` / `StreamAttr::AccessPolicy` store a persisting
+L2 window on the stream. `kernel` / `kernel_bufs` inherit it so billing
+matches `kernel_access_policy`. `kernel_with` and graph replay use the
+launch / node window. Set `None` clears. `stream_copy_attributes` copies
+or clears. Decode identity stays `cudaLaunchKernel` with no stream window.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — official bloom
 
 `general.architecture=bloom` with convert-shaped `bloom.*` KV. Decode
@@ -845,9 +854,9 @@ of those ids. `POST /detokenize` takes `{"tokens":[...]}` and returns
 order). Query; legal during capture. `stream_get_attribute` /
 `stream_set_attribute` are `cudaStreamGetAttribute` / `SetAttribute` of
 existing stream state (priority, synchronization policy, mem-sync
-domain/map, NVLink-util-centric). Green-context SM permille is not a
-CUDA stream attribute. Type mismatch is Invalid `"stream attr"`.
-`gpu-profile capture` is still refused.
+domain/map, NVLink-util-centric, access-policy window). Green-context SM
+permille is not a CUDA stream attribute. Type mismatch is Invalid
+`"stream attr"`. `gpu-profile capture` is still refused.
 
 ## Shipped 2026-08-30 — `cudaEventDestroy`
 
