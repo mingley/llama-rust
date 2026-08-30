@@ -4,7 +4,7 @@
 //! KV cache. `--engine` admits concurrent `POST /generate` onto one [`Engine`]
 //! so prefills and decodes GEMM together. `POST /v1/completions` and
 //! `POST /v1/chat/completions` map onto the same greedy path (`max_tokens`
-//! aliases `n_predict`). HTTP/1.1 keep-alive is on unless the client sends
+//! aliases `n_predict`; `n` must be 1). HTTP/1.1 keep-alive is on unless the client sends
 //! `Connection: close`. `/v1/*` responses use the OpenAI `choices` envelope.
 //! `GET /v1/models` and `GET /v1/models/{id}` are the OpenAI list/retrieve
 //! objects (`--model-id`, default GGUF stem). `GET /health` is `{"status":"ok"}`.
@@ -1771,6 +1771,12 @@ pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
             "stream" => stream = Some(scan.parse_bool()?),
             "echo" => echo = Some(scan.parse_bool()?),
             "add_special_tokens" => add_special_tokens = Some(scan.parse_bool()?),
+            "n" => {
+                let v = scan.parse_usize()?;
+                if v != 1 {
+                    return Err("n must be 1".into());
+                }
+            }
             _ => scan.skip_value()?,
         }
         need_comma = true;
@@ -2851,6 +2857,10 @@ mod tests {
                 .unwrap_err()
                 .contains("disagree")
         );
+        assert!(parse_gen_req(r#"{"prompt":"ab","n":1}"#).is_ok());
+        assert!(parse_gen_req(r#"{"prompt":"ab","n":2}"#)
+            .unwrap_err()
+            .contains("n must be 1"));
         let c = parse_gen_req(r#"{"prompt":"a\"b","extra":true}"#).unwrap();
         assert_eq!(c.prompt.as_deref(), Some("a\"b"));
         assert_eq!(
@@ -3370,6 +3380,14 @@ mod tests {
         assert!(empty.0.starts_with("HTTP/1.1 400 "), "{}", empty.0);
         assert!(empty.1.contains("invalid_request_error"), "{}", empty.1);
         assert!(empty.1.contains("empty prompt"), "{}", empty.1);
+        let many = exchange(
+            &post_v1("/v1/completions", r#"{"prompt":"ab","n":2}"#),
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(many.0.starts_with("HTTP/1.1 400 "), "{}", many.0);
+        assert!(many.1.contains("n must be 1"), "{}", many.1);
     }
 
     #[test]

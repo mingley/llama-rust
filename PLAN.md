@@ -2051,6 +2051,12 @@ model, do not celebrate the sim.
     unchanged. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
+177. [x] Serve OpenAI `n` must be 1:
+    `parse_gen_req` accepts `"n":1` and rejects any other `n` (`n must be
+    1`). Omitted `n` stays one greedy completion. Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.
