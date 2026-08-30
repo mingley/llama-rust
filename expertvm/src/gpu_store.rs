@@ -9,8 +9,8 @@ use crate::planner::{
     Prefetch, DECODE_ACTIVATION_BYTES,
 };
 use crate::sim_replay::{
-    bind_shareable_mempools, check_cluster_preferred, replay_streams, retarget_parked_kernel,
-    stream_of, GemmFlags, LeafMem, GRAPH_SCRATCH_BYTES,
+    allow_non_portable_cluster_if, bind_shareable_mempools, check_cluster_preferred,
+    replay_streams, retarget_parked_kernel, stream_of, GemmFlags, LeafMem, GRAPH_SCRATCH_BYTES,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -185,6 +185,11 @@ pub struct GpuStoreCfg {
     /// Occupies every Hyper-Q slot so leftover kernels cannot overlap.
     /// Decode identity stays Default.
     pub max_shared: bool,
+    /// `cudaFuncAttributeNonPortableClusterSizeAllowed`. Default disallowed.
+    ///
+    /// Lets [`Self::cluster`] exceed `portable_cluster_size` up to
+    /// `max_blocks_per_cluster`. Decode identity stays disallowed.
+    pub non_portable_cluster: bool,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// [`Self::pin_hot`] and walker `--place replicas` map dest VMM physicals
@@ -469,6 +474,7 @@ impl SimulatedGpuStore {
         if cfg.l2_persist {
             sim.enable_persisting_l2()?;
         }
+        allow_non_portable_cluster_if(&mut sim, cfg.non_portable_cluster)?;
         let share_import = if cfg.shareable {
             bind_shareable_mempools(&mut sim)?
                 .get(&DeviceId(0))

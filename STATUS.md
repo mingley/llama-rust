@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — expertvm `--non-portable-cluster`
+
+`expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and
+`infer-bench schedule` take `--non-portable-cluster`. Grouped expert GEMMs
+may launch a cluster larger than `portable_cluster_size` up to the SKU
+`max_blocks_per_cluster` (`cudaFuncAttributeNonPortableClusterSizeAllowed`).
+Example H100 keeps both at 8. Legal with `--pdl` and `--cooperative`.
+Decode identity stays disallowed. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — expertvm `--preferred-cluster`
 
 `expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and

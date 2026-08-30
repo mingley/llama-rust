@@ -456,6 +456,12 @@ pub struct SimCfg {
     /// Decode identity stays Default. [`crate::GpuStoreCfg::max_shared`] is
     /// the store path.
     pub max_shared: bool,
+    /// `cudaFuncAttributeNonPortableClusterSizeAllowed`. Default disallowed.
+    ///
+    /// Lets [`Self::cluster`] exceed `portable_cluster_size` up to
+    /// `max_blocks_per_cluster`. Decode identity stays disallowed.
+    /// [`crate::GpuStoreCfg::non_portable_cluster`] is the store path.
+    pub non_portable_cluster: bool,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// `--place replicas` maps dest VMM physicals then one NVLS kernel instead
@@ -528,6 +534,7 @@ impl SimCfg {
             preferred_cluster: 0,
             cluster_spread: false,
             max_shared: false,
+            non_portable_cluster: false,
             multicast: false,
             compute_slots: 0,
             decode_sm_permille: 0,
@@ -627,6 +634,7 @@ pub fn sim_replay_cfg(
     if cfg.l2_persist {
         sim.enable_persisting_l2()?;
     }
+    allow_non_portable_cluster_if(&mut sim, cfg.non_portable_cluster)?;
     let mut args = TouchArgs {
         d,
         s,
@@ -861,6 +869,22 @@ pub(crate) fn advise_pool_access(sim: &mut Sim) -> Result<(), Error> {
 pub(crate) fn advise_pool_access_if_pinned(sim: &mut Sim, cfg: &SimCfg) -> Result<(), Error> {
     if cfg.accessed_by && !cfg.mapped && !cfg.managed && !cfg.vmm && !cfg.sync_alloc {
         advise_pool_access(sim)?;
+    }
+    Ok(())
+}
+
+/// `cudaFuncSetAttribute` NonPortableClusterSizeAllowed on every GPU.
+pub(crate) fn allow_non_portable_cluster(sim: &mut Sim) -> Result<(), Error> {
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        sim.set_non_portable_cluster_size_allowed(DeviceId(g), true)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn allow_non_portable_cluster_if(sim: &mut Sim, yes: bool) -> Result<(), Error> {
+    if yes {
+        allow_non_portable_cluster(sim)?;
     }
     Ok(())
 }

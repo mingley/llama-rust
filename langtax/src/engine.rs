@@ -60,9 +60,10 @@
 //! a multiple of it). `--cluster-spread`
 //! is Spread scheduling: occupies every Hyper-Q slot even when `N` is smaller
 //! than `compute_slots` (no-op without `--cluster` of at least 2). `--max-shared`
-//! is MaxShared carveout: occupies every Hyper-Q slot. Decode
+//! is MaxShared carveout: occupies every Hyper-Q slot. `--non-portable-cluster`
+//! allows `--cluster N` above portable size up to the SKU max. Decode
 //! identity stays `cudaLaunchKernel` (no cluster / Default policy / no preferred
-//! dim / Default carveout).
+//! dim / Default carveout / non-portable disallowed).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode
@@ -3756,6 +3757,39 @@ mod tests {
             serial.1.wall_ns,
             overlap.1.line(),
             serial.1.line()
+        );
+    }
+
+    #[test]
+    fn engine_gpu_non_portable_cluster_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse(
+            "gpus=1\nmax_blocks_per_cluster=16\nfp16_flops=1000000\ncopy_engines=2\n",
+        )
+        .expect("open cluster profile");
+        let pri = GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            compute_slots: 2,
+            ..GpuStoreCfg::default()
+        };
+        let portable = mixed_gpu_decode_itl_at(bytes.clone(), false, None, pri, profile.clone());
+        let oversize = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                cluster: 16,
+                non_portable_cluster: true,
+                ..pri
+            },
+            profile,
+        );
+        assert_eq!(portable.2, 4);
+        assert_eq!(oversize.2, 4);
+        assert_eq!(
+            portable.4, oversize.4,
+            "non-portable cluster 16 must keep greedy identity"
         );
     }
 

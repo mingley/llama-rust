@@ -5632,6 +5632,47 @@ fn simulated_gpu_store_max_shared_serializes_leftover_prefill() {
 }
 
 #[test]
+fn simulated_gpu_store_non_portable_cluster_allows_oversize() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nmax_blocks_per_cluster=16\n")
+        .expect("open cluster profile");
+    let key = ExpertKey::new(0, 0);
+    let mut blocked = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile.clone(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            cluster: 16,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    match blocked.acquire(key) {
+        Ok(_) => panic!("cluster 16 without non-portable must fail"),
+        Err(err) => assert!(err.to_string().contains("non-portable cluster"), "{err}"),
+    }
+    let mut allowed = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            cluster: 16,
+            non_portable_cluster: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let _lease = allowed.acquire(key).expect("allowed");
+    allowed.release(key);
+}
+
+#[test]
 fn simulated_gpu_store_compute_slots_overlap_across_token_clock() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1])],
@@ -5891,6 +5932,34 @@ fn sim_replay_max_shared_serializes_seq_streams() {
         overlap.sim_ns,
         serial.sim_ns
     );
+}
+
+#[test]
+fn sim_replay_non_portable_cluster_allows_oversize() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nmax_blocks_per_cluster=16\n")
+        .expect("open cluster profile");
+    let oversize = SimCfg {
+        cluster: 16,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let err = sim_replay_cfg(&t, profile.clone(), oversize).expect_err("portable");
+    assert!(err.to_string().contains("non-portable cluster"), "{err}");
+    let allowed = SimCfg {
+        non_portable_cluster: true,
+        ..oversize
+    };
+    let ok = sim_replay_cfg(&t, profile.clone(), allowed).expect("allowed");
+    assert!(ok.misses > 0, "{}", ok.line());
+    let too_big = SimCfg {
+        cluster: 17,
+        non_portable_cluster: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let err = sim_replay_cfg(&t, profile, too_big).expect_err("max");
+    assert!(err.to_string().contains("cluster size"), "{err}");
 }
 
 #[test]

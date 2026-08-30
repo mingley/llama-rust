@@ -17,7 +17,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -136,6 +136,7 @@ fn run() -> Result<(), String> {
             sim_cfg.preferred_cluster = cfg.preferred_cluster;
             sim_cfg.cluster_spread = cfg.cluster_spread;
             sim_cfg.max_shared = cfg.max_shared;
+            sim_cfg.non_portable_cluster = cfg.non_portable_cluster;
             sim_cfg.multicast = cfg.multicast;
             if cfg.multicast {
                 sim_cfg.vmm = true;
@@ -210,6 +211,7 @@ struct Cfg {
     preferred_cluster: u8,
     cluster_spread: bool,
     max_shared: bool,
+    non_portable_cluster: bool,
     multicast: bool,
 }
 
@@ -250,6 +252,7 @@ where
     let mut preferred_cluster = 0u8;
     let mut cluster_spread = false;
     let mut max_shared = false;
+    let mut non_portable_cluster = false;
     let mut multicast = false;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
@@ -323,6 +326,9 @@ where
             }
             "--max-shared" => {
                 max_shared = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
+            "--non-portable-cluster" => {
+                non_portable_cluster = !matches!(inline.as_deref(), Some("0" | "false"));
             }
             "--multicast" => {
                 multicast = !matches!(inline.as_deref(), Some("0" | "false"));
@@ -400,6 +406,7 @@ where
         preferred_cluster,
         cluster_spread,
         max_shared,
+        non_portable_cluster,
         multicast,
     })
 }

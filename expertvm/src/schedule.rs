@@ -6,11 +6,11 @@ use crate::place::PlaceMap;
 use crate::planner::{plan_keys, predicted_keys, ChainState, Markov, Plan};
 use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
-    advise_pool_access_if_pinned, apply_stream_sms, apply_touch, bind_shareable_mempools,
-    drop_remote, fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots,
-    reclaim_victim, remote_hit, replay_from_sim, sim_profile, sync_work, validate_sim_cfg,
-    GraphBank, LeafMem, PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay,
-    StreamPlan, TouchArgs,
+    advise_pool_access_if_pinned, allow_non_portable_cluster_if, apply_stream_sms, apply_touch,
+    bind_shareable_mempools, drop_remote, fetch_remote, fill_remote, gemm_keys, host_callbacks,
+    note_touch, occupancy_slots, reclaim_victim, remote_hit, replay_from_sim, sim_profile,
+    sync_work, validate_sim_cfg, GraphBank, LeafMem, PageHandle, RemoteFetch, RemotePage,
+    ReplayCounters, SimCfg, SimReplay, StreamPlan, TouchArgs,
 };
 use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -304,6 +304,7 @@ impl SchedRt {
         if cfg.l2_persist {
             sim.enable_persisting_l2()?;
         }
+        allow_non_portable_cluster_if(&mut sim, cfg.non_portable_cluster)?;
         let n_gpus = u16::try_from(sim.profile().n_gpus()).unwrap_or(1).max(1);
         let bytes = cfg.bytes_per_expert.max(1);
         let mut cfg = cfg;
