@@ -2443,7 +2443,38 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-223. [ ] Next numbered PLAN item after 222 is the next `gpu-sim` / Engine /
+223. [x] `cudaMemAdvise_v2` location: `Sim::mem_advise_with_location`
+    takes a [`Place`]. [`SetReadMostly`] / [`UnsetReadMostly`] /
+    [`UnsetPreferredLocation`] / [`SetPreferredLocationHost`] ignore
+    location. [`SetPreferredLocation`] with [`Place::Device`] is typed
+    [`mem_advise`]; host places are [`SetPreferredLocationHost`].
+    [`SetAccessedBy`] / [`UnsetAccessedBy`] require [`Place::Device`]
+    (host is Invalid `"advise location"`). Typed [`mem_advise`] stays.
+    Capture refused by that helper. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+224. [x] `cuPointerSetAttribute` SyncMemops: `Sim::pointer_set_attribute`
+    / [`pointer_get_attribute`] for [`PointerAttr::SyncMemops`]. Value
+    0 or 1 (other Invalid `"pointer attr"`). Default false. Runtime
+    [`memcpy`] / [`memset_op`] wait the stream like pageable; capture
+    of those copies is `"cannot capture sync memops memcpy"` /
+    `"cannot capture sync memops memset"` (pageable still wins if
+    both). Explicit graph-add / graph launch is not refused. Set is
+    capture-refused `"cannot capture pointer attr"`; Get is a query.
+    Unknown ids are [`UnknownAlloc`]; freed is Invalid `"pointer attr"`.
+    Decode identity unchanged (default false; D2D stays async).
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+225. [x] `cudaDevAttrSparseCudaArraySupported` /
+    `cudaDevAttrDeferredMappingCudaArraySupported` /
+    `cudaDevAttrDmaBufSupported`: always 0. CUDA arrays and dma-buf
+    are not modeled. Query; legal during capture. Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+226. [ ] Next numbered PLAN item after 225 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

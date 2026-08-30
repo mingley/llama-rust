@@ -21,10 +21,10 @@ use crate::ops::{
     LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAllocationType, MemAttach, MemAttachFlags,
     MemHandleType, MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain,
     MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
-    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp,
+    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
+    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -67,6 +67,8 @@ struct Alloc {
     vmm_write_by: BTreeSet<DeviceId>,
     /// `cudaMemAdviseSetPreferredLocation` (host or one GPU).
     preferred: Preferred,
+    /// `CU_POINTER_ATTRIBUTE_SYNC_MEMOPS`: memcpy/memset wait the stream.
+    sync_memops: bool,
     /// `cuMemAddressReserve` VA. HBM is charged only while mapped (possibly sparse).
     vmm: bool,
     /// Physical maps `(device, offset, bytes)` into a VMM VA.
@@ -5194,6 +5196,7 @@ impl Sim {
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
+                sync_memops: false,
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool,
@@ -8819,6 +8822,7 @@ impl Sim {
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
+                sync_memops: false,
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: Some(pool),
@@ -9241,6 +9245,7 @@ impl Sim {
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
+                sync_memops: false,
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: Some(pool),
@@ -9348,6 +9353,7 @@ impl Sim {
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
+                sync_memops: false,
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: None,
@@ -9463,6 +9469,46 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
+    }
+
+    /// `cudaMemAdvise` / `cudaMemAdvise_v2` with a [`Place`] location.
+    ///
+    /// [`MemAdvise::SetReadMostly`] / [`UnsetReadMostly`](MemAdvise::UnsetReadMostly) /
+    /// [`UnsetPreferredLocation`](MemAdvise::UnsetPreferredLocation) ignore
+    /// location. [`MemAdvise::SetPreferredLocation`] with a host place is
+    /// [`MemAdvise::SetPreferredLocationHost`]. AccessedBy requires
+    /// [`Place::Device`] (host is Invalid `"advise location"`). Typed
+    /// [`Self::mem_advise`] stays. Capture refused by that helper.
+    pub fn mem_advise_with_location(
+        &mut self,
+        alloc: AllocId,
+        advice: MemAdvise,
+        location: Place,
+    ) -> Result<(), SimError> {
+        match advice {
+            MemAdvise::SetReadMostly
+            | MemAdvise::UnsetReadMostly
+            | MemAdvise::UnsetPreferredLocation
+            | MemAdvise::SetPreferredLocationHost => {
+                let device = match location {
+                    Place::Device(d) => d,
+                    Place::Host | Place::HostPinned => DeviceId(0),
+                };
+                self.mem_advise(alloc, advice, device)
+            }
+            MemAdvise::SetPreferredLocation => match location {
+                Place::Device(d) => self.mem_advise(alloc, advice, d),
+                Place::Host | Place::HostPinned => {
+                    self.mem_advise(alloc, MemAdvise::SetPreferredLocationHost, DeviceId(0))
+                }
+            },
+            MemAdvise::SetAccessedBy | MemAdvise::UnsetAccessedBy => match location {
+                Place::Device(d) => self.mem_advise(alloc, advice, d),
+                Place::Host | Place::HostPinned => Err(SimError::Invalid {
+                    why: "advise location",
+                }),
+            },
+        }
     }
 
     /// `cudaMemRangeGetAttribute`. Query; legal during capture.
@@ -9616,6 +9662,7 @@ impl Sim {
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
+                sync_memops: false,
                 vmm: true,
                 vmm_maps: Vec::new(),
                 pool: None,
@@ -10824,6 +10871,7 @@ impl Sim {
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
+                sync_memops: false,
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: None,
@@ -11035,8 +11083,13 @@ impl Sim {
     ///
     /// Pageable host (`Place::Host`) is host-synchronous: the driver bounces
     /// through pinned staging, so this call waits [`Self::synchronize_stream`]
-    /// before returning. Capture cannot include a pageable copy. Pinned DMA
-    /// ([`Self::memcpy_pinned_to_device`]) stays stream-ordered.
+    /// before returning. Capture cannot include a pageable copy.
+    /// [`PointerAttr::SyncMemops`] on [`MemcpyOp::alloc`] waits the stream the
+    /// same way; capture of that copy is `"cannot capture sync memops memcpy"`
+    /// (pageable still wins if both). Pinned DMA
+    /// ([`Self::memcpy_pinned_to_device`]) stays stream-ordered unless that
+    /// flag is set. Explicit [`Self::graph_add_memcpy`] / graph launch is not
+    /// refused.
     /// [`MemcpyOp::height`] `> 1` is `cudaMemcpy2DAsync`: billed bytes are
     /// `width * height`, not pitch padding. [`MemcpyOp::depth`] `> 1` is
     /// `cudaMemcpy3DAsync`: billed bytes are `width * height * depth`, not
@@ -11048,14 +11101,19 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         let pageable = op.src.is_pageable() || op.dst.is_pageable();
-        if pageable && self.in_capture(device, stream) {
+        let sync_ops = self.is_sync_memops(op.alloc)?;
+        if (pageable || sync_ops) && self.in_capture(device, stream) {
             return Err(SimError::Invalid {
-                why: "cannot capture pageable memcpy",
+                why: if sync_ops && !pageable {
+                    "cannot capture sync memops memcpy"
+                } else {
+                    "cannot capture pageable memcpy"
+                },
             });
         }
         memcpy_2d_check(&op)?;
         let id = self.submit(device, stream, Kind::Memcpy(op))?;
-        if pageable {
+        if pageable || sync_ops {
             self.synchronize_stream(device, stream)?;
         }
         Ok(id)
@@ -11828,6 +11886,54 @@ impl Sim {
         Ok((alloc, a.bytes))
     }
 
+    /// `cuPointerSetAttribute` / GetAttribute for
+    /// [`PointerAttr::SyncMemops`]. `value` must be 0 or 1. Capture refused
+    /// (`"cannot capture pointer attr"`). Unknown ids are
+    /// [`SimError::UnknownAlloc`]; freed ids are Invalid `"pointer attr"`.
+    pub fn pointer_set_attribute(
+        &mut self,
+        alloc: AllocId,
+        attr: PointerAttr,
+        value: u64,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture pointer attr")?;
+        let a = self.alloc_mut(alloc)?;
+        if !a.live {
+            return Err(SimError::Invalid {
+                why: "pointer attr",
+            });
+        }
+        match attr {
+            PointerAttr::SyncMemops => {
+                if value > 1 {
+                    return Err(SimError::Invalid {
+                        why: "pointer attr",
+                    });
+                }
+                a.sync_memops = value == 1;
+                Ok(())
+            }
+        }
+    }
+
+    /// `cuPointerGetAttribute` twin of [`Self::pointer_set_attribute`]. Query;
+    /// capture-legal. Reports 0/1 for [`PointerAttr::SyncMemops`].
+    pub fn pointer_get_attribute(
+        &self,
+        alloc: AllocId,
+        attr: PointerAttr,
+    ) -> Result<u64, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live {
+            return Err(SimError::Invalid {
+                why: "pointer attr",
+            });
+        }
+        match attr {
+            PointerAttr::SyncMemops => Ok(u64::from(a.sync_memops)),
+        }
+    }
+
     /// `cudaHostGetDevicePointer`. Query; legal during capture.
     ///
     /// Mapped host (`cudaHostAllocMapped` / `cudaHostRegisterMapped`) returns
@@ -11924,7 +12030,10 @@ impl Sim {
             | DeviceAttr::PageableMemoryAccessUsesHostPageTables
             | DeviceAttr::HostNativeAtomicSupported
             | DeviceAttr::CooperativeMultiDeviceLaunch
-            | DeviceAttr::Integrated => 0,
+            | DeviceAttr::Integrated
+            | DeviceAttr::SparseCudaArraySupported
+            | DeviceAttr::DeferredMappingCudaArraySupported
+            | DeviceAttr::DmaBufSupported => 0,
             DeviceAttr::StreamPrioritiesSupported | DeviceAttr::UnifiedAddressing => 1,
             DeviceAttr::GpuOverlap => u64::from(gpu.copy_engines > 0),
         })
@@ -11969,6 +12078,9 @@ impl Sim {
             host_native_atomic_supported: false,
             cooperative_multi_device_launch: false,
             integrated: false,
+            sparse_cuda_array_supported: false,
+            deferred_mapping_cuda_array_supported: false,
+            dma_buf_supported: false,
         })
     }
 
@@ -12194,7 +12306,10 @@ impl Sim {
     /// [`MemsetOp::height`] `> 1` bills `width * height` as an HBM write (pitch
     /// padding is not written). [`MemsetOp::depth`] `> 1` is `cudaMemset3DAsync`
     /// (`width * height * depth`). The mapped span is the 2D/3D extent. Capture
-    /// is allowed. Mapped host is not a memset dest.
+    /// is allowed unless [`PointerAttr::SyncMemops`] is set (`"cannot capture
+    /// sync memops memset"`); that flag also waits the stream after submit.
+    /// Explicit [`Self::graph_add_memset`] / graph launch is not refused.
+    /// Mapped host is not a memset dest.
     pub fn memset_op(
         &mut self,
         device: DeviceId,
@@ -12202,7 +12317,17 @@ impl Sim {
         stream: StreamId,
     ) -> Result<OpId, SimError> {
         let op = self.resolve_memset_op(op)?;
-        self.submit(device, stream, Kind::Memset(op))
+        let sync_ops = self.is_sync_memops(op.id)?;
+        if sync_ops && self.in_capture(device, stream) {
+            return Err(SimError::Invalid {
+                why: "cannot capture sync memops memset",
+            });
+        }
+        let id = self.submit(device, stream, Kind::Memset(op))?;
+        if sync_ops {
+            self.synchronize_stream(device, stream)?;
+        }
+        Ok(id)
     }
 
     /// `cudaMemset`: enqueue then wait for that stream (host-synchronous).
@@ -13234,6 +13359,11 @@ impl Sim {
             .ok_or(SimError::UnknownAlloc { alloc: id })
     }
 
+    fn is_sync_memops(&self, id: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(id)?;
+        Ok(a.live && a.sync_memops)
+    }
+
     fn fail_if_capturing(&self, why: &'static str) -> Result<(), SimError> {
         if self.capturing.is_some() {
             Err(SimError::Invalid { why })
@@ -13278,6 +13408,7 @@ impl Sim {
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
+                sync_memops: false,
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: None,
@@ -14053,6 +14184,7 @@ impl Sim {
                 accessed_by: BTreeSet::new(),
                 vmm_write_by: BTreeSet::new(),
                 preferred: Preferred::None,
+                sync_memops: false,
                 vmm: false,
                 vmm_maps: Vec::new(),
                 pool: None,

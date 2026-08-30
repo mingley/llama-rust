@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — Advise location, SyncMemops, CUDA-array/dma-buf DeviceAttr
+
+`mem_advise_with_location` is `cudaMemAdvise_v2` (`Place` location;
+AccessedBy requires a device place). `pointer_set_attribute` /
+`pointer_get_attribute` model `CU_POINTER_ATTRIBUTE_SYNC_MEMOPS`
+(memcpy/memset wait the stream like pageable; capture of those copies
+is refused; graph-add is not). `SparseCudaArraySupported` /
+`DeferredMappingCudaArraySupported` / `DmaBufSupported` are always 0.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — VMM access flags and cudaMemGetAddressRange
 
 `va_set_access_with_flags` maps PROT_READ / PROT_READWRITE / PROT_NONE
@@ -2388,7 +2398,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 222 (`mem_get_address_range`).
+Next code change is PLAN systems depth after item 225 (`DmaBufSupported`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

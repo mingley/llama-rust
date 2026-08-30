@@ -571,6 +571,18 @@ pub struct PointerAttributes {
     pub host_pointer: bool,
 }
 
+/// `cuPointerSetAttribute` / `cuPointerGetAttribute` for
+/// [`crate::Sim::pointer_set_attribute`].
+///
+/// Only attributes this VM already models.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PointerAttr {
+    /// `CU_POINTER_ATTRIBUTE_SYNC_MEMOPS`. `1` makes memcpy/memset of this
+    /// pointer host-synchronous (like pageable). Capture of those copies is
+    /// refused.
+    SyncMemops,
+}
+
 /// `cudaDeviceAttr` for [`crate::Sim::device_get_attribute`].
 ///
 /// Only attributes this VM already models. Values are the CUDA `int` as `u64`.
@@ -644,6 +656,14 @@ pub enum DeviceAttr {
     CooperativeMultiDeviceLaunch,
     /// `cudaDevAttrIntegrated` (always 0; example SKUs are discrete).
     Integrated,
+    /// `cudaDevAttrSparseCudaArraySupported` (always 0; CUDA arrays are not
+    /// modeled).
+    SparseCudaArraySupported,
+    /// `cudaDevAttrDeferredMappingCudaArraySupported` (always 0; CUDA arrays
+    /// are not modeled).
+    DeferredMappingCudaArraySupported,
+    /// `cudaDevAttrDmaBufSupported` (always 0; dma-buf is not modeled).
+    DmaBufSupported,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -727,6 +747,12 @@ pub struct DeviceProperties {
     pub cooperative_multi_device_launch: bool,
     /// `cudaDevAttrIntegrated` (example SKUs are discrete).
     pub integrated: bool,
+    /// `cudaDevAttrSparseCudaArraySupported` (CUDA arrays are not modeled).
+    pub sparse_cuda_array_supported: bool,
+    /// `cudaDevAttrDeferredMappingCudaArraySupported` (CUDA arrays are not modeled).
+    pub deferred_mapping_cuda_array_supported: bool,
+    /// `cudaDevAttrDmaBufSupported` (dma-buf is not modeled).
+    pub dma_buf_supported: bool,
 }
 
 /// `cudaFuncAttribute` for [`crate::Sim::func_set_attribute`] / `GetAttribute`.

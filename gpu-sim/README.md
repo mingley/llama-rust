@@ -480,6 +480,10 @@ again).
 stream is `Ok(false)`; the clock does not advance).
 `mem_info` is `cudaMemGetInfo` `(free, total)` HBM bytes.
 `pointer_get_attributes` is `cudaPointerGetAttributes`.
+`pointer_set_attribute` / `pointer_get_attribute` are
+`cuPointerSetAttribute` / `GetAttribute` (`PointerAttr::SyncMemops`:
+memcpy/memset wait the stream like pageable; capture of those copies is
+refused). Set is capture-refused; Get is a query.
 `mem_get_address_range` is `cudaMemGetAddressRange` (base is the alloc id;
 interior offsets are not modeled). Query; legal during capture.
 `host_get_device_pointer` is `cudaHostGetDevicePointer` (mapped host;
@@ -500,7 +504,9 @@ host-sync barrier; capture refused; write-ordering options are not modeled).
 pageable is bounce-buffer; host cannot touch managed while a kernel runs).
 `HostNativeAtomicSupported` / `CooperativeMultiDeviceLaunch` / `Integrated`
 are always 0 (host-mapped atomics and multi-device cooperative are not
-modeled; example SKUs are discrete). `StreamPrioritiesSupported` /
+modeled; example SKUs are discrete). `SparseCudaArraySupported` /
+`DeferredMappingCudaArraySupported` / `DmaBufSupported` are always 0
+(CUDA arrays and dma-buf are not modeled). `StreamPrioritiesSupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
 (no SM count or clock). `func_get_attributes` is `cudaFuncGetAttributes`
@@ -587,6 +593,9 @@ stream; capture is refused). `stream_attach_with_flags` maps
 `MemAttachFlags::{GLOBAL, HOST, SINGLE}` then typed `stream_attach`
 (other bits Invalid `"stream attach flags"`). Typed `stream_attach` stays.
 `mem_advise` is `cudaMemAdvise` (host-sync).
+`mem_advise_with_location` is `cudaMemAdvise_v2` (`Place` location;
+AccessedBy requires a device place; host preferred is
+`SetPreferredLocationHost`). Typed `mem_advise` stays.
 `SetReadMostly` makes prefetch replicate; `SetAccessedBy` lets a kernel
 read without migrating. `SetPreferredLocation` keeps a page already at
 that GPU there on a remote read (writes still migrate; host preferred

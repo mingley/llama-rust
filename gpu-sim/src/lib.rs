@@ -29,7 +29,8 @@
 //! [`Sim::alloc`] / [`memcpy`](Sim::memcpy) / [`free`](Sim::free) are
 //! stream-ordered (`cudaMallocAsync` / `cudaMemcpyAsync` / `cudaFreeAsync`)
 //! except pageable [`Place::Host`] copies, which wait the stream (CUDA bounce
-//! buffer). [`Sim::memcpy_pinned_to_device`] is the overlapping DMA path.
+//! buffer). [`PointerAttr::SyncMemops`] on the copy alloc also waits the stream.
+//! [`Sim::memcpy_pinned_to_device`] is the overlapping DMA path.
 //! [`Sim::malloc`] / [`memcpy_sync`](Sim::memcpy_sync) / [`free_sync`](Sim::free_sync)
 //! / [`memset_sync`](Sim::memset_sync) are host-synchronous (`cudaMalloc` /
 //! `cudaMemcpy` / `cudaFree` / `cudaMemset`). [`memset_op_sync`](Sim::memset_op_sync)
@@ -100,6 +101,10 @@
 //! refused). [`stream_attach_with_flags`](Sim::stream_attach_with_flags) is
 //! the flags word ([`MemAttachFlags`]). Typed helper stays. Prefetch migrates;
 //! it does not replicate unless [`Sim::mem_advise`] [`MemAdvise::SetReadMostly`].
+//! [`mem_advise_with_location`](Sim::mem_advise_with_location) is
+//! `cudaMemAdvise_v2` ([`Place`] location; AccessedBy requires
+//! [`Place::Device`]; host preferred is [`MemAdvise::SetPreferredLocationHost`]).
+//! Typed [`mem_advise`](Sim::mem_advise) stays.
 //! [`prefetch_with_flags`](Sim::prefetch_with_flags) is
 //! `cudaMemPrefetchAsync` / `cuMemPrefetchAsync_v2` ([`PrefetchFlags::DEFAULT`]
 //! only; [`Place::Device`] / host dest). Typed helpers stay.
@@ -189,6 +194,11 @@
 //! [`Sim::query_stream`] is `cudaStreamQuery` (no wait).
 //! [`Sim::mem_info`] is `cudaMemGetInfo` `(free, total)`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
+//! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
+//! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
+//! `cuPointerSetAttribute` / `GetAttribute` ([`PointerAttr::SyncMemops`]:
+//! memcpy/memset wait the stream like pageable; capture of those copies is
+//! refused). Set is capture-refused; Get is a query.
 //! [`Sim::mem_get_address_range`] is `cudaMemGetAddressRange` (base is the
 //! alloc id; interior offsets are not modeled). Query; legal during capture.
 //! [`Sim::host_get_device_pointer`] is `cudaHostGetDevicePointer` (mapped host).
@@ -223,6 +233,10 @@
 //! [`CooperativeMultiDeviceLaunch`](DeviceAttr::CooperativeMultiDeviceLaunch) /
 //! [`Integrated`](DeviceAttr::Integrated) are always 0 (host-mapped atomics and
 //! multi-device cooperative are not modeled; example SKUs are discrete).
+//! [`DeviceAttr::SparseCudaArraySupported`] /
+//! [`DeferredMappingCudaArraySupported`](DeviceAttr::DeferredMappingCudaArraySupported) /
+//! [`DmaBufSupported`](DeviceAttr::DmaBufSupported) are always 0 (CUDA arrays
+//! and dma-buf are not modeled).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -609,10 +623,10 @@ pub use ops::{
     LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAllocationType, MemAttach, MemAttachFlags,
     MemHandleType, MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain,
     MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
-    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp,
+    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
+    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -9553,6 +9567,24 @@ mod tests {
                 .unwrap(),
             0
         );
+        assert!(!hp.sparse_cuda_array_supported);
+        assert!(!hp.deferred_mapping_cuda_array_supported);
+        assert!(!hp.dma_buf_supported);
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::SparseCudaArraySupported)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::DeferredMappingCudaArraySupported)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::DmaBufSupported)
+                .unwrap(),
+            0
+        );
         match h100.flush_gpu_direct_rdma_writes(
             d,
             FlushGpuDirectRdmaTarget::CURRENT_DEVICE,
@@ -10121,6 +10153,84 @@ mod tests {
         assert!(pageable.query_stream(d, s).unwrap());
         assert!(pageable.clock_ns() > t1);
         assert!(pageable.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn pointer_sync_memops_makes_memcpy_host_synchronous() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 8u64 << 20;
+        let mut sim = Sim::new(h100());
+        let a = sim.alloc(d, bytes, s).unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::SyncMemops)
+                .unwrap(),
+            0
+        );
+        let t0 = sim.clock_ns();
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+        assert!(!sim.query_stream(d, s).unwrap());
+        assert_eq!(sim.clock_ns(), t0);
+        sim.synchronize_stream(d, s).unwrap();
+        sim.pointer_set_attribute(a, PointerAttr::SyncMemops, 1)
+            .unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::SyncMemops)
+                .unwrap(),
+            1
+        );
+        let t1 = sim.clock_ns();
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+        assert!(sim.query_stream(d, s).unwrap());
+        assert!(sim.clock_ns() > t1);
+        match sim.pointer_set_attribute(a, PointerAttr::SyncMemops, 2) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.memcpy_pinned_to_device(d, a, bytes, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("sync memops memcpy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_host_to_device(d, a, bytes, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("pageable memcpy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memset(d, a, 64, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("sync memops memset"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.pointer_set_attribute(a, PointerAttr::SyncMemops, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::SyncMemops)
+                .unwrap(),
+            1
+        );
+        let _g = sim.end_capture().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memset(g, KernelBuf::whole(a)).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        sim.free_sync(a).unwrap();
+        match sim.pointer_set_attribute(a, PointerAttr::SyncMemops, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pointer_set_attribute(AllocId(u64::MAX), PointerAttr::SyncMemops, 1) {
+            Err(SimError::UnknownAlloc { .. }) => {}
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -11709,6 +11819,39 @@ mod tests {
             .unwrap_err();
         match cap_pref {
             SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn mem_advise_with_location_maps_host_places() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let m = sim.alloc_managed(4096).unwrap();
+        sim.mem_advise_with_location(m, MemAdvise::SetReadMostly, Place::Host)
+            .unwrap();
+        assert!(sim.is_read_mostly(m).unwrap());
+        sim.mem_advise_with_location(m, MemAdvise::SetPreferredLocation, Place::Host)
+            .unwrap();
+        assert!(sim.is_preferred_host(m).unwrap());
+        sim.mem_advise_with_location(m, MemAdvise::SetPreferredLocation, Place::Device(d))
+            .unwrap();
+        assert!(sim.is_preferred_location(m, d).unwrap());
+        sim.mem_advise_with_location(m, MemAdvise::SetAccessedBy, Place::Device(d))
+            .unwrap();
+        assert!(sim.is_accessed_by(m, d).unwrap());
+        match sim.mem_advise_with_location(m, MemAdvise::SetAccessedBy, Place::Host) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("advise location"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_advise_with_location(m, MemAdvise::UnsetAccessedBy, Place::HostPinned) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("advise location"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.mem_advise_with_location(m, MemAdvise::SetReadMostly, Place::Device(d)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
