@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaMemPoolDestroy`
+
+`Sim::destroy_pool` is `cudaMemPoolDestroy`. Unused cached bytes return to
+the OS. Outstanding allocs stay valid until freed. Destroying the current
+device mempool rebinds GetMemPool to GetDefaultMemPool. Default and
+graph-memory pools cannot be destroyed. Capture cannot include it.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaMemPoolGetAttribute` / `cudaFuncGetAttributes` / GetAccess
 
 `Sim::pool_get_attribute` / `pool_set_attribute` are `cudaMemPoolGetAttribute`
@@ -2054,8 +2062,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 163 (mempool Get/Set
-attribute, func attributes, GetAccess). `gguf_gemv serve --engine`
+Next code change is PLAN systems depth after item 164 (`cudaMemPoolDestroy`).
+`gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover
 is a Llama NORM real-model fixture when a GGUF is on disk. Physical

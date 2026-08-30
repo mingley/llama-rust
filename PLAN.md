@@ -423,14 +423,17 @@ Exact (mechanical invariants agents may rely on):
   `cudaDeviceSynchronize` (`synchronize_device`) waits one GPU
 - memory pools: `create_pool` / `create_shareable_pool` / `alloc_from_pool` /
   `set_pool_release_threshold` / `pool_trim_to` / `set_device_mempool` /
-  `pool_get_attribute` / `pool_set_attribute` / `pool_get_access`
+  `pool_get_attribute` / `pool_set_attribute` / `pool_get_access` /
+  `destroy_pool`
   (`cudaMemPoolCreate` / `cudaMallocFromPoolAsync` /
   `cudaMemPoolAttrReleaseThreshold` / `cudaMemPoolTrimTo` / `cudaDeviceSetMemPool` /
-  `cudaMemPoolGetAttribute` / `SetAttribute` / `GetAccess`); default
+  `cudaMemPoolGetAttribute` / `SetAttribute` / `GetAccess` / `cudaMemPoolDestroy`); default
   threshold `0` returns unused bytes on free; `u64::MAX` holds them so
   `malloc` can OOM until trim; `cudaMalloc` cannot consume pool cache;
   GetAttribute Used/Reserved wrap live+cached (no invented pool high-water);
-  GetAccess is ReadWrite on the owner and after SetAccess on peers
+  GetAccess is ReadWrite on the owner and after SetAccess on peers;
+  Destroy returns unused cache to the OS, keeps outstanding allocs, cannot
+  destroy the default pool, and rebinds the current pool to the default
 - `cudaIpcGetMemHandle` / `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`
   (`ipc_get` / `ipc_open` / `ipc_close`): import aliases source physicals
   (no extra HBM); free of the source while imports are live is Invalid;
@@ -1942,6 +1945,16 @@ model, do not celebrate the sim.
     pool is Invalid. Query; legal during capture. Decode identity
     unchanged. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
+
+164. [x] `cudaMemPoolDestroy`:
+    `Sim::destroy_pool` returns immediately. Unused cached bytes return
+    to the OS. Outstanding allocations stay valid until freed (later
+    frees do not re-cache). Destroying the current device mempool
+    rebinds `device_mempool` to `default_pool`. The default and
+    graph-memory pools cannot be destroyed. A destroyed handle is
+    Invalid for alloc/export/get/set. Capture cannot include it. Decode
+    identity unchanged. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

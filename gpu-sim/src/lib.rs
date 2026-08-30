@@ -52,13 +52,18 @@
 //! [`Sim::create_pool`] / [`alloc_from_pool`](Sim::alloc_from_pool) /
 //! [`set_pool_release_threshold`](Sim::set_pool_release_threshold) /
 //! [`pool_trim_to`](Sim::pool_trim_to) / [`pool_get_attribute`](Sim::pool_get_attribute) /
-//! [`pool_set_attribute`](Sim::pool_set_attribute) are `cudaMemPoolCreate` /
+//! [`pool_set_attribute`](Sim::pool_set_attribute) / [`destroy_pool`](Sim::destroy_pool)
+//! are `cudaMemPoolCreate` /
 //! `cudaMallocFromPoolAsync` / `cudaMemPoolAttrReleaseThreshold` /
-//! `cudaMemPoolTrimTo` / `cudaMemPoolGetAttribute` / `SetAttribute`.
+//! `cudaMemPoolTrimTo` / `cudaMemPoolGetAttribute` / `SetAttribute` /
+//! `cudaMemPoolDestroy`.
 //! [`MemPoolAttr`] is ReleaseThreshold / UsedMemCurrent / ReservedMemCurrent
 //! (no invented pool high-water; graph mem stays [`GraphMemAttr`]). Unused
 //! pool bytes stay in `cudaMemGetInfo` used until trim when the release
-//! threshold is high (`u64::MAX`, vLLM-style).
+//! threshold is high (`u64::MAX`, vLLM-style). Destroying a user pool returns
+//! unused cache to the OS; outstanding allocs stay valid; the default pool
+//! cannot be destroyed; destroying the current pool rebinds GetMemPool to
+//! GetDefaultMemPool.
 //! [`Sim::pool_set_access`] / [`pool_unset_access`](Sim::pool_unset_access) /
 //! [`pool_get_access`](Sim::pool_get_access) are `cudaMemPoolSetAccess`
 //! ReadWrite / ProtNone and `cudaMemPoolGetAccess` (owner is ReadWrite by
@@ -7754,6 +7759,103 @@ mod tests {
             49_152
         );
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn destroy_pool_returns_cache_keeps_live_and_rebinds_current() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.destroy_pool(sim.default_pool(d).unwrap()) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("default"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.destroy_pool(sim.graph_pool(d).unwrap()) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph mem"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let p = sim.create_pool(d).unwrap();
+        sim.pool_set_attribute(p, MemPoolAttr::ReleaseThreshold, u64::MAX)
+            .unwrap();
+        let a = sim.alloc_from_pool(d, p, 256, s).unwrap();
+        sim.synchronize().unwrap();
+        sim.free(d, a, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 256);
+        sim.destroy_pool(p).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        match sim.alloc_from_pool(d, p, 256, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("destroyed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_get_attribute(p, MemPoolAttr::UsedMemCurrent) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("destroyed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.destroy_pool(p) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("destroyed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let q = sim.create_pool(d).unwrap();
+        let b = sim.alloc_from_pool(d, q, 128, s).unwrap();
+        sim.synchronize().unwrap();
+        sim.destroy_pool(q).unwrap();
+        assert!(sim.is_resident(b, d).unwrap());
+        match sim.alloc_from_pool(d, q, 64, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("destroyed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.free(d, b, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        let cur = sim.create_pool(d).unwrap();
+        sim.set_device_mempool(d, cur).unwrap();
+        assert_eq!(sim.device_mempool(d).unwrap(), cur);
+        sim.destroy_pool(cur).unwrap();
+        assert_eq!(sim.device_mempool(d).unwrap(), sim.default_pool(d).unwrap());
+        let c = sim.alloc(d, 64, s).unwrap();
+        sim.synchronize().unwrap();
+        sim.free(d, c, s).unwrap();
+        sim.synchronize().unwrap();
+        let cap = sim.create_pool(d).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.destroy_pool(cap) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn destroy_pool_shareable_import_and_exporter() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let p = sim.create_shareable_pool(d).unwrap();
+        let h = sim.pool_export(p).unwrap();
+        let imp = sim.pool_import(d, h).unwrap();
+        let a = sim.alloc_from_pool(d, p, 64, s).unwrap();
+        sim.synchronize().unwrap();
+        sim.destroy_pool(imp).unwrap();
+        assert!(sim.is_resident(a, d).unwrap());
+        let b = sim.alloc_from_pool(d, p, 32, s).unwrap();
+        sim.synchronize().unwrap();
+        sim.destroy_pool(p).unwrap();
+        match sim.pool_export(p) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("destroyed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_import(d, h) {
+            Err(SimError::Invalid { why }) => assert!(
+                why.contains("shareable") || why.contains("destroyed"),
+                "{why}"
+            ),
+            other => panic!("{other:?}"),
+        }
+        sim.free(d, a, s).unwrap();
+        sim.free(d, b, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
     }
 
     #[test]

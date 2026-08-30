@@ -128,6 +128,8 @@ struct Pool {
     /// Release threshold is `u64::MAX` so unused bytes stay reserved until
     /// [`Sim::graph_mem_trim`].
     graph: bool,
+    /// `cudaMemPoolDestroy`: handle is invalid; outstanding allocs stay valid.
+    destroyed: bool,
 }
 
 impl Pool {
@@ -141,6 +143,7 @@ impl Pool {
             shareable: false,
             share_root: None,
             graph: false,
+            destroyed: false,
         }
     }
 }
@@ -7189,7 +7192,7 @@ impl Sim {
     /// Not the default mempool. [`Self::alloc_from_pool`] / [`Self::set_device_mempool`]
     /// / [`Self::set_pool_release_threshold`] / [`Self::pool_set_access`] /
     /// [`Self::pool_get_attribute`] / [`Self::pool_set_attribute`] /
-    /// [`Self::pool_get_access`] refuse it.
+    /// [`Self::pool_get_access`] / [`Self::destroy_pool`] refuse it.
     pub fn graph_pool(&self, device: DeviceId) -> Result<PoolId, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.graph_pools
@@ -7209,6 +7212,29 @@ impl Sim {
         Ok(())
     }
 
+    fn refuse_destroyed_pool(&self, pool: PoolId) -> Result<(), SimError> {
+        if self.pool_ref(pool)?.destroyed || self.pool_ref(self.pool_root(pool)?)?.destroyed {
+            return Err(SimError::Invalid {
+                why: "destroyed pool",
+            });
+        }
+        Ok(())
+    }
+
+    fn rebind_current_pools(&mut self, pool: PoolId) {
+        let rebound: Vec<DeviceId> = self
+            .current_pools
+            .iter()
+            .filter(|(_, p)| **p == pool)
+            .map(|(d, _)| *d)
+            .collect();
+        for d in rebound {
+            if let Some(&def) = self.default_pools.get(&d) {
+                let _prev = self.current_pools.insert(d, def);
+            }
+        }
+    }
+
     /// `cudaDeviceSetMemPool`. Later [`Self::alloc`] draws from `pool`.
     ///
     /// Capture cannot include it. `pool` must belong to `device` (an imported
@@ -7218,6 +7244,7 @@ impl Sim {
     pub fn set_device_mempool(&mut self, device: DeviceId, pool: PoolId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         self.refuse_graph_pool(pool)?;
+        self.refuse_destroyed_pool(pool)?;
         let _gpu = self.profile.gpu(device)?;
         if self.pool_ref(pool)?.device != device {
             return Err(SimError::Invalid {
@@ -7253,6 +7280,43 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cudaMemPoolDestroy`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Returns immediately. Unused cached bytes return to the OS. Outstanding
+    /// allocations stay valid until freed (later frees do not re-cache).
+    /// Destroying the current device mempool rebinds [`Self::device_mempool`]
+    /// to [`Self::default_pool`]. The default and graph-memory pools cannot be
+    /// destroyed. A destroyed handle is Invalid for alloc/export/get/set.
+    pub fn destroy_pool(&mut self, pool: PoolId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        self.refuse_graph_pool(pool)?;
+        if self.pool_ref(pool)?.destroyed {
+            return Err(SimError::Invalid {
+                why: "destroyed pool",
+            });
+        }
+        if self.default_pools.values().any(|&p| p == pool) {
+            return Err(SimError::Invalid {
+                why: "default pool",
+            });
+        }
+        self.rebind_current_pools(pool);
+        if self.pool_ref(pool)?.share_root.is_some() {
+            self.pool_mut(pool)?.destroyed = true;
+            self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+            return Ok(());
+        }
+        let _dropped = self.pool_trim_to(pool, 0)?;
+        {
+            let p = self.pool_mut(pool)?;
+            p.release_threshold = 0;
+            p.destroyed = true;
+        }
+        self.share_handles.retain(|_, src| *src != pool);
+        self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
+        Ok(())
+    }
+
     /// `cudaMallocFromPoolAsync`. `pool` must belong to `device`.
     ///
     /// The graph-memory pool is not a user mempool; use [`Self::alloc`] during
@@ -7265,6 +7329,7 @@ impl Sim {
         stream: StreamId,
     ) -> Result<AllocId, SimError> {
         self.refuse_graph_pool(pool)?;
+        self.refuse_destroyed_pool(pool)?;
         self.alloc_from_pool_inner(device, pool, bytes, stream)
     }
 
@@ -7337,6 +7402,7 @@ impl Sim {
         self.fail_if_capturing("cannot capture mempool")?;
         let root = self.pool_root(pool)?;
         self.refuse_graph_pool(root)?;
+        self.refuse_destroyed_pool(root)?;
         self.pool_mut(root)?.release_threshold = bytes;
         Ok(())
     }
@@ -7348,6 +7414,7 @@ impl Sim {
     /// The graph-memory pool is Invalid (use [`Self::graph_mem_get`]).
     pub fn pool_get_attribute(&self, pool: PoolId, attr: MemPoolAttr) -> Result<u64, SimError> {
         self.refuse_graph_pool(pool)?;
+        self.refuse_destroyed_pool(pool)?;
         match attr {
             MemPoolAttr::ReleaseThreshold => {
                 Ok(self.pool_ref(self.pool_root(pool)?)?.release_threshold)
@@ -7375,6 +7442,7 @@ impl Sim {
             MemPoolAttr::UsedMemCurrent | MemPoolAttr::ReservedMemCurrent => {
                 self.fail_if_capturing("cannot capture mempool")?;
                 self.refuse_graph_pool(pool)?;
+                self.refuse_destroyed_pool(pool)?;
                 Err(SimError::Invalid {
                     why: "read-only pool attr",
                 })
@@ -7398,6 +7466,7 @@ impl Sim {
     pub fn pool_trim_to(&mut self, pool: PoolId, min_bytes: u64) -> Result<u64, SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         let root = self.pool_root(pool)?;
+        self.refuse_destroyed_pool(root)?;
         let (device, cached) = {
             let p = self.pool_ref(root)?;
             (p.device, p.cached)
@@ -7436,6 +7505,7 @@ impl Sim {
     pub fn pool_set_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         self.refuse_graph_pool(pool)?;
+        self.refuse_destroyed_pool(pool)?;
         let _gpu = self.profile.gpu(device)?;
         let owner = self.pool_ref(pool)?.device;
         if owner != device {
@@ -7455,6 +7525,7 @@ impl Sim {
     /// Drop [`Self::pool_set_access`] for `device` (`cudaMemAccessFlagsProtNone`).
     pub fn pool_unset_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
+        self.refuse_destroyed_pool(pool)?;
         let _gpu = self.profile.gpu(device)?;
         let _p = self.pool_ref(pool)?;
         let _was = self.pool_mut(pool)?.accessed_by.remove(&device);
@@ -7476,6 +7547,7 @@ impl Sim {
     pub fn pool_get_access(&self, pool: PoolId, device: DeviceId) -> Result<u32, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.refuse_graph_pool(pool)?;
+        self.refuse_destroyed_pool(pool)?;
         let owner = self.pool_ref(pool)?.device;
         if owner == device || self.is_pool_accessed_by(pool, device)? {
             Ok(MemAccessFlags::PROT_READ_WRITE)
@@ -7501,6 +7573,7 @@ impl Sim {
     /// the same handle. Capture cannot include it.
     pub fn pool_export(&mut self, pool: PoolId) -> Result<ShareableHandleId, SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
+        self.refuse_destroyed_pool(pool)?;
         let (device, shareable) = {
             let p = self.pool_ref(pool)?;
             (p.device, p.shareable)
@@ -7540,6 +7613,7 @@ impl Sim {
             why: "unknown shareable",
         })?;
         let root = self.pool_root(src)?;
+        self.refuse_destroyed_pool(root)?;
         if self.pool_ref(root)?.device != device {
             return Err(SimError::Invalid {
                 why: "pool device mismatch",

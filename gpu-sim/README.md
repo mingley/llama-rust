@@ -442,7 +442,11 @@ completes). `create_pool` / `alloc_from_pool` /
 `MemPoolAttr` is ReleaseThreshold / UsedMemCurrent / ReservedMemCurrent
 (no invented ordinary-pool high-water; graph mem stays `GraphMemAttr`).
 `u64::MAX` holds unused bytes so `malloc` can OOM
-until trim. Capture cannot include pool create/trim/set-attribute.
+until trim. Destroying a user pool (`destroy_pool` / `cudaMemPoolDestroy`)
+returns unused cache to the OS; outstanding allocs stay valid; the default
+pool cannot be destroyed; destroying the current pool rebinds GetMemPool
+to GetDefaultMemPool. Capture cannot include pool create/trim/set-attribute
+/destroy.
 `pool_get_access` is `cudaMemPoolGetAccess` (owner ReadWrite by default;
 peers need `pool_set_access`).
 `ipc_get` / `ipc_open` / `ipc_close` are `cudaIpcGetMemHandle` /
