@@ -119,6 +119,23 @@ impl Alloc {
             Attach::Single(s) => s == stream,
         }
     }
+
+    /// Device for `cudaIpcGetMemHandle`. None for host / managed / VMM / pool /
+    /// IPC or shareable imports.
+    fn legacy_ipc_device(&self) -> Option<DeviceId> {
+        if !self.live
+            || self.managed
+            || self.vmm
+            || self.host_pinned
+            || self.host_pageable
+            || self.ipc_src.is_some()
+            || self.share_src.is_some()
+            || self.pool.is_some()
+        {
+            return None;
+        }
+        self.devices.first().copied()
+    }
 }
 
 struct Pool {
@@ -10868,21 +10885,7 @@ impl Sim {
         self.fail_if_capturing("cannot capture ipc")?;
         let d = {
             let a = self.alloc_ref(id)?;
-            if !a.live
-                || a.managed
-                || a.vmm
-                || a.host_pinned
-                || a.host_pageable
-                || a.ipc_src.is_some()
-                || a.share_src.is_some()
-                || a.pool.is_some()
-                || a.devices.is_empty()
-            {
-                return Err(SimError::Invalid {
-                    why: "not device ipc",
-                });
-            }
-            a.devices.first().copied().ok_or(SimError::Invalid {
+            a.legacy_ipc_device().ok_or(SimError::Invalid {
                 why: "not device ipc",
             })?
         };
@@ -12235,7 +12238,10 @@ impl Sim {
             | PointerAttr::MemPoolHandle
             | PointerAttr::DeviceOrdinal
             | PointerAttr::RangeStartAddr
-            | PointerAttr::BufferId => Err(SimError::Invalid {
+            | PointerAttr::BufferId
+            | PointerAttr::IsLegacyCudaIpcCapable
+            | PointerAttr::IsGpuDirectRdmaCapable
+            | PointerAttr::AllowedHandleTypes => Err(SimError::Invalid {
                 why: "pointer attr",
             }),
         }
@@ -12244,7 +12250,8 @@ impl Sim {
     /// `cuPointerGetAttribute` twin of [`Self::pointer_set_attribute`]. Query;
     /// capture-legal. Reports 0/1 for [`PointerAttr::SyncMemops`]. Other
     /// attrs wrap [`Self::pointer_get_attributes`], range size, mapped host,
-    /// the backing pool, device ordinal, range start, and buffer id.
+    /// the backing pool, device ordinal, range start, buffer id, legacy IPC /
+    /// GPUDirect RDMA capability, and allowed handle types.
     pub fn pointer_get_attribute(
         &self,
         alloc: AllocId,
@@ -12280,6 +12287,19 @@ impl Sim {
                 Ok(base.0)
             }
             PointerAttr::BufferId => Ok(alloc.0),
+            PointerAttr::IsLegacyCudaIpcCapable => Ok(u64::from(a.legacy_ipc_device().is_some())),
+            PointerAttr::IsGpuDirectRdmaCapable => match a.legacy_ipc_device() {
+                Some(d) => Ok(u64::from(self.profile.gpu_direct_rdma_supported(d))),
+                None => Ok(0),
+            },
+            PointerAttr::AllowedHandleTypes => match a.pool {
+                Some(p) => Ok(if self.is_pool_shareable(p)? {
+                    MemHandleType::POSIX_FILE_DESCRIPTOR
+                } else {
+                    MemHandleType::NONE
+                }),
+                None => Ok(MemHandleType::NONE),
+            },
         }
     }
 

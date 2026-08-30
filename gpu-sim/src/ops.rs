@@ -622,6 +622,15 @@ pub enum PointerAttr {
     RangeStartAddr,
     /// `CU_POINTER_ATTRIBUTE_BUFFER_ID`. This VM uses [`crate::AllocId`].
     BufferId,
+    /// `CU_POINTER_ATTRIBUTE_IS_LEGACY_CUDA_IPC_CAPABLE` (`1` if
+    /// [`crate::Sim::ipc_get`] would succeed).
+    IsLegacyCudaIpcCapable,
+    /// `CU_POINTER_ATTRIBUTE_IS_GPU_DIRECT_RDMA_CAPABLE` (`1` if legacy-IPC
+    /// device memory on a [`crate::LinkKind::Rdma`] GPU).
+    IsGpuDirectRdmaCapable,
+    /// `CU_POINTER_ATTRIBUTE_ALLOWED_HANDLE_TYPES` (POSIX-FD for shareable
+    /// pool allocs; else [`MemHandleType::NONE`]).
+    AllowedHandleTypes,
 }
 
 /// `cudaDeviceAttr` for [`crate::Sim::device_get_attribute`].

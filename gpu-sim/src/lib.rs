@@ -203,7 +203,8 @@
 //! `cuPointerSetAttribute` / `GetAttribute` ([`PointerAttr`]: SyncMemops is
 //! settable; MemoryType / DevicePointer / HostPointer / IsManaged /
 //! RangeSize / Mapped / MemPoolHandle / DeviceOrdinal / RangeStartAddr /
-//! BufferId are query-only wrappers of existing
+//! BufferId / IsLegacyCudaIpcCapable / IsGpuDirectRdmaCapable /
+//! AllowedHandleTypes are query-only wrappers of existing
 //! pointer state). Set is capture-refused; Get is a query.
 //! [`Sim::mem_get_address_range`] is `cudaMemGetAddressRange` (base is the
 //! alloc id; interior offsets are not modeled). Query; legal during capture.
@@ -8734,6 +8735,88 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
             other => panic!("{other:?}"),
         }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn pointer_get_attribute_wraps_ipc_rdma_and_handle_types() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::IsLegacyCudaIpcCapable)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::IsGpuDirectRdmaCapable)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::AllowedHandleTypes)
+                .unwrap(),
+            MemHandleType::NONE
+        );
+        let pin = sim.alloc_host_pinned(64).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(pin, PointerAttr::IsLegacyCudaIpcCapable)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(pin, PointerAttr::IsGpuDirectRdmaCapable)
+                .unwrap(),
+            0
+        );
+        let async_a = sim.alloc(d, 64, s).unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(async_a, PointerAttr::IsLegacyCudaIpcCapable)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(async_a, PointerAttr::AllowedHandleTypes)
+                .unwrap(),
+            MemHandleType::NONE
+        );
+        let p = sim.create_shareable_pool(d).unwrap();
+        let sp = sim.alloc_from_pool(d, p, 64, s).unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(sp, PointerAttr::AllowedHandleTypes)
+                .unwrap(),
+            MemHandleType::POSIX_FILE_DESCRIPTOR
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(sp, PointerAttr::IsLegacyCudaIpcCapable)
+                .unwrap(),
+            0
+        );
+        let mut rdma = Sim::new(HardwareProfile::example_2node_rdma());
+        let r = rdma.malloc(DeviceId(0), 64).unwrap();
+        assert_eq!(
+            rdma.pointer_get_attribute(r, PointerAttr::IsGpuDirectRdmaCapable)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            rdma.pointer_get_attribute(r, PointerAttr::IsLegacyCudaIpcCapable)
+                .unwrap(),
+            1
+        );
+        match sim.pointer_set_attribute(a, PointerAttr::IsLegacyCudaIpcCapable, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::IsLegacyCudaIpcCapable)
+                .unwrap(),
+            1
+        );
         let _g = sim.end_capture().unwrap();
     }
 
