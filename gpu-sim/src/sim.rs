@@ -9358,6 +9358,23 @@ impl Sim {
         })
     }
 
+    /// `cudaMemRangeGetAttributes`. Query; legal during capture.
+    ///
+    /// Same per-alloc rules as [`Self::mem_range_get_attribute`]. Empty
+    /// `attrs` is an empty vec. All-or-nothing: a non-managed pointer fails
+    /// the whole call. Last-prefetch is not modeled.
+    pub fn mem_range_get_attributes(
+        &self,
+        alloc: AllocId,
+        attrs: &[MemRangeAttr],
+    ) -> Result<Vec<MemRangeAttrValue>, SimError> {
+        attrs
+            .iter()
+            .copied()
+            .map(|attr| self.mem_range_get_attribute(alloc, attr))
+            .collect()
+    }
+
     /// Whether [`MemAdvise::SetReadMostly`] is set.
     pub fn is_read_mostly(&self, alloc: AllocId) -> Result<bool, SimError> {
         let a = self.alloc_ref(alloc)?;

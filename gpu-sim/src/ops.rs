@@ -25,7 +25,8 @@ pub enum MemAdvise {
     UnsetPreferredLocation,
 }
 
-/// `cudaMemRangeAttribute` for [`crate::Sim::mem_range_get_attribute`].
+/// `cudaMemRangeAttribute` for [`crate::Sim::mem_range_get_attribute`] /
+/// [`crate::Sim::mem_range_get_attributes`].
 ///
 /// This VM tracks advice per allocation, not per byte range.
 /// `cudaMemRangeAttributeLastPrefetchLocation` is not modeled.
@@ -39,7 +40,8 @@ pub enum MemRangeAttr {
     AccessedBy,
 }
 
-/// Value of [`crate::Sim::mem_range_get_attribute`].
+/// Value of [`crate::Sim::mem_range_get_attribute`] /
+/// [`crate::Sim::mem_range_get_attributes`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MemRangeAttrValue {
     /// [`MemRangeAttr::ReadMostly`].

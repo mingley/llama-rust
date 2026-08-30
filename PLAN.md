@@ -2270,7 +2270,13 @@ model, do not celebrate the sim.
     memcpy node. Decode identity unchanged. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-202. [ ] Next numbered PLAN item after 201 is the next `gpu-sim` / Engine /
+202. [x] `cudaMemRangeGetAttributes`: `Sim::mem_range_get_attributes`
+    batches [`MemRangeAttr`] queries (all-or-nothing; empty is `[]`). Same
+    per-alloc rules as GetAttribute. Last-prefetch is not modeled. Query;
+    legal during capture. Decode identity unchanged. `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+203. [ ] Next numbered PLAN item after 202 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

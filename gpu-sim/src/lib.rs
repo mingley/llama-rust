@@ -93,6 +93,8 @@
 //! [`Sim::mem_range_get_attribute`] is `cudaMemRangeGetAttribute` of modeled
 //! per-alloc advice ([`MemRangeAttr`]; not per byte range; last-prefetch is
 //! not modeled). Query; legal during capture.
+//! [`mem_range_get_attributes`](Sim::mem_range_get_attributes) is
+//! `cudaMemRangeGetAttributes` (batch of those attrs; all-or-nothing).
 //! [`Sim::drop_managed_copy`] refunds one ReadMostly GPU copy (dest eviction).
 //! [`Sim::va_reserve`] / [`va_map`](Sim::va_map) / [`va_unmap`](Sim::va_unmap) /
 //! [`va_free`](Sim::va_free) are `cuMemAddressReserve` / `cuMemMap` /
@@ -11013,6 +11015,27 @@ mod tests {
                 .unwrap(),
             MemRangeAttrValue::ReadMostly(true)
         );
+        assert_eq!(
+            sim.mem_range_get_attributes(
+                m,
+                &[
+                    MemRangeAttr::ReadMostly,
+                    MemRangeAttr::PreferredLocation,
+                    MemRangeAttr::AccessedBy,
+                ]
+            )
+            .unwrap(),
+            vec![
+                MemRangeAttrValue::ReadMostly(true),
+                MemRangeAttrValue::PreferredLocation(Some(Place::Host)),
+                MemRangeAttrValue::AccessedBy(vec![d]),
+            ]
+        );
+        assert!(sim.mem_range_get_attributes(m, &[]).unwrap().is_empty());
+        match sim.mem_range_get_attributes(a, &[MemRangeAttr::ReadMostly]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         let _g = sim.end_capture().unwrap();
     }
 
