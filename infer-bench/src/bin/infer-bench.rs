@@ -18,7 +18,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -146,6 +146,7 @@ fn run() -> Result<(), String> {
             sim_cfg.portable_shared = cfg.portable_shared;
             sim_cfg.nvlink_util_centric = cfg.nvlink_util_centric;
             sim_cfg.device_updatable = cfg.device_updatable;
+            sim_cfg.kernel_priority = cfg.kernel_priority;
             sim_cfg.device_launch = cfg.device_launch;
             sim_cfg.multicast = cfg.multicast;
             if cfg.multicast {
@@ -230,6 +231,7 @@ struct Cfg {
     portable_shared: PortableSharedMode,
     nvlink_util_centric: bool,
     device_updatable: bool,
+    kernel_priority: Option<i32>,
     device_launch: bool,
     multicast: bool,
 }
@@ -280,6 +282,7 @@ where
     let mut portable_shared = PortableSharedMode::Default;
     let mut nvlink_util_centric = false;
     let mut device_updatable = false;
+    let mut kernel_priority = None;
     let mut device_launch = false;
     let mut multicast = false;
     let mut it = args.into_iter();
@@ -384,6 +387,13 @@ where
             "--device-updatable" => {
                 device_updatable = !matches!(inline.as_deref(), Some("0" | "false"));
             }
+            "--kernel-priority" => {
+                kernel_priority = Some(parse_kernel_priority(&value(
+                    "kernel-priority",
+                    inline,
+                    &mut it,
+                )?)?)
+            }
             "--device-launch" => {
                 device_launch = !matches!(inline.as_deref(), Some("0" | "false"));
             }
@@ -472,6 +482,7 @@ where
         portable_shared,
         nvlink_util_centric,
         device_updatable,
+        kernel_priority,
         device_launch,
         multicast,
     })
@@ -542,6 +553,11 @@ fn parse_dynamic_shared(s: &str) -> Result<u32, String> {
         return Err("dynamic-shared must be > 0".into());
     }
     Ok(n)
+}
+
+fn parse_kernel_priority(s: &str) -> Result<i32, String> {
+    s.parse::<i32>()
+        .map_err(|_| format!("invalid kernel-priority {s:?}"))
 }
 
 fn parse_portable_shared(s: &str) -> Result<PortableSharedMode, String> {

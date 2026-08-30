@@ -75,11 +75,12 @@
 //! attribute). `--nvlink-util` is
 //! `cudaLaunchAttributeNvlinkUtilCentricScheduling`: occupies every Hyper-Q
 //! slot when the profile has NVLink; without NVLink occupancy is unchanged.
-//! Decode
+//! `--kernel-priority N` is `cudaLaunchAttributePriority` on grouped expert
+//! GEMMs (`None` inherits stream create priority). Decode
 //! identity stays `cudaLaunchKernel` (no cluster / Default policy / no preferred
 //! dim / Default carveout / non-portable disallowed / Auto sync policy /
 //! Default shared-mem / Default portable-cluster / 0 dynamic shared / Default
-//! portable-shared / nvlink-util off).
+//! portable-shared / nvlink-util off / inherit-stream priority).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode
@@ -3934,6 +3935,67 @@ mod tests {
         assert_eq!(
             off.4, on.4,
             "device-launch + device-updatable must keep greedy identity"
+        );
+    }
+
+    #[test]
+    fn engine_gpu_kernel_priority_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::example_h100_sxm();
+        let off = mixed_gpu_decode_itl_at(
+            bytes.clone(),
+            false,
+            None,
+            GpuStoreCfg::default(),
+            profile.clone(),
+        );
+        let on = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                kernel_priority: Some(5),
+                ..GpuStoreCfg::default()
+            },
+            profile,
+        );
+        assert_eq!(off.2, 4);
+        assert_eq!(on.2, 4);
+        assert_eq!(
+            off.4, on.4,
+            "kernel-priority launch attr must keep greedy identity"
+        );
+    }
+
+    #[test]
+    fn engine_gpu_kernel_priority_overrides_decode_stream() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let pri = GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            ..GpuStoreCfg::default()
+        };
+        let prefer = mixed_gpu_decode_itl_on(bytes.clone(), false, None, pri);
+        let flat = mixed_gpu_decode_itl_on(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                kernel_priority: Some(0),
+                ..pri
+            },
+        );
+        assert_eq!(prefer.2, 4);
+        assert_eq!(flat.2, 4);
+        assert_eq!(
+            prefer.4, flat.4,
+            "kernel-priority must keep greedy identity"
+        );
+        assert!(
+            flat.0 > prefer.0,
+            "kernel-priority 0 must flatten decode-stream ranking; flat={} prefer={}",
+            flat.0,
+            prefer.0
         );
     }
 

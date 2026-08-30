@@ -57,6 +57,9 @@ pub(crate) struct GemmFlags {
     /// `cudaLaunchAttributeDeviceUpdatableKernelNode`. Graphs-only.
     /// Decode identity stays disabled.
     pub device_updatable: bool,
+    /// `cudaLaunchAttributePriority`. [`None`] inherits the stream.
+    /// Decode identity stays inherit-stream.
+    pub priority: Option<i32>,
 }
 
 impl GemmFlags {
@@ -112,6 +115,7 @@ impl GemmFlags {
             portable_shared: self.portable_shared,
             nvlink_util_centric: self.nvlink_util_centric,
             device_updatable: self.device_updatable,
+            priority: self.priority,
             ..KernelAttrs::default()
         }
     }
@@ -565,6 +569,13 @@ pub struct SimCfg {
     /// Illegal with [`Self::graph_update`]. Decode identity stays disabled.
     /// [`crate::GpuStoreCfg::device_updatable`] is the store path.
     pub device_updatable: bool,
+    /// `cudaLaunchAttributePriority` on grouped expert GEMMs.
+    ///
+    /// [`None`] inherits `cudaStreamCreateWithPriority`. [`Some`] overrides
+    /// that kernel (memcpy stays on the stream). Higher first when compute
+    /// contends. Decode identity stays inherit-stream.
+    /// [`crate::GpuStoreCfg::kernel_priority`] is the store path.
+    pub kernel_priority: Option<i32>,
     /// `cudaGraphInstantiateFlagDeviceLaunch` + [`gpu_sim::Sim::device_launch_graph`].
     ///
     /// Leaf GEMM graphs only (no combo-parent child graphs, no mem nodes).
@@ -653,6 +664,7 @@ impl SimCfg {
             portable_shared: gpu_sim::PortableSharedMode::Default,
             nvlink_util_centric: false,
             device_updatable: false,
+            kernel_priority: None,
             device_launch: false,
             multicast: false,
             compute_slots: 0,
@@ -796,6 +808,7 @@ pub fn sim_replay_cfg(
         .with_portable_shared(cfg.portable_shared)
         .with_nvlink_util(cfg.nvlink_util_centric)
         .with_device_updatable(cfg.device_updatable)
+        .with_kernel_priority(cfg.kernel_priority)
         .with_device_launch(cfg.device_launch)
         .with_set_params(cfg.graph_set_params)
         .with_piecewise(cfg.graph_piecewise);
@@ -1078,6 +1091,7 @@ pub(crate) struct GraphBank {
     portable_shared: gpu_sim::PortableSharedMode,
     nvlink_util_centric: bool,
     device_updatable: bool,
+    kernel_priority: Option<i32>,
     device_launch: bool,
     set_params: bool,
     pub updates: u64,
@@ -1108,6 +1122,7 @@ impl GraphBank {
             portable_shared: gpu_sim::PortableSharedMode::Default,
             nvlink_util_centric: false,
             device_updatable: false,
+            kernel_priority: None,
             device_launch: false,
             set_params: false,
             updates: 0,
@@ -1201,7 +1216,13 @@ impl GraphBank {
             portable_shared: self.portable_shared,
             nvlink_util_centric: self.nvlink_util_centric,
             device_updatable: self.device_updatable,
+            priority: self.kernel_priority,
         }
+    }
+
+    pub(crate) fn with_kernel_priority(mut self, pri: Option<i32>) -> Self {
+        self.kernel_priority = pri;
+        self
     }
 
     pub(crate) fn with_set_params(mut self, yes: bool) -> Self {

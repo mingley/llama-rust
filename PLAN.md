@@ -1755,6 +1755,13 @@ model, do not celebrate the sim.
     Decode identity stays inherit-stream (`None`). Distinct from
     `--stream-priority`. `gpu-profile capture` is still refused.
 
+141. [x] expertvm / Engine `--kernel-priority N`:
+    `cudaLaunchAttributePriority` on grouped expert GEMMs. `None` inherits
+    `cudaStreamCreateWithPriority`. `N` (including `0`) overrides that kernel
+    when compute contends (higher first). Distinct from `--stream-priority`.
+    Legal with `--pdl` and `--cooperative`. Decode identity stays inherit-stream.
+    `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

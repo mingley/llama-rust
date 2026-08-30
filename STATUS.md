@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — expertvm `--kernel-priority N`
+
+`expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and
+`infer-bench schedule` take `--kernel-priority N`. Grouped expert GEMMs launch
+with `cudaLaunchAttributePriority`. `None` inherits stream create priority.
+`N` (including `0`) overrides that kernel when compute contends. Distinct from
+`--stream-priority`. Legal with `--pdl` and `--cooperative`. Decode identity
+stays inherit-stream. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaLaunchAttributePriority`
 
 Launch-time override of `cudaStreamCreateWithPriority` (`KernelAttrs::priority`).

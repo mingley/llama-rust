@@ -1,7 +1,7 @@
 //! Library tests: JSONL, Zipf-ish traces, policy order, leases, gpu-sim.
 
 use super::*;
-use gpu_sim::{DeviceId, HardwareProfile};
+use gpu_sim::{AllocId, DeviceId, HardwareProfile};
 use std::collections::BTreeSet;
 
 fn ev(token: u32, layer: u32, experts: &[u32]) -> ExpertAccess {
@@ -5701,6 +5701,20 @@ fn simulated_gpu_store_nvlink_util_serializes_leftover_prefill() {
         off, on,
         "without NVLink the hint must not change occupancy; off={off} on={on}"
     );
+}
+
+#[test]
+fn gemm_flags_priority_is_launch_attr() {
+    use crate::sim_replay::GemmFlags;
+    let id = AllocId(1);
+    let none = GemmFlags::default().kernel_attrs(id);
+    assert_eq!(none.priority, None);
+    let some = GemmFlags {
+        priority: Some(-5),
+        ..GemmFlags::default()
+    }
+    .kernel_attrs(id);
+    assert_eq!(some.priority, Some(-5));
 }
 
 #[test]

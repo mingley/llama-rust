@@ -103,6 +103,8 @@ pub(crate) struct GpuCli {
     pub nvlink_util: bool,
     /// `cudaLaunchAttributeDeviceUpdatableKernelNode` (`GpuStoreCfg::device_updatable`).
     pub device_updatable: bool,
+    /// `cudaLaunchAttributePriority` (`GpuStoreCfg::kernel_priority`).
+    pub kernel_priority: Option<i32>,
     /// `cudaGraphInstantiateFlagDeviceLaunch` (`GpuStoreCfg::device_launch`).
     pub device_launch: bool,
     /// Hopper NVLS replica fanout (`GpuStoreCfg::multicast`). Implies vmm.
@@ -285,6 +287,11 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `cudaLaunchAttributePriority` (`--kernel-priority`). `0` is a valid override.
+    pub(crate) fn set_kernel_priority(&mut self, n: i32) {
+        self.kernel_priority = Some(n);
+    }
+
     /// CUDA 13 portable-shared mode (`--portable-shared default|portable|non-portable`).
     pub(crate) fn set_portable_shared(&mut self, raw: &str) -> Result<(), String> {
         self.portable_shared =
@@ -354,6 +361,7 @@ impl GpuCli {
             (self.portable_shared_set, "--portable-shared"),
             (self.nvlink_util, "--nvlink-util"),
             (self.device_updatable, "--device-updatable"),
+            (self.kernel_priority.is_some(), "--kernel-priority"),
             (self.device_launch, "--device-launch"),
             (self.decode_sm_set, "--decode-sms"),
         ]
@@ -417,6 +425,7 @@ enum PlanSlot {
     PortableCluster,
     DynamicShared,
     PortableShared,
+    KernelPriority,
     DecodeSms,
     Prefetch,
     PlanWindow,
@@ -436,6 +445,7 @@ impl PlanSlot {
             Self::PortableCluster => "portable-cluster",
             Self::DynamicShared => "dynamic-shared",
             Self::PortableShared => "portable-shared",
+            Self::KernelPriority => "kernel-priority",
             Self::DecodeSms => "decode-sms",
             Self::Prefetch => "prefetch",
             Self::PlanWindow => "plan-window",
@@ -460,6 +470,7 @@ impl PlannerCli {
             "--portable-cluster" => Dash::Need(PlanSlot::PortableCluster),
             "--dynamic-shared" => Dash::Need(PlanSlot::DynamicShared),
             "--portable-shared" => Dash::Need(PlanSlot::PortableShared),
+            "--kernel-priority" => Dash::Need(PlanSlot::KernelPriority),
             "--decode-sms" => Dash::Need(PlanSlot::DecodeSms),
             "--prefetch" => Dash::Need(PlanSlot::Prefetch),
             "--plan-window" => Dash::Need(PlanSlot::PlanWindow),
@@ -510,6 +521,12 @@ impl PlannerCli {
                 self.gpu.set_dynamic_shared(n)?;
             }
             PlanSlot::PortableShared => self.gpu.set_portable_shared(raw)?,
+            PlanSlot::KernelPriority => {
+                let n = raw
+                    .parse::<i32>()
+                    .map_err(|_| format!("invalid kernel-priority {raw:?}"))?;
+                self.gpu.set_kernel_priority(n);
+            }
             PlanSlot::DecodeSms => {
                 let n = raw
                     .parse::<u16>()
@@ -619,6 +636,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         portable_shared: gpu.portable_shared,
         nvlink_util_centric: gpu.nvlink_util,
         device_updatable: gpu.device_updatable,
+        kernel_priority: gpu.kernel_priority,
         device_launch: gpu.device_launch,
         multicast: gpu.multicast,
         compute_slots: gpu.compute_slots,

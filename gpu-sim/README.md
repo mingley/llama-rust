@@ -512,6 +512,7 @@ max 8). `ClusterSchedulingPolicy::Spread` occupies every slot.
 A non-capturing `kernel_with` with that attr is Invalid (graphs-only).
 `expertvm sim --device-launch` / `--device-updatable` instantiate leaf GEMM
 graphs with `DEVICE_LAUNCH` and skip re-upload after set-params.
+`expertvm sim --kernel-priority N` is `cudaLaunchAttributePriority`.
 `SharedMemoryMode` is `cudaLaunchAttributeSharedMemoryMode`: Default never
 scales kernel duration; FourByte / EightByte scale by
 `1000 / shared_mem_*_permille` (profile default 1000 is identity).
@@ -547,6 +548,7 @@ default instantiate still uses the launch stream unless `USE_NODE_PRIORITY`).
 `--device-launch` is
 `cudaGraphInstantiateFlagDeviceLaunch` plus `device_launch_graph`.
 `--device-updatable` is `cudaLaunchAttributeDeviceUpdatableKernelNode`.
+`--kernel-priority N` is `cudaLaunchAttributePriority`.
 Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
 instantiate schedules those node priorities instead of the launch stream. `set_created_streams_priority` assigns created streams
 their id. `set_stream_sm_permille` is a green-context SM fraction

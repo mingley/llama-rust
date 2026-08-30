@@ -348,6 +348,7 @@ impl SchedRt {
             .with_portable_shared(cfg.portable_shared)
             .with_nvlink_util(cfg.nvlink_util_centric)
             .with_device_updatable(cfg.device_updatable)
+            .with_kernel_priority(cfg.kernel_priority)
             .with_device_launch(cfg.device_launch)
             .with_set_params(cfg.graph_set_params)
             .with_piecewise(cfg.graph_piecewise),

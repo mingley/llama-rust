@@ -241,6 +241,14 @@ pub struct GpuStoreCfg {
     /// `upload_graph`. Illegal with [`Self::graph_update`]. Decode identity
     /// stays not device-updatable.
     pub device_updatable: bool,
+    /// `cudaLaunchAttributePriority` on grouped expert GEMMs.
+    ///
+    /// [`None`] inherits [`Self::stream_priority`] / stream create priority.
+    /// [`Some`] overrides that kernel (memcpy stays on the stream). Higher
+    /// first when compute contends. Flattening leftover-prefill vs decode
+    /// stream ranking is expected when this is set. Decode identity stays
+    /// inherit-stream.
+    pub kernel_priority: Option<i32>,
     /// `cudaGraphInstantiateFlagDeviceLaunch` + [`gpu_sim::Sim::device_launch_graph`].
     ///
     /// Host [`gpu_sim::Sim::launch_graph`] stays legal. Illegal with
@@ -330,6 +338,7 @@ pub struct SimulatedGpuStore {
     portable_shared: gpu_sim::PortableSharedMode,
     nvlink_util_centric: bool,
     device_updatable: bool,
+    kernel_priority: Option<i32>,
     device_launch: bool,
     multicast: bool,
     next_event: u32,
@@ -496,6 +505,7 @@ impl SimulatedGpuStore {
     /// CUDA 13 `cudaLaunchAttributeSharedMemoryMode`.
     /// [`GpuStoreCfg::device_updatable`] is
     /// `cudaLaunchAttributeDeviceUpdatableKernelNode`.
+    /// [`GpuStoreCfg::kernel_priority`] is `cudaLaunchAttributePriority`.
     /// [`GpuStoreCfg::device_launch`] is `cudaGraphInstantiateFlagDeviceLaunch`.
     /// [`GpuStoreCfg::multicast`] is Hopper NVLS replica fanout (requires
     /// [`GpuFill::Vmm`] and NVLink).
@@ -626,6 +636,7 @@ impl SimulatedGpuStore {
             portable_shared: cfg.portable_shared,
             nvlink_util_centric: cfg.nvlink_util_centric,
             device_updatable: cfg.device_updatable,
+            kernel_priority: cfg.kernel_priority,
             device_launch: cfg.device_launch,
             multicast: cfg.multicast,
             next_event: 1,
@@ -751,6 +762,7 @@ impl SimulatedGpuStore {
             portable_shared: self.portable_shared,
             nvlink_util_centric: self.nvlink_util_centric,
             device_updatable: self.device_updatable,
+            priority: self.kernel_priority,
         }
     }
 
