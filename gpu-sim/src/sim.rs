@@ -281,6 +281,9 @@ struct GpuRt {
     /// `cudaFuncSetSharedMemConfig`. Launch Default inherits this before the
     /// device config.
     func_shared_mem_config: SharedMemoryMode,
+    /// `cudaFuncAttributePreferredSharedMemoryCarveout`. Launch Default inherits
+    /// this occupancy.
+    func_carveout: SharedMemCarveout,
     /// `cudaSetDeviceFlags`. Auto streams inherit the schedule tax.
     device_flags: u32,
 }
@@ -765,6 +768,7 @@ impl Sim {
                     limits: DeviceLimits::sm80(),
                     shared_mem_config: SharedMemoryMode::Default,
                     func_shared_mem_config: SharedMemoryMode::Default,
+                    func_carveout: SharedMemCarveout::Default,
                     device_flags: DeviceFlags::SCHEDULE_AUTO,
                 },
             );
@@ -1555,6 +1559,10 @@ impl Sim {
         carveout: SharedMemCarveout,
     ) -> Result<u8, SimError> {
         let cap = self.profile.gpu(device)?.compute_slots.max(1);
+        let carveout = match carveout {
+            SharedMemCarveout::Default => self.gpu_rt(device)?.func_carveout,
+            other => other,
+        };
         if cooperative || carveout.occupies_all_slots() {
             return Ok(cap);
         }
@@ -11918,6 +11926,28 @@ impl Sim {
         Ok(self.gpu_rt(device)?.func_shared_mem_config)
     }
 
+    /// `cudaFuncSetAttribute(..., cudaFuncAttributePreferredSharedMemoryCarveout)`.
+    ///
+    /// Per device. Launch [`SharedMemCarveout::Default`] inherits this
+    /// occupancy. Launch MaxL1 / MaxShared still override. Capture-legal like
+    /// other function attributes. Decode identity stays Default.
+    pub fn set_func_carveout(
+        &mut self,
+        device: DeviceId,
+        carveout: SharedMemCarveout,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.gpu_rt_mut(device)?.func_carveout = carveout;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// Current [`Self::set_func_carveout`]. Query; legal during capture.
+    pub fn get_func_carveout(&self, device: DeviceId) -> Result<SharedMemCarveout, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.func_carveout)
+    }
+
     /// `cudaSetDeviceFlags`. Host-synchronous. Capture cannot include it.
     ///
     /// Schedule bits [`DeviceFlags::SCHEDULE_AUTO`] / [`DeviceFlags::SCHEDULE_SPIN`] /
@@ -15673,15 +15703,17 @@ impl Sim {
         Ok(FuncAttributes {
             max_dynamic_shared_size_bytes: self.max_dynamic_shared_memory(device),
             non_portable_cluster_size_allowed: self.non_portable_cluster_size_allowed(device),
+            preferred_shmem_carveout: self.gpu_rt(device)?.func_carveout,
         })
     }
 
     /// `cudaFuncSetAttribute`. Host-side; not a graph node.
     ///
     /// Dispatches [`FuncAttr`] onto the typed setters. Capture-legal like those
-    /// setters. Negative [`FuncAttr::MaxDynamicSharedMemorySize`] or a
-    /// non-0/1 [`FuncAttr::NonPortableClusterSizeAllowed`] is Invalid
-    /// `"func attr"`. Typed helpers stay. Decode identity stays `0` / disallowed.
+    /// setters. Negative [`FuncAttr::MaxDynamicSharedMemorySize`], a non-0/1
+    /// [`FuncAttr::NonPortableClusterSizeAllowed`], or a carveout other than
+    /// `-1`/`0`/`100` is Invalid `"func attr"`. Typed helpers stay. Decode
+    /// identity stays `0` / disallowed / Default.
     pub fn func_set_attribute(
         &mut self,
         device: DeviceId,
@@ -15700,6 +15732,10 @@ impl Sim {
                 }
                 self.set_non_portable_cluster_size_allowed(device, value != 0)
             }
+            FuncAttr::PreferredSharedMemoryCarveout => {
+                let carveout = SharedMemCarveout::from_cuda(value)?;
+                self.set_func_carveout(device, carveout)
+            }
         }
     }
 
@@ -15716,6 +15752,9 @@ impl Sim {
             }
             FuncAttr::NonPortableClusterSizeAllowed => {
                 Ok(i32::from(self.non_portable_cluster_size_allowed(device)))
+            }
+            FuncAttr::PreferredSharedMemoryCarveout => {
+                Ok(self.get_func_carveout(device)?.to_cuda())
             }
         }
     }

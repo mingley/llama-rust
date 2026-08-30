@@ -392,6 +392,8 @@
 //! [`ClusterSchedulingPolicy::Spread`] occupies every slot.
 //! [`KernelAttrs::preferred_cluster`] is used when that size fits in
 //! `compute_slots`. [`SharedMemCarveout::MaxShared`] occupies every slot.
+//! [`SharedMemCarveout::Default`] uses [`set_func_carveout`](Sim::set_func_carveout)
+//! (`cudaFuncAttributePreferredSharedMemoryCarveout`).
 //! Sizes above [`GpuProfile::portable_cluster_size`] need
 //! [`set_non_portable_cluster_size_allowed`](Sim::set_non_portable_cluster_size_allowed)
 //! or [`PortableClusterMode::AllowNonPortable`].
@@ -5673,6 +5675,90 @@ mod tests {
     }
 
     #[test]
+    fn func_carveout_inherits_into_default_launch() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |func: SharedMemCarveout, launch: SharedMemCarveout| {
+            let mut sim = Sim::new(h100().with_compute_slots(2));
+            let d = DeviceId(0);
+            sim.set_func_carveout(d, func).unwrap();
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel_with(
+                d,
+                kind.clone(),
+                &[a],
+                &[a],
+                StreamId(1),
+                KernelAttrs {
+                    carveout: SharedMemCarveout::MaxL1,
+                    ..KernelAttrs::default()
+                },
+            ));
+            enq(sim.kernel_with(
+                d,
+                kind.clone(),
+                &[a],
+                &[a],
+                StreamId(2),
+                KernelAttrs {
+                    carveout: launch,
+                    ..KernelAttrs::default()
+                },
+            ));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let overlap = run(SharedMemCarveout::Default, SharedMemCarveout::Default);
+        let func_serial = run(SharedMemCarveout::MaxShared, SharedMemCarveout::Default);
+        let launch_serial = run(SharedMemCarveout::Default, SharedMemCarveout::MaxShared);
+        assert!(
+            overlap < func_serial,
+            "func MaxShared must occupy all slots; overlap={overlap} func={func_serial}"
+        );
+        assert_eq!(
+            func_serial, launch_serial,
+            "func inherit matches launch MaxShared"
+        );
+        let launch_l1 = run(SharedMemCarveout::MaxShared, SharedMemCarveout::MaxL1);
+        assert_eq!(launch_l1, overlap, "launch MaxL1 overrides func MaxShared");
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(
+            sim.get_func_carveout(d).unwrap(),
+            SharedMemCarveout::Default
+        );
+        assert_eq!(
+            sim.func_get_attribute(d, FuncAttr::PreferredSharedMemoryCarveout)
+                .unwrap(),
+            -1
+        );
+        sim.func_set_attribute(d, FuncAttr::PreferredSharedMemoryCarveout, 100)
+            .unwrap();
+        assert_eq!(
+            sim.get_func_carveout(d).unwrap(),
+            SharedMemCarveout::MaxShared
+        );
+        assert_eq!(
+            sim.func_get_attributes(d).unwrap().preferred_shmem_carveout,
+            SharedMemCarveout::MaxShared
+        );
+        match sim.func_set_attribute(d, FuncAttr::PreferredSharedMemoryCarveout, 50) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("func attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        sim.set_func_carveout(d, SharedMemCarveout::MaxL1).unwrap();
+        assert_eq!(
+            sim.func_get_attribute(d, FuncAttr::PreferredSharedMemoryCarveout)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
     fn shared_mem_mode_scales_kernel_duration() {
         let kind = KernelKind::other(1 << 40, 4096);
         let run = |mode: SharedMemoryMode, four: u16, eight: u16| {
@@ -9503,11 +9589,15 @@ mod tests {
         let a0 = sim.func_get_attributes(d).unwrap();
         assert_eq!(a0.max_dynamic_shared_size_bytes, 0);
         assert!(!a0.non_portable_cluster_size_allowed);
+        assert_eq!(a0.preferred_shmem_carveout, SharedMemCarveout::Default);
         sim.set_max_dynamic_shared_memory(d, 49_152).unwrap();
         sim.set_non_portable_cluster_size_allowed(d, true).unwrap();
+        sim.set_func_carveout(d, SharedMemCarveout::MaxShared)
+            .unwrap();
         let a1 = sim.func_get_attributes(d).unwrap();
         assert_eq!(a1.max_dynamic_shared_size_bytes, 49_152);
         assert!(a1.non_portable_cluster_size_allowed);
+        assert_eq!(a1.preferred_shmem_carveout, SharedMemCarveout::MaxShared);
         match sim.func_get_attributes(DeviceId(1)) {
             Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
             other => panic!("{other:?}"),
@@ -9535,6 +9625,11 @@ mod tests {
             sim.func_get_attribute(d, FuncAttr::NonPortableClusterSizeAllowed)
                 .unwrap(),
             0
+        );
+        assert_eq!(
+            sim.func_get_attribute(d, FuncAttr::PreferredSharedMemoryCarveout)
+                .unwrap(),
+            -1
         );
         sim.func_set_attribute(d, FuncAttr::MaxDynamicSharedMemorySize, 49_152)
             .unwrap();

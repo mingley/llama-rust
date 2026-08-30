@@ -764,6 +764,10 @@ pub enum FuncAttr {
     MaxDynamicSharedMemorySize,
     /// `cudaFuncAttributeNonPortableClusterSizeAllowed`.
     NonPortableClusterSizeAllowed,
+    /// `cudaFuncAttributePreferredSharedMemoryCarveout`
+    /// (`-1` Default / `0` MaxL1 / `100` MaxShared). Other percentages are
+    /// Invalid `"func attr"`.
+    PreferredSharedMemoryCarveout,
 }
 
 /// Modeled `cudaFuncGetAttributes` / `cudaFuncGetAttribute` fields.
@@ -777,6 +781,8 @@ pub struct FuncAttributes {
     pub max_dynamic_shared_size_bytes: u32,
     /// `cudaFuncAttributeNonPortableClusterSizeAllowed`.
     pub non_portable_cluster_size_allowed: bool,
+    /// `cudaFuncAttributePreferredSharedMemoryCarveout`.
+    pub preferred_shmem_carveout: SharedMemCarveout,
 }
 
 /// `cudaDeviceP2PAttr` for [`crate::Sim::device_get_p2p_attribute`].
@@ -1272,6 +1278,10 @@ pub struct KernelAttrs {
     /// `cudaLaunchAttributePreferredClusterDimension`. `None` uses [`Self::cluster`].
     pub preferred_cluster: Option<ClusterDim>,
     /// `cudaLaunchAttributePreferredSharedMemoryCarveout`.
+    ///
+    /// [`SharedMemCarveout::Default`] uses
+    /// [`crate::Sim::set_func_carveout`]
+    /// (`cudaFuncAttributePreferredSharedMemoryCarveout`).
     pub carveout: SharedMemCarveout,
     /// `cudaLaunchAttributeDeviceUpdatableKernelNode`.
     ///
@@ -1320,15 +1330,16 @@ pub struct KernelAttrs {
     pub priority: Option<i32>,
 }
 
-/// `cudaFuncCache` / `cudaSharedmemCarveout` preference
-/// (`cudaLaunchAttributePreferredSharedMemoryCarveout`).
+/// `cudaSharedmemCarveout` preference
+/// (`cudaLaunchAttributePreferredSharedMemoryCarveout` /
+/// `cudaFuncAttributePreferredSharedMemoryCarveout`).
 ///
 /// [`Self::MaxShared`] occupies every Hyper-Q slot so leftover kernels cannot
-/// overlap. [`Self::Default`] and [`Self::MaxL1`] keep current occupancy.
-/// Decode identity stays [`Self::Default`].
+/// overlap. [`Self::Default`] uses the function attribute; [`Self::MaxL1`]
+/// keeps current occupancy. Decode identity stays [`Self::Default`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SharedMemCarveout {
-    /// `cudaSharedmemCarveoutDefault` (`-1`).
+    /// `cudaSharedmemCarveoutDefault` (`-1`). Uses the function attribute.
     #[default]
     Default,
     /// `cudaSharedmemCarveoutMaxL1` (`0`): prefer L1 over shared.
@@ -1342,6 +1353,27 @@ impl SharedMemCarveout {
     #[must_use]
     pub fn occupies_all_slots(self) -> bool {
         matches!(self, Self::MaxShared)
+    }
+
+    /// CUDA `int`: [`Self::Default`] `-1`, [`Self::MaxL1`] `0`,
+    /// [`Self::MaxShared`] `100`. Other percentages are Invalid `"func attr"`.
+    pub fn from_cuda(value: i32) -> Result<Self, crate::error::SimError> {
+        match value {
+            -1 => Ok(Self::Default),
+            0 => Ok(Self::MaxL1),
+            100 => Ok(Self::MaxShared),
+            _ => Err(crate::error::SimError::Invalid { why: "func attr" }),
+        }
+    }
+
+    /// Inverse of [`Self::from_cuda`].
+    #[must_use]
+    pub fn to_cuda(self) -> i32 {
+        match self {
+            Self::Default => -1,
+            Self::MaxL1 => 0,
+            Self::MaxShared => 100,
+        }
     }
 }
 

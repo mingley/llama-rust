@@ -150,6 +150,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaFuncAttributeNonPortableClusterSizeAllowed` | sizes above `portable_cluster_size` until the SKU `max_blocks_per_cluster` |
 | `cudaLaunchAttributeSynchronizationPolicy` (stream-only) | host-wait tax on `synchronize_stream` / `synchronize_event`; Auto inherits `set_device_flags` (unset / profile default 0) |
 | `cudaLaunchAttributeDeviceUpdatableKernelNode` | graphs-only; `graph_exec_kernel_set_params` keeps the exec uploaded; device-launch graphs allow it |
+| `cudaLaunchAttributePreferredSharedMemoryCarveout` | MaxShared occupies every Hyper-Q slot; Default uses `set_func_carveout` (`cudaFuncAttributePreferredSharedMemoryCarveout`; unset never occupies) |
 | `cudaLaunchAttributeSharedMemoryMode` | Default uses function `set_func_shared_mem_config` then device `set_shared_mem_config` (unset never scales); FourByte / EightByte scale duration by `1000 / shared_mem_*_permille` (default 1000) |
 | `cudaLaunchAttributePortableClusterSizeMode` | Default uses the function attr; RequirePortable always refuses oversize; AllowNonPortable allows up to SKU max |
 | CUDA 13 `cudaLaunchAttributeSharedMemoryMode` (`PortableSharedMode`) | Default uses `MaxDynamicSharedMemorySize`; RequirePortable refuses oversize; AllowNonPortable allows up to opt-in max |
@@ -514,8 +515,9 @@ modeled; example SKUs are discrete). `SparseCudaArraySupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
 (no SM count or clock). `func_get_attributes` is `cudaFuncGetAttributes`
-of modeled per-device function attrs (`maxDynamicSharedSizeBytes` and
-`nonPortableClusterSizeAllowed`; not per kernel). `func_set_attribute` /
+of modeled per-device function attrs (`maxDynamicSharedSizeBytes`,
+`nonPortableClusterSizeAllowed`, and `preferredShmemCarveout`; not per
+kernel). `func_set_attribute` /
 `func_get_attribute` are `cudaFuncSetAttribute` / `GetAttribute` (`FuncAttr`).
 Typed setters stay. `stream_get_flags` is `cudaStreamGetFlags`
 (`0` `cudaStreamDefault` / `1` `cudaStreamNonBlocking`; NULL follows
@@ -710,6 +712,7 @@ the launch occupies `min(blocks, compute_slots)` Hyper-Q slots (Hopper portable
 max 8). `ClusterSchedulingPolicy::Spread` occupies every slot.
 `preferred_cluster` is used when that size fits in `compute_slots`.
 `SharedMemCarveout::MaxShared` occupies every slot (`cudaLaunchAttributePreferredSharedMemoryCarveout`).
+Default uses `set_func_carveout` (`cudaFuncAttributePreferredSharedMemoryCarveout`).
 `cudaLaunchAttributeDeviceUpdatableKernelNode` lets
 `graph_exec_kernel_set_params` keep the exec uploaded so
 `device_launch_graph` needs no host re-upload (device-launch graphs allow it).

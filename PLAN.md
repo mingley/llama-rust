@@ -2538,7 +2538,17 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-233. [ ] Next numbered PLAN item after 232 is the next `gpu-sim` / Engine /
+233. [x] `cudaFuncAttributePreferredSharedMemoryCarveout`:
+    [`set_func_carveout`] / [`get_func_carveout`] and
+    [`FuncAttr::PreferredSharedMemoryCarveout`]. Launch Default inherits
+    the function carveout occupancy. Launch MaxL1 / MaxShared still
+    override. CUDA ints `-1`/`0`/`100` only (other percentages Invalid
+    `"func attr"`). Capture-legal like other function attributes.
+    [`func_get_attributes`] reports `preferredShmemCarveout`. Decode
+    identity stays Default. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+234. [ ] Next numbered PLAN item after 233 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
