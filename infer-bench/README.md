@@ -35,3 +35,8 @@ infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --pref
 
 Same numbers as `expertvm bench` / `expertvm workload`. Timing comes from a
 [`HardwareProfile`](../gpu-sim), not from policy code.
+
+`gguf_gemv engine --bench` prints the same `expertvm::report` on the
+Engine's batched MoE traces (policy table; with `--expert-sim`, the same
+sim A/B lines). That path lives in llama-rust so infer-bench does not
+depend on the decoder.

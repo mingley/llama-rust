@@ -12,7 +12,7 @@ use crate::sample::argmax;
 use crate::store_attach::{attach_store, gpu_knobs, GpuCli, PlannerCli, StoreAttach};
 use crate::template::ChatMessage;
 use crate::tok::Tokenizer;
-use expertvm::{GpuFill, GpuStoreCfg, Prefetch};
+use expertvm::{report, GpuFill, GpuStoreCfg, HardwareProfile, Prefetch, Trace};
 
 /// Usage for the `infer` verb.
 pub const INFER_USAGE: &str = "\
@@ -50,13 +50,13 @@ usage: gguf_gemv <command> [args]
   trace <path> [--prompt TEXT] [--n-predict N] [--n-ctx N] --out FILE [--capacity N]
   chat <path> [--system TEXT] [--prompt TEXT] [--n-predict N] [--n-ctx N] [--kv-page N] [--show-prompt]
   serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--trace-out FILE]
-  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--trace-out FILE]
+  engine <path> [-p TEXT]... [-n N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--trace-out FILE] [--bench] [--capacity N]
   write|gemv|write-q4k|gemv-q4k|write-tiny|write-tiny-qwen2|write-tiny-qwen3|write-tiny-gemma|write-tiny-llama4|write-tiny-llama-moe|write-tiny-qwen2moe|write-tiny-qwen3moe|write-tiny-qwen3moe-2layer|write-tiny-qwen2vl|write-tiny-qwen3vl|write-tiny-qwen3next|write-tiny-qwen35|write-tiny-phi2 <path>
 ";
 
 /// Usage for the `engine` verb.
 pub const ENGINE_USAGE: &str = "\
-usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
+usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [--kv-page N] [--pool-blocks N] [--max-seqs N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE] [--bench] [--capacity N]
   -p, --prompt TEXT     prompt (repeatable; default: one `ab`)
   -n, --n-predict N     tokens to generate per sequence (default: 2)
       --n-ctx N         KV capacity (default: longest prompt + n_predict + 1)
@@ -107,6 +107,9 @@ usage: gguf_gemv engine <path> [--prompt TEXT]... [--n-predict N] [--n-ctx N] [-
       --plan-window N   Stay vs Fetch over N unique predicted keys (`0` = ungated)
       --plan-threshold N  Stay permille of that window already resident (default: 500)
       --trace-out FILE  write batched MoE ExpertAccess JSONL (all sequences)
+      --bench           infer-bench report on this run's MoE traces (policy table;
+                        with `--expert-sim`, the same sim scorecard as `infer-bench trace`)
+      --capacity N      expertvm cache slots for `--bench` (default: `--expert-slots`, or 8)
 
 Runs Engine continuous batching on one interned pool. Several `--prompt`s
 join the same scheduler. `--decode-first` holds leftover prefill while any
@@ -133,6 +136,11 @@ NVLink / `--expert-8gpu`). Decode identity stays copy-engine D2D. Default
 profile occupancy is exclusive (`1`). `--decode-sms N` (`1..=1000`) reserves that permille of
 peak FLOP/s for decode GEMMs (green-context; leftover prefill gets the
 remainder). Default unset is a full chip.
+`--bench` records the Engine's batched MoE traces and prints
+`expertvm::report` (same policy table and, with `--expert-sim`, the same
+sim A/B lines as `infer-bench trace`). Does not add llama-rust as an
+infer-bench dependency. `--capacity N` is the replay cache size for that
+table (default `--expert-slots`, or 8 when slots are omitted / DirectStore).
 `--prefetch` / `--plan-window` / `--plan-threshold` match `expertvm sim`
 Stay vs Fetch on the serving path (predicted keys only; no JSONL future
 leak). Default `both` / window `0` / threshold `500` is today's decode
@@ -509,8 +517,12 @@ pub struct EngineArgs {
     pub plan_window: usize,
     /// Stay permille of the predicted window already resident.
     pub plan_threshold: u32,
-    /// Write Engine MoE traces as JSONL. `None` leaves tracing off.
+    /// Write Engine MoE traces as JSONL. `None` leaves tracing off unless [`Self::bench`].
     pub trace_out: Option<String>,
+    /// Print `expertvm::report` on this run's MoE traces (`infer-bench` shape).
+    pub bench: bool,
+    /// Replay cache slots for [`Self::bench`]. `None` uses [`Self::expert_slots`] or 8.
+    pub bench_capacity: Option<usize>,
 }
 
 impl EngineArgs {
@@ -594,6 +606,8 @@ where
     let mut expert_bytes = None;
     let mut planner = PlannerCli::default();
     let mut trace_out = None;
+    let mut bench = false;
+    let mut bench_capacity = None;
     let mut it = args.into_iter();
     while let Some(raw) = it.next() {
         let arg = raw.as_ref();
@@ -707,6 +721,19 @@ where
             "--trace-out" => {
                 trace_out = Some(engine_value("trace-out", inline, &mut it)?);
             }
+            "--bench" => {
+                if inline.is_some() {
+                    return engine_err("--bench does not take a value");
+                }
+                bench = true;
+            }
+            "--capacity" => {
+                let n = engine_usize("capacity", &engine_value("capacity", inline, &mut it)?)?;
+                if n == 0 {
+                    return engine_err("capacity must be > 0");
+                }
+                bench_capacity = Some(n);
+            }
             flag if flag.starts_with('-') => match planner.take(key, inline, &mut it) {
                 Ok(true) => {}
                 Ok(false) => return engine_err(&format!("unknown flag {flag}")),
@@ -725,6 +752,9 @@ where
     };
     if prompts.is_empty() {
         prompts.push(InferArgs::DEFAULT_PROMPT.to_string());
+    }
+    if bench_capacity.is_some() && !bench {
+        return engine_err("--capacity requires --bench");
     }
     check_engine_sim_opts(&EngineSimNeed {
         expert_sim,
@@ -764,6 +794,8 @@ where
         plan_window: planner.plan_window,
         plan_threshold: planner.plan_threshold,
         trace_out,
+        bench,
+        bench_capacity,
     }))
 }
 
@@ -776,7 +808,7 @@ pub fn run_engine(args: &EngineArgs) -> Result<(), Box<dyn std::error::Error>> {
     let cfg = engine_cfg(&tok, args)?;
     let mut eng = Engine::new(&model, cfg)?;
     attach_engine_store(&mut eng, &model, args)?;
-    if args.trace_out.is_some() {
+    if args.trace_out.is_some() || args.bench {
         eng.enable_moe_trace();
     }
     let mut handles = Vec::new();
@@ -784,8 +816,13 @@ pub fn run_engine(args: &EngineArgs) -> Result<(), Box<dyn std::error::Error>> {
         handles.push(eng.add(&ids, args.n_predict)?);
     }
     eng.run()?;
+    let traces = if args.trace_out.is_some() || args.bench {
+        take_engine_traces(&mut eng, &handles)
+    } else {
+        Trace::new()
+    };
     if let Some(path) = args.trace_out.as_ref() {
-        write_engine_traces(&mut eng, &handles, path)?;
+        write_file(Path::new(path), traces.to_jsonl().as_bytes())?;
     }
     let mut out = std::io::stdout();
     for (i, id) in handles.iter().enumerate() {
@@ -821,22 +858,55 @@ pub fn run_engine(args: &EngineArgs) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(score) = eng.expert_store_score()? {
         writeln!(out, "{}", score.line())?;
     }
+    if args.bench {
+        write!(out, "{}", engine_bench_report(&traces, args)?)?;
+    }
     Ok(())
 }
 
-fn write_engine_traces(
-    eng: &mut Engine<'_>,
-    ids: &[SeqId],
-    path: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut buf = String::new();
+fn take_engine_traces(eng: &mut Engine<'_>, ids: &[SeqId]) -> Trace {
+    let mut events = Vec::new();
     for id in ids {
         if let Some(t) = eng.take_moe_trace(*id) {
-            buf.push_str(&t.to_jsonl());
+            events.extend(t.events);
         }
     }
-    write_file(Path::new(path), buf.as_bytes())?;
-    Ok(())
+    Trace { events }
+}
+
+fn engine_bench_report(
+    trace: &Trace,
+    args: &EngineArgs,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let capacity = bench_capacity(args);
+    let profile = if args.expert_sim {
+        Some(if args.expert_8gpu {
+            HardwareProfile::example_8xh100_nvlink()
+        } else {
+            HardwareProfile::example_h100_sxm()
+        })
+    } else {
+        None
+    };
+    let row = report(
+        "engine",
+        trace,
+        capacity,
+        8,
+        profile,
+        args.expert_bytes.unwrap_or(4096),
+    )?;
+    Ok(row.render())
+}
+
+fn bench_capacity(args: &EngineArgs) -> usize {
+    if let Some(n) = args.bench_capacity {
+        return n;
+    }
+    match args.expert_slots {
+        Some(0) | None => 8,
+        Some(n) => n,
+    }
 }
 
 fn attach_engine_store(
@@ -1367,6 +1437,8 @@ mod tests {
                 assert_eq!(a.plan_window, 0);
                 assert_eq!(a.plan_threshold, 500);
                 assert_eq!(a.trace_out, None);
+                assert!(!a.bench);
+                assert_eq!(a.bench_capacity, None);
             }
             EngineCmd::Help => panic!("expected Run"),
         }
@@ -1422,6 +1494,38 @@ mod tests {
             EngineCmd::Run(a) => assert_eq!(a.trace_out.as_deref(), Some("out.jsonl")),
             EngineCmd::Help => panic!("expected Run"),
         }
+        match parse_engine_args(["m.gguf", "--bench"]).expect("bench") {
+            EngineCmd::Run(a) => {
+                assert!(a.bench);
+                assert_eq!(a.bench_capacity, None);
+                assert_eq!(bench_capacity(&a), 8);
+            }
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        match parse_engine_args(["m.gguf", "--bench", "--capacity", "2"]).expect("cap") {
+            EngineCmd::Run(a) => {
+                assert!(a.bench);
+                assert_eq!(a.bench_capacity, Some(2));
+                assert_eq!(bench_capacity(&a), 2);
+            }
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        match parse_engine_args(["m.gguf", "--bench", "--capacity=4"]).expect("eqcap") {
+            EngineCmd::Run(a) => assert_eq!(a.bench_capacity, Some(4)),
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        match parse_engine_args(["m.gguf", "--bench", "--expert-slots", "3"]).expect("slots") {
+            EngineCmd::Run(a) => assert_eq!(bench_capacity(&a), 3),
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        match parse_engine_args(["m.gguf", "--bench", "--expert-slots", "0"]).expect("direct") {
+            EngineCmd::Run(a) => assert_eq!(bench_capacity(&a), 8),
+            EngineCmd::Help => panic!("expected Run"),
+        }
+        let err = parse_engine_args(["m.gguf", "--capacity", "2"]).unwrap_err();
+        assert!(err.contains("--capacity requires --bench"), "{err}");
+        let err = parse_engine_args(["m.gguf", "--bench", "--capacity", "0"]).unwrap_err();
+        assert!(err.contains("capacity must be > 0"), "{err}");
         match parse_engine_args(["m.gguf", "--decode-first"]).expect("df") {
             EngineCmd::Run(a) => assert!(a.decode_first),
             EngineCmd::Help => panic!("expected Run"),
@@ -1837,6 +1941,51 @@ mod tests {
         assert!(t.events.iter().any(|e| e.sequence == 1));
         let _rm_g = std::fs::remove_file(&gguf);
         let _rm_j = std::fs::remove_file(&jsonl);
+    }
+
+    #[test]
+    fn engine_bench_report_names_policies() {
+        let pid = std::process::id();
+        let dir = std::env::temp_dir();
+        let gguf = dir.join(format!("llama-rust-eng-bench-{pid}.gguf"));
+        write_file(&gguf, &crate::decode::tiny_qwen3moe_gguf()).expect("gguf");
+        let args = match parse_engine_args([
+            gguf.to_str().expect("utf8 gguf"),
+            "-p",
+            "a",
+            "-p",
+            "b",
+            "--kv-page",
+            "2",
+            "--bench",
+            "--capacity",
+            "2",
+        ])
+        .expect("parse")
+        {
+            EngineCmd::Run(a) => a,
+            EngineCmd::Help => panic!("expected Run"),
+        };
+        let g = load_gguf_owned(read_file(&gguf).expect("bytes")).expect("owned");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("m");
+        let cfg = engine_cfg(&tok, &args).expect("cfg");
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        attach_engine_store(&mut eng, &model, &args).expect("store");
+        eng.enable_moe_trace();
+        let mut handles = Vec::new();
+        for ids in engine_prompts(&tok, &args).expect("prompts") {
+            handles.push(eng.add(&ids, args.n_predict).expect("add"));
+        }
+        eng.run().expect("run");
+        let traces = take_engine_traces(&mut eng, &handles);
+        let text = engine_bench_report(&traces, &args).expect("bench");
+        assert!(text.contains("# engine capacity=2"), "{text}");
+        assert!(text.contains("lru"), "{text}");
+        assert!(text.contains("oracle"), "{text}");
+        assert!(!traces.events.is_empty(), "bench must record MoE events");
+        run_engine(&args).expect("cli");
+        let _rm = std::fs::remove_file(&gguf);
     }
 
     #[test]

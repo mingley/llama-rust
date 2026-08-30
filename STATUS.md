@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — Engine `--bench` infer-bench report
+
+`gguf_gemv engine --bench` records the Engine's batched MoE traces and
+prints `expertvm::report` (the same policy table as `infer-bench trace`;
+with `--expert-sim`, the same sim scorecard). `--capacity N` is the replay
+cache size (default `--expert-slots`, or 8). llama-rust is not an
+infer-bench dependency. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — `cudaGraphNodeSetEnabled`
 
 `Sim::graph_node_set_enabled` / `graph_node_get_enabled` are

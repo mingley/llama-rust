@@ -1255,6 +1255,12 @@ model, do not celebrate the sim.
     cannot include it. Decode identity stays every node enabled. Dual score
     still has no `$/M tokens`.
 
+86. [x] `gguf_gemv engine --bench` records batched MoE traces and prints
+    `expertvm::report` (policy table; with `--expert-sim` the same sim A/B
+    lines as `infer-bench trace`). `--capacity N` is the replay cache size
+    (default `--expert-slots`, or 8). Does not add llama-rust as an
+    infer-bench dep. Dual score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.
