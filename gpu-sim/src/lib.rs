@@ -404,7 +404,7 @@
 //! [`memcpy_device_to_device`](Sim::memcpy_device_to_device) stays; Peer is
 //! host-synchronous and capture-illegal).
 //! [`memcpy_peer_3d_async`](Sim::memcpy_peer_3d_async) / [`memcpy_peer_3d`](Sim::memcpy_peer_3d)
-//! are `cudaMemcpy3DPeerAsync` / `cudaMemcpy3DPeer` ([`MemcpyOp`] height/depth).
+//! are `cudaMemcpy3DPeerAsync` / `cudaMemcpy3DPeer` ([`MemcpyOp::is_3d`]).
 //! [`memcpy_peer_2d_async`](Sim::memcpy_peer_2d_async) / [`memcpy_peer_2d`](Sim::memcpy_peer_2d)
 //! are `cudaMemcpy2DPeerAsync` / `cudaMemcpy2DPeer` ([`MemcpyOp::is_2d`]).
 //! [`memcpy_2d_async`](Sim::memcpy_2d_async) / [`memcpy_2d`](Sim::memcpy_2d)
@@ -4217,6 +4217,56 @@ mod tests {
         enq(sim.memcpy_peer_3d_async(d0, d1, op, s));
         let g = sim.end_capture().unwrap();
         assert_eq!(sim.graph_len(g).unwrap(), 1);
+    }
+
+    #[test]
+    fn memcpy_peer_3d_async_requires_is_3d() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_3d(d0, 256, 4, 4).unwrap();
+        let op = MemcpyOp {
+            alloc: a,
+            bytes: 256,
+            height: 4,
+            src_pitch: pitch,
+            dst_pitch: pitch,
+            depth: 4,
+            src_height: 4,
+            dst_height: 4,
+            ..MemcpyOp::default()
+        };
+        enq(sim.memcpy_peer_3d_async(d0, d1, op.clone(), s));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(a, d1).unwrap());
+        assert_eq!(sim.bytes_moved(), 4096);
+        match sim.memcpy_peer_3d_async(
+            d0,
+            d1,
+            MemcpyOp {
+                depth: 1,
+                ..op.clone()
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy3d depth"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_peer_3d_async(
+            d0,
+            d1,
+            MemcpyOp {
+                depth: 0,
+                src_height: 0,
+                dst_height: 0,
+                ..op
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy3d depth"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

@@ -477,7 +477,8 @@ link; `disable_peer` → `PeerDisabled`). `enable_peer_with_flags` is
 `cudaDeviceEnablePeerAccess` (`flags` must be 0). `memcpy_peer` /
 `memcpy_peer_async` are `cudaMemcpyPeer` / `cudaMemcpyPeerAsync` (replica
 copy; Peer is host-synchronous). `memcpy_peer_3d` / `memcpy_peer_3d_async`
-are `cudaMemcpy3DPeer` / `cudaMemcpy3DPeerAsync`. `memcpy_peer_2d` /
+are `cudaMemcpy3DPeer` / `cudaMemcpy3DPeerAsync`
+(`MemcpyOp` must be 3D). `memcpy_peer_2d` /
 `memcpy_peer_2d_async` are `cudaMemcpy2DPeer` / `cudaMemcpy2DPeerAsync`
 (`MemcpyOp` must be 2D). `memcpy_2d` /
 `memcpy_2d_async` are `cudaMemcpy2D` / `cudaMemcpy2DAsync` (`MemcpyOp` must
