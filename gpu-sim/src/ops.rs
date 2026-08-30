@@ -641,6 +641,48 @@ pub struct GraphInstantiateParams {
     pub result: GraphInstantiateResult,
 }
 
+/// `cudaGraphExecUpdateResult` from [`crate::Sim::update_graph_with_info`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GraphExecUpdateResult {
+    /// `cudaGraphExecUpdateSuccess`.
+    #[default]
+    Success,
+    /// `cudaGraphExecUpdateError`.
+    Error,
+    /// `cudaGraphExecUpdateErrorTopologyChanged`.
+    TopologyChanged,
+    /// `cudaGraphExecUpdateErrorNodeTypeChanged`.
+    NodeTypeChanged,
+    /// `cudaGraphExecUpdateErrorFunctionChanged`.
+    FunctionChanged,
+    /// `cudaGraphExecUpdateErrorParametersChanged`.
+    ParametersChanged,
+    /// `cudaGraphExecUpdateErrorNotSupported`.
+    NotSupported,
+    /// `cudaGraphExecUpdateErrorUnsupportedFunctionChange`.
+    UnsupportedFunctionChange,
+    /// `cudaGraphExecUpdateErrorAttributesChanged`.
+    AttributesChanged,
+    /// `cudaGraphExecUpdateErrorDependenciesChanged` (`errorFromNode` edge).
+    DependenciesChanged,
+}
+
+/// `cudaGraphExecUpdateResultInfo` for [`crate::Sim::update_graph_with_info`].
+///
+/// Filled even on `Err`. [`crate::Sim::update_graph`] uses this path and
+/// keeps the same `why` strings. Decode identity stays
+/// [`crate::Sim::update_graph`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct GraphExecUpdateResultInfo {
+    /// CUDA result enum.
+    pub result: GraphExecUpdateResult,
+    /// `errorNode`: source node that failed, or the to-node of a changed edge.
+    pub error_node: Option<usize>,
+    /// `errorFromNode`: exec index of a node-local mismatch, or the from-node
+    /// of a changed dependency edge.
+    pub error_from_node: Option<usize>,
+}
+
 /// `cudaGraphMemAttributeType` for [`crate::Sim::graph_mem_get`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GraphMemAttr {

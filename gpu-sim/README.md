@@ -80,7 +80,7 @@ warp scheduler, L1, …   ← do not model
 | graph upload is host-sync after instantiate; first launch pays it once | `graph_upload_ns` |
 | `cudaGraphKernelNodeSetParams` / `MemcpyNodeSetParams` / `MemsetNodeSetParams` / `HostNodeSetParams` patch the graph, not an already-instantiated exec | 1 ns host-sync |
 | `cudaGraph*NodeGetParams` reads the definition; `graph_exec_*_get_params` reads the exec snapshot | query |
-| graph update replaces the exec snapshot when topology matches (device, stream, kind, deps); mem nodes are Invalid | `graph_update_ns` |
+| graph update replaces the exec snapshot when topology matches (device, stream, kind, deps); mem nodes are Invalid; `update_graph_with_info` fills `cudaGraphExecUpdateResultInfo` | `graph_update_ns` |
 | `cudaGraphExecKernelNodeSetParams` patches one instantiated kernel node's pointers / kind (mem nodes legal) | `graph_set_params_ns` |
 | `cudaGraphExecMemcpyNodeSetParams` patches one instantiated memcpy node's `MemcpyOp` (mem nodes legal) | `graph_set_params_ns` |
 | `cudaGraphExecMemsetNodeSetParams` patches one instantiated memset node's dest span (mem nodes legal) | `graph_set_params_ns` |
@@ -277,6 +277,10 @@ then uploads if needed (`graph_upload_ns`). `upload_graph` is `cudaGraphUpload`.
 `update_graph` copies source steps into the exec snapshot when the
 device, stream, op kinds, and dependency edges match (`graph_update_ns`); a topology
 mismatch is `Invalid`. Graphs with mem alloc/free nodes cannot be updated.
+`update_graph_with_info` is `cudaGraphExecUpdate` with
+`cudaGraphExecUpdateResultInfo` (filled even on `Err`: node type, deps,
+mem nodes, device-launch). `update_graph` uses that path and keeps the
+same `why` strings.
 `graph_kernel_set_params` / `graph_memcpy_set_params` /
 `graph_memset_set_params` / `graph_batch_mem_op_set_params` /
 `graph_batch_mem_ops_set_params` are

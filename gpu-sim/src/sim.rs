@@ -10,10 +10,10 @@ use crate::ids::{
     PoolId, PtrExportId, ShareableHandleId, StreamId,
 };
 use crate::ops::{
-    BatchMemOp, CaptureDepOp, GpuOp as Kind, GraphInstantiateFlags, GraphInstantiateParams,
-    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, HostNodeParams, KernelBuf, KernelKind,
-    KernelNodeParams, MemAdvise, MemAttach, MemcpyOp, Operation, Place, StreamCaptureInfo,
-    StreamCaptureMode, WaitValueCmp,
+    BatchMemOp, CaptureDepOp, GpuOp as Kind, GraphExecUpdateResult, GraphExecUpdateResultInfo,
+    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
+    GraphNodeKind, HostNodeParams, KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach,
+    MemcpyOp, Operation, Place, StreamCaptureInfo, StreamCaptureMode, WaitValueCmp,
 };
 use crate::profile::{ns_for_bytes, HardwareProfile, LinkKind};
 
@@ -2350,50 +2350,87 @@ impl Sim {
     /// instantiated. Graphs with mem alloc or mem free nodes cannot be updated
     /// (`cudaGraphExecUpdate` of mem nodes).
     pub fn update_graph(&mut self, exec: GraphId, src: GraphId) -> Result<(), SimError> {
-        self.fail_if_capturing("cannot capture graph update")?;
-        if exec == src {
-            return Err(SimError::Invalid {
-                why: "graph update same id",
-            });
+        let mut info = GraphExecUpdateResultInfo::default();
+        self.update_graph_with_info(exec, src, &mut info)
+    }
+
+    /// `cudaGraphExecUpdate` with [`GraphExecUpdateResultInfo`].
+    ///
+    /// Fills `info` even when this returns `Err`. Success is
+    /// [`GraphExecUpdateResult::Success`] with both node fields `None`.
+    /// [`Self::update_graph`] keeps the same `why` strings.
+    pub fn update_graph_with_info(
+        &mut self,
+        exec: GraphId,
+        src: GraphId,
+        info: &mut GraphExecUpdateResultInfo,
+    ) -> Result<(), SimError> {
+        *info = GraphExecUpdateResultInfo::default();
+        if let Err(e) = self.fail_if_capturing("cannot capture graph update") {
+            info.result = GraphExecUpdateResult::Error;
+            return Err(e);
         }
-        let exec = self.as_exec(exec)?;
         if exec == src {
-            return Err(SimError::Invalid {
-                why: "graph update same id",
-            });
+            return update_report(
+                info,
+                GraphExecUpdateResult::Error,
+                None,
+                None,
+                "graph update same id",
+            );
         }
-        let (exec_steps, src_steps, device, exec_flags) = {
-            let e = self.graphs.get(&exec).ok_or(SimError::Invalid {
-                why: "unknown graph",
-            })?;
-            let s = self.graphs.get(&src).ok_or(SimError::Invalid {
-                why: "unknown graph",
-            })?;
-            let device = e.steps.first().map(|s| s.device).unwrap_or(DeviceId(0));
-            (
-                e.view().to_vec(),
-                s.steps.clone(),
-                device,
-                e.instantiate_flags,
-            )
+        let exec = match self.as_exec(exec) {
+            Ok(id) => id,
+            Err(e) => {
+                info.result = GraphExecUpdateResult::Error;
+                return Err(e);
+            }
+        };
+        if exec == src {
+            return update_report(
+                info,
+                GraphExecUpdateResult::Error,
+                None,
+                None,
+                "graph update same id",
+            );
+        }
+        let (exec_steps, src_steps, device, exec_flags) = match self.update_graph_pair(exec, src) {
+            Ok(pair) => pair,
+            Err(e) => {
+                info.result = GraphExecUpdateResult::Error;
+                return Err(e);
+            }
         };
         if exec_flags & GraphInstantiateFlags::DEVICE_LAUNCH != 0 {
-            return Err(SimError::Invalid {
-                why: "device launch graph update",
-            });
+            return update_report(
+                info,
+                GraphExecUpdateResult::NotSupported,
+                None,
+                None,
+                "device launch graph update",
+            );
         }
-        if !graph_topology_eq(
-            &self.steps_def_ids(exec_steps),
-            &self.steps_def_ids(src_steps.clone()),
-        ) {
-            return Err(SimError::Invalid {
-                why: "graph update topology",
-            });
+        let exec_norm = self.steps_def_ids(exec_steps);
+        let src_norm = self.steps_def_ids(src_steps.clone());
+        if let Some(diff) = graph_topology_diff(&exec_norm, &src_norm) {
+            return update_report(
+                info,
+                diff.result,
+                diff.error_node,
+                diff.error_from_node,
+                "graph update topology",
+            );
         }
         if self.graph_has_mem_nodes(exec) || self.graph_has_mem_nodes(src) {
-            return Err(SimError::Invalid {
-                why: "cannot update graph mem nodes",
-            });
+            let node = first_mem_node(&src_norm).or_else(|| first_mem_node(&exec_norm));
+            return update_report(
+                info,
+                GraphExecUpdateResult::NotSupported,
+                node,
+                None,
+                "cannot update graph mem nodes",
+            );
         }
         let ns = self.profile.gpu(device)?.graph_update_ns.max(1);
         self.clock = self.clock.saturating_add(ns);
@@ -2402,7 +2439,32 @@ impl Sim {
         })?;
         exec.exec = Some(src_steps);
         exec.uploaded = false;
+        info.result = GraphExecUpdateResult::Success;
         Ok(())
+    }
+
+    fn update_graph_pair(
+        &self,
+        exec: GraphId,
+        src: GraphId,
+    ) -> Result<(Vec<GraphStep>, Vec<GraphStep>, DeviceId, u32), SimError> {
+        let e = self.graphs.get(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let s = self.graphs.get(&src).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let device = e
+            .steps
+            .first()
+            .map(|step| step.device)
+            .unwrap_or(DeviceId(0));
+        Ok((
+            e.view().to_vec(),
+            s.steps.clone(),
+            device,
+            e.instantiate_flags,
+        ))
     }
 
     /// `cudaGraphExecKernelNodeSetParams` on an instantiated exec.
@@ -10176,17 +10238,113 @@ fn remap_nested_graphs(
     Ok(out)
 }
 
-fn graph_topology_eq(a: &[GraphStep], b: &[GraphStep]) -> bool {
-    if a.len() != b.len() {
-        return false;
+struct GraphTopologyDiff {
+    result: GraphExecUpdateResult,
+    error_node: Option<usize>,
+    error_from_node: Option<usize>,
+}
+
+fn graph_topology_diff(exec: &[GraphStep], src: &[GraphStep]) -> Option<GraphTopologyDiff> {
+    if exec.len() != src.len() {
+        let extra = exec.len().min(src.len());
+        return Some(GraphTopologyDiff {
+            result: GraphExecUpdateResult::TopologyChanged,
+            error_node: (src.len() > exec.len()).then_some(extra),
+            error_from_node: (exec.len() > src.len()).then_some(extra),
+        });
     }
-    a.iter().zip(b.iter()).all(|(x, y)| {
-        x.device == y.device && x.stream == y.stream && op_eq(&x.kind, &y.kind) && x.deps == y.deps
-    })
+    for (i, (x, y)) in exec.iter().zip(src.iter()).enumerate() {
+        if node_kind(&x.kind) != node_kind(&y.kind) {
+            return Some(GraphTopologyDiff {
+                result: GraphExecUpdateResult::NodeTypeChanged,
+                error_node: Some(i),
+                error_from_node: Some(i),
+            });
+        }
+        if x.device != y.device || x.stream != y.stream {
+            return Some(GraphTopologyDiff {
+                result: GraphExecUpdateResult::TopologyChanged,
+                error_node: Some(i),
+                error_from_node: Some(i),
+            });
+        }
+        if x.deps != y.deps {
+            return Some(dep_mismatch(&x.deps, &y.deps, i));
+        }
+        if !op_eq(&x.kind, &y.kind) {
+            return Some(op_mismatch(&x.kind, &y.kind, i));
+        }
+    }
+    None
+}
+
+fn dep_mismatch(exec_deps: &[usize], src_deps: &[usize], to: usize) -> GraphTopologyDiff {
+    let n = exec_deps.len().max(src_deps.len());
+    for k in 0..n {
+        let e = exec_deps.get(k);
+        let s = src_deps.get(k);
+        if e != s {
+            return GraphTopologyDiff {
+                result: GraphExecUpdateResult::DependenciesChanged,
+                error_node: Some(to),
+                error_from_node: s.or(e).copied(),
+            };
+        }
+    }
+    GraphTopologyDiff {
+        result: GraphExecUpdateResult::DependenciesChanged,
+        error_node: Some(to),
+        error_from_node: None,
+    }
+}
+
+fn op_mismatch(exec_kind: &Kind, src_kind: &Kind, i: usize) -> GraphTopologyDiff {
+    let result = match (exec_kind, src_kind) {
+        (Kind::Kernel { cooperative: a, .. }, Kind::Kernel { cooperative: b, .. }) if a != b => {
+            GraphExecUpdateResult::ParametersChanged
+        }
+        (Kind::ChildGraph { .. }, Kind::ChildGraph { .. })
+        | (Kind::If { .. }, Kind::If { .. })
+        | (Kind::While { .. }, Kind::While { .. })
+        | (Kind::Switch { .. }, Kind::Switch { .. })
+        | (Kind::SetConditional { .. }, Kind::SetConditional { .. })
+        | (Kind::WhileTick { .. }, Kind::WhileTick { .. }) => {
+            GraphExecUpdateResult::TopologyChanged
+        }
+        (Kind::EventRecord { .. }, Kind::EventRecord { .. })
+        | (Kind::EventWait { .. }, Kind::EventWait { .. }) => {
+            GraphExecUpdateResult::AttributesChanged
+        }
+        _ => GraphExecUpdateResult::ParametersChanged,
+    };
+    GraphTopologyDiff {
+        result,
+        error_node: Some(i),
+        error_from_node: Some(i),
+    }
+}
+
+fn first_mem_node(steps: &[GraphStep]) -> Option<usize> {
+    steps
+        .iter()
+        .position(|s| matches!(s.kind, Kind::Alloc { .. } | Kind::Free { .. }))
+}
+
+fn update_report(
+    info: &mut GraphExecUpdateResultInfo,
+    result: GraphExecUpdateResult,
+    error_node: Option<usize>,
+    error_from_node: Option<usize>,
+    why: &'static str,
+) -> Result<(), SimError> {
+    info.result = result;
+    info.error_node = error_node;
+    info.error_from_node = error_from_node;
+    Err(SimError::Invalid { why })
 }
 
 /// Topology for [`Sim::graph_exec_child_set_params`]: nested child-graph ids are
-/// parameters, not topology (unlike [`graph_topology_eq`] / `cudaGraphExecUpdate`).
+/// parameters, not topology (unlike [`graph_topology_diff`] / `cudaGraphExecUpdate`).
 fn child_param_topology_eq(a: &[GraphStep], b: &[GraphStep]) -> bool {
     if a.len() != b.len() {
         return false;

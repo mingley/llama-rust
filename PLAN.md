@@ -1480,6 +1480,16 @@ model, do not celebrate the sim.
     still use `resolved_graph` (launched snapshot). Decode identity stays
     kernel-only graphs. `gpu-profile capture` is still refused.
 
+110. [x] `cudaGraphExecUpdateResultInfo`: `update_graph_with_info` fills
+    result, `error_node` (src), and `error_from_node` (exec / from-edge)
+    even on `Err`. Classifies TopologyChanged (count, device/stream, child
+    id), NodeTypeChanged, DependenciesChanged, ParametersChanged
+    (cooperative, wait/write), AttributesChanged (event External),
+    NotSupported (mem nodes, device-launch), and Error (capture, same id,
+    uninstantiated). `update_graph` uses this path and keeps the same
+    `why` strings. Decode identity stays `update_graph`. `gpu-profile
+    capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.
