@@ -1852,6 +1852,20 @@ impl HostGetDevicePointerFlags {
     pub const DEFAULT: u32 = 0;
 }
 
+/// `cudaIpcOpenMemHandle` flags for [`crate::Sim::ipc_open_with_flags`].
+///
+/// [`Self::LAZY_ENABLE_PEER_ACCESS`] is a no-op: the dest GPU must already hold the
+/// source. Cross-GPU lazy peer is not modeled. Unknown bits are Invalid
+/// `"ipc open flags"`.
+pub struct IpcMemFlags;
+
+impl IpcMemFlags {
+    /// Unflagged [`crate::Sim::ipc_open`].
+    pub const DEFAULT: u32 = 0;
+    /// `cudaIpcMemLazyEnablePeerAccess`. No-op when dest already holds the source.
+    pub const LAZY_ENABLE_PEER_ACCESS: u32 = 1;
+}
+
 /// `cudaEventCreateWithFlags` bits for [`crate::Sim::create_event_with_flags`].
 ///
 /// `cudaEventBlockingSync` is not modeled (Invalid). [`INTERPROCESS`] requires

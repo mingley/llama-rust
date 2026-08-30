@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaIpcOpenMemHandle` flags
+
+`ipc_open_with_flags` accepts `IpcMemFlags::LAZY_ENABLE_PEER_ACCESS` as a
+no-op (dest must already hold the source). Cross-GPU lazy peer is not
+modeled. Typed `ipc_open` stays. Capture refused. `gpu-profile capture`
+is still refused.
+
 ## Shipped 2026-08-30 — `cudaMallocManaged` flags
 
 `alloc_managed_with_flags` is Global / Host. Single and other bits are
@@ -2321,7 +2328,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 208 (`alloc_managed_with_flags`).
+Next code change is PLAN systems depth after item 209 (`ipc_open_with_flags`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

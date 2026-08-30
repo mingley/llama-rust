@@ -2317,7 +2317,14 @@ model, do not celebrate the sim.
     Capture refused. Decode identity unchanged. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-209. [ ] Next numbered PLAN item after 208 is the next `gpu-sim` / Engine /
+209. [x] `cudaIpcOpenMemHandle` flags: `Sim::ipc_open_with_flags` accepts
+    [`IpcMemFlags::LAZY_ENABLE_PEER_ACCESS`] as a no-op (dest must already
+    hold the source). Cross-GPU lazy peer is not modeled. Other bits are
+    Invalid `"ipc open flags"`. Typed [`ipc_open`] stays. Capture refused.
+    Decode identity unchanged. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+210. [ ] Next numbered PLAN item after 209 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

@@ -34,7 +34,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMallocAsync` from a pool reuses cached bytes; `cudaMemGetInfo` still counts them used until `pool_trim_to` | `pool_reuse_ns` |
 | `cudaMemPoolSetAccess` (`pool_set_access`) ReadWrite on a peer; dest HBM stays 0; writes allowed | interconnect, not local HBM |
 | `cudaMalloc` (`malloc`) device-syncs that GPU, then the pointer is usable; it cannot consume another pool's cache | `alloc_overhead_ns` (charged at the call) |
-| `cudaIpcGetMemHandle` / `ipc_open` / `ipc_close` share physicals | `alloc_overhead_ns` (export/import) |
+| `cudaIpcGetMemHandle` / `ipc_open` / `ipc_close` share physicals (`ipc_open_with_flags` lazy-peer is a no-op) | `alloc_overhead_ns` (export/import) |
 | `cudaIpcGetEventHandle` / `ipc_open_event` share the source record | 1 ns (export/import) |
 | `cudaMemPoolExportToShareableHandle` / `pool_import` share live/cached | `alloc_overhead_ns` (export/import) |
 | `cudaMemPoolExportPointer` / `pool_import_ptr` alias pool allocs | `alloc_overhead_ns` (export/import) |
@@ -534,7 +534,9 @@ to GetDefaultMemPool. Capture cannot include pool create/trim/set-attribute
 peers need `pool_set_access`).
 `ipc_get` / `ipc_open` / `ipc_close` are `cudaIpcGetMemHandle` /
 `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`: the import aliases the
-source physicals (no extra HBM). Free of the source while imports are live
+source physicals (no extra HBM). `ipc_open_with_flags` accepts
+`cudaIpcMemLazyEnablePeerAccess` as a no-op (dest must already hold the
+source; cross-GPU lazy peer is not modeled). Free of the source while imports are live
 is Invalid. `ipc_get` of a mempool alloc is Invalid. Capture cannot include IPC.
 `ipc_get_event` / `ipc_open_event` are `cudaIpcGetEventHandle` /
 `cudaIpcOpenEventHandle` (interprocess event alias; destroy of the source

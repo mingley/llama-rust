@@ -16,11 +16,11 @@ use crate::ops::{
     GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags,
-    HostGetDevicePointerFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
-    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise,
-    MemAttach, MemAttachFlags, MemHandleType, MemPoolAttr, MemRangeAttr, MemRangeAttrValue,
-    MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch,
-    PeerAccessFlags, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
+    HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind,
+    KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags,
+    MemAdvise, MemAttach, MemAttachFlags, MemHandleType, MemPoolAttr, MemRangeAttr,
+    MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation,
+    PdlLaunch, PeerAccessFlags, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
     ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
     StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
     SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
@@ -10669,6 +10669,27 @@ impl Sim {
             },
         );
         Ok(id)
+    }
+
+    /// `cudaIpcOpenMemHandle` with a flags word.
+    ///
+    /// Known bit: [`IpcMemFlags::LAZY_ENABLE_PEER_ACCESS`]. It is a no-op:
+    /// `device` must already hold the source (cross-GPU lazy peer is not
+    /// modeled). Other bits are Invalid `"ipc open flags"`. Typed
+    /// [`Self::ipc_open`] stays. Capture cannot include it.
+    pub fn ipc_open_with_flags(
+        &mut self,
+        device: DeviceId,
+        handle: IpcHandleId,
+        flags: u32,
+    ) -> Result<AllocId, SimError> {
+        const KNOWN: u32 = IpcMemFlags::LAZY_ENABLE_PEER_ACCESS;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "ipc open flags",
+            });
+        }
+        self.ipc_open(device, handle)
     }
 
     /// `cudaIpcCloseMemHandle`. Does not refund source HBM.

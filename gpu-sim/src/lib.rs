@@ -36,6 +36,9 @@
 //! are `cudaIpcGetMemHandle` / `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`:
 //! the import is an alias of the same physicals (no extra HBM). Free of the
 //! source while imports are live is Invalid. Capture cannot include IPC.
+//! [`ipc_open_with_flags`](Sim::ipc_open_with_flags) accepts
+//! [`IpcMemFlags::LAZY_ENABLE_PEER_ACCESS`] as a no-op (dest must already hold
+//! the source; cross-GPU lazy peer is not modeled). Typed helper stays.
 //! [`Sim::ipc_get`] of a `cudaMallocAsync` pointer is Invalid (`not device ipc`).
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
@@ -569,11 +572,11 @@ pub use ops::{
     GpuOp, GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags,
-    HostGetDevicePointerFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
-    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise,
-    MemAttach, MemAttachFlags, MemHandleType, MemPoolAttr, MemRangeAttr, MemRangeAttrValue,
-    MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch,
-    PeerAccessFlags, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
+    HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind,
+    KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags,
+    MemAdvise, MemAttach, MemAttachFlags, MemHandleType, MemPoolAttr, MemRangeAttr,
+    MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation,
+    PdlLaunch, PeerAccessFlags, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
     ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
     StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
     SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
@@ -7768,6 +7771,35 @@ mod tests {
         assert!(!sim.is_ipc_import(imp).unwrap());
         sim.free_sync(a).unwrap();
         assert_eq!(sim.hbm_used(d).unwrap(), 0);
+    }
+
+    #[test]
+    fn ipc_open_with_flags_lazy_peer_is_noop() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let bytes = 4096u64;
+        let a = sim.malloc(d, bytes).unwrap();
+        let h = sim.ipc_get(a).unwrap();
+        let imp = sim
+            .ipc_open_with_flags(d, h, IpcMemFlags::LAZY_ENABLE_PEER_ACCESS)
+            .unwrap();
+        assert!(sim.is_ipc_import(imp).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        sim.ipc_close(imp).unwrap();
+        let imp0 = sim.ipc_open_with_flags(d, h, IpcMemFlags::DEFAULT).unwrap();
+        assert!(sim.is_ipc_import(imp0).unwrap());
+        sim.ipc_close(imp0).unwrap();
+        match sim.ipc_open_with_flags(d, h, 2) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("ipc open flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.ipc_open_with_flags(d, h, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
     }
 
     #[test]
