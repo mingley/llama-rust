@@ -55,7 +55,7 @@ warp scheduler, L1, …   ← do not model
 | `va_map_range` / `va_unmap_range` map a span; `kernel()` needs the whole VA; `kernel_bufs` / `memset_buf` / `MemcpyOp::offset` touch a mapped span | HBM = mapped bytes |
 | `va_release` parks an unmapped VA; `va_acquire` remaps same size | map only on reuse (no second reserve) |
 | `va_acquire_paged` maps the VA in `page` physicals | `alloc_overhead_ns` per block |
-| `cudaLaunchHostFunc` (`host_func`) is stream-ordered host work | `host_func_ns` (no compute / copy occupancy) |
+| `cudaLaunchHostFunc` (`host_func` / `host_func_params`) is stream-ordered host work; `fn_id` / `user_data` are `cudaHostNodeParams` | `host_func_ns` (no compute / copy occupancy) |
 | `cuStreamWriteValue32/64` (`write_value32` / `write_value64`) writes a mailbox on complete | 1 ns Solo (no compute / copy occupancy) |
 | `cuStreamWaitValue32/64` (`wait_value32` / `wait_value64`) stays pending until the mailbox compare matches; unwritten locations read as 0; kernel/memset/memcpy stores are not modeled | 1 ns Solo when ready; unsatisfied wait + `synchronize` is deadlock |
 | `cuStreamBatchMemOp` (`batch_mem_op`) is one stream op for a wait/write vector; a wait sees earlier writes in that vector | 1 ns Solo when ready |
@@ -76,13 +76,14 @@ warp scheduler, L1, …   ← do not model
 | `cudaEventRecordExternal` / `cudaEventWaitExternal` do not join capture | live waiters overlap graph launch |
 | `launch_graph` during capture is a child-graph node | nested exec expanded at parent launch |
 | independent streams stay live during capture | query/sync of a capturing stream is Invalid |
-| graph instantiate is host-sync and snapshots steps into an exec (same GraphId); first launch pays it once; `instantiate_graph_auto_free` is AutoFreeOnLaunch | `graph_instantiate_ns` |
+| graph instantiate is host-sync and returns a new exec id; first launch of a definition creates a primary exec; `instantiate_graph_auto_free` is AutoFreeOnLaunch | `graph_instantiate_ns` |
 | graph upload is host-sync after instantiate; first launch pays it once | `graph_upload_ns` |
-| `cudaGraphKernelNodeSetParams` / `MemcpyNodeSetParams` / `MemsetNodeSetParams` patch the graph, not an already-instantiated exec | 1 ns host-sync |
+| `cudaGraphKernelNodeSetParams` / `MemcpyNodeSetParams` / `MemsetNodeSetParams` / `HostNodeSetParams` patch the graph, not an already-instantiated exec | 1 ns host-sync |
 | graph update replaces the exec snapshot when topology matches (device, stream, kind, deps); mem nodes are Invalid | `graph_update_ns` |
 | `cudaGraphExecKernelNodeSetParams` patches one instantiated kernel node's pointers / kind (mem nodes legal) | `graph_set_params_ns` |
 | `cudaGraphExecMemcpyNodeSetParams` patches one instantiated memcpy node's `MemcpyOp` (mem nodes legal) | `graph_set_params_ns` |
 | `cudaGraphExecMemsetNodeSetParams` patches one instantiated memset node's dest span (mem nodes legal) | `graph_set_params_ns` |
+| `cudaGraphExecHostNodeSetParams` patches one instantiated host node's `fn_id` / `userData` (mem nodes legal) | `graph_set_params_ns` |
 | `cudaGraphNodeSetEnabled` skips an instantiated node at launch (mem nodes illegal) | `graph_set_params_ns` |
 | `cudaGraphExecChildGraphNodeSetParams` swaps one instantiated child-graph node's nested graph (nested topology must match; child ids are topology for ExecUpdate) | `graph_set_params_ns` |
 | `cudaGraphExecEventRecordNodeSetEvent` / `WaitNodeSetEvent` retarget the event on an instantiated record/wait node (External flag is topology) | `graph_set_params_ns` |
@@ -324,7 +325,8 @@ Launch pays `graph_launch_ns` once; recorded
 kernels skip per-kernel launch overhead.
 `memset` is an HBM-write kernel on a resident alloc. `host_func` is
 `cudaLaunchHostFunc`: stream-ordered host work that does not occupy compute
-or copy engines (other streams may GEMM). `write_value64` / `wait_value64`
+or copy engines (other streams may GEMM). Unnamed callback by default;
+`host_func_params` records `HostNodeParams`. `write_value64` / `wait_value64`
 are `cuStreamWriteValue64` / `WaitValue64` (mailbox; no occupancy).
 `batch_mem_op` is `cuStreamBatchMemOp`. Peer D2D requires a
 topology link **and** directed `enable_peer` (seeded on for every GPU↔GPU
@@ -403,7 +405,11 @@ ReadWrite on a peer (no dest HBM; kernels may write). `kernel()` needs the whole
 size (or reserves); `va_acquire_paged` maps KV-block physicals covering the VA;
 `va_release` unmaps into that pool. Capture cannot
 include them.
-`host_func` is `cudaLaunchHostFunc` (stream-ordered; other streams can compute).
+`host_func` is `cudaLaunchHostFunc` (stream-ordered; other streams can compute;
+unnamed callback). `host_func_params` / `graph_add_host_func_params` record
+`HostNodeParams`. `graph_host_set_params` is `cudaGraphHostNodeSetParams`
+(definition; does not retarget an exec). `graph_exec_host_set_params` is
+`cudaGraphExecHostNodeSetParams`.
 `write_value64` / `wait_value64` are `cuStreamWriteValue64` /
 `cuStreamWaitValue64` (mailbox on complete; unwritten locations read as 0;
 kernel/memset/memcpy stores are not modeled; no compute/copy occupancy).

@@ -99,7 +99,9 @@
 //! [`Sim::kernel`] still needs the whole VA mapped; [`Sim::kernel_bufs`],
 //! [`Sim::memset_buf`], and [`MemcpyOp::offset`] touch a mapped span (paged KV).
 //! [`Sim::is_range_resident`] is that span check.
-//! [`Sim::host_func`] is `cudaLaunchHostFunc` (stream-ordered host work; no GPU occupancy).
+//! [`Sim::host_func`] is `cudaLaunchHostFunc` (stream-ordered host work; no GPU occupancy;
+//! unnamed callback). [`host_func_params`](Sim::host_func_params) records
+//! [`HostNodeParams`] (`cudaHostFn_t` / `userData`).
 //! [`Sim::write_value64`] / [`write_value32`](Sim::write_value32) are
 //! `cuStreamWriteValue64` / `WriteValue32` (mailbox updates on complete; no
 //! compute/copy occupancy). [`wait_value64`](Sim::wait_value64) /
@@ -144,10 +146,11 @@
 //! [`graph_kernel_set_params`](Sim::graph_kernel_set_params) /
 //! [`graph_memcpy_set_params`](Sim::graph_memcpy_set_params) /
 //! [`graph_memset_set_params`](Sim::graph_memset_set_params) /
+//! [`graph_host_set_params`](Sim::graph_host_set_params) /
 //! [`graph_batch_mem_op_set_params`](Sim::graph_batch_mem_op_set_params) /
 //! [`graph_batch_mem_ops_set_params`](Sim::graph_batch_mem_ops_set_params) are
 //! `cudaGraphKernelNodeSetParams` / `MemcpyNodeSetParams` / `MemsetNodeSetParams`
-//! / `BatchMemOpNodeSetParams`
+//! / `HostNodeSetParams` / `BatchMemOpNodeSetParams`
 //! on the graph and do not retarget an already-instantiated exec.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
@@ -172,6 +175,10 @@
 //! `cudaGraphExecMemsetNodeSetParams` (same cost; zero-byte still illegal).
 //! [`graph_unique_memset`](Sim::graph_unique_memset) /
 //! [`graph_try_unique_memset`](Sim::graph_try_unique_memset) find that node.
+//! [`graph_exec_host_set_params`](Sim::graph_exec_host_set_params) is
+//! `cudaGraphExecHostNodeSetParams` (same cost; [`HostNodeParams`] are
+//! parameters). [`graph_unique_host`](Sim::graph_unique_host) /
+//! [`graph_try_unique_host`](Sim::graph_try_unique_host) find that node.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -284,8 +291,8 @@ pub use ids::{
 };
 pub use ops::{
     BatchMemOp, CaptureDepOp, DType, GpuOp, GraphInstantiateFlags, GraphMemAttr, GraphNodeKind,
-    KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp, Operation, Place,
-    StreamCaptureInfo, WaitValueCmp,
+    HostNodeParams, KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp,
+    Operation, Place, StreamCaptureInfo, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -6255,7 +6262,9 @@ mod tests {
             sim.clock_ns().saturating_sub(t0),
             h100().gpu(d).unwrap().host_func_ns.max(1)
         );
-        assert!(sim.operations().any(|o| matches!(o.kind, GpuOp::HostFunc)));
+        assert!(sim
+            .operations()
+            .any(|o| matches!(o.kind, GpuOp::HostFunc { .. })));
     }
 
     #[test]
@@ -6307,7 +6316,7 @@ mod tests {
             .expect("kernel");
         let h = ops
             .iter()
-            .find(|o| matches!(o.kind, GpuOp::HostFunc))
+            .find(|o| matches!(o.kind, GpuOp::HostFunc { .. }))
             .expect("host");
         assert!(k.done_ns.unwrap() <= h.start_ns.unwrap());
     }
@@ -6325,7 +6334,309 @@ mod tests {
         sim.synchronize().unwrap();
         assert!(sim
             .operations()
-            .any(|o| matches!(o.kind, GpuOp::HostFunc) && o.done));
+            .any(|o| matches!(o.kind, GpuOp::HostFunc { .. }) && o.done));
+    }
+
+    #[test]
+    fn host_func_params_are_recorded_on_the_op() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let params = HostNodeParams {
+            fn_id: 7,
+            user_data: 0xfeed_face,
+        };
+        enq(sim.host_func_params(d, s, params));
+        sim.synchronize().unwrap();
+        let op = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::HostFunc { .. }))
+            .expect("host");
+        match op.kind {
+            GpuOp::HostFunc { fn_id, user_data } => {
+                assert_eq!(fn_id, 7);
+                assert_eq!(user_data, 0xfeed_face);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_host_set_params_does_not_retarget_instantiated_exec() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_host_func_params(
+            g,
+            HostNodeParams {
+                fn_id: 1,
+                user_data: 10,
+            },
+        )
+        .unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
+        sim.graph_host_set_params(
+            g,
+            0,
+            HostNodeParams {
+                fn_id: 2,
+                user_data: 20,
+            },
+        )
+        .unwrap();
+        let (_, now) = sim.graph_unique_host(g).unwrap();
+        assert_eq!(
+            now.fn_id, 1,
+            "unique host on a definition is the exec snapshot"
+        );
+        assert_eq!(now.user_data, 10);
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        let launched = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::HostFunc { .. }) && o.done)
+            .expect("host");
+        match launched.kind {
+            GpuOp::HostFunc { fn_id, user_data } => {
+                assert_eq!(fn_id, 1);
+                assert_eq!(user_data, 10);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_exec_host_set_params_retargets_without_second_graph() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_host_func(g).unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        let (node, params) = sim.graph_unique_host(exec).unwrap();
+        assert_eq!(node, 0);
+        assert_eq!(params, HostNodeParams::default());
+        let next = HostNodeParams {
+            fn_id: 3,
+            user_data: 99,
+        };
+        sim.graph_exec_host_set_params(exec, node, next).unwrap();
+        let (_, now) = sim.graph_unique_host(g).unwrap();
+        assert_eq!(
+            now, next,
+            "unique host on the definition forwards to the exec"
+        );
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        let launched = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::HostFunc { .. }) && o.done)
+            .last()
+            .expect("host");
+        match launched.kind {
+            GpuOp::HostFunc { fn_id, user_data } => {
+                assert_eq!(fn_id, 3);
+                assert_eq!(user_data, 99);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_host_set_params_before_instantiate_is_snapshotted() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_host_func(g).unwrap();
+        let patched = HostNodeParams {
+            fn_id: 4,
+            user_data: 40,
+        };
+        sim.graph_host_set_params(g, 0, patched).unwrap();
+        let _ = sim.instantiate_graph(g).unwrap();
+        let (_, now) = sim.graph_unique_host(g).unwrap();
+        assert_eq!(now, patched);
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        let launched = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::HostFunc { .. }) && o.done)
+            .expect("host");
+        match launched.kind {
+            GpuOp::HostFunc { fn_id, user_data } => {
+                assert_eq!(fn_id, 4);
+                assert_eq!(user_data, 40);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_exec_host_set_params_rejects_uninstantiated_and_kernel() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let params = HostNodeParams {
+            fn_id: 1,
+            user_data: 1,
+        };
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_host_func(g).unwrap();
+        let err = sim.graph_exec_host_set_params(g, 0, params).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(g).unwrap();
+        let kern = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(kern, KernelKind::other(8, 8), &[], &[])
+            .unwrap();
+        let _ = sim.instantiate_graph(kern).unwrap();
+        let err = sim.graph_exec_host_set_params(kern, 0, params).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not a host"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        let err = sim.graph_exec_host_set_params(exec, 0, params).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim.graph_host_set_params(g, 0, params).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn update_graph_treats_host_params_as_not_topology() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let exec_src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_host_func_params(
+            exec_src,
+            HostNodeParams {
+                fn_id: 1,
+                user_data: 1,
+            },
+        )
+        .unwrap();
+        let exec = sim.instantiate_graph(exec_src).unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_host_func_params(
+            src,
+            HostNodeParams {
+                fn_id: 9,
+                user_data: 9,
+            },
+        )
+        .unwrap();
+        sim.update_graph(exec, src).unwrap();
+        let (_, now) = sim.graph_unique_host(exec).unwrap();
+        assert_eq!(
+            now,
+            HostNodeParams {
+                fn_id: 9,
+                user_data: 9
+            }
+        );
+    }
+
+    #[test]
+    fn graph_exec_host_set_params_beats_exec_update_wall() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_instantiate_ns = 80_000;
+            g.graph_update_ns = 9_000;
+            g.graph_set_params_ns = 300;
+            g.graph_upload_ns = 1_000;
+            g.graph_launch_ns = 1_000;
+        }
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let run_update = {
+            let mut sim = Sim::new(p.clone());
+            let def = sim.create_graph(d, s).unwrap();
+            sim.graph_add_host_func(def).unwrap();
+            let exec = sim.instantiate_graph(def).unwrap();
+            sim.upload_graph(exec).unwrap();
+            let src = sim.create_graph(d, s).unwrap();
+            sim.graph_add_host_func_params(
+                src,
+                HostNodeParams {
+                    fn_id: 2,
+                    user_data: 2,
+                },
+            )
+            .unwrap();
+            let t0 = sim.clock_ns();
+            sim.update_graph(exec, src).unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let run_set = {
+            let mut sim = Sim::new(p);
+            let def = sim.create_graph(d, s).unwrap();
+            sim.graph_add_host_func(def).unwrap();
+            let exec = sim.instantiate_graph(def).unwrap();
+            sim.upload_graph(exec).unwrap();
+            let t0 = sim.clock_ns();
+            sim.graph_exec_host_set_params(
+                exec,
+                0,
+                HostNodeParams {
+                    fn_id: 2,
+                    user_data: 2,
+                },
+            )
+            .unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        assert!(
+            run_set < run_update,
+            "SetParams must beat ExecUpdate; set={run_set} update={run_update}"
+        );
+    }
+
+    #[test]
+    fn capture_host_func_params_records_payload() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let params = HostNodeParams {
+            fn_id: 5,
+            user_data: 50,
+        };
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.host_func_params(d, s, params));
+        let g = sim.end_capture().unwrap();
+        let (_, now) = sim.graph_unique_host(g).unwrap();
+        assert_eq!(now, params);
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        let launched = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::HostFunc { .. }) && o.done)
+            .expect("host");
+        match launched.kind {
+            GpuOp::HostFunc { fn_id, user_data } => {
+                assert_eq!(fn_id, 5);
+                assert_eq!(user_data, 50);
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

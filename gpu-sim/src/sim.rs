@@ -11,8 +11,8 @@ use crate::ids::{
 };
 use crate::ops::{
     BatchMemOp, CaptureDepOp, GpuOp as Kind, GraphInstantiateFlags, GraphMemAttr, GraphNodeKind,
-    KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp, Operation, Place,
-    StreamCaptureInfo, WaitValueCmp,
+    HostNodeParams, KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp,
+    Operation, Place, StreamCaptureInfo, WaitValueCmp,
 };
 use crate::profile::{ns_for_bytes, HardwareProfile, LinkKind};
 
@@ -2430,6 +2430,48 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphHostNodeSetParams` on the graph definition.
+    ///
+    /// After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_host_set_params`]. [`HostNodeParams::fn_id`] /
+    /// [`HostNodeParams::user_data`] are parameters. Capture cannot include it.
+    /// Host-sync 1 ns.
+    pub fn graph_host_set_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: HostNodeParams,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture host node set params")?;
+        let device = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            if !matches!(step.kind, Kind::HostFunc { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a host node",
+                });
+            }
+            step.device
+        };
+        let _gpu = self.profile.gpu(device)?;
+        self.clock = self.clock.saturating_add(1);
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.kind = Kind::HostFunc {
+            fn_id: params.fn_id,
+            user_data: params.user_data,
+        };
+        Ok(())
+    }
+
     /// `cudaGraphBatchMemOpNodeSetParams` on the graph definition.
     ///
     /// After instantiate this does not retarget the exec; use
@@ -2554,6 +2596,50 @@ impl Sim {
             id: buf.id,
             offset,
             bytes,
+        };
+        g.uploaded = false;
+        Ok(())
+    }
+
+    /// `cudaGraphExecHostNodeSetParams` on an instantiated exec.
+    ///
+    /// Node `node` must already be a host node. [`HostNodeParams::fn_id`] /
+    /// [`HostNodeParams::user_data`] may change. Pays `graph_set_params_ns` and
+    /// clears the upload flag. Capture cannot include it. Graphs with mem
+    /// alloc/free nodes are legal (unlike [`Self::update_graph`]).
+    pub fn graph_exec_host_set_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        params: HostNodeParams,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture host set params")?;
+        let exec = self.as_exec(exec)?;
+        let device = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.view().get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            if !matches!(step.kind, Kind::HostFunc { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a host node",
+                });
+            }
+            step.device
+        };
+        let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.kind = Kind::HostFunc {
+            fn_id: params.fn_id,
+            user_data: params.user_data,
         };
         g.uploaded = false;
         Ok(())
@@ -2938,6 +3024,51 @@ impl Sim {
                     id: *id,
                     offset: *offset,
                     bytes: *bytes,
+                },
+            ));
+        }
+        Ok(found)
+    }
+
+    /// Unique host node on `graph` plus its current [`HostNodeParams`].
+    ///
+    /// Zero host nodes is Invalid (`not a host node`). More than one is
+    /// `not unique host node`.
+    pub fn graph_unique_host(&self, graph: GraphId) -> Result<(usize, HostNodeParams), SimError> {
+        match self.graph_try_unique_host(graph)? {
+            Some(v) => Ok(v),
+            None => Err(SimError::Invalid {
+                why: "not a host node",
+            }),
+        }
+    }
+
+    /// Unique host node, or `None` when the graph has no host callback.
+    ///
+    /// More than one host node is Invalid.
+    pub fn graph_try_unique_host(
+        &self,
+        graph: GraphId,
+    ) -> Result<Option<(usize, HostNodeParams)>, SimError> {
+        let graph = self.resolved_graph(graph)?;
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut found = None;
+        for (i, step) in g.view().iter().enumerate() {
+            let Kind::HostFunc { fn_id, user_data } = &step.kind else {
+                continue;
+            };
+            if found.is_some() {
+                return Err(SimError::Invalid {
+                    why: "not unique host node",
+                });
+            }
+            found = Some((
+                i,
+                HostNodeParams {
+                    fn_id: *fn_id,
+                    user_data: *user_data,
                 },
             ));
         }
@@ -3659,10 +3790,27 @@ impl Sim {
         )
     }
 
-    /// `cudaGraphAddHostNode` (`cudaLaunchHostFunc`).
+    /// `cudaGraphAddHostNode` (`cudaLaunchHostFunc`) with the unnamed callback.
     pub fn graph_add_host_func(&mut self, graph: GraphId) -> Result<(), SimError> {
+        self.graph_add_host_func_params(graph, HostNodeParams::default())
+    }
+
+    /// `cudaGraphAddHostNode` with [`HostNodeParams`] (`cudaHostFn_t` / `userData`).
+    pub fn graph_add_host_func_params(
+        &mut self,
+        graph: GraphId,
+        params: HostNodeParams,
+    ) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
-        self.graph_push(graph, device, stream, Kind::HostFunc)
+        self.graph_push(
+            graph,
+            device,
+            stream,
+            Kind::HostFunc {
+                fn_id: params.fn_id,
+                user_data: params.user_data,
+            },
+        )
     }
 
     /// `cudaGraphAddEmptyNode`: join/fork with no work.
@@ -6606,9 +6754,30 @@ impl Sim {
 
     /// `cudaLaunchHostFunc`. Stream-ordered host work; does not occupy compute
     /// or copy engines. Other streams can run GPU kernels at the same virtual
-    /// time. Capture records a graph host node.
+    /// time. Capture records a graph host node. Unnamed callback (`fn_id = 0`,
+    /// `user_data = 0`).
     pub fn host_func(&mut self, device: DeviceId, stream: StreamId) -> Result<OpId, SimError> {
-        self.submit(device, stream, Kind::HostFunc)
+        self.host_func_params(device, stream, HostNodeParams::default())
+    }
+
+    /// `cudaLaunchHostFunc` with [`HostNodeParams`].
+    ///
+    /// Capture records those params on the host node. Does not occupy compute
+    /// or copy engines.
+    pub fn host_func_params(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        params: HostNodeParams,
+    ) -> Result<OpId, SimError> {
+        self.submit(
+            device,
+            stream,
+            Kind::HostFunc {
+                fn_id: params.fn_id,
+                user_data: params.user_data,
+            },
+        )
     }
 
     /// `cuStreamWriteValue64`. The mailbox updates when this op completes.
@@ -8190,7 +8359,7 @@ impl Sim {
             Kind::Free { id: alloc } => self.start_free(id, device, *alloc),
             Kind::Kernel { .. } => self.start_kernel(id),
             Kind::Memset { .. } => self.start_memset(id),
-            Kind::HostFunc => {
+            Kind::HostFunc { .. } => {
                 let ns = self.host_func_ns(device, launch)?;
                 self.running.push(Running {
                     op: id,
@@ -9228,7 +9397,7 @@ fn device_launch_refused(kind: &Kind) -> bool {
             | Kind::WhileTick { .. }
             | Kind::Attach { .. }
             | Kind::AllReduce { .. }
-            | Kind::HostFunc
+            | Kind::HostFunc { .. }
             | Kind::DeviceLaunch { .. }
     )
 }
@@ -9687,7 +9856,7 @@ fn node_kind(kind: &Kind) -> GraphNodeKind {
         Kind::Kernel { .. } => GraphNodeKind::Kernel,
         Kind::Memcpy(_) => GraphNodeKind::Memcpy,
         Kind::Memset { .. } => GraphNodeKind::Memset,
-        Kind::HostFunc => GraphNodeKind::Host,
+        Kind::HostFunc { .. } => GraphNodeKind::Host,
         Kind::Empty => GraphNodeKind::Empty,
         Kind::EventRecord { .. } => GraphNodeKind::EventRecord,
         Kind::EventWait { .. } => GraphNodeKind::EventWait,
@@ -9903,6 +10072,7 @@ fn op_eq(a: &Kind, b: &Kind) -> bool {
             },
         ) => x == y && cx == cy,
         (Kind::BatchMem { .. }, Kind::BatchMem { .. }) => true,
+        (Kind::HostFunc { .. }, Kind::HostFunc { .. }) => true,
         _ => op_tag(a) == op_tag(b),
     }
 }
@@ -9914,7 +10084,7 @@ fn op_tag(k: &Kind) -> u8 {
         Kind::Memcpy(_) => 2,
         Kind::Kernel { .. } => 3,
         Kind::Memset { .. } => 4,
-        Kind::HostFunc => 5,
+        Kind::HostFunc { .. } => 5,
         Kind::Empty => 11,
         Kind::EventRecord { .. } => 6,
         Kind::EventWait { .. } => 7,

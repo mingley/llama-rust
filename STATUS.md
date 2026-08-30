@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — host-node SetParams
+
+`HostNodeParams` (`fn_id` / `user_data`) is `cudaHostNodeParams` on
+`GpuOp::HostFunc`. `host_func` / `graph_add_host_func` stay the unnamed
+default. `graph_host_set_params` patches the definition and does not retarget
+an exec. `graph_exec_host_set_params` patches the snapshot
+(`graph_set_params_ns`). Capture records the payload. Device-launch graphs
+still refuse host nodes. Decode identity stays kernel-only graphs.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — separate `cudaGraphExec_t` handles
 
 `instantiate_graph` / `instantiate_graph_with_flags` return a new exec id.

@@ -1438,6 +1438,18 @@ model, do not celebrate the sim.
     still launches the definition (primary exec). Dual score still has no
     `$/M tokens`. `gpu-profile capture` is still refused.
 
+106. [x] Host-node SetParams: `HostNodeParams` (`fn_id` / `user_data`) on
+    `GpuOp::HostFunc`. `host_func` / `graph_add_host_func` stay the unnamed
+    default (`0`, `0`). `host_func_params` / `graph_add_host_func_params`
+    record a payload. `graph_host_set_params` is `cudaGraphHostNodeSetParams`
+    on the definition (does not retarget an already-instantiated exec).
+    `graph_exec_host_set_params` is `cudaGraphExecHostNodeSetParams`
+    (`graph_set_params_ns`). `fn_id` / `user_data` are parameters for
+    `update_graph` (not topology). Capture records the params.
+    Device-launch graphs still refuse host nodes. Decode identity stays
+    kernel-only graphs (expertvm `--host-func` still uses the unnamed live
+    callback). `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

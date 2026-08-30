@@ -220,6 +220,20 @@ impl KernelBuf {
     }
 }
 
+/// `cudaHostNodeParams` for [`crate::Sim::graph_exec_host_set_params`].
+///
+/// Topology is "this is a host node." [`Self::fn_id`] and [`Self::user_data`]
+/// are parameters (`cudaHostFn_t` / `userData`). Capture cannot include
+/// SetParams. [`Default`] is the unnamed callback (`fn_id = 0`, `user_data = 0`)
+/// used by [`crate::Sim::host_func`] / [`crate::Sim::graph_add_host_func`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HostNodeParams {
+    /// Callback identity (`cudaHostFn_t` analog). `0` is the unnamed default.
+    pub fn_id: u32,
+    /// Opaque `userData` pointer analog.
+    pub user_data: u64,
+}
+
 /// `cudaKernelNodeParams` for [`crate::Sim::graph_exec_kernel_set_params`].
 ///
 /// Topology (node index, cooperative flag, dependency edges) stays. Pointers
@@ -358,8 +372,14 @@ pub enum GpuOp {
         bytes: u64,
     },
     /// Host callback (`cudaLaunchHostFunc`). Stream-ordered; does not occupy
-    /// compute or copy engines.
-    HostFunc,
+    /// compute or copy engines. `fn_id` / `user_data` are
+    /// [`HostNodeParams`] (parameters, not topology).
+    HostFunc {
+        /// Callback identity (`cudaHostFn_t` analog). Default `0`.
+        fn_id: u32,
+        /// Opaque `userData`. Default `0`.
+        user_data: u64,
+    },
     /// Empty graph node (`cudaGraphAddEmptyNode`). Completes immediately;
     /// does not occupy compute or copy engines. Capture cannot include it
     /// (add on an uninstantiated graph). A join/fork with no work.
