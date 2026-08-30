@@ -535,6 +535,13 @@ pub struct KernelAttrs {
     /// [`crate::Sim::set_max_dynamic_shared_memory`]. Decode identity stays
     /// Default (function attr 0).
     pub portable_shared: PortableSharedMode,
+    /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`.
+    ///
+    /// `true` is enabled (`1`). Decode identity stays `false`. CUDA treats this
+    /// as a hint; this VM honors it as occupancy when the profile has NVLink
+    /// (every Hyper-Q slot, even NVLink traffic per block). Without NVLink the
+    /// flag is stored and occupancy is unchanged.
+    pub nvlink_util_centric: bool,
 }
 
 /// `cudaFuncCache` / `cudaSharedmemCarveout` preference
@@ -657,6 +664,17 @@ pub enum PortableSharedMode {
     RequirePortable,
     /// `cudaSharedMemoryModeAllowNonPortable`.
     AllowNonPortable,
+}
+
+/// `cudaLaunchAttributeNvlinkUtilCentricScheduling` (`0` disabled / `1` enabled).
+pub fn parse_nvlink_util_centric(s: &str) -> Result<bool, crate::error::SimError> {
+    match s {
+        "0" => Ok(false),
+        "1" => Ok(true),
+        _ => Err(crate::error::SimError::Invalid {
+            why: "unknown nvlink-util",
+        }),
+    }
 }
 
 impl PortableSharedMode {

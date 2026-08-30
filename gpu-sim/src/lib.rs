@@ -133,8 +133,8 @@
 //! used).
 //! [`Sim::set_stream_priority`] is `cudaStreamCreateWithPriority`.
 //! [`stream_copy_attributes`](Sim::stream_copy_attributes) is
-//! `cudaStreamCopyAttributes` (priority, SM permille, mem-sync domain/map, and
-//! synchronization policy).
+//! `cudaStreamCopyAttributes` (priority, SM permille, mem-sync domain/map,
+//! synchronization policy, and NVLink-util-centric scheduling).
 //! [`Sim::set_created_streams_priority`] assigns created streams their id.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
@@ -211,6 +211,12 @@
 //! [`PortableSharedMode::AllowNonPortable`]. [`PortableSharedMode`] is CUDA 13
 //! `cudaLaunchAttributeSharedMemoryMode` (`cudaSharedMemoryMode`), distinct
 //! from bank-width [`SharedMemoryMode`].
+//! [`KernelAttrs::nvlink_util_centric`] is
+//! `cudaLaunchAttributeNvlinkUtilCentricScheduling` (`0`/`1`). CUDA treats it
+//! as a hint; this VM occupies every Hyper-Q slot when the profile has NVLink.
+//! Decode identity stays disabled. Stream SetAttribute is inherited by
+//! [`Sim::kernel`]. Graph CopyAttributes copies it. Device-launch graphs allow
+//! it.
 //! Decode identity stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
 //! [`graph_exec_kernel_node_set_priority`](Sim::graph_exec_kernel_node_set_priority)
 //! are the exec-snapshot attributes. [`Sim::upload_graph`] is
@@ -375,14 +381,15 @@ pub use ids::{
     OpId, PoolId, PtrExportId, ShareableHandleId, StreamId, UserObjectId,
 };
 pub use ops::{
-    AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
-    ClusterSchedulingPolicy, DType, GpuOp, GraphExecUpdateResult, GraphExecUpdateResultInfo,
-    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
-    KernelNodeParams, LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap,
-    MemcpyOp, Operation, PdlLaunch, Place, PortableClusterMode, PortableSharedMode,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo,
-    StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp,
+    ClusterDim, ClusterSchedulingPolicy, DType, GpuOp, GraphExecUpdateResult,
+    GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
+    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphUserObjectFlags, HostNodeParams,
+    KernelAttrs, KernelBuf, KernelKind, KernelNodeParams, LaunchCompletionEvent, MemAdvise,
+    MemAttach, MemSyncDomain, MemSyncDomainMap, MemcpyOp, Operation, PdlLaunch, Place,
+    PortableClusterMode, PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch,
+    SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -5600,6 +5607,149 @@ mod tests {
     }
 
     #[test]
+    fn nvlink_util_centric_occupies_all_slots_when_nvlink() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |profile: HardwareProfile, nvlink: bool| {
+            let mut sim = Sim::new(profile.with_compute_slots(2));
+            let d = DeviceId(0);
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+            enq(sim.kernel_with(
+                d,
+                kind.clone(),
+                &[a],
+                &[a],
+                StreamId(2),
+                KernelAttrs {
+                    nvlink_util_centric: nvlink,
+                    ..KernelAttrs::default()
+                },
+            ));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let h100_off = run(h100(), false);
+        let h100_on = run(h100(), true);
+        assert_eq!(
+            h100_off, h100_on,
+            "without NVLink the hint must not change occupancy; off={h100_off} on={h100_on}"
+        );
+        let nv_off = run(HardwareProfile::example_8xh100_nvlink(), false);
+        let nv_on = run(HardwareProfile::example_8xh100_nvlink(), true);
+        assert!(
+            nv_off < nv_on,
+            "NVLink-util-centric must occupy all Hyper-Q slots; overlap={nv_off} serial={nv_on}"
+        );
+    }
+
+    #[test]
+    fn stream_nvlink_util_centric_inherits_on_kernel() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |inherit: bool| {
+            let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink().with_compute_slots(2));
+            let d = DeviceId(0);
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            if inherit {
+                sim.set_stream_nvlink_util_centric(d, StreamId(2), true)
+                    .unwrap();
+            }
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+            enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(2)));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let overlap = run(false);
+        let serial = run(true);
+        assert!(
+            overlap < serial,
+            "stream NVLink-util-centric must inherit onto kernel(); overlap={overlap} serial={serial}"
+        );
+    }
+
+    #[test]
+    fn graph_nvlink_util_centric_copy_and_device_launch() {
+        let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        assert!(!sim.graph_kernel_node_get_nvlink_util_centric(g, 0).unwrap());
+        sim.graph_kernel_node_set_nvlink_util_centric(g, 0, true)
+            .unwrap();
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_copy_attributes(h, 0, g, 0).unwrap();
+        assert!(sim.graph_kernel_node_get_nvlink_util_centric(h, 0).unwrap());
+        let exec = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .expect("device-launch allows nvlink-util");
+        assert!(sim
+            .graph_exec_kernel_node_get_nvlink_util_centric(exec, 0)
+            .unwrap());
+        sim.graph_exec_kernel_node_set_nvlink_util_centric(exec, 0, false)
+            .unwrap();
+        assert!(!sim
+            .graph_exec_kernel_node_get_nvlink_util_centric(exec, 0)
+            .unwrap());
+        let empty = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(empty).unwrap();
+        let err = sim
+            .graph_kernel_node_get_nvlink_util_centric(empty, 0)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not a kernel node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn kernel_with_capture_records_nvlink_util_centric() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            KernelAttrs {
+                nvlink_util_centric: true,
+                ..KernelAttrs::default()
+            },
+        ));
+        let g = sim.end_capture().unwrap();
+        assert!(sim.graph_kernel_node_get_nvlink_util_centric(g, 0).unwrap());
+    }
+
+    #[test]
+    fn stream_copy_attributes_copies_nvlink_util_centric() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        sim.set_stream_nvlink_util_centric(d, StreamId(1), true)
+            .unwrap();
+        sim.stream_copy_attributes(d, StreamId(2), d, StreamId(1))
+            .unwrap();
+        assert!(sim.stream_nvlink_util_centric(d, StreamId(2)));
+        sim.set_stream_nvlink_util_centric(d, StreamId(1), false)
+            .unwrap();
+        sim.stream_copy_attributes(d, StreamId(2), d, StreamId(1))
+            .unwrap();
+        assert!(!sim.stream_nvlink_util_centric(d, StreamId(2)));
+    }
+
+    #[test]
     fn graph_cluster_copies_and_device_launch_allows() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
@@ -6246,6 +6396,17 @@ mod tests {
         let err = PortableSharedMode::parse("bogus").unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("unknown portable-shared"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+    }
+
+    #[test]
+    fn nvlink_util_centric_parse() {
+        assert!(!parse_nvlink_util_centric("0").unwrap());
+        assert!(parse_nvlink_util_centric("1").unwrap());
+        let err = parse_nvlink_util_centric("bogus").unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown nvlink-util"), "{why}"),
             e => panic!("{e:?}"),
         }
     }

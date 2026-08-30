@@ -1716,6 +1716,15 @@ model, do not celebrate the sim.
     identity stays 0 bytes / Default / opt-in off. `gpu-profile capture` is
     still refused.
 
+137. [x] `cudaLaunchAttributeNvlinkUtilCentricScheduling`: `KernelAttrs::nvlink_util_centric`
+    plus stream SetAttribute / graph Get/Set/CopyAttributes. Valid `0`/`1`.
+    CUDA treats it as a hint; this VM occupies every Hyper-Q slot when the
+    profile has NVLink (even NVLink traffic per block). Without NVLink the
+    flag is stored and occupancy is unchanged. Stream attr is inherited by
+    `kernel` / `kernel_bufs`. `kernel_with` and graph replay use the launch /
+    node value. Device-launch graphs allow it. Decode identity stays disabled.
+    `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

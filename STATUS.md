@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaLaunchAttributeNvlinkUtilCentricScheduling`
+
+Launch / stream / graph-node flag (`0` disabled / `1` enabled). CUDA treats it
+as a hint; this VM occupies every Hyper-Q slot when the profile has NVLink.
+Without NVLink the flag is stored and occupancy is unchanged. Stream
+SetAttribute is inherited by `kernel`. Graph CopyAttributes copies it.
+Device-launch graphs allow it. Decode identity stays disabled.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — expertvm `--dynamic-shared` / `--optin-shared` / `--portable-shared`
 
 `expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and

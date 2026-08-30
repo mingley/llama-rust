@@ -124,6 +124,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchAttributePortableClusterSizeMode` | Default uses the function attr; RequirePortable always refuses oversize; AllowNonPortable allows up to SKU max |
 | CUDA 13 `cudaLaunchAttributeSharedMemoryMode` (`PortableSharedMode`) | Default uses `MaxDynamicSharedMemorySize`; RequirePortable refuses oversize; AllowNonPortable allows up to opt-in max |
 | `cudaLaunchKernel` `sharedMemBytes` | `0` is identity; above `max_shared_mem_per_block` needs the function attr or AllowNonPortable |
+| `cudaLaunchAttributeNvlinkUtilCentricScheduling` | hint `0`/`1`; occupies every Hyper-Q slot when the profile has NVLink |
 | `set_stream_sm_permille` is a green-context SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host) | HBM write + launch overhead |
 | peer D2D needs topology + `enable_peer` | link bandwidth |
@@ -478,8 +479,9 @@ cluster, preferred cluster, shared-memory carveout,
 device-updatable kernel node (`cudaLaunchAttributeDeviceUpdatableKernelNode`),
 shared-memory bank mode (`cudaLaunchAttributeSharedMemoryMode`), and
 portable-cluster size mode (`cudaLaunchAttributePortableClusterSizeMode`),
-and CUDA 13 portable-shared mode (`cudaLaunchAttributeSharedMemoryMode` /
-`PortableSharedMode`).
+CUDA 13 portable-shared mode (`cudaLaunchAttributeSharedMemoryMode` /
+`PortableSharedMode`), and NVLink-util-centric scheduling
+(`cudaLaunchAttributeNvlinkUtilCentricScheduling`).
 `kernel_pdl` is `cudaLaunchKernelEx` PDL:
 a wait kernel may start after the previous same-stream kernel's trigger
 (`pdl_trigger_permille`) instead of its completion. Overlap needs
@@ -531,7 +533,9 @@ uses the function attribute; `portable` always refuses oversize; `non-portable`
 allows up to the SKU max). `--optin-shared` is
 `cudaFuncAttributeMaxDynamicSharedMemorySize`. `--dynamic-shared N` is
 `cudaLaunchKernel` `sharedMemBytes`. `--portable-shared default|portable|non-portable`
-is CUDA 13 `cudaLaunchAttributeSharedMemoryMode`. Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
+is CUDA 13 `cudaLaunchAttributeSharedMemoryMode`. `nvlink_util_centric` is
+`cudaLaunchAttributeNvlinkUtilCentricScheduling` (`0`/`1`; occupies every
+Hyper-Q slot when the profile has NVLink). Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
 instantiate schedules those node priorities instead of the launch stream. `set_created_streams_priority` assigns created streams
 their id. `set_stream_sm_permille` is a green-context SM fraction
 (compute-bound kernels scale; memory-bound keep full HBM; default unset is

@@ -196,6 +196,9 @@ struct Op {
     carveout: SharedMemCarveout,
     /// `cudaLaunchAttributeSharedMemoryMode`.
     shared_mem: SharedMemoryMode,
+    /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`. Occupies every Hyper-Q
+    /// slot when the profile has NVLink.
+    nvlink_util_centric: bool,
 }
 
 /// How a submitted op pays kernel/graph launch overhead.
@@ -315,6 +318,8 @@ struct GraphStep {
     dynamic_shared: u32,
     /// CUDA 13 `cudaLaunchAttributeSharedMemoryMode` (`cudaSharedMemoryMode`).
     portable_shared: PortableSharedMode,
+    /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`.
+    nvlink_util_centric: bool,
 }
 
 struct Graph {
@@ -616,10 +621,14 @@ pub struct Sim {
     enqueue_dynamic_shared: u32,
     /// Portable-shared mode for the next submit / graph replay.
     enqueue_portable_shared: PortableSharedMode,
+    /// NVLink-util-centric scheduling for the next submit / graph replay.
+    enqueue_nvlink_util_centric: bool,
     /// Devices with `cudaFuncAttributeNonPortableClusterSizeAllowed`.
     non_portable_cluster: BTreeSet<DeviceId>,
     /// `cudaFuncAttributeMaxDynamicSharedMemorySize` per device (`0` = portable).
     max_dynamic_shared: BTreeMap<DeviceId, u32>,
+    /// Streams with `cudaLaunchAttributeNvlinkUtilCentricScheduling` enabled.
+    stream_nvlink_util_centric: BTreeSet<(DeviceId, StreamId)>,
     /// Wait/write-value mailbox: `(alloc, offset) → word`. Missing is `0`.
     mailbox: BTreeMap<(AllocId, u64), u64>,
     /// `cudaThreadExchangeStreamCaptureMode` default for [`Self::begin_capture`].
@@ -719,8 +728,10 @@ impl Sim {
             enqueue_portable_cluster: PortableClusterMode::Default,
             enqueue_dynamic_shared: 0,
             enqueue_portable_shared: PortableSharedMode::Default,
+            enqueue_nvlink_util_centric: false,
             non_portable_cluster: BTreeSet::new(),
             max_dynamic_shared: BTreeMap::new(),
+            stream_nvlink_util_centric: BTreeSet::new(),
             mailbox: BTreeMap::new(),
             capture_mode: StreamCaptureMode::Relaxed,
             next_user_object: 1,
@@ -1069,8 +1080,35 @@ impl Sim {
             .unwrap_or(SynchronizationPolicy::Auto)
     }
 
+    /// `cudaStreamSetAttribute` for `cudaLaunchAttributeNvlinkUtilCentricScheduling`.
+    ///
+    /// Inherited by [`Self::kernel`] / [`Self::kernel_bufs`] on this stream.
+    /// [`Self::kernel_with`] and graph replay use the launch / node value.
+    /// Decode identity stays disabled.
+    pub fn set_stream_nvlink_util_centric(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        enabled: bool,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if enabled {
+            let _ins = self.stream_nvlink_util_centric.insert((device, stream));
+        } else {
+            let _rm = self.stream_nvlink_util_centric.remove(&(device, stream));
+        }
+        Ok(())
+    }
+
+    /// Stream NVLink-util-centric flag, or `false` if unset.
+    #[must_use]
+    pub fn stream_nvlink_util_centric(&self, device: DeviceId, stream: StreamId) -> bool {
+        self.stream_nvlink_util_centric.contains(&(device, stream))
+    }
+
     /// `cudaStreamCopyAttributes`: copy priority, SM permille, mem-sync
-    /// domain/map, and synchronization policy from `src` to `dst`.
+    /// domain/map, synchronization policy, and NVLink-util-centric scheduling
+    /// from `src` to `dst`.
     ///
     /// Same device required. Capture is allowed (host-side, not a graph node).
     pub fn stream_copy_attributes(
@@ -1091,6 +1129,7 @@ impl Sim {
         let domain = self.stream_mem_sync_domain.get(&(src_device, src)).copied();
         let map = self.stream_mem_sync_map.get(&(src_device, src)).copied();
         let sync = self.stream_sync_policy.get(&(src_device, src)).copied();
+        let nvlink = self.stream_nvlink_util_centric.contains(&(src_device, src));
         self.set_stream_priority(dst_device, dst, pri)?;
         if let Some(sm) = sm {
             self.set_stream_sm_permille(dst_device, dst, sm)?;
@@ -1112,6 +1151,7 @@ impl Sim {
         } else {
             let _gone = self.stream_sync_policy.remove(&(dst_device, dst));
         }
+        self.set_stream_nvlink_util_centric(dst_device, dst, nvlink)?;
         Ok(())
     }
 
@@ -1265,14 +1305,18 @@ impl Sim {
             Kind::Kernel { cooperative, .. } => *cooperative,
             _ => return Ok(1),
         };
-        self.kernel_slots(
+        let slots = self.kernel_slots(
             op.device,
             cooperative,
             op.cluster,
             op.preferred_cluster,
             op.cluster_policy,
             op.carveout,
-        )
+        )?;
+        if op.nvlink_util_centric && self.profile.has_nvlink() {
+            return Ok(self.profile.gpu(op.device)?.compute_slots.max(1));
+        }
+        Ok(slots)
     }
 
     /// `cudaDevAttrCooperativeLaunch` must be set on `device`.
@@ -2037,6 +2081,7 @@ impl Sim {
             self.enqueue_portable_cluster = step.portable_cluster;
             self.enqueue_dynamic_shared = step.dynamic_shared;
             self.enqueue_portable_shared = step.portable_shared;
+            self.enqueue_nvlink_util_centric = step.nvlink_util_centric;
             let wait = graph_node_waits(step, extra_wait, launch_tail, &node_ops)?;
             let s = self.graph_exec_stream(origin, stream, step, &node_stream, &mut worker);
             if let Some(slot) = node_stream.get_mut(idx) {
@@ -2222,6 +2267,7 @@ impl Sim {
         self.enqueue_portable_cluster = PortableClusterMode::Default;
         self.enqueue_dynamic_shared = 0;
         self.enqueue_portable_shared = PortableSharedMode::Default;
+        self.enqueue_nvlink_util_centric = false;
         Ok(n)
     }
 
@@ -6776,12 +6822,99 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphKernelNodeGetAttribute` for NVLink-util-centric scheduling.
+    pub fn graph_kernel_node_get_nvlink_util_centric(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<bool, SimError> {
+        self.kernel_node_nvlink_util_centric(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for NVLink-util-centric scheduling.
+    pub fn graph_exec_kernel_node_get_nvlink_util_centric(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<bool, SimError> {
+        self.kernel_node_nvlink_util_centric(exec, node, true)
+    }
+
+    fn kernel_node_nvlink_util_centric(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<bool, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.nvlink_util_centric)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for NVLink-util-centric scheduling.
+    pub fn graph_kernel_node_set_nvlink_util_centric(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        enabled: bool,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_nvlink_util_centric(graph, node, false, enabled)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for NVLink-util-centric scheduling.
+    pub fn graph_exec_kernel_node_set_nvlink_util_centric(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        enabled: bool,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_nvlink_util_centric(exec, node, true, enabled)
+    }
+
+    fn set_kernel_node_nvlink_util_centric(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        enabled: bool,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.nvlink_util_centric = enabled;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// `cudaGraphKernelNodeCopyAttributes`: copy priority, PDL, programmatic
     /// event, launch-completion event, access-policy window, mem-sync
     /// domain/map, cluster dimension, cluster scheduling policy, preferred
     /// cluster dimension, portable-cluster mode, shared-memory carveout,
-    /// device-updatable kernel node, shared-memory bank mode, and CUDA 13
-    /// portable-shared mode from `src` to `dst`.
+    /// device-updatable kernel node, shared-memory bank mode, CUDA 13
+    /// portable-shared mode, and NVLink-util-centric scheduling from `src`
+    /// to `dst`.
     ///
     /// Both nodes must be kernels. Capture cannot include it.
     pub fn graph_kernel_node_copy_attributes(
@@ -6821,7 +6954,9 @@ impl Sim {
         let sm = self.graph_kernel_node_get_shared_mem(src_graph, src)?;
         self.graph_kernel_node_set_shared_mem(dst_graph, dst, sm)?;
         let ps = self.graph_kernel_node_get_portable_shared(src_graph, src)?;
-        self.graph_kernel_node_set_portable_shared(dst_graph, dst, ps)
+        self.graph_kernel_node_set_portable_shared(dst_graph, dst, ps)?;
+        let nv = self.graph_kernel_node_get_nvlink_util_centric(src_graph, src)?;
+        self.graph_kernel_node_set_nvlink_util_centric(dst_graph, dst, nv)
     }
 
     /// `cudaGraphNodeFindInClone`: index in `cloned` of the node that was `node`
@@ -6914,6 +7049,7 @@ impl Sim {
             portable_cluster: self.enqueue_portable_cluster,
             dynamic_shared: self.enqueue_dynamic_shared,
             portable_shared: self.enqueue_portable_shared,
+            nvlink_util_centric: self.enqueue_nvlink_util_centric,
         });
         Ok(())
     }
@@ -9042,7 +9178,11 @@ impl Sim {
         writes: &[KernelBuf],
         stream: StreamId,
     ) -> Result<OpId, SimError> {
-        self.submit_kernel(device, kind, reads, writes, stream, false)
+        let prev = self.enqueue_nvlink_util_centric;
+        self.enqueue_nvlink_util_centric = self.stream_nvlink_util_centric(device, stream);
+        let out = self.submit_kernel(device, kind, reads, writes, stream, false);
+        self.enqueue_nvlink_util_centric = prev;
+        out
     }
 
     /// Same as [`Self::kernel`] with [`ProgrammaticLaunch`] (CUDA PDL).
@@ -9217,6 +9357,7 @@ impl Sim {
         let prev_pc = self.enqueue_portable_cluster;
         let prev_ds = self.enqueue_dynamic_shared;
         let prev_ps = self.enqueue_portable_shared;
+        let prev_nv = self.enqueue_nvlink_util_centric;
         self.enqueue_pdl = attrs.pdl;
         self.enqueue_access_policy = attrs.access_policy;
         self.enqueue_mem_sync_domain = attrs.mem_sync_domain;
@@ -9230,6 +9371,7 @@ impl Sim {
         self.enqueue_portable_cluster = attrs.portable_cluster;
         self.enqueue_dynamic_shared = attrs.dynamic_shared;
         self.enqueue_portable_shared = attrs.portable_shared;
+        self.enqueue_nvlink_util_centric = attrs.nvlink_util_centric;
         let out = self.submit_kernel(device, kind, reads, writes, stream, attrs.cooperative);
         self.enqueue_pdl = prev_pdl;
         self.enqueue_access_policy = prev_win;
@@ -9244,6 +9386,7 @@ impl Sim {
         self.enqueue_portable_cluster = prev_pc;
         self.enqueue_dynamic_shared = prev_ds;
         self.enqueue_portable_shared = prev_ps;
+        self.enqueue_nvlink_util_centric = prev_nv;
         out
     }
 
@@ -10149,6 +10292,7 @@ impl Sim {
             portable_cluster: self.enqueue_portable_cluster,
             dynamic_shared: self.enqueue_dynamic_shared,
             portable_shared: self.enqueue_portable_shared,
+            nvlink_util_centric: self.enqueue_nvlink_util_centric,
         });
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
@@ -10269,6 +10413,7 @@ impl Sim {
                 preferred_cluster: self.enqueue_preferred_cluster,
                 carveout: self.enqueue_carveout,
                 shared_mem: self.enqueue_shared_mem,
+                nvlink_util_centric: self.enqueue_nvlink_util_centric,
             },
         );
         if let Some(pe) = pde {
@@ -10657,6 +10802,7 @@ impl Sim {
                 preferred_cluster: None,
                 carveout: SharedMemCarveout::Default,
                 shared_mem: SharedMemoryMode::Default,
+                nvlink_util_centric: false,
             },
         );
         self.add_op_dep(kernel, id);
@@ -13318,6 +13464,7 @@ fn remap_nested_graphs(
             portable_cluster: step.portable_cluster,
             dynamic_shared: step.dynamic_shared,
             portable_shared: step.portable_shared,
+            nvlink_util_centric: step.nvlink_util_centric,
         });
     }
     Ok(out)
