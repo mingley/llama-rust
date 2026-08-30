@@ -17,12 +17,12 @@ use crate::ops::{
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags, HostNodeParams,
     KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
-    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr, MemSyncDomain,
-    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, Place,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
-    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp,
+    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr, MemRangeAttr,
+    MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation,
+    PdlLaunch, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
+    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -9307,6 +9307,36 @@ impl Sim {
         }
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
+    }
+
+    /// `cudaMemRangeGetAttribute`. Query; legal during capture.
+    ///
+    /// This VM tracks advice per live managed allocation, not per byte range.
+    /// Non-managed pointers are Invalid `"not managed"`. Last-prefetch location
+    /// is not modeled.
+    pub fn mem_range_get_attribute(
+        &self,
+        alloc: AllocId,
+        attr: MemRangeAttr,
+    ) -> Result<MemRangeAttrValue, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live || !a.managed {
+            return Err(SimError::Invalid { why: "not managed" });
+        }
+        Ok(match attr {
+            MemRangeAttr::ReadMostly => MemRangeAttrValue::ReadMostly(a.read_mostly),
+            MemRangeAttr::PreferredLocation => {
+                let loc = match a.preferred {
+                    Preferred::None => None,
+                    Preferred::Host => Some(Place::Host),
+                    Preferred::Gpu(d) => Some(Place::Device(d)),
+                };
+                MemRangeAttrValue::PreferredLocation(loc)
+            }
+            MemRangeAttr::AccessedBy => {
+                MemRangeAttrValue::AccessedBy(a.accessed_by.iter().copied().collect())
+            }
+        })
     }
 
     /// Whether [`MemAdvise::SetReadMostly`] is set.

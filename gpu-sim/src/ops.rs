@@ -25,6 +25,32 @@ pub enum MemAdvise {
     UnsetPreferredLocation,
 }
 
+/// `cudaMemRangeAttribute` for [`crate::Sim::mem_range_get_attribute`].
+///
+/// This VM tracks advice per allocation, not per byte range.
+/// `cudaMemRangeAttributeLastPrefetchLocation` is not modeled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemRangeAttr {
+    /// `cudaMemRangeAttributeReadMostly`.
+    ReadMostly,
+    /// `cudaMemRangeAttributePreferredLocation`.
+    PreferredLocation,
+    /// `cudaMemRangeAttributeAccessedBy`.
+    AccessedBy,
+}
+
+/// Value of [`crate::Sim::mem_range_get_attribute`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum MemRangeAttrValue {
+    /// [`MemRangeAttr::ReadMostly`].
+    ReadMostly(bool),
+    /// [`MemRangeAttr::PreferredLocation`]. `None` is unset (`cudaInvalidDeviceId`).
+    /// [`Place::Host`] is `cudaCpuDeviceId`. [`Place::Device`] is that GPU.
+    PreferredLocation(Option<Place>),
+    /// [`MemRangeAttr::AccessedBy`]. Device ids that may remote-read.
+    AccessedBy(Vec<DeviceId>),
+}
+
 /// Element type for roofline math. Maps onto a peak-FLOP field in the profile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DType {

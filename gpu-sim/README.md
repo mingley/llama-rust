@@ -546,7 +546,10 @@ stream; capture is refused). `mem_advise` is `cudaMemAdvise` (host-sync).
 `SetReadMostly` makes prefetch replicate; `SetAccessedBy` lets a kernel
 read without migrating. `SetPreferredLocation` keeps a page already at
 that GPU there on a remote read (writes still migrate; host preferred
-does not skip kernel first-touch). `prefetch` / `prefetch_host` are
+does not skip kernel first-touch). `mem_range_get_attribute` is
+`cudaMemRangeGetAttribute` of modeled per-alloc advice (`MemRangeAttr`;
+not per byte range; last-prefetch is not modeled). Query; legal during
+capture. `prefetch` / `prefetch_host` are
 `cudaMemPrefetchAsync` and **move** unless ReadMostly. Capture of
 `alloc_managed` / `mem_advise` / `stream_attach` is refused; a graph must record prefetch
 before the kernel unless AccessedBy or PreferredLocation covers that GPU.

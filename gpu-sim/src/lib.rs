@@ -90,6 +90,9 @@
 //! [`MemAdvise::SetPreferredLocation`] keeps a page already at that GPU
 //! there on a remote read (same interconnect billing; writes still migrate).
 //! Host preferred does not skip a kernel first-touch.
+//! [`Sim::mem_range_get_attribute`] is `cudaMemRangeGetAttribute` of modeled
+//! per-alloc advice ([`MemRangeAttr`]; not per byte range; last-prefetch is
+//! not modeled). Query; legal during capture.
 //! [`Sim::drop_managed_copy`] refunds one ReadMostly GPU copy (dest eviction).
 //! [`Sim::va_reserve`] / [`va_map`](Sim::va_map) / [`va_unmap`](Sim::va_unmap) /
 //! [`va_free`](Sim::va_free) are `cuMemAddressReserve` / `cuMemMap` /
@@ -540,12 +543,12 @@ pub use ops::{
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags, HostNodeParams,
     KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
-    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr, MemSyncDomain,
-    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, Place,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
-    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp,
+    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr, MemRangeAttr,
+    MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation,
+    PdlLaunch, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
+    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -10804,6 +10807,67 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn mem_range_get_attribute_reads_managed_advice() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        match sim.mem_range_get_attribute(a, MemRangeAttr::ReadMostly) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("managed"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let m = sim.alloc_managed(4096).unwrap();
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::ReadMostly)
+                .unwrap(),
+            MemRangeAttrValue::ReadMostly(false)
+        );
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::PreferredLocation)
+                .unwrap(),
+            MemRangeAttrValue::PreferredLocation(None)
+        );
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::AccessedBy)
+                .unwrap(),
+            MemRangeAttrValue::AccessedBy(Vec::new())
+        );
+        sim.mem_advise(m, MemAdvise::SetReadMostly, d).unwrap();
+        sim.mem_advise(m, MemAdvise::SetPreferredLocation, d)
+            .unwrap();
+        sim.mem_advise(m, MemAdvise::SetAccessedBy, d).unwrap();
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::ReadMostly)
+                .unwrap(),
+            MemRangeAttrValue::ReadMostly(true)
+        );
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::PreferredLocation)
+                .unwrap(),
+            MemRangeAttrValue::PreferredLocation(Some(Place::Device(d)))
+        );
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::AccessedBy)
+                .unwrap(),
+            MemRangeAttrValue::AccessedBy(vec![d])
+        );
+        sim.mem_advise(m, MemAdvise::SetPreferredLocationHost, d)
+            .unwrap();
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::PreferredLocation)
+                .unwrap(),
+            MemRangeAttrValue::PreferredLocation(Some(Place::Host))
+        );
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.mem_range_get_attribute(m, MemRangeAttr::ReadMostly)
+                .unwrap(),
+            MemRangeAttrValue::ReadMostly(true)
+        );
         let _g = sim.end_capture().unwrap();
     }
 
