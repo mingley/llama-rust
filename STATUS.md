@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — PointerAttr VMM mapping queries
+
+`pointer_get_attribute` reports MappingBaseAddr / MappingSize (the
+`cuMemMap` span at offset 0, not the reserved VA). Unmapped VMM is
+Invalid. Set stays SyncMemops only. `gpu-profile capture` is still
+refused.
+
 ## Shipped 2026-08-30 — Managed location type and id
 
 `mem_range_get_attribute` reports PreferredLocationType / Id and
@@ -2475,7 +2482,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 240 (`MemLocationType`).
+Next code change is PLAN systems depth after item 241 (`MappingSize`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

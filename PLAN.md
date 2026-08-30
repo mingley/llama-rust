@@ -2614,7 +2614,18 @@ model, do not celebrate the sim.
     Decode identity stays Invalid / `0`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-241. [ ] Next numbered PLAN item after 240 is the next `gpu-sim` / Engine /
+241. [x] `CU_POINTER_ATTRIBUTE_MAPPING_BASE_ADDR` / `MAPPING_SIZE`:
+    [`PointerAttr::MappingBaseAddr`] / [`MappingSize`](PointerAttr::MappingSize)
+    wrap the mapping that covers VA offset 0. Non-VMM is the same as
+    RangeStartAddr / RangeSize. VMM is the `cuMemMap` span at offset 0,
+    not the reserved VA. Unmapped `va_reserve` and maps that skip offset
+    0 are Invalid `"pointer attr"`. Interior offsets are not modeled.
+    Set stays SyncMemops only. Get is a query; capture-legal.
+    ACCESS_FLAGS / CONTEXT / P2P tokens stay unmodeled. Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+242. [ ] Next numbered PLAN item after 241 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

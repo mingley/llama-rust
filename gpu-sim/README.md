@@ -492,8 +492,9 @@ stream is `Ok(false)`; the clock does not advance).
 settable; MemoryType / DevicePointer / HostPointer / IsManaged /
 RangeSize / Mapped / MemPoolHandle / DeviceOrdinal / RangeStartAddr /
 BufferId / IsLegacyCudaIpcCapable / IsGpuDirectRdmaCapable /
-AllowedHandleTypes are query-only). Set is capture-refused;
-Get is a query.
+AllowedHandleTypes / MappingBaseAddr / MappingSize are query-only;
+VMM mapping size is the `cuMemMap` span at offset 0, not the reserved
+VA). Set is capture-refused; Get is a query.
 `mem_get_address_range` is `cudaMemGetAddressRange` (base is the alloc id;
 interior offsets are not modeled). Query; legal during capture.
 `host_get_device_pointer` is `cudaHostGetDevicePointer` (mapped host;

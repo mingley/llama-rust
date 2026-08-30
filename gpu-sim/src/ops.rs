@@ -701,6 +701,14 @@ pub enum PointerAttr {
     /// `CU_POINTER_ATTRIBUTE_ALLOWED_HANDLE_TYPES` (POSIX-FD for shareable
     /// pool allocs; else [`MemHandleType::NONE`]).
     AllowedHandleTypes,
+    /// `CU_POINTER_ATTRIBUTE_MAPPING_BASE_ADDR`. Interior offsets are not
+    /// modeled: the base is the alloc id when a mapping covers offset 0.
+    /// Unmapped VMM is Invalid `"pointer attr"`.
+    MappingBaseAddr,
+    /// `CU_POINTER_ATTRIBUTE_MAPPING_SIZE`. Non-VMM is [`Self::RangeSize`].
+    /// VMM is the `cuMemMap` span at offset 0, not the reserved VA. Unmapped
+    /// VMM or maps that skip offset 0 are Invalid `"pointer attr"`.
+    MappingSize,
 }
 
 /// `cudaDeviceAttr` for [`crate::Sim::device_get_attribute`].

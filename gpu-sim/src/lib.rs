@@ -204,8 +204,10 @@
 //! settable; MemoryType / DevicePointer / HostPointer / IsManaged /
 //! RangeSize / Mapped / MemPoolHandle / DeviceOrdinal / RangeStartAddr /
 //! BufferId / IsLegacyCudaIpcCapable / IsGpuDirectRdmaCapable /
-//! AllowedHandleTypes are query-only wrappers of existing
-//! pointer state). Set is capture-refused; Get is a query.
+//! AllowedHandleTypes / MappingBaseAddr / MappingSize are query-only
+//! wrappers of existing pointer state; VMM mapping size is the
+//! `cuMemMap` span at offset 0, not the reserved VA). Set is
+//! capture-refused; Get is a query.
 //! [`Sim::mem_get_address_range`] is `cudaMemGetAddressRange` (base is the
 //! alloc id; interior offsets are not modeled). Query; legal during capture.
 //! [`Sim::host_get_device_pointer`] is `cudaHostGetDevicePointer` (mapped host).
@@ -8816,6 +8818,87 @@ mod tests {
             sim.pointer_get_attribute(a, PointerAttr::IsLegacyCudaIpcCapable)
                 .unwrap(),
             1
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn pointer_get_attribute_wraps_vmm_mapping_base_and_size() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::MappingBaseAddr)
+                .unwrap(),
+            a.0
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::MappingSize)
+                .unwrap(),
+            4096
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::RangeStartAddr)
+                .unwrap(),
+            a.0
+        );
+        match sim.pointer_set_attribute(a, PointerAttr::MappingSize, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let va = sim.va_reserve(16_384).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(va, PointerAttr::RangeSize)
+                .unwrap(),
+            16_384
+        );
+        match sim.pointer_get_attribute(va, PointerAttr::MappingSize) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pointer_get_attribute(va, PointerAttr::MappingBaseAddr) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.va_map_range(va, d, 4096, 4096).unwrap();
+        match sim.pointer_get_attribute(va, PointerAttr::MappingSize) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.va_map_range(va, d, 0, 4096).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(va, PointerAttr::MappingBaseAddr)
+                .unwrap(),
+            va.0
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(va, PointerAttr::MappingSize)
+                .unwrap(),
+            4096
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(va, PointerAttr::RangeSize)
+                .unwrap(),
+            16_384
+        );
+        sim.va_unmap(va).unwrap();
+        match sim.pointer_get_attribute(va, PointerAttr::MappingSize) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.va_free(va).unwrap();
+        let whole = sim.va_reserve(8192).unwrap();
+        sim.va_map(whole, d).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(whole, PointerAttr::MappingSize)
+                .unwrap(),
+            8192
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(whole, PointerAttr::MappingBaseAddr)
+                .unwrap(),
+            whole.0
         );
         let _g = sim.end_capture().unwrap();
     }

@@ -132,6 +132,20 @@ impl Alloc {
         }
     }
 
+    /// Bytes of the mapping that covers VA offset 0.
+    ///
+    /// Non-VMM is the whole allocation. VMM is the `cuMemMap` span at offset 0
+    /// (not the reserved VA, and not coalesced adjacent maps).
+    fn mapping_size_at_zero(&self) -> Option<u64> {
+        if !self.vmm {
+            return Some(self.bytes);
+        }
+        self.vmm_maps
+            .iter()
+            .find(|(_, offset, _)| *offset == 0)
+            .map(|(_, _, bytes)| *bytes)
+    }
+
     /// Device for `cudaIpcGetMemHandle`. None for host / managed / VMM / pool /
     /// IPC or shareable imports.
     fn legacy_ipc_device(&self) -> Option<DeviceId> {
@@ -12270,7 +12284,9 @@ impl Sim {
             | PointerAttr::BufferId
             | PointerAttr::IsLegacyCudaIpcCapable
             | PointerAttr::IsGpuDirectRdmaCapable
-            | PointerAttr::AllowedHandleTypes => Err(SimError::Invalid {
+            | PointerAttr::AllowedHandleTypes
+            | PointerAttr::MappingBaseAddr
+            | PointerAttr::MappingSize => Err(SimError::Invalid {
                 why: "pointer attr",
             }),
         }
@@ -12280,7 +12296,8 @@ impl Sim {
     /// capture-legal. Reports 0/1 for [`PointerAttr::SyncMemops`]. Other
     /// attrs wrap [`Self::pointer_get_attributes`], range size, mapped host,
     /// the backing pool, device ordinal, range start, buffer id, legacy IPC /
-    /// GPUDirect RDMA capability, and allowed handle types.
+    /// GPUDirect RDMA capability, allowed handle types, and VMM mapping
+    /// base/size at offset 0.
     pub fn pointer_get_attribute(
         &self,
         alloc: AllocId,
@@ -12329,6 +12346,16 @@ impl Sim {
                 }),
                 None => Ok(MemHandleType::NONE),
             },
+            PointerAttr::MappingBaseAddr => {
+                a.mapping_size_at_zero()
+                    .map(|_| alloc.0)
+                    .ok_or(SimError::Invalid {
+                        why: "pointer attr",
+                    })
+            }
+            PointerAttr::MappingSize => a.mapping_size_at_zero().ok_or(SimError::Invalid {
+                why: "pointer attr",
+            }),
         }
     }
 
