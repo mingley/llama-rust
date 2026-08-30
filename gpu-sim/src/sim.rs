@@ -10,7 +10,7 @@ use crate::ids::{
     MulticastId, OpId, PoolId, PtrExportId, ShareableHandleId, StreamId, UserObjectId,
 };
 use crate::ops::{
-    AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
+    AccessPolicyWindow, AccessProperty, BatchMemOp, BatchMemOpFlags, CaptureDepOp, ClusterDim,
     ClusterSchedulingPolicy, ComputeMode, DeviceAttr, DeviceFlags, DeviceLimit, DeviceNumaConfig,
     DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags,
     FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr,
@@ -6343,6 +6343,20 @@ impl Sim {
         self.check_batch_mem_ops(ops)?;
         let (device, stream) = self.graph_origin_for_add(graph)?;
         self.graph_push(graph, device, stream, Kind::BatchMem { ops: ops.to_vec() })
+    }
+
+    /// [`Self::graph_add_batch_mem_op`] with a [`BatchMemOpFlags`] word.
+    ///
+    /// Flags must be [`BatchMemOpFlags::DEFAULT`]. Unknown bits Invalid
+    /// `"batch mem op flags"`. Typed helper stays.
+    pub fn graph_add_batch_mem_op_with_flags(
+        &mut self,
+        graph: GraphId,
+        ops: &[BatchMemOp],
+        flags: u32,
+    ) -> Result<(), SimError> {
+        Self::check_batch_mem_op_flags(flags)?;
+        self.graph_add_batch_mem_op(graph, ops)
     }
 
     fn graph_add_batch_item(&mut self, graph: GraphId, op: BatchMemOp) -> Result<(), SimError> {
@@ -13860,6 +13874,30 @@ impl Sim {
             return self.submit(device, stream, kind_from_batch(*op));
         }
         self.submit(device, stream, Kind::BatchMem { ops: ops.to_vec() })
+    }
+
+    fn check_batch_mem_op_flags(flags: u32) -> Result<(), SimError> {
+        if flags != BatchMemOpFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "batch mem op flags",
+            });
+        }
+        Ok(())
+    }
+
+    /// `cuStreamBatchMemOp` with a [`BatchMemOpFlags`] word.
+    ///
+    /// Flags must be [`BatchMemOpFlags::DEFAULT`]. Unknown bits Invalid
+    /// `"batch mem op flags"`. Typed [`Self::batch_mem_op`] stays.
+    pub fn batch_mem_op_with_flags(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        ops: &[BatchMemOp],
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        Self::check_batch_mem_op_flags(flags)?;
+        self.batch_mem_op(device, stream, ops)
     }
 
     fn submit_batch_mem(

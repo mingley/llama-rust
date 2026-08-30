@@ -211,7 +211,9 @@
 //! word ([`WaitValueFlags`]; [`WaitValueFlags::FLUSH`] is Invalid). Typed
 //! helpers stay. [`batch_mem_op`](Sim::batch_mem_op) is
 //! `cuStreamBatchMemOp` (one stream op; a wait sees earlier writes in that
-//! vector). Kernel / memset / memcpy stores to the
+//! vector). [`batch_mem_op_with_flags`](Sim::batch_mem_op_with_flags) is the
+//! CUDA flags word ([`BatchMemOpFlags`]; must be
+//! [`BatchMemOpFlags::DEFAULT`]). Typed helper stays. Kernel / memset / memcpy stores to the
 //! mailbox address are not modeled. Device-resident and mapped-host are legal;
 //! remote AccessedBy maps are not. Capture records a batch-mem-op node.
 //! [`Sim::set_stream_blocking`] is `cudaStreamCreate` vs `cudaStreamNonBlocking`.
@@ -754,10 +756,10 @@ pub use ids::{
     MemHandleId, MulticastId, OpId, PoolId, PtrExportId, ShareableHandleId, StreamId, UserObjectId,
 };
 pub use ops::{
-    parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp,
-    ClusterDim, ClusterSchedulingPolicy, ComputeMode, DType, DeviceAttr, DeviceFlags, DeviceLimit,
-    DeviceNumaConfig, DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags,
-    EventWaitFlags, FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget,
+    parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, BatchMemOpFlags,
+    CaptureDepOp, ClusterDim, ClusterSchedulingPolicy, ComputeMode, DType, DeviceAttr, DeviceFlags,
+    DeviceLimit, DeviceNumaConfig, DeviceP2pAttr, DeviceProperties, EventCreateFlags,
+    EventRecordFlags, EventWaitFlags, FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget,
     FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, GpuOp, GraphAddNode,
     GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
     GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
@@ -19011,6 +19013,49 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("empty"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn batch_mem_op_with_flags_is_cu_stream_batch_mem_op_flags() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let ops = [
+            BatchMemOp::Write {
+                id: a,
+                offset: 0,
+                value: 1,
+                bits32: false,
+            },
+            BatchMemOp::Wait {
+                id: a,
+                offset: 0,
+                value: 1,
+                bits32: false,
+                cmp: WaitValueCmp::Eq,
+            },
+        ];
+        enq(sim.batch_mem_op_with_flags(d, s, &ops, BatchMemOpFlags::DEFAULT));
+        sim.synchronize().unwrap();
+        match sim.batch_mem_op_with_flags(d, s, &ops, 1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("batch mem op flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_batch_mem_op_with_flags(g, &ops, BatchMemOpFlags::DEFAULT)
+            .unwrap();
+        match sim.graph_add_batch_mem_op_with_flags(g, &ops, 1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("batch mem op flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.batch_mem_op_with_flags(d, s, &ops, BatchMemOpFlags::DEFAULT));
+        let _cap = sim.end_capture().unwrap();
     }
 
     #[test]

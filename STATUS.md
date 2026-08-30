@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — stream batch memop flags
+
+`batch_mem_op_with_flags` / `graph_add_batch_mem_op_with_flags` take
+`cuStreamBatchMemOp` flags (`BatchMemOpFlags`; must be 0). Typed
+`batch_mem_op` stays. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — stream write-value flags
 
 `write_value32_with_flags` / `write_value64_with_flags` take

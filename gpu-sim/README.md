@@ -60,7 +60,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchHostFunc` (`host_func` / `host_func_params`) is stream-ordered host work; `fn_id` / `user_data` are `cudaHostNodeParams` | `host_func_ns` (no compute / copy occupancy) |
 | `cuStreamWriteValue32/64` (`write_value32` / `write_value64`) writes a mailbox on complete; `write_value32_with_flags` / `write_value64_with_flags` is the CUDA flags word (`WriteValueFlags`; NO_MEMORY_BARRIER Invalid) | 1 ns Solo (no compute / copy occupancy) |
 | `cuStreamWaitValue32/64` (`wait_value32` / `wait_value64`) stays pending until the mailbox compare matches; unwritten locations read as 0; kernel/memset/memcpy stores are not modeled; `wait_value32_with_flags` / `wait_value64_with_flags` is the CUDA flags word (`WaitValueFlags`; FLUSH Invalid) | 1 ns Solo when ready; unsatisfied wait + `synchronize` is deadlock |
-| `cuStreamBatchMemOp` (`batch_mem_op`) is one stream op for a wait/write vector; a wait sees earlier writes in that vector | 1 ns Solo when ready |
+| `cuStreamBatchMemOp` (`batch_mem_op`) is one stream op for a wait/write vector; a wait sees earlier writes in that vector; `batch_mem_op_with_flags` is the CUDA flags word (`BatchMemOpFlags`; must be 0) | 1 ns Solo when ready |
 | `cudaStreamCreate` (`set_stream_blocking`) serializes with NULL | copy/compute overlap vs NULL |
 | host pin / `mlock` budget (`host_pin_bytes`) | `SimError::PinOom` |
 | `cudaFree` (`free_sync`) waits owning GPU(s), then every copy is gone | stream-ordered `free` refunds when that stream runs |
@@ -313,6 +313,8 @@ returns `GraphNodeParams::Empty`; Alloc is bytes only).
 flags are `WaitValueFlags` (FLUSH Invalid); write flags are
 `WriteValueFlags` (NO_MEMORY_BARRIER Invalid). Typed helpers stay.
 `batch_mem_op` is live `cuStreamBatchMemOp`.
+`batch_mem_op_with_flags` / `graph_add_batch_mem_op_with_flags` are the
+CUDA flags word (`BatchMemOpFlags`; must be 0). Typed helpers stay.
 `graph_add_dependencies` is `cudaGraphAddDependencies` (independent nodes
 may Hyper-Q overlap at launch; capture records same-stream edges).
 `graph_add_dependencies_n` / `graph_remove_dependencies_n` are the same

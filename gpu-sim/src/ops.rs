@@ -2066,6 +2066,15 @@ impl WaitValueCmp {
     }
 }
 
+/// `cuStreamBatchMemOp` flags for [`crate::Sim::batch_mem_op_with_flags`] /
+/// [`crate::Sim::graph_add_batch_mem_op_with_flags`].
+pub struct BatchMemOpFlags;
+
+impl BatchMemOpFlags {
+    /// CUDA requires `0`.
+    pub const DEFAULT: u32 = 0;
+}
+
 /// One `cuStreamBatchMemOp` item (`cudaGraphAddBatchMemOpNode`).
 ///
 /// [`crate::Sim::graph_add_batch_mem_op`] / [`crate::Sim::batch_mem_op`] pack a

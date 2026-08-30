@@ -3067,7 +3067,17 @@ model, do not celebrate the sim.
     stay. Decode identity unchanged. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-296. [ ] Next numbered PLAN item after 295 is the next `gpu-sim` / Engine /
+296. [x] `cuStreamBatchMemOp` flags:
+    [`batch_mem_op_with_flags`](Sim::batch_mem_op_with_flags) takes
+    [`BatchMemOpFlags`]. Flags must be [`BatchMemOpFlags::DEFAULT`].
+    Unknown bits Invalid `"batch mem op flags"`. Graph twin
+    [`graph_add_batch_mem_op_with_flags`](Sim::graph_add_batch_mem_op_with_flags).
+    Typed [`batch_mem_op`](Sim::batch_mem_op) /
+    [`graph_add_batch_mem_op`](Sim::graph_add_batch_mem_op) stay. Decode
+    identity unchanged. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+297. [ ] Next numbered PLAN item after 296 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
