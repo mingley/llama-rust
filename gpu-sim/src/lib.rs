@@ -471,6 +471,7 @@
 //! [`graph_memcpy_set_params_3d`](Sim::graph_memcpy_set_params_3d) /
 //! [`graph_memset_set_params`](Sim::graph_memset_set_params) /
 //! [`graph_memset_set_params_2d`](Sim::graph_memset_set_params_2d) /
+//! [`graph_memset_set_params_3d`](Sim::graph_memset_set_params_3d) /
 //! [`graph_host_set_params`](Sim::graph_host_set_params) /
 //! [`graph_batch_mem_op_set_params`](Sim::graph_batch_mem_op_set_params) /
 //! [`graph_batch_mem_ops_set_params`](Sim::graph_batch_mem_ops_set_params) /
@@ -598,9 +599,11 @@
 //! [`MemcpyOp::is_3d`]). [`graph_unique_memcpy`](Sim::graph_unique_memcpy)
 //! / [`graph_try_unique_memcpy`](Sim::graph_try_unique_memcpy) find that node.
 //! [`graph_exec_memset_set_params`](Sim::graph_exec_memset_set_params) /
-//! [`graph_exec_memset_set_params_2d`](Sim::graph_exec_memset_set_params_2d)
-//! are `cudaGraphExecMemsetNodeSetParams` / 2D helper (same cost; zero-byte still
-//! illegal; 2D requires [`MemsetOp::is_2d`]).
+//! [`graph_exec_memset_set_params_2d`](Sim::graph_exec_memset_set_params_2d) /
+//! [`graph_exec_memset_set_params_3d`](Sim::graph_exec_memset_set_params_3d)
+//! are `cudaGraphExecMemsetNodeSetParams` / 2D / 3D helpers (same cost;
+//! zero-byte still illegal; 2D requires [`MemsetOp::is_2d`]; 3D requires
+//! [`MemsetOp::is_3d`]).
 //! [`graph_unique_memset`](Sim::graph_unique_memset) /
 //! [`graph_try_unique_memset`](Sim::graph_try_unique_memset) find that node.
 //! [`graph_exec_host_set_params`](Sim::graph_exec_host_set_params) is
@@ -11935,6 +11938,57 @@ mod tests {
         }
         sim.begin_capture(d, s).unwrap();
         match sim.graph_memset_set_params_2d(g, 0, op) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_memset_set_params_3d_requires_is_3d() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_3d(d, 256, 4, 4).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        let op = MemsetOp {
+            id: a,
+            bytes: 256,
+            height: 4,
+            pitch,
+            depth: 4,
+            ysize: 4,
+            ..MemsetOp::default()
+        };
+        sim.graph_add_memset_3d(g, op).unwrap();
+        let patched = MemsetOp { depth: 2, ..op };
+        sim.graph_memset_set_params_3d(g, 0, patched).unwrap();
+        assert_eq!(sim.graph_memset_get_params(g, 0).unwrap().depth, 2);
+        match sim.graph_memset_set_params_3d(g, 0, MemsetOp { depth: 1, ..op }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset3d depth"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_memset_set_params_3d(
+            g,
+            0,
+            MemsetOp {
+                depth: 0,
+                ysize: 0,
+                ..op
+            },
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset3d depth"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.graph_exec_memset_set_params_3d(exec, 0, op).unwrap();
+        assert_eq!(sim.graph_exec_memset_get_params(exec, 0).unwrap().depth, 4);
+        match sim.graph_exec_memset_set_params_3d(exec, 0, MemsetOp { depth: 1, ..op }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset3d depth"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_memset_set_params_3d(g, 0, op) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }

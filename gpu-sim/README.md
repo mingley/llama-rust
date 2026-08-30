@@ -378,7 +378,7 @@ mismatch is `Invalid`. Graphs with mem alloc/free nodes cannot be updated.
 mem nodes, device-launch). `update_graph` uses that path and keeps the
 same `why` strings.
 `graph_kernel_set_params` / `graph_memcpy_set_params` /
-`graph_memcpy_set_params_1d` / `graph_memcpy_set_params_2d` / `graph_memcpy_set_params_3d` / `graph_memset_set_params` / `graph_memset_set_params_2d` /
+`graph_memcpy_set_params_1d` / `graph_memcpy_set_params_2d` / `graph_memcpy_set_params_3d` / `graph_memset_set_params` / `graph_memset_set_params_2d` / `graph_memset_set_params_3d` /
 `graph_batch_mem_op_set_params` /
 `graph_batch_mem_ops_set_params` / `graph_event_record_set_event` /
 `graph_event_wait_set_event` / `graph_child_set_params` are
@@ -397,7 +397,7 @@ definition; Exec GetParams reads the snapshot (`as_exec`; uninstantiated
 is Invalid). Unique-node helpers (`graph_unique_kernel`, …) still use
 the launched/primary snapshot.
 `graph_exec_kernel_set_params` / `graph_exec_memcpy_set_params` /
-`graph_exec_memcpy_set_params_1d` / `graph_exec_memcpy_set_params_2d` / `graph_exec_memcpy_set_params_3d` / `graph_exec_memset_set_params` / `graph_exec_memset_set_params_2d` /
+`graph_exec_memcpy_set_params_1d` / `graph_exec_memcpy_set_params_2d` / `graph_exec_memcpy_set_params_3d` / `graph_exec_memset_set_params` / `graph_exec_memset_set_params_2d` / `graph_exec_memset_set_params_3d` /
 `graph_exec_batch_mem_op_set_params` /
 `graph_exec_batch_mem_ops_set_params` are
 `cudaGraphExecKernelNodeSetParams` / `cudaGraphExecMemcpyNodeSetParams` /

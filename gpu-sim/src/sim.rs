@@ -3588,7 +3588,8 @@ impl Sim {
     /// [`Self::graph_exec_memset_set_params`]. Zero-byte fills stay illegal.
     /// Capture cannot include it. Host-sync 1 ns. [`KernelBuf`] converts to a
     /// packed 1D [`MemsetOp`]. [`Self::graph_memset_set_params_2d`] requires
-    /// [`MemsetOp::is_2d`].
+    /// [`MemsetOp::is_2d`]. [`Self::graph_memset_set_params_3d`] requires
+    /// [`MemsetOp::is_3d`].
     pub fn graph_memset_set_params(
         &mut self,
         graph: GraphId,
@@ -3635,6 +3636,23 @@ impl Sim {
         if !op.is_2d() {
             return Err(SimError::Invalid {
                 why: "memset2d height",
+            });
+        }
+        self.graph_memset_set_params(graph, node, op)
+    }
+
+    /// `cudaGraphMemsetNodeSetParams` whose [`MemsetOp`] is [`MemsetOp::is_3d`]
+    /// (`depth > 1`). Other extents Invalid `"memset3d depth"`. Typed
+    /// [`Self::graph_memset_set_params`] stays.
+    pub fn graph_memset_set_params_3d(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: MemsetOp,
+    ) -> Result<(), SimError> {
+        if !op.is_3d() {
+            return Err(SimError::Invalid {
+                why: "memset3d depth",
             });
         }
         self.graph_memset_set_params(graph, node, op)
@@ -4141,7 +4159,9 @@ impl Sim {
     /// Zero-byte fills stay illegal. Pays `graph_set_params_ns` and clears the
     /// upload flag. Capture cannot include it. Graphs with mem alloc/free nodes
     /// are legal (unlike [`Self::update_graph`]). [`KernelBuf`] converts to a
-    /// packed 1D [`MemsetOp`].
+    /// packed 1D [`MemsetOp`]. [`Self::graph_exec_memset_set_params_2d`]
+    /// requires [`MemsetOp::is_2d`]. [`Self::graph_exec_memset_set_params_3d`]
+    /// requires [`MemsetOp::is_3d`].
     pub fn graph_exec_memset_set_params(
         &mut self,
         exec: GraphId,
@@ -4190,6 +4210,23 @@ impl Sim {
         if !op.is_2d() {
             return Err(SimError::Invalid {
                 why: "memset2d height",
+            });
+        }
+        self.graph_exec_memset_set_params(exec, node, op)
+    }
+
+    /// `cudaGraphExecMemsetNodeSetParams` whose [`MemsetOp`] is [`MemsetOp::is_3d`]
+    /// (`depth > 1`). Other extents Invalid `"memset3d depth"`. Typed
+    /// [`Self::graph_exec_memset_set_params`] stays.
+    pub fn graph_exec_memset_set_params_3d(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: MemsetOp,
+    ) -> Result<(), SimError> {
+        if !op.is_3d() {
+            return Err(SimError::Invalid {
+                why: "memset3d depth",
             });
         }
         self.graph_exec_memset_set_params(exec, node, op)
