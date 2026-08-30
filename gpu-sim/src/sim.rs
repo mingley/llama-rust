@@ -22,11 +22,12 @@ use crate::ops::{
     MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType,
     MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType, MemMapFlags,
     MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags, MemSyncDomain,
-    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, MulticastBindFlags, MulticastGranularity,
-    Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes,
-    PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
-    SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo,
-    StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, MulticastBindFlags, MulticastCreateFlags,
+    MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch, PeerAccessFlags, Place,
+    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
+    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -10206,11 +10207,42 @@ impl Sim {
     /// [`HardwareProfile::multicast_aligned`]. `num_devices` is the team size
     /// (`cuMulticastAddDevice` must fill it before bind/map). PCIe-only and
     /// 1-GPU profiles still create; bind/map fail without an NVLink clique.
+    /// Typed helper; [`Self::multicast_create_with_prop`] takes
+    /// [`MulticastObjectProp`].
     pub fn multicast_create(
         &mut self,
         bytes: u64,
         num_devices: u32,
     ) -> Result<MulticastId, SimError> {
+        self.multicast_create_with_prop(MulticastObjectProp {
+            num_devices,
+            size: bytes,
+            ..MulticastObjectProp::default()
+        })
+    }
+
+    /// [`Self::multicast_create`] with `CUmulticastObjectProp`.
+    ///
+    /// Handle types other than none Invalid `"multicast handle types"`.
+    /// Flags must be 0 ([`MulticastCreateFlags::DEFAULT`]; unknown bits Invalid
+    /// `"multicast create flags"`). Size and team rules match
+    /// [`Self::multicast_create`].
+    pub fn multicast_create_with_prop(
+        &mut self,
+        prop: MulticastObjectProp,
+    ) -> Result<MulticastId, SimError> {
+        if prop.handle_types != MemHandleType::NONE {
+            return Err(SimError::Invalid {
+                why: "multicast handle types",
+            });
+        }
+        if prop.flags != MulticastCreateFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "multicast create flags",
+            });
+        }
+        let bytes = prop.size;
+        let num_devices = prop.num_devices;
         if bytes == 0 {
             return Err(SimError::Invalid {
                 why: "zero-byte alloc",

@@ -2881,7 +2881,16 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-273. [ ] Next numbered PLAN item after 272 is the next `gpu-sim` / Engine /
+273. [x] `cuMulticastCreate` prop:
+    [`multicast_create_with_prop`](Sim::multicast_create_with_prop) takes
+    [`MulticastObjectProp`]. Handle types other than none Invalid
+    `"multicast handle types"` (POSIX-FD multicast export is not modeled).
+    Flags must be 0 ([`MulticastCreateFlags::DEFAULT`]). Typed
+    [`multicast_create`](Sim::multicast_create) stays. Host-synchronous;
+    capture refused. Decode identity unchanged. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+274. [ ] Next numbered PLAN item after 273 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

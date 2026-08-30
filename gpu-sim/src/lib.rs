@@ -154,7 +154,8 @@
 //! [`multicast_unbind`](Sim::multicast_unbind) /
 //! [`multicast_destroy`](Sim::multicast_destroy) / [`va_map_multicast`](Sim::va_map_multicast)
 //! are `cuMulticastCreate` / `AddDevice` / `BindMem` / `BindAddr` / `Unbind` /
-//! `cuMemRelease` / `cuMemMap` of a multicast handle. [`va_map_multicast_with_flags`](Sim::va_map_multicast_with_flags)
+//! `cuMemRelease` / `cuMemMap` of a multicast handle. [`multicast_create_with_prop`](Sim::multicast_create_with_prop)
+//! takes [`MulticastObjectProp`] (handle types none; flags 0). Typed helper stays. [`va_map_multicast_with_flags`](Sim::va_map_multicast_with_flags)
 //! requires flags 0 ([`MemMapFlags::DEFAULT`]). Typed helper stays.
 //! [`va_map_multicast_with_size`](Sim::va_map_multicast_with_size) is the
 //! CUDA size argument (must match the multicast object). [`multicast_unbind_with_size`](Sim::multicast_unbind_with_size)
@@ -712,11 +713,12 @@ pub use ops::{
     MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType,
     MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType, MemMapFlags,
     MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags, MemSyncDomain,
-    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, MulticastBindFlags, MulticastGranularity,
-    Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes,
-    PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
-    SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo,
-    StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, MulticastBindFlags, MulticastCreateFlags,
+    MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch, PeerAccessFlags, Place,
+    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
+    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -17574,6 +17576,52 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("NVLink"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn multicast_create_with_prop_is_cu_multicast_create() {
+        let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let bytes = 4096u64;
+        let mc = sim
+            .multicast_create_with_prop(MulticastObjectProp {
+                num_devices: 2,
+                size: bytes,
+                ..MulticastObjectProp::default()
+            })
+            .unwrap();
+        assert_eq!(sim.multicast_binds(mc).unwrap(), 0);
+        match sim.multicast_create_with_prop(MulticastObjectProp {
+            num_devices: 2,
+            size: bytes,
+            handle_types: MemHandleType::POSIX_FILE_DESCRIPTOR,
+            ..MulticastObjectProp::default()
+        }) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("multicast handle types"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.multicast_create_with_prop(MulticastObjectProp {
+            num_devices: 2,
+            size: bytes,
+            flags: 1,
+            ..MulticastObjectProp::default()
+        }) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("multicast create flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        match sim.multicast_create_with_prop(MulticastObjectProp {
+            num_devices: 2,
+            size: bytes,
+            ..MulticastObjectProp::default()
+        }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

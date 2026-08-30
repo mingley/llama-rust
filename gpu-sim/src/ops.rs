@@ -2589,6 +2589,44 @@ impl MulticastGranularity {
     pub const RECOMMENDED: u32 = 1;
 }
 
+/// `CUmulticastObjectProp` for [`crate::Sim::multicast_create_with_prop`].
+///
+/// Handle types other than [`MemHandleType::NONE`] are Invalid
+/// `"multicast handle types"` (POSIX-FD multicast export is not modeled).
+/// [`Self::flags`] must be [`MulticastCreateFlags::DEFAULT`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MulticastObjectProp {
+    /// Team size (`numDevices`). Must be at least 2.
+    pub num_devices: u32,
+    /// Object bytes (`size`).
+    pub size: u64,
+    /// `CUmemAllocationHandleType`. Create accepts [`MemHandleType::NONE`] only.
+    pub handle_types: u64,
+    /// Create flags. CUDA requires 0.
+    pub flags: u64,
+}
+
+impl Default for MulticastObjectProp {
+    fn default() -> Self {
+        Self {
+            num_devices: 2,
+            size: 0,
+            handle_types: MemHandleType::NONE,
+            flags: MulticastCreateFlags::DEFAULT,
+        }
+    }
+}
+
+/// `cuMulticastCreate` flags on [`MulticastObjectProp::flags`].
+///
+/// CUDA requires 0. Unknown bits are Invalid `"multicast create flags"`.
+pub struct MulticastCreateFlags;
+
+impl MulticastCreateFlags {
+    /// Unflagged [`crate::Sim::multicast_create`].
+    pub const DEFAULT: u64 = 0;
+}
+
 /// `cuMulticastBindAddr` / `BindMem` flags for
 /// [`crate::Sim::multicast_bind_addr_with_flags`] /
 /// [`crate::Sim::multicast_bind_mem_with_flags`].

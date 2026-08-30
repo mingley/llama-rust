@@ -685,6 +685,9 @@ Both are queries; legal during capture. `va_map` still Create+Maps in one call.
 `multicast_create` / `multicast_add_device` / `multicast_bind_mem` /
 `multicast_bind_addr` / `multicast_unbind` / `multicast_destroy` /
 `va_map_multicast` are NVLS multicast (NVLink clique).
+`multicast_create_with_prop` is `cuMulticastCreate` with
+`CUmulticastObjectProp` (handle types none; flags 0). Typed
+`multicast_create` stays.
 `va_map_multicast_with_flags` is `cuMemMap` flags of a multicast handle
 (0; typed `va_map_multicast` stays).
 `va_map_multicast_with_size` is the CUDA size argument (must match the
