@@ -2952,7 +2952,14 @@ model, do not celebrate the sim.
     capture-legal. Decode identity unchanged. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-283. [ ] Next numbered PLAN item after 282 is the next `gpu-sim` / Engine /
+283. [x] `cudaDevAttrTimelineSemaphoreInteropSupported`:
+    [`DeviceAttr::TimelineSemaphoreInteropSupported`] is always 0 (NVSci
+    / timeline semaphore interop is not modeled).
+    [`DeviceProperties::timeline_semaphore_interop_supported`] matches.
+    Query; capture-legal. Decode identity unchanged. `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+284. [ ] Next numbered PLAN item after 283 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

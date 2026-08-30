@@ -862,6 +862,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrUnifiedFunctionPointers` (always 0; device-side function
     /// pointers are not modeled).
     UnifiedFunctionPointers,
+    /// `cudaDevAttrTimelineSemaphoreInteropSupported` (always 0; NVSci /
+    /// timeline semaphore interop is not modeled).
+    TimelineSemaphoreInteropSupported,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -999,6 +1002,9 @@ pub struct DeviceProperties {
     /// `cudaDevAttrUnifiedFunctionPointers` (device-side function pointers
     /// are not modeled).
     pub unified_function_pointers: bool,
+    /// `cudaDevAttrTimelineSemaphoreInteropSupported` (NVSci / timeline
+    /// semaphore interop is not modeled).
+    pub timeline_semaphore_interop_supported: bool,
 }
 
 /// `cudaComputeMode` for [`DeviceAttr::ComputeMode`].
