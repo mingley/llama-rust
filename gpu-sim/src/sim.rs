@@ -10367,13 +10367,30 @@ impl Sim {
     /// Host-synchronous. Capture cannot include it. Partial offset/size unbind
     /// is not modeled. Live [`Self::va_map_multicast`] maps are Invalid
     /// `"still mapped"`. A device that is not currently bound is Invalid
-    /// `"not bound"`.
+    /// `"not bound"`. Typed helper; [`Self::multicast_unbind_with_size`] is the
+    /// CUDA size argument (must match the multicast object).
     pub fn multicast_unbind(&mut self, mc: MulticastId, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
+        let bytes = self.mc_ref(mc)?.bytes;
+        self.multicast_unbind_with_size(mc, device, bytes)
+    }
+
+    /// [`Self::multicast_unbind`] with the CUDA multicast size.
+    ///
+    /// `size` must equal the object bytes. Other sizes Invalid `"unbind size"`.
+    /// CUDA `mcOffset` is 0 (partial unbind is not modeled). Host-synchronous;
+    /// capture refused.
+    pub fn multicast_unbind_with_size(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        size: u64,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
         let _gpu = self.profile.gpu(device)?;
-        let (maps, bound) = {
+        let (maps, bound, bytes) = {
             let obj = self.mc_ref(mc)?;
-            (obj.maps, obj.binds.contains_key(&device))
+            (obj.maps, obj.binds.contains_key(&device), obj.bytes)
         };
         if maps > 0 {
             return Err(SimError::Invalid {
@@ -10382,6 +10399,9 @@ impl Sim {
         }
         if !bound {
             return Err(SimError::Invalid { why: "not bound" });
+        }
+        if size != bytes {
+            return Err(SimError::Invalid { why: "unbind size" });
         }
         let _gone = self.mc_mut(mc)?.binds.remove(&device);
         self.clock = self.clock.saturating_add(1);
