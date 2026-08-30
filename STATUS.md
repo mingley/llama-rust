@@ -5,6 +5,11 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cuDeviceTotalMem`
+
+`device_total_mem` is HBM bytes (same as TotalGlobalMem). Query;
+capture-legal. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaDeviceGetName`
 
 `device_get_name` is the profile name (same as `DeviceProperties::name`).

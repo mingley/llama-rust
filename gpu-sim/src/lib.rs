@@ -259,7 +259,8 @@
 //! [`Sim::device_get_attribute`] is `cudaDeviceGetAttribute` ([`DeviceAttr`]).
 //! [`Sim::device_get_properties`] is `cudaGetDeviceProperties` ([`DeviceProperties`];
 //! modeled caps only — no SM count or clock). [`Sim::device_get_name`] is
-//! `cudaDeviceGetName` (the profile name). [`DeviceAttr::CanMapHostMemory`]
+//! `cudaDeviceGetName` (the profile name). [`device_total_mem`](Sim::device_total_mem)
+//! is `cuDeviceTotalMem` (HBM bytes). [`DeviceAttr::CanMapHostMemory`]
 //! / [`DeviceAttr::ManagedMemory`] are always 1 (this VM has mapped host and
 //! UM). [`DeviceAttr::ClusterLaunch`] is `max_blocks_per_cluster > 0`.
 //! [`DeviceAttr::HostRegisterSupported`] / [`IpcEventSupport`](DeviceAttr::IpcEventSupport) /
@@ -10912,6 +10913,26 @@ mod tests {
         assert_eq!(sim.device_get_name(d).unwrap(), "example-h100-sxm");
         let _g = sim.end_capture().unwrap();
         match sim.device_get_name(DeviceId(9)) {
+            Err(SimError::Invalid { .. }) => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_total_mem_wraps_hbm_bytes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hbm = sim.device_get_properties(d).unwrap().total_global_mem;
+        assert_eq!(sim.device_total_mem(d).unwrap(), hbm);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TotalGlobalMem)
+                .unwrap(),
+            hbm
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.device_total_mem(d).unwrap(), hbm);
+        let _g = sim.end_capture().unwrap();
+        match sim.device_total_mem(DeviceId(9)) {
             Err(SimError::Invalid { .. }) => {}
             other => panic!("{other:?}"),
         }

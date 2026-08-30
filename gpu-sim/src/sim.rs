@@ -13046,6 +13046,14 @@ impl Sim {
         Ok(self.profile.name.clone())
     }
 
+    /// `cuDeviceTotalMem`. Query; legal during capture.
+    ///
+    /// [`crate::GpuProfile::hbm_bytes`] (same as [`DeviceAttr::TotalGlobalMem`] /
+    /// [`DeviceProperties::total_global_mem`]). Unknown devices are Invalid.
+    pub fn device_total_mem(&self, device: DeviceId) -> Result<u64, SimError> {
+        Ok(self.profile.gpu(device)?.hbm_bytes)
+    }
+
     /// `cudaGetDeviceCount`. Query; legal during capture.
     #[must_use]
     pub fn device_count(&self) -> u32 {
