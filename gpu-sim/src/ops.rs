@@ -165,7 +165,8 @@ impl Place {
 ///
 /// [`crate::Sim::graph_exec_memcpy_set_params`] patches this on an instantiated
 /// memcpy node (`cudaGraphExecMemcpyNodeSetParams`). Pageable src/dst stay
-/// illegal as graph params.
+/// illegal as graph params. [`Self::packed_1d`] is
+/// `cudaGraphAddMemcpyNode1D` / `MemcpyNodeSetParams1D`.
 ///
 /// [`Self::height`] `0` or `1` is `cudaMemcpyAsync` of [`Self::bytes`].
 /// `height > 1` and [`Self::depth`] `<= 1` is `cudaMemcpy2DAsync`:
@@ -226,6 +227,26 @@ impl Default for MemcpyOp {
 }
 
 impl MemcpyOp {
+    /// Packed `cudaMemcpy` / `cudaGraphAddMemcpyNode1D` of `bytes`.
+    ///
+    /// Height, depth, and pitches stay `0` ([`Self::default`]).
+    #[must_use]
+    pub fn packed_1d(src: Place, dst: Place, alloc: AllocId, bytes: u64) -> Self {
+        Self {
+            src,
+            dst,
+            alloc,
+            bytes,
+            ..Self::default()
+        }
+    }
+
+    /// Packed 1D copy: neither [`Self::is_2d`] nor [`Self::is_3d`].
+    #[must_use]
+    pub fn is_1d(&self) -> bool {
+        !self.is_2d() && !self.is_3d()
+    }
+
     /// `cudaMemcpy2D` / `height > 1` and not [`Self::is_3d`].
     #[must_use]
     pub fn is_2d(&self) -> bool {

@@ -2166,7 +2166,17 @@ model, do not celebrate the sim.
     unchanged. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-190. [ ] Next numbered PLAN item after 189 is the next `gpu-sim` / Engine /
+190. [x] `cudaGraphAddMemcpyNode1D` / `MemcpyNodeSetParams1D` /
+    `ExecMemcpyNodeSetParams1D`: `Sim::graph_add_memcpy_1d` /
+    `graph_memcpy_set_params_1d` / `graph_exec_memcpy_set_params_1d`
+    pack [`MemcpyOp::packed_1d`] (height/depth/pitches `0`). SetParams1D
+    may convert a 2D/3D node to 1D. Pageable copies stay illegal.
+    Definition Set does not retarget exec. Capture cannot include Add or
+    Set. Typed `graph_add_memcpy` / SetParams stay. Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+191. [ ] Next numbered PLAN item after 190 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

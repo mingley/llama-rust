@@ -3213,7 +3213,9 @@ impl Sim {
     ///
     /// After instantiate this does not retarget the exec; use
     /// [`Self::graph_exec_memcpy_set_params`]. Pageable copies stay illegal.
-    /// Capture cannot include it. Host-sync 1 ns.
+    /// Capture cannot include it. Host-sync 1 ns. [`Self::graph_memcpy_set_params_1d`]
+    /// is `cudaGraphMemcpyNodeSetParams1D` (packed 1D, including converting a
+    /// 2D/3D node).
     pub fn graph_memcpy_set_params(
         &mut self,
         graph: GraphId,
@@ -3251,6 +3253,24 @@ impl Sim {
         })?;
         step.kind = Kind::Memcpy(op.clone());
         Ok(())
+    }
+
+    /// `cudaGraphMemcpyNodeSetParams1D` on the graph definition.
+    ///
+    /// Packs a 1D [`MemcpyOp`] ([`MemcpyOp::packed_1d`]). A 2D/3D node may
+    /// become 1D. After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_memcpy_set_params_1d`]. Pageable copies stay illegal.
+    /// Capture cannot include it. Host-sync 1 ns.
+    pub fn graph_memcpy_set_params_1d(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        src: Place,
+        dst: Place,
+        alloc: AllocId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.graph_memcpy_set_params(graph, node, &MemcpyOp::packed_1d(src, dst, alloc, bytes))
     }
 
     /// `cudaGraphMemsetNodeSetParams` on the graph definition.
@@ -3693,6 +3713,8 @@ impl Sim {
     /// may change. Pageable copies stay illegal. Pays `graph_set_params_ns`
     /// and clears the upload flag. Capture cannot include it. Graphs with
     /// mem alloc/free nodes are legal (unlike [`Self::update_graph`]).
+    /// [`Self::graph_exec_memcpy_set_params_1d`] is
+    /// `cudaGraphExecMemcpyNodeSetParams1D`.
     pub fn graph_exec_memcpy_set_params(
         &mut self,
         exec: GraphId,
@@ -3732,6 +3754,22 @@ impl Sim {
         step.kind = Kind::Memcpy(op.clone());
         g.uploaded = false;
         Ok(())
+    }
+
+    /// `cudaGraphExecMemcpyNodeSetParams1D` on an instantiated exec.
+    ///
+    /// Packs a 1D [`MemcpyOp`]. A 2D/3D node may become 1D. Pageable copies
+    /// stay illegal. Pays `graph_set_params_ns`. Capture cannot include it.
+    pub fn graph_exec_memcpy_set_params_1d(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        src: Place,
+        dst: Place,
+        alloc: AllocId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.graph_exec_memcpy_set_params(exec, node, &MemcpyOp::packed_1d(src, dst, alloc, bytes))
     }
 
     /// `cudaGraphExecMemsetNodeSetParams` on an instantiated exec.
@@ -5549,6 +5587,7 @@ impl Sim {
     }
 
     /// `cudaGraphAddMemcpyNode`. Pageable copies cannot be graph nodes.
+    /// [`Self::graph_add_memcpy_1d`] is `cudaGraphAddMemcpyNode1D`.
     pub fn graph_add_memcpy(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         let _a = self.alloc_ref(op.alloc)?;
@@ -5559,6 +5598,18 @@ impl Sim {
         }
         memcpy_2d_check(&op)?;
         self.graph_push(graph, device, stream, Kind::Memcpy(op))
+    }
+
+    /// `cudaGraphAddMemcpyNode1D`. Pageable copies cannot be graph nodes.
+    pub fn graph_add_memcpy_1d(
+        &mut self,
+        graph: GraphId,
+        src: Place,
+        dst: Place,
+        alloc: AllocId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.graph_add_memcpy(graph, MemcpyOp::packed_1d(src, dst, alloc, bytes))
     }
 
     /// `cudaGraphAddMemsetNode` of a [`KernelBuf`] span (packed 1D).

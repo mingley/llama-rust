@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaGraphAddMemcpyNode1D` / SetParams1D
+
+`Sim::graph_add_memcpy_1d` / `graph_memcpy_set_params_1d` /
+`graph_exec_memcpy_set_params_1d` pack `MemcpyOp::packed_1d`. SetParams1D
+may convert a 2D/3D node to 1D. Pageable copies stay illegal. Definition
+Set does not retarget exec. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaGraphDebugDotPrint` flags
 
 `Sim::graph_debug_dot_with_flags` takes `GraphDebugDotFlags` (CUDA bits).
@@ -2192,7 +2199,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 189 (`DebugDotPrint` flags).
+Next code change is PLAN systems depth after item 190 (`AddMemcpyNode1D`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

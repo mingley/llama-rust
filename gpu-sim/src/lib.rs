@@ -212,6 +212,7 @@
 //! definition uses the primary exec. `cudaGraphExec*SetParams` accept either id.
 //! [`graph_kernel_set_params`](Sim::graph_kernel_set_params) /
 //! [`graph_memcpy_set_params`](Sim::graph_memcpy_set_params) /
+//! [`graph_memcpy_set_params_1d`](Sim::graph_memcpy_set_params_1d) /
 //! [`graph_memset_set_params`](Sim::graph_memset_set_params) /
 //! [`graph_host_set_params`](Sim::graph_host_set_params) /
 //! [`graph_batch_mem_op_set_params`](Sim::graph_batch_mem_op_set_params) /
@@ -219,7 +220,8 @@
 //! [`graph_event_record_set_event`](Sim::graph_event_record_set_event) /
 //! [`graph_event_wait_set_event`](Sim::graph_event_wait_set_event) /
 //! [`graph_child_set_params`](Sim::graph_child_set_params) are
-//! `cudaGraphKernelNodeSetParams` / `MemcpyNodeSetParams` / `MemsetNodeSetParams`
+//! `cudaGraphKernelNodeSetParams` / `MemcpyNodeSetParams` /
+//! `MemcpyNodeSetParams1D` / `MemsetNodeSetParams`
 //! / `HostNodeSetParams` / `BatchMemOpNodeSetParams` /
 //! `EventRecordNodeSetEvent` / `EventWaitNodeSetEvent` /
 //! `ChildGraphNodeSetParams`
@@ -322,9 +324,11 @@
 //! (`cudaLaunchAttributeDeviceUpdatableKernelNode`). Works on graphs with mem
 //! alloc/free nodes (CUDA cannot `cudaGraphExecUpdate` those). Capture cannot
 //! include it.
-//! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) is
-//! `cudaGraphExecMemcpyNodeSetParams` (same `graph_set_params_ns`; pageable
-//! still illegal; mem nodes legal). [`graph_unique_memcpy`](Sim::graph_unique_memcpy)
+//! [`graph_exec_memcpy_set_params`](Sim::graph_exec_memcpy_set_params) /
+//! [`graph_exec_memcpy_set_params_1d`](Sim::graph_exec_memcpy_set_params_1d)
+//! are `cudaGraphExecMemcpyNodeSetParams` / `SetParams1D` (same
+//! `graph_set_params_ns`; pageable still illegal; mem nodes legal; 1D may
+//! convert a 2D/3D node). [`graph_unique_memcpy`](Sim::graph_unique_memcpy)
 //! / [`graph_try_unique_memcpy`](Sim::graph_try_unique_memcpy) find that node.
 //! [`graph_exec_memset_set_params`](Sim::graph_exec_memset_set_params) is
 //! `cudaGraphExecMemsetNodeSetParams` (same cost; zero-byte still illegal).
@@ -383,6 +387,7 @@
 //! child-graph nodes are cloned recursively).
 //! [`Sim::create_graph`] is `cudaGraphCreate` (empty, not instantiated).
 //! [`Sim::graph_add_kernel`] / [`graph_add_memcpy`](Sim::graph_add_memcpy) /
+//! [`graph_add_memcpy_1d`](Sim::graph_add_memcpy_1d) /
 //! [`graph_add_memset`](Sim::graph_add_memset) /
 //! [`graph_add_memset_op`](Sim::graph_add_memset_op) /
 //! [`graph_add_host_func`](Sim::graph_add_host_func) /
@@ -2192,6 +2197,115 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_memcpy_1d_apis_pack_and_convert_2d_nodes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memcpy_1d(g, Place::HostPinned, Place::Device(d), a, 4096)
+            .unwrap();
+        let packed = MemcpyOp::packed_1d(Place::HostPinned, Place::Device(d), a, 4096);
+        let got = sim.graph_memcpy_get_params(g, 0).unwrap();
+        assert_eq!(got, packed);
+        assert!(got.is_1d());
+        assert!(!got.is_2d());
+        assert!(!got.is_3d());
+        let err = sim
+            .graph_add_memcpy_1d(g, Place::Host, Place::Device(d), a, 64)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("pageable"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g2 = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memcpy(
+            g2,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(d),
+                alloc: a,
+                bytes: 256,
+                height: 8,
+                src_pitch: 256,
+                dst_pitch: 512,
+                ..MemcpyOp::default()
+            },
+        )
+        .unwrap();
+        assert!(sim.graph_memcpy_get_params(g2, 0).unwrap().is_2d());
+        sim.graph_memcpy_set_params_1d(g2, 0, Place::HostPinned, Place::Device(d), a, 2048)
+            .unwrap();
+        let one = sim.graph_memcpy_get_params(g2, 0).unwrap();
+        assert!(one.is_1d());
+        assert_eq!(one.bytes, 2048);
+        assert_eq!(one.height, 0);
+        assert_eq!(one.src_pitch, 0);
+        let exec = sim.instantiate_graph(g2).unwrap();
+        sim.graph_memcpy_set_params_1d(g2, 0, Place::HostPinned, Place::Device(d), a, 1024)
+            .unwrap();
+        assert_eq!(
+            sim.graph_exec_memcpy_get_params(exec, 0).unwrap().bytes,
+            2048
+        );
+        assert_eq!(sim.graph_memcpy_get_params(g2, 0).unwrap().bytes, 1024);
+        sim.graph_exec_memcpy_set_params_1d(exec, 0, Place::HostPinned, Place::Device(d), a, 512)
+            .unwrap();
+        assert_eq!(
+            sim.graph_exec_memcpy_get_params(exec, 0).unwrap().bytes,
+            512
+        );
+        sim.begin_capture(d, s).unwrap();
+        let err = sim
+            .graph_add_memcpy_1d(g, Place::HostPinned, Place::Device(d), a, 8)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim
+            .graph_memcpy_set_params_1d(g2, 0, Place::HostPinned, Place::Device(d), a, 8)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim
+            .graph_exec_memcpy_set_params_1d(exec, 0, Place::HostPinned, Place::Device(d), a, 8)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
+        let err = sim
+            .graph_exec_memcpy_set_params_1d(exec, 0, Place::Host, Place::Device(d), a, 8)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("pageable"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let kern = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(kern, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let err = sim
+            .graph_memcpy_set_params_1d(kern, 0, Place::HostPinned, Place::Device(d), a, 8)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not a memcpy"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let inst = sim.instantiate_graph(g).unwrap();
+        let err = sim
+            .graph_add_memcpy_1d(inst, Place::HostPinned, Place::Device(d), a, 8)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

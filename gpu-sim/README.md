@@ -78,11 +78,11 @@ warp scheduler, L1, …   ← do not model
 | independent streams stay live during Relaxed capture (default); ThreadLocal/Global refuse uncaptured-stream submits | query/sync of a capturing stream is Invalid |
 | graph instantiate is host-sync and returns a new exec id; first launch of a definition creates a primary exec; `instantiate_graph_auto_free` is AutoFreeOnLaunch | `graph_instantiate_ns` |
 | graph upload is host-sync after instantiate; first launch pays it once | `graph_upload_ns` |
-| `cudaGraphKernelNodeSetParams` / `MemcpyNodeSetParams` / `MemsetNodeSetParams` / `HostNodeSetParams` patch the graph, not an already-instantiated exec | 1 ns host-sync |
+| `cudaGraphKernelNodeSetParams` / `MemcpyNodeSetParams` / `MemcpyNodeSetParams1D` / `MemsetNodeSetParams` / `HostNodeSetParams` patch the graph, not an already-instantiated exec | 1 ns host-sync |
 | `cudaGraph*NodeGetParams` reads the definition; `graph_exec_*_get_params` reads the exec snapshot | query |
 | graph update replaces the exec snapshot when topology matches (device, stream, kind, deps); mem nodes are Invalid; `update_graph_with_info` fills `cudaGraphExecUpdateResultInfo` | `graph_update_ns` |
 | `cudaGraphExecKernelNodeSetParams` patches one instantiated kernel node's pointers / kind (mem nodes legal; device-updatable nodes keep the exec uploaded) | `graph_set_params_ns` |
-| `cudaGraphExecMemcpyNodeSetParams` patches one instantiated memcpy node's `MemcpyOp` (mem nodes legal) | `graph_set_params_ns` |
+| `cudaGraphExecMemcpyNodeSetParams` / `SetParams1D` patches one instantiated memcpy node's `MemcpyOp` (mem nodes legal; 1D may convert 2D/3D) | `graph_set_params_ns` |
 | `cudaGraphExecMemsetNodeSetParams` patches one instantiated memset node's dest span (mem nodes legal) | `graph_set_params_ns` |
 | `cudaGraphExecHostNodeSetParams` patches one instantiated host node's `fn_id` / `userData` (mem nodes legal) | `graph_set_params_ns` |
 | `cudaGraphNodeSetEnabled` skips an instantiated node at launch (mem nodes illegal) | `graph_set_params_ns` |
@@ -94,7 +94,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaStreamBeginCaptureToGraph` (`begin_capture_to_graph`) appends captured nodes onto an existing uninstantiated graph; empty deps are extra roots | not timed (capture) |
 | `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes` | query |
 | `cudaGraphChildGraphNodeGetGraph` / `EventRecordNodeGetEvent` / `WaitNodeGetEvent` / `MemAllocNodeGetParams` | query |
-| `cudaGraphAddKernelNode` / memcpy / memset / host / empty / event / child / mem alloc/free / cooperative kernel / dependencies (`graph_add_*`) | not timed (host-side topology) |
+| `cudaGraphAddKernelNode` / memcpy / `AddMemcpyNode1D` / memset / host / empty / event / child / mem alloc/free / cooperative kernel / dependencies (`graph_add_*`) | not timed (host-side topology) |
 | graph destroy drops the id (`cudaGraphDestroy`); remaining graph mem is refunded; user-object refs held by the graph are released | 1 ns host-sync |
 | `cudaUserObjectCreate` / `Retain` / `Release`; last ref records the destroy `fn_id` | 1 ns host-sync |
 | `cudaGraphRetainUserObject` / `ReleaseUserObject` on a definition (`MOVE` transfers one caller ref); clone does not copy retains | 1 ns host-sync |
@@ -343,11 +343,13 @@ mismatch is `Invalid`. Graphs with mem alloc/free nodes cannot be updated.
 mem nodes, device-launch). `update_graph` uses that path and keeps the
 same `why` strings.
 `graph_kernel_set_params` / `graph_memcpy_set_params` /
-`graph_memset_set_params` / `graph_batch_mem_op_set_params` /
+`graph_memcpy_set_params_1d` / `graph_memset_set_params` /
+`graph_batch_mem_op_set_params` /
 `graph_batch_mem_ops_set_params` / `graph_event_record_set_event` /
 `graph_event_wait_set_event` / `graph_child_set_params` are
 `cudaGraphKernelNodeSetParams` /
-`MemcpyNodeSetParams` / `MemsetNodeSetParams` / `BatchMemOpNodeSetParams` /
+`MemcpyNodeSetParams` / `MemcpyNodeSetParams1D` / `MemsetNodeSetParams` /
+`BatchMemOpNodeSetParams` /
 `EventRecordNodeSetEvent` / `EventWaitNodeSetEvent` /
 `ChildGraphNodeSetParams` on the graph
 definition (do not retarget an already-instantiated exec). Child-graph
@@ -360,10 +362,12 @@ definition; Exec GetParams reads the snapshot (`as_exec`; uninstantiated
 is Invalid). Unique-node helpers (`graph_unique_kernel`, …) still use
 the launched/primary snapshot.
 `graph_exec_kernel_set_params` / `graph_exec_memcpy_set_params` /
-`graph_exec_memset_set_params` / `graph_exec_batch_mem_op_set_params` /
+`graph_exec_memcpy_set_params_1d` / `graph_exec_memset_set_params` /
+`graph_exec_batch_mem_op_set_params` /
 `graph_exec_batch_mem_ops_set_params` are
 `cudaGraphExecKernelNodeSetParams` / `cudaGraphExecMemcpyNodeSetParams` /
-`cudaGraphExecMemsetNodeSetParams` / `cudaGraphExecBatchMemOpNodeSetParams`
+`cudaGraphExecMemcpyNodeSetParams1D` / `cudaGraphExecMemsetNodeSetParams` /
+`cudaGraphExecBatchMemOpNodeSetParams`
 (`graph_set_params_ns`; mem nodes legal; pageable memcpy stays illegal;
 a `GpuOp::BatchMem` item list is a parameter; kernel SetParams keeps the
 exec uploaded when the node is device-updatable).
