@@ -133,7 +133,10 @@
 //! [`Sim::va_retain_handle`] is `cuMemRetainAllocationHandle` (handle refs;
 //! combined `va_map` spans are promoted). [`Sim::va_release_handle`] is
 //! `cuMemRelease` (allowed while mapped; HBM refunds when refs and maps are 0).
-//! [`Sim::va_map`] still Create+Maps in one call.
+//! [`va_get_allocation_properties`](Sim::va_get_allocation_properties) is
+//! `cuMemGetAllocationPropertiesFromHandle` ([`MemAllocationProp`]; pinned
+//! device location; handle types always none; RDMA capable wraps the SKU).
+//! Query; legal during capture. [`Sim::va_map`] still Create+Maps in one call.
 //! [`Sim::multicast_create`] / [`multicast_add_device`](Sim::multicast_add_device) /
 //! [`multicast_bind_mem`](Sim::multicast_bind_mem) / [`va_map_multicast`](Sim::va_map_multicast)
 //! are `cuMulticastCreate` / `cuMulticastAddDevice` / `cuMulticastBindMem` /
@@ -653,13 +656,13 @@ pub use ops::{
     GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags,
     HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind,
     KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags,
-    MemAdvise, MemAllocationType, MemAttach, MemAttachFlags, MemHandleType, MemLocationType,
-    MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap,
-    MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
-    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp,
+    MemAdvise, MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemHandleType,
+    MemLocationType, MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain,
+    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place,
+    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
+    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -13255,6 +13258,33 @@ mod tests {
         assert_eq!(sim.hbm_used(d).unwrap(), 0);
         sim.va_free(a).unwrap();
         sim.va_free(b).unwrap();
+    }
+
+    #[test]
+    fn va_get_allocation_properties_wraps_handle_device_and_rdma() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let h = sim.va_create(d, 4096).unwrap();
+        let p = sim.va_get_allocation_properties(h).unwrap();
+        assert_eq!(p.alloc_type, MemAllocationType::PINNED);
+        assert_eq!(p.handle_types, MemHandleType::NONE);
+        assert_eq!(p.location, Place::Device(d));
+        assert!(!p.gpu_direct_rdma_capable);
+        match sim.va_get_allocation_properties(MemHandleId(u64::MAX)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("handle"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mut rdma = Sim::new(HardwareProfile::example_2node_rdma());
+        let r = rdma.va_create(DeviceId(0), 4096).unwrap();
+        let rp = rdma.va_get_allocation_properties(r).unwrap();
+        assert_eq!(rp.location, Place::Device(DeviceId(0)));
+        assert!(rp.gpu_direct_rdma_capable);
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.va_get_allocation_properties(h).unwrap().location,
+            Place::Device(d)
+        );
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

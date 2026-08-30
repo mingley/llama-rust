@@ -2408,6 +2408,22 @@ impl MemAllocationType {
     pub const PINNED: u32 = 1;
 }
 
+/// `CUmemAllocationProp` for [`crate::Sim::va_get_allocation_properties`].
+///
+/// Compression and usage flags are not modeled. `cuMemCreate` does not store
+/// requested handle types (always [`MemHandleType::NONE`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemAllocationProp {
+    /// `CUmemAllocationType` ([`MemAllocationType::PINNED`]).
+    pub alloc_type: u32,
+    /// `CUmemAllocationHandleType` (always [`MemHandleType::NONE`]).
+    pub handle_types: u64,
+    /// Handle GPU (`cudaMemLocationTypeDevice`).
+    pub location: Place,
+    /// `allocFlags.gpuDirectRDMACapable` (an RDMA link on that GPU).
+    pub gpu_direct_rdma_capable: bool,
+}
+
 /// `cudaMemPoolProps` for [`crate::Sim::create_pool_with_props`].
 ///
 /// [`Self::alloc_type`] must be [`MemAllocationType::PINNED`].

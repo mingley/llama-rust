@@ -645,7 +645,10 @@ span). `va_create` is `cuMemCreate` (HBM, no VA). `va_map_handle` is `cuMemMap`
 of that handle (no second HBM charge; two VAs may share it). `va_retain_handle`
 is `cuMemRetainAllocationHandle` (combined `va_map` spans are promoted).
 `va_release_handle` is `cuMemRelease` while mapped; HBM refunds when refs and
-maps are 0. `va_map` still Create+Maps in one call.
+maps are 0. `va_get_allocation_properties` is
+`cuMemGetAllocationPropertiesFromHandle` (`MemAllocationProp`; pinned device
+location; handle types always none; RDMA capable wraps the SKU). Query;
+legal during capture. `va_map` still Create+Maps in one call.
 `va_set_access` is `cuMemSetAccess` PROT_READ on a peer (no dest HBM;
 writes still need a local map). `va_set_access_write` is PROT_READWRITE
 (peer writes, no dest HBM). `va_set_access_with_flags` is the flags word

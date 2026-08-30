@@ -2634,7 +2634,15 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-243. [ ] Next numbered PLAN item after 242 is the next `gpu-sim` / Engine /
+243. [x] `cuMemGetAllocationPropertiesFromHandle`:
+    [`Sim::va_get_allocation_properties`] returns [`MemAllocationProp`]
+    (pinned device location of the handle; handle types always none;
+    `gpuDirectRDMACapable` wraps the SKU). Compression / usage flags are
+    not modeled. Query; capture-legal. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+244. [ ] Next numbered PLAN item after 243 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

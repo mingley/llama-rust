@@ -18,13 +18,13 @@ use crate::ops::{
     GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
     GraphUserObjectFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags,
     KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
-    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAllocationType, MemAttach, MemAttachFlags,
-    MemHandleType, MemLocationType, MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
-    MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch,
-    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
-    SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
-    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAllocationProp, MemAllocationType,
+    MemAttach, MemAttachFlags, MemHandleType, MemLocationType, MemPoolAttr, MemPoolProps,
+    MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType,
+    MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes,
+    PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
+    SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo,
+    StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -9997,6 +9997,26 @@ impl Sim {
     /// Outstanding `cuMemCreate` / [`Self::va_retain_handle`] refs.
     pub fn handle_refs(&self, handle: MemHandleId) -> Result<u32, SimError> {
         Ok(self.handle_ref(handle)?.refs)
+    }
+
+    /// `cuMemGetAllocationPropertiesFromHandle`. Query; legal during capture.
+    ///
+    /// Always [`MemAllocationType::PINNED`] at [`Place::Device`] of the
+    /// handle's GPU. Handle types are [`MemHandleType::NONE`] (`cuMemCreate`
+    /// does not store requested types). [`MemAllocationProp::gpu_direct_rdma_capable`]
+    /// is an RDMA link on that GPU. Compression / usage flags are not modeled.
+    /// Unknown ids are Invalid `"unknown handle"`.
+    pub fn va_get_allocation_properties(
+        &self,
+        handle: MemHandleId,
+    ) -> Result<MemAllocationProp, SimError> {
+        let h = self.handle_ref(handle)?;
+        Ok(MemAllocationProp {
+            alloc_type: MemAllocationType::PINNED,
+            handle_types: MemHandleType::NONE,
+            location: Place::Device(h.device),
+            gpu_direct_rdma_capable: self.profile.gpu_direct_rdma_supported(h.device),
+        })
     }
 
     /// `cuMulticastCreate`: an NVLS multicast object. Does not charge HBM.
