@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaStreamGetId`
+
+`Sim::stream_get_id` is unique per `(device, stream)` (not the
+caller-chosen `StreamId`). Query; legal during capture. Unknown devices
+are Invalid. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaStreamGetCaptureInfo` `id_out`
 
 `StreamCaptureInfo::id` is unique per begin-capture sequence (starts at 1).
@@ -2165,7 +2171,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 185 (`GetCaptureInfo` `id_out`).
+Next code change is PLAN systems depth after item 186 (`cudaStreamGetId`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

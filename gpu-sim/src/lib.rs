@@ -153,6 +153,8 @@
 //! [`Sim::stream_get_flags`] is `cudaStreamGetFlags` (`0` blocking / `1`
 //! NonBlocking; NULL follows [`legacy_null_stream`](Sim::legacy_null_stream)).
 //! [`Sim::stream_get_priority`] is `cudaStreamGetPriority`.
+//! [`Sim::stream_get_id`] is `cudaStreamGetId` (unique per device/stream;
+//! not the caller-chosen [`StreamId`]).
 //! [`stream_get_attribute`](Sim::stream_get_attribute) /
 //! [`stream_set_attribute`](Sim::stream_set_attribute) are
 //! `cudaStreamGetAttribute` / `SetAttribute` of existing stream state
@@ -7621,6 +7623,33 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(sim.stream_get_flags(d, StreamId(1)).unwrap(), 1);
         assert_eq!(sim.device_get_properties(d).unwrap().async_engine_count, 2);
+    }
+
+    #[test]
+    fn stream_get_id_is_unique_per_device_stream() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let null = sim.stream_get_id(d, StreamId::NULL).unwrap();
+        let created = sim.stream_get_id(d, StreamId(1)).unwrap();
+        assert_ne!(null, created);
+        assert_eq!(null, sim.stream_get_id(d, StreamId::NULL).unwrap());
+        match sim.stream_get_id(DeviceId(1), StreamId(0)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.stream_get_id(d, StreamId(1)).unwrap(), created);
+        let _g = sim.end_capture().unwrap();
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let gpu0 = eight.stream_get_id(DeviceId(0), StreamId::NULL).unwrap();
+        let gpu1 = eight.stream_get_id(DeviceId(1), StreamId::NULL).unwrap();
+        assert_ne!(gpu0, gpu1);
+        eight.begin_capture(DeviceId(1), StreamId(0)).unwrap();
+        assert_eq!(
+            eight.stream_get_id(DeviceId(1), StreamId::NULL).unwrap(),
+            gpu1
+        );
+        let _g = eight.end_capture().unwrap();
     }
 
     #[test]

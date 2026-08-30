@@ -1293,6 +1293,19 @@ impl Sim {
         Ok(self.stream_priority(device, stream))
     }
 
+    /// `cudaStreamGetId`. Query; legal during capture.
+    ///
+    /// Unique per `(device, stream)` for this VM. [`StreamId`] stays
+    /// caller-chosen; this is not that handle and not a capture-sequence id.
+    /// Unknown devices are Invalid. This VM does not invent
+    /// `cudaStreamDestroy`.
+    pub fn stream_get_id(&self, device: DeviceId, stream: StreamId) -> Result<u64, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok((u64::from(device.0) << 16)
+            .saturating_add(u64::from(stream.0))
+            .saturating_add(1))
+    }
+
     /// `cudaStreamGetAttribute`. Query; legal during capture.
     ///
     /// Wraps existing stream state only. Green-context SM permille is not a

@@ -113,6 +113,7 @@ warp scheduler, L1, …   ← do not model
 | `device_get_properties` wraps the same SKU caps | `cudaGetDeviceProperties` |
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
 | `stream_get_priority` is the create priority | `cudaStreamGetPriority` |
+| `stream_get_id` is unique per device/stream | `cudaStreamGetId` |
 | `stream_get_attribute` / `stream_set_attribute` wrap existing stream state | `cudaStreamGetAttribute` / `SetAttribute` |
 | `device_count` is the profile GPU count | `cudaGetDeviceCount` |
 | `device_can_access_peer` / `device_get_p2p_attribute` are topology links | `cudaDeviceCanAccessPeer` / `GetP2PAttribute` |
@@ -456,6 +457,8 @@ of modeled per-device function attrs (`maxDynamicSharedSizeBytes` and
 `nonPortableClusterSizeAllowed`; not per kernel). `stream_get_flags` is `cudaStreamGetFlags`
 (`0` `cudaStreamDefault` / `1` `cudaStreamNonBlocking`; NULL follows
 `set_legacy_null_stream`). `stream_get_priority` is `cudaStreamGetPriority`.
+`stream_get_id` is `cudaStreamGetId` (unique per device/stream; not the
+caller-chosen `StreamId`).
 `stream_get_attribute` / `stream_set_attribute` are `cudaStreamGetAttribute` /
 `SetAttribute` of existing stream state (`StreamAttr`: priority, synchronization
 policy, mem-sync domain/map, NVLink-util-centric). Green-context SM permille is

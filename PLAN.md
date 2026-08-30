@@ -2130,7 +2130,14 @@ model, do not celebrate the sim.
     graph id. Decode identity unchanged. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-186. [ ] Next numbered PLAN item after 185 is the next `gpu-sim` / Engine /
+186. [x] `cudaStreamGetId`: `Sim::stream_get_id` is unique per
+    `(device, stream)` (not the caller-chosen [`StreamId`], not a capture
+    sequence id). Query; legal during capture. Unknown devices are
+    Invalid. This VM does not invent `cudaStreamDestroy`. Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+187. [ ] Next numbered PLAN item after 186 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
