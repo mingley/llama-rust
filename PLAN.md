@@ -3243,8 +3243,21 @@ model, do not celebrate the sim.
     with no stream window. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-316. [ ] Next numbered PLAN item after 315 is the next `gpu-sim` / Engine /
-    serve / expertvm mechanical API that is still missing. Do not invent
+316. [x] Official Gemma2 (`architecture=gemma2`): writer-built `tiny-gemma2`
+    plus decode of llama.cpp `src/models/gemma2.cpp` — Gemma embed-scale +
+    GeGLU, `post_attention_norm` / `ffn_norm` / `post_ffw_norm`, sliding-window
+    attention (`set_swa_pattern(2)`, `LLAMA_SWA_TYPE_STANDARD`), attn/final
+    tanh logit softcap. Convert-shaped `gemma2.*` KV (`attn_logit_softcapping`,
+    `final_logit_softcapping`, `attention.sliding_window`, `attention.key_length`
+    / `value_length`, `context_length`). Tied `output.weight`. Writer-tiny uses
+    `attention.sliding_window = 2` so short-seq tests clip. `{arch}.context_length`
+    is still unused for KV sizing. `gemma3` stays rejected. Decode identity vs
+    oracle. `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+317. [ ] Next numbered PLAN item after 316 is the next `gpu-sim` / Engine /
+    serve / expertvm mechanical API that is still missing, or the next official
+    decode family (`gemma3`). Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
     numbers, example `$/M tokens` rents, or `cudaStreamDestroy`.
