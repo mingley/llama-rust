@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params, timing events, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `cluster`) are the same mechanical
+//! `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `cluster`, `shared_mem`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -63,9 +63,11 @@
 //! is MaxShared carveout: occupies every Hyper-Q slot. `--non-portable-cluster`
 //! allows `--cluster N` above portable size up to the SKU max. `--sync-policy`
 //! auto|spin|yield|blocking is stream host-wait (`cudaLaunchAttributeSynchronizationPolicy`;
-//! Auto tax 0). Decode
+//! Auto tax 0). `--shared-mem` default|four|eight is kernel-node bank width
+//! (`cudaLaunchAttributeSharedMemoryMode`; Default never scales duration). Decode
 //! identity stays `cudaLaunchKernel` (no cluster / Default policy / no preferred
-//! dim / Default carveout / non-portable disallowed / Auto sync policy).
+//! dim / Default carveout / non-portable disallowed / Auto sync policy /
+//! Default shared-mem).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode
@@ -1466,8 +1468,8 @@ mod tests {
     use crate::tok::Tokenizer;
     use expertvm::{
         CachedStore, DeviceId, ExpertKey, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore,
-        Prefetch, Score, SimulatedGpuStore, StoreMetrics, StreamId, SynchronizationPolicy,
-        TieredStore, Trace,
+        Prefetch, Score, SharedMemoryMode, SimulatedGpuStore, StoreMetrics, StreamId,
+        SynchronizationPolicy, TieredStore, Trace,
     };
 
     struct GpuEngineOut {
@@ -3831,6 +3833,44 @@ mod tests {
             "blocking host wait must inflate decode-stream ITL; auto={} block={}",
             auto.0,
             block.0
+        );
+    }
+
+    #[test]
+    fn engine_gpu_shared_mem_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse(
+            "gpus=1\nshared_mem_eight_byte_permille=500\nfp16_flops=1000000\ncopy_engines=2\n",
+        )
+        .expect("shared-mem profile");
+        let def = mixed_gpu_decode_itl_at(
+            bytes.clone(),
+            false,
+            None,
+            GpuStoreCfg::default(),
+            profile.clone(),
+        );
+        let eight = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                shared_mem: SharedMemoryMode::EightByte,
+                ..GpuStoreCfg::default()
+            },
+            profile,
+        );
+        assert_eq!(def.2, 4);
+        assert_eq!(eight.2, 4);
+        assert_eq!(
+            def.4, eight.4,
+            "EightByte shared-mem must keep greedy identity"
+        );
+        assert!(
+            eight.1.wall_ns > def.1.wall_ns,
+            "EightByte at permille 500 must lengthen GEMM wall; default={} eight={}",
+            def.1.wall_ns,
+            eight.1.wall_ns
         );
     }
 

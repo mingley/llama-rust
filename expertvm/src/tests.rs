@@ -5716,6 +5716,52 @@ fn simulated_gpu_store_sync_policy_taxes_decode_stream() {
 }
 
 #[test]
+fn simulated_gpu_store_shared_mem_eight_lengthens_gemm() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile =
+        HardwareProfile::parse("gpus=1\nshared_mem_eight_byte_permille=500\nfp16_flops=1000000\n")
+            .expect("shared-mem profile");
+    let run = |mode: SharedMemoryMode| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = match SimulatedGpuStore::with_cfg(
+            inner,
+            1,
+            profile.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                shared_mem: mode,
+                ..GpuStoreCfg::default()
+            },
+        ) {
+            Ok(gpu) => gpu,
+            Err(err) => panic!("gpu: {err}"),
+        };
+        let key = ExpertKey::new(0, 0);
+        match gpu.acquire(key) {
+            Ok(_) => {}
+            Err(err) => panic!("warm: {err}"),
+        }
+        gpu.release(key);
+        let t0 = gpu.clock_ns().expect("drain");
+        match gpu.acquire(key) {
+            Ok(_) => {}
+            Err(err) => panic!("hit: {err}"),
+        }
+        gpu.release(key);
+        gpu.clock_ns().expect("done").saturating_sub(t0)
+    };
+    let def = run(SharedMemoryMode::Default);
+    let eight = run(SharedMemoryMode::EightByte);
+    assert!(
+        eight > def,
+        "EightByte at permille 500 must lengthen hit GEMM; default={def} eight={eight}"
+    );
+}
+
+#[test]
 fn simulated_gpu_store_compute_slots_overlap_across_token_clock() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1])],
@@ -6035,6 +6081,36 @@ fn sim_replay_sync_policy_taxes_decode_priority_itl() {
     assert!(
         block_itl > auto_itl,
         "blocking host wait must inflate decode ITL; auto={auto_itl} block={block_itl}"
+    );
+}
+
+#[test]
+fn sim_replay_shared_mem_eight_lengthens() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0]), ev(2, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse(
+        "gpus=1\nshared_mem_eight_byte_permille=500\nfp16_flops=1000000\ncopy_engines=2\n",
+    )
+    .expect("shared-mem profile");
+    let base = SimCfg::lru(1, 4096, 0);
+    let def = sim_replay_cfg(&t, profile.clone(), base).expect("default");
+    let eight = sim_replay_cfg(
+        &t,
+        profile,
+        SimCfg {
+            shared_mem: SharedMemoryMode::EightByte,
+            ..base
+        },
+    )
+    .expect("eight");
+    assert_eq!(def.hits, eight.hits);
+    assert_eq!(def.misses, eight.misses);
+    assert!(
+        eight.sim_ns > def.sim_ns,
+        "EightByte at permille 500 must lengthen replay GEMMs; default={} eight={}",
+        def.sim_ns,
+        eight.sim_ns
     );
 }
 

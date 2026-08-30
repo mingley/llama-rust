@@ -102,7 +102,10 @@ every Hyper-Q slot. `--non-portable-cluster` is
 exceed portable size up to the SKU max (Hopper portable 8). `--sync-policy
 auto|spin|yield|blocking` is `cudaLaunchAttributeSynchronizationPolicy` on
 created streams (decode-stream ITL pays `host_sync_*_ns` when `--decode-priority`;
-Auto tax 0). Expert GEMMs stay
+Auto tax 0). `--shared-mem default|four|eight` is
+`cudaLaunchAttributeSharedMemoryMode` on grouped expert GEMMs (Default never
+scales duration; FourByte / EightByte scale by `1000 / shared_mem_*_permille`).
+Expert GEMMs stay
 on the Default mem-sync domain; gpu-sim allreduce tags Remote so a
 non-zero `same_domain_fence_permille` does not flush expert compute behind
 communication. `--cooperative` is
@@ -227,9 +230,9 @@ on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--shareable` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` /
 `--seq-streams` / `--kv-sim` / `--kv-bytes` / `--decode-priority` /
-`--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--non-portable-cluster` / `--sync-policy` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
+`--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--non-portable-cluster` / `--sync-policy` / `--shared-mem` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
 `expertvm sim` / `schedule` / `store` take `--compute-slots` / `--decode-sms`
-/ `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--non-portable-cluster` / `--sync-policy` / `--multicast` / `--shareable` (Hyper-Q occupancy, green-context SM fraction,
+/ `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--non-portable-cluster` / `--sync-policy` / `--shared-mem` / `--multicast` / `--shareable` (Hyper-Q occupancy, green-context SM fraction,
 decode-stream ITL, exclusive cooperative GEMMs, same-stream PDL overlap, Hopper cluster occupancy / preferred dim / Spread scheduling / non-portable size, NVLS replica fanout, and POSIX-FD mempool IPC on the trace walker). Walker `--decode-sms` does **not**
 imply `--decode-priority` (token 0 is prefill). `--decode-priority` implies
 `--stream-priority` so leftover prefill does not inflate decode ITL.
@@ -251,7 +254,8 @@ even when `N` is smaller than `--compute-slots` (no-op without `--cluster`
 of at least 2). `--max-shared` occupies every Hyper-Q slot via MaxShared
 carveout. `--non-portable-cluster` allows `--cluster N` above portable size
 up to the SKU max. `--sync-policy auto|spin|yield|blocking` is stream host-wait
-(Auto tax 0). `--cooperative` is
+(Auto tax 0). `--shared-mem default|four|eight` is kernel-node bank width
+(Default never scales). `--cooperative` is
 `cudaLaunchCooperativeKernel`: those GEMMs occupy every Hyper-Q slot, so
 leftover prefill cannot overlap even with `--compute-slots 2`. `--decode-sms N` (`1..=1000`)
 is a green-context SM fraction on the decode stream (leftover prefill gets

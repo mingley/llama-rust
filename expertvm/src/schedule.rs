@@ -340,6 +340,7 @@ impl SchedRt {
             .with_preferred_cluster(cfg.preferred_cluster)
             .with_cluster_spread(cfg.cluster_spread)
             .with_max_shared(cfg.max_shared)
+            .with_shared_mem(cfg.shared_mem)
             .with_set_params(cfg.graph_set_params)
             .with_piecewise(cfg.graph_piecewise),
             ctr: ReplayCounters::default(),

@@ -38,6 +38,7 @@ infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --seq-
 infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --seq-streams --compute-slots 2 --max-shared
 infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --cluster 2 --non-portable-cluster
 infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --decode-priority --sync-policy blocking
+infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --shared-mem eight
 infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --prefill-chunk 1 --decode-priority --compute-slots 2
 ```
 

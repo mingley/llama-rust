@@ -198,6 +198,12 @@ pub struct GpuStoreCfg {
     /// [`Self::decode_priority`]). [`gpu_sim::SynchronizationPolicy::Auto`] tax
     /// is 0. Decode identity stays Auto.
     pub sync_policy: gpu_sim::SynchronizationPolicy,
+    /// Shared-memory bank width (`cudaLaunchAttributeSharedMemoryMode`).
+    ///
+    /// Default never scales duration. FourByte / EightByte scale grouped GEMM
+    /// time by `1000 / GpuProfile::shared_mem_*_permille` (profile default
+    /// 1000). Decode identity stays Default.
+    pub shared_mem: gpu_sim::SharedMemoryMode,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// [`Self::pin_hot`] and walker `--place replicas` map dest VMM physicals
@@ -275,6 +281,7 @@ pub struct SimulatedGpuStore {
     preferred_cluster: u8,
     cluster_spread: bool,
     max_shared: bool,
+    shared_mem: gpu_sim::SharedMemoryMode,
     multicast: bool,
     next_event: u32,
     pages: BTreeMap<ExpertKey, GpuPage>,
@@ -430,6 +437,8 @@ impl SimulatedGpuStore {
     /// thread-block cluster dims.
     /// [`GpuStoreCfg::sync_policy`] is stream host-wait
     /// (`cudaLaunchAttributeSynchronizationPolicy`; Auto tax 0).
+    /// [`GpuStoreCfg::shared_mem`] is kernel-node bank width
+    /// (`cudaLaunchAttributeSharedMemoryMode`; Default never scales).
     /// [`GpuStoreCfg::multicast`] is Hopper NVLS replica fanout (requires
     /// [`GpuFill::Vmm`] and NVLink).
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
@@ -545,6 +554,7 @@ impl SimulatedGpuStore {
             preferred_cluster: cfg.preferred_cluster,
             cluster_spread: cfg.cluster_spread,
             max_shared: cfg.max_shared,
+            shared_mem: cfg.shared_mem,
             multicast: cfg.multicast,
             next_event: 1,
             pages: BTreeMap::new(),
@@ -663,6 +673,7 @@ impl SimulatedGpuStore {
             preferred_cluster: self.preferred_cluster,
             cluster_spread: self.cluster_spread,
             max_shared: self.max_shared,
+            shared_mem: self.shared_mem,
         }
     }
 

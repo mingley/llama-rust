@@ -43,6 +43,8 @@ pub(crate) struct GemmFlags {
     pub cluster_spread: bool,
     /// `cudaLaunchAttributePreferredSharedMemoryCarveout` MaxShared.
     pub max_shared: bool,
+    /// `cudaLaunchAttributeSharedMemoryMode`. Decode identity stays Default.
+    pub shared_mem: gpu_sim::SharedMemoryMode,
 }
 
 impl GemmFlags {
@@ -92,6 +94,7 @@ impl GemmFlags {
             preferred_cluster: self.preferred_cluster_dim(),
             cluster_policy: self.cluster_policy(),
             carveout: self.carveout(),
+            shared_mem: self.shared_mem,
             ..KernelAttrs::default()
         }
     }
@@ -125,7 +128,8 @@ use crate::replay::{Touch, Walker};
 use gpu_sim::{
     AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceId, EventId, GraphId,
     HardwareProfile, KernelAttrs, KernelBuf, KernelKind, MemcpyOp, Place, PoolId,
-    ProgrammaticLaunch, Score, SharedMemCarveout, Sim, StreamId, SynchronizationPolicy,
+    ProgrammaticLaunch, Score, SharedMemCarveout, SharedMemoryMode, Sim, StreamId,
+    SynchronizationPolicy,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -468,6 +472,13 @@ pub struct SimCfg {
     /// Decode identity stays Auto. [`crate::GpuStoreCfg::sync_policy`] is the
     /// store path.
     pub sync_policy: gpu_sim::SynchronizationPolicy,
+    /// Shared-memory bank width (`cudaLaunchAttributeSharedMemoryMode`).
+    ///
+    /// Default never scales duration. FourByte / EightByte scale by
+    /// `1000 / GpuProfile::shared_mem_*_permille` (profile default 1000).
+    /// Decode identity stays Default. [`crate::GpuStoreCfg::shared_mem`] is
+    /// the store path.
+    pub shared_mem: gpu_sim::SharedMemoryMode,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// `--place replicas` maps dest VMM physicals then one NVLS kernel instead
@@ -542,6 +553,7 @@ impl SimCfg {
             max_shared: false,
             non_portable_cluster: false,
             sync_policy: gpu_sim::SynchronizationPolicy::Auto,
+            shared_mem: gpu_sim::SharedMemoryMode::Default,
             multicast: false,
             compute_slots: 0,
             decode_sm_permille: 0,
@@ -670,6 +682,7 @@ pub fn sim_replay_cfg(
         .with_preferred_cluster(cfg.preferred_cluster)
         .with_cluster_spread(cfg.cluster_spread)
         .with_max_shared(cfg.max_shared)
+        .with_shared_mem(cfg.shared_mem)
         .with_set_params(cfg.graph_set_params)
         .with_piecewise(cfg.graph_piecewise);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
@@ -927,6 +940,7 @@ pub(crate) struct GraphBank {
     preferred_cluster: u8,
     cluster_spread: bool,
     max_shared: bool,
+    shared_mem: gpu_sim::SharedMemoryMode,
     set_params: bool,
     pub updates: u64,
     pub clones: u64,
@@ -950,6 +964,7 @@ impl GraphBank {
             preferred_cluster: 0,
             cluster_spread: false,
             max_shared: false,
+            shared_mem: gpu_sim::SharedMemoryMode::Default,
             set_params: false,
             updates: 0,
             clones: 0,
@@ -992,6 +1007,11 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_shared_mem(mut self, mode: SharedMemoryMode) -> Self {
+        self.shared_mem = mode;
+        self
+    }
+
     fn gemm_flags(&self) -> GemmFlags {
         GemmFlags {
             cooperative: self.cooperative,
@@ -1001,6 +1021,7 @@ impl GraphBank {
             preferred_cluster: self.preferred_cluster,
             cluster_spread: self.cluster_spread,
             max_shared: self.max_shared,
+            shared_mem: self.shared_mem,
         }
     }
 
@@ -1973,6 +1994,10 @@ fn add_gemm_kernel(
     if flags.max_shared {
         let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_carveout(graph, node, SharedMemCarveout::MaxShared)?;
+    }
+    if flags.shared_mem != SharedMemoryMode::Default {
+        let node = usize::from(!writes.is_empty());
+        sim.graph_kernel_node_set_shared_mem(graph, node, flags.shared_mem)?;
     }
     Ok(())
 }

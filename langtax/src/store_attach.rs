@@ -3,8 +3,8 @@
 use crate::decode::Llama;
 use crate::engine::Engine;
 use expertvm::{
-    CachedStore, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore, Prefetch, SimulatedGpuStore,
-    SynchronizationPolicy,
+    CachedStore, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore, Prefetch, SharedMemoryMode,
+    SimulatedGpuStore, SynchronizationPolicy,
 };
 
 /// CLI knobs that build a [`LiveStore`] for an [`Engine`].
@@ -81,6 +81,10 @@ pub(crate) struct GpuCli {
     pub sync_policy: SynchronizationPolicy,
     /// True when `--sync-policy` appeared.
     pub sync_policy_set: bool,
+    /// Kernel-node bank width (`GpuStoreCfg::shared_mem`).
+    pub shared_mem: SharedMemoryMode,
+    /// True when `--shared-mem` appeared.
+    pub shared_mem_set: bool,
     /// Hopper NVLS replica fanout (`GpuStoreCfg::multicast`). Implies vmm.
     pub multicast: bool,
     /// Hyper-Q occupancy (`GpuStoreCfg::compute_slots`). `0` keeps the profile.
@@ -231,6 +235,14 @@ impl GpuCli {
         Ok(())
     }
 
+    /// Kernel-node bank width (`--shared-mem default|four|eight`).
+    pub(crate) fn set_shared_mem(&mut self, raw: &str) -> Result<(), String> {
+        self.shared_mem =
+            SharedMemoryMode::parse(raw).map_err(|_| format!("unknown shared-mem {raw}"))?;
+        self.shared_mem_set = true;
+        Ok(())
+    }
+
     /// Preferred cluster needs a required `--cluster` that it is a multiple of.
     pub(crate) fn check_preferred_cluster(self) -> Result<(), String> {
         if !self.preferred_cluster_set {
@@ -285,6 +297,7 @@ impl GpuCli {
             (self.max_shared, "--max-shared"),
             (self.non_portable_cluster, "--non-portable-cluster"),
             (self.sync_policy_set, "--sync-policy"),
+            (self.shared_mem_set, "--shared-mem"),
             (self.decode_sm_set, "--decode-sms"),
         ]
         .into_iter()
@@ -343,6 +356,7 @@ enum PlanSlot {
     Cluster,
     PreferredCluster,
     SyncPolicy,
+    SharedMem,
     DecodeSms,
     Prefetch,
     PlanWindow,
@@ -358,6 +372,7 @@ impl PlanSlot {
             Self::Cluster => "cluster",
             Self::PreferredCluster => "preferred-cluster",
             Self::SyncPolicy => "sync-policy",
+            Self::SharedMem => "shared-mem",
             Self::DecodeSms => "decode-sms",
             Self::Prefetch => "prefetch",
             Self::PlanWindow => "plan-window",
@@ -378,6 +393,7 @@ impl PlannerCli {
             "--cluster" => Dash::Need(PlanSlot::Cluster),
             "--preferred-cluster" => Dash::Need(PlanSlot::PreferredCluster),
             "--sync-policy" => Dash::Need(PlanSlot::SyncPolicy),
+            "--shared-mem" => Dash::Need(PlanSlot::SharedMem),
             "--decode-sms" => Dash::Need(PlanSlot::DecodeSms),
             "--prefetch" => Dash::Need(PlanSlot::Prefetch),
             "--plan-window" => Dash::Need(PlanSlot::PlanWindow),
@@ -419,6 +435,7 @@ impl PlannerCli {
                 self.gpu.set_preferred_cluster(n)?;
             }
             PlanSlot::SyncPolicy => self.gpu.set_sync_policy(raw)?,
+            PlanSlot::SharedMem => self.gpu.set_shared_mem(raw)?,
             PlanSlot::DecodeSms => {
                 let n = raw
                     .parse::<u16>()
@@ -521,6 +538,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         max_shared: gpu.max_shared,
         non_portable_cluster: gpu.non_portable_cluster,
         sync_policy: gpu.sync_policy,
+        shared_mem: gpu.shared_mem,
         multicast: gpu.multicast,
         compute_slots: gpu.compute_slots,
         decode_sm_permille: gpu.decode_sm_permille,

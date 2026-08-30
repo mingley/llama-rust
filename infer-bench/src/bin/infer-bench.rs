@@ -1,6 +1,6 @@
 //! `infer-bench adversarial | trace` — measured hit rates and sim scores.
 
-use gpu_sim::SynchronizationPolicy;
+use gpu_sim::{SharedMemoryMode, SynchronizationPolicy};
 use infer_bench::{
     adversarial_suite, colocated, report, schedule_placed, schedule_remote, sim_placed,
     sim_remote_home_cfg, striped, topology_suite, with_hot_replicas, HardwareProfile, SchedCfg,
@@ -18,7 +18,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -139,6 +139,7 @@ fn run() -> Result<(), String> {
             sim_cfg.max_shared = cfg.max_shared;
             sim_cfg.non_portable_cluster = cfg.non_portable_cluster;
             sim_cfg.sync_policy = cfg.sync_policy;
+            sim_cfg.shared_mem = cfg.shared_mem;
             sim_cfg.multicast = cfg.multicast;
             if cfg.multicast {
                 sim_cfg.vmm = true;
@@ -215,6 +216,7 @@ struct Cfg {
     max_shared: bool,
     non_portable_cluster: bool,
     sync_policy: SynchronizationPolicy,
+    shared_mem: SharedMemoryMode,
     multicast: bool,
 }
 
@@ -257,6 +259,7 @@ where
     let mut max_shared = false;
     let mut non_portable_cluster = false;
     let mut sync_policy = SynchronizationPolicy::Auto;
+    let mut shared_mem = SharedMemoryMode::Default;
     let mut multicast = false;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
@@ -337,6 +340,9 @@ where
             "--sync-policy" => {
                 sync_policy = parse_sync_policy(&value("sync-policy", inline, &mut it)?)?
             }
+            "--shared-mem" => {
+                shared_mem = parse_shared_mem(&value("shared-mem", inline, &mut it)?)?
+            }
             "--multicast" => {
                 multicast = !matches!(inline.as_deref(), Some("0" | "false"));
             }
@@ -415,6 +421,7 @@ where
         max_shared,
         non_portable_cluster,
         sync_policy,
+        shared_mem,
         multicast,
     })
 }
@@ -466,6 +473,10 @@ fn parse_preferred_cluster(s: &str) -> Result<u8, String> {
 
 fn parse_sync_policy(s: &str) -> Result<SynchronizationPolicy, String> {
     SynchronizationPolicy::parse(s).map_err(|_| format!("unknown sync-policy {s}"))
+}
+
+fn parse_shared_mem(s: &str) -> Result<SharedMemoryMode, String> {
+    SharedMemoryMode::parse(s).map_err(|_| format!("unknown shared-mem {s}"))
 }
 
 fn parse_workload(name: &str) -> Result<Workload, String> {

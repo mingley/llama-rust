@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — expertvm `--shared-mem`
+
+`expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and
+`infer-bench schedule` take `--shared-mem default|four|eight`. Grouped expert
+GEMMs launch with `cudaLaunchAttributeSharedMemoryMode`. Default never scales
+duration. FourByte / EightByte scale kernel time by
+`1000 / shared_mem_*_permille` (profile default 1000 is identity). Legal with
+`--pdl` and `--cooperative`. Decode identity stays Default.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaLaunchAttributeSharedMemoryMode`
 
 Kernel-node bank width Default / FourByte / EightByte (SetAttribute /
