@@ -3221,7 +3221,18 @@ model, do not celebrate the sim.
     identity unchanged. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-314. [ ] Next numbered PLAN item after 313 is the next `gpu-sim` / Engine /
+314. [x] Official Bloom (`architecture=bloom`): writer-built `tiny-bloom`
+    plus decode of llama.cpp `src/models/bloom.cpp` — `token_embd_norm`
+    LayerNorm, fused `attn_qkv` (concatenated Q/K/V), `LLM_NORM` on
+    attn/ffn/output, sequential residual, `LLM_FFN_GELU`/`LLM_FFN_SEQ`
+    with biases, ALiBi (`f_max_alibi_bias = 8`, no RoPE). Convert-shaped
+    `bloom.*` KV (`layer_norm_epsilon`, `feed_forward_length = 4 * n_embed`,
+    `head_count_kv = n_head`, `context_length`). `{arch}.context_length`
+    is still unused for KV sizing. `gemma2` stays rejected. Decode
+    identity vs oracle. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+315. [ ] Next numbered PLAN item after 314 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
