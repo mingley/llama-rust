@@ -1876,6 +1876,33 @@ model, do not celebrate the sim.
     Decode identity stays single-device. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
+157. [x] `cudaGetDeviceProperties` / extra `DeviceAttr`:
+    `Sim::device_get_properties` wraps existing `GpuProfile` /
+    `HardwareProfile.name` fields only (HBM, shared mem, L2, copy
+    engines, Hyper-Q concurrent kernels, cooperative launch, cluster
+    sizes, mem-sync domains, mempools). No SM count, clock, or warp size.
+    `DeviceAttr::TotalGlobalMem` / `AsyncEngineCount` are `hbm_bytes` /
+    `copy_engines`. Query; legal during capture. Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+158. [x] `cudaStreamGetFlags` / `cudaStreamGetPriority`:
+    `Sim::stream_get_flags` is `0` (`cudaStreamDefault` / blocking) or
+    `1` (`cudaStreamNonBlocking`). `StreamId::NULL` follows
+    `set_legacy_null_stream` (off → NonBlocking). `stream_get_priority`
+    is the create priority (unset `0`). This VM does not cap the range.
+    Query; legal during capture. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+159. [x] Serve `GET /v1/models` / `GET /health` / `GET /metrics`:
+    OpenAI list/retrieve of `--model-id` (default GGUF path stem).
+    Completions/chat envelopes include `"model"`. `/health` is
+    `{"status":"ok"}`. Default `/metrics` is `{"engine":false}`;
+    `--engine` reports live Engine counters. POST generate/completions
+    stay 405 on GET. Decode identity unchanged. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

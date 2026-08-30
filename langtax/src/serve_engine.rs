@@ -5,7 +5,8 @@
 //! decodes GEMM together. `"stream": true` is HTTP/1.1 chunked NDJSON token
 //! lines then a final `generated` object. `/v1/completions` and
 //! `/v1/chat/completions` use the same scheduler with an OpenAI `choices`
-//! envelope; stream is chunked SSE. `--prefill-chunk`, `--decode-first`,
+//! envelope; stream is chunked SSE. `GET /v1/models`, `GET /health`, and
+//! `GET /metrics` (Engine counters) do not admit a sequence. `--prefill-chunk`, `--decode-first`,
 //! `--slo-reject`, `--itl-slo-ns`, graph knobs, fill modes, `GpuStoreCfg`
 //! CUDA knobs, `--prefetch` / `--plan-window` / `--plan-threshold`, `--seq-streams`, and
 //! `--trace-out` match `gguf_gemv engine`. No Tokio.
@@ -18,11 +19,11 @@ use std::net::{TcpListener, TcpStream};
 use crate::decode::{prompt_ids, Llama, LlamaError};
 use crate::engine::{Engine, EngineCfg, SeqId, SeqOutput};
 use crate::serve::{
-    finish_reason, http_chunk, http_chunk_end, http_chunked_headers, http_err_status,
+    dispatch_get, finish_reason, http_chunk, http_chunk_end, http_chunked_headers, http_err_status,
     http_json_bytes, http_sse_headers, json_error, json_generated, json_openai_chat,
-    json_openai_completion, json_openai_error, json_token, parse_gen_req,
-    sse_chat_delta, sse_completion_delta, sse_done, try_parse_http_request, HttpRequest,
-    ServeApi, ServeArgs, ServeError, MAX_REQ,
+    json_openai_completion, json_openai_error, json_token, parse_gen_req, path_only,
+    sse_chat_delta, sse_completion_delta, sse_done, try_parse_http_request, HttpRequest, ServeApi,
+    ServeArgs, ServeError, MAX_REQ,
 };
 use crate::store_attach::{attach_store, StoreAttach};
 use crate::tok::Tokenizer;
@@ -44,6 +45,7 @@ pub(crate) fn run_loop(
 pub(crate) struct EngineHttp<'a> {
     tok: &'a Tokenizer,
     n_predict: usize,
+    model_id: String,
     engine: Engine<'a>,
     listener: TcpListener,
     conns: Vec<Conn>,
@@ -96,6 +98,25 @@ impl AdmitOut {
 
 fn io_again(e: &std::io::Error) -> bool {
     matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::Interrupted)
+}
+
+fn json_engine_metrics(engine: &Engine<'_>) -> String {
+    let mut s = String::from("{\"engine\":true,\"active\":");
+    s.push_str(&engine.active().to_string());
+    s.push_str(",\"waiting\":");
+    s.push_str(&engine.waiting().to_string());
+    s.push_str(",\"preempts\":");
+    s.push_str(&engine.preempts().to_string());
+    s.push_str(",\"rejected\":");
+    s.push_str(&engine.rejected().to_string());
+    s.push_str(",\"itl_slo_miss\":");
+    s.push_str(&engine.itl_slo_miss().to_string());
+    s.push_str(",\"graph_launches\":");
+    s.push_str(&engine.graph_launches().to_string());
+    s.push_str(",\"steps\":");
+    s.push_str(&engine.stats().steps.to_string());
+    s.push('}');
+    s
 }
 
 fn engine_cfg(tok: &Tokenizer, args: &ServeArgs) -> EngineCfg {
@@ -328,6 +349,7 @@ impl<'a> EngineHttp<'a> {
         Ok(Self {
             tok,
             n_predict: args.n_predict,
+            model_id: args.model_id.clone(),
             engine,
             listener,
             conns: Vec::new(),
@@ -431,6 +453,20 @@ impl<'a> EngineHttp<'a> {
 
     fn admit_req(&mut self, req: &HttpRequest) -> AdmitOut {
         let ka = req.keep_alive;
+        if req.method == "GET" {
+            let path = crate::serve::normalize_path(path_only(&req.path));
+            if path == "/metrics" {
+                return AdmitOut::Bytes(http_json_bytes(
+                    200,
+                    "OK",
+                    &json_engine_metrics(&self.engine),
+                    ka,
+                ));
+            }
+            if let Some((status, reason, body)) = dispatch_get(&req.path, &self.model_id, true) {
+                return AdmitOut::Bytes(http_json_bytes(status, reason, &body, ka));
+            }
+        }
         let api = ServeApi::from_path(&req.path);
         if req.method != "POST" {
             return AdmitOut::http(405, "Method Not Allowed", "method must be POST", ka, api);
@@ -460,13 +496,7 @@ impl<'a> EngineHttp<'a> {
             Ok(ids) if !ids.is_empty() => ids,
             Ok(_) => return AdmitOut::http(400, "Bad Request", "empty prompt", ka, Some(api)),
             Err(e) => {
-                return AdmitOut::http(
-                    500,
-                    "Internal Server Error",
-                    &e.to_string(),
-                    ka,
-                    Some(api),
-                )
+                return AdmitOut::http(500, "Internal Server Error", &e.to_string(), ka, Some(api))
             }
         };
         match self.engine.add(&ids, n_predict) {
@@ -479,13 +509,7 @@ impl<'a> EngineHttp<'a> {
             Err(LlamaError::EmptyPrompt) => {
                 AdmitOut::http(400, "Bad Request", "empty prompt", ka, Some(api))
             }
-            Err(e) => AdmitOut::http(
-                500,
-                "Internal Server Error",
-                &e.to_string(),
-                ka,
-                Some(api),
-            ),
+            Err(e) => AdmitOut::http(500, "Internal Server Error", &e.to_string(), ka, Some(api)),
         }
     }
 
@@ -522,10 +546,11 @@ impl<'a> EngineHttp<'a> {
             let next = ids.len();
             let piece = self.tok.decode(new_ids);
             let api = self.conns.get(i).map_or(ServeApi::Generate, |c| c.api);
+            let model = self.model_id.clone();
             let payload = match api {
                 ServeApi::Generate => json_token(&piece),
-                ServeApi::Completions => sse_completion_delta(&piece, None),
-                ServeApi::Chat => sse_chat_delta(&piece, None),
+                ServeApi::Completions => sse_completion_delta(&piece, None, &model),
+                ServeApi::Chat => sse_chat_delta(&piece, None, &model),
             };
             if let Some(c) = self.conns.get_mut(i) {
                 c.write.extend(http_chunk(payload.as_bytes()));
@@ -579,6 +604,7 @@ impl<'a> EngineHttp<'a> {
             return Ok(());
         };
         let reason = finish_reason(out.generated.len(), n_predict);
+        let model = self.model_id.clone();
         let json = match api {
             ServeApi::Generate => json_generated(&decode_seq(self.tok, &out), 0, pages),
             ServeApi::Completions => json_openai_completion(
@@ -586,12 +612,14 @@ impl<'a> EngineHttp<'a> {
                 out.prompt.len(),
                 out.generated.len(),
                 reason,
+                &model,
             ),
             ServeApi::Chat => json_openai_chat(
                 &self.tok.decode(&out.generated),
                 out.prompt.len(),
                 out.generated.len(),
                 reason,
+                &model,
             ),
         };
         if let Some(c) = self.conns.get_mut(i) {
@@ -604,13 +632,14 @@ impl<'a> EngineHttp<'a> {
                     }
                     ServeApi::Completions => {
                         c.write.extend(http_chunk(
-                            sse_completion_delta("", Some(reason)).as_bytes(),
+                            sse_completion_delta("", Some(reason), &model).as_bytes(),
                         ));
                         c.write.extend(http_chunk(sse_done().as_bytes()));
                     }
                     ServeApi::Chat => {
-                        c.write
-                            .extend(http_chunk(sse_chat_delta("", Some(reason)).as_bytes()));
+                        c.write.extend(http_chunk(
+                            sse_chat_delta("", Some(reason), &model).as_bytes(),
+                        ));
                         c.write.extend(http_chunk(sse_done().as_bytes()));
                     }
                 }
@@ -664,6 +693,7 @@ mod tests {
             n_ctx: Some(64),
             kv_page: Some(16),
             bind: "127.0.0.1:0".into(),
+            model_id: "tiny".into(),
             engine: true,
             max_seqs: Some(4),
             expert_slots: None,
@@ -1169,5 +1199,44 @@ mod tests {
         let (status, body) = response_done(&bufs[0]).expect("resp");
         assert_eq!(status, 200, "{body}");
         assert!(body.contains("text_completion"), "{body}");
+    }
+
+    fn get_path(path: &str) -> Vec<u8> {
+        format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .into_bytes()
+    }
+
+    #[test]
+    fn engine_http_get_health_models_and_metrics() {
+        let (model, tok) = tiny_model();
+        let args = engine_args();
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nb");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let mut streams = [connect_nb(addr)];
+        write_all_nb(&mut streams[0], &get_path("/health"));
+        let mut bufs = [Vec::new()];
+        drive(&mut http, &mut streams, &mut bufs);
+        let (status, body) = response_done(&bufs[0]).expect("health");
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body, "{\"status\":\"ok\"}");
+        let mut streams = [connect_nb(addr)];
+        write_all_nb(&mut streams[0], &get_path("/v1/models"));
+        let mut bufs = [Vec::new()];
+        drive(&mut http, &mut streams, &mut bufs);
+        let (status, body) = response_done(&bufs[0]).expect("models");
+        assert_eq!(status, 200, "{body}");
+        assert!(body.contains("\"object\":\"list\""), "{body}");
+        assert!(body.contains("\"id\":\"tiny\""), "{body}");
+        let mut streams = [connect_nb(addr)];
+        write_all_nb(&mut streams[0], &get_path("/metrics"));
+        let mut bufs = [Vec::new()];
+        drive(&mut http, &mut streams, &mut bufs);
+        let (status, body) = response_done(&bufs[0]).expect("metrics");
+        assert_eq!(status, 200, "{body}");
+        assert!(body.contains("\"engine\":true"), "{body}");
+        assert!(body.contains("\"active\":0"), "{body}");
+        assert!(body.contains("\"waiting\":0"), "{body}");
     }
 }

@@ -11,15 +11,14 @@ use crate::ids::{
 };
 use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
-    ClusterSchedulingPolicy, DeviceAttr, DeviceLimit, DeviceP2pAttr, GpuOp as Kind, GraphExecUpdateResult,
-    GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
-    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphUserObjectFlags, HostNodeParams,
-    KernelAttrs, KernelBuf, KernelKind, KernelNodeParams, LaunchCompletionEvent, MemAdvise,
-    MemAttach, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemsetOp, MemoryType, Operation,
-    PdlLaunch, Place,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    ClusterSchedulingPolicy, DeviceAttr, DeviceLimit, DeviceP2pAttr, DeviceProperties,
+    GpuOp as Kind, GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
+    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind,
+    GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeParams,
+    LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
+    MemoryType, MemsetOp, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
+    StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -1251,6 +1250,31 @@ impl Sim {
     #[must_use]
     pub fn stream_is_blocking(&self, device: DeviceId, stream: StreamId) -> bool {
         self.blocking.contains(&(device, stream))
+    }
+
+    /// `cudaStreamGetFlags`. Query; legal during capture.
+    ///
+    /// `0` is `cudaStreamDefault` (blocking). `1` is `cudaStreamNonBlocking`.
+    /// [`StreamId::NULL`] uses [`Self::legacy_null_stream`] (off → NonBlocking).
+    /// Unknown devices are Invalid. Any other stream id is legal (created
+    /// streams default to NonBlocking).
+    pub fn stream_get_flags(&self, device: DeviceId, stream: StreamId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        let blocking = if stream == StreamId::NULL {
+            self.legacy_null_stream
+        } else {
+            self.stream_is_blocking(device, stream)
+        };
+        Ok(u32::from(!blocking))
+    }
+
+    /// `cudaStreamGetPriority`. Query; legal during capture.
+    ///
+    /// Unset streams are `0`. Unknown devices are Invalid. This VM does not
+    /// cap the range (`cudaDeviceGetStreamPriorityRange` is not modeled).
+    pub fn stream_get_priority(&self, device: DeviceId, stream: StreamId) -> Result<i32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.stream_priority(device, stream))
     }
 
     /// Mark streams `1 .. n_streams` blocking on every GPU (`cudaStreamCreate`).
@@ -9779,6 +9803,30 @@ impl Sim {
             DeviceAttr::MaxBlocksPerCluster => u64::from(gpu.max_blocks_per_cluster),
             DeviceAttr::MemSyncDomainCount => u64::from(gpu.mem_sync_domain_count),
             DeviceAttr::MemoryPoolsSupported => 1,
+            DeviceAttr::TotalGlobalMem => gpu.hbm_bytes,
+            DeviceAttr::AsyncEngineCount => u64::from(gpu.copy_engines),
+        })
+    }
+
+    /// `cudaGetDeviceProperties`. Query; legal during capture.
+    ///
+    /// Only fields this VM already models ([`DeviceProperties`]). Unknown
+    /// devices are Invalid.
+    pub fn device_get_properties(&self, device: DeviceId) -> Result<DeviceProperties, SimError> {
+        let gpu = self.profile.gpu(device)?;
+        Ok(DeviceProperties {
+            name: self.profile.name.clone(),
+            total_global_mem: gpu.hbm_bytes,
+            shared_mem_per_block: gpu.max_shared_mem_per_block,
+            shared_mem_per_block_optin: gpu.max_shared_mem_per_block_optin,
+            l2_cache_size: gpu.l2_bytes,
+            async_engine_count: u32::from(gpu.copy_engines),
+            concurrent_kernels: gpu.compute_slots > 1,
+            cooperative_launch: gpu.cooperative_launch,
+            max_blocks_per_cluster: u32::from(gpu.max_blocks_per_cluster),
+            portable_cluster_size: u32::from(gpu.portable_cluster_size),
+            mem_sync_domain_count: u32::from(gpu.mem_sync_domain_count),
+            memory_pools_supported: true,
         })
     }
 
@@ -9857,9 +9905,7 @@ impl Sim {
         depth: u64,
     ) -> Result<(AllocId, u64), SimError> {
         if width == 0 || height == 0 || depth == 0 {
-            return Err(SimError::Invalid {
-                why: "malloc 3d",
-            });
+            return Err(SimError::Invalid { why: "malloc 3d" });
         }
         let pitch = align_up(width, 512);
         let bytes = pitch.saturating_mul(height).saturating_mul(depth);

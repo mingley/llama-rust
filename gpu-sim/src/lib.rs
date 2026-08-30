@@ -130,6 +130,11 @@
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`Sim::host_get_device_pointer`] is `cudaHostGetDevicePointer` (mapped host).
 //! [`Sim::device_get_attribute`] is `cudaDeviceGetAttribute` ([`DeviceAttr`]).
+//! [`Sim::device_get_properties`] is `cudaGetDeviceProperties` ([`DeviceProperties`];
+//! modeled caps only — no SM count or clock).
+//! [`Sim::stream_get_flags`] is `cudaStreamGetFlags` (`0` blocking / `1`
+//! NonBlocking; NULL follows [`legacy_null_stream`](Sim::legacy_null_stream)).
+//! [`Sim::stream_get_priority`] is `cudaStreamGetPriority`.
 //! [`Sim::device_count`] is `cudaGetDeviceCount`.
 //! [`Sim::device_can_access_peer`] / [`device_get_p2p_attribute`](Sim::device_get_p2p_attribute)
 //! are `cudaDeviceCanAccessPeer` / `cudaDeviceGetP2PAttribute` (topology links;
@@ -412,14 +417,15 @@ pub use ids::{
 };
 pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp,
-    ClusterDim, ClusterSchedulingPolicy, DType, DeviceAttr, DeviceLimit, DeviceP2pAttr, GpuOp,
-    GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
-    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind,
-    GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeParams,
-    LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
-    MemsetOp, MemoryType, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
-    StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    ClusterDim, ClusterSchedulingPolicy, DType, DeviceAttr, DeviceLimit, DeviceP2pAttr,
+    DeviceProperties, GpuOp, GraphExecUpdateResult, GraphExecUpdateResultInfo,
+    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
+    GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
+    KernelNodeParams, LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap,
+    MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, Place, PointerAttributes,
+    PortableClusterMode, PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch,
+    SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -7474,6 +7480,68 @@ mod tests {
                 .unwrap(),
             u64::from(gpu.max_shared_mem_per_block)
         );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TotalGlobalMem)
+                .unwrap(),
+            gpu.hbm_bytes
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::AsyncEngineCount)
+                .unwrap(),
+            u64::from(gpu.copy_engines)
+        );
+        let props = sim.device_get_properties(d).unwrap();
+        assert_eq!(props.name, "example-h100-sxm");
+        assert_eq!(props.total_global_mem, gpu.hbm_bytes);
+        assert_eq!(props.shared_mem_per_block, gpu.max_shared_mem_per_block);
+        assert_eq!(
+            props.shared_mem_per_block_optin,
+            gpu.max_shared_mem_per_block_optin
+        );
+        assert_eq!(props.l2_cache_size, gpu.l2_bytes);
+        assert_eq!(props.async_engine_count, u32::from(gpu.copy_engines));
+        assert!(!props.concurrent_kernels);
+        assert_eq!(props.cooperative_launch, gpu.cooperative_launch);
+        assert_eq!(
+            props.max_blocks_per_cluster,
+            u32::from(gpu.max_blocks_per_cluster)
+        );
+        assert_eq!(
+            props.portable_cluster_size,
+            u32::from(gpu.portable_cluster_size)
+        );
+        assert_eq!(
+            props.mem_sync_domain_count,
+            u32::from(gpu.mem_sync_domain_count)
+        );
+        assert!(props.memory_pools_supported);
+        match sim.device_get_properties(DeviceId(1)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn stream_get_flags_and_priority_wrap_create_state() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(sim.stream_get_flags(d, StreamId::NULL).unwrap(), 1);
+        assert_eq!(sim.stream_get_priority(d, StreamId::NULL).unwrap(), 0);
+        sim.set_legacy_null_stream(true);
+        assert_eq!(sim.stream_get_flags(d, StreamId::NULL).unwrap(), 0);
+        sim.set_stream_blocking(d, StreamId(1), true).unwrap();
+        assert_eq!(sim.stream_get_flags(d, StreamId(1)).unwrap(), 0);
+        sim.set_stream_blocking(d, StreamId(1), false).unwrap();
+        assert_eq!(sim.stream_get_flags(d, StreamId(1)).unwrap(), 1);
+        sim.set_stream_priority(d, StreamId(2), 7).unwrap();
+        assert_eq!(sim.stream_get_priority(d, StreamId(2)).unwrap(), 7);
+        match sim.stream_get_flags(DeviceId(1), StreamId(0)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.stream_get_flags(d, StreamId(1)).unwrap(), 1);
+        assert_eq!(sim.device_get_properties(d).unwrap().async_engine_count, 2);
     }
 
     #[test]
@@ -7489,23 +7557,15 @@ mod tests {
         }
         let mut nv = Sim::new(HardwareProfile::example_8xh100_nvlink());
         assert_eq!(nv.device_count(), 8);
-        assert!(nv
-            .device_can_access_peer(DeviceId(0), DeviceId(1))
-            .unwrap());
+        assert!(nv.device_can_access_peer(DeviceId(0), DeviceId(1)).unwrap());
         assert_eq!(
-            nv.device_get_p2p_attribute(
-                DeviceId(0),
-                DeviceId(1),
-                DeviceP2pAttr::AccessSupported
-            )
-            .unwrap(),
+            nv.device_get_p2p_attribute(DeviceId(0), DeviceId(1), DeviceP2pAttr::AccessSupported)
+                .unwrap(),
             1
         );
         nv.disable_peer(DeviceId(0), DeviceId(1)).unwrap();
         assert!(!nv.peer_access(DeviceId(0), DeviceId(1)));
-        assert!(nv
-            .device_can_access_peer(DeviceId(0), DeviceId(1))
-            .unwrap());
+        assert!(nv.device_can_access_peer(DeviceId(0), DeviceId(1)).unwrap());
         let asym = Sim::new(HardwareProfile::example_asymmetric_links());
         assert_eq!(asym.device_count(), 3);
         assert!(asym

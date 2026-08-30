@@ -109,6 +109,9 @@ warp scheduler, L1, …   ← do not model
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
 | `host_get_device_pointer` of mapped host returns the same id | `cudaHostGetDevicePointer` |
 | `device_get_attribute` exposes modeled SKU caps | `cudaDeviceGetAttribute` |
+| `device_get_properties` wraps the same SKU caps | `cudaGetDeviceProperties` |
+| `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
+| `stream_get_priority` is the create priority | `cudaStreamGetPriority` |
 | `device_count` is the profile GPU count | `cudaGetDeviceCount` |
 | `device_can_access_peer` / `device_get_p2p_attribute` are topology links | `cudaDeviceCanAccessPeer` / `GetP2PAttribute` |
 | `set_limit` / `get_limit` wrap persisting L2 plus stack / printf / heap / CDP / L2 fetch | `cudaDeviceSetLimit` / `GetLimit` |
@@ -407,7 +410,13 @@ stream is `Ok(false)`; the clock does not advance).
 `mem_info` is `cudaMemGetInfo` `(free, total)` HBM bytes.
 `pointer_get_attributes` is `cudaPointerGetAttributes`.
 `host_get_device_pointer` is `cudaHostGetDevicePointer` (mapped host).
-`device_get_attribute` is `cudaDeviceGetAttribute` (modeled caps only).
+`device_get_attribute` is `cudaDeviceGetAttribute` (modeled caps only;
+`TotalGlobalMem` is HBM, `AsyncEngineCount` is copy engines).
+`device_get_properties` is `cudaGetDeviceProperties` of those same fields
+(no SM count or clock). `stream_get_flags` is `cudaStreamGetFlags`
+(`0` `cudaStreamDefault` / `1` `cudaStreamNonBlocking`; NULL follows
+`set_legacy_null_stream`). `stream_get_priority` is `cudaStreamGetPriority`.
+This VM does not cap stream-priority range.
 `set_limit` / `get_limit` are `cudaDeviceSetLimit` / `GetLimit`.
 Persisting L2 is `cudaLimitPersistingL2CacheSize`. Access-policy windows
 must align to `cudaLimitMaxL2FetchGranularity` (SM 8.0+ default 128).

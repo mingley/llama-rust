@@ -6,6 +6,9 @@
 //! `POST /v1/chat/completions` map onto the same greedy path (`max_tokens`
 //! aliases `n_predict`). HTTP/1.1 keep-alive is on unless the client sends
 //! `Connection: close`. `/v1/*` responses use the OpenAI `choices` envelope.
+//! `GET /v1/models` and `GET /v1/models/{id}` are the OpenAI list/retrieve
+//! objects (`--model-id`, default GGUF stem). `GET /health` is `{"status":"ok"}`.
+//! `GET /metrics` is `{"engine":false}` here, or Engine counters with `--engine`.
 //! No crates.io HTTP stack.
 
 use std::fs::File;
@@ -25,11 +28,12 @@ use expertvm::{GpuFill, GpuStoreCfg, Prefetch};
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--model-id ID] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
       --bind ADDR     loopback listen address (default: 127.0.0.1:8080)
+      --model-id ID   OpenAI `model` / GET /v1/models id (default: GGUF path stem)
       --engine        concurrent requests on one Engine (continuous-batch GEMM)
       --max-seqs N    in-flight Engine sequences (`--engine`; default: 4)
       --expert-slots N  ExpertStore on `--engine`: omit = blob FFN, `0` = DirectStore,
@@ -101,7 +105,10 @@ with optional \"add_generation_prompt\" (default true), \"n_predict\" or
 \"max_tokens\", and \"stream\" (NDJSON token lines then a final generated
 object; `--engine` only). POST /v1/completions and POST /v1/chat/completions
 are the same greedy path with an OpenAI `choices` envelope (`text` /
-`message.content` is the completion, not the prompt). `--engine` stream on
+`message.content` is the completion, not the prompt). GET /v1/models and
+GET /v1/models/{id} list/retrieve that id (`--model-id`, default GGUF stem).
+GET /health is {\"status\":\"ok\"}. GET /metrics is {\"engine\":false} or
+Engine counters with `--engine`. `--engine` stream on
 those routes is chunked SSE (`data:` lines, then `data: [DONE]`).
 Default serve keeps one KV cache across requests (`prefix_hit` in the JSON).
 `--engine` admits several connections onto one interned pool so they GEMM
@@ -208,6 +215,8 @@ pub struct ServeArgs {
     pub kv_page: Option<usize>,
     /// Loopback `HOST:PORT`. Host must be `127.0.0.1` or `localhost`.
     pub bind: String,
+    /// OpenAI `model` id and `GET /v1/models` id. Default is the GGUF stem.
+    pub model_id: String,
     /// Admit concurrent requests onto one [`crate::Engine`].
     pub engine: bool,
     /// In-flight Engine sequences. `None` is 4 when `--engine`.
@@ -403,7 +412,7 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--model-id ID] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -415,6 +424,7 @@ where
     let mut n_ctx = None;
     let mut kv_page = None;
     let mut bind = ServeArgs::DEFAULT_BIND.to_string();
+    let mut model_id = None;
     let mut engine = false;
     let mut max_seqs = None;
     let mut expert_slots = None;
@@ -459,6 +469,13 @@ where
             "--bind" => {
                 bind = opt_value("bind", inline, &mut it)?;
                 let _addr = parse_bind(&bind)?;
+            }
+            "--model-id" => {
+                let id = opt_value("model-id", inline, &mut it)?;
+                if id.is_empty() {
+                    return usage_err("model-id must be non-empty");
+                }
+                model_id = Some(id);
             }
             "--engine" => {
                 if inline.is_some() {
@@ -569,12 +586,14 @@ where
     planner.gpu.imply_decode_priority();
     let fill = planner.gpu.fill()?;
     let gpu_cfg = gpu_knobs(planner.gpu);
+    let model_id = model_id.unwrap_or_else(|| model_id_from_path(&path));
     Ok(ServeCmd::Run(ServeArgs {
         path,
         n_predict,
         n_ctx,
         kv_page,
         bind,
+        model_id,
         engine,
         max_seqs,
         expert_slots,
@@ -742,6 +761,11 @@ fn dispatch(
     args: &ServeArgs,
     cache: &mut Option<KvCache>,
 ) -> (u16, &'static str, String) {
+    if req.method == "GET" {
+        if let Some(out) = dispatch_get(&req.path, &args.model_id, false) {
+            return out;
+        }
+    }
     let api = ServeApi::from_path(&req.path);
     if req.method != "POST" {
         return (
@@ -755,7 +779,13 @@ fn dispatch(
     };
     let body = match std::str::from_utf8(&req.body) {
         Ok(s) => s,
-        Err(_) => return (400, "Bad Request", json_err(Some(api), "body must be utf-8")),
+        Err(_) => {
+            return (
+                400,
+                "Bad Request",
+                json_err(Some(api), "body must be utf-8"),
+            )
+        }
     };
     let gen = match parse_gen_req(body) {
         Ok(g) => g,
@@ -781,11 +811,9 @@ fn dispatch(
         Ok(parts) => {
             let hit = cache.as_ref().map_or(0, KvCache::last_prefix_hit);
             let pages = cache.as_ref().map_or(0, KvCache::page_hits);
-            (200, "OK", json_ok(api, &parts, hit, pages))
+            (200, "OK", json_ok(api, &parts, hit, pages, &args.model_id))
         }
-        Err(LlamaError::EmptyPrompt) => {
-            (400, "Bad Request", json_err(Some(api), "empty prompt"))
-        }
+        Err(LlamaError::EmptyPrompt) => (400, "Bad Request", json_err(Some(api), "empty prompt")),
         Err(e) => (
             500,
             "Internal Server Error",
@@ -821,7 +849,43 @@ impl ServeApi {
     }
 }
 
-fn path_only(path: &str) -> &str {
+/// GGUF path stem, or `"default"` if the path has no file name.
+#[must_use]
+pub(crate) fn model_id_from_path(path: &str) -> String {
+    Path::new(path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("default")
+        .to_string()
+}
+
+/// `GET /health`, `GET /v1/models`, `GET /v1/models/{id}`, and idle `GET /metrics`.
+///
+/// `engine_metrics` is true on `--engine` so `/metrics` is not the idle object.
+pub(crate) fn dispatch_get(
+    path: &str,
+    model_id: &str,
+    engine_metrics: bool,
+) -> Option<(u16, &'static str, String)> {
+    let path = normalize_path(path_only(path));
+    match path {
+        "/health" => Some((200, "OK", json_health())),
+        "/v1/models" => Some((200, "OK", json_models_list(model_id))),
+        "/metrics" if !engine_metrics => Some((200, "OK", json_idle_metrics())),
+        p => p.strip_prefix("/v1/models/").and_then(|id| {
+            if id.is_empty() {
+                None
+            } else if id == model_id {
+                Some((200, "OK", json_model_object(id)))
+            } else {
+                Some((404, "Not Found", json_openai_error("model not found")))
+            }
+        }),
+    }
+}
+
+pub(crate) fn path_only(path: &str) -> &str {
     path.split(['?', '#']).next().unwrap_or(path)
 }
 
@@ -878,7 +942,7 @@ pub(crate) fn finish_reason(generated: usize, n_predict: usize) -> &'static str 
     }
 }
 
-fn json_ok(api: ServeApi, parts: &GreedyParts, hit: usize, pages: u64) -> String {
+fn json_ok(api: ServeApi, parts: &GreedyParts, hit: usize, pages: u64, model: &str) -> String {
     match api {
         ServeApi::Generate => json_generated(&parts.full, hit, pages),
         ServeApi::Completions => json_openai_completion(
@@ -886,12 +950,14 @@ fn json_ok(api: ServeApi, parts: &GreedyParts, hit: usize, pages: u64) -> String
             parts.prompt_tokens,
             parts.completion_tokens,
             parts.finish,
+            model,
         ),
         ServeApi::Chat => json_openai_chat(
             &parts.completion,
             parts.prompt_tokens,
             parts.completion_tokens,
             parts.finish,
+            model,
         ),
     }
 }
@@ -1143,15 +1209,19 @@ pub(crate) fn json_openai_completion(
     prompt_tokens: usize,
     completion_tokens: usize,
     finish: &str,
+    model: &str,
 ) -> String {
-    openai_choice_body(
+    let mut choice = String::from("\"text\":");
+    append_json_string(&mut choice, text);
+    choice.push_str(",\"index\":0,\"finish_reason\":");
+    append_json_string(&mut choice, finish);
+    openai_envelope(
         "cmpl-0",
         "text_completion",
-        false,
-        text,
+        model,
+        &choice,
         prompt_tokens,
         completion_tokens,
-        finish,
     )
 }
 
@@ -1160,43 +1230,39 @@ pub(crate) fn json_openai_chat(
     prompt_tokens: usize,
     completion_tokens: usize,
     finish: &str,
+    model: &str,
 ) -> String {
-    openai_choice_body(
+    let mut choice = String::from("\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":");
+    append_json_string(&mut choice, text);
+    choice.push_str("},\"finish_reason\":");
+    append_json_string(&mut choice, finish);
+    openai_envelope(
         "chatcmpl-0",
         "chat.completion",
-        true,
-        text,
+        model,
+        &choice,
         prompt_tokens,
         completion_tokens,
-        finish,
     )
 }
 
-fn openai_choice_body(
+fn openai_envelope(
     id: &str,
     object: &str,
-    chat: bool,
-    text: &str,
+    model: &str,
+    choice: &str,
     prompt_tokens: usize,
     completion_tokens: usize,
-    finish: &str,
 ) -> String {
     let total = prompt_tokens.saturating_add(completion_tokens);
     let mut s = String::from("{\"id\":");
     append_json_string(&mut s, id);
     s.push_str(",\"object\":");
     append_json_string(&mut s, object);
+    s.push_str(",\"model\":");
+    append_json_string(&mut s, model);
     s.push_str(",\"choices\":[{");
-    if chat {
-        s.push_str("\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":");
-        append_json_string(&mut s, text);
-        s.push_str("},\"finish_reason\":");
-    } else {
-        s.push_str("\"text\":");
-        append_json_string(&mut s, text);
-        s.push_str(",\"index\":0,\"finish_reason\":");
-    }
-    append_json_string(&mut s, finish);
+    s.push_str(choice);
     s.push_str("}],\"usage\":{\"prompt_tokens\":");
     s.push_str(&prompt_tokens.to_string());
     s.push_str(",\"completion_tokens\":");
@@ -1207,11 +1273,33 @@ fn openai_choice_body(
     s
 }
 
+pub(crate) fn json_health() -> String {
+    String::from("{\"status\":\"ok\"}")
+}
+
+pub(crate) fn json_idle_metrics() -> String {
+    String::from("{\"engine\":false}")
+}
+
+pub(crate) fn json_model_object(id: &str) -> String {
+    let mut s = String::from("{\"id\":");
+    append_json_string(&mut s, id);
+    s.push_str(",\"object\":\"model\",\"created\":0,\"owned_by\":\"llama-rust\"}");
+    s
+}
+
+pub(crate) fn json_models_list(id: &str) -> String {
+    let mut s = String::from("{\"object\":\"list\",\"data\":[");
+    s.push_str(&json_model_object(id));
+    s.push_str("]}");
+    s
+}
+
 /// One SSE `data:` line for `/v1/completions` streaming.
-pub(crate) fn sse_completion_delta(text: &str, finish: Option<&str>) -> String {
-    let mut json = String::from(
-        "{\"id\":\"cmpl-0\",\"object\":\"text_completion\",\"choices\":[{\"text\":",
-    );
+pub(crate) fn sse_completion_delta(text: &str, finish: Option<&str>, model: &str) -> String {
+    let mut json = String::from("{\"id\":\"cmpl-0\",\"object\":\"text_completion\",\"model\":");
+    append_json_string(&mut json, model);
+    json.push_str(",\"choices\":[{\"text\":");
     append_json_string(&mut json, text);
     json.push_str(",\"index\":0,\"finish_reason\":");
     match finish {
@@ -1223,9 +1311,11 @@ pub(crate) fn sse_completion_delta(text: &str, finish: Option<&str>) -> String {
 }
 
 /// One SSE `data:` line for `/v1/chat/completions` streaming.
-pub(crate) fn sse_chat_delta(text: &str, finish: Option<&str>) -> String {
+pub(crate) fn sse_chat_delta(text: &str, finish: Option<&str>, model: &str) -> String {
     let mut json =
-        String::from("{\"id\":\"chatcmpl-0\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{");
+        String::from("{\"id\":\"chatcmpl-0\",\"object\":\"chat.completion.chunk\",\"model\":");
+    append_json_string(&mut json, model);
+    json.push_str(",\"choices\":[{\"index\":0,\"delta\":{");
     if !text.is_empty() {
         json.push_str("\"content\":");
         append_json_string(&mut json, text);
@@ -1604,6 +1694,7 @@ mod tests {
             n_ctx: None,
             kv_page: None,
             bind: ServeArgs::DEFAULT_BIND.into(),
+            model_id: "tiny".into(),
             engine: false,
             max_seqs: None,
             expert_slots: None,
@@ -1684,6 +1775,7 @@ mod tests {
         assert_eq!(a.kv_page, None);
         assert_eq!(a.bind, ServeArgs::DEFAULT_BIND);
         assert_eq!(a.bind, "127.0.0.1:8080");
+        assert_eq!(a.model_id, "tiny");
         assert!(!a.engine);
         assert_eq!(a.max_seqs, None);
         assert_eq!(a.prefill_chunk, 0);
@@ -1717,6 +1809,7 @@ mod tests {
                 n_ctx: Some(16),
                 kv_page: None,
                 bind: "localhost:0".into(),
+                model_id: "m".into(),
                 engine: false,
                 max_seqs: None,
                 expert_slots: None,
@@ -1801,6 +1894,7 @@ mod tests {
                 n_ctx: None,
                 kv_page: None,
                 bind: ServeArgs::DEFAULT_BIND.into(),
+                model_id: "m".into(),
                 engine: true,
                 max_seqs: Some(8),
                 expert_slots: None,
@@ -2551,9 +2645,11 @@ mod tests {
         assert_eq!(mt.n_predict, Some(4));
         let both = parse_gen_req(r#"{"prompt":"ab","n_predict":4,"max_tokens":4}"#).unwrap();
         assert_eq!(both.n_predict, Some(4));
-        assert!(parse_gen_req(r#"{"prompt":"ab","n_predict":2,"max_tokens":4}"#)
-            .unwrap_err()
-            .contains("disagree"));
+        assert!(
+            parse_gen_req(r#"{"prompt":"ab","n_predict":2,"max_tokens":4}"#)
+                .unwrap_err()
+                .contains("disagree")
+        );
         let c = parse_gen_req(r#"{"prompt":"a\"b","extra":true}"#).unwrap();
         assert_eq!(c.prompt.as_deref(), Some("a\"b"));
         assert_eq!(
@@ -2709,12 +2805,12 @@ mod tests {
             r#"{"error":{"message":"empty prompt","type":"invalid_request_error"}}"#
         );
         assert_eq!(
-            json_openai_completion("hi", 1, 2, "length"),
-            r#"{"id":"cmpl-0","object":"text_completion","choices":[{"text":"hi","index":0,"finish_reason":"length"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}"#
+            json_openai_completion("hi", 1, 2, "length", "tiny"),
+            r#"{"id":"cmpl-0","object":"text_completion","model":"tiny","choices":[{"text":"hi","index":0,"finish_reason":"length"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}"#
         );
         assert_eq!(
-            json_openai_chat("hi", 1, 2, "stop"),
-            r#"{"id":"chatcmpl-0","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}"#
+            json_openai_chat("hi", 1, 2, "stop", "tiny"),
+            r#"{"id":"chatcmpl-0","object":"chat.completion","model":"tiny","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}"#
         );
         assert_eq!(
             json_field_string(&json_generated("a\"b\n", 0, 0), "generated").unwrap(),
@@ -2805,6 +2901,76 @@ mod tests {
         assert!(body.contains("method must be POST"), "{body}");
     }
 
+    #[test]
+    fn model_id_flag_overrides_path_stem() {
+        let a = run(&["tiny.gguf", "--model-id", "qwen"]);
+        assert_eq!(a.model_id, "qwen");
+        let a = run(&["--model-id=qwen3", "m.gguf"]);
+        assert_eq!(a.model_id, "qwen3");
+        let err = parse_serve_args(["m.gguf", "--model-id="]).unwrap_err();
+        assert!(err.contains("model-id must be non-empty"), "{err}");
+    }
+
+    #[test]
+    fn get_health_models_and_idle_metrics() {
+        let (model, tok) = tiny_model();
+        let args = defaults();
+        let (head, body) = exchange(
+            "GET /health HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(body, json_health());
+        let (head, body) = exchange(
+            "GET /v1/models HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(body, json_models_list("tiny"));
+        assert!(body.contains("\"object\":\"list\""), "{body}");
+        let (head, body) = exchange(
+            "GET /v1/models/tiny HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(body, json_model_object("tiny"));
+        let (head, body) = exchange(
+            "GET /v1/models/nope HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 404 "), "{head}");
+        assert!(body.contains("invalid_request_error"), "{body}");
+        assert!(body.contains("model not found"), "{body}");
+        let (head, body) = exchange(
+            "GET /metrics HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(body, json_idle_metrics());
+        let named = ServeArgs {
+            model_id: "qwen".into(),
+            ..defaults()
+        };
+        let (head, body) = exchange(
+            "GET /v1/models HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+            &model,
+            &tok,
+            &named,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(body, json_models_list("qwen"));
+    }
+
     fn expect_completion(model: &Llama, tok: &Tokenizer, prompt: &str, n: usize) -> String {
         let mut ids = prompt_ids(tok, prompt).expect("ids");
         let prompt_n = ids.len();
@@ -2832,6 +2998,7 @@ mod tests {
         );
         assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
         assert!(body.contains("\"object\":\"text_completion\""), "{body}");
+        assert!(body.contains("\"model\":\"tiny\""), "{body}");
         assert_eq!(json_string_at(&body, "text").unwrap(), completion);
         let (head, native) = exchange(&post_json(r#"{"prompt":"ab"}"#), &model, &tok, &args);
         assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");

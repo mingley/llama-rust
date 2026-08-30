@@ -167,12 +167,12 @@ impl Place {
 /// memcpy node (`cudaGraphExecMemcpyNodeSetParams`). Pageable src/dst stay
 /// illegal as graph params.
 ///
-    /// [`Self::height`] `0` or `1` is `cudaMemcpyAsync` of [`Self::bytes`].
-    /// `height > 1` and [`Self::depth`] `<= 1` is `cudaMemcpy2DAsync`:
-    /// [`Self::bytes`] is the row width, billed payload is `width * height`
-    /// (pitch padding is not transferred). [`Self::depth`] `> 1` is
-    /// `cudaMemcpy3DAsync`: billed payload is `width * height * depth`
-    /// (row and slice padding are not transferred).
+/// [`Self::height`] `0` or `1` is `cudaMemcpyAsync` of [`Self::bytes`].
+/// `height > 1` and [`Self::depth`] `<= 1` is `cudaMemcpy2DAsync`:
+/// [`Self::bytes`] is the row width, billed payload is `width * height`
+/// (pitch padding is not transferred). [`Self::depth`] `> 1` is
+/// `cudaMemcpy3DAsync`: billed payload is `width * height * depth`
+/// (row and slice padding are not transferred).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MemcpyOp {
     /// Source.
@@ -335,8 +335,7 @@ impl MemcpyOp {
         } else if src_dev && !dst_dev {
             self.src_height_or_extent()
         } else {
-            self.src_height_or_extent()
-                .max(self.dst_height_or_extent())
+            self.src_height_or_extent().max(self.dst_height_or_extent())
         }
     }
 }
@@ -546,6 +545,42 @@ pub enum DeviceAttr {
     MemSyncDomainCount,
     /// `cudaDevAttrMemoryPoolsSupported` (always 1; this VM has mempools).
     MemoryPoolsSupported,
+    /// `cudaDevAttrTotalGlobalMem` ([`crate::GpuProfile::hbm_bytes`]).
+    TotalGlobalMem,
+    /// `cudaDevAttrAsyncEngineCount` ([`crate::GpuProfile::copy_engines`]).
+    AsyncEngineCount,
+}
+
+/// `cudaDeviceProp` fields this VM already models.
+///
+/// No SM count, clock rate, warp size, or `maxThreadsPerBlock` — those are
+/// not in [`crate::GpuProfile`]. [`Self::name`] is [`crate::HardwareProfile::name`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeviceProperties {
+    /// Profile name (`example-h100-sxm`, a capture id, …).
+    pub name: String,
+    /// [`crate::GpuProfile::hbm_bytes`] (`totalGlobalMem`).
+    pub total_global_mem: u64,
+    /// [`crate::GpuProfile::max_shared_mem_per_block`].
+    pub shared_mem_per_block: u32,
+    /// [`crate::GpuProfile::max_shared_mem_per_block_optin`].
+    pub shared_mem_per_block_optin: u32,
+    /// [`crate::GpuProfile::l2_bytes`].
+    pub l2_cache_size: u64,
+    /// [`crate::GpuProfile::copy_engines`].
+    pub async_engine_count: u32,
+    /// [`crate::GpuProfile::compute_slots`] `> 1`.
+    pub concurrent_kernels: bool,
+    /// [`crate::GpuProfile::cooperative_launch`].
+    pub cooperative_launch: bool,
+    /// [`crate::GpuProfile::max_blocks_per_cluster`].
+    pub max_blocks_per_cluster: u32,
+    /// [`crate::GpuProfile::portable_cluster_size`].
+    pub portable_cluster_size: u32,
+    /// [`crate::GpuProfile::mem_sync_domain_count`].
+    pub mem_sync_domain_count: u32,
+    /// This VM always has mempools.
+    pub memory_pools_supported: bool,
 }
 
 /// `cudaDeviceP2PAttr` for [`crate::Sim::device_get_p2p_attribute`].
