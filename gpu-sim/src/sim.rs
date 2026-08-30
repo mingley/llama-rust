@@ -11,8 +11,8 @@ use crate::ids::{
 };
 use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
-    ClusterSchedulingPolicy, DeviceAttr, DeviceFlags, DeviceLimit, DeviceP2pAttr, DeviceProperties,
-    EventCreateFlags, EventRecordFlags, EventWaitFlags, FlushGpuDirectRdmaScope,
+    ClusterSchedulingPolicy, ComputeMode, DeviceAttr, DeviceFlags, DeviceLimit, DeviceP2pAttr,
+    DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags, FlushGpuDirectRdmaScope,
     FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes,
     GpuOp as Kind, GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult,
     GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
@@ -13055,7 +13055,8 @@ impl Sim {
             | DeviceAttr::HandleTypeFabricSupported
             | DeviceAttr::HostMemoryPoolsSupported
             | DeviceAttr::IsMultiGpuBoard
-            | DeviceAttr::MultiGpuBoardGroupID => 0,
+            | DeviceAttr::MultiGpuBoardGroupID
+            | DeviceAttr::ComputeMode => 0,
             DeviceAttr::StreamPrioritiesSupported | DeviceAttr::UnifiedAddressing => 1,
             DeviceAttr::GpuOverlap => u64::from(gpu.copy_engines > 0),
             DeviceAttr::MulticastSupported => u64::from(self.profile.multicast_supported(device)),
@@ -13121,6 +13122,7 @@ impl Sim {
             host_memory_pools_supported: false,
             is_multi_gpu_board: false,
             multi_gpu_board_group_id: 0,
+            compute_mode: ComputeMode::DEFAULT,
         })
     }
 

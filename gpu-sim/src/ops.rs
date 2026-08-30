@@ -842,6 +842,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrMultiGpuBoardGroupID` (always 0; example SKUs are not on
     /// a multi-GPU board).
     MultiGpuBoardGroupID,
+    /// `cudaDevAttrComputeMode` (always [`ComputeMode::DEFAULT`]; exclusive
+    /// process / prohibited are not modeled).
+    ComputeMode,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -961,6 +964,17 @@ pub struct DeviceProperties {
     /// `cudaDevAttrMultiGpuBoardGroupID` (example SKUs are not on a multi-GPU
     /// board).
     pub multi_gpu_board_group_id: u32,
+    /// `cudaDevAttrComputeMode` (always [`ComputeMode::DEFAULT`]).
+    pub compute_mode: u32,
+}
+
+/// `cudaComputeMode` for [`DeviceAttr::ComputeMode`].
+pub struct ComputeMode;
+
+impl ComputeMode {
+    /// `cudaComputeModeDefault` (`0`). This VM has no exclusive-process or
+    /// prohibited modes.
+    pub const DEFAULT: u32 = 0;
 }
 
 /// `cudaFuncAttribute` for [`crate::Sim::func_set_attribute`] / `GetAttribute`.

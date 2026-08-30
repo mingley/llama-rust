@@ -309,6 +309,8 @@
 //! device-only; host location is Invalid).
 //! [`DeviceAttr::IsMultiGpuBoard`] / [`MultiGpuBoardGroupID`](DeviceAttr::MultiGpuBoardGroupID)
 //! are always 0 (example SKUs are discrete single-GPU packages).
+//! [`DeviceAttr::ComputeMode`] is always [`ComputeMode::DEFAULT`] (exclusive
+//! process / prohibited are not modeled).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -705,7 +707,7 @@ pub use ids::{
 };
 pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp,
-    ClusterDim, ClusterSchedulingPolicy, DType, DeviceAttr, DeviceFlags, DeviceLimit,
+    ClusterDim, ClusterSchedulingPolicy, ComputeMode, DType, DeviceAttr, DeviceFlags, DeviceLimit,
     DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags,
     FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr,
     FuncAttributes, GpuOp, GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult,
@@ -10900,6 +10902,26 @@ mod tests {
         );
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::MultiGpuBoardGroupID)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_compute_mode_is_default() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.compute_mode, ComputeMode::DEFAULT);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::ComputeMode)
+                .unwrap(),
+            u64::from(ComputeMode::DEFAULT)
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::ComputeMode)
                 .unwrap(),
             0
         );

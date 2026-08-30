@@ -2906,7 +2906,13 @@ model, do not celebrate the sim.
     Query; capture-legal. Decode identity unchanged. `gpu-profile capture`
     is still refused. Dual score still has no `$/M tokens`.
 
-276. [ ] Next numbered PLAN item after 275 is the next `gpu-sim` / Engine /
+276. [x] `cudaDevAttrComputeMode`: [`DeviceAttr::ComputeMode`] is always
+    [`ComputeMode::DEFAULT`] (`0`). Exclusive process / prohibited are
+    not modeled. [`DeviceProperties::compute_mode`] matches. Query;
+    capture-legal. Decode identity unchanged. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+277. [ ] Next numbered PLAN item after 276 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
