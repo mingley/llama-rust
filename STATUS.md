@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaEventDestroy`
+
+`Sim::destroy_event` is `cudaEventDestroy`. A recorded incomplete event
+waits like `synchronize_event`. A never-recorded event returns immediately.
+Unknown ids are `UnknownEvent`. Capture cannot include it. The id may be
+created again. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaMemPoolDestroy`
 
 `Sim::destroy_pool` is `cudaMemPoolDestroy`. Unused cached bytes return to
@@ -2062,7 +2069,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 164 (`cudaMemPoolDestroy`).
+Next code change is PLAN systems depth after item 165 (`cudaEventDestroy`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

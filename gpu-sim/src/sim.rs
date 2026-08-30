@@ -1523,6 +1523,26 @@ impl Sim {
         self.insert_event(event, false)
     }
 
+    /// `cudaEventDestroy`. Host-synchronous. Capture cannot include it.
+    ///
+    /// An event that was recorded and is not yet complete waits like
+    /// [`Self::synchronize_event`]. A never-recorded event returns immediately.
+    /// Unknown ids are [`SimError::UnknownEvent`]. The id may be created again.
+    pub fn destroy_event(&mut self, event: EventId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture event destroy")?;
+        let recorded = self
+            .events
+            .get(&event)
+            .ok_or(SimError::UnknownEvent { event: event.0 })?
+            .recorded_by
+            .is_some();
+        if recorded {
+            self.synchronize_event(event)?;
+        }
+        let _gone = self.events.remove(&event);
+        Ok(())
+    }
+
     /// Whether `event` was created with timing enabled (`cudaEventDefault`).
     pub fn event_timing(&self, event: EventId) -> Result<bool, SimError> {
         self.events

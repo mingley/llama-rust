@@ -405,6 +405,9 @@ must be complete and timing-enabled; `create_event_disable_timing` is
 invalid; end-before-start is invalid).
 `query_event` is `cudaEventQuery` (unknown id is semantic; incomplete is
 `Ok(false)`).
+`destroy_event` is `cudaEventDestroy` (waits a recorded incomplete event;
+never-recorded returns immediately; capture refused; the id may be created
+again).
 `query_stream` is `cudaStreamQuery` (unknown device is semantic; a busy
 stream is `Ok(false)`; the clock does not advance).
 `mem_info` is `cudaMemGetInfo` `(free, total)` HBM bytes.

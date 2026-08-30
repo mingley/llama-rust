@@ -485,6 +485,9 @@ Exact (mechanical invariants agents may rely on):
   stream (`set_legacy_null_stream`) still serializes with every stream
 - `cudaEventCreateWithFlags(..., cudaEventDisableTiming)`
   (`create_event_disable_timing`): wait/query work; `event_elapsed_ns` fails
+- `cudaEventDestroy` (`destroy_event`): waits a recorded incomplete event;
+  never-recorded returns immediately; capture refused; the id may be created
+  again
 - `cudaEventRecordWithFlags(..., cudaEventRecordExternal)` /
   `cudaStreamWaitEvent(..., cudaEventWaitExternal)`
   (`record_event_external` / `wait_event_external`): captured without
@@ -1955,6 +1958,13 @@ model, do not celebrate the sim.
     Invalid for alloc/export/get/set. Capture cannot include it. Decode
     identity unchanged. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
+
+165. [x] `cudaEventDestroy`:
+    `Sim::destroy_event` waits a recorded incomplete event like
+    `synchronize_event`. A never-recorded event returns immediately.
+    Unknown ids are `UnknownEvent`. Capture cannot include it. The id
+    may be created again. Decode identity unchanged. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
