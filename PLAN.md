@@ -2088,16 +2088,25 @@ model, do not celebrate the sim.
     dependency"`. Decode identity unchanged. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-181. [ ] Next numbered PLAN item after 180 is the next `gpu-sim` / Engine /
+181. [x] `cudaGraphNodeSetParams` / `cudaGraphExecNodeSetParams`:
+    `Sim::graph_node_set_params` / `graph_exec_node_set_params` dispatch
+    [`GraphNodeParams`] onto the typed SetParams. [`GraphNodeParams::Alloc`]
+    is Invalid (`cannot set mem alloc node params`; would resize HBM).
+    [`GraphNodeParams::Empty`] is Invalid (`empty node has no params`).
+    Definition does not retarget exec. Capture refused. Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+182. [ ] Next numbered PLAN item after 181 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
     numbers, example `$/M tokens` rents, or `cudaStreamDestroy`.
     **`best_of` / `use_beam_search` stay out of `parse_gen_req` until a
-    real beam Engine exists.** Prefer definition/exec graph APIs that
-    still have no CUDA-shaped twin (e.g. generic `cudaGraphNodeSetParams` /
-    `cudaGraphExecNodeSetParams`) over more OpenAI HTTP veneer. Do not
-    default `--engine`. Do not invent `max_model_len` or `/v1/tokenize`.
+    real beam Engine exists.** Prefer remaining CUDA-shaped twins (e.g.
+    bulk `cudaGraphAddDependencies` arrays) over more OpenAI HTTP veneer.
+    Do not default `--engine`. Do not invent `max_model_len` or
+    `/v1/tokenize`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

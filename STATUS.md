@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaGraphNodeSetParams` / `ExecNodeSetParams`
+
+`Sim::graph_node_set_params` / `graph_exec_node_set_params` dispatch
+`GraphNodeParams` onto the typed SetParams. Alloc and Empty are Invalid.
+Definition does not retarget exec. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaGraphAddNode`
 
 `Sim::graph_add_node` is `cudaGraphAddNode` (`GraphNodeParams` plus
@@ -2135,7 +2141,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 180 (`cudaGraphAddNode`).
+Next code change is PLAN systems depth after item 181 (`cudaGraphNodeSetParams`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

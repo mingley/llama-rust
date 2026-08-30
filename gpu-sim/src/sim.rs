@@ -3465,6 +3465,116 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphNodeSetParams` on the graph definition.
+    ///
+    /// Dispatches to the typed SetParams. [`GraphNodeParams::Alloc`] is Invalid
+    /// (would resize HBM). [`GraphNodeParams::Empty`] has no params. Event
+    /// External flags are not rewritten (topology). After instantiate this
+    /// does not retarget the exec; use [`Self::graph_exec_node_set_params`].
+    /// Capture cannot include it.
+    pub fn graph_node_set_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: GraphNodeParams,
+    ) -> Result<(), SimError> {
+        self.set_node_params(graph, node, params, false)
+    }
+
+    /// `cudaGraphExecNodeSetParams` on an instantiated exec.
+    ///
+    /// Dispatches to the typed ExecSetParams. [`GraphNodeParams::Alloc`] is
+    /// Invalid. [`GraphNodeParams::Empty`] has no params. Capture cannot
+    /// include it.
+    pub fn graph_exec_node_set_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        params: GraphNodeParams,
+    ) -> Result<(), SimError> {
+        self.set_node_params(exec, node, params, true)
+    }
+
+    fn set_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        params: GraphNodeParams,
+        exec: bool,
+    ) -> Result<(), SimError> {
+        match params {
+            GraphNodeParams::Kernel(p) => {
+                if exec {
+                    self.graph_exec_kernel_set_params(graph, node, &p)
+                } else {
+                    self.graph_kernel_set_params(graph, node, &p)
+                }
+            }
+            GraphNodeParams::Memcpy(op) => {
+                if exec {
+                    self.graph_exec_memcpy_set_params(graph, node, &op)
+                } else {
+                    self.graph_memcpy_set_params(graph, node, &op)
+                }
+            }
+            GraphNodeParams::Memset(op) => {
+                if exec {
+                    self.graph_exec_memset_set_params(graph, node, op)
+                } else {
+                    self.graph_memset_set_params(graph, node, op)
+                }
+            }
+            GraphNodeParams::Host(p) => {
+                if exec {
+                    self.graph_exec_host_set_params(graph, node, p)
+                } else {
+                    self.graph_host_set_params(graph, node, p)
+                }
+            }
+            GraphNodeParams::Empty => Err(SimError::Invalid {
+                why: "empty node has no params",
+            }),
+            GraphNodeParams::EventRecord { event, .. } => {
+                if exec {
+                    self.graph_exec_event_record_set_event(graph, node, event)
+                } else {
+                    self.graph_event_record_set_event(graph, node, event)
+                }
+            }
+            GraphNodeParams::EventWait { event, .. } => {
+                if exec {
+                    self.graph_exec_event_wait_set_event(graph, node, event)
+                } else {
+                    self.graph_event_wait_set_event(graph, node, event)
+                }
+            }
+            GraphNodeParams::ChildGraph(child) => {
+                if exec {
+                    self.graph_exec_child_set_params(graph, node, child)
+                } else {
+                    self.graph_child_set_params(graph, node, child)
+                }
+            }
+            GraphNodeParams::Alloc { .. } => Err(SimError::Invalid {
+                why: "cannot set mem alloc node params",
+            }),
+            GraphNodeParams::Free(id) => {
+                if exec {
+                    self.graph_exec_free_set_params(graph, node, id)
+                } else {
+                    self.graph_free_set_params(graph, node, id)
+                }
+            }
+            GraphNodeParams::BatchMemOp(ops) => {
+                if exec {
+                    self.graph_exec_batch_mem_ops_set_params(graph, node, &ops)
+                } else {
+                    self.graph_batch_mem_ops_set_params(graph, node, &ops)
+                }
+            }
+        }
+    }
+
     /// `cudaGraphBatchMemOpNodeSetParams` on the graph definition.
     ///
     /// After instantiate this does not retarget the exec; use

@@ -387,8 +387,11 @@
 //! ([`GraphNodeParams`] plus dependency indices in the same call). Typed
 //! `graph_add_*` stay (empty deps). IF/WHILE/SWITCH stay
 //! [`graph_add_if`](Sim::graph_add_if) / `graph_add_while` / `graph_add_switch`.
-//! Illegal on an instantiated exec and during capture.
-//! Illegal on an instantiated exec and during capture.
+//! Add is illegal on an instantiated exec and during capture.
+//! [`graph_node_set_params`](Sim::graph_node_set_params) /
+//! [`graph_exec_node_set_params`](Sim::graph_exec_node_set_params) are
+//! `cudaGraphNodeSetParams` / `cudaGraphExecNodeSetParams` (dispatch to the
+//! typed SetParams; Alloc would resize HBM; Empty has no params).
 //! [`Sim::graph_add_alloc`] / [`graph_add_free`](Sim::graph_add_free) are
 //! `cudaGraphAddMemAllocNode` / `cudaGraphAddMemFreeNode` (same reuse /
 //! AutoFreeOnLaunch rules as captured `cudaMallocAsync`).
@@ -8028,6 +8031,60 @@ mod tests {
         let g2 = sim.create_graph(d, s).unwrap();
         sim.begin_capture(d, s).unwrap();
         match sim.graph_add_node(g2, &[], GraphNodeParams::Empty) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_node_set_params_dispatches_without_retargeting_exec() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let patched = GraphNodeParams::Kernel(KernelNodeParams {
+            kind: KernelKind::other(8, 8),
+            reads: vec![KernelBuf::whole(b)],
+            writes: vec![KernelBuf::whole(b)],
+            cooperative: false,
+        });
+        sim.graph_node_set_params(g, 0, patched.clone()).unwrap();
+        let def = sim.graph_kernel_get_params(g, 0).unwrap();
+        assert_eq!(def.reads[0].id, b);
+        let snap = sim.graph_exec_kernel_get_params(exec, 0).unwrap();
+        assert_eq!(snap.reads[0].id, a);
+        sim.graph_exec_node_set_params(exec, 0, patched).unwrap();
+        let snap = sim.graph_exec_kernel_get_params(exec, 0).unwrap();
+        assert_eq!(snap.reads[0].id, b);
+        match sim.graph_node_set_params(g, 0, GraphNodeParams::Empty) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("empty"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_node_set_params(g, 0, GraphNodeParams::Alloc { bytes: 4096 }) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("alloc"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_node_set_params(g, 0, GraphNodeParams::Host(HostNodeParams::default())) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("host"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_node_set_params(
+            g,
+            0,
+            GraphNodeParams::Kernel(KernelNodeParams {
+                kind: KernelKind::other(8, 8),
+                reads: vec![KernelBuf::whole(a)],
+                writes: vec![KernelBuf::whole(a)],
+                cooperative: false,
+            }),
+        ) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
