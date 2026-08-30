@@ -99,6 +99,8 @@ pub(crate) struct GpuCli {
     pub portable_shared: PortableSharedMode,
     /// True when `--portable-shared` appeared.
     pub portable_shared_set: bool,
+    /// `cudaLaunchAttributeNvlinkUtilCentricScheduling` (`GpuStoreCfg::nvlink_util_centric`).
+    pub nvlink_util: bool,
     /// Hopper NVLS replica fanout (`GpuStoreCfg::multicast`). Implies vmm.
     pub multicast: bool,
     /// Hyper-Q occupancy (`GpuStoreCfg::compute_slots`). `0` keeps the profile.
@@ -152,6 +154,7 @@ impl GpuCli {
             "--max-shared" => &mut self.max_shared,
             "--non-portable-cluster" => &mut self.non_portable_cluster,
             "--optin-shared" => &mut self.optin_shared,
+            "--nvlink-util" => &mut self.nvlink_util,
             "--multicast" => &mut self.multicast,
             _ => return Ok(false),
         };
@@ -343,6 +346,7 @@ impl GpuCli {
             (self.optin_shared, "--optin-shared"),
             (self.dynamic_shared_set, "--dynamic-shared"),
             (self.portable_shared_set, "--portable-shared"),
+            (self.nvlink_util, "--nvlink-util"),
             (self.decode_sm_set, "--decode-sms"),
         ]
         .into_iter()
@@ -605,6 +609,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         optin_shared: gpu.optin_shared,
         dynamic_shared: gpu.dynamic_shared,
         portable_shared: gpu.portable_shared,
+        nvlink_util_centric: gpu.nvlink_util,
         multicast: gpu.multicast,
         compute_slots: gpu.compute_slots,
         decode_sm_permille: gpu.decode_sm_permille,

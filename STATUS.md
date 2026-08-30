@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — expertvm `--nvlink-util`
+
+`expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and
+`infer-bench schedule` take `--nvlink-util`. Grouped expert GEMMs launch with
+`cudaLaunchAttributeNvlinkUtilCentricScheduling`. Occupies every Hyper-Q slot
+when the profile has NVLink so leftover prefill cannot overlap decode even
+with `--compute-slots 2`. Without NVLink occupancy is unchanged. Legal with
+`--pdl` and `--cooperative`. Decode identity stays disabled.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaLaunchAttributeNvlinkUtilCentricScheduling`
 
 Launch / stream / graph-node flag (`0` disabled / `1` enabled). CUDA treats it

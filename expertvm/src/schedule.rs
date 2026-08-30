@@ -346,6 +346,7 @@ impl SchedRt {
             .with_portable_cluster(cfg.portable_cluster)
             .with_dynamic_shared(cfg.dynamic_shared)
             .with_portable_shared(cfg.portable_shared)
+            .with_nvlink_util(cfg.nvlink_util_centric)
             .with_set_params(cfg.graph_set_params)
             .with_piecewise(cfg.graph_piecewise),
             ctr: ReplayCounters::default(),

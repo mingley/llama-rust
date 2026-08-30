@@ -226,6 +226,13 @@ pub struct GpuStoreCfg {
     /// oversize. AllowNonPortable allows up to `max_shared_mem_per_block_optin`
     /// even when [`Self::optin_shared`] is off. Decode identity stays Default.
     pub portable_shared: gpu_sim::PortableSharedMode,
+    /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`.
+    ///
+    /// Occupies every Hyper-Q slot when the profile has NVLink so leftover
+    /// prefill cannot overlap decode even when [`Self::compute_slots`] is `>=2`.
+    /// Without NVLink the flag is stored and occupancy is unchanged.
+    /// Decode identity stays disabled.
+    pub nvlink_util_centric: bool,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// [`Self::pin_hot`] and walker `--place replicas` map dest VMM physicals
@@ -307,6 +314,7 @@ pub struct SimulatedGpuStore {
     portable_cluster: gpu_sim::PortableClusterMode,
     dynamic_shared: u32,
     portable_shared: gpu_sim::PortableSharedMode,
+    nvlink_util_centric: bool,
     multicast: bool,
     next_event: u32,
     pages: BTreeMap<ExpertKey, GpuPage>,
@@ -590,6 +598,7 @@ impl SimulatedGpuStore {
             portable_cluster: cfg.portable_cluster,
             dynamic_shared: cfg.dynamic_shared,
             portable_shared: cfg.portable_shared,
+            nvlink_util_centric: cfg.nvlink_util_centric,
             multicast: cfg.multicast,
             next_event: 1,
             pages: BTreeMap::new(),
@@ -712,6 +721,7 @@ impl SimulatedGpuStore {
             portable_cluster: self.portable_cluster,
             dynamic_shared: self.dynamic_shared,
             portable_shared: self.portable_shared,
+            nvlink_util_centric: self.nvlink_util_centric,
         }
     }
 

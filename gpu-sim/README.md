@@ -533,7 +533,7 @@ uses the function attribute; `portable` always refuses oversize; `non-portable`
 allows up to the SKU max). `--optin-shared` is
 `cudaFuncAttributeMaxDynamicSharedMemorySize`. `--dynamic-shared N` is
 `cudaLaunchKernel` `sharedMemBytes`. `--portable-shared default|portable|non-portable`
-is CUDA 13 `cudaLaunchAttributeSharedMemoryMode`. `nvlink_util_centric` is
+is CUDA 13 `cudaLaunchAttributeSharedMemoryMode`. `--nvlink-util` is
 `cudaLaunchAttributeNvlinkUtilCentricScheduling` (`0`/`1`; occupies every
 Hyper-Q slot when the profile has NVLink). Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
 instantiate schedules those node priorities instead of the launch stream. `set_created_streams_priority` assigns created streams

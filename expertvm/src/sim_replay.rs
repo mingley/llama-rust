@@ -51,6 +51,9 @@ pub(crate) struct GemmFlags {
     pub dynamic_shared: u32,
     /// CUDA 13 `cudaLaunchAttributeSharedMemoryMode`. Decode identity stays Default.
     pub portable_shared: gpu_sim::PortableSharedMode,
+    /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`. Occupies every Hyper-Q
+    /// slot when the profile has NVLink. Decode identity stays disabled.
+    pub nvlink_util_centric: bool,
 }
 
 impl GemmFlags {
@@ -104,6 +107,7 @@ impl GemmFlags {
             portable_cluster: self.portable_cluster,
             dynamic_shared: self.dynamic_shared,
             portable_shared: self.portable_shared,
+            nvlink_util_centric: self.nvlink_util_centric,
             ..KernelAttrs::default()
         }
     }
@@ -514,6 +518,14 @@ pub struct SimCfg {
     /// even when [`Self::optin_shared`] is off. Decode identity stays Default.
     /// [`crate::GpuStoreCfg::portable_shared`] is the store path.
     pub portable_shared: gpu_sim::PortableSharedMode,
+    /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`.
+    ///
+    /// Occupies every Hyper-Q slot when the profile has NVLink so leftover
+    /// kernels cannot overlap even when [`Self::compute_slots`] is `>=2`.
+    /// Without NVLink the flag is stored and occupancy is unchanged.
+    /// Decode identity stays disabled. [`crate::GpuStoreCfg::nvlink_util_centric`]
+    /// is the store path.
+    pub nvlink_util_centric: bool,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// `--place replicas` maps dest VMM physicals then one NVLS kernel instead
@@ -593,6 +605,7 @@ impl SimCfg {
             optin_shared: false,
             dynamic_shared: 0,
             portable_shared: gpu_sim::PortableSharedMode::Default,
+            nvlink_util_centric: false,
             multicast: false,
             compute_slots: 0,
             decode_sm_permille: 0,
@@ -726,6 +739,7 @@ pub fn sim_replay_cfg(
         .with_portable_cluster(cfg.portable_cluster)
         .with_dynamic_shared(cfg.dynamic_shared)
         .with_portable_shared(cfg.portable_shared)
+        .with_nvlink_util(cfg.nvlink_util_centric)
         .with_set_params(cfg.graph_set_params)
         .with_piecewise(cfg.graph_piecewise);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
@@ -1005,6 +1019,7 @@ pub(crate) struct GraphBank {
     portable_cluster: gpu_sim::PortableClusterMode,
     dynamic_shared: u32,
     portable_shared: gpu_sim::PortableSharedMode,
+    nvlink_util_centric: bool,
     set_params: bool,
     pub updates: u64,
     pub clones: u64,
@@ -1032,6 +1047,7 @@ impl GraphBank {
             portable_cluster: gpu_sim::PortableClusterMode::Default,
             dynamic_shared: 0,
             portable_shared: gpu_sim::PortableSharedMode::Default,
+            nvlink_util_centric: false,
             set_params: false,
             updates: 0,
             clones: 0,
@@ -1094,6 +1110,11 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_nvlink_util(mut self, yes: bool) -> Self {
+        self.nvlink_util_centric = yes;
+        self
+    }
+
     fn gemm_flags(&self) -> GemmFlags {
         GemmFlags {
             cooperative: self.cooperative,
@@ -1107,6 +1128,7 @@ impl GraphBank {
             portable_cluster: self.portable_cluster,
             dynamic_shared: self.dynamic_shared,
             portable_shared: self.portable_shared,
+            nvlink_util_centric: self.nvlink_util_centric,
         }
     }
 
@@ -2091,6 +2113,10 @@ fn add_gemm_kernel(
     if flags.portable_shared != PortableSharedMode::Default {
         let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_portable_shared(graph, node, flags.portable_shared)?;
+    }
+    if flags.nvlink_util_centric {
+        let node = usize::from(!writes.is_empty());
+        sim.graph_kernel_node_set_nvlink_util_centric(graph, node, true)?;
     }
     if flags.dynamic_shared > 0 {
         let node = usize::from(!writes.is_empty());

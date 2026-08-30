@@ -1725,6 +1725,14 @@ model, do not celebrate the sim.
     node value. Device-launch graphs allow it. Decode identity stays disabled.
     `gpu-profile capture` is still refused.
 
+138. [x] expertvm / Engine `--nvlink-util`:
+    `cudaLaunchAttributeNvlinkUtilCentricScheduling` on grouped expert GEMMs.
+    Occupies every Hyper-Q slot when the profile has NVLink so leftover
+    prefill cannot overlap decode even with `--compute-slots 2`. Without NVLink
+    the flag is stored and occupancy is unchanged. Legal with `--pdl` and
+    `--cooperative`. Decode identity stays disabled. `gpu-profile capture` is
+    still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

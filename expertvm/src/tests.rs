@@ -5632,6 +5632,78 @@ fn simulated_gpu_store_max_shared_serializes_leftover_prefill() {
 }
 
 #[test]
+fn simulated_gpu_store_nvlink_util_serializes_leftover_prefill() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let nv = HardwareProfile::parse("gpus=2\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("nvlink slow gemm");
+    assert!(nv.has_nvlink());
+    let run = |profile: HardwareProfile, nvlink: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = match SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            profile,
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                decode_priority: true,
+                stream_priority: true,
+                compute_slots: 2,
+                nvlink_util_centric: nvlink,
+                ..GpuStoreCfg::default()
+            },
+        ) {
+            Ok(gpu) => gpu,
+            Err(err) => panic!("gpu: {err}"),
+        };
+        let pre = ExpertKey::new(0, 0);
+        let dec = ExpertKey::new(0, 1);
+        gpu.bind_decode_compute(false);
+        let _warm_pre = match gpu.acquire(pre) {
+            Ok(v) => v,
+            Err(err) => panic!("warm pre: {err}"),
+        };
+        gpu.release(pre);
+        let _warm_dec = match gpu.acquire(dec) {
+            Ok(v) => v,
+            Err(err) => panic!("warm dec: {err}"),
+        };
+        gpu.release(dec);
+        let t0 = gpu.clock_ns().expect("drain h2d");
+        gpu.bind_decode_compute(false);
+        let _prefill = match gpu.acquire(pre) {
+            Ok(v) => v,
+            Err(err) => panic!("prefill: {err}"),
+        };
+        gpu.release(pre);
+        gpu.bind_decode_compute(true);
+        let _decode = match gpu.acquire(dec) {
+            Ok(v) => v,
+            Err(err) => panic!("decode: {err}"),
+        };
+        gpu.release(dec);
+        gpu.score().expect("score").wall_ns.saturating_sub(t0)
+    };
+    let overlap = run(nv.clone(), false);
+    let serial = run(nv, true);
+    assert!(
+        overlap < serial,
+        "NVLink-util-centric must not overlap leftover prefill; overlap={overlap} serial={serial}"
+    );
+    let h100 =
+        HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n").expect("no nvlink");
+    assert!(!h100.has_nvlink());
+    let off = run(h100.clone(), false);
+    let on = run(h100, true);
+    assert_eq!(
+        off, on,
+        "without NVLink the hint must not change occupancy; off={off} on={on}"
+    );
+}
+
+#[test]
 fn simulated_gpu_store_non_portable_cluster_allows_oversize() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],
@@ -6168,6 +6240,57 @@ fn sim_replay_max_shared_serializes_seq_streams() {
         "MaxShared carveout must not Hyper-Q overlap; overlap={} serial={}",
         overlap.sim_ns,
         serial.sim_ns
+    );
+}
+
+#[test]
+fn sim_replay_nvlink_util_serializes_seq_streams() {
+    let t = Trace {
+        events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],
+    };
+    let nv = HardwareProfile::parse("gpus=2\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("nvlink slow gemm");
+    assert!(nv.has_nvlink());
+    let hyperq = SimCfg {
+        seq_streams: true,
+        compute_slots: 2,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let flagged = SimCfg {
+        nvlink_util_centric: true,
+        ..hyperq
+    };
+    let overlap = match sim_replay_cfg(&t, nv.clone(), hyperq) {
+        Ok(row) => row,
+        Err(err) => panic!("hyperq: {err}"),
+    };
+    let serial = match sim_replay_cfg(&t, nv, flagged) {
+        Ok(row) => row,
+        Err(err) => panic!("nvlink-util: {err}"),
+    };
+    assert_eq!(overlap.hits, serial.hits);
+    assert_eq!(overlap.misses, serial.misses);
+    assert!(
+        overlap.sim_ns < serial.sim_ns,
+        "NVLink-util-centric must not Hyper-Q overlap; overlap={} serial={}",
+        overlap.sim_ns,
+        serial.sim_ns
+    );
+    let h100 =
+        HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n").expect("no nvlink");
+    assert!(!h100.has_nvlink());
+    let off = match sim_replay_cfg(&t, h100.clone(), hyperq) {
+        Ok(row) => row,
+        Err(err) => panic!("h100 off: {err}"),
+    };
+    let on = match sim_replay_cfg(&t, h100, flagged) {
+        Ok(row) => row,
+        Err(err) => panic!("h100 on: {err}"),
+    };
+    assert_eq!(
+        off.sim_ns, on.sim_ns,
+        "without NVLink the hint must not change occupancy; off={} on={}",
+        off.sim_ns, on.sim_ns
     );
 }
 

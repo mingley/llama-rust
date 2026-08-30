@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params, timing events, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `cluster`, `shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`) are the same mechanical
+//! `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `cluster`, `shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -72,11 +72,14 @@
 //! `--dynamic-shared N` is `cudaLaunchKernel` `sharedMemBytes` (`N` > 0).
 //! `--portable-shared` default|portable|non-portable is CUDA 13 portable-shared
 //! mode (`cudaLaunchAttributeSharedMemoryMode`; Default uses the function
-//! attribute). Decode
+//! attribute). `--nvlink-util` is
+//! `cudaLaunchAttributeNvlinkUtilCentricScheduling`: occupies every Hyper-Q
+//! slot when the profile has NVLink; without NVLink occupancy is unchanged.
+//! Decode
 //! identity stays `cudaLaunchKernel` (no cluster / Default policy / no preferred
 //! dim / Default carveout / non-portable disallowed / Auto sync policy /
 //! Default shared-mem / Default portable-cluster / 0 dynamic shared / Default
-//! portable-shared).
+//! portable-shared / nvlink-util off).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode
@@ -3870,6 +3873,36 @@ mod tests {
         assert_eq!(
             portable.4, oversize.4,
             "AllowNonPortable dynamic shared 65536 must keep greedy identity"
+        );
+    }
+
+    #[test]
+    fn engine_gpu_nvlink_util_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse("gpus=2\nfp16_flops=1000000\ncopy_engines=2\n")
+            .expect("nvlink slow gemm");
+        let pri = GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            compute_slots: 2,
+            ..GpuStoreCfg::default()
+        };
+        let off = mixed_gpu_decode_itl_at(bytes.clone(), false, None, pri, profile.clone());
+        let on = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                nvlink_util_centric: true,
+                ..pri
+            },
+            profile,
+        );
+        assert_eq!(off.2, 4);
+        assert_eq!(on.2, 4);
+        assert_eq!(
+            off.4, on.4,
+            "nvlink-util occupancy must keep greedy identity"
         );
     }
 
