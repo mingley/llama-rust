@@ -121,6 +121,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchAttributeSynchronizationPolicy` (stream-only) | host-wait tax on `synchronize_stream` / `synchronize_event`; Auto / profile default 0 |
 | `cudaLaunchAttributeDeviceUpdatableKernelNode` | `graph_exec_kernel_set_params` keeps the exec uploaded; device-launch graphs allow it |
 | `cudaLaunchAttributeSharedMemoryMode` | Default never scales; FourByte / EightByte scale duration by `1000 / shared_mem_*_permille` (default 1000) |
+| `cudaLaunchAttributePortableClusterSizeMode` | Default uses the function attr; RequirePortable always refuses oversize; AllowNonPortable allows up to SKU max |
 | `set_stream_sm_permille` is a green-context SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host) | HBM write + launch overhead |
 | peer D2D needs topology + `enable_peer` | link bandwidth |
@@ -473,7 +474,8 @@ launch (`ProgrammaticLaunch`), programmatic event (`ProgrammaticEvent`),
 access-policy window (`AccessPolicyWindow`), mem-sync domain/map,
 cluster, preferred cluster, shared-memory carveout,
 device-updatable kernel node (`cudaLaunchAttributeDeviceUpdatableKernelNode`),
-and shared-memory bank mode (`cudaLaunchAttributeSharedMemoryMode`).
+shared-memory bank mode (`cudaLaunchAttributeSharedMemoryMode`), and
+portable-cluster size mode (`cudaLaunchAttributePortableClusterSizeMode`).
 `kernel_pdl` is `cudaLaunchKernelEx` PDL:
 a wait kernel may start after the previous same-stream kernel's trigger
 (`pdl_trigger_permille`) instead of its completion. Overlap needs
@@ -501,7 +503,9 @@ max 8). `ClusterSchedulingPolicy::Spread` occupies every slot.
 `SharedMemoryMode` is `cudaLaunchAttributeSharedMemoryMode`: Default never
 scales kernel duration; FourByte / EightByte scale by
 `1000 / shared_mem_*_permille` (profile default 1000 is identity).
-`set_non_portable_cluster_size_allowed` is
+`PortableClusterMode` is `cudaLaunchAttributePortableClusterSizeMode`: Default
+uses the function attribute; RequirePortable always refuses oversize;
+AllowNonPortable allows up to the SKU max. `set_non_portable_cluster_size_allowed` is
 `cudaFuncAttributeNonPortableClusterSizeAllowed` (default disallowed).
 `expertvm sim --cluster N` / `gguf_gemv engine --expert-sim --cluster N`
 launch grouped expert GEMMs that way. `--preferred-cluster N` occupies the

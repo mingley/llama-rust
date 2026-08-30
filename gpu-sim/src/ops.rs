@@ -484,7 +484,8 @@ impl SynchronizationPolicy {
 /// access-policy window, and a mem-sync domain can share a launch (7 arguments
 /// including `self`). Decode identity stays [`crate::Sim::kernel`] ([`Default`]:
 /// no cooperative, no PDL, no window, inherit stream mem-sync, no cluster,
-/// Default carveout, not device-updatable, Default shared-memory mode).
+/// Default carveout, not device-updatable, Default shared-memory mode,
+/// Default portable-cluster mode).
 /// [`SynchronizationPolicy`] is a stream attribute, not a field here.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KernelAttrs {
@@ -514,6 +515,12 @@ pub struct KernelAttrs {
     pub device_updatable: bool,
     /// `cudaLaunchAttributeSharedMemoryMode`.
     pub shared_mem: SharedMemoryMode,
+    /// `cudaLaunchAttributePortableClusterSizeMode`.
+    ///
+    /// [`PortableClusterMode::Default`] uses the current
+    /// [`crate::Sim::set_non_portable_cluster_size_allowed`]. Decode identity
+    /// stays Default (function attr disallowed).
+    pub portable_cluster: PortableClusterMode,
 }
 
 /// `cudaFuncCache` / `cudaSharedmemCarveout` preference
@@ -574,6 +581,49 @@ impl SharedMemoryMode {
     }
 }
 
+/// `cudaLaunchAttributePortableClusterSizeMode`.
+///
+/// Launch-time override of [`crate::Sim::set_non_portable_cluster_size_allowed`].
+/// [`Self::Default`] uses the current function attribute. [`Self::RequirePortable`]
+/// refuses a cluster larger than [`crate::GpuProfile::portable_cluster_size`]
+/// even when the function attribute allows it. [`Self::AllowNonPortable`]
+/// allows up to [`crate::GpuProfile::max_blocks_per_cluster`] even when the
+/// function attribute is off. Decode identity stays [`Self::Default`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum PortableClusterMode {
+    /// `cudaLaunchPortableClusterModeDefault`. Use the function attribute.
+    #[default]
+    Default,
+    /// `cudaLaunchPortableClusterModeRequirePortable`.
+    RequirePortable,
+    /// `cudaLaunchPortableClusterModeAllowNonPortable`.
+    AllowNonPortable,
+}
+
+impl PortableClusterMode {
+    /// CLI token: `default` / `portable` / `non-portable`.
+    pub fn parse(s: &str) -> Result<Self, crate::error::SimError> {
+        match s {
+            "default" => Ok(Self::Default),
+            "portable" => Ok(Self::RequirePortable),
+            "non-portable" => Ok(Self::AllowNonPortable),
+            _ => Err(crate::error::SimError::Invalid {
+                why: "unknown portable-cluster",
+            }),
+        }
+    }
+
+    /// Whether `mode` plus the function attribute allows a non-portable size.
+    #[must_use]
+    pub fn allows_non_portable(self, func_allowed: bool) -> bool {
+        match self {
+            Self::Default => func_allowed,
+            Self::RequirePortable => false,
+            Self::AllowNonPortable => true,
+        }
+    }
+}
+
 /// `cudaClusterSchedulingPolicy` (`cudaLaunchAttributeClusterSchedulingPolicyPreference`).
 ///
 /// Spread occupies every Hyper-Q slot so leftover kernels cannot overlap a
@@ -596,7 +646,8 @@ pub enum ClusterSchedulingPolicy {
 /// All three dimensions must be `>= 1`. Product is the cluster block count and
 /// must be `<= GpuProfile::max_blocks_per_cluster`. Sizes above
 /// [`crate::GpuProfile::portable_cluster_size`] also need
-/// [`crate::Sim::set_non_portable_cluster_size_allowed`]. Decode identity stays
+/// [`crate::Sim::set_non_portable_cluster_size_allowed`] or
+/// [`PortableClusterMode::AllowNonPortable`]. Decode identity stays
 /// [`None`] (not a cluster). Capture records the attribute.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClusterDim {

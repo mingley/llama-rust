@@ -171,7 +171,8 @@
 //! programmatic event ([`ProgrammaticEvent`]), access-policy window,
 //! mem-sync domain/map, cluster dimension, cluster scheduling policy,
 //! preferred cluster dimension, shared-memory carveout,
-//! device-updatable kernel node, and shared-memory bank mode.
+//! device-updatable kernel node, shared-memory bank mode, and portable-cluster
+//! size mode.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
 //! may start after the previous same-stream kernel's trigger
 //! (`GpuProfile::pdl_trigger_permille`) instead of its completion. Overlap
@@ -195,11 +196,15 @@
 //! [`KernelAttrs::preferred_cluster`] is used when that size fits in
 //! `compute_slots`. [`SharedMemCarveout::MaxShared`] occupies every slot.
 //! Sizes above [`GpuProfile::portable_cluster_size`] need
-//! [`set_non_portable_cluster_size_allowed`](Sim::set_non_portable_cluster_size_allowed).
+//! [`set_non_portable_cluster_size_allowed`](Sim::set_non_portable_cluster_size_allowed)
+//! or [`PortableClusterMode::AllowNonPortable`].
 //! [`KernelAttrs::device_updatable`] is `cudaLaunchAttributeDeviceUpdatableKernelNode`.
 //! [`SharedMemoryMode`] is `cudaLaunchAttributeSharedMemoryMode`: Default never
 //! scales duration; FourByte / EightByte scale by
 //! `1000 / GpuProfile::shared_mem_*_permille` (profile default `1000`).
+//! [`PortableClusterMode`] is `cudaLaunchAttributePortableClusterSizeMode`:
+//! Default uses the function attribute; RequirePortable always refuses a
+//! non-portable size; AllowNonPortable allows up to `max_blocks_per_cluster`.
 //! Decode identity stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
 //! [`graph_exec_kernel_node_set_priority`](Sim::graph_exec_kernel_node_set_priority)
 //! are the exec-snapshot attributes. [`Sim::upload_graph`] is
@@ -369,8 +374,8 @@ pub use ops::{
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
     KernelNodeParams, LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap,
-    MemcpyOp, Operation, PdlLaunch, Place, ProgrammaticEvent, ProgrammaticLaunch,
-    SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
+    MemcpyOp, Operation, PdlLaunch, Place, PortableClusterMode, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
     SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
@@ -5216,6 +5221,178 @@ mod tests {
     }
 
     #[test]
+    fn portable_cluster_mode_overrides_func_attribute() {
+        let p = HardwareProfile::parse("gpus=1\nmax_blocks_per_cluster=16\n").unwrap();
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        let err = sim
+            .kernel_with(
+                d,
+                KernelKind::other(8, 8),
+                &[a],
+                &[a],
+                s,
+                KernelAttrs {
+                    cluster: Some(ClusterDim::x(16)),
+                    ..KernelAttrs::default()
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("non-portable cluster"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        enq(sim.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            KernelAttrs {
+                cluster: Some(ClusterDim::x(16)),
+                portable_cluster: PortableClusterMode::AllowNonPortable,
+                ..KernelAttrs::default()
+            },
+        ));
+        sim.set_non_portable_cluster_size_allowed(d, true).unwrap();
+        let err = sim
+            .kernel_with(
+                d,
+                KernelKind::other(8, 8),
+                &[a],
+                &[a],
+                s,
+                KernelAttrs {
+                    cluster: Some(ClusterDim::x(16)),
+                    portable_cluster: PortableClusterMode::RequirePortable,
+                    ..KernelAttrs::default()
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("non-portable cluster"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn default_portable_cluster_uses_func_attr_at_launch() {
+        let p = HardwareProfile::parse("gpus=1\nmax_blocks_per_cluster=16\n").unwrap();
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        sim.set_non_portable_cluster_size_allowed(d, true).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_set_cluster(g, 0, Some(ClusterDim::x(16)))
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.set_non_portable_cluster_size_allowed(d, false).unwrap();
+        let err = sim.launch_graph(exec, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("non-portable cluster"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.graph_exec_kernel_node_set_portable_cluster(
+            exec,
+            0,
+            PortableClusterMode::AllowNonPortable,
+        )
+        .unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert!(n >= 1);
+    }
+
+    #[test]
+    fn graph_portable_cluster_copy_and_device_launch() {
+        let p = HardwareProfile::parse("gpus=1\nmax_blocks_per_cluster=16\n").unwrap();
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_portable_cluster(g, 0).unwrap(),
+            PortableClusterMode::Default
+        );
+        sim.graph_kernel_node_set_portable_cluster(g, 0, PortableClusterMode::AllowNonPortable)
+            .unwrap();
+        sim.graph_kernel_node_set_cluster(g, 0, Some(ClusterDim::x(16)))
+            .unwrap();
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_copy_attributes(h, 0, g, 0).unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_portable_cluster(h, 0).unwrap(),
+            PortableClusterMode::AllowNonPortable
+        );
+        assert_eq!(
+            sim.graph_kernel_node_get_cluster(h, 0).unwrap(),
+            Some(ClusterDim::x(16))
+        );
+        let exec = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .expect("device-launch allows portable-cluster");
+        assert_eq!(
+            sim.graph_exec_kernel_node_get_portable_cluster(exec, 0)
+                .unwrap(),
+            PortableClusterMode::AllowNonPortable
+        );
+        let err = sim
+            .graph_exec_kernel_node_set_portable_cluster(
+                exec,
+                0,
+                PortableClusterMode::RequirePortable,
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("non-portable cluster"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let empty = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(empty).unwrap();
+        let err = sim
+            .graph_kernel_node_get_portable_cluster(empty, 0)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not a kernel node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn kernel_with_capture_records_portable_cluster() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            KernelAttrs {
+                portable_cluster: PortableClusterMode::AllowNonPortable,
+                ..KernelAttrs::default()
+            },
+        ));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_portable_cluster(g, 0).unwrap(),
+            PortableClusterMode::AllowNonPortable
+        );
+    }
+
+    #[test]
     fn graph_cluster_copies_and_device_launch_allows() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
@@ -5820,6 +5997,27 @@ mod tests {
         let err = SharedMemoryMode::parse("bogus").unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("unknown shared-mem"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+    }
+
+    #[test]
+    fn portable_cluster_mode_parse() {
+        assert_eq!(
+            PortableClusterMode::parse("default").unwrap(),
+            PortableClusterMode::Default
+        );
+        assert_eq!(
+            PortableClusterMode::parse("portable").unwrap(),
+            PortableClusterMode::RequirePortable
+        );
+        assert_eq!(
+            PortableClusterMode::parse("non-portable").unwrap(),
+            PortableClusterMode::AllowNonPortable
+        );
+        let err = PortableClusterMode::parse("bogus").unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown portable-cluster"), "{why}"),
             e => panic!("{e:?}"),
         }
     }

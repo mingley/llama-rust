@@ -15,8 +15,8 @@ use crate::ops::{
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
     KernelNodeParams, LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap,
-    MemcpyOp, Operation, PdlLaunch, Place, ProgrammaticEvent, ProgrammaticLaunch,
-    SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
+    MemcpyOp, Operation, PdlLaunch, Place, PortableClusterMode, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
     SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
@@ -309,6 +309,8 @@ struct GraphStep {
     device_updatable: bool,
     /// `cudaLaunchAttributeSharedMemoryMode`.
     shared_mem: SharedMemoryMode,
+    /// `cudaLaunchAttributePortableClusterSizeMode`.
+    portable_cluster: PortableClusterMode,
 }
 
 struct Graph {
@@ -604,6 +606,8 @@ pub struct Sim {
     enqueue_device_updatable: bool,
     /// Shared-memory bank mode for the next submit / graph replay.
     enqueue_shared_mem: SharedMemoryMode,
+    /// Portable-cluster mode for the next submit / graph replay.
+    enqueue_portable_cluster: PortableClusterMode,
     /// Devices with `cudaFuncAttributeNonPortableClusterSizeAllowed`.
     non_portable_cluster: BTreeSet<DeviceId>,
     /// Wait/write-value mailbox: `(alloc, offset) → word`. Missing is `0`.
@@ -702,6 +706,7 @@ impl Sim {
             enqueue_carveout: SharedMemCarveout::Default,
             enqueue_device_updatable: false,
             enqueue_shared_mem: SharedMemoryMode::Default,
+            enqueue_portable_cluster: PortableClusterMode::Default,
             non_portable_cluster: BTreeSet::new(),
             mailbox: BTreeMap::new(),
             capture_mode: StreamCaptureMode::Relaxed,
@@ -2016,6 +2021,7 @@ impl Sim {
             self.enqueue_carveout = step.carveout;
             self.enqueue_device_updatable = step.device_updatable;
             self.enqueue_shared_mem = step.shared_mem;
+            self.enqueue_portable_cluster = step.portable_cluster;
             let wait = graph_node_waits(step, extra_wait, launch_tail, &node_ops)?;
             let s = self.graph_exec_stream(origin, stream, step, &node_stream, &mut worker);
             if let Some(slot) = node_stream.get_mut(idx) {
@@ -2198,6 +2204,7 @@ impl Sim {
         self.enqueue_carveout = SharedMemCarveout::Default;
         self.enqueue_device_updatable = false;
         self.enqueue_shared_mem = SharedMemoryMode::Default;
+        self.enqueue_portable_cluster = PortableClusterMode::Default;
         Ok(n)
     }
 
@@ -5994,7 +6001,7 @@ impl Sim {
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
         let graph = if exec { self.as_exec(graph)? } else { graph };
-        let device = {
+        let (device, mode) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
@@ -6007,10 +6014,10 @@ impl Sim {
                     why: "not a kernel node",
                 });
             }
-            step.device
+            (step.device, step.portable_cluster)
         };
         if let Some(c) = cluster {
-            let _n = self.validate_cluster(device, c)?;
+            let _n = self.validate_cluster(device, c, mode)?;
         }
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -6179,7 +6186,7 @@ impl Sim {
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
         let graph = if exec { self.as_exec(graph)? } else { graph };
-        let device = {
+        let (device, cluster, mode) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
@@ -6192,19 +6199,9 @@ impl Sim {
                     why: "not a kernel node",
                 });
             }
-            step.device
+            (step.device, step.cluster, step.portable_cluster)
         };
-        let cluster = {
-            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-                why: "unknown graph",
-            })?;
-            let steps = if exec { g.view() } else { &g.steps };
-            let step = steps.get(node).ok_or(SimError::Invalid {
-                why: "unknown graph node",
-            })?;
-            step.cluster
-        };
-        self.validate_cluster_attrs(device, cluster, preferred)?;
+        self.validate_cluster_attrs(device, cluster, preferred, mode)?;
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -6475,11 +6472,109 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphKernelNodeGetAttribute` for portable-cluster size mode.
+    pub fn graph_kernel_node_get_portable_cluster(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<PortableClusterMode, SimError> {
+        self.kernel_node_portable_cluster(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for portable-cluster size mode.
+    pub fn graph_exec_kernel_node_get_portable_cluster(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<PortableClusterMode, SimError> {
+        self.kernel_node_portable_cluster(exec, node, true)
+    }
+
+    fn kernel_node_portable_cluster(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<PortableClusterMode, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.portable_cluster)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for portable-cluster size mode.
+    pub fn graph_kernel_node_set_portable_cluster(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        mode: PortableClusterMode,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_portable_cluster(graph, node, false, mode)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for portable-cluster size mode.
+    pub fn graph_exec_kernel_node_set_portable_cluster(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        mode: PortableClusterMode,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_portable_cluster(exec, node, true, mode)
+    }
+
+    fn set_kernel_node_portable_cluster(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        mode: PortableClusterMode,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let (device, cluster, preferred) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let steps = if exec { g.view() } else { &g.steps };
+            let step = steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+            (step.device, step.cluster, step.preferred_cluster)
+        };
+        self.validate_cluster_attrs(device, cluster, preferred, mode)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.portable_cluster = mode;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// `cudaGraphKernelNodeCopyAttributes`: copy priority, PDL, programmatic
     /// event, launch-completion event, access-policy window, mem-sync
     /// domain/map, cluster dimension, cluster scheduling policy, preferred
-    /// cluster dimension, shared-memory carveout, device-updatable kernel
-    /// node, and shared-memory bank mode from `src` to `dst`.
+    /// cluster dimension, portable-cluster mode, shared-memory carveout,
+    /// device-updatable kernel node, and shared-memory bank mode from `src`
+    /// to `dst`.
     ///
     /// Both nodes must be kernels. Capture cannot include it.
     pub fn graph_kernel_node_copy_attributes(
@@ -6504,6 +6599,8 @@ impl Sim {
         let map = self.graph_kernel_node_get_mem_sync_domain_map(src_graph, src)?;
         self.graph_kernel_node_set_mem_sync_domain(dst_graph, dst, domain)?;
         self.graph_kernel_node_set_mem_sync_domain_map(dst_graph, dst, map)?;
+        let pc = self.graph_kernel_node_get_portable_cluster(src_graph, src)?;
+        self.graph_kernel_node_set_portable_cluster(dst_graph, dst, pc)?;
         let cluster = self.graph_kernel_node_get_cluster(src_graph, src)?;
         self.graph_kernel_node_set_cluster(dst_graph, dst, cluster)?;
         let policy = self.graph_kernel_node_get_cluster_policy(src_graph, src)?;
@@ -6605,6 +6702,7 @@ impl Sim {
             carveout: self.enqueue_carveout,
             device_updatable: self.enqueue_device_updatable,
             shared_mem: self.enqueue_shared_mem,
+            portable_cluster: self.enqueue_portable_cluster,
         });
         Ok(())
     }
@@ -8885,10 +8983,12 @@ impl Sim {
         if let Some(map) = attrs.mem_sync_map {
             self.validate_mem_sync_map(device, map)?;
         }
-        if let Some(c) = attrs.cluster {
-            let _n = self.validate_cluster(device, c)?;
-        }
-        self.validate_cluster_attrs(device, attrs.cluster, attrs.preferred_cluster)?;
+        self.validate_cluster_attrs(
+            device,
+            attrs.cluster,
+            attrs.preferred_cluster,
+            attrs.portable_cluster,
+        )?;
         if attrs.cooperative {
             self.require_cooperative(device)?;
         }
@@ -8902,6 +9002,7 @@ impl Sim {
         let prev_carve = self.enqueue_carveout;
         let prev_upd = self.enqueue_device_updatable;
         let prev_sm = self.enqueue_shared_mem;
+        let prev_pc = self.enqueue_portable_cluster;
         self.enqueue_pdl = attrs.pdl;
         self.enqueue_access_policy = attrs.access_policy;
         self.enqueue_mem_sync_domain = attrs.mem_sync_domain;
@@ -8912,6 +9013,7 @@ impl Sim {
         self.enqueue_carveout = attrs.carveout;
         self.enqueue_device_updatable = attrs.device_updatable;
         self.enqueue_shared_mem = attrs.shared_mem;
+        self.enqueue_portable_cluster = attrs.portable_cluster;
         let out = self.submit_kernel(device, kind, reads, writes, stream, attrs.cooperative);
         self.enqueue_pdl = prev_pdl;
         self.enqueue_access_policy = prev_win;
@@ -8923,6 +9025,7 @@ impl Sim {
         self.enqueue_carveout = prev_carve;
         self.enqueue_device_updatable = prev_upd;
         self.enqueue_shared_mem = prev_sm;
+        self.enqueue_portable_cluster = prev_pc;
         out
     }
 
@@ -9825,6 +9928,7 @@ impl Sim {
             carveout: self.enqueue_carveout,
             device_updatable: self.enqueue_device_updatable,
             shared_mem: self.enqueue_shared_mem,
+            portable_cluster: self.enqueue_portable_cluster,
         });
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
@@ -9875,6 +9979,14 @@ impl Sim {
         launch: LaunchCost,
     ) -> Result<OpId, SimError> {
         let _gpu = self.profile.gpu(device)?;
+        if matches!(kind, Kind::Kernel { .. }) {
+            self.validate_cluster_attrs(
+                device,
+                self.enqueue_cluster,
+                self.enqueue_preferred_cluster,
+                self.enqueue_portable_cluster,
+            )?;
+        }
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
         let pde = self.enqueue_programmatic_event;
@@ -11911,19 +12023,30 @@ impl Sim {
         leftover.saturating_mul(tax) / 1000
     }
 
-    fn validate_cluster(&self, device: DeviceId, dim: ClusterDim) -> Result<u32, SimError> {
+    fn cluster_block_count(&self, device: DeviceId, dim: ClusterDim) -> Result<u32, SimError> {
         let n = dim.blocks().ok_or(SimError::Invalid {
             why: "cluster dimension",
         })?;
         let gpu = self.profile.gpu(device)?;
         let max = u32::from(gpu.max_blocks_per_cluster.max(1));
-        let portable = u32::from(gpu.portable_cluster_size.max(1));
         if n > max {
             return Err(SimError::Invalid {
                 why: "cluster size",
             });
         }
-        if n > portable && !self.non_portable_cluster.contains(&device) {
+        Ok(n)
+    }
+
+    fn validate_cluster(
+        &self,
+        device: DeviceId,
+        dim: ClusterDim,
+        mode: PortableClusterMode,
+    ) -> Result<u32, SimError> {
+        let n = self.cluster_block_count(device, dim)?;
+        let portable = u32::from(self.profile.gpu(device)?.portable_cluster_size.max(1));
+        let func = self.non_portable_cluster.contains(&device);
+        if n > portable && !mode.allows_non_portable(func) {
             return Err(SimError::Invalid {
                 why: "non-portable cluster",
             });
@@ -11936,9 +12059,10 @@ impl Sim {
         device: DeviceId,
         cluster: Option<ClusterDim>,
         preferred: Option<ClusterDim>,
+        mode: PortableClusterMode,
     ) -> Result<(), SimError> {
         if let Some(c) = cluster {
-            let _n = self.validate_cluster(device, c)?;
+            let _n = self.validate_cluster(device, c, mode)?;
         }
         if let Some(p) = preferred {
             let Some(c) = cluster else {
@@ -11951,7 +12075,7 @@ impl Sim {
                     why: "preferred cluster",
                 });
             }
-            let _n = self.validate_cluster(device, p)?;
+            let _n = self.validate_cluster(device, p, mode)?;
         }
         Ok(())
     }
@@ -11962,15 +12086,26 @@ impl Sim {
         cluster: Option<ClusterDim>,
         preferred: Option<ClusterDim>,
     ) -> Result<u32, SimError> {
-        self.validate_cluster_attrs(device, cluster, preferred)?;
+        if let Some(p) = preferred {
+            let Some(c) = cluster else {
+                return Err(SimError::Invalid {
+                    why: "preferred cluster",
+                });
+            };
+            if !p.multiple_of(c) {
+                return Err(SimError::Invalid {
+                    why: "preferred cluster",
+                });
+            }
+        }
         let Some(c) = cluster else {
             return Ok(0);
         };
-        let required = self.validate_cluster(device, c)?;
+        let required = self.cluster_block_count(device, c)?;
         let Some(p) = preferred else {
             return Ok(required);
         };
-        let preferred_n = self.validate_cluster(device, p)?;
+        let preferred_n = self.cluster_block_count(device, p)?;
         let cap = u32::from(self.profile.gpu(device)?.compute_slots.max(1));
         if preferred_n <= cap {
             Ok(preferred_n)
@@ -11983,7 +12118,8 @@ impl Sim {
     ///
     /// Default is disallowed. A cluster larger than
     /// [`crate::GpuProfile::portable_cluster_size`] is Invalid until this is
-    /// true. Decode identity stays disallowed.
+    /// true, unless the launch uses [`PortableClusterMode::AllowNonPortable`].
+    /// Decode identity stays disallowed.
     pub fn set_non_portable_cluster_size_allowed(
         &mut self,
         device: DeviceId,
@@ -12893,6 +13029,7 @@ fn remap_nested_graphs(
             carveout: step.carveout,
             device_updatable: step.device_updatable,
             shared_mem: step.shared_mem,
+            portable_cluster: step.portable_cluster,
         });
     }
     Ok(out)

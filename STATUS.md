@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaLaunchAttributePortableClusterSizeMode`
+
+Launch-time override of `cudaFuncAttributeNonPortableClusterSizeAllowed`
+(SetAttribute / CopyAttributes / `KernelAttrs`). Default uses the current
+function attribute (resolved at launch). RequirePortable always refuses a
+size above `portable_cluster_size`. AllowNonPortable allows up to the SKU
+`max_blocks_per_cluster`. Device-launch graphs allow it. Decode identity
+stays Default (function attr disallowed). `gpu-profile capture` is still
+refused.
+
 ## Shipped 2026-08-30 — expertvm `--shared-mem`
 
 `expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and

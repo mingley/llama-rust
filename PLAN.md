@@ -1674,6 +1674,17 @@ model, do not celebrate the sim.
     default 1000 is identity). Legal with `--pdl` and `--cooperative`.
     Decode identity stays Default. `gpu-profile capture` is still refused.
 
+133. [x] `cudaLaunchAttributePortableClusterSizeMode`: launch-time
+    override of `cudaFuncAttributeNonPortableClusterSizeAllowed`
+    (graph SetAttribute / CopyAttributes / `KernelAttrs`). Default uses
+    the current function attribute. RequirePortable refuses a cluster
+    larger than `portable_cluster_size` even when the function attribute
+    allows it. AllowNonPortable allows up to `max_blocks_per_cluster`
+    even when the function attribute is off. Default is resolved at
+    launch / graph replay. Device-launch graphs allow it. Decode identity
+    stays Default (function attr disallowed). `gpu-profile capture` is
+    still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.
