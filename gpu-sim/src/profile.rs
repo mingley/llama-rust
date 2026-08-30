@@ -108,6 +108,18 @@ pub struct GpuProfile {
     /// Portable cluster size (`sm_90` is 8). A larger launch needs
     /// [`crate::Sim::set_non_portable_cluster_size_allowed`]. Not a capture.
     pub portable_cluster_size: u8,
+    /// Host-side wait tax for [`crate::ops::SynchronizationPolicy::Spin`] on
+    /// `cudaStreamSynchronize` / `cudaEventSynchronize`, nanoseconds.
+    ///
+    /// Default `0` keeps decode identity and existing stream-sync tests.
+    /// Not a capture. Auto policy is always 0 regardless of this field.
+    pub host_sync_spin_ns: u64,
+    /// Host-side wait tax for [`crate::ops::SynchronizationPolicy::Yield`].
+    /// Default `0`. Not a capture.
+    pub host_sync_yield_ns: u64,
+    /// Host-side wait tax for [`crate::ops::SynchronizationPolicy::BlockingSync`].
+    /// Default `0`. Not a capture.
+    pub host_sync_blocking_ns: u64,
 }
 
 impl GpuProfile {
@@ -504,7 +516,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npdl_trigger_permille={}\nl2_bytes={}\nl2_persist_hit_permille={}\nmem_sync_domain_count={}\nsame_domain_fence_permille={}\nmax_blocks_per_cluster={}\nportable_cluster_size={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npdl_trigger_permille={}\nl2_bytes={}\nl2_persist_hit_permille={}\nmem_sync_domain_count={}\nsame_domain_fence_permille={}\nmax_blocks_per_cluster={}\nportable_cluster_size={}\nhost_sync_spin_ns={}\nhost_sync_yield_ns={}\nhost_sync_blocking_ns={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -531,6 +543,9 @@ impl HardwareProfile {
             g0.same_domain_fence_permille,
             g0.max_blocks_per_cluster,
             g0.portable_cluster_size,
+            g0.host_sync_spin_ns,
+            g0.host_sync_yield_ns,
+            g0.host_sync_blocking_ns,
             self.host_pageable_permille(g0.id),
             self.host_align_bytes(g0.id),
             g0.pool_reuse_ns,
@@ -654,6 +669,9 @@ fn h100_gpu(id: DeviceId) -> GpuProfile {
         same_domain_fence_permille: 0,
         max_blocks_per_cluster: 8,
         portable_cluster_size: 8,
+        host_sync_spin_ns: 0,
+        host_sync_yield_ns: 0,
+        host_sync_blocking_ns: 0,
     }
 }
 
@@ -790,6 +808,9 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut same_domain_fence_permille: Option<u16> = None;
     let mut max_blocks_per_cluster: Option<u8> = None;
     let mut portable_cluster_size: Option<u8> = None;
+    let mut host_sync_spin_ns: Option<u64> = None;
+    let mut host_sync_yield_ns: Option<u64> = None;
+    let mut host_sync_blocking_ns: Option<u64> = None;
     let mut pageable_permille: u16 = 500;
     let mut align_bytes: u64 = 128;
     let mut pool_reuse_ns: Option<u64> = None;
@@ -888,6 +909,9 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
                 }
                 portable_cluster_size = Some(n);
             }
+            "host_sync_spin_ns" => host_sync_spin_ns = Some(parse_u64(v)?),
+            "host_sync_yield_ns" => host_sync_yield_ns = Some(parse_u64(v)?),
+            "host_sync_blocking_ns" => host_sync_blocking_ns = Some(parse_u64(v)?),
             "pageable_permille" => pageable_permille = parse_u16(v)?,
             "align_bytes" => align_bytes = parse_u64(v)?,
             "pool_reuse_ns" => pool_reuse_ns = Some(parse_u64(v)?),
@@ -964,6 +988,15 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         }
         if let Some(n) = portable_cluster_size {
             g.portable_cluster_size = n;
+        }
+        if let Some(n) = host_sync_spin_ns {
+            g.host_sync_spin_ns = n;
+        }
+        if let Some(n) = host_sync_yield_ns {
+            g.host_sync_yield_ns = n;
+        }
+        if let Some(n) = host_sync_blocking_ns {
+            g.host_sync_blocking_ns = n;
         }
         if g.portable_cluster_size > g.max_blocks_per_cluster {
             if portable_cluster_size.is_some() {
@@ -1302,6 +1335,27 @@ mod tests {
             format!("{err:?}").contains("portable_cluster_size must be <= max_blocks_per_cluster"),
             "{err:?}"
         );
+    }
+
+    #[test]
+    fn parse_host_sync_ns() {
+        let p = HardwareProfile::parse(
+            "gpus=1\nhost_sync_spin_ns=100\nhost_sync_yield_ns=200\nhost_sync_blocking_ns=10000\n",
+        )
+        .unwrap();
+        let g = p.gpu(DeviceId(0)).unwrap();
+        assert_eq!(g.host_sync_spin_ns, 100);
+        assert_eq!(g.host_sync_yield_ns, 200);
+        assert_eq!(g.host_sync_blocking_ns, 10000);
+        let text = p.to_profile_text();
+        assert!(text.contains("host_sync_spin_ns=100"));
+        assert!(text.contains("host_sync_yield_ns=200"));
+        assert!(text.contains("host_sync_blocking_ns=10000"));
+        let open = HardwareProfile::parse("gpus=1\n").unwrap();
+        let g0 = open.gpu(DeviceId(0)).unwrap();
+        assert_eq!(g0.host_sync_spin_ns, 0);
+        assert_eq!(g0.host_sync_yield_ns, 0);
+        assert_eq!(g0.host_sync_blocking_ns, 0);
     }
 
     #[test]

@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaLaunchAttributeSynchronizationPolicy`
+
+Stream-only (`cudaStreamSetAttribute` / CopyAttributes). Auto / Spin / Yield /
+BlockingSync. Host-wait tax on `synchronize_stream` and `synchronize_event`
+(recording stream) after the GPU drain. Profile `host_sync_*_ns` default 0
+(Auto always 0) so decode identity and existing timing tests stay green.
+`synchronize` / `synchronize_device` do not take the tax. Not a kernel
+launch attribute. Decode identity stays Auto. `gpu-profile capture` is
+still refused.
+
 ## Shipped 2026-08-30 — expertvm `--non-portable-cluster`
 
 `expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and

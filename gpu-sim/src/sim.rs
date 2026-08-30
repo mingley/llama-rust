@@ -16,7 +16,8 @@ use crate::ops::{
     GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
     KernelNodeParams, LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap,
     MemcpyOp, Operation, PdlLaunch, Place, ProgrammaticEvent, ProgrammaticLaunch,
-    SharedMemCarveout, StreamCaptureInfo, StreamCaptureMode, UserObjectFlags, WaitValueCmp,
+    SharedMemCarveout, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{ns_for_bytes, HardwareProfile, LinkKind};
 
@@ -543,6 +544,8 @@ pub struct Sim {
     stream_mem_sync_domain: BTreeMap<(DeviceId, StreamId), MemSyncDomain>,
     /// `cudaLaunchAttributeMemSyncDomainMap` per stream. Missing is identity.
     stream_mem_sync_map: BTreeMap<(DeviceId, StreamId), MemSyncDomainMap>,
+    /// `cudaLaunchAttributeSynchronizationPolicy` per stream. Missing is Auto.
+    stream_sync_policy: BTreeMap<(DeviceId, StreamId), SynchronizationPolicy>,
     next_pool: u32,
     pools: BTreeMap<PoolId, Pool>,
     default_pools: BTreeMap<DeviceId, PoolId>,
@@ -654,6 +657,7 @@ impl Sim {
             sm_permille: BTreeMap::new(),
             stream_mem_sync_domain: BTreeMap::new(),
             stream_mem_sync_map: BTreeMap::new(),
+            stream_sync_policy: BTreeMap::new(),
             next_pool,
             pools,
             default_pools,
@@ -1011,8 +1015,32 @@ impl Sim {
         ))
     }
 
-    /// `cudaStreamCopyAttributes`: copy priority, SM permille, and mem-sync
-    /// domain/map from `src` to `dst`.
+    /// `cudaStreamSetAttribute` for `cudaLaunchAttributeSynchronizationPolicy`.
+    ///
+    /// Host-wait tax for [`Self::synchronize_stream`] / [`Self::synchronize_event`].
+    /// Missing is [`SynchronizationPolicy::Auto`] (tax 0).
+    pub fn set_stream_sync_policy(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        policy: SynchronizationPolicy,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        let _prev = self.stream_sync_policy.insert((device, stream), policy);
+        Ok(())
+    }
+
+    /// Stream synchronization policy, or [`SynchronizationPolicy::Auto`] if unset.
+    #[must_use]
+    pub fn stream_sync_policy(&self, device: DeviceId, stream: StreamId) -> SynchronizationPolicy {
+        self.stream_sync_policy
+            .get(&(device, stream))
+            .copied()
+            .unwrap_or(SynchronizationPolicy::Auto)
+    }
+
+    /// `cudaStreamCopyAttributes`: copy priority, SM permille, mem-sync
+    /// domain/map, and synchronization policy from `src` to `dst`.
     ///
     /// Same device required. Capture is allowed (host-side, not a graph node).
     pub fn stream_copy_attributes(
@@ -1032,6 +1060,7 @@ impl Sim {
         let sm = self.sm_permille.get(&(src_device, src)).copied();
         let domain = self.stream_mem_sync_domain.get(&(src_device, src)).copied();
         let map = self.stream_mem_sync_map.get(&(src_device, src)).copied();
+        let sync = self.stream_sync_policy.get(&(src_device, src)).copied();
         self.set_stream_priority(dst_device, dst, pri)?;
         if let Some(sm) = sm {
             self.set_stream_sm_permille(dst_device, dst, sm)?;
@@ -1047,6 +1076,11 @@ impl Sim {
             self.set_stream_mem_sync_domain_map(dst_device, dst, map)?;
         } else {
             let _gone = self.stream_mem_sync_map.remove(&(dst_device, dst));
+        }
+        if let Some(sync) = sync {
+            self.set_stream_sync_policy(dst_device, dst, sync)?;
+        } else {
+            let _gone = self.stream_sync_policy.remove(&(dst_device, dst));
         }
         Ok(())
     }
@@ -1116,6 +1150,24 @@ impl Sim {
         for d in devices {
             for s in 1..n_streams {
                 self.set_stream_priority(d, StreamId(u16::from(s)), i32::from(s))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// `cudaStreamSetAttribute` SynchronizationPolicy on streams `1 .. n_streams`.
+    ///
+    /// [`StreamId::NULL`] stays [`SynchronizationPolicy::Auto`]. `n_streams <= 1`
+    /// is a no-op.
+    pub fn set_created_streams_sync_policy(
+        &mut self,
+        n_streams: u8,
+        policy: SynchronizationPolicy,
+    ) -> Result<(), SimError> {
+        let devices: Vec<DeviceId> = self.profile.gpus.iter().map(|g| g.id).collect();
+        for d in devices {
+            for s in 1..n_streams {
+                self.set_stream_sync_policy(d, StreamId(u16::from(s)), policy)?;
             }
         }
         Ok(())
@@ -9252,6 +9304,8 @@ impl Sim {
     /// starting leftover kernels on other streams. A stream in an active graph
     /// capture is [`SimError::Invalid`]. Cancelled ops on *this* stream fail;
     /// cancelled work on other streams is left for a later [`Self::synchronize`].
+    /// After the GPU drain, the host-wait tax from
+    /// [`Self::stream_sync_policy`] is added (`Auto` / profile `0` is identity).
     pub fn synchronize_stream(
         &mut self,
         device: DeviceId,
@@ -9269,13 +9323,17 @@ impl Sim {
                 why: "deadlock: stream busy but nothing running",
             });
         }
-        self.stream_sync_outcome(device, stream)
+        self.stream_sync_outcome(device, stream)?;
+        self.apply_stream_sync_policy_tax(device, stream);
+        Ok(())
     }
 
     /// `cudaEventSynchronize`: wait until `event` is recorded and complete.
     ///
     /// Work after the record on the same stream, and work on other streams,
     /// keeps running. An event with no record and no running ops is a deadlock.
+    /// After the GPU drain, the host-wait tax from the recording stream's
+    /// [`Self::stream_sync_policy`] is added.
     pub fn synchronize_event(&mut self, event: EventId) -> Result<(), SimError> {
         if !self.events.contains_key(&event) {
             return Err(SimError::UnknownEvent { event: event.0 });
@@ -9293,6 +9351,7 @@ impl Sim {
                 return Err(SimError::Cancelled { stream, n: 1 });
             }
         }
+        self.apply_event_sync_policy_tax(event);
         Ok(())
     }
 
@@ -9406,6 +9465,36 @@ impl Sim {
             return Err(SimError::Cancelled { stream, n });
         }
         Ok(())
+    }
+
+    fn host_sync_policy_tax_ns(&self, device: DeviceId, policy: SynchronizationPolicy) -> u64 {
+        let Ok(g) = self.profile.gpu(device) else {
+            return 0;
+        };
+        match policy {
+            SynchronizationPolicy::Auto => 0,
+            SynchronizationPolicy::Spin => g.host_sync_spin_ns,
+            SynchronizationPolicy::Yield => g.host_sync_yield_ns,
+            SynchronizationPolicy::BlockingSync => g.host_sync_blocking_ns,
+        }
+    }
+
+    fn apply_stream_sync_policy_tax(&mut self, device: DeviceId, stream: StreamId) {
+        let policy = self.stream_sync_policy(device, stream);
+        let tax = self.host_sync_policy_tax_ns(device, policy);
+        self.clock = self.clock.saturating_add(tax);
+    }
+
+    fn apply_event_sync_policy_tax(&mut self, event: EventId) {
+        let Some(op) = self.events.get(&event).and_then(|e| e.recorded_by) else {
+            return;
+        };
+        let Some(row) = self.ops.get(&op) else {
+            return;
+        };
+        let device = row.device;
+        let stream = row.stream;
+        self.apply_stream_sync_policy_tax(device, stream);
     }
 
     fn submit(&mut self, device: DeviceId, stream: StreamId, kind: Kind) -> Result<OpId, SimError> {

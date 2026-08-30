@@ -1633,6 +1633,16 @@ model, do not celebrate the sim.
     `--pdl` and `--cooperative`. Decode identity stays disallowed.
     `gpu-profile capture` is still refused.
 
+128. [x] `cudaLaunchAttributeSynchronizationPolicy`: stream-only
+    (`cudaStreamSetAttribute` / CopyAttributes). Auto (default) / Spin /
+    Yield / BlockingSync. Host-wait tax on `synchronize_stream` and
+    `synchronize_event` (recording stream) after the GPU drain; profile
+    `host_sync_spin_ns` / `yield` / `blocking` default 0 so decode identity
+    and existing timing tests stay green. Auto tax is always 0.
+    `synchronize` / `synchronize_device` do not take the tax (`cudaDeviceSynchronize`).
+    Not a kernel launch attribute. Decode identity stays Auto.
+    `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

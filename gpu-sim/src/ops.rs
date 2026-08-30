@@ -440,13 +440,37 @@ impl Default for MemSyncDomainMap {
     }
 }
 
+/// `cudaLaunchAttributeSynchronizationPolicy` / `cudaSynchronizationPolicy`.
+///
+/// Stream-only (`cudaStreamSetAttribute` / `cudaStreamCreateWithAttribute`).
+/// Not a kernel launch attribute and not packed into [`KernelAttrs`].
+/// Host-wait tax applies to [`crate::Sim::synchronize_stream`] and
+/// [`crate::Sim::synchronize_event`] (the recording stream).
+/// [`crate::Sim::synchronize`] / [`crate::Sim::synchronize_device`] are
+/// `cudaDeviceSynchronize` and do not take this tax. Decode identity stays
+/// [`Self::Auto`] (tax 0).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum SynchronizationPolicy {
+    /// `cudaSyncPolicyAuto` (1). Default; host-wait tax is 0.
+    #[default]
+    Auto,
+    /// `cudaSyncPolicySpin` (2). Tax is [`crate::GpuProfile::host_sync_spin_ns`].
+    Spin,
+    /// `cudaSyncPolicyYield` (3). Tax is [`crate::GpuProfile::host_sync_yield_ns`].
+    Yield,
+    /// `cudaSyncPolicyBlockingSync` (4). Tax is
+    /// [`crate::GpuProfile::host_sync_blocking_ns`].
+    BlockingSync,
+}
+
 /// Packed `cudaLaunchKernelEx` / graph kernel-node attributes.
 ///
 /// [`crate::Sim::kernel_with`] applies these on one submit so PDL, an
 /// access-policy window, and a mem-sync domain can share a launch (7 arguments
 /// including `self`). Decode identity stays [`crate::Sim::kernel`] ([`Default`]:
 /// no cooperative, no PDL, no window, inherit stream mem-sync, no cluster,
-/// Default carveout).
+/// Default carveout). [`SynchronizationPolicy`] is a stream attribute, not a
+/// field here.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KernelAttrs {
     /// `cudaLaunchCooperativeKernel`.

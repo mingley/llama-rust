@@ -11,6 +11,13 @@
 //! (`cudaStreamSynchronize`); an already-idle stream returns without starting
 //! leftover kernels on other streams. [`GpuProfile::compute_slots`] is Hyper-Q
 //! occupancy (`1` exclusive; `>=2` concurrent kernels at full issue rate).
+//! [`Sim::set_stream_sync_policy`] is `cudaLaunchAttributeSynchronizationPolicy`
+//! (stream-only; [`SynchronizationPolicy::Auto`] tax 0). Host-wait tax on
+//! [`synchronize_stream`](Sim::synchronize_stream) /
+//! [`synchronize_event`](Sim::synchronize_event) comes from
+//! [`GpuProfile::host_sync_spin_ns`] / `yield` / `blocking` (default 0).
+//! [`Sim::synchronize`] / [`synchronize_device`](Sim::synchronize_device) do not
+//! take that tax.
 //! [`Sim::cooperative_kernel`] is `cudaLaunchCooperativeKernel`: it occupies
 //! every compute slot so leftover kernels cannot Hyper-Q overlap it. Capture is
 //! allowed (CUDA 11+). [`GpuProfile::cooperative_launch`] is
@@ -126,7 +133,8 @@
 //! used).
 //! [`Sim::set_stream_priority`] is `cudaStreamCreateWithPriority`.
 //! [`stream_copy_attributes`](Sim::stream_copy_attributes) is
-//! `cudaStreamCopyAttributes` (priority and SM permille).
+//! `cudaStreamCopyAttributes` (priority, SM permille, mem-sync domain/map, and
+//! synchronization policy).
 //! [`Sim::set_created_streams_priority`] assigns created streams their id.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; returns a
 //! new exec id; first [`launch_graph`](Sim::launch_graph) of a definition
@@ -355,7 +363,8 @@ pub use ops::{
     GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
     KernelNodeParams, LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap,
     MemcpyOp, Operation, PdlLaunch, Place, ProgrammaticEvent, ProgrammaticLaunch,
-    SharedMemCarveout, StreamCaptureInfo, StreamCaptureMode, UserObjectFlags, WaitValueCmp,
+    SharedMemCarveout, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -5129,6 +5138,18 @@ mod tests {
             MemSyncDomain::Remote
         );
         assert_eq!(sim.stream_mem_sync_domain_map(d, StreamId(2)).unwrap(), map);
+        assert_eq!(
+            sim.stream_sync_policy(d, StreamId(2)),
+            SynchronizationPolicy::Auto
+        );
+        sim.set_stream_sync_policy(d, StreamId(1), SynchronizationPolicy::BlockingSync)
+            .unwrap();
+        sim.stream_copy_attributes(d, StreamId(2), d, StreamId(1))
+            .unwrap();
+        assert_eq!(
+            sim.stream_sync_policy(d, StreamId(2)),
+            SynchronizationPolicy::BlockingSync
+        );
         let err = sim
             .stream_copy_attributes(DeviceId(0), StreamId(0), DeviceId(1), StreamId(0))
             .unwrap_err();
@@ -5509,6 +5530,169 @@ mod tests {
         sim.set_created_streams_priority(2).unwrap();
         assert_eq!(sim.stream_priority(DeviceId(0), StreamId(0)), 0);
         assert_eq!(sim.stream_priority(DeviceId(0), StreamId(1)), 1);
+    }
+
+    fn sync_policy_pair() -> (Sim, Sim, DeviceId, StreamId) {
+        let p = HardwareProfile::parse("gpus=1\nhost_sync_blocking_ns=10000\nfp16_flops=1000000\n")
+            .expect("host-sync profile");
+        let mut auto = Sim::new(p.clone());
+        let mut block = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = auto.alloc(d, 1 << 20, s).unwrap();
+        let b = block.alloc(d, 1 << 20, s).unwrap();
+        enq(auto.kernel(d, KernelKind::other(1 << 20, 1 << 20), &[a], &[a], s));
+        enq(block.kernel(d, KernelKind::other(1 << 20, 1 << 20), &[b], &[b], s));
+        block
+            .set_stream_sync_policy(d, s, SynchronizationPolicy::BlockingSync)
+            .unwrap();
+        (auto, block, d, s)
+    }
+
+    #[test]
+    fn stream_sync_policy_blocking_taxes_stream_wait() {
+        let (mut auto, mut block, d, s) = sync_policy_pair();
+        auto.synchronize_stream(d, s).unwrap();
+        block.synchronize_stream(d, s).unwrap();
+        assert_eq!(block.clock_ns(), auto.clock_ns().saturating_add(10_000));
+    }
+
+    #[test]
+    fn stream_sync_policy_does_not_tax_device_sync() {
+        let (mut auto, mut block, d, _) = sync_policy_pair();
+        auto.synchronize().unwrap();
+        block.synchronize().unwrap();
+        assert_eq!(block.clock_ns(), auto.clock_ns());
+        let p = HardwareProfile::parse("gpus=1\nhost_sync_blocking_ns=10000\n").unwrap();
+        let mut device = Sim::new(p.clone());
+        let mut auto_dev = Sim::new(p);
+        device
+            .set_stream_sync_policy(d, StreamId(0), SynchronizationPolicy::BlockingSync)
+            .unwrap();
+        let a = device.alloc(d, 1 << 20, StreamId(0)).unwrap();
+        let b = auto_dev.alloc(d, 1 << 20, StreamId(0)).unwrap();
+        enq(device.kernel(
+            d,
+            KernelKind::other(1 << 20, 1 << 20),
+            &[a],
+            &[a],
+            StreamId(0),
+        ));
+        enq(auto_dev.kernel(
+            d,
+            KernelKind::other(1 << 20, 1 << 20),
+            &[b],
+            &[b],
+            StreamId(0),
+        ));
+        device.synchronize_device(d).unwrap();
+        auto_dev.synchronize_device(d).unwrap();
+        assert_eq!(device.clock_ns(), auto_dev.clock_ns());
+    }
+
+    #[test]
+    fn stream_sync_policy_taxes_event_wait_on_recording_stream() {
+        let (mut auto, mut block, d, s) = sync_policy_pair();
+        auto.create_event(EventId(1)).unwrap();
+        block.create_event(EventId(1)).unwrap();
+        enq(auto.record_event(d, EventId(1), s));
+        enq(block.record_event(d, EventId(1), s));
+        auto.synchronize_event(EventId(1)).unwrap();
+        block.synchronize_event(EventId(1)).unwrap();
+        assert_eq!(block.clock_ns(), auto.clock_ns().saturating_add(10_000));
+    }
+
+    #[test]
+    fn stream_sync_policy_default_profile_tax_is_zero() {
+        let mut ident = Sim::new(h100());
+        let mut ident_auto = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        ident
+            .set_stream_sync_policy(d, s, SynchronizationPolicy::BlockingSync)
+            .unwrap();
+        let c = ident.alloc(d, 4096, s).unwrap();
+        let e = ident_auto.alloc(d, 4096, s).unwrap();
+        enq(ident.kernel(d, KernelKind::other(8, 8), &[c], &[c], s));
+        enq(ident_auto.kernel(d, KernelKind::other(8, 8), &[e], &[e], s));
+        ident.synchronize_stream(d, s).unwrap();
+        ident_auto.synchronize_stream(d, s).unwrap();
+        assert_eq!(ident.clock_ns(), ident_auto.clock_ns());
+    }
+
+    #[test]
+    fn stream_sync_policy_spin_and_yield_differ() {
+        let p = HardwareProfile::parse(
+            "gpus=1\nhost_sync_spin_ns=1000\nhost_sync_yield_ns=5000\nhost_sync_blocking_ns=9000\n",
+        )
+        .unwrap();
+        let run = |policy: SynchronizationPolicy| {
+            let mut sim = Sim::new(p.clone());
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            sim.set_stream_sync_policy(d, s, policy).unwrap();
+            let a = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+            sim.synchronize_stream(d, s).unwrap();
+            sim.clock_ns()
+        };
+        let auto = run(SynchronizationPolicy::Auto);
+        let spin = run(SynchronizationPolicy::Spin);
+        let yield_p = run(SynchronizationPolicy::Yield);
+        let block = run(SynchronizationPolicy::BlockingSync);
+        assert_eq!(spin, auto.saturating_add(1_000));
+        assert_eq!(yield_p, auto.saturating_add(5_000));
+        assert_eq!(block, auto.saturating_add(9_000));
+    }
+
+    #[test]
+    fn idle_stream_sync_still_pays_blocking_tax() {
+        let p = HardwareProfile::parse("gpus=1\nhost_sync_blocking_ns=10000\n").unwrap();
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.set_stream_sync_policy(d, s, SynchronizationPolicy::BlockingSync)
+            .unwrap();
+        let t0 = sim.clock_ns();
+        sim.synchronize_stream(d, s).unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(10_000));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(10_000));
+    }
+
+    #[test]
+    fn query_stream_does_not_pay_sync_policy_tax() {
+        let p = HardwareProfile::parse("gpus=1\nhost_sync_blocking_ns=10000\n").unwrap();
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.set_stream_sync_policy(d, s, SynchronizationPolicy::BlockingSync)
+            .unwrap();
+        let t0 = sim.clock_ns();
+        assert!(sim.query_stream(d, s).unwrap());
+        assert_eq!(sim.clock_ns(), t0);
+    }
+
+    #[test]
+    fn set_created_streams_sync_policy_skips_null() {
+        let mut sim = Sim::new(h100());
+        sim.set_created_streams_sync_policy(2, SynchronizationPolicy::Spin)
+            .unwrap();
+        assert_eq!(
+            sim.stream_sync_policy(DeviceId(0), StreamId(0)),
+            SynchronizationPolicy::Auto
+        );
+        assert_eq!(
+            sim.stream_sync_policy(DeviceId(0), StreamId(1)),
+            SynchronizationPolicy::Spin
+        );
+        let err = sim
+            .set_stream_sync_policy(DeviceId(9), StreamId(0), SynchronizationPolicy::Auto)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device not in profile"), "{why}"),
+            e => panic!("{e:?}"),
+        }
     }
 
     #[test]
