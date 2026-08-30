@@ -2474,7 +2474,36 @@ model, do not celebrate the sim.
     unchanged. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-226. [ ] Next numbered PLAN item after 225 is the next `gpu-sim` / Engine /
+226. [x] `cudaDeviceSetSharedMemConfig` / `GetSharedMemConfig`:
+    `Sim::set_shared_mem_config` / [`get_shared_mem_config`].
+    [`SharedMemoryMode::Default`] kernels inherit the device config at
+    duration time. Unset device config is unscaled (decode identity).
+    Launch FourByte / EightByte still override. Set is host-sync
+    (1 ns); capture refused. Get is a query. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+227. [x] `cudaEventBlockingSync`: [`EventCreateFlags::BLOCKING_SYNC`] (`1`).
+    [`create_event_with_flags`] accepts it. [`synchronize_event`] pays
+    [`host_sync_blocking_ns`] instead of the recording stream's policy.
+    [`create_event_blocking_sync`] is the typed helper. Interprocess still
+    requires DisableTiming. Other unknown bits stay Invalid
+    `"event create flags"`. Decode identity unchanged (example profiles
+    tax 0). `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+228. [x] `cudaSetDeviceFlags` / `GetDeviceFlags`: `Sim::set_device_flags` /
+    [`get_device_flags`]. Schedule mask only
+    ([`DeviceFlags::SCHEDULE_AUTO`] / `SPIN` / `YIELD` /
+    `BLOCKING_SYNC`). Combined schedule bits Invalid `"device schedule"`.
+    MapHost / LmemResizeToMax / SyncMemops Invalid `"device flags"`.
+    Auto streams inherit the schedule as host-wait tax; explicit stream
+    policy wins. Default `0` is identity. SetOnActiveProcess is not
+    modeled. Set is host-sync (1 ns); capture refused. Get is a query.
+    Decode identity unchanged. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+229. [ ] Next numbered PLAN item after 228 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

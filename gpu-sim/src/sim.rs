@@ -11,7 +11,7 @@ use crate::ids::{
 };
 use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
-    ClusterSchedulingPolicy, DeviceAttr, DeviceLimit, DeviceP2pAttr, DeviceProperties,
+    ClusterSchedulingPolicy, DeviceAttr, DeviceFlags, DeviceLimit, DeviceP2pAttr, DeviceProperties,
     EventCreateFlags, EventRecordFlags, EventWaitFlags, FlushGpuDirectRdmaScope,
     FlushGpuDirectRdmaTarget, FuncAttr, FuncAttributes, GpuOp as Kind, GraphAddNode,
     GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
@@ -271,6 +271,11 @@ struct GpuRt {
     persist_lines: Vec<PersistLine>,
     /// `cudaDeviceGetLimit` values other than persisting L2.
     limits: DeviceLimits,
+    /// `cudaDeviceSetSharedMemConfig`. [`SharedMemoryMode::Default`] kernels
+    /// inherit this (unset is unscaled).
+    shared_mem_config: SharedMemoryMode,
+    /// `cudaSetDeviceFlags` schedule mask. Auto streams inherit this tax.
+    device_flags: u32,
 }
 
 /// CUDA `cudaDeviceGetLimit` defaults (SM 8.0+ fetch granularity).
@@ -308,6 +313,8 @@ struct Ev {
     timing: bool,
     /// `cudaEventInterprocess`. Required for [`Sim::ipc_get_event`].
     interprocess: bool,
+    /// `cudaEventBlockingSync`: [`Sim::synchronize_event`] pays blocking tax.
+    blocking_sync: bool,
     /// Import from [`Sim::ipc_open_event`]: record/wait follow this source.
     ipc_src: Option<EventId>,
     /// Outstanding [`Sim::ipc_open_event`] aliases. Destroy of the source is Invalid while > 0.
@@ -320,6 +327,7 @@ impl Ev {
             recorded_by: None,
             timing,
             interprocess: false,
+            blocking_sync: false,
             ipc_src: None,
             ipc_opens: 0,
         }
@@ -748,6 +756,8 @@ impl Sim {
                     persist_limit: 0,
                     persist_lines: Vec::new(),
                     limits: DeviceLimits::sm80(),
+                    shared_mem_config: SharedMemoryMode::Default,
+                    device_flags: DeviceFlags::SCHEDULE_AUTO,
                 },
             );
             let _dup = replaced.is_some();
@@ -1173,7 +1183,8 @@ impl Sim {
     /// `cudaStreamSetAttribute` for `cudaLaunchAttributeSynchronizationPolicy`.
     ///
     /// Host-wait tax for [`Self::synchronize_stream`] / [`Self::synchronize_event`].
-    /// Missing is [`SynchronizationPolicy::Auto`] (tax 0).
+    /// Missing is [`SynchronizationPolicy::Auto`], which inherits
+    /// [`Self::set_device_flags`] (unset Auto tax 0).
     pub fn set_stream_sync_policy(
         &mut self,
         device: DeviceId,
@@ -1730,14 +1741,25 @@ impl Sim {
         )
     }
 
+    /// `cudaEventCreateWithFlags(..., cudaEventBlockingSync)`.
+    ///
+    /// [`Self::synchronize_event`] pays [`crate::GpuProfile::host_sync_blocking_ns`].
+    /// Timing stays enabled.
+    pub fn create_event_blocking_sync(&mut self, event: EventId) -> Result<(), SimError> {
+        self.create_event_with_flags(event, EventCreateFlags::BLOCKING_SYNC)
+    }
+
     /// `cudaEventCreateWithFlags`. Capture cannot include it.
     ///
     /// Known bits: [`EventCreateFlags::DISABLE_TIMING`] /
-    /// [`EventCreateFlags::INTERPROCESS`]. [`INTERPROCESS`](EventCreateFlags::INTERPROCESS)
+    /// [`EventCreateFlags::INTERPROCESS`] /
+    /// [`EventCreateFlags::BLOCKING_SYNC`]. [`INTERPROCESS`](EventCreateFlags::INTERPROCESS)
     /// requires disable-timing (Invalid `"interprocess timing"` otherwise).
-    /// Other bits (`cudaEventBlockingSync`) are Invalid `"event create flags"`.
+    /// Other bits are Invalid `"event create flags"`.
     pub fn create_event_with_flags(&mut self, event: EventId, flags: u32) -> Result<(), SimError> {
-        const KNOWN: u32 = EventCreateFlags::DISABLE_TIMING | EventCreateFlags::INTERPROCESS;
+        const KNOWN: u32 = EventCreateFlags::DISABLE_TIMING
+            | EventCreateFlags::INTERPROCESS
+            | EventCreateFlags::BLOCKING_SYNC;
         if flags & !KNOWN != 0 {
             return Err(SimError::Invalid {
                 why: "event create flags",
@@ -1745,12 +1767,13 @@ impl Sim {
         }
         let disable = flags & EventCreateFlags::DISABLE_TIMING != 0;
         let interprocess = flags & EventCreateFlags::INTERPROCESS != 0;
+        let blocking = flags & EventCreateFlags::BLOCKING_SYNC != 0;
         if interprocess && !disable {
             return Err(SimError::Invalid {
                 why: "interprocess timing",
             });
         }
-        self.insert_event(event, !disable, interprocess)
+        self.insert_event(event, !disable, interprocess, blocking)
     }
 
     /// `cudaEventDestroy`. Host-synchronous. Capture cannot include it.
@@ -1800,6 +1823,7 @@ impl Sim {
         event: EventId,
         timing: bool,
         interprocess: bool,
+        blocking_sync: bool,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture event create")?;
         if self.events.contains_key(&event) {
@@ -1809,6 +1833,7 @@ impl Sim {
         }
         let mut ev = Ev::new(timing);
         ev.interprocess = interprocess;
+        ev.blocking_sync = blocking_sync;
         let _prev = self.events.insert(event, ev);
         Ok(())
     }
@@ -11824,6 +11849,68 @@ impl Sim {
         })
     }
 
+    /// `cudaDeviceSetSharedMemConfig`. Host-synchronous. Capture cannot include it.
+    ///
+    /// [`SharedMemoryMode::Default`] kernels inherit this config at duration
+    /// time. Unset is [`SharedMemoryMode::Default`] (unscaled). Launch
+    /// FourByte / EightByte still override. Decode identity stays unset.
+    pub fn set_shared_mem_config(
+        &mut self,
+        device: DeviceId,
+        mode: SharedMemoryMode,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture shared mem config")?;
+        let _gpu = self.profile.gpu(device)?;
+        self.gpu_rt_mut(device)?.shared_mem_config = mode;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaDeviceGetSharedMemConfig`. Query; legal during capture.
+    pub fn get_shared_mem_config(&self, device: DeviceId) -> Result<SharedMemoryMode, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.shared_mem_config)
+    }
+
+    /// `cudaSetDeviceFlags`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Schedule bits [`DeviceFlags::SCHEDULE_AUTO`] / [`DeviceFlags::SCHEDULE_SPIN`] /
+    /// [`DeviceFlags::SCHEDULE_YIELD`] /
+    /// [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`] only.
+    /// Combined schedule bits Invalid `"device schedule"`. Other bits Invalid
+    /// `"device flags"`. This VM does not model `cudaErrorSetOnActiveProcess`.
+    /// Auto streams inherit the schedule as host-wait tax; explicit stream
+    /// policy wins. Default `0` is identity.
+    pub fn set_device_flags(&mut self, device: DeviceId, flags: u32) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture device flags")?;
+        let _gpu = self.profile.gpu(device)?;
+        if flags & !DeviceFlags::SCHEDULE_MASK != 0 {
+            return Err(SimError::Invalid {
+                why: "device flags",
+            });
+        }
+        match flags {
+            DeviceFlags::SCHEDULE_AUTO
+            | DeviceFlags::SCHEDULE_SPIN
+            | DeviceFlags::SCHEDULE_YIELD
+            | DeviceFlags::SCHEDULE_BLOCKING_SYNC => {}
+            _ => {
+                return Err(SimError::Invalid {
+                    why: "device schedule",
+                });
+            }
+        }
+        self.gpu_rt_mut(device)?.device_flags = flags;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGetDeviceFlags`. Query; legal during capture.
+    pub fn get_device_flags(&self, device: DeviceId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.device_flags)
+    }
+
     /// `cudaPointerGetAttributes`. Query; legal during capture.
     ///
     /// A never-created id is [`SimError::UnknownAlloc`]. A freed id is
@@ -12968,12 +13055,39 @@ impl Sim {
     }
 
     fn apply_stream_sync_policy_tax(&mut self, device: DeviceId, stream: StreamId) {
-        let policy = self.stream_sync_policy(device, stream);
+        let policy = self.effective_stream_sync_policy(device, stream);
         let tax = self.host_sync_policy_tax_ns(device, policy);
         self.clock = self.clock.saturating_add(tax);
     }
 
+    fn effective_stream_sync_policy(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> SynchronizationPolicy {
+        match self.stream_sync_policy(device, stream) {
+            SynchronizationPolicy::Auto => self.device_schedule_policy(device),
+            other => other,
+        }
+    }
+
+    fn device_schedule_policy(&self, device: DeviceId) -> SynchronizationPolicy {
+        let flags = self
+            .gpus
+            .get(&device)
+            .map(|g| g.device_flags)
+            .unwrap_or(DeviceFlags::SCHEDULE_AUTO);
+        match flags {
+            DeviceFlags::SCHEDULE_SPIN => SynchronizationPolicy::Spin,
+            DeviceFlags::SCHEDULE_YIELD => SynchronizationPolicy::Yield,
+            DeviceFlags::SCHEDULE_BLOCKING_SYNC => SynchronizationPolicy::BlockingSync,
+            _ => SynchronizationPolicy::Auto,
+        }
+    }
+
     fn apply_event_sync_policy_tax(&mut self, event: EventId) {
+        let root = self.event_root(event);
+        let blocking = self.events.get(&root).is_some_and(|e| e.blocking_sync);
         let Some(op) = self.event_recorded_by(event) else {
             return;
         };
@@ -12982,6 +13096,11 @@ impl Sim {
         };
         let device = row.device;
         let stream = row.stream;
+        if blocking {
+            let tax = self.host_sync_policy_tax_ns(device, SynchronizationPolicy::BlockingSync);
+            self.clock = self.clock.saturating_add(tax);
+            return;
+        }
         self.apply_stream_sync_policy_tax(device, stream);
     }
 
@@ -14866,6 +14985,10 @@ impl Sim {
         ns: u64,
     ) -> Result<u64, SimError> {
         let g = self.profile.gpu(device)?;
+        let mode = match mode {
+            SharedMemoryMode::Default => self.gpu_rt(device)?.shared_mem_config,
+            other => other,
+        };
         let permille = match mode {
             SharedMemoryMode::Default => return Ok(ns),
             SharedMemoryMode::FourByte => g.shared_mem_four_byte_permille,

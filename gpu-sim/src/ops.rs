@@ -1065,11 +1065,12 @@ impl Default for MemSyncDomainMap {
 /// Host-wait tax applies to [`crate::Sim::synchronize_stream`] and
 /// [`crate::Sim::synchronize_event`] (the recording stream).
 /// [`crate::Sim::synchronize`] / [`crate::Sim::synchronize_device`] are
-/// `cudaDeviceSynchronize` and do not take this tax. Decode identity stays
-/// [`Self::Auto`] (tax 0).
+/// `cudaDeviceSynchronize` and do not take this tax. [`Self::Auto`] inherits
+/// [`crate::Sim::set_device_flags`] (unset tax 0). Decode identity stays
+/// [`Self::Auto`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum SynchronizationPolicy {
-    /// `cudaSyncPolicyAuto` (1). Default; host-wait tax is 0.
+    /// `cudaSyncPolicyAuto` (1). Default; inherits device schedule (unset tax 0).
     #[default]
     Auto,
     /// `cudaSyncPolicySpin` (2). Tax is [`crate::GpuProfile::host_sync_spin_ns`].
@@ -1079,6 +1080,28 @@ pub enum SynchronizationPolicy {
     /// `cudaSyncPolicyBlockingSync` (4). Tax is
     /// [`crate::GpuProfile::host_sync_blocking_ns`].
     BlockingSync,
+}
+
+/// `cudaSetDeviceFlags` bits for [`crate::Sim::set_device_flags`].
+///
+/// Only the schedule mask is mechanical ([`Self::SCHEDULE_AUTO`] /
+/// [`Self::SCHEDULE_SPIN`] / [`Self::SCHEDULE_YIELD`] /
+/// [`Self::SCHEDULE_BLOCKING_SYNC`]). Combined schedule bits
+/// are Invalid `"device schedule"`. MapHost / LmemResizeToMax / SyncMemops
+/// are Invalid `"device flags"`. Default `0` is Auto (host-wait tax 0).
+pub struct DeviceFlags;
+
+impl DeviceFlags {
+    /// `cudaDeviceScheduleAuto`.
+    pub const SCHEDULE_AUTO: u32 = 0;
+    /// `cudaDeviceScheduleSpin`.
+    pub const SCHEDULE_SPIN: u32 = 1;
+    /// `cudaDeviceScheduleYield`.
+    pub const SCHEDULE_YIELD: u32 = 2;
+    /// `cudaDeviceScheduleBlockingSync`.
+    pub const SCHEDULE_BLOCKING_SYNC: u32 = 4;
+    /// `cudaDeviceScheduleMask`.
+    pub const SCHEDULE_MASK: u32 = 7;
 }
 
 impl SynchronizationPolicy {
@@ -1315,13 +1338,15 @@ impl SharedMemCarveout {
 
 /// `cudaSharedMemoryConfig` (`cudaLaunchAttributeSharedMemoryMode`).
 ///
-/// Bank width for shared-memory accesses. [`Self::Default`] never scales kernel
-/// duration (decode identity). [`Self::FourByte`] / [`Self::EightByte`] scale
-/// duration by `1000 / GpuProfile::shared_mem_*_permille` (profile default
-/// `1000` is identity). Not occupancy.
+/// Bank width for shared-memory accesses. [`Self::Default`] uses
+/// [`crate::Sim::set_shared_mem_config`] (`cudaDeviceSetSharedMemConfig`);
+/// an unset device config never scales (decode identity). [`Self::FourByte`] /
+/// [`Self::EightByte`] scale duration by
+/// `1000 / GpuProfile::shared_mem_*_permille` (profile default `1000` is
+/// identity). Not occupancy.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum SharedMemoryMode {
-    /// `cudaSharedMemoryBankSizeDefault`. Duration is unscaled.
+    /// `cudaSharedMemoryBankSizeDefault`. Uses the device config.
     #[default]
     Default,
     /// `cudaSharedMemoryBankSizeFourByte`. Scale by
@@ -1979,13 +2004,16 @@ impl IpcMemFlags {
 
 /// `cudaEventCreateWithFlags` bits for [`crate::Sim::create_event_with_flags`].
 ///
-/// `cudaEventBlockingSync` is not modeled (Invalid). [`INTERPROCESS`] requires
+/// [`BLOCKING_SYNC`](Self::BLOCKING_SYNC) taxes [`crate::Sim::synchronize_event`]
+/// with [`crate::GpuProfile::host_sync_blocking_ns`]. [`INTERPROCESS`] requires
 /// [`DISABLE_TIMING`] (`cudaIpcGetEventHandle`).
 pub struct EventCreateFlags;
 
 impl EventCreateFlags {
     /// `cudaEventDefault` (timing enabled).
     pub const DEFAULT: u32 = 0;
+    /// `cudaEventBlockingSync` ([`crate::Sim::create_event_blocking_sync`]).
+    pub const BLOCKING_SYNC: u32 = 1;
     /// `cudaEventDisableTiming` ([`crate::Sim::create_event_disable_timing`]).
     pub const DISABLE_TIMING: u32 = 2;
     /// `cudaEventInterprocess`. Requires [`DISABLE_TIMING`].

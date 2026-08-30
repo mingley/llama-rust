@@ -126,6 +126,8 @@ warp scheduler, L1, …   ← do not model
 | `device_count` is the profile GPU count | `cudaGetDeviceCount` |
 | `flush_gpu_direct_rdma_writes` is a 1 ns host-sync barrier on RDMA SKUs (no write-visibility) | 1 ns |
 | `set_limit` / `get_limit` wrap persisting L2 plus stack / printf / heap / CDP / L2 fetch | `cudaDeviceSetLimit` / `GetLimit` |
+| `set_shared_mem_config` / `get_shared_mem_config`; Default kernels inherit | `cudaDeviceSetSharedMemConfig` / `GetSharedMemConfig` |
+| `set_device_flags` / `get_device_flags` schedule mask; Auto streams inherit the tax | `cudaSetDeviceFlags` / `GetDeviceFlags` |
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128) | exact |
 | `malloc_pitch` charges `pitch * height`; pitch is `align_up(width, 512)` | `cudaMallocPitch` |
 | `MemcpyOp` height/pitches bill `width * height` (not pitch padding) | `cudaMemcpy2DAsync` |
@@ -145,9 +147,9 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchAttributeClusterSchedulingPolicyPreference` Spread | occupies every Hyper-Q slot |
 | `cudaLaunchAttributePreferredClusterDimension` | occupies preferred size when it fits in `compute_slots` |
 | `cudaFuncAttributeNonPortableClusterSizeAllowed` | sizes above `portable_cluster_size` until the SKU `max_blocks_per_cluster` |
-| `cudaLaunchAttributeSynchronizationPolicy` (stream-only) | host-wait tax on `synchronize_stream` / `synchronize_event`; Auto / profile default 0 |
+| `cudaLaunchAttributeSynchronizationPolicy` (stream-only) | host-wait tax on `synchronize_stream` / `synchronize_event`; Auto inherits `set_device_flags` (unset / profile default 0) |
 | `cudaLaunchAttributeDeviceUpdatableKernelNode` | graphs-only; `graph_exec_kernel_set_params` keeps the exec uploaded; device-launch graphs allow it |
-| `cudaLaunchAttributeSharedMemoryMode` | Default never scales; FourByte / EightByte scale duration by `1000 / shared_mem_*_permille` (default 1000) |
+| `cudaLaunchAttributeSharedMemoryMode` | Default uses device `set_shared_mem_config` (unset never scales); FourByte / EightByte scale duration by `1000 / shared_mem_*_permille` (default 1000) |
 | `cudaLaunchAttributePortableClusterSizeMode` | Default uses the function attr; RequirePortable always refuses oversize; AllowNonPortable allows up to SKU max |
 | CUDA 13 `cudaLaunchAttributeSharedMemoryMode` (`PortableSharedMode`) | Default uses `MaxDynamicSharedMemorySize`; RequirePortable refuses oversize; AllowNonPortable allows up to opt-in max |
 | `cudaLaunchKernel` `sharedMemBytes` | `0` is identity; above `max_shared_mem_per_block` needs the function attr or AllowNonPortable |
@@ -273,9 +275,10 @@ not advance the virtual clock. Independent streams stay live. A stream that
 `record_event_with_flags` / `wait_event_with_flags` / `create_event_with_flags`
 are the flags-parameter twins (`EventRecordFlags::EXTERNAL` /
 `EventWaitFlags::EXTERNAL` / `EventCreateFlags::DISABLE_TIMING` /
-`EventCreateFlags::INTERPROCESS`). Unknown bits are Invalid. Interprocess
-requires DisableTiming. `cudaEventBlockingSync` is not modeled. Typed helpers
-stay (`create_event_interprocess`).
+`EventCreateFlags::INTERPROCESS` / `EventCreateFlags::BLOCKING_SYNC`). Unknown bits are Invalid. Interprocess
+requires DisableTiming. BlockingSync taxes `synchronize_event` with
+`host_sync_blocking_ns`. Typed helpers
+stay (`create_event_interprocess` / `create_event_blocking_sync`).
 `ipc_get_event` / `ipc_open_event` are `cudaIpcGetEventHandle` /
 `cudaIpcOpenEventHandle`: the import aliases the source record. Destroy of
 the source while imports are live is Invalid. Capture cannot include event IPC.
@@ -524,6 +527,11 @@ policy, mem-sync domain/map, NVLink-util-centric). Green-context SM permille is
 not a CUDA stream attribute. Type mismatch is Invalid `"stream attr"`. Get is a
 query (capture-legal). This VM does not cap stream-priority range.
 `set_limit` / `get_limit` are `cudaDeviceSetLimit` / `GetLimit`.
+`set_shared_mem_config` / `get_shared_mem_config` are
+`cudaDeviceSetSharedMemConfig` / `GetSharedMemConfig` (Default kernels
+inherit; unset is unscaled). `set_device_flags` / `get_device_flags` are
+`cudaSetDeviceFlags` / `GetDeviceFlags` (schedule mask only; Auto streams
+inherit the tax). This VM does not model `cudaErrorSetOnActiveProcess`.
 Persisting L2 is `cudaLimitPersistingL2CacheSize`. Access-policy windows
 must align to `cudaLimitMaxL2FetchGranularity` (SM 8.0+ default 128).
 `malloc_pitch` is `cudaMallocPitch`. `MemcpyOp` `height` / pitches are
@@ -701,8 +709,9 @@ A non-capturing `kernel_with` with that attr is Invalid (graphs-only).
 `expertvm sim --device-launch` / `--device-updatable` instantiate leaf GEMM
 graphs with `DEVICE_LAUNCH` and skip re-upload after set-params.
 `expertvm sim --kernel-priority N` is `cudaLaunchAttributePriority`.
-`SharedMemoryMode` is `cudaLaunchAttributeSharedMemoryMode`: Default never
-scales kernel duration; FourByte / EightByte scale by
+`SharedMemoryMode` is `cudaLaunchAttributeSharedMemoryMode`: Default uses
+`set_shared_mem_config` (`cudaDeviceSetSharedMemConfig`; unset never
+scales); FourByte / EightByte scale by
 `1000 / shared_mem_*_permille` (profile default 1000 is identity).
 `PortableClusterMode` is `cudaLaunchAttributePortableClusterSizeMode`: Default
 uses the function attribute; RequirePortable always refuses oversize;
@@ -720,9 +729,9 @@ scheduling (occupies every Hyper-Q slot). `--max-shared` is MaxShared
 carveout (occupies every Hyper-Q slot). `--non-portable-cluster` is
 `cudaFuncAttributeNonPortableClusterSizeAllowed`. `--sync-policy auto|spin|yield|blocking`
 is `cudaLaunchAttributeSynchronizationPolicy` on created streams (host-wait
-tax on `synchronize_stream`; Auto tax 0). `--shared-mem default|four|eight` is
-`cudaLaunchAttributeSharedMemoryMode` on grouped expert GEMMs (Default never
-scales duration). `--portable-cluster default|portable|non-portable` is
+tax on `synchronize_stream`; Auto inherits `set_device_flags`, unset tax 0). `--shared-mem default|four|eight` is
+`cudaLaunchAttributeSharedMemoryMode` on grouped expert GEMMs (Default uses
+device `set_shared_mem_config`; unset never scales duration). `--portable-cluster default|portable|non-portable` is
 `cudaLaunchAttributePortableClusterSizeMode` on grouped expert GEMMs (Default
 uses the function attribute; `portable` always refuses oversize; `non-portable`
 allows up to the SKU max). `--optin-shared` is

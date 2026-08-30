@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — SharedMemConfig, event BlockingSync, device schedule flags
+
+`set_shared_mem_config` / `get_shared_mem_config` are
+`cudaDeviceSetSharedMemConfig` / `GetSharedMemConfig` (Default kernels
+inherit; unset is unscaled). `EventCreateFlags::BLOCKING_SYNC` taxes
+`synchronize_event` with `host_sync_blocking_ns`. `set_device_flags` /
+`get_device_flags` are the schedule mask (`cudaSetDeviceFlags`); Auto
+streams inherit the tax. MapHost / Lmem / SyncMemops stay Invalid.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — Advise location, SyncMemops, CUDA-array/dma-buf DeviceAttr
 
 `mem_advise_with_location` is `cudaMemAdvise_v2` (`Place` location;
@@ -2398,7 +2408,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 225 (`DmaBufSupported`).
+Next code change is PLAN systems depth after item 228 (`set_device_flags`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

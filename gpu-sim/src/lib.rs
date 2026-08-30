@@ -12,7 +12,8 @@
 //! leftover kernels on other streams. [`GpuProfile::compute_slots`] is Hyper-Q
 //! occupancy (`1` exclusive; `>=2` concurrent kernels at full issue rate).
 //! [`Sim::set_stream_sync_policy`] is `cudaLaunchAttributeSynchronizationPolicy`
-//! (stream-only; [`SynchronizationPolicy::Auto`] tax 0). Host-wait tax on
+//! (stream-only; [`SynchronizationPolicy::Auto`] inherits
+//! [`set_device_flags`](Sim::set_device_flags), unset tax 0). Host-wait tax on
 //! [`synchronize_stream`](Sim::synchronize_stream) /
 //! [`synchronize_event`](Sim::synchronize_event) comes from
 //! [`GpuProfile::host_sync_spin_ns`] / `yield` / `blocking` (default 0).
@@ -177,8 +178,11 @@
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
 //! [`Sim::create_event_disable_timing`] is `cudaEventDisableTiming` (elapsed fails).
 //! [`Sim::create_event_with_flags`] is `cudaEventCreateWithFlags`
-//! ([`EventCreateFlags::DISABLE_TIMING`] / [`EventCreateFlags::INTERPROCESS`];
-//! Interprocess requires DisableTiming; `cudaEventBlockingSync` is Invalid).
+//! ([`EventCreateFlags::DISABLE_TIMING`] / [`EventCreateFlags::INTERPROCESS`] /
+//! [`EventCreateFlags::BLOCKING_SYNC`]; Interprocess requires DisableTiming).
+//! [`Sim::create_event_blocking_sync`] is the BlockingSync helper
+//! ([`synchronize_event`](Sim::synchronize_event) pays
+//! [`GpuProfile::host_sync_blocking_ns`]).
 //! [`Sim::create_event_interprocess`] is the Interprocess+DisableTiming helper.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle`: the import aliases the
@@ -278,7 +282,13 @@
 //! `GetLimit`. [`DeviceLimit::PersistingL2CacheSize`] wraps
 //! [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size).
 //! [`DeviceLimit::MaxL2FetchGranularity`] aligns access-policy windows (CUDA
-//! default 128 on SM 8.0+). [`Sim::malloc_pitch`] is `cudaMallocPitch`.
+//! default 128 on SM 8.0+). [`set_shared_mem_config`](Sim::set_shared_mem_config) /
+//! [`get_shared_mem_config`](Sim::get_shared_mem_config) are
+//! `cudaDeviceSetSharedMemConfig` / `GetSharedMemConfig` (Default kernels
+//! inherit; unset is unscaled). [`set_device_flags`](Sim::set_device_flags) /
+//! [`get_device_flags`](Sim::get_device_flags) are `cudaSetDeviceFlags` /
+//! `GetDeviceFlags` (schedule mask only; Auto streams inherit the tax).
+//! [`Sim::malloc_pitch`] is `cudaMallocPitch`.
 //! [`MemcpyOp`] `height` / pitches are `cudaMemcpy2DAsync` (payload `width *
 //! height`, not pitch padding). [`MemsetOp`] `height` / `pitch` are
 //! `cudaMemset2DAsync` (payload `width * height`; padding is not written).
@@ -382,8 +392,9 @@
 //! [`graph_exec_kernel_set_params`](Sim::graph_exec_kernel_set_params) keeps the
 //! exec uploaded so [`device_launch_graph`](Sim::device_launch_graph) needs no host
 //! re-upload (device-launch graphs allow it).
-//! [`SharedMemoryMode`] is `cudaLaunchAttributeSharedMemoryMode`: Default never
-//! scales duration; FourByte / EightByte scale by
+//! [`SharedMemoryMode`] is `cudaLaunchAttributeSharedMemoryMode`: Default uses
+//! [`set_shared_mem_config`](Sim::set_shared_mem_config) (`cudaDeviceSetSharedMemConfig`;
+//! unset never scales); FourByte / EightByte scale by
 //! `1000 / GpuProfile::shared_mem_*_permille` (profile default `1000`).
 //! [`PortableClusterMode`] is `cudaLaunchAttributePortableClusterSizeMode`:
 //! Default uses the function attribute; RequirePortable always refuses a
@@ -613,20 +624,21 @@ pub use ids::{
 };
 pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp,
-    ClusterDim, ClusterSchedulingPolicy, DType, DeviceAttr, DeviceLimit, DeviceP2pAttr,
-    DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags, FlushGpuDirectRdmaScope,
-    FlushGpuDirectRdmaTarget, FuncAttr, FuncAttributes, GpuOp, GraphAddNode, GraphDebugDotFlags,
-    GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
-    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
-    GraphUserObjectFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags,
-    KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
-    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAllocationType, MemAttach, MemAttachFlags,
-    MemHandleType, MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain,
-    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place,
-    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
-    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    ClusterDim, ClusterSchedulingPolicy, DType, DeviceAttr, DeviceFlags, DeviceLimit,
+    DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags,
+    FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget, FuncAttr, FuncAttributes, GpuOp,
+    GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo,
+    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
+    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags,
+    HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind,
+    KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags,
+    MemAdvise, MemAllocationType, MemAttach, MemAttachFlags, MemHandleType, MemPoolAttr,
+    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
+    MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
+    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -5700,6 +5712,61 @@ mod tests {
     }
 
     #[test]
+    fn device_shared_mem_config_inherits_into_default() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |device: SharedMemoryMode, launch: SharedMemoryMode, four: u16| {
+            let mut p = h100();
+            for g in &mut p.gpus {
+                g.shared_mem_four_byte_permille = four;
+            }
+            let mut sim = Sim::new(p);
+            let d = DeviceId(0);
+            sim.set_shared_mem_config(d, device).unwrap();
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel_with(
+                d,
+                kind.clone(),
+                &[a],
+                &[a],
+                StreamId(1),
+                KernelAttrs {
+                    shared_mem: launch,
+                    ..KernelAttrs::default()
+                },
+            ));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let unset = run(SharedMemoryMode::Default, SharedMemoryMode::Default, 500);
+        let inherit = run(SharedMemoryMode::FourByte, SharedMemoryMode::Default, 500);
+        let explicit = run(SharedMemoryMode::Default, SharedMemoryMode::FourByte, 500);
+        assert!(
+            inherit > unset,
+            "device FourByte must scale Default kernels; unset={unset} inherit={inherit}"
+        );
+        assert_eq!(inherit, explicit, "inherit matches launch FourByte");
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(
+            sim.get_shared_mem_config(d).unwrap(),
+            SharedMemoryMode::Default
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.get_shared_mem_config(d).unwrap(),
+            SharedMemoryMode::Default
+        );
+        match sim.set_shared_mem_config(d, SharedMemoryMode::FourByte) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
     fn kernel_with_capture_records_shared_mem() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
@@ -7320,6 +7387,55 @@ mod tests {
         assert_eq!(sim.clock_ns(), t0.saturating_add(10_000));
         sim.synchronize().unwrap();
         assert_eq!(sim.clock_ns(), t0.saturating_add(10_000));
+    }
+
+    #[test]
+    fn device_schedule_flags_are_auto_fallback() {
+        let p =
+            HardwareProfile::parse("gpus=1\nhost_sync_spin_ns=1000\nhost_sync_blocking_ns=9000\n")
+                .unwrap();
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let mut spin = Sim::new(p.clone());
+        assert_eq!(
+            spin.get_device_flags(d).unwrap(),
+            DeviceFlags::SCHEDULE_AUTO
+        );
+        spin.set_device_flags(d, DeviceFlags::SCHEDULE_SPIN)
+            .unwrap();
+        assert_eq!(
+            spin.get_device_flags(d).unwrap(),
+            DeviceFlags::SCHEDULE_SPIN
+        );
+        let t0 = spin.clock_ns();
+        spin.synchronize_stream(d, s).unwrap();
+        assert_eq!(spin.clock_ns(), t0.saturating_add(1_000));
+        let mut override_p = Sim::new(p);
+        override_p
+            .set_device_flags(d, DeviceFlags::SCHEDULE_SPIN)
+            .unwrap();
+        override_p
+            .set_stream_sync_policy(d, s, SynchronizationPolicy::BlockingSync)
+            .unwrap();
+        let t1 = override_p.clock_ns();
+        override_p.synchronize_stream(d, s).unwrap();
+        assert_eq!(override_p.clock_ns(), t1.saturating_add(9_000));
+        let mut sim = Sim::new(h100());
+        match sim.set_device_flags(d, 3) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device schedule"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_device_flags(d, 8) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(sim.get_device_flags(d).unwrap(), DeviceFlags::SCHEDULE_AUTO);
+        match sim.set_device_flags(d, DeviceFlags::SCHEDULE_SPIN) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]
@@ -13587,7 +13703,7 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("event wait flags"), "{why}"),
             other => panic!("{other:?}"),
         }
-        match sim.create_event_with_flags(EventId(9), 1) {
+        match sim.create_event_with_flags(EventId(9), 8) {
             Err(SimError::Invalid { why }) => assert!(why.contains("event create flags"), "{why}"),
             other => panic!("{other:?}"),
         }
@@ -13600,6 +13716,27 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn blocking_sync_event_pays_host_wait_tax() {
+        let p = HardwareProfile::parse("gpus=1\nhost_sync_blocking_ns=10000\n").unwrap();
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let mut def = Sim::new(p.clone());
+        def.create_event(EventId(1)).unwrap();
+        let a = def.alloc(d, 4096, s).unwrap();
+        enq(def.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        enq(def.record_event(d, EventId(1), s));
+        def.synchronize_event(EventId(1)).unwrap();
+        let t_def = def.clock_ns();
+        let mut blk = Sim::new(p);
+        blk.create_event_blocking_sync(EventId(1)).unwrap();
+        let b = blk.alloc(d, 4096, s).unwrap();
+        enq(blk.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
+        enq(blk.record_event(d, EventId(1), s));
+        blk.synchronize_event(EventId(1)).unwrap();
+        assert_eq!(blk.clock_ns(), t_def.saturating_add(10_000));
     }
 
     #[test]

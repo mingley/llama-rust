@@ -122,11 +122,11 @@ pub struct GpuProfile {
     pub host_sync_blocking_ns: u64,
     /// Achieved shared-memory throughput in FourByte bank mode, ‰
     /// (`1000` = identity duration). [`crate::ops::SharedMemoryMode::Default`]
-    /// ignores this. Not a capture.
+    /// uses the device config; unset ignores this. Not a capture.
     pub shared_mem_four_byte_permille: u16,
     /// Achieved shared-memory throughput in EightByte bank mode, ‰
     /// (`1000` = identity duration). [`crate::ops::SharedMemoryMode::Default`]
-    /// ignores this. Not a capture.
+    /// uses the device config; unset ignores this. Not a capture.
     pub shared_mem_eight_byte_permille: u16,
     /// Portable dynamic shared (`cudaDevAttrMaxSharedMemoryPerBlock`). Example
     /// H100 is 48 KiB. A larger launch needs
