@@ -3006,7 +3006,14 @@ model, do not celebrate the sim.
     identity unchanged. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-289. [ ] Next numbered PLAN item after 288 is the next `gpu-sim` / Engine /
+289. [x] `cudaDevAttrCanUseStreamMemOps`: always 1 (this VM has
+    [`wait_value32`](Sim::wait_value32) / [`write_value32`](Sim::write_value32)).
+    CUDA deprecated this in favor of
+    [`DeviceAttr::CanUse64BitStreamMemOps`]. Query; capture-legal. Decode
+    identity unchanged. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+290. [ ] Next numbered PLAN item after 289 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

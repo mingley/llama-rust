@@ -13176,6 +13176,7 @@ impl Sim {
             DeviceAttr::StreamPrioritiesSupported
             | DeviceAttr::UnifiedAddressing
             | DeviceAttr::CanUse64BitStreamMemOps
+            | DeviceAttr::CanUseStreamMemOps
             | DeviceAttr::CanUseStreamWaitValueNor => 1,
             DeviceAttr::GpuOverlap => u64::from(gpu.copy_engines > 0),
             DeviceAttr::MulticastSupported => u64::from(self.profile.multicast_supported(device)),
@@ -13245,6 +13246,7 @@ impl Sim {
             tcc_driver: false,
             kernel_exec_timeout: false,
             can_use_64_bit_stream_mem_ops: true,
+            can_use_stream_mem_ops: true,
             can_use_stream_wait_value_nor: true,
             tensor_map_access_supported: false,
             unified_function_pointers: false,

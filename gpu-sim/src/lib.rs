@@ -320,6 +320,10 @@
 //! watchdog).
 //! [`DeviceAttr::CanUse64BitStreamMemOps`] is always 1 (this VM has
 //! [`wait_value64`](Sim::wait_value64) / [`write_value64`](Sim::write_value64)).
+//! [`DeviceAttr::CanUseStreamMemOps`] is always 1 (this VM has
+//! [`wait_value32`](Sim::wait_value32) / [`write_value32`](Sim::write_value32)).
+//! CUDA deprecated this in favor of
+//! [`CanUse64BitStreamMemOps`](DeviceAttr::CanUse64BitStreamMemOps).
 //! [`DeviceAttr::CanUseStreamWaitValueNor`] is always 1 (this VM has
 //! [`WaitValueCmp::Nor`]).
 //! [`DeviceAttr::TensorMapAccessSupported`] is always 0 (`CUtensorMap` / TMA
@@ -11005,6 +11009,26 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::CanUse64BitStreamMemOps)
+                .unwrap(),
+            1
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_can_use_stream_mem_ops() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert!(hp.can_use_stream_mem_ops);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::CanUseStreamMemOps)
+                .unwrap(),
+            1
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::CanUseStreamMemOps)
                 .unwrap(),
             1
         );

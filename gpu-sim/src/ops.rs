@@ -853,6 +853,10 @@ pub enum DeviceAttr {
     /// `cudaDevAttrCanUse64BitStreamMemOps` (always 1; this VM has
     /// [`crate::Sim::wait_value64`] / [`crate::Sim::write_value64`]).
     CanUse64BitStreamMemOps,
+    /// `cudaDevAttrCanUseStreamMemOps` (always 1; this VM has
+    /// [`crate::Sim::wait_value32`] / [`crate::Sim::write_value32`]).
+    /// CUDA deprecated this in favor of [`Self::CanUse64BitStreamMemOps`].
+    CanUseStreamMemOps,
     /// `cudaDevAttrCanUseStreamWaitValueNor` (always 1; this VM has
     /// [`WaitValueCmp::Nor`]).
     CanUseStreamWaitValueNor,
@@ -1003,6 +1007,10 @@ pub struct DeviceProperties {
     /// `cudaDevAttrCanUse64BitStreamMemOps` (this VM has
     /// [`crate::Sim::wait_value64`] / [`crate::Sim::write_value64`]).
     pub can_use_64_bit_stream_mem_ops: bool,
+    /// `cudaDevAttrCanUseStreamMemOps` (this VM has
+    /// [`crate::Sim::wait_value32`] / [`crate::Sim::write_value32`]).
+    /// CUDA deprecated this in favor of [`Self::can_use_64_bit_stream_mem_ops`].
+    pub can_use_stream_mem_ops: bool,
     /// `cudaDevAttrCanUseStreamWaitValueNor` (this VM has
     /// [`WaitValueCmp::Nor`]).
     pub can_use_stream_wait_value_nor: bool,
