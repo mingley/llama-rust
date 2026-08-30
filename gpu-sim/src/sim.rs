@@ -10210,6 +10210,32 @@ impl Sim {
         Ok(())
     }
 
+    /// `cuMulticastUnbind` of a whole-handle bind on `device`.
+    ///
+    /// Host-synchronous. Capture cannot include it. Partial offset/size unbind
+    /// is not modeled. Live [`Self::va_map_multicast`] maps are Invalid
+    /// `"still mapped"`. A device that is not currently bound is Invalid
+    /// `"not bound"`.
+    pub fn multicast_unbind(&mut self, mc: MulticastId, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let _gpu = self.profile.gpu(device)?;
+        let (maps, bound) = {
+            let obj = self.mc_ref(mc)?;
+            (obj.maps, obj.binds.contains_key(&device))
+        };
+        if maps > 0 {
+            return Err(SimError::Invalid {
+                why: "still mapped",
+            });
+        }
+        if !bound {
+            return Err(SimError::Invalid { why: "not bound" });
+        }
+        let _gone = self.mc_mut(mc)?.binds.remove(&device);
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// `cuMemMap` of a multicast object into a reserved VA (no extra HBM).
     ///
     /// Host-synchronous. Capture cannot include it. Every team device must
@@ -10441,7 +10467,7 @@ impl Sim {
         a.devices.clear();
         a.accessed_by.clear();
         a.vmm_write_by.clear();
-        let _gone = self.mc_vas.remove(&id);
+        self.drop_multicast_va(id);
         Ok(())
     }
 
@@ -10478,7 +10504,7 @@ impl Sim {
         if a.vmm_maps.is_empty() {
             a.accessed_by.clear();
             a.vmm_write_by.clear();
-            let _gone = self.mc_vas.remove(&id);
+            self.drop_multicast_va(id);
         }
         Ok(())
     }
@@ -14472,6 +14498,15 @@ impl Sim {
         self.multicasts.get_mut(&id).ok_or(SimError::Invalid {
             why: "unknown multicast",
         })
+    }
+
+    fn drop_multicast_va(&mut self, id: AllocId) {
+        let Some(mc) = self.mc_vas.remove(&id) else {
+            return;
+        };
+        if let Ok(obj) = self.mc_mut(mc) {
+            obj.maps = obj.maps.saturating_sub(1);
+        }
     }
 
     /// Unmap one VMM span: refund HBM unless it is an explicit [`Self::va_map_handle`].
