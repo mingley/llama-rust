@@ -37,6 +37,9 @@
 //! `cudaMemcpy` / `cudaFree` / `cudaMemset`). [`memset_op_sync`](Sim::memset_op_sync)
 //! is `cudaMemset2D` / `cudaMemset3D`. Typed [`memset`](Sim::memset) /
 //! [`memset_op`](Sim::memset_op) stay Async.
+//! [`memset_2d_async`](Sim::memset_2d_async) / [`memset_2d`](Sim::memset_2d)
+//! are `cudaMemset2DAsync` / `cudaMemset2D` ([`MemsetOp::is_2d`]). Typed
+//! [`memset_op`](Sim::memset_op) stays.
 //! [`Sim::ipc_get`] / [`ipc_open`](Sim::ipc_open) / [`ipc_close`](Sim::ipc_close)
 //! are `cudaIpcGetMemHandle` / `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`:
 //! the import is an alias of the same physicals (no extra HBM). Free of the
@@ -11555,6 +11558,51 @@ mod tests {
         match sim.memcpy_3d(d, op, s) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("cannot capture host-sync memcpy"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn memset_2d_async_is_cuda_memset2d_async() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_pitch(d, 256, 8).unwrap();
+        let op = MemsetOp {
+            id: a,
+            offset: 0,
+            bytes: 256,
+            height: 8,
+            pitch,
+            ..MemsetOp::default()
+        };
+        let t0 = sim.clock_ns();
+        enq(sim.memset_2d_async(d, op, s));
+        sim.synchronize().unwrap();
+        assert!(sim.clock_ns() > t0);
+        match sim.memset_2d_async(d, MemsetOp { height: 1, ..op }, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset2d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memset_2d_async(
+            d,
+            MemsetOp {
+                depth: 2,
+                ysize: 8,
+                ..op
+            },
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memset2d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.memset_2d_async(d, op, s));
+        match sim.memset_2d(d, op, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cannot capture host-sync memset"), "{why}");
             }
             other => panic!("{other:?}"),
         }
