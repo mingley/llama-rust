@@ -1248,6 +1248,16 @@ impl SimulatedGpuStore {
         self.sim.stream_priority(device, stream)
     }
 
+    /// [`gpu_sim::Sim::stream_mem_sync_domain`] for `(device, stream)`.
+    #[must_use]
+    pub fn stream_mem_sync_domain(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> gpu_sim::MemSyncDomain {
+        self.sim.stream_mem_sync_domain(device, stream)
+    }
+
     /// How many times a captured GEMM graph was launched.
     #[must_use]
     pub fn graph_launches(&self) -> u64 {

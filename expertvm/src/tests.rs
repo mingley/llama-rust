@@ -7387,3 +7387,34 @@ fn store_replay_mem_sync_domain_binds_later_tokens() {
     assert_eq!(row.metrics.hits, 1);
     assert!(row.score.wall_ns > 0);
 }
+
+#[test]
+fn simulated_gpu_store_mem_sync_domain_marks_decode_stream() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            mem_sync_domain: MemSyncDomain::Remote,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let d = DeviceId(0);
+    assert_eq!(
+        gpu.stream_mem_sync_domain(d, gpu.decode_stream()),
+        MemSyncDomain::Remote
+    );
+    assert_eq!(
+        gpu.stream_mem_sync_domain(d, gpu.prefill_stream()),
+        MemSyncDomain::Default
+    );
+}

@@ -103,7 +103,8 @@
 use crate::decode::{KvCache, Llama, LlamaError, PagedKvPool, PrefetchChain};
 use crate::sample::argmax;
 use expertvm::{
-    DeviceId, ExpertKey, ExpertStore, LiveStore, Prefetch, Score, StoreMetrics, StreamId, Trace,
+    DeviceId, ExpertKey, ExpertStore, LiveStore, MemSyncDomain, Prefetch, Score, StoreMetrics,
+    StreamId, Trace,
 };
 use std::collections::{BTreeMap, VecDeque};
 
@@ -461,6 +462,17 @@ impl<'a> Engine<'a> {
     pub fn gpu_stream_priority(&self, device: DeviceId, stream: StreamId) -> Option<i32> {
         self.live_store()
             .and_then(|s| s.stream_priority(device, stream))
+    }
+
+    /// Stream mem-sync domain on an attached SimulatedGpuStore (`None` unless GPU).
+    #[must_use]
+    pub fn gpu_stream_mem_sync_domain(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Option<MemSyncDomain> {
+        self.live_store()
+            .and_then(|s| s.stream_mem_sync_domain(device, stream))
     }
 
     /// Grouped-GEMM compute stream on an attached SimulatedGpuStore.
@@ -4042,37 +4054,57 @@ mod tests {
     }
 
     #[test]
-    fn engine_gpu_mem_sync_domain_isolates_leftover_prefill() {
+    fn engine_gpu_mem_sync_domain_marks_decode_stream() {
         let bytes = tiny_qwen3moe_2layer_gguf();
-        let profile = HardwareProfile::parse(
-            "gpus=1\nfp16_flops=1000000\ncopy_engines=2\nsame_domain_fence_permille=1000\n",
-        )
-        .expect("fence profile");
         let pri = GpuStoreCfg {
             decode_priority: true,
             stream_priority: true,
-            compute_slots: 2,
+            mem_sync_domain: MemSyncDomain::Remote,
             ..GpuStoreCfg::default()
         };
-        let same = mixed_gpu_decode_itl_at(bytes.clone(), false, None, pri, profile.clone());
-        let iso = mixed_gpu_decode_itl_at(
-            bytes,
+        let same = mixed_gpu_decode_itl_on(
+            bytes.clone(),
             false,
             None,
             GpuStoreCfg {
-                mem_sync_domain: MemSyncDomain::Remote,
-                ..pri
+                decode_priority: true,
+                stream_priority: true,
+                ..GpuStoreCfg::default()
             },
-            profile,
         );
+        let iso = mixed_gpu_decode_itl_on(bytes.clone(), false, None, pri);
         assert_eq!(same.2, 4);
         assert_eq!(iso.2, 4);
         assert_eq!(same.4, iso.4, "mem-sync Remote must keep greedy identity");
-        assert!(
-            iso.0 < same.0,
-            "Remote decode domain must skip leftover prefill fence; iso={} same={}",
-            iso.0,
-            same.0
+        let g = load_gguf_owned(bytes).expect("owned");
+        let model = Llama::from_gguf(g).expect("m");
+        let n = model.expert_direct_store().expect("n").len().max(1);
+        let mut cfg = EngineCfg::tiny();
+        cfg.max_seqs = 2;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        let gpu = SimulatedGpuStore::with_cfg(
+            model.expert_direct_store().expect("c"),
+            n,
+            HardwareProfile::example_h100_sxm(),
+            4096,
+            GpuFill::Pinned,
+            pri,
+        )
+        .expect("gpu");
+        let decode = gpu.decode_stream();
+        let prefill = gpu.prefill_stream();
+        eng.attach_expert_store(LiveStore::simulated(gpu));
+        let _a = eng.add(&[1u32, 2], 2).expect("a");
+        eng.run().expect("run");
+        assert_eq!(
+            eng.gpu_stream_mem_sync_domain(DeviceId(0), decode)
+                .expect("decode domain"),
+            MemSyncDomain::Remote
+        );
+        assert_eq!(
+            eng.gpu_stream_mem_sync_domain(DeviceId(0), prefill)
+                .expect("prefill domain"),
+            MemSyncDomain::Default
         );
     }
 

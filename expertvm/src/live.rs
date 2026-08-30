@@ -5,7 +5,7 @@ use crate::error::Error;
 use crate::gpu_store::SimulatedGpuStore;
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertStore, StoreMetrics};
 use crate::tiered::TieredStore;
-use gpu_sim::{DeviceId, StreamId};
+use gpu_sim::{DeviceId, MemSyncDomain, StreamId};
 
 /// Runtime backend for [`crate::ExpertStore`] on a decode session.
 pub enum LiveStore {
@@ -274,6 +274,19 @@ impl LiveStore {
     pub fn stream_priority(&self, device: DeviceId, stream: StreamId) -> Option<i32> {
         match self {
             Self::Simulated(s) => Some(s.stream_priority(device, stream)),
+            Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => None,
+        }
+    }
+
+    /// [`gpu_sim::Sim::stream_mem_sync_domain`] on a SimulatedGpuStore. CPU stores are `None`.
+    #[must_use]
+    pub fn stream_mem_sync_domain(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Option<MemSyncDomain> {
+        match self {
+            Self::Simulated(s) => Some(s.stream_mem_sync_domain(device, stream)),
             Self::Direct(_) | Self::Cached(_) | Self::Tiered(_) => None,
         }
     }
