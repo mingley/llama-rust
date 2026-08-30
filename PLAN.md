@@ -1659,6 +1659,14 @@ model, do not celebrate the sim.
     it (unlike programmatic/launch-completion events). Decode identity
     stays not device-updatable. `gpu-profile capture` is still refused.
 
+131. [x] `cudaLaunchAttributeSharedMemoryMode`: kernel-node bank width
+    Default / FourByte / EightByte (graph SetAttribute / CopyAttributes /
+    `KernelAttrs`). Default never scales duration. FourByte / EightByte
+    scale kernel time by `1000 / GpuProfile::shared_mem_*_permille`
+    (profile default 1000 is identity so decode stays green). Device-launch
+    graphs allow it. Decode identity stays Default.
+    `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

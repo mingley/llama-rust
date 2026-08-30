@@ -484,8 +484,8 @@ impl SynchronizationPolicy {
 /// access-policy window, and a mem-sync domain can share a launch (7 arguments
 /// including `self`). Decode identity stays [`crate::Sim::kernel`] ([`Default`]:
 /// no cooperative, no PDL, no window, inherit stream mem-sync, no cluster,
-/// Default carveout, not device-updatable). [`SynchronizationPolicy`] is a
-/// stream attribute, not a field here.
+/// Default carveout, not device-updatable, Default shared-memory mode).
+/// [`SynchronizationPolicy`] is a stream attribute, not a field here.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KernelAttrs {
     /// `cudaLaunchCooperativeKernel`.
@@ -512,6 +512,8 @@ pub struct KernelAttrs {
     /// uploaded so a later [`crate::Sim::device_launch_graph`] needs no host
     /// re-upload. Decode identity stays `false`.
     pub device_updatable: bool,
+    /// `cudaLaunchAttributeSharedMemoryMode`.
+    pub shared_mem: SharedMemoryMode,
 }
 
 /// `cudaFuncCache` / `cudaSharedmemCarveout` preference
@@ -536,6 +538,39 @@ impl SharedMemCarveout {
     #[must_use]
     pub fn occupies_all_slots(self) -> bool {
         matches!(self, Self::MaxShared)
+    }
+}
+
+/// `cudaSharedMemoryConfig` (`cudaLaunchAttributeSharedMemoryMode`).
+///
+/// Bank width for shared-memory accesses. [`Self::Default`] never scales kernel
+/// duration (decode identity). [`Self::FourByte`] / [`Self::EightByte`] scale
+/// duration by `1000 / GpuProfile::shared_mem_*_permille` (profile default
+/// `1000` is identity). Not occupancy.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum SharedMemoryMode {
+    /// `cudaSharedMemoryBankSizeDefault`. Duration is unscaled.
+    #[default]
+    Default,
+    /// `cudaSharedMemoryBankSizeFourByte`. Scale by
+    /// [`crate::GpuProfile::shared_mem_four_byte_permille`].
+    FourByte,
+    /// `cudaSharedMemoryBankSizeEightByte`. Scale by
+    /// [`crate::GpuProfile::shared_mem_eight_byte_permille`].
+    EightByte,
+}
+
+impl SharedMemoryMode {
+    /// CLI token: `default` / `four` / `eight`.
+    pub fn parse(s: &str) -> Result<Self, crate::error::SimError> {
+        match s {
+            "default" => Ok(Self::Default),
+            "four" => Ok(Self::FourByte),
+            "eight" => Ok(Self::EightByte),
+            _ => Err(crate::error::SimError::Invalid {
+                why: "unknown shared-mem",
+            }),
+        }
     }
 }
 

@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaLaunchAttributeSharedMemoryMode`
+
+Kernel-node bank width Default / FourByte / EightByte (SetAttribute /
+CopyAttributes / `KernelAttrs`). Default never scales duration. FourByte /
+EightByte scale kernel time by `1000 / shared_mem_*_permille` (profile
+default 1000 is identity). Device-launch graphs allow it. Decode identity
+stays Default. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaLaunchAttributeDeviceUpdatableKernelNode`
 
 Kernel-node flag (graph SetAttribute / CopyAttributes / `KernelAttrs`).

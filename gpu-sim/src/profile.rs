@@ -120,6 +120,14 @@ pub struct GpuProfile {
     /// Host-side wait tax for [`crate::ops::SynchronizationPolicy::BlockingSync`].
     /// Default `0`. Not a capture.
     pub host_sync_blocking_ns: u64,
+    /// Achieved shared-memory throughput in FourByte bank mode, ‰
+    /// (`1000` = identity duration). [`crate::ops::SharedMemoryMode::Default`]
+    /// ignores this. Not a capture.
+    pub shared_mem_four_byte_permille: u16,
+    /// Achieved shared-memory throughput in EightByte bank mode, ‰
+    /// (`1000` = identity duration). [`crate::ops::SharedMemoryMode::Default`]
+    /// ignores this. Not a capture.
+    pub shared_mem_eight_byte_permille: u16,
 }
 
 impl GpuProfile {
@@ -516,7 +524,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npdl_trigger_permille={}\nl2_bytes={}\nl2_persist_hit_permille={}\nmem_sync_domain_count={}\nsame_domain_fence_permille={}\nmax_blocks_per_cluster={}\nportable_cluster_size={}\nhost_sync_spin_ns={}\nhost_sync_yield_ns={}\nhost_sync_blocking_ns={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npdl_trigger_permille={}\nl2_bytes={}\nl2_persist_hit_permille={}\nmem_sync_domain_count={}\nsame_domain_fence_permille={}\nmax_blocks_per_cluster={}\nportable_cluster_size={}\nhost_sync_spin_ns={}\nhost_sync_yield_ns={}\nhost_sync_blocking_ns={}\nshared_mem_four_byte_permille={}\nshared_mem_eight_byte_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -546,6 +554,8 @@ impl HardwareProfile {
             g0.host_sync_spin_ns,
             g0.host_sync_yield_ns,
             g0.host_sync_blocking_ns,
+            g0.shared_mem_four_byte_permille,
+            g0.shared_mem_eight_byte_permille,
             self.host_pageable_permille(g0.id),
             self.host_align_bytes(g0.id),
             g0.pool_reuse_ns,
@@ -672,6 +682,8 @@ fn h100_gpu(id: DeviceId) -> GpuProfile {
         host_sync_spin_ns: 0,
         host_sync_yield_ns: 0,
         host_sync_blocking_ns: 0,
+        shared_mem_four_byte_permille: 1000,
+        shared_mem_eight_byte_permille: 1000,
     }
 }
 
@@ -811,6 +823,8 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut host_sync_spin_ns: Option<u64> = None;
     let mut host_sync_yield_ns: Option<u64> = None;
     let mut host_sync_blocking_ns: Option<u64> = None;
+    let mut shared_mem_four_byte_permille: Option<u16> = None;
+    let mut shared_mem_eight_byte_permille: Option<u16> = None;
     let mut pageable_permille: u16 = 500;
     let mut align_bytes: u64 = 128;
     let mut pool_reuse_ns: Option<u64> = None;
@@ -912,6 +926,24 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             "host_sync_spin_ns" => host_sync_spin_ns = Some(parse_u64(v)?),
             "host_sync_yield_ns" => host_sync_yield_ns = Some(parse_u64(v)?),
             "host_sync_blocking_ns" => host_sync_blocking_ns = Some(parse_u64(v)?),
+            "shared_mem_four_byte_permille" => {
+                let n = parse_u16(v)?;
+                if n == 0 {
+                    return Err(SimError::Invalid {
+                        why: "shared_mem_four_byte_permille must be > 0",
+                    });
+                }
+                shared_mem_four_byte_permille = Some(n);
+            }
+            "shared_mem_eight_byte_permille" => {
+                let n = parse_u16(v)?;
+                if n == 0 {
+                    return Err(SimError::Invalid {
+                        why: "shared_mem_eight_byte_permille must be > 0",
+                    });
+                }
+                shared_mem_eight_byte_permille = Some(n);
+            }
             "pageable_permille" => pageable_permille = parse_u16(v)?,
             "align_bytes" => align_bytes = parse_u64(v)?,
             "pool_reuse_ns" => pool_reuse_ns = Some(parse_u64(v)?),
@@ -997,6 +1029,12 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         }
         if let Some(n) = host_sync_blocking_ns {
             g.host_sync_blocking_ns = n;
+        }
+        if let Some(n) = shared_mem_four_byte_permille {
+            g.shared_mem_four_byte_permille = n;
+        }
+        if let Some(n) = shared_mem_eight_byte_permille {
+            g.shared_mem_eight_byte_permille = n;
         }
         if g.portable_cluster_size > g.max_blocks_per_cluster {
             if portable_cluster_size.is_some() {
@@ -1356,6 +1394,34 @@ mod tests {
         assert_eq!(g0.host_sync_spin_ns, 0);
         assert_eq!(g0.host_sync_yield_ns, 0);
         assert_eq!(g0.host_sync_blocking_ns, 0);
+    }
+
+    #[test]
+    fn parse_shared_mem_permille() {
+        let p = HardwareProfile::parse(
+            "gpus=1\nshared_mem_four_byte_permille=500\nshared_mem_eight_byte_permille=2000\n",
+        )
+        .unwrap();
+        let g = p.gpu(DeviceId(0)).unwrap();
+        assert_eq!(g.shared_mem_four_byte_permille, 500);
+        assert_eq!(g.shared_mem_eight_byte_permille, 2000);
+        let text = p.to_profile_text();
+        assert!(text.contains("shared_mem_four_byte_permille=500"));
+        assert!(text.contains("shared_mem_eight_byte_permille=2000"));
+        let open = HardwareProfile::parse("gpus=1\n").unwrap();
+        let g0 = open.gpu(DeviceId(0)).unwrap();
+        assert_eq!(g0.shared_mem_four_byte_permille, 1000);
+        assert_eq!(g0.shared_mem_eight_byte_permille, 1000);
+        let err = HardwareProfile::parse("gpus=1\nshared_mem_four_byte_permille=0\n").unwrap_err();
+        assert!(
+            format!("{err:?}").contains("shared_mem_four_byte_permille must be > 0"),
+            "{err:?}"
+        );
+        let err = HardwareProfile::parse("gpus=1\nshared_mem_eight_byte_permille=0\n").unwrap_err();
+        assert!(
+            format!("{err:?}").contains("shared_mem_eight_byte_permille must be > 0"),
+            "{err:?}"
+        );
     }
 
     #[test]

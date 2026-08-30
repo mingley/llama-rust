@@ -170,8 +170,8 @@
 //! for priority, programmatic dependent launch ([`ProgrammaticLaunch`]),
 //! programmatic event ([`ProgrammaticEvent`]), access-policy window,
 //! mem-sync domain/map, cluster dimension, cluster scheduling policy,
-//! preferred cluster dimension, shared-memory carveout, and
-//! device-updatable kernel node.
+//! preferred cluster dimension, shared-memory carveout,
+//! device-updatable kernel node, and shared-memory bank mode.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
 //! may start after the previous same-stream kernel's trigger
 //! (`GpuProfile::pdl_trigger_permille`) instead of its completion. Overlap
@@ -197,6 +197,9 @@
 //! Sizes above [`GpuProfile::portable_cluster_size`] need
 //! [`set_non_portable_cluster_size_allowed`](Sim::set_non_portable_cluster_size_allowed).
 //! [`KernelAttrs::device_updatable`] is `cudaLaunchAttributeDeviceUpdatableKernelNode`.
+//! [`SharedMemoryMode`] is `cudaLaunchAttributeSharedMemoryMode`: Default never
+//! scales duration; FourByte / EightByte scale by
+//! `1000 / GpuProfile::shared_mem_*_permille` (profile default `1000`).
 //! Decode identity stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
 //! [`graph_exec_kernel_node_set_priority`](Sim::graph_exec_kernel_node_set_priority)
 //! are the exec-snapshot attributes. [`Sim::upload_graph`] is
@@ -367,8 +370,8 @@ pub use ops::{
     GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
     KernelNodeParams, LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap,
     MemcpyOp, Operation, PdlLaunch, Place, ProgrammaticEvent, ProgrammaticLaunch,
-    SharedMemCarveout, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp,
+    SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -5024,6 +5027,80 @@ mod tests {
     }
 
     #[test]
+    fn shared_mem_mode_scales_kernel_duration() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |mode: SharedMemoryMode, four: u16, eight: u16| {
+            let mut p = h100();
+            for g in &mut p.gpus {
+                g.shared_mem_four_byte_permille = four;
+                g.shared_mem_eight_byte_permille = eight;
+            }
+            let mut sim = Sim::new(p);
+            let d = DeviceId(0);
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel_with(
+                d,
+                kind.clone(),
+                &[a],
+                &[a],
+                StreamId(1),
+                KernelAttrs {
+                    shared_mem: mode,
+                    ..KernelAttrs::default()
+                },
+            ));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let def = run(SharedMemoryMode::Default, 1000, 1000);
+        let def_ignore = run(SharedMemoryMode::Default, 500, 500);
+        assert_eq!(def, def_ignore, "Default ignores shared_mem_*_permille");
+        let four_id = run(SharedMemoryMode::FourByte, 1000, 1000);
+        let eight_id = run(SharedMemoryMode::EightByte, 1000, 1000);
+        assert_eq!(def, four_id, "FourByte at 1000 is identity");
+        assert_eq!(def, eight_id, "EightByte at 1000 is identity");
+        let eight_slow = run(SharedMemoryMode::EightByte, 1000, 500);
+        let four_slow = run(SharedMemoryMode::FourByte, 500, 1000);
+        assert!(
+            eight_slow > def,
+            "EightByte at 500 must lengthen; def={def} eight={eight_slow}"
+        );
+        assert!(
+            four_slow > def,
+            "FourByte at 500 must lengthen; def={def} four={four_slow}"
+        );
+        assert_eq!(four_slow, eight_slow, "same permille, same scale");
+    }
+
+    #[test]
+    fn kernel_with_capture_records_shared_mem() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            KernelAttrs {
+                shared_mem: SharedMemoryMode::FourByte,
+                ..KernelAttrs::default()
+            },
+        ));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_shared_mem(g, 0).unwrap(),
+            SharedMemoryMode::FourByte
+        );
+    }
+
+    #[test]
     fn graph_carveout_copy_and_device_launch() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
@@ -5098,6 +5175,44 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("not a kernel node"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn graph_shared_mem_copy_and_device_launch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_shared_mem(g, 0).unwrap(),
+            SharedMemoryMode::Default
+        );
+        sim.graph_kernel_node_set_shared_mem(g, 0, SharedMemoryMode::EightByte)
+            .unwrap();
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_copy_attributes(h, 0, g, 0).unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_shared_mem(h, 0).unwrap(),
+            SharedMemoryMode::EightByte
+        );
+        let exec = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .expect("device-launch allows shared-mem");
+        assert_eq!(
+            sim.graph_exec_kernel_node_get_shared_mem(exec, 0).unwrap(),
+            SharedMemoryMode::EightByte
+        );
+        sim.graph_exec_kernel_node_set_shared_mem(exec, 0, SharedMemoryMode::FourByte)
+            .unwrap();
+        assert_eq!(
+            sim.graph_exec_kernel_node_get_shared_mem(exec, 0).unwrap(),
+            SharedMemoryMode::FourByte
+        );
     }
 
     #[test]
@@ -5684,6 +5799,27 @@ mod tests {
         let err = SynchronizationPolicy::parse("bogus").unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("unknown sync-policy"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+    }
+
+    #[test]
+    fn shared_memory_mode_parse() {
+        assert_eq!(
+            SharedMemoryMode::parse("default").unwrap(),
+            SharedMemoryMode::Default
+        );
+        assert_eq!(
+            SharedMemoryMode::parse("four").unwrap(),
+            SharedMemoryMode::FourByte
+        );
+        assert_eq!(
+            SharedMemoryMode::parse("eight").unwrap(),
+            SharedMemoryMode::EightByte
+        );
+        let err = SharedMemoryMode::parse("bogus").unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown shared-mem"), "{why}"),
             e => panic!("{e:?}"),
         }
     }

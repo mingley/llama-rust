@@ -16,10 +16,10 @@ use crate::ops::{
     GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
     KernelNodeParams, LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap,
     MemcpyOp, Operation, PdlLaunch, Place, ProgrammaticEvent, ProgrammaticLaunch,
-    SharedMemCarveout, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp,
+    SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
-use crate::profile::{ns_for_bytes, HardwareProfile, LinkKind};
+use crate::profile::{ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Preferred {
@@ -194,6 +194,8 @@ struct Op {
     preferred_cluster: Option<ClusterDim>,
     /// `cudaLaunchAttributePreferredSharedMemoryCarveout`.
     carveout: SharedMemCarveout,
+    /// `cudaLaunchAttributeSharedMemoryMode`.
+    shared_mem: SharedMemoryMode,
 }
 
 /// How a submitted op pays kernel/graph launch overhead.
@@ -305,6 +307,8 @@ struct GraphStep {
     carveout: SharedMemCarveout,
     /// `cudaLaunchAttributeDeviceUpdatableKernelNode`.
     device_updatable: bool,
+    /// `cudaLaunchAttributeSharedMemoryMode`.
+    shared_mem: SharedMemoryMode,
 }
 
 struct Graph {
@@ -598,6 +602,8 @@ pub struct Sim {
     enqueue_carveout: SharedMemCarveout,
     /// Device-updatable kernel node for the next submit / graph replay.
     enqueue_device_updatable: bool,
+    /// Shared-memory bank mode for the next submit / graph replay.
+    enqueue_shared_mem: SharedMemoryMode,
     /// Devices with `cudaFuncAttributeNonPortableClusterSizeAllowed`.
     non_portable_cluster: BTreeSet<DeviceId>,
     /// Wait/write-value mailbox: `(alloc, offset) → word`. Missing is `0`.
@@ -695,6 +701,7 @@ impl Sim {
             enqueue_preferred_cluster: None,
             enqueue_carveout: SharedMemCarveout::Default,
             enqueue_device_updatable: false,
+            enqueue_shared_mem: SharedMemoryMode::Default,
             non_portable_cluster: BTreeSet::new(),
             mailbox: BTreeMap::new(),
             capture_mode: StreamCaptureMode::Relaxed,
@@ -2008,6 +2015,7 @@ impl Sim {
             self.enqueue_preferred_cluster = step.preferred_cluster;
             self.enqueue_carveout = step.carveout;
             self.enqueue_device_updatable = step.device_updatable;
+            self.enqueue_shared_mem = step.shared_mem;
             let wait = graph_node_waits(step, extra_wait, launch_tail, &node_ops)?;
             let s = self.graph_exec_stream(origin, stream, step, &node_stream, &mut worker);
             if let Some(slot) = node_stream.get_mut(idx) {
@@ -2189,6 +2197,7 @@ impl Sim {
         self.enqueue_preferred_cluster = None;
         self.enqueue_carveout = SharedMemCarveout::Default;
         self.enqueue_device_updatable = false;
+        self.enqueue_shared_mem = SharedMemoryMode::Default;
         Ok(n)
     }
 
@@ -6380,11 +6389,97 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphKernelNodeGetAttribute` for shared-memory bank mode.
+    pub fn graph_kernel_node_get_shared_mem(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<SharedMemoryMode, SimError> {
+        self.kernel_node_shared_mem(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for shared-memory bank mode.
+    pub fn graph_exec_kernel_node_get_shared_mem(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<SharedMemoryMode, SimError> {
+        self.kernel_node_shared_mem(exec, node, true)
+    }
+
+    fn kernel_node_shared_mem(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<SharedMemoryMode, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.shared_mem)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for shared-memory bank mode.
+    pub fn graph_kernel_node_set_shared_mem(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        shared_mem: SharedMemoryMode,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_shared_mem(graph, node, false, shared_mem)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for shared-memory bank mode.
+    pub fn graph_exec_kernel_node_set_shared_mem(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        shared_mem: SharedMemoryMode,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_shared_mem(exec, node, true, shared_mem)
+    }
+
+    fn set_kernel_node_shared_mem(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        shared_mem: SharedMemoryMode,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.shared_mem = shared_mem;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// `cudaGraphKernelNodeCopyAttributes`: copy priority, PDL, programmatic
     /// event, launch-completion event, access-policy window, mem-sync
     /// domain/map, cluster dimension, cluster scheduling policy, preferred
-    /// cluster dimension, shared-memory carveout, and device-updatable kernel
-    /// node from `src` to `dst`.
+    /// cluster dimension, shared-memory carveout, device-updatable kernel
+    /// node, and shared-memory bank mode from `src` to `dst`.
     ///
     /// Both nodes must be kernels. Capture cannot include it.
     pub fn graph_kernel_node_copy_attributes(
@@ -6418,7 +6513,9 @@ impl Sim {
         let carveout = self.graph_kernel_node_get_carveout(src_graph, src)?;
         self.graph_kernel_node_set_carveout(dst_graph, dst, carveout)?;
         let upd = self.graph_kernel_node_get_device_updatable(src_graph, src)?;
-        self.graph_kernel_node_set_device_updatable(dst_graph, dst, upd)
+        self.graph_kernel_node_set_device_updatable(dst_graph, dst, upd)?;
+        let sm = self.graph_kernel_node_get_shared_mem(src_graph, src)?;
+        self.graph_kernel_node_set_shared_mem(dst_graph, dst, sm)
     }
 
     /// `cudaGraphNodeFindInClone`: index in `cloned` of the node that was `node`
@@ -6507,6 +6604,7 @@ impl Sim {
             preferred_cluster: self.enqueue_preferred_cluster,
             carveout: self.enqueue_carveout,
             device_updatable: self.enqueue_device_updatable,
+            shared_mem: self.enqueue_shared_mem,
         });
         Ok(())
     }
@@ -8754,8 +8852,8 @@ impl Sim {
     /// [`Self::kernel`] plus packed [`KernelAttrs`] (`cudaLaunchKernelEx`).
     ///
     /// Combines cooperative, PDL, an access-policy window, mem-sync
-    /// domain/map, cluster, shared-memory carveout, and device-updatable
-    /// kernel node on one submit.
+    /// domain/map, cluster, shared-memory carveout, device-updatable kernel
+    /// node, and shared-memory bank mode on one submit.
     /// Decode identity stays [`Self::kernel`] ([`KernelAttrs::default`]).
     pub fn kernel_with(
         &mut self,
@@ -8803,6 +8901,7 @@ impl Sim {
         let prev_pref = self.enqueue_preferred_cluster;
         let prev_carve = self.enqueue_carveout;
         let prev_upd = self.enqueue_device_updatable;
+        let prev_sm = self.enqueue_shared_mem;
         self.enqueue_pdl = attrs.pdl;
         self.enqueue_access_policy = attrs.access_policy;
         self.enqueue_mem_sync_domain = attrs.mem_sync_domain;
@@ -8812,6 +8911,7 @@ impl Sim {
         self.enqueue_preferred_cluster = attrs.preferred_cluster;
         self.enqueue_carveout = attrs.carveout;
         self.enqueue_device_updatable = attrs.device_updatable;
+        self.enqueue_shared_mem = attrs.shared_mem;
         let out = self.submit_kernel(device, kind, reads, writes, stream, attrs.cooperative);
         self.enqueue_pdl = prev_pdl;
         self.enqueue_access_policy = prev_win;
@@ -8822,6 +8922,7 @@ impl Sim {
         self.enqueue_preferred_cluster = prev_pref;
         self.enqueue_carveout = prev_carve;
         self.enqueue_device_updatable = prev_upd;
+        self.enqueue_shared_mem = prev_sm;
         out
     }
 
@@ -9723,6 +9824,7 @@ impl Sim {
             preferred_cluster: self.enqueue_preferred_cluster,
             carveout: self.enqueue_carveout,
             device_updatable: self.enqueue_device_updatable,
+            shared_mem: self.enqueue_shared_mem,
         });
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
@@ -9829,6 +9931,7 @@ impl Sim {
                 cluster_policy: self.enqueue_cluster_policy,
                 preferred_cluster: self.enqueue_preferred_cluster,
                 carveout: self.enqueue_carveout,
+                shared_mem: self.enqueue_shared_mem,
             },
         );
         if let Some(pe) = pde {
@@ -10216,6 +10319,7 @@ impl Sim {
                 cluster_policy: ClusterSchedulingPolicy::Default,
                 preferred_cluster: None,
                 carveout: SharedMemCarveout::Default,
+                shared_mem: SharedMemoryMode::Default,
             },
         );
         self.add_op_dep(kernel, id);
@@ -10223,7 +10327,7 @@ impl Sim {
     }
 
     fn start_kernel(&mut self, id: OpId) -> Result<bool, SimError> {
-        let (device, stream, launch, reads, writes, kind) = {
+        let (device, stream, launch, reads, writes, kind, shared_mem) = {
             let op = self
                 .ops
                 .get(&id)
@@ -10241,6 +10345,7 @@ impl Sim {
                     reads.clone(),
                     writes.clone(),
                     kind.clone(),
+                    op.shared_mem,
                 ),
                 _ => {
                     return Err(SimError::Invalid {
@@ -10283,6 +10388,13 @@ impl Sim {
             }
         };
         let ns = match self.kernel_ns(device, stream, &kind, launch, mem_bps, billed) {
+            Ok(n) => n,
+            Err(e) => {
+                self.drop_compute_n(device, slots)?;
+                return Err(e);
+            }
+        };
+        let ns = match self.shared_mem_ns(device, shared_mem, ns) {
             Ok(n) => n,
             Err(e) => {
                 self.drop_compute_n(device, slots)?;
@@ -11420,6 +11532,21 @@ impl Sim {
             ns = ns.saturating_mul(pen).checked_div(1000).unwrap_or(u64::MAX);
         }
         Ok(ns)
+    }
+
+    fn shared_mem_ns(
+        &self,
+        device: DeviceId,
+        mode: SharedMemoryMode,
+        ns: u64,
+    ) -> Result<u64, SimError> {
+        let g = self.profile.gpu(device)?;
+        let permille = match mode {
+            SharedMemoryMode::Default => return Ok(ns),
+            SharedMemoryMode::FourByte => g.shared_mem_four_byte_permille,
+            SharedMemoryMode::EightByte => g.shared_mem_eight_byte_permille,
+        };
+        Ok(scale_ns_permille(ns, permille))
     }
 
     fn memset_ns(
@@ -12765,6 +12892,7 @@ fn remap_nested_graphs(
             preferred_cluster: step.preferred_cluster,
             carveout: step.carveout,
             device_updatable: step.device_updatable,
+            shared_mem: step.shared_mem,
         });
     }
     Ok(out)
