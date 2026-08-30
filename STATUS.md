@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — graph event/child definition SetParams
+
+`Sim::graph_event_record_set_event` / `graph_event_wait_set_event` are
+`cudaGraphEventRecordNodeSetEvent` / `WaitNodeSetEvent` on the graph
+definition (External flag stays topology; does not retarget exec).
+`graph_child_set_params` is `cudaGraphChildGraphNodeSetParams` on the
+definition (nested topology may change; stores the child id as passed).
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — OpenAI `n` must be 1
 
 `gguf_gemv serve` accepts `"n":1` and rejects any other completion count.
@@ -2120,7 +2129,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 177 (OpenAI `n` must be 1).
+Next code change is PLAN systems depth after item 179 (graph event/child
+definition SetParams).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

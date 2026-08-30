@@ -327,10 +327,15 @@ mem nodes, device-launch). `update_graph` uses that path and keeps the
 same `why` strings.
 `graph_kernel_set_params` / `graph_memcpy_set_params` /
 `graph_memset_set_params` / `graph_batch_mem_op_set_params` /
-`graph_batch_mem_ops_set_params` are
+`graph_batch_mem_ops_set_params` / `graph_event_record_set_event` /
+`graph_event_wait_set_event` / `graph_child_set_params` are
 `cudaGraphKernelNodeSetParams` /
-`MemcpyNodeSetParams` / `MemsetNodeSetParams` / `BatchMemOpNodeSetParams` on the graph
-definition (do not retarget an already-instantiated exec).
+`MemcpyNodeSetParams` / `MemsetNodeSetParams` / `BatchMemOpNodeSetParams` /
+`EventRecordNodeSetEvent` / `EventWaitNodeSetEvent` /
+`ChildGraphNodeSetParams` on the graph
+definition (do not retarget an already-instantiated exec). Child-graph
+definition SetParams may change nested topology; exec SetParams still
+require matching topology. Event External flags stay topology.
 `graph_*_get_params` / `graph_exec_*_get_params` are
 `cudaGraph*NodeGetParams` / `cudaGraphExec*NodeGetParams`
 (query; no clock tick; capture is legal). Graph GetParams reads the
@@ -349,7 +354,9 @@ exec uploaded when the node is device-updatable).
 mem alloc/free cannot be disabled).
 `graph_exec_child_set_params` is `cudaGraphExecChildGraphNodeSetParams`
 (swap the nested graph; nested topology must match; child ids are topology
-for `update_graph`; mem nodes legal).
+for `update_graph`; mem nodes legal). Definition-side
+`graph_child_set_params` stores the child id as passed (same as
+`graph_add_child`).
 `graph_child_get_graph` is `cudaGraphChildGraphNodeGetGraph`.
 `graph_event_record_get_event` / `graph_event_wait_get_event` are
 `cudaGraphEventRecordNodeGetEvent` / `WaitNodeGetEvent`.

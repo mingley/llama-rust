@@ -505,7 +505,7 @@ impl Sim {
     }
 }
 
-/// Record vs wait for [`Sim::graph_exec_event_record_set_event`].
+/// Record vs wait for event-node SetEvent (definition and exec).
 #[derive(Clone, Copy)]
 enum EventSetKind {
     Record,
@@ -3315,6 +3315,152 @@ impl Sim {
             why: "unknown graph node",
         })?;
         step.kind = Kind::Free { id };
+        Ok(())
+    }
+
+    /// `cudaGraphEventRecordNodeSetEvent` on the graph definition.
+    ///
+    /// After [`Self::instantiate_graph`], this does not retarget the exec
+    /// snapshot; use [`Self::graph_exec_event_record_set_event`]. The External
+    /// flag stays (topology). Capture cannot include it. Host-sync 1 ns.
+    pub fn graph_event_record_set_event(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        event: EventId,
+    ) -> Result<(), SimError> {
+        self.graph_def_event_set(graph, node, event, EventSetKind::Record)
+    }
+
+    /// `cudaGraphEventWaitNodeSetEvent` on the graph definition.
+    ///
+    /// After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_event_wait_set_event`]. The External flag stays
+    /// (topology). Capture cannot include it. Host-sync 1 ns.
+    pub fn graph_event_wait_set_event(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        event: EventId,
+    ) -> Result<(), SimError> {
+        self.graph_def_event_set(graph, node, event, EventSetKind::Wait)
+    }
+
+    fn graph_def_event_set(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        event: EventId,
+        kind: EventSetKind,
+    ) -> Result<(), SimError> {
+        let capture = match kind {
+            EventSetKind::Record => "cannot capture event record set event",
+            EventSetKind::Wait => "cannot capture event wait set event",
+        };
+        self.fail_if_capturing(capture)?;
+        if !self.events.contains_key(&event) {
+            return Err(SimError::UnknownEvent { event: event.0 });
+        }
+        let (device, external) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            let external = match (kind, &step.kind) {
+                (EventSetKind::Record, Kind::EventRecord { external, .. }) => *external,
+                (EventSetKind::Wait, Kind::EventWait { external, .. }) => *external,
+                (EventSetKind::Record, _) => {
+                    return Err(SimError::Invalid {
+                        why: "not an event record node",
+                    });
+                }
+                (EventSetKind::Wait, _) => {
+                    return Err(SimError::Invalid {
+                        why: "not an event wait node",
+                    });
+                }
+            };
+            (step.device, external)
+        };
+        let _gpu = self.profile.gpu(device)?;
+        self.clock = self.clock.saturating_add(1);
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.kind = match kind {
+            EventSetKind::Record => Kind::EventRecord { event, external },
+            EventSetKind::Wait => Kind::EventWait { event, external },
+        };
+        Ok(())
+    }
+
+    /// `cudaGraphChildGraphNodeSetParams` on the graph definition.
+    ///
+    /// After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_child_set_params`]. `child` must already be
+    /// instantiated, on the same GPU. Nested topology may change (unlike
+    /// ExecSetParams). Capture cannot include it. Host-sync 1 ns.
+    pub fn graph_child_set_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        child: GraphId,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture child graph node set params")?;
+        if child == graph {
+            return Err(SimError::Invalid {
+                why: "graph child is self",
+            });
+        }
+        let device = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            if !matches!(step.kind, Kind::ChildGraph { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a child graph node",
+                });
+            }
+            step.device
+        };
+        let (ready, origin) = {
+            let c = self.graphs.get(&child).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            (c.ready(), c.origin.0)
+        };
+        if !ready {
+            return Err(SimError::Invalid {
+                why: "child graph not instantiated",
+            });
+        }
+        if origin != device {
+            return Err(SimError::Invalid {
+                why: "graph child gpu mismatch",
+            });
+        }
+        if self.graph_tree_contains(child, graph)? {
+            return Err(SimError::Invalid {
+                why: "cyclic child graph",
+            });
+        }
+        let _gpu = self.profile.gpu(device)?;
+        self.clock = self.clock.saturating_add(1);
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.kind = Kind::ChildGraph { graph: child };
         Ok(())
     }
 

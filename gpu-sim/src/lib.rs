@@ -207,10 +207,18 @@
 //! [`graph_memset_set_params`](Sim::graph_memset_set_params) /
 //! [`graph_host_set_params`](Sim::graph_host_set_params) /
 //! [`graph_batch_mem_op_set_params`](Sim::graph_batch_mem_op_set_params) /
-//! [`graph_batch_mem_ops_set_params`](Sim::graph_batch_mem_ops_set_params) are
+//! [`graph_batch_mem_ops_set_params`](Sim::graph_batch_mem_ops_set_params) /
+//! [`graph_event_record_set_event`](Sim::graph_event_record_set_event) /
+//! [`graph_event_wait_set_event`](Sim::graph_event_wait_set_event) /
+//! [`graph_child_set_params`](Sim::graph_child_set_params) are
 //! `cudaGraphKernelNodeSetParams` / `MemcpyNodeSetParams` / `MemsetNodeSetParams`
-//! / `HostNodeSetParams` / `BatchMemOpNodeSetParams`
+//! / `HostNodeSetParams` / `BatchMemOpNodeSetParams` /
+//! `EventRecordNodeSetEvent` / `EventWaitNodeSetEvent` /
+//! `ChildGraphNodeSetParams`
 //! on the graph and do not retarget an already-instantiated exec.
+//! Child-graph definition SetParams may change nested topology; exec
+//! SetParams still require matching topology. Event External flags stay
+//! topology.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
@@ -7855,6 +7863,114 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn graph_event_set_event_does_not_retarget_instantiated_exec() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.create_event(EventId(1)).unwrap();
+        sim.create_event(EventId(2)).unwrap();
+        sim.create_event(EventId(3)).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_event_record(g, EventId(1), false).unwrap();
+        sim.graph_add_event_wait(g, EventId(1), false).unwrap();
+        sim.graph_event_record_set_event(g, 0, EventId(2)).unwrap();
+        sim.graph_event_wait_set_event(g, 1, EventId(2)).unwrap();
+        assert_eq!(sim.graph_event_record_get_event(g, 0).unwrap(), EventId(2));
+        assert_eq!(sim.graph_event_wait_get_event(g, 1).unwrap(), EventId(2));
+        let kern = sim.create_graph(d, s).unwrap();
+        let a = sim.malloc(d, 4096).unwrap();
+        sim.graph_add_kernel(kern, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        match sim.graph_event_record_set_event(kern, 0, EventId(2)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("event record"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_event_record_set_event(g, 0, EventId(9)) {
+            Err(SimError::UnknownEvent { event: 9 }) => {}
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.graph_event_record_set_event(g, 0, EventId(3)).unwrap();
+        assert_eq!(
+            sim.graph_event_record_get_event(exec, 0).unwrap(),
+            EventId(2)
+        );
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        assert!(sim.query_event(EventId(2)).unwrap());
+        assert!(!sim.query_event(EventId(3)).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_event_record_set_event(g, 0, EventId(1)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_child_set_params_allows_topology_change_on_definition() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let kern = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(kern, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let kern_exec = sim.instantiate_graph(kern).unwrap();
+        let copy = sim.create_graph(d, s).unwrap();
+        sim.graph_add_memcpy(
+            copy,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(d),
+                alloc: b,
+                bytes: 4096,
+                offset: 0,
+                ..MemcpyOp::default()
+            },
+        )
+        .unwrap();
+        let copy_exec = sim.instantiate_graph(copy).unwrap();
+        let parent = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(parent, kern).unwrap();
+        sim.graph_child_set_params(parent, 0, copy).unwrap();
+        assert_eq!(sim.graph_child_get_graph(parent, 0).unwrap(), copy);
+        let exec = sim.instantiate_graph(parent).unwrap();
+        assert_eq!(sim.graph_child_get_graph(exec, 0).unwrap(), copy_exec);
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(b, d).unwrap());
+        let parent2 = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(parent2, kern).unwrap();
+        let exec2 = sim.instantiate_graph(parent2).unwrap();
+        assert_eq!(sim.graph_child_get_graph(exec2, 0).unwrap(), kern_exec);
+        sim.graph_child_set_params(parent2, 0, copy).unwrap();
+        assert_eq!(sim.graph_child_get_graph(exec2, 0).unwrap(), kern_exec);
+        let exec3 = sim.instantiate_graph(parent2).unwrap();
+        assert_eq!(sim.graph_child_get_graph(exec3, 0).unwrap(), copy_exec);
+        match sim.graph_child_set_params(kern, 0, copy) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("child graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let raw = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(raw, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        match sim.graph_child_set_params(parent, 0, raw) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_child_set_params(parent, 0, copy) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
     }
 
     #[test]

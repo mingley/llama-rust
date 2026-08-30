@@ -2057,6 +2057,39 @@ model, do not celebrate the sim.
     unchanged. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
+178. [x] `cudaGraphEventRecordNodeSetEvent` / `cudaGraphEventWaitNodeSetEvent`
+    on a stored graph definition (`Sim::graph_event_record_set_event` /
+    `graph_event_wait_set_event`). Mutates `g.steps`; **does not retarget
+    instantiated exec**. Capture refused (`"cannot capture event record set
+    event"` / `"cannot capture event wait set event"`). `UnknownEvent` /
+    `"not an event record node"` / `"not an event wait node"`. The node's
+    External flag is **not** rewritten — that is topology
+    (`graph_add_event_record` / `graph_add_event_wait`). Host-sync 1 ns.
+    Exec-side `graph_exec_event_*_set_event` already exists. Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+179. [x] `cudaGraphChildGraphNodeSetParams` on a stored graph definition
+    (`Sim::graph_child_set_params`). Nested topology **may** change (unlike
+    exec-side `graph_exec_child_set_params`, which requires
+    `child_param_topology_eq`). Capture refused `"cannot capture child graph
+    node set params"`. Child must be instantiated, same GPU, not self, not
+    cyclic. Stores the child **id as passed** (same as `graph_add_child`).
+    Host-sync 1 ns; does not retarget exec. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+180. [ ] Next numbered PLAN item after 179 is the next `gpu-sim` / Engine /
+    serve / expertvm mechanical API that is still missing. Do not invent
+    `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
+    `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
+    numbers, example `$/M tokens` rents, or `cudaStreamDestroy`.
+    **`best_of` / `use_beam_search` stay out of `parse_gen_req` until a
+    real beam Engine exists.** Prefer definition/exec graph APIs that
+    still have no CUDA-shaped twin (e.g. `cudaGraphNodeFindInClone`) over
+    more OpenAI HTTP veneer. Do not default `--engine`. Do not invent
+    `max_model_len` or `/v1/tokenize`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.
