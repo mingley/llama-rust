@@ -327,6 +327,7 @@
 //! attribute. Type mismatch is Invalid `"stream attr"`. Get is a query
 //! (capture-legal); Set is host-side like the dedicated setters.
 //! [`Sim::device_count`] is `cudaGetDeviceCount`.
+//! [`device_get`](Sim::device_get) is `cuDeviceGet` (ordinal in range).
 //! [`Sim::device_can_access_peer`] / [`device_get_p2p_attribute`](Sim::device_get_p2p_attribute)
 //! are `cudaDeviceCanAccessPeer` / `cudaDeviceGetP2PAttribute` (topology links;
 //! [`DeviceP2pAttr::AccessSupported`] and [`PerformanceRank`](DeviceP2pAttr::PerformanceRank)
@@ -10939,6 +10940,25 @@ mod tests {
             Err(SimError::Invalid { .. }) => {}
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn device_get_wraps_ordinal() {
+        let mut sim = Sim::new(h100());
+        assert_eq!(sim.device_get(0).unwrap(), DeviceId(0));
+        match sim.device_get(1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let nv = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        assert_eq!(nv.device_get(7).unwrap(), DeviceId(7));
+        match nv.device_get(8) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        assert_eq!(sim.device_get(0).unwrap(), DeviceId(0));
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

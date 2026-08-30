@@ -125,6 +125,7 @@ warp scheduler, L1, …   ← do not model
 | `stream_get_id` is unique per device/stream | `cudaStreamGetId` |
 | `stream_get_attribute` / `stream_set_attribute` wrap existing stream state | `cudaStreamGetAttribute` / `SetAttribute` |
 | `device_count` is the profile GPU count | `cudaGetDeviceCount` |
+| `device_get` is the ordinal in `0 .. count` | `cuDeviceGet` |
 | `flush_gpu_direct_rdma_writes` is a 1 ns host-sync barrier on RDMA SKUs (no write-visibility) | 1 ns |
 | `set_limit` / `get_limit` wrap persisting L2 plus stack / printf / heap / CDP / L2 fetch | `cudaDeviceSetLimit` / `GetLimit` |
 | `set_shared_mem_config` / `get_shared_mem_config`; Default kernels inherit function then device | `cudaDeviceSetSharedMemConfig` / `GetSharedMemConfig` |

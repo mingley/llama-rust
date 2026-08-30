@@ -13120,6 +13120,19 @@ impl Sim {
         u32::try_from(self.profile.gpus.len()).unwrap_or(u32::MAX)
     }
 
+    /// `cuDeviceGet`. Query; legal during capture.
+    ///
+    /// Ordinal `0 .. device_count`. Other ordinals Invalid
+    /// `"device not in profile"` (same as [`HardwareProfile::gpu`]).
+    pub fn device_get(&self, ordinal: u32) -> Result<DeviceId, SimError> {
+        let id = u16::try_from(ordinal).map_err(|_| SimError::Invalid {
+            why: "device not in profile",
+        })?;
+        let device = DeviceId(id);
+        let _gpu = self.profile.gpu(device)?;
+        Ok(device)
+    }
+
     /// `cudaDeviceCanAccessPeer`. Query; legal during capture.
     ///
     /// Hardware topology only (a profile link). Same device is false.

@@ -2890,7 +2890,12 @@ model, do not celebrate the sim.
     capture refused. Decode identity unchanged. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-274. [ ] Next numbered PLAN item after 273 is the next `gpu-sim` / Engine /
+274. [x] `cuDeviceGet`: [`device_get`](Sim::device_get) is the ordinal in
+    `0 .. device_count`. Other ordinals Invalid `"device not in profile"`.
+    Query; capture-legal. Decode identity unchanged. `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+275. [ ] Next numbered PLAN item after 274 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
