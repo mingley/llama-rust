@@ -5952,10 +5952,23 @@ impl Sim {
     }
 
     /// `cudaGraphAddMemsetNode` / `cudaMemset2D` params ([`MemsetOp`]).
+    /// [`Self::graph_add_memset_2d`] requires [`MemsetOp::is_2d`].
     pub fn graph_add_memset_op(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         let op = self.resolve_memset_op(op)?;
         self.graph_push(graph, device, stream, Kind::Memset(op))
+    }
+
+    /// `cudaGraphAddMemsetNode` whose [`MemsetOp`] is [`MemsetOp::is_2d`]
+    /// (`height > 1`, not 3D). Other extents Invalid `"memset2d height"`.
+    /// Typed [`Self::graph_add_memset_op`] stays.
+    pub fn graph_add_memset_2d(&mut self, graph: GraphId, op: MemsetOp) -> Result<(), SimError> {
+        if !op.is_2d() {
+            return Err(SimError::Invalid {
+                why: "memset2d height",
+            });
+        }
+        self.graph_add_memset_op(graph, op)
     }
 
     /// `cudaGraphAddHostNode` (`cudaLaunchHostFunc`) with the unnamed callback.
