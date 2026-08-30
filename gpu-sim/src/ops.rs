@@ -2461,7 +2461,8 @@ pub enum MemPoolAttr {
     ReuseAllowInternalDependencies,
 }
 
-/// `cudaMemAccessFlags` for [`crate::Sim::pool_get_access`].
+/// `cudaMemAccessFlags` for [`crate::Sim::pool_get_access`] /
+/// [`crate::Sim::va_get_access`].
 pub struct MemAccessFlags;
 
 impl MemAccessFlags {
@@ -2470,7 +2471,8 @@ impl MemAccessFlags {
     /// `cudaMemAccessFlagsProtRead`. Not modeled for pools (Invalid
     /// `"pool prot read"`). VMM uses [`crate::Sim::va_set_access`].
     pub const PROT_READ: u32 = 1;
-    /// `cudaMemAccessFlagsProtReadWrite` ([`crate::Sim::pool_set_access`]).
+    /// `cudaMemAccessFlagsProtReadWrite` ([`crate::Sim::pool_set_access`] /
+    /// [`crate::Sim::va_set_access_write`]).
     pub const PROT_READ_WRITE: u32 = 3;
 }
 

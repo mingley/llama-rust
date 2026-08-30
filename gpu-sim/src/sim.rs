@@ -10517,6 +10517,31 @@ impl Sim {
         Ok(a.live && a.vmm && a.vmm_write_by.contains(&device))
     }
 
+    /// `cuMemGetAccess`. Query; legal during capture.
+    ///
+    /// [`MemAccessFlags::PROT_READ_WRITE`] on a GPU that holds a local map,
+    /// and on peers after [`Self::va_set_access_write`].
+    /// [`MemAccessFlags::PROT_READ`] after [`Self::va_set_access`]. Else
+    /// [`MemAccessFlags::PROT_NONE`]. Unmapped `va_reserve` is Invalid
+    /// `"not mapped"`. Non-VMM is Invalid `"not a VA"`.
+    pub fn va_get_access(&self, id: AllocId, device: DeviceId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        let a = self.alloc_ref(id)?;
+        if !a.live || !a.vmm {
+            return Err(SimError::Invalid { why: "not a VA" });
+        }
+        if a.vmm_home().is_none() {
+            return Err(SimError::Invalid { why: "not mapped" });
+        }
+        if a.vmm_maps.iter().any(|(d, _, _)| *d == device) || a.vmm_write_by.contains(&device) {
+            return Ok(MemAccessFlags::PROT_READ_WRITE);
+        }
+        if a.accessed_by.contains(&device) {
+            return Ok(MemAccessFlags::PROT_READ);
+        }
+        Ok(MemAccessFlags::PROT_NONE)
+    }
+
     /// Mapped bytes of `alloc` currently charged on `device`.
     pub fn vmm_mapped_bytes(&self, alloc: AllocId, device: DeviceId) -> Result<u64, SimError> {
         let a = self.alloc_ref(alloc)?;

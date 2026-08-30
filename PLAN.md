@@ -2625,7 +2625,16 @@ model, do not celebrate the sim.
     unchanged. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-242. [ ] Next numbered PLAN item after 241 is the next `gpu-sim` / Engine /
+242. [x] `cuMemGetAccess`:
+    [`Sim::va_get_access`] is the flags-word twin of [`pool_get_access`]
+    for VMM. Local map and [`va_set_access_write`] are ProtReadWrite
+    (`3`); [`va_set_access`] is ProtRead (`1`); else ProtNone (`0`).
+    Unmapped `va_reserve` is Invalid `"not mapped"`. Non-VMM is Invalid
+    `"not a VA"`. Query; capture-legal. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+243. [ ] Next numbered PLAN item after 242 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

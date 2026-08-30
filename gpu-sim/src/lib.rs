@@ -148,6 +148,8 @@
 //! PROT_READWRITE (peer writes, no dest HBM). [`Sim::va_unset_access`] drops it.
 //! [`va_set_access_with_flags`](Sim::va_set_access_with_flags) is the flags
 //! word ([`MemAccessFlags`]). Typed helpers stay.
+//! [`va_get_access`](Sim::va_get_access) is `cuMemGetAccess` (local map
+//! ReadWrite; peer Read / ReadWrite / None). Query; legal during capture.
 //! [`Sim::va_acquire`] remaps an idle VA of the same size (or reserves);
 //! [`va_acquire_paged`](Sim::va_acquire_paged) maps it in KV-block spans;
 //! [`va_release`](Sim::va_release) unmaps into that pool instead of freeing the VA.
@@ -12375,6 +12377,57 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn va_get_access_reports_local_peer_read_and_write() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let va = sim.va_reserve(4096).unwrap();
+        match sim.va_get_access(va, d0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mapped"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.va_map(va, d0).unwrap();
+        assert_eq!(
+            sim.va_get_access(va, d0).unwrap(),
+            MemAccessFlags::PROT_READ_WRITE
+        );
+        assert_eq!(
+            sim.va_get_access(va, d1).unwrap(),
+            MemAccessFlags::PROT_NONE
+        );
+        sim.va_set_access(va, d1).unwrap();
+        assert_eq!(
+            sim.va_get_access(va, d1).unwrap(),
+            MemAccessFlags::PROT_READ
+        );
+        sim.va_set_access_write(va, d1).unwrap();
+        assert_eq!(
+            sim.va_get_access(va, d1).unwrap(),
+            MemAccessFlags::PROT_READ_WRITE
+        );
+        sim.va_unset_access(va, d1).unwrap();
+        assert_eq!(
+            sim.va_get_access(va, d1).unwrap(),
+            MemAccessFlags::PROT_NONE
+        );
+        let a = sim.malloc(d0, 64).unwrap();
+        match sim.va_get_access(a, d0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not a VA"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.va_get_access(va, DeviceId(9)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d0, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.va_get_access(va, d0).unwrap(),
+            MemAccessFlags::PROT_READ_WRITE
+        );
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

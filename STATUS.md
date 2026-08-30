@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cuMemGetAccess`
+
+`va_get_access` reports VMM ProtReadWrite / ProtRead / ProtNone from
+local maps and `va_set_access` / `va_set_access_write`. Unmapped VA is
+Invalid. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — PointerAttr VMM mapping queries
 
 `pointer_get_attribute` reports MappingBaseAddr / MappingSize (the
@@ -2482,7 +2488,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 241 (`MappingSize`).
+Next code change is PLAN systems depth after item 242 (`va_get_access`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

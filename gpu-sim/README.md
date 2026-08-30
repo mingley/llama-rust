@@ -650,6 +650,8 @@ maps are 0. `va_map` still Create+Maps in one call.
 writes still need a local map). `va_set_access_write` is PROT_READWRITE
 (peer writes, no dest HBM). `va_set_access_with_flags` is the flags word
 (`PROT_READ` / `PROT_READ_WRITE` / `PROT_NONE`). Typed helpers stay.
+`va_get_access` is `cuMemGetAccess` (local map ReadWrite; peer Read /
+ReadWrite / None). Query; legal during capture.
 `pool_set_access` is `cudaMemPoolSetAccess`
 ReadWrite on a peer (no dest HBM; kernels may write). `kernel()` needs the whole VA covered; `kernel_bufs`, `memset_buf`, and
 `MemcpyOp::offset` touch a mapped page (paged KV). `va_acquire` remaps an idle VA of the same
