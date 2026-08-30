@@ -13037,6 +13037,15 @@ impl Sim {
         })
     }
 
+    /// `cudaDeviceGetName`. Query; legal during capture.
+    ///
+    /// The profile name ([`HardwareProfile::name`]; same as
+    /// [`DeviceProperties::name`]). Unknown devices are Invalid.
+    pub fn device_get_name(&self, device: DeviceId) -> Result<String, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.profile.name.clone())
+    }
+
     /// `cudaGetDeviceCount`. Query; legal during capture.
     #[must_use]
     pub fn device_count(&self) -> u32 {

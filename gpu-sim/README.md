@@ -537,7 +537,8 @@ are discrete single-GPU packages).
 `StreamPrioritiesSupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
-(no SM count or clock). `func_get_attributes` is `cudaFuncGetAttributes`
+(no SM count or clock). `device_get_name` is `cudaDeviceGetName` (the
+profile name). `func_get_attributes` is `cudaFuncGetAttributes`
 of modeled per-device function attrs (`maxDynamicSharedSizeBytes`,
 `nonPortableClusterSizeAllowed`, `preferredShmemCarveout`, cluster-dim
 must-be-set, required cluster width/height/depth, and

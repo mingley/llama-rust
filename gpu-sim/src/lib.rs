@@ -258,7 +258,8 @@
 //! change). IoMemory / ReadOnly are Invalid. Typed helpers stay.
 //! [`Sim::device_get_attribute`] is `cudaDeviceGetAttribute` ([`DeviceAttr`]).
 //! [`Sim::device_get_properties`] is `cudaGetDeviceProperties` ([`DeviceProperties`];
-//! modeled caps only — no SM count or clock). [`DeviceAttr::CanMapHostMemory`]
+//! modeled caps only — no SM count or clock). [`Sim::device_get_name`] is
+//! `cudaDeviceGetName` (the profile name). [`DeviceAttr::CanMapHostMemory`]
 //! / [`DeviceAttr::ManagedMemory`] are always 1 (this VM has mapped host and
 //! UM). [`DeviceAttr::ClusterLaunch`] is `max_blocks_per_cluster > 0`.
 //! [`DeviceAttr::HostRegisterSupported`] / [`IpcEventSupport`](DeviceAttr::IpcEventSupport) /
@@ -10896,6 +10897,24 @@ mod tests {
             0
         );
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_name_wraps_profile_name() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(sim.device_get_name(d).unwrap(), "example-h100-sxm");
+        assert_eq!(
+            sim.device_get_name(d).unwrap(),
+            sim.device_get_properties(d).unwrap().name
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.device_get_name(d).unwrap(), "example-h100-sxm");
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_name(DeviceId(9)) {
+            Err(SimError::Invalid { .. }) => {}
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

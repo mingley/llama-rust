@@ -2860,7 +2860,12 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-270. [ ] Next numbered PLAN item after 269 is the next `gpu-sim` / Engine /
+270. [x] `cudaDeviceGetName`: [`device_get_name`](Sim::device_get_name) is
+    the profile name (same as [`DeviceProperties::name`]). Query;
+    capture-legal. Decode identity unchanged. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+271. [ ] Next numbered PLAN item after 270 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
