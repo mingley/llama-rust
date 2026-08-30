@@ -47,7 +47,7 @@ warp scheduler, L1, …   ← do not model
 | `drop_managed_copy`: dest eviction of one ReadMostly GPU | other copies stay |
 | `cudaMemAdviseSetAccessedBy`: kernel may read without migrating | interconnect, not local HBM |
 | `cudaMemAdviseSetPreferredLocation`: stay if already there | interconnect on remote read; writes migrate |
-| `cudaMemPrefetchAsync` (`prefetch` / `prefetch_host`) **moves** unless ReadMostly | PCIe / NVLink (1 ns if already local) |
+| `cudaMemPrefetchAsync` (`prefetch` / `prefetch_host` / `prefetch_with_flags`) **moves** unless ReadMostly | PCIe / NVLink (1 ns if already local) |
 | `cuMemAddressReserve` (`va_reserve`) is a VA with no physical pages | `alloc_overhead_ns` (at the call) |
 | `cuMemMap` (`va_map`) charges HBM; `va_unmap` refunds; the VA is reusable | `alloc_overhead_ns` (map) |
 | `cuMemCreate` (`va_create`) charges HBM with no VA; `va_map_handle` maps it without a second charge; `va_retain_handle` increments refs; `va_release_handle` refunds when refs and maps are 0 | `alloc_overhead_ns` (create, map, retain) |
@@ -123,7 +123,7 @@ warp scheduler, L1, …   ← do not model
 | `stream_get_id` is unique per device/stream | `cudaStreamGetId` |
 | `stream_get_attribute` / `stream_set_attribute` wrap existing stream state | `cudaStreamGetAttribute` / `SetAttribute` |
 | `device_count` is the profile GPU count | `cudaGetDeviceCount` |
-| `device_can_access_peer` / `device_get_p2p_attribute` are topology links (`AccessSupported`, `PerformanceRank` from GPU↔GPU `bps`) | `cudaDeviceCanAccessPeer` / `GetP2PAttribute` |
+| `device_can_access_peer` / `device_get_p2p_attribute` are topology links (`AccessSupported`, `PerformanceRank` from GPU↔GPU `bps`; NativeAtomic / CudaArrayAccess always 0) | `cudaDeviceCanAccessPeer` / `GetP2PAttribute` |
 | `set_limit` / `get_limit` wrap persisting L2 plus stack / printf / heap / CDP / L2 fetch | `cudaDeviceSetLimit` / `GetLimit` |
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128) | exact |
 | `malloc_pitch` charges `pitch * height`; pitch is `align_up(width, 512)` | `cudaMallocPitch` |
@@ -579,8 +579,10 @@ does not skip kernel first-touch). `mem_range_get_attribute` /
 `mem_range_get_attributes` are `cudaMemRangeGetAttribute` /
 `GetAttributes` of modeled per-alloc advice (`MemRangeAttr`;
 not per byte range; last-prefetch is not modeled). Query; legal during
-capture. `prefetch` / `prefetch_host` are
-`cudaMemPrefetchAsync` and **move** unless ReadMostly. Capture of
+capture. `prefetch` / `prefetch_host` / `prefetch_with_flags` are
+`cudaMemPrefetchAsync` and **move** unless ReadMostly.
+`prefetch_with_flags` requires `flags == 0` (`PrefetchFlags::DEFAULT`) and
+a `Place` dest. Typed helpers stay. Capture of
 `alloc_managed` / `mem_advise` / `stream_attach` is refused; a graph must record prefetch
 before the kernel unless AccessedBy or PreferredLocation covers that GPU.
 `va_reserve` / `va_map` / `va_unmap` / `va_free` are CUDA virtual memory.

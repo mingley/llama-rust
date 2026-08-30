@@ -452,10 +452,13 @@ Exact (mechanical invariants agents may rely on):
   memory; mapped pointers are kernel-readable over PCIe with no H2D and
   no HBM charge; `host_pin_bytes` is the `mlock` cap (`PinOom`)
 - `cudaMallocManaged` / `cudaMemPrefetchAsync` (`alloc_managed`,
-  `prefetch`, `prefetch_host`): no HBM until migrate; prefetch **moves**
-  (does not replicate) unless `cudaMemAdviseSetReadMostly`
-  ([`Sim::mem_advise`] [`MemAdvise::SetReadMostly`]); a kernel first-touch
-  prefetches when that kernel *starts* (after stream deps) unless
+  `prefetch`, `prefetch_host`, `prefetch_with_flags`): no HBM until
+  migrate; prefetch **moves** (does not replicate) unless
+  `cudaMemAdviseSetReadMostly` ([`Sim::mem_advise`]
+  [`MemAdvise::SetReadMostly`]); `prefetch_with_flags` requires flags 0
+  (`PrefetchFlags::DEFAULT`) and a [`Place`] dest; typed helpers stay;
+  a kernel first-touch prefetches when that kernel *starts* (after stream
+  deps) unless
   [`MemAdvise::SetAccessedBy`] maps that
   GPU or [`MemAdvise::SetPreferredLocation`] already holds the page at
   another GPU (remote read, interconnect billing; writes still migrate;
@@ -2363,7 +2366,20 @@ model, do not celebrate the sim.
     stay. Capture refused. Decode identity unchanged. `gpu-profile capture`
     is still refused. Dual score still has no `$/M tokens`.
 
-214. [ ] Next numbered PLAN item after 213 is the next `gpu-sim` / Engine /
+214. [x] `cudaMemPrefetchAsync` flags: `Sim::prefetch_with_flags` requires
+    [`PrefetchFlags::DEFAULT`] (`0`). Other bits are Invalid `"prefetch flags"`.
+    [`Place::Device`] is typed [`prefetch`]; host places are
+    [`prefetch_host`]. Typed helpers stay. Capture may record the memcpy.
+    Decode identity unchanged. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+215. [x] `cudaDevP2PAttrNativeAtomicSupported` /
+    `cudaDevP2PAttrCudaArrayAccessFromDevice`: always 0. Native atomics and
+    CUDA-array P2P are not modeled. Query; legal during capture. Decode
+    identity unchanged. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+216. [ ] Next numbered PLAN item after 215 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

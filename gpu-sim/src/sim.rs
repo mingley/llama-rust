@@ -21,7 +21,7 @@ use crate::ops::{
     MemAdvise, MemAllocationType, MemAttach, MemAttachFlags, MemHandleType, MemPoolAttr,
     MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
     MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttributes,
-    PortableClusterMode, PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch,
+    PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
     SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo,
     StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
@@ -10469,6 +10469,32 @@ impl Sim {
         )
     }
 
+    /// `cudaMemPrefetchAsync` / `cuMemPrefetchAsync_v2` with a flags word.
+    ///
+    /// CUDA requires `flags == 0` ([`PrefetchFlags::DEFAULT`]). Other bits are
+    /// Invalid `"prefetch flags"`. [`Place::Device`] is [`Self::prefetch`];
+    /// [`Place::Host`] / [`HostPinned`](Place::HostPinned) is
+    /// [`Self::prefetch_host`] (submit on `device`). Typed helpers stay.
+    /// Capture may record the memcpy.
+    pub fn prefetch_with_flags(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        dest: Place,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if flags != PrefetchFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "prefetch flags",
+            });
+        }
+        match dest {
+            Place::Device(d) => self.prefetch(d, alloc, stream),
+            Place::Host | Place::HostPinned => self.prefetch_host(device, alloc, stream),
+        }
+    }
+
     /// Whether `alloc` is live in page-locked host memory.
     pub fn is_host_pinned(&self, alloc: AllocId) -> Result<bool, SimError> {
         let a = self.alloc_ref(alloc)?;
@@ -11841,8 +11867,10 @@ impl Sim {
     /// [`DeviceP2pAttr::AccessSupported`] is a profile device–device link.
     /// [`DeviceP2pAttr::PerformanceRank`] is unique GPU↔GPU link `bps`
     /// descending (lower is better). Same device is 0. Missing links are 0,
-    /// not [`SimError::NoPeer`]. Unknown devices are Invalid. Native atomics
-    /// are not modeled.
+    /// not [`SimError::NoPeer`]. Unknown devices are Invalid.
+    /// [`DeviceP2pAttr::NativeAtomicSupported`] /
+    /// [`CudaArrayAccessFromDevice`](DeviceP2pAttr::CudaArrayAccessFromDevice)
+    /// are always 0.
     pub fn device_get_p2p_attribute(
         &self,
         src: DeviceId,
@@ -11860,6 +11888,7 @@ impl Sim {
                 }
             }
             DeviceP2pAttr::PerformanceRank => self.profile.p2p_performance_rank(src, dst),
+            DeviceP2pAttr::NativeAtomicSupported | DeviceP2pAttr::CudaArrayAccessFromDevice => 0,
         })
     }
 

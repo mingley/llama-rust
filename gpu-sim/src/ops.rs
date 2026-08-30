@@ -732,8 +732,15 @@ pub enum DeviceP2pAttr {
     AccessSupported,
     /// `cudaDevP2PAttrPerformanceRank`. Lower is better. Unique GPU↔GPU
     /// [`crate::LinkProfile::bps`] values descending; this pair's index.
-    /// Same device or no link is 0. Native atomics are not modeled.
+    /// Same device or no link is 0. Native atomics are not modeled
+    /// ([`Self::NativeAtomicSupported`] is always 0).
     PerformanceRank,
+    /// `cudaDevP2PAttrNativeAtomicSupported`. Always 0; native atomics are
+    /// not modeled.
+    NativeAtomicSupported,
+    /// `cudaDevP2PAttrCudaArrayAccessFromDevice`. Always 0; CUDA arrays are
+    /// not modeled.
+    CudaArrayAccessFromDevice,
 }
 
 /// One kernel buffer: a whole allocation or a mapped VMM span.
@@ -1854,6 +1861,17 @@ pub struct PeerAccessFlags;
 
 impl PeerAccessFlags {
     /// `cudaDeviceEnablePeerAccess` `flags` must be 0.
+    pub const DEFAULT: u32 = 0;
+}
+
+/// `cudaMemPrefetchAsync` / `cuMemPrefetchAsync_v2` flags for
+/// [`crate::Sim::prefetch_with_flags`].
+///
+/// CUDA requires 0. Unknown bits are Invalid `"prefetch flags"`.
+pub struct PrefetchFlags;
+
+impl PrefetchFlags {
+    /// Unflagged [`crate::Sim::prefetch`] / [`crate::Sim::prefetch_host`].
     pub const DEFAULT: u32 = 0;
 }
 

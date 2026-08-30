@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — Prefetch flags and P2P NativeAtomic/CudaArray = 0
+
+`prefetch_with_flags` requires `PrefetchFlags::DEFAULT` (`0`). Device dest
+is typed `prefetch`; host dest is `prefetch_host`. Other bits Invalid.
+`DeviceP2pAttr::NativeAtomicSupported` and `CudaArrayAccessFromDevice`
+are always 0. Query; capture-legal. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaMemPoolCreate` props
 
 `create_pool_with_props` is `cudaMemPoolCreate` + `cudaMemPoolProps`.
@@ -2356,7 +2363,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 213 (`create_pool_with_props`).
+Next code change is PLAN systems depth after item 215 (`prefetch_with_flags`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

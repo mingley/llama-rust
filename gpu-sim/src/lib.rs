@@ -94,6 +94,9 @@
 //! refused). [`stream_attach_with_flags`](Sim::stream_attach_with_flags) is
 //! the flags word ([`MemAttachFlags`]). Typed helper stays. Prefetch migrates;
 //! it does not replicate unless [`Sim::mem_advise`] [`MemAdvise::SetReadMostly`].
+//! [`prefetch_with_flags`](Sim::prefetch_with_flags) is
+//! `cudaMemPrefetchAsync` / `cuMemPrefetchAsync_v2` ([`PrefetchFlags::DEFAULT`]
+//! only; [`Place::Device`] / host dest). Typed helpers stay.
 //! [`MemAdvise::SetAccessedBy`] maps a GPU so a kernel can read without
 //! migrating (billed on the interconnect, not local HBM). A kernel
 //! page-faults managed memory onto that GPU when the kernel *starts*
@@ -223,7 +226,9 @@
 //! [`Sim::device_can_access_peer`] / [`device_get_p2p_attribute`](Sim::device_get_p2p_attribute)
 //! are `cudaDeviceCanAccessPeer` / `cudaDeviceGetP2PAttribute` (topology links;
 //! [`DeviceP2pAttr::AccessSupported`] and [`PerformanceRank`](DeviceP2pAttr::PerformanceRank)
-//! from GPU↔GPU `bps`; native atomics are not modeled).
+//! from GPU↔GPU `bps`; [`DeviceP2pAttr::NativeAtomicSupported`] /
+//! [`CudaArrayAccessFromDevice`](DeviceP2pAttr::CudaArrayAccessFromDevice)
+//! are always 0).
 //! [`enable_peer_with_flags`](Sim::enable_peer_with_flags) is
 //! `cudaDeviceEnablePeerAccess` ([`PeerAccessFlags::DEFAULT`] only; typed
 //! [`enable_peer`](Sim::enable_peer) stays; capture is legal).
@@ -584,7 +589,7 @@ pub use ops::{
     MemAdvise, MemAllocationType, MemAttach, MemAttachFlags, MemHandleType, MemPoolAttr,
     MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
     MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttributes,
-    PortableClusterMode, PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch,
+    PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
     SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo,
     StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
@@ -9373,6 +9378,35 @@ mod tests {
                 .unwrap(),
             0
         );
+        assert_eq!(
+            nv.device_get_p2p_attribute(
+                DeviceId(0),
+                DeviceId(1),
+                DeviceP2pAttr::NativeAtomicSupported
+            )
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            nv.device_get_p2p_attribute(
+                DeviceId(0),
+                DeviceId(1),
+                DeviceP2pAttr::CudaArrayAccessFromDevice
+            )
+            .unwrap(),
+            0
+        );
+        nv.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        assert_eq!(
+            nv.device_get_p2p_attribute(
+                DeviceId(0),
+                DeviceId(1),
+                DeviceP2pAttr::NativeAtomicSupported
+            )
+            .unwrap(),
+            0
+        );
+        let _g = nv.end_capture().unwrap();
         nv.disable_peer(DeviceId(0), DeviceId(1)).unwrap();
         assert!(!nv.peer_access(DeviceId(0), DeviceId(1)));
         assert!(nv.device_can_access_peer(DeviceId(0), DeviceId(1)).unwrap());
@@ -10779,6 +10813,26 @@ mod tests {
         assert!(!sim.is_resident(m, d).unwrap());
         assert_eq!(sim.hbm_used(d).unwrap(), 0);
         assert!(sim.is_managed(m).unwrap());
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn prefetch_with_flags_is_cuda_mem_prefetch_async() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 1u64 << 20;
+        let m = sim.alloc_managed(bytes).unwrap();
+        enq(sim.prefetch_with_flags(d, m, Place::Device(d), PrefetchFlags::DEFAULT, s));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        enq(sim.prefetch_with_flags(d, m, Place::Host, PrefetchFlags::DEFAULT, s));
+        sim.synchronize().unwrap();
+        assert!(!sim.is_resident(m, d).unwrap());
+        match sim.prefetch_with_flags(d, m, Place::Device(d), 1, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("prefetch flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         sim.free_sync(m).unwrap();
     }
 
