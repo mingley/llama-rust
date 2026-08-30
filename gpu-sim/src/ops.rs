@@ -868,6 +868,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrMemDecompressAlgorithmMask` (always 0; hardware decompress
     /// is not modeled).
     MemDecompressAlgorithmMask,
+    /// `cudaDevAttrMemDecompressMaximumLength` (always 0; hardware decompress
+    /// is not modeled).
+    MemDecompressMaximumLength,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -1011,6 +1014,9 @@ pub struct DeviceProperties {
     /// `cudaDevAttrMemDecompressAlgorithmMask` (hardware decompress is not
     /// modeled).
     pub mem_decompress_algorithm_mask: u64,
+    /// `cudaDevAttrMemDecompressMaximumLength` (hardware decompress is not
+    /// modeled).
+    pub mem_decompress_maximum_length: u64,
 }
 
 /// `cudaComputeMode` for [`DeviceAttr::ComputeMode`].

@@ -326,6 +326,8 @@
 //! timeline semaphore interop is not modeled).
 //! [`DeviceAttr::MemDecompressAlgorithmMask`] is always 0 (hardware decompress
 //! is not modeled).
+//! [`DeviceAttr::MemDecompressMaximumLength`] is always 0 (hardware decompress
+//! is not modeled).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -11095,6 +11097,26 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::MemDecompressAlgorithmMask)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_mem_decompress_max_length_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.mem_decompress_maximum_length, 0);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MemDecompressMaximumLength)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MemDecompressMaximumLength)
                 .unwrap(),
             0
         );
