@@ -127,7 +127,7 @@ impl fmt::Display for MulticastId {
     }
 }
 
-/// `cudaGraphConditionalHandle`. Created on a graph; sampled by an IF node.
+/// `cudaGraphConditionalHandle`. Created on a graph; sampled by IF / WHILE / SWITCH.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CondId(pub u32);
 

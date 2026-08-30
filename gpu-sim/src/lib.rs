@@ -186,7 +186,12 @@
 //! and an IF node (`cudaGraphCondTypeIf`). Body ops skip at start when the
 //! handle is `0`. [`set_conditional`](Sim::set_conditional) is device
 //! `cudaGraphSetConditional` (capture allowed; each launch resets to the
-//! create-time default first).
+//! create-time default first). [`graph_add_while`](Sim::graph_add_while) /
+//! [`graph_add_switch`](Sim::graph_add_switch) are `cudaGraphCondTypeWhile`
+//! / `Switch` (WHILE caps at 64 iterations; SWITCH branch `i` runs when the
+//! handle equals `i`). [`graph_if_nodes`](Sim::graph_if_nodes) /
+//! [`graph_while_nodes`](Sim::graph_while_nodes) /
+//! [`graph_switch_nodes`](Sim::graph_switch_nodes) list those nodes.
 //! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`.
 //! Capture records every stream that [`wait_event`](Sim::wait_event)s an
 //! event recorded in this capture (CUDA forked capture). [`record_event_external`](Sim::record_event_external)
@@ -7236,6 +7241,193 @@ mod tests {
             e => panic!("{e:?}"),
         }
         let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_while_one_iter_then_clear() {
+        let long = KernelKind::other(1 << 40, 4096);
+        let run = |default: u32| {
+            let mut sim = Sim::new(h100());
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let a = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+            sim.synchronize().unwrap();
+            let g = sim.create_graph(d, s).unwrap();
+            let h = sim.graph_conditional_create(g, default).unwrap();
+            let body = sim.graph_add_while(g, h).unwrap();
+            sim.graph_add_kernel(body, long.clone(), &[a], &[a])
+                .unwrap();
+            sim.begin_capture_to_graph(d, s, body, &[0]).unwrap();
+            enq(sim.set_conditional(d, h, 0, s));
+            assert_eq!(sim.end_capture().unwrap(), body);
+            assert_eq!(sim.graph_node_kind(g, 0).unwrap(), GraphNodeKind::While);
+            sim.instantiate_graph(g).unwrap();
+            sim.upload_graph(g).unwrap();
+            let t0 = sim.clock_ns();
+            let _n = sim.launch_graph(g, s).unwrap();
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let skipped = run(0);
+        let once = run(1);
+        assert!(
+            skipped < once,
+            "WHILE default 0 must skip the body; skip={skipped} once={once}"
+        );
+    }
+
+    #[test]
+    fn graph_while_unclear_hits_cap() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        let h = sim.graph_conditional_create(g, 1).unwrap();
+        let body = sim.graph_add_while(g, h).unwrap();
+        sim.graph_add_kernel(body, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph(g).unwrap();
+        let _n = sim.launch_graph(g, s).unwrap();
+        let err = sim.synchronize().unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("while iteration cap"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_switch_selects_branch() {
+        let long = KernelKind::other(1 << 40, 4096);
+        let tiny = KernelKind::other(1 << 30, 4096);
+        let run = |default: u32| {
+            let mut sim = Sim::new(h100());
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let a = sim.alloc(d, 4096, s).unwrap();
+            let b = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+            enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+            sim.synchronize().unwrap();
+            let g = sim.create_graph(d, s).unwrap();
+            let h = sim.graph_conditional_create(g, default).unwrap();
+            let bodies = sim.graph_add_switch(g, h, 2).unwrap();
+            sim.graph_add_kernel(bodies[0], long.clone(), &[a], &[a])
+                .unwrap();
+            sim.graph_add_kernel(bodies[1], tiny.clone(), &[b], &[b])
+                .unwrap();
+            assert_eq!(sim.graph_node_kind(g, 0).unwrap(), GraphNodeKind::Switch);
+            sim.instantiate_graph(g).unwrap();
+            sim.upload_graph(g).unwrap();
+            let t0 = sim.clock_ns();
+            let n = sim.launch_graph(g, s).unwrap();
+            sim.synchronize().unwrap();
+            assert_eq!(n, 2);
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let branch0 = run(0);
+        let branch1 = run(1);
+        let none = run(2);
+        assert!(
+            branch1 < branch0,
+            "SWITCH 1 must run the tiny body; b0={branch0} b1={branch1}"
+        );
+        assert!(
+            none < branch1,
+            "SWITCH out of range must skip both bodies; none={none} b1={branch1}"
+        );
+    }
+
+    #[test]
+    fn graph_add_switch_rejects_zero_branches() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        let h = sim.graph_conditional_create(g, 0).unwrap();
+        let err = sim.graph_add_switch(g, h, 0).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("switch branches"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim.graph_add_switch(g, h, 65).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("switch branches"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_add_while_rejects_instantiated_capture_and_mismatch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        let other = sim.create_graph(d, s).unwrap();
+        let h = sim.graph_conditional_create(g, 0).unwrap();
+        let err = sim.graph_add_while(other, h).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("mismatch"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        let body = sim.graph_add_while(g, h).unwrap();
+        assert_eq!(sim.graph_while_nodes(g).unwrap().len(), 1);
+        sim.instantiate_graph(g).unwrap();
+        let err = sim.graph_add_while(g, h).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        let err = sim.graph_add_while(body, h).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn clone_graph_remaps_while_and_switch_handles() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        let hw = sim.graph_conditional_create(g, 0).unwrap();
+        let hs = sim.graph_conditional_create(g, 1).unwrap();
+        let wbody = sim.graph_add_while(g, hw).unwrap();
+        sim.graph_add_kernel(wbody, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let bodies = sim.graph_add_switch(g, hs, 2).unwrap();
+        sim.graph_add_kernel(bodies[0], KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(bodies[1], KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let orig_w = sim.graph_while_nodes(g).unwrap();
+        let orig_s = sim.graph_switch_nodes(g).unwrap();
+        let cloned = sim.clone_graph(g).unwrap();
+        sim.destroy_graph(g).unwrap();
+        let cw = sim.graph_while_nodes(cloned).unwrap();
+        let cs = sim.graph_switch_nodes(cloned).unwrap();
+        assert_eq!(cw.len(), 1);
+        assert_eq!(cs.len(), 1);
+        assert_ne!(cw[0].1, orig_w[0].1);
+        assert_ne!(cw[0].2, orig_w[0].2);
+        assert_ne!(cs[0].1, orig_s[0].1);
+        assert_ne!(cs[0].2, orig_s[0].2);
+        sim.instantiate_graph(cloned).unwrap();
+        let n = sim.launch_graph(cloned, s).unwrap();
+        sim.synchronize().unwrap();
+        assert!(
+            n >= 2,
+            "clone must expand WHILE skip + SWITCH branch; n={n}"
+        );
     }
 
     #[test]

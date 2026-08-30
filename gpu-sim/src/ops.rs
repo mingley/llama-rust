@@ -253,8 +253,8 @@ pub enum MemAttach {
 
 /// One submitted GPU primitive. PLAN's Kernel / Memcpy / Collective / Event /
 /// Alloc / Free, plus `cudaMemsetAsync`, `cudaLaunchHostFunc`, stream attach,
-/// empty graph nodes, nested [`Self::ChildGraph`], and conditional IF /
-/// [`Self::SetConditional`]. Timing is not stored here.
+/// empty graph nodes, nested [`Self::ChildGraph`], and conditional IF / WHILE /
+/// SWITCH / [`Self::SetConditional`]. Timing is not stored here.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GpuOp {
     /// Stream-ordered device allocation (`cudaMallocAsync`). Capacity is
@@ -352,8 +352,36 @@ pub enum GpuOp {
     SetConditional {
         /// Handle to write.
         handle: CondId,
-        /// Non-zero runs a later IF body; `0` skips it.
+        /// Non-zero runs a later IF/WHILE body; SWITCH uses the value as a
+        /// branch index (`0 .. n-1`).
         value: u32,
+    },
+    /// Conditional WHILE node (`cudaGraphCondTypeWhile`). Expanded at parent
+    /// launch. Each iteration's body ops skip at start when the handle is `0`.
+    /// A body that leaves the handle non-zero is Invalid after 64 iterations.
+    While {
+        /// Handle created with [`crate::Sim::graph_conditional_create`].
+        handle: CondId,
+        /// Body graph returned by [`crate::Sim::graph_add_while`].
+        body: GraphId,
+    },
+    /// Runtime WHILE iteration fence. Never a `cudaGraphAdd*` node.
+    WhileTick {
+        /// Handle sampled after this iteration.
+        handle: CondId,
+        /// Body to enqueue again when the handle is still non-zero.
+        body: GraphId,
+        /// 1-based iteration count (cap 64).
+        iter: u32,
+    },
+    /// Conditional SWITCH node (`cudaGraphCondTypeSwitch`). Expanded at parent
+    /// launch. Branch `i` runs when the handle equals `i`; out of range skips
+    /// every body.
+    Switch {
+        /// Handle created with [`crate::Sim::graph_conditional_create`].
+        handle: CondId,
+        /// Body graphs returned by [`crate::Sim::graph_add_switch`].
+        bodies: Vec<GraphId>,
     },
 }
 
@@ -450,4 +478,10 @@ pub enum GraphNodeKind {
     If,
     /// Captured [`crate::GpuOp::SetConditional`] (`cudaGraphSetConditional`).
     SetConditional,
+    /// Conditional WHILE node (`cudaGraphCondTypeWhile`).
+    While,
+    /// Runtime [`crate::GpuOp::WhileTick`].
+    WhileTick,
+    /// Conditional SWITCH node (`cudaGraphCondTypeSwitch`).
+    Switch,
 }

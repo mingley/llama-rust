@@ -1330,6 +1330,13 @@ model, do not celebrate the sim.
     kernel-only graphs with no IF nodes. Dual score still has no `$/M
     tokens`.
 
+94. [x] Conditional WHILE and SWITCH: `Sim::graph_add_while` is
+    `cudaGraphCondTypeWhile` (body repeats while the handle is non-zero;
+    Invalid after 64 iterations). `graph_add_switch` is
+    `cudaGraphCondTypeSwitch` (`n` bodies, `1..=64`; branch `i` runs when
+    the handle equals `i`; out of range skips every body). Decode identity
+    stays kernel-only graphs. Dual score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

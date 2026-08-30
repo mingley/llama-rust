@@ -159,8 +159,8 @@ struct Op {
     submit_ns: u64,
     start_ns: Option<u64>,
     done_ns: Option<u64>,
-    /// Conditional handles that skip this op at start when any is `0`.
-    preds: Vec<CondId>,
+    /// Conditional handles that skip this op at start when any predicate fails.
+    preds: Vec<CondPred>,
     /// Predicates skipped this op; completion has no alloc/kernel/memcpy effects.
     skipped: bool,
 }
@@ -261,6 +261,15 @@ struct Cond {
     value: u32,
 }
 
+/// Skip predicate for IF / WHILE / SWITCH body ops.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CondPred {
+    /// Skip when the handle is `0`.
+    Nonzero(CondId),
+    /// Skip when the handle is not `branch`.
+    Equals(CondId, u32),
+}
+
 /// DFS state for [`Sim::clone_graph`]: unique graphs in post-order, ancestor stack.
 struct CloneWalk {
     order: Vec<GraphId>,
@@ -325,8 +334,8 @@ pub struct Sim {
     vmm_idle: Vec<AllocId>,
     next_cond: u32,
     conds: BTreeMap<CondId, Cond>,
-    /// IF-body predicates applied to ops submitted by [`Self::enqueue_graph`].
-    enqueue_preds: Vec<CondId>,
+    /// IF/WHILE/SWITCH body predicates applied to ops submitted by [`Self::enqueue_graph`].
+    enqueue_preds: Vec<CondPred>,
 }
 
 impl Sim {
@@ -1142,14 +1151,12 @@ impl Sim {
         steps: &[GraphStep],
     ) -> Result<(), SimError> {
         for step in steps {
-            let child = match &step.kind {
-                Kind::ChildGraph { graph: child } | Kind::If { body: child, .. } => *child,
-                _ => continue,
-            };
-            if child == parent || self.graph_tree_contains(child, parent)? {
-                return Err(SimError::Invalid {
-                    why: "cyclic child graph",
-                });
+            for child in nested_graphs(&step.kind) {
+                if child == parent || self.graph_tree_contains(child, parent)? {
+                    return Err(SimError::Invalid {
+                        why: "cyclic child graph",
+                    });
+                }
             }
         }
         Ok(())
@@ -1208,12 +1215,7 @@ impl Sim {
                 .map(|x| x.steps.clone())
                 .unwrap_or_default();
             for step in steps {
-                match &step.kind {
-                    Kind::ChildGraph { graph } | Kind::If { body: graph, .. } => {
-                        stack.push(*graph);
-                    }
-                    _ => {}
-                }
+                stack.extend(nested_graphs(&step.kind));
             }
         }
         Ok(())
@@ -1309,41 +1311,109 @@ impl Sim {
                 let add = self.enqueue_graph(*child, s, head, stack, &wait)?;
                 head = false;
                 n = n.saturating_add(add);
-                if let Some(id) = self.tail.get(&(step.device, s)).copied() {
-                    if let Some(ops) = node_ops.get_mut(idx) {
-                        ops.push(id);
-                    }
-                    if s != stream {
-                        pending_joins.push(id);
-                    }
-                }
-                if s != stream {
-                    if let Some(ids) = self.graph_joins.get(&(step.device, s)).cloned() {
-                        pending_joins.extend(ids);
-                    }
-                }
+                self.note_nested_tail(
+                    step.device,
+                    s,
+                    stream,
+                    idx,
+                    &mut node_ops,
+                    &mut pending_joins,
+                );
                 continue;
             }
             if let Kind::If { handle, body } = &step.kind {
-                self.enqueue_preds.push(*handle);
-                let nested = self.enqueue_graph(*body, s, head, stack, &wait);
-                let _pop = self.enqueue_preds.pop();
-                let add = nested?;
+                let add = self.enqueue_pred_graph(
+                    CondPred::Nonzero(*handle),
+                    *body,
+                    s,
+                    head,
+                    stack,
+                    &wait,
+                )?;
                 head = false;
                 n = n.saturating_add(add);
-                if let Some(id) = self.tail.get(&(step.device, s)).copied() {
-                    if let Some(ops) = node_ops.get_mut(idx) {
-                        ops.push(id);
-                    }
-                    if s != stream {
-                        pending_joins.push(id);
+                self.note_nested_tail(
+                    step.device,
+                    s,
+                    stream,
+                    idx,
+                    &mut node_ops,
+                    &mut pending_joins,
+                );
+                continue;
+            }
+            if let Kind::While { handle, body } = &step.kind {
+                let handle = *handle;
+                let body = *body;
+                let add = self.enqueue_pred_graph(
+                    CondPred::Nonzero(handle),
+                    body,
+                    s,
+                    head,
+                    stack,
+                    &wait,
+                )?;
+                head = false;
+                n = n.saturating_add(add);
+                let body_tail = self.tail.get(&(step.device, s)).copied();
+                self.enqueue_preds.push(CondPred::Nonzero(handle));
+                let tick = self.submit_launch(
+                    step.device,
+                    s,
+                    Kind::WhileTick {
+                        handle,
+                        body,
+                        iter: 1,
+                    },
+                    LaunchCost::GraphBody,
+                );
+                let _pop = self.enqueue_preds.pop();
+                let tick = tick?;
+                for dep in &wait {
+                    self.add_op_dep(tick, *dep);
+                }
+                if let Some(t) = body_tail {
+                    if t != tick {
+                        self.add_op_dep(tick, t);
                     }
                 }
-                if s != stream {
-                    if let Some(ids) = self.graph_joins.get(&(step.device, s)).cloned() {
-                        pending_joins.extend(ids);
-                    }
+                n = n.saturating_add(1);
+                self.note_nested_tail(
+                    step.device,
+                    s,
+                    stream,
+                    idx,
+                    &mut node_ops,
+                    &mut pending_joins,
+                );
+                continue;
+            }
+            if let Kind::Switch { handle, bodies } = &step.kind {
+                let handle = *handle;
+                let bodies = bodies.clone();
+                for (i, body) in bodies.into_iter().enumerate() {
+                    let idx_u = u32::try_from(i).map_err(|_| SimError::Invalid {
+                        why: "switch branches",
+                    })?;
+                    let add = self.enqueue_pred_graph(
+                        CondPred::Equals(handle, idx_u),
+                        body,
+                        s,
+                        head,
+                        stack,
+                        &wait,
+                    )?;
+                    head = false;
+                    n = n.saturating_add(add);
                 }
+                self.note_nested_tail(
+                    step.device,
+                    s,
+                    stream,
+                    idx,
+                    &mut node_ops,
+                    &mut pending_joins,
+                );
                 continue;
             }
             let rec = match &step.kind {
@@ -1392,6 +1462,45 @@ impl Sim {
         }
         let _gone = stack.remove(&graph);
         Ok(n)
+    }
+
+    fn enqueue_pred_graph(
+        &mut self,
+        pred: CondPred,
+        body: GraphId,
+        stream: StreamId,
+        head: bool,
+        stack: &mut BTreeSet<GraphId>,
+        wait: &[OpId],
+    ) -> Result<u32, SimError> {
+        self.enqueue_preds.push(pred);
+        let nested = self.enqueue_graph(body, stream, head, stack, wait);
+        let _pop = self.enqueue_preds.pop();
+        nested
+    }
+
+    fn note_nested_tail(
+        &mut self,
+        device: DeviceId,
+        s: StreamId,
+        stream: StreamId,
+        idx: usize,
+        node_ops: &mut [Vec<OpId>],
+        pending_joins: &mut Vec<OpId>,
+    ) {
+        if let Some(id) = self.tail.get(&(device, s)).copied() {
+            if let Some(ops) = node_ops.get_mut(idx) {
+                ops.push(id);
+            }
+            if s != stream {
+                pending_joins.push(id);
+            }
+        }
+        if s != stream {
+            if let Some(ids) = self.graph_joins.get(&(device, s)).cloned() {
+                pending_joins.extend(ids);
+            }
+        }
     }
 
     /// Internal stream for an origin-stream graph node. Chains stay on the
@@ -1542,10 +1651,7 @@ impl Sim {
             g.auto_free_on_launch = auto_free;
             g.steps
                 .iter()
-                .filter_map(|s| match &s.kind {
-                    Kind::If { body, .. } => Some(*body),
-                    _ => None,
-                })
+                .flat_map(|s| cond_body_graphs(&s.kind))
                 .collect::<Vec<_>>()
         };
         for body in bodies {
@@ -2384,7 +2490,11 @@ impl Sim {
             })?;
             for step in &mut g.steps {
                 match &mut step.kind {
-                    Kind::If { handle, .. } | Kind::SetConditional { handle, .. } => {
+                    Kind::If { handle, .. }
+                    | Kind::While { handle, .. }
+                    | Kind::Switch { handle, .. }
+                    | Kind::SetConditional { handle, .. }
+                    | Kind::WhileTick { handle, .. } => {
                         if let Some(h) = cond_remap.get(handle) {
                             *handle = *h;
                         }
@@ -2415,11 +2525,8 @@ impl Sim {
         };
         walk.stack.push(graph);
         for step in &steps {
-            match &step.kind {
-                Kind::ChildGraph { graph: child } | Kind::If { body: child, .. } => {
-                    self.collect_clone_tree(*child, walk)?;
-                }
-                _ => {}
+            for child in nested_graphs(&step.kind) {
+                self.collect_clone_tree(child, walk)?;
             }
         }
         let _popped = walk.stack.pop();
@@ -2457,11 +2564,8 @@ impl Sim {
                 gr.steps.clone()
             };
             for step in steps {
-                match &step.kind {
-                    Kind::ChildGraph { graph: child } | Kind::If { body: child, .. } => {
-                        stack.push(*child);
-                    }
-                    _ => {}
+                for child in nested_graphs(&step.kind) {
+                    stack.push(child);
                 }
             }
         }
@@ -2759,6 +2863,60 @@ impl Sim {
     /// Capture cannot include it. Illegal after instantiate.
     pub fn graph_add_if(&mut self, graph: GraphId, handle: CondId) -> Result<GraphId, SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.require_cond_on_graph(handle, graph)?;
+        let body = self.insert_graph(device, stream);
+        self.graph_push(graph, device, stream, Kind::If { handle, body })?;
+        Ok(body)
+    }
+
+    /// `cudaGraphAddNode` WHILE (`cudaGraphCondTypeWhile`). Returns the body.
+    ///
+    /// Each iteration skips at start when `handle` is `0`. A body that leaves
+    /// the handle non-zero is Invalid after 64 iterations. Capture cannot
+    /// include it. Illegal after instantiate.
+    pub fn graph_add_while(&mut self, graph: GraphId, handle: CondId) -> Result<GraphId, SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.require_cond_on_graph(handle, graph)?;
+        let body = self.insert_graph(device, stream);
+        self.graph_push(graph, device, stream, Kind::While { handle, body })?;
+        Ok(body)
+    }
+
+    /// `cudaGraphAddNode` SWITCH (`cudaGraphCondTypeSwitch`). Returns `n` bodies.
+    ///
+    /// Branch `i` runs when the handle equals `i`. Out of range skips every
+    /// body. `n` must be `1..=64`. Capture cannot include it. Illegal after
+    /// instantiate.
+    pub fn graph_add_switch(
+        &mut self,
+        graph: GraphId,
+        handle: CondId,
+        n: u32,
+    ) -> Result<Vec<GraphId>, SimError> {
+        if n == 0 || n > 64 {
+            return Err(SimError::Invalid {
+                why: "switch branches",
+            });
+        }
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.require_cond_on_graph(handle, graph)?;
+        let mut bodies = Vec::new();
+        for _ in 0..n {
+            bodies.push(self.insert_graph(device, stream));
+        }
+        self.graph_push(
+            graph,
+            device,
+            stream,
+            Kind::Switch {
+                handle,
+                bodies: bodies.clone(),
+            },
+        )?;
+        Ok(bodies)
+    }
+
+    fn require_cond_on_graph(&self, handle: CondId, graph: GraphId) -> Result<(), SimError> {
         let cond_graph = self
             .conds
             .get(&handle)
@@ -2771,17 +2929,15 @@ impl Sim {
                 why: "conditional graph mismatch",
             });
         }
-        let body = self.insert_graph(device, stream);
-        self.graph_push(graph, device, stream, Kind::If { handle, body })?;
-        Ok(body)
+        Ok(())
     }
 
     /// Device `cudaGraphSetConditional`: write `handle` when this op starts.
     ///
     /// Capture is allowed. Does not occupy compute or copy engines. A later IF
-    /// body in the same launch waits for this op if the IF node depends on it
-    /// (stream order / edges). Each [`Self::launch_graph`] resets handles to
-    /// their create-time default first, so a live set before launch is wiped.
+    /// / WHILE / SWITCH node waits for this op if it depends on it. Each
+    /// [`Self::launch_graph`] resets handles to their create-time default first,
+    /// so a live set before launch is wiped.
     pub fn set_conditional(
         &mut self,
         device: DeviceId,
@@ -2809,6 +2965,40 @@ impl Sim {
         for (i, step) in g.steps.iter().enumerate() {
             if let Kind::If { handle, body } = step.kind {
                 out.push((i, handle, body));
+            }
+        }
+        Ok(out)
+    }
+
+    /// WHILE nodes on `graph` as `(index, handle, body)` in add order.
+    pub fn graph_while_nodes(
+        &self,
+        graph: GraphId,
+    ) -> Result<Vec<(usize, CondId, GraphId)>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut out = Vec::new();
+        for (i, step) in g.steps.iter().enumerate() {
+            if let Kind::While { handle, body } = step.kind {
+                out.push((i, handle, body));
+            }
+        }
+        Ok(out)
+    }
+
+    /// SWITCH nodes on `graph` as `(index, handle, bodies)` in add order.
+    pub fn graph_switch_nodes(
+        &self,
+        graph: GraphId,
+    ) -> Result<Vec<(usize, CondId, Vec<GraphId>)>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut out = Vec::new();
+        for (i, step) in g.steps.iter().enumerate() {
+            if let Kind::Switch { handle, bodies } = &step.kind {
+                out.push((i, *handle, bodies.clone()));
             }
         }
         Ok(out)
@@ -6787,6 +6977,20 @@ impl Sim {
             Kind::If { .. } => Err(SimError::Invalid {
                 why: "conditional if must be expanded",
             }),
+            Kind::While { .. } => Err(SimError::Invalid {
+                why: "conditional while must be expanded",
+            }),
+            Kind::Switch { .. } => Err(SimError::Invalid {
+                why: "conditional switch must be expanded",
+            }),
+            Kind::WhileTick { .. } => {
+                self.running.push(Running {
+                    op: id,
+                    remaining_ns: 1,
+                    share: Share::Solo,
+                });
+                Ok(true)
+            }
             Kind::SetConditional { handle, value } => {
                 let handle = *handle;
                 let value = *value;
@@ -6804,10 +7008,11 @@ impl Sim {
         }
     }
 
-    fn cond_skip(&self, preds: &[CondId]) -> bool {
-        preds
-            .iter()
-            .any(|h| self.conds.get(h).is_some_and(|c| c.value == 0))
+    fn cond_skip(&self, preds: &[CondPred]) -> bool {
+        preds.iter().any(|p| match p {
+            CondPred::Nonzero(h) => self.conds.get(h).is_some_and(|c| c.value == 0),
+            CondPred::Equals(h, branch) => self.conds.get(h).is_none_or(|c| c.value != *branch),
+        })
     }
 
     fn invalidate_read_mostly_writes(
@@ -7426,6 +7631,65 @@ impl Sim {
             op.done = true;
             op.done_ns = Some(self.clock);
         }
+        self.continue_while(id)?;
+        Ok(())
+    }
+
+    fn continue_while(&mut self, id: OpId) -> Result<(), SimError> {
+        let (handle, body, iter, device, stream) = {
+            let Some(op) = self.ops.get(&id) else {
+                return Ok(());
+            };
+            let Kind::WhileTick { handle, body, iter } = &op.kind else {
+                return Ok(());
+            };
+            (*handle, *body, *iter, op.device, op.stream)
+        };
+        let value = self
+            .conds
+            .get(&handle)
+            .ok_or(SimError::Invalid {
+                why: "unknown conditional",
+            })?
+            .value;
+        if value == 0 {
+            return Ok(());
+        }
+        if iter >= 64 {
+            return Err(SimError::Invalid {
+                why: "while iteration cap",
+            });
+        }
+        let wait = [id];
+        let add = self.enqueue_pred_graph(
+            CondPred::Nonzero(handle),
+            body,
+            stream,
+            false,
+            &mut BTreeSet::new(),
+            &wait,
+        )?;
+        let body_tail = self.tail.get(&(device, stream)).copied();
+        self.enqueue_preds.push(CondPred::Nonzero(handle));
+        let tick = self.submit_launch(
+            device,
+            stream,
+            Kind::WhileTick {
+                handle,
+                body,
+                iter: iter.saturating_add(1),
+            },
+            LaunchCost::GraphBody,
+        );
+        let _pop = self.enqueue_preds.pop();
+        let tick = tick?;
+        self.add_op_dep(tick, id);
+        if let Some(t) = body_tail {
+            if t != tick {
+                self.add_op_dep(tick, t);
+            }
+        }
+        let _n = add;
         Ok(())
     }
 }
@@ -7638,6 +7902,27 @@ fn remap_nested_graphs(
                     body: cloned,
                 }
             }
+            Kind::While { handle, body } => {
+                let cloned = remap.get(body).copied().ok_or(SimError::Invalid {
+                    why: "unknown graph",
+                })?;
+                Kind::While {
+                    handle: *handle,
+                    body: cloned,
+                }
+            }
+            Kind::Switch { handle, bodies } => {
+                let mut cloned = Vec::with_capacity(bodies.len());
+                for b in bodies {
+                    cloned.push(remap.get(b).copied().ok_or(SimError::Invalid {
+                        why: "unknown graph",
+                    })?);
+                }
+                Kind::Switch {
+                    handle: *handle,
+                    bodies: cloned,
+                }
+            }
             other => other.clone(),
         };
         out.push(GraphStep {
@@ -7697,6 +7982,29 @@ fn node_kind(kind: &Kind) -> GraphNodeKind {
         Kind::Attach { .. } => GraphNodeKind::Attach,
         Kind::If { .. } => GraphNodeKind::If,
         Kind::SetConditional { .. } => GraphNodeKind::SetConditional,
+        Kind::While { .. } => GraphNodeKind::While,
+        Kind::WhileTick { .. } => GraphNodeKind::WhileTick,
+        Kind::Switch { .. } => GraphNodeKind::Switch,
+    }
+}
+
+fn nested_graphs(kind: &Kind) -> Vec<GraphId> {
+    match kind {
+        Kind::ChildGraph { graph }
+        | Kind::If { body: graph, .. }
+        | Kind::While { body: graph, .. } => {
+            vec![*graph]
+        }
+        Kind::Switch { bodies, .. } => bodies.clone(),
+        _ => Vec::new(),
+    }
+}
+
+fn cond_body_graphs(kind: &Kind) -> Vec<GraphId> {
+    match kind {
+        Kind::If { body, .. } | Kind::While { body, .. } => vec![*body],
+        Kind::Switch { bodies, .. } => bodies.clone(),
+        _ => Vec::new(),
     }
 }
 
@@ -7841,6 +8149,27 @@ fn op_eq(a: &Kind, b: &Kind) -> bool {
             },
         ) => hx == hy && bx == by,
         (Kind::SetConditional { handle: x, .. }, Kind::SetConditional { handle: y, .. }) => x == y,
+        (
+            Kind::While {
+                handle: hx,
+                body: bx,
+            },
+            Kind::While {
+                handle: hy,
+                body: by,
+            },
+        ) => hx == hy && bx == by,
+        (
+            Kind::Switch {
+                handle: hx,
+                bodies: bx,
+            },
+            Kind::Switch {
+                handle: hy,
+                bodies: by,
+            },
+        ) => hx == hy && bx == by,
+        (Kind::WhileTick { handle: x, .. }, Kind::WhileTick { handle: y, .. }) => x == y,
         (Kind::EventRecord { external: x, .. }, Kind::EventRecord { external: y, .. }) => x == y,
         (Kind::EventWait { external: x, .. }, Kind::EventWait { external: y, .. }) => x == y,
         (Kind::Kernel { cooperative: x, .. }, Kind::Kernel { cooperative: y, .. }) => x == y,
@@ -7864,6 +8193,9 @@ fn op_tag(k: &Kind) -> u8 {
         Kind::Attach { .. } => 10,
         Kind::If { .. } => 12,
         Kind::SetConditional { .. } => 13,
+        Kind::While { .. } => 14,
+        Kind::WhileTick { .. } => 15,
+        Kind::Switch { .. } => 16,
     }
 }
 

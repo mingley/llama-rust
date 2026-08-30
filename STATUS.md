@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — conditional WHILE and SWITCH
+
+`Sim::graph_add_while` is `cudaGraphCondTypeWhile`: the body repeats while
+the handle is non-zero (Invalid after 64 iterations). `graph_add_switch`
+is `cudaGraphCondTypeSwitch`: branch `i` runs when the handle equals `i`;
+out of range skips every body. Decode identity stays kernel-only graphs.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-30 — conditional IF graphs
 
 `Sim::graph_conditional_create` is `cudaGraphConditionalHandleCreate`.
