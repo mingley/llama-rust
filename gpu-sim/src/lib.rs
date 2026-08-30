@@ -182,6 +182,18 @@
 //! `cudaGraphExecHostNodeSetParams` (same cost; [`HostNodeParams`] are
 //! parameters). [`graph_unique_host`](Sim::graph_unique_host) /
 //! [`graph_try_unique_host`](Sim::graph_try_unique_host) find that node.
+//! [`graph_kernel_get_params`](Sim::graph_kernel_get_params) /
+//! [`graph_memcpy_get_params`](Sim::graph_memcpy_get_params) /
+//! [`graph_memset_get_params`](Sim::graph_memset_get_params) /
+//! [`graph_host_get_params`](Sim::graph_host_get_params) /
+//! [`graph_batch_mem_ops_get_params`](Sim::graph_batch_mem_ops_get_params) are
+//! `cudaGraph*NodeGetParams` on the definition.
+//! [`graph_exec_kernel_get_params`](Sim::graph_exec_kernel_get_params) /
+//! [`graph_exec_memcpy_get_params`](Sim::graph_exec_memcpy_get_params) /
+//! [`graph_exec_memset_get_params`](Sim::graph_exec_memset_get_params) /
+//! [`graph_exec_host_get_params`](Sim::graph_exec_host_get_params) /
+//! [`graph_exec_batch_mem_ops_get_params`](Sim::graph_exec_batch_mem_ops_get_params)
+//! read the exec snapshot.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
 //! `bits32`, and compare stay on wait/write nodes;
@@ -3396,6 +3408,81 @@ mod tests {
             }
             e => panic!("{e:?}"),
         }
+    }
+
+    #[test]
+    fn graph_get_params_reads_definition_exec_reads_snapshot() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let got = sim.graph_kernel_get_params(g, 0).unwrap();
+        assert_eq!(got.reads[0].id, a);
+        assert_eq!(got.kind, KernelKind::other(8, 8));
+        let err = sim.graph_exec_kernel_get_params(g, 0).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(g).unwrap();
+        let patched = KernelNodeParams {
+            kind: KernelKind::other(16, 16),
+            reads: vec![KernelBuf::whole(b)],
+            writes: vec![KernelBuf::whole(b)],
+            cooperative: false,
+        };
+        sim.graph_kernel_set_params(g, 0, &patched).unwrap();
+        let def = sim.graph_kernel_get_params(g, 0).unwrap();
+        assert_eq!(def.reads[0].id, b);
+        assert_eq!(def.kind, KernelKind::other(16, 16));
+        let snap = sim.graph_exec_kernel_get_params(g, 0).unwrap();
+        assert_eq!(snap.reads[0].id, a, "exec GetParams is the snapshot");
+        assert_eq!(snap.kind, KernelKind::other(8, 8));
+        let snap2 = sim.graph_exec_kernel_get_params(exec, 0).unwrap();
+        assert_eq!(snap2.reads[0].id, a);
+        let err = sim.graph_memcpy_get_params(g, 0).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not a memcpy"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        let during = sim.graph_kernel_get_params(g, 0).unwrap();
+        assert_eq!(during.reads[0].id, b);
+        let _cap = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_host_get_params_round_trips_set_params() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_host_func(g).unwrap();
+        assert_eq!(
+            sim.graph_host_get_params(g, 0).unwrap(),
+            HostNodeParams::default()
+        );
+        let next = HostNodeParams {
+            fn_id: 4,
+            user_data: 40,
+        };
+        sim.graph_host_set_params(g, 0, next).unwrap();
+        assert_eq!(sim.graph_host_get_params(g, 0).unwrap(), next);
+        let exec = sim.instantiate_graph(g).unwrap();
+        let later = HostNodeParams {
+            fn_id: 5,
+            user_data: 50,
+        };
+        sim.graph_exec_host_set_params(exec, 0, later).unwrap();
+        assert_eq!(sim.graph_exec_host_get_params(exec, 0).unwrap(), later);
+        assert_eq!(sim.graph_host_get_params(g, 0).unwrap(), next);
     }
 
     #[test]

@@ -1472,6 +1472,14 @@ model, do not celebrate the sim.
     Decode identity stays `instantiate_graph`. `gpu-profile capture` is
     still refused.
 
+109. [x] Indexed graph/exec GetParams: `graph_kernel_get_params` /
+    `graph_memcpy_get_params` / `graph_memset_get_params` /
+    `graph_host_get_params` / `graph_batch_mem_ops_get_params` are
+    `cudaGraph*NodeGetParams` on the definition. `graph_exec_*_get_params`
+    reads the exec snapshot (uninstantiated is Invalid). Unique helpers
+    still use `resolved_graph` (launched snapshot). Decode identity stays
+    kernel-only graphs. `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

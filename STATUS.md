@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — graph/exec GetParams
+
+`graph_kernel_get_params` / `graph_memcpy_get_params` /
+`graph_memset_get_params` / `graph_host_get_params` /
+`graph_batch_mem_ops_get_params` are `cudaGraph*NodeGetParams` on the
+definition. `graph_exec_*_get_params` reads the exec snapshot.
+Unique helpers still use the launched snapshot. Decode identity stays
+kernel-only graphs. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaGraphInstantiateWithParams`
 
 `instantiate_graph_with_params` fills `GraphInstantiateParams` result and

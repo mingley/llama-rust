@@ -3248,6 +3248,125 @@ impl Sim {
         Ok(found)
     }
 
+    fn graph_def_step(&self, graph: GraphId, node: usize) -> Result<&GraphStep, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        g.steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })
+    }
+
+    fn graph_exec_step(&self, exec: GraphId, node: usize) -> Result<&GraphStep, SimError> {
+        let exec = self.as_exec(exec)?;
+        let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        g.view().get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })
+    }
+
+    /// `cudaGraphKernelNodeGetParams` on the graph definition.
+    pub fn graph_kernel_get_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<KernelNodeParams, SimError> {
+        kernel_params_of(&self.graph_def_step(graph, node)?.kind)
+    }
+
+    /// `cudaGraphKernelNodeGetParams` of the exec snapshot.
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this is the
+    /// launched kernel; [`Self::graph_kernel_get_params`] stays on the
+    /// definition.
+    pub fn graph_exec_kernel_get_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<KernelNodeParams, SimError> {
+        kernel_params_of(&self.graph_exec_step(exec, node)?.kind)
+    }
+
+    /// `cudaGraphMemcpyNodeGetParams` on the graph definition.
+    pub fn graph_memcpy_get_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<MemcpyOp, SimError> {
+        memcpy_params_of(&self.graph_def_step(graph, node)?.kind)
+    }
+
+    /// Exec-snapshot memcpy params. Uninstantiated graphs are Invalid.
+    pub fn graph_exec_memcpy_get_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<MemcpyOp, SimError> {
+        memcpy_params_of(&self.graph_exec_step(exec, node)?.kind)
+    }
+
+    /// `cudaGraphMemsetNodeGetParams` on the graph definition.
+    pub fn graph_memset_get_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<KernelBuf, SimError> {
+        memset_params_of(&self.graph_def_step(graph, node)?.kind)
+    }
+
+    /// Exec-snapshot memset params. Uninstantiated graphs are Invalid.
+    pub fn graph_exec_memset_get_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<KernelBuf, SimError> {
+        memset_params_of(&self.graph_exec_step(exec, node)?.kind)
+    }
+
+    /// `cudaGraphHostNodeGetParams` on the graph definition.
+    pub fn graph_host_get_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<HostNodeParams, SimError> {
+        host_params_of(&self.graph_def_step(graph, node)?.kind)
+    }
+
+    /// Exec-snapshot host params. Uninstantiated graphs are Invalid.
+    pub fn graph_exec_host_get_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<HostNodeParams, SimError> {
+        host_params_of(&self.graph_exec_step(exec, node)?.kind)
+    }
+
+    /// `cudaGraphBatchMemOpNodeGetParams` on the graph definition.
+    ///
+    /// Wait-value / write-value nodes are a one-item list.
+    pub fn graph_batch_mem_ops_get_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Vec<BatchMemOp>, SimError> {
+        batch_items(&self.graph_def_step(graph, node)?.kind).ok_or(SimError::Invalid {
+            why: "not a batch mem op node",
+        })
+    }
+
+    /// Exec-snapshot batch-mem-op items. Uninstantiated graphs are Invalid.
+    pub fn graph_exec_batch_mem_ops_get_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<Vec<BatchMemOp>, SimError> {
+        batch_items(&self.graph_exec_step(exec, node)?.kind).ok_or(SimError::Invalid {
+            why: "not a batch mem op node",
+        })
+    }
+
     /// Child-graph nodes on `graph` as `(index, nested GraphId)` in add order.
     pub fn graph_child_nodes(&self, graph: GraphId) -> Result<Vec<(usize, GraphId)>, SimError> {
         let graph = self.resolved_graph(graph)?;
@@ -9697,6 +9816,60 @@ fn batch_items(kind: &Kind) -> Option<Vec<BatchMemOp>> {
         }
         _ => None,
     }
+}
+
+fn kernel_params_of(kind: &Kind) -> Result<KernelNodeParams, SimError> {
+    let Kind::Kernel {
+        kind,
+        reads,
+        writes,
+        cooperative,
+    } = kind
+    else {
+        return Err(SimError::Invalid {
+            why: "not a kernel node",
+        });
+    };
+    Ok(KernelNodeParams {
+        kind: kind.clone(),
+        reads: reads.clone(),
+        writes: writes.clone(),
+        cooperative: *cooperative,
+    })
+}
+
+fn memcpy_params_of(kind: &Kind) -> Result<MemcpyOp, SimError> {
+    let Kind::Memcpy(op) = kind else {
+        return Err(SimError::Invalid {
+            why: "not a memcpy node",
+        });
+    };
+    Ok(op.clone())
+}
+
+fn memset_params_of(kind: &Kind) -> Result<KernelBuf, SimError> {
+    let Kind::Memset { id, offset, bytes } = kind else {
+        return Err(SimError::Invalid {
+            why: "not a memset node",
+        });
+    };
+    Ok(KernelBuf {
+        id: *id,
+        offset: *offset,
+        bytes: *bytes,
+    })
+}
+
+fn host_params_of(kind: &Kind) -> Result<HostNodeParams, SimError> {
+    let Kind::HostFunc { fn_id, user_data } = kind else {
+        return Err(SimError::Invalid {
+            why: "not a host node",
+        });
+    };
+    Ok(HostNodeParams {
+        fn_id: *fn_id,
+        user_data: *user_data,
+    })
 }
 
 fn mailbox_writes(kind: &Kind) -> Vec<(AllocId, u64, u64, bool)> {
