@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaGraphInstantiateWithFlags` / `GetFlags`
+
+`Sim::instantiate_graph_with_flags` is `cudaGraphInstantiateWithFlags`:
+`AUTO_FREE_ON_LAUNCH` and `UPLOAD` (upload during instantiate). Device-launch
+and node-priority bits are Invalid. `graph_exec_get_flags` is
+`cudaGraphExecGetFlags`. Decode identity stays default flags. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-08-30 — `cudaGraphNodeFindInClone`
 
 `Sim::graph_node_find_in_clone` is `cudaGraphNodeFindInClone`: the node

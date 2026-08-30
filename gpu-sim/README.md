@@ -242,6 +242,9 @@ stream-ordered-frees those allocs before relaunch. `clone_graph`
 forks those ids. `destroy_graph` refunds remaining graph mem. `update_graph`
 of mem nodes is `Invalid`.
 Instantiate, update, and upload are host-synchronous and cannot run during capture.
+`instantiate_graph_with_flags` is `cudaGraphInstantiateWithFlags`
+(`GraphInstantiateFlags::UPLOAD` uploads during instantiate).
+`graph_exec_get_flags` is `cudaGraphExecGetFlags`.
 `clone_graph` is `cudaGraphClone` (`graph_clone_ns`): an independent
 uninstantiated copy; child-graph nodes are cloned recursively (a diamond
 of shared children becomes one cloned child). Destroying the original

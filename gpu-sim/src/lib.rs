@@ -112,7 +112,11 @@
 //! [`Sim::set_created_streams_priority`] assigns created streams their id.
 //! [`Sim::instantiate_graph`] is `cudaGraphInstantiate` (host-sync; first
 //! [`launch_graph`](Sim::launch_graph) calls it). [`Sim::instantiate_graph_auto_free`]
-//! is `cudaGraphInstantiateFlagAutoFreeOnLaunch`. [`Sim::upload_graph`] is
+//! is `cudaGraphInstantiateFlagAutoFreeOnLaunch`.
+//! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags) is
+//! `cudaGraphInstantiateWithFlags` ([`GraphInstantiateFlags::UPLOAD`] uploads
+//! during instantiate). [`graph_exec_get_flags`](Sim::graph_exec_get_flags) is
+//! `cudaGraphExecGetFlags`. [`Sim::upload_graph`] is
 //! `cudaGraphUpload` (host-sync; first launch after instantiate calls it).
 //! [`Sim::update_graph`] is
 //! `cudaGraphExecUpdate` when device, stream, and op kinds match.
@@ -230,8 +234,8 @@ pub use ids::{
     OpId, PoolId, PtrExportId, ShareableHandleId, StreamId,
 };
 pub use ops::{
-    CaptureDepOp, DType, GpuOp, GraphNodeKind, KernelBuf, KernelKind, KernelNodeParams, MemAdvise,
-    MemAttach, MemcpyOp, Operation, Place, StreamCaptureInfo,
+    CaptureDepOp, DType, GpuOp, GraphInstantiateFlags, GraphNodeKind, KernelBuf, KernelKind,
+    KernelNodeParams, MemAdvise, MemAttach, MemcpyOp, Operation, Place, StreamCaptureInfo,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -893,6 +897,87 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("flags"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn graph_exec_get_flags_and_instantiate_with_flags() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_instantiate_ns = 20_000;
+            g.graph_upload_ns = 7_000;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let g = sim.end_capture().unwrap();
+        let err = sim.graph_exec_get_flags(g).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        let err = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device launch"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        let err = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::USE_NODE_PRIORITY)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("node priority"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        let err = sim.instantiate_graph_with_flags(g, 1 << 16).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("instantiate flags"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        let t0 = sim.clock_ns();
+        sim.instantiate_graph_with_flags(g, GraphInstantiateFlags::UPLOAD)
+            .unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(27_000));
+        assert!(sim.graph_uploaded(g).unwrap());
+        assert_eq!(
+            sim.graph_exec_get_flags(g).unwrap(),
+            GraphInstantiateFlags::UPLOAD
+        );
+        let t1 = sim.clock_ns();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(sim.clock_ns(), t1);
+        sim.synchronize().unwrap();
+        sim.instantiate_graph(g).unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("flags"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph_auto_free(h).unwrap();
+        assert_eq!(
+            sim.graph_exec_get_flags(h).unwrap(),
+            GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH
+        );
+        let both = GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH | GraphInstantiateFlags::UPLOAD;
+        let k = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(k, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph_with_flags(k, both).unwrap();
+        assert_eq!(sim.graph_exec_get_flags(k).unwrap(), both);
+        assert!(sim.graph_uploaded(k).unwrap());
+        assert!(sim.graph_auto_free_on_launch(k).unwrap());
     }
 
     #[test]

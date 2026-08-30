@@ -10,8 +10,8 @@ use crate::ids::{
     PoolId, PtrExportId, ShareableHandleId, StreamId,
 };
 use crate::ops::{
-    CaptureDepOp, GpuOp as Kind, GraphNodeKind, KernelBuf, KernelKind, KernelNodeParams, MemAdvise,
-    MemAttach, MemcpyOp, Operation, Place, StreamCaptureInfo,
+    CaptureDepOp, GpuOp as Kind, GraphInstantiateFlags, GraphNodeKind, KernelBuf, KernelKind,
+    KernelNodeParams, MemAdvise, MemAttach, MemcpyOp, Operation, Place, StreamCaptureInfo,
 };
 use crate::profile::{ns_for_bytes, HardwareProfile, LinkKind};
 
@@ -245,6 +245,8 @@ struct Graph {
     uploaded: bool,
     /// `cudaGraphInstantiateFlagAutoFreeOnLaunch`: free graph mem before relaunch.
     auto_free_on_launch: bool,
+    /// Flags passed to [`Sim::instantiate_graph_with_flags`] (`cudaGraphExecGetFlags`).
+    instantiate_flags: u32,
 }
 
 /// Record vs wait for [`Sim::graph_exec_event_record_set_event`].
@@ -1607,7 +1609,7 @@ impl Sim {
     /// calls this when needed (default flags: graph mem allocs without a
     /// matching free are reused on relaunch).
     pub fn instantiate_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
-        self.instantiate_graph_inner(graph, false)
+        self.instantiate_graph_with_flags(graph, 0)
     }
 
     /// `cudaGraphInstantiate` with `cudaGraphInstantiateFlagAutoFreeOnLaunch`.
@@ -1618,21 +1620,87 @@ impl Sim {
     /// Illegal when the graph has mem free nodes. Illegal after a default
     /// [`Self::instantiate_graph`].
     pub fn instantiate_graph_auto_free(&mut self, graph: GraphId) -> Result<(), SimError> {
-        self.instantiate_graph_inner(graph, true)
+        self.instantiate_graph_with_flags(graph, GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH)
     }
 
-    fn instantiate_graph_inner(&mut self, graph: GraphId, auto_free: bool) -> Result<(), SimError> {
+    /// `cudaGraphInstantiateWithFlags`. Host-synchronous. Capture cannot include it.
+    ///
+    /// [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] matches
+    /// [`Self::instantiate_graph_auto_free`]. [`GraphInstantiateFlags::UPLOAD`]
+    /// host-sync uploads during instantiate so the first launch skips
+    /// [`Self::upload_graph`]. Device-launch and node-priority bits are Invalid.
+    /// Already-instantiated ids are a no-op when `flags` adds no new bits.
+    pub fn instantiate_graph_with_flags(
+        &mut self,
+        graph: GraphId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        Self::check_instantiate_flags(flags)?;
+        let was = self
+            .graphs
+            .get(&graph)
+            .map(|g| g.instantiated)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+        self.instantiate_graph_inner(graph, flags)?;
+        if !was && flags & GraphInstantiateFlags::UPLOAD != 0 {
+            self.upload_graph(graph)?;
+        }
+        Ok(())
+    }
+
+    /// `cudaGraphExecGetFlags` on an instantiated exec.
+    ///
+    /// Capture is allowed. Uninstantiated graphs are Invalid.
+    pub fn graph_exec_get_flags(&self, exec: GraphId) -> Result<u32, SimError> {
+        let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if !g.instantiated {
+            return Err(SimError::Invalid {
+                why: "graph not instantiated",
+            });
+        }
+        Ok(g.instantiate_flags)
+    }
+
+    fn check_instantiate_flags(flags: u32) -> Result<(), SimError> {
+        const KNOWN: u32 = GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH
+            | GraphInstantiateFlags::UPLOAD
+            | GraphInstantiateFlags::DEVICE_LAUNCH
+            | GraphInstantiateFlags::USE_NODE_PRIORITY;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "instantiate flags",
+            });
+        }
+        if flags & GraphInstantiateFlags::DEVICE_LAUNCH != 0 {
+            return Err(SimError::Invalid {
+                why: "device launch instantiate flag",
+            });
+        }
+        if flags & GraphInstantiateFlags::USE_NODE_PRIORITY != 0 {
+            return Err(SimError::Invalid {
+                why: "node priority instantiate flag",
+            });
+        }
+        Ok(())
+    }
+
+    fn instantiate_graph_inner(&mut self, graph: GraphId, flags: u32) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph instantiate")?;
-        let (device, already, current_auto, has_free) = {
+        let auto_free = flags & GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH != 0;
+        let (device, already, current_flags, has_free) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
             let device = g.steps.first().map(|s| s.device).unwrap_or(DeviceId(0));
             let has_free = g.steps.iter().any(|s| matches!(&s.kind, Kind::Free { .. }));
-            (device, g.instantiated, g.auto_free_on_launch, has_free)
+            (device, g.instantiated, g.instantiate_flags, has_free)
         };
         if already {
-            if auto_free && !current_auto {
+            if flags & !current_flags != 0 {
                 return Err(SimError::Invalid {
                     why: "graph instantiate flags",
                 });
@@ -1652,13 +1720,14 @@ impl Sim {
             })?;
             g.instantiated = true;
             g.auto_free_on_launch = auto_free;
+            g.instantiate_flags = flags;
             g.steps
                 .iter()
                 .flat_map(|s| cond_body_graphs(&s.kind))
                 .collect::<Vec<_>>()
         };
         for body in bodies {
-            self.instantiate_graph_inner(body, auto_free)?;
+            self.instantiate_graph_inner(body, flags)?;
         }
         Ok(())
     }
@@ -2442,6 +2511,7 @@ impl Sim {
                     instantiated: false,
                     uploaded: false,
                     auto_free_on_launch: false,
+                    instantiate_flags: 0,
                 },
                 origin.0,
             ));
@@ -2709,6 +2779,7 @@ impl Sim {
                 instantiated: false,
                 uploaded: false,
                 auto_free_on_launch: false,
+                instantiate_flags: 0,
             },
         );
         let _old = self.graph_allocs.insert(id, Vec::new());

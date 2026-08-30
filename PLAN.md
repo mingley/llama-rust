@@ -1344,6 +1344,14 @@ model, do not celebrate the sim.
     Capture is allowed. Decode identity stays kernel-only graphs. Dual
     score still has no `$/M tokens`.
 
+96. [x] `cudaGraphInstantiateWithFlags` / `cudaGraphExecGetFlags`:
+    `Sim::instantiate_graph_with_flags` accepts
+    `GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH` and `UPLOAD` (upload during
+    instantiate so the first launch skips `upload_graph`). Device-launch and
+    node-priority bits are Invalid. `graph_exec_get_flags` returns those bits
+    on an instantiated exec. Decode identity stays default flags. Dual score
+    still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

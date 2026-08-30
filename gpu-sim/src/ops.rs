@@ -433,6 +433,20 @@ pub enum CaptureDepOp {
     Set,
 }
 
+/// `cudaGraphInstantiateFlags` bit names (`cudaGraphExecGetFlags`).
+pub struct GraphInstantiateFlags;
+
+impl GraphInstantiateFlags {
+    /// `cudaGraphInstantiateFlagAutoFreeOnLaunch`.
+    pub const AUTO_FREE_ON_LAUNCH: u32 = 1;
+    /// `cudaGraphInstantiateFlagUpload`: host-sync upload during instantiate.
+    pub const UPLOAD: u32 = 2;
+    /// `cudaGraphInstantiateFlagDeviceLaunch` (not implemented).
+    pub const DEVICE_LAUNCH: u32 = 4;
+    /// `cudaGraphInstantiateFlagUseNodePriority` (not implemented).
+    pub const USE_NODE_PRIORITY: u32 = 8;
+}
+
 /// Active stream capture (`cudaStreamGetCaptureInfo`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StreamCaptureInfo {
