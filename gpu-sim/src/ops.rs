@@ -613,6 +613,15 @@ pub enum PointerAttr {
     /// `CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE` ([`crate::PoolId`] as `u64`; `0`
     /// if not pool-backed).
     MemPoolHandle,
+    /// `CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL` ([`crate::DeviceId`] as `u64`).
+    /// Unmapped host (no device) is Invalid `"pointer attr"`.
+    DeviceOrdinal,
+    /// `CU_POINTER_ATTRIBUTE_RANGE_START_ADDR`. Interior offsets are not
+    /// modeled: the base is the alloc id (same as
+    /// [`crate::Sim::mem_get_address_range`]).
+    RangeStartAddr,
+    /// `CU_POINTER_ATTRIBUTE_BUFFER_ID`. This VM uses [`crate::AllocId`].
+    BufferId,
 }
 
 /// `cudaDeviceAttr` for [`crate::Sim::device_get_attribute`].

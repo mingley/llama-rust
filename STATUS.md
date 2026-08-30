@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — PointerAttr identity queries
+
+`pointer_get_attribute` reports DeviceOrdinal / RangeStartAddr / BufferId.
+Unmapped host has no ordinal. Set stays SyncMemops only.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — Func cluster scheduling policy preference
 
 `set_func_cluster_policy` / `get_func_cluster_policy` are
@@ -2451,7 +2457,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 236 (`ClusterSchedulingPolicyPreference`).
+Next code change is PLAN systems depth after item 237 (`PointerAttr` identity).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

@@ -2580,7 +2580,17 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-237. [ ] Next numbered PLAN item after 236 is the next `gpu-sim` / Engine /
+237. [x] Remaining `cuPointerGetAttribute` identity queries:
+    [`PointerAttr::DeviceOrdinal`] / [`RangeStartAddr`](PointerAttr::RangeStartAddr) /
+    [`BufferId`](PointerAttr::BufferId) wrap the owning GPU, [`mem_get_address_range`]
+    base (alloc id; interior offsets are not modeled), and [`AllocId`].
+    Unmapped host DeviceOrdinal is Invalid `"pointer attr"`. Set stays
+    [`PointerAttr::SyncMemops`] only. Get is a query; capture-legal.
+    CONTEXT / P2P tokens stay unmodeled. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+238. [ ] Next numbered PLAN item after 237 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

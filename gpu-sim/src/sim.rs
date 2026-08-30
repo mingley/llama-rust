@@ -12232,7 +12232,10 @@ impl Sim {
             | PointerAttr::IsManaged
             | PointerAttr::RangeSize
             | PointerAttr::Mapped
-            | PointerAttr::MemPoolHandle => Err(SimError::Invalid {
+            | PointerAttr::MemPoolHandle
+            | PointerAttr::DeviceOrdinal
+            | PointerAttr::RangeStartAddr
+            | PointerAttr::BufferId => Err(SimError::Invalid {
                 why: "pointer attr",
             }),
         }
@@ -12241,7 +12244,7 @@ impl Sim {
     /// `cuPointerGetAttribute` twin of [`Self::pointer_set_attribute`]. Query;
     /// capture-legal. Reports 0/1 for [`PointerAttr::SyncMemops`]. Other
     /// attrs wrap [`Self::pointer_get_attributes`], range size, mapped host,
-    /// and the backing pool.
+    /// the backing pool, device ordinal, range start, and buffer id.
     pub fn pointer_get_attribute(
         &self,
         alloc: AllocId,
@@ -12266,6 +12269,17 @@ impl Sim {
             PointerAttr::RangeSize => Ok(a.bytes),
             PointerAttr::Mapped => Ok(u64::from(a.host_mapped)),
             PointerAttr::MemPoolHandle => Ok(a.pool.map(|p| u64::from(p.0)).unwrap_or(0)),
+            PointerAttr::DeviceOrdinal => match self.pointer_get_attributes(alloc)?.device {
+                Some(d) => Ok(u64::from(d.0)),
+                None => Err(SimError::Invalid {
+                    why: "pointer attr",
+                }),
+            },
+            PointerAttr::RangeStartAddr => {
+                let (base, _) = self.mem_get_address_range(alloc)?;
+                Ok(base.0)
+            }
+            PointerAttr::BufferId => Ok(alloc.0),
         }
     }
 

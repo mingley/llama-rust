@@ -202,7 +202,8 @@
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
 //! `cuPointerSetAttribute` / `GetAttribute` ([`PointerAttr`]: SyncMemops is
 //! settable; MemoryType / DevicePointer / HostPointer / IsManaged /
-//! RangeSize / Mapped / MemPoolHandle are query-only wrappers of existing
+//! RangeSize / Mapped / MemPoolHandle / DeviceOrdinal / RangeStartAddr /
+//! BufferId are query-only wrappers of existing
 //! pointer state). Set is capture-refused; Get is a query.
 //! [`Sim::mem_get_address_range`] is `cudaMemGetAddressRange` (base is the
 //! alloc id; interior offsets are not modeled). Query; legal during capture.
@@ -8659,6 +8660,33 @@ mod tests {
             sim.pointer_get_attribute(async_a, PointerAttr::MemPoolHandle)
                 .unwrap(),
             u64::from(pool.0)
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::DeviceOrdinal)
+                .unwrap(),
+            u64::from(d.0)
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::RangeStartAddr)
+                .unwrap(),
+            a.0
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::BufferId).unwrap(),
+            a.0
+        );
+        let pin = sim.alloc_host_pinned(64).unwrap();
+        match sim.pointer_get_attribute(pin, PointerAttr::DeviceOrdinal) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mut dual = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d1 = DeviceId(1);
+        let b = dual.malloc(d1, 8).unwrap();
+        assert_eq!(
+            dual.pointer_get_attribute(b, PointerAttr::DeviceOrdinal)
+                .unwrap(),
+            u64::from(d1.0)
         );
         let mapped = sim.alloc_host_mapped(64).unwrap();
         assert_eq!(
