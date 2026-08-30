@@ -5,6 +5,24 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `POST /tokenize` / `POST /detokenize`
+
+`gguf_gemv serve` (default and `--engine`) maps `POST /tokenize` onto the
+same prompt / messages path as generate and returns `{"tokens","count"}`
+of those ids. `POST /detokenize` takes `{"tokens":[...]}` and returns
+`{"text"}`. GET is 405. `--engine` does not admit a sequence.
+`gpu-profile capture` is still refused.
+
+## Shipped 2026-08-30 — `cudaGraphGetNodes` / `cudaStreamGetAttribute`
+
+`Sim::graph_nodes` is `cudaGraphGetNodes` (`0 .. graph_len` in creation
+order). Query; legal during capture. `stream_get_attribute` /
+`stream_set_attribute` are `cudaStreamGetAttribute` / `SetAttribute` of
+existing stream state (priority, synchronization policy, mem-sync
+domain/map, NVLink-util-centric). Green-context SM permille is not a
+CUDA stream attribute. Type mismatch is Invalid `"stream attr"`.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaEventDestroy`
 
 `Sim::destroy_event` is `cudaEventDestroy`. A recorded incomplete event
@@ -2002,7 +2020,7 @@ Local: `~/dev/llama-rust-perf`
 - Load/decode errors name tensor, ggml type id, and/or KV key. ggml-removed type ids are named as removed.
 - CLI: `gguf_gemv infer <path> [--prompt TEXT] [--n-predict N] [--n-ctx N]`. Seedless greedy. Defaults remain `ab` / 2 so the shipped two-run command still works.
 - **MoE traces.** `gguf_gemv trace <path> --out FILE [--capacity N]`. Same greedy as `infer`, writes JSONL, prints the measured expertvm hit-rate table. Identity vs untraced greedy.
-- **Serving.** Local `gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--bind HOST:PORT] [--model-id ID] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim]`. Std `TcpListener` on `127.0.0.1` (default `:8080`; `localhost` allowed). Default: one HTTP/1.1 request at a time, `POST /generate` JSON `{"prompt"}` optional `n_predict` → `{"generated"}`, persistent KV prefix reuse, HTTP/1.1 keep-alive unless `Connection: close`. `POST /v1/completions` and `POST /v1/chat/completions` use an OpenAI `choices` envelope. `GET /v1/models` lists `--model-id` (GGUF stem by default). `GET /health` / `GET /metrics` are probes. `--engine` admits concurrent requests onto one `Engine` so they GEMM together. `--expert-slots` / `--expert-sim` park DirectStore / CachedStore / SimulatedGpuStore. Seedless greedy. Missing file and empty prompt fail cleanly. No tok/s. Not a production inference server. Kernel Integrity has not signed it.
+- **Serving.** Local `gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--bind HOST:PORT] [--model-id ID] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim]`. Std `TcpListener` on `127.0.0.1` (default `:8080`; `localhost` allowed). Default: one HTTP/1.1 request at a time, `POST /generate` JSON `{"prompt"}` optional `n_predict` → `{"generated"}`, persistent KV prefix reuse, HTTP/1.1 keep-alive unless `Connection: close`. `POST /v1/completions` and `POST /v1/chat/completions` use an OpenAI `choices` envelope. `POST /tokenize` / `POST /detokenize` encode and decode without generating. `GET /v1/models` lists `--model-id` (GGUF stem by default). `GET /health` / `GET /metrics` are probes. `--engine` admits concurrent requests onto one `Engine` so they GEMM together. `--expert-slots` / `--expert-sim` park DirectStore / CachedStore / SimulatedGpuStore. Seedless greedy. Missing file and empty prompt fail cleanly. No tok/s. Not a production inference server. Kernel Integrity has not signed it.
 - One file blob. `load_gguf_owned(Vec<u8>)` keeps the file bytes. Tensor payloads are ranges of that blob. mmap is still forbidden (`unsafe` or a crate).
 - **Tokenizer.** `token_id` / merge rank are `HashMap` lookups, not a linear scan of the vocab.
   - `tokenizer.ggml.model=gpt2` (and vocabs that contain `Ġ` / `Ċ`): UTF-8 bytes → GPT-2 bytes-to-unicode → BPE. Decode maps `Ċ` → `\n` and `Ġ` → space. The recorded Qwen `generated=abĊĊ` was two newline pieces printed raw.
@@ -2038,7 +2056,8 @@ Ordered by how much they block “others can actually use this”:
    together, HTTP/1.1 keep-alive). Default `serve` is still one HTTP request
    at a time with keep-alive. OpenAI `POST /v1/completions` /
    `POST /v1/chat/completions` plus `GET /v1/models` / `GET /health` /
-   `GET /metrics`. Not a production inference server.
+   `GET /metrics`. `POST /tokenize` / `POST /detokenize` encode and decode
+   without generating. Not a production inference server.
 
 Non-goals that were explicitly parked: SIMD crates (`wide`/`pulp`/`std::simd`); matching llama.cpp tok/s; downloading HF checkpoints in CI; mmap (`unsafe` or a crate).
 
@@ -2069,7 +2088,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 165 (`cudaEventDestroy`).
+Next code change is PLAN systems depth after item 168 (`POST /tokenize`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

@@ -153,6 +153,13 @@
 //! [`Sim::stream_get_flags`] is `cudaStreamGetFlags` (`0` blocking / `1`
 //! NonBlocking; NULL follows [`legacy_null_stream`](Sim::legacy_null_stream)).
 //! [`Sim::stream_get_priority`] is `cudaStreamGetPriority`.
+//! [`stream_get_attribute`](Sim::stream_get_attribute) /
+//! [`stream_set_attribute`](Sim::stream_set_attribute) are
+//! `cudaStreamGetAttribute` / `SetAttribute` of existing stream state
+//! ([`StreamAttr`]: priority, synchronization policy, mem-sync domain/map,
+//! NVLink-util-centric). Green-context SM permille is not a CUDA stream
+//! attribute. Type mismatch is Invalid `"stream attr"`. Get is a query
+//! (capture-legal); Set is host-side like the dedicated setters.
 //! [`Sim::device_count`] is `cudaGetDeviceCount`.
 //! [`Sim::device_can_access_peer`] / [`device_get_p2p_attribute`](Sim::device_get_p2p_attribute)
 //! are `cudaDeviceCanAccessPeer` / `cudaDeviceGetP2PAttribute` (topology links;
@@ -364,9 +371,10 @@
 //! edges). [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
 //! `cudaGraphRemoveDependencies` (illegal on an exec and during capture).
 //! `cudaGraphExecUpdate` treats those edges as topology.
-//! [`graph_root_nodes`](Sim::graph_root_nodes) / [`graph_edges`](Sim::graph_edges) /
+//! [`graph_nodes`](Sim::graph_nodes) / [`graph_root_nodes`](Sim::graph_root_nodes) /
+//! [`graph_edges`](Sim::graph_edges) /
 //! [`graph_node_dependents`](Sim::graph_node_dependents) are
-//! `cudaGraphGetRootNodes` / `GetEdges` / `NodeGetDependentNodes`.
+//! `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes`.
 //! [`begin_capture_to_graph`](Sim::begin_capture_to_graph) is
 //! `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
 //! uninstantiated graph; capture roots additionally depend on the given node
@@ -442,8 +450,8 @@ pub use ops::{
     KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr,
     MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, Place,
     PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
+    StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -7572,6 +7580,111 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(sim.stream_get_flags(d, StreamId(1)).unwrap(), 1);
         assert_eq!(sim.device_get_properties(d).unwrap().async_engine_count, 2);
+    }
+
+    #[test]
+    fn stream_get_set_attribute_wraps_existing_state() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(1);
+        assert_eq!(
+            sim.stream_get_attribute(d, s, StreamAttr::Priority)
+                .unwrap(),
+            StreamAttrValue::Priority(0)
+        );
+        sim.stream_set_attribute(d, s, StreamAttr::Priority, StreamAttrValue::Priority(7))
+            .unwrap();
+        assert_eq!(sim.stream_get_priority(d, s).unwrap(), 7);
+        assert_eq!(
+            sim.stream_get_attribute(d, s, StreamAttr::Priority)
+                .unwrap(),
+            StreamAttrValue::Priority(7)
+        );
+        sim.stream_set_attribute(
+            d,
+            s,
+            StreamAttr::SynchronizationPolicy,
+            StreamAttrValue::SynchronizationPolicy(SynchronizationPolicy::BlockingSync),
+        )
+        .unwrap();
+        assert_eq!(
+            sim.stream_sync_policy(d, s),
+            SynchronizationPolicy::BlockingSync
+        );
+        sim.stream_set_attribute(
+            d,
+            s,
+            StreamAttr::MemSyncDomain,
+            StreamAttrValue::MemSyncDomain(MemSyncDomain::Remote),
+        )
+        .unwrap();
+        assert_eq!(sim.stream_mem_sync_domain(d, s), MemSyncDomain::Remote);
+        let map = MemSyncDomainMap {
+            default: 1,
+            remote: 0,
+        };
+        sim.stream_set_attribute(
+            d,
+            s,
+            StreamAttr::MemSyncDomainMap,
+            StreamAttrValue::MemSyncDomainMap(map),
+        )
+        .unwrap();
+        assert_eq!(sim.stream_mem_sync_domain_map(d, s).unwrap(), map);
+        sim.stream_set_attribute(
+            d,
+            s,
+            StreamAttr::NvlinkUtilCentric,
+            StreamAttrValue::NvlinkUtilCentric(true),
+        )
+        .unwrap();
+        assert!(sim.stream_nvlink_util_centric(d, s));
+        match sim.stream_set_attribute(
+            d,
+            s,
+            StreamAttr::Priority,
+            StreamAttrValue::NvlinkUtilCentric(false),
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("stream attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.stream_get_attribute(DeviceId(1), s, StreamAttr::Priority) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.stream_get_attribute(d, s, StreamAttr::Priority)
+                .unwrap(),
+            StreamAttrValue::Priority(7)
+        );
+        sim.stream_set_attribute(d, s, StreamAttr::Priority, StreamAttrValue::Priority(1))
+            .unwrap();
+        assert_eq!(sim.stream_get_priority(d, s).unwrap(), 1);
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_nodes_are_creation_order_and_capture_legal() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        match sim.graph_nodes(GraphId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g = sim.create_graph(d, s).unwrap();
+        assert!(sim.graph_nodes(g).unwrap().is_empty());
+        let a = sim.malloc(d, 4096).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_empty(g).unwrap();
+        assert_eq!(sim.graph_nodes(g).unwrap(), vec![0, 1]);
+        assert_eq!(sim.graph_root_nodes(g).unwrap(), vec![0, 1]);
+        sim.begin_capture_to_graph(d, s, g, &[]).unwrap();
+        assert_eq!(sim.graph_nodes(g).unwrap(), vec![0, 1]);
+        let _end = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_nodes(g).unwrap(), vec![0, 1]);
     }
 
     #[test]

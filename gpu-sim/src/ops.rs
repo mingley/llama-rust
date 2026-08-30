@@ -910,6 +910,40 @@ impl SynchronizationPolicy {
     }
 }
 
+/// `cudaStreamAttrID` for [`crate::Sim::stream_get_attribute`].
+///
+/// Existing stream state only. Green-context SM permille is not a CUDA stream
+/// attribute.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamAttr {
+    /// `cudaStreamAttributePriority` ([`crate::Sim::stream_get_priority`]).
+    Priority,
+    /// `cudaStreamAttributeSynchronizationPolicy`.
+    SynchronizationPolicy,
+    /// `cudaStreamAttributeMemSyncDomain`.
+    MemSyncDomain,
+    /// `cudaStreamAttributeMemSyncDomainMap`.
+    MemSyncDomainMap,
+    /// `cudaLaunchAttributeNvlinkUtilCentricScheduling` as a stream attribute.
+    NvlinkUtilCentric,
+}
+
+/// `cudaStreamAttrValue` for [`crate::Sim::stream_get_attribute`] /
+/// [`crate::Sim::stream_set_attribute`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StreamAttrValue {
+    /// [`StreamAttr::Priority`].
+    Priority(i32),
+    /// [`StreamAttr::SynchronizationPolicy`].
+    SynchronizationPolicy(SynchronizationPolicy),
+    /// [`StreamAttr::MemSyncDomain`].
+    MemSyncDomain(MemSyncDomain),
+    /// [`StreamAttr::MemSyncDomainMap`].
+    MemSyncDomainMap(MemSyncDomainMap),
+    /// [`StreamAttr::NvlinkUtilCentric`].
+    NvlinkUtilCentric(bool),
+}
+
 /// Packed `cudaLaunchKernelEx` / graph kernel-node attributes.
 ///
 /// [`crate::Sim::kernel_with`] applies these on one submit so PDL, an

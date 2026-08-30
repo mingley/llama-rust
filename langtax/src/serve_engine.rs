@@ -6,7 +6,8 @@
 //! lines then a final `generated` object. `/v1/completions` and
 //! `/v1/chat/completions` use the same scheduler with an OpenAI `choices`
 //! envelope; stream is chunked SSE. `GET /v1/models`, `GET /health`, and
-//! `GET /metrics` (Engine counters) do not admit a sequence. `--prefill-chunk`, `--decode-first`,
+//! `GET /metrics` (Engine counters) do not admit a sequence. `POST /tokenize`
+//! / `POST /detokenize` return bytes without a sequence. `--prefill-chunk`, `--decode-first`,
 //! `--slo-reject`, `--itl-slo-ns`, graph knobs, fill modes, `GpuStoreCfg`
 //! CUDA knobs, `--prefetch` / `--plan-window` / `--plan-threshold`, `--seq-streams`, and
 //! `--trace-out` match `gguf_gemv engine`. No Tokio.
@@ -19,11 +20,11 @@ use std::net::{TcpListener, TcpStream};
 use crate::decode::{prompt_ids, Llama, LlamaError};
 use crate::engine::{Engine, EngineCfg, SeqId, SeqOutput};
 use crate::serve::{
-    dispatch_get, finish_reason, http_chunk, http_chunk_end, http_chunked_headers, http_err_status,
-    http_json_bytes, http_sse_headers, json_error, json_generated, json_openai_chat,
-    json_openai_completion, json_openai_error, json_token, parse_gen_req, path_only,
-    sse_chat_delta, sse_completion_delta, sse_done, try_parse_http_request, HttpRequest, ServeApi,
-    ServeArgs, ServeError, MAX_REQ,
+    dispatch_get, dispatch_tok, finish_reason, http_chunk, http_chunk_end, http_chunked_headers,
+    http_err_status, http_json_bytes, http_sse_headers, json_error, json_generated,
+    json_openai_chat, json_openai_completion, json_openai_error, json_token, parse_gen_req,
+    path_only, sse_chat_delta, sse_completion_delta, sse_done, try_parse_http_request, HttpRequest,
+    ServeApi, ServeArgs, ServeError, MAX_REQ,
 };
 use crate::store_attach::{attach_store, StoreAttach};
 use crate::tok::Tokenizer;
@@ -466,6 +467,9 @@ impl<'a> EngineHttp<'a> {
             if let Some((status, reason, body)) = dispatch_get(&req.path, &self.model_id, true) {
                 return AdmitOut::Bytes(http_json_bytes(status, reason, &body, ka));
             }
+        }
+        if let Some((status, reason, body)) = dispatch_tok(req, self.tok) {
+            return AdmitOut::Bytes(http_json_bytes(status, reason, &body, ka));
         }
         let api = ServeApi::from_path(&req.path);
         if req.method != "POST" {
@@ -1236,6 +1240,46 @@ mod tests {
         let (status, body) = response_done(&bufs[0]).expect("metrics");
         assert_eq!(status, 200, "{body}");
         assert!(body.contains("\"engine\":true"), "{body}");
+        assert!(body.contains("\"active\":0"), "{body}");
+        assert!(body.contains("\"waiting\":0"), "{body}");
+    }
+
+    #[test]
+    fn engine_http_tokenize_does_not_admit_seq() {
+        let (model, tok) = tiny_model();
+        let args = engine_args();
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nb");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let ids = prompt_ids(&tok, "ab").expect("ids");
+        let mut streams = [connect_nb(addr)];
+        write_all_nb(
+            &mut streams[0],
+            &post_path("/tokenize", r#"{"prompt":"ab"}"#),
+        );
+        let mut bufs = [Vec::new()];
+        drive(&mut http, &mut streams, &mut bufs);
+        let (status, body) = response_done(&bufs[0]).expect("tokenize");
+        assert_eq!(status, 200, "{body}");
+        assert!(body.contains("\"tokens\":["), "{body}");
+        assert!(body.contains(&format!("\"count\":{}", ids.len())), "{body}");
+        let mut streams = [connect_nb(addr)];
+        write_all_nb(
+            &mut streams[0],
+            &post_path("/detokenize", r#"{"tokens":[1,2]}"#),
+        );
+        let mut bufs = [Vec::new()];
+        drive(&mut http, &mut streams, &mut bufs);
+        let (status, body) = response_done(&bufs[0]).expect("detokenize");
+        assert_eq!(status, 200, "{body}");
+        assert!(body.contains("\"text\":"), "{body}");
+        let mut streams = [connect_nb(addr)];
+        write_all_nb(&mut streams[0], &get_path("/metrics"));
+        let mut bufs = [Vec::new()];
+        drive(&mut http, &mut streams, &mut bufs);
+        let (status, body) = response_done(&bufs[0]).expect("metrics");
+        assert_eq!(status, 200, "{body}");
         assert!(body.contains("\"active\":0"), "{body}");
         assert!(body.contains("\"waiting\":0"), "{body}");
     }

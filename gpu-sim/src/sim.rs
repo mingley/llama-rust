@@ -18,8 +18,8 @@ use crate::ops::{
     KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr,
     MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, Place,
     PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
+    StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -1287,6 +1287,65 @@ impl Sim {
         Ok(self.stream_priority(device, stream))
     }
 
+    /// `cudaStreamGetAttribute`. Query; legal during capture.
+    ///
+    /// Wraps existing stream state only. Green-context SM permille is not a
+    /// CUDA stream attribute.
+    pub fn stream_get_attribute(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+        attr: StreamAttr,
+    ) -> Result<StreamAttrValue, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(match attr {
+            StreamAttr::Priority => StreamAttrValue::Priority(self.stream_priority(device, stream)),
+            StreamAttr::SynchronizationPolicy => {
+                StreamAttrValue::SynchronizationPolicy(self.stream_sync_policy(device, stream))
+            }
+            StreamAttr::MemSyncDomain => {
+                StreamAttrValue::MemSyncDomain(self.stream_mem_sync_domain(device, stream))
+            }
+            StreamAttr::MemSyncDomainMap => {
+                StreamAttrValue::MemSyncDomainMap(self.stream_mem_sync_domain_map(device, stream)?)
+            }
+            StreamAttr::NvlinkUtilCentric => {
+                StreamAttrValue::NvlinkUtilCentric(self.stream_nvlink_util_centric(device, stream))
+            }
+        })
+    }
+
+    /// `cudaStreamSetAttribute`. Host-side; not a graph node.
+    ///
+    /// Same capture rule as the dedicated setters (legal during capture).
+    /// Attr/value type mismatch is Invalid `"stream attr"`.
+    pub fn stream_set_attribute(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        attr: StreamAttr,
+        value: StreamAttrValue,
+    ) -> Result<(), SimError> {
+        match (attr, value) {
+            (StreamAttr::Priority, StreamAttrValue::Priority(p)) => {
+                self.set_stream_priority(device, stream, p)
+            }
+            (StreamAttr::SynchronizationPolicy, StreamAttrValue::SynchronizationPolicy(policy)) => {
+                self.set_stream_sync_policy(device, stream, policy)
+            }
+            (StreamAttr::MemSyncDomain, StreamAttrValue::MemSyncDomain(domain)) => {
+                self.set_stream_mem_sync_domain(device, stream, domain)
+            }
+            (StreamAttr::MemSyncDomainMap, StreamAttrValue::MemSyncDomainMap(map)) => {
+                self.set_stream_mem_sync_domain_map(device, stream, map)
+            }
+            (StreamAttr::NvlinkUtilCentric, StreamAttrValue::NvlinkUtilCentric(yes)) => {
+                self.set_stream_nvlink_util_centric(device, stream, yes)
+            }
+            _ => Err(SimError::Invalid { why: "stream attr" }),
+        }
+    }
+
     /// Mark streams `1 .. n_streams` blocking on every GPU (`cudaStreamCreate`).
     ///
     /// [`StreamId::NULL`] stays the default stream. `n_streams <= 1` is a no-op.
@@ -2487,6 +2546,15 @@ impl Sim {
             .ok_or(SimError::Invalid {
                 why: "unknown graph",
             })
+    }
+
+    /// `cudaGraphGetNodes` — node indices `0 .. graph_len` in creation order.
+    ///
+    /// Query; legal during capture. During capture this is the destination
+    /// graph only (same as [`Self::graph_len`]).
+    pub fn graph_nodes(&self, graph: GraphId) -> Result<Vec<usize>, SimError> {
+        let n = self.graph_len(graph)?;
+        Ok((0..n).collect())
     }
 
     /// Whether [`Self::instantiate_graph`] (or a first launch) has created an exec.

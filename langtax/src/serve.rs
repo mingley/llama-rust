@@ -9,7 +9,8 @@
 //! `GET /v1/models` and `GET /v1/models/{id}` are the OpenAI list/retrieve
 //! objects (`--model-id`, default GGUF stem). `GET /health` is `{"status":"ok"}`.
 //! `GET /metrics` is `{"engine":false}` here, or Engine counters with `--engine`.
-//! No crates.io HTTP stack.
+//! `POST /tokenize` is `{"tokens","count"}` of the same prompt path as generate.
+//! `POST /detokenize` is `{"text"}` from a token-id array. No crates.io HTTP stack.
 
 use std::fs::File;
 use std::io::{ErrorKind, Read, Write};
@@ -108,8 +109,11 @@ are the same greedy path with an OpenAI `choices` envelope (`text` /
 `message.content` is the completion, not the prompt). GET /v1/models and
 GET /v1/models/{id} list/retrieve that id (`--model-id`, default GGUF stem).
 GET /health is {\"status\":\"ok\"}. GET /metrics is {\"engine\":false} or
-Engine counters with `--engine`. `--engine` stream on
-those routes is chunked SSE (`data:` lines, then `data: [DONE]`).
+Engine counters with `--engine`. POST /tokenize takes the same prompt /
+messages body and returns {\"tokens\":[...],\"count\":N} (the ids generate
+would prefill). POST /detokenize takes {\"tokens\":[...]} and returns
+{\"text\":\"...\"}. GET on those routes is 405. `--engine` stream on
+those generate routes is chunked SSE (`data:` lines, then `data: [DONE]`).
 Default serve keeps one KV cache across requests (`prefix_hit` in the JSON).
 `--engine` admits several connections onto one interned pool so they GEMM
 together (`gguf_gemv engine` is the same scheduler). `--kv-page N` interned
@@ -766,6 +770,9 @@ fn dispatch(
             return out;
         }
     }
+    if let Some(out) = dispatch_tok(req, tok) {
+        return out;
+    }
     let api = ServeApi::from_path(&req.path);
     if req.method != "POST" {
         return (
@@ -882,6 +889,59 @@ pub(crate) fn dispatch_get(
                 Some((404, "Not Found", json_openai_error("model not found")))
             }
         }),
+    }
+}
+
+/// `POST /tokenize` / `POST /detokenize`. GET is 405. Not an Engine sequence.
+pub(crate) fn dispatch_tok(
+    req: &HttpRequest,
+    tok: &Tokenizer,
+) -> Option<(u16, &'static str, String)> {
+    let path = normalize_path(path_only(&req.path));
+    let detok = match path {
+        "/tokenize" => false,
+        "/detokenize" => true,
+        _ => return None,
+    };
+    if req.method != "POST" {
+        return Some((405, "Method Not Allowed", json_error("method must be POST")));
+    }
+    let body = match std::str::from_utf8(&req.body) {
+        Ok(s) => s,
+        Err(_) => return Some((400, "Bad Request", json_error("body must be utf-8"))),
+    };
+    if detok {
+        Some(detokenize_body(tok, body))
+    } else {
+        Some(tokenize_body(tok, body))
+    }
+}
+
+fn tokenize_body(tok: &Tokenizer, body: &str) -> (u16, &'static str, String) {
+    let gen = match parse_gen_req(body) {
+        Ok(g) => g,
+        Err(e) => return (400, "Bad Request", json_error(&e)),
+    };
+    let prompt = match gen.resolve(tok) {
+        Ok(p) => p,
+        Err(e) => return (400, "Bad Request", json_error(&e)),
+    };
+    if prompt.is_empty() {
+        return (400, "Bad Request", json_error("empty prompt"));
+    }
+    match prompt_ids(tok, &prompt) {
+        Ok(ids) if !ids.is_empty() => (200, "OK", json_tokens(&ids)),
+        Ok(_) => (400, "Bad Request", json_error("empty prompt")),
+        Err(LlamaError::EmptyPrompt) => (400, "Bad Request", json_error("empty prompt")),
+        Err(e) => (500, "Internal Server Error", json_error(&e.to_string())),
+    }
+}
+
+fn detokenize_body(tok: &Tokenizer, body: &str) -> (u16, &'static str, String) {
+    match parse_detok_req(body) {
+        Ok(ids) if !ids.is_empty() => (200, "OK", json_detok(&tok.decode(&ids))),
+        Ok(_) => (400, "Bad Request", json_error("empty tokens")),
+        Err(e) => (400, "Bad Request", json_error(&e)),
     }
 }
 
@@ -1295,6 +1355,27 @@ pub(crate) fn json_models_list(id: &str) -> String {
     s
 }
 
+fn json_tokens(ids: &[u32]) -> String {
+    let mut s = String::from("{\"tokens\":[");
+    for (i, id) in ids.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&id.to_string());
+    }
+    s.push_str("],\"count\":");
+    s.push_str(&ids.len().to_string());
+    s.push('}');
+    s
+}
+
+fn json_detok(text: &str) -> String {
+    let mut s = String::from("{\"text\":");
+    append_json_string(&mut s, text);
+    s.push('}');
+    s
+}
+
 /// One SSE `data:` line for `/v1/completions` streaming.
 pub(crate) fn sse_completion_delta(text: &str, finish: Option<&str>, model: &str) -> String {
     let mut json = String::from("{\"id\":\"cmpl-0\",\"object\":\"text_completion\",\"model\":");
@@ -1549,6 +1630,83 @@ impl Scan<'_> {
             _ => Err("expected value".into()),
         }
     }
+
+    fn parse_u32(&mut self) -> Result<u32, String> {
+        self.skip_ws();
+        if self.peek() == Some('-') {
+            return Err("tokens must be >= 0".into());
+        }
+        let start = self.i;
+        while matches!(self.peek(), Some(c) if c.is_ascii_digit()) {
+            let _c = self.bump();
+        }
+        let digits = self.s.get(start..self.i).unwrap_or("");
+        if digits.is_empty() {
+            return Err("expected number".into());
+        }
+        if self.peek() == Some('.') {
+            return Err("tokens must be an integer".into());
+        }
+        digits
+            .parse::<u32>()
+            .map_err(|_| format!("invalid token {digits:?}"))
+    }
+
+    /// `[1, 2, 3]` token ids for `POST /detokenize`.
+    fn parse_u32_array(&mut self) -> Result<Vec<u32>, String> {
+        self.expect_char('[')?;
+        let mut out = Vec::new();
+        let mut need_comma = false;
+        loop {
+            self.skip_ws();
+            if self.peek() == Some(']') {
+                let _c = self.bump();
+                return Ok(out);
+            }
+            if need_comma {
+                self.expect_char(',')?;
+                self.skip_ws();
+                if self.peek() == Some(']') {
+                    return Err("trailing comma in tokens".into());
+                }
+            }
+            out.push(self.parse_u32()?);
+            need_comma = true;
+        }
+    }
+}
+
+fn parse_detok_req(s: &str) -> Result<Vec<u32>, String> {
+    let mut scan = Scan { s, i: 0 };
+    scan.expect_char('{')?;
+    let mut tokens = None;
+    let mut need_comma = false;
+    loop {
+        scan.skip_ws();
+        if scan.peek() == Some('}') {
+            let _c = scan.bump();
+            break;
+        }
+        if need_comma {
+            scan.expect_char(',')?;
+            scan.skip_ws();
+            if scan.peek() == Some('}') {
+                return Err("trailing comma".into());
+            }
+        }
+        let key = scan.parse_string()?;
+        scan.expect_char(':')?;
+        match key.as_str() {
+            "tokens" => tokens = Some(scan.parse_u32_array()?),
+            _ => scan.skip_value()?,
+        }
+        need_comma = true;
+    }
+    scan.skip_ws();
+    if scan.peek().is_some() {
+        return Err("trailing junk after json".into());
+    }
+    tokens.ok_or_else(|| "missing tokens".to_string())
 }
 
 pub(crate) fn parse_gen_req(s: &str) -> Result<GenReq, String> {
@@ -1740,8 +1898,12 @@ mod tests {
     }
 
     fn post_json(json: &str) -> String {
+        post_path("/generate", json)
+    }
+
+    fn post_path(path: &str, json: &str) -> String {
         format!(
-            "POST /generate HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n{json}",
+            "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n{json}",
             json.len()
         )
     }
@@ -2674,6 +2836,18 @@ mod tests {
         assert!(parse_gen_req(r#"{"prompt":"ab"} extra"#)
             .unwrap_err()
             .contains("trailing"));
+        assert_eq!(parse_detok_req(r#"{"tokens":[1,2]}"#).unwrap(), vec![1, 2]);
+        assert_eq!(parse_detok_req(r#"{ "tokens" : [ 0 ] }"#).unwrap(), vec![0]);
+        assert!(parse_detok_req("{}")
+            .unwrap_err()
+            .contains("missing tokens"));
+        assert!(parse_detok_req(r#"{"tokens":[]}"#).unwrap().is_empty());
+        assert!(parse_detok_req(r#"{"tokens":[-1]}"#)
+            .unwrap_err()
+            .contains("tokens"));
+        assert!(parse_detok_req(r#"{"tokens":[1,]}"#)
+            .unwrap_err()
+            .contains("trailing comma"));
     }
 
     /// The tiny fixture has no `chat_template` of its own; give it one whose
@@ -2818,6 +2992,8 @@ mod tests {
         );
         assert_eq!(json_token("ab"), "{\"token\":\"ab\"}\n");
         assert_eq!(json_token("a\"b"), "{\"token\":\"a\\\"b\"}\n");
+        assert_eq!(json_tokens(&[3, 4]), "{\"tokens\":[3,4],\"count\":2}");
+        assert_eq!(json_detok("a\"b"), "{\"text\":\"a\\\"b\"}");
         assert_eq!(http_chunk(b"hi"), b"2\r\nhi\r\n");
         assert_eq!(http_chunk_end(), b"0\r\n\r\n");
     }
@@ -2969,6 +3145,83 @@ mod tests {
         );
         assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
         assert_eq!(body, json_models_list("qwen"));
+    }
+
+    #[test]
+    fn tokenize_and_detokenize_match_prompt_ids() {
+        let (model, tok) = tiny_model();
+        let args = defaults();
+        let ids = prompt_ids(&tok, "ab").expect("ids");
+        let (head, body) = exchange(
+            &post_path("/tokenize", r#"{"prompt":"ab"}"#),
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(body, json_tokens(&ids));
+        let (head, body) = exchange(
+            &post_path(
+                "/detokenize",
+                &format!("{{\"tokens\":[{}]}}", ids_csv(&ids)),
+            ),
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(body, json_detok(&tok.decode(&ids)));
+        let (head, body) = exchange(
+            "GET /tokenize HTTP/1.1\r\nContent-Length: 0\r\n\r\n",
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 405 "), "{head}");
+        assert!(json_field_string(&body, "error").unwrap().contains("POST"));
+        let (head, body) = exchange(
+            &post_path("/tokenize", r#"{"prompt":""}"#),
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 400 "), "{head}");
+        assert_eq!(json_field_string(&body, "error").unwrap(), "empty prompt");
+        let (head, body) = exchange(
+            &post_path("/detokenize", r#"{"tokens":[]}"#),
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 400 "), "{head}");
+        assert_eq!(json_field_string(&body, "error").unwrap(), "empty tokens");
+        let (model, tok) = chat_model(ECHO_TEMPLATE);
+        let rendered = tok
+            .apply_chat_template(&[ChatMessage::new("user", "ab")], true)
+            .expect("template");
+        let chat_ids = prompt_ids(&tok, &rendered).expect("chat ids");
+        let (head, body) = exchange(
+            &post_path(
+                "/tokenize",
+                r#"{"messages":[{"role":"user","content":"ab"}]}"#,
+            ),
+            &model,
+            &tok,
+            &args,
+        );
+        assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
+        assert_eq!(body, json_tokens(&chat_ids));
+    }
+
+    fn ids_csv(ids: &[u32]) -> String {
+        let mut s = String::new();
+        for (i, id) in ids.iter().enumerate() {
+            if i > 0 {
+                s.push(',');
+            }
+            s.push_str(&id.to_string());
+        }
+        s
     }
 
     fn expect_completion(model: &Llama, tok: &Tokenizer, prompt: &str, n: usize) -> String {

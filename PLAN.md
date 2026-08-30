@@ -1966,6 +1966,33 @@ model, do not celebrate the sim.
     may be created again. Decode identity unchanged. `gpu-profile
     capture` is still refused. Dual score still has no `$/M tokens`.
 
+166. [x] `cudaGraphGetNodes`:
+    `Sim::graph_nodes` is node indices `0 .. graph_len` in creation
+    order. Query; legal during capture (destination graph only, same as
+    `graph_len`). `graph_root_nodes` / `graph_edges` /
+    `graph_node_dependents` stay GetRootNodes / GetEdges /
+    NodeGetDependentNodes. Decode identity unchanged. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+167. [x] `cudaStreamGetAttribute` / `cudaStreamSetAttribute`:
+    `Sim::stream_get_attribute` / `stream_set_attribute` wrap existing
+    stream state (`StreamAttr`: Priority, SynchronizationPolicy,
+    MemSyncDomain, MemSyncDomainMap, NvlinkUtilCentric). Green-context
+    SM permille is not a CUDA stream attribute. Attr/value type
+    mismatch is Invalid `"stream attr"`. Get is a query (capture-legal);
+    Set is host-side like the dedicated setters. Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+168. [x] Serve `POST /tokenize` / `POST /detokenize`:
+    Tokenize takes the same `prompt` / `messages` body as generate and
+    returns `{"tokens":[...],"count":N}` of the ids generate would
+    prefill. Detokenize takes `{"tokens":[...]}` and returns
+    `{"text":"..."}`. GET is 405. Empty prompt / empty tokens are 400.
+    `--engine` returns bytes without admitting a sequence. Decode
+    identity unchanged. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

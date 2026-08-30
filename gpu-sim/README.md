@@ -92,7 +92,7 @@ warp scheduler, L1, …   ← do not model
 | graph clone is an independent uninstantiated copy; child graphs cloned recursively; mem alloc nodes get new ids | `graph_clone_ns` |
 | `cudaGraphCreate` (`create_graph`) is an empty uninstantiated graph | 1 ns host-sync |
 | `cudaStreamBeginCaptureToGraph` (`begin_capture_to_graph`) appends captured nodes onto an existing uninstantiated graph; empty deps are extra roots | not timed (capture) |
-| `cudaGraphGetRootNodes` / `GetEdges` / `NodeGetDependentNodes` | query |
+| `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes` | query |
 | `cudaGraphAddKernelNode` / memcpy / memset / host / empty / event / child / mem alloc/free / cooperative kernel / dependencies (`graph_add_*`) | not timed (host-side topology) |
 | graph destroy drops the id (`cudaGraphDestroy`); remaining graph mem is refunded; user-object refs held by the graph are released | 1 ns host-sync |
 | `cudaUserObjectCreate` / `Retain` / `Release`; last ref records the destroy `fn_id` | 1 ns host-sync |
@@ -112,6 +112,7 @@ warp scheduler, L1, …   ← do not model
 | `device_get_properties` wraps the same SKU caps | `cudaGetDeviceProperties` |
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
 | `stream_get_priority` is the create priority | `cudaStreamGetPriority` |
+| `stream_get_attribute` / `stream_set_attribute` wrap existing stream state | `cudaStreamGetAttribute` / `SetAttribute` |
 | `device_count` is the profile GPU count | `cudaGetDeviceCount` |
 | `device_can_access_peer` / `device_get_p2p_attribute` are topology links | `cudaDeviceCanAccessPeer` / `GetP2PAttribute` |
 | `set_limit` / `get_limit` wrap persisting L2 plus stack / printf / heap / CDP / L2 fetch | `cudaDeviceSetLimit` / `GetLimit` |
@@ -278,8 +279,8 @@ exec and during capture). `begin_capture_to_graph` is
 `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
 uninstantiated graph; capture roots additionally depend on the given node
 indices (empty `deps` means extra roots, so they may Hyper-Q overlap).
-`graph_root_nodes` / `graph_edges` / `graph_node_dependents` are
-`cudaGraphGetRootNodes` / `GetEdges` / `NodeGetDependentNodes`. Host-sync
+`graph_nodes` / `graph_root_nodes` / `graph_edges` / `graph_node_dependents` are
+`cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes`. Host-sync
 `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device` / VMM / mempool
 create cannot be captured. A graph that allocates without a matching free
 reuses the pointer on later launches (no second HBM charge) unless
@@ -422,7 +423,11 @@ of modeled per-device function attrs (`maxDynamicSharedSizeBytes` and
 `nonPortableClusterSizeAllowed`; not per kernel). `stream_get_flags` is `cudaStreamGetFlags`
 (`0` `cudaStreamDefault` / `1` `cudaStreamNonBlocking`; NULL follows
 `set_legacy_null_stream`). `stream_get_priority` is `cudaStreamGetPriority`.
-This VM does not cap stream-priority range.
+`stream_get_attribute` / `stream_set_attribute` are `cudaStreamGetAttribute` /
+`SetAttribute` of existing stream state (`StreamAttr`: priority, synchronization
+policy, mem-sync domain/map, NVLink-util-centric). Green-context SM permille is
+not a CUDA stream attribute. Type mismatch is Invalid `"stream attr"`. Get is a
+query (capture-legal). This VM does not cap stream-priority range.
 `set_limit` / `get_limit` are `cudaDeviceSetLimit` / `GetLimit`.
 Persisting L2 is `cudaLimitPersistingL2CacheSize`. Access-policy windows
 must align to `cudaLimitMaxL2FetchGranularity` (SM 8.0+ default 128).
