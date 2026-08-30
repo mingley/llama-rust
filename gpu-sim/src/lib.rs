@@ -168,7 +168,9 @@
 //! is the CUDA size argument (must match the handle; `mcOffset` / `memOffset` 0).
 //! [`multicast_get_granularity`](Sim::multicast_get_granularity)
 //! is `cuMulticastGetGranularity` (minimum and recommended are the same
-//! profile value; `0`/`1` → `1`). Query; legal during capture. The team must be an NVLink clique (PCIe P2P
+//! profile value; `0`/`1` → `1`). [`multicast_get_granularity_with_prop`](Sim::multicast_get_granularity_with_prop)
+//! takes [`MulticastObjectProp`] (handle types none; flags 0; size and team
+//! size are not validated). Query; legal during capture. The team must be an NVLink clique (PCIe P2P
 //! and RDMA refuse). BindAddr ([`Sim::multicast_bind_addr`]) retains the
 //! mapped VA's [`MemHandleId`] then BindMem (dest HBM is already charged).
 //! A kernel write to the multicast VA is one NVLS hop on
@@ -17641,6 +17643,76 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn multicast_get_granularity_with_prop_is_cu_multicast_get_granularity() {
+        let mut sim =
+            Sim::new(HardwareProfile::example_8xh100_nvlink().with_multicast_granularity(1 << 21));
+        let g = sim
+            .multicast_get_granularity(MulticastGranularity::MINIMUM)
+            .unwrap();
+        assert_eq!(g, 1 << 21);
+        assert_eq!(
+            sim.multicast_get_granularity_with_prop(
+                MulticastObjectProp::default(),
+                MulticastGranularity::MINIMUM
+            )
+            .unwrap(),
+            g
+        );
+        assert_eq!(
+            sim.multicast_get_granularity_with_prop(
+                MulticastObjectProp {
+                    num_devices: 1,
+                    size: 1,
+                    ..MulticastObjectProp::default()
+                },
+                MulticastGranularity::RECOMMENDED
+            )
+            .unwrap(),
+            1 << 21
+        );
+        match sim.multicast_get_granularity_with_prop(
+            MulticastObjectProp {
+                handle_types: MemHandleType::POSIX_FILE_DESCRIPTOR,
+                ..MulticastObjectProp::default()
+            },
+            MulticastGranularity::MINIMUM,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("multicast handle types"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.multicast_get_granularity_with_prop(
+            MulticastObjectProp {
+                flags: 1,
+                ..MulticastObjectProp::default()
+            },
+            MulticastGranularity::MINIMUM,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("multicast create flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.multicast_get_granularity_with_prop(MulticastObjectProp::default(), 2) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("multicast granularity flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        assert_eq!(
+            sim.multicast_get_granularity_with_prop(
+                MulticastObjectProp::default(),
+                MulticastGranularity::MINIMUM
+            )
+            .unwrap(),
+            1 << 21
+        );
         let _g = sim.end_capture().unwrap();
     }
 

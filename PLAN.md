@@ -2895,7 +2895,18 @@ model, do not celebrate the sim.
     Query; capture-legal. Decode identity unchanged. `gpu-profile capture`
     is still refused. Dual score still has no `$/M tokens`.
 
-275. [ ] Next numbered PLAN item after 274 is the next `gpu-sim` / Engine /
+275. [x] `cuMulticastGetGranularity` prop:
+    [`multicast_get_granularity_with_prop`](Sim::multicast_get_granularity_with_prop)
+    takes [`MulticastObjectProp`]. Handle types other than none Invalid
+    `"multicast handle types"` (POSIX-FD multicast export is not modeled).
+    Flags must be 0 ([`MulticastCreateFlags::DEFAULT`]). Size and team
+    size are not validated (CUDA queries granularity before create).
+    Granularity flags stay MINIMUM / RECOMMENDED. Typed
+    [`multicast_get_granularity`](Sim::multicast_get_granularity) stays.
+    Query; capture-legal. Decode identity unchanged. `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+276. [ ] Next numbered PLAN item after 275 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cuMulticastGetGranularity` prop
+
+`multicast_get_granularity_with_prop` takes `CUmulticastObjectProp`
+(handle types none; flags 0; size and team size are not validated).
+Typed `multicast_get_granularity` stays. Query; capture-legal.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cuDeviceGet`
 
 `device_get` is the ordinal in `0 .. device_count`. Query; capture-legal.

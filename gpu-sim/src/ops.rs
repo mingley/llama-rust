@@ -2578,7 +2578,8 @@ impl MemMapFlags {
     pub const DEFAULT: u32 = 0;
 }
 
-/// `CUmulticastGranularity_flags` for [`crate::Sim::multicast_get_granularity`].
+/// `CUmulticastGranularity_flags` for [`crate::Sim::multicast_get_granularity`]
+/// / [`crate::Sim::multicast_get_granularity_with_prop`].
 pub struct MulticastGranularity;
 
 impl MulticastGranularity {
@@ -2589,16 +2590,19 @@ impl MulticastGranularity {
     pub const RECOMMENDED: u32 = 1;
 }
 
-/// `CUmulticastObjectProp` for [`crate::Sim::multicast_create_with_prop`].
+/// `CUmulticastObjectProp` for [`crate::Sim::multicast_create_with_prop`] /
+/// [`crate::Sim::multicast_get_granularity_with_prop`].
 ///
 /// Handle types other than [`MemHandleType::NONE`] are Invalid
 /// `"multicast handle types"` (POSIX-FD multicast export is not modeled).
 /// [`Self::flags`] must be [`MulticastCreateFlags::DEFAULT`].
+/// Create requires [`Self::num_devices`] at least 2 and an aligned nonzero
+/// size. GetGranularity does not (CUDA queries granularity before create).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MulticastObjectProp {
-    /// Team size (`numDevices`). Must be at least 2.
+    /// Team size (`numDevices`). Create requires at least 2.
     pub num_devices: u32,
-    /// Object bytes (`size`).
+    /// Object bytes (`size`). Create requires a nonzero aligned size.
     pub size: u64,
     /// `CUmemAllocationHandleType`. Create accepts [`MemHandleType::NONE`] only.
     pub handle_types: u64,

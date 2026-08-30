@@ -10190,8 +10190,35 @@ impl Sim {
     /// [`MulticastGranularity::MINIMUM`] and [`RECOMMENDED`](MulticastGranularity::RECOMMENDED)
     /// return [`HardwareProfile::multicast_granularity_bytes`] (`0`/`1` → `1`;
     /// this VM has one granularity). Other flags Invalid
-    /// `"multicast granularity flags"`.
+    /// `"multicast granularity flags"`. Typed helper;
+    /// [`Self::multicast_get_granularity_with_prop`] takes
+    /// [`MulticastObjectProp`].
     pub fn multicast_get_granularity(&self, flags: u32) -> Result<u64, SimError> {
+        self.multicast_get_granularity_with_prop(MulticastObjectProp::default(), flags)
+    }
+
+    /// [`Self::multicast_get_granularity`] with `CUmulticastObjectProp`.
+    ///
+    /// Handle types other than none Invalid `"multicast handle types"`.
+    /// Flags must be 0 ([`MulticastCreateFlags::DEFAULT`]; unknown bits Invalid
+    /// `"multicast create flags"`). Size and team size are not validated
+    /// (CUDA queries granularity before create). Granularity flags match
+    /// [`Self::multicast_get_granularity`].
+    pub fn multicast_get_granularity_with_prop(
+        &self,
+        prop: MulticastObjectProp,
+        flags: u32,
+    ) -> Result<u64, SimError> {
+        if prop.handle_types != MemHandleType::NONE {
+            return Err(SimError::Invalid {
+                why: "multicast handle types",
+            });
+        }
+        if prop.flags != MulticastCreateFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "multicast create flags",
+            });
+        }
         if flags != MulticastGranularity::MINIMUM && flags != MulticastGranularity::RECOMMENDED {
             return Err(SimError::Invalid {
                 why: "multicast granularity flags",

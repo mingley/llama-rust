@@ -703,7 +703,9 @@ reserved VA; `mcOffset` 0; partial bind is not modeled).
 handle; `mcOffset` / `memOffset` 0; partial bind is not modeled).
 `multicast_get_granularity` is `cuMulticastGetGranularity` (minimum and
 recommended are the same profile value; `0`/`1` → `1`). Query; legal
-during capture.
+during capture. `multicast_get_granularity_with_prop` takes
+`CUmulticastObjectProp` (handle types none; flags 0; size and team size
+are not validated). Typed `multicast_get_granularity` stays.
 `va_set_access` is `cuMemSetAccess` PROT_READ on a peer (no dest HBM;
 writes still need a local map). `va_set_access_write` is PROT_READWRITE
 (peer writes, no dest HBM). `va_set_access_with_flags` is the flags word
