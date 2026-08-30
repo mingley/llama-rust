@@ -313,6 +313,23 @@ impl PdlLaunch {
     }
 }
 
+/// `cudaLaunchAttributeLaunchCompletionEvent`.
+///
+/// [`crate::Sim::kernel_launch_completion`] records `event` when the kernel
+/// grid has been launched ([`Operation::start_ns`]), not when it finishes.
+/// Other streams may [`crate::Sim::wait_event`] it and start copy or compute
+/// while the primary is still running. Same-stream later work still waits for
+/// completion. [`Self::external`] is `cudaEventRecordExternal`. Decode identity
+/// stays [`crate::Sim::kernel`] with no launch-completion event. Capture
+/// records the attribute on the kernel node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LaunchCompletionEvent {
+    /// Event recorded when the kernel starts.
+    pub event: EventId,
+    /// `cudaEventRecordExternal` on the launch attribute.
+    pub external: bool,
+}
+
 /// `cudaStreamAttachMemAsync` flags (`cudaMemAttachGlobal` / `Host` / `Single`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemAttach {

@@ -166,7 +166,9 @@
 //! (`GpuProfile::pdl_trigger_permille`) instead of its completion. Overlap
 //! needs `compute_slots >= 2`. [`kernel_pdl_event`](Sim::kernel_pdl_event) is
 //! `cudaLaunchAttributeProgrammaticEvent`: other streams may wait that event
-//! at the trigger instead of kernel completion. Decode identity stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
+//! at the trigger instead of kernel completion. [`kernel_launch_completion`](Sim::kernel_launch_completion)
+//! is `cudaLaunchAttributeLaunchCompletionEvent`: the event records when the
+//! kernel *starts*. Decode identity stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
 //! [`graph_exec_kernel_node_set_priority`](Sim::graph_exec_kernel_node_set_priority)
 //! are the exec-snapshot attributes. [`Sim::upload_graph`] is
 //! `cudaGraphUpload` (host-sync; first launch after instantiate calls it).
@@ -331,8 +333,9 @@ pub use ops::{
     BatchMemOp, CaptureDepOp, DType, GpuOp, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelBuf, KernelKind, KernelNodeParams,
-    MemAdvise, MemAttach, MemcpyOp, Operation, PdlLaunch, Place, ProgrammaticEvent,
-    ProgrammaticLaunch, StreamCaptureInfo, StreamCaptureMode, UserObjectFlags, WaitValueCmp,
+    LaunchCompletionEvent, MemAdvise, MemAttach, MemcpyOp, Operation, PdlLaunch, Place,
+    ProgrammaticEvent, ProgrammaticLaunch, StreamCaptureInfo, StreamCaptureMode, UserObjectFlags,
+    WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -4029,6 +4032,122 @@ mod tests {
             }),
         )
         .unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device launch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn launch_completion_event_unblocks_copy_at_kernel_start() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s0 = StreamId(0);
+        let s1 = StreamId(1);
+        let a = sim.alloc(d, 4096, s0).unwrap();
+        let b = sim.alloc(d, 64 << 20, s1).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s0));
+        sim.synchronize().unwrap();
+        let ev = EventId(9);
+        enq(sim.kernel_launch_completion(
+            d,
+            KernelKind::other(1 << 30, 4096),
+            &[a],
+            &[a],
+            s0,
+            LaunchCompletionEvent {
+                event: ev,
+                external: false,
+            },
+        ));
+        enq(sim.wait_event(d, ev, s1));
+        enq(sim.memcpy_pinned_to_device(d, b, 64 << 20, s1));
+        sim.synchronize().unwrap();
+        let k0 = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .expect("kernel");
+        let copy = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Memcpy(_)))
+            .last()
+            .expect("copy");
+        let start_k = k0.start_ns.expect("k start");
+        let done_k = k0.done_ns.expect("k done");
+        let start_c = copy.start_ns.expect("copy start");
+        assert!(
+            start_c >= start_k,
+            "copy must wait for launch completion; copy={start_c} kstart={start_k}"
+        );
+        assert!(
+            start_c < done_k,
+            "copy must overlap leftover kernel; copy={start_c} kdone={done_k}"
+        );
+    }
+
+    #[test]
+    fn launch_completion_query_fires_at_kernel_start() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let ev = EventId(10);
+        enq(sim.kernel_launch_completion(
+            d,
+            KernelKind::other(1 << 30, 4096),
+            &[a],
+            &[a],
+            s,
+            LaunchCompletionEvent {
+                event: ev,
+                external: false,
+            },
+        ));
+        sim.synchronize_event(ev).unwrap();
+        assert!(sim.query_event(ev).unwrap());
+        let k0 = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .expect("kernel");
+        assert!(!k0.done, "launch completion must precede kernel done");
+        assert!(k0.start_ns.is_some());
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn graph_launch_completion_copies_and_device_launch_refuses() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let ev = EventId(11);
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_set_launch_completion(
+            g,
+            0,
+            Some(LaunchCompletionEvent {
+                event: ev,
+                external: true,
+            }),
+        )
+        .unwrap();
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_copy_attributes(h, 0, g, 0).unwrap();
+        let got = sim
+            .graph_kernel_node_get_launch_completion(h, 0)
+            .unwrap()
+            .expect("copied");
+        assert_eq!(got.event, ev);
+        assert!(got.external);
         let err = sim
             .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
             .unwrap_err();

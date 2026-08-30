@@ -1526,6 +1526,13 @@ model, do not celebrate the sim.
     (event). CopyAttributes copies it. Decode identity stays `kernel`.
     `gpu-profile capture` is still refused.
 
+115. [x] `cudaLaunchAttributeLaunchCompletionEvent`:
+    `kernel_launch_completion` / `graph_kernel_node_set_launch_completion`
+    record an event when the kernel *starts* (grid launched), not when it
+    finishes. Other streams may `wait_event` it and overlap leftover compute
+    with copies. Device-launch graphs refuse it. CopyAttributes copies it.
+    Decode identity stays `kernel`. `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

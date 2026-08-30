@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaLaunchAttributeLaunchCompletionEvent`
+
+`kernel_launch_completion` records an event when the kernel grid is
+launched (`start_ns`), so other streams can `wait_event` it while the
+primary is still running. Graph SetAttribute / CopyAttributes carry it.
+Device-launch graphs refuse it. Decode identity stays `cudaLaunchKernel`.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaLaunchAttributeProgrammaticEvent`
 
 `kernel_pdl_event` records an event at the PDL trigger so other streams

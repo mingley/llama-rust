@@ -461,7 +461,9 @@ a wait kernel may start after the previous same-stream kernel's trigger
 `compute_slots >= 2`. A later `cudaFreeAsync` on that stream still waits
 for the overlapped primary (all preceding work). `kernel_pdl_event` is
 `cudaLaunchAttributeProgrammaticEvent`: other streams may `wait_event`
-at the trigger instead of kernel completion. `expertvm sim --pdl` / `gguf_gemv engine --expert-sim --pdl`
+at the trigger instead of kernel completion. `kernel_launch_completion` is
+`cudaLaunchAttributeLaunchCompletionEvent`: the event records when the
+kernel starts. `expertvm sim --pdl` / `gguf_gemv engine --expert-sim --pdl`
 launch grouped expert GEMMs that way. Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
 instantiate schedules those node priorities instead of the launch stream. `set_created_streams_priority` assigns created streams
 their id. `set_stream_sm_permille` is a green-context SM fraction

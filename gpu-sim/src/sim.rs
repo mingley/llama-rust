@@ -13,8 +13,9 @@ use crate::ops::{
     BatchMemOp, CaptureDepOp, GpuOp as Kind, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelBuf, KernelKind, KernelNodeParams,
-    MemAdvise, MemAttach, MemcpyOp, Operation, PdlLaunch, Place, ProgrammaticEvent,
-    ProgrammaticLaunch, StreamCaptureInfo, StreamCaptureMode, UserObjectFlags, WaitValueCmp,
+    LaunchCompletionEvent, MemAdvise, MemAttach, MemcpyOp, Operation, PdlLaunch, Place,
+    ProgrammaticEvent, ProgrammaticLaunch, StreamCaptureInfo, StreamCaptureMode, UserObjectFlags,
+    WaitValueCmp,
 };
 use crate::profile::{ns_for_bytes, HardwareProfile, LinkKind};
 
@@ -175,6 +176,8 @@ struct Op {
     pdl_trigger_ns: Option<u64>,
     /// `cudaLaunchAttributeProgrammaticEvent` on this kernel, if any.
     programmatic_event: Option<ProgrammaticEvent>,
+    /// `cudaLaunchAttributeLaunchCompletionEvent` on this kernel, if any.
+    launch_completion: Option<LaunchCompletionEvent>,
 }
 
 /// How a submitted op pays kernel/graph launch overhead.
@@ -258,6 +261,8 @@ struct GraphStep {
     pdl: ProgrammaticLaunch,
     /// `cudaLaunchAttributeProgrammaticEvent` on this kernel node, if any.
     programmatic_event: Option<ProgrammaticEvent>,
+    /// `cudaLaunchAttributeLaunchCompletionEvent` on this kernel node, if any.
+    launch_completion: Option<LaunchCompletionEvent>,
 }
 
 struct Graph {
@@ -527,6 +532,8 @@ pub struct Sim {
     enqueue_pdl: ProgrammaticLaunch,
     /// Programmatic event for the next kernel submit / graph replay.
     enqueue_programmatic_event: Option<ProgrammaticEvent>,
+    /// Launch-completion event for the next kernel submit / graph replay.
+    enqueue_launch_completion: Option<LaunchCompletionEvent>,
     /// Wait/write-value mailbox: `(alloc, offset) → word`. Missing is `0`.
     mailbox: BTreeMap<(AllocId, u64), u64>,
     /// `cudaThreadExchangeStreamCaptureMode` default for [`Self::begin_capture`].
@@ -608,6 +615,7 @@ impl Sim {
             enqueue_priority: None,
             enqueue_pdl: ProgrammaticLaunch::default(),
             enqueue_programmatic_event: None,
+            enqueue_launch_completion: None,
             mailbox: BTreeMap::new(),
             capture_mode: StreamCaptureMode::Relaxed,
             next_user_object: 1,
@@ -1107,9 +1115,13 @@ impl Sim {
         if op.done {
             return true;
         }
-        op.programmatic_event.is_some_and(|p| p.event == event)
+        if op.programmatic_event.is_some_and(|p| p.event == event)
             && op.pdl.trigger
             && op.pdl_trigger_ns.is_some_and(|t| self.clock >= t)
+        {
+            return true;
+        }
+        op.launch_completion.is_some_and(|p| p.event == event) && op.start_ns.is_some()
     }
 
     /// `cudaEventCreate` (timing enabled). Implicit on first [`Self::record_event`]
@@ -1760,6 +1772,7 @@ impl Sim {
             }
             self.enqueue_pdl = step.pdl;
             self.enqueue_programmatic_event = step.programmatic_event;
+            self.enqueue_launch_completion = step.launch_completion;
             let wait = graph_node_waits(step, extra_wait, launch_tail, &node_ops)?;
             let s = self.graph_exec_stream(origin, stream, step, &node_stream, &mut worker);
             if let Some(slot) = node_stream.get_mut(idx) {
@@ -1883,7 +1896,10 @@ impl Sim {
             }
             let rec = match &step.kind {
                 Kind::EventRecord { event, .. } => Some(*event),
-                _ => step.programmatic_event.map(|p| p.event),
+                _ => step
+                    .programmatic_event
+                    .map(|p| p.event)
+                    .or_else(|| step.launch_completion.map(|p| p.event)),
             };
             let wait_ev = match &step.kind {
                 Kind::EventWait { event, external } => Some((*event, *external)),
@@ -1929,6 +1945,7 @@ impl Sim {
         self.enqueue_priority = None;
         self.enqueue_pdl = ProgrammaticLaunch::default();
         self.enqueue_programmatic_event = None;
+        self.enqueue_launch_completion = None;
         Ok(n)
     }
 
@@ -2327,9 +2344,11 @@ impl Sim {
         let has_mem =
             mem_node.is_some() || self.graph_allocs.get(&graph).is_some_and(|v| !v.is_empty());
         let device_launch_err = if device_launch {
-            g.steps
-                .iter()
-                .position(|s| device_launch_refused(&s.kind) || s.programmatic_event.is_some())
+            g.steps.iter().position(|s| {
+                device_launch_refused(&s.kind)
+                    || s.programmatic_event.is_some()
+                    || s.launch_completion.is_some()
+            })
         } else {
             None
         };
@@ -5285,8 +5304,117 @@ impl Sim {
         Ok(())
     }
 
-    /// `cudaGraphKernelNodeCopyAttributes`: copy priority, PDL, and programmatic
-    /// event from `src` to `dst`.
+    /// `cudaGraphKernelNodeGetAttribute` for launch-completion event on the definition.
+    pub fn graph_kernel_node_get_launch_completion(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Option<LaunchCompletionEvent>, SimError> {
+        self.kernel_node_launch_completion(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for launch-completion event on the exec.
+    pub fn graph_exec_kernel_node_get_launch_completion(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<Option<LaunchCompletionEvent>, SimError> {
+        self.kernel_node_launch_completion(exec, node, true)
+    }
+
+    fn kernel_node_launch_completion(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<Option<LaunchCompletionEvent>, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.launch_completion)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for launch-completion event on the definition.
+    pub fn graph_kernel_node_set_launch_completion(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        event: Option<LaunchCompletionEvent>,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+        }
+        if let Some(lc) = event {
+            let _ev = self.events.entry(lc.event).or_insert(Ev {
+                recorded_by: None,
+                timing: true,
+            });
+        }
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.launch_completion = event;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for launch-completion event on the exec.
+    pub fn graph_exec_kernel_node_set_launch_completion(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        event: Option<LaunchCompletionEvent>,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let exec = self.as_exec(exec)?;
+        if let Some(lc) = event {
+            let _ev = self.events.entry(lc.event).or_insert(Ev {
+                recorded_by: None,
+                timing: true,
+            });
+        }
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.launch_completion = event;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeCopyAttributes`: copy priority, PDL, programmatic
+    /// event, and launch-completion event from `src` to `dst`.
     ///
     /// Both nodes must be kernels. Capture cannot include it.
     pub fn graph_kernel_node_copy_attributes(
@@ -5300,9 +5428,11 @@ impl Sim {
         let pri = self.graph_kernel_node_get_priority(src_graph, src)?;
         let pdl = self.graph_kernel_node_get_pdl(src_graph, src)?;
         let pde = self.graph_kernel_node_get_programmatic_event(src_graph, src)?;
+        let lce = self.graph_kernel_node_get_launch_completion(src_graph, src)?;
         self.graph_kernel_node_set_priority(dst_graph, dst, pri)?;
         self.graph_kernel_node_set_pdl(dst_graph, dst, pdl)?;
-        self.graph_kernel_node_set_programmatic_event(dst_graph, dst, pde)
+        self.graph_kernel_node_set_programmatic_event(dst_graph, dst, pde)?;
+        self.graph_kernel_node_set_launch_completion(dst_graph, dst, lce)
     }
 
     /// `cudaGraphNodeFindInClone`: index in `cloned` of the node that was `node`
@@ -5381,6 +5511,7 @@ impl Sim {
             priority,
             pdl: self.enqueue_pdl,
             programmatic_event: self.enqueue_programmatic_event,
+            launch_completion: self.enqueue_launch_completion,
         });
         Ok(())
     }
@@ -7590,6 +7721,41 @@ impl Sim {
         out
     }
 
+    /// [`Self::kernel`] plus [`LaunchCompletionEvent`] (`cudaLaunchAttributeLaunchCompletionEvent`).
+    ///
+    /// Other streams may [`Self::wait_event`] the event when this kernel
+    /// *starts*, not when it finishes. Decode identity stays [`Self::kernel`].
+    pub fn kernel_launch_completion(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+        event: LaunchCompletionEvent,
+    ) -> Result<OpId, SimError> {
+        let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
+        let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
+        self.kernel_launch_completion_bufs(device, kind, &reads, &writes, stream, event)
+    }
+
+    /// [`Self::kernel_bufs`] plus [`LaunchCompletionEvent`].
+    pub fn kernel_launch_completion_bufs(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+        event: LaunchCompletionEvent,
+    ) -> Result<OpId, SimError> {
+        let prev = self.enqueue_launch_completion;
+        self.enqueue_launch_completion = Some(event);
+        let out = self.submit_kernel(device, kind, reads, writes, stream, false);
+        self.enqueue_launch_completion = prev;
+        out
+    }
+
     /// `cudaLaunchCooperativeKernel` on whole allocations.
     ///
     /// Same lease / residency rules as [`Self::kernel`]. The grid occupies
@@ -8143,6 +8309,11 @@ impl Sim {
                 why: "event elapsed: programmatic trigger missing",
             });
         }
+        if op.launch_completion.is_some_and(|p| p.event == event) {
+            return op.start_ns.ok_or(SimError::Invalid {
+                why: "event elapsed: launch completion missing start",
+            });
+        }
         op.done_ns.ok_or(SimError::Invalid {
             why: "event elapsed: record has no done_ns",
         })
@@ -8289,6 +8460,17 @@ impl Sim {
                 }
             }
         }
+        if let Some(lc) = self.enqueue_launch_completion {
+            let _ev = self.events.entry(lc.event).or_insert(Ev {
+                recorded_by: None,
+                timing: true,
+            });
+            if !lc.external {
+                if let Some(cap) = self.capturing.as_mut() {
+                    let _ins = cap.events.insert(lc.event);
+                }
+            }
+        }
         let mut deps = capture_step_deps(&self.capture_buf, device, stream, &kind);
         self.merge_capture_pending(device, stream, &mut deps);
         let priority = self.stream_priority(device, stream);
@@ -8301,6 +8483,7 @@ impl Sim {
             priority,
             pdl: self.enqueue_pdl,
             programmatic_event: self.enqueue_programmatic_event,
+            launch_completion: self.enqueue_launch_completion,
         });
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
@@ -8354,8 +8537,15 @@ impl Sim {
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
         let pde = self.enqueue_programmatic_event;
+        let lce = self.enqueue_launch_completion;
         if let Some(pe) = pde {
             let _ev = self.events.entry(pe.event).or_insert(Ev {
+                recorded_by: None,
+                timing: true,
+            });
+        }
+        if let Some(lc) = lce {
+            let _ev = self.events.entry(lc.event).or_insert(Ev {
                 recorded_by: None,
                 timing: true,
             });
@@ -8390,10 +8580,16 @@ impl Sim {
                 pdl: self.enqueue_pdl,
                 pdl_trigger_ns: None,
                 programmatic_event: pde,
+                launch_completion: lce,
             },
         );
         if let Some(pe) = pde {
             if let Some(ev) = self.events.get_mut(&pe.event) {
+                ev.recorded_by = Some(id);
+            }
+        }
+        if let Some(lc) = lce {
+            if let Some(ev) = self.events.get_mut(&lc.event) {
                 ev.recorded_by = Some(id);
             }
         }
@@ -8764,6 +8960,7 @@ impl Sim {
                 pdl: ProgrammaticLaunch::default(),
                 pdl_trigger_ns: None,
                 programmatic_event: None,
+                launch_completion: None,
             },
         );
         self.add_op_dep(kernel, id);
@@ -9328,6 +9525,10 @@ impl Sim {
             if prev.programmatic_event.is_some_and(|p| p.event == *event)
                 && prev.pdl.trigger
                 && prev.pdl_trigger_ns.is_some_and(|t| self.clock >= t)
+            {
+                return true;
+            }
+            if prev.launch_completion.is_some_and(|p| p.event == *event) && prev.start_ns.is_some()
             {
                 return true;
             }
@@ -10934,6 +11135,7 @@ fn remap_nested_graphs(
             priority: step.priority,
             pdl: step.pdl,
             programmatic_event: step.programmatic_event,
+            launch_completion: step.launch_completion,
         });
     }
     Ok(out)
