@@ -128,7 +128,9 @@
 //! [`HardwareProfile::va_granularity_bytes`] (`0`/`1` = any size; example
 //! default `1` keeps 4096-byte expert pages legal). [`Sim::va_map_range`] / [`va_unmap_range`](Sim::va_unmap_range)
 //! map sparse physicals (vLLM KV-block analog); HBM is the mapped span.
-//! [`Sim::va_create`] is `cuMemCreate` (charges HBM). [`Sim::va_map_handle`] is
+//! [`Sim::va_create`] is `cuMemCreate` (charges HBM). [`va_create_with_prop`](Sim::va_create_with_prop)
+//! is the prop + flags word (pinned device location; flags 0;
+//! [`MemHandleType::NONE`] only). [`Sim::va_map_handle`] is
 //! `cuMemMap` of that handle (no second HBM charge; two VAs may share it).
 //! [`Sim::va_retain_handle`] is `cuMemRetainAllocationHandle` (handle refs;
 //! combined `va_map` spans are promoted). [`Sim::va_release_handle`] is
@@ -684,13 +686,13 @@ pub use ops::{
     HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf,
     KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
     MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType,
-    MemAttach, MemAttachFlags, MemHandleType, MemLocationType, MemPoolAttr, MemPoolProps,
-    MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType,
-    MemsetOp, MulticastBindFlags, MulticastGranularity, Operation, PdlLaunch, PeerAccessFlags,
-    Place, PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
-    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType, MemPoolAttr,
+    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
+    MemoryType, MemsetOp, MulticastBindFlags, MulticastGranularity, Operation, PdlLaunch,
+    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
+    SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
+    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -13539,6 +13541,107 @@ mod tests {
             sim.va_get_allocation_properties(h).unwrap().location,
             Place::Device(d)
         );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn va_create_with_prop_is_cu_mem_create() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let bytes = 4096u64;
+        let h = sim
+            .va_create_with_prop(
+                bytes,
+                MemAllocationProp {
+                    location: Place::Device(d),
+                    ..MemAllocationProp::default()
+                },
+                MemCreateFlags::DEFAULT,
+            )
+            .unwrap();
+        assert!(sim.is_handle_live(h).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), bytes);
+        let p = sim.va_get_allocation_properties(h).unwrap();
+        assert_eq!(p.handle_types, MemHandleType::NONE);
+        assert!(!p.gpu_direct_rdma_capable);
+        match sim.va_create_with_prop(
+            bytes,
+            MemAllocationProp {
+                location: Place::Device(d),
+                ..MemAllocationProp::default()
+            },
+            1,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mem create flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.va_create_with_prop(
+            bytes,
+            MemAllocationProp {
+                alloc_type: 0,
+                location: Place::Device(d),
+                ..MemAllocationProp::default()
+            },
+            MemCreateFlags::DEFAULT,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("alloc type"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.va_create_with_prop(
+            bytes,
+            MemAllocationProp {
+                location: Place::Host,
+                ..MemAllocationProp::default()
+            },
+            MemCreateFlags::DEFAULT,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("create location"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.va_create_with_prop(
+            bytes,
+            MemAllocationProp {
+                handle_types: MemHandleType::POSIX_FILE_DESCRIPTOR,
+                location: Place::Device(d),
+                ..MemAllocationProp::default()
+            },
+            MemCreateFlags::DEFAULT,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("vmm handle types"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let rdma_req = sim
+            .va_create_with_prop(
+                bytes,
+                MemAllocationProp {
+                    location: Place::Device(d),
+                    gpu_direct_rdma_capable: true,
+                    ..MemAllocationProp::default()
+                },
+                MemCreateFlags::DEFAULT,
+            )
+            .unwrap();
+        assert!(
+            !sim.va_get_allocation_properties(rdma_req)
+                .unwrap()
+                .gpu_direct_rdma_capable
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.va_create_with_prop(
+            bytes,
+            MemAllocationProp {
+                location: Place::Device(d),
+                ..MemAllocationProp::default()
+            },
+            MemCreateFlags::DEFAULT,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         let _g = sim.end_capture().unwrap();
     }
 

@@ -2482,13 +2482,16 @@ impl MemAllocationType {
 
 /// `CUmemAllocationProp` for [`crate::Sim::va_get_allocation_properties`].
 ///
-/// Compression and usage flags are not modeled. `cuMemCreate` does not store
-/// requested handle types (always [`MemHandleType::NONE`]).
+/// Compression and usage flags are not modeled. [`crate::Sim::va_create_with_prop`]
+/// accepts [`MemHandleType::NONE`] only (POSIX-FD VMM export is not modeled).
+/// Get always reports none. [`Self::gpu_direct_rdma_capable`] on create is
+/// ignored (Get wraps the SKU).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MemAllocationProp {
     /// `CUmemAllocationType` ([`MemAllocationType::PINNED`]).
     pub alloc_type: u32,
-    /// `CUmemAllocationHandleType` (always [`MemHandleType::NONE`]).
+    /// `CUmemAllocationHandleType`. Create accepts
+    /// [`MemHandleType::NONE`] only; Get always reports none.
     pub handle_types: u64,
     /// Handle GPU (`cudaMemLocationTypeDevice`).
     pub location: Place,
@@ -2517,6 +2520,16 @@ impl MemAllocationGranularity {
     /// `CU_MEM_ALLOC_GRANULARITY_RECOMMENDED` (`1`). This VM has one
     /// granularity; same as [`Self::MINIMUM`].
     pub const RECOMMENDED: u32 = 1;
+}
+
+/// `cuMemCreate` flags for [`crate::Sim::va_create_with_prop`].
+///
+/// CUDA requires 0. Unknown bits are Invalid `"mem create flags"`.
+pub struct MemCreateFlags;
+
+impl MemCreateFlags {
+    /// Unflagged [`crate::Sim::va_create`].
+    pub const DEFAULT: u32 = 0;
 }
 
 /// `CUmulticastGranularity_flags` for [`crate::Sim::multicast_get_granularity`].

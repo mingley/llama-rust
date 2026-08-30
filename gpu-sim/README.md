@@ -654,7 +654,9 @@ before the kernel unless AccessedBy or PreferredLocation covers that GPU.
 `va_granularity_bytes` is `cuMemGetAllocationGranularity` (`0`/`1` accepts
 any size; a 2 MiB profile rejects unaligned reserve/map).
 `va_map_range` / `va_unmap_range` map sparse physicals (HBM is the mapped
-span). `va_create` is `cuMemCreate` (HBM, no VA). `va_map_handle` is `cuMemMap`
+span). `va_create` is `cuMemCreate` (HBM, no VA). `va_create_with_prop` is
+the prop + flags word (pinned device; flags 0; `MemHandleType::NONE` only).
+`va_map_handle` is `cuMemMap`
 of that handle (no second HBM charge; two VAs may share it). `va_retain_handle`
 is `cuMemRetainAllocationHandle` (combined `va_map` spans are promoted).
 `va_release_handle` is `cuMemRelease` while mapped; HBM refunds when refs and

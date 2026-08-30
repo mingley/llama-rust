@@ -20,13 +20,13 @@ use crate::ops::{
     HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf,
     KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
     MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType,
-    MemAttach, MemAttachFlags, MemHandleType, MemLocationType, MemPoolAttr, MemPoolProps,
-    MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType,
-    MemsetOp, MulticastBindFlags, MulticastGranularity, Operation, PdlLaunch, PeerAccessFlags,
-    Place, PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
-    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType, MemPoolAttr,
+    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
+    MemoryType, MemsetOp, MulticastBindFlags, MulticastGranularity, Operation, PdlLaunch,
+    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
+    SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
+    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -9827,15 +9827,61 @@ impl Sim {
     /// Starts with one handle ref. [`Self::va_map_handle`] maps this handle into a
     /// reserved VA without a second HBM charge. [`Self::va_release_handle`] is
     /// `cuMemRelease` (allowed while mapped). HBM refunds when refs and maps are
-    /// both 0.
+    /// both 0. Typed helper; [`Self::va_create_with_prop`] takes the CUDA prop
+    /// and flags word.
     pub fn va_create(&mut self, device: DeviceId, bytes: u64) -> Result<MemHandleId, SimError> {
+        self.va_create_with_prop(
+            bytes,
+            MemAllocationProp {
+                location: Place::Device(device),
+                ..MemAllocationProp::default()
+            },
+            MemCreateFlags::DEFAULT,
+        )
+    }
+
+    /// [`Self::va_create`] with `CUmemAllocationProp` and flags.
+    ///
+    /// CUDA requires flags 0. Unknown bits Invalid `"mem create flags"`.
+    /// [`MemAllocationProp::alloc_type`] must be pinned; location must be
+    /// [`Place::Device`]. Handle types other than none are Invalid
+    /// `"vmm handle types"` (POSIX-FD export is not modeled for VMM).
+    /// [`MemAllocationProp::gpu_direct_rdma_capable`] is ignored (Get reports
+    /// the SKU). Compression / usage flags are not modeled.
+    pub fn va_create_with_prop(
+        &mut self,
+        bytes: u64,
+        prop: MemAllocationProp,
+        flags: u32,
+    ) -> Result<MemHandleId, SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MemCreateFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "mem create flags",
+            });
+        }
+        if prop.alloc_type != MemAllocationType::PINNED {
+            return Err(SimError::Invalid { why: "alloc type" });
+        }
+        let device = match prop.location {
+            Place::Device(d) => d,
+            Place::Host | Place::HostPinned => {
+                return Err(SimError::Invalid {
+                    why: "create location",
+                });
+            }
+        };
+        if prop.handle_types != MemHandleType::NONE {
+            return Err(SimError::Invalid {
+                why: "vmm handle types",
+            });
+        }
         if bytes == 0 {
             return Err(SimError::Invalid {
                 why: "zero-byte alloc",
             });
         }
         self.check_va_align(bytes)?;
-        self.fail_if_capturing("cannot capture alloc/free")?;
         let _gpu = self.profile.gpu(device)?;
         self.reserve_hbm(device, bytes)?;
         let ns = self.profile.gpu(device)?.alloc_overhead_ns.max(1);

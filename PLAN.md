@@ -2729,7 +2729,17 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-255. [ ] Next numbered PLAN item after 254 is the next `gpu-sim` / Engine /
+255. [x] `cuMemCreate` prop + flags: [`va_create_with_prop`](Sim::va_create_with_prop)
+    takes [`MemAllocationProp`] and flags. Flags must be 0
+    ([`MemCreateFlags::DEFAULT`]). Location must be [`Place::Device`];
+    handle types other than none Invalid `"vmm handle types"` (POSIX-FD
+    VMM export is not modeled). RDMA capable on the prop is ignored
+    (Get wraps the SKU). Typed [`va_create`](Sim::va_create) stays.
+    Host-synchronous; capture refused. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+256. [ ] Next numbered PLAN item after 255 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
