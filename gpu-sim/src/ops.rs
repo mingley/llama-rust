@@ -322,6 +322,31 @@ pub struct PointerAttributes {
     pub host_pointer: bool,
 }
 
+/// `cudaDeviceAttr` for [`crate::Sim::device_get_attribute`].
+///
+/// Only attributes this VM already models. Values are the CUDA `int` as `u64`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeviceAttr {
+    /// `cudaDevAttrCooperativeLaunch`.
+    CooperativeLaunch,
+    /// `cudaDevAttrConcurrentKernels` (`compute_slots > 1`).
+    ConcurrentKernels,
+    /// `cudaDevAttrMaxSharedMemoryPerBlock`.
+    MaxSharedMemoryPerBlock,
+    /// `cudaDevAttrMaxSharedMemoryPerBlockOptin`.
+    MaxSharedMemoryPerBlockOptin,
+    /// `cudaDevAttrL2CacheSize`.
+    L2CacheSize,
+    /// `cudaDevAttrMaxPersistingL2CacheSize`.
+    MaxPersistingL2CacheSize,
+    /// `cudaDevAttrMaxBlocksPerCluster`.
+    MaxBlocksPerCluster,
+    /// `cudaDevAttrMemSyncDomainCount`.
+    MemSyncDomainCount,
+    /// `cudaDevAttrMemoryPoolsSupported` (always 1; this VM has mempools).
+    MemoryPoolsSupported,
+}
+
 /// One kernel buffer: a whole allocation or a mapped VMM span.
 ///
 /// [`Self::whole`] is `offset = 0`, `bytes = 0` (remainder of the alloc).

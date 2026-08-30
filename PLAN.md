@@ -1825,6 +1825,20 @@ model, do not celebrate the sim.
     pitch. Decode identity stays packed 1D. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
+150. [x] `cudaHostGetDevicePointer`: `Sim::host_get_device_pointer` of mapped
+    host returns the same id. Unmapped host and device allocs are Invalid
+    `not mapped`. Query; legal during capture. Decode identity stays
+    unmapped. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+151. [x] `cudaDeviceGetAttribute`: `Sim::device_get_attribute` exposes
+    cooperative launch, concurrent kernels (`compute_slots > 1`), shared
+    memory, L2 / persisting L2 max, max blocks per cluster, mem-sync domain
+    count, and memory-pool support. Only attributes this VM already models.
+    Example H100 `compute_slots` is 1 so concurrent kernels is 0. Query;
+    legal during capture. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

@@ -107,6 +107,8 @@ warp scheduler, L1, …   ← do not model
 | `query_stream` is non-blocking | `cudaStreamQuery` |
 | `mem_info` is `(free, total)` HBM | `cudaMemGetInfo` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
+| `host_get_device_pointer` of mapped host returns the same id | `cudaHostGetDevicePointer` |
+| `device_get_attribute` exposes modeled SKU caps | `cudaDeviceGetAttribute` |
 | `set_limit` / `get_limit` wrap persisting L2 plus stack / printf / heap / CDP / L2 fetch | `cudaDeviceSetLimit` / `GetLimit` |
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128) | exact |
 | `malloc_pitch` charges `pitch * height`; pitch is `align_up(width, 512)` | `cudaMallocPitch` |
@@ -398,6 +400,8 @@ invalid; end-before-start is invalid).
 stream is `Ok(false)`; the clock does not advance).
 `mem_info` is `cudaMemGetInfo` `(free, total)` HBM bytes.
 `pointer_get_attributes` is `cudaPointerGetAttributes`.
+`host_get_device_pointer` is `cudaHostGetDevicePointer` (mapped host).
+`device_get_attribute` is `cudaDeviceGetAttribute` (modeled caps only).
 `set_limit` / `get_limit` are `cudaDeviceSetLimit` / `GetLimit`.
 Persisting L2 is `cudaLimitPersistingL2CacheSize`. Access-policy windows
 must align to `cudaLimitMaxL2FetchGranularity` (SM 8.0+ default 128).

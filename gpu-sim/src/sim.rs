@@ -11,7 +11,7 @@ use crate::ids::{
 };
 use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
-    ClusterSchedulingPolicy, DeviceLimit, GpuOp as Kind, GraphExecUpdateResult,
+    ClusterSchedulingPolicy, DeviceAttr, DeviceLimit, GpuOp as Kind, GraphExecUpdateResult,
     GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
     GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphUserObjectFlags, HostNodeParams,
     KernelAttrs, KernelBuf, KernelKind, KernelNodeParams, LaunchCompletionEvent, MemAdvise,
@@ -9772,6 +9772,45 @@ impl Sim {
                 .or_else(|| a.vmm_maps.first().map(|m| m.0)),
             device_pointer: true,
             host_pointer: false,
+        })
+    }
+
+    /// `cudaHostGetDevicePointer`. Query; legal during capture.
+    ///
+    /// Mapped host (`cudaHostAllocMapped` / `cudaHostRegisterMapped`) returns
+    /// the same id (this VM has one pointer space). Unmapped host and device
+    /// allocs are Invalid `not mapped`.
+    pub fn host_get_device_pointer(&self, id: AllocId) -> Result<AllocId, SimError> {
+        let a = self.alloc_ref(id)?;
+        if !a.live {
+            return Err(SimError::UnknownAlloc { alloc: id });
+        }
+        if a.host_mapped {
+            return Ok(id);
+        }
+        Err(SimError::Invalid { why: "not mapped" })
+    }
+
+    /// `cudaDeviceGetAttribute`. Query; legal during capture.
+    ///
+    /// Only attributes this VM already models ([`DeviceAttr`]).
+    pub fn device_get_attribute(
+        &self,
+        device: DeviceId,
+        attr: DeviceAttr,
+    ) -> Result<u64, SimError> {
+        let gpu = self.profile.gpu(device)?;
+        Ok(match attr {
+            DeviceAttr::CooperativeLaunch => u64::from(gpu.cooperative_launch),
+            DeviceAttr::ConcurrentKernels => u64::from(gpu.compute_slots > 1),
+            DeviceAttr::MaxSharedMemoryPerBlock => u64::from(gpu.max_shared_mem_per_block),
+            DeviceAttr::MaxSharedMemoryPerBlockOptin => {
+                u64::from(gpu.max_shared_mem_per_block_optin)
+            }
+            DeviceAttr::L2CacheSize | DeviceAttr::MaxPersistingL2CacheSize => gpu.l2_bytes,
+            DeviceAttr::MaxBlocksPerCluster => u64::from(gpu.max_blocks_per_cluster),
+            DeviceAttr::MemSyncDomainCount => u64::from(gpu.mem_sync_domain_count),
+            DeviceAttr::MemoryPoolsSupported => 1,
         })
     }
 

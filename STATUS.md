@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaHostGetDevicePointer` / `cudaDeviceGetAttribute`
+
+`Sim::host_get_device_pointer` of mapped host returns the same id. Unmapped
+host and device allocs are Invalid. `Sim::device_get_attribute` exposes
+cooperative launch, concurrent kernels (`compute_slots > 1`), shared memory,
+L2 / persisting L2 max, max blocks per cluster, mem-sync domain count, and
+memory-pool support. Example H100 `compute_slots` is 1 so concurrent kernels
+is 0. Query APIs; legal during capture. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaPointerGetAttributes` / `cudaDeviceGetLimit` / `cudaMemcpy2D`
 
 `Sim::pointer_get_attributes` classifies Unregistered / Host / Device / Managed

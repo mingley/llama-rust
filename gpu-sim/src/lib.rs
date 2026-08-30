@@ -128,6 +128,8 @@
 //! [`Sim::query_stream`] is `cudaStreamQuery` (no wait).
 //! [`Sim::mem_info`] is `cudaMemGetInfo` `(free, total)`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
+//! [`Sim::host_get_device_pointer`] is `cudaHostGetDevicePointer` (mapped host).
+//! [`Sim::device_get_attribute`] is `cudaDeviceGetAttribute` ([`DeviceAttr`]).
 //! [`Sim::set_limit`] / [`get_limit`](Sim::get_limit) are `cudaDeviceSetLimit` /
 //! `GetLimit`. [`DeviceLimit::PersistingL2CacheSize`] wraps
 //! [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size).
@@ -401,14 +403,14 @@ pub use ids::{
 };
 pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp,
-    ClusterDim, ClusterSchedulingPolicy, DType, DeviceLimit, GpuOp, GraphExecUpdateResult,
-    GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
-    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphUserObjectFlags, HostNodeParams,
-    KernelAttrs, KernelBuf, KernelKind, KernelNodeParams, LaunchCompletionEvent, MemAdvise,
-    MemAttach, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, Operation, PdlLaunch, Place,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    ClusterDim, ClusterSchedulingPolicy, DType, DeviceAttr, DeviceLimit, GpuOp,
+    GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
+    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind,
+    GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeParams,
+    LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
+    MemoryType, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
+    StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -7413,6 +7415,56 @@ mod tests {
             Err(SimError::UnknownAlloc { .. }) => {}
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn host_get_device_pointer_and_device_get_attribute() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let mapped = sim.alloc_host_mapped(64).unwrap();
+        assert_eq!(sim.host_get_device_pointer(mapped).unwrap(), mapped);
+        let pin = sim.alloc_host_pinned(64).unwrap();
+        match sim.host_get_device_pointer(pin) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not mapped"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.malloc(d, 64).unwrap();
+        match sim.host_get_device_pointer(a) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not mapped"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let gpu = sim.profile().gpu(d).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::CooperativeLaunch)
+                .unwrap(),
+            u64::from(gpu.cooperative_launch)
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::ConcurrentKernels)
+                .unwrap(),
+            0,
+            "example H100 compute_slots is 1"
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::L2CacheSize)
+                .unwrap(),
+            gpu.l2_bytes
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxPersistingL2CacheSize)
+                .unwrap(),
+            gpu.l2_bytes
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MemoryPoolsSupported)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxSharedMemoryPerBlock)
+                .unwrap(),
+            u64::from(gpu.max_shared_mem_per_block)
+        );
     }
 
     #[test]
