@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaGraphDestroyNode`
+
+`Sim::graph_destroy_node` drops a definition node and incident edges.
+Remaining indices stay valid. Illegal on an exec and during capture.
+Definition destroy does not retarget exec. `gpu-profile capture` is still
+refused.
+
 ## Shipped 2026-08-30 — `cudaGraphAddMemcpyNode1D` / SetParams1D
 
 `Sim::graph_add_memcpy_1d` / `graph_memcpy_set_params_1d` /
@@ -2199,7 +2206,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 190 (`AddMemcpyNode1D`).
+Next code change is PLAN systems depth after item 191 (`DestroyNode`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

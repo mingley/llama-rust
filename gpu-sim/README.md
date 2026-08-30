@@ -95,6 +95,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes` | query |
 | `cudaGraphChildGraphNodeGetGraph` / `EventRecordNodeGetEvent` / `WaitNodeGetEvent` / `MemAllocNodeGetParams` | query |
 | `cudaGraphAddKernelNode` / memcpy / `AddMemcpyNode1D` / memset / host / empty / event / child / mem alloc/free / cooperative kernel / dependencies (`graph_add_*`) | not timed (host-side topology) |
+| `cudaGraphDestroyNode` (`graph_destroy_node`) drops a definition node and incident edges; remaining indices stay valid | not timed (host-side topology) |
 | graph destroy drops the id (`cudaGraphDestroy`); remaining graph mem is refunded; user-object refs held by the graph are released | 1 ns host-sync |
 | `cudaUserObjectCreate` / `Retain` / `Release`; last ref records the destroy `fn_id` | 1 ns host-sync |
 | `cudaGraphRetainUserObject` / `ReleaseUserObject` on a definition (`MOVE` transfers one caller ref); clone does not copy retains | 1 ns host-sync |
@@ -292,15 +293,18 @@ may Hyper-Q overlap at launch; capture records same-stream edges).
 `graph_add_dependencies_n` / `graph_remove_dependencies_n` are the same
 APIs with `numDependencies` from/to pairs (all-or-nothing).
 `graph_remove_dependencies` is `cudaGraphRemoveDependencies` (illegal on an
-exec and during capture). `begin_capture_to_graph` is
+exec and during capture). `graph_destroy_node` is `cudaGraphDestroyNode`
+(incident edges dropped; remaining indices stay valid; illegal on an exec
+and during capture; definition destroy does not retarget exec).
+`begin_capture_to_graph` is
 `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
 uninstantiated graph; capture roots additionally depend on the given node
 indices (empty `deps` means extra roots, so they may Hyper-Q overlap).
 `graph_nodes` / `graph_root_nodes` / `graph_edges` / `graph_node_dependents` /
 `graph_debug_dot` / `graph_debug_dot_with_flags` are `cudaGraphGetNodes` /
 `GetRootNodes` / `GetEdges` /
-`NodeGetDependentNodes` / `cudaGraphDebugDotPrint` (kinds and edges; flags `0`
-is that dump; `GraphDebugDotFlags::VERBOSE` prints modeled params). Host-sync
+`NodeGetDependentNodes` / `cudaGraphDebugDotPrint` (live nodes; flags `0`
+is kinds and edges; `GraphDebugDotFlags::VERBOSE` prints modeled params). Host-sync
 `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device` / VMM / mempool
 create cannot be captured. A graph that allocates without a matching free
 reuses the pointer on later launches (no second HBM charge) unless

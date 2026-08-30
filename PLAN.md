@@ -2176,7 +2176,15 @@ model, do not celebrate the sim.
     unchanged. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-191. [ ] Next numbered PLAN item after 190 is the next `gpu-sim` / Engine /
+191. [x] `cudaGraphDestroyNode`: `Sim::graph_destroy_node` drops a definition
+    node and incident edges. Remaining indices stay valid. Capture cannot
+    include it. Illegal on an instantiated exec. Definition destroy does
+    not retarget exec. Destroying a mem alloc node unlinks
+    [`graph_mem_allocs`]. Child-graph objects are not destroyed. Decode
+    identity unchanged. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+192. [ ] Next numbered PLAN item after 191 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

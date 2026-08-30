@@ -426,6 +426,9 @@
 //! [`graph_remove_dependencies_n`](Sim::graph_remove_dependencies_n) are the
 //! same APIs with `numDependencies` from/to pairs (all-or-nothing). [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
 //! `cudaGraphRemoveDependencies` (illegal on an exec and during capture).
+//! [`graph_destroy_node`](Sim::graph_destroy_node) is `cudaGraphDestroyNode`
+//! (drops incident edges; remaining indices stay valid; illegal on an exec and
+//! during capture; does not retarget an already-instantiated exec).
 //! `cudaGraphExecUpdate` treats those edges as topology.
 //! [`graph_nodes`](Sim::graph_nodes) / [`graph_root_nodes`](Sim::graph_root_nodes) /
 //! [`graph_edges`](Sim::graph_edges) /
@@ -433,9 +436,9 @@
 //! [`graph_debug_dot`](Sim::graph_debug_dot) /
 //! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags) are
 //! `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes`
-//! / `cudaGraphDebugDotPrint` (kinds and edges; flags `0` is that dump;
-//! [`GraphDebugDotFlags::VERBOSE`] prints modeled params).
-//! [`begin_capture_to_graph`](Sim::begin_capture_to_graph) is
+//! / `cudaGraphDebugDotPrint` (live nodes; flags `0` is kinds and edges;
+//! [`GraphDebugDotFlags::VERBOSE`] prints modeled params). Destroyed slots are
+//! omitted. [`begin_capture_to_graph`](Sim::begin_capture_to_graph) is
 //! `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
 //! uninstantiated graph; capture roots additionally depend on the given node
 //! indices (empty means extra roots). [`Sim::end_capture`] returns that graph.
@@ -12969,6 +12972,92 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("graph dependency"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn graph_destroy_node_drops_edges_and_keeps_handles() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        sim.graph_add_dependencies(g, 1, 2).unwrap();
+        sim.graph_destroy_node(g, 1).unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 3);
+        assert_eq!(sim.graph_nodes(g).unwrap(), vec![0, 2]);
+        assert!(sim.graph_edges(g).unwrap().is_empty());
+        assert!(sim.graph_node_deps(g, 2).unwrap().is_empty());
+        assert_eq!(sim.graph_node_kind(g, 2).unwrap(), GraphNodeKind::Kernel);
+        match sim.graph_node_kind(g, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_kernel_get_params(g, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim.graph_add_dependencies(g, 0, 1).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("graph dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let dot = sim.graph_debug_dot(g).unwrap();
+        assert!(dot.contains("n0"));
+        assert!(dot.contains("n2"));
+        assert!(!dot.contains("n1 ["));
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        let err = sim.graph_destroy_node(g, 1).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown graph node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(g).unwrap();
+        let err = sim.graph_destroy_node(exec, 0).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        let err = sim.graph_destroy_node(g, 0).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _cap = sim.end_capture().unwrap();
+        let g2 = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g2, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g2, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let exec2 = sim.instantiate_graph(g2).unwrap();
+        sim.graph_destroy_node(g2, 0).unwrap();
+        assert_eq!(sim.graph_nodes(g2).unwrap(), vec![1]);
+        let n = sim.launch_graph(exec2, s).unwrap();
+        assert_eq!(n, 2, "definition destroy does not retarget exec");
+        sim.synchronize().unwrap();
+        let err = sim.update_graph(exec2, g2).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("topology"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mem = sim.create_graph(d, s).unwrap();
+        let id = sim.graph_add_alloc(mem, 4096).unwrap();
+        assert_eq!(sim.graph_mem_allocs(mem).unwrap(), vec![id]);
+        sim.graph_destroy_node(mem, 0).unwrap();
+        assert!(sim.graph_mem_allocs(mem).unwrap().is_empty());
+        let n = sim.launch_graph(mem, s).unwrap();
+        assert_eq!(n, 0);
     }
 
     #[test]
