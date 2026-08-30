@@ -181,6 +181,11 @@ pub struct HardwareProfile {
     /// identity; 4096-byte expert pages stay legal). A 2 MiB profile rejects
     /// unaligned `cuMulticastCreate`. Not a capture. Example H100 is `1`.
     pub multicast_granularity_bytes: u64,
+    /// Example list-price rent, microdollars per hour (`$2.00` is `2_000_000`).
+    ///
+    /// `0` omits [`crate::Score::usd_micros_per_m_tokens`]. Not a capture.
+    /// Parse `rent_usd_micros_per_hour`. Example profiles stay `0`.
+    pub rent_usd_micros_per_hour: u64,
 }
 
 impl HardwareProfile {
@@ -203,6 +208,13 @@ impl HardwareProfile {
     #[must_use]
     pub fn restrict_pin(mut self, bytes: u64) -> Self {
         self.host_pin_bytes = bytes;
+        self
+    }
+
+    /// Example list-price rent for `$/M tokens`. `0` omits dollars.
+    #[must_use]
+    pub fn with_rent_usd_micros_per_hour(mut self, micros: u64) -> Self {
+        self.rent_usd_micros_per_hour = micros;
         self
     }
 
@@ -337,6 +349,7 @@ impl HardwareProfile {
             host_pin_bytes: u64::MAX,
             va_granularity_bytes: 1,
             multicast_granularity_bytes: 1,
+            rent_usd_micros_per_hour: 0,
         }
     }
 
@@ -363,6 +376,7 @@ impl HardwareProfile {
             host_pin_bytes: u64::MAX,
             va_granularity_bytes: 1,
             multicast_granularity_bytes: 1,
+            rent_usd_micros_per_hour: 0,
         }
     }
 
@@ -376,6 +390,7 @@ impl HardwareProfile {
             host_pin_bytes: u64::MAX,
             va_granularity_bytes: 1,
             multicast_granularity_bytes: 1,
+            rent_usd_micros_per_hour: 0,
         }
     }
 
@@ -393,6 +408,7 @@ impl HardwareProfile {
             host_pin_bytes: u64::MAX,
             va_granularity_bytes: 1,
             multicast_granularity_bytes: 1,
+            rent_usd_micros_per_hour: 0,
         }
     }
 
@@ -415,6 +431,7 @@ impl HardwareProfile {
             host_pin_bytes: u64::MAX,
             va_granularity_bytes: 1,
             multicast_granularity_bytes: 1,
+            rent_usd_micros_per_hour: 0,
         }
     }
 
@@ -457,7 +474,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -483,7 +500,8 @@ impl HardwareProfile {
             g0.host_func_ns,
             self.host_pin_bytes,
             self.va_granularity_bytes,
-            self.multicast_granularity_bytes
+            self.multicast_granularity_bytes,
+            self.rent_usd_micros_per_hour
         )
     }
 
@@ -563,6 +581,7 @@ fn one_gpu_example(name: &str, gpu: GpuProfile, pcie: LinkProfile) -> HardwarePr
         host_pin_bytes: u64::MAX,
         va_granularity_bytes: 1,
         multicast_granularity_bytes: 1,
+        rent_usd_micros_per_hour: 0,
     }
 }
 
@@ -727,6 +746,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut host_pin_bytes = u64::MAX;
     let mut va_granularity_bytes = 1u64;
     let mut multicast_granularity_bytes = 1u64;
+    let mut rent_usd_micros_per_hour = 0u64;
     let mut mesh = MeshKind::NvlinkClique;
     let mut mesh_set = false;
     for raw in text.lines() {
@@ -785,6 +805,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             "host_pin_bytes" => host_pin_bytes = parse_u64(v)?,
             "va_granularity_bytes" => va_granularity_bytes = parse_u64(v)?,
             "multicast_granularity_bytes" => multicast_granularity_bytes = parse_u64(v)?,
+            "rent_usd_micros_per_hour" => rent_usd_micros_per_hour = parse_u64(v)?,
             "topology" => {
                 mesh = parse_mesh(v)?;
                 mesh_set = true;
@@ -862,6 +883,7 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         host_pin_bytes,
         va_granularity_bytes,
         multicast_granularity_bytes,
+        rent_usd_micros_per_hour,
     })
 }
 
@@ -988,6 +1010,16 @@ mod tests {
         assert_eq!(p.name, "lab");
         assert_eq!(p.n_gpus(), 2);
         assert!(p.link(Some(DeviceId(0)), Some(DeviceId(1))).is_ok());
+        assert_eq!(p.rent_usd_micros_per_hour, 0);
+    }
+
+    #[test]
+    fn parse_rent_usd_micros_per_hour() {
+        let p = HardwareProfile::parse("gpus=1\nrent_usd_micros_per_hour=2500000\n").unwrap();
+        assert_eq!(p.rent_usd_micros_per_hour, 2_500_000);
+        assert!(p
+            .to_profile_text()
+            .contains("rent_usd_micros_per_hour=2500000"));
     }
 
     #[test]

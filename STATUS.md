@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — dual-score `$/M tokens` from profile rent
+
+`HardwareProfile::rent_usd_micros_per_hour` is an example list-price knob
+(`$2.00/hr` is `2_000_000`). `0` omits dollars; example profiles stay `0`.
+`Score::with_tokens` fills `usd_micros_per_m_tokens` from rent × wall /
+tokens. Not a capture. `gpu-profile capture` is still refused. Device-launch
+is still Invalid.
+
 ## Shipped 2026-08-30 — graph vs exec snapshot
 
 `instantiate_graph` clones graph steps into an exec snapshot on the same

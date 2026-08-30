@@ -4,10 +4,10 @@ Serving-shaped measurement over MoE traces. Dual scores:
 
 1. **Semantic** — `Ok` vs `gpu-sim` illegal GPU state (ordering, residency, OOM).
 2. **Performance** — virtual `wall_ns`, HBM peak, bytes moved, `energy_uj`
-   (profile TDP × wall), optional `ns_per_token`, `ttft_ns`, `itl_ns`.
-
-There is **no invented `$/M tokens`**. Dollars need a real electricity/rental
-price; this crate refuses to hallucinate one.
+   (profile TDP × wall), optional `ns_per_token`, `ttft_ns`, `itl_ns`,
+   optional `usd_micros_per_m_tokens` when the profile sets
+   `rent_usd_micros_per_hour` (example list price × wall / tokens). Example
+   profiles leave rent at `0`.
 
 ```
 infer-bench adversarial --capacity 2 --tokens 64 --experts 16 --profile cheap

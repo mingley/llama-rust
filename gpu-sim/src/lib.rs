@@ -483,6 +483,8 @@ mod tests {
             energy_uj: 7,
             ttft_ns: None,
             itl_ns: None,
+            rent_usd_micros_per_hour: 0,
+            usd_micros_per_m_tokens: None,
         };
         assert_eq!(
             s.line(),
@@ -516,6 +518,25 @@ mod tests {
         assert!(h100.energy_uj > cheap.energy_uj);
         assert!(h100.line().contains("energy_uj="));
         assert!(!h100.line().contains('$'));
+        assert!(!h100
+            .with_tokens(8)
+            .line()
+            .contains("usd_micros_per_m_tokens"));
+    }
+
+    #[test]
+    fn rent_times_wall_fills_usd_per_m_tokens() {
+        let p = HardwareProfile::example_h100_sxm().with_rent_usd_micros_per_hour(2_000_000);
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_host_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let scored = Score::from_sim(&sim).with_tokens(1000);
+        assert!(scored.usd_micros_per_m_tokens.is_some());
+        assert!(scored.line().contains("usd_micros_per_m_tokens="));
+        assert!(!scored.line().contains('$'));
     }
 
     #[test]

@@ -162,13 +162,15 @@ assert!(dag.iter().any(|op| matches!(op.kind, GpuOp::Kernel { .. })));
 
 - **semantic**: `Ok` or a [`SimError`](crate::SimError) (binary)
 - **performance**: `wall_ns`, `hbm_peak`, `bytes_moved`, `energy_uj`, optional
-  `ns_per_token`, `ttft_ns`, `itl_ns`
+  `ns_per_token`, `ttft_ns`, `itl_ns`, optional `usd_micros_per_m_tokens`
 
-`Score::with_tokens(n)` fills `ns_per_token = wall_ns / n`.
+`Score::with_tokens(n)` fills `ns_per_token = wall_ns / n` and, when the
+profile has `rent_usd_micros_per_hour > 0`,
+`usd_micros_per_m_tokens = rent × wall / tokens` (microdollars per million
+tokens). Example profiles leave rent at `0`.
 `Score::with_latencies` attaches TTFT / mean ITL when a caller samples the
 virtual clock at token boundaries (`expertvm::sim_replay` does this).
-`energy_uj` is profile board TDP × virtual wall (`mW × ns / 1e6`). There is
-no invented `$/M tokens` field. Device-to-device replica copies charge the
+`energy_uj` is profile board TDP × virtual wall (`mW × ns / 1e6`). Device-to-device replica copies charge the
 destination HBM at memcpy start and OOM if that GPU is full. `free` of a
 replicated allocation only drops `live` when no device still holds it.
 

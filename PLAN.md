@@ -600,10 +600,12 @@ impossible or immediately fatal.
 2. **Performance (continuous):** $/M tokens, ITL, TTFT, throughput,
    HBM needed, bytes moved, energy estimate.
 
-   Shipped in `gpu-sim::Score` (not a rental price): `wall_ns`, `hbm_peak`,
+   Shipped in `gpu-sim::Score`: `wall_ns`, `hbm_peak`,
    `bytes_moved`, `energy_uj` (`node_tdp_mw * wall_ns / 1e6` µJ), optional
-   `ns_per_token`, `ttft_ns`, `itl_ns`. `sim_replay` samples the virtual clock
-   after each token. There is no `$/M tokens` field.
+   `ns_per_token`, `ttft_ns`, `itl_ns`, optional `usd_micros_per_m_tokens`
+   (`rent_usd_micros_per_hour * wall_ns * 1e6 / (hour_ns * n_tokens)`).
+   Example profiles leave rent at `0` so dollars stay omitted. Not a capture.
+   `sim_replay` samples the virtual clock after each token.
 
 Agent loop: modify expertvm → `cargo test` (semantics) → simulator
 (score) → keep/revert. Thousands of experiments, no H100 required.
@@ -1380,6 +1382,12 @@ model, do not celebrate the sim.
     `update_graph` replaces the snapshot, not the graph. Decode identity
     stays destroy+instantiate / ExecSetParams. Dual score still has no
     `$/M tokens`.
+
+100. [x] Dual-score `$/M tokens`: `HardwareProfile::rent_usd_micros_per_hour`
+    is an example list-price knob (`0` omits dollars; example profiles stay
+    `0`). `Score::with_tokens` fills `usd_micros_per_m_tokens =
+    rent * wall_ns * 1e6 / (hour_ns * n_tokens)` microdollars per million
+    tokens. Not a capture. `gpu-profile capture` is still refused.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

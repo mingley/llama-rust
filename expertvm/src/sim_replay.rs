@@ -53,6 +53,8 @@ pub struct SimReplay {
     pub hbm_peak: u64,
     /// Profile TDP × wall, microjoules.
     pub energy_uj: u64,
+    /// Microdollars per million tokens when the profile has rent.
+    pub usd_micros_per_m_tokens: Option<u64>,
     /// Clock after the first token's last layer, when the trace has tokens.
     pub ttft_ns: Option<u64>,
     /// Mean later-token delta, when the trace has at least two tokens.
@@ -87,6 +89,9 @@ impl SimReplay {
             "sim_ns={} bytes_moved={} hbm_peak={} energy_uj={}",
             self.sim_ns, self.bytes_moved, self.hbm_peak, self.energy_uj
         );
+        if let Some(n) = self.usd_micros_per_m_tokens {
+            let _w = write!(s, " usd_micros_per_m_tokens={n}");
+        }
         if let Some(n) = self.ttft_ns {
             let _w = write!(s, " ttft_ns={n}");
         }
@@ -1409,6 +1414,7 @@ pub(crate) fn replay_from_sim(
         bytes_moved: score.bytes_moved,
         hbm_peak: score.hbm_peak,
         energy_uj: score.energy_uj,
+        usd_micros_per_m_tokens: score.usd_micros_per_m_tokens,
         ttft_ns: score.ttft_ns,
         itl_ns: score.itl_ns,
         hits: ctr.hits,
