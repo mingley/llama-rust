@@ -53,7 +53,7 @@ warp scheduler, L1, …   ← do not model
 | `cuMemMap` (`va_map`) charges HBM; `va_unmap` refunds; the VA is reusable | `alloc_overhead_ns` (map) |
 | `cuMemCreate` (`va_create`) charges HBM with no VA; `va_map_handle` maps it without a second charge; `va_retain_handle` increments refs; `va_release_handle` refunds when refs and maps are 0 | `alloc_overhead_ns` (create, map, retain) |
 | `cuMemGetAllocationGranularity` (`va_granularity_bytes`): reserve/map sizes align (`0`/`1` = any) | not timed |
-| `cuMemSetAccess` (`va_set_access`) PROT_READ on a peer; dest HBM stays 0; `va_set_access_write` is PROT_READWRITE | interconnect, not local HBM |
+| `cuMemSetAccess` (`va_set_access` / `va_set_access_with_flags`) PROT_READ on a peer; dest HBM stays 0; `va_set_access_write` is PROT_READWRITE | interconnect, not local HBM |
 | `va_map_range` / `va_unmap_range` map a span; `kernel()` needs the whole VA; `kernel_bufs` / `memset_buf` / `MemcpyOp::offset` touch a mapped span | HBM = mapped bytes |
 | `va_release` parks an unmapped VA; `va_acquire` remaps same size | map only on reuse (no second reserve) |
 | `va_acquire_paged` maps the VA in `page` physicals | `alloc_overhead_ns` per block |
@@ -480,6 +480,8 @@ again).
 stream is `Ok(false)`; the clock does not advance).
 `mem_info` is `cudaMemGetInfo` `(free, total)` HBM bytes.
 `pointer_get_attributes` is `cudaPointerGetAttributes`.
+`mem_get_address_range` is `cudaMemGetAddressRange` (base is the alloc id;
+interior offsets are not modeled). Query; legal during capture.
 `host_get_device_pointer` is `cudaHostGetDevicePointer` (mapped host;
 `host_get_device_pointer_with_flags` requires `flags == 0`).
 `device_get_attribute` is `cudaDeviceGetAttribute` (modeled caps only;
@@ -609,7 +611,9 @@ is `cuMemRetainAllocationHandle` (combined `va_map` spans are promoted).
 maps are 0. `va_map` still Create+Maps in one call.
 `va_set_access` is `cuMemSetAccess` PROT_READ on a peer (no dest HBM;
 writes still need a local map). `va_set_access_write` is PROT_READWRITE
-(peer writes, no dest HBM). `pool_set_access` is `cudaMemPoolSetAccess`
+(peer writes, no dest HBM). `va_set_access_with_flags` is the flags word
+(`PROT_READ` / `PROT_READ_WRITE` / `PROT_NONE`). Typed helpers stay.
+`pool_set_access` is `cudaMemPoolSetAccess`
 ReadWrite on a peer (no dest HBM; kernels may write). `kernel()` needs the whole VA covered; `kernel_bufs`, `memset_buf`, and
 `MemcpyOp::offset` touch a mapped page (paged KV). `va_acquire` remaps an idle VA of the same
 size (or reserves); `va_acquire_paged` maps KV-block physicals covering the VA;

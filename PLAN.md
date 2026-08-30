@@ -2427,7 +2427,23 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-221. [ ] Next numbered PLAN item after 220 is the next `gpu-sim` / Engine /
+221. [x] `cuMemSetAccess` flags: `Sim::va_set_access_with_flags` maps
+    [`MemAccessFlags::PROT_READ`] onto typed [`va_set_access`],
+    [`PROT_READ_WRITE`](MemAccessFlags::PROT_READ_WRITE) onto
+    [`va_set_access_write`], and [`PROT_NONE`](MemAccessFlags::PROT_NONE)
+    onto [`va_unset_access`]. Other bits Invalid `"va access flags"`.
+    Typed helpers stay. Capture refused by those helpers. Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+222. [x] `cudaMemGetAddressRange`: `Sim::mem_get_address_range` returns
+    `(alloc, bytes)` for a live id. Interior offsets are not modeled.
+    Never-created is [`UnknownAlloc`]. Freed is Invalid `"address range"`.
+    Query; legal during capture. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+223. [ ] Next numbered PLAN item after 222 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

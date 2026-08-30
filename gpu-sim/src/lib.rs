@@ -140,6 +140,8 @@
 //! [`Sim::va_set_access`] is `cuMemSetAccess` PROT_READ on a peer (no dest HBM;
 //! interconnect). [`va_set_access_write`](Sim::va_set_access_write) is
 //! PROT_READWRITE (peer writes, no dest HBM). [`Sim::va_unset_access`] drops it.
+//! [`va_set_access_with_flags`](Sim::va_set_access_with_flags) is the flags
+//! word ([`MemAccessFlags`]). Typed helpers stay.
 //! [`Sim::va_acquire`] remaps an idle VA of the same size (or reserves);
 //! [`va_acquire_paged`](Sim::va_acquire_paged) maps it in KV-block spans;
 //! [`va_release`](Sim::va_release) unmaps into that pool instead of freeing the VA.
@@ -187,6 +189,8 @@
 //! [`Sim::query_stream`] is `cudaStreamQuery` (no wait).
 //! [`Sim::mem_info`] is `cudaMemGetInfo` `(free, total)`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
+//! [`Sim::mem_get_address_range`] is `cudaMemGetAddressRange` (base is the
+//! alloc id; interior offsets are not modeled). Query; legal during capture.
 //! [`Sim::host_get_device_pointer`] is `cudaHostGetDevicePointer` (mapped host).
 //! [`host_get_device_pointer_with_flags`](Sim::host_get_device_pointer_with_flags)
 //! requires [`HostGetDevicePointerFlags::DEFAULT`] (`0`). Typed helper stays.
@@ -8033,6 +8037,20 @@ mod tests {
             Err(SimError::UnknownAlloc { .. }) => {}
             other => panic!("{other:?}"),
         }
+        let live = sim.malloc(d, 4096).unwrap();
+        assert_eq!(sim.mem_get_address_range(live).unwrap(), (live, 4096));
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.mem_get_address_range(live).unwrap(), (live, 4096));
+        let _cap = sim.end_capture().unwrap();
+        sim.free_sync(live).unwrap();
+        match sim.mem_get_address_range(live) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("address range"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.mem_get_address_range(AllocId(u64::MAX)) {
+            Err(SimError::UnknownAlloc { .. }) => {}
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -11298,6 +11316,20 @@ mod tests {
         sim.va_set_access(va, d1).unwrap();
         sim.va_unset_access(va, d1).unwrap();
         assert!(!sim.is_accessed_by(va, d1).unwrap());
+        sim.va_set_access_with_flags(va, d1, MemAccessFlags::PROT_READ)
+            .unwrap();
+        assert!(sim.is_accessed_by(va, d1).unwrap());
+        assert!(!sim.is_va_write_accessed_by(va, d1).unwrap());
+        sim.va_set_access_with_flags(va, d1, MemAccessFlags::PROT_READ_WRITE)
+            .unwrap();
+        assert!(sim.is_va_write_accessed_by(va, d1).unwrap());
+        sim.va_set_access_with_flags(va, d1, MemAccessFlags::PROT_NONE)
+            .unwrap();
+        assert!(!sim.is_accessed_by(va, d1).unwrap());
+        match sim.va_set_access_with_flags(va, d1, 2) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("va access flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         sim.begin_capture(d0, s).unwrap();
         match sim.va_set_access(va, d1).unwrap_err() {
             SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),

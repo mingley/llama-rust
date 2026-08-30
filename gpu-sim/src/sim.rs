@@ -10255,6 +10255,29 @@ impl Sim {
         self.va_set_access_inner(id, device, true)
     }
 
+    /// `cuMemSetAccess` with a flags word.
+    ///
+    /// [`MemAccessFlags::PROT_READ`] is [`Self::va_set_access`].
+    /// [`MemAccessFlags::PROT_READ_WRITE`] is [`Self::va_set_access_write`].
+    /// [`MemAccessFlags::PROT_NONE`] is [`Self::va_unset_access`]. Other bits
+    /// are Invalid `"va access flags"`. Typed helpers stay. Capture is refused
+    /// by those helpers.
+    pub fn va_set_access_with_flags(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        match flags {
+            MemAccessFlags::PROT_READ => self.va_set_access(id, device),
+            MemAccessFlags::PROT_READ_WRITE => self.va_set_access_write(id, device),
+            MemAccessFlags::PROT_NONE => self.va_unset_access(id, device),
+            _ => Err(SimError::Invalid {
+                why: "va access flags",
+            }),
+        }
+    }
+
     fn va_set_access_inner(
         &mut self,
         id: AllocId,
@@ -11788,6 +11811,21 @@ impl Sim {
             device_pointer: true,
             host_pointer: false,
         })
+    }
+
+    /// `cudaMemGetAddressRange`. Query; legal during capture.
+    ///
+    /// Interior offsets are not modeled: the base is `alloc` itself. A never-
+    /// created id is [`SimError::UnknownAlloc`]. A freed id is Invalid
+    /// `"address range"`.
+    pub fn mem_get_address_range(&self, alloc: AllocId) -> Result<(AllocId, u64), SimError> {
+        let a = self.alloc_ref(alloc)?;
+        if !a.live {
+            return Err(SimError::Invalid {
+                why: "address range",
+            });
+        }
+        Ok((alloc, a.bytes))
     }
 
     /// `cudaHostGetDevicePointer`. Query; legal during capture.
