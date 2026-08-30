@@ -2424,6 +2424,39 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphRemoveDependencies`: drop the `from` → `to` edge.
+    ///
+    /// Capture cannot include it. Illegal after instantiate. Missing edges are
+    /// a no-op. Independent nodes (no remaining edge) may Hyper-Q overlap at
+    /// [`Self::launch_graph`].
+    pub fn graph_remove_dependencies(
+        &mut self,
+        graph: GraphId,
+        from: usize,
+        to: usize,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot remove graph dependencies during capture")?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if g.instantiated {
+            return Err(SimError::Invalid {
+                why: "graph instantiated",
+            });
+        }
+        let n = g.steps.len();
+        if from == to || from >= n || to >= n {
+            return Err(SimError::Invalid {
+                why: "graph dependency",
+            });
+        }
+        let step = g.steps.get_mut(to).ok_or(SimError::Invalid {
+            why: "graph dependency",
+        })?;
+        step.deps.retain(|d| *d != from);
+        Ok(())
+    }
+
     /// Predecessor indices of node `i` (`cudaGraphAddDependencies`).
     pub fn graph_node_deps(&self, graph: GraphId, i: usize) -> Result<Vec<usize>, SimError> {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {

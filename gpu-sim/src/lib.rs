@@ -163,7 +163,9 @@
 //! AutoFreeOnLaunch rules as captured `cudaMallocAsync`).
 //! [`Sim::graph_add_dependencies`] is `cudaGraphAddDependencies` (node indices;
 //! independent nodes may Hyper-Q overlap at launch; capture records same-stream
-//! edges). `cudaGraphExecUpdate` treats those edges as topology.
+//! edges). [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
+//! `cudaGraphRemoveDependencies` (illegal after instantiate and during capture).
+//! `cudaGraphExecUpdate` treats those edges as topology.
 //! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`.
 //! Capture records every stream that [`wait_event`](Sim::wait_event)s an
 //! event recorded in this capture (CUDA forked capture). [`record_event_external`](Sim::record_event_external)
@@ -6645,6 +6647,77 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("graph dependency"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn graph_remove_dependencies_restores_hyperq_overlap() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |remove: bool| {
+            let mut sim = Sim::new(h100().with_compute_slots(2));
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let a = sim.alloc(d, 4096, s).unwrap();
+            let b = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+            enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+            sim.synchronize().unwrap();
+            let g = sim.create_graph(d, s).unwrap();
+            sim.graph_add_kernel(g, kind.clone(), &[a], &[a]).unwrap();
+            sim.graph_add_kernel(g, kind.clone(), &[b], &[b]).unwrap();
+            sim.graph_add_dependencies(g, 0, 1).unwrap();
+            assert_eq!(sim.graph_node_deps(g, 1).unwrap(), vec![0]);
+            if remove {
+                sim.graph_remove_dependencies(g, 0, 1).unwrap();
+                assert!(sim.graph_node_deps(g, 1).unwrap().is_empty());
+            }
+            sim.instantiate_graph(g).unwrap();
+            sim.upload_graph(g).unwrap();
+            let t0 = sim.clock_ns();
+            let n = sim.launch_graph(g, s).unwrap();
+            sim.synchronize().unwrap();
+            assert_eq!(n, 2);
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let chained = run(false);
+        let freed = run(true);
+        assert!(
+            freed < chained,
+            "remove_dependencies must restore Hyper-Q overlap; freed={freed} chained={chained}"
+        );
+    }
+
+    #[test]
+    fn graph_remove_dependencies_rejects_instantiated_and_capture() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        sim.graph_remove_dependencies(g, 0, 1).unwrap();
+        sim.graph_remove_dependencies(g, 0, 1).unwrap();
+        let err = sim.graph_remove_dependencies(g, 0, 0).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("graph dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.instantiate_graph(g).unwrap();
+        let err = sim.graph_remove_dependencies(g, 0, 1).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        let err = sim.graph_remove_dependencies(g, 0, 1).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
     }
 
     #[test]

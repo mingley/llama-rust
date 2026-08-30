@@ -222,7 +222,9 @@ it. Independent streams still launch live. `cudaMallocAsync` / `cudaFreeAsync`
 `graph_add_alloc` / `graph_add_free` are `cudaGraphAddMemAllocNode` /
 `cudaGraphAddMemFreeNode` (same reuse / AutoFreeOnLaunch rules).
 `graph_add_dependencies` is `cudaGraphAddDependencies` (independent nodes
-may Hyper-Q overlap at launch; capture records same-stream edges). Host-sync
+may Hyper-Q overlap at launch; capture records same-stream edges).
+`graph_remove_dependencies` is `cudaGraphRemoveDependencies` (illegal after
+instantiate and during capture). Host-sync
 `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device` / VMM / mempool
 create cannot be captured. A graph that allocates without a matching free
 reuses the pointer on later launches (no second HBM charge) unless

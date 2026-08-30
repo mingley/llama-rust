@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaGraphRemoveDependencies`
+
+`Sim::graph_remove_dependencies` is `cudaGraphRemoveDependencies`: drop a
+predecessor edge on an uninstantiated graph. Illegal after instantiate and
+during capture. Missing edges are a no-op. Independent nodes may Hyper-Q
+overlap at launch. Decode identity stays stream-capture edges. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-08-30 — `cudaGraphExecEvent*NodeSetEvent`
 
 `Sim::graph_exec_event_record_set_event` /

@@ -1281,6 +1281,13 @@ model, do not celebrate the sim.
     are legal. Decode identity stays kernel-only graphs. Dual score still
     has no `$/M tokens`.
 
+89. [x] `cudaGraphRemoveDependencies`: `Sim::graph_remove_dependencies`
+    drops a `from` → `to` edge on an uninstantiated graph (illegal after
+    instantiate and during capture). Missing edges are a no-op. Independent
+    nodes may Hyper-Q overlap at launch. `cudaGraphExecUpdate` treats remaining
+    edges as topology. Decode identity stays stream-capture edges. Dual score
+    still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.
