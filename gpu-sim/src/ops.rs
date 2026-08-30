@@ -2571,14 +2571,17 @@ impl MulticastGranularity {
     pub const RECOMMENDED: u32 = 1;
 }
 
-/// `cuMulticastBindAddr` / `BindMem` flags for [`crate::Sim::multicast_bind_addr_with_flags`].
+/// `cuMulticastBindAddr` / `BindMem` flags for
+/// [`crate::Sim::multicast_bind_addr_with_flags`] /
+/// [`crate::Sim::multicast_bind_mem_with_flags`].
 ///
 /// CUDA requires 0. Unknown bits are Invalid `"multicast bind flags"`.
 /// Partial offset/size bind is not modeled.
 pub struct MulticastBindFlags;
 
 impl MulticastBindFlags {
-    /// Unflagged [`crate::Sim::multicast_bind_addr`].
+    /// Unflagged [`crate::Sim::multicast_bind_addr`] /
+    /// [`crate::Sim::multicast_bind_mem`].
     pub const DEFAULT: u32 = 0;
 }
 

@@ -2769,7 +2769,16 @@ model, do not celebrate the sim.
     capture-legal. Decode identity unchanged. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-260. [ ] Next numbered PLAN item after 259 is the next `gpu-sim` / Engine /
+260. [x] `cuMulticastBindMem` flags:
+    [`multicast_bind_mem_with_flags`](Sim::multicast_bind_mem_with_flags)
+    requires flags 0 ([`MulticastBindFlags::DEFAULT`]; unknown bits Invalid
+    `"multicast bind flags"`). Typed [`multicast_bind_mem`](Sim::multicast_bind_mem)
+    stays. Capture then flags. Partial offset/size bind is not modeled.
+    Host-synchronous; capture refused. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+261. [ ] Next numbered PLAN item after 260 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

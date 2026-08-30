@@ -10252,14 +10252,33 @@ impl Sim {
     ///
     /// Host-synchronous. Capture cannot include it. The handle's device and
     /// size must match. All devices must already be added. Dest HBM is the
-    /// handle (already charged); bind does not charge again.
+    /// handle (already charged); bind does not charge again. Typed helper;
+    /// flags must be [`MulticastBindFlags::DEFAULT`].
     pub fn multicast_bind_mem(
         &mut self,
         mc: MulticastId,
         device: DeviceId,
         handle: MemHandleId,
     ) -> Result<(), SimError> {
+        self.multicast_bind_mem_with_flags(mc, device, handle, MulticastBindFlags::DEFAULT)
+    }
+
+    /// [`Self::multicast_bind_mem`] with a flags word.
+    ///
+    /// CUDA requires 0. Unknown bits are Invalid `"multicast bind flags"`.
+    pub fn multicast_bind_mem_with_flags(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        handle: MemHandleId,
+        flags: u32,
+    ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MulticastBindFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "multicast bind flags",
+            });
+        }
         let h = self.handle_ref(handle)?;
         if h.refs == 0 {
             return Err(SimError::Invalid {

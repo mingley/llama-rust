@@ -676,6 +676,8 @@ Both are queries; legal during capture. `va_map` still Create+Maps in one call.
 `multicast_create` / `multicast_add_device` / `multicast_bind_mem` /
 `multicast_bind_addr` / `multicast_unbind` / `multicast_destroy` /
 `va_map_multicast` are NVLS multicast (NVLink clique).
+`multicast_bind_mem_with_flags` / `multicast_bind_addr_with_flags` require
+flags 0 (`MulticastBindFlags::DEFAULT`). Typed helpers stay.
 `multicast_get_granularity` is `cuMulticastGetGranularity` (minimum and
 recommended are the same profile value; `0`/`1` → `1`). Query; legal
 during capture.

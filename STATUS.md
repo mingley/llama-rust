@@ -5,6 +5,11 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cuMulticastBindMem` flags
+
+`multicast_bind_mem_with_flags` requires flags 0. Typed `multicast_bind_mem`
+stays. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — host memory pools unsupported
 
 `device_get_attribute` / `device_get_properties` report
