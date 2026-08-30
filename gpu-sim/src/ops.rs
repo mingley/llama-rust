@@ -1723,7 +1723,8 @@ impl EventWaitFlags {
 
 /// `cudaEventCreateWithFlags` bits for [`crate::Sim::create_event_with_flags`].
 ///
-/// `cudaEventBlockingSync` / `cudaEventInterprocess` are not modeled.
+/// `cudaEventBlockingSync` is not modeled (Invalid). [`INTERPROCESS`] requires
+/// [`DISABLE_TIMING`] (`cudaIpcGetEventHandle`).
 pub struct EventCreateFlags;
 
 impl EventCreateFlags {
@@ -1731,6 +1732,8 @@ impl EventCreateFlags {
     pub const DEFAULT: u32 = 0;
     /// `cudaEventDisableTiming` ([`crate::Sim::create_event_disable_timing`]).
     pub const DISABLE_TIMING: u32 = 2;
+    /// `cudaEventInterprocess`. Requires [`DISABLE_TIMING`].
+    pub const INTERPROCESS: u32 = 4;
 }
 
 /// `cudaHostAlloc*` / `cudaHostRegister*` bits for [`crate::Sim::host_get_flags`].

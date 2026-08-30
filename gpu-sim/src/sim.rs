@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::SimError;
 use crate::ids::{
-    AllocId, CondId, DeviceId, EventId, GraphId, IpcHandleId, MemHandleId, MulticastId, OpId,
-    PoolId, PtrExportId, ShareableHandleId, StreamId, UserObjectId,
+    AllocId, CondId, DeviceId, EventId, GraphId, IpcEventHandleId, IpcHandleId, MemHandleId,
+    MulticastId, OpId, PoolId, PtrExportId, ShareableHandleId, StreamId, UserObjectId,
 };
 use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
@@ -289,6 +289,24 @@ struct Ev {
     recorded_by: Option<OpId>,
     /// `false` is `cudaEventDisableTiming`: [`Sim::event_elapsed_ns`] fails.
     timing: bool,
+    /// `cudaEventInterprocess`. Required for [`Sim::ipc_get_event`].
+    interprocess: bool,
+    /// Import from [`Sim::ipc_open_event`]: record/wait follow this source.
+    ipc_src: Option<EventId>,
+    /// Outstanding [`Sim::ipc_open_event`] aliases. Destroy of the source is Invalid while > 0.
+    ipc_opens: u32,
+}
+
+impl Ev {
+    fn new(timing: bool) -> Self {
+        Self {
+            recorded_by: None,
+            timing,
+            interprocess: false,
+            ipc_src: None,
+            ipc_opens: 0,
+        }
+    }
 }
 
 struct Capture {
@@ -623,6 +641,9 @@ pub struct Sim {
     mem_handles: BTreeMap<MemHandleId, MemHandle>,
     next_ipc: u64,
     ipc_handles: BTreeMap<IpcHandleId, AllocId>,
+    next_ipc_event: u64,
+    ipc_event_handles: BTreeMap<IpcEventHandleId, EventId>,
+    next_imported_event: u32,
     next_share: u64,
     share_handles: BTreeMap<ShareableHandleId, PoolId>,
     next_ptr: u64,
@@ -769,6 +790,9 @@ impl Sim {
             mem_handles: BTreeMap::new(),
             next_ipc: 1,
             ipc_handles: BTreeMap::new(),
+            next_ipc_event: 1,
+            ipc_event_handles: BTreeMap::new(),
+            next_imported_event: 1,
             next_share: 1,
             share_handles: BTreeMap::new(),
             next_ptr: 1,
@@ -1561,6 +1585,7 @@ impl Sim {
     /// `cudaEventQuery`: whether `event` is recorded and complete. Does not wait.
     ///
     /// Unknown ids are [`SimError::UnknownEvent`]. Incomplete records are `Ok(false)`.
+    /// An [`Self::ipc_open_event`] alias follows the source record.
     pub fn query_event(&self, event: EventId) -> Result<bool, SimError> {
         if !self.events.contains_key(&event) {
             return Err(SimError::UnknownEvent { event: event.0 });
@@ -1568,8 +1593,19 @@ impl Sim {
         Ok(self.event_complete(event))
     }
 
+    fn event_root(&self, event: EventId) -> EventId {
+        event_root_of(&self.events, event)
+    }
+
+    fn event_recorded_by(&self, event: EventId) -> Option<OpId> {
+        self.events
+            .get(&self.event_root(event))
+            .and_then(|e| e.recorded_by)
+    }
+
     fn event_is_recorded(&self, event: EventId) -> bool {
-        let Some(id) = self.events.get(&event).and_then(|e| e.recorded_by) else {
+        let root = self.event_root(event);
+        let Some(id) = self.event_recorded_by(root) else {
             return false;
         };
         let Some(op) = self.ops.get(&id) else {
@@ -1581,13 +1617,17 @@ impl Sim {
         if op.done {
             return true;
         }
-        if op.programmatic_event.is_some_and(|p| p.event == event)
+        if op
+            .programmatic_event
+            .is_some_and(|p| self.event_root(p.event) == root)
             && op.pdl.trigger
             && op.pdl_trigger_ns.is_some_and(|t| self.clock >= t)
         {
             return true;
         }
-        op.launch_completion.is_some_and(|p| p.event == event) && op.start_ns.is_some()
+        op.launch_completion
+            .is_some_and(|p| self.event_root(p.event) == root)
+            && op.start_ns.is_some()
     }
 
     /// `cudaEventCreate` (timing enabled). Implicit on first [`Self::record_event`]
@@ -1604,18 +1644,38 @@ impl Sim {
         self.create_event_with_flags(event, EventCreateFlags::DISABLE_TIMING)
     }
 
+    /// `cudaEventCreateWithFlags(..., cudaEventInterprocess | cudaEventDisableTiming)`.
+    ///
+    /// Required for [`Self::ipc_get_event`]. Timing is disabled (CUDA: Interprocess
+    /// requires DisableTiming).
+    pub fn create_event_interprocess(&mut self, event: EventId) -> Result<(), SimError> {
+        self.create_event_with_flags(
+            event,
+            EventCreateFlags::DISABLE_TIMING | EventCreateFlags::INTERPROCESS,
+        )
+    }
+
     /// `cudaEventCreateWithFlags`. Capture cannot include it.
     ///
-    /// Known bits: [`EventCreateFlags::DISABLE_TIMING`]. Other bits (BlockingSync,
-    /// Interprocess) are Invalid `"event create flags"`.
+    /// Known bits: [`EventCreateFlags::DISABLE_TIMING`] /
+    /// [`EventCreateFlags::INTERPROCESS`]. [`INTERPROCESS`](EventCreateFlags::INTERPROCESS)
+    /// requires disable-timing (Invalid `"interprocess timing"` otherwise).
+    /// Other bits (`cudaEventBlockingSync`) are Invalid `"event create flags"`.
     pub fn create_event_with_flags(&mut self, event: EventId, flags: u32) -> Result<(), SimError> {
-        const KNOWN: u32 = EventCreateFlags::DISABLE_TIMING;
+        const KNOWN: u32 = EventCreateFlags::DISABLE_TIMING | EventCreateFlags::INTERPROCESS;
         if flags & !KNOWN != 0 {
             return Err(SimError::Invalid {
                 why: "event create flags",
             });
         }
-        self.insert_event(event, flags & EventCreateFlags::DISABLE_TIMING == 0)
+        let disable = flags & EventCreateFlags::DISABLE_TIMING != 0;
+        let interprocess = flags & EventCreateFlags::INTERPROCESS != 0;
+        if interprocess && !disable {
+            return Err(SimError::Invalid {
+                why: "interprocess timing",
+            });
+        }
+        self.insert_event(event, !disable, interprocess)
     }
 
     /// `cudaEventDestroy`. Host-synchronous. Capture cannot include it.
@@ -1623,17 +1683,31 @@ impl Sim {
     /// An event that was recorded and is not yet complete waits like
     /// [`Self::synchronize_event`]. A never-recorded event returns immediately.
     /// Unknown ids are [`SimError::UnknownEvent`]. The id may be created again.
+    /// Destroy of an [`Self::ipc_open_event`] alias does not destroy the source.
+    /// Destroy of a source with live imports is Invalid `"ipc mapped"`.
     pub fn destroy_event(&mut self, event: EventId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture event destroy")?;
-        let recorded = self
-            .events
-            .get(&event)
-            .ok_or(SimError::UnknownEvent { event: event.0 })?
-            .recorded_by
-            .is_some();
-        if recorded {
+        let (ipc_src, ipc_opens) = {
+            let ev = self
+                .events
+                .get(&event)
+                .ok_or(SimError::UnknownEvent { event: event.0 })?;
+            (ev.ipc_src, ev.ipc_opens)
+        };
+        if ipc_opens > 0 {
+            return Err(SimError::Invalid { why: "ipc mapped" });
+        }
+        if self.event_recorded_by(event).is_some() {
             self.synchronize_event(event)?;
         }
+        if let Some(src) = ipc_src {
+            let _gone = self.events.remove(&event);
+            if let Some(s) = self.events.get_mut(&src) {
+                s.ipc_opens = s.ipc_opens.saturating_sub(1);
+            }
+            return Ok(());
+        }
+        self.ipc_event_handles.retain(|_, e| *e != event);
         let _gone = self.events.remove(&event);
         Ok(())
     }
@@ -1646,20 +1720,21 @@ impl Sim {
             .ok_or(SimError::UnknownEvent { event: event.0 })
     }
 
-    fn insert_event(&mut self, event: EventId, timing: bool) -> Result<(), SimError> {
+    fn insert_event(
+        &mut self,
+        event: EventId,
+        timing: bool,
+        interprocess: bool,
+    ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture event create")?;
         if self.events.contains_key(&event) {
             return Err(SimError::Invalid {
                 why: "event already created",
             });
         }
-        let _prev = self.events.insert(
-            event,
-            Ev {
-                recorded_by: None,
-                timing,
-            },
-        );
+        let mut ev = Ev::new(timing);
+        ev.interprocess = interprocess;
+        let _prev = self.events.insert(event, ev);
         Ok(())
     }
 
@@ -2455,14 +2530,15 @@ impl Sim {
                 self.add_op_dep(id, dep);
             }
             if let Some(event) = rec {
-                let _prev = rec_ops.insert(event, id);
+                let _prev = rec_ops.insert(self.event_root(event), id);
             }
             if let Some((event, external)) = wait_ev {
+                let root = self.event_root(event);
                 if external {
-                    if let Some(rec_id) = self.events.get(&event).and_then(|e| e.recorded_by) {
+                    if let Some(rec_id) = self.event_recorded_by(root) {
                         self.add_op_dep(id, rec_id);
                     }
-                } else if let Some(rec_id) = rec_ops.get(&event).copied() {
+                } else if let Some(rec_id) = rec_ops.get(&root).copied() {
                     self.add_op_dep(id, rec_id);
                 }
             }
@@ -6654,10 +6730,7 @@ impl Sim {
             }
         }
         if let Some(pe) = event {
-            let _ev = self.events.entry(pe.event).or_insert(Ev {
-                recorded_by: None,
-                timing: true,
-            });
+            let _ev = self.events.entry(pe.event).or_insert(Ev::new(true));
         }
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -6680,10 +6753,7 @@ impl Sim {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
         let exec = self.as_exec(exec)?;
         if let Some(pe) = event {
-            let _ev = self.events.entry(pe.event).or_insert(Ev {
-                recorded_by: None,
-                timing: true,
-            });
+            let _ev = self.events.entry(pe.event).or_insert(Ev::new(true));
         }
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -6763,10 +6833,7 @@ impl Sim {
             }
         }
         if let Some(lc) = event {
-            let _ev = self.events.entry(lc.event).or_insert(Ev {
-                recorded_by: None,
-                timing: true,
-            });
+            let _ev = self.events.entry(lc.event).or_insert(Ev::new(true));
         }
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -6789,10 +6856,7 @@ impl Sim {
         self.fail_if_capturing("cannot capture kernel node set attribute")?;
         let exec = self.as_exec(exec)?;
         if let Some(lc) = event {
-            let _ev = self.events.entry(lc.event).or_insert(Ev {
-                recorded_by: None,
-                timing: true,
-            });
+            let _ev = self.events.entry(lc.event).or_insert(Ev::new(true));
         }
         let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -10492,6 +10556,110 @@ impl Sim {
         Ok(a.live && a.ipc_src.is_some())
     }
 
+    /// `cudaIpcGetEventHandle`. Host-synchronous. Capture cannot include it.
+    ///
+    /// The event must be [`EventCreateFlags::INTERPROCESS`] (and therefore
+    /// disable-timing). The same event returns the same handle. An
+    /// [`Self::ipc_open_event`] alias cannot export.
+    pub fn ipc_get_event(&mut self, event: EventId) -> Result<IpcEventHandleId, SimError> {
+        self.fail_if_capturing("cannot capture ipc")?;
+        let ev = self
+            .events
+            .get(&event)
+            .ok_or(SimError::UnknownEvent { event: event.0 })?;
+        if ev.ipc_src.is_some() {
+            return Err(SimError::Invalid {
+                why: "ipc event import",
+            });
+        }
+        if !ev.interprocess {
+            return Err(SimError::Invalid {
+                why: "not interprocess",
+            });
+        }
+        if let Some(h) = self
+            .ipc_event_handles
+            .iter()
+            .find_map(|(&h, &src)| (src == event).then_some(h))
+        {
+            return Ok(h);
+        }
+        self.clock = self.clock.saturating_add(1);
+        let h = IpcEventHandleId(self.next_ipc_event);
+        self.next_ipc_event = self.next_ipc_event.saturating_add(1);
+        let _prev = self.ipc_event_handles.insert(h, event);
+        Ok(h)
+    }
+
+    /// `cudaIpcOpenEventHandle`. Alias shares the source record (no extra event).
+    /// Capture cannot include it. The returned id is simulator-chosen.
+    pub fn ipc_open_event(&mut self, handle: IpcEventHandleId) -> Result<EventId, SimError> {
+        self.fail_if_capturing("cannot capture ipc")?;
+        let src = *self
+            .ipc_event_handles
+            .get(&handle)
+            .ok_or(SimError::Invalid {
+                why: "unknown ipc event",
+            })?;
+        {
+            let ev = self
+                .events
+                .get(&src)
+                .ok_or(SimError::UnknownEvent { event: src.0 })?;
+            if ev.ipc_src.is_some() {
+                return Err(SimError::Invalid {
+                    why: "ipc event import",
+                });
+            }
+            if !ev.interprocess {
+                return Err(SimError::Invalid {
+                    why: "not interprocess",
+                });
+            }
+        }
+        self.clock = self.clock.saturating_add(1);
+        let id = self.alloc_imported_event()?;
+        if let Some(ev) = self.events.get_mut(&src) {
+            ev.ipc_opens = ev.ipc_opens.saturating_add(1);
+        }
+        let mut ev = Ev::new(false);
+        ev.interprocess = true;
+        ev.ipc_src = Some(src);
+        let _prev = self.events.insert(id, ev);
+        Ok(id)
+    }
+
+    /// Whether `event` is a live [`Self::ipc_open_event`] alias.
+    pub fn is_ipc_event_import(&self, event: EventId) -> Result<bool, SimError> {
+        let ev = self
+            .events
+            .get(&event)
+            .ok_or(SimError::UnknownEvent { event: event.0 })?;
+        Ok(ev.ipc_src.is_some())
+    }
+
+    fn alloc_imported_event(&mut self) -> Result<EventId, SimError> {
+        let start = if self.next_imported_event == 0 {
+            1
+        } else {
+            self.next_imported_event
+        };
+        let mut n = start;
+        loop {
+            let id = EventId(n);
+            if !self.events.contains_key(&id) {
+                self.next_imported_event = n.checked_add(1).unwrap_or(1);
+                return Ok(id);
+            }
+            n = n.checked_add(1).unwrap_or(1);
+            if n == start {
+                return Err(SimError::Invalid {
+                    why: "event id space",
+                });
+            }
+        }
+    }
+
     /// `cudaFree`: wait every GPU that holds the pointer, then it is gone on
     /// all of them. [`Self::free`] is `cudaFreeAsync`. Host-pinned ids are
     /// [`SimError::UnknownAlloc`] (`cudaFreeHost` is [`Self::free_host_pinned`]).
@@ -11771,10 +11939,7 @@ impl Sim {
         stream: StreamId,
         external: bool,
     ) -> Result<OpId, SimError> {
-        let _ev = self.events.entry(event).or_insert(Ev {
-            recorded_by: None,
-            timing: true,
-        });
+        let _ev = self.events.entry(event).or_insert(Ev::new(true));
         self.submit(device, stream, Kind::EventRecord { event, external })
     }
 
@@ -11829,10 +11994,7 @@ impl Sim {
         external: bool,
     ) -> Result<OpId, SimError> {
         if let Entry::Vacant(slot) = self.events.entry(event) {
-            let _ev = slot.insert(Ev {
-                recorded_by: None,
-                timing: true,
-            });
+            let _ev = slot.insert(Ev::new(true));
         }
         self.submit(device, stream, Kind::EventWait { event, external })
     }
@@ -11936,7 +12098,7 @@ impl Sim {
                 why: "deadlock: event not complete but nothing running",
             });
         }
-        let rec = self.events.get(&event).and_then(|e| e.recorded_by);
+        let rec = self.event_recorded_by(event);
         if let Some(id) = rec {
             if self.ops.get(&id).is_some_and(|o| o.cancelled) {
                 let stream = self.ops.get(&id).map(|o| o.stream).unwrap_or(StreamId(0));
@@ -11982,21 +12144,29 @@ impl Sim {
                 why: "event elapsed: not complete",
             });
         }
-        let rec = self.events.get(&event).and_then(|e| e.recorded_by);
+        let rec = self.event_recorded_by(event);
         let Some(id) = rec else {
             return Err(SimError::Invalid {
                 why: "event elapsed: not recorded",
             });
         };
+        let root = self.event_root(event);
         let op = self.ops.get(&id).ok_or(SimError::Invalid {
             why: "event elapsed: missing record op",
         })?;
-        if op.programmatic_event.is_some_and(|p| p.event == event) && op.pdl.trigger {
+        if op
+            .programmatic_event
+            .is_some_and(|p| event_root_of(&self.events, p.event) == root)
+            && op.pdl.trigger
+        {
             return op.pdl_trigger_ns.ok_or(SimError::Invalid {
                 why: "event elapsed: programmatic trigger missing",
             });
         }
-        if op.launch_completion.is_some_and(|p| p.event == event) {
+        if op
+            .launch_completion
+            .is_some_and(|p| event_root_of(&self.events, p.event) == root)
+        {
             return op.start_ns.ok_or(SimError::Invalid {
                 why: "event elapsed: launch completion missing start",
             });
@@ -12078,7 +12248,7 @@ impl Sim {
     }
 
     fn apply_event_sync_policy_tax(&mut self, event: EventId) {
-        let Some(op) = self.events.get(&event).and_then(|e| e.recorded_by) else {
+        let Some(op) = self.event_recorded_by(event) else {
             return;
         };
         let Some(row) = self.ops.get(&op) else {
@@ -12122,11 +12292,12 @@ impl Sim {
         kind: Kind,
     ) -> Result<OpId, SimError> {
         if let Kind::EventWait { event, external } = &kind {
+            let root = self.event_root(*event);
             let join = !*external
                 && self
                     .capturing
                     .as_ref()
-                    .is_some_and(|c| c.events.contains(event));
+                    .is_some_and(|c| c.events.contains(&root));
             if join && !self.in_capture(device, stream) {
                 let same = self
                     .capturing
@@ -12161,34 +12332,31 @@ impl Sim {
         }
         if let Kind::EventRecord { event, external } = &kind {
             if !*external {
+                let root = self.event_root(*event);
                 if let Some(cap) = self.capturing.as_mut() {
-                    let _ins = cap.events.insert(*event);
+                    let _ins = cap.events.insert(root);
                 }
             }
         }
         if let Some(pe) = self.enqueue_programmatic_event {
-            let _ev = self.events.entry(pe.event).or_insert(Ev {
-                recorded_by: None,
-                timing: true,
-            });
+            let _ev = self.events.entry(pe.event).or_insert(Ev::new(true));
             if !pe.external {
+                let root = self.event_root(pe.event);
                 if let Some(cap) = self.capturing.as_mut() {
-                    let _ins = cap.events.insert(pe.event);
+                    let _ins = cap.events.insert(root);
                 }
             }
         }
         if let Some(lc) = self.enqueue_launch_completion {
-            let _ev = self.events.entry(lc.event).or_insert(Ev {
-                recorded_by: None,
-                timing: true,
-            });
+            let _ev = self.events.entry(lc.event).or_insert(Ev::new(true));
             if !lc.external {
+                let root = self.event_root(lc.event);
                 if let Some(cap) = self.capturing.as_mut() {
-                    let _ins = cap.events.insert(lc.event);
+                    let _ins = cap.events.insert(root);
                 }
             }
         }
-        let mut deps = capture_step_deps(&self.capture_buf, device, stream, &kind);
+        let mut deps = capture_step_deps(&self.capture_buf, device, stream, &kind, &self.events);
         self.merge_capture_pending(device, stream, &mut deps);
         let priority = self.snap_priority(device, stream);
         let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
@@ -12284,23 +12452,15 @@ impl Sim {
         let pde = self.enqueue_programmatic_event;
         let lce = self.enqueue_launch_completion;
         if let Some(pe) = pde {
-            let _ev = self.events.entry(pe.event).or_insert(Ev {
-                recorded_by: None,
-                timing: true,
-            });
+            let _ev = self.events.entry(pe.event).or_insert(Ev::new(true));
         }
         if let Some(lc) = lce {
-            let _ev = self.events.entry(lc.event).or_insert(Ev {
-                recorded_by: None,
-                timing: true,
-            });
+            let _ev = self.events.entry(lc.event).or_insert(Ev::new(true));
         }
         let mut deps = self.stream_order_deps(device, stream);
         if let Kind::EventWait { event, .. } = &kind {
-            if let Some(ev) = self.events.get(event) {
-                if let Some(rec) = ev.recorded_by {
-                    deps.push(rec);
-                }
+            if let Some(rec) = self.event_recorded_by(*event) {
+                deps.push(rec);
             }
         }
         let priority = self.snap_priority(device, stream);
@@ -12338,12 +12498,14 @@ impl Sim {
             },
         );
         if let Some(pe) = pde {
-            if let Some(ev) = self.events.get_mut(&pe.event) {
+            let root = self.event_root(pe.event);
+            if let Some(ev) = self.events.get_mut(&root) {
                 ev.recorded_by = Some(id);
             }
         }
         if let Some(lc) = lce {
-            if let Some(ev) = self.events.get_mut(&lc.event) {
+            let root = self.event_root(lc.event);
+            if let Some(ev) = self.events.get_mut(&root) {
                 ev.recorded_by = Some(id);
             }
         }
@@ -13303,13 +13465,19 @@ impl Sim {
             return true;
         }
         if let Kind::EventWait { event, .. } = &op.kind {
-            if prev.programmatic_event.is_some_and(|p| p.event == *event)
+            let root = event_root_of(&self.events, *event);
+            if prev
+                .programmatic_event
+                .is_some_and(|p| event_root_of(&self.events, p.event) == root)
                 && prev.pdl.trigger
                 && prev.pdl_trigger_ns.is_some_and(|t| self.clock >= t)
             {
                 return true;
             }
-            if prev.launch_completion.is_some_and(|p| p.event == *event) && prev.start_ns.is_some()
+            if prev
+                .launch_completion
+                .is_some_and(|p| event_root_of(&self.events, p.event) == root)
+                && prev.start_ns.is_some()
             {
                 return true;
             }
@@ -13459,8 +13627,8 @@ impl Sim {
                 Ok(true)
             }
             Kind::EventRecord { event, .. } => {
-                let event = *event;
-                if let Some(ev) = self.events.get_mut(&event) {
+                let root = self.event_root(*event);
+                if let Some(ev) = self.events.get_mut(&root) {
                     ev.recorded_by = Some(id);
                 }
                 self.running.push(Running {
@@ -13983,7 +14151,8 @@ impl Sim {
     }
 
     fn event_wait_gate(&self, event: EventId, skip_graph: bool) -> Result<Option<OpId>, SimError> {
-        if let Some(rec) = self.events.get(&event).and_then(|e| e.recorded_by) {
+        let root = self.event_root(event);
+        if let Some(rec) = self.event_recorded_by(root) {
             let graph_rec = self.ops.get(&rec).is_some_and(|o| {
                 skip_graph && matches!(o.launch, LaunchCost::GraphHead | LaunchCost::GraphBody)
             });
@@ -13992,7 +14161,7 @@ impl Sim {
                     let stream = self.ops.get(&rec).map(|o| o.stream).unwrap_or(StreamId(0));
                     return Err(SimError::Cancelled { stream, n: 1 });
                 }
-                if self.event_is_recorded(event) {
+                if self.event_is_recorded(root) {
                     return Ok(Some(rec));
                 }
                 return Ok(None);
@@ -14003,7 +14172,7 @@ impl Sim {
         let mut stream = StreamId(0);
         for op in self.ops.values() {
             if let Kind::EventRecord { event: ev, .. } = &op.kind {
-                if *ev == event {
+                if event_root_of(&self.events, *ev) == root {
                     if skip_graph
                         && matches!(op.launch, LaunchCost::GraphHead | LaunchCost::GraphBody)
                     {
@@ -15929,11 +16098,16 @@ fn cond_body_graphs(kind: &Kind) -> Vec<GraphId> {
     }
 }
 
+fn event_root_of(events: &BTreeMap<EventId, Ev>, event: EventId) -> EventId {
+    events.get(&event).and_then(|e| e.ipc_src).unwrap_or(event)
+}
+
 fn capture_step_deps(
     buf: &[GraphStep],
     device: DeviceId,
     stream: StreamId,
     kind: &Kind,
+    events: &BTreeMap<EventId, Ev>,
 ) -> Vec<usize> {
     let mut deps = Vec::new();
     if let Some(i) = buf
@@ -15944,13 +16118,14 @@ fn capture_step_deps(
     }
     if let Kind::EventWait { event, external } = kind {
         if !*external {
+            let wait = event_root_of(events, *event);
             if let Some(i) = buf.iter().rposition(|s| {
                 matches!(
                     &s.kind,
                     Kind::EventRecord {
                         event: e,
                         external: false
-                    } if e == event
+                    } if event_root_of(events, *e) == wait
                 )
             }) {
                 if !deps.contains(&i) {

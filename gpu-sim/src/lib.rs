@@ -37,6 +37,8 @@
 //! the import is an alias of the same physicals (no extra HBM). Free of the
 //! source while imports are live is Invalid. Capture cannot include IPC.
 //! [`Sim::ipc_get`] of a `cudaMallocAsync` pointer is Invalid (`not device ipc`).
+//! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
+//! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle` (interprocess events).
 //! [`Sim::create_shareable_pool`] is `cudaMemPoolCreate` with a POSIX-FD handle
 //! type. [`Sim::pool_export`] / [`pool_import`](Sim::pool_import) are
 //! `cudaMemPoolExportToShareableHandle` / `ImportFromShareableHandle`: the
@@ -138,8 +140,14 @@
 //! [`Sim::event_elapsed_ns`] is `cudaEventElapsedTime` in nanoseconds.
 //! [`Sim::create_event_disable_timing`] is `cudaEventDisableTiming` (elapsed fails).
 //! [`Sim::create_event_with_flags`] is `cudaEventCreateWithFlags`
-//! ([`EventCreateFlags::DISABLE_TIMING`] only; BlockingSync / Interprocess are
-//! Invalid). [`Sim::record_event_with_flags`] / [`wait_event_with_flags`](Sim::wait_event_with_flags)
+//! ([`EventCreateFlags::DISABLE_TIMING`] / [`EventCreateFlags::INTERPROCESS`];
+//! Interprocess requires DisableTiming; `cudaEventBlockingSync` is Invalid).
+//! [`Sim::create_event_interprocess`] is the Interprocess+DisableTiming helper.
+//! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
+//! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle`: the import aliases the
+//! source record. Destroy of the source while imports are live is Invalid.
+//! Capture cannot include event IPC.
+//! [`Sim::record_event_with_flags`] / [`wait_event_with_flags`](Sim::wait_event_with_flags)
 //! are `cudaEventRecordWithFlags` / `cudaStreamWaitEvent` flags
 //! ([`EventRecordFlags::EXTERNAL`] / [`EventWaitFlags::EXTERNAL`]). Typed
 //! helpers stay.
@@ -510,8 +518,8 @@ mod sim;
 
 pub use error::SimError;
 pub use ids::{
-    AllocId, CondId, DeviceId, EventId, GraphId, IpcHandleId, LinkId, MemHandleId, MulticastId,
-    OpId, PoolId, PtrExportId, ShareableHandleId, StreamId, UserObjectId,
+    AllocId, CondId, DeviceId, EventId, GraphId, IpcEventHandleId, IpcHandleId, LinkId,
+    MemHandleId, MulticastId, OpId, PoolId, PtrExportId, ShareableHandleId, StreamId, UserObjectId,
 };
 pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp,
@@ -12351,6 +12359,141 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn ipc_event_handle_aliases_record() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let copy = StreamId(0);
+        let compute = StreamId(1);
+        let ev = EventId(3);
+        match sim.create_event_with_flags(ev, EventCreateFlags::INTERPROCESS) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("interprocess timing"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.create_event_interprocess(ev).unwrap();
+        assert!(!sim.event_timing(ev).unwrap());
+        match sim.ipc_get_event(EventId(99)) {
+            Err(SimError::UnknownEvent { event }) => assert_eq!(event, 99),
+            other => panic!("{other:?}"),
+        }
+        let h = sim.ipc_get_event(ev).unwrap();
+        assert_eq!(sim.ipc_get_event(ev).unwrap(), h);
+        let imp = sim.ipc_open_event(h).unwrap();
+        assert_ne!(imp, ev);
+        assert!(sim.is_ipc_event_import(imp).unwrap());
+        assert!(!sim.is_ipc_event_import(ev).unwrap());
+        match sim.ipc_get_event(imp) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("ipc event import"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let a = sim.alloc(d, 4096, copy).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, copy));
+        sim.synchronize().unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], copy));
+        enq(sim.record_event(d, ev, copy));
+        enq(sim.wait_event(d, imp, compute));
+        assert!(!sim.query_event(imp).unwrap());
+        sim.synchronize().unwrap();
+        assert!(sim.query_event(imp).unwrap());
+        assert!(sim.query_event(ev).unwrap());
+        match sim.event_elapsed_ns(ev, imp) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("disable timing"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.destroy_event(ev) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("ipc mapped"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_event(imp).unwrap();
+        match sim.is_ipc_event_import(imp) {
+            Err(SimError::UnknownEvent { event }) => assert_eq!(event, imp.0),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_event(ev).unwrap();
+    }
+
+    #[test]
+    fn ipc_event_record_on_import_wakes_source_wait() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let copy = StreamId(0);
+        let compute = StreamId(1);
+        let ev = EventId(4);
+        sim.create_event_interprocess(ev).unwrap();
+        let h = sim.ipc_get_event(ev).unwrap();
+        let imp = sim.ipc_open_event(h).unwrap();
+        let a = sim.alloc(d, 4096, copy).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, copy));
+        sim.synchronize().unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], copy));
+        enq(sim.record_event(d, imp, copy));
+        enq(sim.wait_event(d, ev, compute));
+        assert!(!sim.query_event(ev).unwrap());
+        sim.synchronize().unwrap();
+        assert!(sim.query_event(ev).unwrap());
+        assert!(sim.query_event(imp).unwrap());
+    }
+
+    #[test]
+    fn ipc_event_capture_refused_and_non_interprocess() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.create_event(EventId(1)).unwrap();
+        match sim.ipc_get_event(EventId(1)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not interprocess"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.create_event_disable_timing(EventId(2)).unwrap();
+        match sim.ipc_get_event(EventId(2)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not interprocess"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.ipc_open_event(IpcEventHandleId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown ipc event"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.create_event_interprocess(EventId(3)).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.ipc_get_event(EventId(3)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.ipc_open_event(IpcEventHandleId(1)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn ipc_event_capture_fork_joins_import_wait() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let copy = StreamId(0);
+        let compute = StreamId(1);
+        let ev = EventId(3);
+        sim.create_event_interprocess(ev).unwrap();
+        let h = sim.ipc_get_event(ev).unwrap();
+        let imp = sim.ipc_open_event(h).unwrap();
+        let a = sim.alloc(d, 4096, copy).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, copy));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, copy).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], copy));
+        enq(sim.record_event(d, ev, copy));
+        enq(sim.wait_event(d, imp, compute));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 3);
+        let n = sim.launch_graph(g, copy).unwrap();
+        assert_eq!(n, 3);
+        sim.synchronize().unwrap();
+        assert!(sim.event_complete(ev));
+        assert!(sim.event_complete(imp));
     }
 
     #[test]

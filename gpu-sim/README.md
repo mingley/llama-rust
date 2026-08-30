@@ -35,6 +35,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemPoolSetAccess` (`pool_set_access`) ReadWrite on a peer; dest HBM stays 0; writes allowed | interconnect, not local HBM |
 | `cudaMalloc` (`malloc`) device-syncs that GPU, then the pointer is usable; it cannot consume another pool's cache | `alloc_overhead_ns` (charged at the call) |
 | `cudaIpcGetMemHandle` / `ipc_open` / `ipc_close` share physicals | `alloc_overhead_ns` (export/import) |
+| `cudaIpcGetEventHandle` / `ipc_open_event` share the source record | 1 ns (export/import) |
 | `cudaMemPoolExportToShareableHandle` / `pool_import` share live/cached | `alloc_overhead_ns` (export/import) |
 | `cudaMemPoolExportPointer` / `pool_import_ptr` alias pool allocs | `alloc_overhead_ns` (export/import) |
 | `cudaDeviceSetMemPool` rebinds `alloc` (`set_device_mempool`); GetDefaultMemPool stays | `alloc_overhead_ns` |
@@ -266,8 +267,13 @@ not advance the virtual clock. Independent streams stay live. A stream that
 `cudaEventWaitExternal`) do not join, so a live waiter can overlap graph launch.
 `record_event_with_flags` / `wait_event_with_flags` / `create_event_with_flags`
 are the flags-parameter twins (`EventRecordFlags::EXTERNAL` /
-`EventWaitFlags::EXTERNAL` / `EventCreateFlags::DISABLE_TIMING`). Unknown bits
-are Invalid. BlockingSync / Interprocess are not modeled. Typed helpers stay.
+`EventWaitFlags::EXTERNAL` / `EventCreateFlags::DISABLE_TIMING` /
+`EventCreateFlags::INTERPROCESS`). Unknown bits are Invalid. Interprocess
+requires DisableTiming. `cudaEventBlockingSync` is not modeled. Typed helpers
+stay (`create_event_interprocess`).
+`ipc_get_event` / `ipc_open_event` are `cudaIpcGetEventHandle` /
+`cudaIpcOpenEventHandle`: the import aliases the source record. Destroy of
+the source while imports are live is Invalid. Capture cannot include event IPC.
 `launch_graph` remaps origin-stream nodes onto the launch stream so copy and
 compute can overlap. Query or `synchronize_stream` of a capturing stream, and
 node `synchronize`, are `Invalid`. `launch_graph` during capture records a
@@ -512,6 +518,9 @@ peers need `pool_set_access`).
 `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`: the import aliases the
 source physicals (no extra HBM). Free of the source while imports are live
 is Invalid. `ipc_get` of a mempool alloc is Invalid. Capture cannot include IPC.
+`ipc_get_event` / `ipc_open_event` are `cudaIpcGetEventHandle` /
+`cudaIpcOpenEventHandle` (interprocess event alias; destroy of the source
+while imports are live is Invalid).
 `create_shareable_pool` is `cudaMemPoolCreate` with a POSIX-FD handle type.
 `pool_export` / `pool_import` are `cudaMemPoolExportToShareableHandle` /
 `ImportFromShareableHandle`: the import is a new pool id that shares

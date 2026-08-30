@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaIpcGetEventHandle` / `OpenEventHandle`
+
+`Sim::ipc_get_event` / `ipc_open_event` export an Interprocess event and
+import an alias of the source record. Interprocess requires DisableTiming.
+`create_event_interprocess` is the typed helper. Destroy of the source
+while imports are live is Invalid. Capture cannot include event IPC.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaHostAlloc` / `cudaHostRegister` flags
 
 `Sim::alloc_host_with_flags` / `host_register_with_flags` take
@@ -2219,7 +2227,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 193 (`HostAlloc` flags).
+Next code change is PLAN systems depth after item 194 (`cudaIpcGetEventHandle`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

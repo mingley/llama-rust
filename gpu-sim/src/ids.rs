@@ -29,8 +29,9 @@ impl StreamId {
 /// Cross-stream ordering token. Record on one stream, wait on another.
 ///
 /// [`crate::Sim::create_event_disable_timing`] is `cudaEventDisableTiming`
-/// (elapsed fails; wait/query still work). Implicit create on record is
-/// timing-enabled (`cudaEventDefault`).
+/// (elapsed fails; wait/query still work). [`crate::Sim::create_event_interprocess`]
+/// is Interprocess+DisableTiming for [`crate::Sim::ipc_get_event`]. Implicit
+/// create on record is timing-enabled (`cudaEventDefault`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct EventId(pub u32);
 
@@ -82,6 +83,18 @@ pub struct IpcHandleId(pub u64);
 impl fmt::Display for IpcHandleId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "ipc{}", self.0)
+    }
+}
+
+/// `cudaIpcEventHandle_t`. [`crate::Sim::ipc_get_event`] exports an
+/// interprocess event; [`crate::Sim::ipc_open_event`] imports an alias that
+/// shares the source record. `IpcEventHandleId(0)` is reserved (unset).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct IpcEventHandleId(pub u64);
+
+impl fmt::Display for IpcEventHandleId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ipcev{}", self.0)
     }
 }
 

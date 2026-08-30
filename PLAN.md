@@ -2200,7 +2200,20 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-194. [ ] Next numbered PLAN item after 193 is the next `gpu-sim` / Engine /
+194. [x] `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle`:
+    `Sim::ipc_get_event` / `ipc_open_event` export an
+    [`EventCreateFlags::INTERPROCESS`] event and import an alias that
+    shares the source record. Interprocess requires DisableTiming
+    (Invalid `"interprocess timing"` otherwise). `cudaEventBlockingSync`
+    stays Invalid. Same event returns the same handle. An import cannot
+    export. Destroy of the source while imports are live is Invalid
+    `"ipc mapped"`. Destroy of an import does not destroy the source.
+    Capture cannot include event IPC. Typed helper:
+    `create_event_interprocess`. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+195. [ ] Next numbered PLAN item after 194 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
