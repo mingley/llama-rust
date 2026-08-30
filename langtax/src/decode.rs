@@ -206,7 +206,8 @@ const GEMMA3N_N_EMBD_ALTUP: usize = 256;
 /// Official `models.h` `n_layer_sparsity` (not a GGUF KV).
 const GEMMA3N_N_LAYER_SPARSITY: usize = 10;
 /// Official `models.h` `f_sparsity_std_mul` = `Normal(0,1).icdf(0.95)`.
-const GEMMA3N_SPARSITY_STD_MUL: f32 = 1.644_853_353_500_366_2;
+/// Stored as the exact `f32` of the official double `1.6448533535003662`.
+const GEMMA3N_SPARSITY_STD_MUL: f32 = 1.644_853_4;
 /// Official gemma3n.cpp `n_layer_kv_from_start` (convert `attention.shared_kv_layers`).
 const GEMMA3N_N_LAYER_KV_FROM_START: u32 = 20;
 
@@ -11007,12 +11008,14 @@ mod tests {
         let base = arch_f32(g, arch, "rope.freq_base").unwrap_or(10_000.0);
         let hd = n_embd / n_head;
         let gqa = n_head / n_kv;
-        let n_altup =
-            arch_u32(g, arch, "altup.num_inputs").unwrap_or(GEMMA3N_N_ALTUP as u32) as usize;
-        let i_act =
-            arch_u32(g, arch, "altup.active_idx").unwrap_or(GEMMA3N_I_ALTUP_ACT as u32) as usize;
+        let n_altup = arch_u32(g, arch, "altup.num_inputs")
+            .unwrap_or(u32::try_from(GEMMA3N_N_ALTUP).unwrap_or(0)) as usize;
+        let i_act = arch_u32(g, arch, "altup.active_idx")
+            .unwrap_or(u32::try_from(GEMMA3N_I_ALTUP_ACT).unwrap_or(0))
+            as usize;
         let n_ea = arch_u32(g, arch, "embedding_length_per_layer_input")
-            .unwrap_or(GEMMA3N_N_EMBD_ALTUP as u32) as usize;
+            .unwrap_or(u32::try_from(GEMMA3N_N_EMBD_ALTUP).unwrap_or(0))
+            as usize;
         let n_swa = arch_u32(g, arch, "attention.sliding_window").unwrap() as usize;
         let period = arch_u32(g, arch, "attention.sliding_window_pattern")
             .unwrap_or(GEMMA3N_SWA_PERIOD_DEFAULT);
@@ -11185,8 +11188,8 @@ mod tests {
                 first = oracle_gemv(g.tensor(&tname(li, "proj.weight")).unwrap(), &first);
                 let post = f32s(g.tensor(&tname(li, "post_norm.weight")).unwrap()).unwrap();
                 first = oracle_rmsnorm(&first, &post, eps);
-                for i in 1..n_altup {
-                    for (d, s) in pred[i].iter_mut().zip(first.iter()) {
+                for stream in pred.iter_mut().skip(1) {
+                    for (d, s) in stream.iter_mut().zip(first.iter()) {
                         *d += *s;
                     }
                 }
