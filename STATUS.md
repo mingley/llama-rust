@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — true `cudaGraphAddBatchMemOpNode` / `cuStreamBatchMemOp`
+
+A multi-item batch is one `GpuOp::BatchMem` node, not sequential wait/write
+nodes with deps. `batch_mem_op` is live `cuStreamBatchMemOp`; a single item
+still submits `WriteValue` / `WaitValue`. A wait sees earlier writes in that
+vector and does not see later ones. Writes commit on complete. Disabling the
+node skips the whole batch. Item lists are parameters for `update_graph` and
+`graph_exec_batch_mem_ops_set_params`. Decode identity stays kernel-only
+graphs. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaGraphInstantiateFlagDeviceLaunch`
 
 `instantiate_graph_with_flags(DEVICE_LAUNCH)` on kernel/memcpy/memset

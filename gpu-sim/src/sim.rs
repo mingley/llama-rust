@@ -2261,16 +2261,31 @@ impl Sim {
     /// `cudaGraphBatchMemOpNodeSetParams` on the graph definition.
     ///
     /// After instantiate this does not retarget the exec; use
-    /// [`Self::graph_exec_batch_mem_op_set_params`]. Wait vs write, `bits32`,
-    /// and compare mode stay (topology). Capture cannot include it. Host-sync
-    /// 1 ns.
+    /// [`Self::graph_exec_batch_mem_op_set_params`]. A wait-value / write-value
+    /// node keeps wait vs write, `bits32`, and compare (topology). A
+    /// [`crate::GpuOp::BatchMem`] node treats the item list as parameters
+    /// (length may change). Capture cannot include it. Host-sync 1 ns.
     pub fn graph_batch_mem_op_set_params(
         &mut self,
         graph: GraphId,
         node: usize,
         op: BatchMemOp,
     ) -> Result<(), SimError> {
-        self.set_batch_mem_op(graph, node, op, false)
+        self.set_batch_mem_ops(graph, node, &[op], false)
+    }
+
+    /// Replace the item list of a [`crate::GpuOp::BatchMem`] graph node.
+    ///
+    /// Empty is Invalid. Wait vs write mix and length are parameters. After
+    /// instantiate this does not retarget the exec. Capture cannot include it.
+    /// Host-sync 1 ns.
+    pub fn graph_batch_mem_ops_set_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        ops: &[BatchMemOp],
+    ) -> Result<(), SimError> {
+        self.set_batch_mem_ops(graph, node, ops, false)
     }
 
     /// `cudaGraphExecMemcpyNodeSetParams` on an instantiated exec.
@@ -2382,24 +2397,34 @@ impl Sim {
 
     /// `cudaGraphExecBatchMemOpNodeSetParams` on an instantiated exec.
     ///
-    /// Node `node` must already be a wait-value or write-value node. Id /
-    /// offset / value may change; wait vs write, `bits32`, and compare mode
-    /// stay. Pays `graph_set_params_ns` and clears the upload flag. Capture
-    /// cannot include it.
+    /// A wait-value / write-value node may change id / offset / value; wait vs
+    /// write, `bits32`, and compare stay. A [`crate::GpuOp::BatchMem`] node
+    /// replaces the item list (length may change). Pays `graph_set_params_ns`
+    /// and clears the upload flag. Capture cannot include it.
     pub fn graph_exec_batch_mem_op_set_params(
         &mut self,
         exec: GraphId,
         node: usize,
         op: BatchMemOp,
     ) -> Result<(), SimError> {
-        self.set_batch_mem_op(exec, node, op, true)
+        self.set_batch_mem_ops(exec, node, &[op], true)
     }
 
-    fn set_batch_mem_op(
+    /// Exec-side item-list SetParams for a [`crate::GpuOp::BatchMem`] node.
+    pub fn graph_exec_batch_mem_ops_set_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        ops: &[BatchMemOp],
+    ) -> Result<(), SimError> {
+        self.set_batch_mem_ops(exec, node, ops, true)
+    }
+
+    fn set_batch_mem_ops(
         &mut self,
         graph: GraphId,
         node: usize,
-        op: BatchMemOp,
+        ops: &[BatchMemOp],
         exec: bool,
     ) -> Result<(), SimError> {
         self.fail_if_capturing(if exec {
@@ -2407,8 +2432,8 @@ impl Sim {
         } else {
             "cannot capture batch mem op node set params"
         })?;
-        self.check_batch_mem(op)?;
-        let (device, instantiated) = {
+        self.check_batch_mem_ops(ops)?;
+        let (device, instantiated, next) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
@@ -2420,8 +2445,8 @@ impl Sim {
             .ok_or(SimError::Invalid {
                 why: "unknown graph node",
             })?;
-            batch_set_params_ok(&step.kind, op)?;
-            (step.device, g.instantiated)
+            let next = batch_ops_set_params_kind(&step.kind, ops)?;
+            (step.device, g.instantiated, next)
         };
         if exec && !instantiated {
             return Err(SimError::Invalid {
@@ -2446,7 +2471,7 @@ impl Sim {
         .ok_or(SimError::Invalid {
             why: "unknown graph node",
         })?;
-        step.kind = kind_from_batch(op);
+        step.kind = next;
         if exec {
             g.uploaded = false;
         }
@@ -2908,6 +2933,24 @@ impl Sim {
         graph: GraphId,
     ) -> Result<Option<(usize, BatchMemOp)>, SimError> {
         self.graph_try_unique_batch_mem(graph, false)
+    }
+
+    /// Wait/write items of a batch-mem-op node on `graph` (exec snapshot when
+    /// instantiated). Wait-value / write-value nodes are a one-item list.
+    pub fn graph_batch_mem_ops(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Vec<BatchMemOp>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.view().get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        batch_items(&step.kind).ok_or(SimError::Invalid {
+            why: "not a batch mem op node",
+        })
     }
 
     fn graph_try_unique_batch_mem(
@@ -3745,37 +3788,20 @@ impl Sim {
         )
     }
 
-    /// Sequential batch-mem-op nodes with stream-order deps (`cudaGraphAddBatchMemOpNode`).
+    /// `cudaGraphAddBatchMemOpNode`: one node holding the wait/write vector.
     ///
-    /// CUDA packs the vector into one node; this crate records one node per
-    /// item and [`Self::graph_add_dependencies`] chains them. Empty is Invalid.
+    /// Empty is Invalid. Items run in order inside the node at launch (a wait
+    /// sees earlier writes in this vector; it does not see later ones). Capture
+    /// cannot include it (use [`Self::batch_mem_op`] during capture). Illegal
+    /// after instantiate.
     pub fn graph_add_batch_mem_op(
         &mut self,
         graph: GraphId,
         ops: &[BatchMemOp],
     ) -> Result<(), SimError> {
-        if ops.is_empty() {
-            return Err(SimError::Invalid {
-                why: "empty batch mem op",
-            });
-        }
-        let mut prev: Option<usize> = None;
-        for op in ops {
-            let idx = self
-                .graphs
-                .get(&graph)
-                .ok_or(SimError::Invalid {
-                    why: "unknown graph",
-                })?
-                .steps
-                .len();
-            self.graph_add_batch_item(graph, *op)?;
-            if let Some(p) = prev {
-                self.graph_add_dependencies(graph, p, idx)?;
-            }
-            prev = Some(idx);
-        }
-        Ok(())
+        self.check_batch_mem_ops(ops)?;
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.graph_push(graph, device, stream, Kind::BatchMem { ops: ops.to_vec() })
     }
 
     fn graph_add_batch_item(&mut self, graph: GraphId, op: BatchMemOp) -> Result<(), SimError> {
@@ -6501,6 +6527,25 @@ impl Sim {
         )
     }
 
+    /// `cuStreamBatchMemOp`. One stream op for the wait/write vector.
+    ///
+    /// Empty is Invalid. A single item is [`Self::write_value64`] /
+    /// [`Self::wait_value64`] (same [`crate::GpuOp`] as those APIs). Two or more
+    /// items are [`crate::GpuOp::BatchMem`]. Capture records one graph node.
+    /// Writes commit on complete. A wait sees earlier writes in this vector.
+    pub fn batch_mem_op(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        ops: &[BatchMemOp],
+    ) -> Result<OpId, SimError> {
+        self.check_batch_mem_ops(ops)?;
+        if let [op] = ops {
+            return self.submit(device, stream, kind_from_batch(*op));
+        }
+        self.submit(device, stream, Kind::BatchMem { ops: ops.to_vec() })
+    }
+
     fn submit_batch_mem(
         &mut self,
         device: DeviceId,
@@ -6509,6 +6554,18 @@ impl Sim {
     ) -> Result<OpId, SimError> {
         self.check_batch_mem(op)?;
         self.submit(device, stream, kind_from_batch(op))
+    }
+
+    fn check_batch_mem_ops(&self, ops: &[BatchMemOp]) -> Result<(), SimError> {
+        if ops.is_empty() {
+            return Err(SimError::Invalid {
+                why: "empty batch mem op",
+            });
+        }
+        for op in ops {
+            self.check_batch_mem(*op)?;
+        }
+        Ok(())
     }
 
     fn check_batch_mem(&self, op: BatchMemOp) -> Result<(), SimError> {
@@ -6523,6 +6580,13 @@ impl Sim {
         let total = self.alloc_ref(id)?.bytes;
         let _width = wait_value_span(total, offset, bits32)?;
         Ok(())
+    }
+
+    fn apply_mailbox_write(&mut self, id: AllocId, offset: u64, value: u64, bits32: bool) {
+        let mask = wait_value_mask(bits32);
+        let prev = self.mailbox.get(&(id, offset)).copied().unwrap_or(0);
+        let stored = (prev & !mask) | (value & mask);
+        let _old = self.mailbox.insert((id, offset), stored);
     }
 
     fn clear_mailbox(&mut self, id: AllocId) {
@@ -8075,42 +8139,80 @@ impl Sim {
                 let batch = batch_from_kind(&op.kind).ok_or(SimError::Invalid {
                     why: "batch mem op",
                 })?;
-                self.start_batch_mem(id, device, batch)
+                self.start_batch_mem_ops(id, device, &[batch])
+            }
+            Kind::BatchMem { ops } => {
+                let ops = ops.clone();
+                self.start_batch_mem_ops(id, device, &ops)
             }
             Kind::DeviceLaunch { .. } => self.start_device_launch(id, device),
         }
     }
 
-    fn start_batch_mem(
+    fn start_batch_mem_ops(
         &mut self,
         op: OpId,
         device: DeviceId,
-        batch: BatchMemOp,
+        ops: &[BatchMemOp],
     ) -> Result<bool, SimError> {
-        let (alloc, offset, bits32) = match batch {
-            BatchMemOp::Write {
-                id, offset, bits32, ..
-            }
-            | BatchMemOp::Wait {
-                id, offset, bits32, ..
-            } => (id, offset, bits32),
-        };
-        self.require_wait_value_resident(device, alloc, offset, bits32)?;
-        if let BatchMemOp::Wait {
-            value, bits32, cmp, ..
-        } = batch
-        {
-            let mask = wait_value_mask(bits32);
-            let loc = self.mailbox.get(&(alloc, offset)).copied().unwrap_or(0) & mask;
-            if !cmp.matches(loc, value & mask) {
-                return Ok(false);
-            }
+        if !self.batch_mem_ready(device, ops)? {
+            return Ok(false);
         }
         self.running.push(Running {
             op,
             remaining_ns: 1,
             share: Share::Solo,
         });
+        Ok(true)
+    }
+
+    fn batch_mem_ready(&self, device: DeviceId, ops: &[BatchMemOp]) -> Result<bool, SimError> {
+        let mut overlay: BTreeMap<(AllocId, u64), u64> = BTreeMap::new();
+        for item in ops {
+            let (alloc, offset, bits32) = match *item {
+                BatchMemOp::Write {
+                    id, offset, bits32, ..
+                }
+                | BatchMemOp::Wait {
+                    id, offset, bits32, ..
+                } => (id, offset, bits32),
+            };
+            self.require_wait_value_resident(device, alloc, offset, bits32)?;
+            match *item {
+                BatchMemOp::Write {
+                    id,
+                    offset,
+                    value,
+                    bits32,
+                } => {
+                    let mask = wait_value_mask(bits32);
+                    let prev = overlay
+                        .get(&(id, offset))
+                        .copied()
+                        .or_else(|| self.mailbox.get(&(id, offset)).copied())
+                        .unwrap_or(0);
+                    let _old = overlay.insert((id, offset), (prev & !mask) | (value & mask));
+                }
+                BatchMemOp::Wait {
+                    id,
+                    offset,
+                    value,
+                    bits32,
+                    cmp,
+                } => {
+                    let mask = wait_value_mask(bits32);
+                    let loc = overlay
+                        .get(&(id, offset))
+                        .copied()
+                        .or_else(|| self.mailbox.get(&(id, offset)).copied())
+                        .unwrap_or(0)
+                        & mask;
+                    if !cmp.matches(loc, value & mask) {
+                        return Ok(false);
+                    }
+                }
+            }
+        }
         Ok(true)
     }
 
@@ -8766,20 +8868,13 @@ impl Sim {
         if let Some(m) = memcpy {
             self.finish_memcpy(device, m, dma)?;
         }
-        let write = self.ops.get(&id).and_then(|op| match &op.kind {
-            Kind::WriteValue {
-                id,
-                offset,
-                value,
-                bits32,
-            } => Some((*id, *offset, *value, *bits32)),
-            _ => None,
-        });
-        if let Some((alloc, offset, value, bits32)) = write {
-            let mask = wait_value_mask(bits32);
-            let prev = self.mailbox.get(&(alloc, offset)).copied().unwrap_or(0);
-            let stored = (prev & !mask) | (value & mask);
-            let _old = self.mailbox.insert((alloc, offset), stored);
+        let writes: Vec<(AllocId, u64, u64, bool)> = self
+            .ops
+            .get(&id)
+            .map(|op| mailbox_writes(&op.kind))
+            .unwrap_or_default();
+        for (alloc, offset, value, bits32) in writes {
+            self.apply_mailbox_write(alloc, offset, value, bits32);
         }
         if let Some(op) = self.ops.get_mut(&id) {
             op.done = true;
@@ -9042,6 +9137,90 @@ fn batch_set_params_ok(step: &Kind, op: BatchMemOp) -> Result<(), SimError> {
     }
 }
 
+fn batch_ops_set_params_kind(step: &Kind, ops: &[BatchMemOp]) -> Result<Kind, SimError> {
+    match step {
+        Kind::BatchMem { .. } => Ok(Kind::BatchMem { ops: ops.to_vec() }),
+        Kind::WriteValue { .. } | Kind::WaitValue { .. } => {
+            if ops.len() != 1 {
+                return Err(SimError::Invalid {
+                    why: "batch mem op length",
+                });
+            }
+            let op = ops.first().copied().ok_or(SimError::Invalid {
+                why: "empty batch mem op",
+            })?;
+            batch_set_params_ok(step, op)?;
+            Ok(kind_from_batch(op))
+        }
+        _ => Err(SimError::Invalid {
+            why: "not a batch mem op node",
+        }),
+    }
+}
+
+fn batch_items(kind: &Kind) -> Option<Vec<BatchMemOp>> {
+    match kind {
+        Kind::BatchMem { ops } => Some(ops.clone()),
+        Kind::WriteValue { .. } | Kind::WaitValue { .. } => {
+            batch_from_kind(kind).map(|op| vec![op])
+        }
+        _ => None,
+    }
+}
+
+fn mailbox_writes(kind: &Kind) -> Vec<(AllocId, u64, u64, bool)> {
+    match kind {
+        Kind::WriteValue {
+            id,
+            offset,
+            value,
+            bits32,
+        } => vec![(*id, *offset, *value, *bits32)],
+        Kind::BatchMem { ops } => ops
+            .iter()
+            .filter_map(|item| match *item {
+                BatchMemOp::Write {
+                    id,
+                    offset,
+                    value,
+                    bits32,
+                } => Some((id, offset, value, bits32)),
+                BatchMemOp::Wait { .. } => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn remap_batch_op(op: BatchMemOp, map: &BTreeMap<AllocId, AllocId>) -> BatchMemOp {
+    match op {
+        BatchMemOp::Write {
+            id,
+            offset,
+            value,
+            bits32,
+        } => BatchMemOp::Write {
+            id: remap_alloc_id(id, map),
+            offset,
+            value,
+            bits32,
+        },
+        BatchMemOp::Wait {
+            id,
+            offset,
+            value,
+            bits32,
+            cmp,
+        } => BatchMemOp::Wait {
+            id: remap_alloc_id(id, map),
+            offset,
+            value,
+            bits32,
+            cmp,
+        },
+    }
+}
+
 fn nvlink_clique(profile: &HardwareProfile, devices: &[DeviceId]) -> Result<(), SimError> {
     if devices.len() < 2 {
         return Err(SimError::Invalid {
@@ -9222,6 +9401,9 @@ fn remap_alloc_kind(kind: Kind, map: &BTreeMap<AllocId, AllocId>) -> Kind {
             bits32,
             cmp,
         },
+        Kind::BatchMem { ops } => Kind::BatchMem {
+            ops: ops.into_iter().map(|op| remap_batch_op(op, map)).collect(),
+        },
         Kind::AllReduce { bytes, parts } => Kind::AllReduce {
             bytes,
             parts: parts
@@ -9339,7 +9521,9 @@ fn node_kind(kind: &Kind) -> GraphNodeKind {
         Kind::While { .. } => GraphNodeKind::While,
         Kind::WhileTick { .. } => GraphNodeKind::WhileTick,
         Kind::Switch { .. } => GraphNodeKind::Switch,
-        Kind::WriteValue { .. } | Kind::WaitValue { .. } => GraphNodeKind::BatchMemOp,
+        Kind::WriteValue { .. } | Kind::WaitValue { .. } | Kind::BatchMem { .. } => {
+            GraphNodeKind::BatchMemOp
+        }
         Kind::DeviceLaunch { .. } => GraphNodeKind::DeviceLaunch,
     }
 }
@@ -9538,6 +9722,7 @@ fn op_eq(a: &Kind, b: &Kind) -> bool {
                 bits32: y, cmp: cy, ..
             },
         ) => x == y && cx == cy,
+        (Kind::BatchMem { .. }, Kind::BatchMem { .. }) => true,
         _ => op_tag(a) == op_tag(b),
     }
 }
@@ -9564,6 +9749,7 @@ fn op_tag(k: &Kind) -> u8 {
         Kind::WriteValue { .. } => 17,
         Kind::WaitValue { .. } => 18,
         Kind::DeviceLaunch { .. } => 19,
+        Kind::BatchMem { .. } => 20,
     }
 }
 

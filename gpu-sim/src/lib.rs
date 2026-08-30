@@ -105,7 +105,9 @@
 //! compute/copy occupancy). [`wait_value64`](Sim::wait_value64) /
 //! [`wait_value32`](Sim::wait_value32) are `cuStreamWaitValue64` / `WaitValue32`
 //! ([`WaitValueCmp`]; unwritten locations read as 0; unsatisfied wait plus
-//! [`Sim::synchronize`] deadlocks). Kernel / memset / memcpy stores to the
+//! [`Sim::synchronize`] deadlocks). [`batch_mem_op`](Sim::batch_mem_op) is
+//! `cuStreamBatchMemOp` (one stream op; a wait sees earlier writes in that
+//! vector). Kernel / memset / memcpy stores to the
 //! mailbox address are not modeled. Device-resident and mapped-host are legal;
 //! remote AccessedBy maps are not. Capture records a batch-mem-op node.
 //! [`Sim::set_stream_blocking`] is `cudaStreamCreate` vs `cudaStreamNonBlocking`.
@@ -141,7 +143,8 @@
 //! [`graph_kernel_set_params`](Sim::graph_kernel_set_params) /
 //! [`graph_memcpy_set_params`](Sim::graph_memcpy_set_params) /
 //! [`graph_memset_set_params`](Sim::graph_memset_set_params) /
-//! [`graph_batch_mem_op_set_params`](Sim::graph_batch_mem_op_set_params) are
+//! [`graph_batch_mem_op_set_params`](Sim::graph_batch_mem_op_set_params) /
+//! [`graph_batch_mem_ops_set_params`](Sim::graph_batch_mem_ops_set_params) are
 //! `cudaGraphKernelNodeSetParams` / `MemcpyNodeSetParams` / `MemsetNodeSetParams`
 //! / `BatchMemOpNodeSetParams`
 //! on the graph and do not retarget an already-instantiated exec.
@@ -170,7 +173,9 @@
 //! [`graph_try_unique_memset`](Sim::graph_try_unique_memset) find that node.
 //! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
 //! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
-//! `bits32`, and compare stay). [`graph_unique_write_value`](Sim::graph_unique_write_value)
+//! `bits32`, and compare stay on wait/write nodes;
+//! [`graph_exec_batch_mem_ops_set_params`](Sim::graph_exec_batch_mem_ops_set_params)
+//! replaces a [`GpuOp::BatchMem`] item list). [`graph_unique_write_value`](Sim::graph_unique_write_value)
 //! / [`graph_unique_wait_value`](Sim::graph_unique_wait_value) find those nodes.
 //! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params) is
 //! `cudaGraphExecChildGraphNodeSetParams`: swap the nested graph of one
@@ -198,6 +203,7 @@
 //! [`graph_add_write_value64`](Sim::graph_add_write_value64) /
 //! [`graph_add_wait_value64`](Sim::graph_add_wait_value64) /
 //! [`graph_add_batch_mem_op`](Sim::graph_add_batch_mem_op) /
+//! [`batch_mem_op`](Sim::batch_mem_op) /
 //! [`graph_add_child`](Sim::graph_add_child) /
 //! [`graph_add_alloc`](Sim::graph_add_alloc) /
 //! [`graph_add_free`](Sim::graph_add_free) /
@@ -8558,7 +8564,7 @@ mod tests {
     }
 
     #[test]
-    fn graph_add_batch_mem_op_chains_write_then_wait() {
+    fn graph_add_batch_mem_op_is_one_node() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
         let s = StreamId(0);
@@ -8583,16 +8589,282 @@ mod tests {
             ],
         )
         .unwrap();
-        assert_eq!(sim.graph_node_deps(g, 1).unwrap(), vec![0]);
+        assert_eq!(sim.graph_len(g).unwrap(), 1);
+        assert_eq!(
+            sim.graph_node_kind(g, 0).unwrap(),
+            GraphNodeKind::BatchMemOp
+        );
+        assert!(sim.graph_node_deps(g, 0).unwrap().is_empty());
         sim.instantiate_graph(g).unwrap();
         let n = sim.launch_graph(g, s).unwrap();
-        assert_eq!(n, 2);
+        assert_eq!(n, 1);
         sim.synchronize().unwrap();
         let err = sim.graph_add_batch_mem_op(g, &[]).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("empty"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn live_batch_write_then_wait_is_one_op() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let t0 = sim.clock_ns();
+        enq(sim.batch_mem_op(
+            d,
+            s,
+            &[
+                BatchMemOp::Write {
+                    id: a,
+                    offset: 0,
+                    value: 9,
+                    bits32: false,
+                },
+                BatchMemOp::Wait {
+                    id: a,
+                    offset: 0,
+                    value: 9,
+                    bits32: false,
+                    cmp: WaitValueCmp::Eq,
+                },
+            ],
+        ));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(1));
+        let n = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::BatchMem { .. }))
+            .count();
+        assert_eq!(n, 1);
+        let mut seq = Sim::new(h100());
+        let a2 = seq.malloc(d, 64).unwrap();
+        let t1 = seq.clock_ns();
+        enq(seq.write_value64(d, a2, 0, 9, s));
+        enq(seq.wait_value64(d, a2, 0, 9, WaitValueCmp::Eq, s));
+        seq.synchronize().unwrap();
+        assert_eq!(seq.clock_ns(), t1.saturating_add(2));
+    }
+
+    #[test]
+    fn batch_wait_then_write_does_not_see_later_write() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        enq(sim.batch_mem_op(
+            d,
+            s,
+            &[
+                BatchMemOp::Wait {
+                    id: a,
+                    offset: 0,
+                    value: 1,
+                    bits32: false,
+                    cmp: WaitValueCmp::Eq,
+                },
+                BatchMemOp::Write {
+                    id: a,
+                    offset: 0,
+                    value: 1,
+                    bits32: false,
+                },
+            ],
+        ));
+        let err = sim.synchronize().unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("deadlock"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_batch_mem_disable_skips_writes() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let wait_s = StreamId(1);
+        let a = sim.malloc(d, 64).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_batch_mem_op(
+            g,
+            &[BatchMemOp::Write {
+                id: a,
+                offset: 0,
+                value: 1,
+                bits32: false,
+            }],
+        )
+        .unwrap();
+        sim.instantiate_graph(g).unwrap();
+        sim.graph_node_set_enabled(g, 0, false).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 0);
+        enq(sim.wait_value64(d, a, 0, 1, WaitValueCmp::Eq, wait_s));
+        let err = sim.synchronize().unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("deadlock"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_exec_batch_mem_ops_set_params_retargets_vector() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let b = sim.malloc(d, 64).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_batch_mem_op(
+            g,
+            &[
+                BatchMemOp::Write {
+                    id: a,
+                    offset: 0,
+                    value: 4,
+                    bits32: false,
+                },
+                BatchMemOp::Wait {
+                    id: a,
+                    offset: 0,
+                    value: 4,
+                    bits32: false,
+                    cmp: WaitValueCmp::Eq,
+                },
+            ],
+        )
+        .unwrap();
+        sim.instantiate_graph(g).unwrap();
+        sim.graph_batch_mem_ops_set_params(
+            g,
+            0,
+            &[BatchMemOp::Write {
+                id: a,
+                offset: 0,
+                value: 99,
+                bits32: false,
+            }],
+        )
+        .unwrap();
+        assert_eq!(sim.graph_batch_mem_ops(g, 0).unwrap().len(), 2);
+        sim.graph_exec_batch_mem_ops_set_params(
+            g,
+            0,
+            &[
+                BatchMemOp::Write {
+                    id: b,
+                    offset: 0,
+                    value: 4,
+                    bits32: false,
+                },
+                BatchMemOp::Wait {
+                    id: b,
+                    offset: 0,
+                    value: 4,
+                    bits32: false,
+                    cmp: WaitValueCmp::Eq,
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            sim.graph_batch_mem_ops(g, 0)
+                .unwrap()
+                .first()
+                .and_then(|op| match *op {
+                    BatchMemOp::Write { id, .. } => Some(id),
+                    _ => None,
+                }),
+            Some(b)
+        );
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn update_graph_treats_batch_mem_items_as_params() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let b = sim.malloc(d, 64).unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_batch_mem_op(
+            exec,
+            &[BatchMemOp::Write {
+                id: a,
+                offset: 0,
+                value: 1,
+                bits32: false,
+            }],
+        )
+        .unwrap();
+        sim.instantiate_graph(exec).unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_batch_mem_op(
+            src,
+            &[
+                BatchMemOp::Write {
+                    id: b,
+                    offset: 0,
+                    value: 2,
+                    bits32: false,
+                },
+                BatchMemOp::Wait {
+                    id: b,
+                    offset: 0,
+                    value: 2,
+                    bits32: false,
+                    cmp: WaitValueCmp::Eq,
+                },
+            ],
+        )
+        .unwrap();
+        sim.update_graph(exec, src).unwrap();
+        assert_eq!(sim.graph_batch_mem_ops(exec, 0).unwrap().len(), 2);
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn capture_batch_mem_op_is_one_node() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.batch_mem_op(
+            d,
+            s,
+            &[
+                BatchMemOp::Write {
+                    id: a,
+                    offset: 0,
+                    value: 3,
+                    bits32: false,
+                },
+                BatchMemOp::Wait {
+                    id: a,
+                    offset: 0,
+                    value: 3,
+                    bits32: false,
+                    cmp: WaitValueCmp::Eq,
+                },
+            ],
+        ));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 1);
+        sim.instantiate_graph(g).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
     }
 
     #[test]

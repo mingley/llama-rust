@@ -1419,6 +1419,15 @@ model, do not celebrate the sim.
     default flags (no device launch). `gpu-profile capture` is still
     refused.
 
+104. [x] True `cudaGraphAddBatchMemOpNode` / `cuStreamBatchMemOp`: a multi-item
+    batch is **one** `GpuOp::BatchMem` node (not sequential wait/write nodes
+    with deps). `batch_mem_op` is the live API; a single item still submits
+    `WriteValue` / `WaitValue`. A wait sees earlier writes in that vector
+    (overlay) and does not see later ones. Writes commit on complete.
+    `graph_node_set_enabled` skips the whole batch. Item lists are parameters
+    for `update_graph` and `graph_exec_batch_mem_ops_set_params`. Decode
+    identity stays kernel-only graphs. `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

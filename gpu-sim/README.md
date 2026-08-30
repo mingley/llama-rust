@@ -58,6 +58,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchHostFunc` (`host_func`) is stream-ordered host work | `host_func_ns` (no compute / copy occupancy) |
 | `cuStreamWriteValue32/64` (`write_value32` / `write_value64`) writes a mailbox on complete | 1 ns Solo (no compute / copy occupancy) |
 | `cuStreamWaitValue32/64` (`wait_value32` / `wait_value64`) stays pending until the mailbox compare matches; unwritten locations read as 0; kernel/memset/memcpy stores are not modeled | 1 ns Solo when ready; unsatisfied wait + `synchronize` is deadlock |
+| `cuStreamBatchMemOp` (`batch_mem_op`) is one stream op for a wait/write vector; a wait sees earlier writes in that vector | 1 ns Solo when ready |
 | `cudaStreamCreate` (`set_stream_blocking`) serializes with NULL | copy/compute overlap vs NULL |
 | host pin / `mlock` budget (`host_pin_bytes`) | `SimError::PinOom` |
 | `cudaFree` (`free_sync`) waits owning GPU(s), then every copy is gone | stream-ordered `free` refunds when that stream runs |
@@ -233,7 +234,8 @@ it. Independent streams still launch live. `cudaMallocAsync` / `cudaFreeAsync`
 `graph_add_empty` is `cudaGraphAddEmptyNode` (1 ns; no compute/copy occupancy).
 `graph_add_write_value64` / `graph_add_wait_value64` /
 `graph_add_batch_mem_op` are `cudaGraphAddBatchMemOpNode` (`cuStreamWaitValue` /
-`WriteValue`; a multi-item batch is sequential nodes with deps).
+`WriteValue`; a multi-item batch is **one** node holding the vector).
+`batch_mem_op` is live `cuStreamBatchMemOp`.
 `graph_add_dependencies` is `cudaGraphAddDependencies` (independent nodes
 may Hyper-Q overlap at launch; capture records same-stream edges).
 `graph_remove_dependencies` is `cudaGraphRemoveDependencies` (illegal after
@@ -270,15 +272,18 @@ then uploads if needed (`graph_upload_ns`). `upload_graph` is `cudaGraphUpload`.
 device, stream, op kinds, and dependency edges match (`graph_update_ns`); a topology
 mismatch is `Invalid`. Graphs with mem alloc/free nodes cannot be updated.
 `graph_kernel_set_params` / `graph_memcpy_set_params` /
-`graph_memset_set_params` / `graph_batch_mem_op_set_params` are
+`graph_memset_set_params` / `graph_batch_mem_op_set_params` /
+`graph_batch_mem_ops_set_params` are
 `cudaGraphKernelNodeSetParams` /
 `MemcpyNodeSetParams` / `MemsetNodeSetParams` / `BatchMemOpNodeSetParams` on the graph
 definition (do not retarget an already-instantiated exec).
 `graph_exec_kernel_set_params` / `graph_exec_memcpy_set_params` /
-`graph_exec_memset_set_params` / `graph_exec_batch_mem_op_set_params` are
+`graph_exec_memset_set_params` / `graph_exec_batch_mem_op_set_params` /
+`graph_exec_batch_mem_ops_set_params` are
 `cudaGraphExecKernelNodeSetParams` / `cudaGraphExecMemcpyNodeSetParams` /
 `cudaGraphExecMemsetNodeSetParams` / `cudaGraphExecBatchMemOpNodeSetParams`
-(`graph_set_params_ns`; mem nodes legal; pageable memcpy stays illegal).
+(`graph_set_params_ns`; mem nodes legal; pageable memcpy stays illegal;
+a `GpuOp::BatchMem` item list is a parameter).
 `graph_node_set_enabled` is `cudaGraphNodeSetEnabled` (skip a node at launch;
 mem alloc/free cannot be disabled).
 `graph_exec_child_set_params` is `cudaGraphExecChildGraphNodeSetParams`
@@ -318,7 +323,8 @@ kernels skip per-kernel launch overhead.
 `memset` is an HBM-write kernel on a resident alloc. `host_func` is
 `cudaLaunchHostFunc`: stream-ordered host work that does not occupy compute
 or copy engines (other streams may GEMM). `write_value64` / `wait_value64`
-are `cuStreamWriteValue64` / `WaitValue64` (mailbox; no occupancy). Peer D2D requires a
+are `cuStreamWriteValue64` / `WaitValue64` (mailbox; no occupancy).
+`batch_mem_op` is `cuStreamBatchMemOp`. Peer D2D requires a
 topology link **and** directed `enable_peer` (seeded on for every GPU↔GPU
 link; `disable_peer` → `PeerDisabled`). [`StreamId::NULL`] is the CUDA null
 stream; `set_legacy_null_stream(true)` serializes it with every other stream
@@ -399,6 +405,8 @@ include them.
 `write_value64` / `wait_value64` are `cuStreamWriteValue64` /
 `cuStreamWaitValue64` (mailbox on complete; unwritten locations read as 0;
 kernel/memset/memcpy stores are not modeled; no compute/copy occupancy).
+`batch_mem_op` is `cuStreamBatchMemOp` (one stream op; a wait sees earlier
+writes in that vector).
 `set_stream_blocking` is `cudaStreamCreate` vs `cudaStreamNonBlocking`
 (NULL serializes with blocking streams; created streams default to
 non-blocking). `set_legacy_null_stream` is the CUDA legacy default

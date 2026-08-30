@@ -277,10 +277,12 @@ impl WaitValueCmp {
     }
 }
 
-/// One `cuStreamBatchMemOp` item (`cudaGraphAddBatchMemOpNode` batch-of-1).
+/// One `cuStreamBatchMemOp` item (`cudaGraphAddBatchMemOpNode`).
 ///
-/// A multi-item [`crate::Sim::graph_add_batch_mem_op`] is sequential nodes with
-/// dependency edges, not one CUDA node holding a vector.
+/// [`crate::Sim::graph_add_batch_mem_op`] / [`crate::Sim::batch_mem_op`] pack a
+/// non-empty vector into one [`GpuOp::BatchMem`] node. Single-item live
+/// [`crate::Sim::write_value64`] / [`crate::Sim::wait_value64`] stay
+/// [`GpuOp::WriteValue`] / [`GpuOp::WaitValue`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BatchMemOp {
     /// [`GpuOp::WriteValue`].
@@ -312,8 +314,8 @@ pub enum BatchMemOp {
 /// One submitted GPU primitive. PLAN's Kernel / Memcpy / Collective / Event /
 /// Alloc / Free, plus `cudaMemsetAsync`, `cudaLaunchHostFunc`, stream attach,
 /// empty graph nodes, nested [`Self::ChildGraph`], conditional IF / WHILE /
-/// SWITCH / [`Self::SetConditional`], and wait/write-value batch mem ops.
-/// Timing is not stored here.
+/// SWITCH / [`Self::SetConditional`], wait/write-value, and multi-item
+/// [`Self::BatchMem`] (`cuStreamBatchMemOp`). Timing is not stored here.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GpuOp {
     /// Stream-ordered device allocation (`cudaMallocAsync`). Capacity is
@@ -455,6 +457,17 @@ pub enum GpuOp {
         value: u64,
         /// 32-bit store when true (high bits of a prior 64-bit write stay).
         bits32: bool,
+    },
+    /// Multi-item `cuStreamBatchMemOp` / `cudaGraphAddBatchMemOpNode`.
+    ///
+    /// Items run in order inside this one stream op (no compute or copy
+    /// occupancy). A wait sees writes **earlier in this vector** via an
+    /// overlay; it does not see later writes in the same batch. All writes
+    /// commit to the mailbox when the op **completes**. Capture records one
+    /// node. Empty is Invalid.
+    BatchMem {
+        /// Wait and write items in CUDA batch order.
+        ops: Vec<BatchMemOp>,
     },
     /// `cuStreamWaitValue32` / `WaitValue64`. Stays pending until the mailbox
     /// compare matches. Unwritten locations read as 0 (flag-memory analog, not
