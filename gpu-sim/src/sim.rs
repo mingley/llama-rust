@@ -5897,6 +5897,7 @@ impl Sim {
     /// `cudaGraphAddMemcpyNode`. Pageable copies cannot be graph nodes.
     /// [`Self::graph_add_memcpy_1d`] is `cudaGraphAddMemcpyNode1D`.
     /// [`Self::graph_add_memcpy_2d`] requires [`MemcpyOp::is_2d`].
+    /// [`Self::graph_add_memcpy_3d`] requires [`MemcpyOp::is_3d`].
     pub fn graph_add_memcpy(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         let _a = self.alloc_ref(op.alloc)?;
@@ -5928,6 +5929,18 @@ impl Sim {
         if !op.is_2d() {
             return Err(SimError::Invalid {
                 why: "memcpy2d height",
+            });
+        }
+        self.graph_add_memcpy(graph, op)
+    }
+
+    /// `cudaGraphAddMemcpyNode` whose [`MemcpyOp`] is [`MemcpyOp::is_3d`]
+    /// (`depth > 1`). Other extents Invalid `"memcpy3d depth"`. Typed
+    /// [`Self::graph_add_memcpy`] stays.
+    pub fn graph_add_memcpy_3d(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
+        if !op.is_3d() {
+            return Err(SimError::Invalid {
+                why: "memcpy3d depth",
             });
         }
         self.graph_add_memcpy(graph, op)

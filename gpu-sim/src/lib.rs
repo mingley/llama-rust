@@ -650,6 +650,7 @@
 //! [`Sim::graph_add_kernel`] / [`graph_add_memcpy`](Sim::graph_add_memcpy) /
 //! [`graph_add_memcpy_1d`](Sim::graph_add_memcpy_1d) /
 //! [`graph_add_memcpy_2d`](Sim::graph_add_memcpy_2d) /
+//! [`graph_add_memcpy_3d`](Sim::graph_add_memcpy_3d) /
 //! [`graph_add_memset`](Sim::graph_add_memset) /
 //! [`graph_add_memset_op`](Sim::graph_add_memset_op) /
 //! [`graph_add_host_func`](Sim::graph_add_host_func) /
@@ -11649,6 +11650,55 @@ mod tests {
             },
         ) {
             Err(SimError::Invalid { why }) => assert!(why.contains("memcpy2d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_add_memcpy_3d_requires_is_3d() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_3d(d, 256, 4, 4).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        let op = MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: a,
+            bytes: 256,
+            height: 4,
+            src_pitch: 256,
+            dst_pitch: pitch,
+            depth: 4,
+            src_height: 4,
+            dst_height: 4,
+            ..MemcpyOp::default()
+        };
+        sim.graph_add_memcpy_3d(g, op.clone()).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), 4096);
+        match sim.graph_add_memcpy_3d(
+            g,
+            MemcpyOp {
+                depth: 1,
+                ..op.clone()
+            },
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy3d depth"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_add_memcpy_3d(
+            g,
+            MemcpyOp {
+                depth: 0,
+                src_height: 0,
+                dst_height: 0,
+                ..op
+            },
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy3d depth"), "{why}"),
             other => panic!("{other:?}"),
         }
     }

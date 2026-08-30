@@ -5,6 +5,11 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — graph `AddMemcpyNode` 3D helper
+
+`graph_add_memcpy_3d` requires a 3D `MemcpyOp` (`depth > 1`). Typed
+`graph_add_memcpy` stays. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — graph `AddMemcpyNode` 2D helper
 
 `graph_add_memcpy_2d` requires a 2D `MemcpyOp` (`height > 1`, not 3D).

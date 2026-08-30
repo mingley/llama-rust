@@ -3155,7 +3155,14 @@ model, do not celebrate the sim.
     unchanged. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-306. [ ] Next numbered PLAN item after 305 is the next `gpu-sim` / Engine /
+306. [x] `cudaGraphAddMemcpyNode` 3D helper:
+    [`graph_add_memcpy_3d`](Sim::graph_add_memcpy_3d) requires
+    [`MemcpyOp::is_3d`] (`depth > 1`). Other extents Invalid
+    `"memcpy3d depth"`. Typed [`graph_add_memcpy`](Sim::graph_add_memcpy)
+    stays. Decode identity unchanged. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+307. [ ] Next numbered PLAN item after 306 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
