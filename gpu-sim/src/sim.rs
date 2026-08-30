@@ -13175,7 +13175,8 @@ impl Sim {
             | DeviceAttr::HostNumaVirtualMemoryManagementSupported
             | DeviceAttr::HostNumaMemoryPoolsSupported
             | DeviceAttr::HostNumaMultinodeIpcSupported
-            | DeviceAttr::NumaConfig => 0,
+            | DeviceAttr::NumaConfig
+            | DeviceAttr::OnlyPartialHostNativeAtomicSupported => 0,
             DeviceAttr::StreamPrioritiesSupported
             | DeviceAttr::UnifiedAddressing
             | DeviceAttr::CanUse64BitStreamMemOps
@@ -13260,6 +13261,7 @@ impl Sim {
             host_numa_memory_pools_supported: false,
             host_numa_multinode_ipc_supported: false,
             numa_config: DeviceNumaConfig::NONE,
+            only_partial_host_native_atomic_supported: false,
         })
     }
 

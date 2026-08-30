@@ -890,6 +890,10 @@ pub enum DeviceAttr {
     /// `cudaDevAttrNumaConfig` (always [`DeviceNumaConfig::NONE`]; GPU memory
     /// NUMA nodes are not modeled). Do not invent `cudaDevAttrNumaId`.
     NumaConfig,
+    /// `cudaDevAttrOnlyPartialHostNativeAtomicSupported` (always 0;
+    /// host-mapped atomics are not modeled). Distinct from
+    /// [`Self::HostNativeAtomicSupported`].
+    OnlyPartialHostNativeAtomicSupported,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -1052,6 +1056,9 @@ pub struct DeviceProperties {
     pub host_numa_multinode_ipc_supported: bool,
     /// `cudaDevAttrNumaConfig` (always [`DeviceNumaConfig::NONE`]).
     pub numa_config: u32,
+    /// `cudaDevAttrOnlyPartialHostNativeAtomicSupported` (host-mapped atomics
+    /// are not modeled). Distinct from [`Self::host_native_atomic_supported`].
+    pub only_partial_host_native_atomic_supported: bool,
 }
 
 /// `cudaComputeMode` for [`DeviceAttr::ComputeMode`].

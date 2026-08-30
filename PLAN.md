@@ -3036,7 +3036,13 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-293. [ ] Next numbered PLAN item after 292 is the next `gpu-sim` / Engine /
+293. [x] `cudaDevAttrOnlyPartialHostNativeAtomicSupported`: always 0
+    (host-mapped atomics are not modeled). Distinct from
+    [`DeviceAttr::HostNativeAtomicSupported`] (already 0). Query;
+    capture-legal. Decode identity unchanged. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+294. [ ] Next numbered PLAN item after 293 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

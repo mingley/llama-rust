@@ -350,6 +350,9 @@
 //! [`IpcEventSupport`](DeviceAttr::IpcEventSupport).
 //! [`DeviceAttr::NumaConfig`] is always [`DeviceNumaConfig::NONE`] (GPU memory
 //! NUMA nodes are not modeled). Do not invent `cudaDevAttrNumaId`.
+//! [`DeviceAttr::OnlyPartialHostNativeAtomicSupported`] is always 0
+//! (host-mapped atomics are not modeled). Distinct from
+//! [`HostNativeAtomicSupported`](DeviceAttr::HostNativeAtomicSupported).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -11241,6 +11244,27 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::NumaConfig).unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_only_partial_host_native_atomic_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert!(!hp.host_native_atomic_supported);
+        assert!(!hp.only_partial_host_native_atomic_supported);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::OnlyPartialHostNativeAtomicSupported)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::OnlyPartialHostNativeAtomicSupported)
+                .unwrap(),
             0
         );
         let _g = sim.end_capture().unwrap();
