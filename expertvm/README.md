@@ -86,7 +86,10 @@ so independent sequence GEMMs on those streams overlap at full issue rate
 launch: consecutive same-stream expert GEMMs may overlap after the
 previous kernel's trigger when `--compute-slots` is `>=2` (illegal with
 `--cooperative`). `--l2-persist` is `cudaLaunchAttributeAccessPolicyWindow`
-over expert pages (persisting L2 after the first fill). `--cooperative` is
+over expert pages (persisting L2 after the first fill). Expert GEMMs stay
+on the Default mem-sync domain; gpu-sim allreduce tags Remote so a
+non-zero `same_domain_fence_permille` does not flush expert compute behind
+communication. `--cooperative` is
 `cudaLaunchCooperativeKernel`: GEMMs occupy every Hyper-Q slot, so
 independent sequences cannot overlap even with `--compute-slots 2`.
 `--decode-sms N` (`1..=1000`) is a

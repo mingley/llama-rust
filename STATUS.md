@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaLaunchAttributeMemSyncDomain`
+
+`kernel_with` / stream and graph SetAttribute select Default vs Remote and a
+physical map (`cudaDevAttrMemSyncDomainCount`; example H100 is 4). A completing
+kernel's implicit fence waits `same_domain_fence_permille` of leftover
+same-domain kernel or allreduce traffic. Default tax is 0 (identity). Allreduce
+tags Remote like NCCL. Graph replay uses the node's map, not the launch stream.
+Device-launch graphs allow it. Decode identity stays `cudaLaunchKernel`.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaLaunchAttributeAccessPolicyWindow`
 
 `kernel_access_policy` applies a persisting L2 window so a reused expert

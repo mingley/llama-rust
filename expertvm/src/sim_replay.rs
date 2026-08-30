@@ -55,6 +55,7 @@ impl GemmFlags {
             cooperative: self.cooperative,
             pdl: self.pdl_attr().unwrap_or_default(),
             access_policy: self.persist_window(id),
+            ..KernelAttrs::default()
         }
     }
 }

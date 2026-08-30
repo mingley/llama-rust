@@ -159,8 +159,9 @@
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
 //! are `cudaGraphKernelNodeGetAttribute` / `SetAttribute` / `CopyAttributes`
-//! for priority, programmatic dependent launch ([`ProgrammaticLaunch`]), and
-//! programmatic event ([`ProgrammaticEvent`]).
+//! for priority, programmatic dependent launch ([`ProgrammaticLaunch`]),
+//! programmatic event ([`ProgrammaticEvent`]), access-policy window, and
+//! mem-sync domain/map.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
 //! may start after the previous same-stream kernel's trigger
 //! (`GpuProfile::pdl_trigger_permille`) instead of its completion. Overlap
@@ -171,7 +172,14 @@
 //! kernel *starts*. [`kernel_access_policy`](Sim::kernel_access_policy) is
 //! `cudaLaunchAttributeAccessPolicyWindow`: persisting hits reduce billed HBM
 //! after [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size)
-//! (CUDA default size is 0). Decode identity stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
+//! (CUDA default size is 0). [`kernel_with`](Sim::kernel_with) also accepts
+//! [`MemSyncDomain`] / [`MemSyncDomainMap`] (`cudaLaunchAttributeMemSyncDomain`):
+//! a completing kernel's implicit fence waits
+//! `GpuProfile::same_domain_fence_permille` of leftover traffic from another
+//! same-physical-domain kernel. [`MemSyncDomain::Remote`] (and allreduce, which
+//! tags Remote like NCCL) isolates that traffic. Example H100
+//! `mem_sync_domain_count` is 4; tax default is 0 (identity). Decode identity
+//! stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
 //! [`graph_exec_kernel_node_set_priority`](Sim::graph_exec_kernel_node_set_priority)
 //! are the exec-snapshot attributes. [`Sim::upload_graph`] is
 //! `cudaGraphUpload` (host-sync; first launch after instantiate calls it).
@@ -337,9 +345,9 @@ pub use ops::{
     GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
     GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind,
     GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeParams,
-    LaunchCompletionEvent, MemAdvise, MemAttach, MemcpyOp, Operation, PdlLaunch, Place,
-    ProgrammaticEvent, ProgrammaticLaunch, StreamCaptureInfo, StreamCaptureMode, UserObjectFlags,
-    WaitValueCmp,
+    LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
+    Operation, PdlLaunch, Place, ProgrammaticEvent, ProgrammaticLaunch, StreamCaptureInfo,
+    StreamCaptureMode, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -4392,6 +4400,258 @@ mod tests {
         );
     }
 
+    fn fence_profile(tax: u16) -> HardwareProfile {
+        let mut p = h100();
+        let g = p.gpus.first_mut().expect("gpu0");
+        g.compute_slots = 2;
+        g.launch_overhead_ns = 1;
+        g.same_domain_fence_permille = tax;
+        g.mem_sync_domain_count = 4;
+        p
+    }
+
+    fn short_long_overlap(
+        tax: u16,
+        long_domain: MemSyncDomain,
+        map: Option<MemSyncDomainMap>,
+    ) -> (u64, u64) {
+        let mut sim = Sim::new(fence_profile(tax));
+        let d = DeviceId(0);
+        let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+        sim.synchronize().unwrap();
+        if let Some(map) = map {
+            sim.set_stream_mem_sync_domain_map(d, StreamId(1), map)
+                .unwrap();
+            sim.set_stream_mem_sync_domain_map(d, StreamId(2), map)
+                .unwrap();
+        }
+        let short = KernelKind::other(1, 4096);
+        let long = KernelKind::other(1 << 40, 4096);
+        enq(sim.kernel(d, short, &[a], &[a], StreamId(1)));
+        enq(sim.kernel_with(
+            d,
+            long,
+            &[a],
+            &[a],
+            StreamId(2),
+            KernelAttrs {
+                mem_sync_domain: Some(long_domain),
+                ..KernelAttrs::default()
+            },
+        ));
+        sim.synchronize().unwrap();
+        let mut ks: Vec<_> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .collect();
+        ks.sort_by_key(|o| o.stream.0);
+        (
+            ks[0].duration_ns().expect("short"),
+            ks[1].duration_ns().expect("long"),
+        )
+    }
+
+    #[test]
+    fn same_domain_fence_waits_on_peer_leftover() {
+        let (short0, long0) = short_long_overlap(0, MemSyncDomain::Default, None);
+        let (short_tax, long_tax) = short_long_overlap(1000, MemSyncDomain::Default, None);
+        assert!(
+            short0 * 4 < long0,
+            "short kernel must finish first without tax; short={short0} long={long0}"
+        );
+        assert!(
+            short_tax + 1 >= long_tax,
+            "same-domain tax 1000 must wait leftover; short={short_tax} long={long_tax}"
+        );
+        assert_eq!(long0, long_tax, "peer duration is unchanged");
+    }
+
+    #[test]
+    fn remote_domain_skips_same_domain_fence() {
+        let (short_iso, long_iso) = short_long_overlap(1000, MemSyncDomain::Remote, None);
+        let (short_same, _) = short_long_overlap(1000, MemSyncDomain::Default, None);
+        assert!(
+            short_iso * 4 < long_iso,
+            "remote domain must isolate; short={short_iso} long={long_iso}"
+        );
+        assert!(
+            short_iso < short_same / 2,
+            "isolated short must beat same-domain tax; iso={short_iso} same={short_same}"
+        );
+    }
+
+    #[test]
+    fn mem_sync_map_can_collapse_remote_onto_default() {
+        let collide = MemSyncDomainMap {
+            default: 0,
+            remote: 0,
+        };
+        let (short_col, long_col) = short_long_overlap(1000, MemSyncDomain::Remote, Some(collide));
+        assert!(
+            short_col + 1 >= long_col,
+            "collapsed map must tax; short={short_col} long={long_col}"
+        );
+    }
+
+    #[test]
+    fn mem_sync_map_rejects_id_past_count() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(sim.mem_sync_domain_count(d).unwrap(), 4);
+        let err = sim
+            .set_stream_mem_sync_domain_map(
+                d,
+                StreamId(0),
+                MemSyncDomainMap {
+                    default: 0,
+                    remote: 4,
+                },
+            )
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("mem sync domain"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mut one = h100();
+        one.gpus.first_mut().expect("gpu0").mem_sync_domain_count = 1;
+        let mut sim = Sim::new(one);
+        let err = sim
+            .set_stream_mem_sync_domain_map(d, StreamId(0), MemSyncDomainMap::identity(2))
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("mem sync domain"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.set_stream_mem_sync_domain_map(d, StreamId(0), MemSyncDomainMap::identity(1))
+            .unwrap();
+        assert_eq!(
+            sim.stream_mem_sync_domain_map(d, StreamId(0))
+                .unwrap()
+                .remote,
+            0
+        );
+    }
+
+    #[test]
+    fn graph_mem_sync_copies_and_device_launch_allows() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_mem_sync_domain(g, 0).unwrap(),
+            MemSyncDomain::Default
+        );
+        sim.graph_kernel_node_set_mem_sync_domain(g, 0, MemSyncDomain::Remote)
+            .unwrap();
+        let map = MemSyncDomainMap {
+            default: 2,
+            remote: 3,
+        };
+        sim.graph_kernel_node_set_mem_sync_domain_map(g, 0, map)
+            .unwrap();
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_copy_attributes(h, 0, g, 0).unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_mem_sync_domain(h, 0).unwrap(),
+            MemSyncDomain::Remote
+        );
+        assert_eq!(
+            sim.graph_kernel_node_get_mem_sync_domain_map(h, 0).unwrap(),
+            map
+        );
+        let exec = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .expect("device-launch allows mem sync");
+        assert_eq!(
+            sim.graph_exec_kernel_node_get_mem_sync_domain(exec, 0)
+                .unwrap(),
+            MemSyncDomain::Remote
+        );
+    }
+
+    #[test]
+    fn graph_replay_ignores_launch_stream_mem_sync_map() {
+        let mut sim = Sim::new(fence_profile(1000));
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1, 4096), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_set_mem_sync_domain(g, 0, MemSyncDomain::Remote)
+            .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.set_stream_mem_sync_domain_map(
+            d,
+            s,
+            MemSyncDomainMap {
+                default: 0,
+                remote: 0,
+            },
+        )
+        .unwrap();
+        let long = KernelKind::other(1 << 40, 4096);
+        enq(sim.kernel(d, long, &[a], &[a], StreamId(1)));
+        let _n = sim.launch_graph(exec, s).unwrap();
+        sim.synchronize().unwrap();
+        let mut ks: Vec<_> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .collect();
+        ks.sort_by_key(|o| o.duration_ns().unwrap_or(u64::MAX));
+        let gd = ks[0].duration_ns().expect("graph short");
+        let ld = ks[1].duration_ns().expect("live long");
+        assert!(
+            gd * 4 < ld,
+            "graph node Remote must isolate despite launch-stream map 0; graph={gd} live={ld}"
+        );
+    }
+
+    #[test]
+    fn allreduce_remote_isolates_from_default_kernel() {
+        let mut p = HardwareProfile::example_8xh100_nvlink();
+        for g in &mut p.gpus {
+            g.compute_slots = 2;
+            g.launch_overhead_ns = 1;
+            g.same_domain_fence_permille = 1000;
+        }
+        let mut sim = Sim::new(p);
+        let s0 = StreamId(0);
+        let s1 = StreamId(1);
+        let bytes = 8u64 << 20;
+        let a = sim.alloc(DeviceId(0), bytes, s0).unwrap();
+        enq(sim.memcpy_pinned_to_device(DeviceId(0), a, bytes, s0));
+        enq(sim.memcpy_device_to_device(DeviceId(0), DeviceId(1), a, bytes, s0));
+        sim.synchronize().unwrap();
+        let short = KernelKind::other(1, 4096);
+        enq(sim.kernel(DeviceId(0), short, &[a], &[a], s1));
+        enq(sim.allreduce(&[(DeviceId(0), a), (DeviceId(1), a)], bytes, s0));
+        sim.synchronize().unwrap();
+        let k = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .expect("kernel");
+        let ar = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::AllReduce { .. }))
+            .expect("allreduce");
+        let kd = k.duration_ns().expect("k");
+        let ad = ar.duration_ns().expect("ar");
+        assert!(
+            kd * 4 < ad,
+            "NCCL-style Remote allreduce must not tax default GEMM; k={kd} ar={ad}"
+        );
+    }
+
     #[test]
     fn higher_stream_priority_starts_first_when_compute_contends() {
         let d = DeviceId(0);
@@ -4430,10 +4690,23 @@ mod tests {
         let d = DeviceId(0);
         sim.set_stream_priority(d, StreamId(1), 7).unwrap();
         sim.set_stream_sm_permille(d, StreamId(1), 250).unwrap();
+        sim.set_stream_mem_sync_domain(d, StreamId(1), MemSyncDomain::Remote)
+            .unwrap();
+        let map = MemSyncDomainMap {
+            default: 0,
+            remote: 2,
+        };
+        sim.set_stream_mem_sync_domain_map(d, StreamId(1), map)
+            .unwrap();
         sim.stream_copy_attributes(d, StreamId(2), d, StreamId(1))
             .unwrap();
         assert_eq!(sim.stream_priority(d, StreamId(2)), 7);
         assert_eq!(sim.stream_sm_permille(d, StreamId(2)), 250);
+        assert_eq!(
+            sim.stream_mem_sync_domain(d, StreamId(2)),
+            MemSyncDomain::Remote
+        );
+        assert_eq!(sim.stream_mem_sync_domain_map(d, StreamId(2)).unwrap(), map);
         let err = sim
             .stream_copy_attributes(DeviceId(0), StreamId(0), DeviceId(1), StreamId(0))
             .unwrap_err();

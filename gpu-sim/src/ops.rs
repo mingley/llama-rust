@@ -377,12 +377,75 @@ impl AccessPolicyWindow {
     }
 }
 
+/// `cudaLaunchMemSyncDomain`.
+///
+/// Logical domain for [`crate::Sim::kernel_with`]. [`Self::Default`] is CUDA
+/// domain 0. [`Self::Remote`] is intended for communication kernels (NCCL
+/// tags Remote). Physical id is [`MemSyncDomainMap::physical`]. Decode identity
+/// stays [`Self::Default`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MemSyncDomain {
+    /// `cudaLaunchMemSyncDomainDefault` (physical id from the map's `default`).
+    #[default]
+    Default,
+    /// `cudaLaunchMemSyncDomainRemote` (physical id from the map's `remote`).
+    Remote,
+}
+
+/// `cudaLaunchMemSyncDomainMap`.
+///
+/// Maps logical [`MemSyncDomain`] onto a physical id in
+/// `0..GpuProfile::mem_sync_domain_count`. CUDA default on Hopper (`count > 1`)
+/// is default→0, remote→1. Pre-Hopper `count == 1` maps both to 0.
+/// [`crate::Sim::set_stream_mem_sync_domain_map`] is the stream attribute.
+/// Graph replay uses the node's map, not the launch stream.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemSyncDomainMap {
+    /// Physical id for [`MemSyncDomain::Default`].
+    pub default: u8,
+    /// Physical id for [`MemSyncDomain::Remote`].
+    pub remote: u8,
+}
+
+impl MemSyncDomainMap {
+    /// CUDA default map for `cudaDevAttrMemSyncDomainCount`.
+    #[must_use]
+    pub fn identity(count: u8) -> Self {
+        if count <= 1 {
+            Self {
+                default: 0,
+                remote: 0,
+            }
+        } else {
+            Self {
+                default: 0,
+                remote: 1,
+            }
+        }
+    }
+
+    /// Physical domain id for `domain`.
+    #[must_use]
+    pub fn physical(self, domain: MemSyncDomain) -> u8 {
+        match domain {
+            MemSyncDomain::Default => self.default,
+            MemSyncDomain::Remote => self.remote,
+        }
+    }
+}
+
+impl Default for MemSyncDomainMap {
+    fn default() -> Self {
+        Self::identity(2)
+    }
+}
+
 /// Packed `cudaLaunchKernelEx` / graph kernel-node attributes.
 ///
-/// [`crate::Sim::kernel_with`] applies these on one submit so PDL and an
-/// access-policy window can share a launch (7 arguments including `self`).
-/// Decode identity stays [`crate::Sim::kernel`] ([`Default`]: no cooperative,
-/// no PDL, no window).
+/// [`crate::Sim::kernel_with`] applies these on one submit so PDL, an
+/// access-policy window, and a mem-sync domain can share a launch (7 arguments
+/// including `self`). Decode identity stays [`crate::Sim::kernel`] ([`Default`]:
+/// no cooperative, no PDL, no window, inherit stream mem-sync).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KernelAttrs {
     /// `cudaLaunchCooperativeKernel`.
@@ -391,6 +454,10 @@ pub struct KernelAttrs {
     pub pdl: ProgrammaticLaunch,
     /// `cudaLaunchAttributeAccessPolicyWindow`.
     pub access_policy: Option<AccessPolicyWindow>,
+    /// `cudaLaunchAttributeMemSyncDomain`. `None` inherits the stream.
+    pub mem_sync_domain: Option<MemSyncDomain>,
+    /// `cudaLaunchAttributeMemSyncDomainMap`. `None` inherits the stream.
+    pub mem_sync_map: Option<MemSyncDomainMap>,
 }
 
 /// `cudaStreamAttachMemAsync` flags (`cudaMemAttachGlobal` / `Host` / `Single`).

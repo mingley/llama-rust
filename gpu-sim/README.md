@@ -113,6 +113,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchCooperativeKernel` occupies every compute slot (`cooperative_kernel`) | leftover kernels cannot Hyper-Q overlap |
 | programmatic dependent launch: wait kernel starts after the previous same-stream trigger (`pdl_trigger_permille`) | overlap needs `compute_slots >= 2` |
 | `cudaLaunchAttributeAccessPolicyWindow` persisting hits (`kernel_access_policy`) | HBM discount after `set_persisting_l2_cache_size`; CUDA default size is 0 |
+| `cudaLaunchAttributeMemSyncDomain` fence isolation (`kernel_with` / allreduce Remote) | `same_domain_fence_permille` of leftover same-domain traffic; tax default 0 |
 | `set_stream_sm_permille` is a green-context SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host) | HBM write + launch overhead |
 | peer D2D needs topology + `enable_peer` | link bandwidth |
@@ -452,11 +453,11 @@ stream (NULL serializes with every stream).
 overflow is `PinOom`. Example default is unlimited.
 `set_stream_priority` is `cudaStreamCreateWithPriority` (higher first when
 compute contends). `stream_copy_attributes` is `cudaStreamCopyAttributes`
-(priority and SM permille). `graph_kernel_node_get_priority` /
+(priority, SM permille, and mem-sync domain/map). `graph_kernel_node_get_priority` /
 `set_priority` / `copy_attributes` are `cudaGraphKernelNodeGetAttribute` /
 `SetAttribute` / `CopyAttributes` for priority, programmatic dependent
-launch (`ProgrammaticLaunch`), programmatic event (`ProgrammaticEvent`), and
-access-policy window (`AccessPolicyWindow`).
+launch (`ProgrammaticLaunch`), programmatic event (`ProgrammaticEvent`),
+access-policy window (`AccessPolicyWindow`), and mem-sync domain/map.
 `kernel_pdl` is `cudaLaunchKernelEx` PDL:
 a wait kernel may start after the previous same-stream kernel's trigger
 (`pdl_trigger_permille`) instead of its completion. Overlap needs
@@ -469,7 +470,11 @@ kernel starts. `expertvm sim --pdl` / `gguf_gemv engine --expert-sim --pdl`
 launch grouped expert GEMMs that way. `kernel_access_policy` is
 `cudaLaunchAttributeAccessPolicyWindow`: persisting hits reduce billed HBM
 after `set_persisting_l2_cache_size` (CUDA default is 0). `expertvm sim --l2-persist`
-enables the persist limit and attaches a window to expert GEMMs. Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
+enables the persist limit and attaches a window to expert GEMMs.
+`kernel_with` also accepts `cudaLaunchAttributeMemSyncDomain` /
+`MemSyncDomainMap`: a completing kernel waits `same_domain_fence_permille` of
+leftover same-physical-domain traffic (default tax 0). Remote (and allreduce)
+isolates communication. Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
 instantiate schedules those node priorities instead of the launch stream. `set_created_streams_priority` assigns created streams
 their id. `set_stream_sm_permille` is a green-context SM fraction
 (compute-bound kernels scale; memory-bound keep full HBM; default unset is

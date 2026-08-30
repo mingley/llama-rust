@@ -14,9 +14,9 @@ use crate::ops::{
     GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
     GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind,
     GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeParams,
-    LaunchCompletionEvent, MemAdvise, MemAttach, MemcpyOp, Operation, PdlLaunch, Place,
-    ProgrammaticEvent, ProgrammaticLaunch, StreamCaptureInfo, StreamCaptureMode, UserObjectFlags,
-    WaitValueCmp,
+    LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
+    Operation, PdlLaunch, Place, ProgrammaticEvent, ProgrammaticLaunch, StreamCaptureInfo,
+    StreamCaptureMode, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{ns_for_bytes, HardwareProfile, LinkKind};
 
@@ -181,6 +181,10 @@ struct Op {
     launch_completion: Option<LaunchCompletionEvent>,
     /// `cudaLaunchAttributeAccessPolicyWindow` on this kernel, if any.
     access_policy: Option<AccessPolicyWindow>,
+    /// Resolved physical mem-sync domain (`cudaLaunchAttributeMemSyncDomain`).
+    mem_sync_physical: u8,
+    /// Completion fence already waited on same-domain leftover traffic.
+    domain_fence_paid: bool,
 }
 
 /// How a submitted op pays kernel/graph launch overhead.
@@ -278,6 +282,10 @@ struct GraphStep {
     launch_completion: Option<LaunchCompletionEvent>,
     /// `cudaLaunchAttributeAccessPolicyWindow` on this kernel node, if any.
     access_policy: Option<AccessPolicyWindow>,
+    /// `cudaLaunchAttributeMemSyncDomain` on this kernel node.
+    mem_sync_domain: MemSyncDomain,
+    /// `cudaLaunchAttributeMemSyncDomainMap` on this kernel node.
+    mem_sync_map: MemSyncDomainMap,
 }
 
 struct Graph {
@@ -515,6 +523,10 @@ pub struct Sim {
     blocking: BTreeSet<(DeviceId, StreamId)>,
     /// Green-context SM fraction per stream (‰). Missing is full chip (`1000`).
     sm_permille: BTreeMap<(DeviceId, StreamId), u16>,
+    /// `cudaLaunchAttributeMemSyncDomain` per stream. Missing is Default.
+    stream_mem_sync_domain: BTreeMap<(DeviceId, StreamId), MemSyncDomain>,
+    /// `cudaLaunchAttributeMemSyncDomainMap` per stream. Missing is identity.
+    stream_mem_sync_map: BTreeMap<(DeviceId, StreamId), MemSyncDomainMap>,
     next_pool: u32,
     pools: BTreeMap<PoolId, Pool>,
     default_pools: BTreeMap<DeviceId, PoolId>,
@@ -551,6 +563,10 @@ pub struct Sim {
     enqueue_launch_completion: Option<LaunchCompletionEvent>,
     /// Access-policy window for the next kernel submit / graph replay.
     enqueue_access_policy: Option<AccessPolicyWindow>,
+    /// Mem-sync domain for the next kernel submit / graph replay.
+    enqueue_mem_sync_domain: Option<MemSyncDomain>,
+    /// Mem-sync map for the next kernel submit / graph replay.
+    enqueue_mem_sync_map: Option<MemSyncDomainMap>,
     /// Wait/write-value mailbox: `(alloc, offset) → word`. Missing is `0`.
     mailbox: BTreeMap<(AllocId, u64), u64>,
     /// `cudaThreadExchangeStreamCaptureMode` default for [`Self::begin_capture`].
@@ -610,6 +626,8 @@ impl Sim {
             priority: BTreeMap::new(),
             blocking: BTreeSet::new(),
             sm_permille: BTreeMap::new(),
+            stream_mem_sync_domain: BTreeMap::new(),
+            stream_mem_sync_map: BTreeMap::new(),
             next_pool,
             pools,
             default_pools,
@@ -636,6 +654,8 @@ impl Sim {
             enqueue_programmatic_event: None,
             enqueue_launch_completion: None,
             enqueue_access_policy: None,
+            enqueue_mem_sync_domain: None,
+            enqueue_mem_sync_map: None,
             mailbox: BTreeMap::new(),
             capture_mode: StreamCaptureMode::Relaxed,
             next_user_object: 1,
@@ -908,7 +928,60 @@ impl Sim {
             .max(1)
     }
 
-    /// `cudaStreamCopyAttributes`: copy priority and SM permille from `src` to `dst`.
+    /// `cudaDevAttrMemSyncDomainCount`.
+    pub fn mem_sync_domain_count(&self, device: DeviceId) -> Result<u8, SimError> {
+        Ok(self.profile.gpu(device)?.mem_sync_domain_count.max(1))
+    }
+
+    /// `cudaStreamSetAttribute` for `cudaLaunchAttributeMemSyncDomain`.
+    pub fn set_stream_mem_sync_domain(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        domain: MemSyncDomain,
+    ) -> Result<(), SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        let _prev = self.stream_mem_sync_domain.insert((device, stream), domain);
+        Ok(())
+    }
+
+    /// Stream mem-sync domain, or [`MemSyncDomain::Default`] if unset.
+    #[must_use]
+    pub fn stream_mem_sync_domain(&self, device: DeviceId, stream: StreamId) -> MemSyncDomain {
+        self.stream_mem_sync_domain
+            .get(&(device, stream))
+            .copied()
+            .unwrap_or(MemSyncDomain::Default)
+    }
+
+    /// `cudaStreamSetAttribute` for `cudaLaunchAttributeMemSyncDomainMap`.
+    pub fn set_stream_mem_sync_domain_map(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        map: MemSyncDomainMap,
+    ) -> Result<(), SimError> {
+        self.validate_mem_sync_map(device, map)?;
+        let _prev = self.stream_mem_sync_map.insert((device, stream), map);
+        Ok(())
+    }
+
+    /// Stream mem-sync map, or CUDA identity for this device's domain count.
+    pub fn stream_mem_sync_domain_map(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<MemSyncDomainMap, SimError> {
+        if let Some(map) = self.stream_mem_sync_map.get(&(device, stream)).copied() {
+            return Ok(map);
+        }
+        Ok(MemSyncDomainMap::identity(
+            self.mem_sync_domain_count(device)?,
+        ))
+    }
+
+    /// `cudaStreamCopyAttributes`: copy priority, SM permille, and mem-sync
+    /// domain/map from `src` to `dst`.
     ///
     /// Same device required. Capture is allowed (host-side, not a graph node).
     pub fn stream_copy_attributes(
@@ -926,11 +999,23 @@ impl Sim {
         let _gpu = self.profile.gpu(src_device)?;
         let pri = self.stream_priority(src_device, src);
         let sm = self.sm_permille.get(&(src_device, src)).copied();
+        let domain = self.stream_mem_sync_domain.get(&(src_device, src)).copied();
+        let map = self.stream_mem_sync_map.get(&(src_device, src)).copied();
         self.set_stream_priority(dst_device, dst, pri)?;
         if let Some(sm) = sm {
             self.set_stream_sm_permille(dst_device, dst, sm)?;
         } else {
             let _gone = self.sm_permille.remove(&(dst_device, dst));
+        }
+        if let Some(domain) = domain {
+            self.set_stream_mem_sync_domain(dst_device, dst, domain)?;
+        } else {
+            let _gone = self.stream_mem_sync_domain.remove(&(dst_device, dst));
+        }
+        if let Some(map) = map {
+            self.set_stream_mem_sync_domain_map(dst_device, dst, map)?;
+        } else {
+            let _gone = self.stream_mem_sync_map.remove(&(dst_device, dst));
         }
         Ok(())
     }
@@ -1794,6 +1879,8 @@ impl Sim {
             self.enqueue_programmatic_event = step.programmatic_event;
             self.enqueue_launch_completion = step.launch_completion;
             self.enqueue_access_policy = step.access_policy;
+            self.enqueue_mem_sync_domain = Some(step.mem_sync_domain);
+            self.enqueue_mem_sync_map = Some(step.mem_sync_map);
             let wait = graph_node_waits(step, extra_wait, launch_tail, &node_ops)?;
             let s = self.graph_exec_stream(origin, stream, step, &node_stream, &mut worker);
             if let Some(slot) = node_stream.get_mut(idx) {
@@ -1968,6 +2055,8 @@ impl Sim {
         self.enqueue_programmatic_event = None;
         self.enqueue_launch_completion = None;
         self.enqueue_access_policy = None;
+        self.enqueue_mem_sync_domain = None;
+        self.enqueue_mem_sync_map = None;
         Ok(n)
     }
 
@@ -5530,9 +5619,170 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphKernelNodeGetAttribute` for mem-sync domain on the definition.
+    pub fn graph_kernel_node_get_mem_sync_domain(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<MemSyncDomain, SimError> {
+        Ok(self.kernel_node_mem_sync(graph, node, false)?.0)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for mem-sync domain on the exec.
+    pub fn graph_exec_kernel_node_get_mem_sync_domain(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<MemSyncDomain, SimError> {
+        Ok(self.kernel_node_mem_sync(exec, node, true)?.0)
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` for mem-sync map on the definition.
+    pub fn graph_kernel_node_get_mem_sync_domain_map(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<MemSyncDomainMap, SimError> {
+        Ok(self.kernel_node_mem_sync(graph, node, false)?.1)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for mem-sync map on the exec.
+    pub fn graph_exec_kernel_node_get_mem_sync_domain_map(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<MemSyncDomainMap, SimError> {
+        Ok(self.kernel_node_mem_sync(exec, node, true)?.1)
+    }
+
+    fn kernel_node_mem_sync(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<(MemSyncDomain, MemSyncDomainMap), SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok((step.mem_sync_domain, step.mem_sync_map))
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for mem-sync domain on the definition.
+    pub fn graph_kernel_node_set_mem_sync_domain(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        domain: MemSyncDomain,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_mem_sync_domain(graph, node, false, domain)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for mem-sync domain on the exec.
+    pub fn graph_exec_kernel_node_set_mem_sync_domain(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        domain: MemSyncDomain,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_mem_sync_domain(exec, node, true, domain)
+    }
+
+    fn set_kernel_node_mem_sync_domain(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        domain: MemSyncDomain,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.mem_sync_domain = domain;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for mem-sync map on the definition.
+    pub fn graph_kernel_node_set_mem_sync_domain_map(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        map: MemSyncDomainMap,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_mem_sync_map(graph, node, false, map)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for mem-sync map on the exec.
+    pub fn graph_exec_kernel_node_set_mem_sync_domain_map(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        map: MemSyncDomainMap,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_mem_sync_map(exec, node, true, map)
+    }
+
+    fn set_kernel_node_mem_sync_map(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        map: MemSyncDomainMap,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let device = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let steps = if exec { g.view() } else { &g.steps };
+            let step = steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            if !matches!(step.kind, Kind::Kernel { .. }) {
+                return Err(SimError::Invalid {
+                    why: "not a kernel node",
+                });
+            }
+            step.device
+        };
+        self.validate_mem_sync_map(device, map)?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.mem_sync_map = map;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// `cudaGraphKernelNodeCopyAttributes`: copy priority, PDL, programmatic
-    /// event, launch-completion event, and access-policy window from `src` to
-    /// `dst`.
+    /// event, launch-completion event, access-policy window, and mem-sync
+    /// domain/map from `src` to `dst`.
     ///
     /// Both nodes must be kernels. Capture cannot include it.
     pub fn graph_kernel_node_copy_attributes(
@@ -5552,7 +5802,11 @@ impl Sim {
         self.graph_kernel_node_set_pdl(dst_graph, dst, pdl)?;
         self.graph_kernel_node_set_programmatic_event(dst_graph, dst, pde)?;
         self.graph_kernel_node_set_launch_completion(dst_graph, dst, lce)?;
-        self.graph_kernel_node_set_access_policy(dst_graph, dst, apw)
+        self.graph_kernel_node_set_access_policy(dst_graph, dst, apw)?;
+        let domain = self.graph_kernel_node_get_mem_sync_domain(src_graph, src)?;
+        let map = self.graph_kernel_node_get_mem_sync_domain_map(src_graph, src)?;
+        self.graph_kernel_node_set_mem_sync_domain(dst_graph, dst, domain)?;
+        self.graph_kernel_node_set_mem_sync_domain_map(dst_graph, dst, map)
     }
 
     /// `cudaGraphNodeFindInClone`: index in `cloned` of the node that was `node`
@@ -5619,6 +5873,7 @@ impl Sim {
         kind: Kind,
     ) -> Result<(), SimError> {
         let priority = self.stream_priority(device, stream);
+        let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -5633,6 +5888,8 @@ impl Sim {
             programmatic_event: self.enqueue_programmatic_event,
             launch_completion: self.enqueue_launch_completion,
             access_policy: self.enqueue_access_policy,
+            mem_sync_domain,
+            mem_sync_map,
         });
         Ok(())
     }
@@ -7879,7 +8136,8 @@ impl Sim {
 
     /// [`Self::kernel`] plus packed [`KernelAttrs`] (`cudaLaunchKernelEx`).
     ///
-    /// Combines cooperative, PDL, and an access-policy window on one submit.
+    /// Combines cooperative, PDL, an access-policy window, and mem-sync
+    /// domain/map on one submit.
     /// Decode identity stays [`Self::kernel`] ([`KernelAttrs::default`]).
     pub fn kernel_with(
         &mut self,
@@ -7908,16 +8166,25 @@ impl Sim {
         if let Some(w) = attrs.access_policy {
             validate_access_policy(w)?;
         }
+        if let Some(map) = attrs.mem_sync_map {
+            self.validate_mem_sync_map(device, map)?;
+        }
         if attrs.cooperative {
             self.require_cooperative(device)?;
         }
         let prev_pdl = self.enqueue_pdl;
         let prev_win = self.enqueue_access_policy;
+        let prev_dom = self.enqueue_mem_sync_domain;
+        let prev_map = self.enqueue_mem_sync_map;
         self.enqueue_pdl = attrs.pdl;
         self.enqueue_access_policy = attrs.access_policy;
+        self.enqueue_mem_sync_domain = attrs.mem_sync_domain;
+        self.enqueue_mem_sync_map = attrs.mem_sync_map;
         let out = self.submit_kernel(device, kind, reads, writes, stream, attrs.cooperative);
         self.enqueue_pdl = prev_pdl;
         self.enqueue_access_policy = prev_win;
+        self.enqueue_mem_sync_domain = prev_dom;
+        self.enqueue_mem_sync_map = prev_map;
         out
     }
 
@@ -8763,6 +9030,7 @@ impl Sim {
         let mut deps = capture_step_deps(&self.capture_buf, device, stream, &kind);
         self.merge_capture_pending(device, stream, &mut deps);
         let priority = self.stream_priority(device, stream);
+        let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
         self.capture_buf.push(GraphStep {
             device,
             stream,
@@ -8774,6 +9042,8 @@ impl Sim {
             programmatic_event: self.enqueue_programmatic_event,
             launch_completion: self.enqueue_launch_completion,
             access_policy: self.enqueue_access_policy,
+            mem_sync_domain,
+            mem_sync_map,
         });
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
@@ -8851,6 +9121,8 @@ impl Sim {
         let priority = self
             .enqueue_priority
             .unwrap_or_else(|| self.stream_priority(device, stream));
+        let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
+        let mem_sync_physical = mem_sync_map.physical(mem_sync_domain);
         let _prev_op = self.ops.insert(
             id,
             Op {
@@ -8872,6 +9144,8 @@ impl Sim {
                 programmatic_event: pde,
                 launch_completion: lce,
                 access_policy: self.enqueue_access_policy,
+                mem_sync_physical,
+                domain_fence_paid: false,
             },
         );
         if let Some(pe) = pde {
@@ -9253,6 +9527,8 @@ impl Sim {
                 programmatic_event: None,
                 launch_completion: None,
                 access_policy: None,
+                mem_sync_physical: 0,
+                domain_fence_paid: false,
             },
         );
         self.add_op_dep(kernel, id);
@@ -10724,6 +11000,98 @@ impl Sim {
         }
     }
 
+    fn validate_mem_sync_map(
+        &self,
+        device: DeviceId,
+        map: MemSyncDomainMap,
+    ) -> Result<(), SimError> {
+        let count = self.mem_sync_domain_count(device)?;
+        if map.default >= count || map.remote >= count {
+            Err(SimError::Invalid {
+                why: "mem sync domain",
+            })
+        } else {
+            Ok(())
+        }
+    }
+
+    fn snap_mem_sync(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+        kind: &Kind,
+    ) -> Result<(MemSyncDomain, MemSyncDomainMap), SimError> {
+        let map = match self.enqueue_mem_sync_map {
+            Some(m) => m,
+            None => self.stream_mem_sync_domain_map(device, stream)?,
+        };
+        self.validate_mem_sync_map(device, map)?;
+        let domain =
+            if matches!(kind, Kind::AllReduce { .. }) && self.enqueue_mem_sync_domain.is_none() {
+                MemSyncDomain::Remote
+            } else {
+                self.enqueue_mem_sync_domain
+                    .unwrap_or_else(|| self.stream_mem_sync_domain(device, stream))
+            };
+        Ok((domain, map))
+    }
+
+    fn apply_domain_fences(&mut self) {
+        let finishing: Vec<OpId> = self
+            .running
+            .iter()
+            .filter(|r| r.remaining_ns == 0)
+            .map(|r| r.op)
+            .collect();
+        for id in finishing {
+            let extra = self.same_domain_fence_extra(id);
+            if extra == 0 {
+                continue;
+            }
+            if let Some(r) = self.running.iter_mut().find(|r| r.op == id) {
+                r.remaining_ns = extra;
+            }
+            if let Some(op) = self.ops.get_mut(&id) {
+                op.domain_fence_paid = true;
+            }
+        }
+    }
+
+    fn same_domain_fence_extra(&self, id: OpId) -> u64 {
+        let Some(op) = self.ops.get(&id) else {
+            return 0;
+        };
+        if op.domain_fence_paid || !mem_sync_kind(&op.kind) {
+            return 0;
+        }
+        let Ok(g) = self.profile.gpu(op.device) else {
+            return 0;
+        };
+        let tax = u64::from(g.same_domain_fence_permille);
+        if tax == 0 {
+            return 0;
+        }
+        let phys = op.mem_sync_physical;
+        let device = op.device;
+        let mut leftover = 0u64;
+        for r in &self.running {
+            if r.op == id || r.remaining_ns == 0 {
+                continue;
+            }
+            let Some(other) = self.ops.get(&r.op) else {
+                continue;
+            };
+            if other.device != device || !mem_sync_kind(&other.kind) {
+                continue;
+            }
+            if other.mem_sync_physical != phys {
+                continue;
+            }
+            leftover = leftover.max(r.remaining_ns);
+        }
+        leftover.saturating_mul(tax) / 1000
+    }
+
     fn advance_to_next_completion(&mut self) -> Result<(), SimError> {
         if self.running.is_empty() {
             return Ok(());
@@ -10755,6 +11123,9 @@ impl Sim {
         for (r, n) in self.running.iter_mut().zip(shares.iter()) {
             let drained = min_dt / (*n).max(1);
             r.remaining_ns = r.remaining_ns.saturating_sub(drained);
+        }
+        self.apply_domain_fences();
+        for r in &self.running {
             if r.remaining_ns == 0 {
                 finished.push(r.op);
             }
@@ -11098,6 +11469,10 @@ fn wait_value_span(total: u64, offset: u64, bits32: bool) -> Result<u64, SimErro
         });
     }
     Ok(width)
+}
+
+fn mem_sync_kind(kind: &Kind) -> bool {
+    matches!(kind, Kind::Kernel { .. } | Kind::AllReduce { .. })
 }
 
 fn device_launch_refused(kind: &Kind) -> bool {
@@ -11591,6 +11966,8 @@ fn remap_nested_graphs(
             programmatic_event: step.programmatic_event,
             launch_completion: step.launch_completion,
             access_policy: step.access_policy,
+            mem_sync_domain: step.mem_sync_domain,
+            mem_sync_map: step.mem_sync_map,
         });
     }
     Ok(out)

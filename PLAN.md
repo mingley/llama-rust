@@ -1545,6 +1545,17 @@ model, do not celebrate the sim.
     attach a window to expert GEMMs. Decode identity stays `kernel` with
     persist limit 0. `gpu-profile capture` is still refused.
 
+117. [x] `cudaLaunchAttributeMemSyncDomain` / `MemSyncDomainMap`:
+    `kernel_with` and stream/graph SetAttribute select a logical domain
+    (Default / Remote) and map it onto `GpuProfile::mem_sync_domain_count`
+    physical ids (example H100 is 4). A completing kernel's implicit fence
+    waits `same_domain_fence_permille` of leftover same-physical-domain
+    kernel/allreduce traffic (default 0 = identity). Allreduce tags Remote
+    like NCCL. Graph replay uses the node's map, not the launch stream.
+    Device-launch graphs allow it. CopyAttributes copies it. Decode identity
+    stays `kernel` (Default, identity map, tax 0). `gpu-profile capture` is
+    still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

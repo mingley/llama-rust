@@ -94,6 +94,14 @@ pub struct GpuProfile {
     /// [`crate::ops::AccessPolicyWindow`]. Example default `750`, not a capture.
     /// No window, or persist limit `0`, keeps full HBM billing.
     pub l2_persist_hit_permille: u16,
+    /// `cudaDevAttrMemSyncDomainCount`. Hopper example is 4; `1` is pre-Hopper
+    /// (both logical domains map to physical 0). Not a capture.
+    pub mem_sync_domain_count: u8,
+    /// Extra duration when a kernel's implicit completion fence waits on
+    /// in-flight writes from another same-physical-domain kernel, ‰ of that
+    /// peer's leftover (`1000` = wait for the peer). Default `0` keeps decode
+    /// identity and existing Hyper-Q overlap tests. Not a capture.
+    pub same_domain_fence_permille: u16,
 }
 
 impl GpuProfile {
@@ -490,7 +498,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npdl_trigger_permille={}\nl2_bytes={}\nl2_persist_hit_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npdl_trigger_permille={}\nl2_bytes={}\nl2_persist_hit_permille={}\nmem_sync_domain_count={}\nsame_domain_fence_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -513,6 +521,8 @@ impl HardwareProfile {
             g0.pdl_trigger_permille,
             g0.l2_bytes,
             g0.l2_persist_hit_permille,
+            g0.mem_sync_domain_count,
+            g0.same_domain_fence_permille,
             self.host_pageable_permille(g0.id),
             self.host_align_bytes(g0.id),
             g0.pool_reuse_ns,
@@ -632,6 +642,8 @@ fn h100_gpu(id: DeviceId) -> GpuProfile {
         pdl_trigger_permille: 250,
         l2_bytes: 50u64.saturating_mul(1 << 20),
         l2_persist_hit_permille: 750,
+        mem_sync_domain_count: 4,
+        same_domain_fence_permille: 0,
     }
 }
 
@@ -764,6 +776,8 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut pdl_trigger_permille: u16 = 250;
     let mut l2_bytes: Option<u64> = None;
     let mut l2_persist_hit_permille: Option<u16> = None;
+    let mut mem_sync_domain_count: Option<u8> = None;
+    let mut same_domain_fence_permille: Option<u16> = None;
     let mut pageable_permille: u16 = 500;
     let mut align_bytes: u64 = 128;
     let mut pool_reuse_ns: Option<u64> = None;
@@ -826,6 +840,24 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             "pdl_trigger_permille" => pdl_trigger_permille = parse_u16(v)?,
             "l2_bytes" => l2_bytes = Some(parse_u64(v)?),
             "l2_persist_hit_permille" => l2_persist_hit_permille = Some(parse_u16(v)?),
+            "mem_sync_domain_count" => {
+                let n = parse_u8(v)?;
+                if n == 0 {
+                    return Err(SimError::Invalid {
+                        why: "mem_sync_domain_count must be > 0",
+                    });
+                }
+                mem_sync_domain_count = Some(n);
+            }
+            "same_domain_fence_permille" => {
+                let n = parse_u16(v)?;
+                if n > 1000 {
+                    return Err(SimError::Invalid {
+                        why: "same_domain_fence_permille must be <= 1000",
+                    });
+                }
+                same_domain_fence_permille = Some(n);
+            }
             "pageable_permille" => pageable_permille = parse_u16(v)?,
             "align_bytes" => align_bytes = parse_u64(v)?,
             "pool_reuse_ns" => pool_reuse_ns = Some(parse_u64(v)?),
@@ -890,6 +922,12 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         }
         if let Some(n) = l2_persist_hit_permille {
             g.l2_persist_hit_permille = n;
+        }
+        if let Some(n) = mem_sync_domain_count {
+            g.mem_sync_domain_count = n;
+        }
+        if let Some(n) = same_domain_fence_permille {
+            g.same_domain_fence_permille = n;
         }
         if let Some(ns) = pool_reuse_ns {
             g.pool_reuse_ns = ns;
@@ -1161,6 +1199,32 @@ mod tests {
             50u64.saturating_mul(1 << 20)
         );
         assert_eq!(open.gpu(DeviceId(0)).unwrap().l2_persist_hit_permille, 750);
+    }
+
+    #[test]
+    fn parse_mem_sync_domain() {
+        let p = HardwareProfile::parse(
+            "gpus=1\nmem_sync_domain_count=1\nsame_domain_fence_permille=250\n",
+        )
+        .unwrap();
+        assert_eq!(p.gpu(DeviceId(0)).unwrap().mem_sync_domain_count, 1);
+        assert_eq!(p.gpu(DeviceId(0)).unwrap().same_domain_fence_permille, 250);
+        let text = p.to_profile_text();
+        assert!(text.contains("mem_sync_domain_count=1"));
+        assert!(text.contains("same_domain_fence_permille=250"));
+        let open = HardwareProfile::parse("gpus=1\n").unwrap();
+        assert_eq!(open.gpu(DeviceId(0)).unwrap().mem_sync_domain_count, 4);
+        assert_eq!(open.gpu(DeviceId(0)).unwrap().same_domain_fence_permille, 0);
+        let err = HardwareProfile::parse("gpus=1\nmem_sync_domain_count=0\n").unwrap_err();
+        assert!(
+            format!("{err:?}").contains("mem_sync_domain_count must be > 0"),
+            "{err:?}"
+        );
+        let err = HardwareProfile::parse("gpus=1\nsame_domain_fence_permille=1001\n").unwrap_err();
+        assert!(
+            format!("{err:?}").contains("same_domain_fence_permille must be <= 1000"),
+            "{err:?}"
+        );
     }
 
     #[test]
