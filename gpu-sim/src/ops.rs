@@ -1785,7 +1785,8 @@ pub enum GraphNodeKind {
     DeviceLaunch,
 }
 
-/// `cudaGraphNodeParams` for [`crate::Sim::graph_add_node`].
+/// `cudaGraphNodeParams` for [`crate::Sim::graph_add_node`] /
+/// [`crate::Sim::graph_node_get_params`].
 ///
 /// IF/WHILE/SWITCH stay [`crate::Sim::graph_add_if`] / `graph_add_while` /
 /// `graph_add_switch` (those return body graphs). External-semaphore nodes are

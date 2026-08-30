@@ -274,6 +274,9 @@ IF/WHILE/SWITCH stay `graph_add_if` / `graph_add_while` / `graph_add_switch`.
 `graph_node_set_params` / `graph_exec_node_set_params` are
 `cudaGraphNodeSetParams` / `cudaGraphExecNodeSetParams` (typed SetParams;
 Alloc would resize HBM; Empty has no params).
+`graph_node_get_params` / `graph_exec_node_get_params` are
+`cudaGraphNodeGetParams` on the definition / exec snapshot (query; Empty
+returns `GraphNodeParams::Empty`; Alloc is bytes only).
 `graph_add_empty` is `cudaGraphAddEmptyNode` (1 ns; no compute/copy occupancy).
 `graph_add_write_value64` / `graph_add_wait_value64` /
 `graph_add_batch_mem_op` are `cudaGraphAddBatchMemOpNode` (`cuStreamWaitValue` /

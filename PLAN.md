@@ -2106,7 +2106,16 @@ model, do not celebrate the sim.
     unchanged. `gpu-profile capture` is still refused. Dual score still has
     no `$/M tokens`.
 
-183. [ ] Next numbered PLAN item after 182 is the next `gpu-sim` / Engine /
+183. [x] `cudaGraphNodeGetParams`: `Sim::graph_node_get_params` /
+    `graph_exec_node_get_params` return [`GraphNodeParams`] from the
+    definition / exec snapshot. Query; legal during capture on the
+    definition. Empty returns [`GraphNodeParams::Empty`]. Alloc is bytes
+    only (pointer stays `graph_alloc_get_params`). IF/WHILE/SWITCH are
+    Invalid `"not a graph node params kind"`. Uninstantiated exec GetParams
+    is Invalid. Decode identity unchanged. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+184. [ ] Next numbered PLAN item after 183 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

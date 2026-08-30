@@ -392,6 +392,10 @@
 //! [`graph_exec_node_set_params`](Sim::graph_exec_node_set_params) are
 //! `cudaGraphNodeSetParams` / `cudaGraphExecNodeSetParams` (dispatch to the
 //! typed SetParams; Alloc would resize HBM; Empty has no params).
+//! [`graph_node_get_params`](Sim::graph_node_get_params) /
+//! [`graph_exec_node_get_params`](Sim::graph_exec_node_get_params) are
+//! `cudaGraphNodeGetParams` on the definition / exec snapshot (query; Empty
+//! returns [`GraphNodeParams::Empty`]; Alloc is bytes only).
 //! [`Sim::graph_add_alloc`] / [`graph_add_free`](Sim::graph_add_free) are
 //! `cudaGraphAddMemAllocNode` / `cudaGraphAddMemFreeNode` (same reuse /
 //! AutoFreeOnLaunch rules as captured `cudaMallocAsync`).
@@ -8091,6 +8095,74 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_node_get_params_reads_definition_not_exec() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_empty(g).unwrap();
+        assert_eq!(
+            sim.graph_node_get_params(g, 1).unwrap(),
+            GraphNodeParams::Empty
+        );
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.graph_node_set_params(
+            g,
+            0,
+            GraphNodeParams::Kernel(KernelNodeParams {
+                kind: KernelKind::other(8, 8),
+                reads: vec![KernelBuf::whole(b)],
+                writes: vec![KernelBuf::whole(b)],
+                cooperative: false,
+            }),
+        )
+        .unwrap();
+        match sim.graph_node_get_params(g, 0).unwrap() {
+            GraphNodeParams::Kernel(p) => assert_eq!(p.reads[0].id, b),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_exec_node_get_params(exec, 0).unwrap() {
+            GraphNodeParams::Kernel(p) => assert_eq!(p.reads[0].id, a),
+            other => panic!("{other:?}"),
+        }
+        let mem = sim.create_graph(d, s).unwrap();
+        let added = sim
+            .graph_add_node(mem, &[], GraphNodeParams::Alloc { bytes: 4096 })
+            .unwrap();
+        assert_eq!(
+            sim.graph_node_get_params(mem, added.node).unwrap(),
+            GraphNodeParams::Alloc { bytes: 4096 }
+        );
+        let cond = sim.create_graph(d, s).unwrap();
+        let h = sim.graph_conditional_create(cond, 0).unwrap();
+        let _body = sim.graph_add_if(cond, h).unwrap();
+        match sim.graph_node_get_params(cond, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("params kind"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let raw = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(raw).unwrap();
+        match sim.graph_exec_node_get_params(raw, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.graph_node_get_params(g, 1).unwrap(),
+            GraphNodeParams::Empty
+        );
+        let _end = sim.end_capture().unwrap();
+        match sim.graph_node_get_params(g, 9) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph node"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

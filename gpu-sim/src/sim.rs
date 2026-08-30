@@ -3575,6 +3575,32 @@ impl Sim {
         }
     }
 
+    /// `cudaGraphNodeGetParams` on the graph definition.
+    ///
+    /// Query; legal during capture. Typed GetParams stay. IF/WHILE/SWITCH stay
+    /// [`Self::graph_if_nodes`] / `graph_while_nodes` / `graph_switch_nodes`.
+    /// [`GraphNodeParams::Alloc`] is bytes only; the pointer is
+    /// [`Self::graph_alloc_get_params`]. Empty returns [`GraphNodeParams::Empty`].
+    pub fn graph_node_get_params(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<GraphNodeParams, SimError> {
+        node_params_of(&self.graph_def_step(graph, node)?.kind)
+    }
+
+    /// Exec-snapshot [`Self::graph_node_get_params`].
+    ///
+    /// Uninstantiated graphs are Invalid. After instantiate this is the
+    /// launched node; [`Self::graph_node_get_params`] stays on the definition.
+    pub fn graph_exec_node_get_params(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<GraphNodeParams, SimError> {
+        node_params_of(&self.graph_exec_step(exec, node)?.kind)
+    }
+
     /// `cudaGraphBatchMemOpNodeSetParams` on the graph definition.
     ///
     /// After instantiate this does not retarget the exec; use
@@ -14565,6 +14591,44 @@ fn host_params_of(kind: &Kind) -> Result<HostNodeParams, SimError> {
     Ok(HostNodeParams {
         fn_id: *fn_id,
         user_data: *user_data,
+    })
+}
+
+fn node_params_of(kind: &Kind) -> Result<GraphNodeParams, SimError> {
+    Ok(match kind {
+        Kind::Kernel { .. } => GraphNodeParams::Kernel(kernel_params_of(kind)?),
+        Kind::Memcpy(_) => GraphNodeParams::Memcpy(memcpy_params_of(kind)?),
+        Kind::Memset(_) => GraphNodeParams::Memset(memset_params_of(kind)?),
+        Kind::HostFunc { .. } => GraphNodeParams::Host(host_params_of(kind)?),
+        Kind::Empty => GraphNodeParams::Empty,
+        Kind::EventRecord { event, external } => GraphNodeParams::EventRecord {
+            event: *event,
+            external: *external,
+        },
+        Kind::EventWait { event, external } => GraphNodeParams::EventWait {
+            event: *event,
+            external: *external,
+        },
+        Kind::ChildGraph { graph } => GraphNodeParams::ChildGraph(*graph),
+        Kind::Alloc { bytes, .. } => GraphNodeParams::Alloc { bytes: *bytes },
+        Kind::Free { id } => GraphNodeParams::Free(*id),
+        Kind::BatchMem { .. } | Kind::WriteValue { .. } | Kind::WaitValue { .. } => {
+            GraphNodeParams::BatchMemOp(batch_items(kind).ok_or(SimError::Invalid {
+                why: "not a batch mem op node",
+            })?)
+        }
+        Kind::If { .. }
+        | Kind::While { .. }
+        | Kind::Switch { .. }
+        | Kind::SetConditional { .. }
+        | Kind::WhileTick { .. }
+        | Kind::Attach { .. }
+        | Kind::AllReduce { .. }
+        | Kind::DeviceLaunch { .. } => {
+            return Err(SimError::Invalid {
+                why: "not a graph node params kind",
+            });
+        }
     })
 }
 
