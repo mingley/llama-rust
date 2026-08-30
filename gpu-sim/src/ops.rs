@@ -1742,6 +1742,11 @@ pub struct StreamCaptureInfo {
     /// `dependencies`): last same-stream captured node (destination-graph
     /// index) union [`Self::pending_deps`].
     pub dependencies: Vec<usize>,
+    /// Capture-sequence id (`cudaStreamGetCaptureInfo` `id_out`).
+    ///
+    /// Unique per [`crate::Sim::begin_capture`] / `begin_capture_to_graph`.
+    /// Forked streams in the same session share it. Not a [`GraphId`].
+    pub id: u64,
     /// Mode this capture started with (`cudaStreamGetCaptureInfo` status).
     pub mode: StreamCaptureMode,
 }

@@ -422,7 +422,9 @@
 //! [`stream_is_capturing`](Sim::stream_is_capturing) /
 //! [`stream_capture_info`](Sim::stream_capture_info) are `cudaStreamIsCapturing`
 //! / `cudaStreamGetCaptureInfo`. [`StreamCaptureInfo::dependencies`] is the v2
-//! array (last same-stream captured node union extra pending deps). [`begin_capture_with_mode`](Sim::begin_capture_with_mode)
+//! array (last same-stream captured node union extra pending deps).
+//! [`StreamCaptureInfo::id`] is `id_out` (unique per begin-capture sequence;
+//! forked streams share it). [`begin_capture_with_mode`](Sim::begin_capture_with_mode)
 //! is `cudaStreamBeginCapture` with [`StreamCaptureMode`] (default
 //! [`StreamCaptureMode::Relaxed`]: independent streams stay live; a wait of a
 //! captured record still joins. [`StreamCaptureMode::ThreadLocal`] /
@@ -13108,6 +13110,42 @@ mod tests {
         assert_eq!(info.dependencies, vec![2]);
         assert_eq!(sim.end_capture().unwrap(), g);
         assert_eq!(sim.graph_node_deps(g, 2).unwrap(), vec![1]);
+    }
+
+    #[test]
+    fn stream_capture_info_id_is_unique_per_sequence() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        let first = sim.stream_capture_info(d, s).expect("first");
+        assert_eq!(first.id, 1);
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let after = sim.stream_capture_info(d, s).expect("after kernel");
+        assert_eq!(after.id, first.id);
+        let _g1 = sim.end_capture().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        let second = sim.stream_capture_info(d, s).expect("second");
+        assert_eq!(second.id, 2);
+        assert_ne!(second.graph, first.graph);
+        let _g2 = sim.end_capture().unwrap();
+        let copy = StreamId(0);
+        let compute = StreamId(1);
+        let ev = EventId(1);
+        sim.create_event(ev).unwrap();
+        sim.begin_capture(d, copy).unwrap();
+        let origin = sim.stream_capture_info(d, copy).expect("origin");
+        assert_eq!(origin.id, 3);
+        enq(sim.record_event(d, ev, copy));
+        enq(sim.wait_event(d, ev, compute));
+        let fork = sim.stream_capture_info(d, compute).expect("fork");
+        assert_eq!(fork.id, origin.id);
+        assert_eq!(fork.graph, origin.graph);
+        assert_eq!(fork.origin, origin.origin);
+        let still = sim.stream_capture_info(d, copy).expect("still");
+        assert_eq!(still.id, origin.id);
+        let _g3 = sim.end_capture().unwrap();
     }
 
     #[test]

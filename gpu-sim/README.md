@@ -385,7 +385,8 @@ parameter; External is topology).
 replaces, `Add` unions). `stream_is_capturing` / `stream_capture_info` are
 `cudaStreamIsCapturing` / `GetCaptureInfo` (includes capture mode).
 `StreamCaptureInfo::dependencies` is `GetCaptureInfo_v2` (last same-stream
-captured node union extra pending deps).
+captured node union extra pending deps). `StreamCaptureInfo::id` is
+`id_out` (unique per begin-capture sequence; forked streams share it).
 `begin_capture_with_mode` is `cudaStreamBeginCapture` with
 `StreamCaptureMode` (default Relaxed: independent streams stay live; a wait
 of a captured record still joins. ThreadLocal/Global refuse uncaptured-stream

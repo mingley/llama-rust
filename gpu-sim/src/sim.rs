@@ -306,6 +306,8 @@ struct Capture {
     extra_abs: BTreeMap<usize, Vec<usize>>,
     /// Mode this session started with.
     mode: StreamCaptureMode,
+    /// `cudaStreamGetCaptureInfo` `id_out` (unique per begin-capture sequence).
+    id: u64,
 }
 
 /// Existing graph plus extra root deps for [`Capture::into`].
@@ -569,6 +571,8 @@ pub struct Sim {
     next_op: u64,
     next_alloc: u64,
     next_graph: u32,
+    /// Next `cudaStreamGetCaptureInfo` `id_out` (starts at 1).
+    next_capture_id: u64,
     allocs: BTreeMap<AllocId, Alloc>,
     ops: BTreeMap<OpId, Op>,
     tail: BTreeMap<(DeviceId, StreamId), OpId>,
@@ -728,6 +732,7 @@ impl Sim {
             next_op: 1,
             next_alloc: 1,
             next_graph: 1,
+            next_capture_id: 1,
             allocs: BTreeMap::new(),
             ops: BTreeMap::new(),
             tail: BTreeMap::new(),
@@ -1795,6 +1800,8 @@ impl Sim {
         let into = self.capture_into(device, graph, deps)?;
         let mut streams = BTreeSet::new();
         let _ins = streams.insert((device, stream));
+        let id = self.next_capture_id;
+        self.next_capture_id = self.next_capture_id.saturating_add(1);
         self.capturing = Some(Capture {
             origin: (device, stream),
             streams,
@@ -1804,6 +1811,7 @@ impl Sim {
             pending: BTreeMap::new(),
             extra_abs: BTreeMap::new(),
             mode,
+            id,
         });
         self.capture_buf.clear();
         Ok(())
@@ -1930,8 +1938,9 @@ impl Sim {
     /// `pending_deps` are extra [`Self::stream_update_capture_dependencies`]
     /// indices not yet consumed (not stream-order predecessors).
     /// `dependencies` is the v2 array: last same-stream captured node union
-    /// those extras (destination-graph indices). [`Self::graph_len`] of
-    /// `info.graph` during capture excludes this session's buffer until
+    /// those extras (destination-graph indices). `id` is `id_out` (unique per
+    /// sequence; forked streams share it). [`Self::graph_len`] of `info.graph`
+    /// during capture excludes this session's buffer until
     /// [`Self::end_capture`].
     #[must_use]
     pub fn stream_capture_info(
@@ -1967,6 +1976,7 @@ impl Sim {
             origin: cap.origin,
             pending_deps,
             dependencies,
+            id: cap.id,
             mode: cap.mode,
         })
     }

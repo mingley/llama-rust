@@ -2123,7 +2123,14 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-185. [ ] Next numbered PLAN item after 184 is the next `gpu-sim` / Engine /
+185. [x] `cudaStreamGetCaptureInfo` `id_out`:
+    [`StreamCaptureInfo::id`] is unique per `begin_capture` /
+    `begin_capture_to_graph` sequence (starts at 1). Forked streams in
+    the same session share it. Stable after capturing nodes. Query; not a
+    graph id. Decode identity unchanged. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+186. [ ] Next numbered PLAN item after 185 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
