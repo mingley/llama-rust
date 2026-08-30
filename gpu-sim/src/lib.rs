@@ -100,6 +100,14 @@
 //! [`Sim::memset_buf`], and [`MemcpyOp::offset`] touch a mapped span (paged KV).
 //! [`Sim::is_range_resident`] is that span check.
 //! [`Sim::host_func`] is `cudaLaunchHostFunc` (stream-ordered host work; no GPU occupancy).
+//! [`Sim::write_value64`] / [`write_value32`](Sim::write_value32) are
+//! `cuStreamWriteValue64` / `WriteValue32` (mailbox updates on complete; no
+//! compute/copy occupancy). [`wait_value64`](Sim::wait_value64) /
+//! [`wait_value32`](Sim::wait_value32) are `cuStreamWaitValue64` / `WaitValue32`
+//! ([`WaitValueCmp`]; unwritten locations read as 0; unsatisfied wait plus
+//! [`Sim::synchronize`] deadlocks). Kernel / memset / memcpy stores to the
+//! mailbox address are not modeled. Device-resident and mapped-host are legal;
+//! remote AccessedBy maps are not. Capture records a batch-mem-op node.
 //! [`Sim::set_stream_blocking`] is `cudaStreamCreate` vs `cudaStreamNonBlocking`.
 //! [`HardwareProfile::host_pin_bytes`] caps `cudaMallocHost` / `cudaHostRegister`.
 //! [`Sim::idle_until`] drains, then jumps the virtual clock (open-loop arrivals).
@@ -128,8 +136,10 @@
 //! `cudaGraphExec*SetParams` use that snapshot.
 //! [`graph_kernel_set_params`](Sim::graph_kernel_set_params) /
 //! [`graph_memcpy_set_params`](Sim::graph_memcpy_set_params) /
-//! [`graph_memset_set_params`](Sim::graph_memset_set_params) are
+//! [`graph_memset_set_params`](Sim::graph_memset_set_params) /
+//! [`graph_batch_mem_op_set_params`](Sim::graph_batch_mem_op_set_params) are
 //! `cudaGraphKernelNodeSetParams` / `MemcpyNodeSetParams` / `MemsetNodeSetParams`
+//! / `BatchMemOpNodeSetParams`
 //! on the graph and do not retarget an already-instantiated exec.
 //! [`graph_kernel_node_get_priority`](Sim::graph_kernel_node_get_priority) /
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
@@ -154,6 +164,10 @@
 //! `cudaGraphExecMemsetNodeSetParams` (same cost; zero-byte still illegal).
 //! [`graph_unique_memset`](Sim::graph_unique_memset) /
 //! [`graph_try_unique_memset`](Sim::graph_try_unique_memset) find that node.
+//! [`graph_exec_batch_mem_op_set_params`](Sim::graph_exec_batch_mem_op_set_params)
+//! is `cudaGraphExecBatchMemOpNodeSetParams` (id/offset/value; wait vs write,
+//! `bits32`, and compare stay). [`graph_unique_write_value`](Sim::graph_unique_write_value)
+//! / [`graph_unique_wait_value`](Sim::graph_unique_wait_value) find those nodes.
 //! [`graph_exec_child_set_params`](Sim::graph_exec_child_set_params) is
 //! `cudaGraphExecChildGraphNodeSetParams`: swap the nested graph of one
 //! instantiated child-graph node (`graph_set_params_ns`; nested topology must
@@ -177,6 +191,9 @@
 //! [`graph_add_empty`](Sim::graph_add_empty) /
 //! [`graph_add_event_record`](Sim::graph_add_event_record) /
 //! [`graph_add_event_wait`](Sim::graph_add_event_wait) /
+//! [`graph_add_write_value64`](Sim::graph_add_write_value64) /
+//! [`graph_add_wait_value64`](Sim::graph_add_wait_value64) /
+//! [`graph_add_batch_mem_op`](Sim::graph_add_batch_mem_op) /
 //! [`graph_add_child`](Sim::graph_add_child) /
 //! [`graph_add_alloc`](Sim::graph_add_alloc) /
 //! [`graph_add_free`](Sim::graph_add_free) /
@@ -255,9 +272,9 @@ pub use ids::{
     OpId, PoolId, PtrExportId, ShareableHandleId, StreamId,
 };
 pub use ops::{
-    CaptureDepOp, DType, GpuOp, GraphInstantiateFlags, GraphMemAttr, GraphNodeKind, KernelBuf,
-    KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp, Operation, Place,
-    StreamCaptureInfo,
+    BatchMemOp, CaptureDepOp, DType, GpuOp, GraphInstantiateFlags, GraphMemAttr, GraphNodeKind,
+    KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp, Operation, Place,
+    StreamCaptureInfo, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -8315,5 +8332,409 @@ mod tests {
             nvls_ns > d2d_ns,
             "exclusive compute: NVLS kernel must serialize with GEMM, nvls={nvls_ns} d2d={d2d_ns}"
         );
+    }
+
+    fn wait_op(sim: &Sim) -> Operation {
+        sim.operations()
+            .find(|o| matches!(o.kind, GpuOp::WaitValue { .. }))
+            .expect("wait-value op")
+    }
+
+    fn write_op(sim: &Sim) -> Operation {
+        sim.operations()
+            .find(|o| matches!(o.kind, GpuOp::WriteValue { .. }))
+            .expect("write-value op")
+    }
+
+    #[test]
+    fn wait_eq_unsatisfied_deadlocks_synchronize() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        enq(sim.wait_value64(d, a, 0, 1, WaitValueCmp::Eq, s));
+        let err = sim.synchronize().unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("deadlock"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn wait_eq_unblocks_after_write_on_other_stream_without_event() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let wait_s = StreamId(0);
+        let write_s = StreamId(1);
+        let a = sim.malloc(d, 64).unwrap();
+        enq(sim.wait_value64(d, a, 0, 1, WaitValueCmp::Eq, wait_s));
+        enq(sim.write_value64(d, a, 0, 1, write_s));
+        sim.synchronize().unwrap();
+        let wait = wait_op(&sim);
+        let write = write_op(&sim);
+        assert!(wait.done);
+        assert!(write.done);
+        assert!(wait.start_ns.unwrap() >= write.done_ns.unwrap());
+    }
+
+    #[test]
+    fn wait_then_write_same_stream_deadlocks() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        enq(sim.wait_value64(d, a, 0, 1, WaitValueCmp::Eq, s));
+        enq(sim.write_value64(d, a, 0, 1, s));
+        let err = sim.synchronize().unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("deadlock"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn wait_geq_and_nor_need_later_write() {
+        let d = DeviceId(0);
+        let wait_s = StreamId(0);
+        let write_s = StreamId(1);
+        let run = |cmp: WaitValueCmp, first: u64, second: u64, want: u64| {
+            let mut sim = Sim::new(h100());
+            let a = sim.malloc(d, 64).unwrap();
+            enq(sim.wait_value64(d, a, 0, want, cmp, wait_s));
+            enq(sim.write_value64(d, a, 0, first, write_s));
+            sim.synchronize_stream(d, write_s).unwrap();
+            let err = sim.synchronize_stream(d, wait_s);
+            match err {
+                Err(SimError::Invalid { why }) => assert!(why.contains("deadlock"), "{why}"),
+                other => panic!("first write must not unblock: {other:?}"),
+            }
+            let mut sim = Sim::new(h100());
+            let a = sim.malloc(d, 64).unwrap();
+            enq(sim.wait_value64(d, a, 0, want, cmp, wait_s));
+            enq(sim.write_value64(d, a, 0, first, write_s));
+            enq(sim.write_value64(d, a, 0, second, write_s));
+            sim.synchronize().unwrap();
+        };
+        run(WaitValueCmp::Geq, 3, 5, 5);
+        run(WaitValueCmp::And, 1, 4, 4);
+        run(WaitValueCmp::Nor, 1, 3, 3);
+    }
+
+    #[test]
+    fn write32_masks_high_bits_for_wait64() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let wait_s = StreamId(0);
+        let write_s = StreamId(1);
+        let a = sim.malloc(d, 64).unwrap();
+        enq(sim.wait_value64(d, a, 0, 0x1_0000_0001, WaitValueCmp::Eq, wait_s));
+        enq(sim.write_value32(d, a, 0, 0x1_0000_0001, write_s));
+        let err = sim.synchronize().unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("deadlock"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let mut sim = Sim::new(h100());
+        let a = sim.malloc(d, 64).unwrap();
+        enq(sim.wait_value32(d, a, 0, 1, WaitValueCmp::Eq, wait_s));
+        enq(sim.write_value32(d, a, 0, 0x1_0000_0001, write_s));
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn wait_value_alignment_and_span() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 16).unwrap();
+        let err = sim
+            .wait_value64(d, a, 1, 1, WaitValueCmp::Eq, s)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("alignment"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim
+            .wait_value64(d, a, 16, 1, WaitValueCmp::Eq, s)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("span"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim.write_value32(d, a, 2, 1, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("alignment"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn wait_on_pageable_host_is_not_resident() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let h = sim.alloc_host(64).unwrap();
+        enq(sim.wait_value64(d, h, 0, 1, WaitValueCmp::Eq, s));
+        let err = sim.synchronize().unwrap_err();
+        match err {
+            SimError::NotResident { alloc, device } => {
+                assert_eq!(alloc, h);
+                assert_eq!(device, d);
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn memset_does_not_unblock_wait() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let wait_s = StreamId(0);
+        let fill_s = StreamId(1);
+        let a = sim.malloc(d, 64).unwrap();
+        enq(sim.wait_value64(d, a, 0, 1, WaitValueCmp::Eq, wait_s));
+        enq(sim.memset(d, a, 64, fill_s));
+        let err = sim.synchronize().unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("deadlock"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn mapped_host_wait_value_is_legal() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let wait_s = StreamId(0);
+        let write_s = StreamId(1);
+        let h = sim.alloc_host_mapped(64).unwrap();
+        enq(sim.wait_value64(d, h, 0, 7, WaitValueCmp::Eq, wait_s));
+        enq(sim.write_value64(d, h, 0, 7, write_s));
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn wait_does_not_occupy_compute() {
+        let mut sim = Sim::new(h100().with_compute_slots(1));
+        let d = DeviceId(0);
+        let gemm_s = StreamId(0);
+        let wait_s = StreamId(1);
+        let write_s = StreamId(2);
+        let a = sim.malloc(d, 64).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 40, 4096), &[b], &[b], gemm_s));
+        enq(sim.wait_value64(d, a, 0, 1, WaitValueCmp::Eq, wait_s));
+        enq(sim.write_value64(d, a, 0, 1, write_s));
+        sim.synchronize().unwrap();
+        let gemm = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .expect("kernel");
+        let wait = wait_op(&sim);
+        assert!(wait.start_ns.unwrap() < gemm.done_ns.unwrap());
+        assert!(wait.start_ns.unwrap() >= write_op(&sim).done_ns.unwrap());
+    }
+
+    #[test]
+    fn graph_add_wait_write_launch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_write_value64(g, a, 0, 1).unwrap();
+        sim.graph_add_wait_value64(g, a, 0, 1, WaitValueCmp::Eq)
+            .unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        assert_eq!(
+            sim.graph_node_kind(g, 0).unwrap(),
+            GraphNodeKind::BatchMemOp
+        );
+        assert_eq!(
+            sim.graph_node_kind(g, 1).unwrap(),
+            GraphNodeKind::BatchMemOp
+        );
+        sim.instantiate_graph(g).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn graph_add_batch_mem_op_chains_write_then_wait() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_batch_mem_op(
+            g,
+            &[
+                BatchMemOp::Write {
+                    id: a,
+                    offset: 0,
+                    value: 1,
+                    bits32: false,
+                },
+                BatchMemOp::Wait {
+                    id: a,
+                    offset: 0,
+                    value: 1,
+                    bits32: false,
+                    cmp: WaitValueCmp::Eq,
+                },
+            ],
+        )
+        .unwrap();
+        assert_eq!(sim.graph_node_deps(g, 1).unwrap(), vec![0]);
+        sim.instantiate_graph(g).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        let err = sim.graph_add_batch_mem_op(g, &[]).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("empty"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn capture_write_then_wait_replays() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.write_value64(d, a, 0, 9, s));
+        enq(sim.wait_value64(d, a, 0, 9, WaitValueCmp::Eq, s));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(
+            sim.graph_node_kind(g, 0).unwrap(),
+            GraphNodeKind::BatchMemOp
+        );
+        sim.instantiate_graph(g).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn graph_add_wait_rejects_instantiated_and_capture() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_wait_value64(g, a, 0, 1, WaitValueCmp::Eq)
+            .unwrap();
+        sim.instantiate_graph(g).unwrap();
+        let err = sim.graph_add_write_value64(g, a, 0, 1).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        let err = sim
+            .graph_add_wait_value64(g, a, 0, 1, WaitValueCmp::Eq)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_batch_mem_op_set_params_does_not_retarget_exec() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let b = sim.malloc(d, 64).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_wait_value64(g, a, 0, 1, WaitValueCmp::Eq)
+            .unwrap();
+        sim.instantiate_graph(g).unwrap();
+        sim.graph_batch_mem_op_set_params(
+            g,
+            0,
+            BatchMemOp::Wait {
+                id: b,
+                offset: 0,
+                value: 1,
+                bits32: false,
+                cmp: WaitValueCmp::Eq,
+            },
+        )
+        .unwrap();
+        let (_, now) = sim.graph_unique_wait_value(g).unwrap();
+        match now {
+            BatchMemOp::Wait { id, .. } => assert_eq!(id, a, "unique wait is the exec snapshot"),
+            other => panic!("{other:?}"),
+        }
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        let err = sim.synchronize().unwrap_err();
+        match err {
+            SimError::NotResident { alloc, device } => {
+                assert_eq!(alloc, a);
+                assert_eq!(device, d);
+            }
+            SimError::Invalid { why } if why.contains("deadlock") => {
+                panic!("wait should fail residency on freed A, not hang: {why}");
+            }
+            e => panic!("{e:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_exec_batch_mem_op_set_params_retargets() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let write_s = StreamId(1);
+        let a = sim.malloc(d, 64).unwrap();
+        let b = sim.malloc(d, 64).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_wait_value64(g, a, 0, 1, WaitValueCmp::Eq)
+            .unwrap();
+        sim.instantiate_graph(g).unwrap();
+        let (node, mut op) = sim.graph_unique_wait_value(g).unwrap();
+        match &mut op {
+            BatchMemOp::Wait { id, .. } => *id = b,
+            other => panic!("{other:?}"),
+        }
+        sim.graph_exec_batch_mem_op_set_params(g, node, op).unwrap();
+        let (_, now) = sim.graph_unique_wait_value(g).unwrap();
+        match now {
+            BatchMemOp::Wait { id, .. } => assert_eq!(id, b),
+            other => panic!("{other:?}"),
+        }
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        enq(sim.write_value64(d, b, 0, 1, write_s));
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn free_mailbox_alloc_while_waiting_is_not_resident() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let wait_s = StreamId(0);
+        let free_s = StreamId(1);
+        let a = sim.alloc(d, 64, wait_s).unwrap();
+        sim.synchronize().unwrap();
+        enq(sim.wait_value64(d, a, 0, 1, WaitValueCmp::Eq, wait_s));
+        sim.free(d, a, free_s).unwrap();
+        let err = sim.synchronize().unwrap_err();
+        match err {
+            SimError::NotResident { alloc, device } => {
+                assert_eq!(alloc, a);
+                assert_eq!(device, d);
+            }
+            other => panic!("{other:?}"),
+        }
     }
 }

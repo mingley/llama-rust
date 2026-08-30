@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — stream wait/write-value (`cuStreamWaitValue`)
+
+`wait_value64` / `write_value64` (and 32-bit) are `cuStreamWaitValue*` /
+`cuStreamWriteValue*`. The mailbox updates when write **completes**;
+unwritten locations read as 0. Kernel / memset / memcpy stores to that
+address are not modeled. Wait stays pending until the compare matches
+(no compute or copy occupancy). A write on another stream unblocks wait
+without an event. Unsatisfied wait plus `synchronize` is deadlock.
+`graph_add_wait_value64` / `graph_add_write_value64` /
+`graph_add_batch_mem_op` are `cudaGraphAddBatchMemOpNode`. Graph vs exec
+SetParams match memcpy. Decode identity stays kernel-only graphs.
+`gpu-profile capture` is still refused. Device-launch is still Invalid.
+
 ## Shipped 2026-08-30 — graph-side memcpy/memset SetParams
 
 `graph_memcpy_set_params` / `graph_memset_set_params` are

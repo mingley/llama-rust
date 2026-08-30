@@ -1395,6 +1395,19 @@ model, do not celebrate the sim.
     instantiate they do not retarget the exec snapshot. Decode identity
     stays ExecSetParams. `gpu-profile capture` is still refused.
 
+102. [x] Stream wait/write-value: `Sim::wait_value64` / `write_value64` /
+    `wait_value32` / `write_value32` are `cuStreamWaitValue*` /
+    `cuStreamWriteValue*` (`WaitValueCmp` Eq/Geq/And/Nor). A mailbox
+    updates on write **complete**; unwritten locations read as 0.
+    Kernel/memset/memcpy stores are not modeled. Wait stays pending until
+    the compare matches (no compute/copy occupancy). Cross-stream write
+    unblocks wait without an event; unsatisfied wait + `synchronize` is
+    deadlock. `graph_add_wait_value64` / `graph_add_write_value64` /
+    `graph_add_batch_mem_op` are `cudaGraphAddBatchMemOpNode` (a multi-item
+    batch is sequential nodes with deps). Graph vs exec SetParams match
+    memcpy. Decode identity stays kernel-only graphs (not wired into
+    expertvm). `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

@@ -251,10 +251,69 @@ pub enum MemAttach {
     Single,
 }
 
+/// `CU_STREAM_WAIT_VALUE_*` compare for [`GpuOp::WaitValue`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WaitValueCmp {
+    /// Wait until `*addr == value` (`CU_STREAM_WAIT_VALUE_EQ`).
+    Eq,
+    /// Unsigned `*addr >= value` (`CU_STREAM_WAIT_VALUE_GEQ`).
+    Geq,
+    /// Wait until `(*addr & value) != 0` (`CU_STREAM_WAIT_VALUE_AND`).
+    And,
+    /// Wait until `(*addr & value) == value` (`CU_STREAM_WAIT_VALUE_NOR`).
+    Nor,
+}
+
+impl WaitValueCmp {
+    /// Whether `loc` (already masked to 32 or 64 bits) satisfies this compare.
+    #[must_use]
+    pub fn matches(self, loc: u64, value: u64) -> bool {
+        match self {
+            Self::Eq => loc == value,
+            Self::Geq => loc >= value,
+            Self::And => (loc & value) != 0,
+            Self::Nor => (loc & value) == value,
+        }
+    }
+}
+
+/// One `cuStreamBatchMemOp` item (`cudaGraphAddBatchMemOpNode` batch-of-1).
+///
+/// A multi-item [`crate::Sim::graph_add_batch_mem_op`] is sequential nodes with
+/// dependency edges, not one CUDA node holding a vector.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BatchMemOp {
+    /// [`GpuOp::WriteValue`].
+    Write {
+        /// Allocation holding the mailbox word.
+        id: AllocId,
+        /// Byte offset (4-byte aligned for 32-bit, 8-byte for 64-bit).
+        offset: u64,
+        /// Value written on complete (low 32 bits when `bits32`).
+        value: u64,
+        /// `cuStreamWriteValue32` when true.
+        bits32: bool,
+    },
+    /// [`GpuOp::WaitValue`].
+    Wait {
+        /// Allocation holding the mailbox word.
+        id: AllocId,
+        /// Byte offset (4-byte aligned for 32-bit, 8-byte for 64-bit).
+        offset: u64,
+        /// Compare operand (low 32 bits when `bits32`).
+        value: u64,
+        /// `cuStreamWaitValue32` when true.
+        bits32: bool,
+        /// Compare mode.
+        cmp: WaitValueCmp,
+    },
+}
+
 /// One submitted GPU primitive. PLAN's Kernel / Memcpy / Collective / Event /
 /// Alloc / Free, plus `cudaMemsetAsync`, `cudaLaunchHostFunc`, stream attach,
-/// empty graph nodes, nested [`Self::ChildGraph`], and conditional IF / WHILE /
-/// SWITCH / [`Self::SetConditional`]. Timing is not stored here.
+/// empty graph nodes, nested [`Self::ChildGraph`], conditional IF / WHILE /
+/// SWITCH / [`Self::SetConditional`], and wait/write-value batch mem ops.
+/// Timing is not stored here.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GpuOp {
     /// Stream-ordered device allocation (`cudaMallocAsync`). Capacity is
@@ -382,6 +441,36 @@ pub enum GpuOp {
         handle: CondId,
         /// Body graphs returned by [`crate::Sim::graph_add_switch`].
         bodies: Vec<GraphId>,
+    },
+    /// `cuStreamWriteValue32` / `WriteValue64`. The mailbox updates when this
+    /// op **completes**, not when it starts. Does not occupy compute or copy
+    /// engines. Capture records a batch-mem-op node. Kernel / memset / memcpy
+    /// stores to this address are not modeled.
+    WriteValue {
+        /// Allocation holding the mailbox word.
+        id: AllocId,
+        /// Byte offset (aligned to 4 or 8).
+        offset: u64,
+        /// Value written on complete.
+        value: u64,
+        /// 32-bit store when true (high bits of a prior 64-bit write stay).
+        bits32: bool,
+    },
+    /// `cuStreamWaitValue32` / `WaitValue64`. Stays pending until the mailbox
+    /// compare matches. Unwritten locations read as 0 (flag-memory analog, not
+    /// uninitialized `cudaMalloc`). No compute or copy occupancy. Capture
+    /// records a batch-mem-op node.
+    WaitValue {
+        /// Allocation holding the mailbox word.
+        id: AllocId,
+        /// Byte offset (aligned to 4 or 8).
+        offset: u64,
+        /// Compare operand.
+        value: u64,
+        /// 32-bit compare when true (mask `0xFFFF_FFFF`).
+        bits32: bool,
+        /// `CU_STREAM_WAIT_VALUE_*` mode.
+        cmp: WaitValueCmp,
     },
 }
 
@@ -514,4 +603,6 @@ pub enum GraphNodeKind {
     WhileTick,
     /// Conditional SWITCH node (`cudaGraphCondTypeSwitch`).
     Switch,
+    /// `cudaGraphAddBatchMemOpNode` / captured wait-value or write-value.
+    BatchMemOp,
 }
