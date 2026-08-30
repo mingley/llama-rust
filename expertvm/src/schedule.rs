@@ -7,11 +7,11 @@ use crate::planner::{plan_keys, predicted_keys, ChainState, Markov, Plan};
 use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
     advise_pool_access_if_pinned, allow_non_portable_cluster_if, allow_optin_shared_if,
-    apply_misses, apply_stream_sms, apply_stream_sync_policy, apply_touch, bind_shareable_mempools,
-    drop_remote, fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots,
-    reclaim_victim, remote_hit, replay_from_sim, sim_profile, sync_work, trim_graph_pools,
-    validate_sim_cfg, GraphBank, LeafMem, PageHandle, RemoteFetch, RemotePage, ReplayCounters,
-    SimCfg, SimReplay, StreamPlan, TouchArgs,
+    apply_misses, apply_stream_mem_sync_domain, apply_stream_sms, apply_stream_sync_policy,
+    apply_touch, bind_shareable_mempools, drop_remote, fetch_remote, fill_remote, gemm_keys,
+    host_callbacks, note_touch, occupancy_slots, reclaim_victim, remote_hit, replay_from_sim,
+    sim_profile, sync_work, trim_graph_pools, validate_sim_cfg, GraphBank, LeafMem, PageHandle,
+    RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, StreamPlan, TouchArgs,
 };
 use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -303,6 +303,7 @@ impl SchedRt {
         }
         apply_stream_sms(&mut sim, plan, cfg.decode_sm_permille)?;
         apply_stream_sync_policy(&mut sim, plan, cfg.sync_policy)?;
+        apply_stream_mem_sync_domain(&mut sim, plan, cfg.mem_sync_domain)?;
         if cfg.l2_persist {
             sim.enable_persisting_l2()?;
         }

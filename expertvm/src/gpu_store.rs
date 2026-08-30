@@ -9,7 +9,8 @@ use crate::planner::{
     Prefetch, DECODE_ACTIVATION_BYTES,
 };
 use crate::sim_replay::{
-    add_leaf_gemm, allow_non_portable_cluster_if, allow_optin_shared_if, apply_stream_sync_policy,
+    add_leaf_gemm, allow_non_portable_cluster_if, allow_optin_shared_if,
+    apply_exec_mem_sync_domain, apply_stream_mem_sync_domain, apply_stream_sync_policy,
     bind_shareable_mempools, check_cluster_preferred, check_device_graph_flags, instantiate_exec,
     kernel_leaf, replay_exec, replay_streams, retarget_parked_kernel, stream_of,
     upload_after_set_params, GemmFlags, LeafMem, StreamPlan,
@@ -218,6 +219,14 @@ pub struct GpuStoreCfg {
     /// [`Self::decode_priority`]). [`gpu_sim::SynchronizationPolicy::Auto`] tax
     /// is 0. Decode identity stays Auto.
     pub sync_policy: gpu_sim::SynchronizationPolicy,
+    /// `cudaLaunchAttributeMemSyncDomain` on the decode compute stream.
+    ///
+    /// [`gpu_sim::MemSyncDomain::Remote`] isolates leftover prefill fence tax
+    /// when [`Self::decode_priority`] puts decode GEMMs on a second stream.
+    /// Leaf graph replay SetAttributes the exec node to the launch stream
+    /// when they disagree (CUDA graphs bake capture-time domain). Decode
+    /// identity stays Default.
+    pub mem_sync_domain: gpu_sim::MemSyncDomain,
     /// Shared-memory bank width (`cudaLaunchAttributeSharedMemoryMode`).
     ///
     /// Default never scales duration. FourByte / EightByte scale grouped GEMM
@@ -520,6 +529,9 @@ impl SimulatedGpuStore {
     /// thread-block cluster dims.
     /// [`GpuStoreCfg::sync_policy`] is stream host-wait
     /// (`cudaLaunchAttributeSynchronizationPolicy`; Auto tax 0).
+    /// [`GpuStoreCfg::mem_sync_domain`] is decode-stream
+    /// `cudaLaunchAttributeMemSyncDomain` (Default identity; Remote isolates
+    /// leftover prefill fence tax).
     /// [`GpuStoreCfg::shared_mem`] is kernel-node bank width
     /// (`cudaLaunchAttributeSharedMemoryMode`; Default never scales).
     /// [`GpuStoreCfg::portable_cluster`] is launch-time portable cluster mode
@@ -634,6 +646,7 @@ impl SimulatedGpuStore {
             sim.set_created_streams_priority(mark)?;
         }
         apply_stream_sync_policy(&mut sim, plan, cfg.sync_policy)?;
+        apply_stream_mem_sync_domain(&mut sim, plan, cfg.mem_sync_domain)?;
         if cfg.decode_sm_permille > 0 {
             let dec = cfg.decode_sm_permille.min(1000);
             let pre = 1000u16.saturating_sub(dec).max(1);
@@ -1629,12 +1642,16 @@ impl SimulatedGpuStore {
         Ok(())
     }
 
+    fn launch_graph_exec(&mut self, g: GraphId, device: DeviceId) -> Result<(), Error> {
+        apply_exec_mem_sync_domain(&mut self.sim, g, device, self.compute)?;
+        self.graph_launches = self.graph_launches.saturating_add(1);
+        replay_exec(&mut self.sim, g, device, self.compute, self.device_launch)
+    }
+
     fn launch_or_gemm(&mut self, device: DeviceId, id: AllocId) -> Result<(), Error> {
         let flags = self.gemm_flags();
         if let Some(g) = self.graphs.get(&id).copied() {
-            self.graph_launches = self.graph_launches.saturating_add(1);
-            replay_exec(&mut self.sim, g, device, self.compute, self.device_launch)?;
-            return Ok(());
+            return self.launch_graph_exec(g, device);
         }
         if self.graph_set_params {
             if let Some(exec) = self.idle_execs.get_mut(&device).and_then(Vec::pop) {
@@ -1642,24 +1659,14 @@ impl SimulatedGpuStore {
                 self.graph_set_params_n = self.graph_set_params_n.saturating_add(1);
                 upload_after_set_params(&mut self.sim, exec, self.device_updatable)?;
                 let _prev = self.graphs.insert(id, exec);
-                self.graph_launches = self.graph_launches.saturating_add(1);
-                replay_exec(
-                    &mut self.sim,
-                    exec,
-                    device,
-                    self.compute,
-                    self.device_launch,
-                )?;
-                return Ok(());
+                return self.launch_graph_exec(exec, device);
             }
         }
         if self.graph_build {
             let src = self.build_gemm_graph(device, id)?;
             let g = self.bind_graph(device, src)?;
             let _prev = self.graphs.insert(id, g);
-            self.graph_launches = self.graph_launches.saturating_add(1);
-            replay_exec(&mut self.sim, g, device, self.compute, self.device_launch)?;
-            return Ok(());
+            return self.launch_graph_exec(g, device);
         }
         if !self.sim.query_stream(device, self.compute)? {
             self.sim.synchronize_stream(device, self.compute)?;
@@ -1669,18 +1676,14 @@ impl SimulatedGpuStore {
                 let src = self.piecewise_gemm_graph(device, id)?;
                 let g = self.bind_graph(device, src)?;
                 let _prev = self.graphs.insert(id, g);
-                self.graph_launches = self.graph_launches.saturating_add(1);
-                replay_exec(&mut self.sim, g, device, self.compute, self.device_launch)?;
-                return Ok(());
+                return self.launch_graph_exec(g, device);
             }
             self.sim.begin_capture(device, self.compute)?;
             kernel_leaf(&mut self.sim, device, self.compute, id, self.leaf, flags)?;
             let src = self.sim.end_capture()?;
             let g = self.bind_graph(device, src)?;
             let _prev = self.graphs.insert(id, g);
-            self.graph_launches = self.graph_launches.saturating_add(1);
-            replay_exec(&mut self.sim, g, device, self.compute, self.device_launch)?;
-            return Ok(());
+            return self.launch_graph_exec(g, device);
         }
         kernel_leaf(
             &mut self.sim,

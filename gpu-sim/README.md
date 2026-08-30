@@ -863,7 +863,9 @@ enables the persist limit and attaches a window to expert GEMMs.
 `kernel_with` also accepts `cudaLaunchAttributeMemSyncDomain` /
 `MemSyncDomainMap`: a completing kernel waits `same_domain_fence_permille` of
 leftover same-physical-domain traffic (default tax 0). Remote (and allreduce)
-isolates communication. `ClusterDim` is `cudaLaunchAttributeClusterDimension`:
+isolates communication. `expertvm sim --mem-sync-domain remote` /
+`gguf_gemv engine --expert-sim --mem-sync-domain remote` put decode GEMMs
+on Remote (prefill stays Default). `ClusterDim` is `cudaLaunchAttributeClusterDimension`:
 the launch occupies `min(blocks, compute_slots)` Hyper-Q slots (Hopper portable
 max 8). `ClusterSchedulingPolicy::Spread` occupies every slot.
 Launch Default uses `set_func_cluster_policy`

@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `memcpy_batch`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/enable, timing events, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `cluster`, `shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`) are the same mechanical
+//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `cluster`, `shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -41,7 +41,11 @@
 //! stream at higher CUDA priority than leftover prefill (implies
 //! `--stream-priority`). Token-boundary ITL then samples that decode stream
 //! so leftover prefill does not inflate it. Default off: one compute stream
-//! and a full-device clock sample. `--compute-slots N` (`N>=2`) is Hyper-Q
+//! and a full-device clock sample. `--mem-sync-domain remote` is
+//! `cudaLaunchAttributeMemSyncDomain` on that decode stream (prefill stays
+//! Default) so leftover prefill fence tax does not inflate decode ITL
+//! (implies `--decode-priority`). Default `default` is decode identity.
+//! `--compute-slots N` (`N>=2`) is Hyper-Q
 //! occupancy so leftover prefill and decode GEMMs on those two streams overlap
 //! at full issue rate (not SM-partition). Default profile occupancy is
 //! exclusive (`1`), which keeps decode identity and stream-priority contention.
@@ -79,7 +83,7 @@
 //! GEMMs (`None` inherits stream create priority). Decode
 //! identity stays `cudaLaunchKernel` (no cluster / Default policy / no preferred
 //! dim / Default carveout / non-portable disallowed / Auto sync policy /
-//! Default shared-mem / Default portable-cluster / 0 dynamic shared / Default
+//! Default mem-sync domain / Default shared-mem / Default portable-cluster / 0 dynamic shared / Default
 //! portable-shared / nvlink-util off / inherit-stream priority).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
@@ -1481,7 +1485,7 @@ mod tests {
     use crate::tok::Tokenizer;
     use expertvm::{
         CachedStore, DeviceId, ExpertKey, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore,
-        PortableClusterMode, PortableSharedMode, Prefetch, Score, SharedMemoryMode,
+        MemSyncDomain, PortableClusterMode, PortableSharedMode, Prefetch, Score, SharedMemoryMode,
         SimulatedGpuStore, StoreMetrics, StreamId, SynchronizationPolicy, TieredStore, Trace,
     };
 
@@ -4034,6 +4038,41 @@ mod tests {
             "blocking host wait must inflate decode-stream ITL; auto={} block={}",
             auto.0,
             block.0
+        );
+    }
+
+    #[test]
+    fn engine_gpu_mem_sync_domain_isolates_leftover_prefill() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse(
+            "gpus=1\nfp16_flops=1000000\ncopy_engines=2\nsame_domain_fence_permille=1000\n",
+        )
+        .expect("fence profile");
+        let pri = GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            compute_slots: 2,
+            ..GpuStoreCfg::default()
+        };
+        let same = mixed_gpu_decode_itl_at(bytes.clone(), false, None, pri, profile.clone());
+        let iso = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                mem_sync_domain: MemSyncDomain::Remote,
+                ..pri
+            },
+            profile,
+        );
+        assert_eq!(same.2, 4);
+        assert_eq!(iso.2, 4);
+        assert_eq!(same.4, iso.4, "mem-sync Remote must keep greedy identity");
+        assert!(
+            iso.0 < same.0,
+            "Remote decode domain must skip leftover prefill fence; iso={} same={}",
+            iso.0,
+            same.0
         );
     }
 

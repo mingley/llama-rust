@@ -544,6 +544,14 @@ pub struct SimCfg {
     /// Decode identity stays Auto. [`crate::GpuStoreCfg::sync_policy`] is the
     /// store path.
     pub sync_policy: gpu_sim::SynchronizationPolicy,
+    /// `cudaLaunchAttributeMemSyncDomain` on the decode compute stream.
+    ///
+    /// [`gpu_sim::MemSyncDomain::Remote`] isolates leftover prefill fence tax
+    /// (`same_domain_fence_permille`) when [`Self::decode_priority`] puts
+    /// decode GEMMs on a second stream. [`gpu_sim::MemSyncDomain::Default`]
+    /// is decode identity. [`crate::GpuStoreCfg::mem_sync_domain`] is the
+    /// store path.
+    pub mem_sync_domain: gpu_sim::MemSyncDomain,
     /// Shared-memory bank width (`cudaLaunchAttributeSharedMemoryMode`).
     ///
     /// Default never scales duration. FourByte / EightByte scale by
@@ -683,6 +691,7 @@ impl SimCfg {
             max_shared: false,
             non_portable_cluster: false,
             sync_policy: gpu_sim::SynchronizationPolicy::Auto,
+            mem_sync_domain: gpu_sim::MemSyncDomain::Default,
             shared_mem: gpu_sim::SharedMemoryMode::Default,
             portable_cluster: gpu_sim::PortableClusterMode::Default,
             optin_shared: false,
@@ -803,6 +812,7 @@ pub fn sim_replay_cfg(
     }
     apply_stream_sms(&mut sim, plan, cfg.decode_sm_permille)?;
     apply_stream_sync_policy(&mut sim, plan, cfg.sync_policy)?;
+    apply_stream_mem_sync_domain(&mut sim, plan, cfg.mem_sync_domain)?;
     if cfg.l2_persist {
         sim.enable_persisting_l2()?;
     }
@@ -1955,15 +1965,7 @@ fn gemm_ids(
     let (d, stream) = origin;
     if graphs.device_launch && ids.len() > 1 {
         for id in ids {
-            gemm_ids(
-                sim,
-                graphs,
-                origin,
-                vec![id],
-                Vec::new(),
-                cuda_graphs,
-                ctr,
-            )?;
+            gemm_ids(sim, graphs, origin, vec![id], Vec::new(), cuda_graphs, ctr)?;
         }
         return Ok(());
     }
@@ -2285,6 +2287,48 @@ pub(crate) fn apply_stream_sync_policy(
         for s in 0..plan.n_copy.max(1) {
             sim.set_stream_sync_policy(d, StreamId(u16::from(s)), policy)?;
         }
+    }
+    Ok(())
+}
+
+/// `cudaStreamSetAttribute` MemSyncDomain on the decode stream (prefill stays Default).
+pub(crate) fn apply_stream_mem_sync_domain(
+    sim: &mut Sim,
+    plan: StreamPlan,
+    domain: gpu_sim::MemSyncDomain,
+) -> Result<(), Error> {
+    if domain == gpu_sim::MemSyncDomain::Default {
+        return Ok(());
+    }
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        let d = DeviceId(g);
+        if plan.decode_priority && plan.prefill != plan.decode {
+            sim.set_stream_mem_sync_domain(d, plan.decode, domain)?;
+        } else {
+            sim.set_stream_mem_sync_domain(d, plan.prefill, domain)?;
+        }
+    }
+    Ok(())
+}
+
+/// `cudaGraphExecKernelNodeSetAttribute` MemSyncDomain to the launch stream.
+///
+/// CUDA graphs bake capture-time domain. Store leaves are keyed by alloc, so a
+/// prefill capture would otherwise replay Default on the decode stream.
+/// Walker [`GraphBank`] is already per-stream. Combo parents are not unique
+/// kernels; they recapture on the decode origin instead.
+pub(crate) fn apply_exec_mem_sync_domain(
+    sim: &mut Sim,
+    exec: GraphId,
+    device: DeviceId,
+    stream: StreamId,
+) -> Result<(), Error> {
+    let want = sim.stream_mem_sync_domain(device, stream);
+    let (node, _) = sim.graph_unique_kernel(exec)?;
+    let have = sim.graph_exec_kernel_node_get_mem_sync_domain(exec, node)?;
+    if have != want {
+        sim.graph_exec_kernel_node_set_mem_sync_domain(exec, node, want)?;
     }
     Ok(())
 }

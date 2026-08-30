@@ -1412,6 +1412,19 @@ pub enum MemSyncDomain {
     Remote,
 }
 
+impl MemSyncDomain {
+    /// CLI token: `default` / `remote`.
+    pub fn parse(s: &str) -> Result<Self, crate::error::SimError> {
+        match s {
+            "default" => Ok(Self::Default),
+            "remote" => Ok(Self::Remote),
+            _ => Err(crate::error::SimError::Invalid {
+                why: "unknown mem-sync-domain",
+            }),
+        }
+    }
+}
+
 /// `cudaLaunchMemSyncDomainMap`.
 ///
 /// Maps logical [`MemSyncDomain`] onto a physical id in

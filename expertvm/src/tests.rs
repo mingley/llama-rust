@@ -1220,6 +1220,49 @@ fn schedule_decode_priority_shortens_mixed_itl() {
 }
 
 #[test]
+fn schedule_mem_sync_domain_isolates_leftover_prefill() {
+    let mut events = Vec::new();
+    for layer in 0..16u32 {
+        events.push(ev_seq(0, 0, layer, &[0]));
+    }
+    events.push(ev_seq(1, 0, 0, &[1]));
+    for token in 1..5u32 {
+        events.push(ev_seq(1, token, 0, &[1]));
+    }
+    let t = Trace { events };
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000\ncopy_engines=2\nsame_domain_fence_permille=1000\n",
+    )
+    .expect("fence profile");
+    let base = SimCfg {
+        seq_streams: true,
+        compute_slots: 2,
+        decode_priority: true,
+        stream_priority: true,
+        ..SimCfg::lru(4, 4096, 0)
+    };
+    let same = schedule_replay(&t, p.clone(), base, SchedCfg::chunked(0, 1)).expect("same");
+    let iso = schedule_replay(
+        &t,
+        p,
+        SimCfg {
+            mem_sync_domain: MemSyncDomain::Remote,
+            ..base
+        },
+        SchedCfg::chunked(0, 1),
+    )
+    .expect("iso");
+    assert_eq!(same.completed, 2);
+    assert_eq!(iso.completed, 2);
+    let same_itl = same.replay.itl_ns.expect("same itl");
+    let iso_itl = iso.replay.itl_ns.expect("iso itl");
+    assert!(
+        iso_itl < same_itl,
+        "Remote decode domain must skip leftover prefill fence; iso={iso_itl} same={same_itl}"
+    );
+}
+
+#[test]
 fn schedule_striped_homes_beat_gpu0_on_wide_token() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1, 2, 3, 4, 5, 6, 7])],
@@ -2638,11 +2681,7 @@ fn cuda_graphs_graph_enable_restores_disabled_children() {
 #[test]
 fn cuda_graphs_graph_enable_captures_resident_cover() {
     let t = Trace {
-        events: vec![
-            ev(0, 0, &[0, 1]),
-            ev(1, 0, &[1, 2]),
-            ev(2, 0, &[0, 2]),
-        ],
+        events: vec![ev(0, 0, &[0, 1]), ev(1, 0, &[1, 2]), ev(2, 0, &[0, 2])],
     };
     let p = HardwareProfile::parse(
         "gpus=1\nlaunch_overhead_ns=1000\ngraph_launch_ns=1000\ngraph_instantiate_ns=100000\ngraph_set_params_ns=1000\ngraph_upload_ns=1000\ncopy_engines=2\n",
@@ -2691,7 +2730,8 @@ fn sim_cfg_graph_enable_refuses_device_launch() {
         Err(e) => e,
     };
     assert!(
-        err.to_string().contains("graph-enable cannot device-launch"),
+        err.to_string()
+            .contains("graph-enable cannot device-launch"),
         "{err}"
     );
 }
@@ -7299,6 +7339,27 @@ fn sim_replay_decode_priority_keeps_hits() {
 }
 
 #[test]
+fn sim_replay_mem_sync_domain_keeps_hits() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg {
+        decode_priority: true,
+        stream_priority: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let on = SimCfg {
+        mem_sync_domain: MemSyncDomain::Remote,
+        ..off
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("off");
+    let b = sim_replay_cfg(&t, profile, on).expect("on");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+}
+
+#[test]
 fn store_replay_decode_priority_binds_later_tokens() {
     let t = Trace {
         events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
@@ -7306,6 +7367,21 @@ fn store_replay_decode_priority_binds_later_tokens() {
     let mut run = StoreReplayCfg::demand(1, 4096, GpuFill::Pinned);
     run.gpu.decode_priority = true;
     run.gpu.stream_priority = true;
+    let row = store_replay_cfg(&t, HardwareProfile::example_h100_sxm(), run).expect("store");
+    assert_eq!(row.metrics.misses, 1);
+    assert_eq!(row.metrics.hits, 1);
+    assert!(row.score.wall_ns > 0);
+}
+
+#[test]
+fn store_replay_mem_sync_domain_binds_later_tokens() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let mut run = StoreReplayCfg::demand(1, 4096, GpuFill::Pinned);
+    run.gpu.decode_priority = true;
+    run.gpu.stream_priority = true;
+    run.gpu.mem_sync_domain = MemSyncDomain::Remote;
     let row = store_replay_cfg(&t, HardwareProfile::example_h100_sxm(), run).expect("store");
     assert_eq!(row.metrics.misses, 1);
     assert_eq!(row.metrics.hits, 1);

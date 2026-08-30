@@ -3,8 +3,9 @@
 use crate::decode::Llama;
 use crate::engine::Engine;
 use expertvm::{
-    CachedStore, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore, PortableClusterMode,
-    PortableSharedMode, Prefetch, SharedMemoryMode, SimulatedGpuStore, SynchronizationPolicy,
+    CachedStore, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore, MemSyncDomain,
+    PortableClusterMode, PortableSharedMode, Prefetch, SharedMemoryMode, SimulatedGpuStore,
+    SynchronizationPolicy,
 };
 
 /// CLI knobs that build a [`LiveStore`] for an [`Engine`].
@@ -86,6 +87,10 @@ pub(crate) struct GpuCli {
     pub sync_policy: SynchronizationPolicy,
     /// True when `--sync-policy` appeared.
     pub sync_policy_set: bool,
+    /// Decode-stream mem-sync domain (`GpuStoreCfg::mem_sync_domain`).
+    pub mem_sync_domain: MemSyncDomain,
+    /// True when `--mem-sync-domain` appeared.
+    pub mem_sync_domain_set: bool,
     /// Kernel-node bank width (`GpuStoreCfg::shared_mem`).
     pub shared_mem: SharedMemoryMode,
     /// True when `--shared-mem` appeared.
@@ -202,9 +207,9 @@ impl GpuCli {
     }
 
     /// `--decode-priority` implies [`Self::stream_priority`]. `--decode-sms`
-    /// implies both. Call after sim-flag checks.
+    /// and `--mem-sync-domain remote` imply both. Call after sim-flag checks.
     pub(crate) fn imply_decode_priority(&mut self) {
-        if self.decode_sm_permille > 0 {
+        if self.decode_sm_permille > 0 || self.mem_sync_domain == MemSyncDomain::Remote {
             self.decode_priority = true;
         }
         if self.decode_priority {
@@ -266,6 +271,14 @@ impl GpuCli {
         self.sync_policy =
             SynchronizationPolicy::parse(raw).map_err(|_| format!("unknown sync-policy {raw}"))?;
         self.sync_policy_set = true;
+        Ok(())
+    }
+
+    /// Decode-stream mem-sync domain (`--mem-sync-domain default|remote`).
+    pub(crate) fn set_mem_sync_domain(&mut self, raw: &str) -> Result<(), String> {
+        self.mem_sync_domain =
+            MemSyncDomain::parse(raw).map_err(|_| format!("unknown mem-sync-domain {raw}"))?;
+        self.mem_sync_domain_set = true;
         Ok(())
     }
 
@@ -365,6 +378,7 @@ impl GpuCli {
             (self.max_shared, "--max-shared"),
             (self.non_portable_cluster, "--non-portable-cluster"),
             (self.sync_policy_set, "--sync-policy"),
+            (self.mem_sync_domain_set, "--mem-sync-domain"),
             (self.shared_mem_set, "--shared-mem"),
             (self.portable_cluster_set, "--portable-cluster"),
             (self.optin_shared, "--optin-shared"),
@@ -432,6 +446,7 @@ enum PlanSlot {
     Cluster,
     PreferredCluster,
     SyncPolicy,
+    MemSyncDomain,
     SharedMem,
     PortableCluster,
     DynamicShared,
@@ -452,6 +467,7 @@ impl PlanSlot {
             Self::Cluster => "cluster",
             Self::PreferredCluster => "preferred-cluster",
             Self::SyncPolicy => "sync-policy",
+            Self::MemSyncDomain => "mem-sync-domain",
             Self::SharedMem => "shared-mem",
             Self::PortableCluster => "portable-cluster",
             Self::DynamicShared => "dynamic-shared",
@@ -477,6 +493,7 @@ impl PlannerCli {
             "--cluster" => Dash::Need(PlanSlot::Cluster),
             "--preferred-cluster" => Dash::Need(PlanSlot::PreferredCluster),
             "--sync-policy" => Dash::Need(PlanSlot::SyncPolicy),
+            "--mem-sync-domain" => Dash::Need(PlanSlot::MemSyncDomain),
             "--shared-mem" => Dash::Need(PlanSlot::SharedMem),
             "--portable-cluster" => Dash::Need(PlanSlot::PortableCluster),
             "--dynamic-shared" => Dash::Need(PlanSlot::DynamicShared),
@@ -523,6 +540,7 @@ impl PlannerCli {
                 self.gpu.set_preferred_cluster(n)?;
             }
             PlanSlot::SyncPolicy => self.gpu.set_sync_policy(raw)?,
+            PlanSlot::MemSyncDomain => self.gpu.set_mem_sync_domain(raw)?,
             PlanSlot::SharedMem => self.gpu.set_shared_mem(raw)?,
             PlanSlot::PortableCluster => self.gpu.set_portable_cluster(raw)?,
             PlanSlot::DynamicShared => {
@@ -643,6 +661,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         max_shared: gpu.max_shared,
         non_portable_cluster: gpu.non_portable_cluster,
         sync_policy: gpu.sync_policy,
+        mem_sync_domain: gpu.mem_sync_domain,
         shared_mem: gpu.shared_mem,
         portable_cluster: gpu.portable_cluster,
         optin_shared: gpu.optin_shared,

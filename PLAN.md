@@ -3370,7 +3370,24 @@ model, do not celebrate the sim.
     exact combo recapture. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-325. [ ] Next numbered PLAN item after 324 is the next `gpu-sim` / Engine /
+325. [x] `cudaLaunchAttributeMemSyncDomain` decode-stream isolation:
+    [`GpuStoreCfg::mem_sync_domain`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::mem_sync_domain`](expertvm/src/sim_replay.rs) set
+    [`set_stream_mem_sync_domain`](gpu-sim/src/sim.rs) on the decode
+    compute stream (prefill stays Default).
+    [`MemSyncDomain::Remote`](gpu-sim/src/ops.rs) isolates leftover
+    prefill [`same_domain_fence_permille`](gpu-sim/src/profile.rs) when
+    `--decode-priority` puts decode GEMMs on a second stream. Default is
+    Default (decode identity). Engine `--mem-sync-domain remote` implies
+    `--decode-priority`. Walker does not (same as `--decode-sms`). Store
+    leaf graph replay SetAttributes the exec node to the launch stream
+    when they disagree (CUDA graphs bake capture-time domain).
+    `--mem-sync-domain` on `expertvm sim` / `schedule` / `store` and
+    `gguf_gemv engine --expert-sim`. Profile tax default is 0.
+    `gpu-profile capture` is still refused. Dual score still has no `$/M
+    tokens`.
+
+326. [ ] Next numbered PLAN item after 325 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

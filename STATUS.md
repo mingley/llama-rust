@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaLaunchAttributeMemSyncDomain` decode isolation
+
+`GpuStoreCfg::mem_sync_domain` / `SimCfg::mem_sync_domain` set
+`cudaStreamSetAttribute` MemSyncDomain on the decode compute stream
+(prefill stays Default). `MemSyncDomain::Remote` isolates leftover
+prefill `same_domain_fence_permille` when `--decode-priority` puts
+decode GEMMs on a second stream. Engine `--mem-sync-domain remote`
+implies `--decode-priority`. Walker does not. Store leaf graph replay
+SetAttributes the exec node to the launch stream when they disagree.
+`--mem-sync-domain` is Default by default (decode identity).
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaGraphNodeSetEnabled` combo reuse
 
 `GpuStoreCfg::graph_enable` / `SimCfg::graph_enable` capture a wide walker

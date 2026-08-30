@@ -558,6 +558,8 @@
 //! same-physical-domain kernel. [`MemSyncDomain::Remote`] (and allreduce, which
 //! tags Remote like NCCL) isolates that traffic. Example H100
 //! `mem_sync_domain_count` is 4; tax default is 0 (identity).
+//! `expertvm sim --mem-sync-domain remote` / Engine `--mem-sync-domain remote`
+//! set the decode compute stream to Remote (prefill stays Default).
 //! [`ClusterDim`] (`cudaLaunchAttributeClusterDimension`) occupies
 //! `min(blocks, compute_slots)` Hyper-Q slots (Hopper portable max 8).
 //! [`ClusterSchedulingPolicy::Spread`] occupies every slot.
@@ -8215,6 +8217,25 @@ mod tests {
         let err = SynchronizationPolicy::parse("bogus").unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("unknown sync-policy"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+    }
+
+    #[test]
+    fn mem_sync_domain_parse() {
+        assert_eq!(
+            MemSyncDomain::parse("default").unwrap(),
+            MemSyncDomain::Default
+        );
+        assert_eq!(
+            MemSyncDomain::parse("remote").unwrap(),
+            MemSyncDomain::Remote
+        );
+        let err = MemSyncDomain::parse("bogus").unwrap_err();
+        match err {
+            SimError::Invalid { why } => {
+                assert!(why.contains("unknown mem-sync-domain"), "{why}")
+            }
             e => panic!("{e:?}"),
         }
     }
