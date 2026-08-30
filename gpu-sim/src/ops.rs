@@ -815,6 +815,15 @@ pub enum DeviceAttr {
     /// `cudaDevAttrGenericCompressionSupported` (always 0; compression is not
     /// modeled).
     GenericCompressionSupported,
+    /// `cudaDevAttrHandleTypeWin32HandleSupported` (always 0; this VM has
+    /// POSIX-FD shareable pools, not Win32 handles).
+    HandleTypeWin32HandleSupported,
+    /// `cudaDevAttrHandleTypeWin32KmtHandleSupported` (always 0; this VM has
+    /// POSIX-FD shareable pools, not Win32 KMT handles).
+    HandleTypeWin32KmtHandleSupported,
+    /// `cudaDevAttrHandleTypeFabricSupported` (always 0; fabric handles are not
+    /// modeled).
+    HandleTypeFabricSupported,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -920,6 +929,12 @@ pub struct DeviceProperties {
     pub gpu_direct_rdma_with_cuda_vmm_supported: bool,
     /// `cudaDevAttrGenericCompressionSupported` (compression is not modeled).
     pub generic_compression_supported: bool,
+    /// `cudaDevAttrHandleTypeWin32HandleSupported` (POSIX-FD only).
+    pub handle_type_win32_handle_supported: bool,
+    /// `cudaDevAttrHandleTypeWin32KmtHandleSupported` (POSIX-FD only).
+    pub handle_type_win32_kmt_handle_supported: bool,
+    /// `cudaDevAttrHandleTypeFabricSupported` (fabric handles are not modeled).
+    pub handle_type_fabric_supported: bool,
 }
 
 /// `cudaFuncAttribute` for [`crate::Sim::func_set_attribute`] / `GetAttribute`.

@@ -270,6 +270,11 @@
 //! reported). [`DeviceAttr::GpuDirectRdmaWithCudaVMMSupported`] is the same
 //! RDMA SKU bit (VMM is always on). [`DeviceAttr::GenericCompressionSupported`]
 //! is always 0 (compression is not modeled).
+//! [`DeviceAttr::HandleTypeWin32HandleSupported`] /
+//! [`HandleTypeWin32KmtHandleSupported`](DeviceAttr::HandleTypeWin32KmtHandleSupported) /
+//! [`HandleTypeFabricSupported`](DeviceAttr::HandleTypeFabricSupported) are
+//! always 0 (this VM has POSIX-FD shareable pools; fabric handles are not
+//! modeled).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -10698,6 +10703,38 @@ mod tests {
             0
         );
         let _g = h100.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_win32_and_fabric_handle_types() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert!(!hp.handle_type_win32_handle_supported);
+        assert!(!hp.handle_type_win32_kmt_handle_supported);
+        assert!(!hp.handle_type_fabric_supported);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::HandleTypeWin32HandleSupported)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::HandleTypeWin32KmtHandleSupported)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::HandleTypeFabricSupported)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::HandleTypeFabricSupported)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

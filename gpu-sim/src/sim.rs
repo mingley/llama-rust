@@ -12563,7 +12563,10 @@ impl Sim {
             | DeviceAttr::SparseCudaArraySupported
             | DeviceAttr::DeferredMappingCudaArraySupported
             | DeviceAttr::DmaBufSupported
-            | DeviceAttr::GenericCompressionSupported => 0,
+            | DeviceAttr::GenericCompressionSupported
+            | DeviceAttr::HandleTypeWin32HandleSupported
+            | DeviceAttr::HandleTypeWin32KmtHandleSupported
+            | DeviceAttr::HandleTypeFabricSupported => 0,
             DeviceAttr::StreamPrioritiesSupported | DeviceAttr::UnifiedAddressing => 1,
             DeviceAttr::GpuOverlap => u64::from(gpu.copy_engines > 0),
             DeviceAttr::MulticastSupported => u64::from(self.profile.multicast_supported(device)),
@@ -12623,6 +12626,9 @@ impl Sim {
             },
             gpu_direct_rdma_with_cuda_vmm_supported: self.profile.gpu_direct_rdma_supported(device),
             generic_compression_supported: false,
+            handle_type_win32_handle_supported: false,
+            handle_type_win32_kmt_handle_supported: false,
+            handle_type_fabric_supported: false,
         })
     }
 
