@@ -201,7 +201,8 @@
 //! [`Sim::device_count`] is `cudaGetDeviceCount`.
 //! [`Sim::device_can_access_peer`] / [`device_get_p2p_attribute`](Sim::device_get_p2p_attribute)
 //! are `cudaDeviceCanAccessPeer` / `cudaDeviceGetP2PAttribute` (topology links;
-//! [`DeviceP2pAttr::AccessSupported`] only).
+//! [`DeviceP2pAttr::AccessSupported`] and [`PerformanceRank`](DeviceP2pAttr::PerformanceRank)
+//! from GPU↔GPU `bps`; native atomics are not modeled).
 //! [`Sim::set_limit`] / [`get_limit`](Sim::get_limit) are `cudaDeviceSetLimit` /
 //! `GetLimit`. [`DeviceLimit::PersistingL2CacheSize`] wraps
 //! [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size).
@@ -9033,6 +9034,16 @@ mod tests {
                 .unwrap(),
             1
         );
+        assert_eq!(
+            nv.device_get_p2p_attribute(DeviceId(0), DeviceId(1), DeviceP2pAttr::PerformanceRank)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            nv.device_get_p2p_attribute(DeviceId(0), DeviceId(0), DeviceP2pAttr::PerformanceRank)
+                .unwrap(),
+            0
+        );
         nv.disable_peer(DeviceId(0), DeviceId(1)).unwrap();
         assert!(!nv.peer_access(DeviceId(0), DeviceId(1)));
         assert!(nv.device_can_access_peer(DeviceId(0), DeviceId(1)).unwrap());
@@ -9044,6 +9055,38 @@ mod tests {
         assert!(!asym
             .device_can_access_peer(DeviceId(0), DeviceId(2))
             .unwrap());
+        assert_eq!(
+            asym.device_get_p2p_attribute(DeviceId(0), DeviceId(2), DeviceP2pAttr::PerformanceRank)
+                .unwrap(),
+            0
+        );
+        let mut mixed = HardwareProfile::example_8xh100_nvlink();
+        for l in &mut mixed.links {
+            if l.connects(Some(DeviceId(0)), Some(DeviceId(1))) {
+                l.bps = 16u64.saturating_mul(1_000_000_000);
+            }
+        }
+        let mut mixed = Sim::new(mixed);
+        assert_eq!(
+            mixed
+                .device_get_p2p_attribute(DeviceId(0), DeviceId(2), DeviceP2pAttr::PerformanceRank)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            mixed
+                .device_get_p2p_attribute(DeviceId(0), DeviceId(1), DeviceP2pAttr::PerformanceRank)
+                .unwrap(),
+            1
+        );
+        mixed.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        assert_eq!(
+            mixed
+                .device_get_p2p_attribute(DeviceId(0), DeviceId(1), DeviceP2pAttr::PerformanceRank)
+                .unwrap(),
+            1
+        );
+        let _g = mixed.end_capture().unwrap();
     }
 
     #[test]

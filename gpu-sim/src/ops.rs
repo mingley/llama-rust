@@ -703,6 +703,10 @@ pub enum DeviceP2pAttr {
     /// `cudaDevP2PAttrAccessSupported`. 1 if the profile has a device–device
     /// link. Same device is 0. Independent of [`crate::Sim::enable_peer`].
     AccessSupported,
+    /// `cudaDevP2PAttrPerformanceRank`. Lower is better. Unique GPU↔GPU
+    /// [`crate::LinkProfile::bps`] values descending; this pair's index.
+    /// Same device or no link is 0. Native atomics are not modeled.
+    PerformanceRank,
 }
 
 /// One kernel buffer: a whole allocation or a mapped VMM span.

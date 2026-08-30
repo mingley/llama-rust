@@ -120,7 +120,7 @@ warp scheduler, L1, …   ← do not model
 | `stream_get_id` is unique per device/stream | `cudaStreamGetId` |
 | `stream_get_attribute` / `stream_set_attribute` wrap existing stream state | `cudaStreamGetAttribute` / `SetAttribute` |
 | `device_count` is the profile GPU count | `cudaGetDeviceCount` |
-| `device_can_access_peer` / `device_get_p2p_attribute` are topology links | `cudaDeviceCanAccessPeer` / `GetP2PAttribute` |
+| `device_can_access_peer` / `device_get_p2p_attribute` are topology links (`AccessSupported`, `PerformanceRank` from GPU↔GPU `bps`) | `cudaDeviceCanAccessPeer` / `GetP2PAttribute` |
 | `set_limit` / `get_limit` wrap persisting L2 plus stack / printf / heap / CDP / L2 fetch | `cudaDeviceSetLimit` / `GetLimit` |
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128) | exact |
 | `malloc_pitch` charges `pitch * height`; pitch is `align_up(width, 512)` | `cudaMallocPitch` |

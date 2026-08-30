@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaDevP2PAttrPerformanceRank`
+
+`device_get_p2p_attribute(..., PerformanceRank)` is unique GPU↔GPU link
+`bps` descending (lower is better). Same device or no link is 0. Native
+atomics are not modeled. Query; legal during capture. `gpu-profile
+capture` is still refused.
+
 ## Shipped 2026-08-30 — DeviceAttr cluster / host-register / IPC / POSIX pool
 
 `DeviceAttr::ClusterLaunch` is `max_blocks_per_cluster > 0`.
@@ -2256,7 +2263,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 198 (`DeviceAttr` cluster/IPC/POSIX).
+Next code change is PLAN systems depth after item 199 (`P2P PerformanceRank`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

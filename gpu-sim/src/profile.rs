@@ -367,6 +367,38 @@ impl HardwareProfile {
             })
     }
 
+    /// `cudaDevP2PAttrPerformanceRank`. Lower is better.
+    ///
+    /// Unique GPU↔GPU [`LinkProfile::bps`] in this profile, sorted
+    /// descending; this pair's index. Same device or no GPU↔GPU link is 0.
+    /// Host links are not ranked. [`Self::link`] still fails for missing
+    /// pairs; this query does not.
+    #[must_use]
+    pub fn p2p_performance_rank(&self, src: DeviceId, dst: DeviceId) -> u64 {
+        if src == dst {
+            return 0;
+        }
+        let Ok(link) = self.link(Some(src), Some(dst)) else {
+            return 0;
+        };
+        if link.a.is_none() || link.b.is_none() {
+            return 0;
+        }
+        let mut unique: Vec<u64> = self
+            .links
+            .iter()
+            .filter(|l| l.a.is_some() && l.b.is_some())
+            .map(|l| l.bps)
+            .collect();
+        unique.sort_unstable_by(|a, b| b.cmp(a));
+        unique.dedup();
+        unique
+            .iter()
+            .position(|&b| b == link.bps)
+            .and_then(|i| u64::try_from(i).ok())
+            .unwrap_or(0)
+    }
+
     /// Example single H100 SXM. **Not a capture.** Public-spec order of magnitude.
     #[must_use]
     pub fn example_h100_sxm() -> Self {

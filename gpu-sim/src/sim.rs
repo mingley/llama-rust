@@ -11579,9 +11579,11 @@ impl Sim {
 
     /// `cudaDeviceGetP2PAttribute`. Query; legal during capture.
     ///
-    /// Only [`DeviceP2pAttr::AccessSupported`] (a profile device–device link).
-    /// Same device is 0. Missing links are 0, not [`SimError::NoPeer`].
-    /// Unknown devices are Invalid.
+    /// [`DeviceP2pAttr::AccessSupported`] is a profile device–device link.
+    /// [`DeviceP2pAttr::PerformanceRank`] is unique GPU↔GPU link `bps`
+    /// descending (lower is better). Same device is 0. Missing links are 0,
+    /// not [`SimError::NoPeer`]. Unknown devices are Invalid. Native atomics
+    /// are not modeled.
     pub fn device_get_p2p_attribute(
         &self,
         src: DeviceId,
@@ -11598,6 +11600,7 @@ impl Sim {
                     1
                 }
             }
+            DeviceP2pAttr::PerformanceRank => self.profile.p2p_performance_rank(src, dst),
         })
     }
 

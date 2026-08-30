@@ -2250,7 +2250,14 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-199. [ ] Next numbered PLAN item after 198 is the next `gpu-sim` / Engine /
+199. [x] `cudaDevP2PAttrPerformanceRank`: `Sim::device_get_p2p_attribute`
+    returns unique GPU↔GPU link `bps` descending (lower is better). Same
+    device or no link is 0. Derived from existing profile links; do not
+    invent `NativeAtomic` or CUDA array P2P. Query; legal during capture.
+    Decode identity unchanged. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+200. [ ] Next numbered PLAN item after 199 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
