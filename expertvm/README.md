@@ -157,7 +157,9 @@ combo parents are `graph_add_child` of instantiated leaves with no
 `graph_add_dependencies` edge, so independent expert GEMMs may Hyper-Q
 overlap). `--graph-piecewise` is `cudaStreamBeginCaptureToGraph` combo
 parents (each leaf is an extra root on one parent; same Hyper-Q overlap;
-illegal with `--graph-build`). `--graph-mem`
+illegal with `--graph-build`). Combo overlap stays separate capture
+sessions: `cudaStreamUpdateCaptureDependencies` extra deps are additive
+with stream-order, so they cannot split same-stream children. `--graph-mem`
 records a scratch `cudaMallocAsync` + free in each leaf GEMM graph (HBM peak
 includes the workspace; `--graph-update` is skipped). `--graph-auto-free` is
 the same scratch without a matching free, instantiated

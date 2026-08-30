@@ -174,6 +174,13 @@
 //! `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
 //! uninstantiated graph; capture roots additionally depend on the given node
 //! indices (empty means extra roots). [`Sim::end_capture`] returns that graph.
+//! [`stream_update_capture_dependencies`](Sim::stream_update_capture_dependencies)
+//! is `cudaStreamUpdateCaptureDependencies`: extra deps for the next captured
+//! node **in addition to** stream-order (`Set` replaces, `Add` unions).
+//! [`stream_is_capturing`](Sim::stream_is_capturing) /
+//! [`stream_capture_info`](Sim::stream_capture_info) are `cudaStreamIsCapturing`
+//! / `cudaStreamGetCaptureInfo`. [`graph_node_kind`](Sim::graph_node_kind) is
+//! `cudaGraphNodeGetType`.
 //! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`.
 //! Capture records every stream that [`wait_event`](Sim::wait_event)s an
 //! event recorded in this capture (CUDA forked capture). [`record_event_external`](Sim::record_event_external)
@@ -209,8 +216,8 @@ pub use ids::{
     PoolId, PtrExportId, ShareableHandleId, StreamId,
 };
 pub use ops::{
-    DType, GpuOp, KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp,
-    Operation, Place,
+    CaptureDepOp, DType, GpuOp, GraphNodeKind, KernelBuf, KernelKind, KernelNodeParams, MemAdvise,
+    MemAttach, MemcpyOp, Operation, Place, StreamCaptureInfo,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -6959,6 +6966,163 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn update_capture_deps_serialize_next_node() {
+        let long = KernelKind::other(1 << 40, 4096);
+        let tiny = KernelKind::other(8, 4096);
+        let run = |update: bool| {
+            let mut sim = Sim::new(h100().with_compute_slots(2));
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let a = sim.alloc(d, 4096, s).unwrap();
+            let b = sim.alloc(d, 4096, s).unwrap();
+            let c = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+            enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+            enq(sim.memcpy_pinned_to_device(d, c, 4096, s));
+            sim.synchronize().unwrap();
+            let g = sim.create_graph(d, s).unwrap();
+            sim.graph_add_kernel(g, long.clone(), &[a], &[a]).unwrap();
+            sim.begin_capture_to_graph(d, s, g, &[]).unwrap();
+            enq(sim.kernel(d, tiny.clone(), &[b], &[b], s));
+            if update {
+                sim.stream_update_capture_dependencies(d, s, &[0], CaptureDepOp::Set)
+                    .unwrap();
+            }
+            enq(sim.kernel(d, long.clone(), &[c], &[c], s));
+            assert_eq!(sim.end_capture().unwrap(), g);
+            if update {
+                assert_eq!(sim.graph_node_deps(g, 2).unwrap(), vec![0, 1]);
+            } else {
+                assert_eq!(sim.graph_node_deps(g, 2).unwrap(), vec![1]);
+            }
+            sim.instantiate_graph(g).unwrap();
+            sim.upload_graph(g).unwrap();
+            let t0 = sim.clock_ns();
+            let n = sim.launch_graph(g, s).unwrap();
+            sim.synchronize().unwrap();
+            assert_eq!(n, 3);
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let with = run(true);
+        let without = run(false);
+        assert!(
+            without < with,
+            "update deps must wait for A; with={with} without={without}"
+        );
+    }
+
+    #[test]
+    fn update_capture_deps_rejects_idle_and_bad_index() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let err = sim
+            .stream_update_capture_dependencies(d, s, &[0], CaptureDepOp::Set)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not capturing"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g = sim.create_graph(d, s).unwrap();
+        sim.begin_capture_to_graph(d, s, g, &[]).unwrap();
+        let err = sim
+            .stream_update_capture_dependencies(d, s, &[0], CaptureDepOp::Set)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("graph dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let err = sim
+            .stream_update_capture_dependencies(d, StreamId(1), &[], CaptureDepOp::Set)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not capturing"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn stream_capture_info_during_and_after() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        assert!(!sim.stream_is_capturing(d, s));
+        assert!(sim.stream_capture_info(d, s).is_none());
+        let g = sim.create_graph(d, s).unwrap();
+        sim.begin_capture_to_graph(d, s, g, &[]).unwrap();
+        assert!(sim.stream_is_capturing(d, s));
+        let info = sim.stream_capture_info(d, s).expect("capturing");
+        assert_eq!(info.graph, g);
+        assert_eq!(info.origin, (d, s));
+        assert!(info.pending_deps.is_empty());
+        assert_eq!(sim.graph_len(g).unwrap(), 0);
+        let _end = sim.end_capture().unwrap();
+        assert!(!sim.stream_is_capturing(d, s));
+        assert!(sim.stream_capture_info(d, s).is_none());
+        sim.begin_capture(d, s).unwrap();
+        let info = sim.stream_capture_info(d, s).expect("vanilla capture");
+        assert_eq!(sim.graph_len(info.graph).unwrap(), 0);
+        let _end = sim.end_capture().unwrap();
+        assert!(!sim.stream_is_capturing(d, s));
+    }
+
+    #[test]
+    fn update_capture_deps_add_unions_set_replaces() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.begin_capture_to_graph(d, s, g, &[]).unwrap();
+        sim.stream_update_capture_dependencies(d, s, &[0], CaptureDepOp::Set)
+            .unwrap();
+        sim.stream_update_capture_dependencies(d, s, &[1], CaptureDepOp::Add)
+            .unwrap();
+        assert_eq!(
+            sim.stream_capture_info(d, s).expect("pending").pending_deps,
+            vec![0, 1]
+        );
+        sim.stream_update_capture_dependencies(d, s, &[1], CaptureDepOp::Set)
+            .unwrap();
+        assert_eq!(
+            sim.stream_capture_info(d, s).expect("set").pending_deps,
+            vec![1]
+        );
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        assert!(sim
+            .stream_capture_info(d, s)
+            .expect("consumed")
+            .pending_deps
+            .is_empty());
+        assert_eq!(sim.end_capture().unwrap(), g);
+        assert_eq!(sim.graph_node_deps(g, 2).unwrap(), vec![1]);
+    }
+
+    #[test]
+    fn graph_node_kind_empty_and_kernel() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_empty(g).unwrap();
+        assert_eq!(sim.graph_node_kind(g, 0).unwrap(), GraphNodeKind::Kernel);
+        assert_eq!(sim.graph_node_kind(g, 1).unwrap(), GraphNodeKind::Empty);
+        let err = sim.graph_node_kind(g, 2).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("graph dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

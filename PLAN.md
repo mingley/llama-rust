@@ -1311,6 +1311,16 @@ model, do not celebrate the sim.
     anchor. Decode identity stays kernel-only graphs. Dual score still has
     no `$/M tokens`.
 
+92. [x] `cudaStreamUpdateCaptureDependencies`:
+    `Sim::stream_update_capture_dependencies` extra deps for the next
+    captured node **in addition to** stream-order (`Set` replaces, `Add`
+    unions). Indices are existing graph nodes, then this-session nodes at
+    `graph_len + i` (`graph_len` during capture excludes the session
+    buffer). `stream_is_capturing` / `stream_capture_info` are
+    `cudaStreamIsCapturing` / `GetCaptureInfo`. `graph_node_kind` is
+    `cudaGraphNodeGetType`. Decode identity stays stream-capture edges (no
+    extra pending). Dual score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

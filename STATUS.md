@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaStreamUpdateCaptureDependencies`
+
+`Sim::stream_update_capture_dependencies` is
+`cudaStreamUpdateCaptureDependencies`: extra deps for the next captured
+node, **in addition to** stream-order (`Set` replaces, `Add` unions).
+`stream_is_capturing` / `stream_capture_info` are `cudaStreamIsCapturing`
+/ `GetCaptureInfo`. `graph_node_kind` is `cudaGraphNodeGetType`. Decode
+identity stays stream-capture edges. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-30 — `cudaGraphAddEmptyNode`
 
 `Sim::graph_add_empty` is `cudaGraphAddEmptyNode`: a join/fork with no

@@ -10,8 +10,8 @@ use crate::ids::{
     PtrExportId, ShareableHandleId, StreamId,
 };
 use crate::ops::{
-    GpuOp as Kind, KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp,
-    Operation, Place,
+    CaptureDepOp, GpuOp as Kind, GraphNodeKind, KernelBuf, KernelKind, KernelNodeParams, MemAdvise,
+    MemAttach, MemcpyOp, Operation, Place, StreamCaptureInfo,
 };
 use crate::profile::{ns_for_bytes, HardwareProfile, LinkKind};
 
@@ -203,8 +203,14 @@ struct Capture {
     events: BTreeSet<EventId>,
     /// `cudaMallocAsync` ids recorded as graph mem alloc nodes.
     mem_allocs: Vec<AllocId>,
-    /// `cudaStreamBeginCaptureToGraph` target. `None` is [`Sim::begin_capture`].
-    into: Option<CaptureInto>,
+    /// Graph being captured into (created at [`Sim::begin_capture`] or passed
+    /// to [`Sim::begin_capture_to_graph`]).
+    into: CaptureInto,
+    /// Per-stream extra deps for the next captured node
+    /// (`cudaStreamUpdateCaptureDependencies`).
+    pending: BTreeMap<(DeviceId, StreamId), Vec<usize>>,
+    /// `capture_buf` index → extra deps in destination-graph index space.
+    extra_abs: BTreeMap<usize, Vec<usize>>,
 }
 
 /// Existing graph plus extra root deps for [`Capture::into`].
@@ -849,10 +855,23 @@ impl Sim {
     /// and compute can overlap inside one [`Self::launch_graph`].
     /// [`Self::record_event_external`] / [`Self::wait_event_external`] do not
     /// join (`cudaEventRecordExternal` / `cudaEventWaitExternal`).
-    /// [`Self::end_capture`] creates a new graph. For an existing graph see
+    /// Creates an empty graph (no clock tick); [`Self::end_capture`] appends
+    /// recorded nodes and returns that id. For an existing graph see
     /// [`Self::begin_capture_to_graph`].
     pub fn begin_capture(&mut self, device: DeviceId, stream: StreamId) -> Result<(), SimError> {
-        self.begin_capture_inner(device, stream, None)
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "nested graph capture",
+            });
+        }
+        let _gpu = self.profile.gpu(device)?;
+        if !self.stream_idle(device, stream) {
+            return Err(SimError::Invalid {
+                why: "capture requires idle stream",
+            });
+        }
+        let graph = self.insert_graph(device, stream);
+        self.begin_capture_inner(device, stream, graph, &[])
     }
 
     /// `cudaStreamBeginCaptureToGraph`: record later submits into `graph`.
@@ -870,14 +889,15 @@ impl Sim {
         graph: GraphId,
         deps: &[usize],
     ) -> Result<(), SimError> {
-        self.begin_capture_inner(device, stream, Some((graph, deps)))
+        self.begin_capture_inner(device, stream, graph, deps)
     }
 
     fn begin_capture_inner(
         &mut self,
         device: DeviceId,
         stream: StreamId,
-        into: Option<(GraphId, &[usize])>,
+        graph: GraphId,
+        deps: &[usize],
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
         if self.capturing.is_some() {
@@ -890,10 +910,7 @@ impl Sim {
                 why: "capture requires idle stream",
             });
         }
-        let into = match into {
-            None => None,
-            Some((graph, deps)) => Some(self.capture_into(device, graph, deps)?),
-        };
+        let into = self.capture_into(device, graph, deps)?;
         let mut streams = BTreeSet::new();
         let _ins = streams.insert((device, stream));
         self.capturing = Some(Capture {
@@ -902,6 +919,8 @@ impl Sim {
             events: BTreeSet::new(),
             mem_allocs: Vec::new(),
             into,
+            pending: BTreeMap::new(),
+            extra_abs: BTreeMap::new(),
         });
         self.capture_buf.clear();
         Ok(())
@@ -944,9 +963,8 @@ impl Sim {
 
     /// Finish capture. The graph is empty of side effects until [`Self::launch_graph`].
     ///
-    /// After [`Self::begin_capture`] this creates a new id. After
-    /// [`Self::begin_capture_to_graph`] this appends nodes onto that graph and
-    /// returns it.
+    /// Appends recorded nodes onto the graph from [`Self::begin_capture`] /
+    /// [`Self::begin_capture_to_graph`] and returns that id.
     pub fn end_capture(&mut self) -> Result<GraphId, SimError> {
         let Some(cap) = self.capturing.take() else {
             return Err(SimError::Invalid {
@@ -954,34 +972,101 @@ impl Sim {
             });
         };
         let steps = core::mem::take(&mut self.capture_buf);
-        let mem_allocs = cap.mem_allocs;
-        if let Some(into) = cap.into {
-            self.append_captured(into, steps, mem_allocs)
-        } else {
-            self.insert_captured_graph(cap.origin, steps, mem_allocs)
-        }
+        self.append_captured(cap.into, steps, cap.mem_allocs, cap.extra_abs)
     }
 
-    fn insert_captured_graph(
+    /// `cudaStreamUpdateCaptureDependencies`: extra deps for the next captured
+    /// node on this stream, **in addition to** stream-order (not instead of).
+    ///
+    /// `deps` are destination-graph indices: existing nodes `0..graph_len-1`,
+    /// then this-session nodes at `graph_len + i`. [`Self::graph_len`] during
+    /// capture does not include the session buffer. [`CaptureDepOp::Set`]
+    /// replaces the pending set; [`CaptureDepOp::Add`] unions. The pending set
+    /// is consumed by the next captured submit on this stream. The stream must
+    /// be in the capture set. Same-stream independent children still need
+    /// separate [`Self::begin_capture_to_graph`] sessions.
+    pub fn stream_update_capture_dependencies(
         &mut self,
-        origin: (DeviceId, StreamId),
-        steps: Vec<GraphStep>,
-        mem_allocs: Vec<AllocId>,
-    ) -> Result<GraphId, SimError> {
-        let id = GraphId(self.next_graph);
-        self.next_graph = self.next_graph.saturating_add(1);
-        let _prev = self.graphs.insert(
-            id,
-            Graph {
-                steps,
-                origin,
-                instantiated: false,
-                uploaded: false,
-                auto_free_on_launch: false,
-            },
-        );
-        let _old = self.graph_allocs.insert(id, mem_allocs);
-        Ok(id)
+        device: DeviceId,
+        stream: StreamId,
+        deps: &[usize],
+        mode: CaptureDepOp,
+    ) -> Result<(), SimError> {
+        let Some(cap) = self.capturing.as_ref() else {
+            return Err(SimError::Invalid {
+                why: "not capturing",
+            });
+        };
+        if !cap.streams.contains(&(device, stream)) {
+            return Err(SimError::Invalid {
+                why: "stream not capturing",
+            });
+        }
+        let existing = self
+            .graphs
+            .get(&cap.into.graph)
+            .map_or(0, |g| g.steps.len());
+        let hi = existing.saturating_add(self.capture_buf.len());
+        for &p in deps {
+            if p >= hi {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+        }
+        let mut named = deps.to_vec();
+        named.sort_unstable();
+        named.dedup();
+        let Some(cap) = self.capturing.as_mut() else {
+            return Err(SimError::Invalid {
+                why: "not capturing",
+            });
+        };
+        match mode {
+            CaptureDepOp::Set => {
+                let _old = cap.pending.insert((device, stream), named);
+            }
+            CaptureDepOp::Add => {
+                let slot = cap.pending.entry((device, stream)).or_default();
+                slot.extend(named);
+                slot.sort_unstable();
+                slot.dedup();
+            }
+        }
+        Ok(())
+    }
+
+    /// `cudaStreamIsCapturing`.
+    #[must_use]
+    pub fn stream_is_capturing(&self, device: DeviceId, stream: StreamId) -> bool {
+        self.in_capture(device, stream)
+    }
+
+    /// `cudaStreamGetCaptureInfo`. `None` if this stream is not capturing.
+    ///
+    /// `pending_deps` are extra [`Self::stream_update_capture_dependencies`]
+    /// indices not yet consumed (not stream-order predecessors).
+    /// [`Self::graph_len`] of `info.graph` during capture excludes this
+    /// session's buffer until [`Self::end_capture`].
+    #[must_use]
+    pub fn stream_capture_info(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Option<StreamCaptureInfo> {
+        let cap = self.capturing.as_ref()?;
+        if !cap.streams.contains(&(device, stream)) {
+            return None;
+        }
+        Some(StreamCaptureInfo {
+            graph: cap.into.graph,
+            origin: cap.origin,
+            pending_deps: cap
+                .pending
+                .get(&(device, stream))
+                .cloned()
+                .unwrap_or_default(),
+        })
     }
 
     fn append_captured(
@@ -989,6 +1074,7 @@ impl Sim {
         into: CaptureInto,
         steps: Vec<GraphStep>,
         mem_allocs: Vec<AllocId>,
+        extra_abs: BTreeMap<usize, Vec<usize>>,
     ) -> Result<GraphId, SimError> {
         self.fail_capture_child_cycles(into.graph, &steps)?;
         let g = self.graphs.get_mut(&into.graph).ok_or(SimError::Invalid {
@@ -1000,10 +1086,18 @@ impl Sim {
             });
         }
         let offset = g.steps.len();
-        for mut step in steps {
-            let was_root = step.deps.is_empty();
+        for (i, mut step) in steps.into_iter().enumerate() {
+            let was_root =
+                step.deps.is_empty() && extra_abs.get(&i).is_none_or(|abs| abs.is_empty());
             for d in &mut step.deps {
                 *d = d.saturating_add(offset);
+            }
+            if let Some(abs) = extra_abs.get(&i) {
+                for extra in abs {
+                    if !step.deps.contains(extra) {
+                        step.deps.push(*extra);
+                    }
+                }
             }
             if was_root {
                 for extra in &into.deps {
@@ -1011,8 +1105,8 @@ impl Sim {
                         step.deps.push(*extra);
                     }
                 }
-                step.deps.sort_unstable();
             }
+            step.deps.sort_unstable();
             g.steps.push(step);
         }
         match self.graph_allocs.entry(into.graph) {
@@ -1280,6 +1374,9 @@ impl Sim {
     }
 
     /// Recorded op count.
+    ///
+    /// During capture this is the destination graph only; this session's
+    /// buffer is not included until [`Self::end_capture`].
     pub fn graph_len(&self, graph: GraphId) -> Result<usize, SimError> {
         self.graphs
             .get(&graph)
@@ -2338,6 +2435,12 @@ impl Sim {
     ) -> Result<GraphId, SimError> {
         self.fail_if_capturing("cannot create graph during capture")?;
         let _gpu = self.profile.gpu(device)?;
+        let id = self.insert_graph(device, stream);
+        self.clock = self.clock.saturating_add(1);
+        Ok(id)
+    }
+
+    fn insert_graph(&mut self, device: DeviceId, stream: StreamId) -> GraphId {
         let id = GraphId(self.next_graph);
         self.next_graph = self.next_graph.saturating_add(1);
         let _prev = self.graphs.insert(
@@ -2351,8 +2454,7 @@ impl Sim {
             },
         );
         let _old = self.graph_allocs.insert(id, Vec::new());
-        self.clock = self.clock.saturating_add(1);
-        Ok(id)
+        id
     }
 
     /// `cudaGraphAddKernelNode` on an uninstantiated [`Self::create_graph`] id.
@@ -2675,6 +2777,17 @@ impl Sim {
             .filter(|(_, s)| s.deps.contains(&i))
             .map(|(j, _)| j)
             .collect())
+    }
+
+    /// `cudaGraphNodeGetType` for node `i`.
+    pub fn graph_node_kind(&self, graph: GraphId, i: usize) -> Result<GraphNodeKind, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let st = g.steps.get(i).ok_or(SimError::Invalid {
+            why: "graph dependency",
+        })?;
+        Ok(node_kind(&st.kind))
     }
 
     fn graph_origin_for_add(&self, graph: GraphId) -> Result<(DeviceId, StreamId), SimError> {
@@ -5319,7 +5432,8 @@ impl Sim {
                 }
             }
         }
-        let deps = capture_step_deps(&self.capture_buf, device, stream, &kind);
+        let mut deps = capture_step_deps(&self.capture_buf, device, stream, &kind);
+        self.merge_capture_pending(device, stream, &mut deps);
         self.capture_buf.push(GraphStep {
             device,
             stream,
@@ -5330,6 +5444,42 @@ impl Sim {
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
         Ok(id)
+    }
+
+    fn merge_capture_pending(&mut self, device: DeviceId, stream: StreamId, deps: &mut Vec<usize>) {
+        let extra = self
+            .capturing
+            .as_mut()
+            .map(|c| c.pending.remove(&(device, stream)).unwrap_or_default())
+            .unwrap_or_default();
+        if extra.is_empty() {
+            return;
+        }
+        let graph = self.capturing.as_ref().map(|c| c.into.graph);
+        let existing = graph
+            .and_then(|g| self.graphs.get(&g))
+            .map_or(0, |g| g.steps.len());
+        let buf_i = self.capture_buf.len();
+        let mut extra_abs = Vec::new();
+        for p in extra {
+            if p < existing {
+                extra_abs.push(p);
+            } else {
+                let rel = p.saturating_sub(existing);
+                if rel < buf_i && !deps.contains(&rel) {
+                    deps.push(rel);
+                }
+            }
+        }
+        deps.sort_unstable();
+        extra_abs.sort_unstable();
+        extra_abs.dedup();
+        if extra_abs.is_empty() {
+            return;
+        }
+        if let Some(cap) = self.capturing.as_mut() {
+            let _prev = cap.extra_abs.insert(buf_i, extra_abs);
+        }
     }
 
     fn submit_live(
@@ -7226,6 +7376,23 @@ fn child_param_op_eq(a: &Kind, b: &Kind) -> bool {
         return true;
     }
     op_eq(a, b)
+}
+
+fn node_kind(kind: &Kind) -> GraphNodeKind {
+    match kind {
+        Kind::Kernel { .. } => GraphNodeKind::Kernel,
+        Kind::Memcpy(_) => GraphNodeKind::Memcpy,
+        Kind::Memset { .. } => GraphNodeKind::Memset,
+        Kind::HostFunc => GraphNodeKind::Host,
+        Kind::Empty => GraphNodeKind::Empty,
+        Kind::EventRecord { .. } => GraphNodeKind::EventRecord,
+        Kind::EventWait { .. } => GraphNodeKind::EventWait,
+        Kind::ChildGraph { .. } => GraphNodeKind::ChildGraph,
+        Kind::Alloc { .. } => GraphNodeKind::Alloc,
+        Kind::Free { .. } => GraphNodeKind::Free,
+        Kind::AllReduce { .. } => GraphNodeKind::AllReduce,
+        Kind::Attach { .. } => GraphNodeKind::Attach,
+    }
 }
 
 fn capture_step_deps(

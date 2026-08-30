@@ -265,6 +265,11 @@ for `update_graph`; mem nodes legal).
 `graph_exec_event_record_set_event` / `graph_exec_event_wait_set_event` are
 `cudaGraphExecEventRecordNodeSetEvent` / `WaitNodeSetEvent` (event id is the
 parameter; External is topology).
+`stream_update_capture_dependencies` is `cudaStreamUpdateCaptureDependencies`
+(extra deps for the next captured node, in addition to stream-order; `Set`
+replaces, `Add` unions). `stream_is_capturing` / `stream_capture_info` are
+`cudaStreamIsCapturing` / `GetCaptureInfo`. `graph_node_kind` is
+`cudaGraphNodeGetType`.
 `expertvm --graph-set-params` parks a leaf and retargets the unique kernel
 (and a unique memcpy or memset if present). `expertvm --graph-update` parks a leaf GEMM on
 evict and updates the next miss instead of instantiate. `--graph-clone`

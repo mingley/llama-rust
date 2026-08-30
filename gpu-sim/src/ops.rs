@@ -378,3 +378,55 @@ impl Operation {
         Some(self.done_ns?.saturating_sub(self.start_ns?))
     }
 }
+
+/// `cudaStreamUpdateCaptureDependencies` flags.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CaptureDepOp {
+    /// Union with the current pending set (`cudaStreamAddCaptureDependencies`).
+    Add,
+    /// Replace the current pending set (`cudaStreamSetCaptureDependencies`).
+    Set,
+}
+
+/// Active stream capture (`cudaStreamGetCaptureInfo`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StreamCaptureInfo {
+    /// Graph being captured into (`cudaStreamBeginCapture` / `ToGraph`).
+    pub graph: GraphId,
+    /// Capture origin `(device, stream)`.
+    pub origin: (DeviceId, StreamId),
+    /// Extra deps for the next captured node on this stream.
+    ///
+    /// Indices are existing graph nodes, then this-session nodes at
+    /// `graph_len + i`. Empty until [`crate::Sim::stream_update_capture_dependencies`].
+    pub pending_deps: Vec<usize>,
+}
+
+/// `cudaGraphNodeGetType` tag for one graph node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GraphNodeKind {
+    /// `cudaGraphAddKernelNode` / captured kernel.
+    Kernel,
+    /// `cudaGraphAddMemcpyNode` / captured memcpy.
+    Memcpy,
+    /// `cudaGraphAddMemsetNode` / captured memset.
+    Memset,
+    /// `cudaGraphAddHostNode`.
+    Host,
+    /// `cudaGraphAddEmptyNode`.
+    Empty,
+    /// `cudaGraphAddEventRecordNode`.
+    EventRecord,
+    /// `cudaGraphAddEventWaitNode`.
+    EventWait,
+    /// `cudaGraphAddChildGraphNode` / `launch_graph` during capture.
+    ChildGraph,
+    /// `cudaGraphAddMemAllocNode` / captured `cudaMallocAsync`.
+    Alloc,
+    /// `cudaGraphAddMemFreeNode` / captured `cudaFreeAsync`.
+    Free,
+    /// Captured ring allreduce (not a `cudaGraphAdd*` node).
+    AllReduce,
+    /// Captured `cudaStreamAttachMemAsync` (illegal to capture; defensive).
+    Attach,
+}
