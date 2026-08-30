@@ -883,6 +883,10 @@ pub enum DeviceAttr {
     /// are not modeled; [`crate::Sim::create_pool_with_props`] refuses host
     /// location). Distinct from [`Self::HostMemoryPoolsSupported`].
     HostNumaMemoryPoolsSupported,
+    /// `cudaDevAttrHostNumaMultinodeIpcSupported` (always 0; this VM's IPC is
+    /// same-node; [`crate::Sim::ipc_open`] requires the dest GPU already in
+    /// the allocation). Distinct from [`Self::IpcEventSupport`].
+    HostNumaMultinodeIpcSupported,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -1040,6 +1044,9 @@ pub struct DeviceProperties {
     /// `cudaDevAttrHostNumaMemoryPoolsSupported` (host NUMA pools are not
     /// modeled). Distinct from [`Self::host_memory_pools_supported`].
     pub host_numa_memory_pools_supported: bool,
+    /// `cudaDevAttrHostNumaMultinodeIpcSupported` (this VM's IPC is
+    /// same-node). Distinct from [`Self::ipc_event_support`].
+    pub host_numa_multinode_ipc_supported: bool,
 }
 
 /// `cudaComputeMode` for [`DeviceAttr::ComputeMode`].

@@ -13173,7 +13173,8 @@ impl Sim {
             | DeviceAttr::MemDecompressAlgorithmMask
             | DeviceAttr::MemDecompressMaximumLength
             | DeviceAttr::HostNumaVirtualMemoryManagementSupported
-            | DeviceAttr::HostNumaMemoryPoolsSupported => 0,
+            | DeviceAttr::HostNumaMemoryPoolsSupported
+            | DeviceAttr::HostNumaMultinodeIpcSupported => 0,
             DeviceAttr::StreamPrioritiesSupported
             | DeviceAttr::UnifiedAddressing
             | DeviceAttr::CanUse64BitStreamMemOps
@@ -13256,6 +13257,7 @@ impl Sim {
             mem_decompress_maximum_length: 0,
             host_numa_virtual_memory_management_supported: false,
             host_numa_memory_pools_supported: false,
+            host_numa_multinode_ipc_supported: false,
         })
     }
 

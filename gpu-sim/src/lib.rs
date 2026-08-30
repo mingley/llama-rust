@@ -344,6 +344,10 @@
 //! are not modeled; [`create_pool_with_props`](Sim::create_pool_with_props)
 //! refuses host location). Distinct from
 //! [`HostMemoryPoolsSupported`](DeviceAttr::HostMemoryPoolsSupported).
+//! [`DeviceAttr::HostNumaMultinodeIpcSupported`] is always 0 (this VM's IPC
+//! is same-node; [`ipc_open`](Sim::ipc_open) requires the dest GPU already
+//! in the allocation). Distinct from
+//! [`IpcEventSupport`](DeviceAttr::IpcEventSupport).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -11195,6 +11199,27 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::HostNumaMemoryPoolsSupported)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_host_numa_multinode_ipc_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert!(hp.ipc_event_support);
+        assert!(!hp.host_numa_multinode_ipc_supported);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::HostNumaMultinodeIpcSupported)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::HostNumaMultinodeIpcSupported)
                 .unwrap(),
             0
         );

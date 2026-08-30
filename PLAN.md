@@ -3022,7 +3022,15 @@ model, do not celebrate the sim.
     identity unchanged. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-291. [ ] Next numbered PLAN item after 290 is the next `gpu-sim` / Engine /
+291. [x] `cudaDevAttrHostNumaMultinodeIpcSupported`: always 0 (this VM's
+    IPC is same-node; [`ipc_open`](Sim::ipc_open) requires the dest GPU
+    already in the allocation). Distinct from
+    [`DeviceAttr::IpcEventSupport`] (same-process event IPC is 1). Do
+    not invent HostNuma IDs. Query; capture-legal. Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+292. [ ] Next numbered PLAN item after 291 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
