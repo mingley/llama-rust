@@ -39,6 +39,8 @@ pub(crate) struct GemmFlags {
     pub cluster: u8,
     /// `cudaLaunchAttributeClusterSchedulingPolicyPreference` Spread.
     pub cluster_spread: bool,
+    /// `cudaLaunchAttributePreferredSharedMemoryCarveout` MaxShared.
+    pub max_shared: bool,
 }
 
 impl GemmFlags {
@@ -66,6 +68,14 @@ impl GemmFlags {
         }
     }
 
+    pub(crate) fn carveout(self) -> SharedMemCarveout {
+        if self.max_shared {
+            SharedMemCarveout::MaxShared
+        } else {
+            SharedMemCarveout::Default
+        }
+    }
+
     pub(crate) fn kernel_attrs(self, id: AllocId) -> KernelAttrs {
         KernelAttrs {
             cooperative: self.cooperative,
@@ -73,6 +83,7 @@ impl GemmFlags {
             access_policy: self.persist_window(id),
             cluster: self.cluster_dim(),
             cluster_policy: self.cluster_policy(),
+            carveout: self.carveout(),
             ..KernelAttrs::default()
         }
     }
@@ -90,7 +101,7 @@ use crate::replay::{Touch, Walker};
 use gpu_sim::{
     AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceId, EventId, GraphId,
     HardwareProfile, KernelAttrs, KernelBuf, KernelKind, MemcpyOp, Place, PoolId,
-    ProgrammaticLaunch, Score, Sim, StreamId,
+    ProgrammaticLaunch, Score, SharedMemCarveout, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -407,6 +418,12 @@ pub struct SimCfg {
     /// unless cluster blocks `> 1`. Decode identity stays Default.
     /// [`crate::GpuStoreCfg::cluster_spread`] is the store path.
     pub cluster_spread: bool,
+    /// Max-shared carveout (`cudaLaunchAttributePreferredSharedMemoryCarveout`).
+    ///
+    /// Occupies every Hyper-Q slot so leftover kernels cannot overlap.
+    /// Decode identity stays Default. [`crate::GpuStoreCfg::max_shared`] is
+    /// the store path.
+    pub max_shared: bool,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// `--place replicas` maps dest VMM physicals then one NVLS kernel instead
@@ -477,6 +494,7 @@ impl SimCfg {
             l2_persist: false,
             cluster: 0,
             cluster_spread: false,
+            max_shared: false,
             multicast: false,
             compute_slots: 0,
             decode_sm_permille: 0,
@@ -600,6 +618,7 @@ pub fn sim_replay_cfg(
         .with_l2_persist(cfg.l2_persist)
         .with_cluster(cfg.cluster)
         .with_cluster_spread(cfg.cluster_spread)
+        .with_max_shared(cfg.max_shared)
         .with_set_params(cfg.graph_set_params)
         .with_piecewise(cfg.graph_piecewise);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
@@ -839,6 +858,7 @@ pub(crate) struct GraphBank {
     l2_persist: bool,
     cluster: u8,
     cluster_spread: bool,
+    max_shared: bool,
     set_params: bool,
     pub updates: u64,
     pub clones: u64,
@@ -860,6 +880,7 @@ impl GraphBank {
             l2_persist: false,
             cluster: 0,
             cluster_spread: false,
+            max_shared: false,
             set_params: false,
             updates: 0,
             clones: 0,
@@ -892,6 +913,11 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_max_shared(mut self, yes: bool) -> Self {
+        self.max_shared = yes;
+        self
+    }
+
     fn gemm_flags(&self) -> GemmFlags {
         GemmFlags {
             cooperative: self.cooperative,
@@ -899,6 +925,7 @@ impl GraphBank {
             l2_persist: self.l2_persist,
             cluster: self.cluster,
             cluster_spread: self.cluster_spread,
+            max_shared: self.max_shared,
         }
     }
 
@@ -1840,6 +1867,10 @@ fn add_gemm_kernel(
     if flags.cluster_spread {
         let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_cluster_policy(graph, node, ClusterSchedulingPolicy::Spread)?;
+    }
+    if flags.max_shared {
+        let node = usize::from(!writes.is_empty());
+        sim.graph_kernel_node_set_carveout(graph, node, SharedMemCarveout::MaxShared)?;
     }
     Ok(())
 }

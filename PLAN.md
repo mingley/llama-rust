@@ -699,7 +699,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--shareable`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-piecewise`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--cluster-spread`, and `--multicast`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-piecewise`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--cluster-spread`, `--max-shared`, and `--multicast`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--shareable` is POSIX-FD mempool IPC
   (implies `--mempool`; illegal with `--sync-alloc` / mapped / managed / vmm). `--mapped` is `cudaHostAllocMapped`
@@ -1608,6 +1608,12 @@ model, do not celebrate the sim.
     so leftover kernels cannot overlap. Graph SetAttribute / CopyAttributes
     carry it. Device-launch graphs allow it. Decode identity stays Default.
     `gpu-profile capture` is still refused.
+
+125. [x] expertvm / Engine `--max-shared`: grouped expert GEMMs launch with
+    `cudaLaunchAttributePreferredSharedMemoryCarveout` MaxShared
+    (`graph_kernel_node_set_carveout`). Occupies every Hyper-Q slot so
+    leftover kernels cannot overlap. Legal with `--pdl` and `--cooperative`.
+    Decode identity stays Default. `gpu-profile capture` is still refused.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

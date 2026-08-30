@@ -68,6 +68,8 @@ pub(crate) struct GpuCli {
     pub cluster_set: bool,
     /// Spread cluster scheduling (`GpuStoreCfg::cluster_spread`).
     pub cluster_spread: bool,
+    /// Max-shared carveout (`GpuStoreCfg::max_shared`).
+    pub max_shared: bool,
     /// Hopper NVLS replica fanout (`GpuStoreCfg::multicast`). Implies vmm.
     pub multicast: bool,
     /// Hyper-Q occupancy (`GpuStoreCfg::compute_slots`). `0` keeps the profile.
@@ -118,6 +120,7 @@ impl GpuCli {
             "--pdl" => &mut self.pdl,
             "--l2-persist" => &mut self.l2_persist,
             "--cluster-spread" => &mut self.cluster_spread,
+            "--max-shared" => &mut self.max_shared,
             "--multicast" => &mut self.multicast,
             _ => return Ok(false),
         };
@@ -234,6 +237,7 @@ impl GpuCli {
             (self.compute_slots_set, "--compute-slots"),
             (self.cluster_set, "--cluster"),
             (self.cluster_spread, "--cluster-spread"),
+            (self.max_shared, "--max-shared"),
             (self.decode_sm_set, "--decode-sms"),
         ]
         .into_iter()
@@ -453,6 +457,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         l2_persist: gpu.l2_persist,
         cluster: gpu.cluster,
         cluster_spread: gpu.cluster_spread,
+        max_shared: gpu.max_shared,
         multicast: gpu.multicast,
         compute_slots: gpu.compute_slots,
         decode_sm_permille: gpu.decode_sm_permille,

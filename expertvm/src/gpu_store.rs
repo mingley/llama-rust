@@ -173,6 +173,11 @@ pub struct GpuStoreCfg {
     /// when [`Self::cluster`] is smaller than [`Self::compute_slots`]. A no-op
     /// unless cluster blocks `> 1`. Decode identity stays Default.
     pub cluster_spread: bool,
+    /// Max-shared carveout (`cudaLaunchAttributePreferredSharedMemoryCarveout`).
+    ///
+    /// Occupies every Hyper-Q slot so leftover kernels cannot overlap.
+    /// Decode identity stays Default.
+    pub max_shared: bool,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// [`Self::pin_hot`] and walker `--place replicas` map dest VMM physicals
@@ -248,6 +253,7 @@ pub struct SimulatedGpuStore {
     l2_persist: bool,
     cluster: u8,
     cluster_spread: bool,
+    max_shared: bool,
     multicast: bool,
     next_event: u32,
     pages: BTreeMap<ExpertKey, GpuPage>,
@@ -508,6 +514,7 @@ impl SimulatedGpuStore {
             l2_persist: cfg.l2_persist,
             cluster: cfg.cluster,
             cluster_spread: cfg.cluster_spread,
+            max_shared: cfg.max_shared,
             multicast: cfg.multicast,
             next_event: 1,
             pages: BTreeMap::new(),
@@ -624,6 +631,7 @@ impl SimulatedGpuStore {
             l2_persist: self.l2_persist,
             cluster: self.cluster,
             cluster_spread: self.cluster_spread,
+            max_shared: self.max_shared,
         }
     }
 

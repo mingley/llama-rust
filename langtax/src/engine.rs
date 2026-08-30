@@ -56,8 +56,10 @@
 //! GEMMs: the launch occupies `min(N, compute_slots)` Hyper-Q slots (Hopper
 //! portable max 8; legal with `--pdl` and `--cooperative`). `--cluster-spread`
 //! is Spread scheduling: occupies every Hyper-Q slot even when `N` is smaller
-//! than `compute_slots` (no-op without `--cluster` of at least 2). Decode
-//! identity stays `cudaLaunchKernel` (no cluster / Default policy).
+//! than `compute_slots` (no-op without `--cluster` of at least 2). `--max-shared`
+//! is MaxShared carveout: occupies every Hyper-Q slot. Decode
+//! identity stays `cudaLaunchKernel` (no cluster / Default policy / Default
+//! carveout).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode
@@ -3670,6 +3672,44 @@ mod tests {
         assert!(
             overlap.1.wall_ns < serial.1.wall_ns,
             "cluster Spread must not overlap leftover prefill with decode; overlap={} serial={} overlap_line={} serial_line={}",
+            overlap.1.wall_ns,
+            serial.1.wall_ns,
+            overlap.1.line(),
+            serial.1.line()
+        );
+    }
+
+    #[test]
+    fn engine_gpu_max_shared_serializes_mixed_wall() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+            .expect("slow gemm profile");
+        let pri = GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            compute_slots: 2,
+            ..GpuStoreCfg::default()
+        };
+        let overlap = mixed_gpu_decode_itl_at(bytes.clone(), false, None, pri, profile.clone());
+        let serial = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                max_shared: true,
+                ..pri
+            },
+            profile,
+        );
+        assert_eq!(overlap.2, 4);
+        assert_eq!(serial.2, 4);
+        assert_eq!(
+            overlap.4, serial.4,
+            "MaxShared carveout launch must keep greedy identity"
+        );
+        assert!(
+            overlap.1.wall_ns < serial.1.wall_ns,
+            "MaxShared carveout must not overlap leftover prefill with decode; overlap={} serial={} overlap_line={} serial_line={}",
             overlap.1.wall_ns,
             serial.1.wall_ns,
             overlap.1.line(),
