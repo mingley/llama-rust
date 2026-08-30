@@ -2548,7 +2548,19 @@ model, do not celebrate the sim.
     identity stays Default. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-234. [ ] Next numbered PLAN item after 233 is the next `gpu-sim` / Engine /
+234. [x] Remaining `cuPointerGetAttribute` queries:
+    [`PointerAttr::MemoryType`] / [`DevicePointer`](PointerAttr::DevicePointer) /
+    [`HostPointer`](PointerAttr::HostPointer) / [`IsManaged`](PointerAttr::IsManaged) /
+    [`RangeSize`](PointerAttr::RangeSize) / [`Mapped`](PointerAttr::Mapped) /
+    [`MemPoolHandle`](PointerAttr::MemPoolHandle) wrap existing
+    [`pointer_get_attributes`], range size, mapped host, and the backing
+    pool. Set stays [`PointerAttr::SyncMemops`] only (other attrs Invalid
+    `"pointer attr"`). Get is a query; capture-legal. CONTEXT / P2P tokens /
+    DeviceOrdinal / RANGE_START_ADDR stay unmodeled. Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+235. [ ] Next numbered PLAN item after 234 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

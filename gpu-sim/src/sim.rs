@@ -12056,8 +12056,9 @@ impl Sim {
         Ok((alloc, a.bytes))
     }
 
-    /// `cuPointerSetAttribute` / GetAttribute for
-    /// [`PointerAttr::SyncMemops`]. `value` must be 0 or 1. Capture refused
+    /// `cuPointerSetAttribute` / GetAttribute for modeled [`PointerAttr`].
+    /// [`PointerAttr::SyncMemops`] is settable (`value` 0 or 1). Other attrs
+    /// are query-only (Invalid `"pointer attr"`). Capture refused
     /// (`"cannot capture pointer attr"`). Unknown ids are
     /// [`SimError::UnknownAlloc`]; freed ids are Invalid `"pointer attr"`.
     pub fn pointer_set_attribute(
@@ -12083,11 +12084,22 @@ impl Sim {
                 a.sync_memops = value == 1;
                 Ok(())
             }
+            PointerAttr::MemoryType
+            | PointerAttr::DevicePointer
+            | PointerAttr::HostPointer
+            | PointerAttr::IsManaged
+            | PointerAttr::RangeSize
+            | PointerAttr::Mapped
+            | PointerAttr::MemPoolHandle => Err(SimError::Invalid {
+                why: "pointer attr",
+            }),
         }
     }
 
     /// `cuPointerGetAttribute` twin of [`Self::pointer_set_attribute`]. Query;
-    /// capture-legal. Reports 0/1 for [`PointerAttr::SyncMemops`].
+    /// capture-legal. Reports 0/1 for [`PointerAttr::SyncMemops`]. Other
+    /// attrs wrap [`Self::pointer_get_attributes`], range size, mapped host,
+    /// and the backing pool.
     pub fn pointer_get_attribute(
         &self,
         alloc: AllocId,
@@ -12101,6 +12113,17 @@ impl Sim {
         }
         match attr {
             PointerAttr::SyncMemops => Ok(u64::from(a.sync_memops)),
+            PointerAttr::MemoryType => Ok(self.pointer_get_attributes(alloc)?.kind.to_cuda()),
+            PointerAttr::DevicePointer => Ok(u64::from(
+                self.pointer_get_attributes(alloc)?.device_pointer,
+            )),
+            PointerAttr::HostPointer => {
+                Ok(u64::from(self.pointer_get_attributes(alloc)?.host_pointer))
+            }
+            PointerAttr::IsManaged => Ok(u64::from(a.managed)),
+            PointerAttr::RangeSize => Ok(a.bytes),
+            PointerAttr::Mapped => Ok(u64::from(a.host_mapped)),
+            PointerAttr::MemPoolHandle => Ok(a.pool.map(|p| u64::from(p.0)).unwrap_or(0)),
         }
     }
 

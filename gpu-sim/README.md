@@ -114,6 +114,7 @@ warp scheduler, L1, …   ← do not model
 | `query_stream` is non-blocking | `cudaStreamQuery` |
 | `mem_info` is `(free, total)` HBM | `cudaMemGetInfo` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
+| `pointer_get_attribute` wraps type / mapped / pool / range; SyncMemops is settable | `cuPointerGetAttribute` / `SetAttribute` |
 | `host_get_device_pointer` of mapped host returns the same id (`flags` must be 0) | `cudaHostGetDevicePointer` |
 | `host_get_flags` returns the stored `HostAllocFlags` word | `cudaHostGetFlags` |
 | `alloc_host_with_flags` / `host_register_with_flags` (MAPPED / PORTABLE / WRITE_COMBINED stored; IoMemory / ReadOnly Invalid) | `cudaHostAlloc` / `cudaHostRegister` |
@@ -486,9 +487,10 @@ stream is `Ok(false)`; the clock does not advance).
 `mem_info` is `cudaMemGetInfo` `(free, total)` HBM bytes.
 `pointer_get_attributes` is `cudaPointerGetAttributes`.
 `pointer_set_attribute` / `pointer_get_attribute` are
-`cuPointerSetAttribute` / `GetAttribute` (`PointerAttr::SyncMemops`:
-memcpy/memset wait the stream like pageable; capture of those copies is
-refused). Set is capture-refused; Get is a query.
+`cuPointerSetAttribute` / `GetAttribute` (`PointerAttr`: SyncMemops is
+settable; MemoryType / DevicePointer / HostPointer / IsManaged /
+RangeSize / Mapped / MemPoolHandle are query-only). Set is capture-refused;
+Get is a query.
 `mem_get_address_range` is `cudaMemGetAddressRange` (base is the alloc id;
 interior offsets are not modeled). Query; legal during capture.
 `host_get_device_pointer` is `cudaHostGetDevicePointer` (mapped host;

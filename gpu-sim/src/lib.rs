@@ -200,9 +200,10 @@
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`pointer_set_attribute`](Sim::pointer_set_attribute) /
 //! [`pointer_get_attribute`](Sim::pointer_get_attribute) are
-//! `cuPointerSetAttribute` / `GetAttribute` ([`PointerAttr::SyncMemops`]:
-//! memcpy/memset wait the stream like pageable; capture of those copies is
-//! refused). Set is capture-refused; Get is a query.
+//! `cuPointerSetAttribute` / `GetAttribute` ([`PointerAttr`]: SyncMemops is
+//! settable; MemoryType / DevicePointer / HostPointer / IsManaged /
+//! RangeSize / Mapped / MemPoolHandle are query-only wrappers of existing
+//! pointer state). Set is capture-refused; Get is a query.
 //! [`Sim::mem_get_address_range`] is `cudaMemGetAddressRange` (base is the
 //! alloc id; interior offsets are not modeled). Query; legal during capture.
 //! [`Sim::host_get_device_pointer`] is `cudaHostGetDevicePointer` (mapped host).
@@ -8410,6 +8411,102 @@ mod tests {
             Err(SimError::UnknownAlloc { .. }) => {}
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn pointer_get_attribute_wraps_type_mapped_pool_and_range() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::MemoryType)
+                .unwrap(),
+            MemoryType::Device.to_cuda()
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::DevicePointer)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::HostPointer)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::IsManaged)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::RangeSize)
+                .unwrap(),
+            4096
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::Mapped).unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::MemPoolHandle)
+                .unwrap(),
+            0
+        );
+        let async_a = sim.alloc(d, 256, StreamId(0)).unwrap();
+        sim.synchronize_stream(d, StreamId(0)).unwrap();
+        let pool = sim.default_pool(d).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(async_a, PointerAttr::MemPoolHandle)
+                .unwrap(),
+            u64::from(pool.0)
+        );
+        let mapped = sim.alloc_host_mapped(64).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(mapped, PointerAttr::MemoryType)
+                .unwrap(),
+            MemoryType::Host.to_cuda()
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(mapped, PointerAttr::Mapped)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(mapped, PointerAttr::DevicePointer)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(mapped, PointerAttr::HostPointer)
+                .unwrap(),
+            1
+        );
+        let um = sim.alloc_managed(64).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(um, PointerAttr::IsManaged)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sim.pointer_get_attribute(um, PointerAttr::MemoryType)
+                .unwrap(),
+            MemoryType::Managed.to_cuda()
+        );
+        match sim.pointer_set_attribute(a, PointerAttr::RangeSize, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(a, PointerAttr::RangeSize)
+                .unwrap(),
+            4096
+        );
+        match sim.pointer_set_attribute(a, PointerAttr::MemoryType, 2) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

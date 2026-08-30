@@ -558,6 +558,20 @@ pub enum MemoryType {
     Managed,
 }
 
+impl MemoryType {
+    /// CUDA `cudaMemoryType` int (`0` Unregistered / `1` Host / `2` Device /
+    /// `3` Managed).
+    #[must_use]
+    pub fn to_cuda(self) -> u64 {
+        match self {
+            Self::Unregistered => 0,
+            Self::Host => 1,
+            Self::Device => 2,
+            Self::Managed => 3,
+        }
+    }
+}
+
 /// `cudaPointerAttributes`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PointerAttributes {
@@ -574,13 +588,31 @@ pub struct PointerAttributes {
 /// `cuPointerSetAttribute` / `cuPointerGetAttribute` for
 /// [`crate::Sim::pointer_set_attribute`].
 ///
-/// Only attributes this VM already models.
+/// Only attributes this VM already models. Set is
+/// [`Self::SyncMemops`] only; the rest are query-only.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PointerAttr {
     /// `CU_POINTER_ATTRIBUTE_SYNC_MEMOPS`. `1` makes memcpy/memset of this
     /// pointer host-synchronous (like pageable). Capture of those copies is
     /// refused.
     SyncMemops,
+    /// `CU_POINTER_ATTRIBUTE_MEMORY_TYPE` ([`MemoryType::to_cuda`]).
+    MemoryType,
+    /// `CU_POINTER_ATTRIBUTE_DEVICE_POINTER` (`1` if a device mapping exists).
+    DevicePointer,
+    /// `CU_POINTER_ATTRIBUTE_HOST_POINTER` (`1` if a host mapping exists).
+    HostPointer,
+    /// `CU_POINTER_ATTRIBUTE_IS_MANAGED`.
+    IsManaged,
+    /// `CU_POINTER_ATTRIBUTE_RANGE_SIZE` (allocation bytes; interior offsets
+    /// are not modeled).
+    RangeSize,
+    /// `CU_POINTER_ATTRIBUTE_MAPPED` (`1` if `cudaHostAllocMapped` /
+    /// `cudaHostRegisterMapped`).
+    Mapped,
+    /// `CU_POINTER_ATTRIBUTE_MEMPOOL_HANDLE` ([`crate::PoolId`] as `u64`; `0`
+    /// if not pool-backed).
+    MemPoolHandle,
 }
 
 /// `cudaDeviceAttr` for [`crate::Sim::device_get_attribute`].
