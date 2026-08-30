@@ -856,6 +856,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrCanUseStreamWaitValueNor` (always 1; this VM has
     /// [`WaitValueCmp::Nor`]).
     CanUseStreamWaitValueNor,
+    /// `cudaDevAttrTensorMapAccessSupported` (always 0; `CUtensorMap` / TMA
+    /// is not modeled).
+    TensorMapAccessSupported,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -987,6 +990,9 @@ pub struct DeviceProperties {
     /// `cudaDevAttrCanUseStreamWaitValueNor` (this VM has
     /// [`WaitValueCmp::Nor`]).
     pub can_use_stream_wait_value_nor: bool,
+    /// `cudaDevAttrTensorMapAccessSupported` (`CUtensorMap` / TMA is not
+    /// modeled).
+    pub tensor_map_access_supported: bool,
 }
 
 /// `cudaComputeMode` for [`DeviceAttr::ComputeMode`].

@@ -2938,7 +2938,14 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-281. [ ] Next numbered PLAN item after 280 is the next `gpu-sim` / Engine /
+281. [x] `cudaDevAttrTensorMapAccessSupported`:
+    [`DeviceAttr::TensorMapAccessSupported`] is always 0 (`CUtensorMap` /
+    TMA is not modeled). [`DeviceProperties::tensor_map_access_supported`]
+    matches. Query; capture-legal. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+282. [ ] Next numbered PLAN item after 281 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

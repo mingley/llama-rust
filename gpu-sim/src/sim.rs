@@ -13058,7 +13058,8 @@ impl Sim {
             | DeviceAttr::MultiGpuBoardGroupID
             | DeviceAttr::ComputeMode
             | DeviceAttr::TccDriver
-            | DeviceAttr::KernelExecTimeout => 0,
+            | DeviceAttr::KernelExecTimeout
+            | DeviceAttr::TensorMapAccessSupported => 0,
             DeviceAttr::StreamPrioritiesSupported
             | DeviceAttr::UnifiedAddressing
             | DeviceAttr::CanUse64BitStreamMemOps
@@ -13132,6 +13133,7 @@ impl Sim {
             kernel_exec_timeout: false,
             can_use_64_bit_stream_mem_ops: true,
             can_use_stream_wait_value_nor: true,
+            tensor_map_access_supported: false,
         })
     }
 
