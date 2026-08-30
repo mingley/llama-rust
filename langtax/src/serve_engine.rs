@@ -6,8 +6,8 @@
 //! lines then a final `generated` object. `--prefill-chunk`, `--decode-first`,
 //! `--slo-reject`, `--itl-slo-ns`, graph knobs, fill modes, `GpuStoreCfg`
 //! CUDA knobs, `--prefetch` / `--plan-window` / `--plan-threshold`, `--seq-streams`, and
-//! `--trace-out` match `gguf_gemv engine`. No Tokio, no
-//! keep-alive, no OpenAI SDK surface.
+//! `--trace-out` match `gguf_gemv engine`. No Tokio, no OpenAI SDK surface.
+//! HTTP/1.1 keep-alive is on unless the client sends `Connection: close`.
 
 use std::fs::OpenOptions;
 use std::io::{ErrorKind, Read, Write};
@@ -58,6 +58,7 @@ struct Conn {
     ndjson: bool,
     streamed: usize,
     finalized: bool,
+    keep_alive: bool,
 }
 
 enum AdmitOut {
@@ -66,8 +67,13 @@ enum AdmitOut {
 }
 
 impl AdmitOut {
-    fn http(status: u16, reason: &'static str, msg: &str) -> Self {
-        Self::Bytes(http_json_bytes(status, reason, &json_error(msg)))
+    fn http(status: u16, reason: &'static str, msg: &str, keep_alive: bool) -> Self {
+        Self::Bytes(http_json_bytes(
+            status,
+            reason,
+            &json_error(msg),
+            keep_alive,
+        ))
     }
 }
 
@@ -117,6 +123,7 @@ impl Conn {
             ndjson: false,
             streamed: 0,
             finalized: false,
+            keep_alive: false,
         }
     }
 
@@ -125,8 +132,29 @@ impl Conn {
     }
 }
 
+fn try_take_request(c: &mut Conn) -> bool {
+    match try_parse_http_request(&c.read) {
+        Ok(Some(req)) => {
+            let n = req.consumed.min(c.read.len());
+            let rest = c.read.split_off(n);
+            c.read = rest;
+            c.keep_alive = req.keep_alive;
+            c.req = Some(req);
+            true
+        }
+        Ok(None) => false,
+        Err(e) => {
+            queue_err(c, &e);
+            true
+        }
+    }
+}
+
 fn read_conn(c: &mut Conn) {
     if c.done || c.req.is_some() || !c.write.is_empty() {
+        return;
+    }
+    if try_take_request(c) {
         return;
     }
     let mut tmp = [0u8; 512];
@@ -147,16 +175,8 @@ fn read_conn(c: &mut Conn) {
                     queue_err(c, &e);
                     return;
                 }
-                match try_parse_http_request(&c.read) {
-                    Ok(Some(req)) => {
-                        c.req = Some(req);
-                        return;
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        queue_err(c, &e);
-                        return;
-                    }
+                if try_take_request(c) {
+                    return;
                 }
             }
             Err(e) if io_again(&e) => return,
@@ -170,8 +190,9 @@ fn read_conn(c: &mut Conn) {
 
 fn queue_err(c: &mut Conn, e: &ServeError) {
     let (status, reason) = http_err_status(e);
-    c.write = http_json_bytes(status, reason, &json_error(&e.to_string()));
+    c.write = http_json_bytes(status, reason, &json_error(&e.to_string()), false);
     c.write_at = 0;
+    c.keep_alive = false;
 }
 
 fn write_conn(c: &mut Conn) {
@@ -191,7 +212,7 @@ fn write_conn(c: &mut Conn) {
                     if c.ndjson && !c.finalized {
                         return;
                     }
-                    c.done = true;
+                    finish_write(c);
                     return;
                 }
                 Err(e) if io_again(&e) => return,
@@ -216,6 +237,20 @@ fn write_conn(c: &mut Conn) {
     }
 }
 
+fn finish_write(c: &mut Conn) {
+    if !c.keep_alive {
+        c.done = true;
+        return;
+    }
+    c.seq = None;
+    c.ndjson = false;
+    c.streamed = 0;
+    c.finalized = false;
+    c.intern_hits_at_add = 0;
+    c.req = None;
+    let _ = try_take_request(c);
+}
+
 fn queue_missing(c: Option<&mut Conn>, ndjson: bool) {
     let Some(c) = c else {
         return;
@@ -226,7 +261,7 @@ fn queue_missing(c: Option<&mut Conn>, ndjson: bool) {
         c.write.extend(http_chunk_end());
         c.finalized = true;
     } else {
-        c.write = http_json_bytes(500, "Internal Server Error", &err);
+        c.write = http_json_bytes(500, "Internal Server Error", &err, c.keep_alive);
         c.write_at = 0;
     }
     c.seq = None;
@@ -341,8 +376,9 @@ impl<'a> EngineHttp<'a> {
                         c.seq = Some(id);
                         c.intern_hits_at_add = hits;
                         c.ndjson = ndjson;
+                        c.keep_alive = req.keep_alive;
                         if ndjson {
-                            c.write.extend(http_chunked_headers());
+                            c.write.extend(http_chunked_headers(req.keep_alive));
                         }
                     }
                 }
@@ -357,40 +393,41 @@ impl<'a> EngineHttp<'a> {
     }
 
     fn admit_req(&mut self, req: &HttpRequest) -> AdmitOut {
+        let ka = req.keep_alive;
         if req.method != "POST" {
-            return AdmitOut::http(405, "Method Not Allowed", "method must be POST");
+            return AdmitOut::http(405, "Method Not Allowed", "method must be POST", ka);
         }
         if normalize_path(&req.path) != "/generate" {
-            return AdmitOut::http(404, "Not Found", "not found");
+            return AdmitOut::http(404, "Not Found", "not found", ka);
         }
         let body = match std::str::from_utf8(&req.body) {
             Ok(s) => s,
-            Err(_) => return AdmitOut::http(400, "Bad Request", "body must be utf-8"),
+            Err(_) => return AdmitOut::http(400, "Bad Request", "body must be utf-8", ka),
         };
         let gen = match parse_gen_req(body) {
             Ok(g) => g,
-            Err(e) => return AdmitOut::http(400, "Bad Request", &e),
+            Err(e) => return AdmitOut::http(400, "Bad Request", &e, ka),
         };
         let prompt = match gen.resolve(self.tok) {
             Ok(p) => p,
-            Err(e) => return AdmitOut::http(400, "Bad Request", &e),
+            Err(e) => return AdmitOut::http(400, "Bad Request", &e, ka),
         };
         if prompt.is_empty() {
-            return AdmitOut::http(400, "Bad Request", "empty prompt");
+            return AdmitOut::http(400, "Bad Request", "empty prompt", ka);
         }
         let n_predict = gen.n_predict.unwrap_or(self.n_predict);
         let ids = match prompt_ids(self.tok, &prompt) {
             Ok(ids) if !ids.is_empty() => ids,
-            Ok(_) => return AdmitOut::http(400, "Bad Request", "empty prompt"),
-            Err(e) => return AdmitOut::http(500, "Internal Server Error", &e.to_string()),
+            Ok(_) => return AdmitOut::http(400, "Bad Request", "empty prompt", ka),
+            Err(e) => return AdmitOut::http(500, "Internal Server Error", &e.to_string(), ka),
         };
         match self.engine.add(&ids, n_predict) {
             Ok(id) => AdmitOut::Seq {
                 id,
                 ndjson: gen.stream,
             },
-            Err(LlamaError::EmptyPrompt) => AdmitOut::http(400, "Bad Request", "empty prompt"),
-            Err(e) => AdmitOut::http(500, "Internal Server Error", &e.to_string()),
+            Err(LlamaError::EmptyPrompt) => AdmitOut::http(400, "Bad Request", "empty prompt", ka),
+            Err(e) => AdmitOut::http(500, "Internal Server Error", &e.to_string(), ka),
         }
     }
 
@@ -489,7 +526,7 @@ impl<'a> EngineHttp<'a> {
                 c.write.extend(http_chunk_end());
                 c.finalized = true;
             } else {
-                c.write = http_json_bytes(200, "OK", &json);
+                c.write = http_json_bytes(200, "OK", &json, c.keep_alive);
                 c.write_at = 0;
             }
             c.seq = None;
@@ -735,6 +772,30 @@ mod tests {
             "two concurrent posts must GEMM together, peak={}",
             http.stats().gemm_peak
         );
+    }
+
+    #[test]
+    fn keep_alive_two_posts_one_engine_connection() {
+        let (model, tok) = tiny_model();
+        let args = engine_args();
+        let listener = bind_loopback("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nb");
+        let addr = listener.local_addr().expect("addr");
+        let mut http = EngineHttp::new(&model, &tok, &args, listener).expect("http");
+        let expect = greedy_generate_ctx(&model, &tok, "ab", 2, Some(64)).expect("g");
+        let mut streams = [connect_nb(addr)];
+        write_all_nb(&mut streams[0], &post_json(r#"{"prompt":"ab"}"#));
+        let mut bufs = [Vec::new()];
+        drive(&mut http, &mut streams, &mut bufs);
+        let (s1, b1) = response_parts(&bufs[0]).expect("first");
+        assert_eq!(s1, 200, "{b1}");
+        assert_eq!(generated_field(&b1), expect);
+        write_all_nb(&mut streams[0], &post_json(r#"{"prompt":"ab"}"#));
+        bufs[0].clear();
+        drive(&mut http, &mut streams, &mut bufs);
+        let (s2, b2) = response_parts(&bufs[0]).expect("second");
+        assert_eq!(s2, 200, "{b2}");
+        assert_eq!(generated_field(&b2), expect);
     }
 
     #[test]

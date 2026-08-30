@@ -1236,9 +1236,8 @@ pub enum GraphMemAttr {
     UsedMemCurrent,
     /// High-water of [`Self::UsedMemCurrent`].
     UsedMemHigh,
-    /// Reserved graph-mem bytes. Equal to used: graph allocs charge device HBM
-    /// (async pool / OS) directly, so [`crate::Sim::graph_mem_trim`] has nothing
-    /// unused to return.
+    /// Reserved graph-mem bytes (live plus unused cached). Unused bytes stay
+    /// charged until [`crate::Sim::graph_mem_trim`].
     ReservedMemCurrent,
     /// High-water of [`Self::ReservedMemCurrent`].
     ReservedMemHigh,

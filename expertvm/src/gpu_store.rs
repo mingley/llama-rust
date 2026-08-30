@@ -16,8 +16,8 @@ use crate::sim_replay::{
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
-    AllocId, DeviceId, EventId, GraphId, HardwareProfile, KernelBuf, KernelKind, MemAdvise,
-    MemHandleId, MemcpyOp, Place, PoolId, Score, Sim, StreamId,
+    AllocId, DeviceId, EventId, GraphId, GraphMemAttr, HardwareProfile, KernelBuf, KernelKind,
+    MemAdvise, MemHandleId, MemcpyOp, Place, PoolId, Score, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -1119,6 +1119,25 @@ impl SimulatedGpuStore {
     /// Live HBM bytes on `device` (does not drain).
     pub fn hbm_used(&self, device: DeviceId) -> Result<u64, Error> {
         Ok(self.sim.hbm_used(device)?)
+    }
+
+    /// `cudaDeviceGetGraphMemAttribute` UsedMemCurrent on `device`.
+    pub fn graph_mem_used(&self, device: DeviceId) -> Result<u64, Error> {
+        Ok(self
+            .sim
+            .graph_mem_get(device, GraphMemAttr::UsedMemCurrent)?)
+    }
+
+    /// `cudaDeviceGetGraphMemAttribute` ReservedMemCurrent on `device`.
+    pub fn graph_mem_reserved(&self, device: DeviceId) -> Result<u64, Error> {
+        Ok(self
+            .sim
+            .graph_mem_get(device, GraphMemAttr::ReservedMemCurrent)?)
+    }
+
+    /// `cudaDeviceGraphMemTrim` on `device`.
+    pub fn graph_mem_trim(&mut self, device: DeviceId) -> Result<(), Error> {
+        Ok(self.sim.graph_mem_trim(device)?)
     }
 
     /// Whether the GPU page for `key` is resident on `device`.

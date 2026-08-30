@@ -2,11 +2,12 @@
 //!
 //! Default `gguf_gemv serve` accepts one connection at a time with a persistent
 //! KV cache. `--engine` admits concurrent `POST /generate` onto one [`Engine`]
-//! so prefills and decodes GEMM together. No keep-alive, no OpenAI SDK surface,
-//! no crates.io HTTP stack.
+//! so prefills and decodes GEMM together. HTTP/1.1 keep-alive is on unless the
+//! client sends `Connection: close`. No OpenAI SDK surface, no crates.io HTTP
+//! stack.
 
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::Path;
 use std::time::Duration;
@@ -656,6 +657,8 @@ pub(crate) struct HttpRequest {
     pub(crate) method: String,
     pub(crate) path: String,
     pub(crate) body: Vec<u8>,
+    pub(crate) keep_alive: bool,
+    pub(crate) consumed: usize,
 }
 
 #[derive(Debug)]
@@ -686,7 +689,7 @@ impl GenReq {
     }
 }
 
-/// Read one HTTP/1.1 request, generate, write one response, close.
+/// Read HTTP/1.1 requests until the client closes or sends `Connection: close`.
 fn handle_connection<S: Read + Write>(
     stream: &mut S,
     model: &Llama,
@@ -694,18 +697,25 @@ fn handle_connection<S: Read + Write>(
     args: &ServeArgs,
     cache: &mut Option<KvCache>,
 ) -> Result<(), ServeError> {
-    match read_request(stream) {
-        Ok(req) => {
-            let (status, reason, body) = dispatch(&req, model, tok, args, cache);
-            write_http_json(stream, status, reason, &body)
-        }
-        Err(ServeError::Io(_)) => Ok(()),
-        Err(e) => {
-            let (status, reason) = http_err_status(&e);
-            let body = json_error(&e.to_string());
-            match write_http_json(stream, status, reason, &body) {
-                Ok(()) | Err(ServeError::Io(_)) => Ok(()),
-                Err(werr) => Err(werr),
+    let mut buf = Vec::new();
+    loop {
+        match read_request_into(stream, &mut buf) {
+            Ok(req) => {
+                let keep = req.keep_alive;
+                let (status, reason, body) = dispatch(&req, model, tok, args, cache);
+                write_http_json(stream, status, reason, &body, keep)?;
+                if !keep {
+                    return Ok(());
+                }
+            }
+            Err(ServeError::Io(_)) => return Ok(()),
+            Err(e) => {
+                let (status, reason) = http_err_status(&e);
+                let body = json_error(&e.to_string());
+                match write_http_json(stream, status, reason, &body, false) {
+                    Ok(()) | Err(ServeError::Io(_)) => return Ok(()),
+                    Err(werr) => return Err(werr),
+                }
             }
         }
     }
@@ -772,14 +782,30 @@ pub(crate) fn normalize_path(path: &str) -> &str {
         .unwrap_or(path)
 }
 
-fn read_request<R: Read>(reader: &mut R) -> Result<HttpRequest, ServeError> {
-    let mut buf = Vec::new();
-    let mut tmp = [0u8; 512];
+fn read_request_into<R: Read>(
+    reader: &mut R,
+    buf: &mut Vec<u8>,
+) -> Result<HttpRequest, ServeError> {
     loop {
+        if let Some(r) = try_parse_http_request(buf)? {
+            let n = r.consumed.min(buf.len());
+            let rest = buf.split_off(n);
+            *buf = rest;
+            return Ok(r);
+        }
+        let mut tmp = [0u8; 512];
         let n = reader.read(&mut tmp)?;
         if n == 0 {
-            return match try_parse_http_request(&buf)? {
-                Some(r) => Ok(r),
+            if buf.is_empty() {
+                return Err(std::io::Error::from(ErrorKind::UnexpectedEof).into());
+            }
+            return match try_parse_http_request(buf)? {
+                Some(r) => {
+                    let n = r.consumed.min(buf.len());
+                    let rest = buf.split_off(n);
+                    *buf = rest;
+                    Ok(r)
+                }
                 None => Err(ServeError::Http("unexpected eof".into())),
             };
         }
@@ -789,9 +815,6 @@ fn read_request<R: Read>(reader: &mut R) -> Result<HttpRequest, ServeError> {
         buf.extend_from_slice(chunk);
         if u64::try_from(buf.len()).unwrap_or(u64::MAX) > MAX_REQ {
             return Err(ServeError::Http("request too large".into()));
-        }
-        if let Some(r) = try_parse_http_request(&buf)? {
-            return Ok(r);
         }
     }
 }
@@ -839,11 +862,34 @@ pub(crate) fn try_parse_http_request(buf: &[u8]) -> Result<Option<HttpRequest>, 
     if !version.starts_with("HTTP/") {
         return Err(ServeError::Http(format!("bad version {version}")));
     }
+    let prefix = buf.len().saturating_sub(body_so_far.len());
+    let consumed = prefix.saturating_add(need);
+    let connection = header_value(headers, "connection");
     Ok(Some(HttpRequest {
         method: method.to_string(),
         path: path.to_string(),
         body,
+        keep_alive: http_keep_alive(version, connection.as_deref()),
+        consumed,
     }))
+}
+
+fn http_keep_alive(version: &str, connection: Option<&str>) -> bool {
+    if connection.is_some_and(|c| c.eq_ignore_ascii_case("close")) {
+        return false;
+    }
+    if version == "HTTP/1.0" {
+        return connection.is_some_and(|c| c.eq_ignore_ascii_case("keep-alive"));
+    }
+    true
+}
+
+fn connection_value(keep_alive: bool) -> &'static str {
+    if keep_alive {
+        "keep-alive"
+    } else {
+        "close"
+    }
 }
 
 fn header_body_split(buf: &[u8]) -> Option<(&[u8], &[u8])> {
@@ -886,17 +932,19 @@ fn write_http_json<W: Write>(
     status: u16,
     reason: &str,
     json: &str,
+    keep_alive: bool,
 ) -> Result<(), ServeError> {
-    w.write_all(&http_json_bytes(status, reason, json))?;
+    w.write_all(&http_json_bytes(status, reason, json, keep_alive))?;
     w.flush()?;
     Ok(())
 }
 
-/// HTTP/1.1 JSON response bytes (`Connection: close`).
-pub(crate) fn http_json_bytes(status: u16, reason: &str, json: &str) -> Vec<u8> {
+/// HTTP/1.1 JSON response bytes.
+pub(crate) fn http_json_bytes(status: u16, reason: &str, json: &str, keep_alive: bool) -> Vec<u8> {
     let len = json.len();
+    let conn = connection_value(keep_alive);
     let head = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n"
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: {conn}\r\n\r\n"
     );
     let mut out = head.into_bytes();
     out.extend_from_slice(json.as_bytes());
@@ -922,10 +970,13 @@ pub(crate) fn json_token(token: &str) -> String {
     s
 }
 
-/// HTTP/1.1 chunked NDJSON headers (`Connection: close`).
-pub(crate) fn http_chunked_headers() -> Vec<u8> {
-    b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n"
-        .to_vec()
+/// HTTP/1.1 chunked NDJSON headers.
+pub(crate) fn http_chunked_headers(keep_alive: bool) -> Vec<u8> {
+    let conn = connection_value(keep_alive);
+    format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nTransfer-Encoding: chunked\r\nConnection: {conn}\r\n\r\n"
+    )
+    .into_bytes()
 }
 
 /// One HTTP/1.1 chunk: hex size, payload, CRLF.
@@ -2179,6 +2230,15 @@ mod tests {
         assert_eq!(req.method, "POST");
         assert_eq!(req.path, "/generate");
         assert_eq!(req.body, br#"{"prompt":"ab"}"#);
+        assert!(req.keep_alive);
+        assert_eq!(req.consumed, raw.len());
+        let closed = b"POST /generate HTTP/1.0\r\nContent-Length: 2\r\n\r\n{}";
+        let req0 = try_parse_http_request(closed).unwrap().unwrap();
+        assert!(!req0.keep_alive);
+        let close_h =
+            b"POST /generate HTTP/1.1\r\nConnection: close\r\nContent-Length: 2\r\n\r\n{}";
+        let reqc = try_parse_http_request(close_h).unwrap().unwrap();
+        assert!(!reqc.keep_alive);
         assert!(try_parse_http_request(b"POST /generate HTTP/1.1\r\n")
             .unwrap()
             .is_none());
@@ -2190,6 +2250,7 @@ mod tests {
         let extra = b"POST /generate HTTP/1.1\r\nContent-Length: 2\r\n\r\n{}\x00leftover";
         let req = try_parse_http_request(extra).unwrap().unwrap();
         assert_eq!(req.body, b"{}");
+        assert_eq!(req.consumed, extra.len().saturating_sub(9));
         let err = try_parse_http_request(
             b"POST /generate HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n",
         )
@@ -2384,7 +2445,7 @@ mod tests {
         let (head, body) = exchange(&post_json(r#"{"prompt":"ab"}"#), &model, &tok, &args);
         assert!(head.starts_with("HTTP/1.1 200 OK"), "{head}");
         assert!(head.contains("Content-Type: application/json"), "{head}");
-        assert!(head.contains("Connection: close"), "{head}");
+        assert!(head.contains("Connection: keep-alive"), "{head}");
         let cl = header_value(&head, "content-length").expect("cl");
         assert_eq!(cl.parse::<usize>().unwrap(), body.len());
         assert_eq!(json_field_string(&body, "generated").unwrap(), expect);
@@ -2406,6 +2467,32 @@ mod tests {
             &args,
         );
         assert_eq!(json_field_string(&body0, "generated").unwrap(), zero);
+        let close = format!(
+            "POST /generate HTTP/1.1\r\nConnection: close\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n{{\"prompt\":\"ab\"}}",
+            r#"{"prompt":"ab"}"#.len()
+        );
+        let (head_c, body_c) = exchange(&close, &model, &tok, &args);
+        assert!(head_c.contains("Connection: close"), "{head_c}");
+        assert_eq!(json_field_string(&body_c, "generated").unwrap(), expect);
+    }
+
+    #[test]
+    fn keep_alive_two_requests_one_connection() {
+        let (model, tok) = tiny_model();
+        let args = defaults();
+        let expect = greedy_generate_ctx(&model, &tok, "ab", 2, None).expect("greedy");
+        let a = post_json(r#"{"prompt":"ab"}"#);
+        let b = post_json(r#"{"prompt":"ab"}"#);
+        let mut sock = RwBuf {
+            input: Cursor::new(format!("{a}{b}").into_bytes()),
+            output: Vec::new(),
+        };
+        let mut cache = None;
+        handle_connection(&mut sock, &model, &tok, &args, &mut cache).expect("handle");
+        let out = std::str::from_utf8(&sock.output).expect("utf8");
+        assert_eq!(out.matches("HTTP/1.1 200 OK").count(), 2, "{out}");
+        assert!(out.contains("Connection: keep-alive"), "{out}");
+        assert!(out.contains(&expect), "{out} expect={expect}");
     }
 
     #[test]

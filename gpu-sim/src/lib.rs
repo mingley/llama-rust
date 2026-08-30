@@ -129,8 +129,8 @@
 //! [`Sim::mem_info`] is `cudaMemGetInfo` `(free, total)`.
 //! [`graph_mem_get`](Sim::graph_mem_get) / [`graph_mem_set`](Sim::graph_mem_set) /
 //! [`graph_mem_trim`](Sim::graph_mem_trim) are `cudaDeviceGetGraphMemAttribute` /
-//! `SetGraphMemAttribute` / `GraphMemTrim` (graph allocs only; reserved equals
-//! used).
+//! `SetGraphMemAttribute` / `GraphMemTrim` (graph-memory pool only; unused
+//! reserved bytes return on trim). [`graph_pool`](Sim::graph_pool) is that pool.
 //! [`Sim::set_stream_priority`] is `cudaStreamCreateWithPriority`.
 //! [`stream_copy_attributes`](Sim::stream_copy_attributes) is
 //! `cudaStreamCopyAttributes` (priority, SM permille, mem-sync domain/map,
@@ -370,8 +370,9 @@
 //! on later launches (no second HBM charge) unless instantiated with
 //! [`instantiate_graph_auto_free`](Sim::instantiate_graph_auto_free)
 //! (`cudaGraphInstantiateFlagAutoFreeOnLaunch`). [`clone_graph`](Sim::clone_graph)
-//! forks those ids. [`destroy_graph`](Sim::destroy_graph) refunds remaining graph
-//! mem. [`update_graph`](Sim::update_graph) of mem nodes is Invalid.
+//! forks those ids. [`destroy_graph`](Sim::destroy_graph) returns remaining graph
+//! mem to the device graph-memory pool (unused reserved stays until
+//! [`graph_mem_trim`](Sim::graph_mem_trim)). [`update_graph`](Sim::update_graph) of mem nodes is Invalid.
 //! [`graph_exec_kernel_set_params`](Sim::graph_exec_kernel_set_params) may still
 //! retarget a kernel node in those graphs.
 
@@ -973,12 +974,23 @@ mod tests {
         assert_eq!(n, 3);
         sim.synchronize().unwrap();
         assert!(!sim.is_resident(a, d).unwrap());
-        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+        assert_eq!(
+            sim.graph_mem_get(d, GraphMemAttr::UsedMemCurrent).unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.graph_mem_get(d, GraphMemAttr::ReservedMemCurrent)
+                .unwrap(),
+            4096
+        );
         let n2 = sim.launch_graph(g, s).unwrap();
         assert_eq!(n2, 3);
         sim.synchronize().unwrap();
-        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
         assert_eq!(sim.hbm_peak(), 4096);
+        sim.graph_mem_trim(d).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
     }
 
     #[test]
@@ -1052,6 +1064,17 @@ mod tests {
             "auto-free relaunch must re-alloc, auto={auto_ns} reuse={reuse_ns}"
         );
         af.destroy_graph(h).unwrap();
+        assert_eq!(
+            af.graph_mem_get(d, GraphMemAttr::UsedMemCurrent).unwrap(),
+            0
+        );
+        assert_eq!(
+            af.graph_mem_get(d, GraphMemAttr::ReservedMemCurrent)
+                .unwrap(),
+            4096
+        );
+        assert_eq!(af.hbm_used(d).unwrap(), 4096);
+        af.graph_mem_trim(d).unwrap();
         assert_eq!(af.hbm_used(d).unwrap(), 0);
     }
 
@@ -1185,6 +1208,17 @@ mod tests {
         sim.synchronize().unwrap();
         assert_eq!(sim.hbm_used(d).unwrap(), 8192);
         sim.destroy_graph(src).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 8192);
+        assert_eq!(
+            sim.graph_mem_get(d, GraphMemAttr::UsedMemCurrent).unwrap(),
+            4096
+        );
+        assert_eq!(
+            sim.graph_mem_get(d, GraphMemAttr::ReservedMemCurrent)
+                .unwrap(),
+            8192
+        );
+        sim.graph_mem_trim(d).unwrap();
         assert_eq!(sim.hbm_used(d).unwrap(), 4096);
         let n3 = sim.launch_graph(clone, s).unwrap();
         assert_eq!(n3, 2);
@@ -1213,8 +1247,15 @@ mod tests {
         sim.synchronize().unwrap();
         assert_eq!(sim.hbm_used(d).unwrap(), 4096);
         sim.destroy_graph(live).unwrap();
-        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+        assert_eq!(
+            sim.graph_mem_get(d, GraphMemAttr::ReservedMemCurrent)
+                .unwrap(),
+            4096
+        );
         assert!(!sim.is_resident(b, d).unwrap());
+        sim.graph_mem_trim(d).unwrap();
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
     }
 
     #[test]
@@ -1275,8 +1316,22 @@ mod tests {
             0
         );
         assert_eq!(
+            sim.graph_mem_get(d, GraphMemAttr::ReservedMemCurrent)
+                .unwrap(),
+            4096
+        );
+        assert_eq!(
             sim.graph_mem_get(d, GraphMemAttr::UsedMemHigh).unwrap(),
             4096
+        );
+        let (free_held, _) = sim.mem_info(d).unwrap();
+        sim.graph_mem_trim(d).unwrap();
+        let (free_trimmed, _) = sim.mem_info(d).unwrap();
+        assert_eq!(free_trimmed, free_held.saturating_add(4096));
+        assert_eq!(
+            sim.graph_mem_get(d, GraphMemAttr::ReservedMemCurrent)
+                .unwrap(),
+            0
         );
         sim.free_sync(host).unwrap();
         sim.begin_capture(d, s).unwrap();
@@ -1286,6 +1341,45 @@ mod tests {
             e => panic!("{e:?}"),
         }
         let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_mem_pool_holds_reserved_until_trim() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let gp = sim.graph_pool(d).unwrap();
+        let dp = sim.default_pool(d).unwrap();
+        assert_ne!(gp, dp);
+        match sim.alloc_from_pool(d, gp, 4096, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph mem pool"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_device_mempool(d, gp) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph mem pool"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_pool_release_threshold(gp, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph mem pool"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let g = sim.end_capture().unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 2);
+        sim.synchronize().unwrap();
+        assert_eq!(sim.pool_live(gp).unwrap(), 4096);
+        assert_eq!(sim.pool_cached(gp).unwrap(), 0);
+        assert_eq!(sim.pool_live(dp).unwrap(), 0);
+        sim.destroy_graph(g).unwrap();
+        assert_eq!(sim.pool_live(gp).unwrap(), 0);
+        assert_eq!(sim.pool_cached(gp).unwrap(), 4096);
+        assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+        sim.graph_mem_trim(d).unwrap();
+        assert_eq!(sim.pool_cached(gp).unwrap(), 0);
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
     }
 
     #[test]
@@ -10829,10 +10923,23 @@ mod tests {
         bld.synchronize().unwrap();
         assert_eq!(n0, 3);
         assert_eq!(n1, 3);
-        assert_eq!(cap.hbm_used(d).unwrap(), 0);
-        assert_eq!(bld.hbm_used(d).unwrap(), 0);
+        assert_eq!(cap.hbm_used(d).unwrap(), 4096);
+        assert_eq!(bld.hbm_used(d).unwrap(), 4096);
+        assert_eq!(
+            cap.graph_mem_get(d, GraphMemAttr::UsedMemCurrent).unwrap(),
+            0
+        );
+        assert_eq!(
+            bld.graph_mem_get(d, GraphMemAttr::ReservedMemCurrent)
+                .unwrap(),
+            4096
+        );
         assert_eq!(cap.hbm_peak(), 4096);
         assert_eq!(bld.hbm_peak(), 4096);
+        cap.graph_mem_trim(d).unwrap();
+        bld.graph_mem_trim(d).unwrap();
+        assert_eq!(cap.hbm_used(d).unwrap(), 0);
+        assert_eq!(bld.hbm_used(d).unwrap(), 0);
     }
 
     #[test]

@@ -106,7 +106,7 @@ warp scheduler, L1, …   ← do not model
 | `query_event` is non-blocking | `cudaEventQuery` |
 | `query_stream` is non-blocking | `cudaStreamQuery` |
 | `mem_info` is `(free, total)` HBM | `cudaMemGetInfo` |
-| graph-mem attr is live graph allocs only; reserved equals used | `cudaDeviceGetGraphMemAttribute` |
+| graph-mem used is live graph allocs; reserved holds unused until trim | `cudaDeviceGetGraphMemAttribute` / `GraphMemTrim` |
 | stream[i+1].start ≥ stream[i].finish (`Operation` timestamps) | queue wait vs run |
 | higher `set_stream_priority` starts first under contention | launch overhead |
 | `compute_slots>=2` overlaps independent kernels at full issue rate | kernel duration (not SM-partition) |
@@ -394,7 +394,7 @@ stream is `Ok(false)`; the clock does not advance).
 `mem_info` is `cudaMemGetInfo` `(free, total)` HBM bytes.
 `graph_mem_get` / `graph_mem_set` / `graph_mem_trim` are
 `cudaDeviceGetGraphMemAttribute` / `SetGraphMemAttribute` / `GraphMemTrim`
-(graph allocs only; reserved equals used; trim does not change `mem_info`).
+(device graph-memory pool only; unused reserved bytes return on trim).
 Default `cudaMallocAsync` uses the device mempool with release threshold
 `0` (unused bytes return to the OS when the stream-ordered free
 completes). `create_pool` / `alloc_from_pool` /

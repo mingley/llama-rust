@@ -1764,6 +1764,23 @@ model, do not celebrate the sim.
     and `--cooperative`. Decode identity stays inherit-stream.
     `gpu-profile capture` is still refused.
 
+142. [x] Dedicated graph-memory pool: captured `cudaMallocAsync` and
+    `cudaGraphAddMemAllocNode` draw from a per-device pool with release
+    threshold `u64::MAX`, not the default mempool. UsedMemCurrent is live
+    graph allocs. ReservedMemCurrent is live plus unused cached bytes.
+    `cudaDeviceGraphMemTrim` (`graph_mem_trim`) returns unused reserved
+    bytes so `cudaMemGetInfo` free grows. `destroy_graph` of a definition
+    parks remaining graph mem in that pool until trim. User
+    `alloc_from_pool` / `set_device_mempool` / `set_pool_release_threshold`
+    / `pool_set_access` refuse the graph pool. Decode identity stays
+    kernel-only graphs. Dual score still has no `$/M tokens`.
+    `gpu-profile capture` is still refused.
+
+143. [x] HTTP/1.1 keep-alive on `gguf_gemv serve` (default and `--engine`).
+    Persistent connections reuse the TCP socket and the Engine / KV cache
+    without a reconnect. `Connection: close` and HTTP/1.0 still close.
+    Not OpenAI-compat. Dual score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

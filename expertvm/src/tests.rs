@@ -3646,8 +3646,33 @@ fn simulated_gpu_store_graph_auto_free_keeps_scratch() {
     assert_eq!(n_af, n_mem);
     assert_eq!(peak_af, 4096 + GRAPH_SCRATCH_BYTES);
     assert_eq!(peak_mem, 4096 + GRAPH_SCRATCH_BYTES);
-    assert_eq!(used_mem, 4096);
+    assert_eq!(used_mem, 4096 + GRAPH_SCRATCH_BYTES);
     assert_eq!(used_af, 4096 + GRAPH_SCRATCH_BYTES);
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        p.clone(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_mem: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    let _n = gpu.prefetch(&[k0]).expect("prefetch");
+    let _s = gpu.score().expect("drain");
+    let _a = gpu.acquire(k0).expect("acq");
+    let _score = gpu.score().expect("final");
+    assert_eq!(gpu.graph_mem_used(DeviceId(0)).expect("gused"), 0);
+    assert_eq!(
+        gpu.graph_mem_reserved(DeviceId(0)).expect("gres"),
+        GRAPH_SCRATCH_BYTES
+    );
+    gpu.graph_mem_trim(DeviceId(0)).expect("trim");
+    assert_eq!(gpu.hbm_used(DeviceId(0)).expect("trimmed"), 4096);
 }
 
 #[test]

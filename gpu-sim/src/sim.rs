@@ -120,6 +120,12 @@ struct Pool {
     shareable: bool,
     /// Imported pools share live/cached/threshold with this root.
     share_root: Option<PoolId>,
+    /// Device graph-memory pool (`cudaDeviceGetGraphMemAttribute` backing).
+    ///
+    /// Capture [`Sim::alloc`] and [`Sim::graph_add_alloc`] draw from this pool.
+    /// Release threshold is `u64::MAX` so unused bytes stay reserved until
+    /// [`Sim::graph_mem_trim`].
+    graph: bool,
 }
 
 impl Pool {
@@ -132,6 +138,7 @@ impl Pool {
             accessed_by: BTreeSet::new(),
             shareable: false,
             share_root: None,
+            graph: false,
         }
     }
 }
@@ -232,7 +239,7 @@ struct GpuRt {
     copies: u8,
     /// High-water of live graph-mem alloc bytes on this GPU.
     graph_used_high: u64,
-    /// High-water of reserved graph-mem bytes (same as used in this model).
+    /// High-water of reserved graph-mem bytes (live + unused cached).
     graph_reserved_high: u64,
     /// `cudaLimitPersistingL2CacheSize`. CUDA default is 0.
     persist_limit: u64,
@@ -568,6 +575,8 @@ pub struct Sim {
     next_pool: u32,
     pools: BTreeMap<PoolId, Pool>,
     default_pools: BTreeMap<DeviceId, PoolId>,
+    /// Per-device graph memory pool (`cudaDeviceGraphMemTrim` backing).
+    graph_pools: BTreeMap<DeviceId, PoolId>,
     next_handle: u64,
     mem_handles: BTreeMap<MemHandleId, MemHandle>,
     next_ipc: u64,
@@ -663,7 +672,19 @@ impl Sim {
             let _dup = replaced.is_some();
         }
         let peer_enabled = seed_peers(&profile);
-        let (next_pool, pools, default_pools) = seed_pools(&profile);
+        let (mut next_pool, mut pools, default_pools) = seed_pools(&profile);
+        let mut graph_pools = BTreeMap::new();
+        for g in &profile.gpus {
+            let gid = PoolId(next_pool);
+            next_pool = next_pool.saturating_add(1);
+            let mut gp = Pool::new(g.id);
+            gp.release_threshold = u64::MAX;
+            gp.graph = true;
+            let replaced = pools.insert(gid, gp);
+            let _dup = replaced.is_some();
+            let replaced = graph_pools.insert(g.id, gid);
+            let _dup = replaced.is_some();
+        }
         Self {
             profile,
             clock: 0,
@@ -697,6 +718,7 @@ impl Sim {
             next_pool,
             pools,
             default_pools,
+            graph_pools,
             next_handle: 1,
             mem_handles: BTreeMap::new(),
             next_ipc: 1,
@@ -808,19 +830,20 @@ impl Sim {
         Ok((total.saturating_sub(used), total))
     }
 
-    /// `cudaDeviceGetGraphMemAttribute` for live graph-mem allocs on `device`.
+    /// `cudaDeviceGetGraphMemAttribute` for the device graph-memory pool.
     ///
-    /// Counts [`Self::graph_add_alloc`] / captured `cudaMallocAsync` ids, not
-    /// ordinary [`Self::malloc`] / [`Self::alloc`]. Reserved equals used:
-    /// those allocs charge device HBM directly. Capture is allowed (query).
+    /// Counts [`Self::graph_add_alloc`] / captured `cudaMallocAsync` from that
+    /// pool, not ordinary [`Self::malloc`] / live [`Self::alloc`]. Used is live
+    /// graph allocs. Reserved is live plus unused cached bytes held until
+    /// [`Self::graph_mem_trim`]. Capture is allowed (query).
     pub fn graph_mem_get(&self, device: DeviceId, attr: GraphMemAttr) -> Result<u64, SimError> {
-        let _gpu = self.profile.gpu(device)?;
-        let used = self.graph_mem_used(device);
+        let (used, reserved) = self.graph_mem_used_reserved(device)?;
         let rt = self.gpu_rt(device)?;
         Ok(match attr {
-            GraphMemAttr::UsedMemCurrent | GraphMemAttr::ReservedMemCurrent => used,
+            GraphMemAttr::UsedMemCurrent => used,
+            GraphMemAttr::ReservedMemCurrent => reserved,
             GraphMemAttr::UsedMemHigh => rt.graph_used_high.max(used),
-            GraphMemAttr::ReservedMemHigh => rt.graph_reserved_high.max(used),
+            GraphMemAttr::ReservedMemHigh => rt.graph_reserved_high.max(reserved),
         })
     }
 
@@ -840,11 +863,11 @@ impl Sim {
                 why: "graph mem attribute value",
             });
         }
-        let used = self.graph_mem_used(device);
+        let (used, reserved) = self.graph_mem_used_reserved(device)?;
         let rt = self.gpu_rt_mut(device)?;
         match attr {
             GraphMemAttr::UsedMemHigh => rt.graph_used_high = used,
-            GraphMemAttr::ReservedMemHigh => rt.graph_reserved_high = used,
+            GraphMemAttr::ReservedMemHigh => rt.graph_reserved_high = reserved,
             GraphMemAttr::UsedMemCurrent | GraphMemAttr::ReservedMemCurrent => {
                 return Err(SimError::Invalid {
                     why: "graph mem attribute",
@@ -857,27 +880,22 @@ impl Sim {
 
     /// `cudaDeviceGraphMemTrim`. Host-synchronous. Capture cannot include it.
     ///
-    /// No unused reserved graph mem in this model (reserved equals used), so
-    /// [`Self::mem_info`] does not change.
+    /// Returns unused reserved graph-mem bytes (cached after a graph free or
+    /// [`Self::destroy_graph`]) to the OS so [`Self::mem_info`] free grows.
+    /// Live graph allocs are not trimmed.
     pub fn graph_mem_trim(&mut self, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph mem trim")?;
-        let _gpu = self.profile.gpu(device)?;
+        let pool = self.graph_pool(device)?;
+        let _dropped = self.pool_trim_to(pool, 0)?;
         self.clock = self.clock.saturating_add(1);
         Ok(())
     }
 
-    fn graph_mem_used(&self, device: DeviceId) -> u64 {
-        let mut n = 0u64;
-        for ids in self.graph_allocs.values() {
-            for id in ids {
-                if let Some(a) = self.allocs.get(id) {
-                    if a.live && a.devices.contains(&device) {
-                        n = n.saturating_add(a.bytes);
-                    }
-                }
-            }
-        }
-        n
+    fn graph_mem_used_reserved(&self, device: DeviceId) -> Result<(u64, u64), SimError> {
+        let pool = self.graph_pool(device)?;
+        let p = self.pool_ref(pool)?;
+        let used = p.live;
+        Ok((used, used.saturating_add(p.cached)))
     }
 
     fn is_graph_alloc(&self, id: AllocId) -> bool {
@@ -885,10 +903,10 @@ impl Sim {
     }
 
     fn bump_graph_mem_high(&mut self, device: DeviceId) -> Result<(), SimError> {
-        let used = self.graph_mem_used(device);
+        let (used, reserved) = self.graph_mem_used_reserved(device)?;
         let rt = self.gpu_rt_mut(device)?;
         rt.graph_used_high = rt.graph_used_high.max(used);
-        rt.graph_reserved_high = rt.graph_reserved_high.max(used);
+        rt.graph_reserved_high = rt.graph_reserved_high.max(reserved);
         Ok(())
     }
 
@@ -4391,10 +4409,12 @@ impl Sim {
     /// `cudaGraphDestroy` / `cudaGraphExecDestroy`. Host-synchronous.
     ///
     /// Capture cannot include it. Later [`Self::launch_graph`] of this id is
-    /// `unknown graph`. Destroying a definition refunds remaining graph mem
-    /// (`cudaGraphDestroy` of a graph with mem nodes). Destroying an exec does
-    /// not; a later [`Self::launch_graph`] of that exec is unknown, but the
-    /// definition (and other execs) stay. Clones are independent.
+    /// `unknown graph`. Destroying a definition returns remaining graph mem to
+    /// the device graph-memory pool (`cudaGraphDestroy` of a graph with mem
+    /// nodes). Unused reserved bytes stay charged until [`Self::graph_mem_trim`].
+    /// Destroying an exec does not; a later [`Self::launch_graph`] of that exec
+    /// is unknown, but the definition (and other execs) stay. Clones are
+    /// independent.
     pub fn destroy_graph(&mut self, graph: GraphId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph destroy")?;
         let g = self.graphs.remove(&graph).ok_or(SimError::Invalid {
@@ -5197,7 +5217,7 @@ impl Sim {
                 why: "zero-byte alloc",
             });
         }
-        let pool = self.default_pool(device)?;
+        let pool = self.graph_pool(device)?;
         let id = self.insert_pool_alloc(pool, bytes)?;
         self.graph_push(graph, device, stream, Kind::Alloc { id, bytes })?;
         self.graph_allocs.entry(graph).or_default().push(id);
@@ -7067,7 +7087,8 @@ impl Sim {
     ///
     /// Capacity is reserved when the op starts. The pointer is not usable until
     /// this stream catches up. Capture records a graph mem alloc node
-    /// (`cudaMallocAsync` during stream capture). [`Self::malloc`] is
+    /// (`cudaMallocAsync` during stream capture) and draws from the device
+    /// graph-memory pool, not the current default mempool. [`Self::malloc`] is
     /// host-synchronous `cudaMalloc` and cannot be captured.
     pub fn alloc(
         &mut self,
@@ -7075,8 +7096,12 @@ impl Sim {
         bytes: u64,
         stream: StreamId,
     ) -> Result<AllocId, SimError> {
-        let pool = self.default_pool(device)?;
-        self.alloc_from_pool(device, pool, bytes, stream)
+        let pool = if self.in_capture(device, stream) {
+            self.graph_pool(device)?
+        } else {
+            self.default_pool(device)?
+        };
+        self.alloc_from_pool_inner(device, pool, bytes, stream)
     }
 
     /// Device default mempool (`cudaDeviceGetDefaultMemPool`).
@@ -7090,12 +7115,37 @@ impl Sim {
             })
     }
 
+    /// Device graph-memory pool (`cudaDeviceGetGraphMemAttribute` backing).
+    ///
+    /// Not the default mempool. [`Self::alloc_from_pool`] / [`Self::set_device_mempool`]
+    /// / [`Self::set_pool_release_threshold`] / [`Self::pool_set_access`] refuse it.
+    pub fn graph_pool(&self, device: DeviceId) -> Result<PoolId, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.graph_pools
+            .get(&device)
+            .copied()
+            .ok_or(SimError::Invalid {
+                why: "graph mem pool missing",
+            })
+    }
+
+    fn refuse_graph_pool(&self, pool: PoolId) -> Result<(), SimError> {
+        if self.pool_ref(self.pool_root(pool)?)?.graph {
+            return Err(SimError::Invalid {
+                why: "graph mem pool",
+            });
+        }
+        Ok(())
+    }
+
     /// `cudaDeviceSetMemPool`. Later [`Self::alloc`] draws from `pool`.
     ///
     /// Capture cannot include it. `pool` must belong to `device` (an imported
-    /// sibling is legal). Does not change live/cached bytes.
+    /// sibling is legal). Does not change live/cached bytes. The graph-memory
+    /// pool is not a valid device mempool.
     pub fn set_device_mempool(&mut self, device: DeviceId, pool: PoolId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
+        self.refuse_graph_pool(pool)?;
         let _gpu = self.profile.gpu(device)?;
         if self.pool_ref(pool)?.device != device {
             return Err(SimError::Invalid {
@@ -7132,7 +7182,21 @@ impl Sim {
     }
 
     /// `cudaMallocFromPoolAsync`. `pool` must belong to `device`.
+    ///
+    /// The graph-memory pool is not a user mempool; use [`Self::alloc`] during
+    /// capture or [`Self::graph_add_alloc`].
     pub fn alloc_from_pool(
+        &mut self,
+        device: DeviceId,
+        pool: PoolId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<AllocId, SimError> {
+        self.refuse_graph_pool(pool)?;
+        self.alloc_from_pool_inner(device, pool, bytes, stream)
+    }
+
+    fn alloc_from_pool_inner(
         &mut self,
         device: DeviceId,
         pool: PoolId,
@@ -7199,6 +7263,7 @@ impl Sim {
     pub fn set_pool_release_threshold(&mut self, pool: PoolId, bytes: u64) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         let root = self.pool_root(pool)?;
+        self.refuse_graph_pool(root)?;
         self.pool_mut(root)?.release_threshold = bytes;
         Ok(())
     }
@@ -7256,6 +7321,7 @@ impl Sim {
     /// no-op that still records access. Applies to existing and later allocs.
     pub fn pool_set_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
+        self.refuse_graph_pool(pool)?;
         let _gpu = self.profile.gpu(device)?;
         let owner = self.pool_ref(pool)?.device;
         if owner != device {
