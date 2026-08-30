@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaGraphInstantiateFlagDeviceLaunch`
+
+`instantiate_graph_with_flags(DEVICE_LAUNCH)` on kernel/memcpy/memset
+graphs. `device_launch_graph` is device-side `cudaGraphLaunch` after
+upload (host `launch_graph` still auto-uploads). The launcher occupies
+one compute slot for `graph_launch_ns`; the body enqueues when it
+completes. Mem alloc/free, events, child graphs, conditionals, and host
+nodes are Invalid. `update_graph` of a device-launch exec is Invalid.
+Overlapping device launches of the same exec are Invalid. Decode identity
+stays default flags. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — stream wait/write-value (`cuStreamWaitValue`)
 
 `wait_value64` / `write_value64` (and 32-bit) are `cuStreamWaitValue*` /

@@ -472,6 +472,15 @@ pub enum GpuOp {
         /// `CU_STREAM_WAIT_VALUE_*` mode.
         cmp: WaitValueCmp,
     },
+    /// Device-side `cudaGraphLaunch` (`cudaGraphInstantiateFlagDeviceLaunch`).
+    ///
+    /// Occupies one compute slot for `graph_launch_ns`. When it completes the
+    /// exec body is enqueued on this stream. Never a `cudaGraphAdd*` node;
+    /// capture is refused.
+    DeviceLaunch {
+        /// Instantiated exec launched from the device.
+        graph: GraphId,
+    },
 }
 
 /// One node in the compiled dependency DAG ([`GpuOp`] + stream + deps).
@@ -530,7 +539,10 @@ impl GraphInstantiateFlags {
     pub const AUTO_FREE_ON_LAUNCH: u32 = 1;
     /// `cudaGraphInstantiateFlagUpload`: host-sync upload during instantiate.
     pub const UPLOAD: u32 = 2;
-    /// `cudaGraphInstantiateFlagDeviceLaunch` (not implemented).
+    /// `cudaGraphInstantiateFlagDeviceLaunch`: [`crate::Sim::device_launch_graph`]
+    /// is legal after upload. Host [`crate::Sim::launch_graph`] stays legal.
+    /// Mem alloc/free, events, child graphs, conditionals, and host nodes are
+    /// Invalid.
     pub const DEVICE_LAUNCH: u32 = 4;
     /// `cudaGraphInstantiateFlagUseNodePriority`: recorded kernels keep the
     /// priority snapshotted at add/capture instead of the launch stream.
@@ -605,4 +617,6 @@ pub enum GraphNodeKind {
     Switch,
     /// `cudaGraphAddBatchMemOpNode` / captured wait-value or write-value.
     BatchMemOp,
+    /// Live [`crate::GpuOp::DeviceLaunch`] (not a `cudaGraphAdd*` node).
+    DeviceLaunch,
 }

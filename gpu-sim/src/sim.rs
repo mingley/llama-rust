@@ -261,6 +261,8 @@ struct Graph {
     auto_free_on_launch: bool,
     /// Flags passed to [`Sim::instantiate_graph_with_flags`] (`cudaGraphExecGetFlags`).
     instantiate_flags: u32,
+    /// Last op of an in-flight [`Sim::device_launch_graph`] (launcher or body tail).
+    device_launch_tail: Option<OpId>,
 }
 
 impl Graph {
@@ -1352,6 +1354,63 @@ impl Sim {
         self.enqueue_graph(graph, stream, true, &mut stack, &[])
     }
 
+    /// Device-side `cudaGraphLaunch` (`cudaGraphInstantiateFlagDeviceLaunch`).
+    ///
+    /// The exec must already be instantiated with [`GraphInstantiateFlags::DEVICE_LAUNCH`]
+    /// and uploaded ([`Self::upload_graph`]; host [`Self::launch_graph`] still
+    /// auto-uploads). Submits a launcher kernel that occupies one compute slot
+    /// for `graph_launch_ns`. When it completes the body is enqueued on
+    /// `stream`. A second device launch of the same exec before that work
+    /// finishes is Invalid. Capture cannot include it.
+    /// [`Self::update_graph`] of a device-launch exec is Invalid.
+    pub fn device_launch_graph(
+        &mut self,
+        graph: GraphId,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.fail_if_capturing("cannot capture device launch")?;
+        let (device, instantiated, flags, uploaded, tail) = {
+            let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            (
+                g.origin.0,
+                g.instantiated,
+                g.instantiate_flags,
+                g.uploaded,
+                g.device_launch_tail,
+            )
+        };
+        if !instantiated {
+            return Err(SimError::Invalid {
+                why: "graph not instantiated",
+            });
+        }
+        if flags & GraphInstantiateFlags::DEVICE_LAUNCH == 0 {
+            return Err(SimError::Invalid {
+                why: "graph not device launch",
+            });
+        }
+        if !uploaded {
+            return Err(SimError::Invalid {
+                why: "graph not uploaded",
+            });
+        }
+        if tail.is_some_and(|id| !self.op_done(id)) {
+            return Err(SimError::Invalid {
+                why: "device launch in flight",
+            });
+        }
+        let id = self.submit(device, stream, Kind::DeviceLaunch { graph })?;
+        self.graphs
+            .get_mut(&graph)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .device_launch_tail = Some(id);
+        Ok(id)
+    }
+
     fn reset_graph_tree_conds(&mut self, root: GraphId) -> Result<(), SimError> {
         let mut stack = vec![root];
         let mut seen = BTreeSet::new();
@@ -1792,7 +1851,10 @@ impl Sim {
     /// host-sync uploads during instantiate so the first launch skips
     /// [`Self::upload_graph`]. [`GraphInstantiateFlags::USE_NODE_PRIORITY`]
     /// schedules recorded kernels with the priority snapshotted at add/capture
-    /// instead of the launch stream. Device-launch is Invalid.
+    /// instead of the launch stream. [`GraphInstantiateFlags::DEVICE_LAUNCH`]
+    /// enables [`Self::device_launch_graph`] after upload (host
+    /// [`Self::launch_graph`] stays legal). Mem alloc/free, events, child
+    /// graphs, conditionals, and host nodes are Invalid.
     /// Already-instantiated ids are a no-op when `flags` adds no new bits.
     pub fn instantiate_graph_with_flags(
         &mut self,
@@ -1839,24 +1901,28 @@ impl Sim {
                 why: "instantiate flags",
             });
         }
-        if flags & GraphInstantiateFlags::DEVICE_LAUNCH != 0 {
-            return Err(SimError::Invalid {
-                why: "device launch instantiate flag",
-            });
-        }
         Ok(())
     }
 
     fn instantiate_graph_inner(&mut self, graph: GraphId, flags: u32) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture graph instantiate")?;
         let auto_free = flags & GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH != 0;
-        let (device, already, current_flags, has_free) = {
+        let device_launch = flags & GraphInstantiateFlags::DEVICE_LAUNCH != 0;
+        let (device, already, current_flags, has_free, device_launch_bad) = {
             let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
             let device = g.steps.first().map(|s| s.device).unwrap_or(DeviceId(0));
             let has_free = g.steps.iter().any(|s| matches!(&s.kind, Kind::Free { .. }));
-            (device, g.instantiated, g.instantiate_flags, has_free)
+            let device_launch_bad =
+                device_launch && g.steps.iter().any(|s| device_launch_refused(&s.kind));
+            (
+                device,
+                g.instantiated,
+                g.instantiate_flags,
+                has_free,
+                device_launch_bad,
+            )
         };
         if already {
             if flags & !current_flags != 0 {
@@ -1869,6 +1935,11 @@ impl Sim {
         if auto_free && has_free {
             return Err(SimError::Invalid {
                 why: "auto free with mem free nodes",
+            });
+        }
+        if device_launch_bad {
+            return Err(SimError::Invalid {
+                why: "device launch instantiate flag",
             });
         }
         let ns = self.profile.gpu(device)?.graph_instantiate_ns.max(1);
@@ -1939,7 +2010,7 @@ impl Sim {
                 why: "graph update same id",
             });
         }
-        let (instantiated, exec_steps, src_steps, device) = {
+        let (instantiated, exec_steps, src_steps, device, exec_flags) = {
             let e = self.graphs.get(&exec).ok_or(SimError::Invalid {
                 why: "unknown graph",
             })?;
@@ -1947,11 +2018,22 @@ impl Sim {
                 why: "unknown graph",
             })?;
             let device = e.steps.first().map(|s| s.device).unwrap_or(DeviceId(0));
-            (e.instantiated, e.view().to_vec(), s.steps.clone(), device)
+            (
+                e.instantiated,
+                e.view().to_vec(),
+                s.steps.clone(),
+                device,
+                e.instantiate_flags,
+            )
         };
         if !instantiated {
             return Err(SimError::Invalid {
                 why: "graph not instantiated",
+            });
+        }
+        if exec_flags & GraphInstantiateFlags::DEVICE_LAUNCH != 0 {
+            return Err(SimError::Invalid {
+                why: "device launch graph update",
             });
         }
         if !graph_topology_eq(&exec_steps, &src_steps) {
@@ -2976,6 +3058,7 @@ impl Sim {
                     uploaded: false,
                     auto_free_on_launch: false,
                     instantiate_flags: 0,
+                    device_launch_tail: None,
                 },
                 origin.0,
             ));
@@ -3248,6 +3331,7 @@ impl Sim {
                 uploaded: false,
                 auto_free_on_launch: false,
                 instantiate_flags: 0,
+                device_launch_tail: None,
             },
         );
         let _old = self.graph_allocs.insert(id, Vec::new());
@@ -7993,6 +8077,7 @@ impl Sim {
                 })?;
                 self.start_batch_mem(id, device, batch)
             }
+            Kind::DeviceLaunch { .. } => self.start_device_launch(id, device),
         }
     }
 
@@ -8046,6 +8131,19 @@ impl Sim {
             return Err(SimError::NotResident { alloc, device });
         }
         Ok(())
+    }
+
+    fn start_device_launch(&mut self, op: OpId, device: DeviceId) -> Result<bool, SimError> {
+        if !self.take_compute(device)? {
+            return Ok(false);
+        }
+        let ns = self.profile.gpu(device)?.graph_launch_ns.max(1);
+        self.running.push(Running {
+            op,
+            remaining_ns: ns,
+            share: Share::Solo,
+        });
+        Ok(true)
     }
 
     fn cond_skip(&self, preds: &[CondPred]) -> bool {
@@ -8636,6 +8734,7 @@ impl Sim {
             )),
             Kind::Memset { id: alloc, .. } => Some((vec![*alloc], false)),
             Kind::AllReduce { parts, .. } => Some((parts.iter().map(|(_, a)| *a).collect(), false)),
+            Kind::DeviceLaunch { .. } => Some((Vec::new(), false)),
             _ => None,
         });
         let memcpy = self.ops.get(&id).and_then(|op| match &op.kind {
@@ -8687,7 +8786,41 @@ impl Sim {
             op.done_ns = Some(self.clock);
         }
         self.bump_graph_mem_from_op(id)?;
+        self.finish_device_launch(id)?;
         self.continue_while(id)?;
+        Ok(())
+    }
+
+    fn finish_device_launch(&mut self, id: OpId) -> Result<(), SimError> {
+        let (graph, stream) = {
+            let Some(op) = self.ops.get(&id) else {
+                return Ok(());
+            };
+            let Kind::DeviceLaunch { graph } = &op.kind else {
+                return Ok(());
+            };
+            (*graph, op.stream)
+        };
+        self.reset_graph_tree_conds(graph)?;
+        let mut stack = BTreeSet::new();
+        let wait = [id];
+        let n = self.enqueue_graph(graph, stream, false, &mut stack, &wait)?;
+        let tail = if n == 0 {
+            id
+        } else {
+            let device = self
+                .ops
+                .get(&id)
+                .ok_or(SimError::Invalid { why: "unknown op" })?
+                .device;
+            self.tail.get(&(device, stream)).copied().unwrap_or(id)
+        };
+        self.graphs
+            .get_mut(&graph)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .device_launch_tail = Some(tail);
         Ok(())
     }
 
@@ -8804,6 +8937,25 @@ fn wait_value_span(total: u64, offset: u64, bits32: bool) -> Result<u64, SimErro
         });
     }
     Ok(width)
+}
+
+fn device_launch_refused(kind: &Kind) -> bool {
+    matches!(
+        kind,
+        Kind::Alloc { .. }
+            | Kind::Free { .. }
+            | Kind::EventRecord { .. }
+            | Kind::EventWait { .. }
+            | Kind::ChildGraph { .. }
+            | Kind::If { .. }
+            | Kind::While { .. }
+            | Kind::Switch { .. }
+            | Kind::WhileTick { .. }
+            | Kind::Attach { .. }
+            | Kind::AllReduce { .. }
+            | Kind::HostFunc
+            | Kind::DeviceLaunch { .. }
+    )
 }
 
 fn kind_from_batch(op: BatchMemOp) -> Kind {
@@ -9188,6 +9340,7 @@ fn node_kind(kind: &Kind) -> GraphNodeKind {
         Kind::WhileTick { .. } => GraphNodeKind::WhileTick,
         Kind::Switch { .. } => GraphNodeKind::Switch,
         Kind::WriteValue { .. } | Kind::WaitValue { .. } => GraphNodeKind::BatchMemOp,
+        Kind::DeviceLaunch { .. } => GraphNodeKind::DeviceLaunch,
     }
 }
 
@@ -9410,6 +9563,7 @@ fn op_tag(k: &Kind) -> u8 {
         Kind::Switch { .. } => 16,
         Kind::WriteValue { .. } => 17,
         Kind::WaitValue { .. } => 18,
+        Kind::DeviceLaunch { .. } => 19,
     }
 }
 

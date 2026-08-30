@@ -254,7 +254,10 @@ Instantiate, update, and upload are host-synchronous and cannot run during captu
 `instantiate_graph_with_flags` is `cudaGraphInstantiateWithFlags`
 (`GraphInstantiateFlags::UPLOAD` uploads during instantiate;
 `USE_NODE_PRIORITY` schedules recorded kernels with the add/capture
-priority).
+priority; `DEVICE_LAUNCH` enables `device_launch_graph` after upload —
+host `launch_graph` stays legal; mem alloc/free, events, child graphs,
+conditionals, and host nodes are Invalid; `update_graph` of a
+device-launch exec is Invalid).
 `graph_exec_get_flags` is `cudaGraphExecGetFlags`.
 `clone_graph` is `cudaGraphClone` (`graph_clone_ns`): an independent
 uninstantiated copy; child-graph nodes are cloned recursively (a diamond

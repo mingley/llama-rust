@@ -1408,6 +1408,17 @@ model, do not celebrate the sim.
     memcpy. Decode identity stays kernel-only graphs (not wired into
     expertvm). `gpu-profile capture` is still refused.
 
+103. [x] `cudaGraphInstantiateFlagDeviceLaunch`:
+    `instantiate_graph_with_flags(DEVICE_LAUNCH)` on kernel/memcpy/memset
+    graphs. `device_launch_graph` is device-side `cudaGraphLaunch` after
+    upload (host `launch_graph` still auto-uploads). Launcher occupies one
+    compute slot for `graph_launch_ns`; the body enqueues when it completes.
+    Mem alloc/free, events, child graphs, conditionals, and host nodes are
+    Invalid. `update_graph` of a device-launch exec is Invalid. Overlapping
+    device launches of the same exec are Invalid. Decode identity stays
+    default flags (no device launch). `gpu-profile capture` is still
+    refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

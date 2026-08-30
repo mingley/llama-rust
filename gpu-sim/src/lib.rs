@@ -130,7 +130,11 @@
 //! [`instantiate_graph_with_flags`](Sim::instantiate_graph_with_flags) is
 //! `cudaGraphInstantiateWithFlags` ([`GraphInstantiateFlags::UPLOAD`] uploads
 //! during instantiate; [`GraphInstantiateFlags::USE_NODE_PRIORITY`] schedules
-//! recorded kernels with the add/capture priority). [`graph_exec_get_flags`](Sim::graph_exec_get_flags) is
+//! recorded kernels with the add/capture priority;
+//! [`GraphInstantiateFlags::DEVICE_LAUNCH`] enables
+//! [`device_launch_graph`](Sim::device_launch_graph) after upload — host
+//! [`launch_graph`](Sim::launch_graph) stays legal; mem alloc/free, events,
+//! child graphs, conditionals, and host nodes are Invalid). [`graph_exec_get_flags`](Sim::graph_exec_get_flags) is
 //! `cudaGraphExecGetFlags`. Instantiate snapshots the graph into an exec
 //! (same [`GraphId`]); [`launch_graph`](Sim::launch_graph) and
 //! `cudaGraphExec*SetParams` use that snapshot.
@@ -978,13 +982,6 @@ mod tests {
         let err = sim.graph_exec_get_flags(g).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("not instantiated"), "{why}"),
-            e => panic!("{e:?}"),
-        }
-        let err = sim
-            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
-            .unwrap_err();
-        match err {
-            SimError::Invalid { why } => assert!(why.contains("device launch"), "{why}"),
             e => panic!("{e:?}"),
         }
         let err = sim.instantiate_graph_with_flags(g, 1 << 16).unwrap_err();
@@ -8734,6 +8731,244 @@ mod tests {
                 assert_eq!(alloc, a);
                 assert_eq!(device, d);
             }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_launch_flag_requires_upload() {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.graph_launch_ns = 5_000;
+            g.graph_upload_ns = 7_000;
+            g.graph_instantiate_ns = 1_000;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        assert_eq!(
+            sim.graph_exec_get_flags(g).unwrap(),
+            GraphInstantiateFlags::DEVICE_LAUNCH
+        );
+        let err = sim.device_launch_graph(g, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not uploaded"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.upload_graph(g).unwrap();
+        enq(sim.device_launch_graph(g, s));
+        sim.synchronize().unwrap();
+        assert!(sim
+            .operations()
+            .any(|o| matches!(o.kind, GpuOp::DeviceLaunch { .. })));
+    }
+
+    #[test]
+    fn device_launch_rejects_mem_event_child_and_host() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let mem = sim.create_graph(d, s).unwrap();
+        let _id = sim.graph_add_alloc(mem, 64).unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(mem, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device launch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let ev = sim.create_graph(d, s).unwrap();
+        sim.create_event(EventId(1)).unwrap();
+        sim.graph_add_event_record(ev, EventId(1), false).unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(ev, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device launch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let host = sim.create_graph(d, s).unwrap();
+        sim.graph_add_host_func(host).unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(host, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device launch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let leaf = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(leaf, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph(leaf).unwrap();
+        let parent = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(parent, leaf).unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(parent, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device launch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn host_launch_of_device_launch_exec_auto_uploads() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        assert!(!sim.graph_uploaded(g).unwrap());
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        assert!(sim.graph_uploaded(g).unwrap());
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn update_graph_rejects_device_launch_exec() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let exec = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(exec, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph_with_flags(exec, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap();
+        let src = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(src, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        let err = sim.update_graph(exec, src).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device launch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_launch_in_flight_and_capture_refused() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1 << 40, 4096), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph_with_flags(
+            g,
+            GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+        )
+        .unwrap();
+        enq(sim.device_launch_graph(g, s));
+        let err = sim.device_launch_graph(g, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("in flight"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.synchronize().unwrap();
+        enq(sim.device_launch_graph(g, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        let err = sim.device_launch_graph(g, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_launch_occupies_compute() {
+        let mut p = h100().with_compute_slots(1);
+        for g in &mut p.gpus {
+            g.graph_launch_ns = 50_000;
+            g.launch_overhead_ns = 1;
+        }
+        let mut sim = Sim::new(p);
+        let d = DeviceId(0);
+        let gemm_s = StreamId(0);
+        let launch_s = StreamId(1);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 40, 4096), &[a], &[a], gemm_s));
+        let g = sim.create_graph(d, launch_s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[b], &[b])
+            .unwrap();
+        sim.instantiate_graph_with_flags(
+            g,
+            GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+        )
+        .unwrap();
+        enq(sim.device_launch_graph(g, launch_s));
+        sim.synchronize().unwrap();
+        let leftover = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.stream == gemm_s)
+            .expect("leftover");
+        let launcher = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::DeviceLaunch { .. }))
+            .expect("launcher");
+        assert!(launcher.start_ns.unwrap() >= leftover.done_ns.unwrap());
+    }
+
+    #[test]
+    fn device_launch_set_params_requires_reupload() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let b = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph_with_flags(
+            g,
+            GraphInstantiateFlags::DEVICE_LAUNCH | GraphInstantiateFlags::UPLOAD,
+        )
+        .unwrap();
+        let (node, mut params) = sim.graph_unique_kernel(g).unwrap();
+        params.reads = vec![KernelBuf::whole(b)];
+        params.writes = vec![KernelBuf::whole(b)];
+        sim.graph_exec_kernel_set_params(g, node, &params).unwrap();
+        let err = sim.device_launch_graph(g, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not uploaded"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.upload_graph(g).unwrap();
+        sim.free_sync(a).unwrap();
+        enq(sim.device_launch_graph(g, s));
+        sim.synchronize().unwrap();
+    }
+
+    #[test]
+    fn device_launch_without_flag_is_invalid() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.instantiate_graph(g).unwrap();
+        sim.upload_graph(g).unwrap();
+        let err = sim.device_launch_graph(g, s).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not device launch"), "{why}"),
             other => panic!("{other:?}"),
         }
     }
