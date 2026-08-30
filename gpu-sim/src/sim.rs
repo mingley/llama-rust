@@ -11026,6 +11026,39 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cudaMemcpy3DPeerAsync`. Replica copy; [`MemcpyOp`] height/depth/pitches
+    /// are the 3D extent. `op.src` / `op.dst` are forced to `src` / `dst`.
+    /// Capture records a memcpy node. Typed [`Self::memcpy`] stays.
+    pub fn memcpy_peer_3d_async(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        mut op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        op.src = Place::Device(src);
+        op.dst = Place::Device(dst);
+        self.memcpy(src, op, stream)
+    }
+
+    /// `cudaMemcpy3DPeer`. Host-synchronous; capture cannot include it.
+    pub fn memcpy_peer_3d(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memcpy",
+            });
+        }
+        let id = self.memcpy_peer_3d_async(src, dst, op, stream)?;
+        self.synchronize_stream(src, stream)?;
+        Ok(id)
+    }
+
     /// Enqueue a kernel on whole allocations. Reads/writes are leased until it completes.
     ///
     /// A VMM VA must be fully mapped ([`Self::is_resident`]) or peer-readable

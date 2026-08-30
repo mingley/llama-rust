@@ -2282,7 +2282,15 @@ model, do not celebrate the sim.
     during capture. Decode identity unchanged. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-204. [ ] Next numbered PLAN item after 203 is the next `gpu-sim` / Engine /
+204. [x] `cudaMemcpy3DPeer` / `cudaMemcpy3DPeerAsync`: `Sim::memcpy_peer_3d`
+    / `memcpy_peer_3d_async` are the host-synchronous / stream-ordered 3D
+    peer replica copies ([`MemcpyOp`] height/depth; payload not padding).
+    Places are forced to `src`/`dst`. Typed [`memcpy`] stays. Peer capture
+    is refused; Async records a memcpy node. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+205. [ ] Next numbered PLAN item after 204 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
