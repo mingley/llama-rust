@@ -3488,7 +3488,8 @@ impl Sim {
     /// [`Self::graph_exec_memcpy_set_params`]. Pageable copies stay illegal.
     /// Capture cannot include it. Host-sync 1 ns. [`Self::graph_memcpy_set_params_1d`]
     /// is `cudaGraphMemcpyNodeSetParams1D` (packed 1D, including converting a
-    /// 2D/3D node).
+    /// 2D/3D node). [`Self::graph_memcpy_set_params_2d`] requires
+    /// [`MemcpyOp::is_2d`].
     pub fn graph_memcpy_set_params(
         &mut self,
         graph: GraphId,
@@ -3544,6 +3545,23 @@ impl Sim {
         bytes: u64,
     ) -> Result<(), SimError> {
         self.graph_memcpy_set_params(graph, node, &MemcpyOp::packed_1d(src, dst, alloc, bytes))
+    }
+
+    /// `cudaGraphMemcpyNodeSetParams` whose [`MemcpyOp`] is [`MemcpyOp::is_2d`]
+    /// (`height > 1`, not 3D). Other extents Invalid `"memcpy2d height"`.
+    /// Typed [`Self::graph_memcpy_set_params`] stays.
+    pub fn graph_memcpy_set_params_2d(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        op: &MemcpyOp,
+    ) -> Result<(), SimError> {
+        if !op.is_2d() {
+            return Err(SimError::Invalid {
+                why: "memcpy2d height",
+            });
+        }
+        self.graph_memcpy_set_params(graph, node, op)
     }
 
     /// `cudaGraphMemsetNodeSetParams` on the graph definition.
@@ -3987,7 +4005,8 @@ impl Sim {
     /// and clears the upload flag. Capture cannot include it. Graphs with
     /// mem alloc/free nodes are legal (unlike [`Self::update_graph`]).
     /// [`Self::graph_exec_memcpy_set_params_1d`] is
-    /// `cudaGraphExecMemcpyNodeSetParams1D`.
+    /// `cudaGraphExecMemcpyNodeSetParams1D`. [`Self::graph_exec_memcpy_set_params_2d`]
+    /// requires [`MemcpyOp::is_2d`].
     pub fn graph_exec_memcpy_set_params(
         &mut self,
         exec: GraphId,
@@ -4043,6 +4062,23 @@ impl Sim {
         bytes: u64,
     ) -> Result<(), SimError> {
         self.graph_exec_memcpy_set_params(exec, node, &MemcpyOp::packed_1d(src, dst, alloc, bytes))
+    }
+
+    /// `cudaGraphExecMemcpyNodeSetParams` whose [`MemcpyOp`] is [`MemcpyOp::is_2d`]
+    /// (`height > 1`, not 3D). Other extents Invalid `"memcpy2d height"`.
+    /// Typed [`Self::graph_exec_memcpy_set_params`] stays.
+    pub fn graph_exec_memcpy_set_params_2d(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        op: &MemcpyOp,
+    ) -> Result<(), SimError> {
+        if !op.is_2d() {
+            return Err(SimError::Invalid {
+                why: "memcpy2d height",
+            });
+        }
+        self.graph_exec_memcpy_set_params(exec, node, op)
     }
 
     /// `cudaGraphExecMemsetNodeSetParams` on an instantiated exec.
