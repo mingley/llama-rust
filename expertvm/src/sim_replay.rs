@@ -2169,6 +2169,9 @@ pub(crate) fn ensure_single_attach(
     id: AllocId,
     stream: StreamId,
 ) -> Result<(), Error> {
+    if !sim.is_managed(id)? {
+        return Ok(());
+    }
     if sim.mem_attach(id)? != MemAttach::Single {
         return Ok(());
     }
