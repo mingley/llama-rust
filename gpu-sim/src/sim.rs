@@ -9045,7 +9045,7 @@ impl Sim {
     /// device (or [`Self::alloc_host_mapped`] / [`Self::host_register_mapped`]).
     /// Capture cannot include host alloc.
     pub fn alloc_host_pinned(&mut self, bytes: u64) -> Result<AllocId, SimError> {
-        self.insert_host(bytes, false, true, false, false)
+        self.alloc_host_with_flags(bytes, HostAllocFlags::DEFAULT)
     }
 
     /// Pageable host allocation (`malloc`). Pin it with [`Self::host_register`].
@@ -9056,7 +9056,23 @@ impl Sim {
     /// `cudaHostAllocMapped`: pinned, mapped, no HBM. A kernel may read it
     /// immediately; the memory term is host PCIe, not HBM.
     pub fn alloc_host_mapped(&mut self, bytes: u64) -> Result<AllocId, SimError> {
-        self.insert_host(bytes, false, true, true, false)
+        self.alloc_host_with_flags(bytes, HostAllocFlags::MAPPED)
+    }
+
+    /// `cudaHostAlloc` with [`HostAllocFlags`].
+    ///
+    /// Known bits: [`HostAllocFlags::MAPPED`]. Portable / WriteCombined are
+    /// Invalid `"host alloc flags"`. Typed helpers stay. Capture cannot include
+    /// host alloc.
+    pub fn alloc_host_with_flags(&mut self, bytes: u64, flags: u32) -> Result<AllocId, SimError> {
+        const KNOWN: u32 = HostAllocFlags::MAPPED;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "host alloc flags",
+            });
+        }
+        let mapped = flags & HostAllocFlags::MAPPED != 0;
+        self.insert_host(bytes, false, true, mapped, false)
     }
 
     /// `cudaMallocManaged`: pointer is live immediately, no HBM until a
@@ -10245,13 +10261,27 @@ impl Sim {
     /// Capture cannot include it. Already-pinned ids fail. [`Self::host_register_mapped`]
     /// also maps the pointer so a kernel can read it without H2D.
     pub fn host_register(&mut self, id: AllocId) -> Result<(), SimError> {
-        self.host_register_flags(id, false)
+        self.host_register_with_flags(id, HostAllocFlags::DEFAULT)
     }
 
     /// `cudaHostRegisterMapped`: pin and map pageable host. Kernels may read it
     /// over PCIe without a device copy.
     pub fn host_register_mapped(&mut self, id: AllocId) -> Result<(), SimError> {
-        self.host_register_flags(id, true)
+        self.host_register_with_flags(id, HostAllocFlags::MAPPED)
+    }
+
+    /// `cudaHostRegister` with [`HostAllocFlags`].
+    ///
+    /// Known bits: [`HostAllocFlags::MAPPED`]. Portable / IoMemory / ReadOnly
+    /// are Invalid `"host register flags"`. Typed helpers stay.
+    pub fn host_register_with_flags(&mut self, id: AllocId, flags: u32) -> Result<(), SimError> {
+        const KNOWN: u32 = HostAllocFlags::MAPPED;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "host register flags",
+            });
+        }
+        self.host_register_flags(id, flags & HostAllocFlags::MAPPED != 0)
     }
 
     /// `cudaHostUnregister`. Only ids from [`Self::host_register`]. Must not be leased

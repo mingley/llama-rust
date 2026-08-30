@@ -152,6 +152,10 @@
 //! [`Sim::host_get_device_pointer`] is `cudaHostGetDevicePointer` (mapped host).
 //! [`Sim::host_get_flags`] is `cudaHostGetFlags` (`HostAllocFlags::MAPPED` or
 //! default `0`; Portable / WriteCombined are not modeled).
+//! [`Sim::alloc_host_with_flags`] / [`host_register_with_flags`](Sim::host_register_with_flags)
+//! are `cudaHostAlloc` / `cudaHostRegister` flag words (known bit
+//! [`HostAllocFlags::MAPPED`]; Portable / WriteCombined / IoMemory / ReadOnly
+//! are Invalid). Typed helpers stay.
 //! [`Sim::device_get_attribute`] is `cudaDeviceGetAttribute` ([`DeviceAttr`]).
 //! [`Sim::device_get_properties`] is `cudaGetDeviceProperties` ([`DeviceProperties`];
 //! modeled caps only — no SM count or clock). [`DeviceAttr::CanMapHostMemory`]
@@ -7757,6 +7761,55 @@ mod tests {
         }
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(sim.host_get_flags(mapped).unwrap(), HostAllocFlags::MAPPED);
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn host_alloc_and_register_with_flags() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let pin = sim
+            .alloc_host_with_flags(64, HostAllocFlags::DEFAULT)
+            .unwrap();
+        assert_eq!(sim.host_get_flags(pin).unwrap(), HostAllocFlags::DEFAULT);
+        let mapped = sim
+            .alloc_host_with_flags(64, HostAllocFlags::MAPPED)
+            .unwrap();
+        assert_eq!(sim.host_get_flags(mapped).unwrap(), HostAllocFlags::MAPPED);
+        match sim.alloc_host_with_flags(64, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("host alloc flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.alloc_host_with_flags(64, 4) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("host alloc flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let pageable = sim.alloc_host(64).unwrap();
+        sim.host_register_with_flags(pageable, HostAllocFlags::DEFAULT)
+            .unwrap();
+        assert_eq!(
+            sim.host_get_flags(pageable).unwrap(),
+            HostAllocFlags::DEFAULT
+        );
+        sim.host_unregister(pageable).unwrap();
+        sim.host_register_with_flags(pageable, HostAllocFlags::MAPPED)
+            .unwrap();
+        assert_eq!(
+            sim.host_get_flags(pageable).unwrap(),
+            HostAllocFlags::MAPPED
+        );
+        sim.host_unregister(pageable).unwrap();
+        match sim.host_register_with_flags(pageable, 1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("host register flags"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.alloc_host_with_flags(64, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         let _g = sim.end_capture().unwrap();
     }
 

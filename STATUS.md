@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaHostAlloc` / `cudaHostRegister` flags
+
+`Sim::alloc_host_with_flags` / `host_register_with_flags` take
+`HostAllocFlags`. Known bit: MAPPED. Portable / WriteCombined / IoMemory /
+ReadOnly are Invalid. Typed helpers stay. `gpu-profile capture` is still
+refused.
+
 ## Shipped 2026-08-30 — `cudaHostGetFlags`
 
 `Sim::host_get_flags` returns `HostAllocFlags::MAPPED` or `0`. Device,
@@ -2212,7 +2219,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 192 (`HostGetFlags`).
+Next code change is PLAN systems depth after item 193 (`HostAlloc` flags).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover
