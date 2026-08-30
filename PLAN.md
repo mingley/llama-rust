@@ -1304,6 +1304,13 @@ model, do not celebrate the sim.
     identity stays a single `begin_capture` of child launches. Dual score
     still has no `$/M tokens`.
 
+91. [x] `cudaGraphAddEmptyNode`: `Sim::graph_add_empty` is a join/fork with
+    no work (1 ns, no compute or copy occupancy). Capture cannot include it.
+    Illegal after instantiate. May be disabled (`cudaGraphNodeSetEnabled`).
+    `cudaStreamBeginCaptureToGraph` can name an empty node as a dependency
+    anchor. Decode identity stays kernel-only graphs. Dual score still has
+    no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

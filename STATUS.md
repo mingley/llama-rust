@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaGraphAddEmptyNode`
+
+`Sim::graph_add_empty` is `cudaGraphAddEmptyNode`: a join/fork with no
+work. Completes in 1 ns and does not occupy compute or copy engines, so
+leftover kernels may Hyper-Q overlap it. Illegal after instantiate and
+during capture. May be disabled. Capture-to-graph can name it as a
+dependency anchor. Decode identity stays kernel-only graphs. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-08-30 — `cudaStreamBeginCaptureToGraph`
 
 `Sim::begin_capture_to_graph` is `cudaStreamBeginCaptureToGraph`: capture

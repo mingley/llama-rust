@@ -87,7 +87,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaGraphCreate` (`create_graph`) is an empty uninstantiated graph | 1 ns host-sync |
 | `cudaStreamBeginCaptureToGraph` (`begin_capture_to_graph`) appends captured nodes onto an existing uninstantiated graph; empty deps are extra roots | not timed (capture) |
 | `cudaGraphGetRootNodes` / `GetEdges` / `NodeGetDependentNodes` | query |
-| `cudaGraphAddKernelNode` / memcpy / memset / host / event / child / mem alloc/free / cooperative kernel / dependencies (`graph_add_*`) | not timed (host-side topology) |
+| `cudaGraphAddKernelNode` / memcpy / memset / host / empty / event / child / mem alloc/free / cooperative kernel / dependencies (`graph_add_*`) | not timed (host-side topology) |
 | graph destroy drops the id (`cudaGraphDestroy`); remaining graph mem is refunded | 1 ns host-sync |
 | graph launch amortizes per-kernel launch overhead | `graph_launch_ns` |
 | `synchronize_stream` waits one stream only | other streams keep running |
@@ -224,6 +224,7 @@ it. Independent streams still launch live. `cudaMallocAsync` / `cudaFreeAsync`
 (`alloc` / `free`) during capture are graph mem alloc/free nodes.
 `graph_add_alloc` / `graph_add_free` are `cudaGraphAddMemAllocNode` /
 `cudaGraphAddMemFreeNode` (same reuse / AutoFreeOnLaunch rules).
+`graph_add_empty` is `cudaGraphAddEmptyNode` (1 ns; no compute/copy occupancy).
 `graph_add_dependencies` is `cudaGraphAddDependencies` (independent nodes
 may Hyper-Q overlap at launch; capture records same-stream edges).
 `graph_remove_dependencies` is `cudaGraphRemoveDependencies` (illegal after

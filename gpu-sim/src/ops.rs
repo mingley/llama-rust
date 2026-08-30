@@ -253,7 +253,7 @@ pub enum MemAttach {
 
 /// One submitted GPU primitive. PLAN's Kernel / Memcpy / Collective / Event /
 /// Alloc / Free, plus `cudaMemsetAsync`, `cudaLaunchHostFunc`, stream attach,
-/// and nested [`Self::ChildGraph`]. Timing is not stored here.
+/// empty graph nodes, and nested [`Self::ChildGraph`]. Timing is not stored here.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GpuOp {
     /// Stream-ordered device allocation (`cudaMallocAsync`). Capacity is
@@ -298,6 +298,10 @@ pub enum GpuOp {
     /// Host callback (`cudaLaunchHostFunc`). Stream-ordered; does not occupy
     /// compute or copy engines.
     HostFunc,
+    /// Empty graph node (`cudaGraphAddEmptyNode`). Completes immediately;
+    /// does not occupy compute or copy engines. Capture cannot include it
+    /// (add on an uninstantiated graph). A join/fork with no work.
+    Empty,
     /// `cudaStreamAttachMemAsync`. Stream-ordered; cannot be captured.
     Attach {
         /// Managed allocation.

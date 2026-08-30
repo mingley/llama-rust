@@ -149,6 +149,7 @@
 //! [`Sim::graph_add_kernel`] / [`graph_add_memcpy`](Sim::graph_add_memcpy) /
 //! [`graph_add_memset`](Sim::graph_add_memset) /
 //! [`graph_add_host_func`](Sim::graph_add_host_func) /
+//! [`graph_add_empty`](Sim::graph_add_empty) /
 //! [`graph_add_event_record`](Sim::graph_add_event_record) /
 //! [`graph_add_event_wait`](Sim::graph_add_event_wait) /
 //! [`graph_add_child`](Sim::graph_add_child) /
@@ -6873,6 +6874,91 @@ mod tests {
         assert_eq!(sim.graph_len(g).unwrap(), 2);
         assert_eq!(sim.graph_mem_allocs(g).unwrap(), vec![scratch]);
         assert_eq!(sim.graph_node_deps(g, 1).unwrap(), vec![0]);
+    }
+
+    #[test]
+    fn graph_add_empty_does_not_occupy_compute() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |empty: bool| {
+            let mut sim = Sim::new(h100().with_compute_slots(2));
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let a = sim.alloc(d, 4096, s).unwrap();
+            let b = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+            enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+            sim.synchronize().unwrap();
+            let g = sim.create_graph(d, s).unwrap();
+            sim.graph_add_kernel(g, kind.clone(), &[a], &[a]).unwrap();
+            sim.graph_add_kernel(g, kind.clone(), &[b], &[b]).unwrap();
+            if empty {
+                sim.graph_add_empty(g).unwrap();
+            } else {
+                sim.graph_add_kernel(g, kind.clone(), &[a], &[a]).unwrap();
+            }
+            sim.instantiate_graph(g).unwrap();
+            sim.upload_graph(g).unwrap();
+            let t0 = sim.clock_ns();
+            let n = sim.launch_graph(g, s).unwrap();
+            sim.synchronize().unwrap();
+            assert_eq!(n, 3);
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let with_empty = run(true);
+        let three_gemm = run(false);
+        assert!(
+            with_empty < three_gemm,
+            "empty must not take a Hyper-Q slot; empty={with_empty} three={three_gemm}"
+        );
+    }
+
+    #[test]
+    fn graph_add_empty_join_then_capture_to_graph() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let mut sim = Sim::new(h100().with_compute_slots(2));
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, kind.clone(), &[a], &[a]).unwrap();
+        sim.graph_add_kernel(g, kind.clone(), &[b], &[b]).unwrap();
+        sim.graph_add_empty(g).unwrap();
+        sim.graph_add_dependencies(g, 0, 2).unwrap();
+        sim.graph_add_dependencies(g, 1, 2).unwrap();
+        sim.begin_capture_to_graph(d, s, g, &[2]).unwrap();
+        enq(sim.kernel(d, kind, &[a], &[a], s));
+        assert_eq!(sim.end_capture().unwrap(), g);
+        assert_eq!(sim.graph_root_nodes(g).unwrap(), vec![0, 1]);
+        assert_eq!(sim.graph_node_deps(g, 3).unwrap(), vec![2]);
+        sim.instantiate_graph(g).unwrap();
+        sim.graph_node_set_enabled(g, 2, false).unwrap();
+        assert!(!sim.graph_node_get_enabled(g, 2).unwrap());
+    }
+
+    #[test]
+    fn graph_add_empty_rejects_instantiated_and_capture() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(g).unwrap();
+        sim.instantiate_graph(g).unwrap();
+        let err = sim.graph_add_empty(g).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        let err = sim.graph_add_empty(g).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
     }
 
     #[test]

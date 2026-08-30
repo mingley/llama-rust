@@ -2456,6 +2456,16 @@ impl Sim {
         self.graph_push(graph, device, stream, Kind::HostFunc)
     }
 
+    /// `cudaGraphAddEmptyNode`: join/fork with no work.
+    ///
+    /// Completes in 1 ns and does not occupy compute or copy engines, so
+    /// leftover kernels may Hyper-Q overlap it. Capture cannot include it.
+    /// Illegal after instantiate.
+    pub fn graph_add_empty(&mut self, graph: GraphId) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.graph_push(graph, device, stream, Kind::Empty)
+    }
+
     /// `cudaGraphAddEventRecordNode`. `external` is `cudaEventRecordExternal`.
     pub fn graph_add_event_record(
         &mut self,
@@ -6275,6 +6285,14 @@ impl Sim {
                 });
                 Ok(true)
             }
+            Kind::Empty => {
+                self.running.push(Running {
+                    op: id,
+                    remaining_ns: 1,
+                    share: Share::Solo,
+                });
+                Ok(true)
+            }
             Kind::Attach { .. } => {
                 self.running.push(Running {
                     op: id,
@@ -7355,6 +7373,7 @@ fn op_tag(k: &Kind) -> u8 {
         Kind::Kernel { .. } => 3,
         Kind::Memset { .. } => 4,
         Kind::HostFunc => 5,
+        Kind::Empty => 11,
         Kind::EventRecord { .. } => 6,
         Kind::EventWait { .. } => 7,
         Kind::AllReduce { .. } => 8,
