@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaGraphNodeFindInClone`
+
+`Sim::graph_node_find_in_clone` is `cudaGraphNodeFindInClone`: the node
+index on a graph produced by `clone_graph` of that original (nested
+graphs cloned in that call count). A second clone of the clone does not
+map the first original. Decode identity stays kernel-only graphs. Dual
+score still has no `$/M tokens`.
+
 ## Shipped 2026-08-30 — conditional WHILE and SWITCH
 
 `Sim::graph_add_while` is `cudaGraphCondTypeWhile`: the body repeats while

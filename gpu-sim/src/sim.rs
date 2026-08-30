@@ -336,6 +336,8 @@ pub struct Sim {
     conds: BTreeMap<CondId, Cond>,
     /// IF/WHILE/SWITCH body predicates applied to ops submitted by [`Self::enqueue_graph`].
     enqueue_preds: Vec<CondPred>,
+    /// `cudaGraphClone` provenance: clone id → source id.
+    clone_of: BTreeMap<GraphId, GraphId>,
 }
 
 impl Sim {
@@ -403,6 +405,7 @@ impl Sim {
             next_cond: 1,
             conds: BTreeMap::new(),
             enqueue_preds: Vec::new(),
+            clone_of: BTreeMap::new(),
         }
     }
 
@@ -2448,6 +2451,9 @@ impl Sim {
             self.clock = self.clock.saturating_add(ns);
             let _prev = self.graphs.insert(id, cloned);
         }
+        for (src, cloned) in &remap {
+            let _prev = self.clone_of.insert(*cloned, *src);
+        }
         self.clone_conditionals(&remap)?;
         remap.get(&graph).copied().ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -2670,6 +2676,7 @@ impl Sim {
         let device = g.origin.0;
         let _gpu = self.profile.gpu(device)?;
         self.release_graph_allocs(graph)?;
+        let _src = self.clone_of.remove(&graph);
         self.clock = self.clock.saturating_add(1);
         Ok(())
     }
@@ -3224,6 +3231,49 @@ impl Sim {
             why: "graph dependency",
         })?;
         Ok(node_kind(&st.kind))
+    }
+
+    /// `cudaGraphNodeFindInClone`: index in `cloned` of the node that was `node`
+    /// on `original`.
+    ///
+    /// `cloned` must have been produced by [`Self::clone_graph`] of `original`
+    /// (a nested graph cloned in that same call counts). Capture is allowed.
+    /// Add order is preserved, so the index is unchanged. A second clone of the
+    /// clone does not map nodes from the first original.
+    pub fn graph_node_find_in_clone(
+        &self,
+        original: GraphId,
+        node: usize,
+        cloned: GraphId,
+    ) -> Result<usize, SimError> {
+        if !self.graphs.contains_key(&original) || !self.graphs.contains_key(&cloned) {
+            return Err(SimError::Invalid {
+                why: "unknown graph",
+            });
+        }
+        if original == cloned {
+            return Err(SimError::Invalid { why: "not a clone" });
+        }
+        let src = self
+            .clone_of
+            .get(&cloned)
+            .copied()
+            .ok_or(SimError::Invalid { why: "not a clone" })?;
+        if src != original {
+            return Err(SimError::Invalid { why: "not a clone" });
+        }
+        let orig = self.graphs.get(&original).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let clone = self.graphs.get(&cloned).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if orig.steps.get(node).is_none() || clone.steps.get(node).is_none() {
+            return Err(SimError::Invalid {
+                why: "unknown graph node",
+            });
+        }
+        Ok(node)
     }
 
     fn graph_origin_for_add(&self, graph: GraphId) -> Result<(DeviceId, StreamId), SimError> {

@@ -277,6 +277,8 @@ start when the handle is `0`. `set_conditional` is device
 `graph_add_while` / `graph_while_nodes` / `graph_add_switch` /
 `graph_switch_nodes` are WHILE / SWITCH (WHILE caps at
 64 iterations; SWITCH runs body `i` when the handle equals `i`).
+`graph_node_find_in_clone` is `cudaGraphNodeFindInClone` (same index on a
+graph produced by `clone_graph` of that original).
 `expertvm --graph-set-params` parks a leaf and retargets the unique kernel
 (and a unique memcpy or memset if present). `expertvm --graph-update` parks a leaf GEMM on
 evict and updates the next miss instead of instantiate. `--graph-clone`

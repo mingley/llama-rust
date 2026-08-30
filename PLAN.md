@@ -1337,6 +1337,13 @@ model, do not celebrate the sim.
     the handle equals `i`; out of range skips every body). Decode identity
     stays kernel-only graphs. Dual score still has no `$/M tokens`.
 
+95. [x] `cudaGraphNodeFindInClone`: `Sim::graph_node_find_in_clone` maps a
+    node index on the original onto the same index of a graph produced by
+    `clone_graph` of that original (nested graphs cloned in that call
+    count). A second clone of the clone does not map the first original.
+    Capture is allowed. Decode identity stays kernel-only graphs. Dual
+    score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

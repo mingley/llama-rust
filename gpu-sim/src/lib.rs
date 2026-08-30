@@ -192,6 +192,9 @@
 //! handle equals `i`). [`graph_if_nodes`](Sim::graph_if_nodes) /
 //! [`graph_while_nodes`](Sim::graph_while_nodes) /
 //! [`graph_switch_nodes`](Sim::graph_switch_nodes) list those nodes.
+//! [`graph_node_find_in_clone`](Sim::graph_node_find_in_clone) is
+//! `cudaGraphNodeFindInClone` (same index on a graph produced by
+//! [`clone_graph`](Sim::clone_graph) of that original).
 //! [`Sim::destroy_graph`] is `cudaGraphDestroy` / `cudaGraphExecDestroy`.
 //! Capture records every stream that [`wait_event`](Sim::wait_event)s an
 //! event recorded in this capture (CUDA forked capture). [`record_event_external`](Sim::record_event_external)
@@ -7428,6 +7431,117 @@ mod tests {
             n >= 2,
             "clone must expand WHILE skip + SWITCH branch; n={n}"
         );
+    }
+
+    #[test]
+    fn graph_node_find_in_clone_maps_kernel_and_rejects() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        let b = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let orig = sim.end_capture().unwrap();
+        let clone = sim.clone_graph(orig).unwrap();
+        let again = sim.clone_graph(clone).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(sim.graph_node_find_in_clone(orig, 0, clone).unwrap(), 0);
+        let _end = sim.end_capture().unwrap();
+        let err = sim.graph_node_find_in_clone(orig, 0, again).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not a clone"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        assert_eq!(sim.graph_node_find_in_clone(clone, 0, again).unwrap(), 0);
+        let err = sim.graph_node_find_in_clone(orig, 0, orig).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not a clone"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        let err = sim.graph_node_find_in_clone(orig, 1, clone).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown graph node"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        let other = sim.create_graph(d, s).unwrap();
+        let err = sim.graph_node_find_in_clone(orig, 0, other).unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not a clone"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        sim.instantiate_graph(clone).unwrap();
+        let node = sim.graph_node_find_in_clone(orig, 0, clone).unwrap();
+        let (_, mut params) = sim.graph_unique_kernel(clone).unwrap();
+        params.reads = vec![KernelBuf::whole(b)];
+        params.writes = vec![KernelBuf::whole(b)];
+        sim.graph_exec_kernel_set_params(clone, node, &params)
+            .unwrap();
+        sim.free_sync(a).unwrap();
+        let n = sim.launch_graph(clone, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        sim.instantiate_graph(orig).unwrap();
+        let _n = sim.launch_graph(orig, s).unwrap();
+        let err = sim.synchronize().unwrap_err();
+        match err {
+            SimError::NotResident { alloc, device } => {
+                assert_eq!(alloc, a);
+                assert_eq!(device, d);
+            }
+            e => panic!("{e:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_node_find_in_clone_nested_child() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(8, 8), &[a], &[a], s));
+        let child = sim.end_capture().unwrap();
+        sim.instantiate_graph(child).unwrap();
+        let parent = sim.create_graph(d, s).unwrap();
+        sim.graph_add_child(parent, child).unwrap();
+        let cloned_parent = sim.clone_graph(parent).unwrap();
+        let kids = sim.graph_child_nodes(cloned_parent).unwrap();
+        assert_eq!(kids.len(), 1);
+        let cloned_child = kids[0].1;
+        assert_eq!(
+            sim.graph_node_find_in_clone(parent, 0, cloned_parent)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.graph_node_find_in_clone(child, 0, cloned_child)
+                .unwrap(),
+            0
+        );
+        let err = sim
+            .graph_node_find_in_clone(child, 0, cloned_parent)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("not a clone"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        sim.destroy_graph(parent).unwrap();
+        let err = sim
+            .graph_node_find_in_clone(parent, 0, cloned_parent)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown graph"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+        let n = sim.launch_graph(cloned_parent, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
     }
 
     #[test]
