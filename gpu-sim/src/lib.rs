@@ -649,6 +649,7 @@
 //! [`Sim::create_graph`] is `cudaGraphCreate` (empty, not instantiated).
 //! [`Sim::graph_add_kernel`] / [`graph_add_memcpy`](Sim::graph_add_memcpy) /
 //! [`graph_add_memcpy_1d`](Sim::graph_add_memcpy_1d) /
+//! [`graph_add_memcpy_2d`](Sim::graph_add_memcpy_2d) /
 //! [`graph_add_memset`](Sim::graph_add_memset) /
 //! [`graph_add_memset_op`](Sim::graph_add_memset_op) /
 //! [`graph_add_host_func`](Sim::graph_add_host_func) /
@@ -11604,6 +11605,52 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_add_memcpy_2d_requires_is_2d() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_pitch(d, 256, 8).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        let op = MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: a,
+            bytes: 256,
+            height: 8,
+            src_pitch: 256,
+            dst_pitch: pitch,
+            ..MemcpyOp::default()
+        };
+        sim.graph_add_memcpy_2d(g, op.clone()).unwrap();
+        let n = sim.launch_graph(g, s).unwrap();
+        assert_eq!(n, 1);
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), 2048);
+        match sim.graph_add_memcpy_2d(
+            g,
+            MemcpyOp {
+                height: 1,
+                ..op.clone()
+            },
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy2d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.graph_add_memcpy_2d(
+            g,
+            MemcpyOp {
+                depth: 2,
+                src_height: 8,
+                dst_height: 8,
+                ..op
+            },
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("memcpy2d height"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

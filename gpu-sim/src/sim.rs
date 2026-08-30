@@ -5896,6 +5896,7 @@ impl Sim {
 
     /// `cudaGraphAddMemcpyNode`. Pageable copies cannot be graph nodes.
     /// [`Self::graph_add_memcpy_1d`] is `cudaGraphAddMemcpyNode1D`.
+    /// [`Self::graph_add_memcpy_2d`] requires [`MemcpyOp::is_2d`].
     pub fn graph_add_memcpy(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
         let (device, stream) = self.graph_origin_for_add(graph)?;
         let _a = self.alloc_ref(op.alloc)?;
@@ -5918,6 +5919,18 @@ impl Sim {
         bytes: u64,
     ) -> Result<(), SimError> {
         self.graph_add_memcpy(graph, MemcpyOp::packed_1d(src, dst, alloc, bytes))
+    }
+
+    /// `cudaGraphAddMemcpyNode` whose [`MemcpyOp`] is [`MemcpyOp::is_2d`]
+    /// (`height > 1`, not 3D). Other extents Invalid `"memcpy2d height"`.
+    /// Typed [`Self::graph_add_memcpy`] stays.
+    pub fn graph_add_memcpy_2d(&mut self, graph: GraphId, op: MemcpyOp) -> Result<(), SimError> {
+        if !op.is_2d() {
+            return Err(SimError::Invalid {
+                why: "memcpy2d height",
+            });
+        }
+        self.graph_add_memcpy(graph, op)
     }
 
     /// `cudaGraphAddMemsetNode` of a [`KernelBuf`] span (packed 1D).
