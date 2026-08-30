@@ -1860,6 +1860,13 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
+155. [x] `cudaMemset3DAsync`: `MemsetOp` `depth` / `ysize` fill
+    `width * height * depth` payload (row and slice padding are not written).
+    Width above pitch or height above `ysize` is Invalid. Packed 1D / 2D
+    (`depth` 0/1) is unchanged. Decode identity stays packed 1D.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

@@ -341,13 +341,15 @@ impl MemcpyOp {
     }
 }
 
-/// Device-side fill (`cudaMemsetAsync` / `cudaMemset2DAsync`).
+/// Device-side fill (`cudaMemsetAsync` / `cudaMemset2DAsync` / `cudaMemset3DAsync`).
 ///
 /// [`Self::height`] `0` or `1` is `cudaMemsetAsync` of [`Self::bytes`].
-/// `height > 1` is `cudaMemset2DAsync`: [`Self::bytes`] is the row width,
-/// billed payload is `width * height` (pitch padding is not written).
-/// [`crate::Sim::graph_exec_memset_set_params`] patches this on an instantiated
-/// memset node (`cudaGraphExecMemsetNodeSetParams`).
+/// `height > 1` and [`Self::depth`] `<= 1` is `cudaMemset2DAsync`: billed
+/// payload is `width * height` (pitch padding is not written).
+/// [`Self::depth`] `> 1` is `cudaMemset3DAsync`: billed payload is
+/// `width * height * depth`. [`crate::Sim::graph_exec_memset_set_params`]
+/// patches this on an instantiated memset node
+/// (`cudaGraphExecMemsetNodeSetParams`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MemsetOp {
     /// Allocation to fill.
@@ -356,10 +358,14 @@ pub struct MemsetOp {
     pub offset: u64,
     /// Payload bytes for a 1D fill, or row width for [`Self::height`] `> 1`.
     pub bytes: u64,
-    /// Row count for `cudaMemset2D`. `0` or `1` is a 1D fill of [`Self::bytes`].
+    /// Row count for `cudaMemset2D` / `3D`. `0` or `1` is a 1D fill of [`Self::bytes`].
     pub height: u64,
     /// Destination pitch in bytes. `0` means packed (`width`).
     pub pitch: u64,
+    /// Slice count for `cudaMemset3D`. `0` or `1` is a 1D or 2D fill.
+    pub depth: u64,
+    /// 2D-slice height (`cudaPitchedPtr::ysize`). `0` means packed ([`Self::height`]).
+    pub ysize: u64,
 }
 
 impl Default for MemsetOp {
@@ -370,6 +376,8 @@ impl Default for MemsetOp {
             bytes: 0,
             height: 0,
             pitch: 0,
+            depth: 0,
+            ysize: 0,
         }
     }
 }
@@ -386,16 +394,26 @@ impl From<KernelBuf> for MemsetOp {
 }
 
 impl MemsetOp {
-    /// `cudaMemset2D` / `height > 1`.
+    /// `cudaMemset2D` / `height > 1` and not [`Self::is_3d`].
     #[must_use]
     pub fn is_2d(&self) -> bool {
-        self.height > 1
+        self.height > 1 && self.depth <= 1
     }
 
-    /// Bytes the fill engine writes (pitch padding is not billed).
+    /// `cudaMemset3D` / `depth > 1`.
+    #[must_use]
+    pub fn is_3d(&self) -> bool {
+        self.depth > 1
+    }
+
+    /// Bytes the fill engine writes (pitch and slice padding are not billed).
     #[must_use]
     pub fn payload_bytes(&self) -> u64 {
-        if self.height > 1 {
+        if self.depth > 1 {
+            self.bytes
+                .saturating_mul(self.height.max(1))
+                .saturating_mul(self.depth)
+        } else if self.height > 1 {
             self.bytes.saturating_mul(self.height)
         } else {
             self.bytes
@@ -412,16 +430,37 @@ impl MemsetOp {
         }
     }
 
-    /// Contiguous span in [`Self::id`] covering the 1D fill or 2D rectangle.
+    /// Slice height, or packed [`Self::height`] when [`Self::ysize`] is `0`.
+    #[must_use]
+    pub fn ysize_or_extent(&self) -> u64 {
+        if self.ysize == 0 {
+            self.height.max(1)
+        } else {
+            self.ysize
+        }
+    }
+
+    /// Contiguous span in [`Self::id`] covering the 1D fill, 2D rectangle, or
+    /// 3D box.
     #[must_use]
     pub fn extent_bytes(&self) -> u64 {
-        if self.height <= 1 {
+        if !self.is_2d() && !self.is_3d() {
             return self.bytes;
         }
-        self.height
+        let pitch = self.pitch_or_width();
+        let h = self.height.max(1);
+        let plane = h
             .saturating_sub(1)
-            .saturating_mul(self.pitch_or_width())
-            .saturating_add(self.bytes)
+            .saturating_mul(pitch)
+            .saturating_add(self.bytes);
+        if !self.is_3d() {
+            return plane;
+        }
+        let slice = pitch.saturating_mul(self.ysize_or_extent());
+        self.depth
+            .saturating_sub(1)
+            .saturating_mul(slice)
+            .saturating_add(plane)
     }
 
     /// 1D [`KernelBuf`] view (payload span). Pitch is not represented.

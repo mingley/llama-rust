@@ -116,6 +116,7 @@ warp scheduler, L1, …   ← do not model
 | `MemsetOp` height/pitch bill `width * height` (not pitch padding) | `cudaMemset2DAsync` |
 | `malloc_3d` charges `pitch * height * depth` | `cudaMalloc3D` |
 | `MemcpyOp` depth/slice heights bill `width * height * depth` | `cudaMemcpy3DAsync` |
+| `MemsetOp` depth/ysize bill `width * height * depth` | `cudaMemset3DAsync` |
 | graph-mem used is live graph allocs; reserved holds unused until trim | `cudaDeviceGetGraphMemAttribute` / `GraphMemTrim` |
 | stream[i+1].start ≥ stream[i].finish (`Operation` timestamps) | queue wait vs run |
 | higher `set_stream_priority` starts first under contention | launch overhead |
@@ -412,7 +413,8 @@ must align to `cudaLimitMaxL2FetchGranularity` (SM 8.0+ default 128).
 `cudaMemcpy2DAsync` (payload `width * height`). `MemsetOp` `height` / `pitch`
 are `cudaMemset2DAsync` (payload `width * height`; padding is not written).
 `malloc_3d` is `cudaMalloc3D`. `MemcpyOp` `depth` / slice heights are
-`cudaMemcpy3DAsync` (payload `width * height * depth`).
+`cudaMemcpy3DAsync` (payload `width * height * depth`). `MemsetOp` `depth` /
+`ysize` are `cudaMemset3DAsync` (payload `width * height * depth`).
 `graph_mem_get` / `graph_mem_set` / `graph_mem_trim` are
 `cudaDeviceGetGraphMemAttribute` / `SetGraphMemAttribute` / `GraphMemTrim`
 (device graph-memory pool only; unused reserved bytes return on trim).

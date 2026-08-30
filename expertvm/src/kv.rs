@@ -438,6 +438,7 @@ fn memset_page(sim: &mut Sim, va: AllocId, off: u64, cfg: KvCfg) -> Result<(), E
             bytes: cfg.row_width,
             height,
             pitch: cfg.pitch,
+            ..MemsetOp::default()
         }
     } else {
         MemsetOp {

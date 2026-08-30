@@ -9919,8 +9919,9 @@ impl Sim {
     /// `cudaMemsetAsync` / `cudaMemset2DAsync`.
     ///
     /// [`MemsetOp::height`] `> 1` bills `width * height` as an HBM write (pitch
-    /// padding is not written). The mapped span is the 2D extent. Capture is
-    /// allowed. Mapped host is not a memset dest.
+    /// padding is not written). [`MemsetOp::depth`] `> 1` is `cudaMemset3DAsync`
+    /// (`width * height * depth`). The mapped span is the 2D/3D extent. Capture
+    /// is allowed. Mapped host is not a memset dest.
     pub fn memset_op(
         &mut self,
         device: DeviceId,
@@ -12491,7 +12492,7 @@ impl Sim {
     fn resolve_memset_op(&self, op: MemsetOp) -> Result<MemsetOp, SimError> {
         memset_2d_check(&op)?;
         let total = self.alloc_ref(op.id)?.bytes;
-        if op.is_2d() {
+        if op.is_2d() || op.is_3d() {
             let span = op.extent_bytes();
             if span == 0 {
                 return Err(SimError::Invalid {
@@ -13251,6 +13252,29 @@ fn memcpy_2d_check(m: &MemcpyOp) -> Result<(), SimError> {
 }
 
 fn memset_2d_check(op: &MemsetOp) -> Result<(), SimError> {
+    if op.is_3d() {
+        if op.bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "memset3d width",
+            });
+        }
+        if op.height == 0 {
+            return Err(SimError::Invalid {
+                why: "memset3d height",
+            });
+        }
+        if op.bytes > op.pitch_or_width() {
+            return Err(SimError::Invalid {
+                why: "memset3d pitch",
+            });
+        }
+        if op.height > op.ysize_or_extent() {
+            return Err(SimError::Invalid {
+                why: "memset3d height",
+            });
+        }
+        return Ok(());
+    }
     if !op.is_2d() {
         return Ok(());
     }
@@ -13782,6 +13806,8 @@ fn remap_alloc_kind(kind: Kind, map: &BTreeMap<AllocId, AllocId>) -> Kind {
             bytes: op.bytes,
             height: op.height,
             pitch: op.pitch,
+            depth: op.depth,
+            ysize: op.ysize,
         }),
         Kind::Attach { id, flags } => Kind::Attach {
             id: remap_alloc_id(id, map),

@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaMemset3DAsync`
+
+`MemsetOp` depth/ysize is `cudaMemset3DAsync`: billed HBM write is
+`width * height * depth` (row and slice padding are not written). Packed
+1D/2D (`depth` 0/1) is unchanged. Decode identity stays packed 1D.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaMalloc3D` / `cudaMemcpy3DAsync`
 
 `Sim::malloc_3d` is `cudaMalloc3D` (pitch `align_up(width, 512)`, charge
