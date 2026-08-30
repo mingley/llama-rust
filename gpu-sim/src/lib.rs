@@ -168,7 +168,10 @@
 //! `cudaLaunchAttributeProgrammaticEvent`: other streams may wait that event
 //! at the trigger instead of kernel completion. [`kernel_launch_completion`](Sim::kernel_launch_completion)
 //! is `cudaLaunchAttributeLaunchCompletionEvent`: the event records when the
-//! kernel *starts*. Decode identity stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
+//! kernel *starts*. [`kernel_access_policy`](Sim::kernel_access_policy) is
+//! `cudaLaunchAttributeAccessPolicyWindow`: persisting hits reduce billed HBM
+//! after [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size)
+//! (CUDA default size is 0). Decode identity stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
 //! [`graph_exec_kernel_node_set_priority`](Sim::graph_exec_kernel_node_set_priority)
 //! are the exec-snapshot attributes. [`Sim::upload_graph`] is
 //! `cudaGraphUpload` (host-sync; first launch after instantiate calls it).
@@ -330,9 +333,10 @@ pub use ids::{
     OpId, PoolId, PtrExportId, ShareableHandleId, StreamId, UserObjectId,
 };
 pub use ops::{
-    BatchMemOp, CaptureDepOp, DType, GpuOp, GraphExecUpdateResult, GraphExecUpdateResultInfo,
-    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelBuf, KernelKind, KernelNodeParams,
+    AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, DType, GpuOp,
+    GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
+    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind,
+    GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeParams,
     LaunchCompletionEvent, MemAdvise, MemAttach, MemcpyOp, Operation, PdlLaunch, Place,
     ProgrammaticEvent, ProgrammaticLaunch, StreamCaptureInfo, StreamCaptureMode, UserObjectFlags,
     WaitValueCmp,
@@ -4155,6 +4159,237 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("device launch"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    fn persist_mem_profile() -> HardwareProfile {
+        let mut p = h100();
+        let g = p.gpus.first_mut().expect("gpu0");
+        g.launch_overhead_ns = 1;
+        g.graph_launch_ns = 1;
+        g.l2_persist_hit_permille = 1000;
+        g.hbm_bps = 1_000_000_000;
+        p
+    }
+
+    #[test]
+    fn persist_limit_zero_window_is_noop() {
+        let mut sim = Sim::new(persist_mem_profile());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 8u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+        sim.synchronize().unwrap();
+        let kind = KernelKind::other(1, bytes);
+        let w = AccessPolicyWindow::persisting(KernelBuf::whole(a));
+        enq(sim.kernel_access_policy(d, kind.clone(), &[a], &[a], s, w));
+        enq(sim.kernel_access_policy(d, kind, &[a], &[a], s, w));
+        sim.synchronize().unwrap();
+        let ks: Vec<_> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .collect();
+        let d0 = ks[0].duration_ns().expect("k0");
+        let d1 = ks[1].duration_ns().expect("k1");
+        assert_eq!(d0, d1, "persist limit 0 must not discount; d0={d0} d1={d1}");
+        assert_eq!(sim.persisting_l2_cache_size(d).unwrap(), 0);
+    }
+
+    #[test]
+    fn second_kernel_hits_persisting_l2() {
+        let mut sim = Sim::new(persist_mem_profile());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.enable_persisting_l2().unwrap();
+        let bytes = 8u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+        sim.synchronize().unwrap();
+        let kind = KernelKind::other(1, bytes);
+        let w = AccessPolicyWindow::persisting(KernelBuf::whole(a));
+        enq(sim.kernel_access_policy(d, kind.clone(), &[a], &[a], s, w));
+        enq(sim.kernel_access_policy(d, kind, &[a], &[a], s, w));
+        sim.synchronize().unwrap();
+        let ks: Vec<_> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .collect();
+        let d0 = ks[0].duration_ns().expect("k0");
+        let d1 = ks[1].duration_ns().expect("k1");
+        assert!(
+            d1 < d0 / 2,
+            "warm persist must cut HBM; cold={d0} warm={d1}"
+        );
+    }
+
+    #[test]
+    fn reset_persisting_l2_cache_colds_next_kernel() {
+        let mut sim = Sim::new(persist_mem_profile());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.enable_persisting_l2().unwrap();
+        let bytes = 8u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+        sim.synchronize().unwrap();
+        let kind = KernelKind::other(1, bytes);
+        let w = AccessPolicyWindow::persisting(KernelBuf::whole(a));
+        enq(sim.kernel_access_policy(d, kind.clone(), &[a], &[a], s, w));
+        sim.synchronize().unwrap();
+        sim.reset_persisting_l2_cache(d).unwrap();
+        enq(sim.kernel_access_policy(d, kind, &[a], &[a], s, w));
+        sim.synchronize().unwrap();
+        let ks: Vec<_> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .collect();
+        let d0 = ks[0].duration_ns().expect("k0");
+        let d1 = ks[1].duration_ns().expect("k1");
+        assert_eq!(d0, d1, "reset must refill; d0={d0} d1={d1}");
+    }
+
+    #[test]
+    fn set_persisting_l2_rejects_over_l2_and_miss_persisting() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let cap = sim.profile().gpu(d).unwrap().l2_bytes;
+        let err = sim
+            .set_persisting_l2_cache_size(d, cap.saturating_add(1))
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("persisting L2"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let bad = AccessPolicyWindow {
+            buf: KernelBuf::whole(a),
+            hit_ratio_permille: 1000,
+            hit: AccessProperty::Persisting,
+            miss: AccessProperty::Persisting,
+        };
+        let err = sim
+            .kernel_access_policy(d, KernelKind::other(8, 8), &[a], &[a], s, bad)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("miss persisting"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let ratio = AccessPolicyWindow {
+            buf: KernelBuf::whole(a),
+            hit_ratio_permille: 1001,
+            hit: AccessProperty::Persisting,
+            miss: AccessProperty::Streaming,
+        };
+        let err = sim
+            .kernel_access_policy(d, KernelKind::other(8, 8), &[a], &[a], s, ratio)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("hit ratio"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn streaming_hit_does_not_fill_persisting_l2() {
+        let mut sim = Sim::new(persist_mem_profile());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.enable_persisting_l2().unwrap();
+        let bytes = 8u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+        sim.synchronize().unwrap();
+        let kind = KernelKind::other(1, bytes);
+        let w = AccessPolicyWindow {
+            buf: KernelBuf::whole(a),
+            hit_ratio_permille: 1000,
+            hit: AccessProperty::Streaming,
+            miss: AccessProperty::Streaming,
+        };
+        enq(sim.kernel_access_policy(d, kind.clone(), &[a], &[a], s, w));
+        enq(sim.kernel_access_policy(d, kind, &[a], &[a], s, w));
+        sim.synchronize().unwrap();
+        let ks: Vec<_> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .collect();
+        assert_eq!(
+            ks[0].duration_ns().expect("k0"),
+            ks[1].duration_ns().expect("k1")
+        );
+    }
+
+    #[test]
+    fn graph_access_policy_copies_and_device_launch_allows() {
+        let mut sim = Sim::new(persist_mem_profile());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.enable_persisting_l2().unwrap();
+        let a = sim.malloc(d, 8 << 20).unwrap();
+        let w = AccessPolicyWindow::persisting(KernelBuf::whole(a));
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1, 8 << 20), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_set_access_policy(g, 0, Some(w))
+            .unwrap();
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(1, 8 << 20), &[a], &[a])
+            .unwrap();
+        assert!(sim
+            .graph_kernel_node_get_access_policy(h, 0)
+            .unwrap()
+            .is_none());
+        sim.graph_kernel_node_copy_attributes(h, 0, g, 0).unwrap();
+        let got = sim
+            .graph_kernel_node_get_access_policy(h, 0)
+            .unwrap()
+            .expect("copied");
+        assert_eq!(got, w);
+        let exec = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .expect("device-launch allows access policy");
+        sim.upload_graph(exec).unwrap();
+        assert!(sim
+            .graph_exec_kernel_node_get_access_policy(exec, 0)
+            .unwrap()
+            .is_some());
+    }
+
+    #[test]
+    fn graph_replay_second_launch_hits_persisting_l2() {
+        let mut sim = Sim::new(persist_mem_profile());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.enable_persisting_l2().unwrap();
+        let bytes = 8u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(1, bytes), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_set_access_policy(
+            g,
+            0,
+            Some(AccessPolicyWindow::persisting(KernelBuf::whole(a))),
+        )
+        .unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        let _n = sim.launch_graph(exec, s).unwrap();
+        sim.synchronize().unwrap();
+        let _n = sim.launch_graph(exec, s).unwrap();
+        sim.synchronize().unwrap();
+        let ks: Vec<_> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .collect();
+        let d0 = ks[0].duration_ns().expect("k0");
+        let d1 = ks[1].duration_ns().expect("k1");
+        assert!(
+            d1 < d0 / 2,
+            "graph relaunch must hit persist; cold={d0} warm={d1}"
+        );
     }
 
     #[test]

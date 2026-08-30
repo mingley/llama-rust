@@ -83,6 +83,17 @@ pub struct GpuProfile {
     /// after start (`0` = at start, `1000` = at completion). Example default
     /// `250`, not a capture. Overlap still needs [`Self::compute_slots`] `>= 2`.
     pub pdl_trigger_permille: u16,
+    /// Device L2 size, bytes. Caps [`crate::Sim::set_persisting_l2_cache_size`].
+    ///
+    /// Example H100 is 50 MiB, not a capture. `0` refuses a non-zero persist
+    /// limit.
+    pub l2_bytes: u64,
+    /// HBM bytes avoided on a persisting-L2 hit, ‰ (`1000` = hit is free).
+    ///
+    /// Applied to the fraction of kernel traffic that hits a filled
+    /// [`crate::ops::AccessPolicyWindow`]. Example default `750`, not a capture.
+    /// No window, or persist limit `0`, keeps full HBM billing.
+    pub l2_persist_hit_permille: u16,
 }
 
 impl GpuProfile {
@@ -479,7 +490,7 @@ impl HardwareProfile {
             return String::from("gpus=0\n");
         };
         format!(
-            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npdl_trigger_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
+            "name={}\ngpus={}\nhbm_bytes={}\nhbm_bps={}\nfp16_flops={}\npcie_bps={}\ncopy_engines={}\ncompute_slots={}\ncooperative_launch={}\ntdp_mw={}\nlaunch_overhead_ns={}\ngraph_launch_ns={}\ngraph_instantiate_ns={}\ngraph_update_ns={}\ngraph_set_params_ns={}\ngraph_clone_ns={}\ngraph_upload_ns={}\ngemm_util_permille={}\ngrouped_moe_permille={}\npdl_trigger_permille={}\nl2_bytes={}\nl2_persist_hit_permille={}\npageable_permille={}\nalign_bytes={}\npool_reuse_ns={}\nhost_func_ns={}\nhost_pin_bytes={}\nva_granularity_bytes={}\nmulticast_granularity_bytes={}\nrent_usd_micros_per_hour={}\n",
             self.name,
             self.gpus.len(),
             g0.hbm_bytes,
@@ -500,6 +511,8 @@ impl HardwareProfile {
             g0.gemm_util_permille,
             g0.grouped_moe_permille,
             g0.pdl_trigger_permille,
+            g0.l2_bytes,
+            g0.l2_persist_hit_permille,
             self.host_pageable_permille(g0.id),
             self.host_align_bytes(g0.id),
             g0.pool_reuse_ns,
@@ -617,6 +630,8 @@ fn h100_gpu(id: DeviceId) -> GpuProfile {
         gemm_util_permille: 1000,
         grouped_moe_permille: 1000,
         pdl_trigger_permille: 250,
+        l2_bytes: 50u64.saturating_mul(1 << 20),
+        l2_persist_hit_permille: 750,
     }
 }
 
@@ -747,6 +762,8 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
     let mut gemm_util_permille: u16 = 1000;
     let mut grouped_moe_permille: u16 = 1000;
     let mut pdl_trigger_permille: u16 = 250;
+    let mut l2_bytes: Option<u64> = None;
+    let mut l2_persist_hit_permille: Option<u16> = None;
     let mut pageable_permille: u16 = 500;
     let mut align_bytes: u64 = 128;
     let mut pool_reuse_ns: Option<u64> = None;
@@ -807,6 +824,8 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
             "gemm_util_permille" => gemm_util_permille = parse_u16(v)?,
             "grouped_moe_permille" => grouped_moe_permille = parse_u16(v)?,
             "pdl_trigger_permille" => pdl_trigger_permille = parse_u16(v)?,
+            "l2_bytes" => l2_bytes = Some(parse_u64(v)?),
+            "l2_persist_hit_permille" => l2_persist_hit_permille = Some(parse_u16(v)?),
             "pageable_permille" => pageable_permille = parse_u16(v)?,
             "align_bytes" => align_bytes = parse_u64(v)?,
             "pool_reuse_ns" => pool_reuse_ns = Some(parse_u64(v)?),
@@ -866,6 +885,12 @@ fn parse_profile(text: &str) -> Result<HardwareProfile, SimError> {
         g.gemm_util_permille = gemm_util_permille;
         g.grouped_moe_permille = grouped_moe_permille;
         g.pdl_trigger_permille = pdl_trigger_permille;
+        if let Some(n) = l2_bytes {
+            g.l2_bytes = n;
+        }
+        if let Some(n) = l2_persist_hit_permille {
+            g.l2_persist_hit_permille = n;
+        }
         if let Some(ns) = pool_reuse_ns {
             g.pool_reuse_ns = ns;
         }
@@ -1119,6 +1144,23 @@ mod tests {
             format!("{err:?}").contains("compute_slots must be > 0"),
             "{err:?}"
         );
+    }
+
+    #[test]
+    fn parse_l2_persist() {
+        let p =
+            HardwareProfile::parse("gpus=1\nl2_bytes=4096\nl2_persist_hit_permille=500\n").unwrap();
+        assert_eq!(p.gpu(DeviceId(0)).unwrap().l2_bytes, 4096);
+        assert_eq!(p.gpu(DeviceId(0)).unwrap().l2_persist_hit_permille, 500);
+        let text = p.to_profile_text();
+        assert!(text.contains("l2_bytes=4096"));
+        assert!(text.contains("l2_persist_hit_permille=500"));
+        let open = HardwareProfile::parse("gpus=1\n").unwrap();
+        assert_eq!(
+            open.gpu(DeviceId(0)).unwrap().l2_bytes,
+            50u64.saturating_mul(1 << 20)
+        );
+        assert_eq!(open.gpu(DeviceId(0)).unwrap().l2_persist_hit_permille, 750);
     }
 
     #[test]

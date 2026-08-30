@@ -60,6 +60,8 @@ pub(crate) struct GpuCli {
     pub cooperative: bool,
     /// Same-stream PDL wait+trigger (`GpuStoreCfg::pdl`).
     pub pdl: bool,
+    /// Persisting L2 access-policy window (`GpuStoreCfg::l2_persist`).
+    pub l2_persist: bool,
     /// Hopper NVLS replica fanout (`GpuStoreCfg::multicast`). Implies vmm.
     pub multicast: bool,
     /// Hyper-Q occupancy (`GpuStoreCfg::compute_slots`). `0` keeps the profile.
@@ -108,6 +110,7 @@ impl GpuCli {
             "--decode-priority" => &mut self.decode_priority,
             "--cooperative" => &mut self.cooperative,
             "--pdl" => &mut self.pdl,
+            "--l2-persist" => &mut self.l2_persist,
             "--multicast" => &mut self.multicast,
             _ => return Ok(false),
         };
@@ -208,6 +211,7 @@ impl GpuCli {
             (self.decode_priority, "--decode-priority"),
             (self.cooperative, "--cooperative"),
             (self.pdl, "--pdl"),
+            (self.l2_persist, "--l2-persist"),
             (self.multicast, "--multicast"),
             (self.vmm_page_set, "--vmm-page"),
             (self.compute_slots_set, "--compute-slots"),
@@ -418,6 +422,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         decode_priority: gpu.decode_priority,
         cooperative: gpu.cooperative,
         pdl: gpu.pdl,
+        l2_persist: gpu.l2_persist,
         multicast: gpu.multicast,
         compute_slots: gpu.compute_slots,
         decode_sm_permille: gpu.decode_sm_permille,

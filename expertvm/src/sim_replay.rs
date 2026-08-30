@@ -33,6 +33,8 @@ pub(crate) struct GemmFlags {
     pub cooperative: bool,
     /// Same-stream PDL wait+trigger (`cudaLaunchKernelEx`).
     pub pdl: bool,
+    /// `cudaLaunchAttributeAccessPolicyWindow` over the expert page.
+    pub l2_persist: bool,
 }
 
 impl GemmFlags {
@@ -41,6 +43,19 @@ impl GemmFlags {
             wait: true,
             trigger: true,
         })
+    }
+
+    pub(crate) fn persist_window(self, id: AllocId) -> Option<AccessPolicyWindow> {
+        self.l2_persist
+            .then(|| AccessPolicyWindow::persisting(KernelBuf::whole(id)))
+    }
+
+    pub(crate) fn kernel_attrs(self, id: AllocId) -> KernelAttrs {
+        KernelAttrs {
+            cooperative: self.cooperative,
+            pdl: self.pdl_attr().unwrap_or_default(),
+            access_policy: self.persist_window(id),
+        }
     }
 }
 
@@ -54,8 +69,8 @@ use crate::planner::{
 use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
 use gpu_sim::{
-    AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelKind, MemcpyOp, Place,
-    PoolId, ProgrammaticLaunch, Score, Sim, StreamId,
+    AccessPolicyWindow, AllocId, DType, DeviceId, EventId, GraphId, HardwareProfile, KernelAttrs,
+    KernelBuf, KernelKind, MemcpyOp, Place, PoolId, ProgrammaticLaunch, Score, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -351,6 +366,13 @@ pub struct SimCfg {
     /// Decode identity stays `cudaLaunchKernel`. [`crate::GpuStoreCfg::pdl`]
     /// is the store path.
     pub pdl: bool,
+    /// `cudaLaunchAttributeAccessPolicyWindow` over each expert page.
+    ///
+    /// Sets [`gpu_sim::Sim::enable_persisting_l2`] and launches GEMMs with a
+    /// persisting window so a reused expert bills less HBM after the first
+    /// fill. Decode identity stays `cudaLaunchKernel` with persist limit 0.
+    /// [`crate::GpuStoreCfg::l2_persist`] is the store path.
+    pub l2_persist: bool,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// `--place replicas` maps dest VMM physicals then one NVLS kernel instead
@@ -418,6 +440,7 @@ impl SimCfg {
             graph_auto_free: false,
             cooperative: false,
             pdl: false,
+            l2_persist: false,
             multicast: false,
             compute_slots: 0,
             decode_sm_permille: 0,
@@ -513,6 +536,9 @@ pub fn sim_replay_cfg(
         sim.set_created_streams_priority(plan.mark)?;
     }
     apply_stream_sms(&mut sim, plan, cfg.decode_sm_permille)?;
+    if cfg.l2_persist {
+        sim.enable_persisting_l2()?;
+    }
     let mut args = TouchArgs {
         d,
         s,
@@ -535,6 +561,7 @@ pub fn sim_replay_cfg(
     let mut graphs = GraphBank::new(cfg.graph_update, cfg.graph_clone, cfg.graph_build, leaf)
         .with_cooperative(cfg.cooperative)
         .with_pdl(cfg.pdl)
+        .with_l2_persist(cfg.l2_persist)
         .with_set_params(cfg.graph_set_params)
         .with_piecewise(cfg.graph_piecewise);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
@@ -771,6 +798,7 @@ pub(crate) struct GraphBank {
     mem: LeafMem,
     cooperative: bool,
     pdl: bool,
+    l2_persist: bool,
     set_params: bool,
     pub updates: u64,
     pub clones: u64,
@@ -789,6 +817,7 @@ impl GraphBank {
             mem,
             cooperative: false,
             pdl: false,
+            l2_persist: false,
             set_params: false,
             updates: 0,
             clones: 0,
@@ -806,10 +835,16 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_l2_persist(mut self, yes: bool) -> Self {
+        self.l2_persist = yes;
+        self
+    }
+
     fn gemm_flags(&self) -> GemmFlags {
         GemmFlags {
             cooperative: self.cooperative,
             pdl: self.pdl,
+            l2_persist: self.l2_persist,
         }
     }
 
@@ -1700,13 +1735,7 @@ fn launch_gemm_kernel(
     writes: &[gpu_sim::AllocId],
     flags: GemmFlags,
 ) -> Result<(), Error> {
-    if flags.cooperative {
-        let _k = sim.cooperative_kernel(d, gemm_kind(), &[id], writes, s)?;
-    } else if let Some(pdl) = flags.pdl_attr() {
-        let _k = sim.kernel_pdl(d, gemm_kind(), &[id], writes, s, pdl)?;
-    } else {
-        let _k = sim.kernel(d, gemm_kind(), &[id], writes, s)?;
-    }
+    let _k = sim.kernel_with(d, gemm_kind(), &[id], writes, s, flags.kernel_attrs(id))?;
     Ok(())
 }
 
@@ -1738,14 +1767,17 @@ fn add_gemm_kernel(
     flags: GemmFlags,
 ) -> Result<(), Error> {
     if flags.cooperative {
-        return sim
-            .graph_add_cooperative_kernel(graph, gemm_kind(), &[id], writes)
-            .map_err(Error::from);
+        sim.graph_add_cooperative_kernel(graph, gemm_kind(), &[id], writes)?;
+    } else {
+        sim.graph_add_kernel(graph, gemm_kind(), &[id], writes)?;
+        if let Some(pdl) = flags.pdl_attr() {
+            let node = usize::from(!writes.is_empty());
+            sim.graph_kernel_node_set_pdl(graph, node, pdl)?;
+        }
     }
-    sim.graph_add_kernel(graph, gemm_kind(), &[id], writes)?;
-    if let Some(pdl) = flags.pdl_attr() {
+    if let Some(w) = flags.persist_window(id) {
         let node = usize::from(!writes.is_empty());
-        sim.graph_kernel_node_set_pdl(graph, node, pdl)?;
+        sim.graph_kernel_node_set_access_policy(graph, node, Some(w))?;
     }
     Ok(())
 }

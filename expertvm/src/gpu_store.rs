@@ -156,6 +156,12 @@ pub struct GpuStoreCfg {
     /// Illegal with [`Self::cooperative`]. Decode identity stays
     /// `cudaLaunchKernel`.
     pub pdl: bool,
+    /// `cudaLaunchAttributeAccessPolicyWindow` over each expert page.
+    ///
+    /// [`SimulatedGpuStore::with_cfg`] calls [`gpu_sim::Sim::enable_persisting_l2`]
+    /// and launches GEMMs with a persisting window. Decode identity stays
+    /// persist limit 0.
+    pub l2_persist: bool,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// [`Self::pin_hot`] and walker `--place replicas` map dest VMM physicals
@@ -228,6 +234,7 @@ pub struct SimulatedGpuStore {
     decode_priority: bool,
     cooperative: bool,
     pdl: bool,
+    l2_persist: bool,
     multicast: bool,
     next_event: u32,
     pages: BTreeMap<ExpertKey, GpuPage>,
@@ -377,6 +384,8 @@ impl SimulatedGpuStore {
     /// `cudaLaunchCooperativeKernel` (exclusive compute).
     /// [`GpuStoreCfg::pdl`] is same-stream programmatic dependent launch
     /// (illegal with cooperative).
+    /// [`GpuStoreCfg::l2_persist`] is `cudaLaunchAttributeAccessPolicyWindow`
+    /// over expert pages (persisting L2 after the first fill).
     /// [`GpuStoreCfg::multicast`] is Hopper NVLS replica fanout (requires
     /// [`GpuFill::Vmm`] and NVLink).
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
@@ -427,6 +436,9 @@ impl SimulatedGpuStore {
             profile
         };
         let mut sim = Sim::new(profile);
+        if cfg.l2_persist {
+            sim.enable_persisting_l2()?;
+        }
         let share_import = if cfg.shareable {
             bind_shareable_mempools(&mut sim)?
                 .get(&DeviceId(0))
@@ -480,6 +492,7 @@ impl SimulatedGpuStore {
             decode_priority: cfg.decode_priority,
             cooperative: cfg.cooperative,
             pdl: cfg.pdl,
+            l2_persist: cfg.l2_persist,
             multicast: cfg.multicast,
             next_event: 1,
             pages: BTreeMap::new(),
@@ -593,6 +606,7 @@ impl SimulatedGpuStore {
         GemmFlags {
             cooperative: self.cooperative,
             pdl: self.pdl,
+            l2_persist: self.l2_persist,
         }
     }
 
@@ -1940,13 +1954,7 @@ fn launch_store_gemm(
     writes: &[AllocId],
     flags: GemmFlags,
 ) -> Result<(), Error> {
-    if flags.cooperative {
-        let _k = sim.cooperative_kernel(d, gemm_kind(), &[id], writes, s)?;
-    } else if let Some(pdl) = flags.pdl_attr() {
-        let _k = sim.kernel_pdl(d, gemm_kind(), &[id], writes, s, pdl)?;
-    } else {
-        let _k = sim.kernel(d, gemm_kind(), &[id], writes, s)?;
-    }
+    let _k = sim.kernel_with(d, gemm_kind(), &[id], writes, s, flags.kernel_attrs(id))?;
     Ok(())
 }
 
@@ -1978,14 +1986,17 @@ fn add_store_gemm(
     flags: GemmFlags,
 ) -> Result<(), Error> {
     if flags.cooperative {
-        return sim
-            .graph_add_cooperative_kernel(graph, gemm_kind(), &[id], writes)
-            .map_err(Error::from);
+        sim.graph_add_cooperative_kernel(graph, gemm_kind(), &[id], writes)?;
+    } else {
+        sim.graph_add_kernel(graph, gemm_kind(), &[id], writes)?;
+        if let Some(pdl) = flags.pdl_attr() {
+            let node = usize::from(!writes.is_empty());
+            sim.graph_kernel_node_set_pdl(graph, node, pdl)?;
+        }
     }
-    sim.graph_add_kernel(graph, gemm_kind(), &[id], writes)?;
-    if let Some(pdl) = flags.pdl_attr() {
+    if let Some(w) = flags.persist_window(id) {
         let node = usize::from(!writes.is_empty());
-        sim.graph_kernel_node_set_pdl(graph, node, pdl)?;
+        sim.graph_kernel_node_set_access_policy(graph, node, Some(w))?;
     }
     Ok(())
 }

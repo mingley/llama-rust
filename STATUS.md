@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaLaunchAttributeAccessPolicyWindow`
+
+`kernel_access_policy` applies a persisting L2 window so a reused expert
+GEMM bills less HBM after `set_persisting_l2_cache_size` (CUDA default 0).
+The first kernel fills the persist cache; `reset_persisting_l2_cache`
+colds it. Graph SetAttribute / CopyAttributes carry the window.
+Device-launch graphs allow it. `expertvm sim --l2-persist` / Engine
+`--expert-sim --l2-persist` enable the limit and attach a window to expert
+GEMMs. Decode identity stays `cudaLaunchKernel` with persist limit 0.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaLaunchAttributeLaunchCompletionEvent`
 
 `kernel_launch_completion` records an event when the kernel grid is

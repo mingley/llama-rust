@@ -31,6 +31,7 @@ infer-bench schedule tests/traces/cycling.jsonl --capacity 8 --place replicas --
 infer-bench schedule tests/traces/cycling.jsonl --capacity 8 --place remote --profile 2node-rdma --expert-bytes 1048576
 infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --compute-slots 2 --decode-sms 250
 infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --compute-slots 2 --pdl
+infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --l2-persist
 infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --prefill-chunk 1 --decode-priority --compute-slots 2
 ```
 

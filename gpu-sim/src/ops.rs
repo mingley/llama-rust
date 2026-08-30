@@ -330,6 +330,69 @@ pub struct LaunchCompletionEvent {
     pub external: bool,
 }
 
+/// `cudaAccessProperty` for [`AccessPolicyWindow`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AccessProperty {
+    /// Normal L2 (no persist fill, no HBM discount).
+    #[default]
+    Normal,
+    /// Streaming: accessed once; does not occupy persisting L2.
+    Streaming,
+    /// Persisting: reused lines stay in L2 until
+    /// [`crate::Sim::reset_persisting_l2_cache`]. `miss` cannot be this.
+    Persisting,
+}
+
+/// `cudaAccessPolicyWindow` / `cudaLaunchAttributeAccessPolicyWindow`.
+///
+/// [`crate::Sim::kernel_access_policy`] applies this window to one launch.
+/// Persisting hits are billed at `1000 - GpuProfile::l2_persist_hit_permille`
+/// of HBM after the first kernel has filled
+/// [`crate::Sim::set_persisting_l2_cache_size`] (CUDA default size is 0).
+/// [`KernelBuf::bytes`] `0` means the remainder of the allocation (not
+/// CUDA `num_bytes = 0`; use [`None`] to clear the attribute). Decode identity
+/// stays [`crate::Sim::kernel`] with no window. Capture records the attribute.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AccessPolicyWindow {
+    /// VA range (`base_ptr` / `num_bytes`).
+    pub buf: KernelBuf,
+    /// `hitRatio` as ‰ (`1000` = the whole window). Must be `<= 1000`.
+    pub hit_ratio_permille: u16,
+    /// Property for expected hits.
+    pub hit: AccessProperty,
+    /// Property for misses. Cannot be [`AccessProperty::Persisting`].
+    pub miss: AccessProperty,
+}
+
+impl AccessPolicyWindow {
+    /// Persisting hits, streaming misses, full window (`hitRatio = 1.0`).
+    #[must_use]
+    pub fn persisting(buf: KernelBuf) -> Self {
+        Self {
+            buf,
+            hit_ratio_permille: 1000,
+            hit: AccessProperty::Persisting,
+            miss: AccessProperty::Streaming,
+        }
+    }
+}
+
+/// Packed `cudaLaunchKernelEx` / graph kernel-node attributes.
+///
+/// [`crate::Sim::kernel_with`] applies these on one submit so PDL and an
+/// access-policy window can share a launch (7 arguments including `self`).
+/// Decode identity stays [`crate::Sim::kernel`] ([`Default`]: no cooperative,
+/// no PDL, no window).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KernelAttrs {
+    /// `cudaLaunchCooperativeKernel`.
+    pub cooperative: bool,
+    /// `cudaLaunchAttributeProgrammaticStreamSerialization`.
+    pub pdl: ProgrammaticLaunch,
+    /// `cudaLaunchAttributeAccessPolicyWindow`.
+    pub access_policy: Option<AccessPolicyWindow>,
+}
+
 /// `cudaStreamAttachMemAsync` flags (`cudaMemAttachGlobal` / `Host` / `Single`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemAttach {

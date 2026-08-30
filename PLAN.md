@@ -699,7 +699,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--shareable`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-piecewise`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--cooperative`, `--pdl`, and `--multicast`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-piecewise`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--cooperative`, `--pdl`, `--l2-persist`, and `--multicast`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--shareable` is POSIX-FD mempool IPC
   (implies `--mempool`; illegal with `--sync-alloc` / mapped / managed / vmm). `--mapped` is `cudaHostAllocMapped`
@@ -1532,6 +1532,18 @@ model, do not celebrate the sim.
     finishes. Other streams may `wait_event` it and overlap leftover compute
     with copies. Device-launch graphs refuse it. CopyAttributes copies it.
     Decode identity stays `kernel`. `gpu-profile capture` is still refused.
+
+116. [x] `cudaLaunchAttributeAccessPolicyWindow`: `kernel_access_policy` /
+    `graph_kernel_node_set_access_policy` apply a persisting (or streaming)
+    L2 window. `set_persisting_l2_cache_size` is
+    `cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize)` (CUDA default 0).
+    The first kernel fills persisting lines; a later overlapping kernel
+    bills HBM at `1000 - l2_persist_hit_permille`. `reset_persisting_l2_cache`
+    colds the next fill. `miss` cannot be Persisting. Device-launch graphs
+    allow it (not an event). CopyAttributes copies it. `expertvm sim
+    --l2-persist` / Engine `--expert-sim --l2-persist` enable the limit and
+    attach a window to expert GEMMs. Decode identity stays `kernel` with
+    persist limit 0. `gpu-profile capture` is still refused.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

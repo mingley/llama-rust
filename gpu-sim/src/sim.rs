@@ -10,9 +10,10 @@ use crate::ids::{
     PoolId, PtrExportId, ShareableHandleId, StreamId, UserObjectId,
 };
 use crate::ops::{
-    BatchMemOp, CaptureDepOp, GpuOp as Kind, GraphExecUpdateResult, GraphExecUpdateResultInfo,
-    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelBuf, KernelKind, KernelNodeParams,
+    AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, GpuOp as Kind,
+    GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
+    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind,
+    GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeParams,
     LaunchCompletionEvent, MemAdvise, MemAttach, MemcpyOp, Operation, PdlLaunch, Place,
     ProgrammaticEvent, ProgrammaticLaunch, StreamCaptureInfo, StreamCaptureMode, UserObjectFlags,
     WaitValueCmp,
@@ -178,6 +179,8 @@ struct Op {
     programmatic_event: Option<ProgrammaticEvent>,
     /// `cudaLaunchAttributeLaunchCompletionEvent` on this kernel, if any.
     launch_completion: Option<LaunchCompletionEvent>,
+    /// `cudaLaunchAttributeAccessPolicyWindow` on this kernel, if any.
+    access_policy: Option<AccessPolicyWindow>,
 }
 
 /// How a submitted op pays kernel/graph launch overhead.
@@ -212,6 +215,16 @@ struct GpuRt {
     graph_used_high: u64,
     /// High-water of reserved graph-mem bytes (same as used in this model).
     graph_reserved_high: u64,
+    /// `cudaLimitPersistingL2CacheSize`. CUDA default is 0.
+    persist_limit: u64,
+    /// Filled persisting-L2 ranges (insertion order is LRU).
+    persist_lines: Vec<PersistLine>,
+}
+
+struct PersistLine {
+    id: AllocId,
+    offset: u64,
+    bytes: u64,
 }
 
 struct Ev {
@@ -263,6 +276,8 @@ struct GraphStep {
     programmatic_event: Option<ProgrammaticEvent>,
     /// `cudaLaunchAttributeLaunchCompletionEvent` on this kernel node, if any.
     launch_completion: Option<LaunchCompletionEvent>,
+    /// `cudaLaunchAttributeAccessPolicyWindow` on this kernel node, if any.
+    access_policy: Option<AccessPolicyWindow>,
 }
 
 struct Graph {
@@ -534,6 +549,8 @@ pub struct Sim {
     enqueue_programmatic_event: Option<ProgrammaticEvent>,
     /// Launch-completion event for the next kernel submit / graph replay.
     enqueue_launch_completion: Option<LaunchCompletionEvent>,
+    /// Access-policy window for the next kernel submit / graph replay.
+    enqueue_access_policy: Option<AccessPolicyWindow>,
     /// Wait/write-value mailbox: `(alloc, offset) → word`. Missing is `0`.
     mailbox: BTreeMap<(AllocId, u64), u64>,
     /// `cudaThreadExchangeStreamCaptureMode` default for [`Self::begin_capture`].
@@ -558,6 +575,8 @@ impl Sim {
                     copies: 0,
                     graph_used_high: 0,
                     graph_reserved_high: 0,
+                    persist_limit: 0,
+                    persist_lines: Vec::new(),
                 },
             );
             let _dup = replaced.is_some();
@@ -616,6 +635,7 @@ impl Sim {
             enqueue_pdl: ProgrammaticLaunch::default(),
             enqueue_programmatic_event: None,
             enqueue_launch_completion: None,
+            enqueue_access_policy: None,
             mailbox: BTreeMap::new(),
             capture_mode: StreamCaptureMode::Relaxed,
             next_user_object: 1,
@@ -1773,6 +1793,7 @@ impl Sim {
             self.enqueue_pdl = step.pdl;
             self.enqueue_programmatic_event = step.programmatic_event;
             self.enqueue_launch_completion = step.launch_completion;
+            self.enqueue_access_policy = step.access_policy;
             let wait = graph_node_waits(step, extra_wait, launch_tail, &node_ops)?;
             let s = self.graph_exec_stream(origin, stream, step, &node_stream, &mut worker);
             if let Some(slot) = node_stream.get_mut(idx) {
@@ -1946,6 +1967,7 @@ impl Sim {
         self.enqueue_pdl = ProgrammaticLaunch::default();
         self.enqueue_programmatic_event = None;
         self.enqueue_launch_completion = None;
+        self.enqueue_access_policy = None;
         Ok(n)
     }
 
@@ -5413,8 +5435,104 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphKernelNodeGetAttribute` for access-policy window on the definition.
+    pub fn graph_kernel_node_get_access_policy(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<Option<AccessPolicyWindow>, SimError> {
+        self.kernel_node_access_policy(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for access-policy window on the exec.
+    pub fn graph_exec_kernel_node_get_access_policy(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<Option<AccessPolicyWindow>, SimError> {
+        self.kernel_node_access_policy(exec, node, true)
+    }
+
+    fn kernel_node_access_policy(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<Option<AccessPolicyWindow>, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.access_policy)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for access-policy window on the definition.
+    pub fn graph_kernel_node_set_access_policy(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        window: Option<AccessPolicyWindow>,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        if let Some(w) = window {
+            validate_access_policy(w)?;
+        }
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.access_policy = window;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for access-policy window on the exec.
+    pub fn graph_exec_kernel_node_set_access_policy(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        window: Option<AccessPolicyWindow>,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let exec = self.as_exec(exec)?;
+        if let Some(w) = window {
+            validate_access_policy(w)?;
+        }
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.access_policy = window;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// `cudaGraphKernelNodeCopyAttributes`: copy priority, PDL, programmatic
-    /// event, and launch-completion event from `src` to `dst`.
+    /// event, launch-completion event, and access-policy window from `src` to
+    /// `dst`.
     ///
     /// Both nodes must be kernels. Capture cannot include it.
     pub fn graph_kernel_node_copy_attributes(
@@ -5429,10 +5547,12 @@ impl Sim {
         let pdl = self.graph_kernel_node_get_pdl(src_graph, src)?;
         let pde = self.graph_kernel_node_get_programmatic_event(src_graph, src)?;
         let lce = self.graph_kernel_node_get_launch_completion(src_graph, src)?;
+        let apw = self.graph_kernel_node_get_access_policy(src_graph, src)?;
         self.graph_kernel_node_set_priority(dst_graph, dst, pri)?;
         self.graph_kernel_node_set_pdl(dst_graph, dst, pdl)?;
         self.graph_kernel_node_set_programmatic_event(dst_graph, dst, pde)?;
-        self.graph_kernel_node_set_launch_completion(dst_graph, dst, lce)
+        self.graph_kernel_node_set_launch_completion(dst_graph, dst, lce)?;
+        self.graph_kernel_node_set_access_policy(dst_graph, dst, apw)
     }
 
     /// `cudaGraphNodeFindInClone`: index in `cloned` of the node that was `node`
@@ -5512,6 +5632,7 @@ impl Sim {
             pdl: self.enqueue_pdl,
             programmatic_event: self.enqueue_programmatic_event,
             launch_completion: self.enqueue_launch_completion,
+            access_policy: self.enqueue_access_policy,
         });
         Ok(())
     }
@@ -7756,6 +7877,174 @@ impl Sim {
         out
     }
 
+    /// [`Self::kernel`] plus packed [`KernelAttrs`] (`cudaLaunchKernelEx`).
+    ///
+    /// Combines cooperative, PDL, and an access-policy window on one submit.
+    /// Decode identity stays [`Self::kernel`] ([`KernelAttrs::default`]).
+    pub fn kernel_with(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+        attrs: KernelAttrs,
+    ) -> Result<OpId, SimError> {
+        let reads: Vec<KernelBuf> = reads.iter().copied().map(KernelBuf::whole).collect();
+        let writes: Vec<KernelBuf> = writes.iter().copied().map(KernelBuf::whole).collect();
+        self.kernel_bufs_with(device, kind, &reads, &writes, stream, attrs)
+    }
+
+    /// [`Self::kernel_bufs`] plus packed [`KernelAttrs`].
+    pub fn kernel_bufs_with(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+        attrs: KernelAttrs,
+    ) -> Result<OpId, SimError> {
+        if let Some(w) = attrs.access_policy {
+            validate_access_policy(w)?;
+        }
+        if attrs.cooperative {
+            self.require_cooperative(device)?;
+        }
+        let prev_pdl = self.enqueue_pdl;
+        let prev_win = self.enqueue_access_policy;
+        self.enqueue_pdl = attrs.pdl;
+        self.enqueue_access_policy = attrs.access_policy;
+        let out = self.submit_kernel(device, kind, reads, writes, stream, attrs.cooperative);
+        self.enqueue_pdl = prev_pdl;
+        self.enqueue_access_policy = prev_win;
+        out
+    }
+
+    /// [`Self::kernel`] plus [`AccessPolicyWindow`] (`cudaLaunchAttributeAccessPolicyWindow`).
+    ///
+    /// Persisting hits reduce billed HBM after
+    /// [`Self::set_persisting_l2_cache_size`]. Decode identity stays [`Self::kernel`].
+    pub fn kernel_access_policy(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[AllocId],
+        writes: &[AllocId],
+        stream: StreamId,
+        window: AccessPolicyWindow,
+    ) -> Result<OpId, SimError> {
+        self.kernel_with(
+            device,
+            kind,
+            reads,
+            writes,
+            stream,
+            KernelAttrs {
+                access_policy: Some(window),
+                ..KernelAttrs::default()
+            },
+        )
+    }
+
+    /// [`Self::kernel_bufs`] plus [`AccessPolicyWindow`].
+    pub fn kernel_access_policy_bufs(
+        &mut self,
+        device: DeviceId,
+        kind: KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+        stream: StreamId,
+        window: AccessPolicyWindow,
+    ) -> Result<OpId, SimError> {
+        self.kernel_bufs_with(
+            device,
+            kind,
+            reads,
+            writes,
+            stream,
+            KernelAttrs {
+                access_policy: Some(window),
+                ..KernelAttrs::default()
+            },
+        )
+    }
+
+    /// `cudaDeviceSetLimit(cudaLimitPersistingL2CacheSize)`.
+    ///
+    /// Host-synchronous. Capture cannot include it. `bytes` must be `<=`
+    /// [`crate::GpuProfile::l2_bytes`]. CUDA default is 0 (windows are a no-op
+    /// until this is set). Shrinking evicts oldest persisting lines.
+    pub fn set_persisting_l2_cache_size(
+        &mut self,
+        device: DeviceId,
+        bytes: u64,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture persisting L2")?;
+        let cap = self.profile.gpu(device)?.l2_bytes;
+        if bytes > cap {
+            return Err(SimError::Invalid {
+                why: "persisting L2 cache size",
+            });
+        }
+        let rt = self.gpus.get_mut(&device).ok_or(SimError::Invalid {
+            why: "unknown device",
+        })?;
+        rt.persist_limit = bytes;
+        persist_trim(rt);
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaDeviceGetLimit(cudaLimitPersistingL2CacheSize)`.
+    pub fn persisting_l2_cache_size(&self, device: DeviceId) -> Result<u64, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self
+            .gpus
+            .get(&device)
+            .ok_or(SimError::Invalid {
+                why: "unknown device",
+            })?
+            .persist_limit)
+    }
+
+    /// `cudaCtxResetPersistingL2Cache`.
+    ///
+    /// Host-synchronous. Drops filled persisting lines; the limit stays.
+    /// Capture cannot include it. The next persisting kernel refills (cold).
+    pub fn reset_persisting_l2_cache(&mut self, device: DeviceId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture persisting L2")?;
+        let _gpu = self.profile.gpu(device)?;
+        let rt = self.gpus.get_mut(&device).ok_or(SimError::Invalid {
+            why: "unknown device",
+        })?;
+        rt.persist_lines.clear();
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// Set each GPU's persisting L2 limit to [`crate::GpuProfile::l2_bytes`].
+    ///
+    /// Fails `l2 persist needs l2_bytes` when a GPU reports 0. Decode identity
+    /// does not call this (limit stays 0).
+    pub fn enable_persisting_l2(&mut self) -> Result<(), SimError> {
+        let ids: Vec<(DeviceId, u64)> = self
+            .profile
+            .gpus
+            .iter()
+            .map(|g| (g.id, g.l2_bytes))
+            .collect();
+        for (id, bytes) in ids {
+            if bytes == 0 {
+                return Err(SimError::Invalid {
+                    why: "l2 persist needs l2_bytes",
+                });
+            }
+            self.set_persisting_l2_cache_size(id, bytes)?;
+        }
+        Ok(())
+    }
+
     /// `cudaLaunchCooperativeKernel` on whole allocations.
     ///
     /// Same lease / residency rules as [`Self::kernel`]. The grid occupies
@@ -8484,6 +8773,7 @@ impl Sim {
             pdl: self.enqueue_pdl,
             programmatic_event: self.enqueue_programmatic_event,
             launch_completion: self.enqueue_launch_completion,
+            access_policy: self.enqueue_access_policy,
         });
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
@@ -8581,6 +8871,7 @@ impl Sim {
                 pdl_trigger_ns: None,
                 programmatic_event: pde,
                 launch_completion: lce,
+                access_policy: self.enqueue_access_policy,
             },
         );
         if let Some(pe) = pde {
@@ -8961,6 +9252,7 @@ impl Sim {
                 pdl_trigger_ns: None,
                 programmatic_event: None,
                 launch_completion: None,
+                access_policy: None,
             },
         );
         self.add_op_dep(kernel, id);
@@ -9014,7 +9306,15 @@ impl Sim {
             self.drop_compute_n(device, slots)?;
             return Err(e);
         }
-        let ns = match self.kernel_ns(device, stream, &kind, launch, mem_bps) {
+        let window = self.ops.get(&id).and_then(|o| o.access_policy);
+        let billed = match self.persist_kernel_bytes(device, window, &kind, &reads, &writes) {
+            Ok(n) => n,
+            Err(e) => {
+                self.drop_compute_n(device, slots)?;
+                return Err(e);
+            }
+        };
+        let ns = match self.kernel_ns(device, stream, &kind, launch, mem_bps, billed) {
             Ok(n) => n,
             Err(e) => {
                 self.drop_compute_n(device, slots)?;
@@ -10055,6 +10355,67 @@ impl Sim {
         n
     }
 
+    fn persist_kernel_bytes(
+        &mut self,
+        device: DeviceId,
+        window: Option<AccessPolicyWindow>,
+        kind: &KernelKind,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+    ) -> Result<u64, SimError> {
+        let (_, kind_bytes) = kind.flops_and_bytes();
+        let Some(window) = window else {
+            return Ok(kind_bytes);
+        };
+        validate_access_policy(window)?;
+        if window.hit != AccessProperty::Persisting {
+            return Ok(kind_bytes);
+        }
+        let persist_hit = u64::from(self.profile.gpu(device)?.l2_persist_hit_permille.min(1000));
+        let total = self.alloc_ref(window.buf.id)?.bytes;
+        let (off, n) = kernel_span(total, &window.buf)?;
+        let touch = self.kernel_touch_spans(reads, writes)?;
+        let overlap = span_overlap_with(window.buf.id, off, n, &touch);
+        if overlap == 0 {
+            return Ok(kind_bytes);
+        }
+        let rt = self.gpus.get_mut(&device).ok_or(SimError::Invalid {
+            why: "unknown device",
+        })?;
+        if rt.persist_limit == 0 {
+            return Ok(kind_bytes);
+        }
+        let want = overlap.saturating_mul(u64::from(window.hit_ratio_permille.min(1000))) / 1000;
+        let cap = want.min(rt.persist_limit);
+        let cached = persist_cached(rt, window.buf.id, off, n).min(overlap);
+        let hit = cached.min(cap);
+        let touch_bytes = touch
+            .iter()
+            .fold(0u64, |acc, s| acc.saturating_add(s.bytes));
+        let billed = persist_discount(kind_bytes, hit, touch_bytes, persist_hit);
+        persist_fill(rt, window.buf.id, off, cap);
+        Ok(billed)
+    }
+
+    fn kernel_touch_spans(
+        &self,
+        reads: &[KernelBuf],
+        writes: &[KernelBuf],
+    ) -> Result<Vec<PersistLine>, SimError> {
+        let mut spans = Vec::new();
+        for b in reads.iter().chain(writes.iter()) {
+            let total = self.alloc_ref(b.id)?.bytes;
+            let (offset, bytes) = kernel_span(total, b)?;
+            spans.push(PersistLine {
+                id: b.id,
+                offset,
+                bytes,
+            });
+        }
+        merge_persist_spans(&mut spans);
+        Ok(spans)
+    }
+
     fn kernel_ns(
         &self,
         device: DeviceId,
@@ -10062,9 +10423,10 @@ impl Sim {
         kind: &KernelKind,
         launch: LaunchCost,
         mem_bps: u64,
+        billed_bytes: u64,
     ) -> Result<u64, SimError> {
         let g = self.profile.gpu(device)?;
-        let (flops, bytes) = kind.flops_and_bytes();
+        let (flops, _) = kind.flops_and_bytes();
         let sm = u64::from(self.stream_sm_permille(device, stream));
         let peak = g
             .flops(kind.dtype())
@@ -10073,7 +10435,7 @@ impl Sim {
             .unwrap_or(1)
             .max(1);
         let compute = ns_for_bytes(flops, peak);
-        let memory = ns_for_bytes(bytes, mem_bps.max(1));
+        let memory = ns_for_bytes(billed_bytes, mem_bps.max(1));
         let overhead = match launch {
             LaunchCost::Kernel => g.launch_overhead_ns,
             LaunchCost::GraphHead => g.graph_launch_ns,
@@ -10623,6 +10985,98 @@ fn kernel_span(total: u64, buf: &KernelBuf) -> Result<(u64, u64), SimError> {
     Ok((buf.offset, n))
 }
 
+fn validate_access_policy(window: AccessPolicyWindow) -> Result<(), SimError> {
+    if window.hit_ratio_permille > 1000 {
+        return Err(SimError::Invalid {
+            why: "access policy hit ratio",
+        });
+    }
+    if window.miss == AccessProperty::Persisting {
+        return Err(SimError::Invalid {
+            why: "access policy miss persisting",
+        });
+    }
+    Ok(())
+}
+
+fn range_overlap(a0: u64, an: u64, b0: u64, bn: u64) -> u64 {
+    let a1 = a0.saturating_add(an);
+    let b1 = b0.saturating_add(bn);
+    let lo = a0.max(b0);
+    let hi = a1.min(b1);
+    hi.saturating_sub(lo)
+}
+
+fn span_overlap_with(id: AllocId, off: u64, n: u64, spans: &[PersistLine]) -> u64 {
+    spans.iter().filter(|s| s.id == id).fold(0u64, |acc, s| {
+        acc.saturating_add(range_overlap(off, n, s.offset, s.bytes))
+    })
+}
+
+fn persist_cached(rt: &GpuRt, id: AllocId, off: u64, n: u64) -> u64 {
+    span_overlap_with(id, off, n, &rt.persist_lines)
+}
+
+fn persist_used(rt: &GpuRt) -> u64 {
+    rt.persist_lines
+        .iter()
+        .fold(0u64, |acc, l| acc.saturating_add(l.bytes))
+}
+
+fn persist_trim(rt: &mut GpuRt) {
+    while persist_used(rt) > rt.persist_limit && !rt.persist_lines.is_empty() {
+        let _gone = rt.persist_lines.remove(0);
+    }
+}
+
+fn persist_fill(rt: &mut GpuRt, id: AllocId, off: u64, n: u64) {
+    if n == 0 || rt.persist_limit == 0 {
+        return;
+    }
+    let n = n.min(rt.persist_limit);
+    rt.persist_lines
+        .retain(|l| l.id != id || range_overlap(off, n, l.offset, l.bytes) == 0);
+    persist_trim(rt);
+    while persist_used(rt).saturating_add(n) > rt.persist_limit && !rt.persist_lines.is_empty() {
+        let _gone = rt.persist_lines.remove(0);
+    }
+    if persist_used(rt).saturating_add(n) <= rt.persist_limit {
+        rt.persist_lines.push(PersistLine {
+            id,
+            offset: off,
+            bytes: n,
+        });
+    }
+}
+
+fn persist_discount(kind_bytes: u64, hit: u64, touch: u64, persist_permille: u64) -> u64 {
+    if hit == 0 || touch == 0 {
+        return kind_bytes;
+    }
+    let frac = hit.saturating_mul(1000) / touch;
+    let discount = frac.saturating_mul(persist_permille) / 1000;
+    kind_bytes.saturating_mul(1000u64.saturating_sub(discount.min(1000))) / 1000
+}
+
+fn merge_persist_spans(spans: &mut Vec<PersistLine>) {
+    spans.sort_by_key(|s| (s.id.0, s.offset));
+    let mut out: Vec<PersistLine> = Vec::new();
+    for s in spans.drain(..) {
+        if let Some(last) = out.last_mut() {
+            if last.id == s.id && last.offset.saturating_add(last.bytes) >= s.offset {
+                let end = last
+                    .offset
+                    .saturating_add(last.bytes)
+                    .max(s.offset.saturating_add(s.bytes));
+                last.bytes = end.saturating_sub(last.offset);
+                continue;
+            }
+        }
+        out.push(s);
+    }
+    *spans = out;
+}
+
 fn wait_value_mask(bits32: bool) -> u64 {
     if bits32 {
         0xFFFF_FFFF
@@ -11136,6 +11590,7 @@ fn remap_nested_graphs(
             pdl: step.pdl,
             programmatic_event: step.programmatic_event,
             launch_completion: step.launch_completion,
+            access_policy: step.access_policy,
         });
     }
     Ok(out)

@@ -50,6 +50,8 @@
 //! `--pdl` is programmatic dependent launch: consecutive same-stream expert
 //! GEMMs may overlap after the previous kernel's trigger (needs
 //! `--compute-slots` >= 2; illegal with `--cooperative`).
+//! `--l2-persist` is `cudaLaunchAttributeAccessPolicyWindow` over expert pages
+//! (persisting L2 after the first fill).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode

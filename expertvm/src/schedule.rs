@@ -301,6 +301,9 @@ impl SchedRt {
             sim.set_created_streams_priority(plan.mark)?;
         }
         apply_stream_sms(&mut sim, plan, cfg.decode_sm_permille)?;
+        if cfg.l2_persist {
+            sim.enable_persisting_l2()?;
+        }
         let n_gpus = u16::try_from(sim.profile().n_gpus()).unwrap_or(1).max(1);
         let bytes = cfg.bytes_per_expert.max(1);
         let mut cfg = cfg;
@@ -330,6 +333,7 @@ impl SchedRt {
             )
             .with_cooperative(cfg.cooperative)
             .with_pdl(cfg.pdl)
+            .with_l2_persist(cfg.l2_persist)
             .with_set_params(cfg.graph_set_params)
             .with_piecewise(cfg.graph_piecewise),
             ctr: ReplayCounters::default(),

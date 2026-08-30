@@ -5657,6 +5657,32 @@ fn sim_replay_pdl_rejects_cooperative() {
 }
 
 #[test]
+fn sim_replay_l2_persist_reused_expert_is_faster() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000000000000\nlaunch_overhead_ns=1\nhbm_bps=1000000000\nl2_persist_hit_permille=1000\n",
+    )
+    .expect("memory-bound persist profile");
+    let cold = SimCfg::lru(2, 4096, 0);
+    let warm = SimCfg {
+        l2_persist: true,
+        ..cold
+    };
+    let off = sim_replay_cfg(&t, profile.clone(), cold).expect("cold");
+    let on = sim_replay_cfg(&t, profile, warm).expect("persist");
+    assert_eq!(off.hits, on.hits);
+    assert_eq!(off.misses, on.misses);
+    assert!(
+        on.sim_ns < off.sim_ns,
+        "persisting L2 must speed a reused expert GEMM; persist={} cold={}",
+        on.sim_ns,
+        off.sim_ns
+    );
+}
+
+#[test]
 fn simulated_gpu_store_pdl_overlaps_same_stream_gemms() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1])],

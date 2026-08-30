@@ -85,7 +85,8 @@ so independent sequence GEMMs on those streams overlap at full issue rate
 (default profile `1` is exclusive). `--pdl` is programmatic dependent
 launch: consecutive same-stream expert GEMMs may overlap after the
 previous kernel's trigger when `--compute-slots` is `>=2` (illegal with
-`--cooperative`). `--cooperative` is
+`--cooperative`). `--l2-persist` is `cudaLaunchAttributeAccessPolicyWindow`
+over expert pages (persisting L2 after the first fill). `--cooperative` is
 `cudaLaunchCooperativeKernel`: GEMMs occupy every Hyper-Q slot, so
 independent sequences cannot overlap even with `--compute-slots 2`.
 `--decode-sms N` (`1..=1000`) is a
@@ -207,9 +208,9 @@ on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--shareable` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` /
 `--seq-streams` / `--kv-sim` / `--kv-bytes` / `--decode-priority` /
-`--cooperative` / `--pdl` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
+`--cooperative` / `--pdl` / `--l2-persist` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
 `expertvm sim` / `schedule` / `store` take `--compute-slots` / `--decode-sms`
-/ `--decode-priority` / `--cooperative` / `--pdl` / `--multicast` / `--shareable` (Hyper-Q occupancy, green-context SM fraction,
+/ `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--multicast` / `--shareable` (Hyper-Q occupancy, green-context SM fraction,
 decode-stream ITL, exclusive cooperative GEMMs, same-stream PDL overlap, NVLS replica fanout, and POSIX-FD mempool IPC on the trace walker). Walker `--decode-sms` does **not**
 imply `--decode-priority` (token 0 is prefill). `--decode-priority` implies
 `--stream-priority` so leftover prefill does not inflate decode ITL.
@@ -221,7 +222,8 @@ Token-boundary ITL samples that decode stream (leftover prefill stays in
 flight). `--compute-slots N` (`N>=2`) is Hyper-Q occupancy so those two
 streams' GEMMs overlap at full issue rate. `--pdl` lets consecutive
 same-stream expert GEMMs overlap after the previous kernel's programmatic
-trigger (needs `--compute-slots` >= 2; illegal with `--cooperative`). `--cooperative` is
+trigger (needs `--compute-slots` >= 2; illegal with `--cooperative`).
+`--l2-persist` keeps reused expert pages in persisting L2. `--cooperative` is
 `cudaLaunchCooperativeKernel`: those GEMMs occupy every Hyper-Q slot, so
 leftover prefill cannot overlap even with `--compute-slots 2`. `--decode-sms N` (`1..=1000`)
 is a green-context SM fraction on the decode stream (leftover prefill gets
@@ -347,6 +349,7 @@ expertvm store    trace.jsonl --capacity 2 --legacy-null
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --stream-priority
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 2 --cooperative
 expertvm sim      trace.jsonl --capacity 2 --compute-slots 2 --pdl
+expertvm sim      trace.jsonl --capacity 2 --l2-persist
 expertvm schedule trace.jsonl --capacity 8 --place replicas --multicast --profile 8xh100
 expertvm schedule trace.jsonl --capacity 8 --prefill-chunk 1 --decode-priority --compute-slots 2
 expertvm sim      trace.jsonl --capacity 2 --managed --accessed-by --profile 2xh100-pcie
