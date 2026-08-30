@@ -50,7 +50,8 @@ pub struct GpuProfile {
     pub graph_update_ns: u64,
     /// `cudaGraphExecKernelNodeSetParams` /
     /// `cudaGraphExecMemcpyNodeSetParams` /
-    /// `cudaGraphExecMemsetNodeSetParams` overhead, nanoseconds. Cheaper than
+    /// `cudaGraphExecMemsetNodeSetParams` / `cudaGraphNodeSetEnabled`
+    /// overhead, nanoseconds. Cheaper than
     /// [`Self::graph_update_ns`] (no second graph / topology match). Example
     /// default, not a capture.
     pub graph_set_params_ns: u64,

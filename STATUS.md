@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-29 — `cudaGraphNodeSetEnabled`
+
+`Sim::graph_node_set_enabled` / `graph_node_get_enabled` are
+`cudaGraphNodeSetEnabled` / `GetEnabled`: skip an instantiated node at
+launch without rebuilding. Dependents wait for the disabled node's
+predecessors. Memory alloc/free nodes cannot be disabled. Decode identity
+stays every node enabled. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-29 — `cudaGraphExecMemsetNodeSetParams`
 
 `Sim::graph_exec_memset_set_params` is `cudaGraphExecMemsetNodeSetParams`:

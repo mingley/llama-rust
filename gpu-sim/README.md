@@ -79,6 +79,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaGraphExecKernelNodeSetParams` patches one instantiated kernel node's pointers / kind (mem nodes legal) | `graph_set_params_ns` |
 | `cudaGraphExecMemcpyNodeSetParams` patches one instantiated memcpy node's `MemcpyOp` (mem nodes legal) | `graph_set_params_ns` |
 | `cudaGraphExecMemsetNodeSetParams` patches one instantiated memset node's dest span (mem nodes legal) | `graph_set_params_ns` |
+| `cudaGraphNodeSetEnabled` skips an instantiated node at launch (mem nodes illegal) | `graph_set_params_ns` |
 | graph mem alloc/free nodes (`cudaMallocAsync` / `cudaFreeAsync` during capture, or `graph_add_alloc` / `graph_add_free`) | `pool_reuse_ns` on relaunch without free |
 | graph clone is an independent uninstantiated copy; child graphs cloned recursively; mem alloc nodes get new ids | `graph_clone_ns` |
 | `cudaGraphCreate` (`create_graph`) is an empty uninstantiated graph | 1 ns host-sync |
@@ -243,6 +244,8 @@ mismatch is `Invalid`. Graphs with mem alloc/free nodes cannot be updated.
 `cudaGraphExecKernelNodeSetParams` / `cudaGraphExecMemcpyNodeSetParams` /
 `cudaGraphExecMemsetNodeSetParams`
 (`graph_set_params_ns`; mem nodes legal; pageable memcpy stays illegal).
+`graph_node_set_enabled` is `cudaGraphNodeSetEnabled` (skip a node at launch;
+mem alloc/free cannot be disabled).
 `expertvm --graph-set-params` parks a leaf and retargets the unique kernel
 (and a unique memcpy or memset if present). `expertvm --graph-update` parks a leaf GEMM on
 evict and updates the next miss instead of instantiate. `--graph-clone`

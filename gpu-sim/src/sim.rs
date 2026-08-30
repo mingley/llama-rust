@@ -213,6 +213,8 @@ struct GraphStep {
     kind: Kind,
     /// Predecessor node indices (`cudaGraphAddDependencies`). Empty is independent.
     deps: Vec<usize>,
+    /// `cudaGraphNodeSetEnabled`. Disabled nodes skip launch and complete immediately.
+    enabled: bool,
 }
 
 struct Graph {
@@ -994,6 +996,12 @@ impl Sim {
             if let Some(slot) = node_stream.get_mut(idx) {
                 *slot = Some(s);
             }
+            if !step.enabled {
+                if let Some(ops) = node_ops.get_mut(idx) {
+                    ops.extend(wait);
+                }
+                continue;
+            }
             if let Kind::ChildGraph { graph: child } = &step.kind {
                 let add = self.enqueue_graph(*child, s, head, stack, &wait)?;
                 head = false;
@@ -1579,6 +1587,67 @@ impl Sim {
         Ok(found)
     }
 
+    /// `cudaGraphNodeSetEnabled` on an instantiated exec.
+    ///
+    /// Disabled nodes are not launched; dependents treat them as already
+    /// complete (wait for the disabled node's predecessors). Memory alloc/free
+    /// nodes cannot be disabled. Pays `graph_set_params_ns`. Capture cannot
+    /// include it. Does not clear the upload flag (topology unchanged).
+    pub fn graph_node_set_enabled(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        enabled: bool,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture node set enabled")?;
+        let (instantiated, device, mem) = {
+            let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = g.steps.get(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?;
+            let mem = matches!(step.kind, Kind::Alloc { .. } | Kind::Free { .. });
+            (g.instantiated, step.device, mem)
+        };
+        if !instantiated {
+            return Err(SimError::Invalid {
+                why: "graph not instantiated",
+            });
+        }
+        if mem {
+            return Err(SimError::Invalid {
+                why: "cannot disable mem node",
+            });
+        }
+        let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+        self.clock = self.clock.saturating_add(ns);
+        let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        step.enabled = enabled;
+        Ok(())
+    }
+
+    /// `cudaGraphNodeGetEnabled` on an instantiated exec.
+    pub fn graph_node_get_enabled(&self, exec: GraphId, node: usize) -> Result<bool, SimError> {
+        let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        if !g.instantiated {
+            return Err(SimError::Invalid {
+                why: "graph not instantiated",
+            });
+        }
+        let step = g.steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        Ok(step.enabled)
+    }
+
     /// Graph mem alloc node ids (`cudaMallocAsync` / `cudaGraphAddMemAllocNode`).
     pub fn graph_mem_allocs(&self, graph: GraphId) -> Result<Vec<AllocId>, SimError> {
         if !self.graphs.contains_key(&graph) {
@@ -2078,6 +2147,7 @@ impl Sim {
             stream,
             kind,
             deps: Vec::new(),
+            enabled: true,
         });
         Ok(())
     }
@@ -4697,6 +4767,7 @@ impl Sim {
             stream,
             kind,
             deps,
+            enabled: true,
         });
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
@@ -6555,6 +6626,7 @@ fn remap_child_graphs(
             stream: step.stream,
             kind,
             deps: step.deps.clone(),
+            enabled: step.enabled,
         });
     }
     Ok(out)

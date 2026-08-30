@@ -2674,6 +2674,33 @@ fn retarget_parked_kernel_patches_unique_memset() {
 }
 
 #[test]
+fn graph_node_set_enabled_skips_combo_child() {
+    use gpu_sim::{KernelKind, Sim, StreamId};
+
+    let mut sim = Sim::new(HardwareProfile::example_h100_sxm());
+    let d = DeviceId(0);
+    let s = StreamId(0);
+    let a = sim.malloc(d, 4096).expect("a");
+    let leaf0 = sim.create_graph(d, s).expect("l0");
+    sim.graph_add_kernel(leaf0, KernelKind::other(8, 8), &[a], &[a])
+        .expect("k0");
+    sim.instantiate_graph(leaf0).expect("i0");
+    let leaf1 = sim.create_graph(d, s).expect("l1");
+    sim.graph_add_kernel(leaf1, KernelKind::other(8, 8), &[a], &[a])
+        .expect("k1");
+    sim.instantiate_graph(leaf1).expect("i1");
+    let parent = sim.create_graph(d, s).expect("p");
+    sim.graph_add_child(parent, leaf0).expect("c0");
+    sim.graph_add_child(parent, leaf1).expect("c1");
+    sim.instantiate_graph(parent).expect("ip");
+    assert!(sim.graph_node_get_enabled(parent, 1).expect("on"));
+    sim.graph_node_set_enabled(parent, 1, false).expect("off");
+    let n = sim.launch_graph(parent, s).expect("launch");
+    assert_eq!(n, 1);
+    sim.synchronize().expect("sync");
+}
+
+#[test]
 fn cuda_graphs_graph_set_params_reuses_parked_leaves() {
     let t = Trace {
         events: vec![

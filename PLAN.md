@@ -655,6 +655,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   (same cost; pageable still illegal; mem nodes legal).
   `graph_exec_memset_set_params` is `cudaGraphExecMemsetNodeSetParams`
   (same cost; zero-byte still illegal; mem nodes legal).
+  `graph_node_set_enabled` is `cudaGraphNodeSetEnabled` (skip launch;
+  mem nodes cannot be disabled).
   `clone_graph` is an independent uninstantiated copy (`graph_clone_ns`);
   child-graph nodes are cloned recursively (shared children cloned once);
   graph mem alloc nodes get new ids (independent HBM).
@@ -1245,6 +1247,13 @@ model, do not celebrate the sim.
     Capture cannot include it. `--graph-set-params` retargets a unique
     memset on a parked leaf if present. Decode identity stays
     destroy+instantiate. Dual score still has no `$/M tokens`.
+
+85. [x] `cudaGraphNodeSetEnabled`: `Sim::graph_node_set_enabled` /
+    `graph_node_get_enabled` skip an instantiated node at launch without a
+    second graph (`graph_set_params_ns`). Dependents treat a disabled node as
+    already complete. Memory alloc/free nodes cannot be disabled. Capture
+    cannot include it. Decode identity stays every node enabled. Dual score
+    still has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
