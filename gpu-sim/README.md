@@ -520,7 +520,8 @@ modeled; example SKUs are discrete). `SparseCudaArraySupported` /
 (CUDA arrays and dma-buf are not modeled). `MulticastSupported` is a
 GPU↔GPU NVLink on that device (PCIe P2P and RDMA are not NVLS).
 `VirtualMemoryManagementSupported` is always 1 (this VM has
-`cuMemAddressReserve`).
+`cuMemAddressReserve`). `HandleTypePosixFileDescriptorSupported` is always 1
+(this VM has POSIX-FD shareable pools).
 `StreamPrioritiesSupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields

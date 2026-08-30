@@ -798,6 +798,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrVirtualMemoryManagementSupported` (always 1; this VM has
     /// [`crate::Sim::va_reserve`]).
     VirtualMemoryManagementSupported,
+    /// `cudaDevAttrHandleTypePosixFileDescriptorSupported` (always 1; this VM
+    /// has [`crate::Sim::create_shareable_pool`]).
+    HandleTypePosixFileDescriptorSupported,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -893,6 +896,9 @@ pub struct DeviceProperties {
     /// `cudaDevAttrVirtualMemoryManagementSupported` (this VM has
     /// `cuMemAddressReserve`).
     pub virtual_memory_management_supported: bool,
+    /// `cudaDevAttrHandleTypePosixFileDescriptorSupported` (this VM has
+    /// POSIX-FD shareable pools).
+    pub handle_type_posix_file_descriptor_supported: bool,
 }
 
 /// `cudaFuncAttribute` for [`crate::Sim::func_set_attribute`] / `GetAttribute`.

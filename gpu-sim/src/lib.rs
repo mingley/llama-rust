@@ -263,6 +263,8 @@
 //! link on that device (PCIe P2P and RDMA are not NVLS).
 //! [`DeviceAttr::VirtualMemoryManagementSupported`] is always 1 (this VM has
 //! `cuMemAddressReserve`).
+//! [`DeviceAttr::HandleTypePosixFileDescriptorSupported`] is always 1 (this VM
+//! has POSIX-FD shareable pools).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -10593,6 +10595,29 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::VirtualMemoryManagementSupported)
+                .unwrap(),
+            1
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_posix_fd_handle_type_supported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert!(
+            sim.device_get_properties(d)
+                .unwrap()
+                .handle_type_posix_file_descriptor_supported
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::HandleTypePosixFileDescriptorSupported)
+                .unwrap(),
+            1
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::HandleTypePosixFileDescriptorSupported)
                 .unwrap(),
             1
         );
