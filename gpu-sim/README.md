@@ -73,7 +73,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemcpy2DPeer` (`memcpy_peer_2d`) waits that stream; `memcpy_peer_2d_async` bills payload not padding | NVLink / PCIe P2P |
 | `cudaMemcpy2D` (`memcpy_2d`) waits that stream; `memcpy_2d_async` bills payload not padding | PCIe / NVLink / HBM |
 | `cudaMemcpy3D` (`memcpy_3d`) waits that stream; `memcpy_3d_async` bills payload not padding | PCIe / NVLink / HBM |
-| `cudaMemcpyBatchAsync` (`memcpy_batch_async`) 1D only; intra-batch copies share one stream-order snapshot (or empty DuringApiCall/Any deps) | copy-engine occupancy; DuringApiCall waits those copies |
+| `cudaMemcpyBatchAsync` (`memcpy_batch_async`) 1D only; intra-batch copies share one stream-order snapshot (or empty DuringApiCall/Any deps); same-stream `cudaMallocAsync` needs no host sync | copy-engine occupancy; DuringApiCall waits those copies |
 | `cudaMemcpyWithAttributesAsync` (`memcpy_with_attributes`) Stream is `memcpy`; DuringApiCall/Any are a one-copy batch | `PreferOverlapWithCompute` ignored (discrete) |
 | `cudaMemcpy3DBatchAsync` (`memcpy_3d_batch_async`) 3D pointer-to-pointer; `flags` 0; CUDA arrays not modeled | same sibling copy-engine occupancy as 1D batch |
 | `cudaMemcpy3DWithAttributesAsync` (`memcpy_3d_with_attributes`) Stream is `memcpy_3d_async` | reserved `flags` must be 0 |

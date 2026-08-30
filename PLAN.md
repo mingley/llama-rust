@@ -3349,11 +3349,13 @@ model, do not celebrate the sim.
     multi-expert pinned/VMM prefetch window with
     [`memcpy_batch_async`](gpu-sim/src/sim.rs) so sibling H2D copies share
     one stream-order snapshot (copy engines together). Demand acquire
-    stays sequential. Illegal with pageable, host-sync, mapped, or
-    managed fills. `--memcpy-batch` on `expertvm sim` / `schedule` /
-    `store` and `gguf_gemv engine --expert-sim`. Decode identity stays
-    sequential `memcpy_pinned_to_device`. `gpu-profile capture` is still
-    refused. Dual score still has no `$/M tokens`.
+    stays sequential. A same-stream [`alloc`](gpu-sim/src/sim.rs)
+    (`cudaMallocAsync`) pointer does not need a host sync. Illegal with
+    pageable, host-sync, mapped, or managed fills. `--memcpy-batch` on
+    `expertvm sim` / `schedule` / `store` and `gguf_gemv engine --expert-sim`.
+    Decode identity stays sequential `memcpy_pinned_to_device`.
+    `gpu-profile capture` is still refused. Dual score still has no `$/M
+    tokens`.
 
 324. [ ] Next numbered PLAN item after 323 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official

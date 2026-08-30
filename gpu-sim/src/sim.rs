@@ -12899,6 +12899,11 @@ impl Sim {
     /// waits those copies before return (not the whole stream). Any does not
     /// wait. Stream-order pageable / SyncMemops copies still
     /// [`Self::synchronize_stream`].
+    ///
+    /// A [`Self::alloc`] (`cudaMallocAsync`) pointer may be enqueued in the
+    /// same stream without a host sync (the copy waits the alloc via stream
+    /// order when it starts). A missing alloc id is still all-or-nothing
+    /// [`SimError::UnknownAlloc`].
     pub fn memcpy_batch_async(
         &mut self,
         device: DeviceId,
@@ -12919,7 +12924,7 @@ impl Sim {
                     why: "memcpy batch 1d",
                 });
             }
-            self.memcpy_precheck(op)?;
+            self.memcpy_precheck_enqueue(op)?;
         }
         self.enqueue_memcpy_batch(device, stream, ops, &per, "cannot capture memcpy batch")
     }
@@ -12991,7 +12996,7 @@ impl Sim {
                     why: "memcpy3d batch depth",
                 });
             }
-            self.memcpy_precheck(op)?;
+            self.memcpy_precheck_enqueue(op)?;
         }
         self.enqueue_memcpy_batch(device, stream, ops, attrs, "cannot capture memcpy3d batch")
     }
@@ -17437,9 +17442,21 @@ impl Sim {
     }
 
     fn memcpy_precheck(&self, m: &MemcpyOp) -> Result<(), SimError> {
+        self.memcpy_check(m, true)
+    }
+
+    /// Submit-time check for [`Self::memcpy_batch_async`]: the alloc id must
+    /// exist. `cudaMallocAsync` may still be pending (`live == false`); the
+    /// copy waits that alloc via stream order and [`Self::memcpy_precheck`]s
+    /// when it starts.
+    fn memcpy_precheck_enqueue(&self, m: &MemcpyOp) -> Result<(), SimError> {
+        self.memcpy_check(m, false)
+    }
+
+    fn memcpy_check(&self, m: &MemcpyOp, require_live: bool) -> Result<(), SimError> {
         memcpy_2d_check(m)?;
         let a = self.alloc_ref(m.alloc)?;
-        if !a.live {
+        if require_live && !a.live {
             return Err(SimError::UnknownAlloc { alloc: m.alloc });
         }
         let span = m.extent_bytes();

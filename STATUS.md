@@ -11,8 +11,10 @@ Work lands on `main`. No PRs.
 pinned/VMM prefetch window with `cudaMemcpyBatchAsync`. Sibling H2D
 copies share one stream-order snapshot. Demand acquire stays sequential.
 Illegal with pageable, host-sync, mapped, or managed fills.
-`--memcpy-batch` is off by default (decode identity). `gpu-profile
-capture` is still refused.
+`--memcpy-batch` is off by default (decode identity). A same-stream
+`cudaMallocAsync` pointer may be enqueued in the batch without a host
+sync (the copy waits the alloc via stream order). `gpu-profile capture`
+is still refused.
 
 ## Shipped 2026-08-30 — `cudaLaunchAttributeCooperative`
 

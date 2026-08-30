@@ -430,7 +430,8 @@
 //! [`memcpy_batch_async`](Sim::memcpy_batch_async) is `cudaMemcpyBatchAsync`
 //! (1D pointer-to-pointer; copies in one batch share one stream-order snapshot
 //! or empty DuringApiCall/Any deps so they do not wait for each other; 2D/3D
-//! Invalid `"memcpy batch 1d"`; capture is `"cannot capture memcpy batch"`).
+//! Invalid `"memcpy batch 1d"`; capture is `"cannot capture memcpy batch"`;
+//! a same-stream [`alloc`](Sim::alloc) pointer does not need a host sync).
 //! [`memcpy_with_attributes`](Sim::memcpy_with_attributes) is
 //! `cudaMemcpyWithAttributesAsync` (Stream is [`memcpy`](Sim::memcpy);
 //! DuringApiCall waits those copies; Any does not). [`MemcpyFlags::PREFER_OVERLAP_WITH_COMPUTE`]
@@ -12746,6 +12747,37 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn memcpy_batch_async_enqueues_pending_malloc_async() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 4u64 << 20;
+        let a = sim.alloc(d, bytes, s).unwrap();
+        let b = sim.alloc(d, bytes, s).unwrap();
+        let attr = MemcpyAttributes::default();
+        let ids = sim
+            .memcpy_batch_async(
+                d,
+                &[pinned_h2d(d, a, bytes), pinned_h2d(d, b, bytes)],
+                &[attr],
+                &[0],
+                s,
+            )
+            .unwrap();
+        assert_eq!(ids.len(), 2);
+        let oa = sim.operation(ids[0]).unwrap();
+        let ob = sim.operation(ids[1]).unwrap();
+        assert_eq!(oa.deps, ob.deps);
+        assert!(!oa.deps.contains(&ids[1]));
+        assert!(!ob.deps.contains(&ids[0]));
+        sim.synchronize().unwrap();
+        let oa = sim.operation(ids[0]).unwrap();
+        let ob = sim.operation(ids[1]).unwrap();
+        assert_eq!(oa.start_ns, ob.start_ns);
+        assert_eq!(sim.bytes_moved(), bytes.saturating_mul(2));
     }
 
     #[test]
