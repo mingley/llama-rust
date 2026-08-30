@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaHostGetFlags`
+
+`Sim::host_get_flags` returns `HostAllocFlags::MAPPED` or `0`. Device,
+managed, and unregistered pageable pointers are Invalid. Query; legal
+during capture. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaGraphDestroyNode`
 
 `Sim::graph_destroy_node` drops a definition node and incident edges.
@@ -2206,7 +2212,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 191 (`DestroyNode`).
+Next code change is PLAN systems depth after item 192 (`HostGetFlags`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

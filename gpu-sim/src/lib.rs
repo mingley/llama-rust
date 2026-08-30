@@ -150,6 +150,8 @@
 //! [`Sim::mem_info`] is `cudaMemGetInfo` `(free, total)`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`Sim::host_get_device_pointer`] is `cudaHostGetDevicePointer` (mapped host).
+//! [`Sim::host_get_flags`] is `cudaHostGetFlags` (`HostAllocFlags::MAPPED` or
+//! default `0`; Portable / WriteCombined are not modeled).
 //! [`Sim::device_get_attribute`] is `cudaDeviceGetAttribute` ([`DeviceAttr`]).
 //! [`Sim::device_get_properties`] is `cudaGetDeviceProperties` ([`DeviceProperties`];
 //! modeled caps only — no SM count or clock). [`DeviceAttr::CanMapHostMemory`]
@@ -513,13 +515,13 @@ pub use ops::{
     DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags, FuncAttributes, GpuOp,
     GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf,
-    KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
-    MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
-    MemoryType, MemsetOp, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
-    StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp,
+    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags, HostNodeParams,
+    KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
+    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr, MemSyncDomain,
+    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, Place,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
+    StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -7717,6 +7719,45 @@ mod tests {
             Err(SimError::UnknownAlloc { .. }) => {}
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn host_get_flags_reports_mapped_bit() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let pin = sim.alloc_host_pinned(64).unwrap();
+        assert_eq!(sim.host_get_flags(pin).unwrap(), HostAllocFlags::DEFAULT);
+        let mapped = sim.alloc_host_mapped(64).unwrap();
+        assert_eq!(sim.host_get_flags(mapped).unwrap(), HostAllocFlags::MAPPED);
+        let pageable = sim.alloc_host(64).unwrap();
+        match sim.host_get_flags(pageable) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not host alloc"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.host_register(pageable).unwrap();
+        assert_eq!(
+            sim.host_get_flags(pageable).unwrap(),
+            HostAllocFlags::DEFAULT
+        );
+        sim.host_unregister(pageable).unwrap();
+        sim.host_register_mapped(pageable).unwrap();
+        assert_eq!(
+            sim.host_get_flags(pageable).unwrap(),
+            HostAllocFlags::MAPPED
+        );
+        let a = sim.malloc(d, 64).unwrap();
+        match sim.host_get_flags(a) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not host alloc"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let um = sim.alloc_managed(64).unwrap();
+        match sim.host_get_flags(um) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not host alloc"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.host_get_flags(mapped).unwrap(), HostAllocFlags::MAPPED);
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

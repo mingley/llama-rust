@@ -1733,6 +1733,18 @@ impl EventCreateFlags {
     pub const DISABLE_TIMING: u32 = 2;
 }
 
+/// `cudaHostAlloc*` / `cudaHostRegister*` bits for [`crate::Sim::host_get_flags`].
+///
+/// Portable / WriteCombined / IoMemory / ReadOnly are not modeled.
+pub struct HostAllocFlags;
+
+impl HostAllocFlags {
+    /// `cudaHostAllocDefault` / `cudaHostRegisterDefault`.
+    pub const DEFAULT: u32 = 0;
+    /// `cudaHostAllocMapped` / `cudaHostRegisterMapped`.
+    pub const MAPPED: u32 = 2;
+}
+
 /// `cudaGraphDebugDotFlags` for [`crate::Sim::graph_debug_dot_with_flags`].
 ///
 /// Bit values match CUDA. External-semaphore and extra-conditional-edge flags

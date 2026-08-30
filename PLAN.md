@@ -2184,7 +2184,16 @@ model, do not celebrate the sim.
     identity unchanged. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-192. [ ] Next numbered PLAN item after 191 is the next `gpu-sim` / Engine /
+192. [x] `cudaHostGetFlags`: `Sim::host_get_flags` returns
+    [`HostAllocFlags::MAPPED`] for `cudaHostAllocMapped` /
+    `cudaHostRegisterMapped`, else `0` for pinned or registered host.
+    Device, managed, VMM, and unregistered pageable pointers are Invalid
+    `"not host alloc"`. Query; legal during capture. Portable /
+    WriteCombined are not modeled. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+193. [ ] Next numbered PLAN item after 192 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

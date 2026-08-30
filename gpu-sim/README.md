@@ -110,6 +110,7 @@ warp scheduler, L1, …   ← do not model
 | `mem_info` is `(free, total)` HBM | `cudaMemGetInfo` |
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
 | `host_get_device_pointer` of mapped host returns the same id | `cudaHostGetDevicePointer` |
+| `host_get_flags` is 0 default / `HostAllocFlags::MAPPED` | `cudaHostGetFlags` |
 | `device_get_attribute` exposes modeled SKU caps | `cudaDeviceGetAttribute` |
 | `device_get_properties` wraps the same SKU caps | `cudaGetDeviceProperties` |
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |

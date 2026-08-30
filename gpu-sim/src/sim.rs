@@ -15,13 +15,13 @@ use crate::ops::{
     EventCreateFlags, EventRecordFlags, EventWaitFlags, FuncAttributes, GpuOp as Kind,
     GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf,
-    KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
-    MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
-    MemoryType, MemsetOp, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
-    StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp,
+    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags, HostNodeParams,
+    KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
+    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr, MemSyncDomain,
+    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, Place,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
+    StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -11205,6 +11205,30 @@ impl Sim {
             return Ok(id);
         }
         Err(SimError::Invalid { why: "not mapped" })
+    }
+
+    /// `cudaHostGetFlags`. Query; legal during capture.
+    ///
+    /// Returns [`HostAllocFlags::MAPPED`] when the pointer is
+    /// `cudaHostAllocMapped` / `cudaHostRegisterMapped`, else `0` for pinned
+    /// or registered host. Device, managed, VMM, and unregistered pageable
+    /// pointers are Invalid `"not host alloc"`. Portable / WriteCombined are
+    /// not modeled.
+    pub fn host_get_flags(&self, id: AllocId) -> Result<u32, SimError> {
+        let a = self.alloc_ref(id)?;
+        if !a.live {
+            return Err(SimError::UnknownAlloc { alloc: id });
+        }
+        if a.managed || a.vmm || !(a.host_pinned || a.host_registered) {
+            return Err(SimError::Invalid {
+                why: "not host alloc",
+            });
+        }
+        if a.host_mapped {
+            Ok(HostAllocFlags::MAPPED)
+        } else {
+            Ok(HostAllocFlags::DEFAULT)
+        }
     }
 
     /// `cudaDeviceGetAttribute`. Query; legal during capture.
