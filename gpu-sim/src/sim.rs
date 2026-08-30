@@ -13056,7 +13056,8 @@ impl Sim {
             | DeviceAttr::HostMemoryPoolsSupported
             | DeviceAttr::IsMultiGpuBoard
             | DeviceAttr::MultiGpuBoardGroupID
-            | DeviceAttr::ComputeMode => 0,
+            | DeviceAttr::ComputeMode
+            | DeviceAttr::TccDriver => 0,
             DeviceAttr::StreamPrioritiesSupported | DeviceAttr::UnifiedAddressing => 1,
             DeviceAttr::GpuOverlap => u64::from(gpu.copy_engines > 0),
             DeviceAttr::MulticastSupported => u64::from(self.profile.multicast_supported(device)),
@@ -13123,6 +13124,7 @@ impl Sim {
             is_multi_gpu_board: false,
             multi_gpu_board_group_id: 0,
             compute_mode: ComputeMode::DEFAULT,
+            tcc_driver: false,
         })
     }
 

@@ -311,6 +311,7 @@
 //! are always 0 (example SKUs are discrete single-GPU packages).
 //! [`DeviceAttr::ComputeMode`] is always [`ComputeMode::DEFAULT`] (exclusive
 //! process / prohibited are not modeled).
+//! [`DeviceAttr::TccDriver`] is always 0 (example SKUs are not Windows TCC).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -10923,6 +10924,24 @@ mod tests {
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::ComputeMode)
                 .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_is_not_tcc_driver() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert!(!hp.tcc_driver);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TccDriver).unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TccDriver).unwrap(),
             0
         );
         let _g = sim.end_capture().unwrap();

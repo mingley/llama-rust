@@ -845,6 +845,8 @@ pub enum DeviceAttr {
     /// `cudaDevAttrComputeMode` (always [`ComputeMode::DEFAULT`]; exclusive
     /// process / prohibited are not modeled).
     ComputeMode,
+    /// `cudaDevAttrTccDriver` (always 0; example SKUs are not Windows TCC).
+    TccDriver,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -966,6 +968,8 @@ pub struct DeviceProperties {
     pub multi_gpu_board_group_id: u32,
     /// `cudaDevAttrComputeMode` (always [`ComputeMode::DEFAULT`]).
     pub compute_mode: u32,
+    /// `cudaDevAttrTccDriver` (example SKUs are not Windows TCC).
+    pub tcc_driver: bool,
 }
 
 /// `cudaComputeMode` for [`DeviceAttr::ComputeMode`].

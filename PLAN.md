@@ -2912,7 +2912,13 @@ model, do not celebrate the sim.
     capture-legal. Decode identity unchanged. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-277. [ ] Next numbered PLAN item after 276 is the next `gpu-sim` / Engine /
+277. [x] `cudaDevAttrTccDriver`: [`DeviceAttr::TccDriver`] is always 0
+    (example SKUs are not Windows TCC). [`DeviceProperties::tcc_driver`]
+    matches. Query; capture-legal. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+278. [ ] Next numbered PLAN item after 277 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
