@@ -3139,7 +3139,15 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no `$/M
     tokens`.
 
-304. [ ] Next numbered PLAN item after 303 is the next `gpu-sim` / Engine /
+304. [x] expertvm pitched KV miss fill uses named 2D copies:
+    [`kv_paged`](kv_paged) with [`KvCfg::with_pitch`] calls
+    [`memcpy_2d_async`](Sim::memcpy_2d_async) / [`memset_2d_async`](Sim::memset_2d_async)
+    when the op is 2D (`height > 1`, not 3D). Packed 1D stays
+    [`memcpy`](Sim::memcpy) / [`memset_op`](Sim::memset_op). Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+305. [ ] Next numbered PLAN item after 304 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

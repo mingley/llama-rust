@@ -152,7 +152,10 @@ impl KvCfg {
 
     /// Pitched miss fill: `height = page_bytes / pitch` rows of `row_width`
     /// (payload `row_width * height`, not pitch padding). [`KvFill::H2d`] is
-    /// `cudaMemcpy2DAsync`; [`KvFill::Memset`] is `cudaMemset2DAsync`.
+    /// [`gpu_sim::Sim::memcpy_2d_async`] (`cudaMemcpy2DAsync`) when
+    /// [`gpu_sim::MemcpyOp::is_2d`]; packed 1D stays [`gpu_sim::Sim::memcpy`].
+    /// [`KvFill::Memset`] is [`gpu_sim::Sim::memset_2d_async`] when
+    /// [`gpu_sim::MemsetOp::is_2d`].
     #[must_use]
     pub fn with_pitch(mut self, row_width: u64, pitch: u64) -> Self {
         self.row_width = row_width;
@@ -420,7 +423,11 @@ fn h2d_page(sim: &mut Sim, va: AllocId, off: u64, cfg: KvCfg) -> Result<(), Erro
             ..MemcpyOp::default()
         }
     };
-    let _id = sim.memcpy(d, op, s)?;
+    let _id = if op.is_2d() {
+        sim.memcpy_2d_async(d, op, s)?
+    } else {
+        sim.memcpy(d, op, s)?
+    };
     Ok(())
 }
 
@@ -448,7 +455,11 @@ fn memset_page(sim: &mut Sim, va: AllocId, off: u64, cfg: KvCfg) -> Result<(), E
             ..MemsetOp::default()
         }
     };
-    let _op = sim.memset_op(d, op, s)?;
+    let _op = if op.is_2d() {
+        sim.memset_2d_async(d, op, s)?
+    } else {
+        sim.memset_op(d, op, s)?
+    };
     Ok(())
 }
 

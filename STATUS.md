@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — expertvm KV pitched fill uses `memcpy_2d_async`
+
+Pitched `kv_paged` miss fills call `memcpy_2d_async` / `memset_2d_async`
+when the op is 2D. Packed 1D stays `memcpy` / `memset_op`. `gpu-profile
+capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaMemcpy3DPeer` requires `is_3d`
 
 `memcpy_peer_3d` / `memcpy_peer_3d_async` require a 3D `MemcpyOp`
