@@ -5634,7 +5634,7 @@ fn simulated_gpu_store_max_shared_serializes_leftover_prefill() {
 #[test]
 fn simulated_gpu_store_nvlink_util_serializes_leftover_prefill() {
     let t = Trace {
-        events: vec![ev(0, 0, &[0, 1])],
+        events: vec![ev(0, 0, &[0, 2])],
     };
     let nv = HardwareProfile::parse("gpus=2\nfp16_flops=1000000\ncopy_engines=2\n")
         .expect("nvlink slow gemm");
@@ -5659,7 +5659,7 @@ fn simulated_gpu_store_nvlink_util_serializes_leftover_prefill() {
             Err(err) => panic!("gpu: {err}"),
         };
         let pre = ExpertKey::new(0, 0);
-        let dec = ExpertKey::new(0, 1);
+        let dec = ExpertKey::new(0, 2);
         gpu.bind_decode_compute(false);
         let _warm_pre = match gpu.acquire(pre) {
             Ok(v) => v,
