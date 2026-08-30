@@ -59,7 +59,7 @@ warp scheduler, L1, …   ← do not model
 | `va_acquire_paged` maps the VA in `page` physicals | `alloc_overhead_ns` per block |
 | `cudaLaunchHostFunc` (`host_func` / `host_func_params`) is stream-ordered host work; `fn_id` / `user_data` are `cudaHostNodeParams` | `host_func_ns` (no compute / copy occupancy) |
 | `cuStreamWriteValue32/64` (`write_value32` / `write_value64`) writes a mailbox on complete | 1 ns Solo (no compute / copy occupancy) |
-| `cuStreamWaitValue32/64` (`wait_value32` / `wait_value64`) stays pending until the mailbox compare matches; unwritten locations read as 0; kernel/memset/memcpy stores are not modeled | 1 ns Solo when ready; unsatisfied wait + `synchronize` is deadlock |
+| `cuStreamWaitValue32/64` (`wait_value32` / `wait_value64`) stays pending until the mailbox compare matches; unwritten locations read as 0; kernel/memset/memcpy stores are not modeled; `wait_value32_with_flags` / `wait_value64_with_flags` is the CUDA flags word (`WaitValueFlags`; FLUSH Invalid) | 1 ns Solo when ready; unsatisfied wait + `synchronize` is deadlock |
 | `cuStreamBatchMemOp` (`batch_mem_op`) is one stream op for a wait/write vector; a wait sees earlier writes in that vector | 1 ns Solo when ready |
 | `cudaStreamCreate` (`set_stream_blocking`) serializes with NULL | copy/compute overlap vs NULL |
 | host pin / `mlock` budget (`host_pin_bytes`) | `SimError::PinOom` |
@@ -306,8 +306,10 @@ Alloc would resize HBM; Empty has no params).
 returns `GraphNodeParams::Empty`; Alloc is bytes only).
 `graph_add_empty` is `cudaGraphAddEmptyNode` (1 ns; no compute/copy occupancy).
 `graph_add_write_value64` / `graph_add_wait_value64` /
+`graph_add_wait_value64_with_flags` / `graph_add_wait_value32_with_flags` /
 `graph_add_batch_mem_op` are `cudaGraphAddBatchMemOpNode` (`cuStreamWaitValue` /
-`WriteValue`; a multi-item batch is **one** node holding the vector).
+`WriteValue`; a multi-item batch is **one** node holding the vector; flags
+word is `WaitValueFlags`, FLUSH Invalid). Typed wait helpers stay.
 `batch_mem_op` is live `cuStreamBatchMemOp`.
 `graph_add_dependencies` is `cudaGraphAddDependencies` (independent nodes
 may Hyper-Q overlap at launch; capture records same-stream edges).
@@ -754,6 +756,8 @@ unnamed callback). `host_func_params` / `graph_add_host_func_params` record
 `write_value64` / `wait_value64` are `cuStreamWriteValue64` /
 `cuStreamWaitValue64` (mailbox on complete; unwritten locations read as 0;
 kernel/memset/memcpy stores are not modeled; no compute/copy occupancy).
+`wait_value64_with_flags` / `wait_value32_with_flags` are the CUDA flags
+word (`WaitValueFlags`; FLUSH Invalid). Typed helpers stay.
 `batch_mem_op` is `cuStreamBatchMemOp` (one stream op; a wait sees earlier
 writes in that vector).
 `set_stream_blocking` is `cudaStreamCreate` vs `cudaStreamNonBlocking`

@@ -6270,6 +6270,35 @@ impl Sim {
         )
     }
 
+    /// [`Self::graph_add_wait_value64`] with a [`crate::WaitValueFlags`] word.
+    ///
+    /// [`crate::WaitValueFlags::FLUSH`] and unknown bits Invalid `"wait value flags"`.
+    /// Typed helper stays.
+    pub fn graph_add_wait_value64_with_flags(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        let cmp = WaitValueCmp::from_flags(flags)?;
+        self.graph_add_wait_value64(graph, id, offset, value, cmp)
+    }
+
+    /// [`Self::graph_add_wait_value32`] with a [`crate::WaitValueFlags`] word.
+    pub fn graph_add_wait_value32_with_flags(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        let cmp = WaitValueCmp::from_flags(flags)?;
+        self.graph_add_wait_value32(graph, id, offset, value, cmp)
+    }
+
     /// `cudaGraphAddBatchMemOpNode`: one node holding the wait/write vector.
     ///
     /// Empty is Invalid. Items run in order inside the node at launch (a wait
@@ -13703,6 +13732,40 @@ impl Sim {
                 cmp,
             },
         )
+    }
+
+    /// `cuStreamWaitValue64` with a [`crate::WaitValueFlags`] word.
+    ///
+    /// [`crate::WaitValueFlags::FLUSH`] and unknown bits Invalid `"wait value flags"`.
+    /// Typed [`Self::wait_value64`] stays.
+    pub fn wait_value64_with_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let cmp = WaitValueCmp::from_flags(flags)?;
+        self.wait_value64(device, id, offset, value, cmp, stream)
+    }
+
+    /// `cuStreamWaitValue32` with a [`crate::WaitValueFlags`] word.
+    ///
+    /// [`crate::WaitValueFlags::FLUSH`] and unknown bits Invalid `"wait value flags"`.
+    /// Typed [`Self::wait_value32`] stays.
+    pub fn wait_value32_with_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        let cmp = WaitValueCmp::from_flags(flags)?;
+        self.wait_value32(device, id, offset, value, cmp, stream)
     }
 
     /// `cuStreamBatchMemOp`. One stream op for the wait/write vector.

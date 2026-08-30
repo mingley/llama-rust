@@ -3042,7 +3042,19 @@ model, do not celebrate the sim.
     capture-legal. Decode identity unchanged. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-294. [ ] Next numbered PLAN item after 293 is the next `gpu-sim` / Engine /
+294. [x] `cuStreamWaitValue32` / `WaitValue64` flags:
+    [`wait_value32_with_flags`](Sim::wait_value32_with_flags) /
+    [`wait_value64_with_flags`](Sim::wait_value64_with_flags) take
+    [`WaitValueFlags`] (GEQ/EQ/AND/NOR). [`WaitValueFlags::FLUSH`] and
+    unknown bits Invalid `"wait value flags"`. Graph twins
+    [`graph_add_wait_value32_with_flags`](Sim::graph_add_wait_value32_with_flags)
+    /
+    [`graph_add_wait_value64_with_flags`](Sim::graph_add_wait_value64_with_flags).
+    Typed [`wait_value32`](Sim::wait_value32) / [`wait_value64`](Sim::wait_value64)
+    stay. Decode identity unchanged. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+295. [ ] Next numbered PLAN item after 294 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

@@ -203,7 +203,10 @@
 //! compute/copy occupancy). [`wait_value64`](Sim::wait_value64) /
 //! [`wait_value32`](Sim::wait_value32) are `cuStreamWaitValue64` / `WaitValue32`
 //! ([`WaitValueCmp`]; unwritten locations read as 0; unsatisfied wait plus
-//! [`Sim::synchronize`] deadlocks). [`batch_mem_op`](Sim::batch_mem_op) is
+//! [`Sim::synchronize`] deadlocks). [`wait_value64_with_flags`](Sim::wait_value64_with_flags) /
+//! [`wait_value32_with_flags`](Sim::wait_value32_with_flags) are the CUDA flags
+//! word ([`WaitValueFlags`]; [`WaitValueFlags::FLUSH`] is Invalid). Typed
+//! helpers stay. [`batch_mem_op`](Sim::batch_mem_op) is
 //! `cuStreamBatchMemOp` (one stream op; a wait sees earlier writes in that
 //! vector). Kernel / memset / memcpy stores to the
 //! mailbox address are not modeled. Device-resident and mapped-host are legal;
@@ -765,7 +768,7 @@ pub use ops::{
     PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
     PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
     SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
-    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -18744,6 +18747,44 @@ mod tests {
         run(WaitValueCmp::Geq, 3, 5, 5);
         run(WaitValueCmp::And, 1, 4, 4);
         run(WaitValueCmp::Nor, 1, 3, 3);
+    }
+
+    #[test]
+    fn wait_value_with_flags_is_cu_stream_wait_value_flags() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let wait_s = StreamId(0);
+        let write_s = StreamId(1);
+        let a = sim.malloc(d, 64).unwrap();
+        enq(sim.wait_value64_with_flags(d, a, 0, 1, WaitValueFlags::EQ, wait_s));
+        enq(sim.write_value64(d, a, 0, 1, write_s));
+        sim.synchronize().unwrap();
+        let a32 = sim.malloc(d, 64).unwrap();
+        enq(sim.wait_value32_with_flags(d, a32, 0, 1, WaitValueFlags::EQ, wait_s));
+        enq(sim.write_value32(d, a32, 0, 1, write_s));
+        sim.synchronize().unwrap();
+        match sim.wait_value64_with_flags(d, a, 0, 1, 4, wait_s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("wait value flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.wait_value32_with_flags(d, a32, 0, 1, WaitValueFlags::FLUSH, wait_s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("wait value flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g = sim.create_graph(d, wait_s).unwrap();
+        sim.graph_add_wait_value64_with_flags(g, a, 0, 1, WaitValueFlags::GEQ)
+            .unwrap();
+        sim.graph_add_wait_value32_with_flags(g, a32, 0, 1, WaitValueFlags::AND)
+            .unwrap();
+        match sim.graph_add_wait_value64_with_flags(g, a, 0, 1, WaitValueFlags::FLUSH) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("wait value flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, wait_s).unwrap();
+        enq(sim.wait_value64_with_flags(d, a, 0, 1, WaitValueFlags::NOR, wait_s));
+        let _cap = sim.end_capture().unwrap();
     }
 
     #[test]

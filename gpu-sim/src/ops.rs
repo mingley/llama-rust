@@ -1988,6 +1988,23 @@ impl MemAttachFlags {
     pub const SINGLE: u32 = 4;
 }
 
+/// `CU_STREAM_WAIT_VALUE_*` flags for [`crate::Sim::wait_value32_with_flags`] /
+/// [`crate::Sim::wait_value64_with_flags`].
+pub struct WaitValueFlags;
+
+impl WaitValueFlags {
+    /// `CU_STREAM_WAIT_VALUE_GEQ` (`0`).
+    pub const GEQ: u32 = 0;
+    /// `CU_STREAM_WAIT_VALUE_EQ` (`1`).
+    pub const EQ: u32 = 1;
+    /// `CU_STREAM_WAIT_VALUE_AND` (`2`).
+    pub const AND: u32 = 2;
+    /// `CU_STREAM_WAIT_VALUE_NOR` (`3`).
+    pub const NOR: u32 = 3;
+    /// `CU_STREAM_WAIT_VALUE_FLUSH`. Not modeled; Invalid `"wait value flags"`.
+    pub const FLUSH: u32 = 1 << 30;
+}
+
 /// `CU_STREAM_WAIT_VALUE_*` compare for [`GpuOp::WaitValue`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WaitValueCmp {
@@ -2011,6 +2028,29 @@ impl WaitValueCmp {
             Self::And => (loc & value) != 0,
             Self::Nor => (loc & value) == value,
         }
+    }
+
+    /// `CU_STREAM_WAIT_VALUE_*` flags word. [`WaitValueFlags::FLUSH`] and
+    /// unknown bits are Invalid `"wait value flags"`.
+    pub fn from_flags(flags: u32) -> Result<Self, crate::error::SimError> {
+        const CMP: u32 = WaitValueFlags::NOR;
+        const KNOWN: u32 = CMP | WaitValueFlags::FLUSH;
+        if flags & !KNOWN != 0 || flags & WaitValueFlags::FLUSH != 0 {
+            return Err(crate::error::SimError::Invalid {
+                why: "wait value flags",
+            });
+        }
+        Ok(match flags & CMP {
+            WaitValueFlags::GEQ => Self::Geq,
+            WaitValueFlags::EQ => Self::Eq,
+            WaitValueFlags::AND => Self::And,
+            WaitValueFlags::NOR => Self::Nor,
+            _ => {
+                return Err(crate::error::SimError::Invalid {
+                    why: "wait value flags",
+                });
+            }
+        })
     }
 }
 
