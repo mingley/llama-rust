@@ -765,7 +765,8 @@ word (`WriteValueFlags`; NO_MEMORY_BARRIER Invalid). Typed helpers stay.
 `wait_value64_with_flags` / `wait_value32_with_flags` are the CUDA flags
 word (`WaitValueFlags`; FLUSH Invalid). Typed helpers stay.
 `batch_mem_op` is `cuStreamBatchMemOp` (one stream op; a wait sees earlier
-writes in that vector).
+writes in that vector). `batch_mem_op_with_flags` is the CUDA flags word
+(`BatchMemOpFlags`; must be 0). Typed helper stays.
 `set_stream_blocking` is `cudaStreamCreate` vs `cudaStreamNonBlocking`
 (NULL serializes with blocking streams; created streams default to
 non-blocking). `stream_create_with_flags` / `stream_create_with_priority`
