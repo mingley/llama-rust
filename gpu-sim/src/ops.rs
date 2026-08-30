@@ -268,6 +268,51 @@ pub struct ProgrammaticLaunch {
     pub trigger: bool,
 }
 
+/// `cudaLaunchAttributeProgrammaticEvent`.
+///
+/// [`crate::Sim::kernel_pdl_event`] records `event` when the kernel fires
+/// [`ProgrammaticLaunch::trigger`] (or at kernel completion when trigger is
+/// false). Other streams may [`crate::Sim::wait_event`] it and start before
+/// the primary finishes. Same-stream later work still waits for completion
+/// unless that work uses PDL wait. [`Self::external`] is
+/// `cudaEventRecordExternal` (captured without forked-capture join). Decode
+/// identity stays [`crate::Sim::kernel`] with no programmatic event. Capture
+/// records the attribute on the kernel node.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProgrammaticEvent {
+    /// Event recorded at the programmatic trigger (or kernel completion).
+    pub event: EventId,
+    /// `cudaEventRecordExternal` on the launch attribute.
+    pub external: bool,
+}
+
+/// Live [`crate::Sim::kernel_pdl_event`] attributes: PDL plus an optional
+/// programmatic event.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PdlLaunch {
+    /// `cudaLaunchAttributeProgrammaticStreamSerialization`.
+    pub pdl: ProgrammaticLaunch,
+    /// `cudaLaunchAttributeProgrammaticEvent`, if any.
+    pub event: Option<ProgrammaticEvent>,
+}
+
+impl PdlLaunch {
+    /// Trigger at `pdl_trigger_permille` and record `event` (not External).
+    #[must_use]
+    pub fn trigger_event(event: EventId) -> Self {
+        Self {
+            pdl: ProgrammaticLaunch {
+                wait: false,
+                trigger: true,
+            },
+            event: Some(ProgrammaticEvent {
+                event,
+                external: false,
+            }),
+        }
+    }
+}
+
 /// `cudaStreamAttachMemAsync` flags (`cudaMemAttachGlobal` / `Host` / `Single`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemAttach {

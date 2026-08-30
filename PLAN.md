@@ -1517,6 +1517,15 @@ model, do not celebrate the sim.
     `cudaFreeAsync` still waits for the overlapped primary. Decode identity
     stays `kernel`. `gpu-profile capture` is still refused.
 
+114. [x] `cudaLaunchAttributeProgrammaticEvent`: `kernel_pdl_event` /
+    `graph_kernel_node_set_programmatic_event` record an event at the PDL
+    trigger (or kernel completion when trigger is false). Other streams may
+    `wait_event` it and start before the primary finishes. Same-stream later
+    work still waits for completion. `query_event` / `synchronize_event` /
+    `event_elapsed_ns` use the trigger. Device-launch graphs refuse it
+    (event). CopyAttributes copies it. Decode identity stays `kernel`.
+    `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

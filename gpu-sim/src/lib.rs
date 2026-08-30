@@ -159,11 +159,14 @@
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
 //! are `cudaGraphKernelNodeGetAttribute` / `SetAttribute` / `CopyAttributes`
-//! for priority and programmatic dependent launch ([`ProgrammaticLaunch`]).
+//! for priority, programmatic dependent launch ([`ProgrammaticLaunch`]), and
+//! programmatic event ([`ProgrammaticEvent`]).
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
 //! may start after the previous same-stream kernel's trigger
 //! (`GpuProfile::pdl_trigger_permille`) instead of its completion. Overlap
-//! needs `compute_slots >= 2`. Decode identity stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
+//! needs `compute_slots >= 2`. [`kernel_pdl_event`](Sim::kernel_pdl_event) is
+//! `cudaLaunchAttributeProgrammaticEvent`: other streams may wait that event
+//! at the trigger instead of kernel completion. Decode identity stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
 //! [`graph_exec_kernel_node_set_priority`](Sim::graph_exec_kernel_node_set_priority)
 //! are the exec-snapshot attributes. [`Sim::upload_graph`] is
 //! `cudaGraphUpload` (host-sync; first launch after instantiate calls it).
@@ -328,8 +331,8 @@ pub use ops::{
     BatchMemOp, CaptureDepOp, DType, GpuOp, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelBuf, KernelKind, KernelNodeParams,
-    MemAdvise, MemAttach, MemcpyOp, Operation, Place, ProgrammaticLaunch, StreamCaptureInfo,
-    StreamCaptureMode, UserObjectFlags, WaitValueCmp,
+    MemAdvise, MemAttach, MemcpyOp, Operation, PdlLaunch, Place, ProgrammaticEvent,
+    ProgrammaticLaunch, StreamCaptureInfo, StreamCaptureMode, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -3743,6 +3746,296 @@ mod tests {
         sim.free(d, a, s)
             .expect("free waits for overlapped primary");
         sim.synchronize().unwrap();
+    }
+
+    fn pdl_two_slot() -> HardwareProfile {
+        let mut p = h100();
+        for g in &mut p.gpus {
+            g.compute_slots = 2;
+            g.pdl_trigger_permille = 250;
+        }
+        p
+    }
+
+    #[test]
+    fn programmatic_event_cross_stream_starts_at_trigger() {
+        let mut sim = Sim::new(pdl_two_slot());
+        let d = DeviceId(0);
+        let s0 = StreamId(0);
+        let s1 = StreamId(1);
+        let a = sim.alloc(d, 4096, s0).unwrap();
+        let b = sim.alloc(d, 4096, s1).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s0));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s1));
+        sim.synchronize().unwrap();
+        let ev = EventId(1);
+        let k = KernelKind::other(1 << 30, 4096);
+        enq(sim.kernel_pdl_event(d, k.clone(), &[a], &[a], s0, PdlLaunch::trigger_event(ev)));
+        enq(sim.wait_event(d, ev, s1));
+        enq(sim.kernel(d, k, &[b], &[b], s1));
+        sim.synchronize().unwrap();
+        let k0 = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.stream == s0)
+            .expect("primary");
+        let k1 = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.stream == s1)
+            .expect("waiter");
+        let d0 = k0.done_ns.expect("k0 done");
+        let a1 = k1.start_ns.expect("k1 start");
+        assert!(
+            a1 < d0,
+            "programmatic event must unblock at trigger; start1={a1} done0={d0}"
+        );
+    }
+
+    #[test]
+    fn programmatic_event_without_trigger_waits_for_completion() {
+        let mut sim = Sim::new(pdl_two_slot());
+        let d = DeviceId(0);
+        let s0 = StreamId(0);
+        let s1 = StreamId(1);
+        let a = sim.alloc(d, 4096, s0).unwrap();
+        let b = sim.alloc(d, 4096, s1).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s0));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s1));
+        sim.synchronize().unwrap();
+        let ev = EventId(2);
+        let k = KernelKind::other(1 << 30, 4096);
+        enq(sim.kernel_pdl_event(
+            d,
+            k.clone(),
+            &[a],
+            &[a],
+            s0,
+            PdlLaunch {
+                pdl: ProgrammaticLaunch {
+                    wait: false,
+                    trigger: false,
+                },
+                event: Some(ProgrammaticEvent {
+                    event: ev,
+                    external: false,
+                }),
+            },
+        ));
+        enq(sim.wait_event(d, ev, s1));
+        enq(sim.kernel(d, k, &[b], &[b], s1));
+        sim.synchronize().unwrap();
+        let k0 = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.stream == s0)
+            .expect("primary");
+        let k1 = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.stream == s1)
+            .expect("waiter");
+        let d0 = k0.done_ns.expect("k0 done");
+        let a1 = k1.start_ns.expect("k1 start");
+        assert!(
+            a1 >= d0,
+            "no trigger means the event records at completion; start1={a1} done0={d0}"
+        );
+    }
+
+    #[test]
+    fn programmatic_event_query_fires_before_kernel_done() {
+        let mut sim = Sim::new(pdl_two_slot());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let ev = EventId(3);
+        enq(sim.kernel_pdl_event(
+            d,
+            KernelKind::other(1 << 30, 4096),
+            &[a],
+            &[a],
+            s,
+            PdlLaunch::trigger_event(ev),
+        ));
+        sim.synchronize_event(ev).unwrap();
+        assert!(sim.query_event(ev).unwrap());
+        let k0 = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .expect("kernel");
+        assert!(!k0.done, "query at trigger must precede kernel completion");
+        assert!(!sim.stream_is_idle(d, s).unwrap());
+        sim.synchronize().unwrap();
+        let k0 = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .expect("kernel done");
+        assert!(k0.done);
+    }
+
+    #[test]
+    fn programmatic_event_elapsed_uses_trigger() {
+        let mut sim = Sim::new(pdl_two_slot());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let start = EventId(4);
+        let end = EventId(5);
+        enq(sim.record_event(d, start, s));
+        enq(sim.kernel_pdl_event(
+            d,
+            KernelKind::other(1 << 30, 4096),
+            &[a],
+            &[a],
+            s,
+            PdlLaunch::trigger_event(end),
+        ));
+        sim.synchronize().unwrap();
+        let elapsed = sim.event_elapsed_ns(start, end).unwrap();
+        let k0 = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .expect("kernel");
+        let start_ns = k0.start_ns.expect("start");
+        let done_ns = k0.done_ns.expect("done");
+        let dur = done_ns.saturating_sub(start_ns);
+        assert!(
+            elapsed < dur,
+            "elapsed through programmatic event must be the trigger, not completion; elapsed={elapsed} dur={dur}"
+        );
+        assert!(elapsed > 0, "trigger must be after record");
+    }
+
+    #[test]
+    fn graph_programmatic_event_cross_stream_at_trigger() {
+        let mut sim = Sim::new(pdl_two_slot());
+        let d = DeviceId(0);
+        let s0 = StreamId(0);
+        let s1 = StreamId(1);
+        let a = sim.alloc(d, 4096, s0).unwrap();
+        let b = sim.alloc(d, 4096, s1).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s0));
+        enq(sim.memcpy_pinned_to_device(d, b, 4096, s1));
+        sim.synchronize().unwrap();
+        let ev = EventId(6);
+        let k = KernelKind::other(1 << 30, 4096);
+        let g = sim.create_graph(d, s0).unwrap();
+        sim.graph_add_kernel(g, k.clone(), &[a], &[a]).unwrap();
+        sim.graph_kernel_node_set_pdl(
+            g,
+            0,
+            ProgrammaticLaunch {
+                wait: false,
+                trigger: true,
+            },
+        )
+        .unwrap();
+        sim.graph_kernel_node_set_programmatic_event(
+            g,
+            0,
+            Some(ProgrammaticEvent {
+                event: ev,
+                external: false,
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_programmatic_event(g, 0)
+                .unwrap()
+                .map(|p| p.event),
+            Some(ev)
+        );
+        let _ = sim.instantiate_graph(g).unwrap();
+        let n = sim.launch_graph(g, s0).unwrap();
+        assert_eq!(n, 1);
+        enq(sim.wait_event(d, ev, s1));
+        enq(sim.kernel(d, k, &[b], &[b], s1));
+        sim.synchronize().unwrap();
+        let k0 = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.stream == s0)
+            .expect("primary");
+        let k1 = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.stream == s1)
+            .expect("waiter");
+        let d0 = k0.done_ns.expect("k0 done");
+        let a1 = k1.start_ns.expect("k1 start");
+        assert!(
+            a1 < d0,
+            "graph programmatic event must unblock at trigger; start1={a1} done0={d0}"
+        );
+    }
+
+    #[test]
+    fn graph_kernel_node_copy_attributes_copies_programmatic_event() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let ev = EventId(7);
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_set_programmatic_event(
+            g,
+            0,
+            Some(ProgrammaticEvent {
+                event: ev,
+                external: true,
+            }),
+        )
+        .unwrap();
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        assert!(sim
+            .graph_kernel_node_get_programmatic_event(h, 0)
+            .unwrap()
+            .is_none());
+        sim.graph_kernel_node_copy_attributes(h, 0, g, 0).unwrap();
+        let got = sim
+            .graph_kernel_node_get_programmatic_event(h, 0)
+            .unwrap()
+            .expect("copied");
+        assert_eq!(got.event, ev);
+        assert!(got.external);
+        sim.graph_kernel_node_set_programmatic_event(h, 0, None)
+            .unwrap();
+        assert!(sim
+            .graph_kernel_node_get_programmatic_event(h, 0)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn device_launch_rejects_programmatic_event() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 64).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_set_programmatic_event(
+            g,
+            0,
+            Some(ProgrammaticEvent {
+                event: EventId(8),
+                external: false,
+            }),
+        )
+        .unwrap();
+        let err = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device launch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

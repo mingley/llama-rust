@@ -453,12 +453,15 @@ overflow is `PinOom`. Example default is unlimited.
 compute contends). `stream_copy_attributes` is `cudaStreamCopyAttributes`
 (priority and SM permille). `graph_kernel_node_get_priority` /
 `set_priority` / `copy_attributes` are `cudaGraphKernelNodeGetAttribute` /
-`SetAttribute` / `CopyAttributes` for priority and programmatic dependent
-launch (`ProgrammaticLaunch`). `kernel_pdl` is `cudaLaunchKernelEx` PDL:
+`SetAttribute` / `CopyAttributes` for priority, programmatic dependent
+launch (`ProgrammaticLaunch`), and programmatic event (`ProgrammaticEvent`).
+`kernel_pdl` is `cudaLaunchKernelEx` PDL:
 a wait kernel may start after the previous same-stream kernel's trigger
 (`pdl_trigger_permille`) instead of its completion. Overlap needs
 `compute_slots >= 2`. A later `cudaFreeAsync` on that stream still waits
-for the overlapped primary (all preceding work). `expertvm sim --pdl` / `gguf_gemv engine --expert-sim --pdl`
+for the overlapped primary (all preceding work). `kernel_pdl_event` is
+`cudaLaunchAttributeProgrammaticEvent`: other streams may `wait_event`
+at the trigger instead of kernel completion. `expertvm sim --pdl` / `gguf_gemv engine --expert-sim --pdl`
 launch grouped expert GEMMs that way. Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
 instantiate schedules those node priorities instead of the launch stream. `set_created_streams_priority` assigns created streams
 their id. `set_stream_sm_permille` is a green-context SM fraction
