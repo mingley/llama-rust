@@ -456,10 +456,12 @@ Exact (mechanical invariants agents may rely on):
   GPU or [`MemAdvise::SetPreferredLocation`] already holds the page at
   another GPU (remote read, interconnect billing; writes still migrate;
   host preferred does not skip first-touch)
-- `cudaStreamAttachMemAsync` (`stream_attach`, `alloc_managed_host`):
-  Global / Host / Single visibility; Host and other-stream Single fail
-  device kernels / memset / device prefetch (`not attached`); Single
-  cannot use the NULL stream; capture is refused
+- `cudaStreamAttachMemAsync` (`stream_attach`, `stream_attach_with_flags`,
+  `alloc_managed_host`): Global / Host / Single visibility; Host and
+  other-stream Single fail device kernels / memset / device prefetch
+  (`not attached`); Single cannot use the NULL stream; capture is refused;
+  `stream_attach_with_flags` maps `MemAttachFlags::{GLOBAL,HOST,SINGLE}`
+  then typed `stream_attach` (other bits Invalid `"stream attach flags"`)
 - CUDA VMM (`va_reserve` / `va_map` / `va_unmap` / `va_free`,
   `va_create` / `va_map_handle` / `va_retain_handle` / `va_release_handle`,
   `va_acquire` / `va_release`, `va_map_range` / `va_unmap_range`):
@@ -2324,7 +2326,15 @@ model, do not celebrate the sim.
     Decode identity unchanged. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-210. [ ] Next numbered PLAN item after 209 is the next `gpu-sim` / Engine /
+210. [x] `cudaStreamAttachMemAsync` flags: `Sim::stream_attach_with_flags`
+    maps [`MemAttachFlags::GLOBAL`] / `HOST` / `SINGLE` onto
+    [`MemAttach`] then typed [`stream_attach`] (capture refuse, Single+NULL,
+    and stream-match stay). Other bits are Invalid `"stream attach flags"`.
+    Typed [`stream_attach`] stays. Query; capture is refused by the typed
+    helper. Decode identity unchanged. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+211. [ ] Next numbered PLAN item after 210 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

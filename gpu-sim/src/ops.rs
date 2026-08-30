@@ -1449,7 +1449,8 @@ pub enum MemAttach {
     Single,
 }
 
-/// `cudaMemAttach*` bits for [`crate::Sim::alloc_managed_with_flags`].
+/// `cudaMemAttach*` bits for [`crate::Sim::alloc_managed_with_flags`] /
+/// [`crate::Sim::stream_attach_with_flags`].
 ///
 /// [`Self::SINGLE`] is stream-attach only; mallocManaged of it is Invalid `"managed flags"`.
 pub struct MemAttachFlags;
@@ -1459,7 +1460,8 @@ impl MemAttachFlags {
     pub const GLOBAL: u32 = 1;
     /// `cudaMemAttachHost`.
     pub const HOST: u32 = 2;
-    /// `cudaMemAttachSingle` ([`crate::Sim::stream_attach`] only).
+    /// `cudaMemAttachSingle` ([`crate::Sim::stream_attach`] /
+    /// [`crate::Sim::stream_attach_with_flags`] only).
     pub const SINGLE: u32 = 4;
 }
 

@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaStreamAttachMemAsync` flags
+
+`stream_attach_with_flags` maps `MemAttachFlags::{GLOBAL, HOST, SINGLE}`
+onto `MemAttach` then typed `stream_attach` (capture refuse / Single+NULL
+/ stream-match stay). Other bits Invalid `"stream attach flags"`. Typed
+`stream_attach` stays. Query; capture is refused by the typed helper.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaIpcOpenMemHandle` flags
 
 `ipc_open_with_flags` accepts `IpcMemFlags::LAZY_ENABLE_PEER_ACCESS` as a
@@ -2328,7 +2336,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 209 (`ipc_open_with_flags`).
+Next code change is PLAN systems depth after item 210 (`stream_attach_with_flags`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

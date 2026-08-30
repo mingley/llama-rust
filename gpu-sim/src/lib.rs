@@ -87,7 +87,8 @@
 //! [`Sim::stream_attach`] is `cudaStreamAttachMemAsync` (stream-ordered;
 //! Host and other-stream Single fail device kernels / memset / device prefetch
 //! with `not attached`; Single cannot use [`StreamId::NULL`]; capture is
-//! refused). Prefetch migrates;
+//! refused). [`stream_attach_with_flags`](Sim::stream_attach_with_flags) is
+//! the flags word ([`MemAttachFlags`]). Typed helper stays. Prefetch migrates;
 //! it does not replicate unless [`Sim::mem_advise`] [`MemAdvise::SetReadMostly`].
 //! [`MemAdvise::SetAccessedBy`] maps a GPU so a kernel can read without
 //! migrating (billed on the interconnect, not local HBM). A kernel
@@ -10410,6 +10411,37 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("not attached")),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn stream_attach_with_flags_is_cuda_stream_attach_mem_async() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s0 = StreamId(1);
+        let bytes = 4096u64;
+        let m = sim.alloc_managed(bytes).unwrap();
+        enq(sim.prefetch(d, m, s0));
+        enq(sim.stream_attach_with_flags(d, m, s0, MemAttachFlags::SINGLE));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.mem_attach(m).unwrap(), MemAttach::Single);
+        enq(sim.stream_attach_with_flags(d, m, s0, MemAttachFlags::GLOBAL));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.mem_attach(m).unwrap(), MemAttach::Global);
+        enq(sim.stream_attach_with_flags(d, m, s0, MemAttachFlags::HOST));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.mem_attach(m).unwrap(), MemAttach::Host);
+        match sim.stream_attach_with_flags(d, m, s0, 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("stream attach flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.stream_attach_with_flags(d, m, s0, MemAttachFlags::GLOBAL) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

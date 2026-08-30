@@ -42,7 +42,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaHostRegister` pins pageable host for DMA (`host_register`) | `alloc_overhead_ns` (mlock, host-sync) |
 | `cudaHostAllocMapped` / `host_register_mapped`: kernel may read host with no H2D | host PCIe vs HBM |
 | `cudaMallocManaged` (`alloc_managed` / `alloc_managed_with_flags` Global/Host) does not charge HBM until migrate | `alloc_overhead_ns` (VA reserve at the call) |
-| `cudaStreamAttachMemAsync` (`stream_attach`) Host/Single visibility | 1 ns stream-ordered |
+| `cudaStreamAttachMemAsync` (`stream_attach` / `stream_attach_with_flags`) Host/Single visibility | 1 ns stream-ordered |
 | `cudaMemAdviseSetReadMostly`: prefetch replicates | same DMA as a move |
 | `drop_managed_copy`: dest eviction of one ReadMostly GPU | other copies stay |
 | `cudaMemAdviseSetAccessedBy`: kernel may read without migrating | interconnect, not local HBM |
@@ -561,7 +561,10 @@ alloc/register. `alloc_managed` is `cudaMallocManaged` (no HBM until
 `cudaMallocManaged` (`MemAttachFlags::GLOBAL` / `HOST`; Single is Invalid). `stream_attach` is
 `cudaStreamAttachMemAsync` (stream-ordered; Host and other-stream Single
 fail device kernels / memset / device prefetch; Single cannot use the NULL
-stream; capture is refused). `mem_advise` is `cudaMemAdvise` (host-sync).
+stream; capture is refused). `stream_attach_with_flags` maps
+`MemAttachFlags::{GLOBAL, HOST, SINGLE}` then typed `stream_attach`
+(other bits Invalid `"stream attach flags"`). Typed `stream_attach` stays.
+`mem_advise` is `cudaMemAdvise` (host-sync).
 `SetReadMostly` makes prefetch replicate; `SetAccessedBy` lets a kernel
 read without migrating. `SetPreferredLocation` keeps a page already at
 that GPU there on a remote read (writes still migrate; host preferred

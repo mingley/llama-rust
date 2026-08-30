@@ -12183,6 +12183,32 @@ impl Sim {
         self.submit(device, stream, Kind::Attach { id, flags })
     }
 
+    /// `cudaStreamAttachMemAsync` with a flags word.
+    ///
+    /// [`MemAttachFlags::GLOBAL`] / [`HOST`](MemAttachFlags::HOST) /
+    /// [`SINGLE`](MemAttachFlags::SINGLE) map to [`MemAttach`]. Other bits are
+    /// Invalid `"stream attach flags"`. Typed [`Self::stream_attach`] stays.
+    /// Capture cannot include it.
+    pub fn stream_attach_with_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        stream: StreamId,
+        flags: u32,
+    ) -> Result<OpId, SimError> {
+        let attach = match flags {
+            MemAttachFlags::GLOBAL => MemAttach::Global,
+            MemAttachFlags::HOST => MemAttach::Host,
+            MemAttachFlags::SINGLE => MemAttach::Single,
+            _ => {
+                return Err(SimError::Invalid {
+                    why: "stream attach flags",
+                });
+            }
+        };
+        self.stream_attach(device, id, stream, attach)
+    }
+
     /// Record `event` after prior ops on `stream` (`cudaEventRecord`).
     pub fn record_event(
         &mut self,
