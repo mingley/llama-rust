@@ -17,8 +17,8 @@ const USAGE: &str = "\
 usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
-  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--shareable] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--cluster-spread] [--max-shared] [--multicast] [--compute-slots N] [--decode-sms N]
-  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--shareable] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--cluster-spread] [--max-shared] [--multicast] [--compute-slots N] [--decode-sms N]
+  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--shareable] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--shareable] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--multicast] [--compute-slots N] [--decode-sms N]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
@@ -27,7 +27,7 @@ usage: expertvm <command> [args]
   place    <trace.jsonl> [--gpus N] [--hot-pt N]
   remote   <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
   kv       [--pages N] [--page-bytes B] [--capacity C] [--tokens T] [--profile NAME] [--fill h2d|memset] [--sequences N]
-  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--shareable] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--cluster-spread] [--max-shared] [--multicast] [--compute-slots N] [--decode-sms N]
+  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--shareable] [--host-func] [--blocking-streams] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -135,6 +135,7 @@ struct Cfg {
     pdl: bool,
     l2_persist: bool,
     cluster: u8,
+    preferred_cluster: u8,
     cluster_spread: bool,
     max_shared: bool,
     multicast: bool,
@@ -199,6 +200,7 @@ where
     let mut pdl = false;
     let mut l2_persist = false;
     let mut cluster = 0u8;
+    let mut preferred_cluster = 0u8;
     let mut cluster_spread = false;
     let mut max_shared = false;
     let mut multicast = false;
@@ -265,6 +267,10 @@ where
             "--pdl" => pdl = switch(&inline),
             "--l2-persist" => l2_persist = switch(&inline),
             "--cluster" => cluster = parse_cluster(&value("cluster", inline, &mut it)?)?,
+            "--preferred-cluster" => {
+                preferred_cluster =
+                    parse_preferred_cluster(&value("preferred-cluster", inline, &mut it)?)?
+            }
             "--cluster-spread" => cluster_spread = switch(&inline),
             "--max-shared" => max_shared = switch(&inline),
             "--multicast" => multicast = switch(&inline),
@@ -354,6 +360,12 @@ where
     if shareable && (sync_alloc || mapped || managed || vmm) {
         return Err("shareable needs cudaMallocAsync".into());
     }
+    if preferred_cluster != 0 && cluster == 0 {
+        return Err("--preferred-cluster needs --cluster".into());
+    }
+    if preferred_cluster != 0 && !preferred_cluster.is_multiple_of(cluster) {
+        return Err("preferred-cluster must be a multiple of cluster".into());
+    }
     Ok(Cfg {
         path: path.ok_or("missing trace.jsonl or workload name")?,
         capacity,
@@ -398,6 +410,7 @@ where
         pdl,
         l2_persist,
         cluster,
+        preferred_cluster,
         cluster_spread,
         max_shared,
         multicast,
@@ -456,6 +469,7 @@ fn sim_cfg_from(cfg: &Cfg, prefetch: Prefetch, max_batch: usize) -> SimCfg {
         pdl: cfg.pdl,
         l2_persist: cfg.l2_persist,
         cluster: cfg.cluster,
+        preferred_cluster: cfg.preferred_cluster,
         cluster_spread: cfg.cluster_spread,
         max_shared: cfg.max_shared,
         multicast: cfg.multicast,
@@ -507,6 +521,16 @@ fn parse_cluster(s: &str) -> Result<u8, String> {
         .map_err(|_| format!("invalid cluster {s:?}"))?;
     if n == 0 {
         return Err("cluster must be > 0".into());
+    }
+    Ok(n)
+}
+
+fn parse_preferred_cluster(s: &str) -> Result<u8, String> {
+    let n = s
+        .parse::<u8>()
+        .map_err(|_| format!("invalid preferred-cluster {s:?}"))?;
+    if n == 0 {
+        return Err("preferred-cluster must be > 0".into());
     }
     Ok(n)
 }
@@ -760,6 +784,7 @@ where
                 pdl: cfg.pdl,
                 l2_persist: cfg.l2_persist,
                 cluster: cfg.cluster,
+                preferred_cluster: cfg.preferred_cluster,
                 cluster_spread: cfg.cluster_spread,
                 max_shared: cfg.max_shared,
                 multicast: cfg.multicast,

@@ -17,7 +17,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--cluster-spread] [--max-shared] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -133,6 +133,7 @@ fn run() -> Result<(), String> {
             sim_cfg.pdl = cfg.pdl;
             sim_cfg.l2_persist = cfg.l2_persist;
             sim_cfg.cluster = cfg.cluster;
+            sim_cfg.preferred_cluster = cfg.preferred_cluster;
             sim_cfg.cluster_spread = cfg.cluster_spread;
             sim_cfg.max_shared = cfg.max_shared;
             sim_cfg.multicast = cfg.multicast;
@@ -206,6 +207,7 @@ struct Cfg {
     pdl: bool,
     l2_persist: bool,
     cluster: u8,
+    preferred_cluster: u8,
     cluster_spread: bool,
     max_shared: bool,
     multicast: bool,
@@ -245,6 +247,7 @@ where
     let mut pdl = false;
     let mut l2_persist = false;
     let mut cluster = 0u8;
+    let mut preferred_cluster = 0u8;
     let mut cluster_spread = false;
     let mut max_shared = false;
     let mut multicast = false;
@@ -311,6 +314,10 @@ where
                 l2_persist = !matches!(inline.as_deref(), Some("0" | "false"));
             }
             "--cluster" => cluster = parse_cluster(&value("cluster", inline, &mut it)?)?,
+            "--preferred-cluster" => {
+                preferred_cluster =
+                    parse_preferred_cluster(&value("preferred-cluster", inline, &mut it)?)?
+            }
             "--cluster-spread" => {
                 cluster_spread = !matches!(inline.as_deref(), Some("0" | "false"));
             }
@@ -360,6 +367,12 @@ where
     if pdl && cooperative {
         return Err("choose one of --pdl, --cooperative".into());
     }
+    if preferred_cluster != 0 && cluster == 0 {
+        return Err("--preferred-cluster needs --cluster".into());
+    }
+    if preferred_cluster != 0 && !preferred_cluster.is_multiple_of(cluster) {
+        return Err("preferred-cluster must be a multiple of cluster".into());
+    }
     Ok(Cfg {
         path,
         capacity,
@@ -384,6 +397,7 @@ where
         pdl,
         l2_persist,
         cluster,
+        preferred_cluster,
         cluster_spread,
         max_shared,
         multicast,
@@ -421,6 +435,16 @@ fn parse_cluster(s: &str) -> Result<u8, String> {
         .map_err(|_| format!("invalid cluster {s:?}"))?;
     if n == 0 {
         return Err("cluster must be > 0".into());
+    }
+    Ok(n)
+}
+
+fn parse_preferred_cluster(s: &str) -> Result<u8, String> {
+    let n = s
+        .parse::<u8>()
+        .map_err(|_| format!("invalid preferred-cluster {s:?}"))?;
+    if n == 0 {
+        return Err("preferred-cluster must be > 0".into());
     }
     Ok(n)
 }

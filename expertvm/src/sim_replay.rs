@@ -37,6 +37,8 @@ pub(crate) struct GemmFlags {
     pub l2_persist: bool,
     /// Hopper cluster X size (`cudaLaunchAttributeClusterDimension`). `0` is off.
     pub cluster: u8,
+    /// Preferred cluster X (`cudaLaunchAttributePreferredClusterDimension`). `0` is off.
+    pub preferred_cluster: u8,
     /// `cudaLaunchAttributeClusterSchedulingPolicyPreference` Spread.
     pub cluster_spread: bool,
     /// `cudaLaunchAttributePreferredSharedMemoryCarveout` MaxShared.
@@ -58,6 +60,11 @@ impl GemmFlags {
 
     pub(crate) fn cluster_dim(self) -> Option<gpu_sim::ClusterDim> {
         (self.cluster >= 1).then_some(gpu_sim::ClusterDim::x(u32::from(self.cluster)))
+    }
+
+    pub(crate) fn preferred_cluster_dim(self) -> Option<gpu_sim::ClusterDim> {
+        (self.preferred_cluster >= 1)
+            .then_some(gpu_sim::ClusterDim::x(u32::from(self.preferred_cluster)))
     }
 
     pub(crate) fn cluster_policy(self) -> ClusterSchedulingPolicy {
@@ -82,11 +89,28 @@ impl GemmFlags {
             pdl: self.pdl_attr().unwrap_or_default(),
             access_policy: self.persist_window(id),
             cluster: self.cluster_dim(),
+            preferred_cluster: self.preferred_cluster_dim(),
             cluster_policy: self.cluster_policy(),
             carveout: self.carveout(),
             ..KernelAttrs::default()
         }
     }
+}
+
+/// Preferred cluster needs a required dim that it is a multiple of (CUDA).
+pub(crate) fn check_cluster_preferred(cluster: u8, preferred: u8) -> Result<(), Error> {
+    if preferred == 0 {
+        return Ok(());
+    }
+    if cluster == 0 {
+        return Err(Error::Store("preferred-cluster needs cluster"));
+    }
+    if !preferred.is_multiple_of(cluster) {
+        return Err(Error::Store(
+            "preferred cluster must be a multiple of cluster",
+        ));
+    }
+    Ok(())
 }
 
 use crate::access::{ExpertAccess, ExpertKey, Trace};
@@ -411,6 +435,14 @@ pub struct SimCfg {
     /// `cudaLaunchKernel` (no cluster). [`crate::GpuStoreCfg::cluster`] is the
     /// store path.
     pub cluster: u8,
+    /// Hopper preferred cluster X (`cudaLaunchAttributePreferredClusterDimension`).
+    /// `0` is off.
+    ///
+    /// Occupancy uses this size when it fits in [`Self::compute_slots`], else
+    /// [`Self::cluster`]. Requires [`Self::cluster`]. Must be an integer
+    /// multiple of the required size. Decode identity stays no preferred dim.
+    /// [`crate::GpuStoreCfg::preferred_cluster`] is the store path.
+    pub preferred_cluster: u8,
     /// Spread cluster scheduling (`cudaLaunchAttributeClusterSchedulingPolicyPreference`).
     ///
     /// Occupies every Hyper-Q slot so leftover kernels cannot overlap even
@@ -493,6 +525,7 @@ impl SimCfg {
             pdl: false,
             l2_persist: false,
             cluster: 0,
+            preferred_cluster: 0,
             cluster_spread: false,
             max_shared: false,
             multicast: false,
@@ -504,6 +537,7 @@ impl SimCfg {
 }
 
 pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Result<(), Error> {
+    check_cluster_preferred(cfg.cluster, cfg.preferred_cluster)?;
     if cfg.graph_update && cfg.graph_set_params {
         return Err(Error::Store("choose one of graph-update, graph-set-params"));
     }
@@ -617,6 +651,7 @@ pub fn sim_replay_cfg(
         .with_pdl(cfg.pdl)
         .with_l2_persist(cfg.l2_persist)
         .with_cluster(cfg.cluster)
+        .with_preferred_cluster(cfg.preferred_cluster)
         .with_cluster_spread(cfg.cluster_spread)
         .with_max_shared(cfg.max_shared)
         .with_set_params(cfg.graph_set_params)
@@ -857,6 +892,7 @@ pub(crate) struct GraphBank {
     pdl: bool,
     l2_persist: bool,
     cluster: u8,
+    preferred_cluster: u8,
     cluster_spread: bool,
     max_shared: bool,
     set_params: bool,
@@ -879,6 +915,7 @@ impl GraphBank {
             pdl: false,
             l2_persist: false,
             cluster: 0,
+            preferred_cluster: 0,
             cluster_spread: false,
             max_shared: false,
             set_params: false,
@@ -908,6 +945,11 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_preferred_cluster(mut self, n: u8) -> Self {
+        self.preferred_cluster = n;
+        self
+    }
+
     pub(crate) fn with_cluster_spread(mut self, yes: bool) -> Self {
         self.cluster_spread = yes;
         self
@@ -924,6 +966,7 @@ impl GraphBank {
             pdl: self.pdl,
             l2_persist: self.l2_persist,
             cluster: self.cluster,
+            preferred_cluster: self.preferred_cluster,
             cluster_spread: self.cluster_spread,
             max_shared: self.max_shared,
         }
@@ -1863,6 +1906,10 @@ fn add_gemm_kernel(
     if let Some(c) = flags.cluster_dim() {
         let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_cluster(graph, node, Some(c))?;
+    }
+    if let Some(p) = flags.preferred_cluster_dim() {
+        let node = usize::from(!writes.is_empty());
+        sim.graph_kernel_node_set_preferred_cluster(graph, node, Some(p))?;
     }
     if flags.cluster_spread {
         let node = usize::from(!writes.is_empty());

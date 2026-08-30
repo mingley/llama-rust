@@ -9,8 +9,8 @@ use crate::planner::{
     Prefetch, DECODE_ACTIVATION_BYTES,
 };
 use crate::sim_replay::{
-    bind_shareable_mempools, replay_streams, retarget_parked_kernel, stream_of, GemmFlags, LeafMem,
-    GRAPH_SCRATCH_BYTES,
+    bind_shareable_mempools, check_cluster_preferred, replay_streams, retarget_parked_kernel,
+    stream_of, GemmFlags, LeafMem, GRAPH_SCRATCH_BYTES,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -167,6 +167,13 @@ pub struct GpuStoreCfg {
     /// Occupies `min(N, compute_slots)` Hyper-Q slots. Decode identity stays
     /// `cudaLaunchKernel` (no cluster).
     pub cluster: u8,
+    /// Hopper preferred cluster X (`cudaLaunchAttributePreferredClusterDimension`).
+    /// `0` is off.
+    ///
+    /// Occupancy uses this size when it fits in [`Self::compute_slots`], else
+    /// [`Self::cluster`]. Requires [`Self::cluster`]. Must be an integer
+    /// multiple of the required size. Decode identity stays no preferred dim.
+    pub preferred_cluster: u8,
     /// Spread cluster scheduling (`cudaLaunchAttributeClusterSchedulingPolicyPreference`).
     ///
     /// Occupies every Hyper-Q slot so leftover kernels cannot overlap even
@@ -252,6 +259,7 @@ pub struct SimulatedGpuStore {
     pdl: bool,
     l2_persist: bool,
     cluster: u8,
+    preferred_cluster: u8,
     cluster_spread: bool,
     max_shared: bool,
     multicast: bool,
@@ -405,6 +413,8 @@ impl SimulatedGpuStore {
     /// (illegal with cooperative).
     /// [`GpuStoreCfg::l2_persist`] is `cudaLaunchAttributeAccessPolicyWindow`
     /// over expert pages (persisting L2 after the first fill).
+    /// [`GpuStoreCfg::cluster`] / [`GpuStoreCfg::preferred_cluster`] are Hopper
+    /// thread-block cluster dims.
     /// [`GpuStoreCfg::multicast`] is Hopper NVLS replica fanout (requires
     /// [`GpuFill::Vmm`] and NVLink).
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
@@ -428,6 +438,7 @@ impl SimulatedGpuStore {
         if cfg.pdl && cfg.cooperative {
             return Err(Error::Store("choose one of pdl, cooperative"));
         }
+        check_cluster_preferred(cfg.cluster, cfg.preferred_cluster)?;
         if cfg.shareable && (cfg.sync_alloc || fill != GpuFill::Pinned) {
             return Err(Error::Store("shareable needs cudaMallocAsync"));
         }
@@ -513,6 +524,7 @@ impl SimulatedGpuStore {
             pdl: cfg.pdl,
             l2_persist: cfg.l2_persist,
             cluster: cfg.cluster,
+            preferred_cluster: cfg.preferred_cluster,
             cluster_spread: cfg.cluster_spread,
             max_shared: cfg.max_shared,
             multicast: cfg.multicast,
@@ -630,6 +642,7 @@ impl SimulatedGpuStore {
             pdl: self.pdl,
             l2_persist: self.l2_persist,
             cluster: self.cluster,
+            preferred_cluster: self.preferred_cluster,
             cluster_spread: self.cluster_spread,
             max_shared: self.max_shared,
         }

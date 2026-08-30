@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — expertvm `--preferred-cluster`
+
+`expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and
+`infer-bench schedule` take `--preferred-cluster N`. Grouped expert GEMMs
+launch with Hopper preferred cluster dimension so occupancy uses that size
+when it fits in `--compute-slots`, else the required `--cluster`. Needs
+`--cluster`; `N` must be a multiple of it. `N==0` is refused at parse.
+Legal with `--pdl` and `--cooperative`. Decode identity stays no preferred
+dim. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — expertvm `--max-shared`
 
 `expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and

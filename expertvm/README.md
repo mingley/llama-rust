@@ -89,7 +89,10 @@ previous kernel's trigger when `--compute-slots` is `>=2` (illegal with
 over expert pages (persisting L2 after the first fill). `--cluster N` is
 `cudaLaunchAttributeClusterDimension` on grouped expert GEMMs: occupies
 `min(N, compute_slots)` Hyper-Q slots (Hopper portable max 8; legal with
-`--pdl` and `--cooperative`). `--cluster-spread` is
+`--pdl` and `--cooperative`). `--preferred-cluster N` is
+`cudaLaunchAttributePreferredClusterDimension`: occupancy uses that size
+when it fits in `compute_slots`, else the required `--cluster` (needs
+`--cluster`; must be a multiple of it; legal with `--pdl` and `--cooperative`). `--cluster-spread` is
 `cudaLaunchAttributeClusterSchedulingPolicyPreference` Spread: occupies
 every Hyper-Q slot even when `N` is smaller than `compute_slots` (no-op
 without `--cluster` of at least 2). `--max-shared` is
@@ -219,10 +222,10 @@ on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--shareable` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` /
 `--seq-streams` / `--kv-sim` / `--kv-bytes` / `--decode-priority` /
-`--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--cluster-spread` / `--max-shared` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
+`--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
 `expertvm sim` / `schedule` / `store` take `--compute-slots` / `--decode-sms`
-/ `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--cluster-spread` / `--max-shared` / `--multicast` / `--shareable` (Hyper-Q occupancy, green-context SM fraction,
-decode-stream ITL, exclusive cooperative GEMMs, same-stream PDL overlap, Hopper cluster occupancy / Spread scheduling, NVLS replica fanout, and POSIX-FD mempool IPC on the trace walker). Walker `--decode-sms` does **not**
+/ `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--multicast` / `--shareable` (Hyper-Q occupancy, green-context SM fraction,
+decode-stream ITL, exclusive cooperative GEMMs, same-stream PDL overlap, Hopper cluster occupancy / preferred dim / Spread scheduling, NVLS replica fanout, and POSIX-FD mempool IPC on the trace walker). Walker `--decode-sms` does **not**
 imply `--decode-priority` (token 0 is prefill). `--decode-priority` implies
 `--stream-priority` so leftover prefill does not inflate decode ITL.
 `gguf_gemv engine --expert-sim --kv-sim` maps interned KV onto that Sim
@@ -236,7 +239,9 @@ same-stream expert GEMMs overlap after the previous kernel's programmatic
 trigger (needs `--compute-slots` >= 2; illegal with `--cooperative`).
 `--l2-persist` keeps reused expert pages in persisting L2. `--cluster N`
 is a Hopper thread-block cluster so leftover kernels cannot overlap a
-launch that fills Hyper-Q. `--cluster-spread` occupies every Hyper-Q slot
+launch that fills Hyper-Q. `--preferred-cluster N` occupies the preferred
+size when it fits in `--compute-slots` (needs `--cluster`; must be a
+multiple of it). `--cluster-spread` occupies every Hyper-Q slot
 even when `N` is smaller than `--compute-slots` (no-op without `--cluster`
 of at least 2). `--max-shared` occupies every Hyper-Q slot via MaxShared
 carveout. `--cooperative` is
@@ -367,6 +372,7 @@ expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 2 --coo
 expertvm sim      trace.jsonl --capacity 2 --compute-slots 2 --pdl
 expertvm sim      trace.jsonl --capacity 2 --l2-persist
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 2 --cluster 2
+expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 4 --cluster 2 --preferred-cluster 4
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 4 --cluster 2 --cluster-spread
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 2 --max-shared
 expertvm schedule trace.jsonl --capacity 8 --place replicas --multicast --profile 8xh100

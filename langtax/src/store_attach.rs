@@ -66,6 +66,10 @@ pub(crate) struct GpuCli {
     pub cluster: u8,
     /// True when `--cluster` appeared.
     pub cluster_set: bool,
+    /// Hopper preferred cluster X (`GpuStoreCfg::preferred_cluster`). `0` is off.
+    pub preferred_cluster: u8,
+    /// True when `--preferred-cluster` appeared.
+    pub preferred_cluster_set: bool,
     /// Spread cluster scheduling (`GpuStoreCfg::cluster_spread`).
     pub cluster_spread: bool,
     /// Max-shared carveout (`GpuStoreCfg::max_shared`).
@@ -201,6 +205,30 @@ impl GpuCli {
         Ok(())
     }
 
+    /// Hopper preferred cluster X (`--preferred-cluster`). `0` is refused.
+    pub(crate) fn set_preferred_cluster(&mut self, n: u8) -> Result<(), String> {
+        if n == 0 {
+            return Err("preferred-cluster must be > 0".into());
+        }
+        self.preferred_cluster = n;
+        self.preferred_cluster_set = true;
+        Ok(())
+    }
+
+    /// Preferred cluster needs a required `--cluster` that it is a multiple of.
+    pub(crate) fn check_preferred_cluster(self) -> Result<(), String> {
+        if !self.preferred_cluster_set {
+            return Ok(());
+        }
+        if !self.cluster_set {
+            return Err("--preferred-cluster needs --cluster".into());
+        }
+        if !self.preferred_cluster.is_multiple_of(self.cluster) {
+            return Err("preferred-cluster must be a multiple of cluster".into());
+        }
+        Ok(())
+    }
+
     /// First CUDA knob that needs `--expert-sim`, if any.
     #[must_use]
     pub(crate) fn sim_flag(self) -> Option<&'static str> {
@@ -236,6 +264,7 @@ impl GpuCli {
             (self.vmm_page_set, "--vmm-page"),
             (self.compute_slots_set, "--compute-slots"),
             (self.cluster_set, "--cluster"),
+            (self.preferred_cluster_set, "--preferred-cluster"),
             (self.cluster_spread, "--cluster-spread"),
             (self.max_shared, "--max-shared"),
             (self.decode_sm_set, "--decode-sms"),
@@ -294,6 +323,7 @@ enum PlanSlot {
     KvBytes,
     ComputeSlots,
     Cluster,
+    PreferredCluster,
     DecodeSms,
     Prefetch,
     PlanWindow,
@@ -307,6 +337,7 @@ impl PlanSlot {
             Self::KvBytes => "kv-bytes",
             Self::ComputeSlots => "compute-slots",
             Self::Cluster => "cluster",
+            Self::PreferredCluster => "preferred-cluster",
             Self::DecodeSms => "decode-sms",
             Self::Prefetch => "prefetch",
             Self::PlanWindow => "plan-window",
@@ -325,6 +356,7 @@ impl PlannerCli {
             "--kv-bytes" => Dash::Need(PlanSlot::KvBytes),
             "--compute-slots" => Dash::Need(PlanSlot::ComputeSlots),
             "--cluster" => Dash::Need(PlanSlot::Cluster),
+            "--preferred-cluster" => Dash::Need(PlanSlot::PreferredCluster),
             "--decode-sms" => Dash::Need(PlanSlot::DecodeSms),
             "--prefetch" => Dash::Need(PlanSlot::Prefetch),
             "--plan-window" => Dash::Need(PlanSlot::PlanWindow),
@@ -358,6 +390,12 @@ impl PlannerCli {
                     .parse::<u8>()
                     .map_err(|_| format!("invalid cluster {raw:?}"))?;
                 self.gpu.set_cluster(n)?;
+            }
+            PlanSlot::PreferredCluster => {
+                let n = raw
+                    .parse::<u8>()
+                    .map_err(|_| format!("invalid preferred-cluster {raw:?}"))?;
+                self.gpu.set_preferred_cluster(n)?;
             }
             PlanSlot::DecodeSms => {
                 let n = raw
@@ -456,6 +494,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         pdl: gpu.pdl,
         l2_persist: gpu.l2_persist,
         cluster: gpu.cluster,
+        preferred_cluster: gpu.preferred_cluster,
         cluster_spread: gpu.cluster_spread,
         max_shared: gpu.max_shared,
         multicast: gpu.multicast,

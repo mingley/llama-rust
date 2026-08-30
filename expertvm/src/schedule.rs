@@ -335,6 +335,7 @@ impl SchedRt {
             .with_pdl(cfg.pdl)
             .with_l2_persist(cfg.l2_persist)
             .with_cluster(cfg.cluster)
+            .with_preferred_cluster(cfg.preferred_cluster)
             .with_cluster_spread(cfg.cluster_spread)
             .with_max_shared(cfg.max_shared)
             .with_set_params(cfg.graph_set_params)

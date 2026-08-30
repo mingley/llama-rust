@@ -699,7 +699,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--shareable`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-piecewise`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--cluster-spread`, `--max-shared`, and `--multicast`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-piecewise`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, and `--multicast`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--shareable` is POSIX-FD mempool IPC
   (implies `--mempool`; illegal with `--sync-alloc` / mapped / managed / vmm). `--mapped` is `cudaHostAllocMapped`
@@ -1614,6 +1614,15 @@ model, do not celebrate the sim.
     (`graph_kernel_node_set_carveout`). Occupies every Hyper-Q slot so
     leftover kernels cannot overlap. Legal with `--pdl` and `--cooperative`.
     Decode identity stays Default. `gpu-profile capture` is still refused.
+
+126. [x] expertvm / Engine `--preferred-cluster N`: grouped expert GEMMs
+    launch with `cudaLaunchAttributePreferredClusterDimension` `{N,1,1}`
+    (`graph_kernel_node_set_preferred_cluster`) after the required
+    `--cluster`. Occupancy uses the preferred size when it fits in
+    `compute_slots`, else the required dim. `N==0` is refused at parse;
+    preferred without `--cluster` is refused; `N` must be a multiple of
+    `--cluster`. Legal with `--pdl` and `--cooperative`. Decode identity
+    stays no preferred dim. `gpu-profile capture` is still refused.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
