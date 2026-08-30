@@ -47,6 +47,10 @@ pub(crate) struct GemmFlags {
     pub shared_mem: gpu_sim::SharedMemoryMode,
     /// `cudaLaunchAttributePortableClusterSizeMode`. Decode identity stays Default.
     pub portable_cluster: gpu_sim::PortableClusterMode,
+    /// `cudaLaunchKernel` `sharedMemBytes`. Decode identity stays `0`.
+    pub dynamic_shared: u32,
+    /// CUDA 13 `cudaLaunchAttributeSharedMemoryMode`. Decode identity stays Default.
+    pub portable_shared: gpu_sim::PortableSharedMode,
 }
 
 impl GemmFlags {
@@ -98,6 +102,8 @@ impl GemmFlags {
             carveout: self.carveout(),
             shared_mem: self.shared_mem,
             portable_cluster: self.portable_cluster,
+            dynamic_shared: self.dynamic_shared,
+            portable_shared: self.portable_shared,
             ..KernelAttrs::default()
         }
     }
@@ -131,8 +137,8 @@ use crate::replay::{Touch, Walker};
 use gpu_sim::{
     AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceId, EventId, GraphId,
     HardwareProfile, KernelAttrs, KernelBuf, KernelKind, MemcpyOp, Place, PoolId,
-    PortableClusterMode, ProgrammaticLaunch, Score, SharedMemCarveout, SharedMemoryMode, Sim,
-    StreamId, SynchronizationPolicy,
+    PortableClusterMode, PortableSharedMode, ProgrammaticLaunch, Score, SharedMemCarveout,
+    SharedMemoryMode, Sim, StreamId, SynchronizationPolicy,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -490,6 +496,24 @@ pub struct SimCfg {
     /// [`Self::non_portable_cluster`] is off. Decode identity stays Default.
     /// [`crate::GpuStoreCfg::portable_cluster`] is the store path.
     pub portable_cluster: gpu_sim::PortableClusterMode,
+    /// `cudaFuncAttributeMaxDynamicSharedMemorySize` to the SKU opt-in max.
+    ///
+    /// Lets [`Self::dynamic_shared`] exceed `max_shared_mem_per_block`.
+    /// Decode identity stays `0` (portable only).
+    /// [`crate::GpuStoreCfg::optin_shared`] is the store path.
+    pub optin_shared: bool,
+    /// `cudaLaunchKernel` `sharedMemBytes` on grouped expert GEMMs. `0` is off.
+    ///
+    /// Decode identity stays `0`. [`crate::GpuStoreCfg::dynamic_shared`] is
+    /// the store path.
+    pub dynamic_shared: u32,
+    /// CUDA 13 portable-shared mode (`cudaLaunchAttributeSharedMemoryMode`).
+    ///
+    /// Default uses the function attribute. RequirePortable always refuses
+    /// oversize. AllowNonPortable allows up to `max_shared_mem_per_block_optin`
+    /// even when [`Self::optin_shared`] is off. Decode identity stays Default.
+    /// [`crate::GpuStoreCfg::portable_shared`] is the store path.
+    pub portable_shared: gpu_sim::PortableSharedMode,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// `--place replicas` maps dest VMM physicals then one NVLS kernel instead
@@ -566,6 +590,9 @@ impl SimCfg {
             sync_policy: gpu_sim::SynchronizationPolicy::Auto,
             shared_mem: gpu_sim::SharedMemoryMode::Default,
             portable_cluster: gpu_sim::PortableClusterMode::Default,
+            optin_shared: false,
+            dynamic_shared: 0,
+            portable_shared: gpu_sim::PortableSharedMode::Default,
             multicast: false,
             compute_slots: 0,
             decode_sm_permille: 0,
@@ -667,6 +694,7 @@ pub fn sim_replay_cfg(
         sim.enable_persisting_l2()?;
     }
     allow_non_portable_cluster_if(&mut sim, cfg.non_portable_cluster)?;
+    allow_optin_shared_if(&mut sim, cfg.optin_shared)?;
     let mut args = TouchArgs {
         d,
         s,
@@ -696,6 +724,8 @@ pub fn sim_replay_cfg(
         .with_max_shared(cfg.max_shared)
         .with_shared_mem(cfg.shared_mem)
         .with_portable_cluster(cfg.portable_cluster)
+        .with_dynamic_shared(cfg.dynamic_shared)
+        .with_portable_shared(cfg.portable_shared)
         .with_set_params(cfg.graph_set_params)
         .with_piecewise(cfg.graph_piecewise);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
@@ -923,6 +953,24 @@ pub(crate) fn allow_non_portable_cluster_if(sim: &mut Sim, yes: bool) -> Result<
     Ok(())
 }
 
+/// `cudaFuncSetAttribute` MaxDynamicSharedMemorySize to the SKU opt-in max.
+pub(crate) fn allow_optin_shared(sim: &mut Sim) -> Result<(), Error> {
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        let d = DeviceId(g);
+        let optin = sim.profile().gpu(d)?.max_shared_mem_per_block_optin;
+        sim.set_max_dynamic_shared_memory(d, optin)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn allow_optin_shared_if(sim: &mut Sim, yes: bool) -> Result<(), Error> {
+    if yes {
+        allow_optin_shared(sim)?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Default)]
 pub(crate) struct ReplayCounters {
     pub hits: u64,
@@ -955,6 +1003,8 @@ pub(crate) struct GraphBank {
     max_shared: bool,
     shared_mem: gpu_sim::SharedMemoryMode,
     portable_cluster: gpu_sim::PortableClusterMode,
+    dynamic_shared: u32,
+    portable_shared: gpu_sim::PortableSharedMode,
     set_params: bool,
     pub updates: u64,
     pub clones: u64,
@@ -980,6 +1030,8 @@ impl GraphBank {
             max_shared: false,
             shared_mem: gpu_sim::SharedMemoryMode::Default,
             portable_cluster: gpu_sim::PortableClusterMode::Default,
+            dynamic_shared: 0,
+            portable_shared: gpu_sim::PortableSharedMode::Default,
             set_params: false,
             updates: 0,
             clones: 0,
@@ -1032,6 +1084,16 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_dynamic_shared(mut self, bytes: u32) -> Self {
+        self.dynamic_shared = bytes;
+        self
+    }
+
+    pub(crate) fn with_portable_shared(mut self, mode: PortableSharedMode) -> Self {
+        self.portable_shared = mode;
+        self
+    }
+
     fn gemm_flags(&self) -> GemmFlags {
         GemmFlags {
             cooperative: self.cooperative,
@@ -1043,6 +1105,8 @@ impl GraphBank {
             max_shared: self.max_shared,
             shared_mem: self.shared_mem,
             portable_cluster: self.portable_cluster,
+            dynamic_shared: self.dynamic_shared,
+            portable_shared: self.portable_shared,
         }
     }
 
@@ -2023,6 +2087,14 @@ fn add_gemm_kernel(
     if flags.portable_cluster != PortableClusterMode::Default {
         let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_portable_cluster(graph, node, flags.portable_cluster)?;
+    }
+    if flags.portable_shared != PortableSharedMode::Default {
+        let node = usize::from(!writes.is_empty());
+        sim.graph_kernel_node_set_portable_shared(graph, node, flags.portable_shared)?;
+    }
+    if flags.dynamic_shared > 0 {
+        let node = usize::from(!writes.is_empty());
+        sim.graph_kernel_node_set_dynamic_shared(graph, node, flags.dynamic_shared)?;
     }
     Ok(())
 }

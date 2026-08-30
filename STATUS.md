@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — expertvm `--dynamic-shared` / `--optin-shared` / `--portable-shared`
+
+`expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and
+`infer-bench schedule` take `--dynamic-shared N`, `--optin-shared`, and
+`--portable-shared default|portable|non-portable`. Grouped expert GEMMs launch
+with `cudaLaunchKernel` `sharedMemBytes` and CUDA 13
+`cudaLaunchAttributeSharedMemoryMode`. `--optin-shared` sets
+`cudaFuncAttributeMaxDynamicSharedMemorySize` to the SKU opt-in max. Default
+uses the function attribute. RequirePortable always refuses oversize.
+AllowNonPortable allows up to the opt-in max even when `--optin-shared` is off.
+Legal with `--pdl` and `--cooperative`. Decode identity stays 0 bytes / Default.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — CUDA 13 portable dynamic shared memory
 
 `PortableSharedMode` is CUDA 13 `cudaLaunchAttributeSharedMemoryMode`

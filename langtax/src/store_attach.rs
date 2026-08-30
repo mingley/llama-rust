@@ -3,8 +3,8 @@
 use crate::decode::Llama;
 use crate::engine::Engine;
 use expertvm::{
-    CachedStore, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore, PortableClusterMode, Prefetch,
-    SharedMemoryMode, SimulatedGpuStore, SynchronizationPolicy,
+    CachedStore, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore, PortableClusterMode,
+    PortableSharedMode, Prefetch, SharedMemoryMode, SimulatedGpuStore, SynchronizationPolicy,
 };
 
 /// CLI knobs that build a [`LiveStore`] for an [`Engine`].
@@ -89,6 +89,16 @@ pub(crate) struct GpuCli {
     pub portable_cluster: PortableClusterMode,
     /// True when `--portable-cluster` appeared.
     pub portable_cluster_set: bool,
+    /// `cudaFuncAttributeMaxDynamicSharedMemorySize` (`GpuStoreCfg::optin_shared`).
+    pub optin_shared: bool,
+    /// `cudaLaunchKernel` `sharedMemBytes` (`GpuStoreCfg::dynamic_shared`).
+    pub dynamic_shared: u32,
+    /// True when `--dynamic-shared` appeared.
+    pub dynamic_shared_set: bool,
+    /// CUDA 13 portable-shared mode (`GpuStoreCfg::portable_shared`).
+    pub portable_shared: PortableSharedMode,
+    /// True when `--portable-shared` appeared.
+    pub portable_shared_set: bool,
     /// Hopper NVLS replica fanout (`GpuStoreCfg::multicast`). Implies vmm.
     pub multicast: bool,
     /// Hyper-Q occupancy (`GpuStoreCfg::compute_slots`). `0` keeps the profile.
@@ -141,6 +151,7 @@ impl GpuCli {
             "--cluster-spread" => &mut self.cluster_spread,
             "--max-shared" => &mut self.max_shared,
             "--non-portable-cluster" => &mut self.non_portable_cluster,
+            "--optin-shared" => &mut self.optin_shared,
             "--multicast" => &mut self.multicast,
             _ => return Ok(false),
         };
@@ -255,6 +266,24 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `cudaLaunchKernel` `sharedMemBytes` (`--dynamic-shared`). `0` is refused.
+    pub(crate) fn set_dynamic_shared(&mut self, n: u32) -> Result<(), String> {
+        if n == 0 {
+            return Err("dynamic-shared must be > 0".into());
+        }
+        self.dynamic_shared = n;
+        self.dynamic_shared_set = true;
+        Ok(())
+    }
+
+    /// CUDA 13 portable-shared mode (`--portable-shared default|portable|non-portable`).
+    pub(crate) fn set_portable_shared(&mut self, raw: &str) -> Result<(), String> {
+        self.portable_shared =
+            PortableSharedMode::parse(raw).map_err(|_| format!("unknown portable-shared {raw}"))?;
+        self.portable_shared_set = true;
+        Ok(())
+    }
+
     /// Preferred cluster needs a required `--cluster` that it is a multiple of.
     pub(crate) fn check_preferred_cluster(self) -> Result<(), String> {
         if !self.preferred_cluster_set {
@@ -311,6 +340,9 @@ impl GpuCli {
             (self.sync_policy_set, "--sync-policy"),
             (self.shared_mem_set, "--shared-mem"),
             (self.portable_cluster_set, "--portable-cluster"),
+            (self.optin_shared, "--optin-shared"),
+            (self.dynamic_shared_set, "--dynamic-shared"),
+            (self.portable_shared_set, "--portable-shared"),
             (self.decode_sm_set, "--decode-sms"),
         ]
         .into_iter()
@@ -371,6 +403,8 @@ enum PlanSlot {
     SyncPolicy,
     SharedMem,
     PortableCluster,
+    DynamicShared,
+    PortableShared,
     DecodeSms,
     Prefetch,
     PlanWindow,
@@ -388,6 +422,8 @@ impl PlanSlot {
             Self::SyncPolicy => "sync-policy",
             Self::SharedMem => "shared-mem",
             Self::PortableCluster => "portable-cluster",
+            Self::DynamicShared => "dynamic-shared",
+            Self::PortableShared => "portable-shared",
             Self::DecodeSms => "decode-sms",
             Self::Prefetch => "prefetch",
             Self::PlanWindow => "plan-window",
@@ -410,6 +446,8 @@ impl PlannerCli {
             "--sync-policy" => Dash::Need(PlanSlot::SyncPolicy),
             "--shared-mem" => Dash::Need(PlanSlot::SharedMem),
             "--portable-cluster" => Dash::Need(PlanSlot::PortableCluster),
+            "--dynamic-shared" => Dash::Need(PlanSlot::DynamicShared),
+            "--portable-shared" => Dash::Need(PlanSlot::PortableShared),
             "--decode-sms" => Dash::Need(PlanSlot::DecodeSms),
             "--prefetch" => Dash::Need(PlanSlot::Prefetch),
             "--plan-window" => Dash::Need(PlanSlot::PlanWindow),
@@ -453,6 +491,13 @@ impl PlannerCli {
             PlanSlot::SyncPolicy => self.gpu.set_sync_policy(raw)?,
             PlanSlot::SharedMem => self.gpu.set_shared_mem(raw)?,
             PlanSlot::PortableCluster => self.gpu.set_portable_cluster(raw)?,
+            PlanSlot::DynamicShared => {
+                let n = raw
+                    .parse::<u32>()
+                    .map_err(|_| format!("invalid dynamic-shared {raw:?}"))?;
+                self.gpu.set_dynamic_shared(n)?;
+            }
+            PlanSlot::PortableShared => self.gpu.set_portable_shared(raw)?,
             PlanSlot::DecodeSms => {
                 let n = raw
                     .parse::<u16>()
@@ -557,6 +602,9 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         sync_policy: gpu.sync_policy,
         shared_mem: gpu.shared_mem,
         portable_cluster: gpu.portable_cluster,
+        optin_shared: gpu.optin_shared,
+        dynamic_shared: gpu.dynamic_shared,
+        portable_shared: gpu.portable_shared,
         multicast: gpu.multicast,
         compute_slots: gpu.compute_slots,
         decode_sm_permille: gpu.decode_sm_permille,

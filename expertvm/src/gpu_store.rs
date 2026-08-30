@@ -9,9 +9,9 @@ use crate::planner::{
     Prefetch, DECODE_ACTIVATION_BYTES,
 };
 use crate::sim_replay::{
-    allow_non_portable_cluster_if, apply_stream_sync_policy, bind_shareable_mempools,
-    check_cluster_preferred, replay_streams, retarget_parked_kernel, stream_of, GemmFlags, LeafMem,
-    StreamPlan, GRAPH_SCRATCH_BYTES,
+    allow_non_portable_cluster_if, allow_optin_shared_if, apply_stream_sync_policy,
+    bind_shareable_mempools, check_cluster_preferred, replay_streams, retarget_parked_kernel,
+    stream_of, GemmFlags, LeafMem, StreamPlan, GRAPH_SCRATCH_BYTES,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -211,6 +211,21 @@ pub struct GpuStoreCfg {
     /// allows up to `max_blocks_per_cluster` even when
     /// [`Self::non_portable_cluster`] is off. Decode identity stays Default.
     pub portable_cluster: gpu_sim::PortableClusterMode,
+    /// `cudaFuncAttributeMaxDynamicSharedMemorySize` to the SKU opt-in max.
+    ///
+    /// Lets [`Self::dynamic_shared`] exceed `max_shared_mem_per_block`.
+    /// Decode identity stays `0` (portable only).
+    pub optin_shared: bool,
+    /// `cudaLaunchKernel` `sharedMemBytes` on grouped expert GEMMs. `0` is off.
+    ///
+    /// Decode identity stays `0`.
+    pub dynamic_shared: u32,
+    /// CUDA 13 portable-shared mode (`cudaLaunchAttributeSharedMemoryMode`).
+    ///
+    /// Default uses the function attribute. RequirePortable always refuses
+    /// oversize. AllowNonPortable allows up to `max_shared_mem_per_block_optin`
+    /// even when [`Self::optin_shared`] is off. Decode identity stays Default.
+    pub portable_shared: gpu_sim::PortableSharedMode,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// [`Self::pin_hot`] and walker `--place replicas` map dest VMM physicals
@@ -290,6 +305,8 @@ pub struct SimulatedGpuStore {
     max_shared: bool,
     shared_mem: gpu_sim::SharedMemoryMode,
     portable_cluster: gpu_sim::PortableClusterMode,
+    dynamic_shared: u32,
+    portable_shared: gpu_sim::PortableSharedMode,
     multicast: bool,
     next_event: u32,
     pages: BTreeMap<ExpertKey, GpuPage>,
@@ -449,6 +466,10 @@ impl SimulatedGpuStore {
     /// (`cudaLaunchAttributeSharedMemoryMode`; Default never scales).
     /// [`GpuStoreCfg::portable_cluster`] is launch-time portable cluster mode
     /// (`cudaLaunchAttributePortableClusterSizeMode`; Default uses the function attr).
+    /// [`GpuStoreCfg::optin_shared`] is `cudaFuncAttributeMaxDynamicSharedMemorySize`
+    /// to the SKU opt-in max. [`GpuStoreCfg::dynamic_shared`] is
+    /// `cudaLaunchKernel` `sharedMemBytes`. [`GpuStoreCfg::portable_shared`] is
+    /// CUDA 13 `cudaLaunchAttributeSharedMemoryMode`.
     /// [`GpuStoreCfg::multicast`] is Hopper NVLS replica fanout (requires
     /// [`GpuFill::Vmm`] and NVLink).
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
@@ -505,6 +526,7 @@ impl SimulatedGpuStore {
             sim.enable_persisting_l2()?;
         }
         allow_non_portable_cluster_if(&mut sim, cfg.non_portable_cluster)?;
+        allow_optin_shared_if(&mut sim, cfg.optin_shared)?;
         let share_import = if cfg.shareable {
             bind_shareable_mempools(&mut sim)?
                 .get(&DeviceId(0))
@@ -566,6 +588,8 @@ impl SimulatedGpuStore {
             max_shared: cfg.max_shared,
             shared_mem: cfg.shared_mem,
             portable_cluster: cfg.portable_cluster,
+            dynamic_shared: cfg.dynamic_shared,
+            portable_shared: cfg.portable_shared,
             multicast: cfg.multicast,
             next_event: 1,
             pages: BTreeMap::new(),
@@ -686,6 +710,8 @@ impl SimulatedGpuStore {
             max_shared: self.max_shared,
             shared_mem: self.shared_mem,
             portable_cluster: self.portable_cluster,
+            dynamic_shared: self.dynamic_shared,
+            portable_shared: self.portable_shared,
         }
     }
 

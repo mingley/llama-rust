@@ -1704,6 +1704,18 @@ model, do not celebrate the sim.
     0 bytes / Default. Default is resolved at launch / graph replay.
     Device-launch graphs allow it. `gpu-profile capture` is still refused.
 
+136. [x] expertvm / Engine `--dynamic-shared N` / `--optin-shared` /
+    `--portable-shared default|portable|non-portable`:
+    `cudaLaunchKernel` `sharedMemBytes`,
+    `cudaFuncAttributeMaxDynamicSharedMemorySize` to the SKU opt-in max, and
+    CUDA 13 `cudaLaunchAttributeSharedMemoryMode` (`PortableSharedMode`) on
+    grouped expert GEMMs. `N == 0` is refused. Default uses the function
+    attribute (`0` = portable only). RequirePortable always refuses oversize.
+    AllowNonPortable allows up to `max_shared_mem_per_block_optin` even when
+    `--optin-shared` is off. Legal with `--pdl` and `--cooperative`. Decode
+    identity stays 0 bytes / Default / opt-in off. `gpu-profile capture` is
+    still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

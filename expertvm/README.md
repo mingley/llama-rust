@@ -109,6 +109,12 @@ scales duration; FourByte / EightByte scale by `1000 / shared_mem_*_permille`).
 `cudaLaunchAttributePortableClusterSizeMode` on grouped expert GEMMs (Default
 uses the function attribute; `portable` always refuses oversize; `non-portable`
 allows up to the SKU max even when `--non-portable-cluster` is off).
+`--optin-shared` is `cudaFuncAttributeMaxDynamicSharedMemorySize` to the SKU
+opt-in max. `--dynamic-shared N` is `cudaLaunchKernel` `sharedMemBytes`
+(`N` must be > 0). `--portable-shared default|portable|non-portable` is CUDA 13
+`cudaLaunchAttributeSharedMemoryMode` (`cudaSharedMemoryMode`; Default uses the
+function attribute; `portable` always refuses oversize; `non-portable` allows
+up to the SKU opt-in even when `--optin-shared` is off).
 Expert GEMMs stay
 on the Default mem-sync domain; gpu-sim allreduce tags Remote so a
 non-zero `same_domain_fence_permille` does not flush expert compute behind
@@ -234,9 +240,9 @@ on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--shareable` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` /
 `--seq-streams` / `--kv-sim` / `--kv-bytes` / `--decode-priority` /
-`--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--non-portable-cluster` / `--sync-policy` / `--shared-mem` / `--portable-cluster` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
+`--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--non-portable-cluster` / `--sync-policy` / `--shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
 `expertvm sim` / `schedule` / `store` take `--compute-slots` / `--decode-sms`
-/ `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--non-portable-cluster` / `--sync-policy` / `--shared-mem` / `--portable-cluster` / `--multicast` / `--shareable` (Hyper-Q occupancy, green-context SM fraction,
+/ `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--non-portable-cluster` / `--sync-policy` / `--shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--multicast` / `--shareable` (Hyper-Q occupancy, green-context SM fraction,
 decode-stream ITL, exclusive cooperative GEMMs, same-stream PDL overlap, Hopper cluster occupancy / preferred dim / Spread scheduling / non-portable size, NVLS replica fanout, and POSIX-FD mempool IPC on the trace walker). Walker `--decode-sms` does **not**
 imply `--decode-priority` (token 0 is prefill). `--decode-priority` implies
 `--stream-priority` so leftover prefill does not inflate decode ITL.
@@ -261,6 +267,10 @@ up to the SKU max. `--sync-policy auto|spin|yield|blocking` is stream host-wait
 (Auto tax 0). `--shared-mem default|four|eight` is kernel-node bank width
 (Default never scales). `--portable-cluster default|portable|non-portable` is
 launch-time portable cluster mode (Default uses the function attribute).
+`--optin-shared` is MaxDynamicSharedMemorySize to the SKU opt-in.
+`--dynamic-shared N` is `sharedMemBytes` (`N` > 0). `--portable-shared
+default|portable|non-portable` is CUDA 13 portable-shared mode (Default uses the
+function attribute).
 `--cooperative` is
 `cudaLaunchCooperativeKernel`: those GEMMs occupy every Hyper-Q slot, so
 leftover prefill cannot overlap even with `--compute-slots 2`. `--decode-sms N` (`1..=1000`)

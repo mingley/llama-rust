@@ -5723,6 +5723,104 @@ fn simulated_gpu_store_portable_cluster_overrides_func_attribute() {
 }
 
 #[test]
+fn simulated_gpu_store_optin_shared_allows_oversize() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nmax_shared_mem_per_block_optin=232448\n")
+        .expect("open shared profile");
+    let key = ExpertKey::new(0, 0);
+    let mut blocked = match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile.clone(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            dynamic_shared: 65_536,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(gpu) => gpu,
+        Err(err) => panic!("gpu: {err}"),
+    };
+    match blocked.acquire(key) {
+        Ok(_) => panic!("oversize without permission must fail"),
+        Err(err) => assert!(err.to_string().contains("non-portable shared"), "{err}"),
+    }
+    let mut allowed = match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            dynamic_shared: 65_536,
+            optin_shared: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(gpu) => gpu,
+        Err(err) => panic!("gpu: {err}"),
+    };
+    match allowed.acquire(key) {
+        Ok(_) => {}
+        Err(err) => panic!("optin must launch oversize: {err}"),
+    }
+    allowed.release(key);
+}
+
+#[test]
+fn simulated_gpu_store_portable_shared_overrides_func_attribute() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nmax_shared_mem_per_block_optin=232448\n")
+        .expect("open shared profile");
+    let key = ExpertKey::new(0, 0);
+    let mut allowed = match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile.clone(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            dynamic_shared: 65_536,
+            portable_shared: PortableSharedMode::AllowNonPortable,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(gpu) => gpu,
+        Err(err) => panic!("gpu: {err}"),
+    };
+    match allowed.acquire(key) {
+        Ok(_) => {}
+        Err(err) => panic!("AllowNonPortable must launch oversize without func attr: {err}"),
+    }
+    allowed.release(key);
+    let mut refused = match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            dynamic_shared: 65_536,
+            optin_shared: true,
+            portable_shared: PortableSharedMode::RequirePortable,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(gpu) => gpu,
+        Err(err) => panic!("gpu: {err}"),
+    };
+    match refused.acquire(key) {
+        Ok(_) => panic!("RequirePortable must refuse oversize even with func attr"),
+        Err(err) => assert!(err.to_string().contains("non-portable shared"), "{err}"),
+    }
+}
+
+#[test]
 fn simulated_gpu_store_sync_policy_taxes_decode_stream() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],
@@ -6131,6 +6229,65 @@ fn sim_replay_portable_cluster_overrides_func_attribute() {
         Err(err) => err,
     };
     assert!(err.to_string().contains("non-portable cluster"), "{err}");
+}
+
+#[test]
+fn sim_replay_optin_shared_allows_oversize() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nmax_shared_mem_per_block_optin=232448\n")
+        .expect("open shared profile");
+    let oversize = SimCfg {
+        dynamic_shared: 65_536,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let err = match sim_replay_cfg(&t, profile.clone(), oversize) {
+        Ok(_) => panic!("oversize without permission must fail"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("non-portable shared"), "{err}");
+    let allowed = SimCfg {
+        optin_shared: true,
+        ..oversize
+    };
+    let ok = match sim_replay_cfg(&t, profile, allowed) {
+        Ok(row) => row,
+        Err(err) => panic!("optin: {err}"),
+    };
+    assert!(ok.misses > 0, "{}", ok.line());
+}
+
+#[test]
+fn sim_replay_portable_shared_overrides_func_attribute() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nmax_shared_mem_per_block_optin=232448\n")
+        .expect("open shared profile");
+    let oversize = SimCfg {
+        dynamic_shared: 65_536,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let allowed = SimCfg {
+        portable_shared: PortableSharedMode::AllowNonPortable,
+        ..oversize
+    };
+    let ok = match sim_replay_cfg(&t, profile.clone(), allowed) {
+        Ok(row) => row,
+        Err(err) => panic!("AllowNonPortable: {err}"),
+    };
+    assert!(ok.misses > 0, "{}", ok.line());
+    let refused = SimCfg {
+        optin_shared: true,
+        portable_shared: PortableSharedMode::RequirePortable,
+        ..oversize
+    };
+    let err = match sim_replay_cfg(&t, profile, refused) {
+        Ok(_) => panic!("RequirePortable must refuse oversize even with func attr"),
+        Err(err) => err,
+    };
+    assert!(err.to_string().contains("non-portable shared"), "{err}");
 }
 
 #[test]

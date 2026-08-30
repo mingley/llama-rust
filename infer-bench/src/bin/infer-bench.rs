@@ -1,6 +1,6 @@
 //! `infer-bench adversarial | trace` — measured hit rates and sim scores.
 
-use gpu_sim::{PortableClusterMode, SharedMemoryMode, SynchronizationPolicy};
+use gpu_sim::{PortableClusterMode, PortableSharedMode, SharedMemoryMode, SynchronizationPolicy};
 use infer_bench::{
     adversarial_suite, colocated, report, schedule_placed, schedule_remote, sim_placed,
     sim_remote_home_cfg, striped, topology_suite, with_hot_replicas, HardwareProfile, SchedCfg,
@@ -18,7 +18,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -141,6 +141,9 @@ fn run() -> Result<(), String> {
             sim_cfg.sync_policy = cfg.sync_policy;
             sim_cfg.shared_mem = cfg.shared_mem;
             sim_cfg.portable_cluster = cfg.portable_cluster;
+            sim_cfg.optin_shared = cfg.optin_shared;
+            sim_cfg.dynamic_shared = cfg.dynamic_shared;
+            sim_cfg.portable_shared = cfg.portable_shared;
             sim_cfg.multicast = cfg.multicast;
             if cfg.multicast {
                 sim_cfg.vmm = true;
@@ -219,6 +222,9 @@ struct Cfg {
     sync_policy: SynchronizationPolicy,
     shared_mem: SharedMemoryMode,
     portable_cluster: PortableClusterMode,
+    optin_shared: bool,
+    dynamic_shared: u32,
+    portable_shared: PortableSharedMode,
     multicast: bool,
 }
 
@@ -263,6 +269,9 @@ where
     let mut sync_policy = SynchronizationPolicy::Auto;
     let mut shared_mem = SharedMemoryMode::Default;
     let mut portable_cluster = PortableClusterMode::Default;
+    let mut optin_shared = false;
+    let mut dynamic_shared = 0u32;
+    let mut portable_shared = PortableSharedMode::Default;
     let mut multicast = false;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
@@ -350,6 +359,16 @@ where
                 portable_cluster =
                     parse_portable_cluster(&value("portable-cluster", inline, &mut it)?)?
             }
+            "--optin-shared" => {
+                optin_shared = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
+            "--dynamic-shared" => {
+                dynamic_shared = parse_dynamic_shared(&value("dynamic-shared", inline, &mut it)?)?
+            }
+            "--portable-shared" => {
+                portable_shared =
+                    parse_portable_shared(&value("portable-shared", inline, &mut it)?)?
+            }
             "--multicast" => {
                 multicast = !matches!(inline.as_deref(), Some("0" | "false"));
             }
@@ -430,6 +449,9 @@ where
         sync_policy,
         shared_mem,
         portable_cluster,
+        optin_shared,
+        dynamic_shared,
+        portable_shared,
         multicast,
     })
 }
@@ -489,6 +511,20 @@ fn parse_shared_mem(s: &str) -> Result<SharedMemoryMode, String> {
 
 fn parse_portable_cluster(s: &str) -> Result<PortableClusterMode, String> {
     PortableClusterMode::parse(s).map_err(|_| format!("unknown portable-cluster {s}"))
+}
+
+fn parse_dynamic_shared(s: &str) -> Result<u32, String> {
+    let n = s
+        .parse::<u32>()
+        .map_err(|_| format!("invalid dynamic-shared {s:?}"))?;
+    if n == 0 {
+        return Err("dynamic-shared must be > 0".into());
+    }
+    Ok(n)
+}
+
+fn parse_portable_shared(s: &str) -> Result<PortableSharedMode, String> {
+    PortableSharedMode::parse(s).map_err(|_| format!("unknown portable-shared {s}"))
 }
 
 fn parse_workload(name: &str) -> Result<Workload, String> {

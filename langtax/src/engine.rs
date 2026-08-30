@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params, timing events, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `cluster`, `shared_mem`, `portable_cluster`) are the same mechanical
+//! `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `cluster`, `shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -67,10 +67,16 @@
 //! (`cudaLaunchAttributeSharedMemoryMode`; Default never scales duration).
 //! `--portable-cluster` default|portable|non-portable is launch-time portable
 //! cluster mode (`cudaLaunchAttributePortableClusterSizeMode`; Default uses
-//! the function attribute). Decode
+//! the function attribute). `--optin-shared` is
+//! `cudaFuncAttributeMaxDynamicSharedMemorySize` to the SKU opt-in max.
+//! `--dynamic-shared N` is `cudaLaunchKernel` `sharedMemBytes` (`N` > 0).
+//! `--portable-shared` default|portable|non-portable is CUDA 13 portable-shared
+//! mode (`cudaLaunchAttributeSharedMemoryMode`; Default uses the function
+//! attribute). Decode
 //! identity stays `cudaLaunchKernel` (no cluster / Default policy / no preferred
 //! dim / Default carveout / non-portable disallowed / Auto sync policy /
-//! Default shared-mem / Default portable-cluster).
+//! Default shared-mem / Default portable-cluster / 0 dynamic shared / Default
+//! portable-shared).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode
@@ -1471,8 +1477,8 @@ mod tests {
     use crate::tok::Tokenizer;
     use expertvm::{
         CachedStore, DeviceId, ExpertKey, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore,
-        PortableClusterMode, Prefetch, Score, SharedMemoryMode, SimulatedGpuStore, StoreMetrics,
-        StreamId, SynchronizationPolicy, TieredStore, Trace,
+        PortableClusterMode, PortableSharedMode, Prefetch, Score, SharedMemoryMode,
+        SimulatedGpuStore, StoreMetrics, StreamId, SynchronizationPolicy, TieredStore, Trace,
     };
 
     struct GpuEngineOut {
@@ -3831,6 +3837,39 @@ mod tests {
         assert_eq!(
             portable.4, oversize.4,
             "AllowNonPortable cluster 16 must keep greedy identity"
+        );
+    }
+
+    #[test]
+    fn engine_gpu_portable_shared_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse(
+            "gpus=1\nmax_shared_mem_per_block_optin=232448\nfp16_flops=1000000\ncopy_engines=2\n",
+        )
+        .expect("open shared profile");
+        let pri = GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            compute_slots: 2,
+            ..GpuStoreCfg::default()
+        };
+        let portable = mixed_gpu_decode_itl_at(bytes.clone(), false, None, pri, profile.clone());
+        let oversize = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                dynamic_shared: 65_536,
+                portable_shared: PortableSharedMode::AllowNonPortable,
+                ..pri
+            },
+            profile,
+        );
+        assert_eq!(portable.2, 4);
+        assert_eq!(oversize.2, 4);
+        assert_eq!(
+            portable.4, oversize.4,
+            "AllowNonPortable dynamic shared 65536 must keep greedy identity"
         );
     }
 

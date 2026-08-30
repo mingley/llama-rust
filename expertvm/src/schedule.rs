@@ -6,11 +6,12 @@ use crate::place::PlaceMap;
 use crate::planner::{plan_keys, predicted_keys, ChainState, Markov, Plan};
 use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
-    advise_pool_access_if_pinned, allow_non_portable_cluster_if, apply_stream_sms,
-    apply_stream_sync_policy, apply_touch, bind_shareable_mempools, drop_remote, fetch_remote,
-    fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots, reclaim_victim,
-    remote_hit, replay_from_sim, sim_profile, sync_work, validate_sim_cfg, GraphBank, LeafMem,
-    PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, StreamPlan, TouchArgs,
+    advise_pool_access_if_pinned, allow_non_portable_cluster_if, allow_optin_shared_if,
+    apply_stream_sms, apply_stream_sync_policy, apply_touch, bind_shareable_mempools, drop_remote,
+    fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots,
+    reclaim_victim, remote_hit, replay_from_sim, sim_profile, sync_work, validate_sim_cfg,
+    GraphBank, LeafMem, PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay,
+    StreamPlan, TouchArgs,
 };
 use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -306,6 +307,7 @@ impl SchedRt {
             sim.enable_persisting_l2()?;
         }
         allow_non_portable_cluster_if(&mut sim, cfg.non_portable_cluster)?;
+        allow_optin_shared_if(&mut sim, cfg.optin_shared)?;
         let n_gpus = u16::try_from(sim.profile().n_gpus()).unwrap_or(1).max(1);
         let bytes = cfg.bytes_per_expert.max(1);
         let mut cfg = cfg;
@@ -342,6 +344,8 @@ impl SchedRt {
             .with_max_shared(cfg.max_shared)
             .with_shared_mem(cfg.shared_mem)
             .with_portable_cluster(cfg.portable_cluster)
+            .with_dynamic_shared(cfg.dynamic_shared)
+            .with_portable_shared(cfg.portable_shared)
             .with_set_params(cfg.graph_set_params)
             .with_piecewise(cfg.graph_piecewise),
             ctr: ReplayCounters::default(),
