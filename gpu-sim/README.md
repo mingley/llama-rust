@@ -125,6 +125,7 @@ warp scheduler, L1, …   ← do not model
 | CUDA 13 `cudaLaunchAttributeSharedMemoryMode` (`PortableSharedMode`) | Default uses `MaxDynamicSharedMemorySize`; RequirePortable refuses oversize; AllowNonPortable allows up to opt-in max |
 | `cudaLaunchKernel` `sharedMemBytes` | `0` is identity; above `max_shared_mem_per_block` needs the function attr or AllowNonPortable |
 | `cudaLaunchAttributeNvlinkUtilCentricScheduling` | hint `0`/`1`; occupies every Hyper-Q slot when the profile has NVLink |
+| `cudaLaunchAttributePriority` (`kernel_with` / `KernelAttrs::priority`) | `None` inherits stream create priority; `Some` overrides that kernel; higher starts first under contention |
 | `set_stream_sm_permille` is a green-context SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host) | HBM write + launch overhead |
 | peer D2D needs topology + `enable_peer` | link bandwidth |
@@ -464,7 +465,9 @@ stream (NULL serializes with every stream).
 `host_pin_bytes` caps page-locked host (`cudaMallocHost` / `cudaHostRegister`);
 overflow is `PinOom`. Example default is unlimited.
 `set_stream_priority` is `cudaStreamCreateWithPriority` (higher first when
-compute contends). `stream_copy_attributes` is `cudaStreamCopyAttributes`
+compute contends). `KernelAttrs::priority` is `cudaLaunchAttributePriority`
+(`None` inherits the stream; `Some` overrides that kernel only).
+`stream_copy_attributes` is `cudaStreamCopyAttributes`
 (priority, SM permille, mem-sync domain/map, and synchronization policy).
 `set_stream_sync_policy` is `cudaLaunchAttributeSynchronizationPolicy`
 (stream-only; Auto tax 0). `synchronize_stream` / `synchronize_event` add
@@ -472,8 +475,8 @@ compute contends). `stream_copy_attributes` is `cudaStreamCopyAttributes`
 `synchronize` / `synchronize_device` do not take that tax.
 `graph_kernel_node_get_priority` /
 `set_priority` / `copy_attributes` are `cudaGraphKernelNodeGetAttribute` /
-`SetAttribute` / `CopyAttributes` for priority, programmatic dependent
-launch (`ProgrammaticLaunch`), programmatic event (`ProgrammaticEvent`),
+`SetAttribute` / `CopyAttributes` for priority (`cudaLaunchAttributePriority`),
+programmatic dependent launch (`ProgrammaticLaunch`), programmatic event (`ProgrammaticEvent`),
 access-policy window (`AccessPolicyWindow`), mem-sync domain/map,
 cluster, preferred cluster, shared-memory carveout,
 device-updatable kernel node (`cudaLaunchAttributeDeviceUpdatableKernelNode`),
@@ -538,7 +541,10 @@ allows up to the SKU max). `--optin-shared` is
 `cudaLaunchKernel` `sharedMemBytes`. `--portable-shared default|portable|non-portable`
 is CUDA 13 `cudaLaunchAttributeSharedMemoryMode`. `--nvlink-util` is
 `cudaLaunchAttributeNvlinkUtilCentricScheduling` (`0`/`1`; occupies every
-Hyper-Q slot when the profile has NVLink). `--device-launch` is
+Hyper-Q slot when the profile has NVLink). `cudaLaunchAttributePriority` is
+a per-kernel override of stream create priority (capture snapshots it;
+default instantiate still uses the launch stream unless `USE_NODE_PRIORITY`).
+`--device-launch` is
 `cudaGraphInstantiateFlagDeviceLaunch` plus `device_launch_graph`.
 `--device-updatable` is `cudaLaunchAttributeDeviceUpdatableKernelNode`.
 Decode identity stays `kernel`. `USE_NODE_PRIORITY` at

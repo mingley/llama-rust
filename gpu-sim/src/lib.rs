@@ -167,7 +167,8 @@
 //! [`graph_kernel_node_set_priority`](Sim::graph_kernel_node_set_priority) /
 //! [`graph_kernel_node_copy_attributes`](Sim::graph_kernel_node_copy_attributes)
 //! are `cudaGraphKernelNodeGetAttribute` / `SetAttribute` / `CopyAttributes`
-//! for priority, programmatic dependent launch ([`ProgrammaticLaunch`]),
+//! for priority (`cudaLaunchAttributePriority` / `cudaKernelNodeAttributePriority`),
+//! programmatic dependent launch ([`ProgrammaticLaunch`]),
 //! programmatic event ([`ProgrammaticEvent`]), access-policy window,
 //! mem-sync domain/map, cluster dimension, cluster scheduling policy,
 //! preferred cluster dimension, shared-memory carveout,
@@ -221,7 +222,12 @@
 //! Decode identity stays disabled. Stream SetAttribute is inherited by
 //! [`Sim::kernel`]. Graph CopyAttributes copies it. Device-launch graphs allow
 //! it.
-//! Decode identity stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
+//! [`KernelAttrs::priority`] is `cudaLaunchAttributePriority`: `None` inherits
+//! the stream (`cudaStreamCreateWithPriority`); `Some` overrides for that kernel
+//! when compute contends (higher first). Capture snapshots the effective value.
+//! Default instantiate still uses the launch stream unless
+//! [`GraphInstantiateFlags::USE_NODE_PRIORITY`]. Device-launch graphs allow it.
+//! Decode identity stays [`Sim::kernel`] (inherit stream). [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
 //! [`graph_exec_kernel_node_set_priority`](Sim::graph_exec_kernel_node_set_priority)
 //! are the exec-snapshot attributes. [`Sim::upload_graph`] is
 //! `cudaGraphUpload` (host-sync; first launch after instantiate calls it).
@@ -5751,6 +5757,186 @@ mod tests {
         sim.stream_copy_attributes(d, StreamId(2), d, StreamId(1))
             .unwrap();
         assert!(!sim.stream_nvlink_util_centric(d, StreamId(2)));
+    }
+
+    #[test]
+    fn launch_attribute_priority_beats_stream_priority() {
+        let d = DeviceId(0);
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |hi_first: bool| {
+            let mut sim = Sim::new(h100());
+            sim.set_stream_priority(d, StreamId(0), 0).unwrap();
+            sim.set_stream_priority(d, StreamId(1), 0).unwrap();
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let hi = KernelAttrs {
+                priority: Some(1),
+                ..KernelAttrs::default()
+            };
+            if hi_first {
+                enq(sim.kernel_with(d, kind.clone(), &[a], &[a], StreamId(1), hi));
+                enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(0)));
+            } else {
+                enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(0)));
+                enq(sim.kernel_with(d, kind.clone(), &[a], &[a], StreamId(1), hi));
+            }
+            sim.start_ready().unwrap();
+            let started: Vec<StreamId> = sim
+                .operations()
+                .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.start_ns.is_some())
+                .map(|o| o.stream)
+                .collect();
+            started
+        };
+        let low_submitted_first = run(false);
+        assert_eq!(low_submitted_first, vec![StreamId(1)]);
+        let high_submitted_first = run(true);
+        assert_eq!(high_submitted_first, vec![StreamId(1)]);
+    }
+
+    #[test]
+    fn kernel_with_none_inherits_stream_priority() {
+        let d = DeviceId(0);
+        let kind = KernelKind::other(1 << 40, 4096);
+        let mut sim = Sim::new(h100());
+        sim.set_stream_priority(d, StreamId(0), 0).unwrap();
+        sim.set_stream_priority(d, StreamId(1), 0).unwrap();
+        sim.set_stream_priority(d, StreamId(2), 5).unwrap();
+        let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+        sim.synchronize().unwrap();
+        enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+        enq(sim.kernel_with(d, kind, &[a], &[a], StreamId(2), KernelAttrs::default()));
+        sim.start_ready().unwrap();
+        let started: Vec<StreamId> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.start_ns.is_some())
+            .map(|o| o.stream)
+            .collect();
+        assert_eq!(
+            started,
+            vec![StreamId(2)],
+            "default KernelAttrs must inherit stream create priority; {started:?}"
+        );
+    }
+
+    #[test]
+    fn kernel_with_priority_zero_overrides_high_stream() {
+        let d = DeviceId(0);
+        let kind = KernelKind::other(1 << 40, 4096);
+        let mut sim = Sim::new(h100());
+        sim.set_stream_priority(d, StreamId(1), 0).unwrap();
+        sim.set_stream_priority(d, StreamId(2), 5).unwrap();
+        let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+        sim.synchronize().unwrap();
+        enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+        enq(sim.kernel_with(
+            d,
+            kind,
+            &[a],
+            &[a],
+            StreamId(2),
+            KernelAttrs {
+                priority: Some(0),
+                ..KernelAttrs::default()
+            },
+        ));
+        sim.start_ready().unwrap();
+        let started: Vec<StreamId> = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.start_ns.is_some())
+            .map(|o| o.stream)
+            .collect();
+        assert_eq!(
+            started,
+            vec![StreamId(1)],
+            "explicit launch priority 0 must not keep the stream's 5; {started:?}"
+        );
+    }
+
+    #[test]
+    fn kernel_with_capture_records_launch_priority() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        sim.set_stream_priority(d, s, 0).unwrap();
+        let a = sim.malloc(d, 4096).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        enq(sim.kernel_with(
+            d,
+            KernelKind::other(8, 8),
+            &[a],
+            &[a],
+            s,
+            KernelAttrs {
+                priority: Some(7),
+                ..KernelAttrs::default()
+            },
+        ));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 7);
+        let exec = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .expect("device-launch allows launch-attribute priority");
+        assert_eq!(sim.graph_exec_kernel_node_get_priority(exec, 0).unwrap(), 7);
+    }
+
+    #[test]
+    fn use_node_priority_uses_captured_launch_attr() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |node_pri: bool| {
+            let mut sim = Sim::new(h100().with_compute_slots(1));
+            let d = DeviceId(0);
+            sim.set_stream_priority(d, StreamId(0), 0).unwrap();
+            sim.set_stream_priority(d, StreamId(1), 0).unwrap();
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            let b = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            enq(sim.memcpy_pinned_to_device(d, b, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            sim.begin_capture(d, StreamId(0)).unwrap();
+            enq(sim.kernel_with(
+                d,
+                kind.clone(),
+                &[a],
+                &[a],
+                StreamId(0),
+                KernelAttrs {
+                    priority: Some(5),
+                    ..KernelAttrs::default()
+                },
+            ));
+            let g = sim.end_capture().unwrap();
+            assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 5);
+            let flags = if node_pri {
+                GraphInstantiateFlags::USE_NODE_PRIORITY
+            } else {
+                0
+            };
+            let _ = sim.instantiate_graph_with_flags(g, flags).unwrap();
+            enq(sim.kernel(d, kind.clone(), &[b], &[b], StreamId(1)));
+            let n = sim.launch_graph(g, StreamId(0)).unwrap();
+            assert_eq!(n, 1);
+            sim.start_ready().unwrap();
+            sim.operations()
+                .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }) && o.start_ns.is_some())
+                .map(|o| o.stream)
+                .collect::<Vec<StreamId>>()
+        };
+        let with_flag = run(true);
+        assert_eq!(
+            with_flag,
+            vec![StreamId(0)],
+            "UseNodePriority must honor captured launch-attribute priority; {with_flag:?}"
+        );
+        let without = run(false);
+        assert_eq!(
+            without,
+            vec![StreamId(1)],
+            "default instantiate must ignore captured launch-attribute priority; {without:?}"
+        );
     }
 
     #[test]

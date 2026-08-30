@@ -1746,6 +1746,15 @@ model, do not celebrate the sim.
     `launch_graph` / not device-updatable. `gpu-profile capture` is still
     refused.
 
+140. [x] `cudaLaunchAttributePriority`: launch-time override of
+    `cudaStreamCreateWithPriority` (`KernelAttrs::priority`). `None` inherits
+    the stream. `Some` schedules that kernel at the given priority when
+    compute contends (higher first). Capture snapshots the effective value.
+    Default instantiate still uses the launch stream unless
+    `cudaGraphInstantiateFlagUseNodePriority`. Device-launch graphs allow it.
+    Decode identity stays inherit-stream (`None`). Distinct from
+    `--stream-priority`. `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

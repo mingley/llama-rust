@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaLaunchAttributePriority`
+
+Launch-time override of `cudaStreamCreateWithPriority` (`KernelAttrs::priority`).
+`None` inherits the stream. `Some` schedules that kernel at the given priority
+when compute contends (higher first). Capture snapshots the effective value.
+Default instantiate still uses the launch stream unless
+`cudaGraphInstantiateFlagUseNodePriority`. Device-launch graphs allow it.
+Decode identity stays inherit-stream. Distinct from `--stream-priority`.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — expertvm `--device-launch` / `--device-updatable`
 
 `expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and

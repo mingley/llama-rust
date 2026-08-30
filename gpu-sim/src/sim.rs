@@ -169,8 +169,9 @@ struct Op {
     preds: Vec<CondPred>,
     /// Predicates skipped this op; completion has no alloc/kernel/memcpy effects.
     skipped: bool,
-    /// Scheduling priority (`cudaStreamCreateWithPriority` or a kernel-node
-    /// attribute when the exec used `cudaGraphInstantiateFlagUseNodePriority`).
+    /// Scheduling priority (`cudaStreamCreateWithPriority`,
+    /// `cudaLaunchAttributePriority`, or a kernel-node attribute when the exec
+    /// used `cudaGraphInstantiateFlagUseNodePriority`).
     priority: i32,
     /// Programmatic dependent launch flags for this op.
     pdl: ProgrammaticLaunch,
@@ -286,7 +287,8 @@ struct GraphStep {
     deps: Vec<usize>,
     /// `cudaGraphNodeSetEnabled`. Disabled nodes skip launch and complete immediately.
     enabled: bool,
-    /// Stream priority snapshotted at add/capture (`cudaKernelNodeAttributePriority`).
+    /// Stream or launch-attribute priority snapshotted at add/capture
+    /// (`cudaKernelNodeAttributePriority` / `cudaLaunchAttributePriority`).
     priority: i32,
     /// Programmatic dependent launch (`cudaLaunchAttributeProgrammaticStreamSerialization`).
     pdl: ProgrammaticLaunch,
@@ -589,7 +591,8 @@ pub struct Sim {
     enqueue_preds: Vec<CondPred>,
     /// `cudaGraphClone` provenance: clone id → source id.
     clone_of: BTreeMap<GraphId, GraphId>,
-    /// Override [`Op::priority`] for ops submitted by [`Self::enqueue_graph`].
+    /// Override [`Op::priority`] for graph replay (`UseNodePriority`) or
+    /// [`Self::kernel_with`] (`cudaLaunchAttributePriority`).
     enqueue_priority: Option<i32>,
     /// PDL flags for the next submit ([`Self::kernel_pdl`] / graph replay).
     enqueue_pdl: ProgrammaticLaunch,
@@ -971,6 +974,12 @@ impl Sim {
     #[must_use]
     pub fn stream_priority(&self, device: DeviceId, stream: StreamId) -> i32 {
         self.priority.get(&(device, stream)).copied().unwrap_or(0)
+    }
+
+    /// [`KernelAttrs::priority`] if set, else [`Self::stream_priority`].
+    fn snap_priority(&self, device: DeviceId, stream: StreamId) -> i32 {
+        self.enqueue_priority
+            .unwrap_or_else(|| self.stream_priority(device, stream))
     }
 
     /// Reserve a green-context SM fraction for `(device, stream)` (‰ of peak FLOP/s).
@@ -7022,7 +7031,7 @@ impl Sim {
         stream: StreamId,
         kind: Kind,
     ) -> Result<(), SimError> {
-        let priority = self.stream_priority(device, stream);
+        let priority = self.snap_priority(device, stream);
         let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -9302,8 +9311,8 @@ impl Sim {
     ///
     /// Combines cooperative, PDL, an access-policy window, mem-sync
     /// domain/map, cluster, shared-memory carveout, device-updatable kernel
-    /// node, and shared-memory bank mode on one submit.
-    /// Decode identity stays [`Self::kernel`] ([`KernelAttrs::default`]).
+    /// node, shared-memory bank mode, and launch-attribute priority on one
+    /// submit. Decode identity stays [`Self::kernel`] ([`KernelAttrs::default`]).
     pub fn kernel_with(
         &mut self,
         device: DeviceId,
@@ -9363,6 +9372,7 @@ impl Sim {
         let prev_ds = self.enqueue_dynamic_shared;
         let prev_ps = self.enqueue_portable_shared;
         let prev_nv = self.enqueue_nvlink_util_centric;
+        let prev_pri = self.enqueue_priority;
         self.enqueue_pdl = attrs.pdl;
         self.enqueue_access_policy = attrs.access_policy;
         self.enqueue_mem_sync_domain = attrs.mem_sync_domain;
@@ -9377,6 +9387,7 @@ impl Sim {
         self.enqueue_dynamic_shared = attrs.dynamic_shared;
         self.enqueue_portable_shared = attrs.portable_shared;
         self.enqueue_nvlink_util_centric = attrs.nvlink_util_centric;
+        self.enqueue_priority = attrs.priority;
         let out = self.submit_kernel(device, kind, reads, writes, stream, attrs.cooperative);
         self.enqueue_pdl = prev_pdl;
         self.enqueue_access_policy = prev_win;
@@ -9392,6 +9403,7 @@ impl Sim {
         self.enqueue_dynamic_shared = prev_ds;
         self.enqueue_portable_shared = prev_ps;
         self.enqueue_nvlink_util_centric = prev_nv;
+        self.enqueue_priority = prev_pri;
         out
     }
 
@@ -10273,7 +10285,7 @@ impl Sim {
         }
         let mut deps = capture_step_deps(&self.capture_buf, device, stream, &kind);
         self.merge_capture_pending(device, stream, &mut deps);
-        let priority = self.stream_priority(device, stream);
+        let priority = self.snap_priority(device, stream);
         let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
         self.capture_buf.push(GraphStep {
             device,
@@ -10385,9 +10397,7 @@ impl Sim {
                 }
             }
         }
-        let priority = self
-            .enqueue_priority
-            .unwrap_or_else(|| self.stream_priority(device, stream));
+        let priority = self.snap_priority(device, stream);
         let (mem_sync_domain, mem_sync_map) = self.snap_mem_sync(device, stream, &kind)?;
         let mem_sync_physical = mem_sync_map.physical(mem_sync_domain);
         let _prev_op = self.ops.insert(

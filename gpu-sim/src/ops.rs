@@ -485,7 +485,8 @@ impl SynchronizationPolicy {
 /// including `self`). Decode identity stays [`crate::Sim::kernel`] ([`Default`]:
 /// no cooperative, no PDL, no window, inherit stream mem-sync, no cluster,
 /// Default carveout, not device-updatable, Default shared-memory bank mode,
-/// Default portable-cluster mode, 0 dynamic shared, Default portable-shared).
+/// Default portable-cluster mode, 0 dynamic shared, Default portable-shared,
+/// inherit stream priority).
 /// [`SynchronizationPolicy`] is a stream attribute, not a field here.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KernelAttrs {
@@ -543,6 +544,15 @@ pub struct KernelAttrs {
     /// (every Hyper-Q slot, even NVLink traffic per block). Without NVLink the
     /// flag is stored and occupancy is unchanged.
     pub nvlink_util_centric: bool,
+    /// `cudaLaunchAttributePriority`.
+    ///
+    /// [`None`] inherits the stream (`cudaStreamCreateWithPriority`). [`Some`]
+    /// overrides for this kernel only; memcpy and other stream work stay on the
+    /// stream priority. Higher values start first when compute contends.
+    /// Decode identity stays [`None`]. Capture snapshots the effective value
+    /// (`cudaKernelNodeAttributePriority`). Default graph replay still uses the
+    /// launch stream unless `cudaGraphInstantiateFlagUseNodePriority`.
+    pub priority: Option<i32>,
 }
 
 /// `cudaFuncCache` / `cudaSharedmemCarveout` preference
