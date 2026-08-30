@@ -124,7 +124,9 @@
 //! [`Sim::drop_managed_copy`] refunds one ReadMostly GPU copy (dest eviction).
 //! [`Sim::va_reserve`] / [`va_map`](Sim::va_map) / [`va_unmap`](Sim::va_unmap) /
 //! [`va_free`](Sim::va_free) are `cuMemAddressReserve` / `cuMemMap` /
-//! `cuMemUnmap` / `cuMemAddressFree`. Size and map offsets must be multiples of
+//! `cuMemUnmap` / `cuMemAddressFree`. [`va_reserve_with_flags`](Sim::va_reserve_with_flags)
+//! is alignment / addr / flags (flags 0; nonzero addr Invalid; nonzero
+//! alignment must be a power of two that divides size). Size and map offsets must be multiples of
 //! [`HardwareProfile::va_granularity_bytes`] (`0`/`1` = any size; example
 //! default `1` keeps 4096-byte expert pages legal). [`Sim::va_map_range`] / [`va_unmap_range`](Sim::va_unmap_range)
 //! map sparse physicals (vLLM KV-block analog); HBM is the mapped span.
@@ -687,12 +689,12 @@ pub use ops::{
     KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
     MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType,
     MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType, MemPoolAttr,
-    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
-    MemoryType, MemsetOp, MulticastBindFlags, MulticastGranularity, Operation, PdlLaunch,
-    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
-    SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
-    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags, MemSyncDomain,
+    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, MulticastBindFlags, MulticastGranularity,
+    Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes,
+    PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
+    SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo,
+    StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -13402,6 +13404,49 @@ mod tests {
         assert_eq!(sim.hbm_used(d).unwrap(), 4096);
         sim.va_unmap(va).unwrap();
         sim.va_free(va).unwrap();
+    }
+
+    #[test]
+    fn va_reserve_with_flags_is_cu_mem_address_reserve() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let va = sim
+            .va_reserve_with_flags(4096, 0, 0, MemReserveFlags::DEFAULT)
+            .unwrap();
+        assert!(sim.is_vmm(va).unwrap());
+        assert_eq!(sim.hbm_used(d).unwrap(), 0);
+        let aligned = sim
+            .va_reserve_with_flags(4096, 4096, 0, MemReserveFlags::DEFAULT)
+            .unwrap();
+        assert!(sim.is_vmm(aligned).unwrap());
+        match sim.va_reserve_with_flags(4096, 0, 0, 1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mem reserve flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.va_reserve_with_flags(4096, 0, 1, MemReserveFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("reserve addr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.va_reserve_with_flags(4096, 3, 0, MemReserveFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("reserve alignment"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.va_reserve_with_flags(4096, 8192, 0, MemReserveFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("reserve alignment"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.va_reserve_with_flags(4096, 0, 0, MemReserveFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

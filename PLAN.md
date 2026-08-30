@@ -2739,7 +2739,16 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-256. [ ] Next numbered PLAN item after 255 is the next `gpu-sim` / Engine /
+256. [x] `cuMemAddressReserve` alignment / addr / flags:
+    [`va_reserve_with_flags`](Sim::va_reserve_with_flags). Flags must be 0
+    ([`MemReserveFlags::DEFAULT`]). Nonzero addr Invalid `"reserve addr"`
+    (fixed VA is not modeled). Nonzero alignment must be a power of two
+    that divides size (Invalid `"reserve alignment"`). Typed
+    [`va_reserve`](Sim::va_reserve) stays. Host-synchronous; capture
+    refused. Decode identity unchanged. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+257. [ ] Next numbered PLAN item after 256 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

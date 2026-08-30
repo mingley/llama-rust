@@ -2532,6 +2532,18 @@ impl MemCreateFlags {
     pub const DEFAULT: u32 = 0;
 }
 
+/// `cuMemAddressReserve` flags for [`crate::Sim::va_reserve_with_flags`].
+///
+/// CUDA requires 0. Unknown bits are Invalid `"mem reserve flags"`.
+/// Nonzero `addr` is Invalid `"reserve addr"` (fixed VA is not modeled).
+/// Nonzero `alignment` must be a power of two that divides `size`.
+pub struct MemReserveFlags;
+
+impl MemReserveFlags {
+    /// Unflagged [`crate::Sim::va_reserve`].
+    pub const DEFAULT: u32 = 0;
+}
+
 /// `CUmulticastGranularity_flags` for [`crate::Sim::multicast_get_granularity`].
 pub struct MulticastGranularity;
 

@@ -21,12 +21,12 @@ use crate::ops::{
     KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
     MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType,
     MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType, MemPoolAttr,
-    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
-    MemoryType, MemsetOp, MulticastBindFlags, MulticastGranularity, Operation, PdlLaunch,
-    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
-    SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
-    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags, MemSyncDomain,
+    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, MulticastBindFlags, MulticastGranularity,
+    Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes,
+    PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
+    SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo,
+    StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -9760,15 +9760,48 @@ impl Sim {
     /// [`Self::va_map`] maps the whole VA; [`Self::va_map_range`] maps a span.
     /// Size and map offsets must be multiples of
     /// [`HardwareProfile::va_granularity_bytes`] (`0`/`1` = any size).
-    /// Capture cannot include it.
+    /// Capture cannot include it. Typed helper;
+    /// [`Self::va_reserve_with_flags`] takes alignment, addr, and flags.
     pub fn va_reserve(&mut self, bytes: u64) -> Result<AllocId, SimError> {
+        self.va_reserve_with_flags(bytes, 0, 0, MemReserveFlags::DEFAULT)
+    }
+
+    /// [`Self::va_reserve`] with CUDA alignment, addr, and flags.
+    ///
+    /// CUDA requires flags 0. Unknown bits Invalid `"mem reserve flags"`.
+    /// Nonzero `addr` is Invalid `"reserve addr"` (this VM assigns ids; a
+    /// fixed VA is not modeled). Nonzero `alignment` must be a power of two
+    /// that divides `bytes` (Invalid `"reserve alignment"`). Alignment `0` is
+    /// the driver default (profile granularity only).
+    pub fn va_reserve_with_flags(
+        &mut self,
+        bytes: u64,
+        alignment: u64,
+        addr: u64,
+        flags: u32,
+    ) -> Result<AllocId, SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MemReserveFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "mem reserve flags",
+            });
+        }
+        if addr != 0 {
+            return Err(SimError::Invalid {
+                why: "reserve addr",
+            });
+        }
+        if alignment != 0 && (!alignment.is_power_of_two() || !bytes.is_multiple_of(alignment)) {
+            return Err(SimError::Invalid {
+                why: "reserve alignment",
+            });
+        }
         if bytes == 0 {
             return Err(SimError::Invalid {
                 why: "zero-byte alloc",
             });
         }
         self.check_va_align(bytes)?;
-        self.fail_if_capturing("cannot capture alloc/free")?;
         self.clock = self.clock.saturating_add(self.first_alloc_ns());
         let id = AllocId(self.next_alloc);
         self.next_alloc = self.next_alloc.saturating_add(1);
