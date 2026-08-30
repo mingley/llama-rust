@@ -10479,7 +10479,8 @@ impl Sim {
     ///
     /// Host-synchronous. Capture cannot include it. Every team device must
     /// already be bound. Kernel writes to this VA are billed as one NVLS hop
-    /// and occupy compute (not a copy engine).
+    /// and occupy compute (not a copy engine). Typed helper; flags must be
+    /// [`MemMapFlags::DEFAULT`].
     pub fn va_map_multicast(
         &mut self,
         id: AllocId,
@@ -10487,7 +10488,26 @@ impl Sim {
         offset: u64,
         mc: MulticastId,
     ) -> Result<(), SimError> {
+        self.va_map_multicast_with_flags(id, device, offset, mc, MemMapFlags::DEFAULT)
+    }
+
+    /// [`Self::va_map_multicast`] with a flags word.
+    ///
+    /// CUDA requires 0. Unknown bits Invalid `"mem map flags"`.
+    pub fn va_map_multicast_with_flags(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        mc: MulticastId,
+        flags: u32,
+    ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MemMapFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "mem map flags",
+            });
+        }
         let (bytes, n_dev, n_binds, in_team, team) = {
             let obj = self.mc_ref(mc)?;
             (

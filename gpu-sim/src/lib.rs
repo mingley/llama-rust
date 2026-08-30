@@ -153,7 +153,8 @@
 //! [`multicast_unbind`](Sim::multicast_unbind) /
 //! [`multicast_destroy`](Sim::multicast_destroy) / [`va_map_multicast`](Sim::va_map_multicast)
 //! are `cuMulticastCreate` / `AddDevice` / `BindMem` / `BindAddr` / `Unbind` /
-//! `cuMemRelease` / `cuMemMap` of a multicast handle. [`multicast_unbind_with_size`](Sim::multicast_unbind_with_size)
+//! `cuMemRelease` / `cuMemMap` of a multicast handle. [`va_map_multicast_with_flags`](Sim::va_map_multicast_with_flags)
+//! requires flags 0 ([`MemMapFlags::DEFAULT`]). Typed helper stays. [`multicast_unbind_with_size`](Sim::multicast_unbind_with_size)
 //! is the CUDA size argument (must match the object; `mcOffset` 0). [`multicast_bind_mem_with_flags`](Sim::multicast_bind_mem_with_flags)
 //! / [`multicast_bind_addr_with_flags`](Sim::multicast_bind_addr_with_flags)
 //! require flags 0 ([`MulticastBindFlags::DEFAULT`]). Typed helpers stay.
@@ -17633,6 +17634,39 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn va_map_multicast_with_flags_is_cu_mem_map() {
+        let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let bytes = 4096u64;
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let mc = sim.multicast_create(bytes, 2).unwrap();
+        sim.multicast_add_device(mc, d0).unwrap();
+        sim.multicast_add_device(mc, d1).unwrap();
+        let h0 = sim.va_create(d0, bytes).unwrap();
+        let h1 = sim.va_create(d1, bytes).unwrap();
+        sim.multicast_bind_mem(mc, d0, h0).unwrap();
+        sim.multicast_bind_mem(mc, d1, h1).unwrap();
+        let va = sim.va_reserve(bytes).unwrap();
+        let va2 = sim.va_reserve(bytes).unwrap();
+        match sim.va_map_multicast_with_flags(va, d0, 0, mc, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mem map flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.va_map_multicast_with_flags(va, d0, 0, mc, MemMapFlags::DEFAULT)
+            .unwrap();
+        assert!(sim.is_multicast_va(va));
+        sim.begin_capture(d0, StreamId(0)).unwrap();
+        match sim.va_map_multicast_with_flags(va2, d0, 0, mc, MemMapFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.va_unmap(va).unwrap();
+        sim.va_free(va).unwrap();
+        sim.va_free(va2).unwrap();
     }
 
     #[test]

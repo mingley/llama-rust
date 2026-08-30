@@ -2567,13 +2567,14 @@ impl MemReserveFlags {
     pub const DEFAULT: u32 = 0;
 }
 
-/// `cuMemMap` flags for [`crate::Sim::va_map_handle_with_flags`].
+/// `cuMemMap` flags for [`crate::Sim::va_map_handle_with_flags`] /
+/// [`crate::Sim::va_map_multicast_with_flags`].
 ///
 /// CUDA requires 0. Unknown bits are Invalid `"mem map flags"`.
 pub struct MemMapFlags;
 
 impl MemMapFlags {
-    /// Unflagged [`crate::Sim::va_map_handle`].
+    /// Unflagged [`crate::Sim::va_map_handle`] / [`crate::Sim::va_map_multicast`].
     pub const DEFAULT: u32 = 0;
 }
 

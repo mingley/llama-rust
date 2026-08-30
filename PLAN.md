@@ -2833,7 +2833,15 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-267. [ ] Next numbered PLAN item after 266 is the next `gpu-sim` / Engine /
+267. [x] `cuMemMap` of a multicast handle flags:
+    [`va_map_multicast_with_flags`](Sim::va_map_multicast_with_flags)
+    requires flags 0 ([`MemMapFlags::DEFAULT`]). Unknown bits Invalid
+    `"mem map flags"`. Typed [`va_map_multicast`](Sim::va_map_multicast)
+    stays. Host-synchronous; capture refused. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+268. [ ] Next numbered PLAN item after 267 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
