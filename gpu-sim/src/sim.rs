@@ -13,15 +13,15 @@ use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
     ClusterSchedulingPolicy, DeviceAttr, DeviceLimit, DeviceP2pAttr, DeviceProperties,
     EventCreateFlags, EventRecordFlags, EventWaitFlags, FuncAttributes, GpuOp as Kind,
-    GraphAddNode, GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
-    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
-    GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
-    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise,
-    MemAttach, MemPoolAttr, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp,
-    Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
-    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags,
-    WaitValueCmp,
+    GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo,
+    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
+    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf,
+    KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
+    MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
+    MemoryType, MemsetOp, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
+    StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -6134,19 +6134,59 @@ impl Sim {
     /// `cudaGraphDebugDotPrint` of stored node kinds and edges.
     ///
     /// Query; legal during capture. Destination graph only during capture
-    /// (same as [`Self::graph_len`]). No verbose kernel-param flags.
+    /// (same as [`Self::graph_len`]). Flags `0` prints kinds and edges only.
     pub fn graph_debug_dot(&self, graph: GraphId) -> Result<String, SimError> {
+        self.graph_debug_dot_with_flags(graph, 0)
+    }
+
+    /// `cudaGraphDebugDotPrint` with [`GraphDebugDotFlags`].
+    ///
+    /// Query; legal during capture. Unknown bits (including external-semaphore
+    /// and extra-conditional-edge flags) are Invalid `"graph debug dot flags"`.
+    /// [`GraphDebugDotFlags::VERBOSE`] dumps every modeled param class.
+    pub fn graph_debug_dot_with_flags(
+        &self,
+        graph: GraphId,
+        flags: u32,
+    ) -> Result<String, SimError> {
+        const KNOWN: u32 = GraphDebugDotFlags::VERBOSE
+            | GraphDebugDotFlags::KERNEL_NODE_PARAMS
+            | GraphDebugDotFlags::MEMCPY_NODE_PARAMS
+            | GraphDebugDotFlags::MEMSET_NODE_PARAMS
+            | GraphDebugDotFlags::HOST_NODE_PARAMS
+            | GraphDebugDotFlags::EVENT_NODE_PARAMS
+            | GraphDebugDotFlags::KERNEL_NODE_ATTRIBUTES
+            | GraphDebugDotFlags::HANDLES
+            | GraphDebugDotFlags::MEM_ALLOC_NODE_PARAMS
+            | GraphDebugDotFlags::MEM_FREE_NODE_PARAMS
+            | GraphDebugDotFlags::BATCH_MEM_OP_NODE_PARAMS
+            | GraphDebugDotFlags::CONDITIONAL_NODE_PARAMS;
+        if flags & !KNOWN != 0 {
+            return Err(SimError::Invalid {
+                why: "graph debug dot flags",
+            });
+        }
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        let mut out = String::from("digraph {\n");
+        let dump = if flags & GraphDebugDotFlags::VERBOSE != 0 {
+            KNOWN
+        } else {
+            flags
+        };
+        let mut out = if dump & GraphDebugDotFlags::HANDLES != 0 {
+            let mut s = String::from("digraph g");
+            s.push_str(&graph.0.to_string());
+            s.push_str(" {\n");
+            s
+        } else {
+            String::from("digraph {\n")
+        };
         for (i, step) in g.steps.iter().enumerate() {
             out.push_str("  n");
             out.push_str(&i.to_string());
             out.push_str(" [label=\"");
-            out.push_str(&i.to_string());
-            out.push(' ');
-            out.push_str(&format!("{:?}", node_kind(&step.kind)));
+            out.push_str(&debug_dot_label(i, step, dump));
             out.push_str("\"];\n");
         }
         for (to, step) in g.steps.iter().enumerate() {
@@ -15430,6 +15470,148 @@ fn child_param_op_eq(a: &Kind, b: &Kind) -> bool {
         return true;
     }
     op_eq(a, b)
+}
+
+fn debug_dot_place(p: Place) -> String {
+    match p {
+        Place::Host => String::from("Host"),
+        Place::HostPinned => String::from("HostPinned"),
+        Place::Device(d) => {
+            let mut s = String::from("D");
+            s.push_str(&d.0.to_string());
+            s
+        }
+    }
+}
+
+fn debug_dot_bufs(bufs: &[KernelBuf]) -> String {
+    let mut s = String::new();
+    for (i, b) in bufs.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push_str(&b.id.0.to_string());
+    }
+    s
+}
+
+fn debug_dot_label(i: usize, step: &GraphStep, flags: u32) -> String {
+    let mut label = i.to_string();
+    label.push(' ');
+    label.push_str(&format!("{:?}", node_kind(&step.kind)));
+    match &step.kind {
+        Kind::Kernel {
+            cooperative,
+            reads,
+            writes,
+            ..
+        } => {
+            if flags & GraphDebugDotFlags::KERNEL_NODE_PARAMS != 0 {
+                label.push_str(" coop=");
+                label.push_str(&u8::from(*cooperative).to_string());
+                label.push_str(" r=");
+                label.push_str(&debug_dot_bufs(reads));
+                label.push_str(" w=");
+                label.push_str(&debug_dot_bufs(writes));
+            }
+            if flags & GraphDebugDotFlags::KERNEL_NODE_ATTRIBUTES != 0 && step.priority != 0 {
+                label.push_str(" pri=");
+                label.push_str(&step.priority.to_string());
+            }
+        }
+        Kind::Memcpy(op) => {
+            if flags & GraphDebugDotFlags::MEMCPY_NODE_PARAMS != 0 {
+                label.push_str(" bytes=");
+                label.push_str(&op.bytes.to_string());
+                label.push_str(" src=");
+                label.push_str(&debug_dot_place(op.src));
+                label.push_str(" dst=");
+                label.push_str(&debug_dot_place(op.dst));
+            }
+        }
+        Kind::Memset(op) => {
+            if flags & GraphDebugDotFlags::MEMSET_NODE_PARAMS != 0 {
+                label.push_str(" bytes=");
+                label.push_str(&op.bytes.to_string());
+                label.push_str(" id=");
+                label.push_str(&op.id.0.to_string());
+            }
+        }
+        Kind::HostFunc { fn_id, user_data } => {
+            if flags & GraphDebugDotFlags::HOST_NODE_PARAMS != 0 {
+                label.push_str(" fn=");
+                label.push_str(&fn_id.to_string());
+                label.push_str(" data=");
+                label.push_str(&user_data.to_string());
+            }
+        }
+        Kind::EventRecord { event, external } | Kind::EventWait { event, external } => {
+            if flags & GraphDebugDotFlags::EVENT_NODE_PARAMS != 0 {
+                label.push_str(" ev=");
+                label.push_str(&event.0.to_string());
+                if *external {
+                    label.push_str(" ext");
+                }
+            }
+        }
+        Kind::Alloc { id, bytes } => {
+            if flags & GraphDebugDotFlags::MEM_ALLOC_NODE_PARAMS != 0 {
+                label.push_str(" id=");
+                label.push_str(&id.0.to_string());
+                label.push_str(" bytes=");
+                label.push_str(&bytes.to_string());
+            }
+        }
+        Kind::Free { id } => {
+            if flags & GraphDebugDotFlags::MEM_FREE_NODE_PARAMS != 0 {
+                label.push_str(" id=");
+                label.push_str(&id.0.to_string());
+            }
+        }
+        Kind::WriteValue { id, .. } | Kind::WaitValue { id, .. } => {
+            if flags & GraphDebugDotFlags::BATCH_MEM_OP_NODE_PARAMS != 0 {
+                label.push_str(" id=");
+                label.push_str(&id.0.to_string());
+                label.push_str(" n=1");
+            }
+        }
+        Kind::BatchMem { ops } => {
+            if flags & GraphDebugDotFlags::BATCH_MEM_OP_NODE_PARAMS != 0 {
+                label.push_str(" n=");
+                label.push_str(&ops.len().to_string());
+            }
+        }
+        Kind::If { handle, body } | Kind::While { handle, body } => {
+            if flags & GraphDebugDotFlags::CONDITIONAL_NODE_PARAMS != 0 {
+                label.push_str(" h=");
+                label.push_str(&handle.0.to_string());
+                label.push_str(" body=");
+                label.push_str(&body.0.to_string());
+            }
+        }
+        Kind::Switch { handle, bodies } => {
+            if flags & GraphDebugDotFlags::CONDITIONAL_NODE_PARAMS != 0 {
+                label.push_str(" h=");
+                label.push_str(&handle.0.to_string());
+                label.push_str(" n=");
+                label.push_str(&bodies.len().to_string());
+            }
+        }
+        Kind::SetConditional { handle, value } => {
+            if flags & GraphDebugDotFlags::CONDITIONAL_NODE_PARAMS != 0 {
+                label.push_str(" h=");
+                label.push_str(&handle.0.to_string());
+                label.push_str(" v=");
+                label.push_str(&value.to_string());
+            }
+        }
+        Kind::ChildGraph { graph } if flags & GraphDebugDotFlags::HANDLES != 0 => {
+            label.push_str(" g=");
+            label.push_str(&graph.0.to_string());
+        }
+        _ => {}
+    }
+    label
 }
 
 fn node_kind(kind: &Kind) -> GraphNodeKind {

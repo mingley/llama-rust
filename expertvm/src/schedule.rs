@@ -10,9 +10,8 @@ use crate::sim_replay::{
     apply_stream_sms, apply_stream_sync_policy, apply_touch, bind_shareable_mempools, drop_remote,
     fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots,
     reclaim_victim, remote_hit, replay_from_sim, sim_profile, sync_work, trim_graph_pools,
-    validate_sim_cfg,
-    GraphBank, LeafMem, PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay,
-    StreamPlan, TouchArgs,
+    validate_sim_cfg, GraphBank, LeafMem, PageHandle, RemoteFetch, RemotePage, ReplayCounters,
+    SimCfg, SimReplay, StreamPlan, TouchArgs,
 };
 use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};

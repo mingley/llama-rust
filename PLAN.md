@@ -2157,7 +2157,16 @@ model, do not celebrate the sim.
     Typed helpers stay. Decode identity unchanged. `gpu-profile capture`
     is still refused. Dual score still has no `$/M tokens`.
 
-189. [ ] Next numbered PLAN item after 188 is the next `gpu-sim` / Engine /
+189. [x] `cudaGraphDebugDotPrint` flags: `Sim::graph_debug_dot_with_flags`
+    takes [`GraphDebugDotFlags`] (CUDA bit values). Flags `0` stays kinds
+    and edges. `VERBOSE` dumps modeled params (kernel coop/buffers,
+    memcpy/memset/host/event/alloc/free/batch/conditional, kernel
+    priority, graph handle). External-semaphore and extra-conditional-edge
+    bits are Invalid. Query; legal during capture. Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+190. [ ] Next numbered PLAN item after 189 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

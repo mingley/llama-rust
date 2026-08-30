@@ -425,9 +425,11 @@
 //! [`graph_nodes`](Sim::graph_nodes) / [`graph_root_nodes`](Sim::graph_root_nodes) /
 //! [`graph_edges`](Sim::graph_edges) /
 //! [`graph_node_dependents`](Sim::graph_node_dependents) /
-//! [`graph_debug_dot`](Sim::graph_debug_dot) are
+//! [`graph_debug_dot`](Sim::graph_debug_dot) /
+//! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags) are
 //! `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes`
-//! / `cudaGraphDebugDotPrint` (kinds and edges; no verbose param flags).
+//! / `cudaGraphDebugDotPrint` (kinds and edges; flags `0` is that dump;
+//! [`GraphDebugDotFlags::VERBOSE`] prints modeled params).
 //! [`begin_capture_to_graph`](Sim::begin_capture_to_graph) is
 //! `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
 //! uninstantiated graph; capture roots additionally depend on the given node
@@ -501,15 +503,15 @@ pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp,
     ClusterDim, ClusterSchedulingPolicy, DType, DeviceAttr, DeviceLimit, DeviceP2pAttr,
     DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags, FuncAttributes, GpuOp,
-    GraphAddNode, GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
-    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
-    GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
-    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise,
-    MemAttach, MemPoolAttr, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp,
-    Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
-    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags,
-    WaitValueCmp,
+    GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo,
+    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
+    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf,
+    KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
+    MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
+    MemoryType, MemsetOp, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
+    StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -8009,6 +8011,68 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn graph_debug_dot_with_flags_dumps_kernel_params() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_memcpy(
+            g,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(d),
+                alloc: a,
+                bytes: 4096,
+                ..MemcpyOp::default()
+            },
+        )
+        .unwrap();
+        sim.graph_kernel_node_set_priority(g, 0, 7).unwrap();
+        let plain = sim.graph_debug_dot(g).unwrap();
+        assert!(plain.contains("n0 [label=\"0 Kernel\"]"), "{plain}");
+        assert!(!plain.contains("coop="), "{plain}");
+        let kern = sim
+            .graph_debug_dot_with_flags(g, GraphDebugDotFlags::KERNEL_NODE_PARAMS)
+            .unwrap();
+        assert!(kern.contains("coop=0"), "{kern}");
+        assert!(kern.contains(&format!("r={}", a.0)), "{kern}");
+        let attrs = sim
+            .graph_debug_dot_with_flags(g, GraphDebugDotFlags::KERNEL_NODE_ATTRIBUTES)
+            .unwrap();
+        assert!(attrs.contains("pri=7"), "{attrs}");
+        let copy = sim
+            .graph_debug_dot_with_flags(g, GraphDebugDotFlags::MEMCPY_NODE_PARAMS)
+            .unwrap();
+        assert!(copy.contains("bytes=4096"), "{copy}");
+        assert!(copy.contains("src=HostPinned"), "{copy}");
+        let verbose = sim
+            .graph_debug_dot_with_flags(g, GraphDebugDotFlags::VERBOSE)
+            .unwrap();
+        assert!(
+            verbose.starts_with(&format!("digraph g{} {{", g.0)),
+            "{verbose}"
+        );
+        assert!(verbose.contains("coop=0"), "{verbose}");
+        assert!(verbose.contains("pri=7"), "{verbose}");
+        assert!(verbose.contains("bytes=4096"), "{verbose}");
+        match sim.graph_debug_dot_with_flags(g, 1 << 7) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("graph debug dot flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        assert!(sim
+            .graph_debug_dot_with_flags(g, GraphDebugDotFlags::KERNEL_NODE_PARAMS)
+            .unwrap()
+            .contains("coop=0"));
+        let _end = sim.end_capture().unwrap();
     }
 
     #[test]

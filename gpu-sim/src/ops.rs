@@ -1712,6 +1712,39 @@ impl EventCreateFlags {
     pub const DISABLE_TIMING: u32 = 2;
 }
 
+/// `cudaGraphDebugDotFlags` for [`crate::Sim::graph_debug_dot_with_flags`].
+///
+/// Bit values match CUDA. External-semaphore and extra-conditional-edge flags
+/// are not modeled (Invalid).
+pub struct GraphDebugDotFlags;
+
+impl GraphDebugDotFlags {
+    /// `cudaGraphDebugDotFlagsVerbose` (all modeled param dumps).
+    pub const VERBOSE: u32 = 1;
+    /// `cudaGraphDebugDotFlagsKernelNodeParams`.
+    pub const KERNEL_NODE_PARAMS: u32 = 1 << 2;
+    /// `cudaGraphDebugDotFlagsMemcpyNodeParams`.
+    pub const MEMCPY_NODE_PARAMS: u32 = 1 << 3;
+    /// `cudaGraphDebugDotFlagsMemsetNodeParams`.
+    pub const MEMSET_NODE_PARAMS: u32 = 1 << 4;
+    /// `cudaGraphDebugDotFlagsHostNodeParams`.
+    pub const HOST_NODE_PARAMS: u32 = 1 << 5;
+    /// `cudaGraphDebugDotFlagsEventNodeParams`.
+    pub const EVENT_NODE_PARAMS: u32 = 1 << 6;
+    /// `cudaGraphDebugDotFlagsKernelNodeAttributes`.
+    pub const KERNEL_NODE_ATTRIBUTES: u32 = 1 << 9;
+    /// `cudaGraphDebugDotFlagsHandles` (graph / alloc / event ids).
+    pub const HANDLES: u32 = 1 << 10;
+    /// `cudaGraphDebugDotFlagsMemAllocNodeParams`.
+    pub const MEM_ALLOC_NODE_PARAMS: u32 = 1 << 11;
+    /// `cudaGraphDebugDotFlagsMemFreeNodeParams`.
+    pub const MEM_FREE_NODE_PARAMS: u32 = 1 << 12;
+    /// `cudaGraphDebugDotFlagsBatchMemOpNodeParams`.
+    pub const BATCH_MEM_OP_NODE_PARAMS: u32 = 1 << 13;
+    /// `cudaGraphDebugDotFlagsConditionalNodeParams`.
+    pub const CONDITIONAL_NODE_PARAMS: u32 = 1 << 15;
+}
+
 /// `cudaGraphInstantiateResult` from [`crate::Sim::instantiate_graph_with_params`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum GraphInstantiateResult {
