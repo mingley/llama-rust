@@ -10353,10 +10353,32 @@ impl Sim {
         flags: u32,
     ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
+        let bytes = self.alloc_ref(id)?.bytes;
+        self.multicast_bind_addr_with_size(mc, device, id, bytes, flags)
+    }
+
+    /// [`Self::multicast_bind_addr`] with the CUDA size and flags.
+    ///
+    /// `size` must equal the reserved VA. Other sizes Invalid `"bind size"`.
+    /// CUDA `mcOffset` is 0 (partial bind is not modeled). Flags must be
+    /// [`MulticastBindFlags::DEFAULT`].
+    pub fn multicast_bind_addr_with_size(
+        &mut self,
+        mc: MulticastId,
+        device: DeviceId,
+        id: AllocId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
         if flags != MulticastBindFlags::DEFAULT {
             return Err(SimError::Invalid {
                 why: "multicast bind flags",
             });
+        }
+        let a = self.alloc_ref(id)?;
+        if size != a.bytes {
+            return Err(SimError::Invalid { why: "bind size" });
         }
         let h = self.handle_for_bind(id, device)?;
         self.multicast_bind_mem(mc, device, h)

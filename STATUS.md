@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cuMulticastBindAddr` size
+
+`multicast_bind_addr_with_size` requires the CUDA reserved-VA size.
+Partial bind is not modeled (`mcOffset` 0). Typed `multicast_bind_addr`
+stays. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cuMulticastUnbind` size
 
 `multicast_unbind_with_size` requires the CUDA multicast object size.

@@ -685,6 +685,8 @@ Both are queries; legal during capture. `va_map` still Create+Maps in one call.
 (must match; `mcOffset` 0; partial unbind is not modeled).
 `multicast_bind_mem_with_flags` / `multicast_bind_addr_with_flags` require
 flags 0 (`MulticastBindFlags::DEFAULT`). Typed helpers stay.
+`multicast_bind_addr_with_size` is the CUDA size argument (must match the
+reserved VA; `mcOffset` 0; partial bind is not modeled).
 `multicast_get_granularity` is `cuMulticastGetGranularity` (minimum and
 recommended are the same profile value; `0`/`1` → `1`). Query; legal
 during capture.

@@ -157,6 +157,8 @@
 //! is the CUDA size argument (must match the object; `mcOffset` 0). [`multicast_bind_mem_with_flags`](Sim::multicast_bind_mem_with_flags)
 //! / [`multicast_bind_addr_with_flags`](Sim::multicast_bind_addr_with_flags)
 //! require flags 0 ([`MulticastBindFlags::DEFAULT`]). Typed helpers stay.
+//! [`multicast_bind_addr_with_size`](Sim::multicast_bind_addr_with_size)
+//! is the CUDA size argument (must match the reserved VA; `mcOffset` 0).
 //! [`multicast_get_granularity`](Sim::multicast_get_granularity)
 //! is `cuMulticastGetGranularity` (minimum and recommended are the same
 //! profile value; `0`/`1` → `1`). Query; legal during capture. The team must be an NVLink clique (PCIe P2P
@@ -17693,6 +17695,35 @@ mod tests {
         }
         sim.begin_capture(d0, StreamId(0)).unwrap();
         match sim.multicast_bind_addr(mc, d0, va) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn multicast_bind_addr_with_size_is_cu_multicast_bind_addr() {
+        let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let bytes = 4096u64;
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let va = sim.va_reserve(bytes).unwrap();
+        sim.va_map(va, d0).unwrap();
+        sim.va_map(va, d1).unwrap();
+        let mc = sim.multicast_create(bytes, 2).unwrap();
+        sim.multicast_add_device(mc, d0).unwrap();
+        sim.multicast_add_device(mc, d1).unwrap();
+        match sim.multicast_bind_addr_with_size(mc, d0, va, 2048, MulticastBindFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("bind size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.multicast_binds(mc).unwrap(), 0);
+        sim.multicast_bind_addr_with_size(mc, d0, va, bytes, MulticastBindFlags::DEFAULT)
+            .unwrap();
+        sim.multicast_bind_addr(mc, d1, va).unwrap();
+        assert_eq!(sim.multicast_binds(mc).unwrap(), 2);
+        sim.begin_capture(d0, StreamId(0)).unwrap();
+        match sim.multicast_bind_addr_with_size(mc, d0, va, bytes, MulticastBindFlags::DEFAULT) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
