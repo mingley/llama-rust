@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — mem decompress unsupported
+
+`DeviceAttr::MemDecompressAlgorithmMask` is always 0 (hardware decompress
+is not modeled). Query; capture-legal. `gpu-profile capture` is still
+refused.
+
 ## Shipped 2026-08-30 — timeline semaphore interop unsupported
 
 `DeviceAttr::TimelineSemaphoreInteropSupported` is always 0 (NVSci /

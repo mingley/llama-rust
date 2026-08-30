@@ -13061,7 +13061,8 @@ impl Sim {
             | DeviceAttr::KernelExecTimeout
             | DeviceAttr::TensorMapAccessSupported
             | DeviceAttr::UnifiedFunctionPointers
-            | DeviceAttr::TimelineSemaphoreInteropSupported => 0,
+            | DeviceAttr::TimelineSemaphoreInteropSupported
+            | DeviceAttr::MemDecompressAlgorithmMask => 0,
             DeviceAttr::StreamPrioritiesSupported
             | DeviceAttr::UnifiedAddressing
             | DeviceAttr::CanUse64BitStreamMemOps
@@ -13138,6 +13139,7 @@ impl Sim {
             tensor_map_access_supported: false,
             unified_function_pointers: false,
             timeline_semaphore_interop_supported: false,
+            mem_decompress_algorithm_mask: 0,
         })
     }
 

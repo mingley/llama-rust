@@ -865,6 +865,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrTimelineSemaphoreInteropSupported` (always 0; NVSci /
     /// timeline semaphore interop is not modeled).
     TimelineSemaphoreInteropSupported,
+    /// `cudaDevAttrMemDecompressAlgorithmMask` (always 0; hardware decompress
+    /// is not modeled).
+    MemDecompressAlgorithmMask,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -1005,6 +1008,9 @@ pub struct DeviceProperties {
     /// `cudaDevAttrTimelineSemaphoreInteropSupported` (NVSci / timeline
     /// semaphore interop is not modeled).
     pub timeline_semaphore_interop_supported: bool,
+    /// `cudaDevAttrMemDecompressAlgorithmMask` (hardware decompress is not
+    /// modeled).
+    pub mem_decompress_algorithm_mask: u64,
 }
 
 /// `cudaComputeMode` for [`DeviceAttr::ComputeMode`].
