@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaDevAttrGPUDirectRDMASupported`
+
+`DeviceAttr::GpuDirectRdmaSupported` is a GPU↔GPU `LinkKind::Rdma` link.
+Flush/write-ordering are not modeled. Query; legal during capture.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaMemRangeGetAttributes`
 
 `mem_range_get_attributes` batches modeled per-alloc managed advice
@@ -2281,7 +2287,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 202 (`cudaMemRangeGetAttributes`).
+Next code change is PLAN systems depth after item 203 (`GPUDirect RDMA` cap).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

@@ -613,6 +613,8 @@ pub enum DeviceAttr {
     /// `cudaDevAttrMemoryPoolSupportedHandleTypes`
     /// ([`MemHandleType::POSIX_FILE_DESCRIPTOR`]).
     MemoryPoolSupportedHandleTypes,
+    /// `cudaDevAttrGPUDirectRDMASupported` (a [`crate::LinkKind::Rdma`] link).
+    GpuDirectRdmaSupported,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -670,6 +672,8 @@ pub struct DeviceProperties {
     pub can_use_host_pointer_for_registered_mem: bool,
     /// `cudaMemHandleTypePosixFileDescriptor` ([`MemHandleType::POSIX_FILE_DESCRIPTOR`]).
     pub memory_pool_supported_handle_types: u64,
+    /// `cudaDevAttrGPUDirectRDMASupported` (a GPU↔GPU [`crate::LinkKind::Rdma`] link).
+    pub gpu_direct_rdma_supported: bool,
 }
 
 /// `cudaFuncAttribute` for [`crate::Sim::func_set_attribute`] / `GetAttribute`.

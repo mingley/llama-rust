@@ -2276,7 +2276,13 @@ model, do not celebrate the sim.
     legal during capture. Decode identity unchanged. `gpu-profile capture`
     is still refused. Dual score still has no `$/M tokens`.
 
-203. [ ] Next numbered PLAN item after 202 is the next `gpu-sim` / Engine /
+203. [x] `cudaDevAttrGPUDirectRDMASupported`: [`DeviceAttr::GpuDirectRdmaSupported`]
+    is 1 iff the profile has a GPU↔GPU [`LinkKind::Rdma`] incident on that
+    device. Flush and write-ordering attrs are not modeled. Query; legal
+    during capture. Decode identity unchanged. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+204. [ ] Next numbered PLAN item after 203 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

@@ -11597,6 +11597,9 @@ impl Sim {
             | DeviceAttr::IpcEventSupport
             | DeviceAttr::CanUseHostPointerForRegisteredMem => 1,
             DeviceAttr::MemoryPoolSupportedHandleTypes => MemHandleType::POSIX_FILE_DESCRIPTOR,
+            DeviceAttr::GpuDirectRdmaSupported => {
+                u64::from(self.profile.gpu_direct_rdma_supported(device))
+            }
         })
     }
 
@@ -11626,6 +11629,7 @@ impl Sim {
             ipc_event_support: true,
             can_use_host_pointer_for_registered_mem: true,
             memory_pool_supported_handle_types: MemHandleType::POSIX_FILE_DESCRIPTOR,
+            gpu_direct_rdma_supported: self.profile.gpu_direct_rdma_supported(device),
         })
     }
 

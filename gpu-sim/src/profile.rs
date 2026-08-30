@@ -315,6 +315,17 @@ impl HardwareProfile {
         self.links.iter().any(|l| l.kind == LinkKind::Nvlink)
     }
 
+    /// `cudaDevAttrGPUDirectRDMASupported` for `device`.
+    ///
+    /// True when this profile has a GPU↔GPU [`LinkKind::Rdma`] incident on
+    /// `device`. Flush/write-ordering attrs are not modeled.
+    #[must_use]
+    pub fn gpu_direct_rdma_supported(&self, device: DeviceId) -> bool {
+        self.links
+            .iter()
+            .any(|l| l.kind == LinkKind::Rdma && (l.a == Some(device) || l.b == Some(device)))
+    }
+
     /// Hyper-Q occupancy on every GPU (`1` is exclusive compute).
     #[must_use]
     pub fn with_compute_slots(mut self, slots: u8) -> Self {

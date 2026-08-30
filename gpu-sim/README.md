@@ -114,7 +114,7 @@ warp scheduler, L1, …   ← do not model
 | `host_get_device_pointer` of mapped host returns the same id | `cudaHostGetDevicePointer` |
 | `host_get_flags` is 0 default / `HostAllocFlags::MAPPED` | `cudaHostGetFlags` |
 | `alloc_host_with_flags` / `host_register_with_flags` (MAPPED known; Portable Invalid) | `cudaHostAlloc` / `cudaHostRegister` |
-| `device_get_attribute` exposes modeled SKU caps | `cudaDeviceGetAttribute` |
+| `device_get_attribute` exposes modeled SKU caps (incl. GPUDirect RDMA from `LinkKind::Rdma`) | `cudaDeviceGetAttribute` |
 | `device_get_properties` wraps the same SKU caps | `cudaGetDeviceProperties` |
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
 | `stream_get_priority` is the create priority | `cudaStreamGetPriority` |
@@ -479,6 +479,8 @@ stream is `Ok(false)`; the clock does not advance).
 `ClusterLaunch` is `max_blocks_per_cluster > 0`. `HostRegisterSupported` /
 `IpcEventSupport` / `CanUseHostPointerForRegisteredMem` are always 1.
 `MemoryPoolSupportedHandleTypes` is POSIX-FD (`MemHandleType`).
+`GpuDirectRdmaSupported` is a GPU↔GPU RDMA link (flush/write-ordering
+are not modeled).
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
 (no SM count or clock). `func_get_attributes` is `cudaFuncGetAttributes`
 of modeled per-device function attrs (`maxDynamicSharedSizeBytes` and

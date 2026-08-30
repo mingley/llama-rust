@@ -182,7 +182,9 @@
 //! [`DeviceAttr::HostRegisterSupported`] / [`IpcEventSupport`](DeviceAttr::IpcEventSupport) /
 //! [`CanUseHostPointerForRegisteredMem`](DeviceAttr::CanUseHostPointerForRegisteredMem)
 //! are always 1. [`DeviceAttr::MemoryPoolSupportedHandleTypes`] is
-//! [`MemHandleType::POSIX_FILE_DESCRIPTOR`]. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
+//! [`MemHandleType::POSIX_FILE_DESCRIPTOR`]. [`DeviceAttr::GpuDirectRdmaSupported`]
+//! is a GPU↔GPU [`crate::LinkKind::Rdma`] link (flush/write-ordering are not
+//! modeled). [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
 //! [`func_set_attribute`](Sim::func_set_attribute) /
 //! [`func_get_attribute`](Sim::func_get_attribute) are `cudaFuncSetAttribute` /
@@ -8036,6 +8038,12 @@ mod tests {
                 .unwrap(),
             MemHandleType::POSIX_FILE_DESCRIPTOR
         );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::GpuDirectRdmaSupported)
+                .unwrap(),
+            0
+        );
+        assert!(!props.gpu_direct_rdma_supported);
         match sim.device_get_properties(DeviceId(1)) {
             Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
             other => panic!("{other:?}"),
@@ -9126,6 +9134,22 @@ mod tests {
             asym.device_get_p2p_attribute(DeviceId(0), DeviceId(2), DeviceP2pAttr::PerformanceRank)
                 .unwrap(),
             0
+        );
+        assert_eq!(
+            nv.device_get_attribute(DeviceId(0), DeviceAttr::GpuDirectRdmaSupported)
+                .unwrap(),
+            0
+        );
+        let rdma = Sim::new(HardwareProfile::example_2node_rdma());
+        assert_eq!(
+            rdma.device_get_attribute(DeviceId(0), DeviceAttr::GpuDirectRdmaSupported)
+                .unwrap(),
+            1
+        );
+        assert!(
+            rdma.device_get_properties(DeviceId(0))
+                .unwrap()
+                .gpu_direct_rdma_supported
         );
         let mut mixed = HardwareProfile::example_8xh100_nvlink();
         for l in &mut mixed.links {
