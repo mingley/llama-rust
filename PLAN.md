@@ -422,11 +422,15 @@ Exact (mechanical invariants agents may rely on):
   (`alloc` / `free` / `memcpy`); `malloc` OOM is at the call;
   `cudaDeviceSynchronize` (`synchronize_device`) waits one GPU
 - memory pools: `create_pool` / `create_shareable_pool` / `alloc_from_pool` /
-  `set_pool_release_threshold` / `pool_trim_to` / `set_device_mempool`
+  `set_pool_release_threshold` / `pool_trim_to` / `set_device_mempool` /
+  `pool_get_attribute` / `pool_set_attribute` / `pool_get_access`
   (`cudaMemPoolCreate` / `cudaMallocFromPoolAsync` /
-  `cudaMemPoolAttrReleaseThreshold` / `cudaMemPoolTrimTo` / `cudaDeviceSetMemPool`); default
+  `cudaMemPoolAttrReleaseThreshold` / `cudaMemPoolTrimTo` / `cudaDeviceSetMemPool` /
+  `cudaMemPoolGetAttribute` / `SetAttribute` / `GetAccess`); default
   threshold `0` returns unused bytes on free; `u64::MAX` holds them so
-  `malloc` can OOM until trim; `cudaMalloc` cannot consume pool cache
+  `malloc` can OOM until trim; `cudaMalloc` cannot consume pool cache;
+  GetAttribute Used/Reserved wrap live+cached (no invented pool high-water);
+  GetAccess is ReadWrite on the owner and after SetAccess on peers
 - `cudaIpcGetMemHandle` / `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`
   (`ipc_get` / `ipc_open` / `ipc_close`): import aliases source physicals
   (no extra HBM); free of the source while imports are live is Invalid;
@@ -1910,6 +1914,34 @@ model, do not celebrate the sim.
     Query; legal during capture. Decode identity unchanged.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
+
+161. [x] `cudaMemPoolGetAttribute` / `SetAttribute`:
+    `Sim::pool_get_attribute` / `pool_set_attribute` wrap existing pool
+    live, cached, and release threshold (`MemPoolAttr`). Used/Reserved
+    are read-only. No invented ordinary-pool high-water (graph mem stays
+    `GraphMemAttr`). Graph-memory pool is Invalid. Imported pools report
+    the exporter. Get is a query (capture-legal); Set cannot capture.
+    Decode identity unchanged. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+162. [x] `cudaFuncGetAttributes` / extra `DeviceAttr`:
+    `Sim::func_get_attributes` wraps per-device
+    `set_max_dynamic_shared_memory` and
+    `set_non_portable_cluster_size_allowed` (`FuncAttributes`). This VM
+    has one function-attr set per device, not per kernel. No
+    `maxThreadsPerBlock` or register count. `DeviceAttr::CanMapHostMemory`
+    / `ManagedMemory` are always 1 (mapped host and UM already exist).
+    Query; legal during capture. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+163. [x] `cudaMemPoolGetAccess`:
+    `Sim::pool_get_access` is ProtReadWrite (`3`) on the owning device
+    (default accessibility) and on peers after `pool_set_access`.
+    Otherwise ProtNone (`0`). This VM does not model ProtRead. Graph
+    pool is Invalid. Query; legal during capture. Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

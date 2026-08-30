@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaMemPoolGetAttribute` / `cudaFuncGetAttributes` / GetAccess
+
+`Sim::pool_get_attribute` / `pool_set_attribute` are `cudaMemPoolGetAttribute`
+/ `SetAttribute` of existing live, cached, and release-threshold state.
+Used/Reserved are read-only. No invented ordinary-pool high-water (graph
+mem stays `graph_mem_get`). Graph-memory pool is Invalid. Imported pools
+report the exporter. `func_get_attributes` is `cudaFuncGetAttributes` of
+per-device `maxDynamicSharedSizeBytes` and `nonPortableClusterSizeAllowed`
+(not per kernel). `DeviceAttr::CanMapHostMemory` / `ManagedMemory` are
+always 1. `pool_get_access` is `cudaMemPoolGetAccess` (owner ReadWrite;
+peers after SetAccess). Query gets are capture-legal; SetAttribute cannot
+capture. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaDeviceGetMemPool` vs GetDefaultMemPool
 
 `Sim::default_pool` is `cudaDeviceGetDefaultMemPool` (seeded at construct).
@@ -2041,8 +2054,8 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 67 (VMM `cuMemCreate` /
-`cuMemMap` split). `gguf_gemv serve --engine`
+Next code change is PLAN systems depth after item 163 (mempool Get/Set
+attribute, func attributes, GetAccess). `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover
 is a Llama NORM real-model fixture when a GGUF is on disk. Physical

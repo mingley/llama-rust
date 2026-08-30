@@ -411,9 +411,12 @@ stream is `Ok(false)`; the clock does not advance).
 `pointer_get_attributes` is `cudaPointerGetAttributes`.
 `host_get_device_pointer` is `cudaHostGetDevicePointer` (mapped host).
 `device_get_attribute` is `cudaDeviceGetAttribute` (modeled caps only;
-`TotalGlobalMem` is HBM, `AsyncEngineCount` is copy engines).
+`TotalGlobalMem` is HBM, `AsyncEngineCount` is copy engines,
+`CanMapHostMemory` / `ManagedMemory` are always 1).
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
-(no SM count or clock). `stream_get_flags` is `cudaStreamGetFlags`
+(no SM count or clock). `func_get_attributes` is `cudaFuncGetAttributes`
+of modeled per-device function attrs (`maxDynamicSharedSizeBytes` and
+`nonPortableClusterSizeAllowed`; not per kernel). `stream_get_flags` is `cudaStreamGetFlags`
 (`0` `cudaStreamDefault` / `1` `cudaStreamNonBlocking`; NULL follows
 `set_legacy_null_stream`). `stream_get_priority` is `cudaStreamGetPriority`.
 This VM does not cap stream-priority range.
@@ -432,10 +435,16 @@ are `cudaMemset2DAsync` (payload `width * height`; padding is not written).
 Default `cudaMallocAsync` uses the device mempool with release threshold
 `0` (unused bytes return to the OS when the stream-ordered free
 completes). `create_pool` / `alloc_from_pool` /
-`set_pool_release_threshold` / `pool_trim_to` are `cudaMemPoolCreate` /
+`set_pool_release_threshold` / `pool_trim_to` / `pool_get_attribute` /
+`pool_set_attribute` are `cudaMemPoolCreate` /
 `cudaMallocFromPoolAsync` / `cudaMemPoolAttrReleaseThreshold` /
-`cudaMemPoolTrimTo`. `u64::MAX` holds unused bytes so `malloc` can OOM
+`cudaMemPoolTrimTo` / `cudaMemPoolGetAttribute` / `SetAttribute`.
+`MemPoolAttr` is ReleaseThreshold / UsedMemCurrent / ReservedMemCurrent
+(no invented ordinary-pool high-water; graph mem stays `GraphMemAttr`).
+`u64::MAX` holds unused bytes so `malloc` can OOM
 until trim. Capture cannot include pool create/trim/set-attribute.
+`pool_get_access` is `cudaMemPoolGetAccess` (owner ReadWrite by default;
+peers need `pool_set_access`).
 `ipc_get` / `ipc_open` / `ipc_close` are `cudaIpcGetMemHandle` /
 `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`: the import aliases the
 source physicals (no extra HBM). Free of the source while imports are live

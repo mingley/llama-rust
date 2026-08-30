@@ -12,13 +12,14 @@ use crate::ids::{
 use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
     ClusterSchedulingPolicy, DeviceAttr, DeviceLimit, DeviceP2pAttr, DeviceProperties,
-    GpuOp as Kind, GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
-    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind,
-    GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeParams,
-    LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
-    MemoryType, MemsetOp, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
-    StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    FuncAttributes, GpuOp as Kind, GraphExecUpdateResult, GraphExecUpdateResultInfo,
+    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
+    GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
+    KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr,
+    MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, Place,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -7186,7 +7187,9 @@ impl Sim {
     /// Device graph-memory pool (`cudaDeviceGetGraphMemAttribute` backing).
     ///
     /// Not the default mempool. [`Self::alloc_from_pool`] / [`Self::set_device_mempool`]
-    /// / [`Self::set_pool_release_threshold`] / [`Self::pool_set_access`] refuse it.
+    /// / [`Self::set_pool_release_threshold`] / [`Self::pool_set_access`] /
+    /// [`Self::pool_get_attribute`] / [`Self::pool_set_attribute`] /
+    /// [`Self::pool_get_access`] refuse it.
     pub fn graph_pool(&self, device: DeviceId) -> Result<PoolId, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.graph_pools
@@ -7328,13 +7331,55 @@ impl Sim {
     ///
     /// `0` (CUDA default) returns unused bytes to the OS when the stream-ordered
     /// free completes. `u64::MAX` holds them so [`Self::mem_info`] still counts
-    /// them used until [`Self::pool_trim_to`].
+    /// them used until [`Self::pool_trim_to`]. Also
+    /// [`Self::pool_set_attribute`] [`MemPoolAttr::ReleaseThreshold`].
     pub fn set_pool_release_threshold(&mut self, pool: PoolId, bytes: u64) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         let root = self.pool_root(pool)?;
         self.refuse_graph_pool(root)?;
         self.pool_mut(root)?.release_threshold = bytes;
         Ok(())
+    }
+
+    /// `cudaMemPoolGetAttribute`. Query; legal during capture.
+    ///
+    /// [`MemPoolAttr::UsedMemCurrent`] is [`Self::pool_live`]. Reserved is live
+    /// plus [`Self::pool_cached`]. An imported pool reports the exporter.
+    /// The graph-memory pool is Invalid (use [`Self::graph_mem_get`]).
+    pub fn pool_get_attribute(&self, pool: PoolId, attr: MemPoolAttr) -> Result<u64, SimError> {
+        self.refuse_graph_pool(pool)?;
+        match attr {
+            MemPoolAttr::ReleaseThreshold => {
+                Ok(self.pool_ref(self.pool_root(pool)?)?.release_threshold)
+            }
+            MemPoolAttr::UsedMemCurrent => self.pool_live(pool),
+            MemPoolAttr::ReservedMemCurrent => Ok(self
+                .pool_live(pool)?
+                .saturating_add(self.pool_cached(pool)?)),
+        }
+    }
+
+    /// `cudaMemPoolSetAttribute`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Only [`MemPoolAttr::ReleaseThreshold`] is writable (same as
+    /// [`Self::set_pool_release_threshold`]). Used/Reserved are read-only.
+    /// The graph-memory pool is Invalid (use [`Self::graph_mem_set`]).
+    pub fn pool_set_attribute(
+        &mut self,
+        pool: PoolId,
+        attr: MemPoolAttr,
+        value: u64,
+    ) -> Result<(), SimError> {
+        match attr {
+            MemPoolAttr::ReleaseThreshold => self.set_pool_release_threshold(pool, value),
+            MemPoolAttr::UsedMemCurrent | MemPoolAttr::ReservedMemCurrent => {
+                self.fail_if_capturing("cannot capture mempool")?;
+                self.refuse_graph_pool(pool)?;
+                Err(SimError::Invalid {
+                    why: "read-only pool attr",
+                })
+            }
+        }
     }
 
     /// Set every device's current mempool release threshold (`cudaDeviceGetMemPool`).
@@ -7420,6 +7465,23 @@ impl Sim {
     /// Whether `device` has [`Self::pool_set_access`] on `pool`.
     pub fn is_pool_accessed_by(&self, pool: PoolId, device: DeviceId) -> Result<bool, SimError> {
         Ok(self.pool_ref(pool)?.accessed_by.contains(&device))
+    }
+
+    /// `cudaMemPoolGetAccess`. Query; legal during capture.
+    ///
+    /// [`MemAccessFlags::PROT_READ_WRITE`] (`3`) on the owning device (default
+    /// accessibility) and on peers after [`Self::pool_set_access`]. Otherwise
+    /// [`MemAccessFlags::PROT_NONE`] (`0`). This VM does not model ProtRead.
+    /// The graph-memory pool is Invalid.
+    pub fn pool_get_access(&self, pool: PoolId, device: DeviceId) -> Result<u32, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.refuse_graph_pool(pool)?;
+        let owner = self.pool_ref(pool)?.device;
+        if owner == device || self.is_pool_accessed_by(pool, device)? {
+            Ok(MemAccessFlags::PROT_READ_WRITE)
+        } else {
+            Ok(MemAccessFlags::PROT_NONE)
+        }
     }
 
     /// Whether `pool` was created with a POSIX-FD shareable handle type.
@@ -9826,6 +9888,7 @@ impl Sim {
             DeviceAttr::MaxBlocksPerCluster => u64::from(gpu.max_blocks_per_cluster),
             DeviceAttr::MemSyncDomainCount => u64::from(gpu.mem_sync_domain_count),
             DeviceAttr::MemoryPoolsSupported => 1,
+            DeviceAttr::CanMapHostMemory | DeviceAttr::ManagedMemory => 1,
             DeviceAttr::TotalGlobalMem => gpu.hbm_bytes,
             DeviceAttr::AsyncEngineCount => u64::from(gpu.copy_engines),
         })
@@ -9850,6 +9913,8 @@ impl Sim {
             portable_cluster_size: u32::from(gpu.portable_cluster_size),
             mem_sync_domain_count: u32::from(gpu.mem_sync_domain_count),
             memory_pools_supported: true,
+            can_map_host_memory: true,
+            managed_memory: true,
         })
     }
 
@@ -13050,6 +13115,18 @@ impl Sim {
     #[must_use]
     pub fn max_dynamic_shared_memory(&self, device: DeviceId) -> u32 {
         self.max_dynamic_shared.get(&device).copied().unwrap_or(0)
+    }
+
+    /// `cudaFuncGetAttributes` of modeled per-device function attrs.
+    ///
+    /// Query; legal during capture. Unknown devices are Invalid. This VM has
+    /// one function-attr set per device, not per kernel function.
+    pub fn func_get_attributes(&self, device: DeviceId) -> Result<FuncAttributes, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(FuncAttributes {
+            max_dynamic_shared_size_bytes: self.max_dynamic_shared_memory(device),
+            non_portable_cluster_size_allowed: self.non_portable_cluster_size_allowed(device),
+        })
     }
 
     fn advance_to_next_completion(&mut self) -> Result<(), SimError> {

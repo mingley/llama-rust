@@ -51,12 +51,18 @@
 //! [`Sim::alloc`] draws from [`device_mempool`](Sim::device_mempool) (`cudaMallocAsync`).
 //! [`Sim::create_pool`] / [`alloc_from_pool`](Sim::alloc_from_pool) /
 //! [`set_pool_release_threshold`](Sim::set_pool_release_threshold) /
-//! [`pool_trim_to`](Sim::pool_trim_to) are `cudaMemPoolCreate` /
+//! [`pool_trim_to`](Sim::pool_trim_to) / [`pool_get_attribute`](Sim::pool_get_attribute) /
+//! [`pool_set_attribute`](Sim::pool_set_attribute) are `cudaMemPoolCreate` /
 //! `cudaMallocFromPoolAsync` / `cudaMemPoolAttrReleaseThreshold` /
-//! `cudaMemPoolTrimTo`. Unused pool bytes stay in `cudaMemGetInfo` used until
-//! trim when the release threshold is high (`u64::MAX`, vLLM-style).
-//! [`Sim::pool_set_access`] / [`pool_unset_access`](Sim::pool_unset_access) are
-//! `cudaMemPoolSetAccess` ReadWrite / ProtNone: a kernel on a peer may read
+//! `cudaMemPoolTrimTo` / `cudaMemPoolGetAttribute` / `SetAttribute`.
+//! [`MemPoolAttr`] is ReleaseThreshold / UsedMemCurrent / ReservedMemCurrent
+//! (no invented pool high-water; graph mem stays [`GraphMemAttr`]). Unused
+//! pool bytes stay in `cudaMemGetInfo` used until trim when the release
+//! threshold is high (`u64::MAX`, vLLM-style).
+//! [`Sim::pool_set_access`] / [`pool_unset_access`](Sim::pool_unset_access) /
+//! [`pool_get_access`](Sim::pool_get_access) are `cudaMemPoolSetAccess`
+//! ReadWrite / ProtNone and `cudaMemPoolGetAccess` (owner is ReadWrite by
+//! default; peers need SetAccess). A kernel on a peer may read
 //! **and write** pool allocations without dest HBM (interconnect). Applies to
 //! existing and later allocs from that pool. [`Sim::malloc`] cannot consume another pool's cache.
 //! [`Sim::alloc_host`] is pageable; [`Sim::host_register`] / [`host_register_mapped`](Sim::host_register_mapped)
@@ -133,7 +139,10 @@
 //! [`Sim::host_get_device_pointer`] is `cudaHostGetDevicePointer` (mapped host).
 //! [`Sim::device_get_attribute`] is `cudaDeviceGetAttribute` ([`DeviceAttr`]).
 //! [`Sim::device_get_properties`] is `cudaGetDeviceProperties` ([`DeviceProperties`];
-//! modeled caps only — no SM count or clock).
+//! modeled caps only — no SM count or clock). [`DeviceAttr::CanMapHostMemory`]
+//! / [`DeviceAttr::ManagedMemory`] are always 1 (this VM has mapped host and
+//! UM). [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
+//! per-device function attrs ([`FuncAttributes`]; not per kernel).
 //! [`Sim::stream_get_flags`] is `cudaStreamGetFlags` (`0` blocking / `1`
 //! NonBlocking; NULL follows [`legacy_null_stream`](Sim::legacy_null_stream)).
 //! [`Sim::stream_get_priority`] is `cudaStreamGetPriority`.
@@ -420,13 +429,13 @@ pub use ids::{
 pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp,
     ClusterDim, ClusterSchedulingPolicy, DType, DeviceAttr, DeviceLimit, DeviceP2pAttr,
-    DeviceProperties, GpuOp, GraphExecUpdateResult, GraphExecUpdateResultInfo,
+    DeviceProperties, FuncAttributes, GpuOp, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
-    KernelNodeParams, LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap,
-    MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, Place, PointerAttributes,
-    PortableClusterMode, PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch,
-    SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
+    KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr,
+    MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, Place,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamCaptureInfo, StreamCaptureMode,
     SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
@@ -7517,6 +7526,18 @@ mod tests {
             u32::from(gpu.mem_sync_domain_count)
         );
         assert!(props.memory_pools_supported);
+        assert!(props.can_map_host_memory);
+        assert!(props.managed_memory);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::CanMapHostMemory)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::ManagedMemory)
+                .unwrap(),
+            1
+        );
         match sim.device_get_properties(DeviceId(1)) {
             Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
             other => panic!("{other:?}"),
@@ -7544,6 +7565,195 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(sim.stream_get_flags(d, StreamId(1)).unwrap(), 1);
         assert_eq!(sim.device_get_properties(d).unwrap().async_engine_count, 2);
+    }
+
+    #[test]
+    fn pool_get_set_attribute_wraps_live_cached_threshold() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let p = sim.default_pool(d).unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReleaseThreshold)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::UsedMemCurrent)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReservedMemCurrent)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.pool_get_access(p, d).unwrap(),
+            MemAccessFlags::PROT_READ_WRITE
+        );
+        let a = sim.alloc(d, 256, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::UsedMemCurrent)
+                .unwrap(),
+            256
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReservedMemCurrent)
+                .unwrap(),
+            256
+        );
+        sim.free(d, a, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::UsedMemCurrent)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReservedMemCurrent)
+                .unwrap(),
+            0
+        );
+        sim.pool_set_attribute(p, MemPoolAttr::ReleaseThreshold, u64::MAX)
+            .unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReleaseThreshold)
+                .unwrap(),
+            u64::MAX
+        );
+        let b = sim.alloc(d, 256, s).unwrap();
+        sim.synchronize().unwrap();
+        sim.free(d, b, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::UsedMemCurrent)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::ReservedMemCurrent)
+                .unwrap(),
+            256
+        );
+        match sim.pool_set_attribute(p, MemPoolAttr::UsedMemCurrent, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("read-only"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_set_attribute(p, MemPoolAttr::ReservedMemCurrent, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("read-only"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let gp = sim.graph_pool(d).unwrap();
+        match sim.pool_get_attribute(gp, MemPoolAttr::UsedMemCurrent) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph mem"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_get_access(gp, d) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("graph mem"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_get_attribute(PoolId(9999), MemPoolAttr::UsedMemCurrent) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pool"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let sp = sim.create_shareable_pool(d).unwrap();
+        sim.set_pool_release_threshold(sp, u64::MAX).unwrap();
+        let h = sim.pool_export(sp).unwrap();
+        let imp = sim.pool_import(d, h).unwrap();
+        let c = sim.alloc_from_pool(d, sp, 128, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(imp, MemPoolAttr::UsedMemCurrent)
+                .unwrap(),
+            128
+        );
+        assert_eq!(
+            sim.pool_get_attribute(imp, MemPoolAttr::ReleaseThreshold)
+                .unwrap(),
+            u64::MAX
+        );
+        sim.free(d, c, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(imp, MemPoolAttr::ReservedMemCurrent)
+                .unwrap(),
+            128
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.pool_get_attribute(p, MemPoolAttr::UsedMemCurrent)
+                .unwrap(),
+            0
+        );
+        match sim.pool_set_attribute(p, MemPoolAttr::ReleaseThreshold, 0) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn pool_get_access_owner_and_peer() {
+        let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let p = sim.default_pool(d0).unwrap();
+        assert_eq!(
+            sim.pool_get_access(p, d0).unwrap(),
+            MemAccessFlags::PROT_READ_WRITE
+        );
+        assert_eq!(
+            sim.pool_get_access(p, d1).unwrap(),
+            MemAccessFlags::PROT_NONE
+        );
+        sim.pool_set_access(p, d1).unwrap();
+        assert_eq!(
+            sim.pool_get_access(p, d1).unwrap(),
+            MemAccessFlags::PROT_READ_WRITE
+        );
+        sim.pool_unset_access(p, d1).unwrap();
+        assert_eq!(
+            sim.pool_get_access(p, d1).unwrap(),
+            MemAccessFlags::PROT_NONE
+        );
+        match sim.pool_get_access(p, DeviceId(9)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d0, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.pool_get_access(p, d0).unwrap(),
+            MemAccessFlags::PROT_READ_WRITE
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn func_get_attributes_wraps_per_device_setters() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let a0 = sim.func_get_attributes(d).unwrap();
+        assert_eq!(a0.max_dynamic_shared_size_bytes, 0);
+        assert!(!a0.non_portable_cluster_size_allowed);
+        sim.set_max_dynamic_shared_memory(d, 49_152).unwrap();
+        sim.set_non_portable_cluster_size_allowed(d, true).unwrap();
+        let a1 = sim.func_get_attributes(d).unwrap();
+        assert_eq!(a1.max_dynamic_shared_size_bytes, 49_152);
+        assert!(a1.non_portable_cluster_size_allowed);
+        match sim.func_get_attributes(DeviceId(1)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.func_get_attributes(d)
+                .unwrap()
+                .max_dynamic_shared_size_bytes,
+            49_152
+        );
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

@@ -545,6 +545,10 @@ pub enum DeviceAttr {
     MemSyncDomainCount,
     /// `cudaDevAttrMemoryPoolsSupported` (always 1; this VM has mempools).
     MemoryPoolsSupported,
+    /// `cudaDevAttrCanMapHostMemory` (always 1; this VM has mapped host).
+    CanMapHostMemory,
+    /// `cudaDevAttrManagedMemory` (always 1; this VM has `cudaMallocManaged`).
+    ManagedMemory,
     /// `cudaDevAttrTotalGlobalMem` ([`crate::GpuProfile::hbm_bytes`]).
     TotalGlobalMem,
     /// `cudaDevAttrAsyncEngineCount` ([`crate::GpuProfile::copy_engines`]).
@@ -581,6 +585,23 @@ pub struct DeviceProperties {
     pub mem_sync_domain_count: u32,
     /// This VM always has mempools.
     pub memory_pools_supported: bool,
+    /// This VM always maps host (`cudaHostAllocMapped`).
+    pub can_map_host_memory: bool,
+    /// This VM always has managed memory (`cudaMallocManaged`).
+    pub managed_memory: bool,
+}
+
+/// Modeled `cudaFuncGetAttributes` / `cudaFuncGetAttribute` fields.
+///
+/// This VM has one function-attr set **per device**, not per kernel
+/// function. No `maxThreadsPerBlock`, register count, or binary version —
+/// those are not modeled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FuncAttributes {
+    /// `cudaFuncAttributeMaxDynamicSharedMemorySize`.
+    pub max_dynamic_shared_size_bytes: u32,
+    /// `cudaFuncAttributeNonPortableClusterSizeAllowed`.
+    pub non_portable_cluster_size_allowed: bool,
 }
 
 /// `cudaDeviceP2PAttr` for [`crate::Sim::device_get_p2p_attribute`].
@@ -1645,6 +1666,30 @@ pub enum GraphMemAttr {
     ReservedMemCurrent,
     /// High-water of [`Self::ReservedMemCurrent`].
     ReservedMemHigh,
+}
+
+/// `cudaMemPoolAttr` for [`crate::Sim::pool_get_attribute`].
+///
+/// Ordinary pools only. Graph-memory high-water stays on [`GraphMemAttr`].
+/// This VM does not invent `UsedMemHigh` / `ReservedMemHigh` here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemPoolAttr {
+    /// `cudaMemPoolAttrReleaseThreshold` ([`crate::Sim::set_pool_release_threshold`]).
+    ReleaseThreshold,
+    /// Live alloc bytes not yet freed (`cudaMemPoolAttrUsedMemCurrent`).
+    UsedMemCurrent,
+    /// Live plus unused cached (`cudaMemPoolAttrReservedMemCurrent`).
+    ReservedMemCurrent,
+}
+
+/// `cudaMemAccessFlags` for [`crate::Sim::pool_get_access`].
+pub struct MemAccessFlags;
+
+impl MemAccessFlags {
+    /// `cudaMemAccessFlagsProtNone`.
+    pub const PROT_NONE: u32 = 0;
+    /// `cudaMemAccessFlagsProtReadWrite` ([`crate::Sim::pool_set_access`]).
+    pub const PROT_READ_WRITE: u32 = 3;
 }
 
 /// Active stream capture (`cudaStreamGetCaptureInfo`).
