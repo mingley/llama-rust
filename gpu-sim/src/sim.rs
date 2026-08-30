@@ -9968,6 +9968,29 @@ impl Sim {
                 why: "mem map flags",
             });
         }
+        let bytes = self.handle_ref(handle)?.bytes;
+        self.va_map_handle_with_size(id, device, offset, handle, bytes, flags)
+    }
+
+    /// [`Self::va_map_handle`] with the CUDA size and flags.
+    ///
+    /// `size` must equal the handle bytes. Other sizes Invalid `"mem map size"`.
+    /// Flags must be [`MemMapFlags::DEFAULT`].
+    pub fn va_map_handle_with_size(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        handle: MemHandleId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MemMapFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "mem map flags",
+            });
+        }
         let h = self.handle_ref(handle)?;
         if h.refs == 0 {
             return Err(SimError::Invalid {
@@ -9980,6 +10003,11 @@ impl Sim {
             });
         }
         let bytes = h.bytes;
+        if size != bytes {
+            return Err(SimError::Invalid {
+                why: "mem map size",
+            });
+        }
         let a = self.alloc_ref(id)?;
         if a.leases > 0 {
             return Err(SimError::Leased { alloc: id });

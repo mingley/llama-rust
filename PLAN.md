@@ -2851,7 +2851,16 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-269. [ ] Next numbered PLAN item after 268 is the next `gpu-sim` / Engine /
+269. [x] `cuMemMap` size: [`va_map_handle_with_size`](Sim::va_map_handle_with_size)
+    requires `size` equal to the handle bytes. Other sizes Invalid
+    `"mem map size"`. Flags still [`MemMapFlags::DEFAULT`]. Typed
+    [`va_map_handle`](Sim::va_map_handle) /
+    [`va_map_handle_with_flags`](Sim::va_map_handle_with_flags) stay.
+    Host-synchronous; capture refused. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+270. [ ] Next numbered PLAN item after 269 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

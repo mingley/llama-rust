@@ -137,7 +137,8 @@
 //! [`MemHandleType::NONE`] only). [`Sim::va_map_handle`] is
 //! `cuMemMap` of that handle (no second HBM charge; two VAs may share it).
 //! [`va_map_handle_with_flags`](Sim::va_map_handle_with_flags) is the flags
-//! word (0). [`Sim::va_retain_handle`] is `cuMemRetainAllocationHandle` (handle refs;
+//! word (0). [`va_map_handle_with_size`](Sim::va_map_handle_with_size) is the
+//! CUDA size argument (must match the handle). [`Sim::va_retain_handle`] is `cuMemRetainAllocationHandle` (handle refs;
 //! combined `va_map` spans are promoted). [`Sim::va_release_handle`] is
 //! `cuMemRelease` (allowed while mapped; HBM refunds when refs and maps are 0).
 //! [`va_get_allocation_properties`](Sim::va_get_allocation_properties) is
@@ -13997,6 +13998,33 @@ mod tests {
         }
         sim.begin_capture(d, StreamId(0)).unwrap();
         match sim.va_map_handle_with_flags(va2, d, 0, h, MemMapFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.va_unmap(va).unwrap();
+        sim.va_free(va).unwrap();
+        sim.va_free(va2).unwrap();
+        sim.va_release_handle(h).unwrap();
+    }
+
+    #[test]
+    fn va_map_handle_with_size_is_cu_mem_map() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let bytes = 4096u64;
+        let h = sim.va_create(d, bytes).unwrap();
+        let va = sim.va_reserve(bytes).unwrap();
+        let va2 = sim.va_reserve(bytes).unwrap();
+        match sim.va_map_handle_with_size(va, d, 0, h, 2048, MemMapFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mem map size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.va_map_handle_with_size(va, d, 0, h, bytes, MemMapFlags::DEFAULT)
+            .unwrap();
+        assert!(sim.is_resident(va, d).unwrap());
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.va_map_handle_with_size(va2, d, 0, h, bytes, MemMapFlags::DEFAULT) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }
