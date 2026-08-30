@@ -662,7 +662,8 @@ any size; a 2 MiB profile rejects unaligned reserve/map).
 span). `va_create` is `cuMemCreate` (HBM, no VA). `va_create_with_prop` is
 the prop + flags word (pinned device; flags 0; `MemHandleType::NONE` only).
 `va_map_handle` is `cuMemMap`
-of that handle (no second HBM charge; two VAs may share it). `va_retain_handle`
+of that handle (no second HBM charge; two VAs may share it).
+`va_map_handle_with_flags` is the flags word (0). `va_retain_handle`
 is `cuMemRetainAllocationHandle` (combined `va_map` spans are promoted).
 `va_release_handle` is `cuMemRelease` while mapped; HBM refunds when refs and
 maps are 0. `va_get_allocation_properties` is

@@ -135,7 +135,8 @@
 //! is the prop + flags word (pinned device location; flags 0;
 //! [`MemHandleType::NONE`] only). [`Sim::va_map_handle`] is
 //! `cuMemMap` of that handle (no second HBM charge; two VAs may share it).
-//! [`Sim::va_retain_handle`] is `cuMemRetainAllocationHandle` (handle refs;
+//! [`va_map_handle_with_flags`](Sim::va_map_handle_with_flags) is the flags
+//! word (0). [`Sim::va_retain_handle`] is `cuMemRetainAllocationHandle` (handle refs;
 //! combined `va_map` spans are promoted). [`Sim::va_release_handle`] is
 //! `cuMemRelease` (allowed while mapped; HBM refunds when refs and maps are 0).
 //! [`va_get_allocation_properties`](Sim::va_get_allocation_properties) is
@@ -689,8 +690,8 @@ pub use ops::{
     HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf,
     KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
     MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType,
-    MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType, MemPoolAttr,
-    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags, MemSyncDomain,
+    MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType, MemMapFlags,
+    MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags, MemSyncDomain,
     MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, MulticastBindFlags, MulticastGranularity,
     Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes,
     PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
@@ -13818,6 +13819,33 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("zero"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn va_map_handle_with_flags_is_cu_mem_map() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let bytes = 4096u64;
+        let h = sim.va_create(d, bytes).unwrap();
+        let va = sim.va_reserve(bytes).unwrap();
+        sim.va_map_handle_with_flags(va, d, 0, h, MemMapFlags::DEFAULT)
+            .unwrap();
+        assert!(sim.is_resident(va, d).unwrap());
+        let va2 = sim.va_reserve(bytes).unwrap();
+        match sim.va_map_handle_with_flags(va2, d, 0, h, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("mem map flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.va_map_handle_with_flags(va2, d, 0, h, MemMapFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        sim.va_unmap(va).unwrap();
+        sim.va_free(va).unwrap();
+        sim.va_free(va2).unwrap();
+        sim.va_release_handle(h).unwrap();
     }
 
     #[test]

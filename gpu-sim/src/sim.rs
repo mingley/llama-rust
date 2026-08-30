@@ -20,8 +20,8 @@ use crate::ops::{
     HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf,
     KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
     MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType,
-    MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType, MemPoolAttr,
-    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags, MemSyncDomain,
+    MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType, MemMapFlags,
+    MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags, MemSyncDomain,
     MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, MulticastBindFlags, MulticastGranularity,
     Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes,
     PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
@@ -9939,7 +9939,8 @@ impl Sim {
     /// Host-synchronous. Does not charge HBM (the handle already holds the
     /// physicals). `device` must be the handle's device. The handle must still
     /// have a ref ([`Self::va_release_handle`] while mapped forbids further
-    /// maps). Capture cannot include it.
+    /// maps). Capture cannot include it. Typed helper;
+    /// [`Self::va_map_handle_with_flags`] takes the CUDA flags word.
     pub fn va_map_handle(
         &mut self,
         id: AllocId,
@@ -9947,7 +9948,26 @@ impl Sim {
         offset: u64,
         handle: MemHandleId,
     ) -> Result<(), SimError> {
+        self.va_map_handle_with_flags(id, device, offset, handle, MemMapFlags::DEFAULT)
+    }
+
+    /// [`Self::va_map_handle`] with a flags word.
+    ///
+    /// CUDA requires 0. Unknown bits Invalid `"mem map flags"`.
+    pub fn va_map_handle_with_flags(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        handle: MemHandleId,
+        flags: u32,
+    ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MemMapFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "mem map flags",
+            });
+        }
         let h = self.handle_ref(handle)?;
         if h.refs == 0 {
             return Err(SimError::Invalid {
