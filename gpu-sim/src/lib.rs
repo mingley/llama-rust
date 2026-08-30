@@ -397,7 +397,9 @@
 //! AutoFreeOnLaunch rules as captured `cudaMallocAsync`).
 //! [`Sim::graph_add_dependencies`] is `cudaGraphAddDependencies` (node indices;
 //! independent nodes may Hyper-Q overlap at launch; capture records same-stream
-//! edges). [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
+//! edges). [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n) /
+//! [`graph_remove_dependencies_n`](Sim::graph_remove_dependencies_n) are the
+//! same APIs with `numDependencies` from/to pairs (all-or-nothing). [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
 //! `cudaGraphRemoveDependencies` (illegal on an exec and during capture).
 //! `cudaGraphExecUpdate` treats those edges as topology.
 //! [`graph_nodes`](Sim::graph_nodes) / [`graph_root_nodes`](Sim::graph_root_nodes) /
@@ -12541,6 +12543,49 @@ mod tests {
         let err = sim.graph_add_dependencies(g, 0, 0).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("graph dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_add_dependencies_n_is_all_or_nothing() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_empty(g).unwrap();
+        sim.graph_add_dependencies_n(g, &[]).unwrap();
+        assert!(sim.graph_edges(g).unwrap().is_empty());
+        sim.graph_add_dependencies_n(g, &[(0, 1), (1, 2)]).unwrap();
+        assert_eq!(sim.graph_edges(g).unwrap(), vec![(0, 1), (1, 2)]);
+        match sim.graph_add_dependencies_n(g, &[(2, 0)]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("cyclic"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.graph_edges(g).unwrap(), vec![(0, 1), (1, 2)]);
+        let cycle = sim.create_graph(d, s).unwrap();
+        sim.graph_add_empty(cycle).unwrap();
+        sim.graph_add_empty(cycle).unwrap();
+        match sim.graph_add_dependencies_n(cycle, &[(0, 1), (1, 0)]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("cyclic"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(sim.graph_edges(cycle).unwrap().is_empty());
+        sim.graph_remove_dependencies_n(g, &[(0, 1), (1, 2)])
+            .unwrap();
+        assert!(sim.graph_edges(g).unwrap().is_empty());
+        match sim.graph_remove_dependencies_n(g, &[(9, 0)]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(g).unwrap();
+        match sim.graph_add_dependencies_n(exec, &[(0, 1)]) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
             other => panic!("{other:?}"),
         }
     }

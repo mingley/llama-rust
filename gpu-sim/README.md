@@ -281,6 +281,8 @@ Alloc would resize HBM; Empty has no params).
 `batch_mem_op` is live `cuStreamBatchMemOp`.
 `graph_add_dependencies` is `cudaGraphAddDependencies` (independent nodes
 may Hyper-Q overlap at launch; capture records same-stream edges).
+`graph_add_dependencies_n` / `graph_remove_dependencies_n` are the same
+APIs with `numDependencies` from/to pairs (all-or-nothing).
 `graph_remove_dependencies` is `cudaGraphRemoveDependencies` (illegal on an
 exec and during capture). `begin_capture_to_graph` is
 `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing

@@ -2097,16 +2097,24 @@ model, do not celebrate the sim.
     unchanged. `gpu-profile capture` is still refused. Dual score still has
     no `$/M tokens`.
 
-182. [ ] Next numbered PLAN item after 181 is the next `gpu-sim` / Engine /
+182. [x] Bulk `cudaGraphAddDependencies` / `cudaGraphRemoveDependencies`:
+    `Sim::graph_add_dependencies_n` / `graph_remove_dependencies_n` take
+    `numDependencies` from/to pairs. All-or-nothing (a cycle or out-of-range
+    index changes nothing). Pairwise helpers call the bulk APIs. Duplicate
+    add is a no-op; missing remove is a no-op. Empty slice is success.
+    Capture refused; illegal on an instantiated exec. Decode identity
+    unchanged. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+183. [ ] Next numbered PLAN item after 182 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
     numbers, example `$/M tokens` rents, or `cudaStreamDestroy`.
     **`best_of` / `use_beam_search` stay out of `parse_gen_req` until a
-    real beam Engine exists.** Prefer remaining CUDA-shaped twins (e.g.
-    bulk `cudaGraphAddDependencies` arrays) over more OpenAI HTTP veneer.
-    Do not default `--engine`. Do not invent `max_model_len` or
-    `/v1/tokenize`.
+    real beam Engine exists.** Prefer remaining CUDA-shaped twins over more
+    OpenAI HTTP veneer. Do not default `--engine`. Do not invent
+    `max_model_len` or `/v1/tokenize`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

@@ -5909,27 +5909,49 @@ impl Sim {
         from: usize,
         to: usize,
     ) -> Result<(), SimError> {
+        self.graph_add_dependencies_n(graph, &[(from, to)])
+    }
+
+    /// `cudaGraphAddDependencies` of `numDependencies` from/to pairs.
+    ///
+    /// All-or-nothing: a cycle or out-of-range index adds nothing. Duplicate
+    /// edges are a no-op. Empty `edges` is success. Capture cannot include it.
+    /// Illegal on an instantiated exec.
+    pub fn graph_add_dependencies_n(
+        &mut self,
+        graph: GraphId,
+        edges: &[(usize, usize)],
+    ) -> Result<(), SimError> {
         let _origin = self.graph_origin_for_add(graph)?;
+        if edges.is_empty() {
+            return Ok(());
+        }
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
         let n = g.steps.len();
-        if from == to || from >= n || to >= n {
-            return Err(SimError::Invalid {
+        let mut steps = g.steps.clone();
+        for &(from, to) in edges {
+            if from == to || from >= n || to >= n {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+            if graph_reaches(&steps, to, from) {
+                return Err(SimError::Invalid {
+                    why: "cyclic graph dependencies",
+                });
+            }
+            let step = steps.get_mut(to).ok_or(SimError::Invalid {
                 why: "graph dependency",
-            });
+            })?;
+            if !step.deps.contains(&from) {
+                step.deps.push(from);
+                step.deps.sort_unstable();
+            }
         }
-        if graph_reaches(&g.steps, to, from) {
-            return Err(SimError::Invalid {
-                why: "cyclic graph dependencies",
-            });
-        }
-        let step = g.steps.get_mut(to).ok_or(SimError::Invalid {
-            why: "graph dependency",
-        })?;
-        if !step.deps.contains(&from) {
-            step.deps.push(from);
-            step.deps.sort_unstable();
+        for (dst, src) in g.steps.iter_mut().zip(steps) {
+            dst.deps = src.deps;
         }
         Ok(())
     }
@@ -5945,6 +5967,19 @@ impl Sim {
         from: usize,
         to: usize,
     ) -> Result<(), SimError> {
+        self.graph_remove_dependencies_n(graph, &[(from, to)])
+    }
+
+    /// `cudaGraphRemoveDependencies` of `numDependencies` from/to pairs.
+    ///
+    /// All-or-nothing on out-of-range indices (nothing is removed). Missing
+    /// edges are a no-op. Empty `edges` is success. Capture cannot include it.
+    /// Illegal on an instantiated exec.
+    pub fn graph_remove_dependencies_n(
+        &mut self,
+        graph: GraphId,
+        edges: &[(usize, usize)],
+    ) -> Result<(), SimError> {
         self.fail_if_capturing("cannot remove graph dependencies during capture")?;
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
@@ -5954,16 +5989,23 @@ impl Sim {
                 why: "graph instantiated",
             });
         }
-        let n = g.steps.len();
-        if from == to || from >= n || to >= n {
-            return Err(SimError::Invalid {
-                why: "graph dependency",
-            });
+        if edges.is_empty() {
+            return Ok(());
         }
-        let step = g.steps.get_mut(to).ok_or(SimError::Invalid {
-            why: "graph dependency",
-        })?;
-        step.deps.retain(|d| *d != from);
+        let n = g.steps.len();
+        for &(from, to) in edges {
+            if from == to || from >= n || to >= n {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+        }
+        for &(from, to) in edges {
+            let step = g.steps.get_mut(to).ok_or(SimError::Invalid {
+                why: "graph dependency",
+            })?;
+            step.deps.retain(|d| *d != from);
+        }
         Ok(())
     }
 

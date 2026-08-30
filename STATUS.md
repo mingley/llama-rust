@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — bulk graph Add/RemoveDependencies
+
+`Sim::graph_add_dependencies_n` / `graph_remove_dependencies_n` are
+`cudaGraphAddDependencies` / `RemoveDependencies` of N from/to pairs
+(all-or-nothing). Pairwise helpers call them. `gpu-profile capture` is
+still refused.
+
 ## Shipped 2026-08-30 — `cudaGraphNodeSetParams` / `ExecNodeSetParams`
 
 `Sim::graph_node_set_params` / `graph_exec_node_set_params` dispatch
@@ -2141,7 +2148,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 181 (`cudaGraphNodeSetParams`).
+Next code change is PLAN systems depth after item 182 (bulk graph dependencies).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover
