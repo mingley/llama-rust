@@ -63,14 +63,29 @@ pub(crate) struct GemmFlags {
     /// `cudaLaunchAttributeLaunchCompletionEvent`. [`None`] records nothing.
     /// Decode identity stays no launch-completion event.
     pub launch_completion: Option<LaunchCompletionEvent>,
+    /// `cudaLaunchAttributeProgrammaticEvent`. [`None`] records nothing.
+    ///
+    /// Other streams may `wait_event` at the PDL trigger. Decode identity stays
+    /// no programmatic event.
+    pub programmatic_event: Option<ProgrammaticEvent>,
 }
 
 impl GemmFlags {
     pub(crate) fn pdl_attr(self) -> Option<ProgrammaticLaunch> {
-        (self.pdl && !self.cooperative).then_some(ProgrammaticLaunch {
-            wait: true,
-            trigger: true,
-        })
+        if self.pdl && !self.cooperative {
+            return Some(ProgrammaticLaunch {
+                wait: true,
+                trigger: true,
+            });
+        }
+        // Programmatic-event overlap needs `cudaTriggerProgrammaticLaunchCompletion`
+        // so the event fires at `pdl_trigger_permille`, not kernel completion.
+        self.programmatic_event
+            .is_some()
+            .then_some(ProgrammaticLaunch {
+                wait: false,
+                trigger: true,
+            })
     }
 
     pub(crate) fn persist_window(self, id: AllocId) -> Option<AccessPolicyWindow> {
@@ -119,6 +134,7 @@ impl GemmFlags {
             nvlink_util_centric: self.nvlink_util_centric,
             device_updatable: self.device_updatable,
             priority: self.priority,
+            programmatic_event: self.programmatic_event,
             launch_completion: self.launch_completion,
             ..KernelAttrs::default()
         }
@@ -183,6 +199,24 @@ pub(crate) fn alloc_launch_completion(
     *next_event = next_event.saturating_add(1);
     sim.create_event_disable_timing(ev)?;
     Ok(Some(LaunchCompletionEvent {
+        event: ev,
+        external: false,
+    }))
+}
+
+/// One `cudaEventCreate` for [`SimCfg::programmatic_event`] / store GEMMs.
+pub(crate) fn alloc_programmatic_event(
+    sim: &mut Sim,
+    on: bool,
+    next_event: &mut u32,
+) -> Result<Option<ProgrammaticEvent>, Error> {
+    if !on {
+        return Ok(None);
+    }
+    let ev = EventId(*next_event);
+    *next_event = next_event.saturating_add(1);
+    sim.create_event_disable_timing(ev)?;
+    Ok(Some(ProgrammaticEvent {
         event: ev,
         external: false,
     }))
@@ -278,8 +312,8 @@ use gpu_sim::{
     AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceId, EventId, GraphId,
     GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf, KernelKind,
     LaunchCompletionEvent, MemPoolAttr, MemcpyAttributes, MemcpyOp, Place, PoolId,
-    PortableClusterMode, PortableSharedMode, ProgrammaticLaunch, Score, SharedMemCarveout,
-    SharedMemoryMode, Sim, StreamId, SynchronizationPolicy, WaitValueCmp,
+    PortableClusterMode, PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, Score,
+    SharedMemCarveout, SharedMemoryMode, Sim, StreamId, SynchronizationPolicy, WaitValueCmp,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -735,6 +769,16 @@ pub struct SimCfg {
     /// Illegal with [`Self::device_launch`]. Decode identity stays no event.
     /// [`crate::GpuStoreCfg::launch_completion`] is the store path.
     pub launch_completion: bool,
+    /// `cudaLaunchAttributeProgrammaticEvent` on grouped expert GEMMs.
+    ///
+    /// Other streams may `wait_event` at the PDL trigger (`pdl_trigger_permille`)
+    /// instead of kernel completion. Store [`crate::SimulatedGpuStore::pin_hot`]
+    /// replica D2D on `n_gpus >= 2` waits that event on the copy stream so
+    /// leftover GEMM overlaps the copy. Implies a PDL trigger on those GEMMs
+    /// (same-stream PDL wait stays [`Self::pdl`]). Illegal with
+    /// [`Self::device_launch`]. Decode identity stays no event.
+    /// [`crate::GpuStoreCfg::programmatic_event`] is the store path.
+    pub programmatic_event: bool,
     /// `cuStreamWaitValue64` / `cuStreamWriteValue64` copy-ready handshake.
     ///
     /// After H2D / prefetch, write a generation into an 8-byte device mailbox
@@ -833,6 +877,7 @@ impl SimCfg {
             kernel_priority: None,
             device_launch: false,
             launch_completion: false,
+            programmatic_event: false,
             wait_value: false,
             multicast: false,
             compute_slots: 0,
@@ -863,6 +908,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     }
     if cfg.launch_completion && cfg.device_launch {
         return Err(Error::Store("launch-completion cannot device-launch"));
+    }
+    if cfg.programmatic_event && cfg.device_launch {
+        return Err(Error::Store("programmatic-event cannot device-launch"));
     }
     if cfg.pdl && cfg.cooperative {
         return Err(Error::Store("choose one of pdl, cooperative"));
@@ -987,6 +1035,8 @@ pub fn sim_replay_cfg(
     let mut next_event = 1u32;
     let launch_completion =
         alloc_launch_completion(&mut sim, cfg.launch_completion, &mut next_event)?;
+    let programmatic_event =
+        alloc_programmatic_event(&mut sim, cfg.programmatic_event, &mut next_event)?;
     let mut graphs = GraphBank::new(cfg.graph_update, cfg.graph_clone, cfg.graph_build, leaf)
         .with_cooperative(cfg.cooperative)
         .with_pdl(cfg.pdl)
@@ -1004,6 +1054,7 @@ pub fn sim_replay_cfg(
         .with_kernel_priority(cfg.kernel_priority)
         .with_device_launch(cfg.device_launch)
         .with_launch_completion(launch_completion)
+        .with_programmatic_event(programmatic_event)
         .with_set_params(cfg.graph_set_params)
         .with_piecewise(cfg.graph_piecewise)
         .with_enable(cfg.graph_enable);
@@ -1324,6 +1375,7 @@ pub(crate) struct GraphBank {
     kernel_priority: Option<i32>,
     device_launch: bool,
     launch_completion: Option<LaunchCompletionEvent>,
+    programmatic_event: Option<ProgrammaticEvent>,
     set_params: bool,
     enable: bool,
     pub updates: u64,
@@ -1357,6 +1409,7 @@ impl GraphBank {
             kernel_priority: None,
             device_launch: false,
             launch_completion: None,
+            programmatic_event: None,
             set_params: false,
             enable: false,
             updates: 0,
@@ -1440,6 +1493,11 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_programmatic_event(mut self, ev: Option<ProgrammaticEvent>) -> Self {
+        self.programmatic_event = ev;
+        self
+    }
+
     fn gemm_flags(&self) -> GemmFlags {
         GemmFlags {
             cooperative: self.cooperative,
@@ -1457,6 +1515,7 @@ impl GraphBank {
             device_updatable: self.device_updatable,
             priority: self.kernel_priority,
             launch_completion: self.launch_completion,
+            programmatic_event: self.programmatic_event,
         }
     }
 
@@ -2784,6 +2843,10 @@ fn add_gemm_kernel(
     if let Some(ev) = flags.launch_completion {
         let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_launch_completion(graph, node, Some(ev))?;
+    }
+    if let Some(ev) = flags.programmatic_event {
+        let node = usize::from(!writes.is_empty());
+        sim.graph_kernel_node_set_programmatic_event(graph, node, Some(ev))?;
     }
     Ok(())
 }

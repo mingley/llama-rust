@@ -858,7 +858,11 @@ a wait kernel may start after the previous same-stream kernel's trigger
 `compute_slots >= 2`. A later `cudaFreeAsync` on that stream still waits
 for the overlapped primary (all preceding work). `kernel_pdl_event` is
 `cudaLaunchAttributeProgrammaticEvent`: other streams may `wait_event`
-at the trigger instead of kernel completion. `kernel_launch_completion` is
+at the trigger instead of kernel completion. `kernel_with` also accepts
+`KernelAttrs::programmatic_event`. `expertvm sim --programmatic-event` /
+`gguf_gemv engine --expert-sim --programmatic-event` attach it to grouped
+GEMMs; store `pin_hot` replica D2D waits the PDL trigger.
+`kernel_launch_completion` is
 `cudaLaunchAttributeLaunchCompletionEvent`: the event records when the
 kernel starts. `expertvm sim --pdl` / `gguf_gemv engine --expert-sim --pdl`
 launch grouped expert GEMMs that way. `kernel_with` also accepts

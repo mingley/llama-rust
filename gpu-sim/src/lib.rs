@@ -551,7 +551,11 @@
 //! (`GpuProfile::pdl_trigger_permille`) instead of its completion. Overlap
 //! needs `compute_slots >= 2`. [`kernel_pdl_event`](Sim::kernel_pdl_event) is
 //! `cudaLaunchAttributeProgrammaticEvent`: other streams may wait that event
-//! at the trigger instead of kernel completion. [`kernel_launch_completion`](Sim::kernel_launch_completion)
+//! at the trigger instead of kernel completion. [`kernel_with`](Sim::kernel_with)
+//! also accepts [`KernelAttrs::programmatic_event`].
+//! `expertvm sim --programmatic-event` / Engine
+//! `--expert-sim --programmatic-event` attach it to grouped expert GEMMs
+//! (store `pin_hot` replica D2D waits the trigger). [`kernel_launch_completion`](Sim::kernel_launch_completion)
 //! is `cudaLaunchAttributeLaunchCompletionEvent`: the event records when the
 //! kernel *starts*. `expertvm sim --launch-completion` / Engine
 //! `--expert-sim --launch-completion` attach it to grouped expert GEMMs.
@@ -5115,6 +5119,60 @@ mod tests {
         assert!(
             start_c < done_k,
             "kernel_with copy must overlap leftover kernel; copy={start_c} kdone={done_k}"
+        );
+    }
+
+    #[test]
+    fn kernel_with_programmatic_event_unblocks_copy_at_trigger() {
+        let mut sim = Sim::new(pdl_two_slot());
+        let d = DeviceId(0);
+        let s0 = StreamId(0);
+        let s1 = StreamId(1);
+        let a = sim.alloc(d, 4096, s0).unwrap();
+        let b = sim.alloc(d, 64 << 20, s1).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s0));
+        sim.synchronize().unwrap();
+        let ev = EventId(11);
+        enq(sim.kernel_with(
+            d,
+            KernelKind::other(1 << 30, 4096),
+            &[a],
+            &[a],
+            s0,
+            KernelAttrs {
+                pdl: ProgrammaticLaunch {
+                    wait: false,
+                    trigger: true,
+                },
+                programmatic_event: Some(ProgrammaticEvent {
+                    event: ev,
+                    external: false,
+                }),
+                ..KernelAttrs::default()
+            },
+        ));
+        enq(sim.wait_event(d, ev, s1));
+        enq(sim.memcpy_pinned_to_device(d, b, 64 << 20, s1));
+        sim.synchronize().unwrap();
+        let k0 = sim
+            .operations()
+            .find(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .expect("kernel");
+        let copy = sim
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Memcpy(_)))
+            .last()
+            .expect("copy");
+        let start_k = k0.start_ns.expect("k start");
+        let done_k = k0.done_ns.expect("k done");
+        let start_c = copy.start_ns.expect("copy start");
+        assert!(
+            start_c > start_k,
+            "programmatic event must fire after kernel start; copy={start_c} kstart={start_k}"
+        );
+        assert!(
+            start_c < done_k,
+            "programmatic event must unblock copy at trigger; copy={start_c} kdone={done_k}"
         );
     }
 

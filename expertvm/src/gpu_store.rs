@@ -9,7 +9,7 @@ use crate::planner::{
     Prefetch, DECODE_ACTIVATION_BYTES,
 };
 use crate::sim_replay::{
-    add_leaf_gemm, alloc_launch_completion, alloc_resident_copy_mailbox,
+    add_leaf_gemm, alloc_launch_completion, alloc_programmatic_event, alloc_resident_copy_mailbox,
     allow_non_portable_cluster_if, allow_optin_shared_if, apply_exec_mem_sync_domain,
     apply_stream_mem_sync_domain, apply_stream_sync_policy, bind_shareable_mempools,
     check_cluster_preferred, check_device_graph_flags, free_copy_mailbox, instantiate_exec,
@@ -20,7 +20,7 @@ use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertSto
 use gpu_sim::{
     AllocId, DeviceId, EventId, GraphId, GraphMemAttr, HardwareProfile, KernelBuf, KernelKind,
     LaunchCompletionEvent, MemAdvise, MemHandleId, MemcpyAttributes, MemcpyOp, Place, PoolId,
-    Score, Sim, StreamId,
+    ProgrammaticEvent, Score, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -309,6 +309,16 @@ pub struct GpuStoreCfg {
     /// of draining the GEMM, so leftover compute overlaps the replica copy.
     /// Illegal with [`Self::device_launch`]. Decode identity stays no event.
     pub launch_completion: bool,
+    /// `cudaLaunchAttributeProgrammaticEvent` on grouped expert GEMMs.
+    ///
+    /// Other streams may `wait_event` at the PDL trigger
+    /// (`pdl_trigger_permille`) instead of kernel completion. [`Self::pin_hot`]
+    /// replica D2D on `n_gpus >= 2` waits that event on the copy stream instead
+    /// of draining the GEMM, so leftover compute overlaps the replica copy.
+    /// Implies a PDL trigger on those GEMMs (same-stream PDL wait stays
+    /// [`Self::pdl`]). Illegal with [`Self::device_launch`]. Decode identity
+    /// stays no event.
+    pub programmatic_event: bool,
     /// `cuStreamWaitValue64` / `cuStreamWriteValue64` instead of copy-ready events.
     ///
     /// After H2D / prefetch, write a generation into an 8-byte device mailbox
@@ -464,6 +474,10 @@ pub struct SimulatedGpuStore {
     launch_completion_event: Option<EventId>,
     /// A grouped GEMM with [`Self::launch_completion_event`] has been submitted.
     launch_completion_armed: bool,
+    /// [`GpuStoreCfg::programmatic_event`]: event recorded at the PDL trigger.
+    programmatic_event: Option<EventId>,
+    /// A grouped GEMM with [`Self::programmatic_event`] has been submitted.
+    programmatic_event_armed: bool,
 }
 
 struct KvGpu {
@@ -594,6 +608,9 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::launch_completion`] is
     /// `cudaLaunchAttributeLaunchCompletionEvent` on grouped GEMMs (replica
     /// D2D waits kernel start; illegal with device-launch).
+    /// [`GpuStoreCfg::programmatic_event`] is
+    /// `cudaLaunchAttributeProgrammaticEvent` on grouped GEMMs (replica D2D
+    /// waits the PDL trigger; illegal with device-launch).
     /// [`GpuStoreCfg::wait_value`] is `cuStreamWaitValue64` / `WriteValue64`
     /// for the copy-ready handshake (8-byte `cudaMallocAsync` mailbox, copy
     /// stream waited before H2D; decode identity stays events).
@@ -639,6 +656,9 @@ impl SimulatedGpuStore {
         }
         if cfg.launch_completion && cfg.device_launch {
             return Err(Error::Store("launch-completion cannot device-launch"));
+        }
+        if cfg.programmatic_event && cfg.device_launch {
+            return Err(Error::Store("programmatic-event cannot device-launch"));
         }
         if cfg.pdl && cfg.cooperative {
             return Err(Error::Store("choose one of pdl, cooperative"));
@@ -740,6 +760,7 @@ impl SimulatedGpuStore {
         };
         let mut next_event = 1u32;
         let launch_ev = alloc_launch_completion(&mut sim, cfg.launch_completion, &mut next_event)?;
+        let pde = alloc_programmatic_event(&mut sim, cfg.programmatic_event, &mut next_event)?;
         Ok(Self {
             cache: CachedStore::new(inner, cache_slots)?,
             sim,
@@ -804,6 +825,8 @@ impl SimulatedGpuStore {
             share_import,
             launch_completion_event: launch_ev.map(|e| e.event),
             launch_completion_armed: false,
+            programmatic_event: pde.map(|e| e.event),
+            programmatic_event_armed: false,
         })
     }
 
@@ -912,6 +935,10 @@ impl SimulatedGpuStore {
                     event,
                     external: false,
                 }),
+            programmatic_event: self.programmatic_event.map(|event| ProgrammaticEvent {
+                event,
+                external: false,
+            }),
         }
     }
 
@@ -1043,6 +1070,8 @@ impl SimulatedGpuStore {
     /// decode-priority ITL samples. [`GpuStoreCfg::launch_completion`] waits
     /// kernel start on the copy stream instead of draining the GEMM, so a
     /// pinned replica D2D can overlap leftover compute.
+    /// [`GpuStoreCfg::programmatic_event`] waits the PDL trigger on that copy
+    /// stream (later than launch-completion, earlier than GEMM done).
     pub fn pin_hot(&mut self, keys: &[ExpertKey]) -> Result<(), Error> {
         for key in keys {
             if !self.cache.contains_catalog(*key) {
@@ -1058,11 +1087,12 @@ impl SimulatedGpuStore {
             // Replica prefetch / D2D cannot start while a GEMM still leases the
             // page. 1-GPU sticky pin does not copy, so leftover prefill GEMMs
             // stay in flight for decode-priority ITL. Launch-completion waits
-            // kernel start on the copy stream so pinned replica D2D overlaps
-            // leftover GEMM (managed prefetch still needs a full lease drain).
+            // kernel start; programmatic-event waits the PDL trigger. Both let
+            // pinned replica D2D overlap leftover GEMM (managed prefetch still
+            // needs a full lease drain).
             if self.sim.profile().n_gpus() >= 2 {
-                if self.mode == GpuFill::Pinned && self.launch_completion_armed {
-                    if let Some(ev) = self.launch_completion_event {
+                if self.mode == GpuFill::Pinned {
+                    if let Some(ev) = self.replica_overlap_event() {
                         let device = self
                             .pages
                             .get(key)
@@ -1379,6 +1409,22 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn launch_completion_event(&self) -> Option<EventId> {
         self.launch_completion_event
+    }
+
+    /// Event recorded at the PDL trigger when [`GpuStoreCfg::programmatic_event`].
+    #[must_use]
+    pub fn programmatic_event(&self) -> Option<EventId> {
+        self.programmatic_event
+    }
+
+    fn replica_overlap_event(&self) -> Option<EventId> {
+        if self.launch_completion_armed {
+            return self.launch_completion_event;
+        }
+        if self.programmatic_event_armed {
+            return self.programmatic_event;
+        }
+        None
     }
 
     /// Submitted simulator ops (GEMM vs replica overlap).
@@ -1893,6 +1939,9 @@ impl SimulatedGpuStore {
     fn launch_or_gemm(&mut self, device: DeviceId, id: AllocId) -> Result<(), Error> {
         if self.launch_completion_event.is_some() {
             self.launch_completion_armed = true;
+        }
+        if self.programmatic_event.is_some() {
+            self.programmatic_event_armed = true;
         }
         let flags = self.gemm_flags();
         if let Some(g) = self.graphs.get(&id).copied() {

@@ -1674,7 +1674,7 @@ pub enum KernelNodeAttrValue {
 /// no cooperative, no PDL, no window, inherit stream mem-sync, no cluster,
 /// Default carveout, not device-updatable, Default shared-memory bank mode,
 /// Default portable-cluster mode, 0 dynamic shared, Default portable-shared,
-/// inherit stream priority).
+/// inherit stream priority, no programmatic event).
 /// [`SynchronizationPolicy`] is a stream attribute, not a field here.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KernelAttrs {
@@ -1753,6 +1753,12 @@ pub struct KernelAttrs {
     /// (`cudaKernelNodeAttributePriority`). Default graph replay still uses the
     /// launch stream unless `cudaGraphInstantiateFlagUseNodePriority`.
     pub priority: Option<i32>,
+    /// `cudaLaunchAttributeProgrammaticEvent`. [`None`] records nothing.
+    ///
+    /// Other streams may [`crate::Sim::wait_event`] at the PDL trigger when
+    /// [`Self::pdl`] has [`ProgrammaticLaunch::trigger`], else at kernel
+    /// completion. Decode identity stays [`None`]. Capture records the attribute.
+    pub programmatic_event: Option<ProgrammaticEvent>,
     /// `cudaLaunchAttributeLaunchCompletionEvent`. [`None`] records nothing.
     ///
     /// Other streams may [`crate::Sim::wait_event`] when this kernel *starts*.

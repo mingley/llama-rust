@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaLaunchAttributeProgrammaticEvent` replica overlap
+
+`GpuStoreCfg::programmatic_event` / `SimCfg::programmatic_event` record
+`cudaLaunchAttributeProgrammaticEvent` on grouped expert GEMMs so other
+streams may `wait_event` at the PDL trigger (`pdl_trigger_permille`)
+instead of kernel completion. Store `pin_hot` replica D2D on `n_gpus >= 2`
+waits that event on the copy stream instead of draining the GEMM, so
+leftover compute overlaps the replica. Implies a PDL trigger on those
+GEMMs (same-stream PDL wait stays `--pdl`). Illegal with `--device-launch`.
+`--programmatic-event` is off by default (decode identity).
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaMemPoolReuseAllowOpportunistic=0`
 
 `GpuStoreCfg::mempool_no_reuse` / `SimCfg::mempool_no_reuse` set

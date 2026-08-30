@@ -123,6 +123,8 @@ pub(crate) struct GpuCli {
     pub device_launch: bool,
     /// `cudaLaunchAttributeLaunchCompletionEvent` (`GpuStoreCfg::launch_completion`).
     pub launch_completion: bool,
+    /// `cudaLaunchAttributeProgrammaticEvent` (`GpuStoreCfg::programmatic_event`).
+    pub programmatic_event: bool,
     /// `cuStreamWaitValue64` / `WriteValue64` copy-ready (`GpuStoreCfg::wait_value`).
     pub wait_value: bool,
     /// Hopper NVLS replica fanout (`GpuStoreCfg::multicast`). Implies vmm.
@@ -187,6 +189,7 @@ impl GpuCli {
             "--device-updatable" => &mut self.device_updatable,
             "--device-launch" => &mut self.device_launch,
             "--launch-completion" => &mut self.launch_completion,
+            "--programmatic-event" => &mut self.programmatic_event,
             "--wait-value" => &mut self.wait_value,
             "--multicast" => &mut self.multicast,
             _ => return Ok(false),
@@ -403,6 +406,7 @@ impl GpuCli {
             (self.kernel_priority.is_some(), "--kernel-priority"),
             (self.device_launch, "--device-launch"),
             (self.launch_completion, "--launch-completion"),
+            (self.programmatic_event, "--programmatic-event"),
             (self.wait_value, "--wait-value"),
             (self.decode_sm_set, "--decode-sms"),
         ]
@@ -690,6 +694,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         kernel_priority: gpu.kernel_priority,
         device_launch: gpu.device_launch,
         launch_completion: gpu.launch_completion,
+        programmatic_event: gpu.programmatic_event,
         wait_value: gpu.wait_value,
         multicast: gpu.multicast,
         compute_slots: gpu.compute_slots,

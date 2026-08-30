@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `mempool_trim`, `mempool_no_reuse`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `memcpy_batch`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/enable, timing events, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `cluster`, `shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `launch_completion`) are the same mechanical
+//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `cluster`, `shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `launch_completion`, `programmatic_event`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -82,7 +82,9 @@
 //! `--kernel-priority N` is `cudaLaunchAttributePriority` on grouped expert
 //! GEMMs (`None` inherits stream create priority). `--launch-completion` is
 //! `cudaLaunchAttributeLaunchCompletionEvent` on those GEMMs (store replica
-//! D2D waits kernel start; illegal with `--device-launch`). `--wait-value` is
+//! D2D waits kernel start; illegal with `--device-launch`). `--programmatic-event`
+//! is `cudaLaunchAttributeProgrammaticEvent` on those GEMMs (store replica D2D
+//! waits the PDL trigger; illegal with `--device-launch`). `--wait-value` is
 //! `cuStreamWaitValue64` / `WriteValue64` for the copy-ready handshake (8-byte
 //! `cudaMallocAsync` mailbox, copy stream waited before H2D; decode identity
 //! stays events). `--mempool-trim` is `cudaMemPoolTrimTo(0)` after
@@ -93,7 +95,7 @@
 //! identity stays `cudaLaunchKernel` (no cluster / Default policy / no preferred
 //! dim / Default carveout / non-portable disallowed / Auto sync policy /
 //! Default mem-sync domain / Default shared-mem / Default portable-cluster / 0 dynamic shared / Default
-//! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event / events copy-ready / no mempool trim / opportunistic reuse).
+//! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event / no programmatic event / events copy-ready / no mempool trim / opportunistic reuse).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode

@@ -3444,7 +3444,24 @@ model, do not celebrate the sim.
     stays opportunistic reuse (CUDA default 1). `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-330. [ ] Next numbered PLAN item after 329 is the next `gpu-sim` / Engine /
+330. [x] `cudaLaunchAttributeProgrammaticEvent` replica overlap:
+    [`GpuStoreCfg::programmatic_event`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::programmatic_event`](expertvm/src/sim_replay.rs) attach
+    [`kernel_with`](gpu-sim/src/sim.rs)
+    [`KernelAttrs::programmatic_event`](gpu-sim/src/ops.rs) /
+    [`graph_kernel_node_set_programmatic_event`](gpu-sim/src/sim.rs) on
+    grouped expert GEMMs so other streams may `wait_event` at the PDL
+    trigger (`pdl_trigger_permille`) instead of kernel completion. Store
+    [`pin_hot`](expertvm/src/gpu_store.rs) replica D2D on `n_gpus >= 2`
+    waits that event on the copy stream instead of draining the GEMM, so
+    leftover compute overlaps the replica. Implies a PDL trigger on those
+    GEMMs (same-stream PDL wait stays `--pdl`). Illegal with
+    `--device-launch`. `--programmatic-event` on `expertvm sim` /
+    `schedule` / `store` and `gguf_gemv engine --expert-sim`. Decode
+    identity stays no programmatic event. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+331. [ ] Next numbered PLAN item after 330 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

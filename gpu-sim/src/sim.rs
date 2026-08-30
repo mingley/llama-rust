@@ -13245,9 +13245,10 @@ impl Sim {
     ///
     /// Combines cooperative, PDL, an access-policy window, mem-sync
     /// domain/map, cluster, shared-memory carveout, device-updatable kernel
-    /// node, shared-memory bank mode, and launch-attribute priority on one
-    /// submit. Does not inherit [`Self::set_stream_access_policy`]. Decode
-    /// identity stays [`Self::kernel`] ([`KernelAttrs::default`]).
+    /// node, shared-memory bank mode, launch-attribute priority, a
+    /// programmatic event, and a launch-completion event on one submit. Does
+    /// not inherit [`Self::set_stream_access_policy`]. Decode identity stays
+    /// [`Self::kernel`] ([`KernelAttrs::default`]).
     pub fn kernel_with(
         &mut self,
         device: DeviceId,
@@ -13308,6 +13309,7 @@ impl Sim {
         let prev_ps = self.enqueue_portable_shared;
         let prev_nv = self.enqueue_nvlink_util_centric;
         let prev_pri = self.enqueue_priority;
+        let prev_pde = self.enqueue_programmatic_event;
         let prev_lce = self.enqueue_launch_completion;
         self.enqueue_pdl = attrs.pdl;
         self.enqueue_access_policy = attrs.access_policy;
@@ -13324,6 +13326,7 @@ impl Sim {
         self.enqueue_portable_shared = attrs.portable_shared;
         self.enqueue_nvlink_util_centric = attrs.nvlink_util_centric;
         self.enqueue_priority = attrs.priority;
+        self.enqueue_programmatic_event = attrs.programmatic_event;
         self.enqueue_launch_completion = attrs.launch_completion;
         let out = self.submit_kernel(device, kind, reads, writes, stream, attrs.cooperative);
         self.enqueue_pdl = prev_pdl;
@@ -13341,6 +13344,7 @@ impl Sim {
         self.enqueue_portable_shared = prev_ps;
         self.enqueue_nvlink_util_centric = prev_nv;
         self.enqueue_priority = prev_pri;
+        self.enqueue_programmatic_event = prev_pde;
         self.enqueue_launch_completion = prev_lce;
         out
     }
