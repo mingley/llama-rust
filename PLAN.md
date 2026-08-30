@@ -3302,17 +3302,32 @@ model, do not celebrate the sim.
     `"memcpy flags"`. Decode identity unchanged. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
-320. [ ] Next numbered PLAN item after 319 is the next `gpu-sim` / Engine /
+320. [x] `cudaMemcpy3DBatchAsync` / `cudaMemcpy3DWithAttributesAsync`:
+    [`memcpy_3d_batch_async`](gpu-sim/src/sim.rs) is pointer-to-pointer
+    [`MemcpyOp::is_3d`] only (other extents Invalid `"memcpy3d batch depth"`;
+    CUDA arrays are not modeled). `ops.len() == attrs.len()`. `flags` must
+    be `0` (reserved; Invalid `"memcpy3d batch flags"`). Intra-batch copies
+    share a snapshotted stream-order predecessor list or empty
+    DuringApiCall/Any deps like PLAN 319. Later submits wait for the whole
+    batch. DuringApiCall waits those copies before return. Any does not.
+    [`memcpy_3d_with_attributes`](gpu-sim/src/sim.rs) Stream is
+    [`memcpy_3d_async`](gpu-sim/src/sim.rs). Capture cannot include a 3D
+    batch (`"cannot capture memcpy3d batch"`). Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no `$/M
+    tokens`.
+
+321. [ ] Next numbered PLAN item after 320 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins
-    (`cudaMemcpy3DBatchAsync`, `cudaMemPrefetchBatchAsync`,
-    `cudaMemDiscardBatchAsync`) over more OpenAI HTTP veneer. Do not invent
+    (`cudaMemPrefetchBatchAsync`, `cudaMemDiscardBatchAsync`,
+    `cudaMemDiscardAndPrefetchBatchAsync`) over more OpenAI HTTP veneer. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
     numbers, example `$/M tokens` rents, or `cudaStreamDestroy`.
     **`best_of` / `use_beam_search` stay out of `parse_gen_req` until a
     real beam Engine exists.** Do not default `--engine`. Do not invent
-    `max_model_len` or `/v1/tokenize`. Do not invent `gemma4`.
+    `max_model_len` or `/v1/tokenize`. Do not invent `gemma4`. Do not invent
+    CUDA arrays on `memcpy_3d_batch_async`.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

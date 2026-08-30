@@ -427,6 +427,11 @@
 //! is ignored (discrete). Location hints are omitted
 //! ([`DeviceAttr::ConcurrentManagedAccess`] / [`PageableMemoryAccess`](DeviceAttr::PageableMemoryAccess)
 //! are 0).
+//! [`memcpy_3d_batch_async`](Sim::memcpy_3d_batch_async) is `cudaMemcpy3DBatchAsync`
+//! (pointer-to-pointer [`MemcpyOp::is_3d`] only; CUDA arrays are not modeled;
+//! `flags` must be `0`; capture is `"cannot capture memcpy3d batch"`).
+//! [`memcpy_3d_with_attributes`](Sim::memcpy_3d_with_attributes) is
+//! `cudaMemcpy3DWithAttributesAsync` (Stream is [`memcpy_3d_async`](Sim::memcpy_3d_async)).
 //! [`Sim::set_limit`] / [`get_limit`](Sim::get_limit) are `cudaDeviceSetLimit` /
 //! `GetLimit`. [`DeviceLimit::PersistingL2CacheSize`] wraps
 //! [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size).
@@ -12711,6 +12716,132 @@ mod tests {
             s,
         ) {
             Err(SimError::Invalid { why }) => assert!(why.contains("memcpy batch attrs"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    fn pinned_h2d_3d(
+        d: DeviceId,
+        a: AllocId,
+        width: u64,
+        height: u64,
+        depth: u64,
+        dst_pitch: u64,
+    ) -> MemcpyOp {
+        MemcpyOp {
+            src: Place::HostPinned,
+            dst: Place::Device(d),
+            alloc: a,
+            bytes: width,
+            height,
+            src_pitch: width,
+            dst_pitch,
+            depth,
+            src_height: height,
+            dst_height: height,
+            ..MemcpyOp::default()
+        }
+    }
+
+    #[test]
+    fn memcpy_3d_batch_async_is_cuda_memcpy3d_batch_async() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_3d(d, 256, 4, 4).unwrap();
+        let (b, pitch_b) = sim.malloc_3d(d, 256, 4, 4).unwrap();
+        assert_eq!(pitch, pitch_b);
+        let op_a = pinned_h2d_3d(d, a, 256, 4, 4, pitch);
+        let op_b = pinned_h2d_3d(d, b, 256, 4, 4, pitch);
+        let attr = MemcpyAttributes::default();
+        let k = sim
+            .kernel(d, KernelKind::other(1 << 20, 256), &[a], &[a], s)
+            .unwrap();
+        let ids = sim
+            .memcpy_3d_batch_async(d, &[op_a.clone(), op_b.clone()], &[attr, attr], 0, s)
+            .unwrap();
+        assert_eq!(ids.len(), 2);
+        let oa = sim.operation(ids[0]).unwrap();
+        let ob = sim.operation(ids[1]).unwrap();
+        assert_eq!(oa.deps, ob.deps);
+        assert!(oa.deps.contains(&k), "{oa:?}");
+        assert!(!oa.deps.contains(&ids[1]));
+        assert!(!ob.deps.contains(&ids[0]));
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), 8192);
+        let oa = sim.operation(ids[0]).unwrap();
+        let ob = sim.operation(ids[1]).unwrap();
+        assert_eq!(oa.start_ns, ob.start_ns);
+        match sim.memcpy_3d_batch_async(d, std::slice::from_ref(&op_a), &[attr], 1, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("memcpy3d batch flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_3d_batch_async(
+            d,
+            &[MemcpyOp {
+                depth: 1,
+                ..op_a.clone()
+            }],
+            &[attr],
+            0,
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("memcpy3d batch depth"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.memcpy_3d_batch_async(d, std::slice::from_ref(&op_a), &[attr, attr], 0, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("memcpy3d batch attrs"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(sim
+            .memcpy_3d_batch_async(d, &[], &[], 0, s)
+            .unwrap()
+            .is_empty());
+        sim.begin_capture(d, s).unwrap();
+        match sim.memcpy_3d_batch_async(d, std::slice::from_ref(&op_a), &[attr], 0, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cannot capture memcpy3d batch"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        enq(sim.memcpy_3d_with_attributes(d, op_a, attr, 0, s));
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn memcpy_3d_with_attributes_during_api_call_waits_the_copy() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_3d(d, 256, 8, 8).unwrap();
+        let (b, _) = sim.malloc_3d(d, 256, 8, 8).unwrap();
+        sim.synchronize_stream(d, s).unwrap();
+        enq(sim.kernel(d, KernelKind::other(1 << 50, 8), &[a], &[a], s));
+        let during = MemcpyAttributes {
+            src_access_order: MemcpySrcAccessOrder::DuringApiCall,
+            flags: 0,
+        };
+        let t0 = sim.clock_ns();
+        let id = sim
+            .memcpy_3d_with_attributes(d, pinned_h2d_3d(d, b, 256, 8, 8, pitch), during, 0, s)
+            .unwrap();
+        let t1 = sim.clock_ns();
+        assert!(t1 > t0);
+        assert!(sim.operation(id).unwrap().done);
+        assert!(!sim.query_stream(d, s).unwrap());
+        sim.synchronize().unwrap();
+        assert_eq!(sim.bytes_moved(), 256 * 8 * 8);
+        match sim.memcpy_3d_with_attributes(d, pinned_h2d_3d(d, b, 256, 8, 8, pitch), during, 1, s)
+        {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("memcpy3d batch flags"), "{why}");
+            }
             other => panic!("{other:?}"),
         }
     }

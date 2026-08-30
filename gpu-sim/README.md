@@ -74,6 +74,8 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemcpy3D` (`memcpy_3d`) waits that stream; `memcpy_3d_async` bills payload not padding | PCIe / NVLink / HBM |
 | `cudaMemcpyBatchAsync` (`memcpy_batch_async`) 1D only; intra-batch copies share one stream-order snapshot (or empty DuringApiCall/Any deps) | copy-engine occupancy; DuringApiCall waits those copies |
 | `cudaMemcpyWithAttributesAsync` (`memcpy_with_attributes`) Stream is `memcpy`; DuringApiCall/Any are a one-copy batch | `PreferOverlapWithCompute` ignored (discrete) |
+| `cudaMemcpy3DBatchAsync` (`memcpy_3d_batch_async`) 3D pointer-to-pointer; `flags` 0; CUDA arrays not modeled | same sibling copy-engine occupancy as 1D batch |
+| `cudaMemcpy3DWithAttributesAsync` (`memcpy_3d_with_attributes`) Stream is `memcpy_3d_async` | reserved `flags` must be 0 |
 | `cudaMemset2D` (`memset_2d`) waits that stream; `memset_2d_async` bills payload not padding | HBM write |
 | `cudaMemset3D` (`memset_3d`) waits that stream; `memset_3d_async` bills payload not padding | HBM write |
 | `synchronize_device` waits one GPU | other GPUs keep running |
@@ -488,9 +490,13 @@ are `cudaMemcpy3DPeer` / `cudaMemcpy3DPeerAsync`
 be 2D). `memcpy_3d` / `memcpy_3d_async` are `cudaMemcpy3D` /
 `cudaMemcpy3DAsync` (`MemcpyOp` must be 3D). `memcpy_batch_async` is
 `cudaMemcpyBatchAsync` (1D pointer-to-pointer; copies in one batch do not
-wait for each other; `cudaMemcpy3DBatchAsync` is not this API; capture
+wait for each other; 2D/3D use `memcpy_3d_batch_async`; capture
 cannot include it). `memcpy_with_attributes` is
-`cudaMemcpyWithAttributesAsync` (Stream is `memcpy`). Typed `memcpy` stays. [`StreamId::NULL`] is the CUDA null
+`cudaMemcpyWithAttributesAsync` (Stream is `memcpy`). `memcpy_3d_batch_async`
+is `cudaMemcpy3DBatchAsync` (3D pointer-to-pointer; `flags` must be 0; CUDA
+arrays are not modeled; capture cannot include it).
+`memcpy_3d_with_attributes` is `cudaMemcpy3DWithAttributesAsync` (Stream is
+`memcpy_3d_async`). Typed `memcpy` stays. [`StreamId::NULL`] is the CUDA null
 stream; `set_legacy_null_stream(true)` serializes it with every other stream
 on that device (CUDA legacy default stream). Off by default is the
 per-thread default: NULL serializes only with `set_stream_blocking`

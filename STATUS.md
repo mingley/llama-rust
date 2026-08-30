@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaMemcpy3DBatchAsync`
+
+`memcpy_3d_batch_async` is pointer-to-pointer `cudaMemcpy3DBatchAsync`
+(`MemcpyOp` must be 3D). `flags` must be 0. CUDA arrays are not modeled.
+Sibling copies share a stream-order snapshot or empty DuringApiCall/Any
+deps like `memcpy_batch_async`. `memcpy_3d_with_attributes` Stream is
+`memcpy_3d_async`. Capture cannot include a 3D batch. `gpu-profile
+capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaMemcpyBatchAsync`
 
 `memcpy_batch_async` is 1D pointer-to-pointer `cudaMemcpyBatchAsync`.

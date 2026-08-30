@@ -12719,11 +12719,92 @@ impl Sim {
             }
             self.memcpy_precheck(op)?;
         }
+        self.enqueue_memcpy_batch(device, stream, ops, &per, "cannot capture memcpy batch")
+    }
+
+    /// `cudaMemcpy3DWithAttributesAsync`.
+    ///
+    /// [`MemcpySrcAccessOrder::Stream`] is [`Self::memcpy_3d_async`].
+    /// [`MemcpySrcAccessOrder::DuringApiCall`] / [`MemcpySrcAccessOrder::Any`]
+    /// are a one-copy [`Self::memcpy_3d_batch_async`]. `flags` must be `0`.
+    pub fn memcpy_3d_with_attributes(
+        &mut self,
+        device: DeviceId,
+        op: MemcpyOp,
+        attr: MemcpyAttributes,
+        flags: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if flags != 0 {
+            return Err(SimError::Invalid {
+                why: "memcpy3d batch flags",
+            });
+        }
+        memcpy_flags_ok(attr.flags)?;
+        match attr.src_access_order {
+            MemcpySrcAccessOrder::Stream => self.memcpy_3d_async(device, op, stream),
+            MemcpySrcAccessOrder::DuringApiCall | MemcpySrcAccessOrder::Any => self
+                .memcpy_3d_batch_async(device, std::slice::from_ref(&op), &[attr], flags, stream)?
+                .into_iter()
+                .next()
+                .ok_or(SimError::Invalid {
+                    why: "memcpy3d attributes empty",
+                }),
+        }
+    }
+
+    /// `cudaMemcpy3DBatchAsync`. Pointer-to-pointer 3D copies only.
+    ///
+    /// Each op must be [`MemcpyOp::is_3d`]. CUDA arrays are not modeled.
+    /// `ops.len() == attrs.len()`. `flags` must be `0` (reserved). Capture
+    /// cannot include it (`"cannot capture memcpy3d batch"`). Intra-batch
+    /// copies share one stream-order snapshot or empty DuringApiCall/Any deps
+    /// like [`Self::memcpy_batch_async`].
+    pub fn memcpy_3d_batch_async(
+        &mut self,
+        device: DeviceId,
+        ops: &[MemcpyOp],
+        attrs: &[MemcpyAttributes],
+        flags: u64,
+        stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        if self.unavailable.contains(&device) {
+            return Err(SimError::Unavailable { device });
+        }
+        if flags != 0 {
+            return Err(SimError::Invalid {
+                why: "memcpy3d batch flags",
+            });
+        }
+        if ops.len() != attrs.len() {
+            return Err(SimError::Invalid {
+                why: "memcpy3d batch attrs",
+            });
+        }
+        for (op, attr) in ops.iter().zip(attrs.iter()) {
+            memcpy_flags_ok(attr.flags)?;
+            if !op.is_3d() {
+                return Err(SimError::Invalid {
+                    why: "memcpy3d batch depth",
+                });
+            }
+            self.memcpy_precheck(op)?;
+        }
+        self.enqueue_memcpy_batch(device, stream, ops, attrs, "cannot capture memcpy3d batch")
+    }
+
+    fn enqueue_memcpy_batch(
+        &mut self,
+        device: DeviceId,
+        stream: StreamId,
+        ops: &[MemcpyOp],
+        attrs: &[MemcpyAttributes],
+        capture_why: &'static str,
+    ) -> Result<Vec<OpId>, SimError> {
         if self.capturing.is_some() {
             if self.in_capture(device, stream) {
-                return Err(SimError::Invalid {
-                    why: "cannot capture memcpy batch",
-                });
+                return Err(SimError::Invalid { why: capture_why });
             }
             let live = self
                 .capturing
@@ -12742,7 +12823,7 @@ impl Sim {
         let mut ids = Vec::with_capacity(ops.len());
         let mut during = Vec::new();
         let mut wait_stream = false;
-        for (op, attr) in ops.iter().zip(per.iter()) {
+        for (op, attr) in ops.iter().zip(attrs.iter()) {
             let deps = match attr.src_access_order {
                 MemcpySrcAccessOrder::Stream => stream_deps.clone(),
                 MemcpySrcAccessOrder::DuringApiCall | MemcpySrcAccessOrder::Any => Vec::new(),
