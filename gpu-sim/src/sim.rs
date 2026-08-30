@@ -21,11 +21,11 @@ use crate::ops::{
     LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp,
     MemAllocationType, MemAttach, MemAttachFlags, MemHandleType, MemLocationType, MemPoolAttr,
     MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
-    MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
-    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp,
+    MemoryType, MemsetOp, MulticastGranularity, Operation, PdlLaunch, PeerAccessFlags, Place,
+    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
+    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -10053,6 +10053,22 @@ impl Sim {
         };
         let _gpu = self.profile.gpu(device)?;
         let g = self.profile.va_granularity_bytes;
+        Ok(if g <= 1 { 1 } else { g })
+    }
+
+    /// `cuMulticastGetGranularity`. Query; legal during capture.
+    ///
+    /// [`MulticastGranularity::MINIMUM`] and [`RECOMMENDED`](MulticastGranularity::RECOMMENDED)
+    /// return [`HardwareProfile::multicast_granularity_bytes`] (`0`/`1` → `1`;
+    /// this VM has one granularity). Other flags Invalid
+    /// `"multicast granularity flags"`.
+    pub fn multicast_get_granularity(&self, flags: u32) -> Result<u64, SimError> {
+        if flags != MulticastGranularity::MINIMUM && flags != MulticastGranularity::RECOMMENDED {
+            return Err(SimError::Invalid {
+                why: "multicast granularity flags",
+            });
+        }
+        let g = self.profile.multicast_granularity_bytes;
         Ok(if g <= 1 { 1 } else { g })
     }
 

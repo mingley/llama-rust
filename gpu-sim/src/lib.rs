@@ -144,7 +144,9 @@
 //! [`Sim::multicast_create`] / [`multicast_add_device`](Sim::multicast_add_device) /
 //! [`multicast_bind_mem`](Sim::multicast_bind_mem) / [`va_map_multicast`](Sim::va_map_multicast)
 //! are `cuMulticastCreate` / `cuMulticastAddDevice` / `cuMulticastBindMem` /
-//! `cuMemMap` of a multicast handle. The team must be an NVLink clique (PCIe P2P
+//! `cuMemMap` of a multicast handle. [`multicast_get_granularity`](Sim::multicast_get_granularity)
+//! is `cuMulticastGetGranularity` (minimum and recommended are the same
+//! profile value; `0`/`1` → `1`). Query; legal during capture. The team must be an NVLink clique (PCIe P2P
 //! and RDMA refuse). Bind uses existing [`MemHandleId`] physicals (dest HBM is
 //! already charged). A kernel write to the multicast VA is one NVLS hop on
 //! compute, not N sequential copy-engine D2Ds. Capture cannot include
@@ -662,11 +664,12 @@ pub use ops::{
     KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags,
     MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach,
     MemAttachFlags, MemHandleType, MemLocationType, MemPoolAttr, MemPoolProps, MemRangeAttr,
-    MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation,
-    PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
-    SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
-    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp,
+    MulticastGranularity, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
+    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -16869,15 +16872,41 @@ mod tests {
     fn multicast_granularity_and_capture_refused() {
         let mut sim =
             Sim::new(HardwareProfile::example_8xh100_nvlink().with_multicast_granularity(1 << 21));
+        assert_eq!(
+            sim.multicast_get_granularity(MulticastGranularity::MINIMUM)
+                .unwrap(),
+            1 << 21
+        );
+        assert_eq!(
+            sim.multicast_get_granularity(MulticastGranularity::RECOMMENDED)
+                .unwrap(),
+            1 << 21
+        );
+        match sim.multicast_get_granularity(2) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("multicast granularity flags"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
         let err = sim.multicast_create(4096, 2).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("unaligned"), "{why}"),
             other => panic!("{other:?}"),
         }
         let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        assert_eq!(
+            sim.multicast_get_granularity(MulticastGranularity::MINIMUM)
+                .unwrap(),
+            1
+        );
         let d = DeviceId(0);
         let s = StreamId(0);
         sim.begin_capture(d, s).unwrap();
+        assert_eq!(
+            sim.multicast_get_granularity(MulticastGranularity::MINIMUM)
+                .unwrap(),
+            1
+        );
         let err = sim.multicast_create(4096, 2).unwrap_err();
         match err {
             SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),

@@ -2651,7 +2651,15 @@ model, do not celebrate the sim.
     Query; capture-legal. Decode identity unchanged. `gpu-profile
     capture` is still refused. Dual score still has no `$/M tokens`.
 
-245. [ ] Next numbered PLAN item after 244 is the next `gpu-sim` / Engine /
+245. [x] `cuMulticastGetGranularity`:
+    [`Sim::multicast_get_granularity`] returns the profile
+    [`multicast_granularity_bytes`](HardwareProfile::multicast_granularity_bytes)
+    (`0`/`1` → `1`). Minimum and recommended flags are the same value.
+    Other flags Invalid `"multicast granularity flags"`. Query;
+    capture-legal. Decode identity unchanged. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+246. [ ] Next numbered PLAN item after 245 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

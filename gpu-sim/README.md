@@ -651,6 +651,11 @@ location; handle types always none; RDMA capable wraps the SKU).
 `va_get_allocation_granularity` is `cuMemGetAllocationGranularity`
 (minimum and recommended are the same profile value; `0`/`1` → `1`).
 Both are queries; legal during capture. `va_map` still Create+Maps in one call.
+`multicast_create` / `multicast_add_device` / `multicast_bind_mem` /
+`va_map_multicast` are NVLS multicast (NVLink clique).
+`multicast_get_granularity` is `cuMulticastGetGranularity` (minimum and
+recommended are the same profile value; `0`/`1` → `1`). Query; legal
+during capture.
 `va_set_access` is `cuMemSetAccess` PROT_READ on a peer (no dest HBM;
 writes still need a local map). `va_set_access_write` is PROT_READWRITE
 (peer writes, no dest HBM). `va_set_access_with_flags` is the flags word

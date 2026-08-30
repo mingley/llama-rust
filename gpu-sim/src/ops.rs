@@ -2447,6 +2447,17 @@ impl MemAllocationGranularity {
     pub const RECOMMENDED: u32 = 1;
 }
 
+/// `CUmulticastGranularity_flags` for [`crate::Sim::multicast_get_granularity`].
+pub struct MulticastGranularity;
+
+impl MulticastGranularity {
+    /// `CU_MULTICAST_GRANULARITY_MINIMUM` (`0`).
+    pub const MINIMUM: u32 = 0;
+    /// `CU_MULTICAST_GRANULARITY_RECOMMENDED` (`1`). This VM has one
+    /// granularity; same as [`Self::MINIMUM`].
+    pub const RECOMMENDED: u32 = 1;
+}
+
 /// `cudaMemPoolProps` for [`crate::Sim::create_pool_with_props`].
 ///
 /// [`Self::alloc_type`] must be [`MemAllocationType::PINNED`].
