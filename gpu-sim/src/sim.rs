@@ -16,7 +16,7 @@ use crate::ops::{
     GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
     KernelNodeParams, LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap,
     MemcpyOp, Operation, PdlLaunch, Place, ProgrammaticEvent, ProgrammaticLaunch,
-    StreamCaptureInfo, StreamCaptureMode, UserObjectFlags, WaitValueCmp,
+    SharedMemCarveout, StreamCaptureInfo, StreamCaptureMode, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{ns_for_bytes, HardwareProfile, LinkKind};
 
@@ -191,6 +191,8 @@ struct Op {
     cluster_policy: ClusterSchedulingPolicy,
     /// `cudaLaunchAttributePreferredClusterDimension`.
     preferred_cluster: Option<ClusterDim>,
+    /// `cudaLaunchAttributePreferredSharedMemoryCarveout`.
+    carveout: SharedMemCarveout,
 }
 
 /// How a submitted op pays kernel/graph launch overhead.
@@ -298,6 +300,8 @@ struct GraphStep {
     cluster_policy: ClusterSchedulingPolicy,
     /// `cudaLaunchAttributePreferredClusterDimension`.
     preferred_cluster: Option<ClusterDim>,
+    /// `cudaLaunchAttributePreferredSharedMemoryCarveout`.
+    carveout: SharedMemCarveout,
 }
 
 struct Graph {
@@ -585,6 +589,8 @@ pub struct Sim {
     enqueue_cluster_policy: ClusterSchedulingPolicy,
     /// Preferred cluster dimension for the next kernel submit / graph replay.
     enqueue_preferred_cluster: Option<ClusterDim>,
+    /// Shared-memory carveout for the next kernel submit / graph replay.
+    enqueue_carveout: SharedMemCarveout,
     /// Devices with `cudaFuncAttributeNonPortableClusterSizeAllowed`.
     non_portable_cluster: BTreeSet<DeviceId>,
     /// Wait/write-value mailbox: `(alloc, offset) → word`. Missing is `0`.
@@ -679,6 +685,7 @@ impl Sim {
             enqueue_cluster: None,
             enqueue_cluster_policy: ClusterSchedulingPolicy::Default,
             enqueue_preferred_cluster: None,
+            enqueue_carveout: SharedMemCarveout::Default,
             non_portable_cluster: BTreeSet::new(),
             mailbox: BTreeMap::new(),
             capture_mode: StreamCaptureMode::Relaxed,
@@ -1143,10 +1150,10 @@ impl Sim {
         Ok(())
     }
 
-    /// Slots a kernel occupies: cooperative grids need the whole GPU. A
-    /// Default/LoadBalancing cluster occupies `min(blocks, compute_slots)`.
-    /// Spread occupies every slot. Preferred cluster size is used when it
-    /// fits in `compute_slots`.
+    /// Slots a kernel occupies: cooperative grids and MaxShared carveout need
+    /// the whole GPU. A Default/LoadBalancing cluster occupies
+    /// `min(blocks, compute_slots)`. Spread occupies every slot. Preferred
+    /// cluster size is used when it fits in `compute_slots`.
     fn kernel_slots(
         &self,
         device: DeviceId,
@@ -1154,9 +1161,10 @@ impl Sim {
         cluster: Option<ClusterDim>,
         preferred: Option<ClusterDim>,
         policy: ClusterSchedulingPolicy,
+        carveout: SharedMemCarveout,
     ) -> Result<u8, SimError> {
         let cap = self.profile.gpu(device)?.compute_slots.max(1);
-        if cooperative {
+        if cooperative || carveout.occupies_all_slots() {
             return Ok(cap);
         }
         let blocks = self.effective_cluster_blocks(device, cluster, preferred)?;
@@ -1181,6 +1189,7 @@ impl Sim {
             op.cluster,
             op.preferred_cluster,
             op.cluster_policy,
+            op.carveout,
         )
     }
 
@@ -1940,6 +1949,7 @@ impl Sim {
             self.enqueue_cluster = step.cluster;
             self.enqueue_cluster_policy = step.cluster_policy;
             self.enqueue_preferred_cluster = step.preferred_cluster;
+            self.enqueue_carveout = step.carveout;
             let wait = graph_node_waits(step, extra_wait, launch_tail, &node_ops)?;
             let s = self.graph_exec_stream(origin, stream, step, &node_stream, &mut worker);
             if let Some(slot) = node_stream.get_mut(idx) {
@@ -2119,6 +2129,7 @@ impl Sim {
         self.enqueue_cluster = None;
         self.enqueue_cluster_policy = ClusterSchedulingPolicy::Default;
         self.enqueue_preferred_cluster = None;
+        self.enqueue_carveout = SharedMemCarveout::Default;
         Ok(n)
     }
 
@@ -6134,10 +6145,96 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphKernelNodeGetAttribute` for shared-memory carveout.
+    pub fn graph_kernel_node_get_carveout(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<SharedMemCarveout, SimError> {
+        self.kernel_node_carveout(graph, node, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` for shared-memory carveout.
+    pub fn graph_exec_kernel_node_get_carveout(
+        &self,
+        exec: GraphId,
+        node: usize,
+    ) -> Result<SharedMemCarveout, SimError> {
+        self.kernel_node_carveout(exec, node, true)
+    }
+
+    fn kernel_node_carveout(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<SharedMemCarveout, SimError> {
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.view() } else { &g.steps };
+        let step = steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.carveout)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` for shared-memory carveout.
+    pub fn graph_kernel_node_set_carveout(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        carveout: SharedMemCarveout,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_carveout(graph, node, false, carveout)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` for shared-memory carveout.
+    pub fn graph_exec_kernel_node_set_carveout(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        carveout: SharedMemCarveout,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_carveout(exec, node, true, carveout)
+    }
+
+    fn set_kernel_node_carveout(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+        carveout: SharedMemCarveout,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let graph = if exec { self.as_exec(graph)? } else { graph };
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let steps = if exec { g.exec_mut()? } else { &mut g.steps };
+        let step = steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.carveout = carveout;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
     /// `cudaGraphKernelNodeCopyAttributes`: copy priority, PDL, programmatic
     /// event, launch-completion event, access-policy window, mem-sync
-    /// domain/map, cluster dimension, cluster scheduling policy, and preferred
-    /// cluster dimension from `src` to `dst`.
+    /// domain/map, cluster dimension, cluster scheduling policy, preferred
+    /// cluster dimension, and shared-memory carveout from `src` to `dst`.
     ///
     /// Both nodes must be kernels. Capture cannot include it.
     pub fn graph_kernel_node_copy_attributes(
@@ -6167,7 +6264,9 @@ impl Sim {
         let policy = self.graph_kernel_node_get_cluster_policy(src_graph, src)?;
         self.graph_kernel_node_set_cluster_policy(dst_graph, dst, policy)?;
         let preferred = self.graph_kernel_node_get_preferred_cluster(src_graph, src)?;
-        self.graph_kernel_node_set_preferred_cluster(dst_graph, dst, preferred)
+        self.graph_kernel_node_set_preferred_cluster(dst_graph, dst, preferred)?;
+        let carveout = self.graph_kernel_node_get_carveout(src_graph, src)?;
+        self.graph_kernel_node_set_carveout(dst_graph, dst, carveout)
     }
 
     /// `cudaGraphNodeFindInClone`: index in `cloned` of the node that was `node`
@@ -6254,6 +6353,7 @@ impl Sim {
             cluster: self.enqueue_cluster,
             cluster_policy: self.enqueue_cluster_policy,
             preferred_cluster: self.enqueue_preferred_cluster,
+            carveout: self.enqueue_carveout,
         });
         Ok(())
     }
@@ -8500,8 +8600,8 @@ impl Sim {
 
     /// [`Self::kernel`] plus packed [`KernelAttrs`] (`cudaLaunchKernelEx`).
     ///
-    /// Combines cooperative, PDL, an access-policy window, and mem-sync
-    /// domain/map on one submit.
+    /// Combines cooperative, PDL, an access-policy window, mem-sync
+    /// domain/map, cluster, and shared-memory carveout on one submit.
     /// Decode identity stays [`Self::kernel`] ([`KernelAttrs::default`]).
     pub fn kernel_with(
         &mut self,
@@ -8547,6 +8647,7 @@ impl Sim {
         let prev_cl = self.enqueue_cluster;
         let prev_pol = self.enqueue_cluster_policy;
         let prev_pref = self.enqueue_preferred_cluster;
+        let prev_carve = self.enqueue_carveout;
         self.enqueue_pdl = attrs.pdl;
         self.enqueue_access_policy = attrs.access_policy;
         self.enqueue_mem_sync_domain = attrs.mem_sync_domain;
@@ -8554,6 +8655,7 @@ impl Sim {
         self.enqueue_cluster = attrs.cluster;
         self.enqueue_cluster_policy = attrs.cluster_policy;
         self.enqueue_preferred_cluster = attrs.preferred_cluster;
+        self.enqueue_carveout = attrs.carveout;
         let out = self.submit_kernel(device, kind, reads, writes, stream, attrs.cooperative);
         self.enqueue_pdl = prev_pdl;
         self.enqueue_access_policy = prev_win;
@@ -8562,6 +8664,7 @@ impl Sim {
         self.enqueue_cluster = prev_cl;
         self.enqueue_cluster_policy = prev_pol;
         self.enqueue_preferred_cluster = prev_pref;
+        self.enqueue_carveout = prev_carve;
         out
     }
 
@@ -9424,6 +9527,7 @@ impl Sim {
             cluster: self.enqueue_cluster,
             cluster_policy: self.enqueue_cluster_policy,
             preferred_cluster: self.enqueue_preferred_cluster,
+            carveout: self.enqueue_carveout,
         });
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
@@ -9529,6 +9633,7 @@ impl Sim {
                 cluster: self.enqueue_cluster,
                 cluster_policy: self.enqueue_cluster_policy,
                 preferred_cluster: self.enqueue_preferred_cluster,
+                carveout: self.enqueue_carveout,
             },
         );
         if let Some(pe) = pde {
@@ -9915,6 +10020,7 @@ impl Sim {
                 cluster: None,
                 cluster_policy: ClusterSchedulingPolicy::Default,
                 preferred_cluster: None,
+                carveout: SharedMemCarveout::Default,
             },
         );
         self.add_op_dep(kernel, id);
@@ -12462,6 +12568,7 @@ fn remap_nested_graphs(
             cluster: step.cluster,
             cluster_policy: step.cluster_policy,
             preferred_cluster: step.preferred_cluster,
+            carveout: step.carveout,
         });
     }
     Ok(out)

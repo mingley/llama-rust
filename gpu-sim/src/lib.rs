@@ -184,7 +184,8 @@
 //! `min(blocks, compute_slots)` Hyper-Q slots (Hopper portable max 8).
 //! [`ClusterSchedulingPolicy::Spread`] occupies every slot.
 //! [`KernelAttrs::preferred_cluster`] is used when that size fits in
-//! `compute_slots`. Sizes above [`GpuProfile::portable_cluster_size`] need
+//! `compute_slots`. [`SharedMemCarveout::MaxShared`] occupies every slot.
+//! Sizes above [`GpuProfile::portable_cluster_size`] need
 //! [`set_non_portable_cluster_size_allowed`](Sim::set_non_portable_cluster_size_allowed).
 //! Decode identity stays [`Sim::kernel`]. [`graph_exec_kernel_node_get_priority`](Sim::graph_exec_kernel_node_get_priority) /
 //! [`graph_exec_kernel_node_set_priority`](Sim::graph_exec_kernel_node_set_priority)
@@ -354,7 +355,7 @@ pub use ops::{
     GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
     KernelNodeParams, LaunchCompletionEvent, MemAdvise, MemAttach, MemSyncDomain, MemSyncDomainMap,
     MemcpyOp, Operation, PdlLaunch, Place, ProgrammaticEvent, ProgrammaticLaunch,
-    StreamCaptureInfo, StreamCaptureMode, UserObjectFlags, WaitValueCmp,
+    SharedMemCarveout, StreamCaptureInfo, StreamCaptureMode, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -4971,6 +4972,79 @@ mod tests {
             sim.graph_exec_kernel_node_get_preferred_cluster(exec, 0)
                 .unwrap(),
             Some(ClusterDim::x(4))
+        );
+    }
+
+    #[test]
+    fn max_shared_carveout_occupies_all_compute_slots() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |carveout: SharedMemCarveout| {
+            let mut sim = Sim::new(h100().with_compute_slots(2));
+            let d = DeviceId(0);
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+            enq(sim.kernel_with(
+                d,
+                kind.clone(),
+                &[a],
+                &[a],
+                StreamId(2),
+                KernelAttrs {
+                    carveout,
+                    ..KernelAttrs::default()
+                },
+            ));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let overlap = run(SharedMemCarveout::Default);
+        let serial = run(SharedMemCarveout::MaxShared);
+        assert!(
+            overlap < serial,
+            "MaxShared carveout must occupy all Hyper-Q slots; overlap={overlap} serial={serial}"
+        );
+        let l1 = run(SharedMemCarveout::MaxL1);
+        assert_eq!(overlap, l1, "MaxL1 matches Default occupancy");
+    }
+
+    #[test]
+    fn graph_carveout_copy_and_device_launch() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 8).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_carveout(g, 0).unwrap(),
+            SharedMemCarveout::Default
+        );
+        sim.graph_kernel_node_set_carveout(g, 0, SharedMemCarveout::MaxShared)
+            .unwrap();
+        let h = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(h, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_kernel_node_copy_attributes(h, 0, g, 0).unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_carveout(h, 0).unwrap(),
+            SharedMemCarveout::MaxShared
+        );
+        let exec = sim
+            .instantiate_graph_with_flags(g, GraphInstantiateFlags::DEVICE_LAUNCH)
+            .expect("device-launch allows carveout");
+        assert_eq!(
+            sim.graph_exec_kernel_node_get_carveout(exec, 0).unwrap(),
+            SharedMemCarveout::MaxShared
+        );
+        sim.graph_exec_kernel_node_set_carveout(exec, 0, SharedMemCarveout::MaxL1)
+            .unwrap();
+        assert_eq!(
+            sim.graph_exec_kernel_node_get_carveout(exec, 0).unwrap(),
+            SharedMemCarveout::MaxL1
         );
     }
 

@@ -1603,6 +1603,12 @@ model, do not celebrate the sim.
     Legal with `--pdl` and `--cooperative`. Decode identity stays Default.
     `gpu-profile capture` is still refused.
 
+124. [x] `cudaLaunchAttributePreferredSharedMemoryCarveout`: Default and
+    MaxL1 keep current Hyper-Q occupancy. MaxShared occupies every slot
+    so leftover kernels cannot overlap. Graph SetAttribute / CopyAttributes
+    carry it. Device-launch graphs allow it. Decode identity stays Default.
+    `gpu-profile capture` is still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

@@ -445,7 +445,8 @@ impl Default for MemSyncDomainMap {
 /// [`crate::Sim::kernel_with`] applies these on one submit so PDL, an
 /// access-policy window, and a mem-sync domain can share a launch (7 arguments
 /// including `self`). Decode identity stays [`crate::Sim::kernel`] ([`Default`]:
-/// no cooperative, no PDL, no window, inherit stream mem-sync, no cluster).
+/// no cooperative, no PDL, no window, inherit stream mem-sync, no cluster,
+/// Default carveout).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct KernelAttrs {
     /// `cudaLaunchCooperativeKernel`.
@@ -464,6 +465,33 @@ pub struct KernelAttrs {
     pub cluster_policy: ClusterSchedulingPolicy,
     /// `cudaLaunchAttributePreferredClusterDimension`. `None` uses [`Self::cluster`].
     pub preferred_cluster: Option<ClusterDim>,
+    /// `cudaLaunchAttributePreferredSharedMemoryCarveout`.
+    pub carveout: SharedMemCarveout,
+}
+
+/// `cudaFuncCache` / `cudaSharedmemCarveout` preference
+/// (`cudaLaunchAttributePreferredSharedMemoryCarveout`).
+///
+/// [`Self::MaxShared`] occupies every Hyper-Q slot so leftover kernels cannot
+/// overlap. [`Self::Default`] and [`Self::MaxL1`] keep current occupancy.
+/// Decode identity stays [`Self::Default`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SharedMemCarveout {
+    /// `cudaSharedmemCarveoutDefault` (`-1`).
+    #[default]
+    Default,
+    /// `cudaSharedmemCarveoutMaxL1` (`0`): prefer L1 over shared.
+    MaxL1,
+    /// `cudaSharedmemCarveoutMaxShared` (`100`): prefer shared over L1.
+    MaxShared,
+}
+
+impl SharedMemCarveout {
+    /// Max-shared kernels occupy the whole GPU.
+    #[must_use]
+    pub fn occupies_all_slots(self) -> bool {
+        matches!(self, Self::MaxShared)
+    }
 }
 
 /// `cudaClusterSchedulingPolicy` (`cudaLaunchAttributeClusterSchedulingPolicyPreference`).

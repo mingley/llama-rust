@@ -482,6 +482,7 @@ isolates communication. `ClusterDim` is `cudaLaunchAttributeClusterDimension`:
 the launch occupies `min(blocks, compute_slots)` Hyper-Q slots (Hopper portable
 max 8). `ClusterSchedulingPolicy::Spread` occupies every slot.
 `preferred_cluster` is used when that size fits in `compute_slots`.
+`SharedMemCarveout::MaxShared` occupies every slot (`cudaLaunchAttributePreferredSharedMemoryCarveout`).
 `set_non_portable_cluster_size_allowed` is
 `cudaFuncAttributeNonPortableClusterSizeAllowed` (default disallowed).
 `expertvm sim --cluster N` / `gguf_gemv engine --expert-sim --cluster N`
