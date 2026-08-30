@@ -261,6 +261,8 @@ priority; `DEVICE_LAUNCH` enables `device_launch_graph` after upload —
 host `launch_graph` stays legal; mem alloc/free, events, child graphs,
 conditionals, and host nodes are Invalid; `update_graph` of a
 device-launch exec is Invalid).
+`instantiate_graph_with_params` is `cudaGraphInstantiateWithParams`
+(`GraphInstantiateParams` result and err node).
 `graph_exec_get_flags` is `cudaGraphExecGetFlags`.
 Instantiate returns a new exec id (`cudaGraphExec_t`); the source graph
 stays a definition. `launch_graph` of a definition uses the primary exec.

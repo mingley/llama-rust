@@ -139,7 +139,10 @@
 //! [`GraphInstantiateFlags::DEVICE_LAUNCH`] enables
 //! [`device_launch_graph`](Sim::device_launch_graph) after upload — host
 //! [`launch_graph`](Sim::launch_graph) stays legal; mem alloc/free, events,
-//! child graphs, conditionals, and host nodes are Invalid). [`graph_exec_get_flags`](Sim::graph_exec_get_flags) is
+//! child graphs, conditionals, and host nodes are Invalid).
+//! [`instantiate_graph_with_params`](Sim::instantiate_graph_with_params) is
+//! `cudaGraphInstantiateWithParams` ([`GraphInstantiateParams`] result and
+//! err node). [`graph_exec_get_flags`](Sim::graph_exec_get_flags) is
 //! `cudaGraphExecGetFlags`. Instantiate returns a new exec id (`cudaGraphExec_t`);
 //! the source graph stays a definition. [`launch_graph`](Sim::launch_graph) of a
 //! definition uses the primary exec. `cudaGraphExec*SetParams` accept either id.
@@ -296,9 +299,10 @@ pub use ids::{
     OpId, PoolId, PtrExportId, ShareableHandleId, StreamId,
 };
 pub use ops::{
-    BatchMemOp, CaptureDepOp, DType, GpuOp, GraphInstantiateFlags, GraphMemAttr, GraphNodeKind,
-    HostNodeParams, KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp,
-    Operation, Place, StreamCaptureInfo, StreamCaptureMode, WaitValueCmp,
+    BatchMemOp, CaptureDepOp, DType, GpuOp, GraphInstantiateFlags, GraphInstantiateParams,
+    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, HostNodeParams, KernelBuf, KernelKind,
+    KernelNodeParams, MemAdvise, MemAttach, MemcpyOp, Operation, Place, StreamCaptureInfo,
+    StreamCaptureMode, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -1469,6 +1473,72 @@ mod tests {
             }
             e => panic!("{e:?}"),
         }
+    }
+
+    #[test]
+    fn instantiate_with_params_reports_success_and_err_node() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let mut params = GraphInstantiateParams::default();
+        let exec = sim.instantiate_graph_with_params(g, &mut params).unwrap();
+        assert_ne!(exec, g);
+        assert_eq!(params.result, GraphInstantiateResult::Success);
+        assert_eq!(params.err_node, None);
+        let host = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(host, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_host_func(host).unwrap();
+        let mut params = GraphInstantiateParams {
+            flags: GraphInstantiateFlags::DEVICE_LAUNCH,
+            ..GraphInstantiateParams::default()
+        };
+        let err = sim
+            .instantiate_graph_with_params(host, &mut params)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("device launch"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            params.result,
+            GraphInstantiateResult::NodeOperationNotSupported
+        );
+        assert_eq!(params.err_node, Some(1));
+        let mem = sim.create_graph(d, s).unwrap();
+        let id = sim.graph_add_alloc(mem, 64).unwrap();
+        sim.graph_add_free(mem, id).unwrap();
+        let mut params = GraphInstantiateParams {
+            flags: GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH,
+            ..GraphInstantiateParams::default()
+        };
+        let err = sim
+            .instantiate_graph_with_params(mem, &mut params)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("auto free"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(params.result, GraphInstantiateResult::InvalidStructure);
+        assert_eq!(params.err_node, Some(1));
+        sim.begin_capture(d, s).unwrap();
+        let mut params = GraphInstantiateParams::default();
+        let err = sim
+            .instantiate_graph_with_params(g, &mut params)
+            .unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(params.result, GraphInstantiateResult::Error);
+        assert_eq!(params.err_node, None);
+        let _cap = sim.end_capture().unwrap();
     }
 
     #[test]

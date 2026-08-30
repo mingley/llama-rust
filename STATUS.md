@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaGraphInstantiateWithParams`
+
+`instantiate_graph_with_params` fills `GraphInstantiateParams` result and
+err node even on `Err`. Device-launch of a forbidden node is
+`NodeOperationNotSupported` with that index. Auto-free plus a mem-free node
+is `InvalidStructure`. `instantiate_graph_with_flags` uses this path.
+Decode identity stays `instantiate_graph`. `gpu-profile capture` is still
+refused.
+
 ## Shipped 2026-08-30 — `cudaStreamCaptureMode`
 
 `begin_capture` defaults to Relaxed: independent streams stay live, and a

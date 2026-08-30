@@ -1462,6 +1462,16 @@ model, do not celebrate the sim.
     capture keeps its mode). `stream_capture_info` reports the mode.
     Decode identity stays Relaxed. `gpu-profile capture` is still refused.
 
+108. [x] `cudaGraphInstantiateWithParams`: `instantiate_graph_with_params`
+    fills `GraphInstantiateParams` result and err node even on `Err`.
+    Success is `GraphInstantiateResult::Success` with `err_node = None`.
+    Device-launch of a host/event/mem node is `NodeOperationNotSupported`
+    with that node index. Auto-free plus a mem-free node, and a second
+    instantiate of a mem graph, are `InvalidStructure`. Unknown flags and
+    capture are `Error`. `instantiate_graph_with_flags` uses this path.
+    Decode identity stays `instantiate_graph`. `gpu-profile capture` is
+    still refused.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

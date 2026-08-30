@@ -611,6 +611,36 @@ impl GraphInstantiateFlags {
     pub const USE_NODE_PRIORITY: u32 = 8;
 }
 
+/// `cudaGraphInstantiateResult` from [`crate::Sim::instantiate_graph_with_params`].
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum GraphInstantiateResult {
+    /// `cudaGraphInstantiateSuccess`.
+    #[default]
+    Success,
+    /// `cudaGraphInstantiateError`.
+    Error,
+    /// `cudaGraphInstantiateInvalidStructure`.
+    InvalidStructure,
+    /// `cudaGraphInstantiateNodeOperationNotSupported`.
+    NodeOperationNotSupported,
+    /// `cudaGraphInstantiateMultipleDevicesNotSupported`.
+    MultipleDevicesNotSupported,
+}
+
+/// `cudaGraphInstantiateParams` for [`crate::Sim::instantiate_graph_with_params`].
+///
+/// `flags` are inputs. `err_node` / `result` are outputs (filled even on
+/// `Err`). Decode identity stays [`crate::Sim::instantiate_graph`].
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GraphInstantiateParams {
+    /// `cudaGraphInstantiateFlags`.
+    pub flags: u32,
+    /// First node that made instantiate fail, when known.
+    pub err_node: Option<usize>,
+    /// CUDA result enum.
+    pub result: GraphInstantiateResult,
+}
+
 /// `cudaGraphMemAttributeType` for [`crate::Sim::graph_mem_get`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GraphMemAttr {

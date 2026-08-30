@@ -10,9 +10,10 @@ use crate::ids::{
     PoolId, PtrExportId, ShareableHandleId, StreamId,
 };
 use crate::ops::{
-    BatchMemOp, CaptureDepOp, GpuOp as Kind, GraphInstantiateFlags, GraphMemAttr, GraphNodeKind,
-    HostNodeParams, KernelBuf, KernelKind, KernelNodeParams, MemAdvise, MemAttach, MemcpyOp,
-    Operation, Place, StreamCaptureInfo, StreamCaptureMode, WaitValueCmp,
+    BatchMemOp, CaptureDepOp, GpuOp as Kind, GraphInstantiateFlags, GraphInstantiateParams,
+    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, HostNodeParams, KernelBuf, KernelKind,
+    KernelNodeParams, MemAdvise, MemAttach, MemcpyOp, Operation, Place, StreamCaptureInfo,
+    StreamCaptureMode, WaitValueCmp,
 };
 use crate::profile::{ns_for_bytes, HardwareProfile, LinkKind};
 
@@ -428,8 +429,11 @@ struct InstantiateSnap {
     already: bool,
     current_flags: u32,
     has_free: bool,
-    device_launch_bad: bool,
+    device_launch_err: Option<usize>,
     has_mem: bool,
+    mem_node: Option<usize>,
+    free_node: Option<usize>,
+    multi_dev: Option<usize>,
     primary: Option<GraphId>,
     origin: (DeviceId, StreamId),
     bodies: Vec<GraphId>,
@@ -2053,8 +2057,27 @@ impl Sim {
         graph: GraphId,
         flags: u32,
     ) -> Result<GraphId, SimError> {
-        Self::check_instantiate_flags(flags)?;
-        let exec = self.instantiate_graph_inner(graph, flags)?;
+        let mut params = GraphInstantiateParams {
+            flags,
+            ..GraphInstantiateParams::default()
+        };
+        self.instantiate_graph_with_params(graph, &mut params)
+    }
+
+    /// `cudaGraphInstantiateWithParams`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Fills [`GraphInstantiateParams::result`] and
+    /// [`GraphInstantiateParams::err_node`] even when this returns `Err`.
+    /// Success is [`GraphInstantiateResult::Success`] with `err_node = None`.
+    /// [`GraphInstantiateParams::flags`] are the instantiate flags (same as
+    /// [`Self::instantiate_graph_with_flags`]).
+    pub fn instantiate_graph_with_params(
+        &mut self,
+        graph: GraphId,
+        params: &mut GraphInstantiateParams,
+    ) -> Result<GraphId, SimError> {
+        let flags = params.flags;
+        let exec = self.instantiate_graph_inner(graph, flags, Some(params))?;
         if flags & GraphInstantiateFlags::UPLOAD != 0 {
             self.upload_graph(exec)?;
         }
@@ -2085,42 +2108,111 @@ impl Sim {
         Ok(())
     }
 
-    fn instantiate_graph_inner(&mut self, graph: GraphId, flags: u32) -> Result<GraphId, SimError> {
-        self.fail_if_capturing("cannot capture graph instantiate")?;
+    fn instantiate_report(
+        out: Option<&mut GraphInstantiateParams>,
+        result: GraphInstantiateResult,
+        err_node: Option<usize>,
+        why: &'static str,
+    ) -> Result<GraphId, SimError> {
+        if let Some(p) = out {
+            p.result = result;
+            p.err_node = err_node;
+        }
+        Err(SimError::Invalid { why })
+    }
+
+    fn instantiate_graph_inner(
+        &mut self,
+        graph: GraphId,
+        flags: u32,
+        mut out: Option<&mut GraphInstantiateParams>,
+    ) -> Result<GraphId, SimError> {
+        if let Err(e) = self.fail_if_capturing("cannot capture graph instantiate") {
+            if let Some(p) = out.as_mut() {
+                p.result = GraphInstantiateResult::Error;
+                p.err_node = None;
+            }
+            return Err(e);
+        }
+        if let Err(e) = Self::check_instantiate_flags(flags) {
+            if let Some(p) = out.as_mut() {
+                p.result = GraphInstantiateResult::Error;
+                p.err_node = None;
+            }
+            return Err(e);
+        }
         let auto_free = flags & GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH != 0;
         let device_launch = flags & GraphInstantiateFlags::DEVICE_LAUNCH != 0;
-        let snapshot = self.instantiate_snapshot(graph, device_launch)?;
+        let snapshot = match self.instantiate_snapshot(graph, device_launch) {
+            Ok(s) => s,
+            Err(e) => {
+                if let Some(p) = out.as_mut() {
+                    p.result = GraphInstantiateResult::Error;
+                    p.err_node = None;
+                }
+                return Err(e);
+            }
+        };
         if snapshot.already {
             if flags & !snapshot.current_flags != 0 {
-                return Err(SimError::Invalid {
-                    why: "graph instantiate flags",
-                });
+                return Self::instantiate_report(
+                    out,
+                    GraphInstantiateResult::Error,
+                    None,
+                    "graph instantiate flags",
+                );
+            }
+            if let Some(p) = out.as_mut() {
+                p.result = GraphInstantiateResult::Success;
+                p.err_node = None;
             }
             return Ok(graph);
         }
         if auto_free && snapshot.has_free {
-            return Err(SimError::Invalid {
-                why: "auto free with mem free nodes",
-            });
+            return Self::instantiate_report(
+                out,
+                GraphInstantiateResult::InvalidStructure,
+                snapshot.free_node,
+                "auto free with mem free nodes",
+            );
         }
-        if snapshot.device_launch_bad {
-            return Err(SimError::Invalid {
-                why: "device launch instantiate flag",
-            });
+        if let Some(node) = snapshot.device_launch_err {
+            return Self::instantiate_report(
+                out,
+                GraphInstantiateResult::NodeOperationNotSupported,
+                Some(node),
+                "device launch instantiate flag",
+            );
         }
         if snapshot.primary.is_some() && snapshot.has_mem {
-            return Err(SimError::Invalid {
-                why: "graph mem exec",
-            });
+            return Self::instantiate_report(
+                out,
+                GraphInstantiateResult::InvalidStructure,
+                snapshot.mem_node,
+                "graph mem exec",
+            );
         }
-        let ns = self
-            .profile
-            .gpu(snapshot.device)?
-            .graph_instantiate_ns
-            .max(1);
+        if let Some(node) = snapshot.multi_dev {
+            return Self::instantiate_report(
+                out,
+                GraphInstantiateResult::MultipleDevicesNotSupported,
+                Some(node),
+                "graph multiple devices",
+            );
+        }
+        let ns = match self.profile.gpu(snapshot.device) {
+            Ok(g) => g.graph_instantiate_ns.max(1),
+            Err(e) => {
+                if let Some(p) = out.as_mut() {
+                    p.result = GraphInstantiateResult::Error;
+                    p.err_node = None;
+                }
+                return Err(e);
+            }
+        };
         self.clock = self.clock.saturating_add(ns);
         for body in snapshot.bodies {
-            let _exec = self.instantiate_graph_inner(body, 0)?;
+            let _exec = self.instantiate_graph_inner(body, 0, None)?;
         }
         let exec_id = GraphId(self.next_graph);
         self.next_graph = self.next_graph.saturating_add(1);
@@ -2150,6 +2242,10 @@ impl Sim {
         if def.primary_exec.is_none() {
             def.primary_exec = Some(exec_id);
         }
+        if let Some(p) = out.as_mut() {
+            p.result = GraphInstantiateResult::Success;
+            p.err_node = None;
+        }
         Ok(exec_id)
     }
 
@@ -2161,22 +2257,35 @@ impl Sim {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        let device = g.steps.first().map(|s| s.device).unwrap_or(DeviceId(0));
-        let has_free = g.steps.iter().any(|s| matches!(&s.kind, Kind::Free { .. }));
-        let has_mem = g
+        let origin_dev = g.origin.0;
+        let device = g.steps.first().map(|s| s.device).unwrap_or(origin_dev);
+        let free_node = g
             .steps
             .iter()
-            .any(|s| matches!(&s.kind, Kind::Alloc { .. } | Kind::Free { .. }))
-            || self.graph_allocs.get(&graph).is_some_and(|v| !v.is_empty());
-        let device_launch_bad =
-            device_launch && g.steps.iter().any(|s| device_launch_refused(&s.kind));
+            .position(|s| matches!(&s.kind, Kind::Free { .. }));
+        let mem_node = g
+            .steps
+            .iter()
+            .position(|s| matches!(&s.kind, Kind::Alloc { .. } | Kind::Free { .. }));
+        let has_free = free_node.is_some();
+        let has_mem =
+            mem_node.is_some() || self.graph_allocs.get(&graph).is_some_and(|v| !v.is_empty());
+        let device_launch_err = if device_launch {
+            g.steps.iter().position(|s| device_launch_refused(&s.kind))
+        } else {
+            None
+        };
+        let multi_dev = g.steps.iter().position(|s| s.device != origin_dev);
         Ok(InstantiateSnap {
             device,
             already: g.instantiated,
             current_flags: g.instantiate_flags,
             has_free,
-            device_launch_bad,
+            device_launch_err,
             has_mem,
+            mem_node,
+            free_node,
+            multi_dev,
             primary: g.primary_exec,
             origin: g.origin,
             bodies: g
