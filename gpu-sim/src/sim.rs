@@ -164,6 +164,9 @@ struct Op {
     preds: Vec<CondPred>,
     /// Predicates skipped this op; completion has no alloc/kernel/memcpy effects.
     skipped: bool,
+    /// Scheduling priority (`cudaStreamCreateWithPriority` or a kernel-node
+    /// attribute when the exec used `cudaGraphInstantiateFlagUseNodePriority`).
+    priority: i32,
 }
 
 /// How a submitted op pays kernel/graph launch overhead.
@@ -239,6 +242,8 @@ struct GraphStep {
     deps: Vec<usize>,
     /// `cudaGraphNodeSetEnabled`. Disabled nodes skip launch and complete immediately.
     enabled: bool,
+    /// Stream priority snapshotted at add/capture (`cudaKernelNodeAttributePriority`).
+    priority: i32,
 }
 
 struct Graph {
@@ -345,6 +350,8 @@ pub struct Sim {
     enqueue_preds: Vec<CondPred>,
     /// `cudaGraphClone` provenance: clone id → source id.
     clone_of: BTreeMap<GraphId, GraphId>,
+    /// Override [`Op::priority`] for ops submitted by [`Self::enqueue_graph`].
+    enqueue_priority: Option<i32>,
 }
 
 impl Sim {
@@ -415,6 +422,7 @@ impl Sim {
             conds: BTreeMap::new(),
             enqueue_preds: Vec::new(),
             clone_of: BTreeMap::new(),
+            enqueue_priority: None,
         }
     }
 
@@ -680,6 +688,33 @@ impl Sim {
             .copied()
             .unwrap_or(1000)
             .max(1)
+    }
+
+    /// `cudaStreamCopyAttributes`: copy priority and SM permille from `src` to `dst`.
+    ///
+    /// Same device required. Capture is allowed (host-side, not a graph node).
+    pub fn stream_copy_attributes(
+        &mut self,
+        dst_device: DeviceId,
+        dst: StreamId,
+        src_device: DeviceId,
+        src: StreamId,
+    ) -> Result<(), SimError> {
+        if dst_device != src_device {
+            return Err(SimError::Invalid {
+                why: "stream attribute device mismatch",
+            });
+        }
+        let _gpu = self.profile.gpu(src_device)?;
+        let pri = self.stream_priority(src_device, src);
+        let sm = self.sm_permille.get(&(src_device, src)).copied();
+        self.set_stream_priority(dst_device, dst, pri)?;
+        if let Some(sm) = sm {
+            self.set_stream_sm_permille(dst_device, dst, sm)?;
+        } else {
+            let _gone = self.sm_permille.remove(&(dst_device, dst));
+        }
+        Ok(())
     }
 
     /// CUDA legacy null stream: [`StreamId::NULL`] serializes with every other stream
@@ -1392,6 +1427,11 @@ impl Sim {
             let step = steps.get(idx).ok_or(SimError::Invalid {
                 why: "graph dependency",
             })?;
+            if self.graph_uses_node_priority(graph) {
+                self.enqueue_priority = Some(step.priority);
+            } else {
+                self.enqueue_priority = None;
+            }
             let wait = graph_node_waits(step, extra_wait, launch_tail, &node_ops)?;
             let s = self.graph_exec_stream(origin, stream, step, &node_stream, &mut worker);
             if let Some(slot) = node_stream.get_mut(idx) {
@@ -1557,7 +1597,14 @@ impl Sim {
                 .extend(pending_joins);
         }
         let _gone = stack.remove(&graph);
+        self.enqueue_priority = None;
         Ok(n)
+    }
+
+    fn graph_uses_node_priority(&self, graph: GraphId) -> bool {
+        self.graphs
+            .get(&graph)
+            .is_some_and(|g| g.instantiate_flags & GraphInstantiateFlags::USE_NODE_PRIORITY != 0)
     }
 
     fn enqueue_pred_graph(
@@ -1719,7 +1766,9 @@ impl Sim {
     /// [`GraphInstantiateFlags::AUTO_FREE_ON_LAUNCH`] matches
     /// [`Self::instantiate_graph_auto_free`]. [`GraphInstantiateFlags::UPLOAD`]
     /// host-sync uploads during instantiate so the first launch skips
-    /// [`Self::upload_graph`]. Device-launch and node-priority bits are Invalid.
+    /// [`Self::upload_graph`]. [`GraphInstantiateFlags::USE_NODE_PRIORITY`]
+    /// schedules recorded kernels with the priority snapshotted at add/capture
+    /// instead of the launch stream. Device-launch is Invalid.
     /// Already-instantiated ids are a no-op when `flags` adds no new bits.
     pub fn instantiate_graph_with_flags(
         &mut self,
@@ -1769,11 +1818,6 @@ impl Sim {
         if flags & GraphInstantiateFlags::DEVICE_LAUNCH != 0 {
             return Err(SimError::Invalid {
                 why: "device launch instantiate flag",
-            });
-        }
-        if flags & GraphInstantiateFlags::USE_NODE_PRIORITY != 0 {
-            return Err(SimError::Invalid {
-                why: "node priority instantiate flag",
             });
         }
         Ok(())
@@ -3395,6 +3439,66 @@ impl Sim {
         Ok(node_kind(&st.kind))
     }
 
+    /// `cudaKernelNodeAttributePriority` on a kernel node.
+    pub fn graph_kernel_node_get_priority(
+        &self,
+        graph: GraphId,
+        node: usize,
+    ) -> Result<i32, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        Ok(step.priority)
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` / `cudaGraphExecKernelNodeSetAttribute`
+    /// for priority. Capture cannot include it.
+    pub fn graph_kernel_node_set_priority(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        priority: i32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node set attribute")?;
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        if !matches!(step.kind, Kind::Kernel { .. }) {
+            return Err(SimError::Invalid {
+                why: "not a kernel node",
+            });
+        }
+        step.priority = priority;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaGraphKernelNodeCopyAttributes`: copy priority from `src` to `dst`.
+    ///
+    /// Both nodes must be kernels. Capture cannot include it.
+    pub fn graph_kernel_node_copy_attributes(
+        &mut self,
+        dst_graph: GraphId,
+        dst: usize,
+        src_graph: GraphId,
+        src: usize,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture kernel node copy attributes")?;
+        let pri = self.graph_kernel_node_get_priority(src_graph, src)?;
+        self.graph_kernel_node_set_priority(dst_graph, dst, pri)
+    }
+
     /// `cudaGraphNodeFindInClone`: index in `cloned` of the node that was `node`
     /// on `original`.
     ///
@@ -3458,6 +3562,7 @@ impl Sim {
         stream: StreamId,
         kind: Kind,
     ) -> Result<(), SimError> {
+        let priority = self.stream_priority(device, stream);
         let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
@@ -3467,6 +3572,7 @@ impl Sim {
             kind,
             deps: Vec::new(),
             enabled: true,
+            priority,
         });
         Ok(())
     }
@@ -6082,12 +6188,14 @@ impl Sim {
         }
         let mut deps = capture_step_deps(&self.capture_buf, device, stream, &kind);
         self.merge_capture_pending(device, stream, &mut deps);
+        let priority = self.stream_priority(device, stream);
         self.capture_buf.push(GraphStep {
             device,
             stream,
             kind,
             deps,
             enabled: true,
+            priority,
         });
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
@@ -6148,6 +6256,9 @@ impl Sim {
                 }
             }
         }
+        let priority = self
+            .enqueue_priority
+            .unwrap_or_else(|| self.stream_priority(device, stream));
         let _prev_op = self.ops.insert(
             id,
             Op {
@@ -6163,6 +6274,7 @@ impl Sim {
                 done_ns: None,
                 preds: self.enqueue_preds.clone(),
                 skipped: false,
+                priority,
             },
         );
         let _prev_tail = self.tail.insert((device, stream), id);
@@ -6486,6 +6598,11 @@ impl Sim {
             .get(&kernel)
             .ok_or(SimError::Invalid { why: "unknown op" })?
             .stream;
+        let priority = self
+            .ops
+            .get(&kernel)
+            .ok_or(SimError::Invalid { why: "unknown op" })?
+            .priority;
         let (bytes, src) = self.managed_move_src(alloc, Some(device))?;
         let id = OpId(self.next_op);
         self.next_op = self.next_op.saturating_add(1);
@@ -6510,6 +6627,7 @@ impl Sim {
                 done_ns: None,
                 preds: Vec::new(),
                 skipped: false,
+                priority,
             },
         );
         self.add_op_dep(kernel, id);
@@ -7041,7 +7159,7 @@ impl Sim {
                 if o.done || self.is_running(*id) || !self.deps_ready(o) {
                     continue;
                 }
-                let pri = self.stream_priority(o.device, o.stream);
+                let pri = o.priority;
                 candidates.push((pri, id.0, *id));
             }
             candidates.sort_by_key(|&(pri, oid, _)| (Reverse(pri), oid));
@@ -8158,6 +8276,7 @@ fn remap_nested_graphs(
             kind,
             deps: step.deps.clone(),
             enabled: step.enabled,
+            priority: step.priority,
         });
     }
     Ok(out)

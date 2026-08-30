@@ -244,7 +244,9 @@ forks those ids. `destroy_graph` refunds remaining graph mem. `update_graph`
 of mem nodes is `Invalid`.
 Instantiate, update, and upload are host-synchronous and cannot run during capture.
 `instantiate_graph_with_flags` is `cudaGraphInstantiateWithFlags`
-(`GraphInstantiateFlags::UPLOAD` uploads during instantiate).
+(`GraphInstantiateFlags::UPLOAD` uploads during instantiate;
+`USE_NODE_PRIORITY` schedules recorded kernels with the add/capture
+priority).
 `graph_exec_get_flags` is `cudaGraphExecGetFlags`.
 `clone_graph` is `cudaGraphClone` (`graph_clone_ns`): an independent
 uninstantiated copy; child-graph nodes are cloned recursively (a diamond
@@ -384,7 +386,11 @@ stream (NULL serializes with every stream).
 `host_pin_bytes` caps page-locked host (`cudaMallocHost` / `cudaHostRegister`);
 overflow is `PinOom`. Example default is unlimited.
 `set_stream_priority` is `cudaStreamCreateWithPriority` (higher first when
-compute contends). `set_created_streams_priority` assigns created streams
+compute contends). `stream_copy_attributes` is `cudaStreamCopyAttributes`
+(priority and SM permille). `graph_kernel_node_get_priority` /
+`set_priority` / `copy_attributes` are `cudaGraphKernelNodeGetAttribute` /
+`SetAttribute` / `CopyAttributes` for priority. `USE_NODE_PRIORITY` at
+instantiate schedules those node priorities instead of the launch stream. `set_created_streams_priority` assigns created streams
 their id. `set_stream_sm_permille` is a green-context SM fraction
 (compute-bound kernels scale; memory-bound keep full HBM; default unset is
 a full chip). `Operation` carries `submit_ns` / `start_ns` / `done_ns`

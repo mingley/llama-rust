@@ -1360,6 +1360,16 @@ model, do not celebrate the sim.
     Capture cannot include set/trim. Decode identity stays kernel-only
     graphs. Dual score still has no `$/M tokens`.
 
+98. [x] `cudaGraphInstantiateFlagUseNodePriority`:
+    `instantiate_graph_with_flags(USE_NODE_PRIORITY)` schedules recorded
+    kernels with the priority snapshotted at add/capture
+    (`cudaKernelNodeAttributePriority`) instead of the launch stream.
+    `graph_kernel_node_get_priority` / `set_priority` /
+    `copy_attributes` are Get/Set/CopyAttributes. `stream_copy_attributes`
+    is `cudaStreamCopyAttributes` (priority and SM permille). Device-launch
+    is still Invalid. Decode identity stays default flags. Dual score still
+    has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

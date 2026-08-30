@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaGraphInstantiateFlagUseNodePriority`
+
+`instantiate_graph_with_flags(USE_NODE_PRIORITY)` schedules recorded
+kernels with the add/capture priority instead of the launch stream.
+`graph_kernel_node_get_priority` / `set_priority` / `copy_attributes` are
+kernel-node Get/Set/CopyAttributes. `stream_copy_attributes` is
+`cudaStreamCopyAttributes`. Device-launch is still Invalid. Decode
+identity stays default flags. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-30 — `cudaDeviceGetGraphMemAttribute`
 
 `Sim::graph_mem_get` counts live graph-mem allocs, not ordinary
