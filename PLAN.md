@@ -2784,7 +2784,17 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-262. [ ] Next numbered PLAN item after 261 is the next `gpu-sim` / Engine /
+262. [x] `CU_POINTER_ATTRIBUTE_MEMORY_BLOCK_ID`:
+    [`PointerAttr::MemoryBlockId`] is the [`MemHandleId`] of the `cuMemMap`
+    covering offset 0 (`va_map_handle` or [`va_retain_handle`](Sim::va_retain_handle)).
+    `cudaMalloc`, combined [`va_map`](Sim::va_map) without retain, unmapped
+    VMM, and maps that skip offset 0 are Invalid `"pointer attr"`. Does not
+    duplicate [`PointerAttr::BufferId`]. Query-only; Set is Invalid
+    `"pointer attr"`. Query; capture-legal. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+263. [ ] Next numbered PLAN item after 262 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

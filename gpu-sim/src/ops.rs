@@ -712,6 +712,11 @@ pub enum PointerAttr {
     /// `CU_POINTER_ATTRIBUTE_IS_HW_DECOMPRESS_CAPABLE` (always 0; compression
     /// is not modeled).
     IsHwDecompressCapable,
+    /// `CU_POINTER_ATTRIBUTE_MEMORY_BLOCK_ID`. The [`crate::MemHandleId`] of
+    /// the `cuMemMap` that covers offset 0. Combined [`crate::Sim::va_map`]
+    /// without [`crate::Sim::va_retain_handle`], `cudaMalloc`, unmapped VMM,
+    /// and maps that skip offset 0 are Invalid `"pointer attr"`.
+    MemoryBlockId,
 }
 
 /// `cudaDeviceAttr` for [`crate::Sim::device_get_attribute`].

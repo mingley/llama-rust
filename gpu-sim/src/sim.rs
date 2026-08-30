@@ -12599,7 +12599,8 @@ impl Sim {
             | PointerAttr::AllowedHandleTypes
             | PointerAttr::MappingBaseAddr
             | PointerAttr::MappingSize
-            | PointerAttr::IsHwDecompressCapable => Err(SimError::Invalid {
+            | PointerAttr::IsHwDecompressCapable
+            | PointerAttr::MemoryBlockId => Err(SimError::Invalid {
                 why: "pointer attr",
             }),
         }
@@ -12610,7 +12611,8 @@ impl Sim {
     /// attrs wrap [`Self::pointer_get_attributes`], range size, mapped host,
     /// the backing pool, device ordinal, range start, buffer id, legacy IPC /
     /// GPUDirect RDMA capability, allowed handle types, VMM mapping
-    /// base/size at offset 0, and hardware decompress (always 0).
+    /// base/size at offset 0, hardware decompress (always 0), and the VMM
+    /// memory-block id (the [`MemHandleId`] covering offset 0).
     pub fn pointer_get_attribute(
         &self,
         alloc: AllocId,
@@ -12670,6 +12672,27 @@ impl Sim {
                 why: "pointer attr",
             }),
             PointerAttr::IsHwDecompressCapable => Ok(0),
+            PointerAttr::MemoryBlockId => {
+                if !a.vmm {
+                    return Err(SimError::Invalid {
+                        why: "pointer attr",
+                    });
+                }
+                let (device, bytes) = a
+                    .vmm_maps
+                    .iter()
+                    .find(|(_, offset, _)| *offset == 0)
+                    .map(|&(d, _, n)| (d, n))
+                    .ok_or(SimError::Invalid {
+                        why: "pointer attr",
+                    })?;
+                self.vmm_handle_at
+                    .get(&(alloc, device, 0, bytes))
+                    .map(|h| h.0)
+                    .ok_or(SimError::Invalid {
+                        why: "pointer attr",
+                    })
+            }
         }
     }
 

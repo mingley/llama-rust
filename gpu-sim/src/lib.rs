@@ -228,10 +228,10 @@
 //! RangeSize / Mapped / MemPoolHandle / DeviceOrdinal / RangeStartAddr /
 //! BufferId / IsLegacyCudaIpcCapable / IsGpuDirectRdmaCapable /
 //! AllowedHandleTypes / MappingBaseAddr / MappingSize /
-//! IsHwDecompressCapable are query-only
+//! IsHwDecompressCapable / MemoryBlockId are query-only
 //! wrappers of existing pointer state; VMM mapping size is the
 //! `cuMemMap` span at offset 0, not the reserved VA; hardware decompress
-//! is always 0). Set is
+//! is always 0; memory-block id is the [`MemHandleId`] covering offset 0). Set is
 //! capture-refused; Get is a query.
 //! [`Sim::mem_get_address_range`] is `cudaMemGetAddressRange` (base is the
 //! alloc id; interior offsets are not modeled). Query; legal during capture.
@@ -8970,6 +8970,64 @@ mod tests {
             0
         );
         let _g = sim.end_capture().unwrap();
+        sim.free_sync(a).unwrap();
+    }
+
+    #[test]
+    fn pointer_get_attribute_wraps_vmm_memory_block_id() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        match sim.pointer_get_attribute(a, PointerAttr::MemoryBlockId) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pointer_set_attribute(a, PointerAttr::MemoryBlockId, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let va = sim.va_reserve(16_384).unwrap();
+        match sim.pointer_get_attribute(va, PointerAttr::MemoryBlockId) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.va_map_range(va, d, 4096, 4096).unwrap();
+        match sim.pointer_get_attribute(va, PointerAttr::MemoryBlockId) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.va_map_range(va, d, 0, 4096).unwrap();
+        match sim.pointer_get_attribute(va, PointerAttr::MemoryBlockId) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pointer attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let h = sim.va_retain_handle(va, d, 0).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(va, PointerAttr::MemoryBlockId)
+                .unwrap(),
+            h.0
+        );
+        let created = sim.va_create(d, 4096).unwrap();
+        let mapped = sim.va_reserve(4096).unwrap();
+        sim.va_map_handle(mapped, d, 0, created).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(mapped, PointerAttr::MemoryBlockId)
+                .unwrap(),
+            created.0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.pointer_get_attribute(mapped, PointerAttr::MemoryBlockId)
+                .unwrap(),
+            created.0
+        );
+        let _g = sim.end_capture().unwrap();
+        sim.va_unmap(va).unwrap();
+        sim.va_unmap(mapped).unwrap();
+        sim.va_free(va).unwrap();
+        sim.va_free(mapped).unwrap();
+        sim.va_release_handle(h).unwrap();
+        sim.va_release_handle(created).unwrap();
         sim.free_sync(a).unwrap();
     }
 
