@@ -232,6 +232,14 @@
 //! preferred cluster dimension, shared-memory carveout,
 //! device-updatable kernel node, shared-memory bank mode, and portable-cluster
 //! size mode.
+//! [`graph_kernel_node_get_attribute`](Sim::graph_kernel_node_get_attribute) /
+//! [`graph_exec_kernel_node_get_attribute`](Sim::graph_exec_kernel_node_get_attribute) /
+//! [`graph_kernel_node_set_attribute`](Sim::graph_kernel_node_set_attribute) /
+//! [`graph_exec_kernel_node_set_attribute`](Sim::graph_exec_kernel_node_set_attribute)
+//! are the generic `cudaGraphKernelNodeGetAttribute` / `SetAttribute`
+//! ([`KernelNodeAttr`]). Typed getters stay. Definition Set does not retarget
+//! exec. Attr/value mismatch is Invalid `"kernel node attr"`. Get is a query
+//! (capture-legal); Set cannot include capture.
 //! [`kernel_pdl`](Sim::kernel_pdl) is `cudaLaunchKernelEx` PDL: a wait kernel
 //! may start after the previous same-stream kernel's trigger
 //! (`GpuProfile::pdl_trigger_permille`) instead of its completion. Overlap
@@ -489,12 +497,12 @@ pub use ops::{
     DeviceProperties, FuncAttributes, GpuOp, GraphAddNode, GraphExecUpdateResult,
     GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
     GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
-    HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeParams, LaunchCompletionEvent,
-    MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
-    MemoryType, MemsetOp, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
-    StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp,
+    HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue,
+    KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr,
+    MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, Place,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
+    StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -6321,6 +6329,90 @@ mod tests {
             SimError::Invalid { why } => assert!(why.contains("capture"), "{why}"),
             e => panic!("{e:?}"),
         }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_kernel_node_get_set_attribute_dispatches_without_retargeting_exec() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(g, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        sim.graph_add_empty(g).unwrap();
+        assert_eq!(
+            sim.graph_kernel_node_get_attribute(g, 0, KernelNodeAttr::Priority)
+                .unwrap(),
+            KernelNodeAttrValue::Priority(0)
+        );
+        sim.graph_kernel_node_set_attribute(
+            g,
+            0,
+            KernelNodeAttr::Priority,
+            KernelNodeAttrValue::Priority(7),
+        )
+        .unwrap();
+        assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 7);
+        sim.graph_kernel_node_set_attribute(
+            g,
+            0,
+            KernelNodeAttr::NvlinkUtilCentric,
+            KernelNodeAttrValue::NvlinkUtilCentric(true),
+        )
+        .unwrap();
+        assert!(sim.graph_kernel_node_get_nvlink_util_centric(g, 0).unwrap());
+        match sim.graph_kernel_node_get_attribute(g, 1, KernelNodeAttr::Priority) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("not a kernel"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.graph_kernel_node_set_attribute(
+            g,
+            0,
+            KernelNodeAttr::Priority,
+            KernelNodeAttrValue::Priority(3),
+        )
+        .unwrap();
+        assert_eq!(
+            sim.graph_exec_kernel_node_get_attribute(exec, 0, KernelNodeAttr::Priority)
+                .unwrap(),
+            KernelNodeAttrValue::Priority(7)
+        );
+        sim.graph_exec_kernel_node_set_attribute(
+            exec,
+            0,
+            KernelNodeAttr::Priority,
+            KernelNodeAttrValue::Priority(1),
+        )
+        .unwrap();
+        assert_eq!(sim.graph_exec_kernel_node_get_priority(exec, 0).unwrap(), 1);
+        assert_eq!(sim.graph_kernel_node_get_priority(g, 0).unwrap(), 3);
+        match sim.graph_kernel_node_set_attribute(
+            g,
+            0,
+            KernelNodeAttr::Priority,
+            KernelNodeAttrValue::NvlinkUtilCentric(false),
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("kernel node attr"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_kernel_node_set_attribute(
+            g,
+            0,
+            KernelNodeAttr::Priority,
+            KernelNodeAttrValue::Priority(0),
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(
+            sim.graph_kernel_node_get_attribute(g, 0, KernelNodeAttr::Priority)
+                .unwrap(),
+            KernelNodeAttrValue::Priority(3)
+        );
         let _end = sim.end_capture().unwrap();
     }
 

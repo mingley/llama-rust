@@ -2137,7 +2137,18 @@ model, do not celebrate the sim.
     unchanged. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-187. [ ] Next numbered PLAN item after 186 is the next `gpu-sim` / Engine /
+187. [x] `cudaGraphKernelNodeGetAttribute` / `SetAttribute`:
+    `Sim::graph_kernel_node_get_attribute` /
+    `graph_exec_kernel_node_get_attribute` /
+    `graph_kernel_node_set_attribute` /
+    `graph_exec_kernel_node_set_attribute` dispatch [`KernelNodeAttr`] onto
+    the typed kernel-node getters/setters. Definition Set does not
+    retarget exec. Get is a query (capture-legal); Set cannot include
+    capture. Attr/value mismatch is Invalid `"kernel node attr"`. Typed
+    helpers stay. Decode identity unchanged. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+188. [ ] Next numbered PLAN item after 187 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

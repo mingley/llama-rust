@@ -944,6 +944,87 @@ pub enum StreamAttrValue {
     NvlinkUtilCentric(bool),
 }
 
+/// `cudaKernelNodeAttrID` / `cudaLaunchAttribute_t` for graph kernel nodes.
+///
+/// Typed [`crate::Sim::graph_kernel_node_get_priority`] helpers stay. This
+/// enum is `cudaGraphKernelNodeGetAttribute` / `SetAttribute`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KernelNodeAttr {
+    /// `cudaKernelNodeAttributePriority`.
+    Priority,
+    /// `cudaLaunchAttributeProgrammaticStreamSerialization`.
+    Pdl,
+    /// `cudaLaunchAttributeProgrammaticEvent`.
+    ProgrammaticEvent,
+    /// `cudaLaunchAttributeLaunchCompletionEvent`.
+    LaunchCompletion,
+    /// `cudaLaunchAttributeAccessPolicyWindow`.
+    AccessPolicy,
+    /// `cudaLaunchAttributeMemSyncDomain`.
+    MemSyncDomain,
+    /// `cudaLaunchAttributeMemSyncDomainMap`.
+    MemSyncDomainMap,
+    /// `cudaLaunchAttributeClusterDimension`.
+    Cluster,
+    /// `cudaLaunchAttributeClusterSchedulingPolicyPreference`.
+    ClusterPolicy,
+    /// `cudaLaunchAttributePreferredClusterDimension`.
+    PreferredCluster,
+    /// `cudaLaunchAttributePreferredSharedMemoryCarveout`.
+    Carveout,
+    /// `cudaLaunchAttributeDeviceUpdatableKernelNode`.
+    DeviceUpdatable,
+    /// `cudaLaunchAttributeSharedMemoryMode` (bank width).
+    SharedMem,
+    /// `cudaLaunchAttributePortableClusterSizeMode`.
+    PortableCluster,
+    /// CUDA 13 portable shared-memory mode.
+    PortableShared,
+    /// `cudaKernelNodeParams::sharedMemBytes`.
+    DynamicShared,
+    /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`.
+    NvlinkUtilCentric,
+}
+
+/// `cudaKernelNodeAttrValue` for [`crate::Sim::graph_kernel_node_get_attribute`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KernelNodeAttrValue {
+    /// [`KernelNodeAttr::Priority`].
+    Priority(i32),
+    /// [`KernelNodeAttr::Pdl`].
+    Pdl(ProgrammaticLaunch),
+    /// [`KernelNodeAttr::ProgrammaticEvent`].
+    ProgrammaticEvent(Option<ProgrammaticEvent>),
+    /// [`KernelNodeAttr::LaunchCompletion`].
+    LaunchCompletion(Option<LaunchCompletionEvent>),
+    /// [`KernelNodeAttr::AccessPolicy`].
+    AccessPolicy(Option<AccessPolicyWindow>),
+    /// [`KernelNodeAttr::MemSyncDomain`].
+    MemSyncDomain(MemSyncDomain),
+    /// [`KernelNodeAttr::MemSyncDomainMap`].
+    MemSyncDomainMap(MemSyncDomainMap),
+    /// [`KernelNodeAttr::Cluster`].
+    Cluster(Option<ClusterDim>),
+    /// [`KernelNodeAttr::ClusterPolicy`].
+    ClusterPolicy(ClusterSchedulingPolicy),
+    /// [`KernelNodeAttr::PreferredCluster`].
+    PreferredCluster(Option<ClusterDim>),
+    /// [`KernelNodeAttr::Carveout`].
+    Carveout(SharedMemCarveout),
+    /// [`KernelNodeAttr::DeviceUpdatable`].
+    DeviceUpdatable(bool),
+    /// [`KernelNodeAttr::SharedMem`].
+    SharedMem(SharedMemoryMode),
+    /// [`KernelNodeAttr::PortableCluster`].
+    PortableCluster(PortableClusterMode),
+    /// [`KernelNodeAttr::PortableShared`].
+    PortableShared(PortableSharedMode),
+    /// [`KernelNodeAttr::DynamicShared`].
+    DynamicShared(u32),
+    /// [`KernelNodeAttr::NvlinkUtilCentric`].
+    NvlinkUtilCentric(bool),
+}
+
 /// Packed `cudaLaunchKernelEx` / graph kernel-node attributes.
 ///
 /// [`crate::Sim::kernel_with`] applies these on one submit so PDL, an

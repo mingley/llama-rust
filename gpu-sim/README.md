@@ -578,6 +578,11 @@ portable-cluster size mode (`cudaLaunchAttributePortableClusterSizeMode`),
 CUDA 13 portable-shared mode (`cudaLaunchAttributeSharedMemoryMode` /
 `PortableSharedMode`), and NVLink-util-centric scheduling
 (`cudaLaunchAttributeNvlinkUtilCentricScheduling`).
+`graph_kernel_node_get_attribute` / `graph_exec_kernel_node_get_attribute` /
+`graph_kernel_node_set_attribute` / `graph_exec_kernel_node_set_attribute`
+are the generic `cudaGraphKernelNodeGetAttribute` / `SetAttribute`
+(`KernelNodeAttr`). Typed getters stay. Definition Set does not retarget
+exec. Attr/value mismatch is Invalid `"kernel node attr"`.
 `kernel_pdl` is `cudaLaunchKernelEx` PDL:
 a wait kernel may start after the previous same-stream kernel's trigger
 (`pdl_trigger_permille`) instead of its completion. Overlap needs

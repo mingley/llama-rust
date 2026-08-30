@@ -15,12 +15,12 @@ use crate::ops::{
     FuncAttributes, GpuOp as Kind, GraphAddNode, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
     GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf,
-    KernelKind, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach,
-    MemPoolAttr, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation,
-    PdlLaunch, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
-    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags,
-    WaitValueCmp,
+    KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
+    MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
+    MemoryType, MemsetOp, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
+    StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -7821,6 +7821,254 @@ impl Sim {
         self.graph_kernel_node_set_portable_shared(dst_graph, dst, ps)?;
         let nv = self.graph_kernel_node_get_nvlink_util_centric(src_graph, src)?;
         self.graph_kernel_node_set_nvlink_util_centric(dst_graph, dst, nv)
+    }
+
+    /// `cudaGraphKernelNodeGetAttribute` on the graph definition.
+    ///
+    /// Query; legal during capture. Typed getters stay. Attr/value type
+    /// mismatch is Invalid `"kernel node attr"`.
+    pub fn graph_kernel_node_get_attribute(
+        &self,
+        graph: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+    ) -> Result<KernelNodeAttrValue, SimError> {
+        self.kernel_node_attribute(graph, node, attr, false)
+    }
+
+    /// `cudaGraphExecKernelNodeGetAttribute` on the exec snapshot.
+    ///
+    /// Query; legal during capture. Uninstantiated exec is Invalid.
+    pub fn graph_exec_kernel_node_get_attribute(
+        &self,
+        exec: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+    ) -> Result<KernelNodeAttrValue, SimError> {
+        self.kernel_node_attribute(exec, node, attr, true)
+    }
+
+    fn kernel_node_attribute(
+        &self,
+        graph: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+        exec: bool,
+    ) -> Result<KernelNodeAttrValue, SimError> {
+        Ok(match attr {
+            KernelNodeAttr::Priority => {
+                KernelNodeAttrValue::Priority(self.kernel_node_priority(graph, node, exec)?)
+            }
+            KernelNodeAttr::Pdl => {
+                KernelNodeAttrValue::Pdl(self.kernel_node_pdl(graph, node, exec)?)
+            }
+            KernelNodeAttr::ProgrammaticEvent => KernelNodeAttrValue::ProgrammaticEvent(
+                self.kernel_node_programmatic_event(graph, node, exec)?,
+            ),
+            KernelNodeAttr::LaunchCompletion => KernelNodeAttrValue::LaunchCompletion(
+                self.kernel_node_launch_completion(graph, node, exec)?,
+            ),
+            KernelNodeAttr::AccessPolicy => KernelNodeAttrValue::AccessPolicy(
+                self.kernel_node_access_policy(graph, node, exec)?,
+            ),
+            KernelNodeAttr::MemSyncDomain => {
+                KernelNodeAttrValue::MemSyncDomain(self.kernel_node_mem_sync(graph, node, exec)?.0)
+            }
+            KernelNodeAttr::MemSyncDomainMap => KernelNodeAttrValue::MemSyncDomainMap(
+                self.kernel_node_mem_sync(graph, node, exec)?.1,
+            ),
+            KernelNodeAttr::Cluster => {
+                KernelNodeAttrValue::Cluster(self.kernel_node_cluster(graph, node, exec)?)
+            }
+            KernelNodeAttr::ClusterPolicy => KernelNodeAttrValue::ClusterPolicy(
+                self.kernel_node_cluster_policy(graph, node, exec)?,
+            ),
+            KernelNodeAttr::PreferredCluster => KernelNodeAttrValue::PreferredCluster(
+                self.kernel_node_preferred_cluster(graph, node, exec)?,
+            ),
+            KernelNodeAttr::Carveout => {
+                KernelNodeAttrValue::Carveout(self.kernel_node_carveout(graph, node, exec)?)
+            }
+            KernelNodeAttr::DeviceUpdatable => KernelNodeAttrValue::DeviceUpdatable(
+                self.kernel_node_device_updatable(graph, node, exec)?,
+            ),
+            KernelNodeAttr::SharedMem => {
+                KernelNodeAttrValue::SharedMem(self.kernel_node_shared_mem(graph, node, exec)?)
+            }
+            KernelNodeAttr::PortableCluster => KernelNodeAttrValue::PortableCluster(
+                self.kernel_node_portable_cluster(graph, node, exec)?,
+            ),
+            KernelNodeAttr::PortableShared => KernelNodeAttrValue::PortableShared(
+                self.kernel_node_portable_shared(graph, node, exec)?,
+            ),
+            KernelNodeAttr::DynamicShared => KernelNodeAttrValue::DynamicShared(
+                self.kernel_node_dynamic_shared(graph, node, exec)?,
+            ),
+            KernelNodeAttr::NvlinkUtilCentric => KernelNodeAttrValue::NvlinkUtilCentric(
+                self.kernel_node_nvlink_util_centric(graph, node, exec)?,
+            ),
+        })
+    }
+
+    /// `cudaGraphKernelNodeSetAttribute` on the graph definition.
+    ///
+    /// Dispatches to the typed setters. After instantiate this does not
+    /// retarget the exec; use [`Self::graph_exec_kernel_node_set_attribute`].
+    /// Capture cannot include it. Attr/value type mismatch is Invalid
+    /// `"kernel node attr"`.
+    pub fn graph_kernel_node_set_attribute(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+        value: KernelNodeAttrValue,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_attribute(graph, node, attr, value, false)
+    }
+
+    /// `cudaGraphExecKernelNodeSetAttribute` on the exec snapshot.
+    pub fn graph_exec_kernel_node_set_attribute(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+        value: KernelNodeAttrValue,
+    ) -> Result<(), SimError> {
+        self.set_kernel_node_attribute(exec, node, attr, value, true)
+    }
+
+    fn set_kernel_node_attribute(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        attr: KernelNodeAttr,
+        value: KernelNodeAttrValue,
+        exec: bool,
+    ) -> Result<(), SimError> {
+        match (attr, value) {
+            (KernelNodeAttr::Priority, KernelNodeAttrValue::Priority(p)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_priority(graph, node, p)
+                } else {
+                    self.graph_kernel_node_set_priority(graph, node, p)
+                }
+            }
+            (KernelNodeAttr::Pdl, KernelNodeAttrValue::Pdl(pdl)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_pdl(graph, node, pdl)
+                } else {
+                    self.graph_kernel_node_set_pdl(graph, node, pdl)
+                }
+            }
+            (KernelNodeAttr::ProgrammaticEvent, KernelNodeAttrValue::ProgrammaticEvent(ev)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_programmatic_event(graph, node, ev)
+                } else {
+                    self.graph_kernel_node_set_programmatic_event(graph, node, ev)
+                }
+            }
+            (KernelNodeAttr::LaunchCompletion, KernelNodeAttrValue::LaunchCompletion(ev)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_launch_completion(graph, node, ev)
+                } else {
+                    self.graph_kernel_node_set_launch_completion(graph, node, ev)
+                }
+            }
+            (KernelNodeAttr::AccessPolicy, KernelNodeAttrValue::AccessPolicy(w)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_access_policy(graph, node, w)
+                } else {
+                    self.graph_kernel_node_set_access_policy(graph, node, w)
+                }
+            }
+            (KernelNodeAttr::MemSyncDomain, KernelNodeAttrValue::MemSyncDomain(d)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_mem_sync_domain(graph, node, d)
+                } else {
+                    self.graph_kernel_node_set_mem_sync_domain(graph, node, d)
+                }
+            }
+            (KernelNodeAttr::MemSyncDomainMap, KernelNodeAttrValue::MemSyncDomainMap(m)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_mem_sync_domain_map(graph, node, m)
+                } else {
+                    self.graph_kernel_node_set_mem_sync_domain_map(graph, node, m)
+                }
+            }
+            (KernelNodeAttr::Cluster, KernelNodeAttrValue::Cluster(c)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_cluster(graph, node, c)
+                } else {
+                    self.graph_kernel_node_set_cluster(graph, node, c)
+                }
+            }
+            (KernelNodeAttr::ClusterPolicy, KernelNodeAttrValue::ClusterPolicy(p)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_cluster_policy(graph, node, p)
+                } else {
+                    self.graph_kernel_node_set_cluster_policy(graph, node, p)
+                }
+            }
+            (KernelNodeAttr::PreferredCluster, KernelNodeAttrValue::PreferredCluster(c)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_preferred_cluster(graph, node, c)
+                } else {
+                    self.graph_kernel_node_set_preferred_cluster(graph, node, c)
+                }
+            }
+            (KernelNodeAttr::Carveout, KernelNodeAttrValue::Carveout(c)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_carveout(graph, node, c)
+                } else {
+                    self.graph_kernel_node_set_carveout(graph, node, c)
+                }
+            }
+            (KernelNodeAttr::DeviceUpdatable, KernelNodeAttrValue::DeviceUpdatable(yes)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_device_updatable(graph, node, yes)
+                } else {
+                    self.graph_kernel_node_set_device_updatable(graph, node, yes)
+                }
+            }
+            (KernelNodeAttr::SharedMem, KernelNodeAttrValue::SharedMem(m)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_shared_mem(graph, node, m)
+                } else {
+                    self.graph_kernel_node_set_shared_mem(graph, node, m)
+                }
+            }
+            (KernelNodeAttr::PortableCluster, KernelNodeAttrValue::PortableCluster(m)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_portable_cluster(graph, node, m)
+                } else {
+                    self.graph_kernel_node_set_portable_cluster(graph, node, m)
+                }
+            }
+            (KernelNodeAttr::PortableShared, KernelNodeAttrValue::PortableShared(m)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_portable_shared(graph, node, m)
+                } else {
+                    self.graph_kernel_node_set_portable_shared(graph, node, m)
+                }
+            }
+            (KernelNodeAttr::DynamicShared, KernelNodeAttrValue::DynamicShared(n)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_dynamic_shared(graph, node, n)
+                } else {
+                    self.graph_kernel_node_set_dynamic_shared(graph, node, n)
+                }
+            }
+            (KernelNodeAttr::NvlinkUtilCentric, KernelNodeAttrValue::NvlinkUtilCentric(yes)) => {
+                if exec {
+                    self.graph_exec_kernel_node_set_nvlink_util_centric(graph, node, yes)
+                } else {
+                    self.graph_kernel_node_set_nvlink_util_centric(graph, node, yes)
+                }
+            }
+            _ => Err(SimError::Invalid {
+                why: "kernel node attr",
+            }),
+        }
     }
 
     /// `cudaGraphNodeFindInClone`: index in `cloned` of the node that was `node`
