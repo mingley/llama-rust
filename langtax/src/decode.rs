@@ -45,7 +45,12 @@
 //! attn/final tanh logit softcap.
 //! Official Gemma3 (`architecture=gemma3`) follows `src/models/gemma3.cpp`:
 //! Gemma2 post-norms + GeGLU, QK-Norm before RoPE, no attn softcap, optional
-//! final tanh softcap, SWA default period 6. `gemma3n` stays rejected.
+//! final tanh softcap, SWA default period 6.
+//! Official Gemma3n (`architecture=gemma3n`) follows `src/models/gemma3n.cpp`:
+//! Gemma3 QK-Norm + post-norms + GeGLU, attention scale `1.0`, unweighted
+//! RMSNorm on V, SWA period 5, required sliding window, final tanh softcap
+//! (default 30), AltUp (4 streams) + Laurel + per-layer inputs, gaussian_topk
+//! on the first 10 layers. `gemma4` stays rejected.
 
 use crate::gguf::{load_gguf_owned, GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 pub use crate::kv_page::PagedKvPool;
@@ -188,6 +193,22 @@ const GEMMA2_TINY_N_SWA: u32 = 2;
 const GEMMA2_SWA_PERIOD_DEFAULT: u32 = 2;
 /// Official gemma3.cpp `set_swa_pattern` default period.
 const GEMMA3_SWA_PERIOD_DEFAULT: u32 = 6;
+/// Official gemma3n.cpp `get_key_or_arr` default `swa_period`.
+const GEMMA3N_SWA_PERIOD_DEFAULT: u32 = 5;
+/// Official `llama_hparams::n_altup` / convert `altup_num_inputs`.
+const GEMMA3N_N_ALTUP: usize = 4;
+/// Official `llama_hparams::i_altup_act` / convert `altup_active_idx`.
+const GEMMA3N_I_ALTUP_ACT: usize = 0;
+/// Official `llama_hparams::laurel_rank`.
+const GEMMA3N_LAUREL_RANK: usize = 64;
+/// Official `llama_hparams::n_embd_altup` (equals [`TINY_N_EMBD`] on the writer-tiny).
+const GEMMA3N_N_EMBD_ALTUP: usize = 256;
+/// Official `models.h` `n_layer_sparsity` (not a GGUF KV).
+const GEMMA3N_N_LAYER_SPARSITY: usize = 10;
+/// Official `models.h` `f_sparsity_std_mul` = `Normal(0,1).icdf(0.95)`.
+const GEMMA3N_SPARSITY_STD_MUL: f32 = 1.644_853_353_500_366_2;
+/// Official gemma3n.cpp `n_layer_kv_from_start` (convert `attention.shared_kv_layers`).
+const GEMMA3N_N_LAYER_KV_FROM_START: u32 = 20;
 
 /// Decode / load failure.
 #[derive(Debug)]
@@ -441,9 +462,9 @@ struct Layer {
     wo: QuantMat,
     /// Official phi2 / bloom `blk.{i}.attn_output.bias` (required, flag 0).
     wo_b: Option<Vec<f32>>,
-    /// Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 / Gemma3 `blk.{i}.attn_q_norm` (RMSNorm on Q after projection, before RoPE).
+    /// Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 / Gemma3 / Gemma3n `blk.{i}.attn_q_norm` (RMSNorm on Q after projection, before RoPE).
     attn_q_norm: Option<Vec<f32>>,
-    /// Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 / Gemma3 `blk.{i}.attn_k_norm` (RMSNorm on K after projection, before RoPE).
+    /// Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 / Gemma3 / Gemma3n `blk.{i}.attn_k_norm` (RMSNorm on K after projection, before RoPE).
     attn_k_norm: Option<Vec<f32>>,
     /// Official Qwen3Next / Qwen35: `attn_q` is query+gate (`n_embd_head * n_head * 2`).
     attn_q_gate: bool,
@@ -454,11 +475,41 @@ struct Layer {
     ffn_norm: Vec<f32>,
     /// Official bloom `blk.{i}.ffn_norm.bias` (`LLM_NORM`). Phi2 has no `ffn_norm`.
     ffn_norm_b: Option<Vec<f32>>,
-    /// Official gemma2 / gemma3 `blk.{i}.post_attention_norm` (RMSNorm on attn out before residual).
+    /// Official gemma2 / gemma3 / gemma3n `blk.{i}.post_attention_norm` (RMSNorm on attn out before residual).
     attn_post_norm: Option<Vec<f32>>,
-    /// Official gemma2 / gemma3 `blk.{i}.post_ffw_norm` (RMSNorm on FFN out before residual).
+    /// Official gemma2 / gemma3 / gemma3n `blk.{i}.post_ffw_norm` (RMSNorm on FFN out before residual).
     ffn_post_norm: Option<Vec<f32>>,
     ffn: LayerFfn,
+    /// Official gemma3n AltUp / Laurel / per-layer input tensors.
+    gemma3n: Option<Gemma3nLayer>,
+}
+
+/// Official gemma3n.cpp per-layer AltUp, Laurel, and per-layer input weights.
+struct Gemma3nLayer {
+    inp_gate: QuantMat,
+    proj: QuantMat,
+    post_norm: Vec<f32>,
+    altup_correct_coef: QuantMat,
+    altup_correct_scale: Vec<f32>,
+    altup_predict_coef: QuantMat,
+    altup_router: QuantMat,
+    altup_router_norm: Vec<f32>,
+    laurel_l: QuantMat,
+    laurel_r: QuantMat,
+    laurel_post_norm: Vec<f32>,
+}
+
+/// Official gemma3n.cpp model-level AltUp / per-layer embedding tensors.
+struct Gemma3nWeights {
+    altup_proj: QuantMat,
+    altup_unembd_proj: QuantMat,
+    per_layer_token_embd: QuantMat,
+    per_layer_model_proj: QuantMat,
+    per_layer_proj_norm: Vec<f32>,
+    n_altup: usize,
+    i_altup_act: usize,
+    n_embd_altup: usize,
+    n_layer_sparsity: usize,
 }
 
 /// Loaded Llama-family weights. Quantized matrices are ranges of one file blob.
@@ -510,6 +561,8 @@ pub struct Llama {
     n_swa: usize,
     /// Official gemma2 `set_swa_pattern` period (default 2; `0` means every layer).
     swa_period: u32,
+    /// Official `architecture=gemma3n` AltUp / Laurel / per-layer embeddings.
+    gemma3n: Option<Gemma3nWeights>,
     layers: Vec<Layer>,
 }
 
@@ -1121,6 +1174,29 @@ struct Scratch {
     /// Returned logits, `n_vocab`.
     logits: Vec<f32>,
     moe: MoeScratch,
+    /// Official gemma3n AltUp / Laurel / per-layer working buffers.
+    g3n: Gemma3nScratch,
+}
+
+/// Working buffers for official gemma3n.cpp AltUp, Laurel, and per-layer inputs.
+#[derive(Default)]
+struct Gemma3nScratch {
+    /// Stacked residual streams, `n_altup * n_tokens * n_embd`.
+    streams: Vec<f32>,
+    /// AltUp predictions, same layout as `streams`.
+    pred: Vec<f32>,
+    /// Per-layer inputs, token-major `[token][layer][n_embd_altup]`.
+    per_layer: Vec<f32>,
+    /// Laurel residual, `n_tokens * n_embd`.
+    laurel: Vec<f32>,
+    /// Router modalities, `n_tokens * n_altup`.
+    router: Vec<f32>,
+    /// Predict mix coefficients, `n_tokens * n_altup * n_altup`.
+    coefs: Vec<f32>,
+    /// Attn+Laurel / extra-stream / first-prediction workspace, `n_tokens * n_embd`.
+    tmp: Vec<f32>,
+    /// One per-layer token embedding row, `n_embd_altup * n_layer`.
+    per_tok: Vec<f32>,
 }
 
 /// Working buffers for MoE expert FFNs (Llama4 and the other official walks).
@@ -1172,6 +1248,14 @@ impl Scratch {
             &self.scores,
             &self.xn,
             &self.logits,
+            &self.g3n.streams,
+            &self.g3n.pred,
+            &self.g3n.per_layer,
+            &self.g3n.laurel,
+            &self.g3n.router,
+            &self.g3n.coefs,
+            &self.g3n.tmp,
+            &self.g3n.per_tok,
             &self.moe.logits,
             &self.moe.weights,
             &self.moe.shexp_gate,
@@ -1402,9 +1486,30 @@ fn copy_buf(dst: &mut Vec<f32>, src: &[f32]) {
     dst.extend_from_slice(src);
 }
 
+/// Size official gemma3n AltUp / Laurel / per-layer scratch for `n` tokens.
+fn gemma3n_fit(s: &mut Scratch, w: &Gemma3nWeights, n: usize, n_embd: usize, n_layer: usize) {
+    let width = n.saturating_mul(n_embd);
+    let n_altup = w.n_altup;
+    let n_ea = w.n_embd_altup;
+    let stacked = n_altup.saturating_mul(width);
+    let pl = n.saturating_mul(n_ea.saturating_mul(n_layer));
+    let tmp_w = n_embd.max(n_ea.saturating_mul(n_layer));
+    fit(&mut s.g3n.streams, stacked);
+    fit(&mut s.g3n.pred, stacked);
+    fit(&mut s.g3n.per_layer, pl);
+    fit(&mut s.g3n.laurel, width);
+    fit(&mut s.g3n.router, n.saturating_mul(n_altup));
+    fit(
+        &mut s.g3n.coefs,
+        n.saturating_mul(n_altup.saturating_mul(n_altup)),
+    );
+    fit(&mut s.g3n.tmp, n.saturating_mul(tmp_w));
+    fit(&mut s.g3n.per_tok, n_ea.saturating_mul(n_layer));
+}
+
 impl Llama {
     /// Build from a loaded GGUF using `{arch}.*` KV (`llama`, `qwen2`, `mistral`,
-    /// `phi3`, `gemma`, `gemma2`, `gemma3`, `qwen3`, `llama4`, `qwen2moe`, `qwen3moe`, `qwen2vl`,
+    /// `phi3`, `gemma`, `gemma2`, `gemma3`, `gemma3n`, `qwen3`, `llama4`, `qwen2moe`, `qwen3moe`, `qwen2vl`,
     /// `qwen3vl`, `qwen3next`, `qwen35`, `phi2`, or `bloom`) and `blk.{i}.*` tensor names. Official llama
     /// MoE is still `architecture=llama` with `n_expert>0`. Official Qwen2VL is
     /// Qwen2 plus m-RoPE (`LLAMA_ROPE_TYPE_MROPE`). Official Qwen3VL is Qwen3
@@ -1416,7 +1521,10 @@ impl Llama {
     /// `token_embd_norm` + fused QKV + ALiBi + sequential GELU FFN. Official
     /// Gemma2 is Gemma embed-scale + GeGLU plus post-norms, SWA, and tanh
     /// softcap. Official Gemma3 is Gemma2 post-norms + GeGLU plus QK-Norm,
-    /// no attn softcap, optional final softcap (`gemma3n` stays rejected).
+    /// no attn softcap, optional final softcap. Official Gemma3n is Gemma3
+    /// plus attention scale `1.0`, unweighted V RMSNorm, AltUp, Laurel,
+    /// per-layer inputs, gaussian_topk, SWA period 5, and final softcap 30
+    /// (`gemma4` stays rejected).
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
     /// blob; they do not clone tensor bytes. When `output.weight` is absent,
@@ -1463,10 +1571,11 @@ impl Llama {
         let bloom = arch == "bloom";
         let gemma2 = arch == "gemma2";
         let gemma3 = arch == "gemma3";
+        let gemma3n = arch == "gemma3n";
         let rms_eps = if phi2 || bloom {
             require_f32(&g, arch, "attention.layer_norm_epsilon")?
-        } else if gemma2 || gemma3 {
-            // Official gemma2.cpp / gemma3.cpp `get_key` without `false`: required.
+        } else if gemma2 || gemma3 || gemma3n {
+            // Official gemma2.cpp / gemma3.cpp / gemma3n.cpp `get_key` without `false`.
             require_f32(&g, arch, "attention.layer_norm_rms_epsilon")?
         } else {
             arch_f32(&g, arch, "attention.layer_norm_rms_epsilon").unwrap_or(1e-5)
@@ -1474,7 +1583,8 @@ impl Llama {
         // Official gemma2.cpp: convert always writes softcap / SWA; require so a
         // writer-tiny cannot silently drop them. Official gemma3.cpp: attn
         // softcap is gone; SWA is optional (`n_swa==0` is `LLAMA_SWA_TYPE_NONE`);
-        // final softcap defaults to 0.
+        // final softcap defaults to 0. Official gemma3n.cpp: SWA is required;
+        // final softcap defaults to 30; attn scale is 1.0 (not a KV).
         let (attn_logit_softcapping, final_logit_softcapping, n_swa, swa_period) = if gemma2 {
             (
                 require_f32(&g, arch, "attn_logit_softcapping")?,
@@ -1492,6 +1602,15 @@ impl Llama {
                 g.kv_u32(&arch_key(arch, "attention.sliding_window_pattern"))
                     .unwrap_or(GEMMA3_SWA_PERIOD_DEFAULT),
             )
+        } else if gemma3n {
+            (
+                0.0,
+                arch_f32(&g, arch, "final_logit_softcapping")
+                    .unwrap_or(GEMMA2_FINAL_LOGIT_SOFTCAPPING),
+                require_usize(&g, arch, "attention.sliding_window")?,
+                g.kv_u32(&arch_key(arch, "attention.sliding_window_pattern"))
+                    .unwrap_or(GEMMA3N_SWA_PERIOD_DEFAULT),
+            )
         } else {
             (0.0, 0.0, 0, 0)
         };
@@ -1508,7 +1627,7 @@ impl Llama {
             .map(|t| t.n_rows())
             .ok_or_else(|| LlamaError::Tensor("token_embd.weight".into()))?;
         let rope_base = arch_f32(&g, arch, "rope.freq_base").unwrap_or(10_000.0);
-        let gemma = arch == "gemma" || gemma2 || gemma3;
+        let gemma = arch == "gemma" || gemma2 || gemma3 || gemma3n;
         let n_embd_f = f32::from(u16::try_from(n_embd).unwrap_or(1));
         let embed_scale = if gemma { n_embd_f.sqrt() } else { 1.0 };
         let token_embd = quant_mat(need(&g, "token_embd.weight")?)?;
@@ -1542,7 +1661,8 @@ impl Llama {
             || arch == "qwen3vl"
             || arch == "qwen3next"
             || arch == "qwen35"
-            || gemma3;
+            || gemma3
+            || gemma3n;
         let llama4 = arch == "llama4";
         let llama4_hparams = if llama4 {
             Some(load_llama4_hparams(&g, arch, n_layer)?)
@@ -1570,6 +1690,7 @@ impl Llama {
             bloom,
             gemma2,
             gemma3,
+            gemma3n,
             llama4: llama4_hparams.as_ref(),
             llama_moe: llama_moe_hparams.as_ref(),
             qwen2moe: qwen2moe_hparams.as_ref(),
@@ -1581,6 +1702,11 @@ impl Llama {
         for i in 0..n_layer {
             layers.push(load_layer(&g, i, &layer_h)?);
         }
+        let gemma3n = if gemma3n {
+            Some(load_gemma3n_weights(&g, n_embd, n_layer, n_vocab)?)
+        } else {
+            None
+        };
         Ok(Self {
             n_vocab,
             n_embd,
@@ -1608,6 +1734,7 @@ impl Llama {
             final_logit_softcapping,
             n_swa,
             swa_period,
+            gemma3n,
             layers,
         })
     }
@@ -2061,6 +2188,9 @@ impl Llama {
         pos: &[usize],
         logits: LogitsKind,
     ) -> Result<(), LlamaError> {
+        if self.gemma3n.is_some() {
+            return self.transformer_gemma3n(run, addrs, pos, logits);
+        }
         let TransformerRun {
             s,
             pool,
@@ -2341,6 +2471,515 @@ impl Llama {
             }
         }
         Ok(())
+    }
+
+    /// Official gemma3n.cpp language walk: AltUp + Laurel + per-layer inputs.
+    fn transformer_gemma3n(
+        &self,
+        run: &mut TransformerRun<'_>,
+        addrs: &[KvAddr],
+        pos: &[usize],
+        logits: LogitsKind,
+    ) -> Result<(), LlamaError> {
+        let Some(w) = self.gemma3n.as_ref() else {
+            return Err(LlamaError::Shape("gemma3n".into()));
+        };
+        let n = run.n;
+        gemma3n_fit(run.s, w, n, self.n_embd, self.layers.len());
+        self.gemma3n_init_streams(w, n, run.s, run.pool)?;
+        self.gemma3n_project_per_layer(w, n, run)?;
+        for (li, layer) in self.layers.iter().enumerate() {
+            run.moe_trace.layer = u32::try_from(li).unwrap_or(u32::MAX);
+            let Some(gl) = layer.gemma3n.as_ref() else {
+                return Err(LlamaError::Shape("gemma3n layer".into()));
+            };
+            self.gemma3n_altup_predict(w, gl, n, run.s, run.pool)?;
+            let active = altup_stream(&run.s.g3n.pred, w.i_altup_act, n, self.n_embd)?;
+            copy_buf(&mut run.s.x, active);
+            copy_buf(&mut run.s.residual, &run.s.x);
+            rmsnorm_rows_inplace(&mut run.s.x, self.n_embd, &layer.attn_norm, self.rms_eps)?;
+            self.gemma3n_laurel(gl, n, run.s, run.pool)?;
+            self.gemma3n_layer_attn(layer, li, run, addrs, pos)?;
+            if let Some(pn) = layer.attn_post_norm.as_deref() {
+                rmsnorm_rows_inplace(&mut run.s.attn_proj, self.n_embd, pn, self.rms_eps)?;
+            }
+            add_into(&mut run.s.g3n.tmp, &run.s.attn_proj, &run.s.residual)?;
+            add_into(&mut run.s.x, &run.s.g3n.tmp, &run.s.g3n.laurel)?;
+            let inv_sqrt2 = 1.0 / 2.0f32.sqrt();
+            for v in run.s.x.iter_mut() {
+                *v *= inv_sqrt2;
+            }
+            copy_buf(&mut run.s.g3n.tmp, &run.s.x);
+            rmsnorm_rows_inplace(&mut run.s.x, self.n_embd, &layer.ffn_norm, self.rms_eps)?;
+            match &layer.ffn {
+                LayerFfn::Dense(dense) => {
+                    self.gemm_into(&dense.gate, n, &run.s.x, &mut run.s.gate, run.pool)?;
+                    self.gemm_into(&dense.up, n, &run.s.x, &mut run.s.up, run.pool)?;
+                    if li < w.n_layer_sparsity {
+                        gaussian_topk_inplace(&mut run.s.gate, dense.gate.n_rows)?;
+                    }
+                    ffn_gate_act_inplace(&mut run.s.gate, self.ffn_gelu);
+                    for (hv, uv) in run.s.gate.iter_mut().zip(run.s.up.iter()) {
+                        *hv *= *uv;
+                    }
+                    self.gemm_into(&dense.down, n, &run.s.gate, &mut run.s.ffn_out, run.pool)?;
+                }
+                _ => return Err(LlamaError::Shape("gemma3n ffn".into())),
+            }
+            if let Some(pn) = layer.ffn_post_norm.as_deref() {
+                rmsnorm_rows_inplace(&mut run.s.ffn_out, self.n_embd, pn, self.rms_eps)?;
+            }
+            add_into(&mut run.s.x, &run.s.ffn_out, &run.s.g3n.tmp)?;
+            self.gemma3n_altup_correct(w, gl, n, run.s, run.pool)?;
+            self.gemma3n_per_layer_inject(w, gl, li, n, run.s, run.pool)?;
+            copy_buf(&mut run.s.g3n.streams, &run.s.g3n.pred);
+        }
+        self.gemma3n_unembed(w, n, run.s, run.pool)?;
+        self.gemma3n_logits(n, run.s, run.pool, logits)
+    }
+
+    fn gemma3n_init_streams(
+        &self,
+        w: &Gemma3nWeights,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        let width = n.saturating_mul(self.n_embd);
+        let Some(first) = s.g3n.streams.get_mut(..width) else {
+            return Err(LlamaError::Shape("gemma3n streams".into()));
+        };
+        first.copy_from_slice(&s.x);
+        for p in 0..w.n_altup.saturating_sub(1) {
+            self.gemm_part_tokens_into(&w.altup_proj, p, n, &s.x, &mut s.g3n.tmp, pool)?;
+            scale_rows_to_match(&s.x, &mut s.g3n.tmp, self.n_embd)?;
+            let dst = altup_stream_mut(&mut s.g3n.streams, p.saturating_add(1), n, self.n_embd)?;
+            dst.copy_from_slice(&s.g3n.tmp);
+        }
+        Ok(())
+    }
+
+    fn gemma3n_project_per_layer(
+        &self,
+        w: &Gemma3nWeights,
+        n: usize,
+        run: &mut TransformerRun<'_>,
+    ) -> Result<(), LlamaError> {
+        let n_ea = w.n_embd_altup;
+        let n_layer = self.layers.len();
+        let pl_cols = n_ea
+            .checked_mul(n_layer)
+            .ok_or_else(|| LlamaError::Shape("gemma3n per_layer".into()))?;
+        if run.moe_trace.batch.len() != n {
+            return Err(LlamaError::Shape("gemma3n tokens".into()));
+        }
+        let tok_scale = f32::from(u16::try_from(n_ea).unwrap_or(1)).sqrt();
+        let n_embd_f = f32::from(u16::try_from(self.n_embd).unwrap_or(1));
+        let proj_scale = if n_embd_f > 0.0 {
+            1.0 / n_embd_f.sqrt()
+        } else {
+            0.0
+        };
+        let mix_scale = 1.0 / 2.0f32.sqrt();
+        for t in 0..n {
+            let tok = *run
+                .moe_trace
+                .batch
+                .get(t)
+                .ok_or_else(|| LlamaError::Shape("gemma3n tokens".into()))?;
+            self.embed_mat_into(&w.per_layer_token_embd, tok, &mut run.s.g3n.per_tok)?;
+            for v in run.s.g3n.per_tok.iter_mut() {
+                *v *= tok_scale;
+            }
+            let off = t.saturating_mul(pl_cols);
+            let dst = run
+                .s
+                .g3n
+                .per_layer
+                .get_mut(off..off.saturating_add(pl_cols))
+                .ok_or_else(|| LlamaError::Shape("gemma3n per_layer".into()))?;
+            dst.copy_from_slice(&run.s.g3n.per_tok);
+        }
+        self.gemm_into(
+            &w.per_layer_model_proj,
+            n,
+            &run.s.x,
+            &mut run.s.g3n.tmp,
+            run.pool,
+        )?;
+        for v in run.s.g3n.tmp.iter_mut() {
+            *v *= proj_scale;
+        }
+        rmsnorm_rows_inplace(
+            &mut run.s.g3n.tmp,
+            n_ea,
+            &w.per_layer_proj_norm,
+            self.rms_eps,
+        )?;
+        if run.s.g3n.tmp.len() != run.s.g3n.per_layer.len() {
+            return Err(LlamaError::Shape("gemma3n per_layer".into()));
+        }
+        for (pl, pv) in run.s.g3n.per_layer.iter_mut().zip(run.s.g3n.tmp.iter()) {
+            *pl = (*pl + *pv) * mix_scale;
+        }
+        Ok(())
+    }
+
+    fn gemma3n_altup_predict(
+        &self,
+        w: &Gemma3nWeights,
+        gl: &Gemma3nLayer,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        let active = altup_stream(&s.g3n.streams, w.i_altup_act, n, self.n_embd)?;
+        copy_buf(&mut s.g3n.tmp, active);
+        self.gemma3n_router(gl, n, s, pool)?;
+        self.gemm_into(
+            &gl.altup_predict_coef,
+            n,
+            &s.g3n.router,
+            &mut s.g3n.coefs,
+            pool,
+        )?;
+        let n_altup = w.n_altup;
+        let n_embd = self.n_embd;
+        let nsq = n_altup.saturating_mul(n_altup);
+        for t in 0..n {
+            let coef_off = t.saturating_mul(nsq);
+            for i in 0..n_altup {
+                {
+                    let residual = altup_token(&s.g3n.streams, i, t, n, n_embd)?;
+                    let pred = altup_token_mut(&mut s.g3n.pred, i, t, n, n_embd)?;
+                    pred.copy_from_slice(residual);
+                }
+                for j in 0..n_altup {
+                    let c = *s
+                        .g3n
+                        .coefs
+                        .get(coef_off.saturating_add(j.saturating_add(i.saturating_mul(n_altup))))
+                        .ok_or_else(|| LlamaError::Shape("gemma3n predict coef".into()))?;
+                    let src = altup_token(&s.g3n.streams, j, t, n, n_embd)?;
+                    let pred = altup_token_mut(&mut s.g3n.pred, i, t, n, n_embd)?;
+                    for (d, sv) in pred.iter_mut().zip(src.iter()) {
+                        *d += c * *sv;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn gemma3n_altup_correct(
+        &self,
+        w: &Gemma3nWeights,
+        gl: &Gemma3nLayer,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        copy_buf(&mut s.g3n.tmp, &s.x);
+        self.gemma3n_router(gl, n, s, pool)?;
+        self.gemm_into(
+            &gl.altup_correct_coef,
+            n,
+            &s.g3n.router,
+            &mut s.g3n.coefs,
+            pool,
+        )?;
+        for c in s.g3n.coefs.iter_mut() {
+            *c += 1.0;
+        }
+        let n_altup = w.n_altup;
+        let n_embd = self.n_embd;
+        fit(&mut s.attn, n.saturating_mul(n_embd));
+        for t in 0..n {
+            let activated = token_row(&s.g3n.tmp, t, n_embd, "gemma3n correct")?;
+            let active_pred = altup_token(&s.g3n.pred, w.i_altup_act, t, n, n_embd)?;
+            let inn = token_row_mut(&mut s.attn, t, n_embd, "gemma3n innov")?;
+            for (d, (av, pv)) in inn.iter_mut().zip(activated.iter().zip(active_pred.iter())) {
+                *d = *av - *pv;
+            }
+        }
+        for t in 0..n {
+            let coef_off = t.saturating_mul(n_altup);
+            for i in 0..n_altup {
+                let c = *s
+                    .g3n
+                    .coefs
+                    .get(coef_off.saturating_add(i))
+                    .ok_or_else(|| LlamaError::Shape("gemma3n correct coef".into()))?;
+                let inn = token_row(&s.attn, t, n_embd, "gemma3n innov")?;
+                let pred = altup_token_mut(&mut s.g3n.pred, i, t, n, n_embd)?;
+                for (d, iv) in pred.iter_mut().zip(inn.iter()) {
+                    *d += c * *iv;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn gemma3n_router(
+        &self,
+        gl: &Gemma3nLayer,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        copy_buf(&mut s.x, &s.g3n.tmp);
+        rmsnorm_rows_inplace(&mut s.x, self.n_embd, &gl.altup_router_norm, self.rms_eps)?;
+        let n_embd_f = f32::from(u16::try_from(self.n_embd).unwrap_or(1));
+        let inv = if n_embd_f > 0.0 { 1.0 / n_embd_f } else { 0.0 };
+        for v in s.x.iter_mut() {
+            *v *= inv;
+        }
+        self.gemm_into(&gl.altup_router, n, &s.x, &mut s.g3n.router, pool)?;
+        for v in s.g3n.router.iter_mut() {
+            *v = v.tanh();
+        }
+        Ok(())
+    }
+
+    fn gemma3n_laurel(
+        &self,
+        gl: &Gemma3nLayer,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        self.gemm_into(&gl.laurel_l, n, &s.x, &mut s.gate, pool)?;
+        self.gemm_into(&gl.laurel_r, n, &s.gate, &mut s.g3n.laurel, pool)?;
+        rmsnorm_rows_inplace(
+            &mut s.g3n.laurel,
+            self.n_embd,
+            &gl.laurel_post_norm,
+            self.rms_eps,
+        )?;
+        add_assign(&mut s.g3n.laurel, &s.x)?;
+        Ok(())
+    }
+
+    fn gemma3n_layer_attn(
+        &self,
+        layer: &Layer,
+        li: usize,
+        run: &mut TransformerRun<'_>,
+        addrs: &[KvAddr],
+        pos: &[usize],
+    ) -> Result<(), LlamaError> {
+        let n = run.n;
+        let hd = run.hd;
+        let width = run.width;
+        let s = &mut *run.s;
+        let pool = &mut *run.pool;
+        let cache_k = &mut *run.cache_k;
+        let cache_v = &mut *run.cache_v;
+        if layer.wk.n_rows != self.n_head_kv.saturating_mul(hd)
+            || layer.wv.n_rows != self.n_head_kv.saturating_mul(hd)
+        {
+            return Err(LlamaError::Shape("qkv head split".into()));
+        }
+        self.gemm_into(&layer.wq, n, &s.x, &mut s.q, pool)?;
+        self.gemm_into(&layer.wk, n, &s.x, &mut s.k, pool)?;
+        self.gemm_into(&layer.wv, n, &s.x, &mut s.v, pool)?;
+        let q_width = self.n_head.saturating_mul(hd);
+        if layer.wq.n_rows != q_width {
+            return Err(LlamaError::Shape("qkv head split".into()));
+        }
+        if let Some(w) = layer.attn_q_norm.as_deref() {
+            rmsnorm_rows_inplace(&mut s.q, hd, w, self.rms_eps)?;
+        }
+        if let Some(w) = layer.attn_k_norm.as_deref() {
+            rmsnorm_rows_inplace(&mut s.k, hd, w, self.rms_eps)?;
+        }
+        rmsnorm_unweighted_rows_inplace(&mut s.v, hd, self.rms_eps)?;
+        for t in 0..n {
+            let p = token_pos(pos, t)?;
+            let geom = kv_addr(addrs, t)?.geom(self.n_head_kv, hd);
+            let k_t = token_row_mut(&mut s.k, t, layer.wk.n_rows, "gemma3n k")?;
+            for h in k_t.chunks_mut(hd) {
+                apply_rope(
+                    h,
+                    p,
+                    self.n_rot,
+                    self.rope_base,
+                    self.rope_sections,
+                    self.rope_imrope,
+                    self.rope_neox,
+                )?;
+            }
+            store_kv(cache_k, li, &geom, p, k_t)?;
+            let v_t = token_row(&s.v, t, layer.wv.n_rows, "gemma3n v")?;
+            store_kv(cache_v, li, &geom, p, v_t)?;
+        }
+        fit(&mut s.attn, width);
+        for t in 0..n {
+            let p = token_pos(pos, t)?;
+            let geom = kv_addr(addrs, t)?.geom(self.n_head_kv, hd);
+            let q_t = token_row_mut(&mut s.q, t, q_width, "gemma3n q")?;
+            for h in q_t.chunks_mut(hd) {
+                apply_rope(
+                    h,
+                    p,
+                    self.n_rot,
+                    self.rope_base,
+                    self.rope_sections,
+                    self.rope_imrope,
+                    self.rope_neox,
+                )?;
+            }
+            let dst_off = t.saturating_mul(self.n_embd);
+            let dst = s
+                .attn
+                .get_mut(dst_off..dst_off.saturating_add(self.n_embd))
+                .ok_or_else(|| LlamaError::Shape("gemma3n attn".into()))?;
+            let layer_swa = if gemma2_is_swa(li, self.swa_period) {
+                self.n_swa
+            } else {
+                0
+            };
+            attend_query(
+                cache_k,
+                cache_v,
+                li,
+                q_t,
+                &geom,
+                p.saturating_add(1),
+                1.0,
+                0.0,
+                0.0,
+                layer_swa,
+                &mut s.scores,
+                dst,
+            )?;
+        }
+        self.gemm_into(&layer.wo, n, &s.attn, &mut s.attn_proj, pool)
+    }
+
+    fn gemma3n_per_layer_inject(
+        &self,
+        w: &Gemma3nWeights,
+        gl: &Gemma3nLayer,
+        li: usize,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        let active = altup_stream(&s.g3n.pred, w.i_altup_act, n, self.n_embd)?;
+        copy_buf(&mut s.x, active);
+        if s.x.len() != gl.altup_correct_scale.len().saturating_mul(n)
+            && gl.altup_correct_scale.len() != self.n_embd
+        {
+            return Err(LlamaError::Shape("altup_correct_scale".into()));
+        }
+        for t in 0..n {
+            let row = token_row_mut(&mut s.x, t, self.n_embd, "gemma3n scale")?;
+            for (v, sc) in row.iter_mut().zip(gl.altup_correct_scale.iter()) {
+                *v *= *sc;
+            }
+        }
+        self.gemm_into(&gl.inp_gate, n, &s.x, &mut s.gate, pool)?;
+        gelu_inplace(&mut s.gate);
+        let n_ea = w.n_embd_altup;
+        let n_layer = self.layers.len();
+        for t in 0..n {
+            let gate = token_row_mut(&mut s.gate, t, n_ea, "gemma3n inp_gate")?;
+            let pl = per_layer_at(&s.g3n.per_layer, li, t, n_ea, n_layer)?;
+            for (g, p) in gate.iter_mut().zip(pl.iter()) {
+                *g *= *p;
+            }
+        }
+        self.gemm_into(&gl.proj, n, &s.gate, &mut s.ffn_out, pool)?;
+        rmsnorm_rows_inplace(&mut s.ffn_out, self.n_embd, &gl.post_norm, self.rms_eps)?;
+        for i in 1..w.n_altup {
+            for t in 0..n {
+                let dst = altup_token_mut(&mut s.g3n.pred, i, t, n, self.n_embd)?;
+                let src = token_row(&s.ffn_out, t, self.n_embd, "gemma3n inject")?;
+                add_assign(dst, src)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn gemma3n_unembed(
+        &self,
+        w: &Gemma3nWeights,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        let active = altup_stream(&s.g3n.streams, w.i_altup_act, n, self.n_embd)?;
+        copy_buf(&mut s.x, active);
+        copy_buf(&mut s.residual, &s.x);
+        let inv = 1.0 / f32::from(u16::try_from(w.n_altup).unwrap_or(1));
+        for p in 0..w.n_altup.saturating_sub(1) {
+            let src = altup_stream(&s.g3n.streams, p.saturating_add(1), n, self.n_embd)?;
+            copy_buf(&mut s.g3n.tmp, src);
+            self.gemm_part_tokens_into(
+                &w.altup_unembd_proj,
+                p,
+                n,
+                &s.g3n.tmp,
+                &mut s.ffn_out,
+                pool,
+            )?;
+            scale_rows_to_match(&s.x, &mut s.ffn_out, self.n_embd)?;
+            add_assign(&mut s.residual, &s.ffn_out)?;
+        }
+        for v in s.residual.iter_mut() {
+            *v *= inv;
+        }
+        copy_buf(&mut s.x, &s.residual);
+        Ok(())
+    }
+
+    fn gemma3n_logits(
+        &self,
+        n: usize,
+        s: &mut Scratch,
+        pool: &mut GemvPool,
+        logits: LogitsKind,
+    ) -> Result<(), LlamaError> {
+        match logits {
+            LogitsKind::Last => {
+                let last_off = n.saturating_sub(1).saturating_mul(self.n_embd);
+                let last =
+                    s.x.get(last_off..last_off.saturating_add(self.n_embd))
+                        .ok_or_else(|| LlamaError::Shape("gemma3n last".into()))?;
+                copy_buf(&mut s.xn, last);
+                rmsnorm_inplace(&mut s.xn, &self.output_norm, self.rms_eps)?;
+                self.gemv_into(&self.output, &s.xn, &mut s.logits, pool)?;
+            }
+            LogitsKind::All => {
+                rmsnorm_rows_inplace(&mut s.x, self.n_embd, &self.output_norm, self.rms_eps)?;
+                self.gemm_into(&self.output, n, &s.x, &mut s.logits, pool)?;
+            }
+        }
+        tanh_softcap_inplace(&mut s.logits, self.final_logit_softcapping);
+        Ok(())
+    }
+
+    fn gemm_part_tokens_into(
+        &self,
+        m: &QuantMat,
+        part: usize,
+        n_tokens: usize,
+        x: &[f32],
+        y: &mut Vec<f32>,
+        pool: &mut GemvPool,
+    ) -> Result<(), LlamaError> {
+        self.gemm_part_bytes_into(
+            PartBytes {
+                m,
+                part,
+                n_tokens,
+                bytes: None,
+            },
+            x,
+            y,
+            pool,
+        )
     }
 
     /// One decode step. Writes K/V at `cache.n_past` and increments it. Returns logits.
@@ -2852,11 +3491,43 @@ pub fn tiny_gemma2_gguf() -> Vec<u8> {
 /// omits `attn_logit_softcapping`, writes `attention.sliding_window` when
 /// `sliding_window_pattern != 1`. Writer-tiny uses `attention.sliding_window = 2`
 /// so short-seq tests clip. Convert-hf bakes `norm.weight + 1`; runtime does
-/// not add 1 again. `gemma3n` stays rejected.
+/// not add 1 again. `gemma3n` is a separate official family.
 pub fn tiny_gemma3_gguf() -> Vec<u8> {
     tiny_arch_gguf_lm_head(
         TinySpec {
             arch: "gemma3",
+            token_embd: GgmlType::F32,
+            output: GgmlType::F32,
+            layer: None,
+            rope_dimension_count: false,
+            qkv_bias: false,
+            add_bos_token: None,
+            llama_moe: false,
+        },
+        TinyLmHead::Tied,
+    )
+}
+
+/// Writer-built official Gemma3n GGUF: `architecture=gemma3n` with `gemma3n.*` KV.
+///
+/// Official `general.architecture=gemma3n` (`MODEL_ARCH_NAMES[GEMMA3N] = "gemma3n"`,
+/// `Gemma3nForCausalLM` → `MODEL_ARCH.GEMMA3N`). Decode follows llama.cpp
+/// `src/models/gemma3n.cpp`: Gemma embed-scale + GeGLU, QK-Norm before RoPE,
+/// unweighted RMSNorm on V, attention scale `1.0`, RMSNorm `post_attention_norm`
+/// / `ffn_norm` / `post_ffw_norm`, SWA default period 5 (`set_swa_pattern`,
+/// required `attention.sliding_window`), final tanh softcap (default 30),
+/// AltUp (4 residual streams, convert asserts `altup_num_inputs == 4`), Laurel,
+/// per-layer inputs, gaussian_topk on the first 10 layers (`n_layer_sparsity`
+/// is hardcoded, not GGUF). Convert skips `lm_head.weight` when tied, omits
+/// `attn_logit_softcapping` / `rope.dimension_count`. Writer-tiny uses
+/// `attention.sliding_window = 2` so short-seq tests clip, omits
+/// `sliding_window_pattern` (period 5), and writes convert-shaped
+/// `gemma3n.altup.*` / `embedding_length_per_layer_input`. Convert
+/// `norm_shift` is 0 (runtime does not add 1). `gemma4` stays rejected.
+pub fn tiny_gemma3n_gguf() -> Vec<u8> {
+    tiny_arch_gguf_lm_head(
+        TinySpec {
+            arch: "gemma3n",
             token_embd: GgmlType::F32,
             output: GgmlType::F32,
             layer: None,
@@ -4141,7 +4812,7 @@ fn tiny_arch_gguf_gqa(
             vec![n_embd],
             pack_vec1d(vec1d, &ones),
         ));
-        if spec.arch == "gemma2" || spec.arch == "gemma3" {
+        if spec.arch == "gemma2" || spec.arch == "gemma3" || spec.arch == "gemma3n" {
             // Official gemma2.cpp: `post_attention_norm` AND `ffn_norm` AND
             // `post_ffw_norm`. Not the qwen3next reuse of post_attention_norm
             // as pre-FFN.
@@ -4165,6 +4836,7 @@ fn tiny_arch_gguf_gqa(
         || spec.arch == "qwen3next"
         || spec.arch == "qwen35"
         || spec.arch == "gemma3"
+        || spec.arch == "gemma3n"
     {
         // Official Qwen3Next / Qwen35 QK-Norm is `{n_embd_head_k}`, not `n_rot`.
         let qk_len = if spec.arch == "qwen3next" || spec.arch == "qwen35" {
@@ -4530,7 +5202,144 @@ fn tiny_arch_gguf_gqa(
             pack_vec1d(vec1d, &pat_f32(n_kv, 13)),
         ));
     }
+    if spec.arch == "gemma3n" {
+        push_tiny_gemma3n_tensors(&spec, vec1d, n_embd, n_vocab, &ones, &mut tensors);
+    }
     write_gguf_with_kv(&tiny_kv_gqa(&spec, n_head_kv), &tensors)
+}
+
+fn push_tiny_gemma3n_tensors(
+    spec: &TinySpec,
+    vec1d: GgmlType,
+    n_embd: usize,
+    n_vocab: usize,
+    ones: &[f32],
+    tensors: &mut Vec<TensorWrite>,
+) {
+    let n_altup = GEMMA3N_N_ALTUP;
+    let extra = n_altup.saturating_sub(1);
+    let n_embd_altup = GEMMA3N_N_EMBD_ALTUP;
+    let rank = GEMMA3N_LAUREL_RANK;
+    let pl_cols = n_embd_altup.saturating_mul(TINY_N_LAYER);
+    let altup_ones = vec![1.0f32; n_embd_altup];
+    tensors.push(layer_tw_exps(
+        spec,
+        "altup_proj.weight",
+        n_embd,
+        n_embd,
+        extra,
+        40,
+        GgmlType::F32,
+    ));
+    tensors.push(layer_tw_exps(
+        spec,
+        "altup_unembd_proj.weight",
+        n_embd,
+        n_embd,
+        extra,
+        41,
+        GgmlType::F32,
+    ));
+    tensors.push(tw(
+        "per_layer_token_embd.weight",
+        spec.token_embd,
+        vec![pl_cols, n_vocab],
+        pack_mat(spec.token_embd, pl_cols, n_vocab, 42),
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "per_layer_model_proj.weight",
+        n_embd,
+        pl_cols,
+        43,
+        GgmlType::F32,
+    ));
+    tensors.push(tw(
+        "per_layer_proj_norm.weight",
+        vec1d,
+        vec![n_embd_altup],
+        pack_vec1d(vec1d, &altup_ones),
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "blk.0.inp_gate.weight",
+        n_embd,
+        n_embd_altup,
+        44,
+        GgmlType::F32,
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "blk.0.proj.weight",
+        n_embd_altup,
+        n_embd,
+        45,
+        GgmlType::F32,
+    ));
+    tensors.push(tw(
+        "blk.0.post_norm.weight",
+        vec1d,
+        vec![n_embd],
+        pack_vec1d(vec1d, ones),
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "blk.0.altup_correct_coef.weight",
+        n_altup,
+        n_altup,
+        46,
+        GgmlType::F32,
+    ));
+    tensors.push(tw(
+        "blk.0.altup_correct_scale.weight",
+        vec1d,
+        vec![n_embd],
+        pack_vec1d(vec1d, ones),
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "blk.0.altup_predict_coef.weight",
+        n_altup,
+        n_altup.saturating_mul(n_altup),
+        47,
+        GgmlType::F32,
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "blk.0.altup_router.weight",
+        n_embd,
+        n_altup,
+        48,
+        GgmlType::F32,
+    ));
+    tensors.push(tw(
+        "blk.0.altup_router_norm.weight",
+        vec1d,
+        vec![n_embd],
+        pack_vec1d(vec1d, ones),
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "blk.0.laurel_l.weight",
+        n_embd,
+        rank,
+        49,
+        GgmlType::F32,
+    ));
+    tensors.push(layer_tw(
+        spec,
+        "blk.0.laurel_r.weight",
+        rank,
+        n_embd,
+        50,
+        GgmlType::F32,
+    ));
+    tensors.push(tw(
+        "blk.0.laurel_post_norm.weight",
+        vec1d,
+        vec![n_embd],
+        pack_vec1d(vec1d, ones),
+    ));
 }
 
 fn architecture(g: &Gguf) -> Result<&str, LlamaError> {
@@ -4549,6 +5358,7 @@ fn supported_arch(s: &str) -> bool {
         || s == "gemma"
         || s == "gemma2"
         || s == "gemma3"
+        || s == "gemma3n"
         || s == "qwen3"
         || s == "llama4"
         || s == "qwen2moe"
@@ -4823,8 +5633,8 @@ fn tiny_kv_gqa(spec: &TinySpec, n_head_kv: usize) -> Vec<(String, Kv)> {
             },
         ));
     }
-    if arch == "gemma2" || arch == "gemma3" {
-        // Official convert/gemma.py Gemma2Model / Gemma3Model.
+    if arch == "gemma2" || arch == "gemma3" || arch == "gemma3n" {
+        // Official convert/gemma.py Gemma2Model / Gemma3Model / Gemma3NModel.
         if arch == "gemma2" {
             kv.push((
                 arch_key(arch, "attn_logit_softcapping"),
@@ -4833,6 +5643,28 @@ fn tiny_kv_gqa(spec: &TinySpec, n_head_kv: usize) -> Vec<(String, Kv)> {
             kv.push((
                 arch_key(arch, "final_logit_softcapping"),
                 Kv::F32(GEMMA2_FINAL_LOGIT_SOFTCAPPING),
+            ));
+        }
+        if arch == "gemma3n" {
+            kv.push((
+                arch_key(arch, "final_logit_softcapping"),
+                Kv::F32(GEMMA2_FINAL_LOGIT_SOFTCAPPING),
+            ));
+            kv.push((
+                arch_key(arch, "altup.active_idx"),
+                Kv::U32(u32::try_from(GEMMA3N_I_ALTUP_ACT).unwrap_or(0)),
+            ));
+            kv.push((
+                arch_key(arch, "altup.num_inputs"),
+                Kv::U32(u32::try_from(GEMMA3N_N_ALTUP).unwrap_or(0)),
+            ));
+            kv.push((
+                arch_key(arch, "embedding_length_per_layer_input"),
+                Kv::U32(u32::try_from(GEMMA3N_N_EMBD_ALTUP).unwrap_or(0)),
+            ));
+            kv.push((
+                arch_key(arch, "attention.shared_kv_layers"),
+                Kv::U32(GEMMA3N_N_LAYER_KV_FROM_START),
             ));
         }
         kv.push((
@@ -5834,6 +6666,7 @@ struct LayerHparams<'a> {
     bloom: bool,
     gemma2: bool,
     gemma3: bool,
+    gemma3n: bool,
     llama4: Option<&'a Llama4Hparams>,
     llama_moe: Option<&'a LlamaMoeHparams>,
     qwen2moe: Option<&'a Qwen2MoeHparams>,
@@ -5973,7 +6806,7 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
         } else {
             None
         },
-        attn_post_norm: if h.gemma2 || h.gemma3 {
+        attn_post_norm: if h.gemma2 || h.gemma3 || h.gemma3n {
             Some(f32s(need(
                 g,
                 &format!("blk.{i}.post_attention_norm.weight"),
@@ -5981,12 +6814,92 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
         } else {
             None
         },
-        ffn_post_norm: if h.gemma2 || h.gemma3 {
+        ffn_post_norm: if h.gemma2 || h.gemma3 || h.gemma3n {
             Some(f32s(need(g, &format!("blk.{i}.post_ffw_norm.weight"))?)?)
         } else {
             None
         },
         ffn,
+        gemma3n: if h.gemma3n {
+            Some(load_gemma3n_layer(g, i)?)
+        } else {
+            None
+        },
+    })
+}
+
+fn load_gemma3n_layer(g: &Gguf, i: usize) -> Result<Gemma3nLayer, LlamaError> {
+    Ok(Gemma3nLayer {
+        inp_gate: quant_mat(need(g, &format!("blk.{i}.inp_gate.weight"))?)?,
+        proj: quant_mat(need(g, &format!("blk.{i}.proj.weight"))?)?,
+        post_norm: f32s(need(g, &format!("blk.{i}.post_norm.weight"))?)?,
+        altup_correct_coef: quant_mat(need(g, &format!("blk.{i}.altup_correct_coef.weight"))?)?,
+        altup_correct_scale: f32s(need(g, &format!("blk.{i}.altup_correct_scale.weight"))?)?,
+        altup_predict_coef: quant_mat(need(g, &format!("blk.{i}.altup_predict_coef.weight"))?)?,
+        altup_router: quant_mat(need(g, &format!("blk.{i}.altup_router.weight"))?)?,
+        altup_router_norm: f32s(need(g, &format!("blk.{i}.altup_router_norm.weight"))?)?,
+        laurel_l: quant_mat(need(g, &format!("blk.{i}.laurel_l.weight"))?)?,
+        laurel_r: quant_mat(need(g, &format!("blk.{i}.laurel_r.weight"))?)?,
+        laurel_post_norm: f32s(need(g, &format!("blk.{i}.laurel_post_norm.weight"))?)?,
+    })
+}
+
+fn load_gemma3n_weights(
+    g: &Gguf,
+    n_embd: usize,
+    n_layer: usize,
+    n_vocab: usize,
+) -> Result<Gemma3nWeights, LlamaError> {
+    let n_altup = g
+        .kv_u32(&arch_key("gemma3n", "altup.num_inputs"))
+        .map_or(GEMMA3N_N_ALTUP, |v| usize::try_from(v).unwrap_or(0));
+    let i_altup_act = g
+        .kv_u32(&arch_key("gemma3n", "altup.active_idx"))
+        .map_or(GEMMA3N_I_ALTUP_ACT, |v| usize::try_from(v).unwrap_or(0));
+    let n_embd_altup = g
+        .kv_u32(&arch_key("gemma3n", "embedding_length_per_layer_input"))
+        .map_or(GEMMA3N_N_EMBD_ALTUP, |v| usize::try_from(v).unwrap_or(0));
+    if n_altup < 2 || i_altup_act >= n_altup || n_embd_altup == 0 {
+        return Err(LlamaError::Shape("gemma3n altup".into()));
+    }
+    let extra = n_altup.saturating_sub(1);
+    let altup_proj = quant_mat(need(g, "altup_proj.weight")?)?;
+    let altup_unembd_proj = quant_mat(need(g, "altup_unembd_proj.weight")?)?;
+    if altup_proj.n_parts != extra
+        || altup_unembd_proj.n_parts != extra
+        || altup_proj.n_cols != n_embd
+        || altup_proj.n_rows != n_embd
+        || altup_unembd_proj.n_cols != n_embd
+        || altup_unembd_proj.n_rows != n_embd
+    {
+        return Err(LlamaError::Shape("altup_proj".into()));
+    }
+    let per_layer_token_embd = quant_mat(need(g, "per_layer_token_embd.weight")?)?;
+    let per_layer_model_proj = quant_mat(need(g, "per_layer_model_proj.weight")?)?;
+    let want_pl = n_embd_altup
+        .checked_mul(n_layer)
+        .ok_or_else(|| LlamaError::Shape("per_layer_token_embd".into()))?;
+    if per_layer_token_embd.n_cols != want_pl
+        || per_layer_token_embd.n_rows != n_vocab
+        || per_layer_model_proj.n_cols != n_embd
+        || per_layer_model_proj.n_rows != want_pl
+    {
+        return Err(LlamaError::Shape("per_layer_token_embd".into()));
+    }
+    let per_layer_proj_norm = f32s(need(g, "per_layer_proj_norm.weight")?)?;
+    if per_layer_proj_norm.len() != n_embd_altup {
+        return Err(LlamaError::Shape("per_layer_proj_norm".into()));
+    }
+    Ok(Gemma3nWeights {
+        altup_proj,
+        altup_unembd_proj,
+        per_layer_token_embd,
+        per_layer_model_proj,
+        per_layer_proj_norm,
+        n_altup,
+        i_altup_act,
+        n_embd_altup,
+        n_layer_sparsity: GEMMA3N_N_LAYER_SPARSITY,
     })
 }
 
@@ -6221,6 +7134,11 @@ fn is_applied_norm_or_bias(name: &str) -> bool {
         || name.ends_with(".post_ffw_norm.weight")
         || name.ends_with(".attn_q_norm.weight")
         || name.ends_with(".attn_k_norm.weight")
+        || name.ends_with(".post_norm.weight")
+        || name.ends_with(".altup_router_norm.weight")
+        || name.ends_with(".laurel_post_norm.weight")
+        || name.ends_with(".altup_correct_scale.weight")
+        || name == "per_layer_proj_norm.weight"
         || name.ends_with(".attn_q.bias")
         || name.ends_with(".attn_k.bias")
         || name.ends_with(".attn_v.bias")
@@ -7126,7 +8044,11 @@ impl Llama {
 
     /// Dequantize `token`'s embedding row into `y` (`token_embd.n_cols` long).
     fn embed_into(&self, token: u32, y: &mut [f32]) -> Result<(), LlamaError> {
-        let emb = &self.token_embd;
+        self.embed_mat_into(&self.token_embd, token, y)
+    }
+
+    /// Dequantize `token`'s row of `emb` into `y` (`emb.n_cols` long).
+    fn embed_mat_into(&self, emb: &QuantMat, token: u32, y: &mut [f32]) -> Result<(), LlamaError> {
         if y.len() != emb.n_cols {
             return Err(LlamaError::Shape(emb.name.clone()));
         }
@@ -7470,7 +8392,8 @@ fn alibi_slope(head: usize, n_head: usize, max_bias: f32) -> f32 {
 /// query head `hq` to KV head `hq / (n_head / n_head_kv)`.
 ///
 /// `score_scale` is `1/sqrt(hd)` for every arch except official phi2, which
-/// scales Q after RoPE instead and passes 1.0 here.
+/// scales Q after RoPE instead and passes 1.0 here, and official gemma3n,
+/// which passes `hparams.f_attention_scale = 1.0`.
 ///
 /// `alibi_bias` is official bloom `f_max_alibi_bias` (`8`); `0` disables ALiBi.
 ///
@@ -7550,6 +8473,7 @@ fn attend_query(
 }
 
 /// Official Llama4 `ggml_rms_norm` without a weight (`Llama4TextL2Norm`).
+/// Gemma3n applies the same op to V (`n_embd_head` rows) before KV store.
 fn rmsnorm_unweighted_inplace(x: &mut [f32], eps: f32) {
     let mut ss = 0.0f32;
     for v in x.iter() {
@@ -7561,6 +8485,138 @@ fn rmsnorm_unweighted_inplace(x: &mut [f32], eps: f32) {
     for xv in x.iter_mut() {
         *xv *= inv;
     }
+}
+
+fn rmsnorm_unweighted_rows_inplace(
+    x: &mut [f32],
+    width: usize,
+    eps: f32,
+) -> Result<(), LlamaError> {
+    if width == 0 || !x.len().is_multiple_of(width) {
+        return Err(LlamaError::Shape("rmsnorm".into()));
+    }
+    for row in x.chunks_mut(width) {
+        rmsnorm_unweighted_inplace(row, eps);
+    }
+    Ok(())
+}
+
+fn altup_stream_off(i: usize, n: usize, n_embd: usize) -> Result<usize, LlamaError> {
+    i.checked_mul(n)
+        .and_then(|v| v.checked_mul(n_embd))
+        .ok_or_else(|| LlamaError::Shape("gemma3n stream".into()))
+}
+
+fn altup_stream(buf: &[f32], i: usize, n: usize, n_embd: usize) -> Result<&[f32], LlamaError> {
+    let off = altup_stream_off(i, n, n_embd)?;
+    let width = n.saturating_mul(n_embd);
+    buf.get(off..off.saturating_add(width))
+        .ok_or_else(|| LlamaError::Shape("gemma3n stream".into()))
+}
+
+fn altup_stream_mut(
+    buf: &mut [f32],
+    i: usize,
+    n: usize,
+    n_embd: usize,
+) -> Result<&mut [f32], LlamaError> {
+    let off = altup_stream_off(i, n, n_embd)?;
+    let width = n.saturating_mul(n_embd);
+    buf.get_mut(off..off.saturating_add(width))
+        .ok_or_else(|| LlamaError::Shape("gemma3n stream".into()))
+}
+
+fn altup_token(
+    buf: &[f32],
+    i: usize,
+    t: usize,
+    n: usize,
+    n_embd: usize,
+) -> Result<&[f32], LlamaError> {
+    let stream = altup_stream(buf, i, n, n_embd)?;
+    token_row(stream, t, n_embd, "gemma3n stream")
+}
+
+fn altup_token_mut(
+    buf: &mut [f32],
+    i: usize,
+    t: usize,
+    n: usize,
+    n_embd: usize,
+) -> Result<&mut [f32], LlamaError> {
+    let tok_off = t
+        .checked_mul(n_embd)
+        .ok_or_else(|| LlamaError::Shape("gemma3n stream".into()))?;
+    let off = altup_stream_off(i, n, n_embd)?
+        .checked_add(tok_off)
+        .ok_or_else(|| LlamaError::Shape("gemma3n stream".into()))?;
+    buf.get_mut(off..off.saturating_add(n_embd))
+        .ok_or_else(|| LlamaError::Shape("gemma3n stream".into()))
+}
+
+fn per_layer_at(
+    buf: &[f32],
+    li: usize,
+    t: usize,
+    n_ea: usize,
+    n_layer: usize,
+) -> Result<&[f32], LlamaError> {
+    let off = t
+        .checked_mul(n_layer)
+        .and_then(|v| v.checked_mul(n_ea))
+        .and_then(|v| li.checked_mul(n_ea).and_then(|o| v.checked_add(o)))
+        .ok_or_else(|| LlamaError::Shape("gemma3n per_layer".into()))?;
+    buf.get(off..off.saturating_add(n_ea))
+        .ok_or_else(|| LlamaError::Shape("gemma3n per_layer".into()))
+}
+
+/// Official gemma3n.cpp `calc_magnitude` then `x * target / new` (no epsilon).
+fn scale_rows_to_match(src: &[f32], dst: &mut [f32], n_embd: usize) -> Result<(), LlamaError> {
+    if src.len() != dst.len() || n_embd == 0 || !src.len().is_multiple_of(n_embd) {
+        return Err(LlamaError::Shape("gemma3n magnitude".into()));
+    }
+    for (s, d) in src.chunks(n_embd).zip(dst.chunks_mut(n_embd)) {
+        let mut ss = 0.0f32;
+        let mut ds = 0.0f32;
+        for (sv, dv) in s.iter().zip(d.iter()) {
+            ss += *sv * *sv;
+            ds += *dv * *dv;
+        }
+        let mag_s = ss.sqrt();
+        let mag_d = ds.sqrt();
+        let scale = if mag_d > 0.0 { mag_s / mag_d } else { 0.0 };
+        for v in d.iter_mut() {
+            *v *= scale;
+        }
+    }
+    Ok(())
+}
+
+/// Official gemma3n.cpp `gaussian_topk`: Bessel std over `n_ff-1`, then ReLU.
+fn gaussian_topk_inplace(x: &mut [f32], n_ff: usize) -> Result<(), LlamaError> {
+    if n_ff < 2 || !x.len().is_multiple_of(n_ff) {
+        return Err(LlamaError::Shape("gaussian_topk".into()));
+    }
+    let n_f = f32::from(u16::try_from(n_ff).unwrap_or(1));
+    let denom = f32::from(u16::try_from(n_ff.saturating_sub(1)).unwrap_or(1));
+    for row in x.chunks_mut(n_ff) {
+        let mut sum = 0.0f32;
+        for v in row.iter() {
+            sum += *v;
+        }
+        let mean = sum / n_f;
+        let mut var = 0.0f32;
+        for v in row.iter() {
+            let d = *v - mean;
+            var += d * d;
+        }
+        let std = (var / denom).sqrt();
+        let cutoff = mean + std * GEMMA3N_SPARSITY_STD_MUL;
+        for v in row.iter_mut() {
+            *v = (*v - cutoff).max(0.0);
+        }
+    }
+    Ok(())
 }
 
 /// Official llama.cpp `llm_graph_input_attn_temp` for Llama4 NoPE layers.
@@ -7894,7 +8950,7 @@ fn rope_is_neox(arch: &str) -> bool {
         // QWEN2 / QWEN2MOE / QWEN3 / QWEN3MOE / QWEN3NEXT / PHI2 / PHI3 / GEMMA /
         // GEMMA2 / GEMMA3 => LLAMA_ROPE_TYPE_NEOX.
         "qwen2" | "qwen2moe" | "qwen3" | "qwen3moe" | "qwen3next" | "phi2" | "phi3" | "gemma"
-        | "gemma2" | "gemma3" => true,
+        | "gemma2" | "gemma3" | "gemma3n" => true,
         // MROPE / IMROPE arches reach `rope_multi`; the flag is unused for them.
         _ => false,
     }
@@ -9740,6 +10796,7 @@ mod tests {
                 | "gemma"
                 | "gemma2"
                 | "gemma3"
+                | "gemma3n"
         )
     }
 
@@ -9832,9 +10889,347 @@ mod tests {
         oracle_forward_seq(g, &[token])
     }
 
+    fn oracle_scale_match(src: &[f32], dst: &mut [f32]) {
+        let mag_s: f32 = src.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let mag_d: f32 = dst.iter().map(|v| v * v).sum::<f32>().sqrt();
+        let scale = if mag_d > 0.0 { mag_s / mag_d } else { 0.0 };
+        for v in dst.iter_mut() {
+            *v *= scale;
+        }
+    }
+
+    fn oracle_gaussian_topk(gate: &mut [f32]) {
+        let n_ff = gate.len();
+        if n_ff < 2 {
+            return;
+        }
+        let n_f = n_ff as f32;
+        let mean = gate.iter().sum::<f32>() / n_f;
+        let var = gate
+            .iter()
+            .map(|v| {
+                let d = *v - mean;
+                d * d
+            })
+            .sum::<f32>()
+            / (n_f - 1.0);
+        let cutoff = mean + var.sqrt() * GEMMA3N_SPARSITY_STD_MUL;
+        for v in gate.iter_mut() {
+            *v = (*v - cutoff).max(0.0);
+        }
+    }
+
+    fn oracle_gemma3n_router(g: &Gguf, x: &[f32], li: usize, eps: f32, n_embd: usize) -> Vec<f32> {
+        let rn = f32s(g.tensor(&tname(li, "altup_router_norm.weight")).unwrap()).unwrap();
+        let mut inp = oracle_rmsnorm(x, &rn, eps);
+        let inv = 1.0 / n_embd as f32;
+        for v in &mut inp {
+            *v *= inv;
+        }
+        let mut y = oracle_gemv(g.tensor(&tname(li, "altup_router.weight")).unwrap(), &inp);
+        for v in &mut y {
+            *v = v.tanh();
+        }
+        y
+    }
+
+    fn oracle_gemma3n_predict(
+        g: &Gguf,
+        streams: &[Vec<f32>],
+        li: usize,
+        eps: f32,
+        n_embd: usize,
+        i_act: usize,
+    ) -> Vec<Vec<f32>> {
+        let n_altup = streams.len();
+        let modalities = oracle_gemma3n_router(g, &streams[i_act], li, eps, n_embd);
+        let coefs = oracle_gemv(
+            g.tensor(&tname(li, "altup_predict_coef.weight")).unwrap(),
+            &modalities,
+        );
+        let mut pred = streams.to_vec();
+        for i in 0..n_altup {
+            for j in 0..n_altup {
+                let c = coefs[j + i * n_altup];
+                for (d, s) in pred[i].iter_mut().zip(streams[j].iter()) {
+                    *d += c * *s;
+                }
+            }
+        }
+        pred
+    }
+
+    fn oracle_gemma3n_correct(
+        g: &Gguf,
+        pred: &mut [Vec<f32>],
+        activated: &[f32],
+        li: usize,
+        eps: f32,
+        n_embd: usize,
+        i_act: usize,
+    ) {
+        let n_altup = pred.len();
+        let modalities = oracle_gemma3n_router(g, activated, li, eps, n_embd);
+        let mut coefs = oracle_gemv(
+            g.tensor(&tname(li, "altup_correct_coef.weight")).unwrap(),
+            &modalities,
+        );
+        for c in &mut coefs {
+            *c += 1.0;
+        }
+        let mut innov = vec![0.0f32; n_embd];
+        for ((d, a), p) in innov
+            .iter_mut()
+            .zip(activated.iter())
+            .zip(pred[i_act].iter())
+        {
+            *d = *a - *p;
+        }
+        for i in 0..n_altup {
+            let c = coefs[i];
+            for (d, iv) in pred[i].iter_mut().zip(innov.iter()) {
+                *d += c * *iv;
+            }
+        }
+    }
+
+    /// Independent scalar of official `src/models/gemma3n.cpp` (AltUp, Laurel,
+    /// per-layer inputs, V RMSNorm, attention scale 1.0, gaussian_topk, SWA
+    /// period 5, final tanh softcap).
+    fn oracle_gemma3n_forward_seq(g: &Gguf, tokens: &[u32]) -> Vec<f32> {
+        let arch = "gemma3n";
+        let n_embd = arch_u32(g, arch, "embedding_length").unwrap() as usize;
+        let n_head = arch_u32(g, arch, "attention.head_count").unwrap() as usize;
+        let n_kv = arch_u32(g, arch, "attention.head_count_kv").unwrap() as usize;
+        let n_layer = arch_u32(g, arch, "block_count").unwrap() as usize;
+        let n_rot = oracle_n_rot(g, arch, n_embd, n_head);
+        let eps = arch_f32(g, arch, "attention.layer_norm_rms_epsilon").unwrap();
+        let base = arch_f32(g, arch, "rope.freq_base").unwrap_or(10_000.0);
+        let hd = n_embd / n_head;
+        let gqa = n_head / n_kv;
+        let n_altup =
+            arch_u32(g, arch, "altup.num_inputs").unwrap_or(GEMMA3N_N_ALTUP as u32) as usize;
+        let i_act =
+            arch_u32(g, arch, "altup.active_idx").unwrap_or(GEMMA3N_I_ALTUP_ACT as u32) as usize;
+        let n_ea = arch_u32(g, arch, "embedding_length_per_layer_input")
+            .unwrap_or(GEMMA3N_N_EMBD_ALTUP as u32) as usize;
+        let n_swa = arch_u32(g, arch, "attention.sliding_window").unwrap() as usize;
+        let period = arch_u32(g, arch, "attention.sliding_window_pattern")
+            .unwrap_or(GEMMA3N_SWA_PERIOD_DEFAULT);
+        let cap =
+            arch_f32(g, arch, "final_logit_softcapping").unwrap_or(GEMMA2_FINAL_LOGIT_SOFTCAPPING);
+        let embed_scale = (n_embd as f32).sqrt();
+        let tok_scale = (n_ea as f32).sqrt();
+        let mix_scale = 1.0 / 2.0f32.sqrt();
+        let proj_scale = 1.0 / (n_embd as f32).sqrt();
+        let extra = n_altup - 1;
+        let mut k_cache: Vec<Vec<Vec<Vec<f32>>>> = vec![vec![Vec::new(); n_kv]; n_layer];
+        let mut v_cache: Vec<Vec<Vec<Vec<f32>>>> = vec![vec![Vec::new(); n_kv]; n_layer];
+        let mut last = Vec::new();
+        for (pos, &token) in tokens.iter().enumerate() {
+            let mut residual = oracle_embed(g.tensor("token_embd.weight").unwrap(), token);
+            for v in &mut residual {
+                *v *= embed_scale;
+            }
+            let mut streams: Vec<Vec<f32>> = vec![residual.clone()];
+            for p in 0..extra {
+                let mut extra_s =
+                    oracle_gemv_expert(g.tensor("altup_proj.weight").unwrap(), p, &residual);
+                oracle_scale_match(&residual, &mut extra_s);
+                streams.push(extra_s);
+            }
+            let mut per_tok = oracle_embed(g.tensor("per_layer_token_embd.weight").unwrap(), token);
+            for v in &mut per_tok {
+                *v *= tok_scale;
+            }
+            let mut proj = oracle_gemv(g.tensor("per_layer_model_proj.weight").unwrap(), &residual);
+            for v in &mut proj {
+                *v *= proj_scale;
+            }
+            let pn = f32s(g.tensor("per_layer_proj_norm.weight").unwrap()).unwrap();
+            let mut per_layer: Vec<Vec<f32>> = Vec::new();
+            for li in 0..n_layer {
+                let row = &proj[li * n_ea..(li + 1) * n_ea];
+                let mut nrm = oracle_rmsnorm(row, &pn, eps);
+                let tok_row = &per_tok[li * n_ea..(li + 1) * n_ea];
+                for (nv, tv) in nrm.iter_mut().zip(tok_row.iter()) {
+                    *nv = (*nv + *tv) * mix_scale;
+                }
+                per_layer.push(nrm);
+            }
+            for li in 0..n_layer {
+                let mut pred = oracle_gemma3n_predict(g, &streams, li, eps, n_embd, i_act);
+                let active = pred[i_act].clone();
+                let an = f32s(g.tensor(&tname(li, "attn_norm.weight")).unwrap()).unwrap();
+                let xn = oracle_rmsnorm(&active, &an, eps);
+                let l = oracle_gemv(g.tensor(&tname(li, "laurel_l.weight")).unwrap(), &xn);
+                let mut laurel = oracle_gemv(g.tensor(&tname(li, "laurel_r.weight")).unwrap(), &l);
+                let ln = f32s(g.tensor(&tname(li, "laurel_post_norm.weight")).unwrap()).unwrap();
+                laurel = oracle_rmsnorm(&laurel, &ln, eps);
+                for (a, b) in laurel.iter_mut().zip(xn.iter()) {
+                    *a += *b;
+                }
+                let q = oracle_gemv(g.tensor(&tname(li, "attn_q.weight")).unwrap(), &xn);
+                let k = oracle_gemv(g.tensor(&tname(li, "attn_k.weight")).unwrap(), &xn);
+                let v = oracle_gemv(g.tensor(&tname(li, "attn_v.weight")).unwrap(), &xn);
+                let qn = f32s(g.tensor(&tname(li, "attn_q_norm.weight")).unwrap()).unwrap();
+                let kn = f32s(g.tensor(&tname(li, "attn_k_norm.weight")).unwrap()).unwrap();
+                let mut qh: Vec<Vec<f32>> = q.chunks(hd).map(<[f32]>::to_vec).collect();
+                let mut kh: Vec<Vec<f32>> = k.chunks(hd).map(<[f32]>::to_vec).collect();
+                let mut vh: Vec<Vec<f32>> = v.chunks(hd).map(<[f32]>::to_vec).collect();
+                for h in &mut qh {
+                    *h = oracle_rmsnorm(h, &qn, eps);
+                }
+                for h in &mut kh {
+                    *h = oracle_rmsnorm(h, &kn, eps);
+                }
+                for h in &mut vh {
+                    *h = oracle_rmsnorm_unweighted(h, eps);
+                }
+                for h in &mut kh {
+                    *h = oracle_rope_neox(h.clone(), pos, n_rot, base);
+                }
+                for h in &mut qh {
+                    *h = oracle_rope_neox(h.clone(), pos, n_rot, base);
+                }
+                for (hkv, khv) in kh.iter().enumerate() {
+                    k_cache[li][hkv].push(khv.clone());
+                    v_cache[li][hkv].push(vh[hkv].clone());
+                }
+                let seq = pos + 1;
+                let mut attn = vec![0.0f32; n_embd];
+                for (hq, qvec) in qh.iter().enumerate() {
+                    let hkv = hq / gqa;
+                    let mut scores = vec![0.0f32; seq];
+                    for t in 0..seq {
+                        let kv = &k_cache[li][hkv][t];
+                        let mut s = qvec.iter().zip(kv.iter()).map(|(a, b)| a * b).sum::<f32>();
+                        if gemma2_is_swa(li, period) && n_swa > 0 && pos.saturating_sub(t) >= n_swa
+                        {
+                            s = f32::NEG_INFINITY;
+                        }
+                        scores[t] = s;
+                    }
+                    let m = scores.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+                    let mut z = 0.0f32;
+                    for v in &mut scores {
+                        *v = (*v - m).exp();
+                        z += *v;
+                    }
+                    if z > 0.0 {
+                        for v in &mut scores {
+                            *v /= z;
+                        }
+                    }
+                    let mut acc = vec![0.0f32; hd];
+                    for t in 0..seq {
+                        let st = scores[t];
+                        for (a, b) in acc.iter_mut().zip(v_cache[li][hkv][t].iter()) {
+                            *a += st * *b;
+                        }
+                    }
+                    let off = hq * hd;
+                    attn[off..off + hd].copy_from_slice(&acc);
+                }
+                let mut attn_out =
+                    oracle_gemv(g.tensor(&tname(li, "attn_output.weight")).unwrap(), &attn);
+                let pn_attn =
+                    f32s(g.tensor(&tname(li, "post_attention_norm.weight")).unwrap()).unwrap();
+                attn_out = oracle_rmsnorm(&attn_out, &pn_attn, eps);
+                let attn_gated: Vec<f32> = attn_out
+                    .iter()
+                    .zip(active.iter())
+                    .map(|(a, b)| a + b)
+                    .collect();
+                let attn_laurel: Vec<f32> = attn_gated
+                    .iter()
+                    .zip(laurel.iter())
+                    .map(|(a, b)| (a + b) * mix_scale)
+                    .collect();
+                let fnorm = f32s(g.tensor(&tname(li, "ffn_norm.weight")).unwrap()).unwrap();
+                let xn_ff = oracle_rmsnorm(&attn_laurel, &fnorm, eps);
+                let mut gate =
+                    oracle_gemv(g.tensor(&tname(li, "ffn_gate.weight")).unwrap(), &xn_ff);
+                let up = oracle_gemv(g.tensor(&tname(li, "ffn_up.weight")).unwrap(), &xn_ff);
+                if li < GEMMA3N_N_LAYER_SPARSITY {
+                    oracle_gaussian_topk(&mut gate);
+                }
+                let h: Vec<f32> = gate
+                    .iter()
+                    .zip(up.iter())
+                    .map(|(gv, u)| oracle_gelu(*gv) * *u)
+                    .collect();
+                let mut down = oracle_gemv(g.tensor(&tname(li, "ffn_down.weight")).unwrap(), &h);
+                let pn_ff = f32s(g.tensor(&tname(li, "post_ffw_norm.weight")).unwrap()).unwrap();
+                down = oracle_rmsnorm(&down, &pn_ff, eps);
+                let activated: Vec<f32> = down
+                    .iter()
+                    .zip(attn_laurel.iter())
+                    .map(|(a, b)| a + b)
+                    .collect();
+                oracle_gemma3n_correct(g, &mut pred, &activated, li, eps, n_embd, i_act);
+                let scale_w =
+                    f32s(g.tensor(&tname(li, "altup_correct_scale.weight")).unwrap()).unwrap();
+                let mut first: Vec<f32> = pred[i_act]
+                    .iter()
+                    .zip(scale_w.iter())
+                    .map(|(a, s)| a * s)
+                    .collect();
+                first = oracle_gemv(g.tensor(&tname(li, "inp_gate.weight")).unwrap(), &first);
+                for v in &mut first {
+                    *v = oracle_gelu(*v);
+                }
+                for (f, p) in first.iter_mut().zip(per_layer[li].iter()) {
+                    *f *= *p;
+                }
+                first = oracle_gemv(g.tensor(&tname(li, "proj.weight")).unwrap(), &first);
+                let post = f32s(g.tensor(&tname(li, "post_norm.weight")).unwrap()).unwrap();
+                first = oracle_rmsnorm(&first, &post, eps);
+                for i in 1..n_altup {
+                    for (d, s) in pred[i].iter_mut().zip(first.iter()) {
+                        *d += *s;
+                    }
+                }
+                streams = pred;
+            }
+            let mut merged = streams[i_act].clone();
+            for p in 0..extra {
+                let mut extra_s = oracle_gemv_expert(
+                    g.tensor("altup_unembd_proj.weight").unwrap(),
+                    p,
+                    &streams[p + 1],
+                );
+                oracle_scale_match(&streams[i_act], &mut extra_s);
+                for (d, s) in merged.iter_mut().zip(extra_s.iter()) {
+                    *d += *s;
+                }
+            }
+            let inv = 1.0 / n_altup as f32;
+            for v in &mut merged {
+                *v *= inv;
+            }
+            let on = f32s(g.tensor("output_norm.weight").unwrap()).unwrap();
+            let x = oracle_rmsnorm(&merged, &on, eps);
+            let lm_head = g
+                .tensor("output.weight")
+                .or_else(|| g.tensor("token_embd.weight"))
+                .expect("lm_head");
+            last = oracle_gemv(lm_head, &x);
+            if cap > 0.0 {
+                for v in &mut last {
+                    *v = cap * (*v / cap).tanh();
+                }
+            }
+        }
+        last
+    }
+
     /// Independent scalar Llama math for a token sequence (causal attn + GQA).
     fn oracle_forward_seq(g: &Gguf, tokens: &[u32]) -> Vec<f32> {
         let arch = architecture(g).expect("arch");
+        if arch == "gemma3n" {
+            return oracle_gemma3n_forward_seq(g, tokens);
+        }
         let n_embd = arch_u32(g, arch, "embedding_length").unwrap() as usize;
         let n_head = arch_u32(g, arch, "attention.head_count").unwrap() as usize;
         let n_kv = arch_u32(g, arch, "attention.head_count_kv").unwrap() as usize;
@@ -10282,6 +11677,7 @@ mod tests {
             "gemma",
             "gemma2",
             "gemma3",
+            "gemma3n",
         ] {
             assert!(rope_is_neox(arch), "{arch} is LLAMA_ROPE_TYPE_NEOX");
             assert!(oracle_rope_is_neox(arch), "{arch} oracle NEOX");
@@ -11476,6 +12872,7 @@ mod tests {
             tiny_gemma_gguf(),
             tiny_gemma2_gguf(),
             tiny_gemma3_gguf(),
+            tiny_gemma3n_gguf(),
             tiny_qwen3_gguf(),
             tiny_llama4_gguf(),
             tiny_llama_moe_gguf(),
@@ -11525,6 +12922,7 @@ mod tests {
             ("gemma", tiny_gemma_gguf()),
             ("gemma2", tiny_gemma2_gguf()),
             ("gemma3", tiny_gemma3_gguf()),
+            ("gemma3n", tiny_gemma3n_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("f16", tiny_f16_gguf()),
@@ -11609,6 +13007,7 @@ mod tests {
             ("gemma", tiny_gemma_gguf()),
             ("gemma2", tiny_gemma2_gguf()),
             ("gemma3", tiny_gemma3_gguf()),
+            ("gemma3n", tiny_gemma3n_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("llama-moe", tiny_llama_moe_gguf()),
@@ -12339,6 +13738,110 @@ mod tests {
         assert!(
             !gemma2_is_swa(5, GEMMA3_SWA_PERIOD_DEFAULT),
             "layer 5 is dense under set_swa_pattern(6)"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma3n_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma3n_gguf();
+        let g = load_gguf(&bytes).expect("load gemma3n");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma3n".into()))
+        );
+        assert_eq!(g.kv_u32("gemma3n.block_count"), Some(1));
+        assert_eq!(g.kv_u32("gemma3n.embedding_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma3n.feed_forward_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma3n.attention.head_count"), Some(4));
+        assert_eq!(g.kv_u32("gemma3n.attention.head_count_kv"), Some(2));
+        assert_eq!(g.kv_u32("gemma3n.context_length"), Some(256));
+        assert_eq!(
+            g.kv_u32("gemma3n.attention.sliding_window"),
+            Some(GEMMA2_TINY_N_SWA)
+        );
+        assert_eq!(g.kv_u32("gemma3n.attention.key_length"), Some(64));
+        assert_eq!(g.kv_u32("gemma3n.attention.value_length"), Some(64));
+        assert_eq!(
+            g.kv_f32("gemma3n.final_logit_softcapping"),
+            Some(GEMMA2_FINAL_LOGIT_SOFTCAPPING)
+        );
+        assert_eq!(
+            g.kv_u32("gemma3n.altup.num_inputs"),
+            Some(u32::try_from(GEMMA3N_N_ALTUP).unwrap())
+        );
+        assert_eq!(
+            g.kv_u32("gemma3n.altup.active_idx"),
+            Some(u32::try_from(GEMMA3N_I_ALTUP_ACT).unwrap())
+        );
+        assert_eq!(
+            g.kv_u32("gemma3n.embedding_length_per_layer_input"),
+            Some(u32::try_from(GEMMA3N_N_EMBD_ALTUP).unwrap())
+        );
+        assert_eq!(
+            g.kv_u32("gemma3n.attention.shared_kv_layers"),
+            Some(GEMMA3N_N_LAYER_KV_FROM_START)
+        );
+        assert!(g.kv_f32("gemma3n.attn_logit_softcapping").is_none());
+        assert!(g.kv_u32("gemma3n.rope.dimension_count").is_none());
+        assert!(g
+            .kv_u32("gemma3n.attention.sliding_window_pattern")
+            .is_none());
+        assert!(g.kv_u32("gemma3.block_count").is_none());
+        assert!(g.kv_u32("llama.block_count").is_none());
+        assert!(g.kv_u32("mixtral.block_count").is_none());
+        assert!(g.tensor("output.weight").is_none());
+        assert!(g.tensor("altup_proj.weight").is_some());
+        assert!(g.tensor("altup_unembd_proj.weight").is_some());
+        assert!(g.tensor("per_layer_token_embd.weight").is_some());
+        assert!(g.tensor("per_layer_model_proj.weight").is_some());
+        assert!(g.tensor("per_layer_proj_norm.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_norm.weight").is_some());
+        assert!(g.tensor("blk.0.post_attention_norm.weight").is_some());
+        assert!(g.tensor("blk.0.post_ffw_norm.weight").is_some());
+        assert!(g.tensor("blk.0.attn_q_norm.weight").is_some());
+        assert!(g.tensor("blk.0.attn_k_norm.weight").is_some());
+        assert!(g.tensor("blk.0.inp_gate.weight").is_some());
+        assert!(g.tensor("blk.0.laurel_l.weight").is_some());
+        assert_eq!(
+            g.tensor("blk.0.attn_q_norm.weight").unwrap().n_cols(),
+            TINY_N_ROT
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("token_embd.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        let tokens = [1u32, 2, 3];
+        let gemma3_pref = {
+            let g3 = load_gguf(&tiny_gemma3_gguf()).expect("gemma3");
+            let m = Llama::from_gguf(g3).expect("m3");
+            let mut c = m.new_cache(8).expect("c3");
+            m.prefill(&mut c, &tokens).expect("gemma3 pref")
+        };
+        let mut gc = model.new_cache(8).expect("gc");
+        let gemma3n_pref = model.prefill(&mut gc, &tokens).expect("gemma3n pref");
+        assert_ne!(
+            gemma3n_pref, gemma3_pref,
+            "gemma3n AltUp/Laurel/V-norm/attn-scale must change logits vs gemma3"
+        );
+        assert!(
+            gemma2_is_swa(0, GEMMA3N_SWA_PERIOD_DEFAULT),
+            "layer 0 is SWA under set_swa_pattern(5)"
+        );
+        assert!(
+            gemma2_is_swa(3, GEMMA3N_SWA_PERIOD_DEFAULT),
+            "layer 3 is SWA under set_swa_pattern(5)"
+        );
+        assert!(
+            !gemma2_is_swa(4, GEMMA3N_SWA_PERIOD_DEFAULT),
+            "layer 4 is dense under set_swa_pattern(5)"
         );
     }
 
@@ -14132,11 +15635,11 @@ mod tests {
     }
 
     #[test]
-    fn gemma3n_architecture_error_names_arch() {
+    fn gemma4_architecture_error_names_arch() {
         let bytes = write_gguf_with_kv(
             &[
                 ("general.alignment".into(), Kv::U32(32)),
-                ("general.architecture".into(), Kv::String("gemma3n".into())),
+                ("general.architecture".into(), Kv::String("gemma4".into())),
             ],
             &[],
         );
@@ -14145,7 +15648,7 @@ mod tests {
             Ok(_) => panic!("expected unknown arch"),
             Err(e) => e.to_string(),
         };
-        assert!(err.contains("gemma3n"), "error should name arch: {err}");
+        assert!(err.contains("gemma4"), "error should name arch: {err}");
         assert!(
             err.contains("unknown architecture"),
             "error should name unknown architecture: {err}"
@@ -14200,6 +15703,30 @@ mod tests {
         };
         assert!(
             err.contains("gemma3.attention.layer_norm_rms_epsilon"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma3n_missing_layer_norm_rms_epsilon_names_key() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma3n".into())),
+                ("gemma3n.block_count".into(), Kv::U32(1)),
+                ("gemma3n.embedding_length".into(), Kv::U32(256)),
+                ("gemma3n.attention.head_count".into(), Kv::U32(4)),
+                ("gemma3n.attention.head_count_kv".into(), Kv::U32(2)),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected missing layer_norm_rms_epsilon"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("gemma3n.attention.layer_norm_rms_epsilon"),
             "error should name kv key: {err}"
         );
     }
@@ -14628,7 +16155,7 @@ mod bench {
     fn bench_logits_fingerprint() {
         // Every zero-argument fixture in the suite, so that each architecture
         // walk and each dtype kernel the decode path can reach is pinned.
-        let cases: [(&str, Vec<u8>); 51] = [
+        let cases: [(&str, Vec<u8>); 52] = [
             ("llama", tiny_llama_gguf()),
             ("tied", tiny_tied_gguf()),
             ("tied_copy", tiny_tied_copy_gguf()),
@@ -14651,6 +16178,7 @@ mod bench {
             ("gemma", tiny_gemma_gguf()),
             ("gemma2", tiny_gemma2_gguf()),
             ("gemma3", tiny_gemma3_gguf()),
+            ("gemma3n", tiny_gemma3n_gguf()),
             ("f16", tiny_f16_gguf()),
             ("f16_1d", tiny_f16_1d_gguf()),
             ("f16_1d_bias", tiny_f16_1d_bias_gguf()),

@@ -3264,13 +3264,30 @@ model, do not celebrate the sim.
     `gemma3.*` KV (`attention.sliding_window` when present, `attention.key_length`
     / `value_length`, `context_length`; omit `attn_logit_softcapping`). Tied
     `output.weight`. Writer-tiny uses `attention.sliding_window = 2` so short-seq
-    tests clip. `{arch}.context_length` is still unused for KV sizing. `gemma3n`
+    tests clip.     `{arch}.context_length` is still unused for KV sizing. `gemma3n`
     stays rejected. Decode identity vs oracle. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-318. [ ] Next numbered PLAN item after 317 is the next `gpu-sim` / Engine /
+318. [x] Official Gemma3n (`architecture=gemma3n`): writer-built
+    `tiny-gemma3n` plus decode of llama.cpp `src/models/gemma3n.cpp` —
+    Gemma embed-scale + GeGLU, QK-Norm before RoPE, unweighted RMSNorm on
+    V, attention scale `1.0`, RMSNorm `post_attention_norm` / `ffn_norm` /
+    `post_ffw_norm`, SWA default period 5 (required
+    `attention.sliding_window`), final tanh softcap (default 30), AltUp
+    (4 residual streams) + Laurel + per-layer inputs, gaussian_topk on
+    the first 10 layers (`n_layer_sparsity` hardcoded, not GGUF). Convert
+    skips `lm_head.weight` when tied, omits `attn_logit_softcapping` /
+    `rope.dimension_count`. Writer-tiny uses `attention.sliding_window = 2`
+    so short-seq tests clip, omits `sliding_window_pattern` (period 5),
+    and writes convert-shaped `gemma3n.altup.*` /
+    `embedding_length_per_layer_input`. Convert `norm_shift` is 0.
+    `{arch}.context_length` is still unused for KV sizing. `gemma4` stays
+    rejected. Decode identity vs oracle. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+319. [ ] Next numbered PLAN item after 318 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
-    decode family (`gemma3n`). Do not invent
+    decode family (`gemma4`). Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
     numbers, example `$/M tokens` rents, or `cudaStreamDestroy`.
