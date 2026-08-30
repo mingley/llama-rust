@@ -1867,6 +1867,15 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
+156. [x] `cudaGetDeviceCount` / `cudaDeviceCanAccessPeer` /
+    `cudaDeviceGetP2PAttribute`: `Sim::device_count` is the profile GPU
+    count. `device_can_access_peer` / `device_get_p2p_attribute` expose
+    `DeviceP2pAttr::AccessSupported` (a profile device–device link). Same
+    device is 0. Missing links are 0, not NoPeer. Independent of
+    `enable_peer` (D2D still needs that). Query; legal during capture.
+    Decode identity stays single-device. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

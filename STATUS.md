@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaGetDeviceCount` / P2P attributes
+
+`Sim::device_count` is `cudaGetDeviceCount`. `device_can_access_peer` /
+`device_get_p2p_attribute` expose `cudaDevP2PAttrAccessSupported` from the
+profile topology (a device–device link). Same device is 0. Missing links
+are 0. Independent of `enable_peer`. Query APIs; legal during capture.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaMemset3DAsync`
 
 `MemsetOp` depth/ysize is `cudaMemset3DAsync`: billed HBM write is

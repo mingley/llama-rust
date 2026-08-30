@@ -11,7 +11,7 @@ use crate::ids::{
 };
 use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
-    ClusterSchedulingPolicy, DeviceAttr, DeviceLimit, GpuOp as Kind, GraphExecUpdateResult,
+    ClusterSchedulingPolicy, DeviceAttr, DeviceLimit, DeviceP2pAttr, GpuOp as Kind, GraphExecUpdateResult,
     GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
     GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphUserObjectFlags, HostNodeParams,
     KernelAttrs, KernelBuf, KernelKind, KernelNodeParams, LaunchCompletionEvent, MemAdvise,
@@ -9779,6 +9779,48 @@ impl Sim {
             DeviceAttr::MaxBlocksPerCluster => u64::from(gpu.max_blocks_per_cluster),
             DeviceAttr::MemSyncDomainCount => u64::from(gpu.mem_sync_domain_count),
             DeviceAttr::MemoryPoolsSupported => 1,
+        })
+    }
+
+    /// `cudaGetDeviceCount`. Query; legal during capture.
+    #[must_use]
+    pub fn device_count(&self) -> u32 {
+        u32::try_from(self.profile.gpus.len()).unwrap_or(u32::MAX)
+    }
+
+    /// `cudaDeviceCanAccessPeer`. Query; legal during capture.
+    ///
+    /// Hardware topology only (a profile link). Same device is false.
+    /// [`Self::enable_peer`] is still required before D2D.
+    pub fn device_can_access_peer(
+        &self,
+        device: DeviceId,
+        peer: DeviceId,
+    ) -> Result<bool, SimError> {
+        Ok(self.device_get_p2p_attribute(device, peer, DeviceP2pAttr::AccessSupported)? != 0)
+    }
+
+    /// `cudaDeviceGetP2PAttribute`. Query; legal during capture.
+    ///
+    /// Only [`DeviceP2pAttr::AccessSupported`] (a profile device–device link).
+    /// Same device is 0. Missing links are 0, not [`SimError::NoPeer`].
+    /// Unknown devices are Invalid.
+    pub fn device_get_p2p_attribute(
+        &self,
+        src: DeviceId,
+        dst: DeviceId,
+        attr: DeviceP2pAttr,
+    ) -> Result<u64, SimError> {
+        let _src = self.profile.gpu(src)?;
+        let _dst = self.profile.gpu(dst)?;
+        Ok(match attr {
+            DeviceP2pAttr::AccessSupported => {
+                if src == dst || self.profile.link(Some(src), Some(dst)).is_err() {
+                    0
+                } else {
+                    1
+                }
+            }
         })
     }
 

@@ -548,6 +548,17 @@ pub enum DeviceAttr {
     MemoryPoolsSupported,
 }
 
+/// `cudaDeviceP2PAttr` for [`crate::Sim::device_get_p2p_attribute`].
+///
+/// Only attributes this VM already models (topology links). Values are the
+/// CUDA `int` as `u64`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeviceP2pAttr {
+    /// `cudaDevP2PAttrAccessSupported`. 1 if the profile has a device–device
+    /// link. Same device is 0. Independent of [`crate::Sim::enable_peer`].
+    AccessSupported,
+}
+
 /// One kernel buffer: a whole allocation or a mapped VMM span.
 ///
 /// [`Self::whole`] is `offset = 0`, `bytes = 0` (remainder of the alloc).

@@ -109,6 +109,8 @@ warp scheduler, L1, …   ← do not model
 | `pointer_get_attributes` classifies Unregistered / Host / Device / Managed | `cudaPointerGetAttributes` |
 | `host_get_device_pointer` of mapped host returns the same id | `cudaHostGetDevicePointer` |
 | `device_get_attribute` exposes modeled SKU caps | `cudaDeviceGetAttribute` |
+| `device_count` is the profile GPU count | `cudaGetDeviceCount` |
+| `device_can_access_peer` / `device_get_p2p_attribute` are topology links | `cudaDeviceCanAccessPeer` / `GetP2PAttribute` |
 | `set_limit` / `get_limit` wrap persisting L2 plus stack / printf / heap / CDP / L2 fetch | `cudaDeviceSetLimit` / `GetLimit` |
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128) | exact |
 | `malloc_pitch` charges `pitch * height`; pitch is `align_up(width, 512)` | `cudaMallocPitch` |
