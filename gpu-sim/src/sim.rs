@@ -11026,10 +11026,7 @@ impl Sim {
         Ok(id)
     }
 
-    /// `cudaMemcpy3DPeerAsync`. Replica copy; [`MemcpyOp`] height/depth/pitches
-    /// are the 3D extent. `op.src` / `op.dst` are forced to `src` / `dst`.
-    /// Capture records a memcpy node. Typed [`Self::memcpy`] stays.
-    pub fn memcpy_peer_3d_async(
+    fn memcpy_peer_extent_async(
         &mut self,
         src: DeviceId,
         dst: DeviceId,
@@ -11041,8 +11038,7 @@ impl Sim {
         self.memcpy(src, op, stream)
     }
 
-    /// `cudaMemcpy3DPeer`. Host-synchronous; capture cannot include it.
-    pub fn memcpy_peer_3d(
+    fn memcpy_peer_extent(
         &mut self,
         src: DeviceId,
         dst: DeviceId,
@@ -11054,9 +11050,57 @@ impl Sim {
                 why: "cannot capture host-sync memcpy",
             });
         }
-        let id = self.memcpy_peer_3d_async(src, dst, op, stream)?;
+        let id = self.memcpy_peer_extent_async(src, dst, op, stream)?;
         self.synchronize_stream(src, stream)?;
         Ok(id)
+    }
+
+    /// `cudaMemcpy3DPeerAsync`. Replica copy; [`MemcpyOp`] height/depth/pitches
+    /// are the 3D extent. `op.src` / `op.dst` are forced to `src` / `dst`.
+    /// Capture records a memcpy node. Typed [`Self::memcpy`] stays.
+    pub fn memcpy_peer_3d_async(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_peer_extent_async(src, dst, op, stream)
+    }
+
+    /// `cudaMemcpy3DPeer`. Host-synchronous; capture cannot include it.
+    pub fn memcpy_peer_3d(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_peer_extent(src, dst, op, stream)
+    }
+
+    /// `cudaMemcpy2DPeerAsync`. Replica copy; [`MemcpyOp`] height/pitches are
+    /// the 2D extent. `op.src` / `op.dst` are forced to `src` / `dst`. Capture
+    /// records a memcpy node. Typed [`Self::memcpy`] stays.
+    pub fn memcpy_peer_2d_async(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_peer_extent_async(src, dst, op, stream)
+    }
+
+    /// `cudaMemcpy2DPeer`. Host-synchronous; capture cannot include it.
+    pub fn memcpy_peer_2d(
+        &mut self,
+        src: DeviceId,
+        dst: DeviceId,
+        op: MemcpyOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        self.memcpy_peer_extent(src, dst, op, stream)
     }
 
     /// Enqueue a kernel on whole allocations. Reads/writes are leased until it completes.

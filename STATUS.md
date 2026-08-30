@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaMemcpy2DPeer` / `cudaMemcpy2DPeerAsync`
+
+`memcpy_peer_2d` is host-synchronous; capture refused.
+`memcpy_peer_2d_async` bills 2D payload (not pitch padding). Places are
+forced to `src`/`dst`. Typed `memcpy` stays. `gpu-profile capture` is
+still refused.
+
 ## Shipped 2026-08-30 — `cudaMemcpy3DPeer` / `cudaMemcpy3DPeerAsync`
 
 `memcpy_peer_3d` is host-synchronous; capture refused.
@@ -2294,7 +2301,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 204 (`cudaMemcpy3DPeer`).
+Next code change is PLAN systems depth after item 205 (`cudaMemcpy2DPeer`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

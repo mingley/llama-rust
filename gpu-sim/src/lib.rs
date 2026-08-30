@@ -216,6 +216,8 @@
 //! host-synchronous and capture-illegal).
 //! [`memcpy_peer_3d_async`](Sim::memcpy_peer_3d_async) / [`memcpy_peer_3d`](Sim::memcpy_peer_3d)
 //! are `cudaMemcpy3DPeerAsync` / `cudaMemcpy3DPeer` ([`MemcpyOp`] height/depth).
+//! [`memcpy_peer_2d_async`](Sim::memcpy_peer_2d_async) / [`memcpy_peer_2d`](Sim::memcpy_peer_2d)
+//! are `cudaMemcpy2DPeerAsync` / `cudaMemcpy2DPeer` ([`MemcpyOp`] height/pitches).
 //! [`Sim::set_limit`] / [`get_limit`](Sim::get_limit) are `cudaDeviceSetLimit` /
 //! `GetLimit`. [`DeviceLimit::PersistingL2CacheSize`] wraps
 //! [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size).
@@ -3994,6 +3996,54 @@ mod tests {
             other => panic!("{other:?}"),
         }
         enq(sim.memcpy_peer_3d_async(d0, d1, op, s));
+        let g = sim.end_capture().unwrap();
+        assert_eq!(sim.graph_len(g).unwrap(), 1);
+    }
+
+    #[test]
+    fn memcpy_peer_2d_is_host_sync_cuda_memcpy2d_peer() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let s = StreamId(0);
+        let (a, pitch) = sim.malloc_pitch(d0, 256, 8).unwrap();
+        enq(sim.memcpy(
+            d0,
+            MemcpyOp {
+                src: Place::HostPinned,
+                dst: Place::Device(d0),
+                alloc: a,
+                bytes: 256,
+                height: 8,
+                src_pitch: 256,
+                dst_pitch: pitch,
+                ..MemcpyOp::default()
+            },
+            s,
+        ));
+        sim.synchronize().unwrap();
+        let moved0 = sim.bytes_moved();
+        let t0 = sim.clock_ns();
+        let op = MemcpyOp {
+            alloc: a,
+            bytes: 256,
+            height: 8,
+            src_pitch: pitch,
+            dst_pitch: pitch,
+            ..MemcpyOp::default()
+        };
+        let id = sim.memcpy_peer_2d(d0, d1, op.clone(), s).unwrap();
+        assert!(sim.stream_is_idle(d0, s).unwrap());
+        assert!(sim.is_resident(a, d1).unwrap());
+        assert!(sim.clock_ns() > t0);
+        assert_eq!(sim.bytes_moved(), moved0 + 2048);
+        assert_eq!(sim.op_stream(id), Some(s));
+        sim.begin_capture(d0, s).unwrap();
+        match sim.memcpy_peer_2d(d0, d1, op.clone(), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        enq(sim.memcpy_peer_2d_async(d0, d1, op, s));
         let g = sim.end_capture().unwrap();
         assert_eq!(sim.graph_len(g).unwrap(), 1);
     }
