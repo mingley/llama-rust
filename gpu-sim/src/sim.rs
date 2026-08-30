@@ -15,14 +15,15 @@ use crate::ops::{
     EventCreateFlags, EventRecordFlags, EventWaitFlags, FuncAttr, FuncAttributes, GpuOp as Kind,
     GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags, HostNodeParams,
-    KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
-    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemHandleType, MemPoolAttr,
-    MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType,
-    MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
-    StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags,
+    HostGetDevicePointerFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
+    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise,
+    MemAttach, MemHandleType, MemPoolAttr, MemRangeAttr, MemRangeAttrValue, MemSyncDomain,
+    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
+    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -11620,6 +11621,24 @@ impl Sim {
             return Ok(id);
         }
         Err(SimError::Invalid { why: "not mapped" })
+    }
+
+    /// `cudaHostGetDevicePointer` with a flags word.
+    ///
+    /// CUDA requires `flags == 0` ([`HostGetDevicePointerFlags::DEFAULT`]).
+    /// Other bits are Invalid `"host get device pointer flags"`. Typed
+    /// [`Self::host_get_device_pointer`] stays. Query; legal during capture.
+    pub fn host_get_device_pointer_with_flags(
+        &self,
+        id: AllocId,
+        flags: u32,
+    ) -> Result<AllocId, SimError> {
+        if flags != HostGetDevicePointerFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "host get device pointer flags",
+            });
+        }
+        self.host_get_device_pointer(id)
     }
 
     /// `cudaHostGetFlags`. Query; legal during capture.

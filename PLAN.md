@@ -2305,7 +2305,13 @@ model, do not celebrate the sim.
     identity unchanged. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-207. [ ] Next numbered PLAN item after 206 is the next `gpu-sim` / Engine /
+207. [x] `cudaHostGetDevicePointer` flags: `Sim::host_get_device_pointer_with_flags`
+    requires [`HostGetDevicePointerFlags::DEFAULT`] (`0`). Unknown bits are
+    Invalid `"host get device pointer flags"`. Typed helper stays. Query;
+    legal during capture. Decode identity unchanged. `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+208. [ ] Next numbered PLAN item after 207 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

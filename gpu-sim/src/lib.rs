@@ -168,6 +168,8 @@
 //! [`Sim::mem_info`] is `cudaMemGetInfo` `(free, total)`.
 //! [`Sim::pointer_get_attributes`] is `cudaPointerGetAttributes`.
 //! [`Sim::host_get_device_pointer`] is `cudaHostGetDevicePointer` (mapped host).
+//! [`host_get_device_pointer_with_flags`](Sim::host_get_device_pointer_with_flags)
+//! requires [`HostGetDevicePointerFlags::DEFAULT`] (`0`). Typed helper stays.
 //! [`Sim::host_get_flags`] is `cudaHostGetFlags` (`HostAllocFlags::MAPPED` or
 //! default `0`; Portable / WriteCombined are not modeled).
 //! [`Sim::alloc_host_with_flags`] / [`host_register_with_flags`](Sim::host_register_with_flags)
@@ -563,14 +565,15 @@ pub use ops::{
     DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags, FuncAttr, FuncAttributes,
     GpuOp, GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags, HostNodeParams,
-    KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
-    LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemHandleType, MemPoolAttr,
-    MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType,
-    MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
-    StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags,
+    HostGetDevicePointerFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
+    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise,
+    MemAttach, MemHandleType, MemPoolAttr, MemRangeAttr, MemRangeAttrValue, MemSyncDomain,
+    MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
+    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -8024,6 +8027,17 @@ mod tests {
         let d = DeviceId(0);
         let mapped = sim.alloc_host_mapped(64).unwrap();
         assert_eq!(sim.host_get_device_pointer(mapped).unwrap(), mapped);
+        assert_eq!(
+            sim.host_get_device_pointer_with_flags(mapped, HostGetDevicePointerFlags::DEFAULT)
+                .unwrap(),
+            mapped
+        );
+        match sim.host_get_device_pointer_with_flags(mapped, 1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("host get device pointer flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
         let pin = sim.alloc_host_pinned(64).unwrap();
         match sim.host_get_device_pointer(pin) {
             Err(SimError::Invalid { why }) => assert!(why.contains("not mapped"), "{why}"),
@@ -8164,6 +8178,12 @@ mod tests {
         );
         assert!(!props.host_register_read_only_supported);
         assert!(!props.pageable_memory_access);
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.host_get_device_pointer_with_flags(mapped, 0).unwrap(),
+            mapped
+        );
+        let _g = sim.end_capture().unwrap();
         match sim.device_get_properties(DeviceId(1)) {
             Err(SimError::Invalid { why }) => assert!(why.contains("device"), "{why}"),
             other => panic!("{other:?}"),

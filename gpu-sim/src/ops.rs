@@ -1828,6 +1828,16 @@ impl PeerAccessFlags {
     pub const DEFAULT: u32 = 0;
 }
 
+/// `cudaHostGetDevicePointer` flags for [`crate::Sim::host_get_device_pointer_with_flags`].
+///
+/// CUDA requires 0. Unknown bits are Invalid `"host get device pointer flags"`.
+pub struct HostGetDevicePointerFlags;
+
+impl HostGetDevicePointerFlags {
+    /// `cudaHostGetDevicePointer` `flags` must be 0.
+    pub const DEFAULT: u32 = 0;
+}
+
 /// `cudaEventCreateWithFlags` bits for [`crate::Sim::create_event_with_flags`].
 ///
 /// `cudaEventBlockingSync` is not modeled (Invalid). [`INTERPROCESS`] requires
