@@ -9001,6 +9001,31 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaMemPoolSetAccess` with a flags word.
+    ///
+    /// [`MemAccessFlags::PROT_READ_WRITE`] is [`Self::pool_set_access`].
+    /// [`MemAccessFlags::PROT_NONE`] is [`Self::pool_unset_access`].
+    /// [`MemAccessFlags::PROT_READ`] is Invalid `"pool prot read"` (pool
+    /// ProtRead is not modeled). Other bits are Invalid `"pool access flags"`.
+    /// Typed helpers stay. Capture is refused by those helpers.
+    pub fn pool_set_access_with_flags(
+        &mut self,
+        pool: PoolId,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        match flags {
+            MemAccessFlags::PROT_READ_WRITE => self.pool_set_access(pool, device),
+            MemAccessFlags::PROT_NONE => self.pool_unset_access(pool, device),
+            MemAccessFlags::PROT_READ => Err(SimError::Invalid {
+                why: "pool prot read",
+            }),
+            _ => Err(SimError::Invalid {
+                why: "pool access flags",
+            }),
+        }
+    }
+
     /// Drop [`Self::pool_set_access`] for `device` (`cudaMemAccessFlagsProtNone`).
     pub fn pool_unset_access(&mut self, pool: PoolId, device: DeviceId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
@@ -9021,8 +9046,9 @@ impl Sim {
     ///
     /// [`MemAccessFlags::PROT_READ_WRITE`] (`3`) on the owning device (default
     /// accessibility) and on peers after [`Self::pool_set_access`]. Otherwise
-    /// [`MemAccessFlags::PROT_NONE`] (`0`). This VM does not model ProtRead.
-    /// The graph-memory pool is Invalid.
+    /// [`MemAccessFlags::PROT_NONE`] (`0`). [`MemAccessFlags::PROT_READ`] is
+    /// not returned (pool ProtRead is not modeled). The graph-memory pool is
+    /// Invalid.
     pub fn pool_get_access(&self, pool: PoolId, device: DeviceId) -> Result<u32, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.refuse_graph_pool(pool)?;
@@ -11857,7 +11883,10 @@ impl Sim {
             | DeviceAttr::PageableMemoryAccess
             | DeviceAttr::ConcurrentManagedAccess
             | DeviceAttr::DirectManagedMemAccessFromHost
-            | DeviceAttr::PageableMemoryAccessUsesHostPageTables => 0,
+            | DeviceAttr::PageableMemoryAccessUsesHostPageTables
+            | DeviceAttr::HostNativeAtomicSupported
+            | DeviceAttr::CooperativeMultiDeviceLaunch
+            | DeviceAttr::Integrated => 0,
             DeviceAttr::StreamPrioritiesSupported | DeviceAttr::UnifiedAddressing => 1,
             DeviceAttr::GpuOverlap => u64::from(gpu.copy_engines > 0),
         })
@@ -11899,6 +11928,9 @@ impl Sim {
             direct_managed_mem_access_from_host: false,
             pageable_memory_access_uses_host_page_tables: false,
             can_flush_remote_writes: self.profile.gpu_direct_rdma_supported(device),
+            host_native_atomic_supported: false,
+            cooperative_multi_device_launch: false,
+            integrated: false,
         })
     }
 

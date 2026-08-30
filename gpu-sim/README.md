@@ -117,7 +117,7 @@ warp scheduler, L1, …   ← do not model
 | `host_get_device_pointer` of mapped host returns the same id (`flags` must be 0) | `cudaHostGetDevicePointer` |
 | `host_get_flags` is 0 default / `HostAllocFlags::MAPPED` | `cudaHostGetFlags` |
 | `alloc_host_with_flags` / `host_register_with_flags` (MAPPED known; Portable Invalid) | `cudaHostAlloc` / `cudaHostRegister` |
-| `device_get_attribute` exposes modeled SKU caps (incl. GPUDirect RDMA / CanFlushRemoteWrites from `LinkKind::Rdma`; ConcurrentManaged / DirectManagedHost / PageableHostPageTables always 0) | `cudaDeviceGetAttribute` |
+| `device_get_attribute` exposes modeled SKU caps (incl. GPUDirect RDMA / CanFlushRemoteWrites from `LinkKind::Rdma`; ConcurrentManaged / DirectManagedHost / PageableHostPageTables / HostNativeAtomic / CooperativeMultiDevice / Integrated always 0) | `cudaDeviceGetAttribute` |
 | `device_get_properties` wraps the same SKU caps | `cudaGetDeviceProperties` |
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
 | `stream_get_priority` is the create priority | `cudaStreamGetPriority` |
@@ -495,7 +495,10 @@ host-sync barrier; capture refused; write-ordering options are not modeled).
 `PageableMemoryAccess` / `ConcurrentManagedAccess` /
 `DirectManagedMemAccessFromHost` /
 `PageableMemoryAccessUsesHostPageTables` are always 0 (ReadOnly host register is Invalid;
-pageable is bounce-buffer; host cannot touch managed while a kernel runs). `StreamPrioritiesSupported` /
+pageable is bounce-buffer; host cannot touch managed while a kernel runs).
+`HostNativeAtomicSupported` / `CooperativeMultiDeviceLaunch` / `Integrated`
+are always 0 (host-mapped atomics and multi-device cooperative are not
+modeled; example SKUs are discrete). `StreamPrioritiesSupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
 (no SM count or clock). `func_get_attributes` is `cudaFuncGetAttributes`
@@ -546,7 +549,9 @@ pool cannot be destroyed; destroying the current pool rebinds GetMemPool
 to GetDefaultMemPool. Capture cannot include pool create/trim/set-attribute
 /destroy.
 `pool_get_access` is `cudaMemPoolGetAccess` (owner ReadWrite by default;
-peers need `pool_set_access`).
+peers need `pool_set_access`). `pool_set_access_with_flags` is the flags
+word (`PROT_READ_WRITE` / `PROT_NONE`; `PROT_READ` is Invalid `"pool prot
+read"`). Typed helpers stay.
 `ipc_get` / `ipc_open` / `ipc_close` are `cudaIpcGetMemHandle` /
 `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`: the import aliases the
 source physicals (no extra HBM). `ipc_open_with_flags` accepts

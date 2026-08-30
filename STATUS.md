@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — Pool access flags and discrete/unmodeled DeviceAttr zeros
+
+`pool_set_access_with_flags` maps `PROT_READ_WRITE` / `PROT_NONE` onto
+typed helpers. `PROT_READ` is Invalid (pool ProtRead is not modeled).
+`HostNativeAtomicSupported` / `CooperativeMultiDeviceLaunch` /
+`Integrated` are always 0. Query; capture-legal. `gpu-profile capture`
+is still refused.
+
 ## Shipped 2026-08-30 — MemPool reuse attrs, managed/flush DeviceAttr, RDMA flush
 
 `MemPoolAttr` reuse flags default to 1. Only `ReuseAllowOpportunistic=0`
@@ -2373,7 +2381,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 218 (`flush_gpu_direct_rdma_writes`).
+Next code change is PLAN systems depth after item 220 (`pool_set_access_with_flags`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

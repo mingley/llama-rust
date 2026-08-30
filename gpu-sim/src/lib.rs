@@ -79,7 +79,10 @@
 //! [`Sim::pool_set_access`] / [`pool_unset_access`](Sim::pool_unset_access) /
 //! [`pool_get_access`](Sim::pool_get_access) are `cudaMemPoolSetAccess`
 //! ReadWrite / ProtNone and `cudaMemPoolGetAccess` (owner is ReadWrite by
-//! default; peers need SetAccess). A kernel on a peer may read
+//! default; peers need SetAccess). [`pool_set_access_with_flags`](Sim::pool_set_access_with_flags)
+//! is the flags word ([`MemAccessFlags::PROT_READ_WRITE`] / [`PROT_NONE`](MemAccessFlags::PROT_NONE);
+//! [`PROT_READ`](MemAccessFlags::PROT_READ) is Invalid `"pool prot read"`).
+//! Typed helpers stay. A kernel on a peer may read
 //! **and write** pool allocations without dest HBM (interconnect). Applies to
 //! existing and later allocs from that pool. [`Sim::malloc`] cannot consume another pool's cache.
 //! [`Sim::alloc_host`] is pageable; [`Sim::host_register`] / [`host_register_mapped`](Sim::host_register_mapped)
@@ -212,7 +215,10 @@
 //! [`PageableMemoryAccessUsesHostPageTables`](DeviceAttr::PageableMemoryAccessUsesHostPageTables)
 //! are always 0
 //! (ReadOnly host register is Invalid; pageable is bounce-buffer; host cannot
-//! touch managed while a kernel runs).
+//! touch managed while a kernel runs). [`DeviceAttr::HostNativeAtomicSupported`] /
+//! [`CooperativeMultiDeviceLaunch`](DeviceAttr::CooperativeMultiDeviceLaunch) /
+//! [`Integrated`](DeviceAttr::Integrated) are always 0 (host-mapped atomics and
+//! multi-device cooperative are not modeled; example SKUs are discrete).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -9511,6 +9517,24 @@ mod tests {
                 .unwrap(),
             0
         );
+        assert!(!hp.host_native_atomic_supported);
+        assert!(!hp.cooperative_multi_device_launch);
+        assert!(!hp.integrated);
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::HostNativeAtomicSupported)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::CooperativeMultiDeviceLaunch)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::Integrated)
+                .unwrap(),
+            0
+        );
         match h100.flush_gpu_direct_rdma_writes(
             d,
             FlushGpuDirectRdmaTarget::CURRENT_DEVICE,
@@ -11450,6 +11474,24 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = cap.end_capture().unwrap();
+        let mut flags = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let pf = flags.default_pool(d0).unwrap();
+        flags
+            .pool_set_access_with_flags(pf, d1, MemAccessFlags::PROT_READ_WRITE)
+            .unwrap();
+        assert!(flags.is_pool_accessed_by(pf, d1).unwrap());
+        flags
+            .pool_set_access_with_flags(pf, d1, MemAccessFlags::PROT_NONE)
+            .unwrap();
+        assert!(!flags.is_pool_accessed_by(pf, d1).unwrap());
+        match flags.pool_set_access_with_flags(pf, d1, MemAccessFlags::PROT_READ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pool prot read"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match flags.pool_set_access_with_flags(pf, d1, 2) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pool access flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
         let mut chain = Sim::new(HardwareProfile::example_asymmetric_links());
         let far = chain.default_pool(DeviceId(0)).unwrap();
         match chain.pool_set_access(far, DeviceId(2)).unwrap_err() {

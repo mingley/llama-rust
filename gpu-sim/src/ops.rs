@@ -636,6 +636,14 @@ pub enum DeviceAttr {
     PageableMemoryAccessUsesHostPageTables,
     /// `cudaDevAttrCanFlushRemoteWrites` ([`Self::GpuDirectRdmaSupported`]).
     CanFlushRemoteWrites,
+    /// `cudaDevAttrHostNativeAtomicSupported` (always 0; host-mapped atomics
+    /// are not modeled).
+    HostNativeAtomicSupported,
+    /// `cudaDevAttrCooperativeMultiDeviceLaunch` (always 0; multi-device
+    /// cooperative is not modeled).
+    CooperativeMultiDeviceLaunch,
+    /// `cudaDevAttrIntegrated` (always 0; example SKUs are discrete).
+    Integrated,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -713,6 +721,12 @@ pub struct DeviceProperties {
     pub pageable_memory_access_uses_host_page_tables: bool,
     /// `cudaDevAttrCanFlushRemoteWrites` (a GPU↔GPU [`crate::LinkKind::Rdma`] link).
     pub can_flush_remote_writes: bool,
+    /// `cudaDevAttrHostNativeAtomicSupported` (host-mapped atomics are not modeled).
+    pub host_native_atomic_supported: bool,
+    /// `cudaDevAttrCooperativeMultiDeviceLaunch` (multi-device cooperative is not modeled).
+    pub cooperative_multi_device_launch: bool,
+    /// `cudaDevAttrIntegrated` (example SKUs are discrete).
+    pub integrated: bool,
 }
 
 /// `cudaFuncAttribute` for [`crate::Sim::func_set_attribute`] / `GetAttribute`.
@@ -2169,6 +2183,9 @@ pub struct MemAccessFlags;
 impl MemAccessFlags {
     /// `cudaMemAccessFlagsProtNone`.
     pub const PROT_NONE: u32 = 0;
+    /// `cudaMemAccessFlagsProtRead`. Not modeled for pools (Invalid
+    /// `"pool prot read"`). VMM uses [`crate::Sim::va_set_access`].
+    pub const PROT_READ: u32 = 1;
     /// `cudaMemAccessFlagsProtReadWrite` ([`crate::Sim::pool_set_access`]).
     pub const PROT_READ_WRITE: u32 = 3;
 }

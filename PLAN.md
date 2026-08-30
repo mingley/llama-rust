@@ -2410,7 +2410,24 @@ model, do not celebrate the sim.
     Decode identity unchanged. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-219. [ ] Next numbered PLAN item after 218 is the next `gpu-sim` / Engine /
+219. [x] `cudaMemPoolSetAccess` flags: `Sim::pool_set_access_with_flags`
+    maps [`MemAccessFlags::PROT_READ_WRITE`] onto typed
+    [`pool_set_access`] and [`PROT_NONE`](MemAccessFlags::PROT_NONE) onto
+    [`pool_unset_access`]. [`PROT_READ`](MemAccessFlags::PROT_READ) is
+    Invalid `"pool prot read"` (pool ProtRead is not modeled). Other bits
+    Invalid `"pool access flags"`. Typed helpers stay. Capture refused by
+    those helpers. Decode identity unchanged. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+220. [x] `cudaDevAttrHostNativeAtomicSupported` /
+    `cudaDevAttrCooperativeMultiDeviceLaunch` /
+    `cudaDevAttrIntegrated`: always 0. Host-mapped atomics and
+    multi-device cooperative are not modeled; example SKUs are discrete.
+    Query; legal during capture. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+221. [ ] Next numbered PLAN item after 220 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
