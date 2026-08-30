@@ -383,6 +383,11 @@
 //! [`graph_add_cooperative_kernel`](Sim::graph_add_cooperative_kernel) /
 //! [`graph_add_dependencies`](Sim::graph_add_dependencies) are
 //! `cudaGraphAdd*` on that id.
+//! [`graph_add_node`](Sim::graph_add_node) is `cudaGraphAddNode`
+//! ([`GraphNodeParams`] plus dependency indices in the same call). Typed
+//! `graph_add_*` stay (empty deps). IF/WHILE/SWITCH stay
+//! [`graph_add_if`](Sim::graph_add_if) / `graph_add_while` / `graph_add_switch`.
+//! Illegal on an instantiated exec and during capture.
 //! Illegal on an instantiated exec and during capture.
 //! [`Sim::graph_add_alloc`] / [`graph_add_free`](Sim::graph_add_free) are
 //! `cudaGraphAddMemAllocNode` / `cudaGraphAddMemFreeNode` (same reuse /
@@ -467,14 +472,15 @@ pub use ids::{
 pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp,
     ClusterDim, ClusterSchedulingPolicy, DType, DeviceAttr, DeviceLimit, DeviceP2pAttr,
-    DeviceProperties, FuncAttributes, GpuOp, GraphExecUpdateResult, GraphExecUpdateResultInfo,
-    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
-    KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr,
-    MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, Place,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
-    StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    DeviceProperties, FuncAttributes, GpuOp, GraphAddNode, GraphExecUpdateResult,
+    GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
+    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
+    HostNodeParams, KernelAttrs, KernelBuf, KernelKind, KernelNodeParams, LaunchCompletionEvent,
+    MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
+    MemoryType, MemsetOp, Operation, PdlLaunch, Place, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode,
+    StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -7967,6 +7973,61 @@ mod tests {
         }
         sim.begin_capture(d, s).unwrap();
         match sim.graph_child_set_params(parent, 0, copy) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _end = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn graph_add_node_binds_deps_and_alloc_id() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        let empty = sim.graph_add_node(g, &[], GraphNodeParams::Empty).unwrap();
+        assert_eq!(empty.node, 0);
+        assert!(empty.alloc.is_none());
+        let kern = sim
+            .graph_add_node(
+                g,
+                &[0],
+                GraphNodeParams::Kernel(KernelNodeParams {
+                    kind: KernelKind::other(8, 8),
+                    reads: vec![KernelBuf::whole(a)],
+                    writes: vec![KernelBuf::whole(a)],
+                    cooperative: false,
+                }),
+            )
+            .unwrap();
+        assert_eq!(kern.node, 1);
+        assert_eq!(sim.graph_node_deps(g, 1).unwrap(), vec![0]);
+        assert_eq!(sim.graph_edges(g).unwrap(), vec![(0, 1)]);
+        assert_eq!(sim.graph_node_kind(g, 1).unwrap(), GraphNodeKind::Kernel);
+        let mem = sim
+            .graph_add_node(g, &[1], GraphNodeParams::Alloc { bytes: 4096 })
+            .unwrap();
+        assert_eq!(mem.node, 2);
+        let id = mem.alloc.expect("alloc node id");
+        assert_eq!(sim.graph_alloc_get_params(g, 2).unwrap(), (id, 4096));
+        assert_eq!(sim.graph_node_deps(g, 2).unwrap(), vec![1]);
+        match sim.graph_add_node(g, &[99], GraphNodeParams::Empty) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("dependency"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let exec = sim.instantiate_graph(g).unwrap();
+        match sim.graph_add_node(exec, &[], GraphNodeParams::Empty) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("instantiated"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let n = sim.launch_graph(exec, s).unwrap();
+        assert_eq!(n, 3);
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(id, d).unwrap());
+        let g2 = sim.create_graph(d, s).unwrap();
+        sim.begin_capture(d, s).unwrap();
+        match sim.graph_add_node(g2, &[], GraphNodeParams::Empty) {
             Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
             other => panic!("{other:?}"),
         }

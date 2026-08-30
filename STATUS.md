@@ -5,6 +5,12 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaGraphAddNode`
+
+`Sim::graph_add_node` is `cudaGraphAddNode` (`GraphNodeParams` plus
+dependency indices). Typed `graph_add_*` stay. Alloc fills
+`GraphAddNode::alloc`. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — graph event/child definition SetParams
 
 `Sim::graph_event_record_set_event` / `graph_event_wait_set_event` are
@@ -2129,8 +2135,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 179 (graph event/child
-definition SetParams).
+Next code change is PLAN systems depth after item 180 (`cudaGraphAddNode`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

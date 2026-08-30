@@ -1784,3 +1784,56 @@ pub enum GraphNodeKind {
     /// Live [`crate::GpuOp::DeviceLaunch`] (not a `cudaGraphAdd*` node).
     DeviceLaunch,
 }
+
+/// `cudaGraphNodeParams` for [`crate::Sim::graph_add_node`].
+///
+/// IF/WHILE/SWITCH stay [`crate::Sim::graph_add_if`] / `graph_add_while` /
+/// `graph_add_switch` (those return body graphs). External-semaphore nodes are
+/// not modeled.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GraphNodeParams {
+    /// `cudaGraphKernelNode`.
+    Kernel(KernelNodeParams),
+    /// `cudaGraphMemcpyNode`. Pageable copies are Invalid.
+    Memcpy(MemcpyOp),
+    /// `cudaGraphMemsetNode`.
+    Memset(MemsetOp),
+    /// `cudaGraphHostNode`.
+    Host(HostNodeParams),
+    /// `cudaGraphEmptyNode`.
+    Empty,
+    /// `cudaGraphEventRecordNode`.
+    EventRecord {
+        /// Event to record.
+        event: EventId,
+        /// `cudaEventRecordExternal`.
+        external: bool,
+    },
+    /// `cudaGraphEventWaitNode`.
+    EventWait {
+        /// Event to wait.
+        event: EventId,
+        /// `cudaEventWaitExternal`.
+        external: bool,
+    },
+    /// `cudaGraphChildGraphNode`. Child must already be instantiated.
+    ChildGraph(GraphId),
+    /// `cudaGraphMemAllocNode`. [`GraphAddNode::alloc`] is the pending id.
+    Alloc {
+        /// Bytes for the pending `cudaMallocAsync`.
+        bytes: u64,
+    },
+    /// `cudaGraphMemFreeNode`.
+    Free(AllocId),
+    /// `cudaGraphBatchMemOpNode` (item list; empty is Invalid).
+    BatchMemOp(Vec<BatchMemOp>),
+}
+
+/// Result of [`crate::Sim::graph_add_node`] (`cudaGraphAddNode`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GraphAddNode {
+    /// New node index in add order (`cudaGraphNode_t` analog).
+    pub node: usize,
+    /// Filled for [`GraphNodeParams::Alloc`] (`cudaMemAllocNodeParams::dptr`).
+    pub alloc: Option<AllocId>,
+}

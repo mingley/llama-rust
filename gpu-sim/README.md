@@ -268,6 +268,9 @@ it. Independent streams still launch live. `cudaMallocAsync` / `cudaFreeAsync`
 (`alloc` / `free`) during capture are graph mem alloc/free nodes.
 `graph_add_alloc` / `graph_add_free` are `cudaGraphAddMemAllocNode` /
 `cudaGraphAddMemFreeNode` (same reuse / AutoFreeOnLaunch rules).
+`graph_add_node` is `cudaGraphAddNode` (`GraphNodeParams` plus dependency
+indices in the same call). Typed `graph_add_*` stay (empty deps).
+IF/WHILE/SWITCH stay `graph_add_if` / `graph_add_while` / `graph_add_switch`.
 `graph_add_empty` is `cudaGraphAddEmptyNode` (1 ns; no compute/copy occupancy).
 `graph_add_write_value64` / `graph_add_wait_value64` /
 `graph_add_batch_mem_op` are `cudaGraphAddBatchMemOpNode` (`cuStreamWaitValue` /

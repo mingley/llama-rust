@@ -12,14 +12,15 @@ use crate::ids::{
 use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, CaptureDepOp, ClusterDim,
     ClusterSchedulingPolicy, DeviceAttr, DeviceLimit, DeviceP2pAttr, DeviceProperties,
-    FuncAttributes, GpuOp as Kind, GraphExecUpdateResult, GraphExecUpdateResultInfo,
+    FuncAttributes, GpuOp as Kind, GraphAddNode, GraphExecUpdateResult, GraphExecUpdateResultInfo,
     GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf, KernelKind,
-    KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach, MemPoolAttr,
-    MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation, PdlLaunch, Place,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue,
-    StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostNodeParams, KernelAttrs, KernelBuf,
+    KernelKind, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags, MemAdvise, MemAttach,
+    MemPoolAttr, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation,
+    PdlLaunch, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
+    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, SynchronizationPolicy, UserObjectFlags,
+    WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -5160,6 +5161,138 @@ impl Sim {
         );
         let _old = self.graph_allocs.insert(id, Vec::new());
         id
+    }
+
+    /// `cudaGraphAddNode` (`cudaGraphNodeParams` plus dependency indices).
+    ///
+    /// Typed [`Self::graph_add_kernel`] / `graph_add_memcpy` / … stay; they
+    /// start with no dependencies. This call binds `deps` in the same step (all
+    /// indices must already exist). IF/WHILE/SWITCH stay
+    /// [`Self::graph_add_if`] / `graph_add_while` / `graph_add_switch`. Capture
+    /// cannot include it. Illegal on an instantiated exec.
+    /// [`GraphNodeParams::Alloc`] fills [`GraphAddNode::alloc`].
+    pub fn graph_add_node(
+        &mut self,
+        graph: GraphId,
+        deps: &[usize],
+        params: GraphNodeParams,
+    ) -> Result<GraphAddNode, SimError> {
+        let n = self.graph_len(graph)?;
+        for &from in deps {
+            if from >= n {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+        }
+        let alloc = self.graph_add_node_kind(graph, params)?;
+        let node = self.graph_len(graph)?.saturating_sub(1);
+        self.graph_bind_new_deps(graph, node, deps)?;
+        Ok(GraphAddNode { node, alloc })
+    }
+
+    fn graph_add_node_kind(
+        &mut self,
+        graph: GraphId,
+        params: GraphNodeParams,
+    ) -> Result<Option<AllocId>, SimError> {
+        match params {
+            GraphNodeParams::Kernel(p) => {
+                self.graph_add_kernel_params(graph, p)?;
+                Ok(None)
+            }
+            GraphNodeParams::Memcpy(op) => {
+                self.graph_add_memcpy(graph, op)?;
+                Ok(None)
+            }
+            GraphNodeParams::Memset(op) => {
+                self.graph_add_memset_op(graph, op)?;
+                Ok(None)
+            }
+            GraphNodeParams::Host(p) => {
+                self.graph_add_host_func_params(graph, p)?;
+                Ok(None)
+            }
+            GraphNodeParams::Empty => {
+                self.graph_add_empty(graph)?;
+                Ok(None)
+            }
+            GraphNodeParams::EventRecord { event, external } => {
+                self.graph_add_event_record(graph, event, external)?;
+                Ok(None)
+            }
+            GraphNodeParams::EventWait { event, external } => {
+                self.graph_add_event_wait(graph, event, external)?;
+                Ok(None)
+            }
+            GraphNodeParams::ChildGraph(child) => {
+                self.graph_add_child(graph, child)?;
+                Ok(None)
+            }
+            GraphNodeParams::Alloc { bytes } => Ok(Some(self.graph_add_alloc(graph, bytes)?)),
+            GraphNodeParams::Free(id) => {
+                self.graph_add_free(graph, id)?;
+                Ok(None)
+            }
+            GraphNodeParams::BatchMemOp(ops) => {
+                self.graph_add_batch_mem_op(graph, &ops)?;
+                Ok(None)
+            }
+        }
+    }
+
+    fn graph_bind_new_deps(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        deps: &[usize],
+    ) -> Result<(), SimError> {
+        if deps.is_empty() {
+            return Ok(());
+        }
+        let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let n = g.steps.len();
+        let step = g.steps.get_mut(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?;
+        for &from in deps {
+            if from == node || from >= n {
+                return Err(SimError::Invalid {
+                    why: "graph dependency",
+                });
+            }
+            if !step.deps.contains(&from) {
+                step.deps.push(from);
+            }
+        }
+        step.deps.sort_unstable();
+        Ok(())
+    }
+
+    fn graph_add_kernel_params(
+        &mut self,
+        graph: GraphId,
+        params: KernelNodeParams,
+    ) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        if params.cooperative {
+            self.require_cooperative(device)?;
+        }
+        let reads = self.resolve_bufs(&params.reads)?;
+        let writes = self.resolve_bufs(&params.writes)?;
+        self.graph_push(
+            graph,
+            device,
+            stream,
+            Kind::Kernel {
+                kind: params.kind,
+                reads,
+                writes,
+                cooperative: params.cooperative,
+            },
+        )
     }
 
     /// `cudaGraphAddKernelNode` on a [`Self::create_graph`] definition.
