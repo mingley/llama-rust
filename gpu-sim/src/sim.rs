@@ -10872,14 +10872,42 @@ impl Sim {
         device: DeviceId,
         flags: u32,
     ) -> Result<(), SimError> {
-        match flags {
-            MemAccessFlags::PROT_READ => self.va_set_access(id, device),
-            MemAccessFlags::PROT_READ_WRITE => self.va_set_access_write(id, device),
-            MemAccessFlags::PROT_NONE => self.va_unset_access(id, device),
-            _ => Err(SimError::Invalid {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        let bytes = self.alloc_ref(id)?.bytes;
+        self.va_set_access_with_size(id, device, bytes, flags)
+    }
+
+    /// [`Self::va_set_access_with_flags`] with the CUDA size argument.
+    ///
+    /// `size` must equal the reserved bytes. Other sizes Invalid `"access size"`.
+    /// Partial SetAccess is not modeled. Flags are [`MemAccessFlags`].
+    pub fn va_set_access_with_size(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MemAccessFlags::PROT_READ
+            && flags != MemAccessFlags::PROT_READ_WRITE
+            && flags != MemAccessFlags::PROT_NONE
+        {
+            return Err(SimError::Invalid {
                 why: "va access flags",
-            }),
+            });
         }
+        let a = self.alloc_ref(id)?;
+        if size != a.bytes {
+            return Err(SimError::Invalid { why: "access size" });
+        }
+        if flags == MemAccessFlags::PROT_READ {
+            return self.va_set_access(id, device);
+        }
+        if flags == MemAccessFlags::PROT_READ_WRITE {
+            return self.va_set_access_write(id, device);
+        }
+        self.va_unset_access(id, device)
     }
 
     fn va_set_access_inner(

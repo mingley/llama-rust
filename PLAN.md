@@ -2871,7 +2871,17 @@ model, do not celebrate the sim.
     identity unchanged. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-272. [ ] Next numbered PLAN item after 271 is the next `gpu-sim` / Engine /
+272. [x] `cuMemSetAccess` size:
+    [`va_set_access_with_size`](Sim::va_set_access_with_size) requires `size`
+    equal to the reserved bytes. Other sizes Invalid `"access size"`.
+    Partial SetAccess is not modeled. Flags stay [`MemAccessFlags`]. Typed
+    [`va_set_access`](Sim::va_set_access) /
+    [`va_set_access_with_flags`](Sim::va_set_access_with_flags) stay.
+    Host-synchronous; capture refused. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+273. [ ] Next numbered PLAN item after 272 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

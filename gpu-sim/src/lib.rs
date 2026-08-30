@@ -178,7 +178,8 @@
 //! interconnect). [`va_set_access_write`](Sim::va_set_access_write) is
 //! PROT_READWRITE (peer writes, no dest HBM). [`Sim::va_unset_access`] drops it.
 //! [`va_set_access_with_flags`](Sim::va_set_access_with_flags) is the flags
-//! word ([`MemAccessFlags`]). Typed helpers stay.
+//! word ([`MemAccessFlags`]). [`va_set_access_with_size`](Sim::va_set_access_with_size)
+//! is the CUDA size argument (must match the reserved VA). Typed helpers stay.
 //! [`va_get_access`](Sim::va_get_access) is `cuMemGetAccess` (local map
 //! ReadWrite; peer Read / ReadWrite / None). Query; legal during capture.
 //! [`Sim::va_acquire`] remaps an idle VA of the same size (or reserves);
@@ -12807,6 +12808,29 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn va_set_access_with_size_is_cu_mem_set_access() {
+        let mut sim = Sim::new(HardwareProfile::example_2xh100_pcie());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        let va = sim.va_reserve(4096).unwrap();
+        sim.va_map(va, d0).unwrap();
+        match sim.va_set_access_with_size(va, d1, 2048, MemAccessFlags::PROT_READ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("access size"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        assert!(!sim.is_accessed_by(va, d1).unwrap());
+        sim.va_set_access_with_size(va, d1, 4096, MemAccessFlags::PROT_READ)
+            .unwrap();
+        assert!(sim.is_accessed_by(va, d1).unwrap());
+        sim.begin_capture(d0, StreamId(0)).unwrap();
+        match sim.va_set_access_with_size(va, d1, 4096, MemAccessFlags::PROT_NONE) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

@@ -704,6 +704,8 @@ during capture.
 writes still need a local map). `va_set_access_write` is PROT_READWRITE
 (peer writes, no dest HBM). `va_set_access_with_flags` is the flags word
 (`PROT_READ` / `PROT_READ_WRITE` / `PROT_NONE`). Typed helpers stay.
+`va_set_access_with_size` is the CUDA size argument (must match the
+reserved VA; partial SetAccess is not modeled).
 `va_get_access` is `cuMemGetAccess` (local map ReadWrite; peer Read /
 ReadWrite / None). Query; legal during capture.
 `pool_set_access` is `cudaMemPoolSetAccess`
