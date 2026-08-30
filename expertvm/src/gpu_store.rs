@@ -9,8 +9,9 @@ use crate::planner::{
     Prefetch, DECODE_ACTIVATION_BYTES,
 };
 use crate::sim_replay::{
-    allow_non_portable_cluster_if, bind_shareable_mempools, check_cluster_preferred,
-    replay_streams, retarget_parked_kernel, stream_of, GemmFlags, LeafMem, GRAPH_SCRATCH_BYTES,
+    allow_non_portable_cluster_if, apply_stream_sync_policy, bind_shareable_mempools,
+    check_cluster_preferred, replay_streams, retarget_parked_kernel, stream_of, GemmFlags, LeafMem,
+    StreamPlan, GRAPH_SCRATCH_BYTES,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -190,6 +191,13 @@ pub struct GpuStoreCfg {
     /// Lets [`Self::cluster`] exceed `portable_cluster_size` up to
     /// `max_blocks_per_cluster`. Decode identity stays disallowed.
     pub non_portable_cluster: bool,
+    /// Stream host-wait policy (`cudaLaunchAttributeSynchronizationPolicy`).
+    ///
+    /// [`SimulatedGpuStore::token_clock_ns`] / walker `sync_work` pay
+    /// `host_sync_*_ns` on `synchronize_stream` (decode stream when
+    /// [`Self::decode_priority`]). [`gpu_sim::SynchronizationPolicy::Auto`] tax
+    /// is 0. Decode identity stays Auto.
+    pub sync_policy: gpu_sim::SynchronizationPolicy,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// [`Self::pin_hot`] and walker `--place replicas` map dest VMM physicals
@@ -420,6 +428,8 @@ impl SimulatedGpuStore {
     /// over expert pages (persisting L2 after the first fill).
     /// [`GpuStoreCfg::cluster`] / [`GpuStoreCfg::preferred_cluster`] are Hopper
     /// thread-block cluster dims.
+    /// [`GpuStoreCfg::sync_policy`] is stream host-wait
+    /// (`cudaLaunchAttributeSynchronizationPolicy`; Auto tax 0).
     /// [`GpuStoreCfg::multicast`] is Hopper NVLS replica fanout (requires
     /// [`GpuFill::Vmm`] and NVLink).
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
@@ -465,6 +475,7 @@ impl SimulatedGpuStore {
         let bytes = bytes_per_expert.max(1);
         let (copy, prefill, decode, mark) =
             copy_compute_streams(&profile, cfg.seq_streams, cfg.decode_priority);
+        let plan = StreamPlan::new(&profile, cfg.seq_streams, cfg.decode_priority);
         let profile = if cfg.compute_slots > 0 {
             profile.with_compute_slots(cfg.compute_slots)
         } else {
@@ -497,6 +508,7 @@ impl SimulatedGpuStore {
         if cfg.stream_priority {
             sim.set_created_streams_priority(mark)?;
         }
+        apply_stream_sync_policy(&mut sim, plan, cfg.sync_policy)?;
         if cfg.decode_sm_permille > 0 {
             let dec = cfg.decode_sm_permille.min(1000);
             let pre = 1000u16.saturating_sub(dec).max(1);

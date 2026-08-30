@@ -699,7 +699,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--shareable`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-piecewise`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, `--non-portable-cluster`, and `--multicast`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-piecewise`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, `--non-portable-cluster`, `--sync-policy`, and `--multicast`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--shareable` is POSIX-FD mempool IPC
   (implies `--mempool`; illegal with `--sync-alloc` / mapped / managed / vmm). `--mapped` is `cudaHostAllocMapped`
@@ -1641,6 +1641,14 @@ model, do not celebrate the sim.
     and existing timing tests stay green. Auto tax is always 0.
     `synchronize` / `synchronize_device` do not take the tax (`cudaDeviceSynchronize`).
     Not a kernel launch attribute. Decode identity stays Auto.
+    `gpu-profile capture` is still refused.
+
+129. [x] expertvm / Engine `--sync-policy auto|spin|yield|blocking`:
+    `cudaStreamSetAttribute` SynchronizationPolicy on copy/prefill/decode
+    streams. Host-wait tax on `synchronize_stream` (decode-stream ITL when
+    `--decode-priority`) after the GPU drain. Auto (default) tax is 0.
+    Profile `host_sync_*_ns` default 0 so decode identity stays green.
+    Legal with `--pdl` and `--cooperative`. Decode identity stays Auto.
     `gpu-profile capture` is still refused.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

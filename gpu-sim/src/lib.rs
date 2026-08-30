@@ -5621,6 +5621,31 @@ mod tests {
     }
 
     #[test]
+    fn synchronization_policy_parse() {
+        assert_eq!(
+            SynchronizationPolicy::parse("auto").unwrap(),
+            SynchronizationPolicy::Auto
+        );
+        assert_eq!(
+            SynchronizationPolicy::parse("spin").unwrap(),
+            SynchronizationPolicy::Spin
+        );
+        assert_eq!(
+            SynchronizationPolicy::parse("yield").unwrap(),
+            SynchronizationPolicy::Yield
+        );
+        assert_eq!(
+            SynchronizationPolicy::parse("blocking").unwrap(),
+            SynchronizationPolicy::BlockingSync
+        );
+        let err = SynchronizationPolicy::parse("bogus").unwrap_err();
+        match err {
+            SimError::Invalid { why } => assert!(why.contains("unknown sync-policy"), "{why}"),
+            e => panic!("{e:?}"),
+        }
+    }
+
+    #[test]
     fn stream_sync_policy_spin_and_yield_differ() {
         let p = HardwareProfile::parse(
             "gpus=1\nhost_sync_spin_ns=1000\nhost_sync_yield_ns=5000\nhost_sync_blocking_ns=9000\n",

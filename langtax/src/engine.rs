@@ -61,9 +61,11 @@
 //! is Spread scheduling: occupies every Hyper-Q slot even when `N` is smaller
 //! than `compute_slots` (no-op without `--cluster` of at least 2). `--max-shared`
 //! is MaxShared carveout: occupies every Hyper-Q slot. `--non-portable-cluster`
-//! allows `--cluster N` above portable size up to the SKU max. Decode
+//! allows `--cluster N` above portable size up to the SKU max. `--sync-policy`
+//! auto|spin|yield|blocking is stream host-wait (`cudaLaunchAttributeSynchronizationPolicy`;
+//! Auto tax 0). Decode
 //! identity stays `cudaLaunchKernel` (no cluster / Default policy / no preferred
-//! dim / Default carveout / non-portable disallowed).
+//! dim / Default carveout / non-portable disallowed / Auto sync policy).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode
@@ -1464,7 +1466,8 @@ mod tests {
     use crate::tok::Tokenizer;
     use expertvm::{
         CachedStore, DeviceId, ExpertKey, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore,
-        Prefetch, Score, SimulatedGpuStore, StoreMetrics, StreamId, TieredStore, Trace,
+        Prefetch, Score, SimulatedGpuStore, StoreMetrics, StreamId, SynchronizationPolicy,
+        TieredStore, Trace,
     };
 
     struct GpuEngineOut {
@@ -3790,6 +3793,44 @@ mod tests {
         assert_eq!(
             portable.4, oversize.4,
             "non-portable cluster 16 must keep greedy identity"
+        );
+    }
+
+    #[test]
+    fn engine_gpu_sync_policy_taxes_decode_itl() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse(
+            "gpus=1\nhost_sync_blocking_ns=10000\nfp16_flops=1000000\ncopy_engines=2\n",
+        )
+        .expect("host-sync profile");
+        let pri = GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            compute_slots: 2,
+            ..GpuStoreCfg::default()
+        };
+        let auto = mixed_gpu_decode_itl_at(bytes.clone(), false, None, pri, profile.clone());
+        let block = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                sync_policy: SynchronizationPolicy::BlockingSync,
+                ..pri
+            },
+            profile,
+        );
+        assert_eq!(auto.2, 4);
+        assert_eq!(block.2, 4);
+        assert_eq!(
+            auto.4, block.4,
+            "blocking sync policy must keep greedy identity"
+        );
+        assert!(
+            block.0 > auto.0,
+            "blocking host wait must inflate decode-stream ITL; auto={} block={}",
+            auto.0,
+            block.0
         );
     }
 

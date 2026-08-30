@@ -496,7 +496,9 @@ launch grouped expert GEMMs that way. `--preferred-cluster N` occupies the
 preferred size when it fits (needs `--cluster`). `--cluster-spread` is Spread
 scheduling (occupies every Hyper-Q slot). `--max-shared` is MaxShared
 carveout (occupies every Hyper-Q slot). `--non-portable-cluster` is
-`cudaFuncAttributeNonPortableClusterSizeAllowed`. Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
+`cudaFuncAttributeNonPortableClusterSizeAllowed`. `--sync-policy auto|spin|yield|blocking`
+is `cudaLaunchAttributeSynchronizationPolicy` on created streams (host-wait
+tax on `synchronize_stream`; Auto tax 0). Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
 instantiate schedules those node priorities instead of the launch stream. `set_created_streams_priority` assigns created streams
 their id. `set_stream_sm_permille` is a green-context SM fraction
 (compute-bound kernels scale; memory-bound keep full HBM; default unset is

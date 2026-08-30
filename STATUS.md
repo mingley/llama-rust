@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — expertvm `--sync-policy`
+
+`expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and
+`infer-bench schedule` take `--sync-policy auto|spin|yield|blocking`.
+Created streams get `cudaLaunchAttributeSynchronizationPolicy`. Decode-stream
+ITL (`--decode-priority`) pays `host_sync_*_ns` on `synchronize_stream`.
+Auto tax is 0. Legal with `--pdl` and `--cooperative`. Decode identity stays
+Auto. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaLaunchAttributeSynchronizationPolicy`
 
 Stream-only (`cudaStreamSetAttribute` / CopyAttributes). Auto / Spin / Yield /

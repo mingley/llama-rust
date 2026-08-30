@@ -463,6 +463,21 @@ pub enum SynchronizationPolicy {
     BlockingSync,
 }
 
+impl SynchronizationPolicy {
+    /// CLI token: `auto` / `spin` / `yield` / `blocking`.
+    pub fn parse(s: &str) -> Result<Self, crate::error::SimError> {
+        match s {
+            "auto" => Ok(Self::Auto),
+            "spin" => Ok(Self::Spin),
+            "yield" => Ok(Self::Yield),
+            "blocking" => Ok(Self::BlockingSync),
+            _ => Err(crate::error::SimError::Invalid {
+                why: "unknown sync-policy",
+            }),
+        }
+    }
+}
+
 /// Packed `cudaLaunchKernelEx` / graph kernel-node attributes.
 ///
 /// [`crate::Sim::kernel_with`] applies these on one submit so PDL, an

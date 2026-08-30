@@ -125,7 +125,7 @@ use crate::replay::{Touch, Walker};
 use gpu_sim::{
     AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceId, EventId, GraphId,
     HardwareProfile, KernelAttrs, KernelBuf, KernelKind, MemcpyOp, Place, PoolId,
-    ProgrammaticLaunch, Score, SharedMemCarveout, Sim, StreamId,
+    ProgrammaticLaunch, Score, SharedMemCarveout, Sim, StreamId, SynchronizationPolicy,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -462,6 +462,12 @@ pub struct SimCfg {
     /// `max_blocks_per_cluster`. Decode identity stays disallowed.
     /// [`crate::GpuStoreCfg::non_portable_cluster`] is the store path.
     pub non_portable_cluster: bool,
+    /// Stream host-wait policy (`cudaLaunchAttributeSynchronizationPolicy`).
+    ///
+    /// Decode-token `sync_work` pays `host_sync_*_ns` on `synchronize_stream`.
+    /// Decode identity stays Auto. [`crate::GpuStoreCfg::sync_policy`] is the
+    /// store path.
+    pub sync_policy: gpu_sim::SynchronizationPolicy,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// `--place replicas` maps dest VMM physicals then one NVLS kernel instead
@@ -535,6 +541,7 @@ impl SimCfg {
             cluster_spread: false,
             max_shared: false,
             non_portable_cluster: false,
+            sync_policy: gpu_sim::SynchronizationPolicy::Auto,
             multicast: false,
             compute_slots: 0,
             decode_sm_permille: 0,
@@ -631,6 +638,7 @@ pub fn sim_replay_cfg(
         sim.set_created_streams_priority(plan.mark)?;
     }
     apply_stream_sms(&mut sim, plan, cfg.decode_sm_permille)?;
+    apply_stream_sync_policy(&mut sim, plan, cfg.sync_policy)?;
     if cfg.l2_persist {
         sim.enable_persisting_l2()?;
     }
@@ -1737,6 +1745,29 @@ pub(crate) fn apply_stream_sms(
     for g in 0..n {
         for s in 0..plan.n_copy.max(1) {
             sim.set_stream_sm_permille(DeviceId(g), StreamId(u16::from(s)), permille)?;
+        }
+    }
+    Ok(())
+}
+
+/// `cudaStreamSetAttribute` SynchronizationPolicy on copy/prefill/decode streams.
+pub(crate) fn apply_stream_sync_policy(
+    sim: &mut Sim,
+    plan: StreamPlan,
+    policy: SynchronizationPolicy,
+) -> Result<(), Error> {
+    if policy == SynchronizationPolicy::Auto {
+        return Ok(());
+    }
+    sim.set_created_streams_sync_policy(plan.mark, policy)?;
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        let d = DeviceId(g);
+        sim.set_stream_sync_policy(d, StreamId::NULL, policy)?;
+        sim.set_stream_sync_policy(d, plan.prefill, policy)?;
+        sim.set_stream_sync_policy(d, plan.decode, policy)?;
+        for s in 0..plan.n_copy.max(1) {
+            sim.set_stream_sync_policy(d, StreamId(u16::from(s)), policy)?;
         }
     }
     Ok(())

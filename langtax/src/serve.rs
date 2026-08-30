@@ -22,7 +22,7 @@ use expertvm::{GpuFill, GpuStoreCfg, Prefetch};
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
@@ -73,6 +73,7 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --cluster-spread  Hopper cluster scheduling Spread (`--expert-sim`; occupies every Hyper-Q slot; no-op without `--cluster` >= 2; legal with `--pdl` and `--cooperative`)
       --max-shared      MaxShared L1/shared carveout (`--expert-sim`; occupies every Hyper-Q slot; legal with `--pdl` and `--cooperative`)
       --non-portable-cluster  allow cluster larger than portable size (`--expert-sim`; `cudaFuncAttributeNonPortableClusterSizeAllowed`; legal with `--pdl` and `--cooperative`)
+      --sync-policy MODE  stream host-wait policy auto|spin|yield|blocking (`--expert-sim`; `cudaLaunchAttributeSynchronizationPolicy`; legal with `--pdl` and `--cooperative`)
       --multicast       cuMulticastCreate NVLS replica fanout (`--expert-sim`; implies `--vmm`; needs NVLink)
       --compute-slots N Hyper-Q occupancy (`--expert-sim`; `1` exclusive, `>=2` overlaps leftover prefill with decode on two streams; default profile `1`)
       --decode-sms N    decode-stream SM permille (`--expert-sim`; `1..=1000`; leftover prefill gets the remainder; implies `--decode-priority`; default full chip)
@@ -99,7 +100,7 @@ leftover prefill while any live sequence is already decoding. `--slo-reject` /
 the same SimulatedGpuStore knobs as `gguf_gemv engine`. `--host-func` /
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--shareable` / `--vmm-page` /
 `--pageable` / `--accessed-by` / `--legacy-null` / `--stream-priority` / `--seq-streams` /
-`--kv-sim` / `--kv-bytes` / `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--non-portable-cluster` / `--multicast` /
+`--kv-sim` / `--kv-bytes` / `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--non-portable-cluster` / `--sync-policy` / `--multicast` /
 `--compute-slots` / `--decode-sms` match
 `GpuStoreCfg`. `--kv-sim` bills interned KV on the same clock as expert H2D
 (distinct from `expertvm kv`; default off). `--decode-priority` ITL samples
@@ -122,7 +123,9 @@ is `cudaLaunchAttributePreferredSharedMemoryCarveout` MaxShared: occupies
 every Hyper-Q slot (legal with `--pdl` and `--cooperative`). `--non-portable-cluster`
 is `cudaFuncAttributeNonPortableClusterSizeAllowed` so `--cluster N` may
 exceed portable size up to the SKU max (Hopper portable 8; legal with
-`--pdl` and `--cooperative`). `--cooperative` is
+`--pdl` and `--cooperative`). `--sync-policy auto|spin|yield|blocking` is
+`cudaLaunchAttributeSynchronizationPolicy` on created streams (host-wait tax
+on decode-stream ITL when `--decode-priority`; Auto tax 0). `--cooperative` is
 `cudaLaunchCooperativeKernel`: those GEMMs occupy every Hyper-Q slot, so
 leftover prefill cannot overlap even with `--compute-slots 2`. `--multicast`
 is Hopper NVLS replica fanout (`cuMulticastCreate`; implies `--vmm`; needs
@@ -351,7 +354,7 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-mem] [--graph-auto-free] [--timing-events] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--shareable] [--pageable] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -1196,6 +1199,7 @@ fn parse_u64(name: &str, s: &str) -> Result<u64, String> {
 mod tests {
     use super::*;
     use crate::decode::{greedy_generate_ctx, greedy_generate_slot, tiny_llama_gguf};
+    use expertvm::SynchronizationPolicy;
     use std::io::Cursor;
     use std::net::{IpAddr, Ipv4Addr};
 
@@ -1838,6 +1842,19 @@ mod tests {
             "--non-portable-cluster",
         ]);
         assert!(a.gpu_cfg.non_portable_cluster);
+        let err = parse_serve_args(["m.gguf", "--sync-policy", "blocking"]).unwrap_err();
+        assert!(err.contains("--sync-policy requires --engine"), "{err}");
+        let err =
+            parse_serve_args(["m.gguf", "--engine", "--sync-policy", "blocking"]).unwrap_err();
+        assert!(err.contains("--sync-policy requires --expert-sim"), "{err}");
+        let a = run(&[
+            "m.gguf",
+            "--engine",
+            "--expert-sim",
+            "--sync-policy",
+            "blocking",
+        ]);
+        assert_eq!(a.gpu_cfg.sync_policy, SynchronizationPolicy::BlockingSync);
         let err = parse_serve_args([
             "m.gguf",
             "--engine",
