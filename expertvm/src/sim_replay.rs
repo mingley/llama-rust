@@ -1012,12 +1012,12 @@ pub(crate) fn bind_shareable_mempools(sim: &mut Sim) -> Result<BTreeMap<DeviceId
     Ok(imported)
 }
 
-/// `cudaMemPoolSetAccess` ReadWrite on every default pool for every GPU.
+/// `cudaMemPoolSetAccess` ReadWrite on every current device mempool.
 pub(crate) fn advise_pool_access(sim: &mut Sim) -> Result<(), Error> {
     let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
     for g in 0..n {
         let home = DeviceId(g);
-        let pool = sim.default_pool(home)?;
+        let pool = sim.device_mempool(home)?;
         for d in 0..n {
             sim.pool_set_access(pool, DeviceId(d))?;
         }

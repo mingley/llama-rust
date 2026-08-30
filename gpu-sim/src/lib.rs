@@ -44,9 +44,11 @@
 //! exporter (no extra HBM). [`Sim::pool_export_ptr`] /
 //! [`pool_import_ptr`](Sim::pool_import_ptr) are `cudaMemPoolExportPointer` /
 //! `ImportPointer` (alias, no extra HBM). [`Sim::set_device_mempool`] is
-//! `cudaDeviceSetMemPool`. Default and [`create_pool`](Sim::create_pool) pools
+//! `cudaDeviceSetMemPool`. [`default_pool`](Sim::default_pool) is
+//! `cudaDeviceGetDefaultMemPool` (seeded; SetMemPool does not replace it).
+//! [`device_mempool`](Sim::device_mempool) is `cudaDeviceGetMemPool`. Default and [`create_pool`](Sim::create_pool) pools
 //! cannot be exported. Capture cannot include shareable export/import.
-//! [`Sim::alloc`] draws from the device default mempool (`cudaMallocAsync`).
+//! [`Sim::alloc`] draws from [`device_mempool`](Sim::device_mempool) (`cudaMallocAsync`).
 //! [`Sim::create_pool`] / [`alloc_from_pool`](Sim::alloc_from_pool) /
 //! [`set_pool_release_threshold`](Sim::set_pool_release_threshold) /
 //! [`pool_trim_to`](Sim::pool_trim_to) are `cudaMemPoolCreate` /
@@ -8343,7 +8345,8 @@ mod tests {
         let p = sim.create_shareable_pool(d).unwrap();
         sim.set_pool_release_threshold(p, u64::MAX).unwrap();
         sim.set_device_mempool(d, p).unwrap();
-        assert_eq!(sim.default_pool(d).unwrap(), p);
+        assert_eq!(sim.device_mempool(d).unwrap(), p);
+        assert_ne!(sim.default_pool(d).unwrap(), p);
         let a = sim.alloc(d, 4096, s).unwrap();
         sim.synchronize().unwrap();
         let e = sim.pool_export_ptr(a).unwrap();
@@ -8352,6 +8355,30 @@ mod tests {
         let alias = sim.pool_import_ptr(imp, e).unwrap();
         assert!(sim.is_share_import(alias).unwrap());
         assert_eq!(sim.hbm_used(d).unwrap(), 4096);
+    }
+
+    #[test]
+    fn set_device_mempool_keeps_get_default_mempool() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let orig = sim.default_pool(d).unwrap();
+        assert_eq!(sim.device_mempool(d).unwrap(), orig);
+        let p = sim.create_pool(d).unwrap();
+        sim.set_pool_release_threshold(p, u64::MAX).unwrap();
+        sim.set_device_mempool(d, p).unwrap();
+        assert_eq!(sim.default_pool(d).unwrap(), orig);
+        assert_eq!(sim.device_mempool(d).unwrap(), p);
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(sim.default_pool(d).unwrap(), orig);
+        assert_eq!(sim.device_mempool(d).unwrap(), p);
+        let _g = sim.end_capture().unwrap();
+        let a = sim.alloc(d, 4096, s).unwrap();
+        sim.synchronize().unwrap();
+        sim.free(d, a, s).unwrap();
+        sim.synchronize().unwrap();
+        assert_eq!(sim.pool_cached(p).unwrap(), 4096);
+        assert_eq!(sim.pool_cached(orig).unwrap(), 0);
     }
 
     #[test]

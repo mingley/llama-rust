@@ -1903,6 +1903,14 @@ model, do not celebrate the sim.
     stay 405 on GET. Decode identity unchanged. `gpu-profile capture` is
     still refused. Dual score still has no `$/M tokens`.
 
+160. [x] `cudaDeviceGetMemPool` vs `cudaDeviceGetDefaultMemPool`:
+    `Sim::default_pool` is the seeded default (SetMemPool does not
+    replace it). `device_mempool` is the current `cudaMallocAsync` pool.
+    `alloc` / mempool SetAccess / cached-byte helpers use GetMemPool.
+    Query; legal during capture. Decode identity unchanged.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
 accepted.

@@ -37,7 +37,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaIpcGetMemHandle` / `ipc_open` / `ipc_close` share physicals | `alloc_overhead_ns` (export/import) |
 | `cudaMemPoolExportToShareableHandle` / `pool_import` share live/cached | `alloc_overhead_ns` (export/import) |
 | `cudaMemPoolExportPointer` / `pool_import_ptr` alias pool allocs | `alloc_overhead_ns` (export/import) |
-| `cudaDeviceSetMemPool` rebinds `alloc` (`set_device_mempool`) | `alloc_overhead_ns` |
+| `cudaDeviceSetMemPool` rebinds `alloc` (`set_device_mempool`); GetDefaultMemPool stays | `alloc_overhead_ns` |
 | `cudaHostRegister` pins pageable host for DMA (`host_register`) | `alloc_overhead_ns` (mlock, host-sync) |
 | `cudaHostAllocMapped` / `host_register_mapped`: kernel may read host with no H2D | host PCIe vs HBM |
 | `cudaMallocManaged` (`alloc_managed`) does not charge HBM until migrate | `alloc_overhead_ns` (VA reserve at the call) |
@@ -445,7 +445,9 @@ is Invalid. `ipc_get` of a mempool alloc is Invalid. Capture cannot include IPC.
 `ImportFromShareableHandle`: the import is a new pool id that shares
 live/cached/threshold with the exporter. `pool_export_ptr` /
 `pool_import_ptr` are `cudaMemPoolExportPointer` / `ImportPointer` (alias,
-no extra HBM). `set_device_mempool` is `cudaDeviceSetMemPool`. Default and
+no extra HBM). `set_device_mempool` is `cudaDeviceSetMemPool`. `default_pool` is
+`cudaDeviceGetDefaultMemPool` (seeded; SetMemPool does not replace it).
+`device_mempool` is `cudaDeviceGetMemPool` (`alloc` draws from it). Default and
 `create_pool` pools cannot be exported. Capture cannot include shareable
 export/import.
 `alloc_host` is pageable; `host_register` / `host_register_mapped` are

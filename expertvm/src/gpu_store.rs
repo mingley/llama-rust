@@ -707,11 +707,13 @@ impl SimulatedGpuStore {
         self.sim.is_host_pinned(self.staging).unwrap_or(false)
     }
 
-    /// Unused bytes in GPU0's default mempool after a device drain.
+    /// Unused bytes in GPU0's `cudaMallocAsync` pool after a device drain.
     pub fn default_pool_cached(&mut self) -> Result<u64, Error> {
         self.sim.synchronize()?;
         self.sweep_evicts();
-        Ok(self.sim.pool_cached(self.sim.default_pool(self.device)?)?)
+        Ok(self
+            .sim
+            .pool_cached(self.sim.device_mempool(self.device)?)?)
     }
 
     /// Imported sibling of the shareable device mempool (`None` unless
@@ -2155,12 +2157,12 @@ fn advise_vmm_access(sim: &mut Sim, id: AllocId) -> Result<(), Error> {
     Ok(())
 }
 
-/// `cudaMemPoolSetAccess` ReadWrite on every default pool for every GPU.
+/// `cudaMemPoolSetAccess` ReadWrite on every current device mempool.
 fn advise_pool_access(sim: &mut Sim) -> Result<(), Error> {
     let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
     for g in 0..n {
         let home = DeviceId(g);
-        let pool = sim.default_pool(home)?;
+        let pool = sim.device_mempool(home)?;
         for d in 0..n {
             sim.pool_set_access(pool, DeviceId(d))?;
         }

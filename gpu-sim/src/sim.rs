@@ -600,7 +600,11 @@ pub struct Sim {
     stream_sync_policy: BTreeMap<(DeviceId, StreamId), SynchronizationPolicy>,
     next_pool: u32,
     pools: BTreeMap<PoolId, Pool>,
+    /// `cudaDeviceGetDefaultMemPool`. Seeded at construct; [`Self::set_device_mempool`]
+    /// does not replace it.
     default_pools: BTreeMap<DeviceId, PoolId>,
+    /// `cudaDeviceGetMemPool`. [`Self::alloc`] draws from this.
+    current_pools: BTreeMap<DeviceId, PoolId>,
     /// Per-device graph memory pool (`cudaDeviceGraphMemTrim` backing).
     graph_pools: BTreeMap<DeviceId, PoolId>,
     next_handle: u64,
@@ -700,6 +704,7 @@ impl Sim {
         }
         let peer_enabled = seed_peers(&profile);
         let (mut next_pool, mut pools, default_pools) = seed_pools(&profile);
+        let current_pools = default_pools.clone();
         let mut graph_pools = BTreeMap::new();
         for g in &profile.gpus {
             let gid = PoolId(next_pool);
@@ -745,6 +750,7 @@ impl Sim {
             next_pool,
             pools,
             default_pools,
+            current_pools,
             graph_pools,
             next_handle: 1,
             mem_handles: BTreeMap::new(),
@@ -7145,12 +7151,14 @@ impl Sim {
         let pool = if self.in_capture(device, stream) {
             self.graph_pool(device)?
         } else {
-            self.default_pool(device)?
+            self.device_mempool(device)?
         };
         self.alloc_from_pool_inner(device, pool, bytes, stream)
     }
 
-    /// Device default mempool (`cudaDeviceGetDefaultMemPool`).
+    /// `cudaDeviceGetDefaultMemPool`. Query; legal during capture.
+    ///
+    /// Seeded at construct. [`Self::set_device_mempool`] does not replace it.
     pub fn default_pool(&self, device: DeviceId) -> Result<PoolId, SimError> {
         let _gpu = self.profile.gpu(device)?;
         self.default_pools
@@ -7158,6 +7166,20 @@ impl Sim {
             .copied()
             .ok_or(SimError::Invalid {
                 why: "default pool missing",
+            })
+    }
+
+    /// `cudaDeviceGetMemPool`. Query; legal during capture.
+    ///
+    /// [`Self::alloc`] (`cudaMallocAsync`) draws from this. Starts as
+    /// [`Self::default_pool`]; [`Self::set_device_mempool`] rebinds it.
+    pub fn device_mempool(&self, device: DeviceId) -> Result<PoolId, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.current_pools
+            .get(&device)
+            .copied()
+            .ok_or(SimError::Invalid {
+                why: "device mempool missing",
             })
     }
 
@@ -7188,7 +7210,8 @@ impl Sim {
     ///
     /// Capture cannot include it. `pool` must belong to `device` (an imported
     /// sibling is legal). Does not change live/cached bytes. The graph-memory
-    /// pool is not a valid device mempool.
+    /// pool is not a valid device mempool. [`Self::default_pool`] stays the
+    /// seeded default.
     pub fn set_device_mempool(&mut self, device: DeviceId, pool: PoolId) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         self.refuse_graph_pool(pool)?;
@@ -7198,7 +7221,7 @@ impl Sim {
                 why: "pool device mismatch",
             });
         }
-        let _prev = self.default_pools.insert(device, pool);
+        let _prev = self.current_pools.insert(device, pool);
         self.clock = self.clock.saturating_add(self.first_alloc_ns().max(1));
         Ok(())
     }
@@ -7314,9 +7337,9 @@ impl Sim {
         Ok(())
     }
 
-    /// Set every device default pool's release threshold.
+    /// Set every device's current mempool release threshold (`cudaDeviceGetMemPool`).
     pub fn set_default_pool_release_threshold(&mut self, bytes: u64) -> Result<(), SimError> {
-        let ids: Vec<PoolId> = self.default_pools.values().copied().collect();
+        let ids: Vec<PoolId> = self.current_pools.values().copied().collect();
         for id in ids {
             self.set_pool_release_threshold(id, bytes)?;
         }
