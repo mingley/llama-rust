@@ -74,6 +74,14 @@ pub struct GpuStoreCfg {
     /// Decode identity stays no trim (CUDA default threshold 0 already
     /// returns on free).
     pub mempool_trim: bool,
+    /// `cudaMemPoolReuseAllowOpportunistic=0`: skip cache reuse (OS alloc).
+    ///
+    /// Implies [`Self::mempool`] (hold unused bytes so skip-reuse is visible).
+    /// Illegal with [`Self::sync_alloc`]. Hits/misses stay the same; leftover
+    /// cache stays reserved so the next miss charges extra HBM
+    /// (`alloc_overhead_ns` instead of `pool_reuse_ns`). Decode identity stays
+    /// opportunistic reuse (CUDA default 1).
+    pub mempool_no_reuse: bool,
     /// POSIX-FD shareable mempool IPC (`cudaMemPoolExportToShareableHandle`).
     ///
     /// Creates a shareable pool, exports it, imports a sibling that shares
@@ -592,6 +600,9 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::mempool_trim`] is `cudaMemPoolTrimTo(0)` after
     /// [`Self::score`] (implies mempool hold; illegal with
     /// [`GpuStoreCfg::sync_alloc`]; [`Self::clock_ns`] / token ITL do not trim).
+    /// [`GpuStoreCfg::mempool_no_reuse`] is
+    /// `cudaMemPoolReuseAllowOpportunistic=0` (implies mempool hold; leftover
+    /// cache stays reserved; illegal with sync-alloc).
     /// [`GpuStoreCfg::multicast`] is Hopper NVLS replica fanout (requires
     /// [`GpuFill::Vmm`] and NVLink).
     /// [`GpuStoreCfg::memcpy_batch`] fills a multi-expert pinned/VMM prefetch
@@ -639,6 +650,9 @@ impl SimulatedGpuStore {
         if cfg.mempool_trim && cfg.sync_alloc {
             return Err(Error::Store("mempool-trim needs cudaMallocAsync"));
         }
+        if cfg.mempool_no_reuse && cfg.sync_alloc {
+            return Err(Error::Store("mempool-no-reuse needs cudaMallocAsync"));
+        }
         if cfg.memcpy_batch
             && (cfg.pageable
                 || cfg.sync_alloc
@@ -684,8 +698,11 @@ impl SimulatedGpuStore {
         } else {
             None
         };
-        if cfg.mempool || cfg.shareable || cfg.mempool_trim {
+        if cfg.mempool || cfg.shareable || cfg.mempool_trim || cfg.mempool_no_reuse {
             sim.set_default_pool_release_threshold(u64::MAX)?;
+        }
+        if cfg.mempool_no_reuse {
+            crate::sim_replay::disable_pool_opportunistic_reuse(&mut sim)?;
         }
         if cfg.accessed_by && fill == GpuFill::Pinned && !cfg.sync_alloc {
             advise_pool_access(&mut sim)?;

@@ -51,6 +51,8 @@ pub(crate) struct GpuCli {
     pub mempool: bool,
     /// `cudaMemPoolTrimTo(0)` after score (`GpuStoreCfg::mempool_trim`). Implies mempool.
     pub mempool_trim: bool,
+    /// `cudaMemPoolReuseAllowOpportunistic=0` (`GpuStoreCfg::mempool_no_reuse`). Implies mempool.
+    pub mempool_no_reuse: bool,
     /// POSIX-FD shareable mempool IPC (`GpuStoreCfg::shareable`). Implies mempool.
     pub shareable: bool,
     pub pageable: bool,
@@ -164,6 +166,7 @@ impl GpuCli {
             "--sync-alloc" => &mut self.sync_alloc,
             "--mempool" => &mut self.mempool,
             "--mempool-trim" => &mut self.mempool_trim,
+            "--mempool-no-reuse" => &mut self.mempool_no_reuse,
             "--shareable" => &mut self.shareable,
             "--pageable" => &mut self.pageable,
             "--memcpy-batch" => &mut self.memcpy_batch,
@@ -208,9 +211,9 @@ impl GpuCli {
         }
     }
 
-    /// `--shareable` / `--mempool-trim` imply [`Self::mempool`]. Call after sim-flag checks.
+    /// `--shareable` / `--mempool-trim` / `--mempool-no-reuse` imply [`Self::mempool`]. Call after sim-flag checks.
     pub(crate) fn imply_shareable(&mut self) {
-        if self.shareable || self.mempool_trim {
+        if self.shareable || self.mempool_trim || self.mempool_no_reuse {
             self.mempool = true;
         }
     }
@@ -367,6 +370,7 @@ impl GpuCli {
             (self.sync_alloc, "--sync-alloc"),
             (self.mempool, "--mempool"),
             (self.mempool_trim, "--mempool-trim"),
+            (self.mempool_no_reuse, "--mempool-no-reuse"),
             (self.shareable, "--shareable"),
             (self.pageable, "--pageable"),
             (self.memcpy_batch, "--memcpy-batch"),
@@ -645,6 +649,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         sync_alloc: gpu.sync_alloc,
         mempool: gpu.mempool,
         mempool_trim: gpu.mempool_trim,
+        mempool_no_reuse: gpu.mempool_no_reuse,
         shareable: gpu.shareable,
         vmm_page: gpu.vmm_page,
         pageable: gpu.pageable,

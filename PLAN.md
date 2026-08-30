@@ -3432,7 +3432,19 @@ model, do not celebrate the sim.
     threshold 0 (free already returns). `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-329. [ ] Next numbered PLAN item after 328 is the next `gpu-sim` / Engine /
+329. [x] `cudaMemPoolReuseAllowOpportunistic=0` skip-reuse:
+    [`GpuStoreCfg::mempool_no_reuse`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::mempool_no_reuse`](expertvm/src/sim_replay.rs) set
+    [`MemPoolAttr::ReuseAllowOpportunistic`](gpu-sim/src/ops.rs) `0` on every
+    GPU's current device mempool after the `u64::MAX` hold. Leftover cache
+    stays reserved; the next miss is an OS alloc (`alloc_overhead_ns`) and
+    charges extra HBM. Implies `--mempool`. Illegal with `--sync-alloc`.
+    Hits/misses stay the same. `--mempool-no-reuse` on `expertvm sim` /
+    `schedule` / `store` and `gguf_gemv engine --expert-sim`. Decode identity
+    stays opportunistic reuse (CUDA default 1). `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+330. [ ] Next numbered PLAN item after 329 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

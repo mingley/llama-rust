@@ -27,7 +27,7 @@
 //! (`ttft_ns` / `itl_ns` / `ns_per_token`; not `$/M tokens`). Default GPU
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
-//! `mempool_trim`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `memcpy_batch`, `SetAccessedBy`, legacy NULL, stream priority,
+//! `mempool_trim`, `mempool_no_reuse`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `memcpy_batch`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/enable, timing events, `seq_streams`, `kv_sim`, `decode_priority`,
 //! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `cluster`, `shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `launch_completion`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
@@ -87,11 +87,13 @@
 //! `cudaMallocAsync` mailbox, copy stream waited before H2D; decode identity
 //! stays events). `--mempool-trim` is `cudaMemPoolTrimTo(0)` after
 //! [`Engine::expert_store_score`] (implies `--mempool`; illegal with
-//! `--sync-alloc`; token ITL does not trim). Decode
+//! `--sync-alloc`; token ITL does not trim). `--mempool-no-reuse` is
+//! `cudaMemPoolReuseAllowOpportunistic=0` (implies `--mempool`; leftover cache
+//! stays reserved). Decode
 //! identity stays `cudaLaunchKernel` (no cluster / Default policy / no preferred
 //! dim / Default carveout / non-portable disallowed / Auto sync policy /
 //! Default mem-sync domain / Default shared-mem / Default portable-cluster / 0 dynamic shared / Default
-//! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event / events copy-ready / no mempool trim).
+//! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event / events copy-ready / no mempool trim / opportunistic reuse).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode

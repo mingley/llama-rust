@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaMemPoolReuseAllowOpportunistic=0`
+
+`GpuStoreCfg::mempool_no_reuse` / `SimCfg::mempool_no_reuse` set
+`cudaMemPoolReuseAllowOpportunistic=0` on every GPU's current device
+mempool after the `u64::MAX` hold. Leftover cache stays reserved; the next
+miss is an OS alloc and charges extra HBM. Implies `--mempool`. Illegal
+with `--sync-alloc`. Hits/misses stay the same. `--mempool-no-reuse` is
+off by default (decode identity: CUDA default opportunistic reuse).
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaMemPoolTrimTo` after score
 
 `GpuStoreCfg::mempool_trim` / `SimCfg::mempool_trim` hold unused

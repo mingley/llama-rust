@@ -277,9 +277,9 @@ use crate::replay::{Touch, Walker};
 use gpu_sim::{
     AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceId, EventId, GraphId,
     GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf, KernelKind,
-    LaunchCompletionEvent, MemcpyAttributes, MemcpyOp, Place, PoolId, PortableClusterMode,
-    PortableSharedMode, ProgrammaticLaunch, Score, SharedMemCarveout, SharedMemoryMode, Sim,
-    StreamId, SynchronizationPolicy, WaitValueCmp,
+    LaunchCompletionEvent, MemPoolAttr, MemcpyAttributes, MemcpyOp, Place, PoolId,
+    PortableClusterMode, PortableSharedMode, ProgrammaticLaunch, Score, SharedMemCarveout,
+    SharedMemoryMode, Sim, StreamId, SynchronizationPolicy, WaitValueCmp,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -424,6 +424,12 @@ pub struct SimCfg {
     /// the same; peak HBM is unchanged. Decode identity stays no trim.
     /// [`crate::GpuStoreCfg::mempool_trim`] is the store path.
     pub mempool_trim: bool,
+    /// `cudaMemPoolReuseAllowOpportunistic=0` after the mempool hold.
+    ///
+    /// Implies [`Self::mempool`]. Illegal with [`Self::sync_alloc`]. Hits stay
+    /// the same; leftover cache stays reserved. Decode identity stays reuse-on.
+    /// [`crate::GpuStoreCfg::mempool_no_reuse`] is the store path.
+    pub mempool_no_reuse: bool,
     /// POSIX-FD shareable mempool IPC (`cudaMemPoolExportToShareableHandle`).
     ///
     /// Creates a shareable pool, exports it, imports a sibling that shares
@@ -786,6 +792,7 @@ impl SimCfg {
             sync_alloc: false,
             mempool: false,
             mempool_trim: false,
+            mempool_no_reuse: false,
             shareable: false,
             mapped: false,
             managed: false,
@@ -866,6 +873,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     if cfg.mempool_trim && cfg.sync_alloc {
         return Err(Error::Store("mempool-trim needs cudaMallocAsync"));
     }
+    if cfg.mempool_no_reuse && cfg.sync_alloc {
+        return Err(Error::Store("mempool-no-reuse needs cudaMallocAsync"));
+    }
     if cfg.memcpy_batch && (cfg.pageable || cfg.sync_alloc || cfg.mapped || cfg.managed) {
         return Err(Error::Store("memcpy-batch needs async pinned/vmm H2D"));
     }
@@ -922,8 +932,11 @@ pub fn sim_replay_cfg(
     if cfg.shareable {
         let _imported = bind_shareable_mempools(&mut sim)?;
     }
-    if cfg.mempool || cfg.shareable || cfg.mempool_trim {
+    if cfg.mempool || cfg.shareable || cfg.mempool_trim || cfg.mempool_no_reuse {
         sim.set_default_pool_release_threshold(u64::MAX)?;
+    }
+    if cfg.mempool_no_reuse {
+        disable_pool_opportunistic_reuse(&mut sim)?;
     }
     advise_pool_access_if_pinned(&mut sim, &cfg)?;
     let d = DeviceId(0);
@@ -2344,6 +2357,17 @@ pub(crate) fn trim_device_pools(sim: &mut Sim) -> Result<(), Error> {
         let d = DeviceId(g);
         let pool = sim.device_mempool(d)?;
         let _dropped = sim.pool_trim_to(pool, 0)?;
+    }
+    Ok(())
+}
+
+/// `cudaMemPoolReuseAllowOpportunistic=0` on every GPU's current device mempool.
+pub(crate) fn disable_pool_opportunistic_reuse(sim: &mut Sim) -> Result<(), Error> {
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        let d = DeviceId(g);
+        let pool = sim.device_mempool(d)?;
+        sim.pool_set_attribute(pool, MemPoolAttr::ReuseAllowOpportunistic, 0)?;
     }
     Ok(())
 }

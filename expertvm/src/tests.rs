@@ -4554,6 +4554,132 @@ fn sim_replay_mempool_trim_refuses_sync_alloc() {
 }
 
 #[test]
+fn simulated_gpu_store_mempool_no_reuse_charges_extra_hbm() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let bytes = 4096u64;
+    let k0 = ExpertKey::new(0, 0);
+    let mut reuse = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        p.clone(),
+        bytes,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            mempool: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("reuse");
+    let _a = reuse.acquire(k0).expect("reuse acq");
+    reuse.evict(k0).expect("reuse evict");
+    let _clk = reuse.clock_ns().expect("reuse drain");
+    let used0 = reuse.hbm_used(DeviceId(0)).expect("u0");
+    let _b = reuse.acquire(k0).expect("reuse acq2");
+    let _clk = reuse.clock_ns().expect("reuse drain2");
+    let used1 = reuse.hbm_used(DeviceId(0)).expect("u1");
+    assert_eq!(
+        used1, used0,
+        "opportunistic reuse must not charge extra HBM"
+    );
+    let mut skip = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        p,
+        bytes,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            mempool_no_reuse: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("skip");
+    let _a = skip.acquire(k0).expect("skip acq");
+    skip.evict(k0).expect("skip evict");
+    let _clk = skip.clock_ns().expect("skip drain");
+    assert!(
+        skip.default_pool_cached().expect("cached") >= bytes,
+        "no-reuse must still hold cache"
+    );
+    let used_a = skip.hbm_used(DeviceId(0)).expect("ua");
+    let _b = skip.acquire(k0).expect("skip acq2");
+    let _clk = skip.clock_ns().expect("skip drain2");
+    let used_b = skip.hbm_used(DeviceId(0)).expect("ub");
+    assert!(
+        used_b >= used_a.saturating_add(bytes),
+        "OS alloc must charge extra HBM; a={used_a} b={used_b}"
+    );
+    assert!(
+        skip.default_pool_cached().expect("still") >= bytes,
+        "unused cache stays reserved"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_mempool_no_reuse_refuses_sync_alloc() {
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&Trace {
+            events: vec![ev(0, 0, &[0])],
+        }),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            mempool_no_reuse: true,
+            sync_alloc: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("mempool-no-reuse + sync-alloc must fail"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("mempool-no-reuse"), "{s}");
+        }
+    }
+}
+
+#[test]
+fn sim_replay_mempool_no_reuse_keeps_hits() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg::lru(1, 4096, 0);
+    let held = SimCfg {
+        mempool: true,
+        ..off
+    };
+    let skip = SimCfg {
+        mempool_no_reuse: true,
+        ..off
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("off");
+    let b = sim_replay_cfg(&t, profile.clone(), held).expect("held");
+    let c = sim_replay_cfg(&t, profile.clone(), skip).expect("skip");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+    assert_eq!(a.hits, c.hits);
+    assert_eq!(a.misses, c.misses);
+    assert!(
+        b.sim_ns < c.sim_ns,
+        "no-reuse must pay alloc_overhead; reuse={} skip={}",
+        b.sim_ns,
+        c.sim_ns
+    );
+    assert!(
+        c.hbm_peak > b.hbm_peak,
+        "no-reuse must keep leftover cache reserved; reuse={} skip={}",
+        b.hbm_peak,
+        c.hbm_peak
+    );
+    let sched_held = schedule_replay(&t, profile.clone(), held, SchedCfg::closed(0)).expect("sh");
+    let sched_skip = schedule_replay(&t, profile, skip, SchedCfg::closed(0)).expect("ss");
+    assert_eq!(sched_held.replay.hits, sched_skip.replay.hits);
+    assert_eq!(sched_held.replay.misses, sched_skip.replay.misses);
+}
+
+#[test]
 fn simulated_gpu_store_shareable_imported_pool_reuses_cache() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],

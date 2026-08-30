@@ -150,7 +150,10 @@ reuse of a same-size page pays `pool_reuse_ns` instead of
 idle (vLLM `cudaMemPoolTrimTo` at idle). Implies `--mempool`. Illegal
 with `--sync-alloc`. Hits/misses and `hbm_peak` stay the same; token ITL
 does not trim. Decode identity stays off (CUDA default threshold 0 already
-returns on free). `--shareable` is POSIX-FD mempool IPC
+returns on free). `--mempool-no-reuse` is
+`cudaMemPoolReuseAllowOpportunistic=0`: leftover cache stays reserved and
+the next miss is an OS alloc (extra HBM, `alloc_overhead_ns`). Implies
+`--mempool`. Illegal with `--sync-alloc`. `--shareable` is POSIX-FD mempool IPC
 (`cudaMemPoolExportToShareableHandle` / `ImportFromShareableHandle` /
 `ExportPointer` / `ImportPointer`): a shareable pool is `cudaDeviceSetMemPool`'d
 so `cudaMallocAsync` draws from it, and an imported sibling shares
@@ -195,7 +198,7 @@ mapped experts (`PinOom` only when even one expert cannot lock). `SimulatedGpuSt
 uses the same occupancy cap (pageable staging so construction does not steal mlock). `SimulatedGpuStore::new`
 stays on the async H2D path with CUDA's default threshold (`0`), non-blocking
 streams, and `cudaEventDisableTiming` copy events. `with_cfg` opts into the
-`sim` knobs (`host_func`, blocking compute, `sync_alloc`, mempool, `mempool_trim`, `shareable`, `vmm_page`, pageable H2D, `memcpy_batch`, AccessedBy, legacy NULL, stream priority, `graph_update`, `graph_set_params`, `graph_clone`, `graph_build`, `graph_piecewise`, `graph_enable`, `graph_mem`, `graph_auto_free`, `timing_events`, `cooperative`, `mem_sync_domain`, `launch_completion`, `wait_value`). `--memcpy-batch` is `cudaMemcpyBatchAsync` for a multi-expert pinned/VMM prefetch on one stream (sibling copies share a stream-order snapshot; demand acquire stays sequential). Illegal with `--pageable`, `--sync-alloc`, `--mapped`, or `--managed`. `--graph-enable` is `cudaGraphNodeSetEnabled` on a wide combo parent (implies `--cuda-graphs`; illegal with `--device-launch`). `--mem-sync-domain remote` is `cudaLaunchAttributeMemSyncDomain` on the decode stream (prefill stays Default). `--launch-completion` is `cudaLaunchAttributeLaunchCompletionEvent` on grouped GEMMs (replica D2D waits kernel start; illegal with `--device-launch`). `--wait-value` is `cuStreamWaitValue64` / `WriteValue64` after H2D (8-byte device mailbox; decode identity stays events). `--mempool-trim` is `cudaMemPoolTrimTo(0)` after score (implies `--mempool`; illegal with `--sync-alloc`; token ITL does not trim). `--max-batch N` admits N sequences per engine
+`sim` knobs (`host_func`, blocking compute, `sync_alloc`, mempool, `mempool_trim`, `mempool_no_reuse`, `shareable`, `vmm_page`, pageable H2D, `memcpy_batch`, AccessedBy, legacy NULL, stream priority, `graph_update`, `graph_set_params`, `graph_clone`, `graph_build`, `graph_piecewise`, `graph_enable`, `graph_mem`, `graph_auto_free`, `timing_events`, `cooperative`, `mem_sync_domain`, `launch_completion`, `wait_value`). `--memcpy-batch` is `cudaMemcpyBatchAsync` for a multi-expert pinned/VMM prefetch on one stream (sibling copies share a stream-order snapshot; demand acquire stays sequential). Illegal with `--pageable`, `--sync-alloc`, `--mapped`, or `--managed`. `--graph-enable` is `cudaGraphNodeSetEnabled` on a wide combo parent (implies `--cuda-graphs`; illegal with `--device-launch`). `--mem-sync-domain remote` is `cudaLaunchAttributeMemSyncDomain` on the decode stream (prefill stays Default). `--launch-completion` is `cudaLaunchAttributeLaunchCompletionEvent` on grouped GEMMs (replica D2D waits kernel start; illegal with `--device-launch`). `--wait-value` is `cuStreamWaitValue64` / `WriteValue64` after H2D (8-byte device mailbox; decode identity stays events). `--mempool-trim` is `cudaMemPoolTrimTo(0)` after score (implies `--mempool`; illegal with `--sync-alloc`; token ITL does not trim). `--max-batch N` admits N sequences per engine
 iteration at a token (`0` = the whole token) and still samples TTFT once.
 `--cuda-graphs` captures a leaf GEMM per resident expert alloc, instantiates
 it, then a parent of `launch_graph` child nodes for a grouped launch
@@ -262,7 +265,7 @@ per-page GEMM graphs (`graph_launches=`; `--cuda-graphs` documents that).
 `--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-piecewise` / `--graph-enable` / `--graph-mem` / `--graph-auto-free` / `--graph-mem-trim` / `--timing-events` are `GpuStoreCfg`
 on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 (`gguf_gemv engine --expert-sim --managed`). `--host-func` /
-`--blocking-streams` / `--sync-alloc` / `--mempool` / `--mempool-trim` / `--shareable` / `--vmm-page` /
+`--blocking-streams` / `--sync-alloc` / `--mempool` / `--mempool-trim` / `--mempool-no-reuse` / `--shareable` / `--vmm-page` /
 `--pageable` / `--memcpy-batch` / `--accessed-by` / `--legacy-null` / `--stream-priority` /
 `--seq-streams` / `--kv-sim` / `--kv-bytes` / `--decode-priority` /
 `--cooperative` / `--pdl` / `--l2-persist` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--max-shared` / `--non-portable-cluster` / `--sync-policy` / `--mem-sync-domain` / `--shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--wait-value` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
@@ -379,6 +382,7 @@ expertvm sim      trace.jsonl --capacity 8 --profile h100 --prefetch markov --se
 expertvm sim      trace.jsonl --capacity 8 --seq-streams --sync-alloc
 expertvm sim      trace.jsonl --capacity 8 --mempool
 expertvm sim      trace.jsonl --capacity 8 --mempool-trim
+expertvm sim      trace.jsonl --capacity 8 --mempool-no-reuse
 expertvm sim      trace.jsonl --capacity 8 --shareable
 expertvm sim      trace.jsonl --capacity 8 --mapped
 expertvm sim      trace.jsonl --capacity 8 --managed
