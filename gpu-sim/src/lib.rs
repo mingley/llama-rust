@@ -51,7 +51,10 @@
 //! type. [`Sim::pool_export`] / [`pool_import`](Sim::pool_import) are
 //! `cudaMemPoolExportToShareableHandle` / `ImportFromShareableHandle`: the
 //! import is a new [`PoolId`] that shares live/cached/threshold with the
-//! exporter (no extra HBM). [`Sim::pool_export_ptr`] /
+//! exporter (no extra HBM). [`pool_export_with_type`](Sim::pool_export_with_type) /
+//! [`pool_import_with_type`](Sim::pool_import_with_type) take
+//! [`MemHandleType::POSIX_FILE_DESCRIPTOR`] and
+//! [`MemPoolExportFlags::DEFAULT`]. Typed helpers stay. [`Sim::pool_export_ptr`] /
 //! [`pool_import_ptr`](Sim::pool_import_ptr) are `cudaMemPoolExportPointer` /
 //! `ImportPointer` (alias, no extra HBM). [`Sim::set_device_mempool`] is
 //! `cudaDeviceSetMemPool`. [`default_pool`](Sim::default_pool) is
@@ -767,14 +770,14 @@ pub use ops::{
     KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
     LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity,
     MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType,
-    MemLocationType, MemMapFlags, MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
-    MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp,
-    MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation,
-    PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
-    SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
-    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags,
-    WriteValueFlags,
+    MemLocationType, MemMapFlags, MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr,
+    MemRangeAttrValue, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType,
+    MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
+    Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes,
+    PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
+    SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo,
+    StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    WaitValueFlags, WriteValueFlags,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -12144,6 +12147,54 @@ mod tests {
         assert_eq!(sim.hbm_used(d).unwrap(), used0);
         assert_eq!(sim.pool_cached(p).unwrap(), 0);
         assert!(sim.is_resident(b, d).unwrap());
+    }
+
+    #[test]
+    fn pool_export_with_type_is_cuda_mempool_export_shareable_handle() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let p = sim.create_shareable_pool(d).unwrap();
+        let h = sim
+            .pool_export_with_type(
+                p,
+                MemHandleType::POSIX_FILE_DESCRIPTOR,
+                MemPoolExportFlags::DEFAULT,
+            )
+            .unwrap();
+        assert_eq!(sim.pool_export(p).unwrap(), h);
+        let imp = sim
+            .pool_import_with_type(
+                d,
+                h,
+                MemHandleType::POSIX_FILE_DESCRIPTOR,
+                MemPoolExportFlags::DEFAULT,
+            )
+            .unwrap();
+        assert!(sim.is_pool_imported(imp).unwrap());
+        match sim.pool_export_with_type(p, MemHandleType::POSIX_FILE_DESCRIPTOR, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pool export flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_import_with_type(d, h, MemHandleType::POSIX_FILE_DESCRIPTOR, 1) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pool import flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.pool_export_with_type(p, MemHandleType::NONE, MemPoolExportFlags::DEFAULT) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("pool handle types"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.pool_export_with_type(
+            p,
+            MemHandleType::POSIX_FILE_DESCRIPTOR,
+            MemPoolExportFlags::DEFAULT,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cannot capture mempool"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
     }
 
     #[test]

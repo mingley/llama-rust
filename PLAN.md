@@ -3077,7 +3077,19 @@ model, do not celebrate the sim.
     identity unchanged. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-297. [ ] Next numbered PLAN item after 296 is the next `gpu-sim` / Engine /
+297. [x] `cudaMemPoolExportToShareableHandle` /
+    `ImportFromShareableHandle` handle type and flags:
+    [`pool_export_with_type`](Sim::pool_export_with_type) /
+    [`pool_import_with_type`](Sim::pool_import_with_type) take
+    [`MemHandleType::POSIX_FILE_DESCRIPTOR`] and
+    [`MemPoolExportFlags::DEFAULT`]. Other handle types Invalid
+    `"pool handle types"`. Unknown flags Invalid `"pool export flags"` /
+    `"pool import flags"`. Typed [`pool_export`](Sim::pool_export) /
+    [`pool_import`](Sim::pool_import) stay. Host-synchronous; capture
+    refused. Decode identity unchanged. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+298. [ ] Next numbered PLAN item after 297 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

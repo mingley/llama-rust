@@ -2821,6 +2821,16 @@ impl MulticastBindFlags {
     pub const DEFAULT: u32 = 0;
 }
 
+/// `cudaMemPoolExportToShareableHandle` / `ImportFromShareableHandle` flags
+/// for [`crate::Sim::pool_export_with_type`] /
+/// [`crate::Sim::pool_import_with_type`].
+pub struct MemPoolExportFlags;
+
+impl MemPoolExportFlags {
+    /// CUDA requires `0`.
+    pub const DEFAULT: u32 = 0;
+}
+
 /// `cudaMemPoolProps` for [`crate::Sim::create_pool_with_props`].
 ///
 /// [`Self::alloc_type`] must be [`MemAllocationType::PINNED`].

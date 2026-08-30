@@ -21,10 +21,10 @@ use crate::ops::{
     KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
     MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp,
     MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType,
-    MemMapFlags, MemPoolAttr, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags,
-    MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, MulticastBindFlags,
-    MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch,
-    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    MemMapFlags, MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
+    MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp,
+    MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation,
+    PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
     PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
     SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
     StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WriteValueFlags,
@@ -9373,6 +9373,55 @@ impl Sim {
         p.share_root = Some(root);
         let _prev = self.pools.insert(id, p);
         Ok(id)
+    }
+
+    fn check_pool_export_type(
+        handle_type: u64,
+        flags: u32,
+        flags_why: &'static str,
+    ) -> Result<(), SimError> {
+        if flags != MemPoolExportFlags::DEFAULT {
+            return Err(SimError::Invalid { why: flags_why });
+        }
+        if handle_type != MemHandleType::POSIX_FILE_DESCRIPTOR {
+            return Err(SimError::Invalid {
+                why: "pool handle types",
+            });
+        }
+        Ok(())
+    }
+
+    /// `cudaMemPoolExportToShareableHandle` with handle type and flags.
+    ///
+    /// [`MemHandleType::POSIX_FILE_DESCRIPTOR`] only. Flags must be
+    /// [`MemPoolExportFlags::DEFAULT`]. Typed [`Self::pool_export`] stays.
+    /// Host-synchronous; capture refused.
+    pub fn pool_export_with_type(
+        &mut self,
+        pool: PoolId,
+        handle_type: u64,
+        flags: u32,
+    ) -> Result<ShareableHandleId, SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        Self::check_pool_export_type(handle_type, flags, "pool export flags")?;
+        self.pool_export(pool)
+    }
+
+    /// `cudaMemPoolImportFromShareableHandle` with handle type and flags.
+    ///
+    /// [`MemHandleType::POSIX_FILE_DESCRIPTOR`] only. Flags must be
+    /// [`MemPoolExportFlags::DEFAULT`]. Typed [`Self::pool_import`] stays.
+    /// Host-synchronous; capture refused.
+    pub fn pool_import_with_type(
+        &mut self,
+        device: DeviceId,
+        handle: ShareableHandleId,
+        handle_type: u64,
+        flags: u32,
+    ) -> Result<PoolId, SimError> {
+        self.fail_if_capturing("cannot capture mempool")?;
+        Self::check_pool_export_type(handle_type, flags, "pool import flags")?;
+        self.pool_import(device, handle)
     }
 
     /// `cudaMemPoolExportPointer` of a live allocation from a shareable pool.

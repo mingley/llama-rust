@@ -37,7 +37,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMalloc` (`malloc`) device-syncs that GPU, then the pointer is usable; it cannot consume another pool's cache | `alloc_overhead_ns` (charged at the call) |
 | `cudaIpcGetMemHandle` / `ipc_open` / `ipc_close` share physicals (`ipc_open_with_flags` lazy-peer is a no-op) | `alloc_overhead_ns` (export/import) |
 | `cudaIpcGetEventHandle` / `ipc_open_event` share the source record | 1 ns (export/import) |
-| `cudaMemPoolExportToShareableHandle` / `pool_import` share live/cached | `alloc_overhead_ns` (export/import) |
+| `cudaMemPoolExportToShareableHandle` / `pool_import` share live/cached (`pool_export_with_type` / `pool_import_with_type` POSIX-FD flags 0) | `alloc_overhead_ns` (export/import) |
 | `cudaMemPoolExportPointer` / `pool_import_ptr` alias pool allocs | `alloc_overhead_ns` (export/import) |
 | `cudaDeviceSetMemPool` rebinds `alloc` (`set_device_mempool`); GetDefaultMemPool stays | `alloc_overhead_ns` |
 | `cudaHostRegister` pins pageable host for DMA (`host_register`) | `alloc_overhead_ns` (mlock, host-sync) |
@@ -642,7 +642,9 @@ while imports are live is Invalid).
 `create_shareable_pool` is `cudaMemPoolCreate` with a POSIX-FD handle type.
 `pool_export` / `pool_import` are `cudaMemPoolExportToShareableHandle` /
 `ImportFromShareableHandle`: the import is a new pool id that shares
-live/cached/threshold with the exporter. `pool_export_ptr` /
+live/cached/threshold with the exporter. `pool_export_with_type` /
+`pool_import_with_type` take POSIX-FD and flags 0 (`MemPoolExportFlags`).
+Typed helpers stay. `pool_export_ptr` /
 `pool_import_ptr` are `cudaMemPoolExportPointer` / `ImportPointer` (alias,
 no extra HBM). `set_device_mempool` is `cudaDeviceSetMemPool`. `default_pool` is
 `cudaDeviceGetDefaultMemPool` (seeded; SetMemPool does not replace it).
