@@ -49,6 +49,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMemAdviseSetAccessedBy`: kernel may read without migrating | interconnect, not local HBM |
 | `cudaMemAdviseSetPreferredLocation`: stay if already there | interconnect on remote read; writes migrate |
 | `cudaMemPrefetchAsync` (`prefetch` / `prefetch_host` / `prefetch_with_flags`) **moves** unless ReadMostly | PCIe / NVLink (1 ns if already local) |
+| `cudaMemPrefetchBatchAsync` / `DiscardBatchAsync` / `DiscardAndPrefetchBatchAsync` require CMA on every GPU | this VM reports `ConcurrentManagedAccess` 0 → Invalid |
 | `cuMemAddressReserve` (`va_reserve`) is a VA with no physical pages | `alloc_overhead_ns` (at the call) |
 | `cuMemMap` (`va_map`) charges HBM; `va_unmap` refunds; the VA is reusable | `alloc_overhead_ns` (map) |
 | `cuMemCreate` (`va_create`) charges HBM with no VA; `va_map_handle` maps it without a second charge; `va_retain_handle` increments refs; `va_release_handle` refunds when refs and maps are 0 | `alloc_overhead_ns` (create, map, retain) |
@@ -714,7 +715,13 @@ not per byte range). Last-prefetch is the dest of `prefetch` /
 capture. `prefetch` / `prefetch_host` / `prefetch_with_flags` are
 `cudaMemPrefetchAsync` and **move** unless ReadMostly.
 `prefetch_with_flags` requires `flags == 0` (`PrefetchFlags::DEFAULT`) and
-a `Place` dest. Typed helpers stay. Capture of
+a `Place` dest. Typed helpers stay. `prefetch_batch_async` /
+`discard_batch_async` / `discard_and_prefetch_batch_async` are
+`cudaMemPrefetchBatchAsync` / `cudaMemDiscardBatchAsync` /
+`cudaMemDiscardAndPrefetchBatchAsync`: they require
+`ConcurrentManagedAccess` on every GPU. This VM reports 0, so they are
+Invalid `"concurrent managed access"`. Discard contents are not modeled.
+Capture of
 `alloc_managed` / `mem_advise` / `stream_attach` is refused; a graph must record prefetch
 before the kernel unless AccessedBy or PreferredLocation covers that GPU.
 `va_reserve` / `va_map` / `va_unmap` / `va_free` are CUDA virtual memory.

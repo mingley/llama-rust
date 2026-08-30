@@ -120,6 +120,14 @@
 //! [`prefetch_with_flags`](Sim::prefetch_with_flags) is
 //! `cudaMemPrefetchAsync` / `cuMemPrefetchAsync_v2` ([`PrefetchFlags::DEFAULT`]
 //! only; [`Place::Device`] / host dest). Typed helpers stay.
+//! [`prefetch_batch_async`](Sim::prefetch_batch_async) /
+//! [`discard_batch_async`](Sim::discard_batch_async) /
+//! [`discard_and_prefetch_batch_async`](Sim::discard_and_prefetch_batch_async)
+//! are `cudaMemPrefetchBatchAsync` / `cudaMemDiscardBatchAsync` /
+//! `cudaMemDiscardAndPrefetchBatchAsync`: they require
+//! [`DeviceAttr::ConcurrentManagedAccess`] on every GPU (this VM reports `0`,
+//! so they are Invalid `"concurrent managed access"`). Discard contents are
+//! not modeled.
 //! [`MemAdvise::SetAccessedBy`] maps a GPU so a kernel can read without
 //! migrating (billed on the interconnect, not local HBM). A kernel
 //! page-faults managed memory onto that GPU when the kernel *starts*
@@ -14489,6 +14497,50 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("prefetch flags"), "{why}"),
             other => panic!("{other:?}"),
         }
+        sim.free_sync(m).unwrap();
+    }
+
+    #[test]
+    fn prefetch_batch_async_requires_concurrent_managed_access() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 4096u64;
+        let m = sim.alloc_managed(bytes).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::ConcurrentManagedAccess)
+                .unwrap(),
+            0
+        );
+        match sim.prefetch_batch_async(d, &[m], &[bytes], &[Place::Device(d)], &[0], 0, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("concurrent managed access"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.discard_batch_async(d, &[m], &[bytes], 0, s) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("concurrent managed access"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.discard_and_prefetch_batch_async(
+            d,
+            &[m],
+            &[bytes],
+            &[Place::Device(d)],
+            &[0],
+            0,
+            s,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("concurrent managed access"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        enq(sim.prefetch(d, m, s));
+        sim.synchronize().unwrap();
+        assert!(sim.is_resident(m, d).unwrap());
         sim.free_sync(m).unwrap();
     }
 

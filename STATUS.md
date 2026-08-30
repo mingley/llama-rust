@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — managed batch prefetch/discard require CMA
+
+`prefetch_batch_async` / `discard_batch_async` /
+`discard_and_prefetch_batch_async` are `cudaMemPrefetchBatchAsync` /
+`cudaMemDiscardBatchAsync` / `cudaMemDiscardAndPrefetchBatchAsync`. They
+require `ConcurrentManagedAccess` on every GPU. This VM reports 0, so
+they are Invalid `"concurrent managed access"`. Typed `prefetch` stays.
+Discard contents are not modeled. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaMemcpy3DBatchAsync`
 
 `memcpy_3d_batch_async` is pointer-to-pointer `cudaMemcpy3DBatchAsync`

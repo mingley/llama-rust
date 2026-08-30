@@ -3316,18 +3316,31 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no `$/M
     tokens`.
 
-321. [ ] Next numbered PLAN item after 320 is the next `gpu-sim` / Engine /
+321. [x] `cudaMemPrefetchBatchAsync` / `cudaMemDiscardBatchAsync` /
+    `cudaMemDiscardAndPrefetchBatchAsync`:
+    [`prefetch_batch_async`](gpu-sim/src/sim.rs) /
+    [`discard_batch_async`](gpu-sim/src/sim.rs) /
+    [`discard_and_prefetch_batch_async`](gpu-sim/src/sim.rs) require
+    `cudaDevAttrConcurrentManagedAccess` on every GPU. This VM reports `0`,
+    so they are Invalid `"concurrent managed access"`. Typed
+    [`prefetch`](gpu-sim/src/sim.rs) / [`prefetch_with_flags`](gpu-sim/src/sim.rs)
+    stay (no CMA gate). Discard contents / Host NUMA prefetch locations are
+    not modeled. Decode identity unchanged. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+322. [ ] Next numbered PLAN item after 321 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
-    decode family (`gemma4`). Prefer remaining CUDA-shaped twins
-    (`cudaMemPrefetchBatchAsync`, `cudaMemDiscardBatchAsync`,
-    `cudaMemDiscardAndPrefetchBatchAsync`) over more OpenAI HTTP veneer. Do not invent
+    decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
+    OpenAI HTTP veneer. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
     numbers, example `$/M tokens` rents, or `cudaStreamDestroy`.
     **`best_of` / `use_beam_search` stay out of `parse_gen_req` until a
     real beam Engine exists.** Do not default `--engine`. Do not invent
     `max_model_len` or `/v1/tokenize`. Do not invent `gemma4`. Do not invent
-    CUDA arrays on `memcpy_3d_batch_async`.
+    CUDA arrays on `memcpy_3d_batch_async`. Do not invent
+    `ConcurrentManagedAccess` / discard contents to make batch prefetch
+    succeed.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as

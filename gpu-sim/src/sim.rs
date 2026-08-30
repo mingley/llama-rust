@@ -11860,6 +11860,84 @@ impl Sim {
         }
     }
 
+    /// `cudaMemPrefetchBatchAsync`.
+    ///
+    /// Requires [`DeviceAttr::ConcurrentManagedAccess`] on every GPU. This VM
+    /// reports `0`, so the call is always Invalid `"concurrent managed
+    /// access"`. Single [`Self::prefetch`] / [`prefetch_with_flags`](Self::prefetch_with_flags)
+    /// stay (they do not have that CMA gate). Location hints / Host NUMA are
+    /// not reached.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "cudaMemPrefetchBatchAsync argument list"
+    )]
+    pub fn prefetch_batch_async(
+        &mut self,
+        device: DeviceId,
+        _allocs: &[AllocId],
+        _sizes: &[u64],
+        _dests: &[Place],
+        _dest_idxs: &[usize],
+        _flags: u64,
+        _stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_concurrent_managed_access()
+    }
+
+    /// `cudaMemDiscardBatchAsync`.
+    ///
+    /// Requires [`DeviceAttr::ConcurrentManagedAccess`] on every GPU. This VM
+    /// reports `0`, so the call is always Invalid `"concurrent managed
+    /// access"`. Discard contents are not modeled.
+    pub fn discard_batch_async(
+        &mut self,
+        device: DeviceId,
+        _allocs: &[AllocId],
+        _sizes: &[u64],
+        _flags: u64,
+        _stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_concurrent_managed_access()
+    }
+
+    /// `cudaMemDiscardAndPrefetchBatchAsync`.
+    ///
+    /// Requires [`DeviceAttr::ConcurrentManagedAccess`] on every GPU. This VM
+    /// reports `0`, so the call is always Invalid `"concurrent managed
+    /// access"`. Equivalent to discard-then-prefetch on hardware with CMA.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "cudaMemDiscardAndPrefetchBatchAsync argument list"
+    )]
+    pub fn discard_and_prefetch_batch_async(
+        &mut self,
+        device: DeviceId,
+        _allocs: &[AllocId],
+        _sizes: &[u64],
+        _dests: &[Place],
+        _dest_idxs: &[usize],
+        _flags: u64,
+        _stream: StreamId,
+    ) -> Result<Vec<OpId>, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        self.require_concurrent_managed_access()
+    }
+
+    fn require_concurrent_managed_access(&self) -> Result<Vec<OpId>, SimError> {
+        for g in &self.profile.gpus {
+            if self.device_get_attribute(g.id, DeviceAttr::ConcurrentManagedAccess)? == 0 {
+                return Err(SimError::Invalid {
+                    why: "concurrent managed access",
+                });
+            }
+        }
+        Err(SimError::Invalid {
+            why: "concurrent managed access",
+        })
+    }
+
     /// Whether `alloc` is live in page-locked host memory.
     pub fn is_host_pinned(&self, alloc: AllocId) -> Result<bool, SimError> {
         let a = self.alloc_ref(alloc)?;
