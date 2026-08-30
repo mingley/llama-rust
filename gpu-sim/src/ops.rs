@@ -879,6 +879,10 @@ pub enum DeviceAttr {
     /// NUMA VMM is not modeled; [`crate::Sim::va_create_with_prop`] refuses
     /// host location). Distinct from [`Self::VirtualMemoryManagementSupported`].
     HostNumaVirtualMemoryManagementSupported,
+    /// `cudaDevAttrHostNumaMemoryPoolsSupported` (always 0; host NUMA pools
+    /// are not modeled; [`crate::Sim::create_pool_with_props`] refuses host
+    /// location). Distinct from [`Self::HostMemoryPoolsSupported`].
+    HostNumaMemoryPoolsSupported,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -1033,6 +1037,9 @@ pub struct DeviceProperties {
     /// is not modeled). Distinct from
     /// [`Self::virtual_memory_management_supported`].
     pub host_numa_virtual_memory_management_supported: bool,
+    /// `cudaDevAttrHostNumaMemoryPoolsSupported` (host NUMA pools are not
+    /// modeled). Distinct from [`Self::host_memory_pools_supported`].
+    pub host_numa_memory_pools_supported: bool,
 }
 
 /// `cudaComputeMode` for [`DeviceAttr::ComputeMode`].

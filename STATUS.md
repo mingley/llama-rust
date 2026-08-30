@@ -5,6 +5,13 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — host NUMA memory pools unsupported
+
+`DeviceAttr::HostNumaMemoryPoolsSupported` is always 0 (host NUMA
+pools are not modeled; `create_pool_with_props` refuses host location).
+Distinct from `HostMemoryPoolsSupported` (already 0). Query;
+capture-legal. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — 32-bit stream memops
 
 `DeviceAttr::CanUseStreamMemOps` is always 1 (`wait_value32` /

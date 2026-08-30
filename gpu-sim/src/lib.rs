@@ -340,6 +340,10 @@
 //! NUMA VMM is not modeled; [`va_create_with_prop`](Sim::va_create_with_prop)
 //! refuses host location). Distinct from
 //! [`VirtualMemoryManagementSupported`](DeviceAttr::VirtualMemoryManagementSupported).
+//! [`DeviceAttr::HostNumaMemoryPoolsSupported`] is always 0 (host NUMA pools
+//! are not modeled; [`create_pool_with_props`](Sim::create_pool_with_props)
+//! refuses host location). Distinct from
+//! [`HostMemoryPoolsSupported`](DeviceAttr::HostMemoryPoolsSupported).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -11170,6 +11174,27 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::HostNumaVirtualMemoryManagementSupported)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_host_numa_memory_pools_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert!(!hp.host_memory_pools_supported);
+        assert!(!hp.host_numa_memory_pools_supported);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::HostNumaMemoryPoolsSupported)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::HostNumaMemoryPoolsSupported)
                 .unwrap(),
             0
         );
