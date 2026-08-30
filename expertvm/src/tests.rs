@@ -5415,6 +5415,52 @@ fn simulated_gpu_store_cooperative_serializes_leftover_prefill() {
 }
 
 #[test]
+fn simulated_gpu_store_cluster_serializes_leftover_prefill() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let run = |cluster: u8| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            HardwareProfile::example_h100_sxm(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                decode_priority: true,
+                stream_priority: true,
+                compute_slots: 2,
+                cluster,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let pre = ExpertKey::new(0, 0);
+        let dec = ExpertKey::new(0, 1);
+        gpu.bind_decode_compute(false);
+        let _warm_pre = gpu.acquire(pre).expect("warm pre");
+        gpu.release(pre);
+        let _warm_dec = gpu.acquire(dec).expect("warm dec");
+        gpu.release(dec);
+        let t0 = gpu.clock_ns().expect("drain h2d");
+        gpu.bind_decode_compute(false);
+        let _prefill = gpu.acquire(pre).expect("prefill");
+        gpu.release(pre);
+        gpu.bind_decode_compute(true);
+        let _decode = gpu.acquire(dec).expect("decode");
+        gpu.release(dec);
+        gpu.score().expect("score").wall_ns.saturating_sub(t0)
+    };
+    let overlap = run(0);
+    let serial = run(2);
+    assert!(
+        overlap < serial,
+        "cluster of 2 must not overlap leftover prefill with decode; overlap={overlap} serial={serial}"
+    );
+}
+
+#[test]
 fn simulated_gpu_store_compute_slots_overlap_across_token_clock() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1])],
@@ -5557,6 +5603,34 @@ fn sim_replay_cooperative_serializes_seq_streams() {
     assert!(
         overlap.sim_ns < serial.sim_ns,
         "cooperative GEMMs must not Hyper-Q overlap; overlap={} serial={}",
+        overlap.sim_ns,
+        serial.sim_ns
+    );
+}
+
+#[test]
+fn sim_replay_cluster_serializes_seq_streams() {
+    let t = Trace {
+        events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("slow gemm profile");
+    let hyperq = SimCfg {
+        seq_streams: true,
+        compute_slots: 2,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let clustered = SimCfg {
+        cluster: 2,
+        ..hyperq
+    };
+    let overlap = sim_replay_cfg(&t, profile.clone(), hyperq).expect("hyperq");
+    let serial = sim_replay_cfg(&t, profile, clustered).expect("cluster");
+    assert_eq!(overlap.hits, serial.hits);
+    assert_eq!(overlap.misses, serial.misses);
+    assert!(
+        overlap.sim_ns < serial.sim_ns,
+        "cluster of 2 must not Hyper-Q overlap; overlap={} serial={}",
         overlap.sim_ns,
         serial.sim_ns
     );

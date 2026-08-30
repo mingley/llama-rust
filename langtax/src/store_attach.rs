@@ -62,6 +62,10 @@ pub(crate) struct GpuCli {
     pub pdl: bool,
     /// Persisting L2 access-policy window (`GpuStoreCfg::l2_persist`).
     pub l2_persist: bool,
+    /// Hopper cluster X size (`GpuStoreCfg::cluster`). `0` is off.
+    pub cluster: u8,
+    /// True when `--cluster` appeared.
+    pub cluster_set: bool,
     /// Hopper NVLS replica fanout (`GpuStoreCfg::multicast`). Implies vmm.
     pub multicast: bool,
     /// Hyper-Q occupancy (`GpuStoreCfg::compute_slots`). `0` keeps the profile.
@@ -181,6 +185,16 @@ impl GpuCli {
         Ok(())
     }
 
+    /// Hopper cluster X (`--cluster`). `0` is refused.
+    pub(crate) fn set_cluster(&mut self, n: u8) -> Result<(), String> {
+        if n == 0 {
+            return Err("cluster must be > 0".into());
+        }
+        self.cluster = n;
+        self.cluster_set = true;
+        Ok(())
+    }
+
     /// First CUDA knob that needs `--expert-sim`, if any.
     #[must_use]
     pub(crate) fn sim_flag(self) -> Option<&'static str> {
@@ -215,6 +229,7 @@ impl GpuCli {
             (self.multicast, "--multicast"),
             (self.vmm_page_set, "--vmm-page"),
             (self.compute_slots_set, "--compute-slots"),
+            (self.cluster_set, "--cluster"),
             (self.decode_sm_set, "--decode-sms"),
         ]
         .into_iter()
@@ -270,6 +285,7 @@ enum PlanSlot {
     VmmPage,
     KvBytes,
     ComputeSlots,
+    Cluster,
     DecodeSms,
     Prefetch,
     PlanWindow,
@@ -282,6 +298,7 @@ impl PlanSlot {
             Self::VmmPage => "vmm-page",
             Self::KvBytes => "kv-bytes",
             Self::ComputeSlots => "compute-slots",
+            Self::Cluster => "cluster",
             Self::DecodeSms => "decode-sms",
             Self::Prefetch => "prefetch",
             Self::PlanWindow => "plan-window",
@@ -299,6 +316,7 @@ impl PlannerCli {
             "--vmm-page" => Dash::Need(PlanSlot::VmmPage),
             "--kv-bytes" => Dash::Need(PlanSlot::KvBytes),
             "--compute-slots" => Dash::Need(PlanSlot::ComputeSlots),
+            "--cluster" => Dash::Need(PlanSlot::Cluster),
             "--decode-sms" => Dash::Need(PlanSlot::DecodeSms),
             "--prefetch" => Dash::Need(PlanSlot::Prefetch),
             "--plan-window" => Dash::Need(PlanSlot::PlanWindow),
@@ -326,6 +344,12 @@ impl PlannerCli {
                     .parse::<u8>()
                     .map_err(|_| format!("invalid compute-slots {raw:?}"))?;
                 self.gpu.set_compute_slots(n)?;
+            }
+            PlanSlot::Cluster => {
+                let n = raw
+                    .parse::<u8>()
+                    .map_err(|_| format!("invalid cluster {raw:?}"))?;
+                self.gpu.set_cluster(n)?;
             }
             PlanSlot::DecodeSms => {
                 let n = raw
@@ -423,6 +447,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         cooperative: gpu.cooperative,
         pdl: gpu.pdl,
         l2_persist: gpu.l2_persist,
+        cluster: gpu.cluster,
         multicast: gpu.multicast,
         compute_slots: gpu.compute_slots,
         decode_sm_permille: gpu.decode_sm_permille,

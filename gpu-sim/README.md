@@ -477,7 +477,8 @@ enables the persist limit and attaches a window to expert GEMMs.
 leftover same-physical-domain traffic (default tax 0). Remote (and allreduce)
 isolates communication. `ClusterDim` is `cudaLaunchAttributeClusterDimension`:
 the launch occupies `min(blocks, compute_slots)` Hyper-Q slots (Hopper portable
-max 8). Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
+max 8). `expertvm sim --cluster N` / `gguf_gemv engine --expert-sim --cluster N`
+launch grouped expert GEMMs that way. Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
 instantiate schedules those node priorities instead of the launch stream. `set_created_streams_priority` assigns created streams
 their id. `set_stream_sm_permille` is a green-context SM fraction
 (compute-bound kernels scale; memory-bound keep full HBM; default unset is

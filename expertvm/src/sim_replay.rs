@@ -35,6 +35,8 @@ pub(crate) struct GemmFlags {
     pub pdl: bool,
     /// `cudaLaunchAttributeAccessPolicyWindow` over the expert page.
     pub l2_persist: bool,
+    /// Hopper cluster X size (`cudaLaunchAttributeClusterDimension`). `0` is off.
+    pub cluster: u8,
 }
 
 impl GemmFlags {
@@ -50,11 +52,16 @@ impl GemmFlags {
             .then(|| AccessPolicyWindow::persisting(KernelBuf::whole(id)))
     }
 
+    pub(crate) fn cluster_dim(self) -> Option<gpu_sim::ClusterDim> {
+        (self.cluster >= 1).then_some(gpu_sim::ClusterDim::x(u32::from(self.cluster)))
+    }
+
     pub(crate) fn kernel_attrs(self, id: AllocId) -> KernelAttrs {
         KernelAttrs {
             cooperative: self.cooperative,
             pdl: self.pdl_attr().unwrap_or_default(),
             access_policy: self.persist_window(id),
+            cluster: self.cluster_dim(),
             ..KernelAttrs::default()
         }
     }
@@ -374,6 +381,13 @@ pub struct SimCfg {
     /// fill. Decode identity stays `cudaLaunchKernel` with persist limit 0.
     /// [`crate::GpuStoreCfg::l2_persist`] is the store path.
     pub l2_persist: bool,
+    /// Hopper cluster X size (`cudaLaunchAttributeClusterDimension`). `0` is off.
+    ///
+    /// Occupies `min(N, compute_slots)` Hyper-Q slots so leftover kernels
+    /// cannot overlap a cluster that fills the cap. Decode identity stays
+    /// `cudaLaunchKernel` (no cluster). [`crate::GpuStoreCfg::cluster`] is the
+    /// store path.
+    pub cluster: u8,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// `--place replicas` maps dest VMM physicals then one NVLS kernel instead
@@ -442,6 +456,7 @@ impl SimCfg {
             cooperative: false,
             pdl: false,
             l2_persist: false,
+            cluster: 0,
             multicast: false,
             compute_slots: 0,
             decode_sm_permille: 0,
@@ -563,6 +578,7 @@ pub fn sim_replay_cfg(
         .with_cooperative(cfg.cooperative)
         .with_pdl(cfg.pdl)
         .with_l2_persist(cfg.l2_persist)
+        .with_cluster(cfg.cluster)
         .with_set_params(cfg.graph_set_params)
         .with_piecewise(cfg.graph_piecewise);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
@@ -800,6 +816,7 @@ pub(crate) struct GraphBank {
     cooperative: bool,
     pdl: bool,
     l2_persist: bool,
+    cluster: u8,
     set_params: bool,
     pub updates: u64,
     pub clones: u64,
@@ -819,6 +836,7 @@ impl GraphBank {
             cooperative: false,
             pdl: false,
             l2_persist: false,
+            cluster: 0,
             set_params: false,
             updates: 0,
             clones: 0,
@@ -841,11 +859,17 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_cluster(mut self, n: u8) -> Self {
+        self.cluster = n;
+        self
+    }
+
     fn gemm_flags(&self) -> GemmFlags {
         GemmFlags {
             cooperative: self.cooperative,
             pdl: self.pdl,
             l2_persist: self.l2_persist,
+            cluster: self.cluster,
         }
     }
 
@@ -1779,6 +1803,10 @@ fn add_gemm_kernel(
     if let Some(w) = flags.persist_window(id) {
         let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_access_policy(graph, node, Some(w))?;
+    }
+    if let Some(c) = flags.cluster_dim() {
+        let node = usize::from(!writes.is_empty());
+        sim.graph_kernel_node_set_cluster(graph, node, Some(c))?;
     }
     Ok(())
 }

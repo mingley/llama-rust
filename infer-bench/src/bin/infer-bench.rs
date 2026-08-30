@@ -17,7 +17,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -132,6 +132,7 @@ fn run() -> Result<(), String> {
             sim_cfg.cooperative = cfg.cooperative;
             sim_cfg.pdl = cfg.pdl;
             sim_cfg.l2_persist = cfg.l2_persist;
+            sim_cfg.cluster = cfg.cluster;
             sim_cfg.multicast = cfg.multicast;
             if cfg.multicast {
                 sim_cfg.vmm = true;
@@ -202,6 +203,7 @@ struct Cfg {
     cooperative: bool,
     pdl: bool,
     l2_persist: bool,
+    cluster: u8,
     multicast: bool,
 }
 
@@ -238,6 +240,7 @@ where
     let mut cooperative = false;
     let mut pdl = false;
     let mut l2_persist = false;
+    let mut cluster = 0u8;
     let mut multicast = false;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
@@ -301,6 +304,7 @@ where
             "--l2-persist" => {
                 l2_persist = !matches!(inline.as_deref(), Some("0" | "false"));
             }
+            "--cluster" => cluster = parse_cluster(&value("cluster", inline, &mut it)?)?,
             "--multicast" => {
                 multicast = !matches!(inline.as_deref(), Some("0" | "false"));
             }
@@ -367,6 +371,7 @@ where
         cooperative,
         pdl,
         l2_persist,
+        cluster,
         multicast,
     })
 }
@@ -394,6 +399,16 @@ fn parse_u64(name: &str, s: &str) -> Result<u64, String> {
 fn parse_u32(name: &str, s: &str) -> Result<u32, String> {
     s.parse::<u32>()
         .map_err(|_| format!("invalid {name} {s:?}"))
+}
+
+fn parse_cluster(s: &str) -> Result<u8, String> {
+    let n = s
+        .parse::<u8>()
+        .map_err(|_| format!("invalid cluster {s:?}"))?;
+    if n == 0 {
+        return Err("cluster must be > 0".into());
+    }
+    Ok(n)
 }
 
 fn parse_workload(name: &str) -> Result<Workload, String> {

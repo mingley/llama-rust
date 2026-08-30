@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — expertvm `--cluster`
+
+`expertvm sim` / `schedule` / `store`, `gguf_gemv engine` / `serve`, and
+`infer-bench schedule` take `--cluster N`. Grouped expert GEMMs launch as a
+Hopper thread-block cluster of X size `N` so the launch occupies
+`min(N, compute_slots)` Hyper-Q slots. A cluster that fills the cap cannot
+overlap leftover kernels. `N==0` is refused at parse. Legal with `--pdl`
+and `--cooperative`. Decode identity stays `cudaLaunchKernel` (no cluster).
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaLaunchAttributeClusterDimension`
 
 `kernel_with` / graph SetAttribute launch a Hopper thread-block cluster.

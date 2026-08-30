@@ -162,6 +162,11 @@ pub struct GpuStoreCfg {
     /// and launches GEMMs with a persisting window. Decode identity stays
     /// persist limit 0.
     pub l2_persist: bool,
+    /// Hopper cluster X size (`cudaLaunchAttributeClusterDimension`). `0` is off.
+    ///
+    /// Occupies `min(N, compute_slots)` Hyper-Q slots. Decode identity stays
+    /// `cudaLaunchKernel` (no cluster).
+    pub cluster: u8,
     /// Hopper NVLS replica fanout (`cuMulticastCreate` / bind / kernel store).
     ///
     /// [`Self::pin_hot`] and walker `--place replicas` map dest VMM physicals
@@ -235,6 +240,7 @@ pub struct SimulatedGpuStore {
     cooperative: bool,
     pdl: bool,
     l2_persist: bool,
+    cluster: u8,
     multicast: bool,
     next_event: u32,
     pages: BTreeMap<ExpertKey, GpuPage>,
@@ -493,6 +499,7 @@ impl SimulatedGpuStore {
             cooperative: cfg.cooperative,
             pdl: cfg.pdl,
             l2_persist: cfg.l2_persist,
+            cluster: cfg.cluster,
             multicast: cfg.multicast,
             next_event: 1,
             pages: BTreeMap::new(),
@@ -607,6 +614,7 @@ impl SimulatedGpuStore {
             cooperative: self.cooperative,
             pdl: self.pdl,
             l2_persist: self.l2_persist,
+            cluster: self.cluster,
         }
     }
 
