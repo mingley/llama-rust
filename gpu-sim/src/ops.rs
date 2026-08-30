@@ -619,6 +619,13 @@ pub enum DeviceAttr {
     HostRegisterReadOnlySupported,
     /// `cudaDevAttrPageableMemoryAccess` (always 0; pageable is bounce-buffer).
     PageableMemoryAccess,
+    /// `cudaDevAttrStreamPrioritiesSupported` (always 1; this VM has
+    /// [`crate::Sim::set_stream_priority`]).
+    StreamPrioritiesSupported,
+    /// `cudaDevAttrGpuOverlap` ([`crate::GpuProfile::copy_engines`] `> 0`).
+    GpuOverlap,
+    /// `cudaDevAttrUnifiedAddressing` (always 1; this VM has one pointer space).
+    UnifiedAddressing,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -682,6 +689,12 @@ pub struct DeviceProperties {
     pub host_register_read_only_supported: bool,
     /// `cudaDevAttrPageableMemoryAccess` (pageable H2D/D2H is bounce-buffer).
     pub pageable_memory_access: bool,
+    /// `cudaDevAttrStreamPrioritiesSupported` (this VM has stream priorities).
+    pub stream_priorities_supported: bool,
+    /// `cudaDevAttrGpuOverlap` ([`crate::GpuProfile::copy_engines`] `> 0`).
+    pub gpu_overlap: bool,
+    /// `cudaDevAttrUnifiedAddressing` (one pointer space).
+    pub unified_addressing: bool,
 }
 
 /// `cudaFuncAttribute` for [`crate::Sim::func_set_attribute`] / `GetAttribute`.
@@ -2029,6 +2042,46 @@ pub enum GraphMemAttr {
     ReservedMemCurrent,
     /// High-water of [`Self::ReservedMemCurrent`].
     ReservedMemHigh,
+}
+
+/// `cudaMemAllocationType` for [`MemPoolProps`].
+///
+/// Only [`Self::PINNED`] is modeled (`cudaMemAllocationTypePinned`).
+pub struct MemAllocationType;
+
+impl MemAllocationType {
+    /// `cudaMemAllocationTypePinned`.
+    pub const PINNED: u32 = 1;
+}
+
+/// `cudaMemPoolProps` for [`crate::Sim::create_pool_with_props`].
+///
+/// [`Self::alloc_type`] must be [`MemAllocationType::PINNED`].
+/// [`Self::handle_types`] is [`MemHandleType::NONE`] or
+/// [`MemHandleType::POSIX_FILE_DESCRIPTOR`]. [`Self::location`] must be
+/// [`Place::Device`]. [`Self::max_size`] `0` is unlimited; otherwise reserved
+/// (`live + cached`) cannot grow past it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemPoolProps {
+    /// `cudaMemAllocationType`.
+    pub alloc_type: u32,
+    /// `cudaMemAllocationHandleType` bits.
+    pub handle_types: u64,
+    /// Pool GPU (`cudaMemLocationTypeDevice`).
+    pub location: Place,
+    /// Maximum reserved bytes. `0` is unlimited.
+    pub max_size: u64,
+}
+
+impl Default for MemPoolProps {
+    fn default() -> Self {
+        Self {
+            alloc_type: MemAllocationType::PINNED,
+            handle_types: MemHandleType::NONE,
+            location: Place::Device(DeviceId(0)),
+            max_size: 0,
+        }
+    }
 }
 
 /// `cudaMemPoolAttr` for [`crate::Sim::pool_get_attribute`].

@@ -416,20 +416,24 @@ already do that, and it is too expensive).
 Exact (mechanical invariants agents may rely on):
 
 - memory capacity, alloc/free, lifetimes
-- host-synchronous `cudaMalloc` / `cudaFree` / `cudaMemcpy`
-  (`Sim::malloc` / `free_sync` / `memcpy_sync`) vs stream-ordered
-  `cudaMallocAsync` / `cudaFreeAsync` / `cudaMemcpyAsync`
-  (`alloc` / `free` / `memcpy`); `malloc` OOM is at the call;
+- host-synchronous `cudaMalloc` / `cudaFree` / `cudaMemcpy` / `cudaMemset`
+  (`Sim::malloc` / `free_sync` / `memcpy_sync` / `memset_sync` /
+  `memset_op_sync`) vs stream-ordered
+  `cudaMallocAsync` / `cudaFreeAsync` / `cudaMemcpyAsync` / `cudaMemsetAsync`
+  (`alloc` / `free` / `memcpy` / `memset`); `malloc` OOM is at the call;
   `cudaDeviceSynchronize` (`synchronize_device`) waits one GPU
-- memory pools: `create_pool` / `create_shareable_pool` / `alloc_from_pool` /
+- memory pools: `create_pool` / `create_pool_with_props` /
+  `create_shareable_pool` / `alloc_from_pool` /
   `set_pool_release_threshold` / `pool_trim_to` / `set_device_mempool` /
   `pool_get_attribute` / `pool_set_attribute` / `pool_get_access` /
   `destroy_pool`
-  (`cudaMemPoolCreate` / `cudaMallocFromPoolAsync` /
+  (`cudaMemPoolCreate` / `cudaMemPoolCreate`+`MemPoolProps` /
+  `cudaMallocFromPoolAsync` /
   `cudaMemPoolAttrReleaseThreshold` / `cudaMemPoolTrimTo` / `cudaDeviceSetMemPool` /
   `cudaMemPoolGetAttribute` / `SetAttribute` / `GetAccess` / `cudaMemPoolDestroy`); default
   threshold `0` returns unused bytes on free; `u64::MAX` holds them so
   `malloc` can OOM until trim; `cudaMalloc` cannot consume pool cache;
+  `MemPoolProps::max_size` caps reserved (`live + cached`) or is unlimited (`0`);
   GetAttribute Used/Reserved wrap live+cached (no invented pool high-water);
   GetAccess is ReadWrite on the owner and after SetAccess on peers;
   Destroy returns unused cache to the OS, keeps outstanding allocs, cannot
@@ -2334,7 +2338,32 @@ model, do not celebrate the sim.
     helper. Decode identity unchanged. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-211. [ ] Next numbered PLAN item after 210 is the next `gpu-sim` / Engine /
+211. [x] `cudaMemset` / `cudaMemset2D` / `cudaMemset3D`: `Sim::memset_sync`
+    / `memset_op_sync` enqueue then wait the stream (host-synchronous).
+    Capture is refused (`"cannot capture host-sync memset"`). Typed
+    [`memset`] / [`memset_op`] stay `cudaMemsetAsync` / `2DAsync` / `3DAsync`.
+    Decode identity stays Async. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+212. [x] `cudaDevAttrStreamPrioritiesSupported` /
+    `cudaDevAttrGpuOverlap` / `cudaDevAttrUnifiedAddressing`:
+    StreamPrioritiesSupported and UnifiedAddressing are always 1 (this VM
+    has [`set_stream_priority`] and one pointer space). GpuOverlap is
+    [`GpuProfile::copy_engines`] `> 0`. Query; legal during capture.
+    Decode identity unchanged. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+213. [x] `cudaMemPoolCreate` props: `Sim::create_pool_with_props` takes
+    [`MemPoolProps`]. [`MemAllocationType::PINNED`] only. Handle types
+    [`MemHandleType::NONE`] / `POSIX_FILE_DESCRIPTOR` map to typed
+    [`create_pool`] / [`create_shareable_pool`]. Other bits Invalid
+    `"pool handle types"`. Location must be [`Place::Device`].
+    [`MemPoolProps::max_size`] `0` is unlimited; otherwise
+    [`alloc_from_pool`] OOMs when reserved would exceed it. Typed helpers
+    stay. Capture refused. Decode identity unchanged. `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+214. [ ] Next numbered PLAN item after 213 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

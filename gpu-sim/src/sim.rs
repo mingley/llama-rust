@@ -18,12 +18,12 @@ use crate::ops::{
     GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags,
     HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind,
     KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags,
-    MemAdvise, MemAttach, MemAttachFlags, MemHandleType, MemPoolAttr, MemRangeAttr,
-    MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation,
-    PdlLaunch, PeerAccessFlags, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
-    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    MemAdvise, MemAllocationType, MemAttach, MemAttachFlags, MemHandleType, MemPoolAttr,
+    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
+    MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttributes,
+    PortableClusterMode, PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch,
+    SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo,
+    StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -134,6 +134,8 @@ struct Pool {
     graph: bool,
     /// `cudaMemPoolDestroy`: handle is invalid; outstanding allocs stay valid.
     destroyed: bool,
+    /// `cudaMemPoolProps::maxSize`. `0` is unlimited.
+    max_size: u64,
 }
 
 impl Pool {
@@ -148,6 +150,7 @@ impl Pool {
             share_root: None,
             graph: false,
             destroyed: false,
+            max_size: 0,
         }
     }
 }
@@ -8658,6 +8661,43 @@ impl Sim {
         self.insert_pool(device, true)
     }
 
+    /// `cudaMemPoolCreate` with [`MemPoolProps`].
+    ///
+    /// [`MemAllocationType::PINNED`] only. [`MemHandleType::NONE`] is
+    /// [`Self::create_pool`]; [`MemHandleType::POSIX_FILE_DESCRIPTOR`] is
+    /// [`Self::create_shareable_pool`]. Other handle bits are Invalid
+    /// `"pool handle types"`. [`Place::Device`] only (`"pool location"`).
+    /// [`MemPoolProps::max_size`] `0` is unlimited; otherwise
+    /// [`Self::alloc_from_pool`] OOMs when reserved would exceed it. Typed
+    /// helpers stay. Capture cannot include it.
+    pub fn create_pool_with_props(&mut self, props: MemPoolProps) -> Result<PoolId, SimError> {
+        if props.alloc_type != MemAllocationType::PINNED {
+            return Err(SimError::Invalid {
+                why: "pool alloc type",
+            });
+        }
+        let device = match props.location {
+            Place::Device(d) => d,
+            Place::Host | Place::HostPinned => {
+                return Err(SimError::Invalid {
+                    why: "pool location",
+                });
+            }
+        };
+        let shareable = match props.handle_types {
+            MemHandleType::NONE => false,
+            MemHandleType::POSIX_FILE_DESCRIPTOR => true,
+            _ => {
+                return Err(SimError::Invalid {
+                    why: "pool handle types",
+                });
+            }
+        };
+        let id = self.insert_pool(device, shareable)?;
+        self.pool_mut(id)?.max_size = props.max_size;
+        Ok(id)
+    }
+
     fn insert_pool(&mut self, device: DeviceId, shareable: bool) -> Result<PoolId, SimError> {
         self.fail_if_capturing("cannot capture mempool")?;
         let _gpu = self.profile.gpu(device)?;
@@ -11738,6 +11778,8 @@ impl Sim {
                 u64::from(self.profile.gpu_direct_rdma_supported(device))
             }
             DeviceAttr::HostRegisterReadOnlySupported | DeviceAttr::PageableMemoryAccess => 0,
+            DeviceAttr::StreamPrioritiesSupported | DeviceAttr::UnifiedAddressing => 1,
+            DeviceAttr::GpuOverlap => u64::from(gpu.copy_engines > 0),
         })
     }
 
@@ -11770,6 +11812,9 @@ impl Sim {
             gpu_direct_rdma_supported: self.profile.gpu_direct_rdma_supported(device),
             host_register_read_only_supported: false,
             pageable_memory_access: false,
+            stream_priorities_supported: true,
+            gpu_overlap: gpu.copy_engines > 0,
+            unified_addressing: true,
         })
     }
 
@@ -11964,6 +12009,45 @@ impl Sim {
     ) -> Result<OpId, SimError> {
         let op = self.resolve_memset_op(op)?;
         self.submit(device, stream, Kind::Memset(op))
+    }
+
+    /// `cudaMemset`: enqueue then wait for that stream (host-synchronous).
+    ///
+    /// Capture cannot include it. [`Self::memset`] is `cudaMemsetAsync`.
+    pub fn memset_sync(
+        &mut self,
+        device: DeviceId,
+        alloc: AllocId,
+        bytes: u64,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memset",
+            });
+        }
+        let id = self.memset(device, alloc, bytes, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
+    }
+
+    /// `cudaMemset` / `cudaMemset2D` / `cudaMemset3D` (host-synchronous).
+    ///
+    /// Capture cannot include it. [`Self::memset_op`] is the Async twin.
+    pub fn memset_op_sync(
+        &mut self,
+        device: DeviceId,
+        op: MemsetOp,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        if self.capturing.is_some() {
+            return Err(SimError::Invalid {
+                why: "cannot capture host-sync memset",
+            });
+        }
+        let id = self.memset_op(device, op, stream)?;
+        self.synchronize_stream(device, stream)?;
+        Ok(id)
     }
 
     /// `cudaLaunchHostFunc`. Stream-ordered host work; does not occupy compute
@@ -13526,9 +13610,9 @@ impl Sim {
 
     fn pool_acquire(&mut self, pool: PoolId, bytes: u64) -> Result<u64, SimError> {
         let pool = self.pool_root(pool)?;
-        let (device, cached) = {
+        let (device, cached, live, max_size) = {
             let p = self.pool_ref(pool)?;
-            (p.device, p.cached)
+            (p.device, p.cached, p.live, p.max_size)
         };
         let first = self.profile.gpu(device)?.alloc_overhead_ns;
         let reuse = self.profile.gpu(device)?.pool_reuse_ns;
@@ -13537,6 +13621,17 @@ impl Sim {
             p.cached = cached.saturating_sub(bytes);
             p.live = p.live.saturating_add(bytes);
             return Ok(reuse.max(1));
+        }
+        if max_size > 0 {
+            let new_reserved = live.saturating_add(bytes);
+            if new_reserved > max_size {
+                let reserved = live.saturating_add(cached);
+                return Err(SimError::Oom {
+                    device,
+                    need: bytes.saturating_sub(cached),
+                    free: max_size.saturating_sub(reserved),
+                });
+            }
         }
         let extra = bytes.saturating_sub(cached);
         self.reserve_hbm(device, extra)?;

@@ -154,6 +154,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchAttributePriority` (`kernel_with` / `KernelAttrs::priority`) | `None` inherits stream create priority; `Some` overrides that kernel; higher starts first under contention |
 | `set_stream_sm_permille` is a green-context SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host); `memset_op` height/pitch is 2D | HBM write of payload + launch overhead |
+| `cudaMemset` / `2D` / `3D` (`memset_sync` / `memset_op_sync`) wait the stream | host-synchronous; capture refused |
 | peer D2D needs topology + `enable_peer` (`enable_peer_with_flags` must be 0) | link bandwidth |
 | legacy null stream serializes (opt-in) | copy/compute overlap |
 | `cudaStreamCreate` blocking stream serializes with NULL | `cudaStreamNonBlocking` overlap |
@@ -441,7 +442,9 @@ AutoFreeOnLaunch (relaunch recharges HBM; not with `--graph-mem`).
 `cudaLaunchCooperativeKernel` (occupy every Hyper-Q slot; capture allowed).
 Launch pays `graph_launch_ns` once; recorded
 kernels skip per-kernel launch overhead.
-`memset` is an HBM-write kernel on a resident alloc. `host_func` is
+`memset` is an HBM-write kernel on a resident alloc. `memset_sync` /
+`memset_op_sync` are host-synchronous `cudaMemset` / `2D` / `3D` (capture
+refused). Typed `memset` / `memset_op` stay Async. `host_func` is
 `cudaLaunchHostFunc`: stream-ordered host work that does not occupy compute
 or copy engines (other streams may GEMM). Unnamed callback by default;
 `host_func_params` records `HostNodeParams`. `write_value64` / `wait_value64`
@@ -487,7 +490,8 @@ stream is `Ok(false)`; the clock does not advance).
 `GpuDirectRdmaSupported` is a GPU↔GPU RDMA link (flush/write-ordering
 are not modeled). `HostRegisterReadOnlySupported` /
 `PageableMemoryAccess` are always 0 (ReadOnly host register is Invalid;
-pageable is bounce-buffer).
+pageable is bounce-buffer). `StreamPrioritiesSupported` /
+`UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
 (no SM count or clock). `func_get_attributes` is `cudaFuncGetAttributes`
 of modeled per-device function attrs (`maxDynamicSharedSizeBytes` and
@@ -517,11 +521,14 @@ are `cudaMemset2DAsync` (payload `width * height`; padding is not written).
 (device graph-memory pool only; unused reserved bytes return on trim).
 Default `cudaMallocAsync` uses the device mempool with release threshold
 `0` (unused bytes return to the OS when the stream-ordered free
-completes). `create_pool` / `alloc_from_pool` /
+completes). `create_pool` / `create_pool_with_props` / `alloc_from_pool` /
 `set_pool_release_threshold` / `pool_trim_to` / `pool_get_attribute` /
-`pool_set_attribute` are `cudaMemPoolCreate` /
+`pool_set_attribute` are `cudaMemPoolCreate` / `Create`+`MemPoolProps` /
 `cudaMallocFromPoolAsync` / `cudaMemPoolAttrReleaseThreshold` /
 `cudaMemPoolTrimTo` / `cudaMemPoolGetAttribute` / `SetAttribute`.
+`MemPoolProps` is pinned alloc type, NONE or POSIX-FD handles, a device
+location, and `max_size` (`0` unlimited; otherwise reserved cannot grow
+past it). Typed `create_pool` / `create_shareable_pool` stay.
 `MemPoolAttr` is ReleaseThreshold / UsedMemCurrent / ReservedMemCurrent
 (no invented ordinary-pool high-water; graph mem stays `GraphMemAttr`).
 `u64::MAX` holds unused bytes so `malloc` can OOM

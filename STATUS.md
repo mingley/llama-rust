@@ -5,6 +5,26 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaMemPoolCreate` props
+
+`create_pool_with_props` is `cudaMemPoolCreate` + `cudaMemPoolProps`.
+Pinned alloc type only. NONE / POSIX-FD handle types map to typed
+`create_pool` / `create_shareable_pool`. `max_size` caps reserved bytes
+(`0` unlimited). Host location and other handle bits are Invalid. Typed
+helpers stay. Capture refused. `gpu-profile capture` is still refused.
+
+## Shipped 2026-08-30 — StreamPriorities / GpuOverlap / UnifiedAddressing
+
+`DeviceAttr::StreamPrioritiesSupported` and `UnifiedAddressing` are 1.
+`GpuOverlap` is `copy_engines > 0`. Query; legal during capture.
+`gpu-profile capture` is still refused.
+
+## Shipped 2026-08-30 — `cudaMemset` host-sync
+
+`memset_sync` / `memset_op_sync` are `cudaMemset` / `2D` / `3D`
+(host-synchronous; capture refused). Typed `memset` / `memset_op` stay
+Async. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaStreamAttachMemAsync` flags
 
 `stream_attach_with_flags` maps `MemAttachFlags::{GLOBAL, HOST, SINGLE}`
@@ -2336,7 +2356,7 @@ cargo clippy --all-targets --all-features -- -D warnings
 cargo run -p llama-rust --example session
 ```
 
-Next code change is PLAN systems depth after item 210 (`stream_attach_with_flags`).
+Next code change is PLAN systems depth after item 213 (`create_pool_with_props`).
 `gguf_gemv serve --engine`
 streams NDJSON, chunks prefill, and appends MoE JSONL on the same
 Engine scheduler. Phase 0 leftover

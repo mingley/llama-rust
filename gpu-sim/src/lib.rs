@@ -31,7 +31,10 @@
 //! except pageable [`Place::Host`] copies, which wait the stream (CUDA bounce
 //! buffer). [`Sim::memcpy_pinned_to_device`] is the overlapping DMA path.
 //! [`Sim::malloc`] / [`memcpy_sync`](Sim::memcpy_sync) / [`free_sync`](Sim::free_sync)
-//! are host-synchronous (`cudaMalloc` / `cudaMemcpy` / `cudaFree`).
+//! / [`memset_sync`](Sim::memset_sync) are host-synchronous (`cudaMalloc` /
+//! `cudaMemcpy` / `cudaFree` / `cudaMemset`). [`memset_op_sync`](Sim::memset_op_sync)
+//! is `cudaMemset2D` / `cudaMemset3D`. Typed [`memset`](Sim::memset) /
+//! [`memset_op`](Sim::memset_op) stay Async.
 //! [`Sim::ipc_get`] / [`ipc_open`](Sim::ipc_open) / [`ipc_close`](Sim::ipc_close)
 //! are `cudaIpcGetMemHandle` / `cudaIpcOpenMemHandle` / `cudaIpcCloseMemHandle`:
 //! the import is an alias of the same physicals (no extra HBM). Free of the
@@ -54,11 +57,12 @@
 //! [`device_mempool`](Sim::device_mempool) is `cudaDeviceGetMemPool`. Default and [`create_pool`](Sim::create_pool) pools
 //! cannot be exported. Capture cannot include shareable export/import.
 //! [`Sim::alloc`] draws from [`device_mempool`](Sim::device_mempool) (`cudaMallocAsync`).
-//! [`Sim::create_pool`] / [`alloc_from_pool`](Sim::alloc_from_pool) /
+//! [`Sim::create_pool`] / [`create_pool_with_props`](Sim::create_pool_with_props) /
+//! [`alloc_from_pool`](Sim::alloc_from_pool) /
 //! [`set_pool_release_threshold`](Sim::set_pool_release_threshold) /
 //! [`pool_trim_to`](Sim::pool_trim_to) / [`pool_get_attribute`](Sim::pool_get_attribute) /
 //! [`pool_set_attribute`](Sim::pool_set_attribute) / [`destroy_pool`](Sim::destroy_pool)
-//! are `cudaMemPoolCreate` /
+//! are `cudaMemPoolCreate` / `cudaMemPoolCreate`+[`MemPoolProps`] /
 //! `cudaMallocFromPoolAsync` / `cudaMemPoolAttrReleaseThreshold` /
 //! `cudaMemPoolTrimTo` / `cudaMemPoolGetAttribute` / `SetAttribute` /
 //! `cudaMemPoolDestroy`.
@@ -195,7 +199,9 @@
 //! is a GPU↔GPU [`crate::LinkKind::Rdma`] link (flush/write-ordering are not
 //! modeled). [`DeviceAttr::HostRegisterReadOnlySupported`] /
 //! [`PageableMemoryAccess`](DeviceAttr::PageableMemoryAccess) are always 0
-//! (ReadOnly host register is Invalid; pageable is bounce-buffer). [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
+//! (ReadOnly host register is Invalid; pageable is bounce-buffer).
+//! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
+//! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
 //! [`func_set_attribute`](Sim::func_set_attribute) /
 //! [`func_get_attribute`](Sim::func_get_attribute) are `cudaFuncSetAttribute` /
@@ -575,12 +581,12 @@ pub use ops::{
     GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, HostAllocFlags,
     HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind,
     KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessFlags,
-    MemAdvise, MemAttach, MemAttachFlags, MemHandleType, MemPoolAttr, MemRangeAttr,
-    MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp, MemoryType, MemsetOp, Operation,
-    PdlLaunch, PeerAccessFlags, Place, PointerAttributes, PortableClusterMode, PortableSharedMode,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
-    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    MemAdvise, MemAllocationType, MemAttach, MemAttachFlags, MemHandleType, MemPoolAttr,
+    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemSyncDomain, MemSyncDomainMap, MemcpyOp,
+    MemoryType, MemsetOp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttributes,
+    PortableClusterMode, PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch,
+    SharedMemCarveout, SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo,
+    StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -7936,6 +7942,44 @@ mod tests {
     }
 
     #[test]
+    fn memset_sync_is_cuda_memset() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let bytes = 4096u64;
+        let a = sim.malloc(d, bytes).unwrap();
+        let op = sim.memset_sync(d, a, bytes, s).unwrap();
+        assert!(op.0 >= 1);
+        assert!(sim.query_stream(d, s).unwrap());
+        let pitched = sim
+            .memset_op_sync(
+                d,
+                MemsetOp {
+                    id: a,
+                    offset: 0,
+                    bytes: 256,
+                    height: 8,
+                    pitch: 512,
+                    ..MemsetOp::default()
+                },
+                s,
+            )
+            .unwrap();
+        assert!(pitched.0 >= 1);
+        assert!(sim.query_stream(d, s).unwrap());
+        sim.begin_capture(d, s).unwrap();
+        match sim.memset_sync(d, a, bytes, s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.memset_op_sync(d, MemsetOp::from(KernelBuf::whole(a)), s) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
     fn pointer_get_attributes_classifies_host_device_managed() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
@@ -8214,6 +8258,40 @@ mod tests {
         );
         assert!(!props.host_register_read_only_supported);
         assert!(!props.pageable_memory_access);
+        assert!(props.stream_priorities_supported);
+        assert!(props.gpu_overlap);
+        assert!(props.unified_addressing);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::StreamPrioritiesSupported)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::GpuOverlap).unwrap(),
+            1
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::UnifiedAddressing)
+                .unwrap(),
+            1
+        );
+        let no_copy = HardwareProfile::parse("gpus=1\ncopy_engines=0\n").unwrap();
+        let mut overlap = Sim::new(no_copy);
+        assert_eq!(
+            overlap
+                .device_get_attribute(d, DeviceAttr::GpuOverlap)
+                .unwrap(),
+            0
+        );
+        assert!(!overlap.device_get_properties(d).unwrap().gpu_overlap);
+        overlap.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            overlap
+                .device_get_attribute(d, DeviceAttr::UnifiedAddressing)
+                .unwrap(),
+            1
+        );
+        let _cap = overlap.end_capture().unwrap();
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(
             sim.host_get_device_pointer_with_flags(mapped, 0).unwrap(),
@@ -10192,6 +10270,86 @@ mod tests {
         match sim.alloc_from_pool(DeviceId(1), p0, 4096, StreamId(0)) {
             Err(SimError::Invalid { why }) => assert!(why.contains("mismatch")),
             other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_pool_with_props_is_cuda_mempool_create() {
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        {
+            let mut sim = Sim::new(h100());
+            let p = sim
+                .create_pool_with_props(MemPoolProps {
+                    max_size: 4096,
+                    ..MemPoolProps::default()
+                })
+                .unwrap();
+            let a = sim.alloc_from_pool(d, p, 4096, s).unwrap();
+            sim.synchronize().unwrap();
+            assert!(sim.is_resident(a, d).unwrap());
+            let _over = sim.alloc_from_pool(d, p, 4096, s).unwrap();
+            match sim.synchronize() {
+                Err(SimError::Oom { need, free, .. }) => {
+                    assert_eq!(need, 4096);
+                    assert_eq!(free, 0);
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        {
+            let mut sim = Sim::new(h100());
+            match sim.create_pool_with_props(MemPoolProps {
+                alloc_type: 0,
+                ..MemPoolProps::default()
+            }) {
+                Err(SimError::Invalid { why }) => assert!(why.contains("pool alloc type"), "{why}"),
+                other => panic!("{other:?}"),
+            }
+            match sim.create_pool_with_props(MemPoolProps {
+                location: Place::Host,
+                ..MemPoolProps::default()
+            }) {
+                Err(SimError::Invalid { why }) => assert!(why.contains("pool location"), "{why}"),
+                other => panic!("{other:?}"),
+            }
+            match sim.create_pool_with_props(MemPoolProps {
+                handle_types: 2,
+                ..MemPoolProps::default()
+            }) {
+                Err(SimError::Invalid { why }) => {
+                    assert!(why.contains("pool handle types"), "{why}");
+                }
+                other => panic!("{other:?}"),
+            }
+            let share = sim
+                .create_pool_with_props(MemPoolProps {
+                    handle_types: MemHandleType::POSIX_FILE_DESCRIPTOR,
+                    ..MemPoolProps::default()
+                })
+                .unwrap();
+            let h = sim.pool_export(share).unwrap();
+            let _imp = sim.pool_import(d, h).unwrap();
+            let p = sim
+                .create_pool_with_props(MemPoolProps {
+                    max_size: 4096,
+                    ..MemPoolProps::default()
+                })
+                .unwrap();
+            sim.set_pool_release_threshold(p, u64::MAX).unwrap();
+            let a = sim.alloc_from_pool(d, p, 4096, s).unwrap();
+            sim.synchronize().unwrap();
+            sim.free(d, a, s).unwrap();
+            sim.synchronize().unwrap();
+            let reuse = sim.alloc_from_pool(d, p, 4096, s).unwrap();
+            sim.synchronize().unwrap();
+            assert!(sim.is_resident(reuse, d).unwrap());
+            sim.begin_capture(d, s).unwrap();
+            match sim.create_pool_with_props(MemPoolProps::default()) {
+                Err(SimError::Invalid { why }) => assert!(why.contains("mempool"), "{why}"),
+                other => panic!("{other:?}"),
+            }
+            let _g = sim.end_capture().unwrap();
         }
     }
 
