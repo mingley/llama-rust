@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — stream write-value flags
+
+`write_value32_with_flags` / `write_value64_with_flags` take
+`CU_STREAM_WRITE_VALUE_*` (`WriteValueFlags`). NO_MEMORY_BARRIER is
+Invalid. Typed `write_value32` stays. Graph twins
+`graph_add_write_value32_with_flags` / `graph_add_write_value64_with_flags`.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — stream wait-value flags
 
 `wait_value32_with_flags` / `wait_value64_with_flags` take

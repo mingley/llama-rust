@@ -200,7 +200,10 @@
 //! [`HostNodeParams`] (`cudaHostFn_t` / `userData`).
 //! [`Sim::write_value64`] / [`write_value32`](Sim::write_value32) are
 //! `cuStreamWriteValue64` / `WriteValue32` (mailbox updates on complete; no
-//! compute/copy occupancy). [`wait_value64`](Sim::wait_value64) /
+//! compute/copy occupancy). [`write_value64_with_flags`](Sim::write_value64_with_flags) /
+//! [`write_value32_with_flags`](Sim::write_value32_with_flags) are the CUDA flags
+//! word ([`WriteValueFlags`]; [`WriteValueFlags::NO_MEMORY_BARRIER`] is Invalid).
+//! Typed helpers stay. [`wait_value64`](Sim::wait_value64) /
 //! [`wait_value32`](Sim::wait_value32) are `cuStreamWaitValue64` / `WaitValue32`
 //! ([`WaitValueCmp`]; unwritten locations read as 0; unsatisfied wait plus
 //! [`Sim::synchronize`] deadlocks). [`wait_value64_with_flags`](Sim::wait_value64_with_flags) /
@@ -769,6 +772,7 @@ pub use ops::{
     PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
     SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
     StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags,
+    WriteValueFlags,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -18784,6 +18788,45 @@ mod tests {
         }
         sim.begin_capture(d, wait_s).unwrap();
         enq(sim.wait_value64_with_flags(d, a, 0, 1, WaitValueFlags::NOR, wait_s));
+        let _cap = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn write_value_with_flags_is_cu_stream_write_value_flags() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let wait_s = StreamId(0);
+        let write_s = StreamId(1);
+        let a = sim.malloc(d, 64).unwrap();
+        enq(sim.write_value64_with_flags(d, a, 0, 1, WriteValueFlags::DEFAULT, write_s));
+        enq(sim.wait_value64(d, a, 0, 1, WaitValueCmp::Eq, wait_s));
+        sim.synchronize().unwrap();
+        let a32 = sim.malloc(d, 64).unwrap();
+        enq(sim.write_value32_with_flags(d, a32, 0, 1, WriteValueFlags::DEFAULT, write_s));
+        enq(sim.wait_value32(d, a32, 0, 1, WaitValueCmp::Eq, wait_s));
+        sim.synchronize().unwrap();
+        match sim.write_value64_with_flags(d, a, 0, 1, WriteValueFlags::NO_MEMORY_BARRIER, write_s)
+        {
+            Err(SimError::Invalid { why }) => assert!(why.contains("write value flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let g = sim.create_graph(d, write_s).unwrap();
+        sim.graph_add_write_value64_with_flags(g, a, 0, 1, WriteValueFlags::DEFAULT)
+            .unwrap();
+        sim.graph_add_write_value32_with_flags(g, a32, 0, 1, WriteValueFlags::DEFAULT)
+            .unwrap();
+        match sim.graph_add_write_value32_with_flags(
+            g,
+            a32,
+            0,
+            1,
+            WriteValueFlags::NO_MEMORY_BARRIER,
+        ) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("write value flags"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, write_s).unwrap();
+        enq(sim.write_value64_with_flags(d, a, 0, 2, WriteValueFlags::DEFAULT, write_s));
         let _cap = sim.end_capture().unwrap();
     }
 

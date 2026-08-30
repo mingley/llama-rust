@@ -3054,7 +3054,20 @@ model, do not celebrate the sim.
     stay. Decode identity unchanged. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-295. [ ] Next numbered PLAN item after 294 is the next `gpu-sim` / Engine /
+295. [x] `cuStreamWriteValue32` / `WriteValue64` flags:
+    [`write_value32_with_flags`](Sim::write_value32_with_flags) /
+    [`write_value64_with_flags`](Sim::write_value64_with_flags) take
+    [`WriteValueFlags`]. Flags must be [`WriteValueFlags::DEFAULT`].
+    [`WriteValueFlags::NO_MEMORY_BARRIER`] Invalid `"write value flags"`.
+    Graph twins
+    [`graph_add_write_value32_with_flags`](Sim::graph_add_write_value32_with_flags)
+    /
+    [`graph_add_write_value64_with_flags`](Sim::graph_add_write_value64_with_flags).
+    Typed [`write_value32`](Sim::write_value32) / [`write_value64`](Sim::write_value64)
+    stay. Decode identity unchanged. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+296. [ ] Next numbered PLAN item after 295 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version

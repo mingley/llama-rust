@@ -27,7 +27,7 @@ use crate::ops::{
     PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
     PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
     SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
-    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WriteValueFlags,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -6226,6 +6226,36 @@ impl Sim {
                 bits32: true,
             },
         )
+    }
+
+    /// [`Self::graph_add_write_value64`] with a [`WriteValueFlags`] word.
+    ///
+    /// Flags must be [`WriteValueFlags::DEFAULT`].
+    /// [`WriteValueFlags::NO_MEMORY_BARRIER`] is Invalid `"write value flags"`.
+    /// Typed helper stays.
+    pub fn graph_add_write_value64_with_flags(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        Self::check_write_value_flags(flags)?;
+        self.graph_add_write_value64(graph, id, offset, value)
+    }
+
+    /// [`Self::graph_add_write_value32`] with a [`WriteValueFlags`] word.
+    pub fn graph_add_write_value32_with_flags(
+        &mut self,
+        graph: GraphId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        Self::check_write_value_flags(flags)?;
+        self.graph_add_write_value32(graph, id, offset, value)
     }
 
     /// `cuStreamWaitValue64` as a `cudaGraphAddBatchMemOpNode`.
@@ -13682,6 +13712,51 @@ impl Sim {
                 bits32: true,
             },
         )
+    }
+
+    fn check_write_value_flags(flags: u32) -> Result<(), SimError> {
+        if flags != WriteValueFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "write value flags",
+            });
+        }
+        Ok(())
+    }
+
+    /// `cuStreamWriteValue64` with a [`WriteValueFlags`] word.
+    ///
+    /// Flags must be [`WriteValueFlags::DEFAULT`].
+    /// [`WriteValueFlags::NO_MEMORY_BARRIER`] is Invalid `"write value flags"`.
+    /// Typed [`Self::write_value64`] stays.
+    pub fn write_value64_with_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        Self::check_write_value_flags(flags)?;
+        self.write_value64(device, id, offset, value, stream)
+    }
+
+    /// `cuStreamWriteValue32` with a [`WriteValueFlags`] word.
+    ///
+    /// Flags must be [`WriteValueFlags::DEFAULT`].
+    /// [`WriteValueFlags::NO_MEMORY_BARRIER`] is Invalid `"write value flags"`.
+    /// Typed [`Self::write_value32`] stays.
+    pub fn write_value32_with_flags(
+        &mut self,
+        device: DeviceId,
+        id: AllocId,
+        offset: u64,
+        value: u64,
+        flags: u32,
+        stream: StreamId,
+    ) -> Result<OpId, SimError> {
+        Self::check_write_value_flags(flags)?;
+        self.write_value32(device, id, offset, value, stream)
     }
 
     /// `cuStreamWaitValue64`. Stays pending until the mailbox compare matches.

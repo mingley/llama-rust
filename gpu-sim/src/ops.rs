@@ -2005,6 +2005,18 @@ impl WaitValueFlags {
     pub const FLUSH: u32 = 1 << 30;
 }
 
+/// `CU_STREAM_WRITE_VALUE_*` flags for [`crate::Sim::write_value32_with_flags`] /
+/// [`crate::Sim::write_value64_with_flags`].
+pub struct WriteValueFlags;
+
+impl WriteValueFlags {
+    /// `CU_STREAM_WRITE_VALUE_DEFAULT` (`0`).
+    pub const DEFAULT: u32 = 0;
+    /// `CU_STREAM_WRITE_VALUE_NO_MEMORY_BARRIER`. Not modeled; Invalid
+    /// `"write value flags"`.
+    pub const NO_MEMORY_BARRIER: u32 = 1;
+}
+
 /// `CU_STREAM_WAIT_VALUE_*` compare for [`GpuOp::WaitValue`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WaitValueCmp {
