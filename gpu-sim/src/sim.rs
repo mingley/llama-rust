@@ -10508,6 +10508,29 @@ impl Sim {
                 why: "mem map flags",
             });
         }
+        let bytes = self.mc_ref(mc)?.bytes;
+        self.va_map_multicast_with_size(id, device, offset, mc, bytes, flags)
+    }
+
+    /// [`Self::va_map_multicast`] with the CUDA size and flags.
+    ///
+    /// `size` must equal the multicast object bytes. Other sizes Invalid
+    /// `"mem map size"`. Flags must be [`MemMapFlags::DEFAULT`].
+    pub fn va_map_multicast_with_size(
+        &mut self,
+        id: AllocId,
+        device: DeviceId,
+        offset: u64,
+        mc: MulticastId,
+        size: u64,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if flags != MemMapFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "mem map flags",
+            });
+        }
         let (bytes, n_dev, n_binds, in_team, team) = {
             let obj = self.mc_ref(mc)?;
             (
@@ -10518,6 +10541,11 @@ impl Sim {
                 obj.devices.clone(),
             )
         };
+        if size != bytes {
+            return Err(SimError::Invalid {
+                why: "mem map size",
+            });
+        }
         if n_binds != n_dev {
             return Err(SimError::Invalid {
                 why: "bind all devices first",
