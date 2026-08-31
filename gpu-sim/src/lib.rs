@@ -831,7 +831,7 @@
 //! `expertvm --graph-host` inserts [`graph_add_host_func`](Sim::graph_add_host_func)
 //! BETWEEN those children (`host_func_ns` tax; not a JOIN after overlap).
 //! `expertvm --graph-if` wraps those children in [`graph_add_if`](Sim::graph_add_if)
-//! + [`graph_add_set_conditional`](Sim::graph_add_set_conditional) and skips extras
+//! and [`graph_add_set_conditional`](Sim::graph_add_set_conditional) and skips extras
 //! with exec SetParams (clears upload; not a second SetEnabled).
 //! `expertvm --graph-memset` inserts [`graph_add_memset`](Sim::graph_add_memset)
 //! BETWEEN `--graph-mem` scratch alloc and the GEMM kernel (HBM-write tax;
