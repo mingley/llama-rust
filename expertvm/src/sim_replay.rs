@@ -751,6 +751,12 @@ pub struct SimCfg {
     /// Decode identity stays Default. [`crate::GpuStoreCfg::shared_mem`] is
     /// the store path.
     pub shared_mem: gpu_sim::SharedMemoryMode,
+    /// Function shared-mem bank width (`cudaFuncSetSharedMemConfig`).
+    ///
+    /// Launch Default inherits this duration scale. Distinct from launch-attribute
+    /// [`Self::shared_mem`]. Decode identity stays Default.
+    /// [`crate::GpuStoreCfg::func_shared_mem`] is the store path.
+    pub func_shared_mem: gpu_sim::SharedMemoryMode,
     /// Portable-cluster size mode (`cudaLaunchAttributePortableClusterSizeMode`).
     ///
     /// Default uses the current function attribute. RequirePortable always
@@ -944,6 +950,7 @@ impl SimCfg {
             sync_policy: gpu_sim::SynchronizationPolicy::Auto,
             mem_sync_domain: gpu_sim::MemSyncDomain::Default,
             shared_mem: gpu_sim::SharedMemoryMode::Default,
+            func_shared_mem: gpu_sim::SharedMemoryMode::Default,
             portable_cluster: gpu_sim::PortableClusterMode::Default,
             optin_shared: false,
             dynamic_shared: 0,
@@ -1098,6 +1105,7 @@ pub fn sim_replay_cfg(
     let mut sim = Sim::new(sim_profile(profile, &cfg));
     apply_device_sync_memops(&mut sim, cfg.device_sync_memops)?;
     apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
+    apply_func_shared_mem(&mut sim, cfg.func_shared_mem)?;
     if cfg.shareable {
         let _imported = bind_shareable_mempools(&mut sim)?;
     }
@@ -1491,6 +1499,21 @@ pub(crate) fn apply_func_max_shared(sim: &mut Sim, on: bool) -> Result<(), Error
     let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
     for g in 0..n {
         sim.set_func_carveout(DeviceId(g), SharedMemCarveout::MaxShared)?;
+    }
+    Ok(())
+}
+
+/// `cudaFuncSetSharedMemConfig` so launch Default inherits bank-width duration.
+///
+/// Call after [`Sim::new`]. Capture cannot include it; construction is live.
+/// Launch FourByte / EightByte still override.
+pub(crate) fn apply_func_shared_mem(sim: &mut Sim, mode: SharedMemoryMode) -> Result<(), Error> {
+    if mode == SharedMemoryMode::Default {
+        return Ok(());
+    }
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        sim.set_func_shared_mem_config(DeviceId(g), mode)?;
     }
     Ok(())
 }

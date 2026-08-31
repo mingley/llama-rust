@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `mempool_trim`, `mempool_no_reuse`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/enable, timing events, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `cluster`, `shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
+//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `cluster`, `shared_mem`, `func_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -74,6 +74,8 @@
 //! auto|spin|yield|blocking is stream host-wait (`cudaLaunchAttributeSynchronizationPolicy`;
 //! Auto tax 0). `--shared-mem` default|four|eight is kernel-node bank width
 //! (`cudaLaunchAttributeSharedMemoryMode`; Default never scales duration).
+//! `--func-shared-mem` default|four|eight is `cudaFuncSetSharedMemConfig`:
+//! launch Default inherits that duration scale (distinct from `--shared-mem`).
 //! `--portable-cluster` default|portable|non-portable is launch-time portable
 //! cluster mode (`cudaLaunchAttributePortableClusterSizeMode`; Default uses
 //! the function attribute). `--optin-shared` is
@@ -4298,6 +4300,44 @@ mod tests {
         assert!(
             eight.1.wall_ns > def.1.wall_ns,
             "EightByte at permille 500 must lengthen GEMM wall; default={} eight={}",
+            def.1.wall_ns,
+            eight.1.wall_ns
+        );
+    }
+
+    #[test]
+    fn engine_gpu_func_shared_mem_lengthens_wall() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse(
+            "gpus=1\nshared_mem_eight_byte_permille=500\nfp16_flops=1000000\ncopy_engines=2\n",
+        )
+        .expect("shared-mem profile");
+        let def = mixed_gpu_decode_itl_at(
+            bytes.clone(),
+            false,
+            None,
+            GpuStoreCfg::default(),
+            profile.clone(),
+        );
+        let eight = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                func_shared_mem: SharedMemoryMode::EightByte,
+                ..GpuStoreCfg::default()
+            },
+            profile,
+        );
+        assert_eq!(def.2, 4);
+        assert_eq!(eight.2, 4);
+        assert_eq!(
+            def.4, eight.4,
+            "func EightByte shared-mem must keep greedy identity"
+        );
+        assert!(
+            eight.1.wall_ns > def.1.wall_ns,
+            "func EightByte at permille 500 must lengthen GEMM wall; default={} eight={}",
             def.1.wall_ns,
             eight.1.wall_ns
         );

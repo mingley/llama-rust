@@ -931,6 +931,8 @@ graphs with `DEVICE_LAUNCH` and skip re-upload after set-params.
 (`cudaFuncSetSharedMemConfig` / `cudaDeviceSetSharedMemConfig`; unset never
 scales); FourByte / EightByte scale by
 `1000 / shared_mem_*_permille` (profile default 1000 is identity).
+`expertvm sim --func-shared-mem eight` sets function EightByte so launch
+Default inherits that duration scale (distinct from `--shared-mem`).
 `PortableClusterMode` is `cudaLaunchAttributePortableClusterSizeMode`: Default
 uses the function attribute; RequirePortable always refuses oversize;
 AllowNonPortable allows up to the SKU max. `set_non_portable_cluster_size_allowed` is

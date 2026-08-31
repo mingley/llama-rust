@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaFuncSetSharedMemConfig` function bank width
+
+`GpuStoreCfg::func_shared_mem` / `SimCfg::func_shared_mem` call
+`cudaFuncSetSharedMemConfig` after `Sim::new`. Launch Default inherits that
+bank-width duration scale. Hits/misses stay the same. Distinct from
+launch-attribute `--shared-mem`. `--func-shared-mem` is Default by default
+(decode identity: unscaled). `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaCtxResetPersistingL2Cache` after each GEMM
 
 `GpuStoreCfg::l2_reset` / `SimCfg::l2_reset` call `cudaCtxResetPersistingL2Cache`
