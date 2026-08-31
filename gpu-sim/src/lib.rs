@@ -245,6 +245,9 @@
 //! [`va_get_access`](Sim::va_get_access) is `cuMemGetAccess` (local map
 //! ReadWrite; peer Read / ReadWrite / None). Query; legal during capture.
 //! [`Sim::va_acquire`] remaps an idle VA of the same size (or reserves);
+//! [`va_reserve_idle`](Sim::va_reserve_idle) is the map-less twin (idle or
+//! reserve; split create/map is [`va_create`](Sim::va_create) then
+//! [`va_map_handle`](Sim::va_map_handle));
 //! [`va_acquire_paged`](Sim::va_acquire_paged) maps it in KV-block spans;
 //! [`va_release`](Sim::va_release) unmaps into that pool instead of freeing the VA.
 //! [`Sim::kernel`] still needs the whole VA mapped; [`Sim::kernel_bufs`],
@@ -17251,6 +17254,24 @@ mod tests {
         let c = sim.va_acquire(d, 4096).unwrap();
         assert_ne!(a, c);
         sim.va_release(c).unwrap();
+    }
+
+    #[test]
+    fn va_reserve_idle_reuses_released_pointer() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let a = sim.va_reserve_idle(4096).unwrap();
+        assert!(!sim.is_resident(a, d).unwrap());
+        let h = sim.va_create(d, 4096).unwrap();
+        sim.va_map_handle(a, d, 0, h).unwrap();
+        assert!(sim.is_resident(a, d).unwrap());
+        sim.va_release_handle(h).unwrap();
+        sim.va_release(a).unwrap();
+        assert_eq!(sim.vmm_idle_len(), 1);
+        let b = sim.va_reserve_idle(4096).unwrap();
+        assert_eq!(a, b);
+        assert!(!sim.is_resident(b, d).unwrap());
+        sim.va_free(b).unwrap();
     }
 
     #[test]

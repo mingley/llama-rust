@@ -4210,7 +4210,27 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-380. [ ] Next numbered PLAN item after 379 is the next `gpu-sim` / Engine /
+380. [x] `cuMemCreate` plus `cuMemMap` instead of combined `va_acquire` (`--vmm-handle`):
+    [`GpuStoreCfg::vmm_handle`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::vmm_handle`](expertvm/src/sim_replay.rs) idle-or-reserve a VA
+    ([`gpu_sim::Sim::va_reserve_idle`](gpu-sim/src/sim.rs)) then
+    [`gpu_sim::Sim::va_create`](gpu-sim/src/sim.rs) plus
+    [`gpu_sim::Sim::va_map_handle`](gpu-sim/src/sim.rs) at offset 0 so the
+    page holds a live handle and `va_release_handle` before `va_release`
+    (`alloc_overhead_ns` on create and map). Hits stay the same. Distinct
+    from `--vmm` (combined `va_map` without a handle) and `--vmm-retain`
+    (promote after acquire). Implies `--vmm`. Illegal with `--mapped` /
+    `--managed` / `--vmm-retain`. Legal with `--pdl`, `--cooperative`,
+    `--pageable`, `--memset-fill`, `--wait-value`, `--d2h-evict`,
+    `--d2h-pageable`, `--vmm-page`, `--multicast`, and `--accessed-by`.
+    `--vmm-handle` on `expertvm sim` / `schedule` / `store`,
+    `gguf_gemv engine --expert-sim`, and `infer-bench schedule` (implies
+    `--vmm`; infer-bench has no standalone `--vmm`). Decode identity is
+    `--vmm` without `cuMemCreate` plus `cuMemMap`. Store and walker (not
+    walker-only). `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+381. [ ] Next numbered PLAN item after 380 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
@@ -4272,9 +4292,8 @@ model, do not celebrate the sim.
     default `cudaMalloc`). Do not invent a second `--share-ptr` /
     `cudaMemPoolExportPointer` (per-page pointer handshake vs pool-level
     `--shareable` is the wall). Do not invent a second `--vmm-retain` /
-    `cuMemRetainAllocationHandle`. Do not invent `--vmm-handle`
-    (`va_create` plus `va_map_handle` instead of `va_acquire`) as this item.
-    Do not invent
+    `cuMemRetainAllocationHandle`. Do not invent a second `--vmm-handle` /
+    `va_create` plus `va_map_handle`. Do not invent
     `--memcpy-peer` host-sync pin_hot (alias of D2D; wall matches after
     `score()`). Do not invent `graph_add_empty` as a decode-path flag
     (1 ns join/fork). Do not invent a second `cudaGraphAddMemsetNode` of

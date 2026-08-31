@@ -89,6 +89,8 @@ pub(crate) struct GpuCli {
     pub share_ptr: bool,
     /// `cuMemRetainAllocationHandle` after VMM miss map (`GpuStoreCfg::vmm_retain`). Implies vmm.
     pub vmm_retain: bool,
+    /// `cuMemCreate` plus `cuMemMap` of that handle (`GpuStoreCfg::vmm_handle`). Implies vmm.
+    pub vmm_handle: bool,
     pub pageable: bool,
     /// `cudaHostRegister` (`GpuStoreCfg::host_register`). Implies pageable.
     pub host_register: bool,
@@ -300,6 +302,7 @@ impl GpuCli {
             "--ipc" => &mut self.ipc,
             "--share-ptr" => &mut self.share_ptr,
             "--vmm-retain" => &mut self.vmm_retain,
+            "--vmm-handle" => &mut self.vmm_handle,
             "--pageable" => &mut self.pageable,
             "--host-register" => &mut self.host_register,
             "--host-unregister" => &mut self.host_unregister,
@@ -363,9 +366,9 @@ impl GpuCli {
         self.vmm_page_set = true;
     }
 
-    /// `--vmm-page N` with `N>0`, `--multicast`, or `--vmm-retain` implies [`Self::vmm`]. Call after sim-flag checks.
+    /// `--vmm-page N` with `N>0`, `--multicast`, `--vmm-retain`, or `--vmm-handle` implies [`Self::vmm`]. Call after sim-flag checks.
     pub(crate) fn imply_vmm(&mut self) {
-        if self.vmm_page > 0 || self.multicast || self.vmm_retain {
+        if self.vmm_page > 0 || self.multicast || self.vmm_retain || self.vmm_handle {
             self.vmm = true;
         }
     }
@@ -747,6 +750,7 @@ impl GpuCli {
             || self.managed
             || self.vmm
             || self.vmm_retain
+            || self.vmm_handle
             || self.stream_attach
             || self.managed_host
             || self.prefetch_host
@@ -755,6 +759,14 @@ impl GpuCli {
             || self.no_mem_prefetch
         {
             return Err("--ipc needs cudaMalloc".into());
+        }
+        Ok(())
+    }
+
+    /// `--vmm-handle` is exclusive with `--vmm-retain`.
+    pub(crate) fn check_vmm_handle(self) -> Result<(), String> {
+        if self.vmm_handle && self.vmm_retain {
+            return Err("choose one of --vmm-handle, --vmm-retain".into());
         }
         Ok(())
     }
@@ -969,6 +981,7 @@ impl GpuCli {
             (self.ipc, "--ipc"),
             (self.share_ptr, "--share-ptr"),
             (self.vmm_retain, "--vmm-retain"),
+            (self.vmm_handle, "--vmm-handle"),
             (self.pageable, "--pageable"),
             (self.host_register, "--host-register"),
             (self.host_unregister, "--host-unregister"),
@@ -1043,8 +1056,12 @@ impl GpuCli {
 
     /// Pinned when every fill flag is off; otherwise exactly one of mapped/managed/vmm.
     pub(crate) fn fill(self) -> Result<GpuFill, String> {
-        GpuFill::from_flags(self.mapped, self.managed, self.vmm || self.vmm_retain)
-            .map_err(|e| e.to_string())
+        GpuFill::from_flags(
+            self.mapped,
+            self.managed,
+            self.vmm || self.vmm_retain || self.vmm_handle,
+        )
+        .map_err(|e| e.to_string())
     }
 }
 
@@ -1340,6 +1357,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         ipc: gpu.ipc,
         share_ptr: gpu.share_ptr,
         vmm_retain: gpu.vmm_retain,
+        vmm_handle: gpu.vmm_handle,
         vmm_page: gpu.vmm_page,
         pageable: gpu.pageable,
         host_register: gpu.host_register,

@@ -27,9 +27,9 @@
 //! (`ttft_ns` / `itl_ns` / `ns_per_token`; not `$/M tokens`). Default GPU
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
-//! `mempool_trim`, `mempool_no_reuse`, `mempool_max`, shareable POSIX-FD IPC, ipc cudaMalloc IPC, share_ptr mempool ExportPointer, vmm_retain cuMemRetainAllocationHandle, `vmm_page`, pageable H2D, `host_register`, `host_unregister`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `memcpy_during`, `memcpy_any`, `memcpy_attr`, `memset_fill`, `SetAccessedBy`, legacy NULL, stream priority,
+//! `mempool_trim`, `mempool_no_reuse`, `mempool_max`, shareable POSIX-FD IPC, ipc cudaMalloc IPC, share_ptr mempool ExportPointer, vmm_retain cuMemRetainAllocationHandle, vmm_handle cuMemCreate plus cuMemMap, `vmm_page`, pageable H2D, `host_register`, `host_unregister`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `memcpy_during`, `memcpy_any`, `memcpy_attr`, `memset_fill`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/build/build-deps/host/piecewise/capture-deps/enable/if/mem/memset/memcpy, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `l2_ratio`, `l2_streaming`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `mem_sync_launch`, `mem_sync_launch_map`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`, `d2h_evict`, `d2h_pageable`, `host_unregister`, `ipc`, `share_ptr`, `vmm_retain`) are the same mechanical
+//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `l2_ratio`, `l2_streaming`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `mem_sync_launch`, `mem_sync_launch_map`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`, `d2h_evict`, `d2h_pageable`, `host_unregister`, `ipc`, `share_ptr`, `vmm_retain`, `vmm_handle`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -3704,6 +3704,32 @@ mod tests {
         assert!(
             on.wall_ns > off.wall_ns,
             "vmm-retain must bill retain overhead; on={} off={}",
+            on.wall_ns,
+            off.wall_ns
+        );
+    }
+
+    #[test]
+    fn engine_gpu_vmm_handle_keeps_greedy_identity() {
+        let off = two_seq_gpu_on(
+            8,
+            GpuStoreCfg::default(),
+            GpuFill::Vmm,
+            HardwareProfile::example_h100_sxm(),
+        );
+        let on = two_seq_gpu_on(
+            8,
+            GpuStoreCfg {
+                vmm_handle: true,
+                ..GpuStoreCfg::default()
+            },
+            GpuFill::Vmm,
+            HardwareProfile::example_h100_sxm(),
+        );
+        assert_eq!(off.launches, on.launches);
+        assert!(
+            on.wall_ns > off.wall_ns,
+            "vmm-handle must bill create plus map; on={} off={}",
             on.wall_ns,
             off.wall_ns
         );

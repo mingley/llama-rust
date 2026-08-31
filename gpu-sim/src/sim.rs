@@ -12028,6 +12028,19 @@ impl Sim {
         }
     }
 
+    /// Reuse a [`Self::va_release`]d VA of `bytes`, or [`Self::va_reserve`].
+    ///
+    /// No physicals. Split create/map is [`Self::va_create`] then
+    /// [`Self::va_map_handle`]. Idle reuse skips a second `cuMemAddressReserve`.
+    /// Capture cannot include it.
+    pub fn va_reserve_idle(&mut self, bytes: u64) -> Result<AllocId, SimError> {
+        self.fail_if_capturing("cannot capture alloc/free")?;
+        if let Some(id) = self.take_idle_va(bytes) {
+            return Ok(id);
+        }
+        self.va_reserve(bytes)
+    }
+
     /// Map a previously [`Self::va_release`]d VA of `bytes`, or [`Self::va_reserve`].
     ///
     /// Unmap keeps the pointer (vLLM-style). The next miss remaps without another

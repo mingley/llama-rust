@@ -57,7 +57,7 @@ warp scheduler, L1, …   ← do not model
 | `cuMemGetAllocationGranularity` (`va_granularity_bytes`): reserve/map sizes align (`0`/`1` = any) | not timed |
 | `cuMemSetAccess` (`va_set_access` / `va_set_access_with_flags`) PROT_READ on a peer; dest HBM stays 0; `va_set_access_write` is PROT_READWRITE | interconnect, not local HBM |
 | `va_map_range` / `va_unmap_range` map a span; `kernel()` needs the whole VA; `kernel_bufs` / `memset_buf` / `MemcpyOp::offset` touch a mapped span | HBM = mapped bytes |
-| `va_release` parks an unmapped VA; `va_acquire` remaps same size | map only on reuse (no second reserve) |
+| `va_release` parks an unmapped VA; `va_acquire` remaps same size; `va_reserve_idle` reuses that VA with no physicals | map only on reuse (no second reserve) |
 | `va_acquire_paged` maps the VA in `page` physicals | `alloc_overhead_ns` per block |
 | `cudaLaunchHostFunc` (`host_func` / `host_func_params`) is stream-ordered host work; `fn_id` / `user_data` are `cudaHostNodeParams` | `host_func_ns` (no compute / copy occupancy) |
 | `cuStreamWriteValue32/64` (`write_value32` / `write_value64`) writes a mailbox on complete; `write_value32_with_flags` / `write_value64_with_flags` is the CUDA flags word (`WriteValueFlags`; NO_MEMORY_BARRIER Invalid) | 1 ns Solo (no compute / copy occupancy) |
@@ -914,7 +914,8 @@ ReadWrite on a peer (no dest HBM; kernels may write). `pool_set_access_n`
 is the CUDA descriptor array (all-or-nothing; empty is a no-op after
 pool checks). Typed helpers stay. `kernel()` needs the whole VA covered; `kernel_bufs`, `memset_buf`, and
 `MemcpyOp::offset` touch a mapped page (paged KV). `va_acquire` remaps an idle VA of the same
-size (or reserves); `va_acquire_paged` maps KV-block physicals covering the VA;
+size (or reserves); `va_reserve_idle` is the map-less twin (split create/map is
+`va_create` then `va_map_handle`); `va_acquire_paged` maps KV-block physicals covering the VA;
 `va_release` unmaps into that pool. Capture cannot
 include them.
 `host_func` is `cudaLaunchHostFunc` (stream-ordered; other streams can compute;

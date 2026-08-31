@@ -464,12 +464,87 @@ pub(crate) fn close_ipc_alias(sim: &mut Sim, import: Option<AllocId>) -> Result<
 ///
 /// No auto-imply of `--vmm` here (CLI implies; `with_cfg` / `validate_sim_cfg`
 /// refuse). Hits stay the same iff [`Sim::va_release_handle`] runs before
-/// [`Sim::va_release`].
+/// [`Sim::va_release`]. Illegal with [`check_vmm_handle`].
 pub(crate) fn check_vmm_retain(vmm_retain: bool, vmm: bool) -> Result<(), Error> {
     if vmm_retain && !vmm {
         return Err(Error::Store("vmm-retain needs vmm"));
     }
     Ok(())
+}
+
+/// `--vmm-handle` needs `--vmm` (`cuMemCreate` plus `cuMemMap` of that handle).
+///
+/// No auto-imply of `--vmm` here. Exclusive with `--vmm-retain` (create+map
+/// vs retain-promote). Hits stay the same iff [`Sim::va_release_handle`] runs
+/// before [`Sim::va_release`]. Paged VMM creates offset 0 only; later pages
+/// stay combined `va_map_range`.
+pub(crate) fn check_vmm_handle(vmm_handle: bool, vmm: bool, vmm_retain: bool) -> Result<(), Error> {
+    if vmm_handle && vmm_retain {
+        return Err(Error::Store("choose one of vmm-handle, vmm-retain"));
+    }
+    if vmm_handle && !vmm {
+        return Err(Error::Store("vmm-handle needs vmm"));
+    }
+    Ok(())
+}
+
+/// Idle-or-reserve a VA, then `cuMemCreate` plus `cuMemMap` at offset 0.
+///
+/// Paged VMM creates the first physical only; later pages stay combined.
+/// On map failure the VA is [`Sim::va_release`]d back to the idle pool.
+pub(crate) fn vmm_alloc_handle(
+    sim: &mut Sim,
+    device: DeviceId,
+    bytes: u64,
+    page: u64,
+) -> Result<AllocId, Error> {
+    let id = sim.va_reserve_idle(bytes)?;
+    match map_vmm_handles(sim, device, id, bytes, page) {
+        Ok(()) => Ok(id),
+        Err(e) => {
+            match sim.va_release(id) {
+                Ok(()) => {}
+                Err(_r) => {}
+            }
+            Err(e)
+        }
+    }
+}
+
+fn map_vmm_handles(
+    sim: &mut Sim,
+    device: DeviceId,
+    id: AllocId,
+    bytes: u64,
+    page: u64,
+) -> Result<(), Error> {
+    if page > 0 && page < bytes {
+        let mut off = 0u64;
+        let mut first = true;
+        while off < bytes {
+            let n = page.min(bytes.saturating_sub(off));
+            if first {
+                let h = sim.va_create(device, n)?;
+                sim.va_map_handle(id, device, off, h)?;
+                first = false;
+            } else {
+                sim.va_map_range(id, device, off, n)?;
+            }
+            off = off.saturating_add(n);
+        }
+        return Ok(());
+    }
+    let h = sim.va_create(device, bytes)?;
+    sim.va_map_handle(id, device, 0, h)?;
+    Ok(())
+}
+
+/// Live `cuMemCreate` / retain handle covering offset 0, if any.
+pub(crate) fn vmm_handle_of(sim: &Sim, id: AllocId) -> Result<Option<MemHandleId>, Error> {
+    match sim.pointer_get_attribute(id, PointerAttr::MemoryBlockId) {
+        Ok(n) => Ok(Some(MemHandleId(n))),
+        Err(_) => Ok(None),
+    }
 }
 
 /// `cuMemRetainAllocationHandle` of a live VMM map at offset 0.
@@ -970,6 +1045,14 @@ pub struct SimCfg {
     /// 0 only. Decode identity stays combined `va_map` without a handle.
     /// [`crate::GpuStoreCfg::vmm_retain`] is the store path.
     pub vmm_retain: bool,
+    /// `cuMemCreate` plus `cuMemMap` of that handle instead of combined `va_map`.
+    ///
+    /// Bills `alloc_overhead_ns` on create and map. Hits stay the same iff
+    /// `va_release_handle` runs before `va_release`. Paged VMM creates offset
+    /// 0 only. Decode identity stays `va_acquire`. Exclusive with
+    /// [`Self::vmm_retain`]. [`crate::GpuStoreCfg::vmm_handle`] is the store
+    /// path.
+    pub vmm_handle: bool,
     /// `cudaLaunchHostFunc` after each event's GEMMs (CPU scheduler roundtrip).
     ///
     /// Does not change hits/misses. Lengthens wall by `host_func_ns` per
@@ -1655,6 +1738,7 @@ impl SimCfg {
             vmm: false,
             vmm_page: 0,
             vmm_retain: false,
+            vmm_handle: false,
             host_func: false,
             copy_host: false,
             blocking_streams: false,
@@ -1932,6 +2016,7 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     )?;
     check_share_ptr(cfg.share_ptr, cfg.shareable, cfg.ipc)?;
     check_vmm_retain(cfg.vmm_retain, cfg.vmm)?;
+    check_vmm_handle(cfg.vmm_handle, cfg.vmm, cfg.vmm_retain)?;
     if cfg.host_register_mapped && !cfg.mapped {
         return Err(Error::Store("host-register-mapped needs mapped"));
     }
@@ -2049,6 +2134,7 @@ pub fn sim_replay_cfg(
         vmm: cfg.vmm,
         vmm_page: cfg.vmm_page,
         vmm_retain: cfg.vmm_retain,
+        vmm_handle: cfg.vmm_handle,
         pageable: cfg.pageable,
         host_register: cfg.host_register,
         host_unregister: cfg.host_unregister,
@@ -2236,6 +2322,8 @@ pub(crate) struct TouchArgs {
     pub vmm_page: u64,
     /// [`SimCfg::vmm_retain`]: `cuMemRetainAllocationHandle` after VMM miss map.
     pub vmm_retain: bool,
+    /// [`SimCfg::vmm_handle`]: `cuMemCreate` plus `cuMemMap` of that handle.
+    pub vmm_handle: bool,
     /// [`SimCfg::pageable`]: host-sync pageable H2D.
     pub pageable: bool,
     /// [`SimCfg::host_register`]: `cudaHostRegister` then pinned DMA H2D.
@@ -3475,7 +3563,7 @@ pub(crate) struct PageHandle {
     pub(crate) ipc: Option<AllocId>,
     /// [`TouchArgs::share_ptr`]: live `cudaMemPoolImportPointer` alias of `id`.
     pub(crate) share: Option<AllocId>,
-    /// [`TouchArgs::vmm_retain`]: live `cuMemRetainAllocationHandle` of `id`.
+    /// [`TouchArgs::vmm_retain`] / [`TouchArgs::vmm_handle`]: live handle of `id`.
     pub(crate) retain: Option<MemHandleId>,
 }
 
@@ -3656,7 +3744,11 @@ pub(crate) fn apply_misses(
                     id,
                     args.share_ptr && !args.mapped && !args.managed && !args.vmm,
                 )?,
-                retain: retain_vmm_handle(sim, args.d, id, args.vmm && args.vmm_retain)?,
+                retain: if args.vmm && args.vmm_handle {
+                    vmm_handle_of(sim, id)?
+                } else {
+                    retain_vmm_handle(sim, args.d, id, args.vmm && args.vmm_retain)?
+                },
             },
         );
     }
@@ -3692,7 +3784,9 @@ fn alloc_touch_page(sim: &mut Sim, args: TouchArgs) -> Result<AllocId, Error> {
         )?;
         id
     } else if args.vmm {
-        if args.vmm_page > 0 && args.vmm_page < args.bytes {
+        if args.vmm_handle {
+            vmm_alloc_handle(sim, args.d, args.bytes, args.vmm_page)?
+        } else if args.vmm_page > 0 && args.vmm_page < args.bytes {
             sim.va_acquire_paged(args.d, args.bytes, args.vmm_page)?
         } else {
             sim.va_acquire(args.d, args.bytes)?

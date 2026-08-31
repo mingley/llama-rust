@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cuMemCreate` plus `cuMemMap` instead of combined `va_acquire`
+
+`GpuStoreCfg::vmm_handle` / `SimCfg::vmm_handle` idle-or-reserve a VA
+(`va_reserve_idle`) then `cuMemCreate` plus `cuMemMap` of that handle at
+offset 0 so the page holds a live handle and `va_release_handle` before
+`va_release` (`alloc_overhead_ns` on create and map). Hits/misses stay the
+same. Distinct from `--vmm` (combined `va_map` without a handle) and
+`--vmm-retain` (promote after acquire). Implies `--vmm`. Illegal with
+`--mapped` / `--managed` / `--vmm-retain`. `--vmm-handle` is off by default
+(decode identity: `--vmm` without create plus map). Store and walker (not
+walker-only). infer-bench schedule gets `--vmm-handle` (implies `--vmm`; no
+standalone `--vmm`). `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cuMemRetainAllocationHandle` after each VMM miss map
 
 `GpuStoreCfg::vmm_retain` / `SimCfg::vmm_retain` call

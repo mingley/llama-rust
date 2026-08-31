@@ -18,7 +18,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--l2-ratio N] [--l2-streaming] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-load-balance] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--no-read-mostly] [--no-preferred] [--no-mem-prefetch] [--wait-value] [--vmm-retain] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--l2-ratio N] [--l2-streaming] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-load-balance] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--no-read-mostly] [--no-preferred] [--no-mem-prefetch] [--wait-value] [--vmm-retain] [--vmm-handle] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -182,7 +182,8 @@ fn run() -> Result<(), String> {
             sim_cfg.wait_value = cfg.wait_value;
             sim_cfg.multicast = cfg.multicast;
             sim_cfg.vmm_retain = cfg.vmm_retain;
-            if cfg.multicast || cfg.vmm_retain {
+            sim_cfg.vmm_handle = cfg.vmm_handle;
+            if cfg.multicast || cfg.vmm_retain || cfg.vmm_handle {
                 sim_cfg.vmm = true;
             }
             if cfg.decode_priority {
@@ -290,6 +291,7 @@ struct Cfg {
     wait_value: bool,
     multicast: bool,
     vmm_retain: bool,
+    vmm_handle: bool,
 }
 
 fn parse_flags<I>(args: I) -> Result<Cfg, String>
@@ -364,6 +366,7 @@ where
     let mut wait_value = false;
     let mut multicast = false;
     let mut vmm_retain = false;
+    let mut vmm_handle = false;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -548,6 +551,9 @@ where
             "--vmm-retain" => {
                 vmm_retain = !matches!(inline.as_deref(), Some("0" | "false"));
             }
+            "--vmm-handle" => {
+                vmm_handle = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
             "--slo-reject" => {
                 slo_reject = !matches!(inline.as_deref(), Some("0" | "false"));
             }
@@ -584,6 +590,9 @@ where
                 path = Some(other.to_string());
             }
         }
+    }
+    if vmm_handle && vmm_retain {
+        return Err("choose one of --vmm-handle, --vmm-retain".into());
     }
     if pdl && cooperative {
         return Err("choose one of --pdl, --cooperative".into());
@@ -686,6 +695,7 @@ where
         wait_value,
         multicast,
         vmm_retain,
+        vmm_handle,
     })
 }
 
