@@ -96,6 +96,8 @@
 //! Writer-tiny dense K scale ([`tiny_llama_attn_k_s_gguf`]) is llama plus
 //! `{1}` `attn_k.scale`. Writer-tiny dense V scale
 //! ([`tiny_llama_attn_v_s_gguf`]) is llama plus `{1}` `attn_v.scale`.
+//! Writer-tiny dense gate scale ([`tiny_llama_ffn_gate_s_gguf`]) is llama plus
+//! `{1}` `ffn_gate.scale`.
 
 use crate::gguf::{load_gguf_owned, GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 pub use crate::kv_page::PagedKvPool;
@@ -220,6 +222,10 @@ const TINY_GEMMA4_UP_S: [f32; TINY_GEMMA4_N_EXPERT] = [0.75, 3.0, 0.5, 1.5];
 /// observable vs [`tiny_llama_gguf`]. Gemma2/3/4 `post_ffw_norm` RMSNorm
 /// would cancel a positive scalar, so the fixture is llama, not gemma4.
 const TINY_LLAMA_FFN_DOWN_S: f32 = 0.5;
+/// Writer-tiny dense `ffn_gate.scale` (`{1}`). Not 1, and distinct from
+/// [`TINY_LLAMA_FFN_DOWN_S`] so a mix-up with down scale cannot silently
+/// match. Applied after the gate GEMM, before SiLU. The fixture is llama.
+const TINY_LLAMA_FFN_GATE_S: f32 = 1.25;
 /// Writer-tiny dense `attn_q.scale` (`{1}`). Not 1, and distinct from
 /// [`TINY_LLAMA_FFN_DOWN_S`], so the walk is observable vs [`tiny_llama_gguf`]
 /// and a mix-up with down scale cannot silently match. Gemma3/4 QK-Norm
@@ -580,6 +586,9 @@ struct Qwen2Moe {
 /// Dense SwiGLU / GeGLU weights (`ffn_gate` / `ffn_up` / `ffn_down`).
 struct DenseFfn {
     gate: QuantMat,
+    /// Official llama.cpp generic `{1}` `ffn_gate.scale` (`TENSOR_NOT_REQUIRED`).
+    /// `build_ffn` `ggml_mul` after the gate GEMM, before SiLU / GELU. Missing is `1.0`.
+    gate_s: Option<f32>,
     up: QuantMat,
     down: QuantMat,
     /// Official llama.cpp generic `{1}` `ffn_down.scale` (`TENSOR_NOT_REQUIRED`).
@@ -1785,7 +1794,8 @@ impl Llama {
     /// [`tiny_llama_attn_q_s_gguf`]. Dense `{1}` `attn_output.scale` is
     /// [`tiny_llama_attn_out_s_gguf`]. Dense `{1}` `attn_k.scale` is
     /// [`tiny_llama_attn_k_s_gguf`]. Dense `{1}` `attn_v.scale` is
-    /// [`tiny_llama_attn_v_s_gguf`].
+    /// [`tiny_llama_attn_v_s_gguf`]. Dense `{1}` `ffn_gate.scale` is
+    /// [`tiny_llama_ffn_gate_s_gguf`].
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
     /// blob; they do not clone tensor bytes. When `output.weight` is absent,
@@ -2840,6 +2850,15 @@ impl Llama {
                 match &layer.ffn {
                     LayerFfn::Dense(dense) => {
                         self.gemm_into(&dense.gate, n, &s.x, &mut s.gate, pool)?;
+                        if let Some(scale) = dense.gate_s {
+                            scale_expert_rows(
+                                &mut s.gate,
+                                n,
+                                dense.gate.n_rows,
+                                scale,
+                                "ffn_gate.scale",
+                            )?;
+                        }
                         self.gemm_into(&dense.up, n, &s.x, &mut s.up, pool)?;
                         ffn_gate_act_inplace(&mut s.gate, self.ffn_gelu);
                         for (hv, uv) in s.gate.iter_mut().zip(s.up.iter()) {
@@ -2989,6 +3008,15 @@ impl Llama {
             match &layer.ffn {
                 LayerFfn::Dense(dense) => {
                     self.gemm_into(&dense.gate, n, &run.s.x, &mut run.s.gate, run.pool)?;
+                    if let Some(scale) = dense.gate_s {
+                        scale_expert_rows(
+                            &mut run.s.gate,
+                            n,
+                            dense.gate.n_rows,
+                            scale,
+                            "ffn_gate.scale",
+                        )?;
+                    }
                     self.gemm_into(&dense.up, n, &run.s.x, &mut run.s.up, run.pool)?;
                     if li < w.n_layer_sparsity {
                         gaussian_topk_inplace(&mut run.s.gate, dense.gate.n_rows)?;
@@ -3971,6 +3999,7 @@ fn tiny_llama_spec() -> TinySpec {
 /// Writer-built Llama-shaped GGUF: mixed F32/Q4_K/Q6_K weights + tokenizer KV.
 ///
 /// Optional dense `ffn_down.scale` is [`tiny_llama_ffn_down_s_gguf`].
+/// Optional dense `ffn_gate.scale` is [`tiny_llama_ffn_gate_s_gguf`].
 /// Optional dense `attn_q.scale` is [`tiny_llama_attn_q_s_gguf`].
 /// Optional dense `attn_output.scale` is [`tiny_llama_attn_out_s_gguf`].
 /// Optional dense `attn_k.scale` is [`tiny_llama_attn_k_s_gguf`].
@@ -3994,6 +4023,22 @@ pub fn tiny_llama_ffn_down_s_gguf() -> Vec<u8> {
 /// Append or omit `blk.0.ffn_down.scale`.
 fn rewrite_tiny_llama_ffn_down_s(bytes: Vec<u8>, scale: Option<f32>) -> Result<Vec<u8>, GgufError> {
     rewrite_tiny_llama_unit_scale(bytes, "blk.0.ffn_down.scale", scale)
+}
+
+/// Writer-built Llama GGUF with official `{1}` `ffn_gate.scale`.
+///
+/// Same tensors as [`tiny_llama_gguf`] plus `blk.0.ffn_gate.scale`. Decode
+/// follows llama.cpp `build_ffn`: after the gate GEMM, `ggml_mul` broadcasts
+/// the scalar (`TENSOR_NOT_REQUIRED`; missing is `1.0`) before SiLU. Not a
+/// second architecture.
+pub fn tiny_llama_ffn_gate_s_gguf() -> Vec<u8> {
+    rewrite_tiny_llama_ffn_gate_s(tiny_llama_gguf(), Some(TINY_LLAMA_FFN_GATE_S))
+        .unwrap_or_else(|_| Vec::new())
+}
+
+/// Append or omit `blk.0.ffn_gate.scale`.
+fn rewrite_tiny_llama_ffn_gate_s(bytes: Vec<u8>, scale: Option<f32>) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_llama_unit_scale(bytes, "blk.0.ffn_gate.scale", scale)
 }
 
 /// Writer-built Llama GGUF with official `{1}` `attn_q.scale`.
@@ -9153,6 +9198,7 @@ fn load_unit_scale(g: &Gguf, name: &str) -> Result<Option<f32>, LlamaError> {
 fn load_dense_ffn(g: &Gguf, i: usize) -> Result<DenseFfn, LlamaError> {
     Ok(DenseFfn {
         gate: quant_mat(need(g, &format!("blk.{i}.ffn_gate.weight"))?)?,
+        gate_s: load_unit_scale(g, &format!("blk.{i}.ffn_gate.scale"))?,
         up: quant_mat(need(g, &format!("blk.{i}.ffn_up.weight"))?)?,
         down: quant_mat(need(g, &format!("blk.{i}.ffn_down.weight"))?)?,
         down_s: load_unit_scale(g, &format!("blk.{i}.ffn_down.scale"))?,
@@ -9220,6 +9266,7 @@ fn is_applied_norm_or_bias(name: &str) -> bool {
         || name.ends_with(".ffn_up_exps.scale")
         || name.ends_with(".ffn_down_exps.scale")
         || name.ends_with(".ffn_down.scale")
+        || name.ends_with(".ffn_gate.scale")
         || name.ends_with(".attn_q.scale")
         || name.ends_with(".attn_k.scale")
         || name.ends_with(".attn_v.scale")
@@ -10259,6 +10306,15 @@ impl Llama {
             .checked_mul(n_embd)
             .ok_or_else(|| LlamaError::Shape("gemma4 moe".into()))?;
         self.gemm_into(&moe.shared.gate, n_tokens, &s.x, &mut s.gate, pool)?;
+        if let Some(scale) = moe.shared.gate_s {
+            scale_expert_rows(
+                &mut s.gate,
+                n_tokens,
+                moe.shared.gate.n_rows,
+                scale,
+                "ffn_gate.scale",
+            )?;
+        }
         self.gemm_into(&moe.shared.up, n_tokens, &s.x, &mut s.up, pool)?;
         ffn_gate_act_inplace(&mut s.gate, true);
         for (hv, uv) in s.gate.iter_mut().zip(s.up.iter()) {
@@ -13120,6 +13176,10 @@ mod tests {
         oracle_mul_unit_scale(g, layer, "ffn_down.scale", y);
     }
 
+    fn oracle_mul_ffn_gate_s(g: &Gguf, layer: usize, y: &mut [f32]) {
+        oracle_mul_unit_scale(g, layer, "ffn_gate.scale", y);
+    }
+
     /// Official llama.cpp `build_lora_mm`: `{1}` `attn_q.scale` `ggml_mul` after
     /// the Q GEMM (`TENSOR_NOT_REQUIRED`; missing is `1.0`).
     fn oracle_mul_attn_q_s(g: &Gguf, layer: usize, y: &mut [f32]) {
@@ -13159,10 +13219,11 @@ mod tests {
         layer: usize,
         eps: f32,
     ) -> Vec<f32> {
-        let gate = oracle_gemv(
+        let mut gate = oracle_gemv(
             g.tensor(&tname(layer, "ffn_gate.weight")).unwrap(),
             xn_shared,
         );
+        oracle_mul_ffn_gate_s(g, layer, &mut gate);
         let up = oracle_gemv(g.tensor(&tname(layer, "ffn_up.weight")).unwrap(), xn_shared);
         let h: Vec<f32> = gate
             .iter()
@@ -13797,6 +13858,7 @@ mod tests {
                 let xn_ff = oracle_rmsnorm(&attn_laurel, &fnorm, eps);
                 let mut gate =
                     oracle_gemv(g.tensor(&tname(li, "ffn_gate.weight")).unwrap(), &xn_ff);
+                oracle_mul_ffn_gate_s(g, li, &mut gate);
                 let up = oracle_gemv(g.tensor(&tname(li, "ffn_up.weight")).unwrap(), &xn_ff);
                 if li < GEMMA3N_N_LAYER_SPARSITY {
                     oracle_gaussian_topk(&mut gate);
@@ -14361,8 +14423,9 @@ mod tests {
                         } else if gemma4_moe {
                             oracle_gemma4_moe(g, &x, &xn, li, eps)
                         } else {
-                            let gate =
+                            let mut gate =
                                 oracle_gemv(g.tensor(&tname(li, "ffn_gate.weight")).unwrap(), &xn);
+                            oracle_mul_ffn_gate_s(g, li, &mut gate);
                             let up =
                                 oracle_gemv(g.tensor(&tname(li, "ffn_up.weight")).unwrap(), &xn);
                             let h: Vec<f32> = gate
@@ -15731,6 +15794,7 @@ mod tests {
             tiny_llama_attn_out_s_gguf(),
             tiny_llama_attn_k_s_gguf(),
             tiny_llama_attn_v_s_gguf(),
+            tiny_llama_ffn_gate_s_gguf(),
             tiny_qwen3_gguf(),
             tiny_llama4_gguf(),
             tiny_llama_moe_gguf(),
@@ -15800,6 +15864,7 @@ mod tests {
             ("llama-attn-out-s", tiny_llama_attn_out_s_gguf()),
             ("llama-attn-k-s", tiny_llama_attn_k_s_gguf()),
             ("llama-attn-v-s", tiny_llama_attn_v_s_gguf()),
+            ("llama-ffn-gate-s", tiny_llama_ffn_gate_s_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("f16", tiny_f16_gguf()),
@@ -15904,6 +15969,7 @@ mod tests {
             ("llama-attn-out-s", tiny_llama_attn_out_s_gguf()),
             ("llama-attn-k-s", tiny_llama_attn_k_s_gguf()),
             ("llama-attn-v-s", tiny_llama_attn_v_s_gguf()),
+            ("llama-ffn-gate-s", tiny_llama_ffn_gate_s_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("llama-moe", tiny_llama_moe_gguf()),
@@ -18728,6 +18794,116 @@ mod tests {
     }
 
     #[test]
+    fn tiny_llama_ffn_gate_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_llama_ffn_gate_s_gguf();
+        let g = load_gguf(&bytes).expect("load llama ffn_gate.scale");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("llama".into()))
+        );
+        let scale = g.tensor("blk.0.ffn_gate.scale").expect("gate_s");
+        assert_eq!(scale.n_cols(), 1);
+        assert_eq!(
+            f32s(scale).expect("f32s").first().copied(),
+            Some(TINY_LLAMA_FFN_GATE_S)
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        match &model.layers[0].ffn {
+            LayerFfn::Dense(dense) => {
+                assert_eq!(dense.gate_s, Some(TINY_LLAMA_FFN_GATE_S));
+            }
+            _ => panic!("expected dense ffn"),
+        }
+        let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+        assert!(llama.tensor("blk.0.ffn_gate.scale").is_none());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&llama, &[1, 2, 3]),
+            "oracle ffn_gate.scale vs llama"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("gate_s pref");
+        let llama_pref = {
+            let lm = Llama::from_gguf(llama.clone()).expect("lm");
+            match &lm.layers[0].ffn {
+                LayerFfn::Dense(d) => assert!(d.gate_s.is_none()),
+                _ => panic!("expected dense ffn"),
+            }
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        assert_ne!(
+            scaled, llama_pref,
+            "ffn_gate.scale 1.25 must not copy llama logits"
+        );
+        let ones_pref = {
+            let ones_bytes =
+                rewrite_tiny_llama_ffn_gate_s(tiny_llama_gguf(), Some(1.0)).expect("ones bytes");
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&llama, &tokens),
+                "scale=1.0 must match omitted ffn_gate.scale"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, llama_pref,
+            "all-ones ffn_gate.scale must be identity with llama"
+        );
+        let down_s = load_gguf(&tiny_llama_ffn_down_s_gguf()).expect("down_s");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&down_s, &tokens),
+            "ffn_gate.scale must not copy ffn_down.scale logits"
+        );
+        let v_s = load_gguf(&tiny_llama_attn_v_s_gguf()).expect("v_s");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&v_s, &tokens),
+            "ffn_gate.scale must not copy attn_v.scale logits"
+        );
+        let bad = {
+            let g0 = load_gguf_owned(tiny_llama_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32, 3.0];
+            tensors.push(tw(
+                "blk.0.ffn_gate.scale",
+                GgmlType::F32,
+                vec![2],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected ffn_gate.scale shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("ffn_gate.scale"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
     fn tiny_qwen3_load_gemv_gemm_embed_and_greedy() {
         let bytes = tiny_qwen3_gguf();
         let g = load_gguf(&bytes).expect("load qwen3");
@@ -21402,7 +21578,7 @@ mod bench {
     fn bench_logits_fingerprint() {
         // Every zero-argument fixture in the suite, so that each architecture
         // walk and each dtype kernel the decode path can reach is pinned.
-        let cases: [(&str, Vec<u8>); 71] = [
+        let cases: [(&str, Vec<u8>); 72] = [
             ("llama", tiny_llama_gguf()),
             ("tied", tiny_tied_gguf()),
             ("tied_copy", tiny_tied_copy_gguf()),
@@ -21445,6 +21621,7 @@ mod bench {
             ("llama_attn_out_s", tiny_llama_attn_out_s_gguf()),
             ("llama_attn_k_s", tiny_llama_attn_k_s_gguf()),
             ("llama_attn_v_s", tiny_llama_attn_v_s_gguf()),
+            ("llama_ffn_gate_s", tiny_llama_ffn_gate_s_gguf()),
             ("f16", tiny_f16_gguf()),
             ("f16_1d", tiny_f16_1d_gguf()),
             ("f16_1d_bias", tiny_f16_1d_bias_gguf()),

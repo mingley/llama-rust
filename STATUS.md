@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — official dense `{1}` `ffn_gate.scale`
+
+Generic llama.cpp post-load `blk.{i}.ffn_gate.scale` shape `{1}`
+(`TENSOR_NOT_REQUIRED`; missing is `1.0`). Decode follows `build_ffn`:
+`ggml_mul` after the gate GEMM, before SiLU / GELU. Writer-tiny
+`tiny-llama-ffn-gate-s` is `tiny-llama` plus scale `1.25` (distinct from
+dense `ffn_down.scale` `0.5`). SiLU is nonlinear, so the walk stays
+observable even where `post_ffw_norm` would cancel a down scale. Phi2/Bloom
+stay on `Phi2Ffn` (no gate). Per-expert `ffn_gate_exps.scale` stays the
+gemma4 MoE tensor.
+
 ## Shipped 2026-08-31 — official dense `{1}` `attn_v.scale`
 
 Generic llama.cpp post-load `blk.{i}.attn_v.scale` shape `{1}`
