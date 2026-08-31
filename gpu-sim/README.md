@@ -108,6 +108,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaGraphCreate` (`create_graph`) is an empty uninstantiated graph | 1 ns host-sync |
 | `cudaStreamBeginCaptureToGraph` (`begin_capture_to_graph`) appends captured nodes onto an existing uninstantiated graph; empty deps are extra roots | not timed (capture) |
 | `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes` | query |
+| `cudaGraphGetId` (`graph_get_id`) | unique id matching debug-dot HANDLES; exec/clone differ |
 | `cudaGraphChildGraphNodeGetGraph` / `EventRecordNodeGetEvent` / `WaitNodeGetEvent` / `MemAllocNodeGetParams` | query |
 | `cudaGraphAddKernelNode` / memcpy / `AddMemcpyNode1D` / `graph_add_memcpy_2d` / `graph_add_memcpy_3d` / `graph_add_memset_2d` / `graph_add_memset_3d` / memset / host / empty / event / child / mem alloc/free / cooperative kernel / dependencies (`graph_add_*`) | not timed (host-side topology) |
 | `cudaGraphDestroyNode` (`graph_destroy_node`) drops a definition node and incident edges; remaining indices stay valid | not timed (host-side topology) |
@@ -381,9 +382,9 @@ and during capture; definition destroy does not retarget exec).
 uninstantiated graph; capture roots additionally depend on the given node
 indices (empty `deps` means extra roots, so they may Hyper-Q overlap).
 `graph_nodes` / `graph_root_nodes` / `graph_edges` / `graph_node_dependents` /
-`graph_debug_dot` / `graph_debug_dot_with_flags` are `cudaGraphGetNodes` /
+`graph_debug_dot` / `graph_debug_dot_with_flags` / `graph_get_id` are `cudaGraphGetNodes` /
 `GetRootNodes` / `GetEdges` /
-`NodeGetDependentNodes` / `cudaGraphDebugDotPrint` (live nodes; flags `0`
+`NodeGetDependentNodes` / `cudaGraphDebugDotPrint` / `cudaGraphGetId` (live nodes; flags `0`
 is kinds and edges; `GraphDebugDotFlags::VERBOSE` prints modeled params). Host-sync
 `malloc` / `free_sync` / `memcpy_sync` / `synchronize_device` / VMM / mempool
 create cannot be captured. A graph that allocates without a matching free

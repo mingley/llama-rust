@@ -904,9 +904,10 @@
 //! [`graph_edges`](Sim::graph_edges) /
 //! [`graph_node_dependents`](Sim::graph_node_dependents) /
 //! [`graph_debug_dot`](Sim::graph_debug_dot) /
-//! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags) are
+//! [`graph_debug_dot_with_flags`](Sim::graph_debug_dot_with_flags) /
+//! [`graph_get_id`](Sim::graph_get_id) are
 //! `cudaGraphGetNodes` / `GetRootNodes` / `GetEdges` / `NodeGetDependentNodes`
-//! / `cudaGraphDebugDotPrint` (live nodes; flags `0` is kinds and edges;
+//! / `cudaGraphDebugDotPrint` / `cudaGraphGetId` (live nodes; flags `0` is kinds and edges;
 //! [`GraphDebugDotFlags::VERBOSE`] prints modeled params). Destroyed slots are
 //! omitted. [`begin_capture_to_graph`](Sim::begin_capture_to_graph) is
 //! `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
@@ -11255,6 +11256,44 @@ mod tests {
         assert!(sim.graph_debug_dot(g).unwrap().contains("n0 -> n1;"));
         let _end = sim.end_capture().unwrap();
         match sim.graph_debug_dot(GraphId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn graph_get_id_matches_debug_dot_handles() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        let g0 = sim.create_graph(d, s).unwrap();
+        let g1 = sim.create_graph(d, s).unwrap();
+        let id0 = sim.graph_get_id(g0).unwrap();
+        let id1 = sim.graph_get_id(g1).unwrap();
+        assert_ne!(id0, id1);
+        assert_eq!(id0, g0.0);
+        sim.graph_add_kernel(g0, KernelKind::other(8, 8), &[a], &[a])
+            .unwrap();
+        let handles = sim
+            .graph_debug_dot_with_flags(g0, GraphDebugDotFlags::HANDLES)
+            .unwrap();
+        assert!(handles.contains(&format!("digraph g{id0}")), "{handles}");
+        sim.begin_capture(d, s).unwrap();
+        assert_eq!(sim.graph_get_id(g0).unwrap(), id0);
+        let _end = sim.end_capture().unwrap();
+        let exec = sim.instantiate_graph(g0).unwrap();
+        let exec_id = sim.graph_get_id(exec).unwrap();
+        assert_ne!(exec_id, id0);
+        let clone = sim.clone_graph(g0).unwrap();
+        assert_ne!(sim.graph_get_id(clone).unwrap(), id0);
+        assert_ne!(sim.graph_get_id(clone).unwrap(), exec_id);
+        match sim.graph_get_id(GraphId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_graph(g1).unwrap();
+        match sim.graph_get_id(g1) {
             Err(SimError::Invalid { why }) => assert!(why.contains("unknown graph"), "{why}"),
             other => panic!("{other:?}"),
         }

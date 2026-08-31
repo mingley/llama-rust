@@ -3466,6 +3466,21 @@ impl Sim {
             })
     }
 
+    /// `cudaGraphGetId` / `cudaGraphExecGetId`. Query; legal during capture.
+    ///
+    /// Matches the id printed by [`Self::graph_debug_dot_with_flags`] with
+    /// [`GraphDebugDotFlags::HANDLES`]. Distinct from node indices. A
+    /// definition, its instantiate exec, and a clone each have their own id.
+    /// Unknown graphs are Invalid `"unknown graph"`.
+    pub fn graph_get_id(&self, graph: GraphId) -> Result<u32, SimError> {
+        if !self.graphs.contains_key(&graph) {
+            return Err(SimError::Invalid {
+                why: "unknown graph",
+            });
+        }
+        Ok(graph.0)
+    }
+
     /// `cudaGraphGetNodes` — live node indices in creation order.
     ///
     /// Query; legal during capture. During capture this is the destination
