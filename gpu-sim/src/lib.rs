@@ -375,7 +375,8 @@
 //! is `cudaDeviceGetPciBusId` / `cuDeviceGetPCIBusId` (synthetic
 //! `domain:bus:device.function`; also [`DeviceProperties::pci_domain_id`] /
 //! [`pci_bus_id`](DeviceProperties::pci_bus_id) /
-//! [`pci_device_id`](DeviceProperties::pci_device_id)). [`device_total_mem`](Sim::device_total_mem)
+//! [`pci_device_id`](DeviceProperties::pci_device_id)). [`device_get_by_pci_bus_id`](Sim::device_get_by_pci_bus_id)
+//! is `cudaDeviceGetByPCIBusId` (inverse). [`device_total_mem`](Sim::device_total_mem)
 //! is `cuDeviceTotalMem` (HBM bytes). [`DeviceAttr::CanMapHostMemory`]
 //! / [`DeviceAttr::ManagedMemory`] are always 1 (this VM has mapped host and
 //! UM). [`DeviceAttr::ClusterLaunch`] is `max_blocks_per_cluster > 0`.
@@ -13146,6 +13147,30 @@ mod tests {
         match a.device_get_pci_bus_id(DeviceId(99)) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("device not in profile"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_get_by_pci_bus_id_roundtrips() {
+        let mut a = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let p0 = a.device_get_pci_bus_id(DeviceId(0)).unwrap();
+        let p1 = a.device_get_pci_bus_id(DeviceId(1)).unwrap();
+        assert_eq!(a.device_get_by_pci_bus_id(&p0).unwrap(), DeviceId(0));
+        assert_eq!(a.device_get_by_pci_bus_id(&p1).unwrap(), DeviceId(1));
+        a.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        assert_eq!(a.device_get_by_pci_bus_id(&p0).unwrap(), DeviceId(0));
+        let _g = a.end_capture().unwrap();
+        match a.device_get_by_pci_bus_id("zzzz") {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown pci bus id"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        match a.device_get_by_pci_bus_id("0000:08:00.0") {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown pci bus id"), "{why}")
             }
             other => panic!("{other:?}"),
         }

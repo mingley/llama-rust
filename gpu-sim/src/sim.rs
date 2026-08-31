@@ -15084,10 +15084,26 @@ impl Sim {
     /// Same ordinal on two profiles share a bus id. Also
     /// [`DeviceProperties::pci_domain_id`] / [`pci_bus_id`](DeviceProperties::pci_bus_id) /
     /// [`pci_device_id`](DeviceProperties::pci_device_id). Unknown devices are
-    /// Invalid.
+    /// Invalid. Inverse is [`Self::device_get_by_pci_bus_id`].
     pub fn device_get_pci_bus_id(&self, device: DeviceId) -> Result<String, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(synthetic_pci_bus_id(device))
+    }
+
+    /// `cudaDeviceGetByPCIBusId`. Query; legal during capture.
+    ///
+    /// Inverse of [`Self::device_get_pci_bus_id`]. Unknown or malformed bus id
+    /// is Invalid `"unknown pci bus id"`. Distinct from
+    /// [`Self::device_get_by_uuid`].
+    pub fn device_get_by_pci_bus_id(&self, pci_bus_id: &str) -> Result<DeviceId, SimError> {
+        self.profile
+            .gpus
+            .iter()
+            .find(|g| synthetic_pci_bus_id(g.id) == pci_bus_id)
+            .map(|g| g.id)
+            .ok_or(SimError::Invalid {
+                why: "unknown pci bus id",
+            })
     }
 
     /// `cuDeviceTotalMem`. Query; legal during capture.

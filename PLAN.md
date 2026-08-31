@@ -4659,7 +4659,14 @@ model, do not celebrate the sim.
     slice. No `cuDeviceGetLuid`. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-420. [ ] Next numbered PLAN item after 419 is the next `gpu-sim` / Engine /
+420. [x] CUDA `cudaDeviceGetByPCIBusId` (`device_get_by_pci_bus_id`): inverse
+    of `device_get_pci_bus_id`. A matching synthetic bus id returns that
+    device. Unknown or malformed is Invalid. Query; legal during capture.
+    Distinct from `device_get_by_uuid`. No `cuDeviceGetLuid`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+421. [ ] Next numbered PLAN item after 420 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4678,7 +4685,8 @@ model, do not celebrate the sim.
     Do not invent a second `cuGraphNodeGetToolsId`. Do not invent a second
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
     `cuDeviceGetByUuid`. Do not invent a second `cudaDeviceGetPciBusId` /
-    `cuDeviceGetPCIBusId`. Do not invent `cuDeviceGetLuid`
+    `cuDeviceGetPCIBusId`. Do not invent a second `cudaDeviceGetByPCIBusId`.
+    Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
     `attn_v.scale` as the writer-tiny. Do not invent a second dense

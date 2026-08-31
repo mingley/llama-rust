@@ -137,6 +137,7 @@ warp scheduler, L1, …   ← do not model
 | `device_get_uuid` is a synthetic 16-octet id (also `DeviceProperties.uuid`) | `cuDeviceGetUuid` |
 | `device_get_by_uuid` is the inverse of `device_get_uuid` | `cuDeviceGetByUuid` |
 | `device_get_pci_bus_id` is a synthetic `domain:bus:device.function` (also `DeviceProperties` PCI ids) | `cudaDeviceGetPciBusId` |
+| `device_get_by_pci_bus_id` is the inverse of `device_get_pci_bus_id` | `cudaDeviceGetByPCIBusId` |
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
 | `stream_get_priority` is the create priority | `cudaStreamGetPriority` |
 | `stream_get_id` is unique per device/stream | `cudaStreamGetId` |
@@ -711,7 +712,8 @@ profile name). `device_get_uuid` is `cuDeviceGetUuid` (synthetic 16-octet
 id; also `DeviceProperties.uuid`). `device_get_by_uuid` is
 `cuDeviceGetByUuid` (inverse). `device_get_pci_bus_id` is
 `cudaDeviceGetPciBusId` (synthetic PCI string; also `DeviceProperties`
-PCI ids). `device_total_mem` is `cuDeviceTotalMem` (HBM bytes).
+PCI ids). `device_get_by_pci_bus_id` is `cudaDeviceGetByPCIBusId`
+(inverse). `device_total_mem` is `cuDeviceTotalMem` (HBM bytes).
 `func_get_attributes` is `cudaFuncGetAttributes`
 of modeled per-device function attrs (`maxDynamicSharedSizeBytes`,
 `nonPortableClusterSizeAllowed`, `preferredShmemCarveout`, cluster-dim
