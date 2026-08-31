@@ -14964,6 +14964,7 @@ impl Sim {
         let gpu = self.profile.gpu(device)?;
         Ok(DeviceProperties {
             name: self.profile.name.clone(),
+            uuid: synthetic_device_uuid(&self.profile.name, device),
             total_global_mem: gpu.hbm_bytes,
             shared_mem_per_block: gpu.max_shared_mem_per_block,
             shared_mem_per_block_optin: gpu.max_shared_mem_per_block_optin,
@@ -15041,6 +15042,17 @@ impl Sim {
     pub fn device_get_name(&self, device: DeviceId) -> Result<String, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.profile.name.clone())
+    }
+
+    /// `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Query; legal during capture.
+    ///
+    /// Sixteen-octet synthetic UUID for this `(profile.name, device)`. Distinct
+    /// from [`Self::device_get_name`] and [`DeviceId`]. Two [`Sim`]s with the
+    /// same profile agree. Also [`DeviceProperties::uuid`]. Unknown devices
+    /// are Invalid.
+    pub fn device_get_uuid(&self, device: DeviceId) -> Result<[u8; 16], SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(synthetic_device_uuid(&self.profile.name, device))
     }
 
     /// `cuDeviceTotalMem`. Query; legal during capture.
@@ -19992,6 +20004,24 @@ fn remap_nested_graphs(
         });
     }
     Ok(out)
+}
+
+/// Synthetic `cudaUuid_t` for [`Sim::device_get_uuid`].
+///
+/// Tag `GSIM`, FNV-1a of the profile name, and the device ordinal. Not a real
+/// NVIDIA UUID.
+fn synthetic_device_uuid(profile_name: &str, device: DeviceId) -> [u8; 16] {
+    const FNV_OFFSET: u32 = 2_166_136_261;
+    const FNV_PRIME: u32 = 16_777_619;
+    let mut h = FNV_OFFSET;
+    for b in profile_name.as_bytes() {
+        h ^= u32::from(*b);
+        h = h.wrapping_mul(FNV_PRIME);
+    }
+    let [t0, t1, t2, t3] = *b"GSIM";
+    let [h0, h1, h2, h3] = h.to_be_bytes();
+    let [d0, d1] = device.0.to_be_bytes();
+    [t0, t1, t2, t3, h0, h1, h2, h3, 0, 0, 0, 0, 0, 0, d0, d1]
 }
 
 fn live_ok(step: &GraphStep) -> Result<&GraphStep, SimError> {

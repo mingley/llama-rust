@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cuDeviceGetUuid`
+
+`gpu-sim` `device_get_uuid` is `cuDeviceGetUuid` / `cudaDeviceGetUuid`. A
+live device returns a synthetic 16-octet UUID for `(profile.name, device)`.
+Distinct from `device_get_name` and `DeviceId`. Two `Sim`s with the same
+profile agree; GPUs on an 8×H100 profile differ. Also
+`DeviceProperties.uuid`. Query; legal during capture. Unknown is Invalid.
+Not a real NVIDIA UUID. No `cuDeviceGetLuid`. `gpu-profile capture` is
+still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cuGraphNodeGetToolsId`
 
 `gpu-sim` `graph_node_get_tools_id` is `cuGraphNodeGetToolsId`. A live graph

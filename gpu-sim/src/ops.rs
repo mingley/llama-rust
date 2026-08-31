@@ -959,10 +959,15 @@ impl MemHandleType {
 ///
 /// No SM count, clock rate, warp size, or `maxThreadsPerBlock` — those are
 /// not in [`crate::GpuProfile`]. [`Self::name`] is [`crate::HardwareProfile::name`].
+/// [`Self::uuid`] is the synthetic [`crate::Sim::device_get_uuid`] value
+/// (`cudaUuid_t`), not a real NVIDIA board UUID.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceProperties {
     /// Profile name (`example-h100-sxm`, a capture id, …).
     pub name: String,
+    /// Synthetic `cudaUuid_t` ([`crate::Sim::device_get_uuid`]). Not a real
+    /// NVIDIA UUID and not parsed from a capture file.
+    pub uuid: [u8; 16],
     /// [`crate::GpuProfile::hbm_bytes`] (`totalGlobalMem`).
     pub total_global_mem: u64,
     /// [`crate::GpuProfile::max_shared_mem_per_block`].

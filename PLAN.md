@@ -4635,7 +4635,15 @@ model, do not celebrate the sim.
     Destroyed or unknown is Invalid. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-417. [ ] Next numbered PLAN item after 416 is the next `gpu-sim` / Engine /
+417. [x] CUDA `cuDeviceGetUuid` (`device_get_uuid`): synthetic 16-octet UUID
+    for a live device (`cudaDeviceGetUuid`). Distinct from `device_get_name`
+    and `DeviceId`. Two `Sim`s with the same profile agree; GPUs on an 8×H100
+    profile differ. Also `DeviceProperties.uuid`. Query; legal during
+    capture. Unknown is Invalid. Not a real NVIDIA UUID. No
+    `cuDeviceGetLuid`. `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+418. [ ] Next numbered PLAN item after 417 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4651,7 +4659,9 @@ model, do not celebrate the sim.
     Do not invent a second `cudaExecutionCtxGetDevice`. Do not invent a
     second `cudaEventGetFlags`. Do not invent a second `cudaGraphGetId` /
     `cudaGraphExecGetId`. Do not invent a second `cuGraphNodeGetLocalId`.
-    Do not invent a second `cuGraphNodeGetToolsId`.
+    Do not invent a second `cuGraphNodeGetToolsId`. Do not invent a second
+    `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent `cuDeviceGetLuid`
+    (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
     `attn_v.scale` as the writer-tiny. Do not invent a second dense
     `ffn_down.scale` / second `ffn_gate.scale` / second `ffn_up.scale` /

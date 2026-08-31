@@ -368,7 +368,9 @@
 //! [`Sim::device_get_attribute`] is `cudaDeviceGetAttribute` ([`DeviceAttr`]).
 //! [`Sim::device_get_properties`] is `cudaGetDeviceProperties` ([`DeviceProperties`];
 //! modeled caps only — no SM count or clock). [`Sim::device_get_name`] is
-//! `cudaDeviceGetName` (the profile name). [`device_total_mem`](Sim::device_total_mem)
+//! `cudaDeviceGetName` (the profile name). [`device_get_uuid`](Sim::device_get_uuid)
+//! is `cuDeviceGetUuid` / `cudaDeviceGetUuid` (synthetic 16-octet id; also
+//! [`DeviceProperties::uuid`]). [`device_total_mem`](Sim::device_total_mem)
 //! is `cuDeviceTotalMem` (HBM bytes). [`DeviceAttr::CanMapHostMemory`]
 //! / [`DeviceAttr::ManagedMemory`] are always 1 (this VM has mapped host and
 //! UM). [`DeviceAttr::ClusterLaunch`] is `max_blocks_per_cluster > 0`.
@@ -13044,6 +13046,30 @@ mod tests {
         let _g = sim.end_capture().unwrap();
         match sim.device_get_name(DeviceId(9)) {
             Err(SimError::Invalid { .. }) => {}
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_get_uuid_is_stable_and_per_device() {
+        let mut a = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let b = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let u0 = a.device_get_uuid(DeviceId(0)).unwrap();
+        let u1 = a.device_get_uuid(DeviceId(1)).unwrap();
+        assert_ne!(u0, u1);
+        assert_eq!(u0, b.device_get_uuid(DeviceId(0)).unwrap());
+        let [t0, t1, t2, t3, ..] = u0;
+        assert_eq!([t0, t1, t2, t3], *b"GSIM");
+        let name = a.device_get_name(DeviceId(0)).unwrap();
+        assert_ne!(u0.as_slice(), name.as_bytes());
+        assert_eq!(a.device_get_properties(DeviceId(0)).unwrap().uuid, u0);
+        let h = Sim::new(h100());
+        assert_ne!(h.device_get_uuid(DeviceId(0)).unwrap(), u0);
+        a.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        assert_eq!(a.device_get_uuid(DeviceId(0)).unwrap(), u0);
+        let _g = a.end_capture().unwrap();
+        match a.device_get_uuid(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("unknown device"), "{why}"),
             other => panic!("{other:?}"),
         }
     }
