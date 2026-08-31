@@ -4805,7 +4805,15 @@ model, do not celebrate the sim.
     capture. `gpu-profile capture` is still refused. Dual score still has
     no `$/M tokens`.
 
-439. [ ] Next numbered PLAN item after 438 is the next `gpu-sim` / Engine /
+439. [x] `gpu-sim` `va_get_handle_for_address_range` is
+    `cuMemGetHandleForAddressRange`. Always Invalid `"dma-buf not modeled"`
+    (`DeviceAttr::DmaBufSupported` is 0). `MemRangeHandleType::DMA_BUF_FD`
+    only; flags 0 or `DMA_BUF_MAPPING_TYPE_PCIE`. Distinct from `ipc_get`
+    and `create_shareable_pool`. Query; legal during capture. No Engine
+    `--dma-buf`. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+440. [ ] Next numbered PLAN item after 439 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4855,6 +4863,8 @@ model, do not celebrate the sim.
     `--init-device` (same wall as `set_device_flags`). Do not invent
     `cudaSetDevice` (no thread-current device).
     Do not invent a second `cudaDevAttrMaxPitch`.
+    Do not invent a second `cuMemGetHandleForAddressRange`. Do not invent
+    a dma-buf file descriptor. Do not invent Engine `--dma-buf`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

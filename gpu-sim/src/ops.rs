@@ -1012,6 +1012,25 @@ impl MemHandleType {
     pub const POSIX_FILE_DESCRIPTOR: u64 = 1;
 }
 
+/// `CUmemRangeHandleType` for [`crate::Sim::va_get_handle_for_address_range`].
+pub struct MemRangeHandleType;
+
+impl MemRangeHandleType {
+    /// `CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD`.
+    pub const DMA_BUF_FD: u32 = 1;
+}
+
+/// Flags for [`crate::Sim::va_get_handle_for_address_range`].
+pub struct MemRangeHandleFlags;
+
+impl MemRangeHandleFlags {
+    /// CUDA default (`0`).
+    pub const DEFAULT: u32 = 0;
+    /// `CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE`. Still Invalid
+    /// `"dma-buf not modeled"`.
+    pub const DMA_BUF_MAPPING_TYPE_PCIE: u32 = 1;
+}
+
 /// `cudaDeviceProp` fields this VM already models.
 ///
 /// No SM count, clock rate, warp size, or `maxThreadsPerBlock` — those are

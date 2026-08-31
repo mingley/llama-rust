@@ -225,10 +225,18 @@
 //! [`va_get_allocation_properties`](Sim::va_get_allocation_properties) is
 //! `cuMemGetAllocationPropertiesFromHandle` ([`MemAllocationProp`]; pinned
 //! device location; handle types always none; RDMA capable wraps the SKU).
+//! [`va_get_handle_for_address_range`](Sim::va_get_handle_for_address_range) is
+//! `cuMemGetHandleForAddressRange` (always Invalid `"dma-buf not modeled"`;
+//! [`DeviceAttr::DmaBufSupported`] is 0). [`MemRangeHandleType::DMA_BUF_FD`]
+//! only; flags [`MemRangeHandleFlags::DEFAULT`] or
+//! [`DMA_BUF_MAPPING_TYPE_PCIE`](MemRangeHandleFlags::DMA_BUF_MAPPING_TYPE_PCIE).
+//! Distinct from [`ipc_get`](Sim::ipc_get) and
+//! [`create_shareable_pool`](Sim::create_shareable_pool). Query; legal during
+//! capture.
 //! [`Sim::va_get_allocation_granularity`] is
 //! `cuMemGetAllocationGranularity` ([`MemAllocationGranularity::MINIMUM`] /
 //! [`RECOMMENDED`](MemAllocationGranularity::RECOMMENDED) are the same
-//! profile value; `0`/`1` → `1`). Both are queries; legal during capture.
+//! profile value; `0`/`1` → `1`). Query; legal during capture.
 //! [`Sim::va_map`] still Create+Maps in one call.
 //! [`Sim::multicast_create`] / [`multicast_add_device`](Sim::multicast_add_device) /
 //! [`multicast_bind_mem`](Sim::multicast_bind_mem) / [`multicast_bind_addr`](Sim::multicast_bind_addr) /
@@ -1080,7 +1088,8 @@ pub use ops::{
     KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise,
     MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags,
     MemCreateFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr, MemPoolExportFlags,
-    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags, MemSyncDomain,
+    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags, MemRangeHandleType,
+    MemReserveFlags, MemSyncDomain,
     MemSyncDomainMap, MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType,
     MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
     Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes,
@@ -17949,6 +17958,108 @@ mod tests {
             sim.va_get_allocation_properties(h).unwrap().location,
             Place::Device(d)
         );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn va_get_handle_for_address_range_is_dma_buf_not_modeled() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let a = sim.malloc(d, 4096).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::DmaBufSupported)
+                .unwrap(),
+            0
+        );
+        match sim.va_get_handle_for_address_range(
+            a,
+            0,
+            4096,
+            MemRangeHandleType::DMA_BUF_FD,
+            MemRangeHandleFlags::DEFAULT,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("dma-buf not modeled"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.va_get_handle_for_address_range(
+            a,
+            0,
+            4096,
+            MemRangeHandleType::DMA_BUF_FD,
+            MemRangeHandleFlags::DMA_BUF_MAPPING_TYPE_PCIE,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("dma-buf not modeled"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.va_get_handle_for_address_range(a, 0, 4096, 0, 0) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mem range handle type"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.va_get_handle_for_address_range(
+            a,
+            0,
+            4096,
+            MemRangeHandleType::DMA_BUF_FD,
+            2,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("mem range handle flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.va_get_handle_for_address_range(
+            a,
+            0,
+            0,
+            MemRangeHandleType::DMA_BUF_FD,
+            0,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("dma-buf range"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.va_get_handle_for_address_range(
+            a,
+            0,
+            8192,
+            MemRangeHandleType::DMA_BUF_FD,
+            0,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("range past alloc"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        match sim.va_get_handle_for_address_range(
+            AllocId(u64::MAX),
+            0,
+            4096,
+            MemRangeHandleType::DMA_BUF_FD,
+            0,
+        ) {
+            Err(SimError::UnknownAlloc { .. }) => {}
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        match sim.va_get_handle_for_address_range(
+            a,
+            0,
+            4096,
+            MemRangeHandleType::DMA_BUF_FD,
+            0,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("dma-buf not modeled"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
         let _g = sim.end_capture().unwrap();
     }
 

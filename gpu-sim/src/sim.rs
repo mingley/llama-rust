@@ -24,14 +24,15 @@ use crate::ops::{
     KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags,
     MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach,
     MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr,
-    MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags,
-    MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder,
-    MemoryType, MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity,
-    MulticastObjectProp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
-    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
-    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr,
-    StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WriteValueFlags,
+    MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemRangeHandleFlags,
+    MemRangeHandleType, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
+    MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags,
+    MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch,
+    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
+    SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCallbackFlags,
+    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp, WriteValueFlags,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -11570,6 +11571,51 @@ impl Sim {
             handle_types: MemHandleType::NONE,
             location: Place::Device(h.device),
             gpu_direct_rdma_capable: self.profile.gpu_direct_rdma_supported(h.device),
+        })
+    }
+
+    /// `cuMemGetHandleForAddressRange`. Query; legal during capture.
+    ///
+    /// Always Invalid `"dma-buf not modeled"` ([`DeviceAttr::DmaBufSupported`]
+    /// is 0). [`MemRangeHandleType`] must be
+    /// [`MemRangeHandleType::DMA_BUF_FD`]. Flags must be
+    /// [`MemRangeHandleFlags::DEFAULT`] or
+    /// [`MemRangeHandleFlags::DMA_BUF_MAPPING_TYPE_PCIE`]. Unknown type
+    /// `"mem range handle type"`; unknown flags `"mem range handle flags"`.
+    /// Empty `bytes` Invalid `"dma-buf range"`. A range past the allocation
+    /// is `"range past alloc"`. Distinct from [`Self::ipc_get`] and
+    /// [`Self::create_shareable_pool`]. No Engine `--dma-buf`.
+    pub fn va_get_handle_for_address_range(
+        &self,
+        id: AllocId,
+        offset: u64,
+        bytes: u64,
+        handle_type: u32,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        if handle_type != MemRangeHandleType::DMA_BUF_FD {
+            return Err(SimError::Invalid {
+                why: "mem range handle type",
+            });
+        }
+        if flags & !MemRangeHandleFlags::DMA_BUF_MAPPING_TYPE_PCIE != 0 {
+            return Err(SimError::Invalid {
+                why: "mem range handle flags",
+            });
+        }
+        if bytes == 0 {
+            return Err(SimError::Invalid {
+                why: "dma-buf range",
+            });
+        }
+        let a = self.alloc_ref(id)?;
+        if offset.saturating_add(bytes) > a.bytes {
+            return Err(SimError::Invalid {
+                why: "range past alloc",
+            });
+        }
+        Err(SimError::Invalid {
+            why: "dma-buf not modeled",
         })
     }
 
