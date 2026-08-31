@@ -513,7 +513,8 @@ Exact (mechanical invariants agents may rely on):
   `cuGreenCtxWaitEvent` (`green_ctx_record_event` / `green_ctx_wait_event`),
   `cudaExecutionCtxSynchronize` (`green_ctx_synchronize`),
   `cuStreamGetDevResource` (`stream_get_dev_resource`),
-  `cuGreenCtxGetId` (`green_ctx_get_id`),
+    `cuGreenCtxGetId` (`green_ctx_get_id`),
+  `cudaExecutionCtxGetDevice` (`green_ctx_get_device`),
   peer accessibility
 - HBM vs host-pinned residency (`Place::{Host, HostPinned, Device}`,
   `alloc_host_pinned`, `memcpy_pinned_to_device`; pageable
@@ -4598,7 +4599,14 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-412. [ ] Next numbered PLAN item after 411 is the next `gpu-sim` / Engine /
+412. [x] CUDA `cudaExecutionCtxGetDevice` (`green_ctx_get_device`): device of
+    a live green context. Distinct from `green_ctx_get_id`,
+    `stream_get_green_ctx`, and `device_get_dev_resource`. Query; legal
+    during capture. Unknown or destroyed is Invalid. No
+    `cuCtxFromGreenCtx`. No second `--green-ctx`. `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+413. [ ] Next numbered PLAN item after 412 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4611,6 +4619,7 @@ model, do not celebrate the sim.
     `cuGreenCtxRecordEvent` / `WaitEvent`. Do not invent a second
     `cudaExecutionCtxSynchronize`. Do not invent a second
     `cuStreamGetDevResource`. Do not invent a second `cuGreenCtxGetId`.
+    Do not invent a second `cudaExecutionCtxGetDevice`.
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
     `attn_v.scale` as the writer-tiny. Do not invent a second dense
     `ffn_down.scale` / second `ffn_gate.scale` / second `ffn_up.scale` /

@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cudaExecutionCtxGetDevice`
+
+`gpu-sim` `green_ctx_get_device` is `cudaExecutionCtxGetDevice`. A live
+green context returns the device passed to `green_ctx_create`. Distinct
+from `green_ctx_get_id`, `stream_get_green_ctx`, and
+`device_get_dev_resource`. Query; legal during capture. Unknown or
+destroyed is Invalid. No `cuCtxFromGreenCtx`. No second `--green-ctx`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cuGreenCtxGetId`
 
 `gpu-sim` `green_ctx_get_id` is `cuGreenCtxGetId` / `cudaExecutionCtxGetId`.

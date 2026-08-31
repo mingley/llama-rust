@@ -455,6 +455,7 @@ hold every stream bound to a ctx (not a second `--green-ctx`).
 `green_ctx_synchronize` is `cudaExecutionCtxSynchronize` (one ctx; other
 ctxs keep running). `stream_get_dev_resource` is `cuStreamGetDevResource`.
 `green_ctx_get_id` is `cuGreenCtxGetId` (not a second `--green-ctx`).
+`green_ctx_get_device` is `cudaExecutionCtxGetDevice`.
 Default `--expert-sim` keeps
 one compute stream, exclusive compute (`compute_slots=1`), a full chip of
 SMs, and a full-device clock sample.

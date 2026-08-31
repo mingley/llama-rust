@@ -37,11 +37,13 @@
 //! [`green_ctx_wait_event`](Sim::green_ctx_wait_event) /
 //! [`green_ctx_synchronize`](Sim::green_ctx_synchronize) /
 //! [`green_ctx_get_id`](Sim::green_ctx_get_id) /
+//! [`green_ctx_get_device`](Sim::green_ctx_get_device) /
 //! [`stream_get_dev_resource`](Sim::stream_get_dev_resource) are CUDA green contexts
 //! (`cuDeviceGetDevResource` / `cuDevSmResourceSplitByCount` /
 //! `cuDevResourceGenerateDesc` / `cuGreenCtxCreate` / `cuGreenCtxStreamCreate` /
 //! `cuGreenCtxRecordEvent` / `cuGreenCtxWaitEvent` / `cudaExecutionCtxSynchronize` /
-//! `cuGreenCtxGetId` / `cudaExecutionCtxGetId` / `cuStreamGetDevResource`).
+//! `cuGreenCtxGetId` / `cudaExecutionCtxGetId` / `cudaExecutionCtxGetDevice` /
+//! `cuStreamGetDevResource`).
 //! SM resources are ‰ of the chip, not occupancy SM counts. Complementary
 //! green contexts may overlap kernels even when [`GpuProfile::compute_slots`]
 //! is 1. Same-span contexts still share exclusive compute. Capture cannot
@@ -9413,6 +9415,51 @@ mod tests {
         let id2 = sim.green_ctx_get_id(c2).unwrap();
         assert_ne!(id2, id0);
         assert_ne!(id2, id1);
+    }
+
+    #[test]
+    fn green_ctx_get_device_returns_create_device() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let desc = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 0,
+                width: 500,
+            }])
+            .unwrap();
+        let ctx = sim
+            .green_ctx_create(desc, d, GreenCtxFlags::DEFAULT)
+            .unwrap();
+        assert_eq!(sim.green_ctx_get_device(ctx).unwrap(), d);
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.green_ctx_get_device(ctx).unwrap(), d);
+        let _g = sim.end_capture().unwrap();
+        match sim.green_ctx_get_device(GreenCtxId(0)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown green ctx"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.green_ctx_destroy(ctx).unwrap();
+        match sim.green_ctx_get_device(ctx) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown green ctx"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let mut eight = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d1 = DeviceId(1);
+        let desc1 = eight
+            .dev_resource_generate_desc(&[SmResource {
+                start: 0,
+                width: 250,
+            }])
+            .unwrap();
+        let ctx1 = eight
+            .green_ctx_create(desc1, d1, GreenCtxFlags::DEFAULT)
+            .unwrap();
+        assert_eq!(eight.green_ctx_get_device(ctx1).unwrap(), d1);
+        assert_ne!(eight.green_ctx_get_id(ctx1).unwrap(), u64::from(d1.0));
     }
 
     #[test]

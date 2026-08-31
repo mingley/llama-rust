@@ -1403,6 +1403,19 @@ impl Sim {
         Ok(g.cuda_id)
     }
 
+    /// `cudaExecutionCtxGetDevice`. Query; legal during capture.
+    ///
+    /// Returns the device passed to [`Self::green_ctx_create`]. Unknown or
+    /// destroyed contexts are Invalid `"unknown green ctx"`. Distinct from
+    /// [`Self::stream_get_green_ctx`] (stream to ctx) and
+    /// [`Self::green_ctx_get_id`]. This VM does not invent `cuCtxFromGreenCtx`.
+    pub fn green_ctx_get_device(&self, ctx: GreenCtxId) -> Result<DeviceId, SimError> {
+        let g = self.green_ctxs.get(&ctx).ok_or(SimError::Invalid {
+            why: "unknown green ctx",
+        })?;
+        Ok(g.device)
+    }
+
     /// Bind `stream` to `ctx` (`cuGreenCtxStreamCreate` without creating).
     ///
     /// Sets duration permille to the span width. [`StreamId::NULL`] is Invalid.

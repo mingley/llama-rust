@@ -189,6 +189,7 @@ impl fmt::Display for DevResourceDescId {
 /// [`crate::Sim::green_ctx_set_stream`] inherit that SM span (duration and
 /// occupancy). `GreenCtxId(0)` is reserved (unset).
 /// [`crate::Sim::green_ctx_get_id`] is `cuGreenCtxGetId` (not this handle).
+/// [`crate::Sim::green_ctx_get_device`] is `cudaExecutionCtxGetDevice`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct GreenCtxId(pub u32);
 
