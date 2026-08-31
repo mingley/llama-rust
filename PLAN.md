@@ -4249,7 +4249,28 @@ model, do not celebrate the sim.
     Decode identity vs oracle. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-382. [ ] Next numbered PLAN item after 381 is the next `gpu-sim` / Engine /
+382. [x] Official Gemma4 MoE (`architecture=gemma4` with `ffn_gate_inp`):
+    writer-built `tiny-gemma4-moe` plus decode of llama.cpp
+    `src/models/gemma4.cpp` when `ffn_gate_inp` is present. Same
+    `architecture=gemma4` as 381 (not a second arch). Shared dense GeGLU
+    (`ffn_gate` / `ffn_up` / `ffn_down`) after `ffn_norm(attn_out)`, then
+    RMSNorm `ffn_post_norm_1`. Expert input is RMSNorm `ffn_pre_norm_2` of
+    `attn_out`. Custom router operates on `attn_out` (unweighted RMSNorm,
+    scale `1/sqrt(n_embd)`, `ffn_gate_inp.scale`, then `ffn_gate_inp` GEMM),
+    not `ffn_norm` / expert input. `build_moe_ffn` softmax then top-k with
+    `norm_w` clamp `2^-14` and GELU experts (not SILU). Then RMSNorm
+    `ffn_post_norm_2` and add into the shared MLP. Caller still applies
+    `post_ffw_norm` and the residual onto `attn_out`. Writer-tiny keeps
+    dense `tiny-gemma4` unchanged; MoE writes `expert_count=4`,
+    `expert_used_count=2`, `expert_feed_forward_length=n_ff`, separate
+    `ffn_gate_exps` / `ffn_up_exps` / `ffn_down_exps` (fused
+    `ffn_gate_up_exps` is refused with that tensor name). PLE / shared-KV /
+    mixed SWA/global head dims stay refused with named keys. Decode identity
+    vs oracle. ExpertAccess traces plus DirectStore identity.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+383. [ ] Next numbered PLAN item after 382 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
