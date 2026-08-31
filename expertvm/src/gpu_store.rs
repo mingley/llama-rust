@@ -228,6 +228,14 @@ pub struct GpuStoreCfg {
     /// so independent expert GEMMs may Hyper-Q overlap. Decode identity stays
     /// `begin_capture` / `end_capture`. Illegal with [`Self::graph_piecewise`].
     pub graph_build: bool,
+    /// `cudaGraphAddDependencies` chaining on combo parents.
+    ///
+    /// Needs [`Self::graph_build`]. Later `graph_add_child` nodes depend on the
+    /// previous child so sibling GEMMs serialize (empty edges stay independent).
+    /// Does not imply graph-build. Hits stay the same. Decode identity stays
+    /// no edges (Hyper-Q overlap when `compute_slots >= 2`). Store GEMM stays
+    /// per-leaf.
+    pub graph_build_deps: bool,
     /// `cudaStreamBeginCaptureToGraph` combo parents (independent child roots).
     ///
     /// Walker combo parents capture each instantiated leaf into one parent as
@@ -657,6 +665,8 @@ pub struct SimulatedGpuStore {
     graph_set_params: bool,
     graph_clone: bool,
     graph_build: bool,
+    /// [`GpuStoreCfg::graph_build_deps`]: walker combo `graph_add_dependencies` (store GEMM stays per-leaf).
+    graph_build_deps: bool,
     graph_piecewise: bool,
     /// [`GpuStoreCfg::graph_capture_deps`]: walker combo capture-to-graph deps (store GEMM stays per-leaf).
     graph_capture_deps: bool,
@@ -825,7 +835,9 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::graph_enable`] is walker combo `cudaGraphNodeSetEnabled`
     /// (store GEMM stays per-leaf; illegal with device-launch);
     /// [`GpuStoreCfg::graph_capture_deps`] chains piecewise combo
-    /// fragments (needs piecewise; store GEMM stays per-leaf)),
+    /// fragments (needs piecewise; store GEMM stays per-leaf);
+    /// [`GpuStoreCfg::graph_build_deps`] chains graph-build combo children
+    /// (needs graph-build; store GEMM stays per-leaf)),
     /// disable-timing copy events.
     /// [`GpuStoreCfg::cooperative`] launches GEMMs with
     /// `cudaLaunchCooperativeKernel` (exclusive compute).
@@ -961,6 +973,9 @@ impl SimulatedGpuStore {
         )?;
         if cfg.graph_build && cfg.graph_piecewise {
             return Err(Error::Store("choose one of graph-build, graph-piecewise"));
+        }
+        if cfg.graph_build_deps && !cfg.graph_build {
+            return Err(Error::Store("graph-build-deps needs graph-build"));
         }
         if cfg.graph_capture_deps && !cfg.graph_piecewise {
             return Err(Error::Store("graph-capture-deps needs graph-piecewise"));
@@ -1210,6 +1225,7 @@ impl SimulatedGpuStore {
             graph_set_params: cfg.graph_set_params,
             graph_clone: cfg.graph_clone,
             graph_build: cfg.graph_build,
+            graph_build_deps: cfg.graph_build_deps,
             graph_piecewise: cfg.graph_piecewise,
             graph_capture_deps: cfg.graph_capture_deps,
             leaf,
@@ -1414,6 +1430,12 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn graph_capture_deps(&self) -> bool {
         self.graph_capture_deps
+    }
+
+    /// Whether walker combo `graph_add_dependencies` was requested (store GEMM stays per-leaf).
+    #[must_use]
+    pub fn graph_build_deps(&self) -> bool {
+        self.graph_build_deps
     }
 
     /// Whether this store set `cudaFuncAttributeClusterDimMustBeSet`.
@@ -2665,6 +2687,8 @@ impl SimulatedGpuStore {
     fn build_gemm_graph(&mut self, device: DeviceId, id: AllocId) -> Result<GraphId, Error> {
         let flags = self.gemm_flags();
         let g = self.sim.create_graph(device, self.compute)?;
+        // Store GEMM is per-leaf; combo `graph_add_dependencies` stay walker-only
+        // even when [`GpuStoreCfg::graph_build_deps`] is set.
         add_leaf_gemm(&mut self.sim, g, id, self.leaf, flags)?;
         Ok(g)
     }

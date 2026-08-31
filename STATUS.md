@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaGraphAddDependencies` combo edges
+
+`GpuStoreCfg::graph_build_deps` / `SimCfg::graph_build_deps` call
+`cudaGraphAddDependencies` on `--graph-build` combo parents so later
+`graph_add_child` nodes chain to the previous child and sibling expert
+GEMMs serialize. Needs `--graph-build`. Does not imply graph-build.
+Hits/misses stay the same. Distinct from `--graph-build` (no edges vs
+chained) and `--graph-capture-deps` (`cudaStreamBeginCaptureToGraph`
+deps). `--graph-build-deps` is off by default (decode identity: no
+edges). Store GEMM stays per-leaf. infer-bench has no `--graph-build`,
+so it does not get `--graph-build-deps`. `gpu-profile capture` is still
+refused.
+
 ## Shipped 2026-08-31 — `cudaStreamBeginCaptureToGraph` deps
 
 `GpuStoreCfg::graph_capture_deps` / `SimCfg::graph_capture_deps` pass a

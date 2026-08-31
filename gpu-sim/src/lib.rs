@@ -816,7 +816,8 @@
 //! AutoFreeOnLaunch rules as captured `cudaMallocAsync`).
 //! [`Sim::graph_add_dependencies`] is `cudaGraphAddDependencies` (node indices;
 //! independent nodes may Hyper-Q overlap at launch; capture records same-stream
-//! edges). [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n) /
+//! edges). `expertvm --graph-build-deps` chains `--graph-build` combo children.
+//! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n) /
 //! [`graph_remove_dependencies_n`](Sim::graph_remove_dependencies_n) are the
 //! same APIs with `numDependencies` from/to pairs (all-or-nothing). [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
 //! `cudaGraphRemoveDependencies` (illegal on an exec and during capture).

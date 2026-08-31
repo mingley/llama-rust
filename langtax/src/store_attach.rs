@@ -35,6 +35,8 @@ pub(crate) struct GpuCli {
     pub graph_set_params: bool,
     pub graph_clone: bool,
     pub graph_build: bool,
+    /// `cudaGraphAddDependencies` combo edges (`GpuStoreCfg::graph_build_deps`). Needs graph-build.
+    pub graph_build_deps: bool,
     pub graph_piecewise: bool,
     /// `cudaStreamBeginCaptureToGraph` deps (`GpuStoreCfg::graph_capture_deps`). Needs piecewise.
     pub graph_capture_deps: bool,
@@ -230,6 +232,7 @@ impl GpuCli {
             "--graph-set-params" => &mut self.graph_set_params,
             "--graph-clone" => &mut self.graph_clone,
             "--graph-build" => &mut self.graph_build,
+            "--graph-build-deps" => &mut self.graph_build_deps,
             "--graph-piecewise" => &mut self.graph_piecewise,
             "--graph-capture-deps" => &mut self.graph_capture_deps,
             "--graph-enable" => &mut self.graph_enable,
@@ -661,6 +664,14 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--graph-build-deps` needs `--graph-build`.
+    pub(crate) fn check_graph_build_deps(self) -> Result<(), String> {
+        if self.graph_build_deps && !self.graph_build {
+            return Err("--graph-build-deps needs --graph-build".into());
+        }
+        Ok(())
+    }
+
     /// First CUDA knob that needs `--expert-sim`, if any.
     #[must_use]
     pub(crate) fn sim_flag(self) -> Option<&'static str> {
@@ -670,6 +681,7 @@ impl GpuCli {
             (self.graph_set_params, "--graph-set-params"),
             (self.graph_clone, "--graph-clone"),
             (self.graph_build, "--graph-build"),
+            (self.graph_build_deps, "--graph-build-deps"),
             (self.graph_piecewise, "--graph-piecewise"),
             (self.graph_capture_deps, "--graph-capture-deps"),
             (self.graph_enable, "--graph-enable"),
@@ -1063,6 +1075,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         graph_set_params: gpu.graph_set_params,
         graph_clone: gpu.graph_clone,
         graph_build: gpu.graph_build,
+        graph_build_deps: gpu.graph_build_deps,
         graph_piecewise: gpu.graph_piecewise,
         graph_capture_deps: gpu.graph_capture_deps,
         graph_enable: gpu.graph_enable,

@@ -3548,6 +3548,41 @@ fn cuda_graphs_graph_build_independent_children_overlap() {
 }
 
 #[test]
+fn cuda_graphs_graph_build_deps_serializes_combo_children() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000\nhbm_bps=1000000000000\ngraph_instantiate_ns=1\ngraph_upload_ns=1\ngraph_launch_ns=1\nlaunch_overhead_ns=1\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let run = |graph_build_deps: bool| {
+        sim_replay_cfg(
+            &t,
+            p.clone(),
+            SimCfg {
+                cuda_graphs: true,
+                graph_build: true,
+                graph_build_deps,
+                compute_slots: 2,
+                ..SimCfg::lru(2, 4096, 0)
+            },
+        )
+        .expect("replay")
+    };
+    let bld = run(false);
+    let chained = run(true);
+    assert_eq!(bld.hits, chained.hits);
+    assert_eq!(bld.misses, chained.misses);
+    assert!(
+        chained.sim_ns > bld.sim_ns,
+        "graph-build-deps must serialize combo children; chained={} build={}",
+        chained.sim_ns,
+        bld.sim_ns
+    );
+}
+
+#[test]
 fn cuda_graphs_graph_piecewise_independent_children_overlap() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1])],
@@ -3634,6 +3669,73 @@ fn sim_cfg_graph_build_and_piecewise_conflict() {
             .contains("choose one of graph-build, graph-piecewise"),
         "{err}"
     );
+}
+
+#[test]
+fn sim_replay_graph_build_deps_needs_graph_build() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    match sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            graph_build_deps: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("graph-build-deps without graph-build must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("graph-build-deps needs graph-build"),
+            "{err}"
+        ),
+    }
+    match sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            cuda_graphs: true,
+            graph_build_deps: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("graph-build-deps with cuda-graphs still needs graph-build"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("graph-build-deps needs graph-build"),
+            "{err}"
+        ),
+    }
+    match sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            cuda_graphs: true,
+            graph_piecewise: true,
+            graph_build_deps: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("graph-build-deps with piecewise still needs graph-build"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("graph-build-deps needs graph-build"),
+            "{err}"
+        ),
+    }
+    let _ok = sim_replay_cfg(
+        &t,
+        profile,
+        SimCfg {
+            cuda_graphs: true,
+            graph_build: true,
+            graph_build_deps: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    )
+    .expect("graph-build arms build-deps");
 }
 
 #[test]
@@ -3738,6 +3840,47 @@ fn simulated_gpu_store_graph_build_launches() {
     assert!(n_build > 0);
     assert_eq!(n_build, n_cap);
     assert_eq!(h0, h1);
+}
+
+#[test]
+fn simulated_gpu_store_graph_build_deps_needs_graph_build() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile.clone(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_build_deps: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("graph-build-deps without graph-build must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("graph-build-deps needs graph-build"),
+            "{err}"
+        ),
+    }
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_build: true,
+            graph_build_deps: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("graph-build arms build-deps");
+    assert!(gpu.graph_build_deps());
+    let _s = gpu.score().expect("score");
 }
 
 #[test]

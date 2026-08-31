@@ -28,7 +28,7 @@
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `mempool_trim`, `mempool_no_reuse`, `mempool_max`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `memcpy_during`, `memcpy_any`, `SetAccessedBy`, legacy NULL, stream priority,
-//! graph update/clone/set-params/piecewise/capture-deps/enable, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
+//! graph update/clone/set-params/build/build-deps/piecewise/capture-deps/enable, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
 //! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `l2_ratio`, `l2_streaming`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `mem_sync_launch`, `mem_sync_launch_map`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
@@ -77,7 +77,9 @@
 //! `--graph-piecewise` is `cudaStreamBeginCaptureToGraph` combo parents
 //! (independent child roots; store GEMM stays per-leaf). `--graph-capture-deps`
 //! chains those fragments (`numDependencies > 0`; needs `--graph-piecewise`;
-//! sibling GEMMs serialize; store GEMM stays per-leaf).
+//! sibling GEMMs serialize; store GEMM stays per-leaf). `--graph-build-deps`
+//! is `cudaGraphAddDependencies` on `--graph-build` combo parents (needs
+//! `--graph-build`; sibling GEMMs serialize; store GEMM stays per-leaf).
 //! `--cluster N` is `cudaLaunchAttributeClusterDimension` on grouped expert
 //! GEMMs: the launch occupies `min(N, compute_slots)` Hyper-Q slots (Hopper
 //! portable max 8; legal with `--pdl` and `--cooperative`). `--preferred-cluster N`
@@ -4441,6 +4443,39 @@ mod tests {
             piece.4, deps.4,
             "graph-capture-deps must keep greedy identity"
         );
+    }
+
+    #[test]
+    fn engine_gpu_graph_build_deps_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse(
+            "gpus=1\nfp16_flops=1000000\ngraph_instantiate_ns=1\ngraph_upload_ns=1\ngraph_launch_ns=1\nlaunch_overhead_ns=1\ncopy_engines=2\n",
+        )
+        .expect("graph profile");
+        let bld = mixed_gpu_decode_itl_at(
+            bytes.clone(),
+            false,
+            None,
+            GpuStoreCfg {
+                graph_build: true,
+                ..GpuStoreCfg::default()
+            },
+            profile.clone(),
+        );
+        let deps = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                graph_build: true,
+                graph_build_deps: true,
+                ..GpuStoreCfg::default()
+            },
+            profile,
+        );
+        assert_eq!(bld.2, 4);
+        assert_eq!(deps.2, 4);
+        assert_eq!(bld.4, deps.4, "graph-build-deps must keep greedy identity");
     }
 
     #[test]

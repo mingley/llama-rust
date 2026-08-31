@@ -467,7 +467,8 @@ graph produced by `clone_graph` of that original).
 evict and updates the next miss instead of instantiate. `--graph-clone`
 copies the capture (`cudaGraphClone`) before instantiate. `--graph-build` is
 `cudaGraphCreate` / `cudaGraphAdd*` (no idle stream; combo children may
-Hyper-Q overlap unless `graph_add_dependencies` chains them). `--graph-piecewise`
+Hyper-Q overlap unless `graph_add_dependencies` chains them).
+`expertvm --graph-build-deps` adds those edges. `--graph-piecewise`
 is `cudaStreamBeginCaptureToGraph` combo parents (independent child roots).
 `expertvm --graph-capture-deps` chains those fragments (`numDependencies > 0`).
 `--graph-mem` is in-graph

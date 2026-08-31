@@ -797,6 +797,14 @@ pub struct SimCfg {
     /// identity stays stream capture. [`crate::GpuStoreCfg::graph_build`] is
     /// the store path. Illegal with [`Self::graph_piecewise`].
     pub graph_build: bool,
+    /// `cudaGraphAddDependencies` chaining on combo parents.
+    ///
+    /// Needs [`Self::graph_build`]. Later `graph_add_child` nodes depend on the
+    /// previous child so sibling expert GEMMs serialize. Does not imply
+    /// graph-build. Hits stay the same. Decode identity stays no edges.
+    /// [`crate::GpuStoreCfg::graph_build_deps`] is the store CLI field (store
+    /// GEMM stays per-leaf).
+    pub graph_build_deps: bool,
     /// `cudaStreamBeginCaptureToGraph` combo parents (independent child roots).
     ///
     /// Each instantiated leaf is captured into one parent as an extra root
@@ -1209,6 +1217,7 @@ impl SimCfg {
             graph_set_params: false,
             graph_clone: false,
             graph_build: false,
+            graph_build_deps: false,
             graph_piecewise: false,
             graph_capture_deps: false,
             graph_enable: false,
@@ -1298,6 +1307,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     )?;
     if cfg.graph_build && cfg.graph_piecewise {
         return Err(Error::Store("choose one of graph-build, graph-piecewise"));
+    }
+    if cfg.graph_build_deps && !cfg.graph_build {
+        return Err(Error::Store("graph-build-deps needs graph-build"));
     }
     if cfg.graph_capture_deps && !cfg.graph_piecewise {
         return Err(Error::Store("graph-capture-deps needs graph-piecewise"));
@@ -1544,6 +1556,7 @@ pub fn sim_replay_cfg(
         .with_mem_sync_launch(cfg.mem_sync_launch)
         .with_mem_sync_launch_map(cfg.mem_sync_launch_map)
         .with_set_params(cfg.graph_set_params)
+        .with_build_deps(cfg.graph_build_deps)
         .with_piecewise(cfg.graph_piecewise)
         .with_capture_deps(cfg.graph_capture_deps)
         .with_enable(cfg.graph_enable);
@@ -2050,6 +2063,7 @@ pub(crate) struct GraphBank {
     update: bool,
     clone: bool,
     build: bool,
+    build_deps: bool,
     piecewise: bool,
     capture_deps: bool,
     mem: LeafMem,
@@ -2092,6 +2106,7 @@ impl GraphBank {
             update,
             clone,
             build,
+            build_deps: false,
             piecewise: false,
             capture_deps: false,
             mem,
@@ -2281,6 +2296,11 @@ impl GraphBank {
 
     pub(crate) fn with_piecewise(mut self, yes: bool) -> Self {
         self.piecewise = yes;
+        self
+    }
+
+    pub(crate) fn with_build_deps(mut self, yes: bool) -> Self {
+        self.build_deps = yes;
         self
     }
 
@@ -3386,8 +3406,13 @@ fn build_expert_graph(
         return Ok(leaves.first().copied());
     }
     let parent = sim.create_graph(d, stream)?;
-    for g in leaves {
-        sim.graph_add_child(parent, g)?;
+    for g in &leaves {
+        sim.graph_add_child(parent, *g)?;
+    }
+    if graphs.build_deps {
+        for i in 1..leaves.len() {
+            sim.graph_add_dependencies(parent, i - 1, i)?;
+        }
     }
     Ok(Some(graphs.bind(sim, origin, ids.to_vec(), parent)?))
 }
