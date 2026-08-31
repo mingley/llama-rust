@@ -15248,11 +15248,17 @@ mod tests {
         assert!(g.tensor("blk.0.post_norm.weight").is_some());
         assert_eq!(
             g.tensor("per_layer_token_embd.weight").unwrap().shape,
-            &[TINY_GEMMA4_N_EMBD_PER_LAYER, TINY_N_VOCAB]
+            &[
+                u64::try_from(TINY_GEMMA4_N_EMBD_PER_LAYER).unwrap(),
+                u64::try_from(TINY_N_VOCAB).unwrap()
+            ]
         );
         assert_eq!(
             g.tensor("per_layer_model_proj.weight").unwrap().shape,
-            &[TINY_N_EMBD, TINY_GEMMA4_N_EMBD_PER_LAYER]
+            &[
+                u64::try_from(TINY_N_EMBD).unwrap(),
+                u64::try_from(TINY_GEMMA4_N_EMBD_PER_LAYER).unwrap()
+            ]
         );
         let model = Llama::from_gguf(g.clone()).expect("model");
         assert!(model.gemma4);
