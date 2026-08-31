@@ -486,6 +486,9 @@
 //! [`MaxSharedMemoryPerBlock`](DeviceAttr::MaxSharedMemoryPerBlock).
 //! [`DeviceAttr::TotalConstantMemory`] is always 0 (`__constant__` memory is
 //! not modeled). Distinct from [`TotalGlobalMem`](DeviceAttr::TotalGlobalMem).
+//! [`DeviceAttr::TextureAlignment`] is always 0 (CUDA arrays / textures are
+//! not modeled). Distinct from
+//! [`SparseCudaArraySupported`](DeviceAttr::SparseCudaArraySupported).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -12908,6 +12911,32 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::TotalConstantMemory)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_texture_alignment_is_zero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.texture_alignment, 0);
+        assert!(!hp.sparse_cuda_array_supported);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TextureAlignment)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::SparseCudaArraySupported)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TextureAlignment)
                 .unwrap(),
             0
         );

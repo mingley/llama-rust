@@ -14999,6 +14999,7 @@ impl Sim {
             | DeviceAttr::EccEnabled
             | DeviceAttr::ReservedSharedMemoryPerBlock
             | DeviceAttr::TotalConstantMemory
+            | DeviceAttr::TextureAlignment
             | DeviceAttr::HandleTypeWin32HandleSupported
             | DeviceAttr::HandleTypeWin32KmtHandleSupported
             | DeviceAttr::HandleTypeFabricSupported
@@ -15045,6 +15046,7 @@ impl Sim {
             pci_device_id: synthetic_pci_ids(device).2,
             total_global_mem: gpu.hbm_bytes,
             total_constant_memory: 0,
+            texture_alignment: 0,
             shared_mem_per_block: gpu.max_shared_mem_per_block,
             shared_mem_per_block_optin: gpu.max_shared_mem_per_block_optin,
             reserved_shared_mem_per_block: 0,

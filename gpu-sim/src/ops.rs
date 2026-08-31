@@ -818,6 +818,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrTotalConstantMemory` (always 0; `__constant__` memory is
     /// not modeled). Distinct from [`Self::TotalGlobalMem`].
     TotalConstantMemory,
+    /// `cudaDevAttrTextureAlignment` (always 0; CUDA arrays / textures are
+    /// not modeled). Distinct from [`Self::SparseCudaArraySupported`].
+    TextureAlignment,
     /// `cudaDevAttrAsyncEngineCount` ([`crate::GpuProfile::copy_engines`]).
     AsyncEngineCount,
     /// `cudaDevAttrClusterLaunch` (`max_blocks_per_cluster > 0`).
@@ -1014,6 +1017,10 @@ pub struct DeviceProperties {
     /// Always 0; `__constant__` memory is not modeled. Distinct from
     /// [`Self::total_global_mem`].
     pub total_constant_memory: u64,
+    /// `cudaDevAttrTextureAlignment` ([`DeviceAttr::TextureAlignment`]). Always
+    /// 0; CUDA arrays / textures are not modeled. Distinct from
+    /// [`Self::sparse_cuda_array_supported`].
+    pub texture_alignment: u32,
     /// [`crate::GpuProfile::max_shared_mem_per_block`].
     pub shared_mem_per_block: u32,
     /// [`crate::GpuProfile::max_shared_mem_per_block_optin`].
