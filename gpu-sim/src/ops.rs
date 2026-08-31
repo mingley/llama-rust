@@ -815,6 +815,9 @@ pub enum DeviceAttr {
     ManagedMemory,
     /// `cudaDevAttrTotalGlobalMem` ([`crate::GpuProfile::hbm_bytes`]).
     TotalGlobalMem,
+    /// `cudaDevAttrTotalConstantMemory` (always 0; `__constant__` memory is
+    /// not modeled). Distinct from [`Self::TotalGlobalMem`].
+    TotalConstantMemory,
     /// `cudaDevAttrAsyncEngineCount` ([`crate::GpuProfile::copy_engines`]).
     AsyncEngineCount,
     /// `cudaDevAttrClusterLaunch` (`max_blocks_per_cluster > 0`).
@@ -1007,6 +1010,10 @@ pub struct DeviceProperties {
     pub pci_device_id: u32,
     /// [`crate::GpuProfile::hbm_bytes`] (`totalGlobalMem`).
     pub total_global_mem: u64,
+    /// `cudaDevAttrTotalConstantMemory` ([`DeviceAttr::TotalConstantMemory`]).
+    /// Always 0; `__constant__` memory is not modeled. Distinct from
+    /// [`Self::total_global_mem`].
+    pub total_constant_memory: u64,
     /// [`crate::GpuProfile::max_shared_mem_per_block`].
     pub shared_mem_per_block: u32,
     /// [`crate::GpuProfile::max_shared_mem_per_block_optin`].

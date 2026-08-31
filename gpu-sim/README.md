@@ -716,6 +716,8 @@ modeled; distinct from `KernelExecTimeout`).
 `EccEnabled` is always 0 (ECC is not modeled; distinct from `TccDriver`).
 `ReservedSharedMemoryPerBlock` is always 0 (driver-reserved shared memory
 is not modeled; distinct from `MaxSharedMemoryPerBlock`).
+`TotalConstantMemory` is always 0 (`__constant__` memory is not modeled;
+distinct from `TotalGlobalMem`).
 `StreamPrioritiesSupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields

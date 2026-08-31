@@ -484,6 +484,8 @@
 //! [`DeviceAttr::ReservedSharedMemoryPerBlock`] is always 0 (driver-reserved
 //! shared memory is not modeled). Distinct from
 //! [`MaxSharedMemoryPerBlock`](DeviceAttr::MaxSharedMemoryPerBlock).
+//! [`DeviceAttr::TotalConstantMemory`] is always 0 (`__constant__` memory is
+//! not modeled). Distinct from [`TotalGlobalMem`](DeviceAttr::TotalGlobalMem).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -12880,6 +12882,32 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::ReservedSharedMemoryPerBlock)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_total_constant_memory_is_zero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.total_constant_memory, 0);
+        assert!(hp.total_global_mem > 0);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TotalConstantMemory)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TotalGlobalMem)
+                .unwrap(),
+            hp.total_global_mem
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TotalConstantMemory)
                 .unwrap(),
             0
         );
