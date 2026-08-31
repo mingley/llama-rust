@@ -4798,7 +4798,14 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-438. [ ] Next numbered PLAN item after 437 is the next `gpu-sim` / Engine /
+438. [x] `gpu-sim` `DeviceAttr::MaxPitch` is `DeviceAttr::MAX_PITCH`
+    (`i32::MAX`). This VM does not cap 2D memcpy / `cudaMallocPitch` pitch.
+    Distinct from `TexturePitchAlignment` (always 0; textures are not
+    modeled). Also `DeviceProperties.mem_pitch`. Query; legal during
+    capture. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+439. [ ] Next numbered PLAN item after 438 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4847,6 +4854,7 @@ model, do not celebrate the sim.
     Do not invent a second `cudaInitDevice`. Do not invent Engine
     `--init-device` (same wall as `set_device_flags`). Do not invent
     `cudaSetDevice` (no thread-current device).
+    Do not invent a second `cudaDevAttrMaxPitch`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

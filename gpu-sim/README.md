@@ -732,6 +732,8 @@ from `TextureAlignment`).
 distinct from `TextureAlignment` and from `MemcpyOp` 2D pitches).
 `MaxTexture1DWidth` is always 0 (CUDA arrays / textures are not modeled;
 distinct from `TextureAlignment`).
+`MaxPitch` is `DeviceAttr::MAX_PITCH` (`i32::MAX`; this VM does not cap
+2D memcpy / `cudaMallocPitch` pitch; distinct from `TexturePitchAlignment`).
 `DeviceP2pAttr::OnlyPartialNativeAtomicSupported` is always 0 (P2P native
 atomics are not modeled; distinct from `NativeAtomicSupported` and from
 `OnlyPartialHostNativeAtomicSupported`). This VM does not invent

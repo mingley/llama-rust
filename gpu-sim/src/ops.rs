@@ -831,6 +831,10 @@ pub enum DeviceAttr {
     /// `cudaDevAttrMaxTexture1DWidth` (always 0; CUDA arrays / textures are
     /// not modeled). Distinct from [`Self::TextureAlignment`].
     MaxTexture1DWidth,
+    /// `cudaDevAttrMaxPitch` ([`Self::MAX_PITCH`]; this VM does not cap 2D
+    /// memcpy / `cudaMallocPitch` pitch). Distinct from
+    /// [`Self::TexturePitchAlignment`] (always 0; textures are not modeled).
+    MaxPitch,
     /// `cudaDevAttrAsyncEngineCount` ([`crate::GpuProfile::copy_engines`]).
     AsyncEngineCount,
     /// `cudaDevAttrClusterLaunch` (`max_blocks_per_cluster > 0`).
@@ -989,6 +993,14 @@ pub enum DeviceAttr {
     PciDeviceId,
 }
 
+impl DeviceAttr {
+    /// `cudaDevAttrMaxPitch` when this VM does not cap 2D memcpy pitch.
+    ///
+    /// CUDA device attributes are `int`; unlimited is `i32::MAX`. Distinct
+    /// from [`DeviceAttr::TexturePitchAlignment`] (always 0).
+    pub const MAX_PITCH: u64 = 2_147_483_647;
+}
+
 /// `cudaMemAllocationHandleType` bits for
 /// [`DeviceAttr::MemoryPoolSupportedHandleTypes`].
 pub struct MemHandleType;
@@ -1044,6 +1056,10 @@ pub struct DeviceProperties {
     /// Always 0; CUDA arrays / textures are not modeled. Distinct from
     /// [`Self::texture_alignment`].
     pub max_texture_1d_width: u32,
+    /// `cudaDevAttrMaxPitch` ([`DeviceAttr::MaxPitch`] / `memPitch`).
+    /// [`DeviceAttr::MAX_PITCH`]: this VM does not cap 2D memcpy /
+    /// `cudaMallocPitch` pitch. Distinct from [`Self::texture_pitch_alignment`].
+    pub mem_pitch: u64,
     /// [`crate::GpuProfile::max_shared_mem_per_block`].
     pub shared_mem_per_block: u32,
     /// [`crate::GpuProfile::max_shared_mem_per_block_optin`].

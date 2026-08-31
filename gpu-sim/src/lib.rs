@@ -503,6 +503,9 @@
 //! and from [`MemcpyOp`] 2D pitches (which this VM does model).
 //! [`DeviceAttr::MaxTexture1DWidth`] is always 0 (CUDA arrays / textures are
 //! not modeled). Distinct from [`TextureAlignment`](DeviceAttr::TextureAlignment).
+//! [`DeviceAttr::MaxPitch`] is [`DeviceAttr::MAX_PITCH`] (this VM does not cap
+//! 2D memcpy / `cudaMallocPitch` pitch). Distinct from
+//! [`TexturePitchAlignment`](DeviceAttr::TexturePitchAlignment).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -13096,6 +13099,39 @@ mod tests {
             0
         );
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_max_pitch_is_uncapped() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.mem_pitch, DeviceAttr::MAX_PITCH);
+        assert_eq!(hp.texture_pitch_alignment, 0);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxPitch).unwrap(),
+            DeviceAttr::MAX_PITCH
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TexturePitchAlignment)
+                .unwrap(),
+            0
+        );
+        let (_a, pitch) = sim.malloc_pitch(d, 256, 8).unwrap();
+        assert_eq!(pitch, 512);
+        assert!(pitch < DeviceAttr::MAX_PITCH);
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxPitch).unwrap(),
+            DeviceAttr::MAX_PITCH
+        );
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_attribute(DeviceId(99), DeviceAttr::MaxPitch) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

@@ -15058,6 +15058,7 @@ impl Sim {
             | DeviceAttr::HostNumaMultinodeIpcSupported
             | DeviceAttr::NumaConfig
             | DeviceAttr::OnlyPartialHostNativeAtomicSupported => 0,
+            DeviceAttr::MaxPitch => DeviceAttr::MAX_PITCH,
             DeviceAttr::StreamPrioritiesSupported
             | DeviceAttr::UnifiedAddressing
             | DeviceAttr::CanUse64BitStreamMemOps
@@ -15089,6 +15090,7 @@ impl Sim {
             surface_alignment: 0,
             texture_pitch_alignment: 0,
             max_texture_1d_width: 0,
+            mem_pitch: DeviceAttr::MAX_PITCH,
             shared_mem_per_block: gpu.max_shared_mem_per_block,
             shared_mem_per_block_optin: gpu.max_shared_mem_per_block_optin,
             reserved_shared_mem_per_block: 0,
