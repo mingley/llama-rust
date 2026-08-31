@@ -4728,7 +4728,14 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-429. [ ] Next numbered PLAN item after 428 is the next `gpu-sim` / Engine /
+429. [x] CUDA `cudaDevAttrReservedSharedMemoryPerBlock`
+    (`DeviceAttr::ReservedSharedMemoryPerBlock`): always 0. Driver-reserved
+    shared memory is not modeled. Distinct from `MaxSharedMemoryPerBlock`.
+    Also `DeviceProperties.reserved_shared_mem_per_block`. Query; legal
+    during capture. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+430. [ ] Next numbered PLAN item after 429 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4761,6 +4768,7 @@ model, do not celebrate the sim.
     Do not invent a second `cudaDeviceSetCacheConfig` / `GetCacheConfig` /
     `cudaFuncSetCacheConfig`. Do not invent Engine `--cache-config`
     (stored-only; L1 vs Shared is not mechanically distinct).
+    Do not invent a second `cudaDevAttrReservedSharedMemoryPerBlock`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

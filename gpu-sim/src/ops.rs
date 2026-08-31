@@ -780,6 +780,10 @@ pub enum DeviceAttr {
     MaxSharedMemoryPerBlock,
     /// `cudaDevAttrMaxSharedMemoryPerBlockOptin`.
     MaxSharedMemoryPerBlockOptin,
+    /// `cudaDevAttrReservedSharedMemoryPerBlock` (always 0; driver-reserved
+    /// shared memory is not modeled). Distinct from
+    /// [`Self::MaxSharedMemoryPerBlock`].
+    ReservedSharedMemoryPerBlock,
     /// `cudaDevAttrL2CacheSize`.
     L2CacheSize,
     /// `cudaDevAttrMaxPersistingL2CacheSize`.
@@ -1007,6 +1011,10 @@ pub struct DeviceProperties {
     pub shared_mem_per_block: u32,
     /// [`crate::GpuProfile::max_shared_mem_per_block_optin`].
     pub shared_mem_per_block_optin: u32,
+    /// `cudaDevAttrReservedSharedMemoryPerBlock`
+    /// ([`DeviceAttr::ReservedSharedMemoryPerBlock`]). Always 0; driver-reserved
+    /// shared memory is not modeled. Distinct from [`Self::shared_mem_per_block`].
+    pub reserved_shared_mem_per_block: u32,
     /// [`crate::GpuProfile::l2_bytes`].
     pub l2_cache_size: u64,
     /// `accessPolicyMaxWindowSize` ([`DeviceAttr::MaxAccessPolicyWindowSize`]).

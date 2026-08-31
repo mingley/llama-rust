@@ -14997,6 +14997,7 @@ impl Sim {
             | DeviceAttr::LocalL1CacheSupported
             | DeviceAttr::ComputePreemptionSupported
             | DeviceAttr::EccEnabled
+            | DeviceAttr::ReservedSharedMemoryPerBlock
             | DeviceAttr::HandleTypeWin32HandleSupported
             | DeviceAttr::HandleTypeWin32KmtHandleSupported
             | DeviceAttr::HandleTypeFabricSupported
@@ -15044,6 +15045,7 @@ impl Sim {
             total_global_mem: gpu.hbm_bytes,
             shared_mem_per_block: gpu.max_shared_mem_per_block,
             shared_mem_per_block_optin: gpu.max_shared_mem_per_block_optin,
+            reserved_shared_mem_per_block: 0,
             l2_cache_size: gpu.l2_bytes,
             access_policy_max_window_size: gpu.l2_bytes,
             global_l1_cache_supported: false,

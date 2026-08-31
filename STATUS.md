@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cudaDevAttrReservedSharedMemoryPerBlock`
+
+`gpu-sim` `DeviceAttr::ReservedSharedMemoryPerBlock` is always 0.
+Driver-reserved shared memory is not modeled. Distinct from
+`MaxSharedMemoryPerBlock` (profile bytes). Also
+`DeviceProperties.reserved_shared_mem_per_block`. Query; legal during
+capture. `gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cudaDeviceSetCacheConfig`
 
 `gpu-sim` `set_cache_config` / `get_cache_config` are

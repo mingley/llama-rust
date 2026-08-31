@@ -481,6 +481,9 @@
 //! [`KernelExecTimeout`](DeviceAttr::KernelExecTimeout).
 //! [`DeviceAttr::EccEnabled`] is always 0 (ECC is not modeled). Distinct from
 //! [`TccDriver`](DeviceAttr::TccDriver).
+//! [`DeviceAttr::ReservedSharedMemoryPerBlock`] is always 0 (driver-reserved
+//! shared memory is not modeled). Distinct from
+//! [`MaxSharedMemoryPerBlock`](DeviceAttr::MaxSharedMemoryPerBlock).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -12852,6 +12855,32 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::EccEnabled).unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_reserved_shared_memory_is_zero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.reserved_shared_mem_per_block, 0);
+        assert!(hp.shared_mem_per_block > 0);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::ReservedSharedMemoryPerBlock)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxSharedMemoryPerBlock)
+                .unwrap(),
+            u64::from(hp.shared_mem_per_block)
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::ReservedSharedMemoryPerBlock)
+                .unwrap(),
             0
         );
         let _g = sim.end_capture().unwrap();
