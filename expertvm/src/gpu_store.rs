@@ -19,8 +19,8 @@ use crate::sim_replay::{
     check_cluster_preferred, check_device_graph_flags, check_l2_fetch, check_l2_ratio,
     check_max_l1, check_mem_sync_collapse, check_mem_sync_launch, check_mem_sync_launch_map,
     check_memset_fill, check_required_cluster, collapse_mem_sync_map, ensure_single_attach,
-    free_copy_mailbox, free_mapped_host, instantiate_exec, kernel_leaf, mark_sync_memops,
-    memcpy_batch_attr, mempool_hold, persist_armed, replay_exec, replay_streams,
+    free_copy_mailbox, free_mapped_host, host_after_copy, instantiate_exec, kernel_leaf,
+    mark_sync_memops, memcpy_batch_attr, mempool_hold, persist_armed, replay_exec, replay_streams,
     reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
     upload_after_set_params, wait_copy_ready, wait_memcpy_during_allocs, GemmFlags, LeafMem,
     LeafWork, StreamPlan,
@@ -79,6 +79,13 @@ impl GpuFill {
 pub struct GpuStoreCfg {
     /// [`gpu_sim::Sim::host_func`] after each acquire GEMM (CPU scheduler roundtrip).
     pub host_func: bool,
+    /// [`gpu_sim::Sim::host_func`] after miss DMA / prefetch, before copy-ready.
+    ///
+    /// Bills [`gpu_sim::GpuProfile::host_func_ns`] on the DMA stream so GEMM
+    /// waits include the host callback. Does not imply [`Self::host_func`].
+    /// Hits stay the same. Mapped misses have no device fill (no-op). Replica
+    /// `pin_hot` D2D stays memcpy-only. Decode identity stays no host after copy.
+    pub copy_host: bool,
     /// Blocking `cudaStreamCreate` for created streams (`1 .. n`).
     ///
     /// Default off (decode identity): copy is NULL, compute is `StreamId(1)`, so
@@ -746,6 +753,8 @@ pub struct SimulatedGpuStore {
     copy_elapsed_ns: u64,
     mode: GpuFill,
     host_func: bool,
+    /// [`GpuStoreCfg::copy_host`]: live `cudaLaunchHostFunc` after miss DMA.
+    copy_host: bool,
     sync_alloc: bool,
     /// [`GpuStoreCfg::vmm_page`]: KV-sized physicals when [`GpuFill::Vmm`].
     vmm_page: u64,
@@ -915,6 +924,9 @@ impl SimulatedGpuStore {
     /// BETWEEN those fragments (needs piecewise; store GEMM stays per-leaf);
     /// [`GpuStoreCfg::graph_clone_parent`] clones walker combo parents
     /// (recursive children; store GEMM stays per-leaf);
+    /// [`GpuStoreCfg::copy_host`] is live `cudaLaunchHostFunc` after miss DMA
+    /// / prefetch (bills `host_func_ns` before copy-ready; does not imply
+    /// [`GpuStoreCfg::host_func`]; mapped misses are a no-op);
     /// [`GpuStoreCfg::memset_fill`] is `cudaMemsetAsync` of pinned/VMM miss
     /// pages (HBM write; not mapped/managed/pageable/memcpy-batch);
     /// [`GpuStoreCfg::graph_build_deps`] chains graph-build combo children
@@ -1348,6 +1360,7 @@ impl SimulatedGpuStore {
             copy_elapsed_ns: 0,
             mode: fill,
             host_func: cfg.host_func,
+            copy_host: cfg.copy_host,
             sync_alloc: cfg.sync_alloc,
             vmm_page: cfg.vmm_page,
             pageable: cfg.pageable,
@@ -1413,6 +1426,12 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn memset_fill(&self) -> bool {
         self.memset_fill
+    }
+
+    /// Whether miss DMA / prefetch enqueues `cudaLaunchHostFunc` before copy-ready.
+    #[must_use]
+    pub fn copy_host(&self) -> bool {
+        self.copy_host
     }
 
     /// Stream memcpy ops (H2D / D2D) currently in the attached Sim.
@@ -2586,6 +2605,7 @@ impl SimulatedGpuStore {
         let _ids =
             self.sim
                 .memcpy_batch_async(d, &ops, std::slice::from_ref(&attr), &[0], self.copy)?;
+        host_after_copy(&mut self.sim, d, self.copy, self.copy_host)?;
         for (key, id, start, mailbox) in pending {
             if self.mode == GpuFill::Vmm && self.accessed_by {
                 advise_vmm_access(&mut self.sim, id)?;
@@ -2667,6 +2687,7 @@ impl SimulatedGpuStore {
                 if self.sync_alloc {
                     self.sim.synchronize_stream(d, dma)?;
                 }
+                host_after_copy(&mut self.sim, d, dma, self.copy_host)?;
                 Ok(id)
             }
             GpuFill::Mapped => {
@@ -2722,9 +2743,7 @@ impl SimulatedGpuStore {
             } else {
                 let _c = self.sim.memset_buf(d, KernelBuf::whole(id), self.copy)?;
             }
-            return Ok(());
-        }
-        if self.pageable && !self.host_register {
+        } else if self.pageable && !self.host_register {
             let _id = self.sim.memcpy_host_to_device(d, id, bytes, self.copy)?;
         } else if self.sync_alloc {
             let _id = self.sim.memcpy_sync(
@@ -2742,6 +2761,7 @@ impl SimulatedGpuStore {
         } else {
             let _c = self.sim.memcpy_pinned_to_device(d, id, bytes, self.copy)?;
         }
+        host_after_copy(&mut self.sim, d, self.copy, self.copy_host)?;
         Ok(())
     }
 
@@ -2968,6 +2988,7 @@ impl SimulatedGpuStore {
         if self.sync_alloc {
             self.sim.synchronize_stream(d, dma)?;
         }
+        host_after_copy(&mut self.sim, d, dma, self.copy_host)?;
         self.insert_page(key, page.id, d, start, mailbox)
     }
 

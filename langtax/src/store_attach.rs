@@ -66,6 +66,8 @@ pub(crate) struct GpuCli {
     pub managed: bool,
     pub vmm: bool,
     pub host_func: bool,
+    /// `cudaLaunchHostFunc` after miss DMA (`GpuStoreCfg::copy_host`).
+    pub copy_host: bool,
     pub blocking_streams: bool,
     pub sync_alloc: bool,
     pub mempool: bool,
@@ -265,6 +267,7 @@ impl GpuCli {
             "--managed" => &mut self.managed,
             "--vmm" => &mut self.vmm,
             "--host-func" => &mut self.host_func,
+            "--copy-host" => &mut self.copy_host,
             "--blocking-streams" => &mut self.blocking_streams,
             "--sync-alloc" => &mut self.sync_alloc,
             "--mempool" => &mut self.mempool,
@@ -781,6 +784,7 @@ impl GpuCli {
             (self.managed, "--managed"),
             (self.vmm, "--vmm"),
             (self.host_func, "--host-func"),
+            (self.copy_host, "--copy-host"),
             (self.blocking_streams, "--blocking-streams"),
             (self.sync_alloc, "--sync-alloc"),
             (self.mempool, "--mempool"),
@@ -1140,6 +1144,7 @@ impl PlannerCli {
 pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
     GpuStoreCfg {
         host_func: gpu.host_func,
+        copy_host: gpu.copy_host,
         blocking_streams: gpu.blocking_streams,
         sync_alloc: gpu.sync_alloc,
         mempool: gpu.mempool,

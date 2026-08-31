@@ -848,6 +848,7 @@ fn vmm_evict_reacquires_same_va() {
         memcpy_during: false,
         memcpy_any: false,
         memset_fill: false,
+        copy_host: false,
         accessed_by: false,
         wait_value: false,
         stream_attach: false,
@@ -915,6 +916,141 @@ fn host_func_lengthens_wall_not_hits() {
         "host={} plain={}",
         cb.sim_ns,
         plain.sim_ns
+    );
+}
+
+#[test]
+fn copy_host_lengthens_miss_wall_not_later_hits() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0]), ev(2, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000\nhbm_bps=1000000000000\nhost_func_ns=100000\nlaunch_overhead_ns=1\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let base = SimCfg::lru(2, 4096, 0);
+    let plain = sim_replay_cfg(&t, p.clone(), base).expect("plain");
+    let copy = sim_replay_cfg(
+        &t,
+        p.clone(),
+        SimCfg {
+            copy_host: true,
+            ..base
+        },
+    )
+    .expect("copy-host");
+    let gemm = sim_replay_cfg(
+        &t,
+        p.clone(),
+        SimCfg {
+            host_func: true,
+            ..base
+        },
+    )
+    .expect("host-func");
+    let both = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            host_func: true,
+            copy_host: true,
+            ..base
+        },
+    )
+    .expect("both");
+    assert_eq!(plain.hits, copy.hits);
+    assert_eq!(plain.misses, copy.misses);
+    assert_eq!(copy.misses, 1);
+    assert!(
+        copy.sim_ns > plain.sim_ns,
+        "copy-host={} plain={}",
+        copy.sim_ns,
+        plain.sim_ns
+    );
+    assert!(
+        gemm.sim_ns > copy.sim_ns,
+        "host-func after every GEMM must beat miss-only copy-host; gemm={} copy={}",
+        gemm.sim_ns,
+        copy.sim_ns
+    );
+    assert!(
+        both.sim_ns > gemm.sim_ns,
+        "copy-host must stack with host-func; both={} gemm={}",
+        both.sim_ns,
+        gemm.sim_ns
+    );
+}
+
+#[test]
+fn sim_replay_copy_host_legal_with_pdl_cooperative_wait_value() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let base = SimCfg::lru(1, 4096, 0);
+    let _pdl = sim_replay_cfg(
+        &t,
+        p.clone(),
+        SimCfg {
+            copy_host: true,
+            pdl: true,
+            compute_slots: 2,
+            ..base
+        },
+    )
+    .expect("pdl");
+    let _coop = sim_replay_cfg(
+        &t,
+        p.clone(),
+        SimCfg {
+            copy_host: true,
+            cooperative: true,
+            ..base
+        },
+    )
+    .expect("coop");
+    let wait = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            copy_host: true,
+            wait_value: true,
+            ..base
+        },
+    )
+    .expect("wait");
+    assert_eq!(wait.misses, 1);
+}
+
+#[test]
+fn sim_replay_copy_host_mapped_is_noop() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000\nhbm_bps=1000000000000\nhost_func_ns=100000\nlaunch_overhead_ns=1\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let base = SimCfg {
+        mapped: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let plain = sim_replay_cfg(&t, p.clone(), base).expect("mapped");
+    let copy = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            copy_host: true,
+            ..base
+        },
+    )
+    .expect("mapped copy-host");
+    assert_eq!(plain.hits, copy.hits);
+    assert_eq!(plain.misses, copy.misses);
+    assert_eq!(
+        plain.sim_ns, copy.sim_ns,
+        "mapped has no device fill; copy-host={} mapped={}",
+        copy.sim_ns, plain.sim_ns
     );
 }
 
@@ -5733,6 +5869,144 @@ fn simulated_gpu_store_host_func_lengthens_wall() {
 }
 
 #[test]
+fn simulated_gpu_store_copy_host_lengthens_miss_not_later_hits() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0]), ev(2, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000\nhbm_bps=1000000000000\nhost_func_ns=100000\nlaunch_overhead_ns=1\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let run = |cfg: GpuStoreCfg| {
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            DirectStore::from_trace(&t),
+            2,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            cfg,
+        )
+        .expect("gpu");
+        for k in t.keys() {
+            let _p = gpu.acquire(k).expect("acq");
+        }
+        gpu.score().expect("score")
+    };
+    let plain = run(GpuStoreCfg::default());
+    let mut copy_cfg = GpuStoreCfg::default();
+    copy_cfg.copy_host = true;
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        2,
+        p.clone(),
+        4096,
+        GpuFill::Pinned,
+        copy_cfg,
+    )
+    .expect("copy-host");
+    assert!(gpu.copy_host());
+    for k in t.keys() {
+        let _p = gpu.acquire(k).expect("acq");
+    }
+    let copy = gpu.score().expect("copy score");
+    let gemm = run(GpuStoreCfg {
+        host_func: true,
+        ..GpuStoreCfg::default()
+    });
+    assert!(
+        copy.wall_ns > plain.wall_ns,
+        "copy-host={} plain={}",
+        copy.wall_ns,
+        plain.wall_ns
+    );
+    assert!(
+        gemm.wall_ns > copy.wall_ns,
+        "host-func after every GEMM must beat miss-only copy-host; gemm={} copy={}",
+        gemm.wall_ns,
+        copy.wall_ns
+    );
+}
+
+#[test]
+fn simulated_gpu_store_copy_host_legal_with_pdl_cooperative() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    for extra in [
+        GpuStoreCfg {
+            copy_host: true,
+            pdl: true,
+            compute_slots: 2,
+            ..GpuStoreCfg::default()
+        },
+        GpuStoreCfg {
+            copy_host: true,
+            cooperative: true,
+            ..GpuStoreCfg::default()
+        },
+        GpuStoreCfg {
+            copy_host: true,
+            wait_value: true,
+            ..GpuStoreCfg::default()
+        },
+        GpuStoreCfg {
+            copy_host: true,
+            memset_fill: true,
+            ..GpuStoreCfg::default()
+        },
+    ] {
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            DirectStore::from_trace(&t),
+            1,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            extra,
+        )
+        .expect("gpu");
+        assert!(gpu.copy_host());
+        let _n = gpu.prefetch(&[ExpertKey::new(0, 0)]).expect("prefetch");
+        let _s = gpu.score().expect("drain");
+    }
+}
+
+#[test]
+fn simulated_gpu_store_copy_host_mapped_is_noop() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000\nhbm_bps=1000000000000\nhost_func_ns=100000\nlaunch_overhead_ns=1\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let run = |copy_host: bool| {
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            DirectStore::from_trace(&t),
+            1,
+            p.clone(),
+            4096,
+            GpuFill::Mapped,
+            GpuStoreCfg {
+                copy_host,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        assert_eq!(gpu.copy_host(), copy_host);
+        let _n = gpu.prefetch(&[ExpertKey::new(0, 0)]).expect("prefetch");
+        gpu.score().expect("drain")
+    };
+    let plain = run(false);
+    let copy = run(true);
+    assert_eq!(
+        plain.wall_ns, copy.wall_ns,
+        "mapped has no device fill; copy-host={} mapped={}",
+        copy.wall_ns, plain.wall_ns
+    );
+}
+
+#[test]
 fn simulated_gpu_store_blocking_streams_serialize_copy_and_compute() {
     let t = Trace {
         events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
@@ -6913,6 +7187,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         memcpy_during: false,
         memcpy_any: false,
         memset_fill: false,
+        copy_host: false,
         accessed_by: true,
         wait_value: false,
         stream_attach: false,
@@ -6983,6 +7258,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         memcpy_during: false,
         memcpy_any: false,
         memset_fill: false,
+        copy_host: false,
         accessed_by: true,
         wait_value: false,
         stream_attach: false,
@@ -7054,6 +7330,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         memcpy_during: false,
         memcpy_any: false,
         memset_fill: false,
+        copy_host: false,
         accessed_by: true,
         wait_value: false,
         stream_attach: false,
@@ -7491,6 +7768,7 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         memcpy_during: false,
         memcpy_any: false,
         memset_fill: false,
+        copy_host: false,
         accessed_by: false,
         wait_value: false,
         stream_attach: false,
@@ -7555,6 +7833,7 @@ fn memcpy_during_apply_misses_waits_copies() {
             memcpy_during: during,
             memcpy_any: false,
             memset_fill: false,
+            copy_host: false,
             accessed_by: false,
             wait_value: false,
             stream_attach: false,
@@ -7621,6 +7900,7 @@ fn memcpy_any_apply_misses_empty_deps() {
             memcpy_during: false,
             memcpy_any: any,
             memset_fill: false,
+            copy_host: false,
             accessed_by: false,
             wait_value: false,
             stream_attach: false,
@@ -8321,6 +8601,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             memcpy_during: false,
             memcpy_any: false,
             memset_fill: false,
+            copy_host: false,
             accessed_by: false,
             wait_value: false,
             stream_attach: false,
@@ -13187,6 +13468,7 @@ fn sim_replay_sync_memops_h2d_host_sync() {
             memcpy_during: false,
             memcpy_any: false,
             memset_fill: false,
+            copy_host: false,
             accessed_by: false,
             wait_value: false,
             stream_attach: false,
@@ -13400,6 +13682,7 @@ fn sim_replay_device_sync_memops_h2d_host_sync() {
             memcpy_during: false,
             memcpy_any: false,
             memset_fill: false,
+            copy_host: false,
             accessed_by: false,
             wait_value: false,
             stream_attach: false,

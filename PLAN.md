@@ -720,7 +720,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `sim`/`schedule` / `SimulatedGpuStore::new` stay on `cudaMallocAsync`.
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--shareable`,
-  `--host-func`, blocking compute, `--pageable`, `--memset-fill`, `--accessed-by`,
+  `--host-func`, `--copy-host`, blocking compute, `--pageable`, `--memset-fill`, `--accessed-by`,
   `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-clone-parent`, `--graph-build`, `--graph-build-deps`, `--graph-host`, `--graph-piecewise`, `--graph-capture-deps`, `--graph-capture-host`, `--graph-mem`, `--graph-memset`, `--graph-memcpy`, `--graph-leaf-host`, `--graph-auto-free`, `--timing-events`, `--event-blocking-sync`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, `--non-portable-cluster`, `--sync-policy`, `--device-sync-policy`, `--shared-mem`, and `--multicast`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--shareable` is POSIX-FD mempool IPC
@@ -739,7 +739,10 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   implies `--vmm`). `expertvm kv` demand-pages per-sequence VAs (`cuMemCreate`
   + `cuMemMap`; `--sequences N` aliases interned physicals; `kernel_bufs`
   + H2D or `memset_buf` at a mapped span; peak HBM is unique pages). `--host-func` is `cudaLaunchHostFunc` after each event's
-  GEMMs (`host_func_ns`; no GPU occupancy). `--blocking-streams` is
+  GEMMs (`host_func_ns`; no GPU occupancy). `--copy-host` is
+  `cudaLaunchHostFunc` after miss DMA / prefetch (`host_func_ns` on the DMA
+  stream before copy-ready; does not imply `--host-func`; mapped misses are
+  a no-op). `--blocking-streams` is
   `cudaStreamCreate` on seq-streams (serialize with NULL); default is
   `cudaStreamNonBlocking`. `--legacy-null` is `set_legacy_null_stream`
   (NULL serializes with every stream). `--pageable` is host-sync
@@ -1037,7 +1040,7 @@ model, do not celebrate the sim.
     Dual score still has no `$/M tokens`.
 52. [x] Engine SimulatedGpuStore CUDA knobs: `--host-func` /
     `--blocking-streams` / `--sync-alloc` / `--mempool` / `--vmm-page` /
-    `--pageable` / `--memset-fill` / `--accessed-by` / `--legacy-null` / `--stream-priority`
+    `--pageable` / `--memset-fill` / `--copy-host` / `--accessed-by` / `--legacy-null` / `--stream-priority`
     match `GpuStoreCfg` / `expertvm sim` on `gguf_gemv engine` and
     `serve --engine --expert-sim`. Default pinned async stays decode
     identity. Dual score still has no `$/M tokens`.
@@ -3982,7 +3985,24 @@ model, do not celebrate the sim.
     walker-only). `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-367. [ ] Next numbered PLAN item after 366 is the next `gpu-sim` / Engine /
+367. [x] Live `cudaLaunchHostFunc` after miss DMA / prefetch:
+    [`GpuStoreCfg::copy_host`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::copy_host`](expertvm/src/sim_replay.rs) enqueue
+    [`gpu_sim::Sim::host_func`](gpu-sim/src/sim.rs) on the DMA stream after
+    pinned/VMM H2D, `cudaMemsetAsync` miss fill, or managed prefetch, before
+    copy-ready (event or wait/write-value). Bills `host_func_ns` so GEMM waits
+    include the host callback. Does not imply `--host-func`. Hits stay the
+    same. Distinct from `--host-func` (after every token GEMM, including
+    hits). Mapped misses have no device fill (no-op). Replica `pin_hot` D2D
+    stays memcpy-only. Legal with `--pdl`, `--cooperative`, `--wait-value`,
+    and `--memset-fill`. Does not imply `--cuda-graphs`. Graphs stay
+    kernel-only. `--copy-host` on `expertvm sim` / `schedule` / `store` and
+    `gguf_gemv engine --expert-sim`. infer-bench has no expert miss DMA, so
+    it does not get `--copy-host`. Decode identity stays no host after copy.
+    Store and walker (not walker-only). `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+368. [ ] Next numbered PLAN item after 367 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
@@ -4015,6 +4035,7 @@ model, do not celebrate the sim.
     `cudaGraphAddHostNode` / captured `cudaLaunchHostFunc` BEFORE GEMM flag.
     Do not invent a second `cudaGraphClone` of combo parents flag.
     Do not invent a second `cudaMemsetAsync` miss-fill flag.
+    Do not invent a second live `cudaLaunchHostFunc` after miss DMA flag.
     Do not invent JOIN-style host
     after overlapping combo children (same wall as live `--host-func`
     after `launch_graph`). Do not invent `stream_update_capture_dependencies`
@@ -4034,7 +4055,9 @@ model, do not celebrate the sim.
     SynchronizationPolicy as an Engine flag (stream-only today). Do not
     invent PDL wait-only. Do not invent in-graph wait_value / event wait
     BEFORE a leaf (same GPU timeline as live wait). Do not invent host AFTER
-    kernel on a leaf (exclusive-compute wall matches BEFORE). Do not
+    kernel on a leaf (exclusive-compute wall matches BEFORE). Do not invent
+    `cuStreamBatchMemOp` packing of wait/write (1 ns Solo, not
+    `launch_overhead_ns`). Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

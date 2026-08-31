@@ -466,6 +466,19 @@ pub(crate) fn alloc_resident_copy_mailbox(
     Ok(id)
 }
 
+/// `cudaLaunchHostFunc` after miss DMA / prefetch so copy-ready waits include it.
+pub(crate) fn host_after_copy(
+    sim: &mut Sim,
+    device: DeviceId,
+    stream: StreamId,
+    copy_host: bool,
+) -> Result<(), Error> {
+    if copy_host {
+        let _id = sim.host_func(device, stream)?;
+    }
+    Ok(())
+}
+
 /// `cuStreamWriteValue64` after H2D / prefetch so compute can wait without an event.
 pub(crate) fn signal_copy_ready(
     sim: &mut Sim,
@@ -730,6 +743,14 @@ pub struct SimCfg {
     /// enqueue it; [`crate::SimulatedGpuStore::with_cfg`] with
     /// [`crate::GpuStoreCfg::host_func`] does.
     pub host_func: bool,
+    /// `cudaLaunchHostFunc` after miss DMA / prefetch, before copy-ready.
+    ///
+    /// Bills `host_func_ns` on the DMA stream so GEMM waits include the host
+    /// callback. Does not imply [`Self::host_func`]. Hits stay the same. Mapped
+    /// misses have no device fill (no-op). Replica D2D stays memcpy-only.
+    /// Decode identity stays no host after copy.
+    /// [`crate::GpuStoreCfg::copy_host`] is the store path.
+    pub copy_host: bool,
     /// `cudaStreamCreate` (blocking) for streams `1 .. n_streams`.
     ///
     /// They serialize with [`gpu_sim::StreamId::NULL`]. Default is
@@ -1323,6 +1344,7 @@ impl SimCfg {
             vmm: false,
             vmm_page: 0,
             host_func: false,
+            copy_host: false,
             blocking_streams: false,
             pageable: false,
             host_register: false,
@@ -1657,6 +1679,7 @@ pub fn sim_replay_cfg(
         memcpy_during: cfg.memcpy_during,
         memcpy_any: cfg.memcpy_any,
         memset_fill: cfg.memset_fill,
+        copy_host: cfg.copy_host,
         accessed_by: cfg.accessed_by,
         wait_value: cfg.wait_value,
         stream_attach: cfg.stream_attach,
@@ -1837,6 +1860,8 @@ pub(crate) struct TouchArgs {
     pub memcpy_any: bool,
     /// [`SimCfg::memset_fill`]: miss fill is `cudaMemsetAsync` (not pinned H2D).
     pub memset_fill: bool,
+    /// [`SimCfg::copy_host`]: live `cudaLaunchHostFunc` after miss DMA / prefetch.
+    pub copy_host: bool,
     /// [`SimCfg::accessed_by`]: SetAccessedBy / VMM SetAccess / mempool SetAccess
     /// on every GPU (fill or default pools).
     pub accessed_by: bool,
@@ -2999,6 +3024,12 @@ pub(crate) fn apply_misses(
     } else if !args.mapped {
         hbm_h2d_many(sim, args, &h2d)?;
     }
+    host_after_copy(
+        sim,
+        args.d,
+        args.s,
+        args.copy_host && !filled.is_empty() && (args.managed || !args.mapped),
+    )?;
     for (key, id, mailbox) in filled {
         if args.vmm && args.accessed_by {
             advise_vmm_access(sim, id)?;
@@ -3247,6 +3278,7 @@ fn restore_managed_from_host(
     let stream = bump_null_for_attach(args.s, args.stream_attach);
     ensure_single_attach(sim, args.d, page.id, stream)?;
     let _p = sim.prefetch(args.d, page.id, stream)?;
+    host_after_copy(sim, args.d, stream, args.copy_host)?;
     page.host_resident = false;
     page.device = args.d;
     page.stream = stream;

@@ -479,6 +479,9 @@
 //! `expertvm sim --memset-fill` / `gguf_gemv engine --expert-sim --memset-fill`
 //! is `cudaMemsetAsync` of pinned/VMM miss pages (HBM write, compute occupancy;
 //! not mapped/managed/pageable/memcpy-batch; distinct from `--graph-memset` scratch).
+//! `expertvm sim --copy-host` / `gguf_gemv engine --expert-sim --copy-host`
+//! is `cudaLaunchHostFunc` after miss DMA / prefetch (`host_func_ns` before
+//! copy-ready; does not imply `--host-func`; mapped misses are a no-op).
 //! [`memcpy_3d_batch_async`](Sim::memcpy_3d_batch_async) is `cudaMemcpy3DBatchAsync`
 //! (pointer-to-pointer [`MemcpyOp::is_3d`] only; CUDA arrays are not modeled;
 //! `flags` must be `0`; capture is `"cannot capture memcpy3d batch"`).

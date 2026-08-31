@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaLaunchHostFunc` after miss DMA
+
+`GpuStoreCfg::copy_host` / `SimCfg::copy_host` enqueue `cudaLaunchHostFunc`
+on the DMA stream after pinned/VMM H2D, `cudaMemsetAsync` miss fill, or
+managed prefetch, before copy-ready. Bills `host_func_ns` so GEMM waits
+include the host callback. Does not imply `--host-func`. Hits/misses stay
+the same. Distinct from `--host-func` (after every token GEMM, including
+hits). Mapped misses have no device fill (no-op). Replica `pin_hot` D2D
+stays memcpy-only. `--copy-host` is off by default (decode identity: no
+host after copy). Store and walker (not walker-only). infer-bench has no
+expert miss DMA, so it does not get `--copy-host`. `gpu-profile capture`
+is still refused.
+
 ## Shipped 2026-08-31 — `cudaMemsetAsync` miss fill
 
 `GpuStoreCfg::memset_fill` / `SimCfg::memset_fill` fill pinned/VMM miss

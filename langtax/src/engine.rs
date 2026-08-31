@@ -100,6 +100,9 @@
 //! per-leaf). `--memset-fill` is `cudaMemsetAsync` of pinned/VMM miss pages
 //! (HBM write, compute occupancy; not with `--mapped` / `--managed` /
 //! `--pageable` / `--memcpy-batch`; store and walker).
+//! `--copy-host` is `cudaLaunchHostFunc` after miss DMA / prefetch
+//! (bills `host_func_ns` before copy-ready; does not imply `--host-func`;
+//! mapped misses are a no-op; store and walker).
 //! `--cluster N` is `cudaLaunchAttributeClusterDimension` on grouped expert
 //! GEMMs: the launch occupies `min(N, compute_slots)` Hyper-Q slots (Hopper
 //! portable max 8; legal with `--pdl` and `--cooperative`). `--preferred-cluster N`
@@ -3559,6 +3562,24 @@ mod tests {
         assert_eq!(iso.2, 4);
         assert_eq!(fill.2, 4);
         assert_eq!(iso.4, fill.4, "memset-fill must keep greedy identity");
+    }
+
+    #[test]
+    fn engine_gpu_copy_host_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let iso = mixed_gpu_decode_itl_on(bytes.clone(), false, None, GpuStoreCfg::default());
+        let copy = mixed_gpu_decode_itl_on(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                copy_host: true,
+                ..GpuStoreCfg::default()
+            },
+        );
+        assert_eq!(iso.2, 4);
+        assert_eq!(copy.2, 4);
+        assert_eq!(iso.4, copy.4, "copy-host must keep greedy identity");
     }
 
     #[test]
