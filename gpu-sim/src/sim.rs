@@ -254,6 +254,9 @@ struct Multicast {
 struct GreenCtx {
     device: DeviceId,
     sm: SmResource,
+    /// [`Sim::green_ctx_wait_event`] ops. Future submits on bound streams wait
+    /// these (`cuGreenCtxWaitEvent`).
+    wait_ops: Vec<OpId>,
 }
 
 struct Op {
@@ -1334,7 +1337,14 @@ impl Sim {
             })?;
         let id = GreenCtxId(self.next_green_ctx);
         self.next_green_ctx = self.next_green_ctx.saturating_add(1);
-        let _prev = self.green_ctxs.insert(id, GreenCtx { device, sm });
+        let _prev = self.green_ctxs.insert(
+            id,
+            GreenCtx {
+                device,
+                sm,
+                wait_ops: Vec::new(),
+            },
+        );
         Ok(id)
     }
 
@@ -1432,6 +1442,145 @@ impl Sim {
     ) -> Result<Option<GreenCtxId>, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.stream_green_ctx.get(&(device, stream)).copied())
+    }
+
+    /// `cuGreenCtxRecordEvent`. Capture is refused when any stream bound to
+    /// `ctx` is capturing (`CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED`).
+    ///
+    /// Records an event that completes after every activity already submitted
+    /// on streams bound to `ctx`. Later work on those streams does not join
+    /// `event`. Distinct from [`Self::record_event`] (one stream). The record
+    /// is not inserted into any bound stream's timeline. `event` and `ctx`
+    /// must share a device (CUDA same primary context).
+    pub fn green_ctx_record_event(
+        &mut self,
+        ctx: GreenCtxId,
+        event: EventId,
+    ) -> Result<OpId, SimError> {
+        let device = self
+            .green_ctxs
+            .get(&ctx)
+            .ok_or(SimError::Invalid {
+                why: "unknown green ctx",
+            })?
+            .device;
+        if self.green_ctx_has_capturing_stream(ctx) {
+            return Err(SimError::Invalid {
+                why: "cannot capture green ctx record",
+            });
+        }
+        if let Some(prev) = self.event_recorded_by(event) {
+            if self.ops.get(&prev).is_some_and(|o| o.device != device) {
+                return Err(SimError::Invalid {
+                    why: "green ctx event",
+                });
+            }
+        }
+        let mut deps = self.stream_order_deps(device, StreamId::GREEN_CTX_SYNC);
+        for (d, s) in self.green_ctx_bound_streams(ctx) {
+            self.collect_stream_work(d, s, &mut deps);
+        }
+        let _ev = self.events.entry(event).or_insert(Ev::new(true));
+        self.submit_live_with_deps(
+            device,
+            StreamId::GREEN_CTX_SYNC,
+            Kind::EventRecord {
+                event,
+                external: false,
+            },
+            LaunchCost::Kernel,
+            deps,
+        )
+    }
+
+    /// `cuGreenCtxWaitEvent`. Capture is refused when any stream bound to
+    /// `ctx` is capturing, or when `event` is in an ongoing capture.
+    ///
+    /// All later work submitted on streams bound to `ctx` (including streams
+    /// bound after this call) waits for work captured in `event`. Distinct
+    /// from [`Self::wait_event`] (one stream). `event` may be from another
+    /// device. Does not block the CPU.
+    pub fn green_ctx_wait_event(
+        &mut self,
+        ctx: GreenCtxId,
+        event: EventId,
+    ) -> Result<OpId, SimError> {
+        let device = self
+            .green_ctxs
+            .get(&ctx)
+            .ok_or(SimError::Invalid {
+                why: "unknown green ctx",
+            })?
+            .device;
+        if self.green_ctx_has_capturing_stream(ctx) {
+            return Err(SimError::Invalid {
+                why: "cannot capture green ctx wait",
+            });
+        }
+        let root = self.event_root(event);
+        if self
+            .capturing
+            .as_ref()
+            .is_some_and(|c| c.events.contains(&root))
+        {
+            return Err(SimError::Invalid {
+                why: "cannot capture green ctx wait",
+            });
+        }
+        if let Entry::Vacant(slot) = self.events.entry(event) {
+            let _ev = slot.insert(Ev::new(true));
+        }
+        let id = self.submit_live(
+            device,
+            StreamId::GREEN_CTX_SYNC,
+            Kind::EventWait {
+                event,
+                external: false,
+            },
+            LaunchCost::Kernel,
+        )?;
+        if let Some(g) = self.green_ctxs.get_mut(&ctx) {
+            g.wait_ops.push(id);
+        }
+        Ok(id)
+    }
+
+    fn green_ctx_bound_streams(&self, ctx: GreenCtxId) -> Vec<(DeviceId, StreamId)> {
+        self.stream_green_ctx
+            .iter()
+            .filter_map(|(k, c)| (*c == ctx).then_some(*k))
+            .collect()
+    }
+
+    fn green_ctx_has_capturing_stream(&self, ctx: GreenCtxId) -> bool {
+        self.green_ctx_bound_streams(ctx)
+            .iter()
+            .any(|&(d, s)| self.in_capture(d, s))
+    }
+
+    fn collect_stream_work(&self, device: DeviceId, stream: StreamId, deps: &mut Vec<OpId>) {
+        if let Some(prev) = self.tail.get(&(device, stream)) {
+            if !deps.contains(prev) {
+                deps.push(*prev);
+            }
+        }
+        for (id, o) in &self.ops {
+            if o.device == device
+                && o.stream == stream
+                && !o.done
+                && !o.cancelled
+                && !deps.contains(id)
+            {
+                deps.push(*id);
+            }
+        }
+        if let Some(joins) = self.graph_joins.get(&(device, stream)) {
+            for id in joins {
+                if !deps.contains(id) {
+                    deps.push(*id);
+                }
+            }
+        }
     }
 
     /// `cudaDevAttrMemSyncDomainCount`.
@@ -16031,6 +16180,17 @@ impl Sim {
                 deps.push(rec);
             }
         }
+        if stream != StreamId::GREEN_CTX_SYNC {
+            if let Some(ctx) = self.stream_green_ctx.get(&(device, stream)).copied() {
+                if let Some(g) = self.green_ctxs.get(&ctx) {
+                    for id in &g.wait_ops {
+                        if !deps.contains(id) {
+                            deps.push(*id);
+                        }
+                    }
+                }
+            }
+        }
         self.submit_live_with_deps(device, stream, kind, launch, deps)
     }
 
@@ -16155,7 +16315,7 @@ impl Sim {
         if self.legacy_null_stream {
             if stream == StreamId::NULL {
                 for ((d, s), tail) in &self.tail {
-                    if *d == device && *s != stream {
+                    if *d == device && *s != stream && *s != StreamId::GREEN_CTX_SYNC {
                         deps.push(*tail);
                     }
                 }

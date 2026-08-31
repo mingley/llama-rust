@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA green-context events (`cuGreenCtxRecordEvent`)
+
+`gpu-sim` `green_ctx_record_event` / `green_ctx_wait_event` are
+`cuGreenCtxRecordEvent` / `cuGreenCtxWaitEvent`. Record joins every
+stream bound to that ctx (later work does not join). Wait holds later
+submits on that ctx, including streams bound after the wait. Distinct
+from `cudaEventRecord` / `cudaStreamWaitEvent` (one stream). Capture is
+refused when a bound stream is capturing. The record is not inserted
+into a bound stream's timeline. No second `--green-ctx`.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-31 — official NVFP4 `{1}` `output.scale`
 
 llama.cpp creates `output.scale` shape `{1}` only when `output.weight`

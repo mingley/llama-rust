@@ -509,7 +509,8 @@ Exact (mechanical invariants agents may rely on):
 - copy-engine availability, Hyper-Q `compute_slots` occupancy (default
   exclusive; `>=2` concurrent kernels at full issue rate), green-context
   `set_stream_sm_permille` (compute-bound kernels scale; memory-bound keep
-  full HBM; default unset is a full chip),
+  full HBM; default unset is a full chip), `cuGreenCtxRecordEvent` /
+  `cuGreenCtxWaitEvent` (`green_ctx_record_event` / `green_ctx_wait_event`),
   peer accessibility
 - HBM vs host-pinned residency (`Place::{Host, HostPinned, Device}`,
   `alloc_host_pinned`, `memcpy_pinned_to_device`; pageable
@@ -4517,12 +4518,22 @@ model, do not celebrate the sim.
     oracle. `gpu-profile capture` is still refused. Dual score still has
     no `$/M tokens`.
 
-404. [ ] Next numbered PLAN item after 403 is the next `gpu-sim` / Engine /
+404. [x] CUDA green-context events (`cuGreenCtxRecordEvent` /
+    `cuGreenCtxWaitEvent`): `green_ctx_record_event` captures every activity
+    already submitted on streams bound to that ctx (not one stream;
+    later work does not join). `green_ctx_wait_event` holds later work on
+    that ctx, including streams bound after the wait. Capture is refused
+    when a bound stream is capturing. No second `--green-ctx`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+405. [ ] Next numbered PLAN item after 404 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
     second NVFP4 `output.scale` as a new family. Do not invent
-    `output.input_scale` / `*.input_scale` this slice. Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
+    `output.input_scale` / `*.input_scale` this slice. Do not invent a second
+    `cuGreenCtxRecordEvent` / `WaitEvent`. Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
     `attn_v.scale` as the writer-tiny. Do not invent a second dense
     `ffn_down.scale` / second `ffn_gate.scale` / second `ffn_up.scale` /
     second `attn_q.scale` / second `attn_output.scale` /
@@ -4532,7 +4543,6 @@ model, do not celebrate the sim.
     Do not invent `CU_GREEN_CTX_DEFAULT_STREAM` as a second NULL stream.
     Do not invent split `IGNORE_SM_COSCHEDULING` / max-cluster bits.
     Do not invent `cuCtxFromGreenCtx` (no `CUcontext` object).
-    Do not invent `cuGreenCtxRecordEvent` / `WaitEvent` this item.
     Do not invent occupancy SM counts (`cudaDevAttrMultiProcessorCount`,
     occupancy APIs). Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),

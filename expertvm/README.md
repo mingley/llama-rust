@@ -180,7 +180,9 @@ scale; memory-bound keep full HBM; default unset is a full chip; does not
 partition Hyper-Q). `--green-ctx` binds complementary CUDA green contexts
 on decode vs leftover prefill (implies `--decode-priority`; default 500/500;
 `--decode-sms 1000` refused) so they may overlap even when `compute_slots`
-is 1. `--multicast`
+is 1. `gpu-sim` `green_ctx_record_event` / `green_ctx_wait_event` are
+`cuGreenCtxRecordEvent` / `cuGreenCtxWaitEvent` (join every bound stream;
+later ctx work waits). `--multicast`
 is Hopper NVLS replica fanout (implies `--vmm`; illegal with `--accessed-by`
 / `--vmm-page`; needs an NVLink clique). `--sync-alloc` uses host-sync `cudaMalloc` /
 `cudaMemcpy` / `cudaFree` on every miss (`Sim::malloc`); the default is
@@ -448,7 +450,8 @@ the remainder; implies `--decode-priority` on Engine, not on the walker).
 may overlap decode even when occupancy is exclusive (implies
 `--decode-priority`; default 500/500; `--decode-sms 1000` refused). Distinct
 from `--decode-sms` alone (exclusive compute still serializes leftover
-prefill). Default `--expert-sim` keeps
+prefill). `gpu-sim` `green_ctx_record_event` / `green_ctx_wait_event` join or
+hold every stream bound to a ctx (not a second `--green-ctx`). Default `--expert-sim` keeps
 one compute stream, exclusive compute (`compute_slots=1`), a full chip of
 SMs, and a full-device clock sample.
 `gguf_gemv engine --expert-sim --seq-streams` is the real-KV analog of

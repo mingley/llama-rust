@@ -24,6 +24,10 @@ pub struct StreamId(pub u16);
 impl StreamId {
     /// CUDA null / default stream (`cudaStream_t` 0).
     pub const NULL: Self = Self(0);
+    /// Internal stream for [`crate::Sim::green_ctx_record_event`] /
+    /// [`crate::Sim::green_ctx_wait_event`]. Not a CUDA stream id; not bound
+    /// to a green context. User work must not use this id.
+    pub const GREEN_CTX_SYNC: Self = Self(u16::MAX);
 }
 
 /// Cross-stream ordering token. Record on one stream, wait on another.
