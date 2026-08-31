@@ -13,10 +13,11 @@ use crate::sim_replay::{
     allow_non_portable_cluster_if, allow_optin_shared_if, apply_cluster_dim_must_be_set,
     apply_device_shared_mem, apply_device_sync_memops, apply_device_sync_policy,
     apply_exec_mem_sync_domain, apply_func_cluster_spread, apply_func_max_shared,
-    apply_func_shared_mem, apply_l2_fetch, apply_stream_mem_sync_domain, apply_stream_sync_policy,
-    bind_shareable_mempools, check_cluster_must_set, check_cluster_preferred,
-    check_device_graph_flags, check_l2_fetch, ensure_single_attach, free_copy_mailbox,
-    free_mapped_host, instantiate_exec, kernel_leaf, mark_sync_memops, replay_exec, replay_streams,
+    apply_func_shared_mem, apply_l2_fetch, apply_required_cluster_width,
+    apply_stream_mem_sync_domain, apply_stream_sync_policy, bind_shareable_mempools,
+    check_cluster_must_set, check_cluster_preferred, check_device_graph_flags, check_l2_fetch,
+    check_required_cluster, ensure_single_attach, free_copy_mailbox, free_mapped_host,
+    instantiate_exec, kernel_leaf, mark_sync_memops, replay_exec, replay_streams,
     reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
     upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
 };
@@ -299,6 +300,12 @@ pub struct GpuStoreCfg {
     /// [`Self::cluster`]. Occupancy matches `--cluster` (SetAttribute is +1 ns).
     /// Decode identity stays unset.
     pub cluster_must_set: bool,
+    /// `cudaFuncSetAttribute` RequiredClusterWidth. `0` is unset.
+    ///
+    /// Needs [`Self::cluster`] and must equal it. Occupancy matches `--cluster`
+    /// (SetAttribute is +1 ns). Distinct from [`Self::cluster_must_set`] and
+    /// [`Self::preferred_cluster`]. Decode identity stays unset.
+    pub required_cluster: u8,
     /// Max-shared carveout (`cudaLaunchAttributePreferredSharedMemoryCarveout`).
     ///
     /// Occupies every Hyper-Q slot so leftover kernels cannot overlap.
@@ -751,6 +758,9 @@ impl SimulatedGpuStore {
     /// ClusterSchedulingPolicyPreference Spread (launch Default inherits).
     /// [`GpuStoreCfg::cluster_must_set`] is `cudaFuncSetAttribute`
     /// ClusterDimMustBeSet (needs `--cluster`; occupancy matches `--cluster`).
+    /// [`GpuStoreCfg::required_cluster`] is `cudaFuncSetAttribute`
+    /// RequiredClusterWidth (needs `--cluster`; must match; occupancy matches
+    /// `--cluster`).
     /// [`GpuStoreCfg::sync_policy`] is stream host-wait
     /// (`cudaLaunchAttributeSynchronizationPolicy`; Auto tax 0).
     /// [`GpuStoreCfg::device_sync_policy`] is device host-wait
@@ -877,6 +887,7 @@ impl SimulatedGpuStore {
         }
         check_cluster_preferred(cfg.cluster, cfg.preferred_cluster)?;
         check_cluster_must_set(cfg.cluster, cfg.cluster_must_set)?;
+        check_required_cluster(cfg.cluster, cfg.required_cluster)?;
         check_l2_fetch(cfg.l2_fetch)?;
         if cfg.shareable && (cfg.sync_alloc || fill != GpuFill::Pinned) {
             return Err(Error::Store("shareable needs cudaMallocAsync"));
@@ -947,6 +958,7 @@ impl SimulatedGpuStore {
         apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
         apply_func_cluster_spread(&mut sim, cfg.func_cluster_spread)?;
         apply_cluster_dim_must_be_set(&mut sim, cfg.cluster_must_set)?;
+        apply_required_cluster_width(&mut sim, cfg.required_cluster)?;
         apply_l2_fetch(&mut sim, cfg.l2_fetch)?;
         apply_func_shared_mem(&mut sim, cfg.func_shared_mem)?;
         apply_device_shared_mem(&mut sim, cfg.device_shared_mem)?;
@@ -1202,6 +1214,12 @@ impl SimulatedGpuStore {
         self.sim
             .cluster_dim_must_be_set(self.device)
             .unwrap_or(false)
+    }
+
+    /// Function RequiredClusterWidth set at construction (`0` unset).
+    #[must_use]
+    pub fn required_cluster(&self) -> u8 {
+        u8::try_from(self.sim.required_cluster_width(self.device).unwrap_or(0)).unwrap_or(0)
     }
 
     /// Function shared-mem bank width set at construction (`cudaFuncSetSharedMemConfig`).

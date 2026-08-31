@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaFuncAttributeRequiredClusterWidth`
+
+`GpuStoreCfg::required_cluster` / `SimCfg::required_cluster` call
+`cudaFuncSetAttribute(..., cudaFuncAttributeRequiredClusterWidth)` after
+`Sim::new`. Needs `--cluster` and must equal `--cluster` X. Occupancy matches
+`--cluster` (SetAttribute is +1 ns). Hits/misses stay the same. Distinct from
+`--cluster-must-set` (bool: some cluster dim must be present) and
+`--preferred-cluster`. A mismatched width is refused at construction
+(`required-cluster must match cluster`), not at the first Invalid
+`"required cluster"`. `--required-cluster` is unset by default (decode
+identity: `0`). `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaSetDeviceFlags` schedule
 
 `GpuStoreCfg::device_sync_policy` / `SimCfg::device_sync_policy` call

@@ -107,6 +107,10 @@ pub(crate) struct GpuCli {
     pub func_cluster_spread: bool,
     /// `cudaFuncAttributeClusterDimMustBeSet` (`GpuStoreCfg::cluster_must_set`).
     pub cluster_must_set: bool,
+    /// `cudaFuncAttributeRequiredClusterWidth` (`GpuStoreCfg::required_cluster`). `0` is unset.
+    pub required_cluster: u8,
+    /// True when `--required-cluster` appeared.
+    pub required_cluster_set: bool,
     /// Max-shared carveout (`GpuStoreCfg::max_shared`).
     pub max_shared: bool,
     /// Function MaxShared carveout (`GpuStoreCfg::func_max_shared`).
@@ -362,6 +366,16 @@ impl GpuCli {
         Ok(())
     }
 
+    /// Function RequiredClusterWidth (`--required-cluster`). `0` is refused.
+    pub(crate) fn set_required_cluster(&mut self, n: u8) -> Result<(), String> {
+        if n == 0 {
+            return Err("required-cluster must be > 0".into());
+        }
+        self.required_cluster = n;
+        self.required_cluster_set = true;
+        Ok(())
+    }
+
     /// `cudaLimitMaxL2FetchGranularity` (`--l2-fetch`). `32` / `64` / `128` only.
     pub(crate) fn set_l2_fetch(&mut self, n: u64) -> Result<(), String> {
         if n != 32 && n != 64 && n != 128 {
@@ -482,6 +496,20 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--required-cluster N` needs `--cluster` and must equal it.
+    pub(crate) fn check_required_cluster(self) -> Result<(), String> {
+        if !self.required_cluster_set {
+            return Ok(());
+        }
+        if !self.cluster_set {
+            return Err("--required-cluster needs --cluster".into());
+        }
+        if self.required_cluster != self.cluster {
+            return Err("required-cluster must match --cluster".into());
+        }
+        Ok(())
+    }
+
     /// First CUDA knob that needs `--expert-sim`, if any.
     #[must_use]
     pub(crate) fn sim_flag(self) -> Option<&'static str> {
@@ -533,6 +561,7 @@ impl GpuCli {
             (self.cluster_spread, "--cluster-spread"),
             (self.func_cluster_spread, "--func-cluster-spread"),
             (self.cluster_must_set, "--cluster-must-set"),
+            (self.required_cluster_set, "--required-cluster"),
             (self.max_shared, "--max-shared"),
             (self.func_max_shared, "--func-max-shared"),
             (self.non_portable_cluster, "--non-portable-cluster"),
@@ -612,6 +641,7 @@ enum PlanSlot {
     KvBytes,
     ComputeSlots,
     Cluster,
+    RequiredCluster,
     PreferredCluster,
     SyncPolicy,
     DeviceSyncPolicy,
@@ -637,6 +667,7 @@ impl PlanSlot {
             Self::KvBytes => "kv-bytes",
             Self::ComputeSlots => "compute-slots",
             Self::Cluster => "cluster",
+            Self::RequiredCluster => "required-cluster",
             Self::PreferredCluster => "preferred-cluster",
             Self::SyncPolicy => "sync-policy",
             Self::DeviceSyncPolicy => "device-sync-policy",
@@ -667,6 +698,7 @@ impl PlannerCli {
             "--kv-bytes" => Dash::Need(PlanSlot::KvBytes),
             "--compute-slots" => Dash::Need(PlanSlot::ComputeSlots),
             "--cluster" => Dash::Need(PlanSlot::Cluster),
+            "--required-cluster" => Dash::Need(PlanSlot::RequiredCluster),
             "--l2-fetch" => Dash::Need(PlanSlot::L2Fetch),
             "--preferred-cluster" => Dash::Need(PlanSlot::PreferredCluster),
             "--sync-policy" => Dash::Need(PlanSlot::SyncPolicy),
@@ -712,6 +744,12 @@ impl PlannerCli {
                     .parse::<u8>()
                     .map_err(|_| format!("invalid cluster {raw:?}"))?;
                 self.gpu.set_cluster(n)?;
+            }
+            PlanSlot::RequiredCluster => {
+                let n = raw
+                    .parse::<u8>()
+                    .map_err(|_| format!("invalid required-cluster {raw:?}"))?;
+                self.gpu.set_required_cluster(n)?;
             }
             PlanSlot::L2Fetch => {
                 let n = raw
@@ -858,6 +896,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         cluster_spread: gpu.cluster_spread,
         func_cluster_spread: gpu.func_cluster_spread,
         cluster_must_set: gpu.cluster_must_set,
+        required_cluster: gpu.required_cluster,
         max_shared: gpu.max_shared,
         func_max_shared: gpu.func_max_shared,
         non_portable_cluster: gpu.non_portable_cluster,

@@ -13678,6 +13678,8 @@ impl Sim {
     ///
     /// `0` clears the requirement. A launch cluster must match a nonzero
     /// width. Capture-legal. Decode identity stays `0`.
+    /// `expertvm sim --required-cluster N` sets this (needs `--cluster`;
+    /// occupancy matches `--cluster`).
     pub fn set_required_cluster_width(
         &mut self,
         device: DeviceId,

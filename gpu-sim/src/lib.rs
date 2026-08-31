@@ -625,6 +625,9 @@
 //! `--cluster-spread` launch attribute).
 //! `expertvm sim --cluster-must-set` is `cudaFuncAttributeClusterDimMustBeSet`
 //! (needs `--cluster`; occupancy matches `--cluster`; SetAttribute is +1 ns).
+//! `expertvm sim --required-cluster N` is `cudaFuncAttributeRequiredClusterWidth`
+//! (needs `--cluster`; must match `--cluster`; occupancy matches `--cluster`;
+//! SetAttribute is +1 ns).
 //! Sizes above [`GpuProfile::portable_cluster_size`] need
 //! [`set_non_portable_cluster_size_allowed`](Sim::set_non_portable_cluster_size_allowed)
 //! or [`PortableClusterMode::AllowNonPortable`].

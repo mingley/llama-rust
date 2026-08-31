@@ -103,7 +103,9 @@ without `--cluster` of at least 2). `--func-cluster-spread` is
 `cudaFuncSetAttribute` ClusterSchedulingPolicyPreference Spread: launch
 Default inherits that occupancy (distinct from `--cluster-spread`). `--cluster-must-set` is
 `cudaFuncSetAttribute` ClusterDimMustBeSet (needs `--cluster`; occupancy
-matches `--cluster`; SetAttribute is +1 ns). `--max-shared` is
+matches `--cluster`; SetAttribute is +1 ns). `--required-cluster N` is
+`cudaFuncSetAttribute` RequiredClusterWidth (needs `--cluster`; must match
+`--cluster`; occupancy matches `--cluster`; SetAttribute is +1 ns). `--max-shared` is
 `cudaLaunchAttributePreferredSharedMemoryCarveout` MaxShared: occupies
 every Hyper-Q slot. `--func-max-shared` is `cudaFuncSetAttribute`
 PreferredSharedMemoryCarveout MaxShared: launch Default inherits that
@@ -282,10 +284,10 @@ on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--mempool-trim` / `--mempool-no-reuse` / `--shareable` / `--vmm-page` /
 `--pageable` / `--host-register` / `--host-register-mapped` / `--sync-memops` / `--device-sync-memops` / `--memcpy-batch` / `--accessed-by` / `--legacy-null` / `--stream-priority` /
 `--seq-streams` / `--kv-sim` / `--kv-bytes` / `--decode-priority` /
-`--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--l2-fetch` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--cluster-must-set` / `--max-shared` / `--func-max-shared` / `--non-portable-cluster` / `--sync-policy` / `--device-sync-policy` / `--event-blocking-sync` / `--mem-sync-domain` / `--shared-mem` / `--func-shared-mem` / `--device-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--wait-value` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
+`--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--l2-fetch` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--cluster-must-set` / `--required-cluster` / `--max-shared` / `--func-max-shared` / `--non-portable-cluster` / `--sync-policy` / `--device-sync-policy` / `--event-blocking-sync` / `--mem-sync-domain` / `--shared-mem` / `--func-shared-mem` / `--device-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--wait-value` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
 `expertvm sim` / `schedule` / `store` take `--compute-slots` / `--decode-sms`
-/ `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--l2-fetch` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--cluster-must-set` / `--max-shared` / `--func-max-shared` / `--non-portable-cluster` / `--sync-policy` / `--device-sync-policy` / `--mem-sync-domain` / `--shared-mem` / `--func-shared-mem` / `--device-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--wait-value` / `--multicast` / `--shareable` (Hyper-Q occupancy, green-context SM fraction,
-decode-stream ITL, exclusive cooperative GEMMs, same-stream PDL overlap, Hopper cluster occupancy / preferred dim / Spread scheduling / ClusterDimMustBeSet / non-portable size, NVLS replica fanout, and POSIX-FD mempool IPC on the trace walker). Walker `--decode-sms` does **not**
+/ `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--l2-fetch` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--cluster-must-set` / `--required-cluster` / `--max-shared` / `--func-max-shared` / `--non-portable-cluster` / `--sync-policy` / `--device-sync-policy` / `--mem-sync-domain` / `--shared-mem` / `--func-shared-mem` / `--device-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--wait-value` / `--multicast` / `--shareable` (Hyper-Q occupancy, green-context SM fraction,
+decode-stream ITL, exclusive cooperative GEMMs, same-stream PDL overlap, Hopper cluster occupancy / preferred dim / Spread scheduling / ClusterDimMustBeSet / RequiredClusterWidth / non-portable size, NVLS replica fanout, and POSIX-FD mempool IPC on the trace walker). Walker `--decode-sms` does **not**
 imply `--decode-priority` (token 0 is prefill). Engine `--mem-sync-domain remote`
 implies `--decode-priority`. `--decode-priority` implies
 `--stream-priority` so leftover prefill does not inflate decode ITL.
@@ -311,7 +313,9 @@ even when `N` is smaller than `--compute-slots` (no-op without `--cluster`
 of at least 2). `--func-cluster-spread` occupies every Hyper-Q slot via
 function Spread policy (launch Default inherits). `--cluster-must-set` is
 `cudaFuncAttributeClusterDimMustBeSet` (needs `--cluster`; occupancy matches
-`--cluster`). `--max-shared` occupies every Hyper-Q slot via MaxShared
+`--cluster`). `--required-cluster N` is
+`cudaFuncAttributeRequiredClusterWidth` (needs `--cluster`; must match
+`--cluster`; occupancy matches `--cluster`). `--max-shared` occupies every Hyper-Q slot via MaxShared
 carveout. `--func-max-shared` occupies every Hyper-Q slot via function
 MaxShared carveout (launch Default inherits). `--non-portable-cluster` allows `--cluster N` above portable size
 up to the SKU max. `--sync-policy auto|spin|yield|blocking` is stream host-wait
@@ -484,6 +488,7 @@ expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 4 --clu
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 4 --cluster 2 --cluster-spread
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 4 --cluster 2 --func-cluster-spread
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 4 --cluster 2 --cluster-must-set
+expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 4 --cluster 2 --required-cluster 2
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 2 --max-shared
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 2 --func-max-shared
 expertvm schedule trace.jsonl --capacity 8 --place replicas --multicast --profile 8xh100

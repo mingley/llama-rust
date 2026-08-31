@@ -172,6 +172,19 @@ pub(crate) fn check_cluster_must_set(cluster: u8, must: bool) -> Result<(), Erro
     Ok(())
 }
 
+pub(crate) fn check_required_cluster(cluster: u8, required: u8) -> Result<(), Error> {
+    if required == 0 {
+        return Ok(());
+    }
+    if cluster == 0 {
+        return Err(Error::Store("required-cluster needs cluster"));
+    }
+    if required != cluster {
+        return Err(Error::Store("required-cluster must match cluster"));
+    }
+    Ok(())
+}
+
 pub(crate) fn check_l2_fetch(n: u64) -> Result<(), Error> {
     if n == 0 || n == 32 || n == 64 || n == 128 {
         return Ok(());
@@ -747,6 +760,13 @@ pub struct SimCfg {
     /// Decode identity stays unset. [`crate::GpuStoreCfg::cluster_must_set`] is
     /// the store path.
     pub cluster_must_set: bool,
+    /// `cudaFuncSetAttribute` RequiredClusterWidth. `0` is unset.
+    ///
+    /// Needs [`Self::cluster`] and must equal it. Occupancy matches `--cluster`
+    /// (SetAttribute is +1 ns). Distinct from [`Self::cluster_must_set`] and
+    /// [`Self::preferred_cluster`]. Decode identity stays unset.
+    /// [`crate::GpuStoreCfg::required_cluster`] is the store path.
+    pub required_cluster: u8,
     /// Max-shared carveout (`cudaLaunchAttributePreferredSharedMemoryCarveout`).
     ///
     /// Occupies every Hyper-Q slot so leftover kernels cannot overlap.
@@ -998,6 +1018,7 @@ impl SimCfg {
             cluster_spread: false,
             func_cluster_spread: false,
             cluster_must_set: false,
+            required_cluster: 0,
             max_shared: false,
             func_max_shared: false,
             non_portable_cluster: false,
@@ -1033,6 +1054,7 @@ impl SimCfg {
 pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Result<(), Error> {
     check_cluster_preferred(cfg.cluster, cfg.preferred_cluster)?;
     check_cluster_must_set(cfg.cluster, cfg.cluster_must_set)?;
+    check_required_cluster(cfg.cluster, cfg.required_cluster)?;
     check_l2_fetch(cfg.l2_fetch)?;
     if cfg.graph_update && cfg.graph_set_params {
         return Err(Error::Store("choose one of graph-update, graph-set-params"));
@@ -1166,6 +1188,7 @@ pub fn sim_replay_cfg(
     apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
     apply_func_cluster_spread(&mut sim, cfg.func_cluster_spread)?;
     apply_cluster_dim_must_be_set(&mut sim, cfg.cluster_must_set)?;
+    apply_required_cluster_width(&mut sim, cfg.required_cluster)?;
     apply_l2_fetch(&mut sim, cfg.l2_fetch)?;
     apply_func_shared_mem(&mut sim, cfg.func_shared_mem)?;
     apply_device_shared_mem(&mut sim, cfg.device_shared_mem)?;
@@ -1593,6 +1616,22 @@ pub(crate) fn apply_cluster_dim_must_be_set(sim: &mut Sim, on: bool) -> Result<(
     let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
     for g in 0..n {
         sim.set_cluster_dim_must_be_set(DeviceId(g), true)?;
+    }
+    Ok(())
+}
+
+/// `cudaFuncSetAttribute(..., cudaFuncAttributeRequiredClusterWidth)`.
+///
+/// Call after [`Sim::new`]. `0` is identity (unset). Needs a launch cluster
+/// dim that matches. Occupancy matches `--cluster` (SetAttribute is +1 ns
+/// per GPU). Capture-legal.
+pub(crate) fn apply_required_cluster_width(sim: &mut Sim, n: u8) -> Result<(), Error> {
+    if n == 0 {
+        return Ok(());
+    }
+    let gpus = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..gpus {
+        sim.set_required_cluster_width(DeviceId(g), u32::from(n))?;
     }
     Ok(())
 }
