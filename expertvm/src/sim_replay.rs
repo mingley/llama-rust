@@ -165,6 +165,13 @@ pub(crate) fn check_cluster_preferred(cluster: u8, preferred: u8) -> Result<(), 
     Ok(())
 }
 
+pub(crate) fn check_cluster_must_set(cluster: u8, must: bool) -> Result<(), Error> {
+    if must && cluster == 0 {
+        return Err(Error::Store("cluster-must-set needs cluster"));
+    }
+    Ok(())
+}
+
 /// Device-launch graphs refuse mem nodes and `cudaGraphExecUpdate`.
 /// Device-updatable nodes also cannot `cudaGraphExecUpdate`.
 pub(crate) fn check_device_graph_flags(
@@ -719,6 +726,13 @@ pub struct SimCfg {
     /// cluster blocks `> 1`. Decode identity stays Default.
     /// [`crate::GpuStoreCfg::func_cluster_spread`] is the store path.
     pub func_cluster_spread: bool,
+    /// `cudaFuncSetAttribute` ClusterDimMustBeSet.
+    ///
+    /// A grouped GEMM without [`Self::cluster`] is Invalid. Needs
+    /// [`Self::cluster`]. Occupancy matches `--cluster` (SetAttribute is +1 ns).
+    /// Decode identity stays unset. [`crate::GpuStoreCfg::cluster_must_set`] is
+    /// the store path.
+    pub cluster_must_set: bool,
     /// Max-shared carveout (`cudaLaunchAttributePreferredSharedMemoryCarveout`).
     ///
     /// Occupies every Hyper-Q slot so leftover kernels cannot overlap.
@@ -960,6 +974,7 @@ impl SimCfg {
             preferred_cluster: 0,
             cluster_spread: false,
             func_cluster_spread: false,
+            cluster_must_set: false,
             max_shared: false,
             func_max_shared: false,
             non_portable_cluster: false,
@@ -993,6 +1008,7 @@ impl SimCfg {
 
 pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Result<(), Error> {
     check_cluster_preferred(cfg.cluster, cfg.preferred_cluster)?;
+    check_cluster_must_set(cfg.cluster, cfg.cluster_must_set)?;
     if cfg.graph_update && cfg.graph_set_params {
         return Err(Error::Store("choose one of graph-update, graph-set-params"));
     }
@@ -1123,6 +1139,7 @@ pub fn sim_replay_cfg(
     apply_device_sync_memops(&mut sim, cfg.device_sync_memops)?;
     apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
     apply_func_cluster_spread(&mut sim, cfg.func_cluster_spread)?;
+    apply_cluster_dim_must_be_set(&mut sim, cfg.cluster_must_set)?;
     apply_func_shared_mem(&mut sim, cfg.func_shared_mem)?;
     apply_device_shared_mem(&mut sim, cfg.device_shared_mem)?;
     if cfg.shareable {
@@ -1534,6 +1551,21 @@ pub(crate) fn apply_func_cluster_spread(sim: &mut Sim, on: bool) -> Result<(), E
     let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
     for g in 0..n {
         sim.set_func_cluster_policy(DeviceId(g), ClusterSchedulingPolicy::Spread)?;
+    }
+    Ok(())
+}
+
+/// `cudaFuncSetAttribute(..., cudaFuncAttributeClusterDimMustBeSet)`.
+///
+/// Call after [`Sim::new`]. Needs a launch cluster dim. Occupancy matches
+/// `--cluster` (SetAttribute is +1 ns per GPU). Capture-legal.
+pub(crate) fn apply_cluster_dim_must_be_set(sim: &mut Sim, on: bool) -> Result<(), Error> {
+    if !on {
+        return Ok(());
+    }
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        sim.set_cluster_dim_must_be_set(DeviceId(g), true)?;
     }
     Ok(())
 }

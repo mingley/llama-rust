@@ -3626,7 +3626,18 @@ model, do not celebrate the sim.
     timing events. Decode identity stays `cudaEventDisableTiming`.
     `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
 
-344. [ ] Next numbered PLAN item after 343 is the next `gpu-sim` / Engine /
+344. [x] `cudaFuncAttributeClusterDimMustBeSet`:
+    [`GpuStoreCfg::cluster_must_set`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::cluster_must_set`](expertvm/src/sim_replay.rs)
+    [`set_cluster_dim_must_be_set`](gpu-sim/src/sim.rs) after `Sim::new`.
+    Needs `--cluster` (a grouped GEMM without cluster is Invalid
+    `"cluster dim must be set"`). Occupancy matches `--cluster`
+    (SetAttribute is +1 ns). Hits stay the same. Legal with `--pdl` and
+    `--cooperative`. `--cluster-must-set` on `expertvm sim` / `schedule` /
+    `store` and `gguf_gemv engine --expert-sim`. Decode identity stays unset.
+    `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+345. [ ] Next numbered PLAN item after 344 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

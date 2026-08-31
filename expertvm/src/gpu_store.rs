@@ -10,14 +10,15 @@ use crate::planner::{
 };
 use crate::sim_replay::{
     add_leaf_gemm, alloc_launch_completion, alloc_programmatic_event, alloc_resident_copy_mailbox,
-    allow_non_portable_cluster_if, allow_optin_shared_if, apply_device_shared_mem,
-    apply_device_sync_memops, apply_exec_mem_sync_domain, apply_func_cluster_spread,
-    apply_func_max_shared, apply_func_shared_mem, apply_stream_mem_sync_domain,
-    apply_stream_sync_policy, bind_shareable_mempools, check_cluster_preferred,
-    check_device_graph_flags, ensure_single_attach, free_copy_mailbox, free_mapped_host,
-    instantiate_exec, kernel_leaf, mark_sync_memops, replay_exec, replay_streams,
-    reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
-    upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
+    allow_non_portable_cluster_if, allow_optin_shared_if, apply_cluster_dim_must_be_set,
+    apply_device_shared_mem, apply_device_sync_memops, apply_exec_mem_sync_domain,
+    apply_func_cluster_spread, apply_func_max_shared, apply_func_shared_mem,
+    apply_stream_mem_sync_domain, apply_stream_sync_policy, bind_shareable_mempools,
+    check_cluster_must_set, check_cluster_preferred, check_device_graph_flags,
+    ensure_single_attach, free_copy_mailbox, free_mapped_host, instantiate_exec, kernel_leaf,
+    mark_sync_memops, replay_exec, replay_streams, reset_persisting_l2_if, retarget_parked_kernel,
+    signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem,
+    StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -285,6 +286,12 @@ pub struct GpuStoreCfg {
     /// Distinct from launch-attribute [`Self::cluster_spread`]. A no-op unless
     /// cluster blocks `> 1`. Decode identity stays Default.
     pub func_cluster_spread: bool,
+    /// `cudaFuncSetAttribute` ClusterDimMustBeSet.
+    ///
+    /// A grouped GEMM without [`Self::cluster`] is Invalid. Needs
+    /// [`Self::cluster`]. Occupancy matches `--cluster` (SetAttribute is +1 ns).
+    /// Decode identity stays unset.
+    pub cluster_must_set: bool,
     /// Max-shared carveout (`cudaLaunchAttributePreferredSharedMemoryCarveout`).
     ///
     /// Occupies every Hyper-Q slot so leftover kernels cannot overlap.
@@ -726,6 +733,8 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::cluster_spread`] is launch-attribute Spread.
     /// [`GpuStoreCfg::func_cluster_spread`] is `cudaFuncSetAttribute`
     /// ClusterSchedulingPolicyPreference Spread (launch Default inherits).
+    /// [`GpuStoreCfg::cluster_must_set`] is `cudaFuncSetAttribute`
+    /// ClusterDimMustBeSet (needs `--cluster`; occupancy matches `--cluster`).
     /// [`GpuStoreCfg::sync_policy`] is stream host-wait
     /// (`cudaLaunchAttributeSynchronizationPolicy`; Auto tax 0).
     /// [`GpuStoreCfg::mem_sync_domain`] is decode-stream
@@ -845,6 +854,7 @@ impl SimulatedGpuStore {
             return Err(Error::Store("choose one of pdl, cooperative"));
         }
         check_cluster_preferred(cfg.cluster, cfg.preferred_cluster)?;
+        check_cluster_must_set(cfg.cluster, cfg.cluster_must_set)?;
         if cfg.shareable && (cfg.sync_alloc || fill != GpuFill::Pinned) {
             return Err(Error::Store("shareable needs cudaMallocAsync"));
         }
@@ -912,6 +922,7 @@ impl SimulatedGpuStore {
         apply_device_sync_memops(&mut sim, cfg.device_sync_memops)?;
         apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
         apply_func_cluster_spread(&mut sim, cfg.func_cluster_spread)?;
+        apply_cluster_dim_must_be_set(&mut sim, cfg.cluster_must_set)?;
         apply_func_shared_mem(&mut sim, cfg.func_shared_mem)?;
         apply_device_shared_mem(&mut sim, cfg.device_shared_mem)?;
         if cfg.l2_persist || cfg.l2_reset {
@@ -1140,6 +1151,14 @@ impl SimulatedGpuStore {
         self.sim
             .get_func_cluster_policy(self.device)
             .map(|p| p == ClusterSchedulingPolicy::Spread)
+            .unwrap_or(false)
+    }
+
+    /// Whether this store set `cudaFuncAttributeClusterDimMustBeSet`.
+    #[must_use]
+    pub fn cluster_must_set(&self) -> bool {
+        self.sim
+            .cluster_dim_must_be_set(self.device)
             .unwrap_or(false)
     }
 

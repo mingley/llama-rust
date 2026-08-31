@@ -614,6 +614,8 @@
 //! `expertvm sim --func-cluster-spread` sets function Spread so launch Default
 //! occupies every Hyper-Q slot when `--cluster` is at least 2 (distinct from
 //! `--cluster-spread` launch attribute).
+//! `expertvm sim --cluster-must-set` is `cudaFuncAttributeClusterDimMustBeSet`
+//! (needs `--cluster`; occupancy matches `--cluster`; SetAttribute is +1 ns).
 //! Sizes above [`GpuProfile::portable_cluster_size`] need
 //! [`set_non_portable_cluster_size_allowed`](Sim::set_non_portable_cluster_size_allowed)
 //! or [`PortableClusterMode::AllowNonPortable`].

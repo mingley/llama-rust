@@ -161,7 +161,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchAttributeClusterSchedulingPolicyPreference` Spread | occupies every Hyper-Q slot; Default uses `set_func_cluster_policy` (`cudaFuncAttributeClusterSchedulingPolicyPreference`; `expertvm sim --func-cluster-spread` sets Spread; unset never occupies extra slots without `--cluster` >= 2) |
 | `cudaLaunchAttributePreferredClusterDimension` | occupies preferred size when it fits in `compute_slots` |
 | `cudaFuncAttributeNonPortableClusterSizeAllowed` | sizes above `portable_cluster_size` until the SKU `max_blocks_per_cluster` |
-| `cudaFuncAttributeClusterDimMustBeSet` / `RequiredClusterWidth` / Height / Depth | no cluster is Invalid; a nonzero required axis must match the launch |
+| `cudaFuncAttributeClusterDimMustBeSet` / `RequiredClusterWidth` / Height / Depth | no cluster is Invalid; a nonzero required axis must match the launch; `expertvm sim --cluster-must-set` sets ClusterDimMustBeSet (needs `--cluster`; occupancy matches `--cluster`) |
 | `cudaLaunchAttributeSynchronizationPolicy` (stream-only) | host-wait tax on `synchronize_stream` / `synchronize_event`; Auto inherits `set_device_flags` (unset / profile default 0) |
 | `cudaLaunchAttributeDeviceUpdatableKernelNode` | graphs-only; `graph_exec_kernel_set_params` keeps the exec uploaded; device-launch graphs allow it |
 | `cudaLaunchAttributePreferredSharedMemoryCarveout` | MaxShared occupies every Hyper-Q slot; Default uses `set_func_carveout` (`cudaFuncAttributePreferredSharedMemoryCarveout`; `expertvm sim --func-max-shared` sets MaxShared; unset never occupies) |
@@ -921,6 +921,8 @@ Launch Default uses `set_func_cluster_policy`
 `expertvm sim --func-cluster-spread` sets Spread so launch Default occupies
 every Hyper-Q slot when `--cluster` is at least 2 (distinct from
 `--cluster-spread`).
+`expertvm sim --cluster-must-set` is `cudaFuncAttributeClusterDimMustBeSet`
+(needs `--cluster`; occupancy matches `--cluster`; SetAttribute is +1 ns).
 `preferred_cluster` is used when that size fits in `compute_slots`.
 `SharedMemCarveout::MaxShared` occupies every slot (`cudaLaunchAttributePreferredSharedMemoryCarveout`).
 Default uses `set_func_carveout` (`cudaFuncAttributePreferredSharedMemoryCarveout`).
@@ -954,7 +956,9 @@ launch grouped expert GEMMs that way. `--preferred-cluster N` occupies the
 preferred size when it fits (needs `--cluster`). `--cluster-spread` is Spread
 scheduling (occupies every Hyper-Q slot). `--func-cluster-spread` is
 `cudaFuncSetAttribute` ClusterSchedulingPolicyPreference Spread (launch
-Default inherits; occupies every Hyper-Q slot when `--cluster` >= 2). `--max-shared` is MaxShared
+Default inherits; occupies every Hyper-Q slot when `--cluster` >= 2). `--cluster-must-set` is
+`cudaFuncSetAttribute` ClusterDimMustBeSet (needs `--cluster`; occupancy matches
+`--cluster`). `--max-shared` is MaxShared
 carveout (occupies every Hyper-Q slot). `--func-max-shared` is
 `cudaFuncSetAttribute` PreferredSharedMemoryCarveout MaxShared (launch
 Default inherits; occupies every Hyper-Q slot). `--non-portable-cluster` is

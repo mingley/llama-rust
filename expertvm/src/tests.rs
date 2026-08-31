@@ -6628,6 +6628,80 @@ fn simulated_gpu_store_func_cluster_spread_serializes_leftover_prefill() {
 }
 
 #[test]
+fn simulated_gpu_store_cluster_must_set_matches_cluster_occupancy() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("slow gemm profile");
+    let run = |cluster_must_set: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            profile.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                decode_priority: true,
+                stream_priority: true,
+                compute_slots: 4,
+                cluster: 2,
+                cluster_must_set,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let pre = ExpertKey::new(0, 0);
+        let dec = ExpertKey::new(0, 1);
+        gpu.bind_decode_compute(false);
+        let _warm_pre = gpu.acquire(pre).expect("warm pre");
+        gpu.release(pre);
+        let _warm_dec = gpu.acquire(dec).expect("warm dec");
+        gpu.release(dec);
+        let t0 = gpu.clock_ns().expect("drain h2d");
+        gpu.bind_decode_compute(false);
+        let _prefill = gpu.acquire(pre).expect("prefill");
+        gpu.release(pre);
+        gpu.bind_decode_compute(true);
+        let _decode = gpu.acquire(dec).expect("decode");
+        gpu.release(dec);
+        gpu.score().expect("score").wall_ns.saturating_sub(t0)
+    };
+    let cluster = run(false);
+    let must = run(true);
+    assert_eq!(
+        cluster, must,
+        "ClusterDimMustBeSet occupancy matches --cluster; cluster={cluster} must={must}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_cluster_must_set_needs_cluster() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            cluster_must_set: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("cluster-must-set without cluster must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("cluster-must-set needs cluster"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
 fn simulated_gpu_store_preferred_cluster_serializes_leftover_prefill() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1])],
@@ -7692,6 +7766,67 @@ fn sim_replay_func_cluster_spread_serializes_seq_streams_graphs() {
     assert!(
         overlap.sim_ns < serial.sim_ns,
         "func cluster Spread graphs must inherit occupancy; overlap={} serial={}",
+        overlap.sim_ns,
+        serial.sim_ns
+    );
+}
+
+#[test]
+fn sim_replay_cluster_must_set_matches_cluster_occupancy() {
+    let t = Trace {
+        events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("slow gemm profile");
+    let packed = SimCfg {
+        seq_streams: true,
+        compute_slots: 4,
+        cluster: 2,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let must = SimCfg {
+        cluster_must_set: true,
+        ..packed
+    };
+    let overlap = sim_replay_cfg(&t, profile.clone(), packed).expect("cluster");
+    let serial = sim_replay_cfg(&t, profile, must).expect("cluster-must-set");
+    assert_eq!(overlap.hits, serial.hits);
+    assert_eq!(overlap.misses, serial.misses);
+    assert_eq!(
+        overlap.sim_ns.saturating_add(1),
+        serial.sim_ns,
+        "ClusterDimMustBeSet occupancy matches --cluster; SetAttribute is +1 ns; cluster={} must={}",
+        overlap.sim_ns,
+        serial.sim_ns
+    );
+}
+
+#[test]
+fn sim_replay_cluster_must_set_matches_cluster_occupancy_graphs() {
+    let t = Trace {
+        events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("slow gemm profile");
+    let packed = SimCfg {
+        seq_streams: true,
+        compute_slots: 4,
+        cluster: 2,
+        cuda_graphs: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let must = SimCfg {
+        cluster_must_set: true,
+        ..packed
+    };
+    let overlap = sim_replay_cfg(&t, profile.clone(), packed).expect("cluster graphs");
+    let serial = sim_replay_cfg(&t, profile, must).expect("cluster-must-set graphs");
+    assert_eq!(overlap.hits, serial.hits);
+    assert_eq!(overlap.misses, serial.misses);
+    assert_eq!(
+        overlap.sim_ns.saturating_add(1),
+        serial.sim_ns,
+        "ClusterDimMustBeSet graphs inherit occupancy; SetAttribute is +1 ns; cluster={} must={}",
         overlap.sim_ns,
         serial.sim_ns
     );
@@ -10315,6 +10450,82 @@ fn sim_replay_func_cluster_spread_matches_launch_spread() {
         b.sim_ns,
         c.sim_ns
     );
+}
+
+#[test]
+fn sim_replay_cluster_must_set_keeps_hits() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg {
+        cluster: 2,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let on = SimCfg {
+        cluster: 2,
+        cluster_must_set: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("identity");
+    let b = sim_replay_cfg(&t, profile, on).expect("cluster-must-set");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+}
+
+#[test]
+fn simulated_gpu_store_cluster_must_set_sets_func_attr() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let run = |cluster_must_set: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                cluster: 2,
+                cluster_must_set,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        assert_eq!(gpu.cluster_must_set(), cluster_must_set);
+        for key in t.keys() {
+            let _p = gpu.acquire(key).expect("acquire");
+            gpu.release(key);
+        }
+        let metrics = gpu.metrics();
+        let _s = gpu.score().expect("score");
+        (metrics.hits, metrics.misses)
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut identity = SimulatedGpuStore::new(inner, 2, p.clone(), 4096).expect("id");
+    let k0 = ExpertKey::new(0, 0);
+    let _a = identity.acquire(k0).expect("id acq");
+    assert!(!identity.cluster_must_set());
+    let _s = identity.score().expect("id score");
+    let off = run(false);
+    let on = run(true);
+    assert_eq!(off.0, on.0);
+    assert_eq!(off.1, on.1);
+}
+
+#[test]
+fn sim_replay_cluster_must_set_needs_cluster() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let on = SimCfg {
+        cluster_must_set: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    match sim_replay_cfg(&t, profile, on) {
+        Ok(_) => panic!("cluster-must-set without cluster must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("cluster-must-set needs cluster"),
+            "{err}"
+        ),
+    }
 }
 
 #[test]

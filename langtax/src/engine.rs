@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `mempool_trim`, `mempool_no_reuse`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/enable, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `func_cluster_spread`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
+//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `func_cluster_spread`, `cluster_must_set`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -68,7 +68,9 @@
 //! is Spread scheduling: occupies every Hyper-Q slot even when `N` is smaller
 //! than `compute_slots` (no-op without `--cluster` of at least 2). `--func-cluster-spread`
 //! is `cudaFuncSetAttribute` ClusterSchedulingPolicyPreference Spread: launch
-//! Default inherits that occupancy (distinct from `--cluster-spread`). `--max-shared`
+//! Default inherits that occupancy (distinct from `--cluster-spread`). `--cluster-must-set`
+//! is `cudaFuncSetAttribute` ClusterDimMustBeSet (needs `--cluster`; occupancy
+//! matches `--cluster`; SetAttribute is +1 ns). `--max-shared`
 //! is MaxShared carveout: occupies every Hyper-Q slot. `--func-max-shared`
 //! is `cudaFuncSetAttribute` PreferredSharedMemoryCarveout MaxShared: launch
 //! Default inherits that occupancy. `--non-portable-cluster`
@@ -3879,6 +3881,46 @@ mod tests {
             serial.1.wall_ns,
             overlap.1.line(),
             serial.1.line()
+        );
+    }
+
+    #[test]
+    fn engine_gpu_cluster_must_set_matches_cluster_wall() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+            .expect("slow gemm profile");
+        let pri = GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            compute_slots: 4,
+            cluster: 2,
+            ..GpuStoreCfg::default()
+        };
+        let cluster = mixed_gpu_decode_itl_at(bytes.clone(), false, None, pri, profile.clone());
+        let must = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                cluster_must_set: true,
+                ..pri
+            },
+            profile,
+        );
+        assert_eq!(cluster.2, 4);
+        assert_eq!(must.2, 4);
+        assert_eq!(
+            cluster.4, must.4,
+            "ClusterDimMustBeSet must keep greedy identity"
+        );
+        assert_eq!(
+            cluster.1.wall_ns.saturating_add(1),
+            must.1.wall_ns,
+            "ClusterDimMustBeSet occupancy matches --cluster; SetAttribute is +1 ns; cluster={} must={} cluster_line={} must_line={}",
+            cluster.1.wall_ns,
+            must.1.wall_ns,
+            cluster.1.line(),
+            must.1.line()
         );
     }
 

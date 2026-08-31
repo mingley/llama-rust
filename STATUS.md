@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaFuncAttributeClusterDimMustBeSet`
+
+`GpuStoreCfg::cluster_must_set` / `SimCfg::cluster_must_set` call
+`cudaFuncSetAttribute(..., cudaFuncAttributeClusterDimMustBeSet)` after
+`Sim::new`. Needs `--cluster`. Occupancy matches `--cluster` (SetAttribute
+is +1 ns). Hits/misses stay the same. A grouped GEMM without `--cluster`
+is refused at construction (`cluster-must-set needs cluster`), not at the
+first Invalid `"cluster dim must be set"`. `--cluster-must-set` is off by
+default (decode identity: unset). `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaEventBlockingSync` copy events
 
 `GpuStoreCfg::event_blocking_sync` creates copy start/end events with

@@ -101,6 +101,8 @@ pub(crate) struct GpuCli {
     pub cluster_spread: bool,
     /// Function Spread cluster scheduling (`GpuStoreCfg::func_cluster_spread`).
     pub func_cluster_spread: bool,
+    /// `cudaFuncAttributeClusterDimMustBeSet` (`GpuStoreCfg::cluster_must_set`).
+    pub cluster_must_set: bool,
     /// Max-shared carveout (`GpuStoreCfg::max_shared`).
     pub max_shared: bool,
     /// Function MaxShared carveout (`GpuStoreCfg::func_max_shared`).
@@ -223,6 +225,7 @@ impl GpuCli {
             "--l2-reset" => &mut self.l2_reset,
             "--cluster-spread" => &mut self.cluster_spread,
             "--func-cluster-spread" => &mut self.func_cluster_spread,
+            "--cluster-must-set" => &mut self.cluster_must_set,
             "--max-shared" => &mut self.max_shared,
             "--func-max-shared" => &mut self.func_max_shared,
             "--non-portable-cluster" => &mut self.non_portable_cluster,
@@ -446,6 +449,14 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--cluster-must-set` needs a required `--cluster`.
+    pub(crate) fn check_cluster_must_set(self) -> Result<(), String> {
+        if self.cluster_must_set && !self.cluster_set {
+            return Err("--cluster-must-set needs --cluster".into());
+        }
+        Ok(())
+    }
+
     /// First CUDA knob that needs `--expert-sim`, if any.
     #[must_use]
     pub(crate) fn sim_flag(self) -> Option<&'static str> {
@@ -495,6 +506,7 @@ impl GpuCli {
             (self.preferred_cluster_set, "--preferred-cluster"),
             (self.cluster_spread, "--cluster-spread"),
             (self.func_cluster_spread, "--func-cluster-spread"),
+            (self.cluster_must_set, "--cluster-must-set"),
             (self.max_shared, "--max-shared"),
             (self.func_max_shared, "--func-max-shared"),
             (self.non_portable_cluster, "--non-portable-cluster"),
@@ -804,6 +816,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         preferred_cluster: gpu.preferred_cluster,
         cluster_spread: gpu.cluster_spread,
         func_cluster_spread: gpu.func_cluster_spread,
+        cluster_must_set: gpu.cluster_must_set,
         max_shared: gpu.max_shared,
         func_max_shared: gpu.func_max_shared,
         non_portable_cluster: gpu.non_portable_cluster,
