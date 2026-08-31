@@ -624,6 +624,8 @@
 //! (`cudaFuncAttributePreferredSharedMemoryCarveout`).
 //! `expertvm sim --func-max-shared` sets MaxShared so launch Default occupies
 //! every Hyper-Q slot (distinct from `--max-shared` launch attribute).
+//! `expertvm sim --max-l1` is launch MaxL1 (needs `--func-max-shared`;
+//! restores leftover Hyper-Q overlap; exclusive with `--max-shared`).
 //! `expertvm sim --func-cluster-spread` sets function Spread so launch Default
 //! occupies every Hyper-Q slot when `--cluster` is at least 2 (distinct from
 //! `--cluster-spread` launch attribute).

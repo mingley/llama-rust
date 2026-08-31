@@ -115,6 +115,8 @@ pub(crate) struct GpuCli {
     pub max_shared: bool,
     /// Function MaxShared carveout (`GpuStoreCfg::func_max_shared`).
     pub func_max_shared: bool,
+    /// Launch MaxL1 carveout (`GpuStoreCfg::max_l1`).
+    pub max_l1: bool,
     /// Non-portable cluster size (`GpuStoreCfg::non_portable_cluster`).
     pub non_portable_cluster: bool,
     /// Stream host-wait policy (`GpuStoreCfg::sync_policy`).
@@ -244,6 +246,7 @@ impl GpuCli {
             "--cluster-must-set" => &mut self.cluster_must_set,
             "--max-shared" => &mut self.max_shared,
             "--func-max-shared" => &mut self.func_max_shared,
+            "--max-l1" => &mut self.max_l1,
             "--non-portable-cluster" => &mut self.non_portable_cluster,
             "--optin-shared" => &mut self.optin_shared,
             "--nvlink-util" => &mut self.nvlink_util,
@@ -525,6 +528,17 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--max-l1` needs `--func-max-shared` and is exclusive with `--max-shared`.
+    pub(crate) fn check_max_l1(self) -> Result<(), String> {
+        if self.max_l1 && self.max_shared {
+            return Err("choose one of --max-l1, --max-shared".into());
+        }
+        if self.max_l1 && !self.func_max_shared {
+            return Err("--max-l1 needs --func-max-shared".into());
+        }
+        Ok(())
+    }
+
     /// `--mem-sync-map collapse` needs `--mem-sync-domain remote`.
     pub(crate) fn check_mem_sync_map(self) -> Result<(), String> {
         if self.mem_sync_collapse && self.mem_sync_domain != MemSyncDomain::Remote {
@@ -587,6 +601,7 @@ impl GpuCli {
             (self.required_cluster_set, "--required-cluster"),
             (self.max_shared, "--max-shared"),
             (self.func_max_shared, "--func-max-shared"),
+            (self.max_l1, "--max-l1"),
             (self.non_portable_cluster, "--non-portable-cluster"),
             (self.sync_policy_set, "--sync-policy"),
             (self.device_sync_policy_set, "--device-sync-policy"),
@@ -927,6 +942,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         required_cluster: gpu.required_cluster,
         max_shared: gpu.max_shared,
         func_max_shared: gpu.func_max_shared,
+        max_l1: gpu.max_l1,
         non_portable_cluster: gpu.non_portable_cluster,
         sync_policy: gpu.sync_policy,
         device_sync_policy: gpu.device_sync_policy,

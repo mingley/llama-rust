@@ -16,11 +16,11 @@ use crate::sim_replay::{
     apply_func_max_shared, apply_func_shared_mem, apply_l2_fetch, apply_required_cluster_width,
     apply_stream_mem_sync_domain, apply_stream_mem_sync_map, apply_stream_sync_policy,
     bind_shareable_mempools, check_cluster_must_set, check_cluster_preferred,
-    check_device_graph_flags, check_l2_fetch, check_mem_sync_collapse, check_required_cluster,
-    ensure_single_attach, free_copy_mailbox, free_mapped_host, instantiate_exec, kernel_leaf,
-    mark_sync_memops, replay_exec, replay_streams, reset_persisting_l2_if, retarget_parked_kernel,
-    signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem,
-    StreamPlan,
+    check_device_graph_flags, check_l2_fetch, check_max_l1, check_mem_sync_collapse,
+    check_required_cluster, ensure_single_attach, free_copy_mailbox, free_mapped_host,
+    instantiate_exec, kernel_leaf, mark_sync_memops, replay_exec, replay_streams,
+    reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
+    upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -318,6 +318,12 @@ pub struct GpuStoreCfg {
     /// overlap. Distinct from launch-attribute [`Self::max_shared`]. Decode
     /// identity stays Default.
     pub func_max_shared: bool,
+    /// Launch MaxL1 carveout (`cudaLaunchAttributePreferredSharedMemoryCarveout`).
+    ///
+    /// Needs [`Self::func_max_shared`]. Overrides function MaxShared so leftover
+    /// kernels can Hyper-Q overlap again. Exclusive with [`Self::max_shared`].
+    /// Decode identity stays Default.
+    pub max_l1: bool,
     /// `cudaFuncAttributeNonPortableClusterSizeAllowed`. Default disallowed.
     ///
     /// Lets [`Self::cluster`] exceed `portable_cluster_size` up to
@@ -560,6 +566,7 @@ pub struct SimulatedGpuStore {
     preferred_cluster: u8,
     cluster_spread: bool,
     max_shared: bool,
+    max_l1: bool,
     shared_mem: gpu_sim::SharedMemoryMode,
     portable_cluster: gpu_sim::PortableClusterMode,
     dynamic_shared: u32,
@@ -781,6 +788,8 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::max_shared`] is launch-attribute MaxShared carveout.
     /// [`GpuStoreCfg::func_max_shared`] is `cudaFuncSetAttribute`
     /// PreferredSharedMemoryCarveout MaxShared (launch Default inherits).
+    /// [`GpuStoreCfg::max_l1`] is launch-attribute MaxL1 (needs
+    /// `--func-max-shared`; restores Hyper-Q overlap).
     /// [`GpuStoreCfg::shared_mem`] is kernel-node bank width
     /// (`cudaLaunchAttributeSharedMemoryMode`; Default never scales).
     /// [`GpuStoreCfg::func_shared_mem`] is `cudaFuncSetSharedMemConfig`
@@ -898,6 +907,7 @@ impl SimulatedGpuStore {
         check_cluster_must_set(cfg.cluster, cfg.cluster_must_set)?;
         check_required_cluster(cfg.cluster, cfg.required_cluster)?;
         check_mem_sync_collapse(cfg.mem_sync_domain, cfg.mem_sync_collapse)?;
+        check_max_l1(cfg.max_l1, cfg.func_max_shared, cfg.max_shared)?;
         check_l2_fetch(cfg.l2_fetch)?;
         if cfg.shareable && (cfg.sync_alloc || fill != GpuFill::Pinned) {
             return Err(Error::Store("shareable needs cudaMallocAsync"));
@@ -1049,6 +1059,7 @@ impl SimulatedGpuStore {
             preferred_cluster: cfg.preferred_cluster,
             cluster_spread: cfg.cluster_spread,
             max_shared: cfg.max_shared,
+            max_l1: cfg.max_l1,
             shared_mem: cfg.shared_mem,
             portable_cluster: cfg.portable_cluster,
             dynamic_shared: cfg.dynamic_shared,
@@ -1202,6 +1213,12 @@ impl SimulatedGpuStore {
             .unwrap_or(false)
     }
 
+    /// Whether grouped GEMMs launch with MaxL1 carveout.
+    #[must_use]
+    pub fn max_l1(&self) -> bool {
+        self.gemm_flags().carveout() == SharedMemCarveout::MaxL1
+    }
+
     /// Whether this store set function Spread cluster policy at construction.
     #[must_use]
     pub fn func_cluster_spread(&self) -> bool {
@@ -1320,6 +1337,7 @@ impl SimulatedGpuStore {
             preferred_cluster: self.preferred_cluster,
             cluster_spread: self.cluster_spread,
             max_shared: self.max_shared,
+            max_l1: self.max_l1,
             shared_mem: self.shared_mem,
             portable_cluster: self.portable_cluster,
             dynamic_shared: self.dynamic_shared,

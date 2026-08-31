@@ -7017,6 +7017,55 @@ fn simulated_gpu_store_func_max_shared_serializes_leftover_prefill() {
 }
 
 #[test]
+fn simulated_gpu_store_max_l1_restores_leftover_prefill_overlap() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("slow gemm profile");
+    let run = |max_l1: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            profile.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                decode_priority: true,
+                stream_priority: true,
+                compute_slots: 2,
+                func_max_shared: true,
+                max_l1,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let pre = ExpertKey::new(0, 0);
+        let dec = ExpertKey::new(0, 1);
+        gpu.bind_decode_compute(false);
+        let _warm_pre = gpu.acquire(pre).expect("warm pre");
+        gpu.release(pre);
+        let _warm_dec = gpu.acquire(dec).expect("warm dec");
+        gpu.release(dec);
+        let t0 = gpu.clock_ns().expect("drain h2d");
+        gpu.bind_decode_compute(false);
+        let _prefill = gpu.acquire(pre).expect("prefill");
+        gpu.release(pre);
+        gpu.bind_decode_compute(true);
+        let _decode = gpu.acquire(dec).expect("decode");
+        gpu.release(dec);
+        gpu.score().expect("score").wall_ns.saturating_sub(t0)
+    };
+    let serial = run(false);
+    let restored = run(true);
+    assert!(
+        restored < serial,
+        "launch MaxL1 must restore leftover prefill overlap; restored={restored} serial={serial}"
+    );
+}
+
+#[test]
 fn simulated_gpu_store_nvlink_util_serializes_leftover_prefill() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 2])],
@@ -8253,6 +8302,39 @@ fn sim_replay_func_max_shared_serializes_seq_streams() {
         overlap.sim_ns < serial.sim_ns,
         "func MaxShared carveout must not Hyper-Q overlap; overlap={} serial={}",
         overlap.sim_ns,
+        serial.sim_ns
+    );
+}
+
+#[test]
+fn sim_replay_max_l1_restores_seq_stream_overlap() {
+    let t = Trace {
+        events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("slow gemm profile");
+    let hyperq = SimCfg {
+        seq_streams: true,
+        compute_slots: 2,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let serial = SimCfg {
+        func_max_shared: true,
+        ..hyperq
+    };
+    let restored = SimCfg {
+        max_l1: true,
+        ..serial
+    };
+    let overlap = sim_replay_cfg(&t, profile.clone(), hyperq).expect("hyperq");
+    let serial = sim_replay_cfg(&t, profile.clone(), serial).expect("func-max-shared");
+    let restored = sim_replay_cfg(&t, profile, restored).expect("max-l1");
+    assert_eq!(overlap.hits, restored.hits);
+    assert_eq!(overlap.misses, restored.misses);
+    assert!(
+        restored.sim_ns < serial.sim_ns,
+        "launch MaxL1 must restore Hyper-Q overlap; restored={} serial={}",
+        restored.sim_ns,
         serial.sim_ns
     );
 }
@@ -10794,6 +10876,121 @@ fn sim_replay_func_max_shared_keeps_hits() {
     let b = sim_replay_cfg(&t, profile, on).expect("func-max-shared");
     assert_eq!(a.hits, b.hits);
     assert_eq!(a.misses, b.misses);
+}
+
+#[test]
+fn sim_replay_max_l1_keeps_hits() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg {
+        func_max_shared: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let on = SimCfg {
+        max_l1: true,
+        ..off
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("func-max-shared");
+    let b = sim_replay_cfg(&t, profile, on).expect("max-l1");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+}
+
+#[test]
+fn sim_replay_max_l1_needs_func_max_shared() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let on = SimCfg {
+        max_l1: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    match sim_replay_cfg(&t, profile, on) {
+        Ok(_) => panic!("max-l1 without func-max-shared must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("max-l1 needs func-max-shared"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn simulated_gpu_store_max_l1_needs_func_max_shared() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            max_l1: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("max-l1 without func-max-shared must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("max-l1 needs func-max-shared"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn simulated_gpu_store_max_l1_refuses_max_shared() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            func_max_shared: true,
+            max_shared: true,
+            max_l1: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("max-l1 with max-shared must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("choose one of max-l1, max-shared"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn simulated_gpu_store_max_l1_marks_launch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            func_max_shared: true,
+            max_l1: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    assert!(gpu.max_l1());
+    assert!(gpu.func_max_shared());
+    let identity = SimulatedGpuStore::new(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+    )
+    .expect("id");
+    assert!(!identity.max_l1());
 }
 
 #[test]

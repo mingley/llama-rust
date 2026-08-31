@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaLaunchAttributePreferredSharedMemoryCarveout` MaxL1
+
+`GpuStoreCfg::max_l1` / `SimCfg::max_l1` set launch MaxL1 carveout. Needs
+`--func-max-shared`. Overrides function MaxShared so leftover kernels can
+Hyper-Q overlap again. Exclusive with `--max-shared`. Hits/misses stay the
+same. `--max-l1` is off by default (decode identity: Default carveout).
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaLaunchAttributeMemSyncDomainMap` collapse
 
 `GpuStoreCfg::mem_sync_collapse` / `SimCfg::mem_sync_collapse` call

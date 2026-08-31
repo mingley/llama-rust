@@ -18,7 +18,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -143,6 +143,7 @@ fn run() -> Result<(), String> {
             sim_cfg.required_cluster = cfg.required_cluster;
             sim_cfg.max_shared = cfg.max_shared;
             sim_cfg.func_max_shared = cfg.func_max_shared;
+            sim_cfg.max_l1 = cfg.max_l1;
             sim_cfg.non_portable_cluster = cfg.non_portable_cluster;
             sim_cfg.sync_policy = cfg.sync_policy;
             sim_cfg.device_sync_policy = cfg.device_sync_policy;
@@ -246,6 +247,7 @@ struct Cfg {
     required_cluster: u8,
     max_shared: bool,
     func_max_shared: bool,
+    max_l1: bool,
     non_portable_cluster: bool,
     sync_policy: SynchronizationPolicy,
     device_sync_policy: SynchronizationPolicy,
@@ -312,6 +314,7 @@ where
     let mut required_cluster = 0u8;
     let mut max_shared = false;
     let mut func_max_shared = false;
+    let mut max_l1 = false;
     let mut non_portable_cluster = false;
     let mut sync_policy = SynchronizationPolicy::Auto;
     let mut device_sync_policy = SynchronizationPolicy::Auto;
@@ -422,6 +425,9 @@ where
             }
             "--func-max-shared" => {
                 func_max_shared = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
+            "--max-l1" => {
+                max_l1 = !matches!(inline.as_deref(), Some("0" | "false"));
             }
             "--non-portable-cluster" => {
                 non_portable_cluster = !matches!(inline.as_deref(), Some("0" | "false"));
@@ -556,6 +562,12 @@ where
     if required_cluster != 0 && required_cluster != cluster {
         return Err("required-cluster must match --cluster".into());
     }
+    if max_l1 && max_shared {
+        return Err("choose one of --max-l1, --max-shared".into());
+    }
+    if max_l1 && !func_max_shared {
+        return Err("--max-l1 needs --func-max-shared".into());
+    }
     Ok(Cfg {
         path,
         capacity,
@@ -589,6 +601,7 @@ where
         required_cluster,
         max_shared,
         func_max_shared,
+        max_l1,
         non_portable_cluster,
         sync_policy,
         device_sync_policy,

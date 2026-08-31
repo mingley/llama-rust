@@ -3691,7 +3691,18 @@ model, do not celebrate the sim.
     identity stays Hopper identity. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-349. [ ] Next numbered PLAN item after 348 is the next `gpu-sim` / Engine /
+349. [x] `cudaLaunchAttributePreferredSharedMemoryCarveout` MaxL1:
+    [`GpuStoreCfg::max_l1`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::max_l1`](expertvm/src/sim_replay.rs) launch carveout.
+    Needs `--func-max-shared`. Overrides function MaxShared so leftover
+    kernels can Hyper-Q overlap again. Exclusive with `--max-shared`.
+    Hits stay the same. Legal with `--pdl` and `--cooperative`.
+    `--max-l1` on `expertvm sim` / `schedule` / `store` and
+    `gguf_gemv engine --expert-sim`. infer-bench has `--func-max-shared`,
+    so it gets `--max-l1`. Decode identity stays Default. `gpu-profile
+    capture` is still refused. Dual score still has no `$/M tokens`.
+
+350. [ ] Next numbered PLAN item after 349 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

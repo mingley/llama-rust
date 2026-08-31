@@ -43,6 +43,8 @@ pub(crate) struct GemmFlags {
     pub cluster_spread: bool,
     /// `cudaLaunchAttributePreferredSharedMemoryCarveout` MaxShared.
     pub max_shared: bool,
+    /// `cudaLaunchAttributePreferredSharedMemoryCarveout` MaxL1.
+    pub max_l1: bool,
     /// `cudaLaunchAttributeSharedMemoryMode`. Decode identity stays Default.
     pub shared_mem: gpu_sim::SharedMemoryMode,
     /// `cudaLaunchAttributePortableClusterSizeMode`. Decode identity stays Default.
@@ -113,6 +115,8 @@ impl GemmFlags {
     pub(crate) fn carveout(self) -> SharedMemCarveout {
         if self.max_shared {
             SharedMemCarveout::MaxShared
+        } else if self.max_l1 {
+            SharedMemCarveout::MaxL1
         } else {
             SharedMemCarveout::Default
         }
@@ -181,6 +185,20 @@ pub(crate) fn check_required_cluster(cluster: u8, required: u8) -> Result<(), Er
     }
     if required != cluster {
         return Err(Error::Store("required-cluster must match cluster"));
+    }
+    Ok(())
+}
+
+pub(crate) fn check_max_l1(
+    max_l1: bool,
+    func_max_shared: bool,
+    max_shared: bool,
+) -> Result<(), Error> {
+    if max_l1 && max_shared {
+        return Err(Error::Store("choose one of max-l1, max-shared"));
+    }
+    if max_l1 && !func_max_shared {
+        return Err(Error::Store("max-l1 needs func-max-shared"));
     }
     Ok(())
 }
@@ -789,6 +807,13 @@ pub struct SimCfg {
     /// identity stays Default. [`crate::GpuStoreCfg::func_max_shared`] is the
     /// store path.
     pub func_max_shared: bool,
+    /// Launch MaxL1 carveout (`cudaLaunchAttributePreferredSharedMemoryCarveout`).
+    ///
+    /// Needs [`Self::func_max_shared`]. Overrides function MaxShared so leftover
+    /// kernels can Hyper-Q overlap again. Exclusive with [`Self::max_shared`].
+    /// Decode identity stays Default. [`crate::GpuStoreCfg::max_l1`] is the
+    /// store path.
+    pub max_l1: bool,
     /// `cudaFuncAttributeNonPortableClusterSizeAllowed`. Default disallowed.
     ///
     /// Lets [`Self::cluster`] exceed `portable_cluster_size` up to
@@ -1036,6 +1061,7 @@ impl SimCfg {
             required_cluster: 0,
             max_shared: false,
             func_max_shared: false,
+            max_l1: false,
             non_portable_cluster: false,
             sync_policy: gpu_sim::SynchronizationPolicy::Auto,
             device_sync_policy: gpu_sim::SynchronizationPolicy::Auto,
@@ -1072,6 +1098,7 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     check_cluster_must_set(cfg.cluster, cfg.cluster_must_set)?;
     check_required_cluster(cfg.cluster, cfg.required_cluster)?;
     check_mem_sync_collapse(cfg.mem_sync_domain, cfg.mem_sync_collapse)?;
+    check_max_l1(cfg.max_l1, cfg.func_max_shared, cfg.max_shared)?;
     check_l2_fetch(cfg.l2_fetch)?;
     if cfg.graph_update && cfg.graph_set_params {
         return Err(Error::Store("choose one of graph-update, graph-set-params"));
@@ -1286,6 +1313,7 @@ pub fn sim_replay_cfg(
         .with_preferred_cluster(cfg.preferred_cluster)
         .with_cluster_spread(cfg.cluster_spread)
         .with_max_shared(cfg.max_shared)
+        .with_max_l1(cfg.max_l1)
         .with_shared_mem(cfg.shared_mem)
         .with_portable_cluster(cfg.portable_cluster)
         .with_dynamic_shared(cfg.dynamic_shared)
@@ -1747,6 +1775,7 @@ pub(crate) struct GraphBank {
     preferred_cluster: u8,
     cluster_spread: bool,
     max_shared: bool,
+    max_l1: bool,
     shared_mem: gpu_sim::SharedMemoryMode,
     portable_cluster: gpu_sim::PortableClusterMode,
     dynamic_shared: u32,
@@ -1782,6 +1811,7 @@ impl GraphBank {
             preferred_cluster: 0,
             cluster_spread: false,
             max_shared: false,
+            max_l1: false,
             shared_mem: gpu_sim::SharedMemoryMode::Default,
             portable_cluster: gpu_sim::PortableClusterMode::Default,
             dynamic_shared: 0,
@@ -1840,6 +1870,11 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_max_l1(mut self, yes: bool) -> Self {
+        self.max_l1 = yes;
+        self
+    }
+
     pub(crate) fn with_shared_mem(mut self, mode: SharedMemoryMode) -> Self {
         self.shared_mem = mode;
         self
@@ -1894,6 +1929,7 @@ impl GraphBank {
             preferred_cluster: self.preferred_cluster,
             cluster_spread: self.cluster_spread,
             max_shared: self.max_shared,
+            max_l1: self.max_l1,
             shared_mem: self.shared_mem,
             portable_cluster: self.portable_cluster,
             dynamic_shared: self.dynamic_shared,
@@ -3491,9 +3527,10 @@ fn add_gemm_kernel(
         let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_cluster_policy(graph, node, ClusterSchedulingPolicy::Spread)?;
     }
-    if flags.max_shared {
+    let carve = flags.carveout();
+    if carve != SharedMemCarveout::Default {
         let node = usize::from(!writes.is_empty());
-        sim.graph_kernel_node_set_carveout(graph, node, SharedMemCarveout::MaxShared)?;
+        sim.graph_kernel_node_set_carveout(graph, node, carve)?;
     }
     if flags.shared_mem != SharedMemoryMode::Default {
         let node = usize::from(!writes.is_empty());
