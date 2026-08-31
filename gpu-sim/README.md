@@ -295,6 +295,8 @@ are the flags-parameter twins (`EventRecordFlags::EXTERNAL` /
 requires DisableTiming. BlockingSync taxes `synchronize_event` with
 `host_sync_blocking_ns`. Typed helpers
 stay (`create_event_interprocess` / `create_event_blocking_sync`).
+`expertvm store --event-blocking-sync` creates timing copy events with
+BlockingSync (implies `--timing-events`; distinct from `--sync-policy blocking`).
 `ipc_get_event` / `ipc_open_event` are `cudaIpcGetEventHandle` /
 `cudaIpcOpenEventHandle`: the import aliases the source record. Destroy of
 the source while imports are live is Invalid. Capture cannot include event IPC.

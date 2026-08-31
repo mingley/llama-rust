@@ -4186,6 +4186,115 @@ fn simulated_gpu_store_timing_events_score_copy_elapsed() {
 }
 
 #[test]
+fn simulated_gpu_store_event_blocking_sync_pays_host_wait_tax() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nhost_sync_blocking_ns=10000\nfp16_flops=1000000\ncopy_engines=2\n",
+    )
+    .expect("blocking profile");
+    let run =
+        |event_blocking_sync: bool, timing_events: bool, sync_policy: SynchronizationPolicy| {
+            let inner = DirectStore::from_trace(&t);
+            let mut gpu = match SimulatedGpuStore::with_cfg(
+                inner,
+                1,
+                p.clone(),
+                4096,
+                GpuFill::Pinned,
+                GpuStoreCfg {
+                    event_blocking_sync,
+                    timing_events,
+                    sync_policy,
+                    ..GpuStoreCfg::default()
+                },
+            ) {
+                Ok(gpu) => gpu,
+                Err(err) => panic!("gpu: {err}"),
+            };
+            assert_eq!(gpu.event_blocking_sync(), event_blocking_sync);
+            let k0 = ExpertKey::new(0, 0);
+            match gpu.acquire(k0) {
+                Ok(_) => {}
+                Err(err) => panic!("acq: {err}"),
+            }
+            gpu.release(k0);
+            let _s = gpu.score().expect("score");
+            (
+                gpu.copy_elapsed_ns(),
+                gpu.metrics().hits,
+                gpu.metrics().misses,
+                gpu.clock_ns().expect("clock"),
+            )
+        };
+    let inner = DirectStore::from_trace(&t);
+    let identity = match SimulatedGpuStore::new(inner, 1, p.clone(), 4096) {
+        Ok(gpu) => gpu,
+        Err(err) => panic!("id: {err}"),
+    };
+    assert!(!identity.event_blocking_sync());
+    let (elapsed_t, h0, m0, clock_t) = run(false, true, SynchronizationPolicy::Auto);
+    let (elapsed_b, h1, m1, clock_b) = run(true, false, SynchronizationPolicy::Auto);
+    let (elapsed_s, h2, m2, clock_s) = run(false, true, SynchronizationPolicy::BlockingSync);
+    assert!(elapsed_t > 0, "timing elapsed={elapsed_t}");
+    assert!(elapsed_b > 0, "blocking elapsed={elapsed_b}");
+    assert_eq!(h0, h1);
+    assert_eq!(m0, m1);
+    assert_eq!(h0, h2);
+    assert_eq!(m0, m2);
+    assert!(
+        clock_b > clock_t,
+        "BlockingSync copy events must pay host_sync_blocking_ns; timing={clock_t} blocking={clock_b}"
+    );
+    assert_eq!(
+        clock_b.saturating_sub(clock_t),
+        20_000,
+        "two synchronize_event taxes; timing={clock_t} blocking={clock_b}"
+    );
+    assert_ne!(
+        clock_b, clock_s,
+        "event BlockingSync must be distinct from stream --sync-policy blocking; event={clock_b} stream={clock_s} elapsed_s={elapsed_s}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_event_blocking_sync_keeps_hits() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let run = |event_blocking_sync: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = match SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                event_blocking_sync,
+                ..GpuStoreCfg::default()
+            },
+        ) {
+            Ok(gpu) => gpu,
+            Err(err) => panic!("gpu: {err}"),
+        };
+        for key in t.keys() {
+            match gpu.acquire(key) {
+                Ok(_) => {}
+                Err(err) => panic!("acq: {err}"),
+            }
+            gpu.release(key);
+        }
+        let _s = gpu.score().expect("score");
+        (gpu.metrics().hits, gpu.metrics().misses)
+    };
+    let (h0, m0) = run(false);
+    let (h1, m1) = run(true);
+    assert_eq!(h0, h1);
+    assert_eq!(m0, m1);
+}
+
+#[test]
 fn simulated_gpu_store_captures_gemm_after_drain() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],

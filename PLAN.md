@@ -375,7 +375,7 @@ Backends:
 | `DirectStore` | today’s blob range; bit-identical to current decode |
 | `CachedStore` | bounded “fast memory” of N experts; rest fault in |
 | `TieredStore` | fast RAM / slow RAM / disk |
-| `SimulatedGpuStore` | fake HBM capacity, PCIe/NVLink bandwidth, DMA concurrency; `with_managed` is UM prefetch, `with_mapped` is zero-copy host (and `host_pin_bytes` occupancy), `with_vmm` is `va_acquire`; `with_cfg` is `host_func` / blocking streams / `sync_alloc` / mempool / `vmm_page` / pageable H2D / `SetAccessedBy` / legacy NULL / stream priority / `graph_update` / `graph_clone` / `timing_events`; `expertvm store` / `store_replay_cfg` is the CLI (Markov prefetch) |
+| `SimulatedGpuStore` | fake HBM capacity, PCIe/NVLink bandwidth, DMA concurrency; `with_managed` is UM prefetch, `with_mapped` is zero-copy host (and `host_pin_bytes` occupancy), `with_vmm` is `va_acquire`; `with_cfg` is `host_func` / blocking streams / `sync_alloc` / mempool / `vmm_page` / pageable H2D / `SetAccessedBy` / legacy NULL / stream priority / `graph_update` / `graph_clone` / `timing_events` / `event_blocking_sync`; `expertvm store` / `store_replay_cfg` is the CLI (Markov prefetch) |
 
 `DirectStore` must keep every existing oracle / real-model test green.
 The dense/common weights stay resident. Only expert tensors go through
@@ -720,7 +720,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--shareable`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-piecewise`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, `--non-portable-cluster`, `--sync-policy`, `--shared-mem`, and `--multicast`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-piecewise`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--event-blocking-sync`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, `--non-portable-cluster`, `--sync-policy`, `--shared-mem`, and `--multicast`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--shareable` is POSIX-FD mempool IPC
   (implies `--mempool`; illegal with `--sync-alloc` / mapped / managed / vmm). `--mapped` is `cudaHostAllocMapped`
@@ -758,7 +758,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   (illegal with `--graph-mem`).
   `--timing-events` is timing-on copy events
   plus `event_elapsed_ns` (`cudaEventElapsedTime`); default wait events stay
-  `cudaEventDisableTiming`. `memset` / `memset_buf` of a mapped span, directed peer enable, and
+  `cudaEventDisableTiming`. `--event-blocking-sync` is `cudaEventBlockingSync`
+  on those copy events (implies `--timing-events`; `synchronize_event` pays
+  `host_sync_blocking_ns`; distinct from `--sync-policy blocking`). `memset` / `memset_buf` of a mapped span, directed peer enable, and
   the legacy null stream are mechanical CUDA invariants.
   `synchronize_stream` / `synchronize_event` / `synchronize_device` are
   `cudaStreamSynchronize` / `cudaEventSynchronize` / `cudaDeviceSynchronize`. `event_elapsed_ns` is `cudaEventElapsedTime` in
@@ -993,7 +995,7 @@ model, do not celebrate the sim.
     Dual score still has no `$/M tokens`.
 48. [x] Engine SimulatedGpuStore CUDA graphs: default `--expert-sim` captures
     per-page GEMM graphs (`Engine::graph_launches`). `--graph-update` /
-    `--graph-clone` / `--graph-build` / `--graph-piecewise` / `--graph-mem` / `--graph-auto-free` / `--timing-events` / `--cuda-graphs` match
+    `--graph-clone` / `--graph-build` / `--graph-piecewise` / `--graph-mem` / `--graph-auto-free` / `--timing-events` / `--event-blocking-sync` / `--cuda-graphs` match
     `GpuStoreCfg` / `expertvm sim`. Tight slots park+update. Identity stays.
     Dual score still has no `$/M tokens`.
 49. [x] Engine `itl_slo_ns`: count later-token gaps over a virtual-ns budget
@@ -3613,7 +3615,18 @@ model, do not celebrate the sim.
     device config. `gpu-profile capture` is still refused. Dual score still has
     no `$/M tokens`.
 
-343. [ ] Next numbered PLAN item after 342 is the next `gpu-sim` / Engine /
+343. [x] `cudaEventBlockingSync` on copy start/end events:
+    [`GpuStoreCfg::event_blocking_sync`](expertvm/src/gpu_store.rs)
+    [`create_event_blocking_sync`](gpu-sim/src/sim.rs) when timing copy events.
+    Implies `--timing-events`. [`synchronize_event`] pays
+    [`host_sync_blocking_ns`] instead of the recording stream's policy.
+    Distinct from `--sync-policy blocking` (that taxes `synchronize_stream`).
+    Hits stay the same. `--event-blocking-sync` on `expertvm store` and
+    `gguf_gemv engine --expert-sim`. Walker `sim` / `schedule` do not create
+    timing events. Decode identity stays `cudaEventDisableTiming`.
+    `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+344. [ ] Next numbered PLAN item after 343 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

@@ -1957,6 +1957,14 @@ impl Sim {
             .ok_or(SimError::UnknownEvent { event: event.0 })
     }
 
+    /// Whether `event` was created with [`EventCreateFlags::BLOCKING_SYNC`].
+    pub fn event_blocking_sync(&self, event: EventId) -> Result<bool, SimError> {
+        self.events
+            .get(&event)
+            .map(|e| e.blocking_sync)
+            .ok_or(SimError::UnknownEvent { event: event.0 })
+    }
+
     fn insert_event(
         &mut self,
         event: EventId,

@@ -42,6 +42,10 @@ pub(crate) struct GpuCli {
     pub graph_auto_free: bool,
     pub graph_mem_trim: bool,
     pub timing_events: bool,
+    /// `cudaEventBlockingSync` copy events (`GpuStoreCfg::event_blocking_sync`).
+    ///
+    /// Implies [`Self::timing_events`]. Distinct from `--sync-policy blocking`.
+    pub event_blocking_sync: bool,
     pub mapped: bool,
     pub managed: bool,
     pub vmm: bool,
@@ -190,6 +194,7 @@ impl GpuCli {
             "--graph-auto-free" => &mut self.graph_auto_free,
             "--graph-mem-trim" => &mut self.graph_mem_trim,
             "--timing-events" => &mut self.timing_events,
+            "--event-blocking-sync" => &mut self.event_blocking_sync,
             "--mapped" => &mut self.mapped,
             "--managed" => &mut self.managed,
             "--vmm" => &mut self.vmm,
@@ -286,6 +291,13 @@ impl GpuCli {
     pub(crate) fn imply_l2_persist(&mut self) {
         if self.l2_reset {
             self.l2_persist = true;
+        }
+    }
+
+    /// `--event-blocking-sync` implies [`Self::timing_events`]. Call after sim-flag checks.
+    pub(crate) fn imply_timing_events(&mut self) {
+        if self.event_blocking_sync {
+            self.timing_events = true;
         }
     }
 
@@ -449,6 +461,7 @@ impl GpuCli {
             (self.graph_auto_free, "--graph-auto-free"),
             (self.graph_mem_trim, "--graph-mem-trim"),
             (self.timing_events, "--timing-events"),
+            (self.event_blocking_sync, "--event-blocking-sync"),
             (self.mapped, "--mapped"),
             (self.managed, "--managed"),
             (self.vmm, "--vmm"),
@@ -778,7 +791,8 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         graph_mem: gpu.graph_mem,
         graph_auto_free: gpu.graph_auto_free,
         graph_mem_trim: gpu.graph_mem_trim,
-        timing_events: gpu.timing_events,
+        timing_events: gpu.timing_events || gpu.event_blocking_sync,
+        event_blocking_sync: gpu.event_blocking_sync,
         seq_streams: gpu.seq_streams,
         kv_sim: gpu.kv_sim,
         decode_priority: gpu.decode_priority,

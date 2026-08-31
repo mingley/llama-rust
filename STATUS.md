@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaEventBlockingSync` copy events
+
+`GpuStoreCfg::event_blocking_sync` creates copy start/end events with
+`cudaEventBlockingSync`. Implies `--timing-events`. `synchronize_event` pays
+`host_sync_blocking_ns` instead of the recording stream's sync policy.
+Hits/misses stay the same. Distinct from `--sync-policy blocking` (that taxes
+`synchronize_stream`). `--event-blocking-sync` is off by default (decode
+identity: `cudaEventDisableTiming`). `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaDeviceSetSharedMemConfig` device bank width
 
 `GpuStoreCfg::device_shared_mem` / `SimCfg::device_shared_mem` call

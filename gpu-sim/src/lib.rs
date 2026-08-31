@@ -274,7 +274,8 @@
 //! [`EventCreateFlags::BLOCKING_SYNC`]; Interprocess requires DisableTiming).
 //! [`Sim::create_event_blocking_sync`] is the BlockingSync helper
 //! ([`synchronize_event`](Sim::synchronize_event) pays
-//! [`GpuProfile::host_sync_blocking_ns`]).
+//! [`GpuProfile::host_sync_blocking_ns`]; `expertvm store --event-blocking-sync`
+//! uses it for copy start/end events).
 //! [`Sim::create_event_interprocess`] is the Interprocess+DisableTiming helper.
 //! [`Sim::ipc_get_event`] / [`ipc_open_event`](Sim::ipc_open_event) are
 //! `cudaIpcGetEventHandle` / `cudaIpcOpenEventHandle`: the import aliases the
@@ -18029,12 +18030,15 @@ mod tests {
         enq(def.record_event(d, EventId(1), s));
         def.synchronize_event(EventId(1)).unwrap();
         let t_def = def.clock_ns();
+        assert!(!def.event_blocking_sync(EventId(1)).unwrap());
         let mut blk = Sim::new(p);
         blk.create_event_blocking_sync(EventId(1)).unwrap();
         let b = blk.alloc(d, 4096, s).unwrap();
         enq(blk.kernel(d, KernelKind::other(8, 8), &[b], &[b], s));
         enq(blk.record_event(d, EventId(1), s));
         blk.synchronize_event(EventId(1)).unwrap();
+        assert!(blk.event_blocking_sync(EventId(1)).unwrap());
+        assert!(blk.event_timing(EventId(1)).unwrap());
         assert_eq!(blk.clock_ns(), t_def.saturating_add(10_000));
     }
 

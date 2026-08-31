@@ -448,6 +448,14 @@ pub struct GpuStoreCfg {
     /// Default is `cudaEventDisableTiming` (vLLM wait events). Decode identity
     /// stays disable-timing; elapsed is not recorded.
     pub timing_events: bool,
+    /// `cudaEventBlockingSync` on copy start/end events.
+    ///
+    /// [`gpu_sim::Sim::synchronize_event`] pays
+    /// [`gpu_sim::GpuProfile::host_sync_blocking_ns`] instead of the recording
+    /// stream's [`Self::sync_policy`]. Implies [`Self::timing_events`]. Distinct
+    /// from `--sync-policy blocking` (that taxes `synchronize_stream`). Decode
+    /// identity stays disable-timing non-blocking copy events.
+    pub event_blocking_sync: bool,
     /// Per-sequence copy streams so concurrent H2D can overlap.
     ///
     /// `n_copy` is GPU0 `copy_engines.max(2)`; copy for sequence `s` is
@@ -550,6 +558,7 @@ pub struct SimulatedGpuStore {
     graph_mem_trim: bool,
     mempool_trim: bool,
     timing_events: bool,
+    event_blocking_sync: bool,
     copy_elapsed_ns: u64,
     mode: GpuFill,
     host_func: bool,
@@ -766,6 +775,10 @@ impl SimulatedGpuStore {
     /// cache stays reserved; illegal with sync-alloc).
     /// [`GpuStoreCfg::multicast`] is Hopper NVLS replica fanout (requires
     /// [`GpuFill::Vmm`] and NVLink).
+    /// [`GpuStoreCfg::event_blocking_sync`] is `cudaEventBlockingSync` on
+    /// timing copy events (implies [`GpuStoreCfg::timing_events`];
+    /// `synchronize_event` pays `host_sync_blocking_ns`; distinct from
+    /// [`GpuStoreCfg::sync_policy`] Blocking).
     /// [`GpuStoreCfg::memcpy_batch`] fills a multi-expert pinned/VMM prefetch
     /// with `cudaMemcpyBatchAsync` (sibling H2D copies share one stream-order
     /// snapshot). Demand [`ExpertStore::acquire`] stays sequential. Illegal
@@ -1006,7 +1019,8 @@ impl SimulatedGpuStore {
             leaf,
             graph_mem_trim: cfg.graph_mem_trim,
             mempool_trim: cfg.mempool_trim,
-            timing_events: cfg.timing_events,
+            timing_events: cfg.timing_events || cfg.event_blocking_sync,
+            event_blocking_sync: cfg.event_blocking_sync,
             copy_elapsed_ns: 0,
             mode: fill,
             host_func: cfg.host_func,
@@ -1143,6 +1157,12 @@ impl SimulatedGpuStore {
         self.sim
             .get_shared_mem_config(self.device)
             .unwrap_or(SharedMemoryMode::Default)
+    }
+
+    /// Whether copy events were created with `cudaEventBlockingSync`.
+    #[must_use]
+    pub fn event_blocking_sync(&self) -> bool {
+        self.event_blocking_sync
     }
 
     /// Whether this store resets persisting L2 after each resident GEMM.
@@ -1747,7 +1767,8 @@ impl SimulatedGpuStore {
 
     /// Sum of [`gpu_sim::Sim::event_elapsed_ns`] on copy start/end events.
     ///
-    /// Zero unless [`GpuStoreCfg::timing_events`] and a copy was waited.
+    /// Zero unless [`GpuStoreCfg::timing_events`] (implied by
+    /// [`GpuStoreCfg::event_blocking_sync`]) and a copy was waited.
     #[must_use]
     pub fn copy_elapsed_ns(&self) -> u64 {
         self.copy_elapsed_ns
@@ -2088,7 +2109,9 @@ impl SimulatedGpuStore {
     fn create_copy_event(&mut self) -> Result<EventId, Error> {
         let ev = EventId(self.next_event);
         self.next_event = self.next_event.saturating_add(1);
-        if self.timing_events {
+        if self.event_blocking_sync {
+            self.sim.create_event_blocking_sync(ev)?;
+        } else if self.timing_events {
             self.sim.create_event(ev)?;
         } else {
             self.sim.create_event_disable_timing(ev)?;

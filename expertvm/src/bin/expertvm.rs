@@ -30,7 +30,7 @@ usage: expertvm <command> [args]
   place    <trace.jsonl> [--gpus N] [--hot-pt N]
   remote   <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
   kv       [--pages N] [--page-bytes B] [--capacity C] [--tokens T] [--profile NAME] [--fill h2d|memset] [--sequences N] [--row-width W] [--pitch P]
-  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--shareable] [--host-func] [--blocking-streams] [--pageable] [--host-register] [--host-register-mapped] [--sync-memops] [--device-sync-memops] [--memcpy-batch] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--max-shared] [--func-max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
+  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--shareable] [--host-func] [--blocking-streams] [--pageable] [--host-register] [--host-register-mapped] [--sync-memops] [--device-sync-memops] [--memcpy-batch] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--event-blocking-sync] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--max-shared] [--func-max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -140,6 +140,7 @@ struct Cfg {
     graph_auto_free: bool,
     graph_mem_trim: bool,
     timing_events: bool,
+    event_blocking_sync: bool,
     compute_slots: u8,
     decode_sm_permille: u16,
     decode_priority: bool,
@@ -237,6 +238,7 @@ where
     let mut graph_auto_free = false;
     let mut graph_mem_trim = false;
     let mut timing_events = false;
+    let mut event_blocking_sync = false;
     let mut compute_slots = 0u8;
     let mut decode_sm_permille = 0u16;
     let mut decode_priority = false;
@@ -408,6 +410,7 @@ where
             "--graph-auto-free" => graph_auto_free = switch(&inline),
             "--graph-mem-trim" => graph_mem_trim = switch(&inline),
             "--timing-events" => timing_events = switch(&inline),
+            "--event-blocking-sync" => event_blocking_sync = switch(&inline),
             "--compute-slots" => {
                 compute_slots = parse_compute_slots(&value("compute-slots", inline, &mut it)?)?
             }
@@ -504,6 +507,9 @@ where
     if pdl && cooperative {
         return Err("choose one of --pdl, --cooperative".into());
     }
+    if event_blocking_sync {
+        timing_events = true;
+    }
     if shareable {
         mempool = true;
     }
@@ -597,6 +603,7 @@ where
         graph_auto_free,
         graph_mem_trim,
         timing_events,
+        event_blocking_sync,
         compute_slots,
         decode_sm_permille,
         decode_priority,
@@ -1080,7 +1087,8 @@ where
                 graph_mem: cfg.graph_mem,
                 graph_auto_free: cfg.graph_auto_free,
                 graph_mem_trim: cfg.graph_mem_trim,
-                timing_events: cfg.timing_events,
+                timing_events: cfg.timing_events || cfg.event_blocking_sync,
+                event_blocking_sync: cfg.event_blocking_sync,
                 seq_streams: cfg.seq_streams,
                 kv_sim: false,
                 decode_priority: cfg.decode_priority,
