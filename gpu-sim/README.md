@@ -133,9 +133,10 @@ warp scheduler, L1, …   ← do not model
 | `host_get_flags` returns the stored `HostAllocFlags` word | `cudaHostGetFlags` |
 | `alloc_host_with_flags` / `host_register_with_flags` (MAPPED / PORTABLE / WRITE_COMBINED stored; IoMemory / ReadOnly Invalid) | `cudaHostAlloc` / `cudaHostRegister` |
 | `device_get_attribute` exposes modeled SKU caps (incl. GPUDirect RDMA / CanFlushRemoteWrites / FlushWritesOptions Host / WithCudaVMM from `LinkKind::Rdma`; MulticastSupported from `LinkKind::Nvlink`; ConcurrentManaged / DirectManagedHost / PageableHostPageTables / HostNativeAtomic / OnlyPartialHostNativeAtomic / CooperativeMultiDevice / Integrated / GenericCompression / Win32 / Win32Kmt / Fabric handle types always 0; ComputeMode always Default; NumaConfig always None; TccDriver / KernelExecTimeout / TensorMapAccessSupported / UnifiedFunctionPointers / TimelineSemaphoreInteropSupported / MemDecompressAlgorithmMask / MemDecompressMaximumLength / HostNumaVirtualMemoryManagementSupported / HostNumaMemoryPoolsSupported / HostNumaMultinodeIpcSupported always 0; CanUse64BitStreamMemOps / CanUseStreamMemOps / CanUseStreamWaitValueNor always 1) | `cudaDeviceGetAttribute` |
-| `device_get_properties` wraps the same SKU caps (incl. synthetic `uuid`) | `cudaGetDeviceProperties` |
+| `device_get_properties` wraps the same SKU caps (incl. synthetic `uuid` and PCI ids) | `cudaGetDeviceProperties` |
 | `device_get_uuid` is a synthetic 16-octet id (also `DeviceProperties.uuid`) | `cuDeviceGetUuid` |
 | `device_get_by_uuid` is the inverse of `device_get_uuid` | `cuDeviceGetByUuid` |
+| `device_get_pci_bus_id` is a synthetic `domain:bus:device.function` (also `DeviceProperties` PCI ids) | `cudaDeviceGetPciBusId` |
 | `stream_get_flags` is 0 blocking / 1 NonBlocking | `cudaStreamGetFlags` |
 | `stream_get_priority` is the create priority | `cudaStreamGetPriority` |
 | `stream_get_id` is unique per device/stream | `cudaStreamGetId` |
@@ -708,7 +709,9 @@ are not modeled; distinct from `HostNativeAtomicSupported`).
 (no SM count or clock). `device_get_name` is `cudaDeviceGetName` (the
 profile name). `device_get_uuid` is `cuDeviceGetUuid` (synthetic 16-octet
 id; also `DeviceProperties.uuid`). `device_get_by_uuid` is
-`cuDeviceGetByUuid` (inverse). `device_total_mem` is `cuDeviceTotalMem` (HBM bytes).
+`cuDeviceGetByUuid` (inverse). `device_get_pci_bus_id` is
+`cudaDeviceGetPciBusId` (synthetic PCI string; also `DeviceProperties`
+PCI ids). `device_total_mem` is `cuDeviceTotalMem` (HBM bytes).
 `func_get_attributes` is `cudaFuncGetAttributes`
 of modeled per-device function attrs (`maxDynamicSharedSizeBytes`,
 `nonPortableClusterSizeAllowed`, `preferredShmemCarveout`, cluster-dim

@@ -942,6 +942,12 @@ pub enum DeviceAttr {
     /// host-mapped atomics are not modeled). Distinct from
     /// [`Self::HostNativeAtomicSupported`].
     OnlyPartialHostNativeAtomicSupported,
+    /// `cudaDevAttrPciDomainId` (synthetic; high 8 bits of [`crate::DeviceId`]).
+    PciDomainId,
+    /// `cudaDevAttrPciBusId` (synthetic; low 8 bits of [`crate::DeviceId`]).
+    PciBusId,
+    /// `cudaDevAttrPciDeviceId` (synthetic PCI device number; always 0).
+    PciDeviceId,
 }
 
 /// `cudaMemAllocationHandleType` bits for
@@ -960,7 +966,9 @@ impl MemHandleType {
 /// No SM count, clock rate, warp size, or `maxThreadsPerBlock` — those are
 /// not in [`crate::GpuProfile`]. [`Self::name`] is [`crate::HardwareProfile::name`].
 /// [`Self::uuid`] is the synthetic [`crate::Sim::device_get_uuid`] value
-/// (`cudaUuid_t`), not a real NVIDIA board UUID.
+/// (`cudaUuid_t`), not a real NVIDIA board UUID. [`Self::pci_domain_id`] /
+/// [`Self::pci_bus_id`] / [`Self::pci_device_id`] are the synthetic PCI
+/// identity from [`crate::Sim::device_get_pci_bus_id`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DeviceProperties {
     /// Profile name (`example-h100-sxm`, a capture id, …).
@@ -968,6 +976,12 @@ pub struct DeviceProperties {
     /// Synthetic `cudaUuid_t` ([`crate::Sim::device_get_uuid`]). Not a real
     /// NVIDIA UUID and not parsed from a capture file.
     pub uuid: [u8; 16],
+    /// Synthetic `pciDomainID` ([`DeviceAttr::PciDomainId`]).
+    pub pci_domain_id: u32,
+    /// Synthetic `pciBusID` ([`DeviceAttr::PciBusId`]).
+    pub pci_bus_id: u32,
+    /// Synthetic `pciDeviceID` ([`DeviceAttr::PciDeviceId`]). Always 0.
+    pub pci_device_id: u32,
     /// [`crate::GpuProfile::hbm_bytes`] (`totalGlobalMem`).
     pub total_global_mem: u64,
     /// [`crate::GpuProfile::max_shared_mem_per_block`].

@@ -371,7 +371,11 @@
 //! `cudaDeviceGetName` (the profile name). [`device_get_uuid`](Sim::device_get_uuid)
 //! is `cuDeviceGetUuid` / `cudaDeviceGetUuid` (synthetic 16-octet id; also
 //! [`DeviceProperties::uuid`]). [`device_get_by_uuid`](Sim::device_get_by_uuid)
-//! is `cuDeviceGetByUuid` (inverse). [`device_total_mem`](Sim::device_total_mem)
+//! is `cuDeviceGetByUuid` (inverse). [`device_get_pci_bus_id`](Sim::device_get_pci_bus_id)
+//! is `cudaDeviceGetPciBusId` / `cuDeviceGetPCIBusId` (synthetic
+//! `domain:bus:device.function`; also [`DeviceProperties::pci_domain_id`] /
+//! [`pci_bus_id`](DeviceProperties::pci_bus_id) /
+//! [`pci_device_id`](DeviceProperties::pci_device_id)). [`device_total_mem`](Sim::device_total_mem)
 //! is `cuDeviceTotalMem` (HBM bytes). [`DeviceAttr::CanMapHostMemory`]
 //! / [`DeviceAttr::ManagedMemory`] are always 1 (this VM has mapped host and
 //! UM). [`DeviceAttr::ClusterLaunch`] is `max_blocks_per_cluster > 0`.
@@ -457,6 +461,9 @@
 //! [`DeviceAttr::OnlyPartialHostNativeAtomicSupported`] is always 0
 //! (host-mapped atomics are not modeled). Distinct from
 //! [`HostNativeAtomicSupported`](DeviceAttr::HostNativeAtomicSupported).
+//! [`DeviceAttr::PciDomainId`] / [`PciBusId`](DeviceAttr::PciBusId) /
+//! [`PciDeviceId`](DeviceAttr::PciDeviceId) are the synthetic PCI identity
+//! ([`device_get_pci_bus_id`](Sim::device_get_pci_bus_id)).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -13097,6 +13104,48 @@ mod tests {
         match a.device_get_by_uuid([0; 16]) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("unknown device uuid"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_get_pci_bus_id_is_stable_and_per_device() {
+        let mut a = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let b = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let p0 = a.device_get_pci_bus_id(DeviceId(0)).unwrap();
+        let p1 = a.device_get_pci_bus_id(DeviceId(1)).unwrap();
+        assert_eq!(p0, "0000:00:00.0");
+        assert_eq!(p1, "0000:01:00.0");
+        assert_eq!(p0, b.device_get_pci_bus_id(DeviceId(0)).unwrap());
+        assert_ne!(p0, a.device_get_name(DeviceId(0)).unwrap());
+        let hp0 = a.device_get_properties(DeviceId(0)).unwrap();
+        assert_eq!(hp0.pci_domain_id, 0);
+        assert_eq!(hp0.pci_bus_id, 0);
+        assert_eq!(hp0.pci_device_id, 0);
+        let hp1 = a.device_get_properties(DeviceId(1)).unwrap();
+        assert_eq!(hp1.pci_bus_id, 1);
+        assert_eq!(
+            a.device_get_attribute(DeviceId(1), DeviceAttr::PciBusId)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            a.device_get_attribute(DeviceId(1), DeviceAttr::PciDomainId)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            a.device_get_attribute(DeviceId(1), DeviceAttr::PciDeviceId)
+                .unwrap(),
+            0
+        );
+        a.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        assert_eq!(a.device_get_pci_bus_id(DeviceId(0)).unwrap(), p0);
+        let _g = a.end_capture().unwrap();
+        match a.device_get_pci_bus_id(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}")
             }
             other => panic!("{other:?}"),
         }

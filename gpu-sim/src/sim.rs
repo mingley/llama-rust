@@ -14953,6 +14953,9 @@ impl Sim {
             | DeviceAttr::CanUseStreamWaitValueNor => 1,
             DeviceAttr::GpuOverlap => u64::from(gpu.copy_engines > 0),
             DeviceAttr::MulticastSupported => u64::from(self.profile.multicast_supported(device)),
+            DeviceAttr::PciDomainId => u64::from(synthetic_pci_ids(device).0),
+            DeviceAttr::PciBusId => u64::from(synthetic_pci_ids(device).1),
+            DeviceAttr::PciDeviceId => u64::from(synthetic_pci_ids(device).2),
         })
     }
 
@@ -14965,6 +14968,9 @@ impl Sim {
         Ok(DeviceProperties {
             name: self.profile.name.clone(),
             uuid: synthetic_device_uuid(&self.profile.name, device),
+            pci_domain_id: synthetic_pci_ids(device).0,
+            pci_bus_id: synthetic_pci_ids(device).1,
+            pci_device_id: synthetic_pci_ids(device).2,
             total_global_mem: gpu.hbm_bytes,
             shared_mem_per_block: gpu.max_shared_mem_per_block,
             shared_mem_per_block_optin: gpu.max_shared_mem_per_block_optin,
@@ -15068,6 +15074,20 @@ impl Sim {
             .ok_or(SimError::Invalid {
                 why: "unknown device uuid",
             })
+    }
+
+    /// `cudaDeviceGetPciBusId` / `cuDeviceGetPCIBusId`. Query; legal during
+    /// capture.
+    ///
+    /// Synthetic `domain:bus:device.function` string for this [`DeviceId`].
+    /// Distinct from [`Self::device_get_uuid`] and [`Self::device_get_name`].
+    /// Same ordinal on two profiles share a bus id. Also
+    /// [`DeviceProperties::pci_domain_id`] / [`pci_bus_id`](DeviceProperties::pci_bus_id) /
+    /// [`pci_device_id`](DeviceProperties::pci_device_id). Unknown devices are
+    /// Invalid.
+    pub fn device_get_pci_bus_id(&self, device: DeviceId) -> Result<String, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(synthetic_pci_bus_id(device))
     }
 
     /// `cuDeviceTotalMem`. Query; legal during capture.
@@ -20037,6 +20057,20 @@ fn synthetic_device_uuid(profile_name: &str, device: DeviceId) -> [u8; 16] {
     let [h0, h1, h2, h3] = h.to_be_bytes();
     let [d0, d1] = device.0.to_be_bytes();
     [t0, t1, t2, t3, h0, h1, h2, h3, 0, 0, 0, 0, 0, 0, d0, d1]
+}
+
+/// Synthetic PCI domain / bus / device for [`Sim::device_get_pci_bus_id`].
+///
+/// Domain is the high 8 bits of [`DeviceId`], bus the low 8 bits, device 0.
+/// Not a real PCI topology and not parsed from a capture file.
+fn synthetic_pci_ids(device: DeviceId) -> (u32, u32, u32) {
+    let id = u32::from(device.0);
+    (id >> 8, id & 0xff, 0)
+}
+
+fn synthetic_pci_bus_id(device: DeviceId) -> String {
+    let (domain, bus, pci_dev) = synthetic_pci_ids(device);
+    format!("{domain:04x}:{bus:02x}:{pci_dev:02x}.0")
 }
 
 fn live_ok(step: &GraphStep) -> Result<&GraphStep, SimError> {

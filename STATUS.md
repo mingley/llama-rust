@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cudaDeviceGetPciBusId`
+
+`gpu-sim` `device_get_pci_bus_id` is `cudaDeviceGetPciBusId` /
+`cuDeviceGetPCIBusId`. A live device returns a synthetic
+`domain:bus:device.function` string. Distinct from `device_get_uuid` and
+`device_get_name`. Same ordinal on two profiles share a bus id. Also
+`DeviceProperties` PCI ids and `DeviceAttr::PciDomainId` / `PciBusId` /
+`PciDeviceId`. Query; legal during capture. Unknown is Invalid. Not a
+real PCI topology. No `cudaDeviceGetByPCIBusId` this slice. No
+`cuDeviceGetLuid`. `gpu-profile capture` is still refused. Dual score
+still has no `$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cuDeviceGetByUuid`
 
 `gpu-sim` `device_get_by_uuid` is `cuDeviceGetByUuid`. A matching
