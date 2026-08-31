@@ -4673,7 +4673,14 @@ model, do not celebrate the sim.
     `CUcontext` object). `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-422. [ ] Next numbered PLAN item after 421 is the next `gpu-sim` / Engine /
+422. [x] CUDA `cudaDevAttrMaxAccessPolicyWindowSize`
+    (`DeviceAttr::MaxAccessPolicyWindowSize`): L2 bytes, same as
+    `MaxPersistingL2CacheSize` / `DeviceProperties.l2_cache_size`. Also
+    `DeviceProperties.access_policy_max_window_size`. Query; legal during
+    capture. `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+423. [ ] Next numbered PLAN item after 422 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4695,6 +4702,7 @@ model, do not celebrate the sim.
     `cuDeviceGetPCIBusId`. Do not invent a second `cudaDeviceGetByPCIBusId`.
     Do not invent a second `cuDevicePrimaryCtxGetState`. Do not invent
     `cuDevicePrimaryCtxRetain` / `Release` / `Reset` (no `CUcontext` object).
+    Do not invent a second `cudaDevAttrMaxAccessPolicyWindowSize`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

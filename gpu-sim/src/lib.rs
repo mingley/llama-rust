@@ -465,6 +465,8 @@
 //! [`DeviceAttr::PciDomainId`] / [`PciBusId`](DeviceAttr::PciBusId) /
 //! [`PciDeviceId`](DeviceAttr::PciDeviceId) are the synthetic PCI identity
 //! ([`device_get_pci_bus_id`](Sim::device_get_pci_bus_id)).
+//! [`DeviceAttr::MaxAccessPolicyWindowSize`] is [`crate::GpuProfile::l2_bytes`]
+//! (same as [`MaxPersistingL2CacheSize`](DeviceAttr::MaxPersistingL2CacheSize)).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -13040,6 +13042,32 @@ mod tests {
             sim.device_get_attribute(d, DeviceAttr::OnlyPartialHostNativeAtomicSupported)
                 .unwrap(),
             0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_max_access_policy_window_is_l2() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        let l2 = hp.l2_cache_size;
+        assert_eq!(hp.access_policy_max_window_size, l2);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxAccessPolicyWindowSize)
+                .unwrap(),
+            l2
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxPersistingL2CacheSize)
+                .unwrap(),
+            l2
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::MaxAccessPolicyWindowSize)
+                .unwrap(),
+            l2
         );
         let _g = sim.end_capture().unwrap();
     }

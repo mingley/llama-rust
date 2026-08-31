@@ -784,6 +784,9 @@ pub enum DeviceAttr {
     L2CacheSize,
     /// `cudaDevAttrMaxPersistingL2CacheSize`.
     MaxPersistingL2CacheSize,
+    /// `cudaDevAttrMaxAccessPolicyWindowSize` (same bytes as
+    /// [`Self::MaxPersistingL2CacheSize`] / [`crate::GpuProfile::l2_bytes`]).
+    MaxAccessPolicyWindowSize,
     /// `cudaDevAttrMaxBlocksPerCluster`.
     MaxBlocksPerCluster,
     /// `cudaDevAttrMemSyncDomainCount`.
@@ -990,6 +993,9 @@ pub struct DeviceProperties {
     pub shared_mem_per_block_optin: u32,
     /// [`crate::GpuProfile::l2_bytes`].
     pub l2_cache_size: u64,
+    /// `accessPolicyMaxWindowSize` ([`DeviceAttr::MaxAccessPolicyWindowSize`]).
+    /// Same bytes as [`Self::l2_cache_size`].
+    pub access_policy_max_window_size: u64,
     /// [`crate::GpuProfile::copy_engines`].
     pub async_engine_count: u32,
     /// [`crate::GpuProfile::compute_slots`] `> 1`.

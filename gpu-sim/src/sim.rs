@@ -14899,7 +14899,9 @@ impl Sim {
             DeviceAttr::MaxSharedMemoryPerBlockOptin => {
                 u64::from(gpu.max_shared_mem_per_block_optin)
             }
-            DeviceAttr::L2CacheSize | DeviceAttr::MaxPersistingL2CacheSize => gpu.l2_bytes,
+            DeviceAttr::L2CacheSize
+            | DeviceAttr::MaxPersistingL2CacheSize
+            | DeviceAttr::MaxAccessPolicyWindowSize => gpu.l2_bytes,
             DeviceAttr::MaxBlocksPerCluster => u64::from(gpu.max_blocks_per_cluster),
             DeviceAttr::MemSyncDomainCount => u64::from(gpu.mem_sync_domain_count),
             DeviceAttr::MemoryPoolsSupported
@@ -14985,6 +14987,7 @@ impl Sim {
             shared_mem_per_block: gpu.max_shared_mem_per_block,
             shared_mem_per_block_optin: gpu.max_shared_mem_per_block_optin,
             l2_cache_size: gpu.l2_bytes,
+            access_policy_max_window_size: gpu.l2_bytes,
             async_engine_count: u32::from(gpu.copy_engines),
             concurrent_kernels: gpu.compute_slots > 1,
             cooperative_launch: gpu.cooperative_launch,

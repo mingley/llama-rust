@@ -705,6 +705,7 @@ modeled; `create_pool_with_props` refuses host location).
 do not invent `cudaDevAttrNumaId`).
 `OnlyPartialHostNativeAtomicSupported` is always 0 (host-mapped atomics
 are not modeled; distinct from `HostNativeAtomicSupported`).
+`MaxAccessPolicyWindowSize` is L2 bytes (same as `MaxPersistingL2CacheSize`).
 `StreamPrioritiesSupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
