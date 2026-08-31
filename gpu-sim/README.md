@@ -904,6 +904,8 @@ after `set_persisting_l2_cache_size` (CUDA default is 0).
 `set_stream_access_policy` is `cudaStreamAttributeAccessPolicyWindow`;
 `kernel` inherits it. `expertvm sim --l2-persist`
 enables the persist limit and attaches a window to expert GEMMs.
+`--l2-reset` is `cudaCtxResetPersistingL2Cache` after each GEMM (implies
+`--l2-persist`; live; cannot capture).
 `kernel_with` also accepts `cudaLaunchAttributeMemSyncDomain` /
 `MemSyncDomainMap`: a completing kernel waits `same_domain_fence_permille` of
 leftover same-physical-domain traffic (default tax 0). Remote (and allreduce)

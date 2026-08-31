@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaCtxResetPersistingL2Cache` after each GEMM
+
+`GpuStoreCfg::l2_reset` / `SimCfg::l2_reset` call `cudaCtxResetPersistingL2Cache`
+after each live grouped GEMM so a reused expert does not keep persisting L2
+lines. Implies `--l2-persist`. Hits/misses stay the same. Live (cannot
+capture); kernel-only graphs stay legal. `--l2-reset` is off by default
+(decode identity: no reset). `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaFuncSetAttribute` MaxShared carveout
 
 `GpuStoreCfg::func_max_shared` / `SimCfg::func_max_shared` call

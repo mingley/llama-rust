@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `mempool_trim`, `mempool_no_reuse`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/enable, timing events, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `cluster`, `shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
+//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `cluster`, `shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -56,6 +56,9 @@
 //! `--compute-slots` >= 2; illegal with `--cooperative`).
 //! `--l2-persist` is `cudaLaunchAttributeAccessPolicyWindow` over expert pages
 //! (persisting L2 after the first fill).
+//! `--l2-reset` is `cudaCtxResetPersistingL2Cache` after each GEMM (implies
+//! `--l2-persist`; live; cannot capture; a reused expert does not keep
+//! persisting L2).
 //! `--cluster N` is `cudaLaunchAttributeClusterDimension` on grouped expert
 //! GEMMs: the launch occupies `min(N, compute_slots)` Hyper-Q slots (Hopper
 //! portable max 8; legal with `--pdl` and `--cooperative`). `--preferred-cluster N`
@@ -3904,6 +3907,47 @@ mod tests {
             serial.1.wall_ns,
             overlap.1.line(),
             serial.1.line()
+        );
+    }
+
+    #[test]
+    fn engine_gpu_l2_reset_colds_reused_wall() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse(
+            "gpus=1\nfp16_flops=1000000000000000\nlaunch_overhead_ns=1\nhbm_bps=1000000000\nl2_persist_hit_permille=1000\n",
+        )
+        .expect("memory-bound persist profile");
+        let persist = mixed_gpu_decode_itl_at(
+            bytes.clone(),
+            false,
+            None,
+            GpuStoreCfg {
+                l2_persist: true,
+                ..GpuStoreCfg::default()
+            },
+            profile.clone(),
+        );
+        let reset = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                l2_persist: true,
+                l2_reset: true,
+                ..GpuStoreCfg::default()
+            },
+            profile,
+        );
+        assert_eq!(persist.2, 4);
+        assert_eq!(reset.2, 4);
+        assert_eq!(persist.4, reset.4, "l2-reset must keep greedy identity");
+        assert!(
+            persist.1.wall_ns < reset.1.wall_ns,
+            "reset must cold reused persist lines; persist={} reset={} persist_line={} reset_line={}",
+            persist.1.wall_ns,
+            reset.1.wall_ns,
+            persist.1.line(),
+            reset.1.line()
         );
     }
 

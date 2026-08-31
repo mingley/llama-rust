@@ -15,8 +15,8 @@ use crate::sim_replay::{
     apply_stream_sync_policy, bind_shareable_mempools, check_cluster_preferred,
     check_device_graph_flags, ensure_single_attach, free_copy_mailbox, free_mapped_host,
     instantiate_exec, kernel_leaf, mark_sync_memops, replay_exec, replay_streams,
-    retarget_parked_kernel, signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready,
-    GemmFlags, LeafMem, StreamPlan,
+    reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
+    upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -253,6 +253,12 @@ pub struct GpuStoreCfg {
     /// and launches GEMMs with a persisting window. Decode identity stays
     /// persist limit 0.
     pub l2_persist: bool,
+    /// `cudaCtxResetPersistingL2Cache` after each resident GEMM.
+    ///
+    /// Implies [`Self::l2_persist`]. Live (cannot capture). Hits stay the same;
+    /// a reused expert does not keep persisting L2 lines. Decode identity stays
+    /// no reset.
+    pub l2_reset: bool,
     /// Hopper cluster X size (`cudaLaunchAttributeClusterDimension`). `0` is off.
     ///
     /// Occupies `min(N, compute_slots)` Hyper-Q slots. Decode identity stays
@@ -488,6 +494,7 @@ pub struct SimulatedGpuStore {
     cooperative: bool,
     pdl: bool,
     l2_persist: bool,
+    l2_reset: bool,
     cluster: u8,
     preferred_cluster: u8,
     cluster_spread: bool,
@@ -684,6 +691,8 @@ impl SimulatedGpuStore {
     /// (illegal with cooperative).
     /// [`GpuStoreCfg::l2_persist`] is `cudaLaunchAttributeAccessPolicyWindow`
     /// over expert pages (persisting L2 after the first fill).
+    /// [`GpuStoreCfg::l2_reset`] is `cudaCtxResetPersistingL2Cache` after each
+    /// resident GEMM (implies persist; live; cannot capture).
     /// [`GpuStoreCfg::cluster`] / [`GpuStoreCfg::preferred_cluster`] are Hopper
     /// thread-block cluster dims.
     /// [`GpuStoreCfg::sync_policy`] is stream host-wait
@@ -863,7 +872,7 @@ impl SimulatedGpuStore {
         let mut sim = Sim::new(profile);
         apply_device_sync_memops(&mut sim, cfg.device_sync_memops)?;
         apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
-        if cfg.l2_persist {
+        if cfg.l2_persist || cfg.l2_reset {
             sim.enable_persisting_l2()?;
         }
         allow_non_portable_cluster_if(&mut sim, cfg.non_portable_cluster)?;
@@ -933,7 +942,8 @@ impl SimulatedGpuStore {
             decode_priority: cfg.decode_priority,
             cooperative: cfg.cooperative,
             pdl: cfg.pdl,
-            l2_persist: cfg.l2_persist,
+            l2_persist: cfg.l2_persist || cfg.l2_reset,
+            l2_reset: cfg.l2_reset,
             cluster: cfg.cluster,
             preferred_cluster: cfg.preferred_cluster,
             cluster_spread: cfg.cluster_spread,
@@ -1079,6 +1089,12 @@ impl SimulatedGpuStore {
             .get_func_carveout(self.device)
             .map(|c| c == SharedMemCarveout::MaxShared)
             .unwrap_or(false)
+    }
+
+    /// Whether this store resets persisting L2 after each resident GEMM.
+    #[must_use]
+    pub fn l2_reset(&self) -> bool {
+        self.l2_reset
     }
 
     /// Unused bytes in GPU0's `cudaMallocAsync` pool after a device drain.
@@ -2185,6 +2201,7 @@ impl SimulatedGpuStore {
         }
         ensure_single_attach(&mut self.sim, device, id, self.compute)?;
         self.launch_or_gemm(device, id)?;
+        reset_persisting_l2_if(&mut self.sim, device, self.l2_reset)?;
         if self.host_func {
             let _id = self.sim.host_func(device, self.compute)?;
         }

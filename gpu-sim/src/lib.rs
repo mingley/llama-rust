@@ -585,7 +585,12 @@
 //! after [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size)
 //! (CUDA default size is 0). [`set_stream_access_policy`](Sim::set_stream_access_policy)
 //! is the stream twin (`cudaStreamAttributeAccessPolicyWindow`);
-//! [`kernel`](Sim::kernel) inherits it. [`kernel_with`](Sim::kernel_with) also accepts
+//! [`kernel`](Sim::kernel) inherits it. `expertvm sim --l2-persist` /
+//! Engine `--expert-sim --l2-persist` enable the persist limit and attach a
+//! window to expert GEMMs. `--l2-reset` is
+//! [`reset_persisting_l2_cache`](Sim::reset_persisting_l2_cache)
+//! (`cudaCtxResetPersistingL2Cache`) after each GEMM (implies persist; live).
+//! [`kernel_with`](Sim::kernel_with) also accepts
 //! [`MemSyncDomain`] / [`MemSyncDomainMap`] (`cudaLaunchAttributeMemSyncDomain`):
 //! a completing kernel's implicit fence waits
 //! `GpuProfile::same_domain_fence_permille` of leftover traffic from another

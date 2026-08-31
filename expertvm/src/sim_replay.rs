@@ -683,6 +683,12 @@ pub struct SimCfg {
     /// fill. Decode identity stays `cudaLaunchKernel` with persist limit 0.
     /// [`crate::GpuStoreCfg::l2_persist`] is the store path.
     pub l2_persist: bool,
+    /// `cudaCtxResetPersistingL2Cache` after each grouped GEMM.
+    ///
+    /// Implies [`Self::l2_persist`]. Live (cannot capture). Hits stay the same;
+    /// a reused expert does not keep persisting L2 lines. Decode identity stays
+    /// no reset. [`crate::GpuStoreCfg::l2_reset`] is the store path.
+    pub l2_reset: bool,
     /// Hopper cluster X size (`cudaLaunchAttributeClusterDimension`). `0` is off.
     ///
     /// Occupies `min(N, compute_slots)` Hyper-Q slots so leftover kernels
@@ -928,6 +934,7 @@ impl SimCfg {
             cooperative: false,
             pdl: false,
             l2_persist: false,
+            l2_reset: false,
             cluster: 0,
             preferred_cluster: 0,
             cluster_spread: false,
@@ -1121,7 +1128,7 @@ pub fn sim_replay_cfg(
     apply_stream_sms(&mut sim, plan, cfg.decode_sm_permille)?;
     apply_stream_sync_policy(&mut sim, plan, cfg.sync_policy)?;
     apply_stream_mem_sync_domain(&mut sim, plan, cfg.mem_sync_domain)?;
-    if cfg.l2_persist {
+    if cfg.l2_persist || cfg.l2_reset {
         sim.enable_persisting_l2()?;
     }
     allow_non_portable_cluster_if(&mut sim, cfg.non_portable_cluster)?;
@@ -1161,7 +1168,8 @@ pub fn sim_replay_cfg(
     let mut graphs = GraphBank::new(cfg.graph_update, cfg.graph_clone, cfg.graph_build, leaf)
         .with_cooperative(cfg.cooperative)
         .with_pdl(cfg.pdl)
-        .with_l2_persist(cfg.l2_persist)
+        .with_l2_persist(cfg.l2_persist || cfg.l2_reset)
+        .with_l2_reset(cfg.l2_reset)
         .with_cluster(cfg.cluster)
         .with_preferred_cluster(cfg.preferred_cluster)
         .with_cluster_spread(cfg.cluster_spread)
@@ -1487,6 +1495,21 @@ pub(crate) fn apply_func_max_shared(sim: &mut Sim, on: bool) -> Result<(), Error
     Ok(())
 }
 
+/// `cudaCtxResetPersistingL2Cache` on `device` after a live GEMM.
+///
+/// Capture cannot include it; call after `launch_graph` / stream kernel.
+pub(crate) fn reset_persisting_l2_if(
+    sim: &mut Sim,
+    device: DeviceId,
+    on: bool,
+) -> Result<(), Error> {
+    if !on {
+        return Ok(());
+    }
+    sim.reset_persisting_l2_cache(device)?;
+    Ok(())
+}
+
 #[derive(Clone, Copy, Default)]
 pub(crate) struct ReplayCounters {
     pub hits: u64,
@@ -1513,6 +1536,7 @@ pub(crate) struct GraphBank {
     cooperative: bool,
     pdl: bool,
     l2_persist: bool,
+    l2_reset: bool,
     cluster: u8,
     preferred_cluster: u8,
     cluster_spread: bool,
@@ -1547,6 +1571,7 @@ impl GraphBank {
             cooperative: false,
             pdl: false,
             l2_persist: false,
+            l2_reset: false,
             cluster: 0,
             preferred_cluster: 0,
             cluster_spread: false,
@@ -1581,6 +1606,11 @@ impl GraphBank {
 
     pub(crate) fn with_l2_persist(mut self, yes: bool) -> Self {
         self.l2_persist = yes;
+        self
+    }
+
+    pub(crate) fn with_l2_reset(mut self, yes: bool) -> Self {
+        self.l2_reset = yes;
         self
     }
 
@@ -2509,6 +2539,7 @@ pub(crate) fn gemm_keys(
             Vec::new()
         };
         gemm_ids(sim, graphs, (d, stream), ids, cover, cuda_graphs, ctr)?;
+        reset_persisting_l2_if(sim, d, graphs.l2_reset)?;
     }
     Ok(())
 }

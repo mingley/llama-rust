@@ -18,7 +18,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--func-max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--func-max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -132,7 +132,8 @@ fn run() -> Result<(), String> {
             sim_cfg.decode_priority = cfg.decode_priority;
             sim_cfg.cooperative = cfg.cooperative;
             sim_cfg.pdl = cfg.pdl;
-            sim_cfg.l2_persist = cfg.l2_persist;
+            sim_cfg.l2_persist = cfg.l2_persist || cfg.l2_reset;
+            sim_cfg.l2_reset = cfg.l2_reset;
             sim_cfg.cluster = cfg.cluster;
             sim_cfg.preferred_cluster = cfg.preferred_cluster;
             sim_cfg.cluster_spread = cfg.cluster_spread;
@@ -228,6 +229,7 @@ struct Cfg {
     cooperative: bool,
     pdl: bool,
     l2_persist: bool,
+    l2_reset: bool,
     cluster: u8,
     preferred_cluster: u8,
     cluster_spread: bool,
@@ -286,6 +288,7 @@ where
     let mut cooperative = false;
     let mut pdl = false;
     let mut l2_persist = false;
+    let mut l2_reset = false;
     let mut cluster = 0u8;
     let mut preferred_cluster = 0u8;
     let mut cluster_spread = false;
@@ -370,6 +373,9 @@ where
             }
             "--l2-persist" => {
                 l2_persist = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
+            "--l2-reset" => {
+                l2_reset = !matches!(inline.as_deref(), Some("0" | "false"));
             }
             "--cluster" => cluster = parse_cluster(&value("cluster", inline, &mut it)?)?,
             "--preferred-cluster" => {
@@ -520,6 +526,7 @@ where
         cooperative,
         pdl,
         l2_persist,
+        l2_reset,
         cluster,
         preferred_cluster,
         cluster_spread,

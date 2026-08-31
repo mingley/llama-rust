@@ -81,6 +81,10 @@ pub(crate) struct GpuCli {
     pub pdl: bool,
     /// Persisting L2 access-policy window (`GpuStoreCfg::l2_persist`).
     pub l2_persist: bool,
+    /// `cudaCtxResetPersistingL2Cache` after each GEMM (`GpuStoreCfg::l2_reset`).
+    ///
+    /// Implies [`Self::l2_persist`].
+    pub l2_reset: bool,
     /// Hopper cluster X size (`GpuStoreCfg::cluster`). `0` is off.
     pub cluster: u8,
     /// True when `--cluster` appeared.
@@ -201,6 +205,7 @@ impl GpuCli {
             "--cooperative" => &mut self.cooperative,
             "--pdl" => &mut self.pdl,
             "--l2-persist" => &mut self.l2_persist,
+            "--l2-reset" => &mut self.l2_reset,
             "--cluster-spread" => &mut self.cluster_spread,
             "--max-shared" => &mut self.max_shared,
             "--func-max-shared" => &mut self.func_max_shared,
@@ -263,6 +268,13 @@ impl GpuCli {
     pub(crate) fn imply_pageable(&mut self) {
         if self.host_register {
             self.pageable = true;
+        }
+    }
+
+    /// `--l2-reset` implies [`Self::l2_persist`]. Call after sim-flag checks.
+    pub(crate) fn imply_l2_persist(&mut self) {
+        if self.l2_reset {
+            self.l2_persist = true;
         }
     }
 
@@ -435,6 +447,7 @@ impl GpuCli {
             (self.cooperative, "--cooperative"),
             (self.pdl, "--pdl"),
             (self.l2_persist, "--l2-persist"),
+            (self.l2_reset, "--l2-reset"),
             (self.multicast, "--multicast"),
             (self.vmm_page_set, "--vmm-page"),
             (self.compute_slots_set, "--compute-slots"),
@@ -733,7 +746,8 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         decode_priority: gpu.decode_priority,
         cooperative: gpu.cooperative,
         pdl: gpu.pdl,
-        l2_persist: gpu.l2_persist,
+        l2_persist: gpu.l2_persist || gpu.l2_reset,
+        l2_reset: gpu.l2_reset,
         cluster: gpu.cluster,
         preferred_cluster: gpu.preferred_cluster,
         cluster_spread: gpu.cluster_spread,

@@ -312,7 +312,7 @@ impl SchedRt {
         apply_stream_sms(&mut sim, plan, cfg.decode_sm_permille)?;
         apply_stream_sync_policy(&mut sim, plan, cfg.sync_policy)?;
         apply_stream_mem_sync_domain(&mut sim, plan, cfg.mem_sync_domain)?;
-        if cfg.l2_persist {
+        if cfg.l2_persist || cfg.l2_reset {
             sim.enable_persisting_l2()?;
         }
         allow_non_portable_cluster_if(&mut sim, cfg.non_portable_cluster)?;
@@ -360,7 +360,8 @@ impl SchedRt {
             )
             .with_cooperative(cfg.cooperative)
             .with_pdl(cfg.pdl)
-            .with_l2_persist(cfg.l2_persist)
+            .with_l2_persist(cfg.l2_persist || cfg.l2_reset)
+            .with_l2_reset(cfg.l2_reset)
             .with_cluster(cfg.cluster)
             .with_preferred_cluster(cfg.preferred_cluster)
             .with_cluster_spread(cfg.cluster_spread)

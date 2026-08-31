@@ -7834,6 +7834,69 @@ fn sim_replay_l2_persist_reused_expert_is_faster() {
 }
 
 #[test]
+fn sim_replay_l2_reset_colds_reused_expert() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000000000000\nlaunch_overhead_ns=1\nhbm_bps=1000000000\nl2_persist_hit_permille=1000\n",
+    )
+    .expect("memory-bound persist profile");
+    let persist = SimCfg {
+        l2_persist: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let reset = SimCfg {
+        l2_persist: true,
+        l2_reset: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let only_reset = SimCfg {
+        l2_reset: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let warm = sim_replay_cfg(&t, profile.clone(), persist).expect("persist");
+    let cold = sim_replay_cfg(&t, profile.clone(), reset).expect("persist+reset");
+    let implied = sim_replay_cfg(&t, profile, only_reset).expect("reset-implies-persist");
+    assert_eq!(warm.hits, cold.hits);
+    assert_eq!(warm.misses, cold.misses);
+    assert_eq!(implied.hits, cold.hits);
+    assert_eq!(implied.misses, cold.misses);
+    assert!(
+        warm.sim_ns < cold.sim_ns,
+        "reset must cold reused persist lines; persist={} reset={}",
+        warm.sim_ns,
+        cold.sim_ns
+    );
+    assert_eq!(
+        implied.sim_ns, cold.sim_ns,
+        "bare --l2-reset must imply persist windows; implied={} reset={}",
+        implied.sim_ns, cold.sim_ns
+    );
+}
+
+#[test]
+fn sim_replay_l2_reset_with_graphs_keeps_hits() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let persist = SimCfg {
+        cuda_graphs: true,
+        l2_persist: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let reset = SimCfg {
+        cuda_graphs: true,
+        l2_persist: true,
+        l2_reset: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), persist).expect("persist graphs");
+    let b = sim_replay_cfg(&t, profile, reset).expect("reset graphs");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+}
+
+#[test]
 fn simulated_gpu_store_pdl_overlaps_same_stream_gemms() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1])],
@@ -9685,4 +9748,78 @@ fn simulated_gpu_store_func_max_shared_sets_func_carveout() {
     let on = run(true);
     assert_eq!(off.0, on.0);
     assert_eq!(off.1, on.1);
+}
+
+#[test]
+fn sim_replay_l2_reset_keeps_hits() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg::lru(2, 4096, 0);
+    let on = SimCfg {
+        l2_reset: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("identity");
+    let b = sim_replay_cfg(&t, profile, on).expect("l2-reset");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+}
+
+#[test]
+fn simulated_gpu_store_l2_reset_colds_reused_expert() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000000000000\nlaunch_overhead_ns=1\nhbm_bps=1000000000\nl2_persist_hit_permille=1000\n",
+    )
+    .expect("memory-bound persist profile");
+    let run = |l2_persist: bool, l2_reset: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                l2_persist,
+                l2_reset,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        assert_eq!(gpu.l2_reset(), l2_reset);
+        for key in t.keys() {
+            let _p = gpu.acquire(key).expect("acquire");
+            gpu.release(key);
+        }
+        let metrics = gpu.metrics();
+        let score = gpu.score().expect("score");
+        (metrics.hits, metrics.misses, score.wall_ns)
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut identity = SimulatedGpuStore::new(inner, 2, p.clone(), 4096).expect("id");
+    let k0 = ExpertKey::new(0, 0);
+    let _a = identity.acquire(k0).expect("id acq");
+    assert!(!identity.l2_reset());
+    let _s = identity.score().expect("id score");
+    let persist = run(true, false);
+    let reset = run(true, true);
+    let implied = run(false, true);
+    assert_eq!(persist.0, reset.0);
+    assert_eq!(persist.1, reset.1);
+    assert_eq!(implied.0, reset.0);
+    assert_eq!(implied.1, reset.1);
+    assert!(
+        persist.2 < reset.2,
+        "reset must cold reused persist lines; persist={} reset={}",
+        persist.2,
+        reset.2
+    );
+    assert_eq!(
+        implied.2, reset.2,
+        "bare l2_reset must imply persist windows; implied={} reset={}",
+        implied.2, reset.2
+    );
 }

@@ -3565,7 +3565,17 @@ model, do not celebrate the sim.
     Default function carveout. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-339. [ ] Next numbered PLAN item after 338 is the next `gpu-sim` / Engine /
+339. [x] `cudaCtxResetPersistingL2Cache` after each grouped GEMM:
+    [`GpuStoreCfg::l2_reset`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::l2_reset`](expertvm/src/sim_replay.rs)
+    [`reset_persisting_l2_cache`](gpu-sim/src/sim.rs) after live GEMM (not
+    inside capture). Implies `--l2-persist`. Hits stay the same; a reused
+    expert does not keep persisting L2 lines. `--l2-reset` on `expertvm sim`
+    / `schedule` / `store` and `gguf_gemv engine --expert-sim`. Decode
+    identity stays no reset. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+340. [ ] Next numbered PLAN item after 339 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
