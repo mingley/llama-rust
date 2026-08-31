@@ -4507,11 +4507,22 @@ model, do not celebrate the sim.
     vs oracle. `gpu-profile capture` is still refused. Dual score still has
     no `$/M tokens`.
 
-403. [ ] Next numbered PLAN item after 402 is the next `gpu-sim` / Engine /
+403. [x] Official NVFP4 `{1}` `output.scale`: llama.cpp creates this tensor
+    only when `output.weight` is `GGML_TYPE_NVFP4` (`TENSOR_NOT_REQUIRED`;
+    missing is `1.0`). Decode follows `build_lora_mm`: `ggml_mul` after the
+    LM-head GEMM, before bias / tanh softcap. Writer-tiny
+    `tiny-nvfp4-output-s` is `tiny-nvfp4` plus scale `4.0`. F32 files that
+    contain `output.scale` are ignored (not loaded). Tied embeddings
+    (absent `output.weight`) do not load the scale. Decode identity vs
+    oracle. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+404. [ ] Next numbered PLAN item after 403 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
-    OpenAI HTTP veneer. Do not invent F32 `output.scale` unless NVFP4. Do not
-    invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
+    OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
+    second NVFP4 `output.scale` as a new family. Do not invent
+    `output.input_scale` / `*.input_scale` this slice. Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
     `attn_v.scale` as the writer-tiny. Do not invent a second dense
     `ffn_down.scale` / second `ffn_gate.scale` / second `ffn_up.scale` /
     second `attn_q.scale` / second `attn_output.scale` /

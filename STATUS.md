@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — official NVFP4 `{1}` `output.scale`
+
+llama.cpp creates `output.scale` shape `{1}` only when `output.weight`
+is `GGML_TYPE_NVFP4` (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Decode
+follows `build_lora_mm`: `ggml_mul` after the LM-head GEMM, before bias
+/ tanh softcap. Writer-tiny `tiny-nvfp4-output-s` is `tiny-nvfp4` plus
+scale `4.0`. F32 files that contain `output.scale` are ignored (not
+loaded). Tied embeddings (absent `output.weight`) do not load the
+scale. Do not invent `output.input_scale` this slice.
+
 ## Shipped 2026-08-31 — official dense `{1}` `ffn_up.scale`
 
 Generic llama.cpp post-load `blk.{i}.ffn_up.scale` shape `{1}`
