@@ -796,6 +796,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrComputePreemptionSupported` (always 0; kernel preemption
     /// is not modeled). Distinct from [`Self::KernelExecTimeout`].
     ComputePreemptionSupported,
+    /// `cudaDevAttrEccEnabled` (always 0; ECC is not modeled). Distinct from
+    /// [`Self::TccDriver`].
+    EccEnabled,
     /// `cudaDevAttrMaxBlocksPerCluster`.
     MaxBlocksPerCluster,
     /// `cudaDevAttrMemSyncDomainCount`.
@@ -1020,6 +1023,9 @@ pub struct DeviceProperties {
     /// ([`DeviceAttr::ComputePreemptionSupported`]). Always false; kernel
     /// preemption is not modeled. Distinct from [`Self::kernel_exec_timeout`].
     pub compute_preemption_supported: bool,
+    /// `cudaDevAttrEccEnabled` ([`DeviceAttr::EccEnabled`]). Always false; ECC
+    /// is not modeled. Distinct from [`Self::tcc_driver`].
+    pub ecc_enabled: bool,
     /// [`crate::GpuProfile::copy_engines`].
     pub async_engine_count: u32,
     /// [`crate::GpuProfile::compute_slots`] `> 1`.

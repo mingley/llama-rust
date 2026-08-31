@@ -4711,7 +4711,13 @@ model, do not celebrate the sim.
     capture. `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-427. [ ] Next numbered PLAN item after 426 is the next `gpu-sim` / Engine /
+427. [x] CUDA `cudaDevAttrEccEnabled` (`DeviceAttr::EccEnabled`): always 0.
+    ECC is not modeled. Distinct from `TccDriver`. Also
+    `DeviceProperties.ecc_enabled`. Query; legal during capture.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+428. [ ] Next numbered PLAN item after 427 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4740,6 +4746,7 @@ model, do not celebrate the sim.
     Do not invent a second `cudaDevAttrGlobalL1CacheSupported`.
     Do not invent a second `cudaDevAttrLocalL1CacheSupported`.
     Do not invent a second `cudaDevAttrComputePreemptionSupported`.
+    Do not invent a second `cudaDevAttrEccEnabled`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

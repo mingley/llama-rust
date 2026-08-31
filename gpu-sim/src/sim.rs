@@ -14943,6 +14943,7 @@ impl Sim {
             | DeviceAttr::GlobalL1CacheSupported
             | DeviceAttr::LocalL1CacheSupported
             | DeviceAttr::ComputePreemptionSupported
+            | DeviceAttr::EccEnabled
             | DeviceAttr::HandleTypeWin32HandleSupported
             | DeviceAttr::HandleTypeWin32KmtHandleSupported
             | DeviceAttr::HandleTypeFabricSupported
@@ -14995,6 +14996,7 @@ impl Sim {
             global_l1_cache_supported: false,
             local_l1_cache_supported: false,
             compute_preemption_supported: false,
+            ecc_enabled: false,
             async_engine_count: u32::from(gpu.copy_engines),
             concurrent_kernels: gpu.compute_slots > 1,
             cooperative_launch: gpu.cooperative_launch,

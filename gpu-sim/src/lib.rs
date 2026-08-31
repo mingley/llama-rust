@@ -479,6 +479,8 @@
 //! [`DeviceAttr::ComputePreemptionSupported`] is always 0 (kernel preemption
 //! is not modeled). Distinct from
 //! [`KernelExecTimeout`](DeviceAttr::KernelExecTimeout).
+//! [`DeviceAttr::EccEnabled`] is always 0 (ECC is not modeled). Distinct from
+//! [`TccDriver`](DeviceAttr::TccDriver).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -12767,6 +12769,29 @@ mod tests {
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::ComputePreemptionSupported)
                 .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_ecc_disabled() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert!(!hp.ecc_enabled);
+        assert!(!hp.tcc_driver);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::EccEnabled).unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TccDriver).unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::EccEnabled).unwrap(),
             0
         );
         let _g = sim.end_capture().unwrap();
