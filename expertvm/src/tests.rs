@@ -9330,20 +9330,25 @@ fn sim_replay_sync_memops_h2d_host_sync() {
         )
         .expect("miss");
         let id = handles.get(&k0).expect("page").id;
-        let attr = sim
-            .pointer_get_attribute(id, PointerAttr::SyncMemops)
-            .expect("attr");
         let idle = sim.query_stream(DeviceId(0), StreamId(0)).expect("query");
+        let attr = if sync_memops {
+            Some(
+                sim.pointer_get_attribute(id, PointerAttr::SyncMemops)
+                    .expect("attr"),
+            )
+        } else {
+            None
+        };
         (attr, idle)
     };
     let (off_attr, off_idle) = run(false);
     let (on_attr, on_idle) = run(true);
-    assert_eq!(off_attr, 0);
+    assert_eq!(off_attr, None);
     assert!(
         !off_idle,
         "async pinned H2D must leave the copy stream busy"
     );
-    assert_eq!(on_attr, 1);
+    assert_eq!(on_attr, Some(1));
     assert!(
         on_idle,
         "SyncMemops H2D must host-wait the copy stream before return"

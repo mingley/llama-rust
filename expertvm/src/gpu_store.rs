@@ -126,11 +126,13 @@ pub struct GpuStoreCfg {
     /// `cuPointerSetAttribute` [`gpu_sim::PointerAttr::SyncMemops`] on miss device pages.
     ///
     /// After alloc, before H2D / managed prefetch: memcpy and memset of that
-    /// pointer are host-synchronous (`synchronize_stream` after submit). Hits
-    /// stay the same; leftover compute cannot overlap that copy. Illegal with
-    /// mapped fill (no device memcpy) and [`Self::memcpy_batch`] (needs async
-    /// H2D). Does not imply pageable or [`Self::sync_alloc`]. Decode identity
-    /// stays async `memcpy_pinned_to_device`.
+    /// pointer are host-synchronous (`synchronize_stream` after submit).
+    /// `cudaMallocAsync` waits the copy stream first so the pointer is live
+    /// (leftover compute is not drained). Hits stay the same; leftover compute
+    /// cannot overlap that copy. Illegal with mapped fill (no device memcpy)
+    /// and [`Self::memcpy_batch`] (needs async H2D). Does not imply pageable
+    /// or [`Self::sync_alloc`]. Decode identity stays async
+    /// `memcpy_pinned_to_device`.
     pub sync_memops: bool,
     /// `cudaMemcpyBatchAsync` for a multi-expert pinned/VMM prefetch on one stream.
     ///
@@ -2019,7 +2021,7 @@ impl SimulatedGpuStore {
                 } else if self.managed_host {
                     let _a = self.sim.stream_attach(d, id, dma, MemAttach::Global)?;
                 }
-                mark_sync_memops(&mut self.sim, id, self.sync_memops)?;
+                mark_sync_memops(&mut self.sim, id, d, dma, self.sync_memops)?;
                 let _p = self.sim.prefetch(d, id, dma)?;
                 if self.sync_alloc {
                     self.sim.synchronize_stream(d, dma)?;
@@ -2037,7 +2039,7 @@ impl SimulatedGpuStore {
             }
             GpuFill::Vmm => {
                 let id = self.vmm_alloc(d)?;
-                mark_sync_memops(&mut self.sim, id, self.sync_memops)?;
+                mark_sync_memops(&mut self.sim, id, d, self.copy, self.sync_memops)?;
                 self.fill_hbm(d, id)?;
                 if self.accessed_by {
                     advise_vmm_access(&mut self.sim, id)?;
@@ -2046,7 +2048,7 @@ impl SimulatedGpuStore {
             }
             GpuFill::Pinned => {
                 let id = self.hbm_alloc(d)?;
-                mark_sync_memops(&mut self.sim, id, self.sync_memops)?;
+                mark_sync_memops(&mut self.sim, id, d, self.copy, self.sync_memops)?;
                 self.fill_hbm(d, id)?;
                 Ok(id)
             }

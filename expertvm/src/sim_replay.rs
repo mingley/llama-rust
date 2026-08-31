@@ -2169,15 +2169,32 @@ fn alloc_touch_page(sim: &mut Sim, args: TouchArgs) -> Result<AllocId, Error> {
     } else {
         hbm_alloc(sim, args.d, args.bytes, args.s, args.sync_alloc)?
     };
-    mark_sync_memops(sim, id, args.sync_memops)?;
+    mark_sync_memops(sim, id, args.d, args.s, args.sync_memops)?;
     Ok(id)
 }
 
 /// `cuPointerSetAttribute` SyncMemops on a miss page before H2D / prefetch.
-pub(crate) fn mark_sync_memops(sim: &mut Sim, id: AllocId, on: bool) -> Result<(), Error> {
-    if on {
-        sim.pointer_set_attribute(id, PointerAttr::SyncMemops, 1)?;
+///
+/// `cudaMallocAsync` pointers are not live until the alloc op completes, so
+/// this waits `stream` when GetAttribute is not yet legal (copy stream only;
+/// leftover compute is not drained).
+pub(crate) fn mark_sync_memops(
+    sim: &mut Sim,
+    id: AllocId,
+    device: DeviceId,
+    stream: StreamId,
+    on: bool,
+) -> Result<(), Error> {
+    if !on {
+        return Ok(());
     }
+    if sim
+        .pointer_get_attribute(id, PointerAttr::SyncMemops)
+        .is_err()
+    {
+        sim.synchronize_stream(device, stream)?;
+    }
+    sim.pointer_set_attribute(id, PointerAttr::SyncMemops, 1)?;
     Ok(())
 }
 
