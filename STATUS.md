@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cuDeviceGetByUuid`
+
+`gpu-sim` `device_get_by_uuid` is `cuDeviceGetByUuid`. A matching
+synthetic UUID from `device_get_uuid` returns that device. Unknown UUID
+is Invalid. Query; legal during capture. Distinct from `device_get`
+(ordinal). No `cuDeviceGetLuid`. `gpu-profile capture` is still refused.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cuDeviceGetUuid`
 
 `gpu-sim` `device_get_uuid` is `cuDeviceGetUuid` / `cudaDeviceGetUuid`. A

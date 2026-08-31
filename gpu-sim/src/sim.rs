@@ -15049,10 +15049,25 @@ impl Sim {
     /// Sixteen-octet synthetic UUID for this `(profile.name, device)`. Distinct
     /// from [`Self::device_get_name`] and [`DeviceId`]. Two [`Sim`]s with the
     /// same profile agree. Also [`DeviceProperties::uuid`]. Unknown devices
-    /// are Invalid.
+    /// are Invalid. Inverse is [`Self::device_get_by_uuid`].
     pub fn device_get_uuid(&self, device: DeviceId) -> Result<[u8; 16], SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(synthetic_device_uuid(&self.profile.name, device))
+    }
+
+    /// `cuDeviceGetByUuid`. Query; legal during capture.
+    ///
+    /// Inverse of [`Self::device_get_uuid`]. Unknown UUID is Invalid
+    /// `"unknown device uuid"`. Distinct from [`Self::device_get`] (ordinal).
+    pub fn device_get_by_uuid(&self, uuid: [u8; 16]) -> Result<DeviceId, SimError> {
+        self.profile
+            .gpus
+            .iter()
+            .find(|g| synthetic_device_uuid(&self.profile.name, g.id) == uuid)
+            .map(|g| g.id)
+            .ok_or(SimError::Invalid {
+                why: "unknown device uuid",
+            })
     }
 
     /// `cuDeviceTotalMem`. Query; legal during capture.

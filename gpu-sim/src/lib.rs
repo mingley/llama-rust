@@ -370,7 +370,8 @@
 //! modeled caps only — no SM count or clock). [`Sim::device_get_name`] is
 //! `cudaDeviceGetName` (the profile name). [`device_get_uuid`](Sim::device_get_uuid)
 //! is `cuDeviceGetUuid` / `cudaDeviceGetUuid` (synthetic 16-octet id; also
-//! [`DeviceProperties::uuid`]). [`device_total_mem`](Sim::device_total_mem)
+//! [`DeviceProperties::uuid`]). [`device_get_by_uuid`](Sim::device_get_by_uuid)
+//! is `cuDeviceGetByUuid` (inverse). [`device_total_mem`](Sim::device_total_mem)
 //! is `cuDeviceTotalMem` (HBM bytes). [`DeviceAttr::CanMapHostMemory`]
 //! / [`DeviceAttr::ManagedMemory`] are always 1 (this VM has mapped host and
 //! UM). [`DeviceAttr::ClusterLaunch`] is `max_blocks_per_cluster > 0`.
@@ -13071,6 +13072,31 @@ mod tests {
         match a.device_get_uuid(DeviceId(99)) {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("device not in profile"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_get_by_uuid_roundtrips() {
+        let mut a = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let u0 = a.device_get_uuid(DeviceId(0)).unwrap();
+        let u1 = a.device_get_uuid(DeviceId(1)).unwrap();
+        assert_eq!(a.device_get_by_uuid(u0).unwrap(), DeviceId(0));
+        assert_eq!(a.device_get_by_uuid(u1).unwrap(), DeviceId(1));
+        a.begin_capture(DeviceId(0), StreamId(0)).unwrap();
+        assert_eq!(a.device_get_by_uuid(u0).unwrap(), DeviceId(0));
+        let _g = a.end_capture().unwrap();
+        let h = Sim::new(h100());
+        match a.device_get_by_uuid(h.device_get_uuid(DeviceId(0)).unwrap()) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown device uuid"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+        match a.device_get_by_uuid([0; 16]) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown device uuid"), "{why}")
             }
             other => panic!("{other:?}"),
         }
