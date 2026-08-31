@@ -367,6 +367,32 @@ pub(crate) fn check_device_graph_flags(
     Ok(())
 }
 
+/// `--memset-fill` is pinned/VMM `cudaMemsetAsync`, not mapped/managed/pageable/batch H2D.
+pub(crate) fn check_memset_fill(
+    memset_fill: bool,
+    mapped: bool,
+    managed: bool,
+    pageable: bool,
+    memcpy_batch: bool,
+) -> Result<(), Error> {
+    if !memset_fill {
+        return Ok(());
+    }
+    if mapped {
+        return Err(Error::Store("memset-fill cannot mapped"));
+    }
+    if managed {
+        return Err(Error::Store("memset-fill cannot managed"));
+    }
+    if pageable {
+        return Err(Error::Store("memset-fill cannot pageable"));
+    }
+    if memcpy_batch {
+        return Err(Error::Store("memset-fill cannot memcpy-batch"));
+    }
+    Ok(())
+}
+
 /// One `cudaEventCreate` for [`SimCfg::launch_completion`] / store GEMMs.
 pub(crate) fn alloc_launch_completion(
     sim: &mut Sim,
@@ -768,6 +794,13 @@ pub struct SimCfg {
     /// identity stays Stream order (or sequential H2D).
     /// [`crate::GpuStoreCfg::memcpy_any`] is the store path.
     pub memcpy_any: bool,
+    /// `cudaMemsetAsync` miss fill instead of pinned H2D (HBM write, compute).
+    ///
+    /// Distinct from [`Self::graph_memset`] (in-graph scratch vs miss page).
+    /// Illegal with [`Self::mapped`], [`Self::managed`], [`Self::pageable`],
+    /// and [`Self::memcpy_batch`]. Hits stay the same. Decode identity stays
+    /// pinned H2D. [`crate::GpuStoreCfg::memset_fill`] is the store path.
+    pub memset_fill: bool,
     /// Peer map without dest HBM at a managed or VMM fill.
     ///
     /// Dest GEMMs may read without migrating or charging dest HBM. `--place replicas`
@@ -1364,6 +1397,7 @@ impl SimCfg {
             memcpy_batch: false,
             memcpy_during: false,
             memcpy_any: false,
+            memset_fill: false,
         }
     }
 }
@@ -1466,6 +1500,13 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     if cfg.memcpy_any && cfg.memcpy_during {
         return Err(Error::Store("choose one of memcpy-any, memcpy-during"));
     }
+    check_memset_fill(
+        cfg.memset_fill,
+        cfg.mapped,
+        cfg.managed,
+        cfg.pageable,
+        cfg.memcpy_batch,
+    )?;
     if cfg.memcpy_batch
         && (cfg.pageable
             || cfg.sync_alloc
@@ -1615,6 +1656,7 @@ pub fn sim_replay_cfg(
         memcpy_batch: cfg.memcpy_batch,
         memcpy_during: cfg.memcpy_during,
         memcpy_any: cfg.memcpy_any,
+        memset_fill: cfg.memset_fill,
         accessed_by: cfg.accessed_by,
         wait_value: cfg.wait_value,
         stream_attach: cfg.stream_attach,
@@ -1793,6 +1835,8 @@ pub(crate) struct TouchArgs {
     pub memcpy_during: bool,
     /// [`SimCfg::memcpy_any`]: batch attrs use Any.
     pub memcpy_any: bool,
+    /// [`SimCfg::memset_fill`]: miss fill is `cudaMemsetAsync` (not pinned H2D).
+    pub memset_fill: bool,
     /// [`SimCfg::accessed_by`]: SetAccessedBy / VMM SetAccess / mempool SetAccess
     /// on every GPU (fill or default pools).
     pub accessed_by: bool,
@@ -1850,6 +1894,22 @@ fn hbm_h2d_pinned(
     Ok(())
 }
 
+fn hbm_memset(
+    sim: &mut Sim,
+    device: DeviceId,
+    alloc: AllocId,
+    bytes: u64,
+    stream: StreamId,
+    sync: bool,
+) -> Result<(), Error> {
+    if sync {
+        let _id = sim.memset_sync(device, alloc, bytes, stream)?;
+    } else {
+        let _c = sim.memset_buf(device, KernelBuf::whole(alloc), stream)?;
+    }
+    Ok(())
+}
+
 /// `cudaMemcpyAttributes` for a batched H2D.
 ///
 /// DuringApiCall waits those copies. Any uses empty deps and does not wait.
@@ -1881,6 +1941,12 @@ pub(crate) fn wait_memcpy_during_allocs(
 
 fn hbm_h2d_many(sim: &mut Sim, args: TouchArgs, allocs: &[AllocId]) -> Result<(), Error> {
     if allocs.is_empty() {
+        return Ok(());
+    }
+    if args.memset_fill {
+        for id in allocs {
+            hbm_memset(sim, args.d, *id, args.bytes, args.s, args.sync_alloc)?;
+        }
         return Ok(());
     }
     let batch = args.memcpy_batch

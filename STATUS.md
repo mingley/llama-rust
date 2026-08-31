@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaMemsetAsync` miss fill
+
+`GpuStoreCfg::memset_fill` / `SimCfg::memset_fill` fill pinned/VMM miss
+pages with `cudaMemsetAsync` (HBM write, compute occupancy) instead of
+pinned H2D (copy-engine PCIe). Does not imply `--cuda-graphs`. Hits/misses
+stay the same. Distinct from `--graph-memset` (in-graph scratch vs miss
+page). Illegal with `--mapped` / `--managed` / `--pageable` /
+`--memcpy-batch`. Replica `pin_hot` D2D stays memcpy. `--memset-fill` is
+off by default (decode identity: pinned H2D; inner ExpertStore still holds
+real weights). Store and walker (not walker-only). infer-bench has no
+expert H2D fill, so it does not get `--memset-fill`. `gpu-profile capture`
+is still refused.
+
 ## Shipped 2026-08-31 — `cudaGraphClone` of combo parents
 
 `GpuStoreCfg::graph_clone_parent` / `SimCfg::graph_clone_parent` clone walker

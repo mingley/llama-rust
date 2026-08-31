@@ -363,6 +363,7 @@ impl SchedRt {
                 memcpy_batch: cfg.memcpy_batch,
                 memcpy_during: cfg.memcpy_during,
                 memcpy_any: cfg.memcpy_any,
+                memset_fill: cfg.memset_fill,
                 accessed_by: cfg.accessed_by,
                 wait_value: cfg.wait_value,
                 stream_attach: cfg.stream_attach,

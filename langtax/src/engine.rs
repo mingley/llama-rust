@@ -27,7 +27,7 @@
 //! (`ttft_ns` / `itl_ns` / `ns_per_token`; not `$/M tokens`). Default GPU
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
-//! `mempool_trim`, `mempool_no_reuse`, `mempool_max`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `memcpy_during`, `memcpy_any`, `SetAccessedBy`, legacy NULL, stream priority,
+//! `mempool_trim`, `mempool_no_reuse`, `mempool_max`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `memcpy_during`, `memcpy_any`, `memset_fill`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/build/build-deps/host/piecewise/capture-deps/enable/mem/memset/memcpy, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
 //! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `l2_ratio`, `l2_streaming`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `mem_sync_launch`, `mem_sync_launch_map`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
@@ -97,7 +97,9 @@
 //! does not imply `--host-func`; not with `--device-launch`; store and walker
 //! leaf GEMMs). `--graph-clone-parent` is `cudaGraphClone` of combo parents
 //! (recursive children; does not imply `--graph-clone`; store GEMM stays
-//! per-leaf).
+//! per-leaf). `--memset-fill` is `cudaMemsetAsync` of pinned/VMM miss pages
+//! (HBM write, compute occupancy; not with `--mapped` / `--managed` /
+//! `--pageable` / `--memcpy-batch`; store and walker).
 //! `--cluster N` is `cudaLaunchAttributeClusterDimension` on grouped expert
 //! GEMMs: the launch occupies `min(N, compute_slots)` Hyper-Q slots (Hopper
 //! portable max 8; legal with `--pdl` and `--cooperative`). `--preferred-cluster N`
@@ -3539,6 +3541,24 @@ mod tests {
         assert_eq!(iso.2, 4);
         assert_eq!(any.2, 4);
         assert_eq!(iso.4, any.4, "memcpy-any must keep greedy identity");
+    }
+
+    #[test]
+    fn engine_gpu_memset_fill_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let iso = mixed_gpu_decode_itl_on(bytes.clone(), false, None, GpuStoreCfg::default());
+        let fill = mixed_gpu_decode_itl_on(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                memset_fill: true,
+                ..GpuStoreCfg::default()
+            },
+        );
+        assert_eq!(iso.2, 4);
+        assert_eq!(fill.2, 4);
+        assert_eq!(iso.4, fill.4, "memset-fill must keep greedy identity");
     }
 
     #[test]

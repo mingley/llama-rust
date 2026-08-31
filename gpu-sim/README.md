@@ -529,7 +529,11 @@ cannot include it). `memcpy_with_attributes` is
 those copies). `expertvm sim --memcpy-during` / `gguf_gemv engine --expert-sim --memcpy-during`
 is DuringApiCall on batched prefetch (needs `--memcpy-batch`; identity stays
 Stream). `expertvm sim --memcpy-any` / `gguf_gemv engine --expert-sim --memcpy-any`
-is Any on batched prefetch (needs `--memcpy-batch`; empty deps; no API wait). `memcpy_3d_batch_async`
+is Any on batched prefetch (needs `--memcpy-batch`; empty deps; no API wait).
+`expertvm sim --memset-fill` / `gguf_gemv engine --expert-sim --memset-fill`
+is `cudaMemsetAsync` of pinned/VMM miss pages (HBM write, compute occupancy;
+not mapped/managed/pageable/memcpy-batch; distinct from `--graph-memset`
+scratch). `memcpy_3d_batch_async`
 is `cudaMemcpy3DBatchAsync` (3D pointer-to-pointer; `flags` must be 0; CUDA
 arrays are not modeled; capture cannot include it).
 `memcpy_3d_with_attributes` is `cudaMemcpy3DWithAttributesAsync` (Stream is

@@ -847,6 +847,7 @@ fn vmm_evict_reacquires_same_va() {
         memcpy_batch: false,
         memcpy_during: false,
         memcpy_any: false,
+        memset_fill: false,
         accessed_by: false,
         wait_value: false,
         stream_attach: false,
@@ -6911,6 +6912,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         memcpy_batch: false,
         memcpy_during: false,
         memcpy_any: false,
+        memset_fill: false,
         accessed_by: true,
         wait_value: false,
         stream_attach: false,
@@ -6980,6 +6982,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         memcpy_batch: false,
         memcpy_during: false,
         memcpy_any: false,
+        memset_fill: false,
         accessed_by: true,
         wait_value: false,
         stream_attach: false,
@@ -7050,6 +7053,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         memcpy_batch: false,
         memcpy_during: false,
         memcpy_any: false,
+        memset_fill: false,
         accessed_by: true,
         wait_value: false,
         stream_attach: false,
@@ -7486,6 +7490,7 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         memcpy_batch: true,
         memcpy_during: false,
         memcpy_any: false,
+        memset_fill: false,
         accessed_by: false,
         wait_value: false,
         stream_attach: false,
@@ -7549,6 +7554,7 @@ fn memcpy_during_apply_misses_waits_copies() {
             memcpy_batch: true,
             memcpy_during: during,
             memcpy_any: false,
+            memset_fill: false,
             accessed_by: false,
             wait_value: false,
             stream_attach: false,
@@ -7614,6 +7620,7 @@ fn memcpy_any_apply_misses_empty_deps() {
             memcpy_batch: true,
             memcpy_during: false,
             memcpy_any: any,
+            memset_fill: false,
             accessed_by: false,
             wait_value: false,
             stream_attach: false,
@@ -7949,6 +7956,131 @@ fn simulated_gpu_store_memcpy_any_refuses_during() {
 }
 
 #[test]
+fn simulated_gpu_store_memset_fill_is_faster_than_pcie_h2d() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000000000000\nhbm_bps=1000000000000\npcie_bps=1000\nlaunch_overhead_ns=1\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let run = |memset_fill: bool, fill: GpuFill, extra: GpuStoreCfg| {
+        let mut cfg = extra;
+        cfg.memset_fill = memset_fill;
+        let mut gpu =
+            SimulatedGpuStore::with_cfg(DirectStore::from_trace(&t), 1, p.clone(), 4096, fill, cfg)
+                .expect("gpu");
+        assert_eq!(gpu.memset_fill(), memset_fill);
+        let _n = gpu.prefetch(&[ExpertKey::new(0, 0)]).expect("prefetch");
+        let score = gpu.score().expect("drain");
+        (gpu.metrics().hits, gpu.metrics().misses, score.wall_ns)
+    };
+    let h2d = run(false, GpuFill::Pinned, GpuStoreCfg::default());
+    let memset = run(true, GpuFill::Pinned, GpuStoreCfg::default());
+    assert_eq!(h2d.0, memset.0);
+    assert_eq!(h2d.1, memset.1);
+    assert!(
+        memset.2 < h2d.2,
+        "memset-fill must beat slow PCIe H2D; memset={} h2d={}",
+        memset.2,
+        h2d.2
+    );
+    let vmm = run(true, GpuFill::Vmm, GpuStoreCfg::default());
+    assert_eq!(vmm.0, memset.0);
+    assert!(vmm.2 < h2d.2, "vmm memset={} h2d={}", vmm.2, h2d.2);
+    let _pdl = run(
+        true,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            pdl: true,
+            compute_slots: 2,
+            ..GpuStoreCfg::default()
+        },
+    );
+    let _coop = run(
+        true,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            cooperative: true,
+            ..GpuStoreCfg::default()
+        },
+    );
+    let _sync = run(
+        true,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            sync_alloc: true,
+            ..GpuStoreCfg::default()
+        },
+    );
+    let _gb = run(
+        true,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_build: true,
+            ..GpuStoreCfg::default()
+        },
+    );
+}
+
+#[test]
+fn simulated_gpu_store_memset_fill_cannot_mapped_managed_pageable_batch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let inner = DirectStore::from_trace(&t);
+    let refuse = |fill: GpuFill, cfg: GpuStoreCfg, needle: &str| match SimulatedGpuStore::with_cfg(
+        inner.clone(),
+        1,
+        p.clone(),
+        4096,
+        fill,
+        cfg,
+    ) {
+        Ok(_) => panic!("memset-fill must refuse {needle}"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains(needle), "{s}");
+        }
+    };
+    refuse(
+        GpuFill::Mapped,
+        GpuStoreCfg {
+            memset_fill: true,
+            ..GpuStoreCfg::default()
+        },
+        "memset-fill cannot mapped",
+    );
+    refuse(
+        GpuFill::Managed,
+        GpuStoreCfg {
+            memset_fill: true,
+            ..GpuStoreCfg::default()
+        },
+        "memset-fill cannot managed",
+    );
+    refuse(
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            memset_fill: true,
+            pageable: true,
+            ..GpuStoreCfg::default()
+        },
+        "memset-fill cannot pageable",
+    );
+    refuse(
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            memset_fill: true,
+            memcpy_batch: true,
+            ..GpuStoreCfg::default()
+        },
+        "memset-fill cannot memcpy-batch",
+    );
+}
+
+#[test]
 fn sim_replay_memcpy_any_keeps_hits() {
     let t = cycling_trace();
     let p = HardwareProfile::example_h100_sxm();
@@ -8015,6 +8147,146 @@ fn sim_replay_memcpy_any_refuses_during() {
 }
 
 #[test]
+fn sim_replay_memset_fill_is_faster_than_pcie_h2d() {
+    let t = cycling_trace();
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000000000000\nhbm_bps=1000000000000\npcie_bps=1000\nlaunch_overhead_ns=1\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let base = SimCfg::lru(1, 4096, 0);
+    let h2d = sim_replay_cfg(&t, p.clone(), base).expect("h2d");
+    let memset = sim_replay_cfg(
+        &t,
+        p.clone(),
+        SimCfg {
+            memset_fill: true,
+            ..base
+        },
+    )
+    .expect("memset");
+    assert_eq!(h2d.hits, memset.hits);
+    assert_eq!(h2d.misses, memset.misses);
+    assert!(
+        memset.sim_ns < h2d.sim_ns,
+        "memset-fill must beat slow PCIe H2D; memset={} h2d={}",
+        memset.sim_ns,
+        h2d.sim_ns
+    );
+    let sched_h = schedule_replay(&t, p.clone(), base, SchedCfg::closed(0)).expect("sh");
+    let sched_m = schedule_replay(
+        &t,
+        p.clone(),
+        SimCfg {
+            memset_fill: true,
+            ..base
+        },
+        SchedCfg::closed(0),
+    )
+    .expect("sm");
+    assert_eq!(sched_h.replay.hits, sched_m.replay.hits);
+    assert_eq!(sched_h.replay.misses, sched_m.replay.misses);
+    let _pdl = sim_replay_cfg(
+        &t,
+        p.clone(),
+        SimCfg {
+            memset_fill: true,
+            pdl: true,
+            compute_slots: 2,
+            ..base
+        },
+    )
+    .expect("pdl");
+    let _coop = sim_replay_cfg(
+        &t,
+        p.clone(),
+        SimCfg {
+            memset_fill: true,
+            cooperative: true,
+            ..base
+        },
+    )
+    .expect("coop");
+    let _vmm = sim_replay_cfg(
+        &t,
+        p.clone(),
+        SimCfg {
+            memset_fill: true,
+            vmm: true,
+            ..base
+        },
+    )
+    .expect("vmm");
+    let _sync = sim_replay_cfg(
+        &t,
+        p.clone(),
+        SimCfg {
+            memset_fill: true,
+            sync_alloc: true,
+            ..base
+        },
+    )
+    .expect("sync");
+    let _gb = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            memset_fill: true,
+            graph_build: true,
+            cuda_graphs: true,
+            ..base
+        },
+    )
+    .expect("graph-build");
+}
+
+#[test]
+fn sim_replay_memset_fill_cannot_mapped_managed_pageable_batch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let refuse = |cfg: SimCfg, needle: &str| match sim_replay_cfg(&t, p.clone(), cfg) {
+        Ok(_) => panic!("memset-fill must refuse {needle}"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains(needle), "{s}");
+        }
+    };
+    refuse(
+        SimCfg {
+            memset_fill: true,
+            mapped: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+        "memset-fill cannot mapped",
+    );
+    refuse(
+        SimCfg {
+            memset_fill: true,
+            managed: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+        "memset-fill cannot managed",
+    );
+    refuse(
+        SimCfg {
+            memset_fill: true,
+            pageable: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+        "memset-fill cannot pageable",
+    );
+    refuse(
+        SimCfg {
+            memset_fill: true,
+            memcpy_batch: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+        "memset-fill cannot memcpy-batch",
+    );
+}
+
+#[test]
 fn seq_stream_priority_starts_higher_stream_first() {
     use crate::replay::Touch;
     use crate::sim_replay::{
@@ -8048,6 +8320,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             memcpy_batch: false,
             memcpy_during: false,
             memcpy_any: false,
+            memset_fill: false,
             accessed_by: false,
             wait_value: false,
             stream_attach: false,
@@ -12913,6 +13186,7 @@ fn sim_replay_sync_memops_h2d_host_sync() {
             memcpy_batch: false,
             memcpy_during: false,
             memcpy_any: false,
+            memset_fill: false,
             accessed_by: false,
             wait_value: false,
             stream_attach: false,
@@ -13125,6 +13399,7 @@ fn sim_replay_device_sync_memops_h2d_host_sync() {
             memcpy_batch: false,
             memcpy_during: false,
             memcpy_any: false,
+            memset_fill: false,
             accessed_by: false,
             wait_value: false,
             stream_attach: false,

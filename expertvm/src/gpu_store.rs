@@ -18,11 +18,12 @@ use crate::sim_replay::{
     bind_device_mempools, check_cluster_load_balance, check_cluster_must_set,
     check_cluster_preferred, check_device_graph_flags, check_l2_fetch, check_l2_ratio,
     check_max_l1, check_mem_sync_collapse, check_mem_sync_launch, check_mem_sync_launch_map,
-    check_required_cluster, collapse_mem_sync_map, ensure_single_attach, free_copy_mailbox,
-    free_mapped_host, instantiate_exec, kernel_leaf, mark_sync_memops, memcpy_batch_attr,
-    mempool_hold, persist_armed, replay_exec, replay_streams, reset_persisting_l2_if,
-    retarget_parked_kernel, signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready,
-    wait_memcpy_during_allocs, GemmFlags, LeafMem, LeafWork, StreamPlan,
+    check_memset_fill, check_required_cluster, collapse_mem_sync_map, ensure_single_attach,
+    free_copy_mailbox, free_mapped_host, instantiate_exec, kernel_leaf, mark_sync_memops,
+    memcpy_batch_attr, mempool_hold, persist_armed, replay_exec, replay_streams,
+    reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
+    upload_after_set_params, wait_copy_ready, wait_memcpy_during_allocs, GemmFlags, LeafMem,
+    LeafWork, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -179,6 +180,12 @@ pub struct GpuStoreCfg {
     /// [`Self::memcpy_batch`]. Exclusive with [`Self::memcpy_during`]. Hits/misses
     /// stay the same. Decode identity stays Stream order (or sequential H2D).
     pub memcpy_any: bool,
+    /// `cudaMemsetAsync` miss fill instead of pinned H2D (HBM write, compute).
+    ///
+    /// Distinct from [`Self::graph_memset`] (in-graph scratch vs miss page).
+    /// Illegal with mapped, managed, [`Self::pageable`], and [`Self::memcpy_batch`].
+    /// Hits stay the same. Decode identity stays pinned H2D.
+    pub memset_fill: bool,
     /// Peer map without dest HBM: managed [`gpu_sim::MemAdvise::SetAccessedBy`],
     /// VMM [`gpu_sim::Sim::va_set_access`], or pinned-async
     /// [`gpu_sim::Sim::pool_set_access`] on every GPU.
@@ -756,6 +763,8 @@ pub struct SimulatedGpuStore {
     memcpy_during: bool,
     /// [`GpuStoreCfg::memcpy_any`]: batch attrs use Any (empty deps, no wait).
     memcpy_any: bool,
+    /// [`GpuStoreCfg::memset_fill`]: miss fill is `cudaMemsetAsync` (not pinned H2D).
+    memset_fill: bool,
     /// [`GpuStoreCfg::wait_value`]: copy-ready is wait/write-value, not events.
     wait_value: bool,
     /// [`GpuStoreCfg::accessed_by`]: managed/VMM/mempool pages stay on the home GPU.
@@ -906,6 +915,8 @@ impl SimulatedGpuStore {
     /// BETWEEN those fragments (needs piecewise; store GEMM stays per-leaf);
     /// [`GpuStoreCfg::graph_clone_parent`] clones walker combo parents
     /// (recursive children; store GEMM stays per-leaf);
+    /// [`GpuStoreCfg::memset_fill`] is `cudaMemsetAsync` of pinned/VMM miss
+    /// pages (HBM write; not mapped/managed/pageable/memcpy-batch);
     /// [`GpuStoreCfg::graph_build_deps`] chains graph-build combo children
     /// (needs graph-build; store GEMM stays per-leaf);
     /// [`GpuStoreCfg::graph_host`] inserts `graph_add_host_func` BETWEEN
@@ -1131,6 +1142,13 @@ impl SimulatedGpuStore {
         if cfg.memcpy_any && cfg.memcpy_during {
             return Err(Error::Store("choose one of memcpy-any, memcpy-during"));
         }
+        check_memset_fill(
+            cfg.memset_fill,
+            fill == GpuFill::Mapped,
+            fill == GpuFill::Managed,
+            cfg.pageable,
+            cfg.memcpy_batch,
+        )?;
         if cfg.memcpy_batch
             && (cfg.pageable
                 || cfg.sync_alloc
@@ -1339,6 +1357,7 @@ impl SimulatedGpuStore {
             memcpy_batch: cfg.memcpy_batch,
             memcpy_during: cfg.memcpy_during,
             memcpy_any: cfg.memcpy_any,
+            memset_fill: cfg.memset_fill,
             wait_value: cfg.wait_value,
             accessed_by: cfg.accessed_by,
             migrates: 0,
@@ -1388,6 +1407,12 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn memcpy_any(&self) -> bool {
         self.memcpy_any
+    }
+
+    /// Whether miss fill is `cudaMemsetAsync` instead of pinned H2D.
+    #[must_use]
+    pub fn memset_fill(&self) -> bool {
+        self.memset_fill
     }
 
     /// Stream memcpy ops (H2D / D2D) currently in the attached Sim.
@@ -2691,6 +2716,14 @@ impl SimulatedGpuStore {
 
     fn fill_hbm(&mut self, d: DeviceId, id: AllocId) -> Result<(), Error> {
         let bytes = self.bytes_per_expert;
+        if self.memset_fill {
+            if self.sync_alloc {
+                let _id = self.sim.memset_sync(d, id, bytes, self.copy)?;
+            } else {
+                let _c = self.sim.memset_buf(d, KernelBuf::whole(id), self.copy)?;
+            }
+            return Ok(());
+        }
         if self.pageable && !self.host_register {
             let _id = self.sim.memcpy_host_to_device(d, id, bytes, self.copy)?;
         } else if self.sync_alloc {
