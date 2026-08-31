@@ -711,6 +711,14 @@ pub struct SimCfg {
     /// unless cluster blocks `> 1`. Decode identity stays Default.
     /// [`crate::GpuStoreCfg::cluster_spread`] is the store path.
     pub cluster_spread: bool,
+    /// Function Spread cluster scheduling (`cudaFuncSetAttribute` ClusterSchedulingPolicyPreference).
+    ///
+    /// Launch Default inherits this occupancy so leftover kernels cannot
+    /// overlap even when [`Self::cluster`] is smaller than [`Self::compute_slots`].
+    /// Distinct from launch-attribute [`Self::cluster_spread`]. A no-op unless
+    /// cluster blocks `> 1`. Decode identity stays Default.
+    /// [`crate::GpuStoreCfg::func_cluster_spread`] is the store path.
+    pub func_cluster_spread: bool,
     /// Max-shared carveout (`cudaLaunchAttributePreferredSharedMemoryCarveout`).
     ///
     /// Occupies every Hyper-Q slot so leftover kernels cannot overlap.
@@ -944,6 +952,7 @@ impl SimCfg {
             cluster: 0,
             preferred_cluster: 0,
             cluster_spread: false,
+            func_cluster_spread: false,
             max_shared: false,
             func_max_shared: false,
             non_portable_cluster: false,
@@ -1105,6 +1114,7 @@ pub fn sim_replay_cfg(
     let mut sim = Sim::new(sim_profile(profile, &cfg));
     apply_device_sync_memops(&mut sim, cfg.device_sync_memops)?;
     apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
+    apply_func_cluster_spread(&mut sim, cfg.func_cluster_spread)?;
     apply_func_shared_mem(&mut sim, cfg.func_shared_mem)?;
     if cfg.shareable {
         let _imported = bind_shareable_mempools(&mut sim)?;
@@ -1499,6 +1509,22 @@ pub(crate) fn apply_func_max_shared(sim: &mut Sim, on: bool) -> Result<(), Error
     let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
     for g in 0..n {
         sim.set_func_carveout(DeviceId(g), SharedMemCarveout::MaxShared)?;
+    }
+    Ok(())
+}
+
+/// `cudaFuncSetAttribute(..., cudaFuncAttributeClusterSchedulingPolicyPreference)` Spread.
+///
+/// Call after [`Sim::new`]. Launch Default inherits this occupancy (Hyper-Q
+/// exclusive when cluster blocks `> 1`). Capture-legal; kernel-only graphs
+/// stay legal.
+pub(crate) fn apply_func_cluster_spread(sim: &mut Sim, on: bool) -> Result<(), Error> {
+    if !on {
+        return Ok(());
+    }
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        sim.set_func_cluster_policy(DeviceId(g), ClusterSchedulingPolicy::Spread)?;
     }
     Ok(())
 }

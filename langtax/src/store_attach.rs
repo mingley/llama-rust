@@ -95,6 +95,8 @@ pub(crate) struct GpuCli {
     pub preferred_cluster_set: bool,
     /// Spread cluster scheduling (`GpuStoreCfg::cluster_spread`).
     pub cluster_spread: bool,
+    /// Function Spread cluster scheduling (`GpuStoreCfg::func_cluster_spread`).
+    pub func_cluster_spread: bool,
     /// Max-shared carveout (`GpuStoreCfg::max_shared`).
     pub max_shared: bool,
     /// Function MaxShared carveout (`GpuStoreCfg::func_max_shared`).
@@ -211,6 +213,7 @@ impl GpuCli {
             "--l2-persist" => &mut self.l2_persist,
             "--l2-reset" => &mut self.l2_reset,
             "--cluster-spread" => &mut self.cluster_spread,
+            "--func-cluster-spread" => &mut self.func_cluster_spread,
             "--max-shared" => &mut self.max_shared,
             "--func-max-shared" => &mut self.func_max_shared,
             "--non-portable-cluster" => &mut self.non_portable_cluster,
@@ -466,6 +469,7 @@ impl GpuCli {
             (self.cluster_set, "--cluster"),
             (self.preferred_cluster_set, "--preferred-cluster"),
             (self.cluster_spread, "--cluster-spread"),
+            (self.func_cluster_spread, "--func-cluster-spread"),
             (self.max_shared, "--max-shared"),
             (self.func_max_shared, "--func-max-shared"),
             (self.non_portable_cluster, "--non-portable-cluster"),
@@ -768,6 +772,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         cluster: gpu.cluster,
         preferred_cluster: gpu.preferred_cluster,
         cluster_spread: gpu.cluster_spread,
+        func_cluster_spread: gpu.func_cluster_spread,
         max_shared: gpu.max_shared,
         func_max_shared: gpu.func_max_shared,
         non_portable_cluster: gpu.non_portable_cluster,

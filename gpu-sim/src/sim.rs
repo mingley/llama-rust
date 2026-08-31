@@ -13622,6 +13622,7 @@ impl Sim {
     /// Per device. Launch [`ClusterSchedulingPolicy::Default`] inherits this
     /// occupancy. Launch Spread / LoadBalancing still override. Capture-legal
     /// like other function attributes. Decode identity stays Default.
+    /// `expertvm sim --func-cluster-spread` sets [`ClusterSchedulingPolicy::Spread`].
     pub fn set_func_cluster_policy(
         &mut self,
         device: DeviceId,

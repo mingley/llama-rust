@@ -3587,7 +3587,20 @@ model, do not celebrate the sim.
     config. `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-341. [ ] Next numbered PLAN item after 340 is the next `gpu-sim` / Engine /
+341. [x] `cudaFuncSetAttribute` ClusterSchedulingPolicyPreference Spread:
+    [`GpuStoreCfg::func_cluster_spread`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::func_cluster_spread`](expertvm/src/sim_replay.rs)
+    [`set_func_cluster_policy`](gpu-sim/src/sim.rs)
+    [`ClusterSchedulingPolicy::Spread`] after `Sim::new`. Launch Default
+    inherits that occupancy so leftover kernels cannot Hyper-Q overlap when
+    `--cluster` is at least 2. Distinct from launch-attribute
+    `--cluster-spread`. Hits stay the same. Legal with `--pdl` and
+    `--cooperative`. `--func-cluster-spread` on `expertvm sim` /
+    `schedule` / `store` and `gguf_gemv engine --expert-sim`. Decode
+    identity stays Default function policy. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+342. [ ] Next numbered PLAN item after 341 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

@@ -11,19 +11,20 @@ use crate::planner::{
 use crate::sim_replay::{
     add_leaf_gemm, alloc_launch_completion, alloc_programmatic_event, alloc_resident_copy_mailbox,
     allow_non_portable_cluster_if, allow_optin_shared_if, apply_device_sync_memops,
-    apply_exec_mem_sync_domain, apply_func_max_shared, apply_func_shared_mem,
-    apply_stream_mem_sync_domain, apply_stream_sync_policy, bind_shareable_mempools,
-    check_cluster_preferred, check_device_graph_flags, ensure_single_attach, free_copy_mailbox,
-    free_mapped_host, instantiate_exec, kernel_leaf, mark_sync_memops, replay_exec, replay_streams,
-    reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
-    upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
+    apply_exec_mem_sync_domain, apply_func_cluster_spread, apply_func_max_shared,
+    apply_func_shared_mem, apply_stream_mem_sync_domain, apply_stream_sync_policy,
+    bind_shareable_mempools, check_cluster_preferred, check_device_graph_flags,
+    ensure_single_attach, free_copy_mailbox, free_mapped_host, instantiate_exec, kernel_leaf,
+    mark_sync_memops, replay_exec, replay_streams, reset_persisting_l2_if, retarget_parked_kernel,
+    signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem,
+    StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
-    AllocId, DeviceFlags, DeviceId, EventId, GraphId, GraphMemAttr, HardwareProfile, KernelBuf,
-    KernelKind, LaunchCompletionEvent, MemAdvise, MemAttach, MemHandleId, MemcpyAttributes,
-    MemcpyOp, Place, PointerAttr, PoolId, ProgrammaticEvent, Score, SharedMemCarveout,
-    SharedMemoryMode, Sim, StreamId,
+    AllocId, ClusterSchedulingPolicy, DeviceFlags, DeviceId, EventId, GraphId, GraphMemAttr,
+    HardwareProfile, KernelBuf, KernelKind, LaunchCompletionEvent, MemAdvise, MemAttach,
+    MemHandleId, MemcpyAttributes, MemcpyOp, Place, PointerAttr, PoolId, ProgrammaticEvent, Score,
+    SharedMemCarveout, SharedMemoryMode, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -277,6 +278,13 @@ pub struct GpuStoreCfg {
     /// when [`Self::cluster`] is smaller than [`Self::compute_slots`]. A no-op
     /// unless cluster blocks `> 1`. Decode identity stays Default.
     pub cluster_spread: bool,
+    /// Function Spread cluster scheduling (`cudaFuncSetAttribute` ClusterSchedulingPolicyPreference).
+    ///
+    /// Launch Default inherits this occupancy so leftover kernels cannot
+    /// overlap even when [`Self::cluster`] is smaller than [`Self::compute_slots`].
+    /// Distinct from launch-attribute [`Self::cluster_spread`]. A no-op unless
+    /// cluster blocks `> 1`. Decode identity stays Default.
+    pub func_cluster_spread: bool,
     /// Max-shared carveout (`cudaLaunchAttributePreferredSharedMemoryCarveout`).
     ///
     /// Occupies every Hyper-Q slot so leftover kernels cannot overlap.
@@ -700,6 +708,9 @@ impl SimulatedGpuStore {
     /// resident GEMM (implies persist; live; cannot capture).
     /// [`GpuStoreCfg::cluster`] / [`GpuStoreCfg::preferred_cluster`] are Hopper
     /// thread-block cluster dims.
+    /// [`GpuStoreCfg::cluster_spread`] is launch-attribute Spread.
+    /// [`GpuStoreCfg::func_cluster_spread`] is `cudaFuncSetAttribute`
+    /// ClusterSchedulingPolicyPreference Spread (launch Default inherits).
     /// [`GpuStoreCfg::sync_policy`] is stream host-wait
     /// (`cudaLaunchAttributeSynchronizationPolicy`; Auto tax 0).
     /// [`GpuStoreCfg::mem_sync_domain`] is decode-stream
@@ -879,6 +890,7 @@ impl SimulatedGpuStore {
         let mut sim = Sim::new(profile);
         apply_device_sync_memops(&mut sim, cfg.device_sync_memops)?;
         apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
+        apply_func_cluster_spread(&mut sim, cfg.func_cluster_spread)?;
         apply_func_shared_mem(&mut sim, cfg.func_shared_mem)?;
         if cfg.l2_persist || cfg.l2_reset {
             sim.enable_persisting_l2()?;
@@ -1096,6 +1108,15 @@ impl SimulatedGpuStore {
         self.sim
             .get_func_carveout(self.device)
             .map(|c| c == SharedMemCarveout::MaxShared)
+            .unwrap_or(false)
+    }
+
+    /// Whether this store set function Spread cluster policy at construction.
+    #[must_use]
+    pub fn func_cluster_spread(&self) -> bool {
+        self.sim
+            .get_func_cluster_policy(self.device)
+            .map(|p| p == ClusterSchedulingPolicy::Spread)
             .unwrap_or(false)
     }
 

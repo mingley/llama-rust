@@ -610,6 +610,9 @@
 //! (`cudaFuncAttributePreferredSharedMemoryCarveout`).
 //! `expertvm sim --func-max-shared` sets MaxShared so launch Default occupies
 //! every Hyper-Q slot (distinct from `--max-shared` launch attribute).
+//! `expertvm sim --func-cluster-spread` sets function Spread so launch Default
+//! occupies every Hyper-Q slot when `--cluster` is at least 2 (distinct from
+//! `--cluster-spread` launch attribute).
 //! Sizes above [`GpuProfile::portable_cluster_size`] need
 //! [`set_non_portable_cluster_size_allowed`](Sim::set_non_portable_cluster_size_allowed)
 //! or [`PortableClusterMode::AllowNonPortable`].
