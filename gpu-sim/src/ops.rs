@@ -1388,9 +1388,18 @@ impl AccessPolicyWindow {
     /// Persisting hits, streaming misses, full window (`hitRatio = 1.0`).
     #[must_use]
     pub fn persisting(buf: KernelBuf) -> Self {
+        Self::persisting_ratio(buf, 1000)
+    }
+
+    /// Persisting hits, streaming misses, `hitRatio` as ‰ (`1000` = the whole window).
+    ///
+    /// CUDA `cudaAccessPolicyWindow.hitRatio`. `0` bills no persisting hits.
+    /// Must be `<= 1000` at launch.
+    #[must_use]
+    pub fn persisting_ratio(buf: KernelBuf, hit_ratio_permille: u16) -> Self {
         Self {
             buf,
-            hit_ratio_permille: 1000,
+            hit_ratio_permille,
             hit: AccessProperty::Persisting,
             miss: AccessProperty::Streaming,
         }

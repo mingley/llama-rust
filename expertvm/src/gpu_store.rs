@@ -16,11 +16,12 @@ use crate::sim_replay::{
     apply_func_max_shared, apply_func_shared_mem, apply_l2_fetch, apply_required_cluster_width,
     apply_stream_mem_sync_domain, apply_stream_mem_sync_map, apply_stream_sync_policy,
     bind_shareable_mempools, check_cluster_load_balance, check_cluster_must_set,
-    check_cluster_preferred, check_device_graph_flags, check_l2_fetch, check_max_l1,
-    check_mem_sync_collapse, check_required_cluster, ensure_single_attach, free_copy_mailbox,
-    free_mapped_host, instantiate_exec, kernel_leaf, mark_sync_memops, replay_exec, replay_streams,
-    reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
-    upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
+    check_cluster_preferred, check_device_graph_flags, check_l2_fetch, check_l2_ratio,
+    check_max_l1, check_mem_sync_collapse, check_required_cluster, ensure_single_attach,
+    free_copy_mailbox, free_mapped_host, instantiate_exec, kernel_leaf, mark_sync_memops,
+    persist_armed, replay_exec, replay_streams, reset_persisting_l2_if, retarget_parked_kernel,
+    signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem,
+    StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -270,6 +271,12 @@ pub struct GpuStoreCfg {
     /// [`Self::l2_persist`]. `32` / `64` / `128` only. Decode identity stays
     /// 128.
     pub l2_fetch: u64,
+    /// CUDA `cudaAccessPolicyWindow.hitRatio` as ‰. `0` is unset (`1000`).
+    ///
+    /// Implies [`Self::l2_persist`]. `1..=1000` when set. A partial ratio bills
+    /// more HBM than full persist on a reused expert. Decode identity stays
+    /// 1000.
+    pub l2_ratio: u16,
     /// Hopper cluster X size (`cudaLaunchAttributeClusterDimension`). `0` is off.
     ///
     /// Occupies `min(N, compute_slots)` Hyper-Q slots. Decode identity stays
@@ -568,6 +575,7 @@ pub struct SimulatedGpuStore {
     pdl: bool,
     l2_persist: bool,
     l2_reset: bool,
+    l2_ratio: u16,
     cluster: u8,
     preferred_cluster: u8,
     cluster_spread: bool,
@@ -771,6 +779,8 @@ impl SimulatedGpuStore {
     /// resident GEMM (implies persist; live; cannot capture).
     /// [`GpuStoreCfg::l2_fetch`] is `cudaLimitMaxL2FetchGranularity` (implies
     /// persist; windows must align; `32`/`64`/`128`).
+    /// [`GpuStoreCfg::l2_ratio`] is CUDA `hitRatio` as ‰ (implies persist;
+    /// `1..=1000`; unset is 1000).
     /// [`GpuStoreCfg::cluster`] / [`GpuStoreCfg::preferred_cluster`] are Hopper
     /// thread-block cluster dims.
     /// [`GpuStoreCfg::cluster_spread`] is launch-attribute Spread.
@@ -923,6 +933,7 @@ impl SimulatedGpuStore {
         )?;
         check_max_l1(cfg.max_l1, cfg.func_max_shared, cfg.max_shared)?;
         check_l2_fetch(cfg.l2_fetch)?;
+        check_l2_ratio(cfg.l2_ratio)?;
         if cfg.shareable && (cfg.sync_alloc || fill != GpuFill::Pinned) {
             return Err(Error::Store("shareable needs cudaMallocAsync"));
         }
@@ -996,7 +1007,7 @@ impl SimulatedGpuStore {
         apply_l2_fetch(&mut sim, cfg.l2_fetch)?;
         apply_func_shared_mem(&mut sim, cfg.func_shared_mem)?;
         apply_device_shared_mem(&mut sim, cfg.device_shared_mem)?;
-        if cfg.l2_persist || cfg.l2_reset || cfg.l2_fetch != 0 {
+        if persist_armed(cfg.l2_persist, cfg.l2_reset, cfg.l2_fetch, cfg.l2_ratio) {
             sim.enable_persisting_l2()?;
         }
         allow_non_portable_cluster_if(&mut sim, cfg.non_portable_cluster)?;
@@ -1067,8 +1078,9 @@ impl SimulatedGpuStore {
             decode_priority: cfg.decode_priority,
             cooperative: cfg.cooperative,
             pdl: cfg.pdl,
-            l2_persist: cfg.l2_persist || cfg.l2_reset || cfg.l2_fetch != 0,
+            l2_persist: persist_armed(cfg.l2_persist, cfg.l2_reset, cfg.l2_fetch, cfg.l2_ratio),
             l2_reset: cfg.l2_reset,
+            l2_ratio: cfg.l2_ratio,
             cluster: cfg.cluster,
             preferred_cluster: cfg.preferred_cluster,
             cluster_spread: cfg.cluster_spread,
@@ -1257,6 +1269,15 @@ impl SimulatedGpuStore {
             .unwrap_or(128)
     }
 
+    /// CUDA `hitRatio` as ‰ (`1000` when unset).
+    #[must_use]
+    pub fn l2_ratio(&self) -> u16 {
+        match self.gemm_flags().l2_ratio {
+            0 => 1000,
+            n => n,
+        }
+    }
+
     /// Whether this store set `cudaFuncAttributeClusterDimMustBeSet`.
     #[must_use]
     pub fn cluster_must_set(&self) -> bool {
@@ -1354,6 +1375,7 @@ impl SimulatedGpuStore {
             cooperative: self.cooperative,
             pdl: self.pdl,
             l2_persist: self.l2_persist,
+            l2_ratio: self.l2_ratio,
             cluster: self.cluster,
             preferred_cluster: self.preferred_cluster,
             cluster_spread: self.cluster_spread,

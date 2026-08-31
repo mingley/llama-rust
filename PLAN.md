@@ -3714,7 +3714,18 @@ model, do not celebrate the sim.
     Decode identity stays Default. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-351. [ ] Next numbered PLAN item after 350 is the next `gpu-sim` / Engine /
+351. [x] `cudaAccessPolicyWindow.hitRatio`:
+    [`GpuStoreCfg::l2_ratio`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::l2_ratio`](expertvm/src/sim_replay.rs) launch window ratio.
+    Implies `--l2-persist`. `1..=1000` (unset is 1000). A partial ratio bills
+    more HBM than full persist on a reused expert (no extra construction tick).
+    Hits stay the same. Legal with `--pdl` and `--cooperative`.
+    `--l2-ratio N` on `expertvm sim` / `schedule` / `store` and
+    `gguf_gemv engine --expert-sim`. infer-bench has `--l2-persist`, so it
+    gets `--l2-ratio`. Decode identity stays 1000. `gpu-profile capture` is
+    still refused. Dual score still has no `$/M tokens`.
+
+352. [ ] Next numbered PLAN item after 351 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

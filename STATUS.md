@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaAccessPolicyWindow.hitRatio`
+
+`GpuStoreCfg::l2_ratio` / `SimCfg::l2_ratio` set launch `hitRatio` as ‰.
+Implies `--l2-persist`. `1..=1000` (unset is 1000). A partial ratio bills more
+HBM than full persist on a reused expert (no extra construction tick).
+Hits/misses stay the same. `--l2-ratio` is unset by default (decode identity:
+1000). infer-bench has `--l2-persist`, so it gets `--l2-ratio`.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaLaunchAttributeClusterSchedulingPolicyPreference` LoadBalancing
 
 `GpuStoreCfg::cluster_load_balance` / `SimCfg::cluster_load_balance` set

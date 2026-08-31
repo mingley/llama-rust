@@ -141,6 +141,7 @@ warp scheduler, L1, …   ← do not model
 | `set_func_shared_mem_config` / `get_func_shared_mem_config`; per-device function config | `cudaFuncSetSharedMemConfig` / `GetSharedMemConfig` |
 | `set_device_flags` / `get_device_flags` schedule + MapHost / Lmem / SyncMemops; Auto streams inherit the tax | `cudaSetDeviceFlags` / `GetDeviceFlags` |
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128; `expertvm sim --l2-fetch N` sets 32/64/128) | exact |
+| `AccessPolicyWindow.hit_ratio_permille` is CUDA `hitRatio` (`expertvm sim --l2-ratio N`; unset 1000) | exact |
 | `malloc_pitch` charges `pitch * height`; pitch is `align_up(width, 512)` | `cudaMallocPitch` |
 | `MemcpyOp` height/pitches bill `width * height` (not pitch padding) | `cudaMemcpy2DAsync` |
 | `MemsetOp` height/pitch bill `width * height` (not pitch padding) | `cudaMemset2DAsync` |
@@ -912,7 +913,8 @@ enables the persist limit and attaches a window to expert GEMMs.
 `--l2-reset` is `cudaCtxResetPersistingL2Cache` after each GEMM (implies
 `--l2-persist`; live; cannot capture). `--l2-fetch N` is
 `cudaLimitMaxL2FetchGranularity` (`32`/`64`/`128`; implies `--l2-persist`).
-`kernel_with` also accepts `cudaLaunchAttributeMemSyncDomain` /
+`--l2-ratio N` is CUDA `hitRatio` as ‰ (`1..=1000`; implies `--l2-persist`;
+unset is 1000). `kernel_with` also accepts `cudaLaunchAttributeMemSyncDomain` /
 `MemSyncDomainMap`: a completing kernel waits `same_domain_fence_permille` of
 leftover same-physical-domain traffic (default tax 0). Remote (and allreduce)
 isolates communication. `expertvm sim --mem-sync-domain remote` /

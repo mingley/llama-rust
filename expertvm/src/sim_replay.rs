@@ -35,6 +35,8 @@ pub(crate) struct GemmFlags {
     pub pdl: bool,
     /// `cudaLaunchAttributeAccessPolicyWindow` over the expert page.
     pub l2_persist: bool,
+    /// CUDA `cudaAccessPolicyWindow.hitRatio` as ‰. `0` is unset (`1000`).
+    pub l2_ratio: u16,
     /// Hopper cluster X size (`cudaLaunchAttributeClusterDimension`). `0` is off.
     pub cluster: u8,
     /// Preferred cluster X (`cudaLaunchAttributePreferredClusterDimension`). `0` is off.
@@ -92,9 +94,18 @@ impl GemmFlags {
             })
     }
 
+    pub(crate) fn persist_ratio(self) -> u16 {
+        if self.l2_ratio == 0 {
+            1000
+        } else {
+            self.l2_ratio
+        }
+    }
+
     pub(crate) fn persist_window(self, id: AllocId) -> Option<AccessPolicyWindow> {
-        self.l2_persist
-            .then(|| AccessPolicyWindow::persisting(KernelBuf::whole(id)))
+        self.l2_persist.then(|| {
+            AccessPolicyWindow::persisting_ratio(KernelBuf::whole(id), self.persist_ratio())
+        })
     }
 
     pub(crate) fn cluster_dim(self) -> Option<gpu_sim::ClusterDim> {
@@ -239,6 +250,19 @@ pub(crate) fn check_l2_fetch(n: u64) -> Result<(), Error> {
         return Ok(());
     }
     Err(Error::Store("l2-fetch must be 32, 64, or 128"))
+}
+
+/// CUDA `hitRatio` as ‰. `0` is unset (`1000`). `1..=1000` when set.
+pub(crate) fn check_l2_ratio(n: u16) -> Result<(), Error> {
+    if n <= 1000 {
+        return Ok(());
+    }
+    Err(Error::Store("l2-ratio must be 1..=1000"))
+}
+
+/// Persist windows fire when persist, reset, fetch, or hit-ratio is set.
+pub(crate) fn persist_armed(persist: bool, reset: bool, fetch: u64, ratio: u16) -> bool {
+    persist || reset || fetch != 0 || ratio != 0
 }
 
 /// Device-launch graphs refuse mem nodes and `cudaGraphExecUpdate`.
@@ -772,6 +796,12 @@ pub struct SimCfg {
     /// [`Self::l2_persist`]. `32` / `64` / `128` only. Decode identity stays
     /// 128. [`crate::GpuStoreCfg::l2_fetch`] is the store path.
     pub l2_fetch: u64,
+    /// CUDA `cudaAccessPolicyWindow.hitRatio` as ‰. `0` is unset (`1000`).
+    ///
+    /// Implies [`Self::l2_persist`]. `1..=1000` when set. A partial ratio bills
+    /// more HBM than full persist on a reused expert. Decode identity stays
+    /// 1000. [`crate::GpuStoreCfg::l2_ratio`] is the store path.
+    pub l2_ratio: u16,
     /// Hopper cluster X size (`cudaLaunchAttributeClusterDimension`). `0` is off.
     ///
     /// Occupies `min(N, compute_slots)` Hyper-Q slots so leftover kernels
@@ -1082,6 +1112,7 @@ impl SimCfg {
             l2_persist: false,
             l2_reset: false,
             l2_fetch: 0,
+            l2_ratio: 0,
             cluster: 0,
             preferred_cluster: 0,
             cluster_spread: false,
@@ -1135,6 +1166,7 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     )?;
     check_max_l1(cfg.max_l1, cfg.func_max_shared, cfg.max_shared)?;
     check_l2_fetch(cfg.l2_fetch)?;
+    check_l2_ratio(cfg.l2_ratio)?;
     if cfg.graph_update && cfg.graph_set_params {
         return Err(Error::Store("choose one of graph-update, graph-set-params"));
     }
@@ -1302,7 +1334,7 @@ pub fn sim_replay_cfg(
     apply_stream_sync_policy(&mut sim, plan, cfg.sync_policy)?;
     apply_stream_mem_sync_domain(&mut sim, plan, cfg.mem_sync_domain)?;
     apply_stream_mem_sync_map(&mut sim, plan, cfg.mem_sync_collapse)?;
-    if cfg.l2_persist || cfg.l2_reset || cfg.l2_fetch != 0 {
+    if persist_armed(cfg.l2_persist, cfg.l2_reset, cfg.l2_fetch, cfg.l2_ratio) {
         sim.enable_persisting_l2()?;
     }
     allow_non_portable_cluster_if(&mut sim, cfg.non_portable_cluster)?;
@@ -1342,8 +1374,14 @@ pub fn sim_replay_cfg(
     let mut graphs = GraphBank::new(cfg.graph_update, cfg.graph_clone, cfg.graph_build, leaf)
         .with_cooperative(cfg.cooperative)
         .with_pdl(cfg.pdl)
-        .with_l2_persist(cfg.l2_persist || cfg.l2_reset || cfg.l2_fetch != 0)
+        .with_l2_persist(persist_armed(
+            cfg.l2_persist,
+            cfg.l2_reset,
+            cfg.l2_fetch,
+            cfg.l2_ratio,
+        ))
         .with_l2_reset(cfg.l2_reset)
+        .with_l2_ratio(cfg.l2_ratio)
         .with_cluster(cfg.cluster)
         .with_preferred_cluster(cfg.preferred_cluster)
         .with_cluster_spread(cfg.cluster_spread)
@@ -1807,6 +1845,7 @@ pub(crate) struct GraphBank {
     pdl: bool,
     l2_persist: bool,
     l2_reset: bool,
+    l2_ratio: u16,
     cluster: u8,
     preferred_cluster: u8,
     cluster_spread: bool,
@@ -1844,6 +1883,7 @@ impl GraphBank {
             pdl: false,
             l2_persist: false,
             l2_reset: false,
+            l2_ratio: 0,
             cluster: 0,
             preferred_cluster: 0,
             cluster_spread: false,
@@ -1885,6 +1925,11 @@ impl GraphBank {
 
     pub(crate) fn with_l2_reset(mut self, yes: bool) -> Self {
         self.l2_reset = yes;
+        self
+    }
+
+    pub(crate) fn with_l2_ratio(mut self, n: u16) -> Self {
+        self.l2_ratio = n;
         self
     }
 
@@ -1968,6 +2013,7 @@ impl GraphBank {
             cooperative: self.cooperative,
             pdl: self.pdl,
             l2_persist: self.l2_persist,
+            l2_ratio: self.l2_ratio,
             cluster: self.cluster,
             preferred_cluster: self.preferred_cluster,
             cluster_spread: self.cluster_spread,

@@ -7248,6 +7248,27 @@ fn gemm_flags_programmatic_event_is_launch_attr() {
 }
 
 #[test]
+fn gemm_flags_persist_ratio_is_launch_attr() {
+    use crate::sim_replay::GemmFlags;
+    let id = AllocId(1);
+    let none = GemmFlags::default().kernel_attrs(id);
+    assert!(none.access_policy.is_none());
+    let full = GemmFlags {
+        l2_persist: true,
+        ..GemmFlags::default()
+    }
+    .kernel_attrs(id);
+    assert_eq!(full.access_policy.expect("window").hit_ratio_permille, 1000);
+    let half = GemmFlags {
+        l2_persist: true,
+        l2_ratio: 500,
+        ..GemmFlags::default()
+    }
+    .kernel_attrs(id);
+    assert_eq!(half.access_policy.expect("window").hit_ratio_permille, 500);
+}
+
+#[test]
 fn simulated_gpu_store_device_updatable_skips_reupload() {
     let t = Trace {
         events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
@@ -8971,6 +8992,65 @@ fn sim_replay_l2_persist_reused_expert_is_faster() {
         on.sim_ns,
         off.sim_ns
     );
+}
+
+#[test]
+fn sim_replay_l2_ratio_partial_is_slower_than_full() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000000000000\nlaunch_overhead_ns=1\nhbm_bps=1000000000\nl2_persist_hit_permille=1000\n",
+    )
+    .expect("memory-bound persist profile");
+    let persist = SimCfg {
+        l2_persist: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let half = SimCfg {
+        l2_ratio: 500,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let full_flag = SimCfg {
+        l2_persist: true,
+        l2_ratio: 1000,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), persist).expect("persist");
+    let b = sim_replay_cfg(&t, profile.clone(), half).expect("ratio-500");
+    let c = sim_replay_cfg(&t, profile, full_flag).expect("ratio-1000");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+    assert_eq!(a.hits, c.hits);
+    assert_eq!(a.misses, c.misses);
+    assert_eq!(
+        a.sim_ns, c.sim_ns,
+        "hitRatio 1000 must match persist; persist={} ratio1000={}",
+        a.sim_ns, c.sim_ns
+    );
+    assert!(
+        b.sim_ns > a.sim_ns,
+        "hitRatio 500 must bill more HBM than full persist; half={} full={}",
+        b.sim_ns,
+        a.sim_ns
+    );
+}
+
+#[test]
+fn sim_replay_l2_ratio_refuses_over_1000() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let on = SimCfg {
+        l2_ratio: 1001,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    match sim_replay_cfg(&t, profile, on) {
+        Ok(_) => panic!("l2-ratio 1001 must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("l2-ratio must be 1..=1000"),
+            "{err}"
+        ),
+    }
 }
 
 #[test]
@@ -11679,6 +11759,90 @@ fn simulated_gpu_store_l2_fetch_refuses_invalid() {
         Ok(_) => panic!("l2-fetch 96 must fail"),
         Err(err) => assert!(
             err.to_string().contains("l2-fetch must be 32, 64, or 128"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn simulated_gpu_store_l2_ratio_partial_is_slower_than_full() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000000000000\nlaunch_overhead_ns=1\nhbm_bps=1000000000\nl2_persist_hit_permille=1000\n",
+    )
+    .expect("memory-bound persist profile");
+    let run = |l2_persist: bool, l2_ratio: u16| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                l2_persist,
+                l2_ratio,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        assert_eq!(gpu.l2_ratio(), if l2_ratio == 0 { 1000 } else { l2_ratio });
+        for key in t.keys() {
+            let _p = gpu.acquire(key).expect("acquire");
+            gpu.release(key);
+        }
+        let metrics = gpu.metrics();
+        let score = gpu.score().expect("score");
+        (metrics.hits, metrics.misses, score.wall_ns)
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut identity = SimulatedGpuStore::new(inner, 2, p.clone(), 4096).expect("id");
+    let k0 = ExpertKey::new(0, 0);
+    let _a = identity.acquire(k0).expect("id acq");
+    assert_eq!(identity.l2_ratio(), 1000);
+    let _s = identity.score().expect("id score");
+    let persist = run(true, 0);
+    let half = run(false, 500);
+    let full = run(true, 1000);
+    assert_eq!(persist.0, half.0);
+    assert_eq!(persist.1, half.1);
+    assert_eq!(persist.0, full.0);
+    assert_eq!(persist.1, full.1);
+    assert_eq!(
+        persist.2, full.2,
+        "hitRatio 1000 must match persist; persist={} ratio1000={}",
+        persist.2, full.2
+    );
+    assert!(
+        half.2 > persist.2,
+        "hitRatio 500 must bill more HBM than full persist; half={} full={}",
+        half.2,
+        persist.2
+    );
+}
+
+#[test]
+fn simulated_gpu_store_l2_ratio_refuses_over_1000() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            l2_ratio: 1001,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("l2-ratio 1001 must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("l2-ratio must be 1..=1000"),
             "{err}"
         ),
     }

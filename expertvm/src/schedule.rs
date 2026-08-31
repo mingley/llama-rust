@@ -14,9 +14,9 @@ use crate::sim_replay::{
     apply_stream_mem_sync_map, apply_stream_sms, apply_stream_sync_policy, apply_touch,
     bind_shareable_mempools, bump_null_for_attach, disable_pool_opportunistic_reuse, drop_remote,
     fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots,
-    pin_pageable_staging, reclaim_victim, remote_hit, replay_from_sim, sim_profile, sync_work,
-    trim_device_pools, trim_graph_pools, validate_sim_cfg, GraphBank, LeafMem, PageHandle,
-    RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, StreamPlan, TouchArgs,
+    persist_armed, pin_pageable_staging, reclaim_victim, remote_hit, replay_from_sim, sim_profile,
+    sync_work, trim_device_pools, trim_graph_pools, validate_sim_cfg, GraphBank, LeafMem,
+    PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, StreamPlan, TouchArgs,
 };
 use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -322,7 +322,7 @@ impl SchedRt {
         apply_stream_sync_policy(&mut sim, plan, cfg.sync_policy)?;
         apply_stream_mem_sync_domain(&mut sim, plan, cfg.mem_sync_domain)?;
         apply_stream_mem_sync_map(&mut sim, plan, cfg.mem_sync_collapse)?;
-        if cfg.l2_persist || cfg.l2_reset || cfg.l2_fetch != 0 {
+        if persist_armed(cfg.l2_persist, cfg.l2_reset, cfg.l2_fetch, cfg.l2_ratio) {
             sim.enable_persisting_l2()?;
         }
         allow_non_portable_cluster_if(&mut sim, cfg.non_portable_cluster)?;
@@ -370,8 +370,14 @@ impl SchedRt {
             )
             .with_cooperative(cfg.cooperative)
             .with_pdl(cfg.pdl)
-            .with_l2_persist(cfg.l2_persist || cfg.l2_reset || cfg.l2_fetch != 0)
+            .with_l2_persist(persist_armed(
+                cfg.l2_persist,
+                cfg.l2_reset,
+                cfg.l2_fetch,
+                cfg.l2_ratio,
+            ))
             .with_l2_reset(cfg.l2_reset)
+            .with_l2_ratio(cfg.l2_ratio)
             .with_cluster(cfg.cluster)
             .with_preferred_cluster(cfg.preferred_cluster)
             .with_cluster_spread(cfg.cluster_spread)

@@ -593,7 +593,10 @@
 //! [`kernel_access_policy`](Sim::kernel_access_policy) is
 //! `cudaLaunchAttributeAccessPolicyWindow`: persisting hits reduce billed HBM
 //! after [`set_persisting_l2_cache_size`](Sim::set_persisting_l2_cache_size)
-//! (CUDA default size is 0). [`set_stream_access_policy`](Sim::set_stream_access_policy)
+//! (CUDA default size is 0). [`AccessPolicyWindow::hit_ratio_permille`] is
+//! CUDA `hitRatio` (`1000` = the whole window). `expertvm sim --l2-ratio N` /
+//! Engine `--expert-sim --l2-ratio N` sets that ‰ (implies persist; `1..=1000`;
+//! unset is 1000). [`set_stream_access_policy`](Sim::set_stream_access_policy)
 //! is the stream twin (`cudaStreamAttributeAccessPolicyWindow`);
 //! [`kernel`](Sim::kernel) inherits it. `expertvm sim --l2-persist` /
 //! Engine `--expert-sim --l2-persist` enable the persist limit and attach a
@@ -5362,6 +5365,36 @@ mod tests {
         assert!(
             d1 < d0 / 2,
             "warm persist must cut HBM; cold={d0} warm={d1}"
+        );
+    }
+
+    #[test]
+    fn partial_hit_ratio_discounts_less_than_full() {
+        let run = |ratio: u16| {
+            let mut sim = Sim::new(persist_mem_profile());
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            sim.enable_persisting_l2().unwrap();
+            let bytes = 8u64 << 20;
+            let a = sim.alloc(d, bytes, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, bytes, s));
+            sim.synchronize().unwrap();
+            let kind = KernelKind::other(1, bytes);
+            let w = AccessPolicyWindow::persisting_ratio(KernelBuf::whole(a), ratio);
+            enq(sim.kernel_access_policy(d, kind.clone(), &[a], &[a], s, w));
+            enq(sim.kernel_access_policy(d, kind, &[a], &[a], s, w));
+            sim.synchronize().unwrap();
+            let ks: Vec<_> = sim
+                .operations()
+                .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+                .collect();
+            ks[1].duration_ns().expect("warm")
+        };
+        let full = run(1000);
+        let half = run(500);
+        assert!(
+            half > full,
+            "hitRatio 0.5 must bill more HBM than 1.0; half={half} full={full}"
         );
     }
 

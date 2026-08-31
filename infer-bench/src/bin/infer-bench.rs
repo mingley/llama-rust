@@ -18,7 +18,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-load-balance] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--l2-ratio N] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-load-balance] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -132,9 +132,11 @@ fn run() -> Result<(), String> {
             sim_cfg.decode_priority = cfg.decode_priority;
             sim_cfg.cooperative = cfg.cooperative;
             sim_cfg.pdl = cfg.pdl;
-            sim_cfg.l2_persist = cfg.l2_persist || cfg.l2_reset || cfg.l2_fetch != 0;
+            sim_cfg.l2_persist =
+                cfg.l2_persist || cfg.l2_reset || cfg.l2_fetch != 0 || cfg.l2_ratio != 0;
             sim_cfg.l2_reset = cfg.l2_reset;
             sim_cfg.l2_fetch = cfg.l2_fetch;
+            sim_cfg.l2_ratio = cfg.l2_ratio;
             sim_cfg.cluster = cfg.cluster;
             sim_cfg.preferred_cluster = cfg.preferred_cluster;
             sim_cfg.cluster_spread = cfg.cluster_spread;
@@ -240,6 +242,7 @@ struct Cfg {
     l2_persist: bool,
     l2_reset: bool,
     l2_fetch: u64,
+    l2_ratio: u16,
     cluster: u8,
     preferred_cluster: u8,
     cluster_spread: bool,
@@ -308,6 +311,7 @@ where
     let mut l2_persist = false;
     let mut l2_reset = false;
     let mut l2_fetch = 0u64;
+    let mut l2_ratio = 0u16;
     let mut cluster = 0u8;
     let mut preferred_cluster = 0u8;
     let mut cluster_spread = false;
@@ -405,6 +409,7 @@ where
                 l2_reset = !matches!(inline.as_deref(), Some("0" | "false"));
             }
             "--l2-fetch" => l2_fetch = parse_l2_fetch(&value("l2-fetch", inline, &mut it)?)?,
+            "--l2-ratio" => l2_ratio = parse_l2_ratio(&value("l2-ratio", inline, &mut it)?)?,
             "--cluster" => cluster = parse_cluster(&value("cluster", inline, &mut it)?)?,
             "--preferred-cluster" => {
                 preferred_cluster =
@@ -605,6 +610,7 @@ where
         l2_persist,
         l2_reset,
         l2_fetch,
+        l2_ratio,
         cluster,
         preferred_cluster,
         cluster_spread,
@@ -690,6 +696,16 @@ fn parse_l2_fetch(s: &str) -> Result<u64, String> {
         .map_err(|_| format!("invalid l2-fetch {s:?}"))?;
     if n != 32 && n != 64 && n != 128 {
         return Err("l2-fetch must be 32, 64, or 128".into());
+    }
+    Ok(n)
+}
+
+fn parse_l2_ratio(s: &str) -> Result<u16, String> {
+    let n = s
+        .parse::<u16>()
+        .map_err(|_| format!("invalid l2-ratio {s:?}"))?;
+    if n == 0 || n > 1000 {
+        return Err("l2-ratio must be 1..=1000".into());
     }
     Ok(n)
 }
