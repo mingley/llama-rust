@@ -377,6 +377,7 @@ impl SchedRt {
                 cfg.graph_build,
                 LeafMem::from_flags(cfg.graph_mem, cfg.graph_auto_free)?,
             )
+            .with_clone_parent(cfg.graph_clone_parent)
             .with_cooperative(cfg.cooperative)
             .with_pdl(cfg.pdl)
             .with_l2_persist(persist_armed(

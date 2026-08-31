@@ -811,10 +811,19 @@ pub struct SimCfg {
     /// `cudaGraphClone` a leaf capture before instantiate (graph vs exec).
     ///
     /// Parent combo graphs still instantiate in place so child ids stay the
-    /// GraphBank leaves. A no-op unless [`Self::cuda_graphs`]. Decode identity
+    /// GraphBank leaves unless [`Self::graph_clone_parent`]. A no-op unless [`Self::cuda_graphs`]. Decode identity
     /// stays instantiate-in-place. [`crate::GpuStoreCfg::graph_clone`] is the
     /// store path.
     pub graph_clone: bool,
+    /// `cudaGraphClone` a combo parent before instantiate (recursive children).
+    ///
+    /// Walker combo parents (`ids.len() >= 2`) clone, destroy the src, then
+    /// instantiate the copy so the parent tree is independent of GraphBank
+    /// leaves (`graph_clone_ns` per graph in that tree). Does not imply
+    /// [`Self::graph_clone`] or [`Self::cuda_graphs`]. Hits stay the same.
+    /// Decode identity stays instantiate-in-place. Store GEMM stays per-leaf.
+    /// [`crate::GpuStoreCfg::graph_clone_parent`] is the store CLI field.
+    pub graph_clone_parent: bool,
     /// `cudaGraphCreate` / `cudaGraphAdd*` instead of stream capture.
     ///
     /// Leaves and parents are built with [`gpu_sim::Sim::create_graph`] and
@@ -1293,6 +1302,7 @@ impl SimCfg {
             graph_update: false,
             graph_set_params: false,
             graph_clone: false,
+            graph_clone_parent: false,
             graph_build: false,
             graph_build_deps: false,
             graph_host: false,
@@ -1623,6 +1633,7 @@ pub fn sim_replay_cfg(
     let programmatic_event =
         alloc_programmatic_event(&mut sim, cfg.programmatic_event, &mut next_event)?;
     let mut graphs = GraphBank::new(cfg.graph_update, cfg.graph_clone, cfg.graph_build, leaf)
+        .with_clone_parent(cfg.graph_clone_parent)
         .with_cooperative(cfg.cooperative)
         .with_pdl(cfg.pdl)
         .with_l2_persist(persist_armed(
@@ -2164,6 +2175,8 @@ pub(crate) struct GraphBank {
     idle: BTreeMap<(DeviceId, StreamId), Vec<GraphId>>,
     update: bool,
     clone: bool,
+    /// [`SimCfg::graph_clone_parent`]: clone combo parents before instantiate.
+    clone_parent: bool,
     build: bool,
     build_deps: bool,
     graph_host: bool,
@@ -2215,6 +2228,7 @@ impl GraphBank {
             idle: BTreeMap::new(),
             update,
             clone,
+            clone_parent: false,
             build,
             build_deps: false,
             graph_host: false,
@@ -2255,6 +2269,11 @@ impl GraphBank {
             clones: 0,
             kernel_sets: 0,
         }
+    }
+
+    pub(crate) fn with_clone_parent(mut self, yes: bool) -> Self {
+        self.clone_parent = yes;
+        self
     }
 
     pub(crate) fn with_cooperative(mut self, yes: bool) -> Self {
@@ -2600,7 +2619,8 @@ impl GraphBank {
         ids: &[AllocId],
         src: GraphId,
     ) -> Result<GraphId, Error> {
-        let exec = if self.clone && ids.len() == 1 {
+        let clone = (self.clone && ids.len() == 1) || (self.clone_parent && ids.len() >= 2);
+        let exec = if clone {
             let cloned = sim.clone_graph(src)?;
             sim.destroy_graph(src)?;
             self.clones = self.clones.saturating_add(1);

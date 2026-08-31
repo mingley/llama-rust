@@ -703,7 +703,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   parks a leaf exec on evict and `update_graph`s the next miss on that
   `(device, stream)` (`graph_update_ns` instead of instantiate; parent
   combos still destroy). `--graph-clone` clones a leaf capture before
-  instantiate (`graph_clone_ns`; the src is destroyed).   `--graph-build`
+  instantiate (`graph_clone_ns`; the src is destroyed). `--graph-clone-parent`
+  clones combo parents (recursive children; store GEMM stays per-leaf). `--graph-build`
   is `cudaGraphCreate` / `cudaGraphAdd*` instead of stream capture (no idle
   stream; implies `--cuda-graphs` on the walker; combo children have no
   `graph_add_dependencies` edge so they may Hyper-Q overlap). Capture after a miss waits with
@@ -720,7 +721,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--shareable`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-build-deps`, `--graph-host`, `--graph-piecewise`, `--graph-capture-deps`, `--graph-capture-host`, `--graph-mem`, `--graph-memset`, `--graph-memcpy`, `--graph-leaf-host`, `--graph-auto-free`, `--timing-events`, `--event-blocking-sync`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, `--non-portable-cluster`, `--sync-policy`, `--device-sync-policy`, `--shared-mem`, and `--multicast`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-clone-parent`, `--graph-build`, `--graph-build-deps`, `--graph-host`, `--graph-piecewise`, `--graph-capture-deps`, `--graph-capture-host`, `--graph-mem`, `--graph-memset`, `--graph-memcpy`, `--graph-leaf-host`, `--graph-auto-free`, `--timing-events`, `--event-blocking-sync`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, `--non-portable-cluster`, `--sync-policy`, `--device-sync-policy`, `--shared-mem`, and `--multicast`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--shareable` is POSIX-FD mempool IPC
   (implies `--mempool`; illegal with `--sync-alloc` / mapped / managed / vmm). `--mapped` is `cudaHostAllocMapped`
@@ -747,7 +748,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   is `cudaGraphExecUpdate` of a parked leaf (store and `--cuda-graphs`
   walker). `--graph-set-params` is `cudaGraphExecKernelNodeSetParams` of a
   parked leaf (no second capture; legal with mem nodes). `--graph-clone` is `cudaGraphClone` of a leaf capture before
-  instantiate (graph vs exec). `--graph-build` is `cudaGraphCreate` /
+  instantiate (graph vs exec). `--graph-clone-parent` is `cudaGraphClone` of combo
+  parents (recursive children; store GEMM stays per-leaf). `--graph-build` is `cudaGraphCreate` /
   `cudaGraphAddKernelNode` (and child add for combo parents; independent
   children may Hyper-Q overlap). `--graph-piecewise` is
   `cudaStreamBeginCaptureToGraph` combo parents (independent child roots;
@@ -1012,7 +1014,7 @@ model, do not celebrate the sim.
     Dual score still has no `$/M tokens`.
 48. [x] Engine SimulatedGpuStore CUDA graphs: default `--expert-sim` captures
     per-page GEMM graphs (`Engine::graph_launches`). `--graph-update` /
-    `--graph-clone` / `--graph-build` / `--graph-build-deps` / `--graph-host` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-capture-host` / `--graph-mem` / `--graph-memset` / `--graph-memcpy` / `--graph-leaf-host` / `--graph-auto-free` / `--timing-events` / `--event-blocking-sync` / `--cuda-graphs` match
+    `--graph-clone` / `--graph-clone-parent` / `--graph-build` / `--graph-build-deps` / `--graph-host` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-capture-host` / `--graph-mem` / `--graph-memset` / `--graph-memcpy` / `--graph-leaf-host` / `--graph-auto-free` / `--timing-events` / `--event-blocking-sync` / `--cuda-graphs` match
     `GpuStoreCfg` / `expertvm sim`. Tight slots park+update. Identity stays.
     Dual score still has no `$/M tokens`.
 49. [x] Engine `itl_slo_ns`: count later-token gaps over a virtual-ns budget
@@ -3946,7 +3948,21 @@ model, do not celebrate the sim.
     GEMMs host too (not walker-only). `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-365. [ ] Next numbered PLAN item after 364 is the next `gpu-sim` / Engine /
+365. [x] `cudaGraphClone` of combo parents (recursive children):
+    [`GpuStoreCfg::graph_clone_parent`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::graph_clone_parent`](expertvm/src/sim_replay.rs) on walker combo
+    parents (`ids.len() >= 2`). Clone, destroy the src, then instantiate the
+    copy so the parent tree is independent of GraphBank leaves (`graph_clone_ns`
+    per graph in that tree, including nested children). Does not imply
+    `--graph-clone` or `--cuda-graphs`. Hits stay the same. Distinct from
+    `--graph-clone` (leaves vs combo parents). Legal with `--pdl` and
+    `--cooperative`. `--graph-clone-parent` on `expertvm sim` / `schedule` /
+    `store` and `gguf_gemv engine --expert-sim`. infer-bench has no combo
+    graph construction, so it does not get `--graph-clone-parent`. Decode
+    identity stays instantiate-in-place. Store GEMM stays per-leaf.
+    `gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
+366. [ ] Next numbered PLAN item after 365 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
@@ -3977,6 +3993,7 @@ model, do not celebrate the sim.
     `cudaGraphAddHostNode` BETWEEN flag. Do not invent a second captured
     `cudaLaunchHostFunc` BETWEEN piecewise flag. Do not invent a second leaf
     `cudaGraphAddHostNode` / captured `cudaLaunchHostFunc` BEFORE GEMM flag.
+    Do not invent a second `cudaGraphClone` of combo parents flag.
     Do not invent JOIN-style host
     after overlapping combo children (same wall as live `--host-func`
     after `launch_graph`). Do not invent `stream_update_capture_dependencies`

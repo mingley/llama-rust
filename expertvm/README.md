@@ -255,7 +255,9 @@ parks that leaf and `cudaGraphExecKernelNodeSetParams` the unique kernel
 unique memcpy or memset if present; combo parents use
 `cudaGraphExecChildGraphNodeSetParams`). `--graph-clone`
 clones a leaf capture before instantiate (`graph_clone_ns`; the src is
-destroyed). `--graph-build` is `cudaGraphCreate` / `cudaGraphAdd*` instead of
+destroyed). `--graph-clone-parent` clones combo parents before instantiate
+(recursive children; `graph_clone_ns` per id; does not imply `--graph-clone`;
+store GEMM stays per-leaf). `--graph-build` is `cudaGraphCreate` / `cudaGraphAdd*` instead of
 stream capture (no idle-stream wait; implies `--cuda-graphs` on the walker;
 combo parents are `graph_add_child` of instantiated leaves with no
 `graph_add_dependencies` edge, so independent expert GEMMs may Hyper-Q
@@ -324,7 +326,7 @@ same Stay vs Fetch predictor on real decode; upcoming keys are the
 online predicted list, not this walker's JSONL future window.
 `--expert-sim` captures
 per-page GEMM graphs (`graph_launches=`; `--cuda-graphs` documents that).
-`--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-build-deps` / `--graph-host` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-capture-host` / `--graph-enable` / `--graph-mem` / `--graph-memset` / `--graph-memcpy` / `--graph-leaf-host` / `--graph-auto-free` / `--graph-mem-trim` / `--timing-events` / `--event-blocking-sync` are `GpuStoreCfg`
+`--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-clone-parent` / `--graph-build` / `--graph-build-deps` / `--graph-host` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-capture-host` / `--graph-enable` / `--graph-mem` / `--graph-memset` / `--graph-memcpy` / `--graph-leaf-host` / `--graph-auto-free` / `--graph-mem-trim` / `--timing-events` / `--event-blocking-sync` are `GpuStoreCfg`
 on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 (`gguf_gemv engine --expert-sim --managed`). `--host-func` /
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--mempool-trim` / `--mempool-no-reuse` / `--mempool-max` / `--shareable` / `--vmm-page` /

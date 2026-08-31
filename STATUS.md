@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaGraphClone` of combo parents
+
+`GpuStoreCfg::graph_clone_parent` / `SimCfg::graph_clone_parent` clone walker
+combo parents (`cudaGraphClone`, recursive children) before instantiate so
+the parent tree is independent of GraphBank leaves. Does not imply
+`--graph-clone` or `--cuda-graphs`. Hits/misses stay the same. Distinct from
+`--graph-clone` (leaves vs combo parents). `--graph-clone-parent` is off by
+default (decode identity: instantiate-in-place). Store GEMM stays per-leaf.
+infer-bench has no combo graph construction, so it does not get
+`--graph-clone-parent`. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaGraphAddHostNode` before each leaf GEMM
 
 `GpuStoreCfg::graph_leaf_host` / `SimCfg::graph_leaf_host` insert

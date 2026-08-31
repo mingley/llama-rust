@@ -3486,6 +3486,88 @@ fn cuda_graphs_graph_clone_copies_leaf_before_instantiate() {
 }
 
 #[test]
+fn cuda_graphs_graph_clone_parent_copies_combo_before_instantiate() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_clone_ns=80000\ngraph_instantiate_ns=1000\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let base = SimCfg {
+        cuda_graphs: true,
+        compute_slots: 2,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let run = |graph_clone: bool, graph_clone_parent: bool| {
+        sim_replay_cfg(
+            &t,
+            p.clone(),
+            SimCfg {
+                graph_clone,
+                graph_clone_parent,
+                ..base
+            },
+        )
+        .expect("replay")
+    };
+    let plain = run(false, false);
+    let leaves = run(true, false);
+    let parent = run(false, true);
+    let both = run(true, true);
+    assert_eq!(plain.hits, parent.hits);
+    assert_eq!(plain.misses, parent.misses);
+    assert_eq!(leaves.hits, parent.hits);
+    assert_eq!(both.hits, parent.hits);
+    assert_eq!(plain.graph_clones, 0);
+    assert_eq!(leaves.graph_clones, 2);
+    assert_eq!(parent.graph_clones, 1);
+    assert_eq!(both.graph_clones, 3);
+    assert!(
+        parent.sim_ns > plain.sim_ns,
+        "graph-clone-parent must bill recursive clone_ns; parent={} plain={}",
+        parent.sim_ns,
+        plain.sim_ns
+    );
+    assert!(
+        parent.sim_ns > leaves.sim_ns,
+        "combo parent clone must exceed two leaf clones; parent={} leaves={}",
+        parent.sim_ns,
+        leaves.sim_ns
+    );
+    assert!(
+        both.sim_ns > parent.sim_ns,
+        "leaf+parent clone must stack; both={} parent={}",
+        both.sim_ns,
+        parent.sim_ns
+    );
+    let pdl = sim_replay_cfg(
+        &t,
+        p.clone(),
+        SimCfg {
+            graph_clone_parent: true,
+            pdl: true,
+            ..base
+        },
+    )
+    .expect("pdl");
+    assert_eq!(pdl.hits, parent.hits);
+    assert_eq!(pdl.graph_clones, 1);
+    let bld = sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            graph_build: true,
+            graph_clone_parent: true,
+            ..base
+        },
+    )
+    .expect("build");
+    assert_eq!(bld.hits, parent.hits);
+    assert_eq!(bld.graph_clones, 1);
+}
+
+#[test]
 fn cuda_graphs_graph_build_matches_capture_hits() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1]), ev(1, 0, &[0, 2])],
@@ -5358,6 +5440,42 @@ fn simulated_gpu_store_graph_clone_copies_capture() {
     assert_eq!(n_plain, 0);
     assert_eq!(h0, h1);
     assert!(wall_c > wall_p, "clone={wall_c} plain={wall_p}");
+}
+
+#[test]
+fn simulated_gpu_store_graph_clone_parent_is_walker_only() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\ngraph_clone_ns=80000\ngraph_instantiate_ns=1000\ngraph_upload_ns=1000\ngraph_launch_ns=1000\nlaunch_overhead_ns=1000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        2,
+        p,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_clone_parent: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    assert!(gpu.graph_clone_parent());
+    let k0 = ExpertKey::new(0, 0);
+    let k1 = ExpertKey::new(0, 1);
+    let _n = gpu.prefetch(&[k0, k1]).expect("prefetch");
+    let _s = gpu.score().expect("drain");
+    let _a0 = gpu.acquire(k0).expect("acq0");
+    let _a1 = gpu.acquire(k1).expect("acq1");
+    let _score = gpu.score().expect("final");
+    assert_eq!(
+        gpu.graph_clones(),
+        0,
+        "store GEMM stays per-leaf; clone-parent must not clone leaves"
+    );
 }
 
 #[test]

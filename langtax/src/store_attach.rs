@@ -34,6 +34,8 @@ pub(crate) struct GpuCli {
     pub graph_update: bool,
     pub graph_set_params: bool,
     pub graph_clone: bool,
+    /// `cudaGraphClone` combo parents (`GpuStoreCfg::graph_clone_parent`). Walker-only.
+    pub graph_clone_parent: bool,
     pub graph_build: bool,
     /// `cudaGraphAddDependencies` combo edges (`GpuStoreCfg::graph_build_deps`). Needs graph-build.
     pub graph_build_deps: bool,
@@ -241,6 +243,7 @@ impl GpuCli {
             "--graph-update" => &mut self.graph_update,
             "--graph-set-params" => &mut self.graph_set_params,
             "--graph-clone" => &mut self.graph_clone,
+            "--graph-clone-parent" => &mut self.graph_clone_parent,
             "--graph-build" => &mut self.graph_build,
             "--graph-build-deps" => &mut self.graph_build_deps,
             "--graph-host" => &mut self.graph_host,
@@ -735,6 +738,7 @@ impl GpuCli {
             (self.graph_update, "--graph-update"),
             (self.graph_set_params, "--graph-set-params"),
             (self.graph_clone, "--graph-clone"),
+            (self.graph_clone_parent, "--graph-clone-parent"),
             (self.graph_build, "--graph-build"),
             (self.graph_build_deps, "--graph-build-deps"),
             (self.graph_host, "--graph-host"),
@@ -1134,6 +1138,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         graph_update: gpu.graph_update,
         graph_set_params: gpu.graph_set_params,
         graph_clone: gpu.graph_clone,
+        graph_clone_parent: gpu.graph_clone_parent,
         graph_build: gpu.graph_build,
         graph_build_deps: gpu.graph_build_deps,
         graph_host: gpu.graph_host,

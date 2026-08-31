@@ -474,7 +474,8 @@ graph produced by `clone_graph` of that original).
 `expertvm --graph-set-params` parks a leaf and retargets the unique kernel
 (and a unique memcpy or memset if present). `expertvm --graph-update` parks a leaf GEMM on
 evict and updates the next miss instead of instantiate. `--graph-clone`
-copies the capture (`cudaGraphClone`) before instantiate. `--graph-build` is
+copies the capture (`cudaGraphClone`) before instantiate. `--graph-clone-parent`
+clones combo parents (recursive children). `--graph-build` is
 `cudaGraphCreate` / `cudaGraphAdd*` (no idle stream; combo children may
 Hyper-Q overlap unless `graph_add_dependencies` chains them).
 `expertvm --graph-build-deps` adds those edges. `--graph-host` inserts

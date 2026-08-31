@@ -221,6 +221,12 @@ pub struct GpuStoreCfg {
     /// Clone, destroy the src, then instantiate the copy. A parked-exec
     /// update skips clone. Decode identity stays instantiate-in-place.
     pub graph_clone: bool,
+    /// `cudaGraphClone` a walker combo parent before instantiate.
+    ///
+    /// Recursive child-graph clone (`graph_clone_ns` per id in the tree).
+    /// Does not imply [`Self::graph_clone`]. Hits stay the same. Decode
+    /// identity stays instantiate-in-place. Store GEMM stays per-leaf.
+    pub graph_clone_parent: bool,
     /// `cudaGraphCreate` / `cudaGraphAddKernelNode` instead of stream capture.
     ///
     /// Does not require an idle compute stream (`cudaStreamBeginCapture` does).
@@ -705,6 +711,8 @@ pub struct SimulatedGpuStore {
     graph_update: bool,
     graph_set_params: bool,
     graph_clone: bool,
+    /// [`GpuStoreCfg::graph_clone_parent`]: walker combo `clone_graph` (store GEMM stays per-leaf).
+    graph_clone_parent: bool,
     graph_build: bool,
     /// [`GpuStoreCfg::graph_build_deps`]: walker combo `graph_add_dependencies` (store GEMM stays per-leaf).
     graph_build_deps: bool,
@@ -896,6 +904,8 @@ impl SimulatedGpuStore {
     /// fragments (needs piecewise; store GEMM stays per-leaf);
     /// [`GpuStoreCfg::graph_capture_host`] inserts captured `host_func`
     /// BETWEEN those fragments (needs piecewise; store GEMM stays per-leaf);
+    /// [`GpuStoreCfg::graph_clone_parent`] clones walker combo parents
+    /// (recursive children; store GEMM stays per-leaf);
     /// [`GpuStoreCfg::graph_build_deps`] chains graph-build combo children
     /// (needs graph-build; store GEMM stays per-leaf);
     /// [`GpuStoreCfg::graph_host`] inserts `graph_add_host_func` BETWEEN
@@ -1301,6 +1311,7 @@ impl SimulatedGpuStore {
             graph_update: cfg.graph_update,
             graph_set_params: cfg.graph_set_params,
             graph_clone: cfg.graph_clone,
+            graph_clone_parent: cfg.graph_clone_parent,
             graph_build: cfg.graph_build,
             graph_build_deps: cfg.graph_build_deps,
             graph_host: cfg.graph_host,
@@ -1518,6 +1529,12 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn graph_capture_host(&self) -> bool {
         self.graph_capture_host
+    }
+
+    /// Whether walker combo `cudaGraphClone` of the parent was requested (store GEMM stays per-leaf).
+    #[must_use]
+    pub fn graph_clone_parent(&self) -> bool {
+        self.graph_clone_parent
     }
 
     /// Whether walker combo `graph_add_dependencies` was requested (store GEMM stays per-leaf).

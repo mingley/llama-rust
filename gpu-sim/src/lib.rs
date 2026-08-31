@@ -775,6 +775,8 @@
 //! `cudaGraphNodeSetEnabled` / `GetEnabled` (skip launch; mem nodes illegal).
 //! [`Sim::clone_graph`] is `cudaGraphClone` (independent, not instantiated;
 //! child-graph nodes are cloned recursively).
+//! `expertvm --graph-clone` clones leaf captures; `--graph-clone-parent` clones
+//! combo parents (recursive children; store GEMM stays per-leaf).
 //! [`Sim::create_graph`] is `cudaGraphCreate` (empty, not instantiated).
 //! [`Sim::graph_add_kernel`] / [`graph_add_memcpy`](Sim::graph_add_memcpy) /
 //! [`graph_add_memcpy_1d`](Sim::graph_add_memcpy_1d) /
