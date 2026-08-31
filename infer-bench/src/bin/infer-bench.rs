@@ -18,7 +18,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--func-max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -137,6 +137,7 @@ fn run() -> Result<(), String> {
             sim_cfg.preferred_cluster = cfg.preferred_cluster;
             sim_cfg.cluster_spread = cfg.cluster_spread;
             sim_cfg.max_shared = cfg.max_shared;
+            sim_cfg.func_max_shared = cfg.func_max_shared;
             sim_cfg.non_portable_cluster = cfg.non_portable_cluster;
             sim_cfg.sync_policy = cfg.sync_policy;
             sim_cfg.shared_mem = cfg.shared_mem;
@@ -231,6 +232,7 @@ struct Cfg {
     preferred_cluster: u8,
     cluster_spread: bool,
     max_shared: bool,
+    func_max_shared: bool,
     non_portable_cluster: bool,
     sync_policy: SynchronizationPolicy,
     shared_mem: SharedMemoryMode,
@@ -288,6 +290,7 @@ where
     let mut preferred_cluster = 0u8;
     let mut cluster_spread = false;
     let mut max_shared = false;
+    let mut func_max_shared = false;
     let mut non_portable_cluster = false;
     let mut sync_policy = SynchronizationPolicy::Auto;
     let mut shared_mem = SharedMemoryMode::Default;
@@ -378,6 +381,9 @@ where
             }
             "--max-shared" => {
                 max_shared = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
+            "--func-max-shared" => {
+                func_max_shared = !matches!(inline.as_deref(), Some("0" | "false"));
             }
             "--non-portable-cluster" => {
                 non_portable_cluster = !matches!(inline.as_deref(), Some("0" | "false"));
@@ -518,6 +524,7 @@ where
         preferred_cluster,
         cluster_spread,
         max_shared,
+        func_max_shared,
         non_portable_cluster,
         sync_policy,
         shared_mem,

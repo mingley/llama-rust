@@ -711,6 +711,13 @@ pub struct SimCfg {
     /// Decode identity stays Default. [`crate::GpuStoreCfg::max_shared`] is
     /// the store path.
     pub max_shared: bool,
+    /// Function MaxShared carveout (`cudaFuncSetAttribute` PreferredSharedMemoryCarveout).
+    ///
+    /// Launch Default inherits this occupancy so leftover kernels cannot
+    /// overlap. Distinct from launch-attribute [`Self::max_shared`]. Decode
+    /// identity stays Default. [`crate::GpuStoreCfg::func_max_shared`] is the
+    /// store path.
+    pub func_max_shared: bool,
     /// `cudaFuncAttributeNonPortableClusterSizeAllowed`. Default disallowed.
     ///
     /// Lets [`Self::cluster`] exceed `portable_cluster_size` up to
@@ -925,6 +932,7 @@ impl SimCfg {
             preferred_cluster: 0,
             cluster_spread: false,
             max_shared: false,
+            func_max_shared: false,
             non_portable_cluster: false,
             sync_policy: gpu_sim::SynchronizationPolicy::Auto,
             mem_sync_domain: gpu_sim::MemSyncDomain::Default,
@@ -1082,6 +1090,7 @@ pub fn sim_replay_cfg(
     let keys = trace.keys();
     let mut sim = Sim::new(sim_profile(profile, &cfg));
     apply_device_sync_memops(&mut sim, cfg.device_sync_memops)?;
+    apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
     if cfg.shareable {
         let _imported = bind_shareable_mempools(&mut sim)?;
     }
@@ -1459,6 +1468,21 @@ pub(crate) fn allow_optin_shared(sim: &mut Sim) -> Result<(), Error> {
 pub(crate) fn allow_optin_shared_if(sim: &mut Sim, yes: bool) -> Result<(), Error> {
     if yes {
         allow_optin_shared(sim)?;
+    }
+    Ok(())
+}
+
+/// `cudaFuncSetAttribute(..., cudaFuncAttributePreferredSharedMemoryCarveout)` MaxShared.
+///
+/// Call after [`Sim::new`]. Launch Default inherits this occupancy (Hyper-Q
+/// exclusive). Capture-legal; kernel-only graphs stay legal.
+pub(crate) fn apply_func_max_shared(sim: &mut Sim, on: bool) -> Result<(), Error> {
+    if !on {
+        return Ok(());
+    }
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        sim.set_func_carveout(DeviceId(g), SharedMemCarveout::MaxShared)?;
     }
     Ok(())
 }

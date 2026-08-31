@@ -13599,6 +13599,7 @@ impl Sim {
     /// Per device. Launch [`SharedMemCarveout::Default`] inherits this
     /// occupancy. Launch MaxL1 / MaxShared still override. Capture-legal like
     /// other function attributes. Decode identity stays Default.
+    /// `expertvm sim --func-max-shared` sets [`SharedMemCarveout::MaxShared`].
     pub fn set_func_carveout(
         &mut self,
         device: DeviceId,

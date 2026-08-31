@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaFuncSetAttribute` MaxShared carveout
+
+`GpuStoreCfg::func_max_shared` / `SimCfg::func_max_shared` call
+`cudaFuncSetAttribute(..., cudaFuncAttributePreferredSharedMemoryCarveout)`
+MaxShared after `Sim::new`. Launch Default inherits that occupancy so leftover
+kernels cannot Hyper-Q overlap. Hits/misses stay the same. Distinct from
+launch-attribute `--max-shared`. `--func-max-shared` is off by default
+(decode identity: Default function carveout). `gpu-profile capture` is still
+refused.
+
 ## Shipped 2026-08-31 — `cudaSetDeviceFlags` SyncMemops
 
 `GpuStoreCfg::device_sync_memops` / `SimCfg::device_sync_memops` call

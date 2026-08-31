@@ -164,7 +164,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaFuncAttributeClusterDimMustBeSet` / `RequiredClusterWidth` / Height / Depth | no cluster is Invalid; a nonzero required axis must match the launch |
 | `cudaLaunchAttributeSynchronizationPolicy` (stream-only) | host-wait tax on `synchronize_stream` / `synchronize_event`; Auto inherits `set_device_flags` (unset / profile default 0) |
 | `cudaLaunchAttributeDeviceUpdatableKernelNode` | graphs-only; `graph_exec_kernel_set_params` keeps the exec uploaded; device-launch graphs allow it |
-| `cudaLaunchAttributePreferredSharedMemoryCarveout` | MaxShared occupies every Hyper-Q slot; Default uses `set_func_carveout` (`cudaFuncAttributePreferredSharedMemoryCarveout`; unset never occupies) |
+| `cudaLaunchAttributePreferredSharedMemoryCarveout` | MaxShared occupies every Hyper-Q slot; Default uses `set_func_carveout` (`cudaFuncAttributePreferredSharedMemoryCarveout`; `expertvm sim --func-max-shared` sets MaxShared; unset never occupies) |
 | `cudaLaunchAttributeSharedMemoryMode` | Default uses function `set_func_shared_mem_config` then device `set_shared_mem_config` (unset never scales); FourByte / EightByte scale duration by `1000 / shared_mem_*_permille` (default 1000) |
 | `cudaLaunchAttributePortableClusterSizeMode` | Default uses the function attr; RequirePortable always refuses oversize; AllowNonPortable allows up to SKU max |
 | CUDA 13 `cudaLaunchAttributeSharedMemoryMode` (`PortableSharedMode`) | Default uses `MaxDynamicSharedMemorySize`; RequirePortable refuses oversize; AllowNonPortable allows up to opt-in max |
@@ -942,7 +942,9 @@ opt-in. `expertvm sim --cluster N` / `gguf_gemv engine --expert-sim --cluster N`
 launch grouped expert GEMMs that way. `--preferred-cluster N` occupies the
 preferred size when it fits (needs `--cluster`). `--cluster-spread` is Spread
 scheduling (occupies every Hyper-Q slot). `--max-shared` is MaxShared
-carveout (occupies every Hyper-Q slot). `--non-portable-cluster` is
+carveout (occupies every Hyper-Q slot). `--func-max-shared` is
+`cudaFuncSetAttribute` PreferredSharedMemoryCarveout MaxShared (launch
+Default inherits; occupies every Hyper-Q slot). `--non-portable-cluster` is
 `cudaFuncAttributeNonPortableClusterSizeAllowed`. `--sync-policy auto|spin|yield|blocking`
 is `cudaLaunchAttributeSynchronizationPolicy` on created streams (host-wait
 tax on `synchronize_stream`; Auto inherits `set_device_flags`, unset tax 0). `--shared-mem default|four|eight` is

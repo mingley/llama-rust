@@ -11,17 +11,19 @@ use crate::planner::{
 use crate::sim_replay::{
     add_leaf_gemm, alloc_launch_completion, alloc_programmatic_event, alloc_resident_copy_mailbox,
     allow_non_portable_cluster_if, allow_optin_shared_if, apply_device_sync_memops,
-    apply_exec_mem_sync_domain, apply_stream_mem_sync_domain, apply_stream_sync_policy,
-    bind_shareable_mempools, check_cluster_preferred, check_device_graph_flags,
-    ensure_single_attach, free_copy_mailbox, free_mapped_host, instantiate_exec, kernel_leaf,
-    mark_sync_memops, replay_exec, replay_streams, retarget_parked_kernel, signal_copy_ready,
-    stream_of, upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
+    apply_exec_mem_sync_domain, apply_func_max_shared, apply_stream_mem_sync_domain,
+    apply_stream_sync_policy, bind_shareable_mempools, check_cluster_preferred,
+    check_device_graph_flags, ensure_single_attach, free_copy_mailbox, free_mapped_host,
+    instantiate_exec, kernel_leaf, mark_sync_memops, replay_exec, replay_streams,
+    retarget_parked_kernel, signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready,
+    GemmFlags, LeafMem, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
     AllocId, DeviceFlags, DeviceId, EventId, GraphId, GraphMemAttr, HardwareProfile, KernelBuf,
     KernelKind, LaunchCompletionEvent, MemAdvise, MemAttach, MemHandleId, MemcpyAttributes,
-    MemcpyOp, Place, PointerAttr, PoolId, ProgrammaticEvent, Score, Sim, StreamId,
+    MemcpyOp, Place, PointerAttr, PoolId, ProgrammaticEvent, Score, SharedMemCarveout, Sim,
+    StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -274,6 +276,12 @@ pub struct GpuStoreCfg {
     /// Occupies every Hyper-Q slot so leftover kernels cannot overlap.
     /// Decode identity stays Default.
     pub max_shared: bool,
+    /// Function MaxShared carveout (`cudaFuncSetAttribute` PreferredSharedMemoryCarveout).
+    ///
+    /// Launch Default inherits this occupancy so leftover kernels cannot
+    /// overlap. Distinct from launch-attribute [`Self::max_shared`]. Decode
+    /// identity stays Default.
+    pub func_max_shared: bool,
     /// `cudaFuncAttributeNonPortableClusterSizeAllowed`. Default disallowed.
     ///
     /// Lets [`Self::cluster`] exceed `portable_cluster_size` up to
@@ -683,6 +691,9 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::mem_sync_domain`] is decode-stream
     /// `cudaLaunchAttributeMemSyncDomain` (Default identity; Remote isolates
     /// leftover prefill fence tax).
+    /// [`GpuStoreCfg::max_shared`] is launch-attribute MaxShared carveout.
+    /// [`GpuStoreCfg::func_max_shared`] is `cudaFuncSetAttribute`
+    /// PreferredSharedMemoryCarveout MaxShared (launch Default inherits).
     /// [`GpuStoreCfg::shared_mem`] is kernel-node bank width
     /// (`cudaLaunchAttributeSharedMemoryMode`; Default never scales).
     /// [`GpuStoreCfg::portable_cluster`] is launch-time portable cluster mode
@@ -851,6 +862,7 @@ impl SimulatedGpuStore {
         };
         let mut sim = Sim::new(profile);
         apply_device_sync_memops(&mut sim, cfg.device_sync_memops)?;
+        apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
         if cfg.l2_persist {
             sim.enable_persisting_l2()?;
         }
@@ -1057,6 +1069,15 @@ impl SimulatedGpuStore {
         self.sim
             .get_device_flags(self.device)
             .map(|f| f & DeviceFlags::SYNC_MEMOPS != 0)
+            .unwrap_or(false)
+    }
+
+    /// Whether this store set function MaxShared carveout at construction.
+    #[must_use]
+    pub fn func_max_shared(&self) -> bool {
+        self.sim
+            .get_func_carveout(self.device)
+            .map(|c| c == SharedMemCarveout::MaxShared)
             .unwrap_or(false)
     }
 

@@ -7,13 +7,14 @@ use crate::planner::{plan_keys, predicted_keys, ChainState, Markov, Plan};
 use crate::replay::{Touch, Walker};
 use crate::sim_replay::{
     advise_pool_access_if_pinned, alloc_launch_completion, alloc_programmatic_event,
-    allow_non_portable_cluster_if, allow_optin_shared_if, apply_device_sync_memops, apply_misses,
-    apply_stream_mem_sync_domain, apply_stream_sms, apply_stream_sync_policy, apply_touch,
-    bind_shareable_mempools, bump_null_for_attach, disable_pool_opportunistic_reuse, drop_remote,
-    fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots,
-    pin_pageable_staging, reclaim_victim, remote_hit, replay_from_sim, sim_profile, sync_work,
-    trim_device_pools, trim_graph_pools, validate_sim_cfg, GraphBank, LeafMem, PageHandle,
-    RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, StreamPlan, TouchArgs,
+    allow_non_portable_cluster_if, allow_optin_shared_if, apply_device_sync_memops,
+    apply_func_max_shared, apply_misses, apply_stream_mem_sync_domain, apply_stream_sms,
+    apply_stream_sync_policy, apply_touch, bind_shareable_mempools, bump_null_for_attach,
+    disable_pool_opportunistic_reuse, drop_remote, fetch_remote, fill_remote, gemm_keys,
+    host_callbacks, note_touch, occupancy_slots, pin_pageable_staging, reclaim_victim, remote_hit,
+    replay_from_sim, sim_profile, sync_work, trim_device_pools, trim_graph_pools, validate_sim_cfg,
+    GraphBank, LeafMem, PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay,
+    StreamPlan, TouchArgs,
 };
 use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -287,6 +288,7 @@ impl SchedRt {
         validate_sim_cfg(&cfg, &profile)?;
         let mut sim = Sim::new(sim_profile(profile, &cfg));
         apply_device_sync_memops(&mut sim, cfg.device_sync_memops)?;
+        apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
         if cfg.shareable {
             let _imported = bind_shareable_mempools(&mut sim)?;
         }
