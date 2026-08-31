@@ -145,6 +145,8 @@
 //! `expertvm sim --no-preferred` is [`MemAdvise::UnsetPreferredLocation`]
 //! at managed fill so a remote GEMM first-touches instead of staying on
 //! home.
+//! `expertvm sim --no-mem-prefetch` skips fill [`prefetch`](Sim::prefetch)
+//! so the kernel first-touches instead of copy-engine prefetch.
 //! [`mem_advise_with_location`](Sim::mem_advise_with_location) is
 //! `cudaMemAdvise_v2` ([`Place`] location; AccessedBy requires
 //! [`Place::Device`]; host preferred is [`MemAdvise::SetPreferredLocationHost`]).

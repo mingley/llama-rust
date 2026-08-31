@@ -796,7 +796,9 @@ AccessedBy requires a device place; host preferred is
 read without migrating. `SetPreferredLocation` keeps a page already at
 that GPU there on a remote read (writes still migrate; host preferred
 does not skip kernel first-touch). `expertvm --no-preferred` is
-`UnsetPreferredLocation` so a remote GEMM first-touches. `mem_range_get_attribute` /
+`UnsetPreferredLocation` so a remote GEMM first-touches.
+`expertvm --no-mem-prefetch` skips fill `cudaMemPrefetchAsync` so the
+kernel first-touches instead of copy-engine prefetch. `mem_range_get_attribute` /
 `mem_range_get_attributes` are `cudaMemRangeGetAttribute` /
 `GetAttributes` of modeled per-alloc advice (`MemRangeAttr`;
 not per byte range). Last-prefetch is the dest of `prefetch` /

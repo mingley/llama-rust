@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — skip fill `cudaMemPrefetchAsync`
+
+`GpuStoreCfg::no_mem_prefetch` / `SimCfg::no_mem_prefetch` skip
+`cudaMemPrefetchAsync` at managed miss fill so the first GEMM first-touches
+on compute instead of copy-engine prefetch overlapping leftover GEMM.
+Implies `--managed`. Hits/misses stay the same. Distinct from `--prefetch
+none` (predictor) and `--prefetch-host` (evict to host). Keep replica dest
+prefetch and host-restore prefetch. Keep SetReadMostly /
+SetPreferredLocation unless those flags are also set. `--no-mem-prefetch`
+is off by default (decode identity: fill prefetch). Store and walker (not
+walker-only). infer-bench has managed fill via `--managed-host`, so it gets
+`--no-mem-prefetch`. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — skip `cudaMemAdviseSetPreferredLocation`
 
 `GpuStoreCfg::no_preferred` / `SimCfg::no_preferred` call

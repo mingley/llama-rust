@@ -165,7 +165,9 @@
 //! skips `cudaMemAdviseSetReadMostly` (implies `--managed`; dest prefetch moves;
 //! identity stays SetReadMostly). `--no-preferred` skips
 //! `cudaMemAdviseSetPreferredLocation` (implies `--managed`; remote GEMM
-//! first-touches; identity stays SetPreferredLocation). `--host-register-mapped` is
+//! first-touches; identity stays SetPreferredLocation). `--no-mem-prefetch`
+//! skips `cudaMemPrefetchAsync` at managed fill (implies `--managed`; kernel
+//! first-touches; identity stays fill prefetch). `--host-register-mapped` is
 //! `cudaHostRegisterMapped` on expert pages (implies `--mapped`; identity stays
 //! `cudaHostAllocMapped`). `--sync-memops` is `cuPointerSetAttribute` SyncMemops
 //! on miss device pages (host-sync H2D / managed prefetch; illegal with `--mapped`
@@ -188,7 +190,7 @@
 //! identity stays `cudaLaunchKernel` (no cluster / Default policy / no preferred
 //! dim / Default carveout / non-portable disallowed / Auto sync policy /
 //! Auto device schedule / Default mem-sync domain / Default shared-mem / Default portable-cluster / 0 dynamic shared / Default
-//! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event / no programmatic event / Global managed attach / SetReadMostly / SetPreferredLocation / events copy-ready / no mempool trim / opportunistic reuse / unlimited mempool maxSize / stream-order memcpy-batch / free_sync managed evict / cudaHostAllocMapped not HostRegisterMapped / async memcpy not SyncMemops / no device SyncMemops / disable-timing non-blocking copy events).
+//! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event / no programmatic event / Global managed attach / SetReadMostly / SetPreferredLocation / fill prefetch / events copy-ready / no mempool trim / opportunistic reuse / unlimited mempool maxSize / stream-order memcpy-batch / free_sync managed evict / cudaHostAllocMapped not HostRegisterMapped / async memcpy not SyncMemops / no device SyncMemops / disable-timing non-blocking copy events).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode

@@ -51,9 +51,10 @@ pub enum GpuFill {
     /// [`gpu_sim::MemAdvise::UnsetReadMostly`] so dest prefetch moves.
     /// [`GpuStoreCfg::no_preferred`] is
     /// [`gpu_sim::MemAdvise::UnsetPreferredLocation`] so a remote GEMM
-    /// first-touches instead of staying on home. Default is Global attach
-    /// at alloc, copy-stream prefetch, SetReadMostly, and
-    /// SetPreferredLocation.
+    /// first-touches instead of staying on home. [`GpuStoreCfg::no_mem_prefetch`]
+    /// skips `cudaMemPrefetchAsync` at fill so the kernel first-touches.
+    /// Default is Global attach at alloc, copy-stream prefetch, SetReadMostly,
+    /// and SetPreferredLocation.
     Managed,
     /// `cudaHostAllocMapped` (PCIe kernel, no H2D).
     ///
@@ -230,6 +231,16 @@ pub struct GpuStoreCfg {
     /// migrating) and [`Self::no_read_mostly`] (prefetch move vs replicate).
     /// Decode identity stays SetPreferredLocation.
     pub no_preferred: bool,
+    /// Skip `cudaMemPrefetchAsync` at a managed fill (kernel first-touch).
+    ///
+    /// Default managed fill prefetches onto home on the copy stream so leftover
+    /// compute can overlap that DMA. This skips that prefetch; the first GEMM
+    /// first-touches on the compute stream. Needs [`GpuFill::Managed`]. Implies
+    /// managed on the CLI. Hits stay the same. Distinct from [`Prefetch::None`]
+    /// (predictor) and [`Self::prefetch_host`] (evict to host). Replica dest
+    /// prefetch and host-restore prefetch stay. Decode identity stays fill
+    /// prefetch.
+    pub no_mem_prefetch: bool,
     /// CUDA legacy null stream: copy (`StreamId(0)`) serializes with compute.
     ///
     /// Off by default (`cudaStreamNonBlocking` compute). Decode identity stays
@@ -816,6 +827,8 @@ pub struct SimulatedGpuStore {
     no_read_mostly: bool,
     /// [`GpuStoreCfg::no_preferred`]: skip SetPreferredLocation at managed fill.
     no_preferred: bool,
+    /// [`GpuStoreCfg::no_mem_prefetch`]: skip fill `cudaMemPrefetchAsync`.
+    no_mem_prefetch: bool,
     /// Successful D2D [`Self::migrate`] calls (source device ≠ dest).
     migrates: u64,
     /// [`plan_placement`] chose [`Placement::DispatchActivations`] (no D2D).
@@ -1168,6 +1181,9 @@ impl SimulatedGpuStore {
         if cfg.no_preferred && fill != GpuFill::Managed {
             return Err(Error::Store("no-preferred needs managed"));
         }
+        if cfg.no_mem_prefetch && fill != GpuFill::Managed {
+            return Err(Error::Store("no-mem-prefetch needs managed"));
+        }
         if cfg.pdl && cfg.cooperative {
             return Err(Error::Store("choose one of pdl, cooperative"));
         }
@@ -1432,6 +1448,7 @@ impl SimulatedGpuStore {
             accessed_by: cfg.accessed_by,
             no_read_mostly: cfg.no_read_mostly,
             no_preferred: cfg.no_preferred,
+            no_mem_prefetch: cfg.no_mem_prefetch,
             migrates: 0,
             dispatches: 0,
             replicates: 0,
@@ -2758,11 +2775,13 @@ impl SimulatedGpuStore {
                     let _a = self.sim.stream_attach(d, id, dma, MemAttach::Global)?;
                 }
                 mark_sync_memops(&mut self.sim, id, d, dma, self.sync_memops)?;
-                let _p = self.sim.prefetch(d, id, dma)?;
-                if self.sync_alloc {
-                    self.sim.synchronize_stream(d, dma)?;
+                if !self.no_mem_prefetch {
+                    let _p = self.sim.prefetch(d, id, dma)?;
+                    if self.sync_alloc {
+                        self.sim.synchronize_stream(d, dma)?;
+                    }
+                    host_after_copy(&mut self.sim, d, dma, self.copy_host)?;
                 }
-                host_after_copy(&mut self.sim, d, dma, self.copy_host)?;
                 Ok(id)
             }
             GpuFill::Mapped => {
@@ -2880,9 +2899,10 @@ impl SimulatedGpuStore {
         }
         let compute = self.compute;
         ensure_single_attach(&mut self.sim, device, id, compute)?;
-        // Dest prefetch without ReadMostly moved the page. Live kernels
-        // first-touch; graphs need this prefetch before capture.
-        if self.no_read_mostly && !self.sim.is_resident(id, device)? {
+        // Dest prefetch without ReadMostly moved the page, or fill skipped
+        // prefetch. Live kernels first-touch; graphs need this prefetch
+        // before capture.
+        if (self.no_read_mostly || self.no_mem_prefetch) && !self.sim.is_resident(id, device)? {
             let _p = self.sim.prefetch(device, id, compute)?;
         }
         self.launch_or_gemm(device, id)?;

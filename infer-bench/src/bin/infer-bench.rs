@@ -18,7 +18,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--l2-ratio N] [--l2-streaming] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-load-balance] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--no-read-mostly] [--no-preferred] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--l2-ratio N] [--l2-streaming] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-load-balance] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--no-read-mostly] [--no-preferred] [--no-mem-prefetch] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -169,11 +169,13 @@ fn run() -> Result<(), String> {
             sim_cfg.prefetch_host = cfg.prefetch_host;
             sim_cfg.no_read_mostly = cfg.no_read_mostly;
             sim_cfg.no_preferred = cfg.no_preferred;
+            sim_cfg.no_mem_prefetch = cfg.no_mem_prefetch;
             if cfg.stream_attach
                 || cfg.managed_host
                 || cfg.prefetch_host
                 || cfg.no_read_mostly
                 || cfg.no_preferred
+                || cfg.no_mem_prefetch
             {
                 sim_cfg.managed = true;
             }
@@ -283,6 +285,7 @@ struct Cfg {
     prefetch_host: bool,
     no_read_mostly: bool,
     no_preferred: bool,
+    no_mem_prefetch: bool,
     wait_value: bool,
     multicast: bool,
 }
@@ -355,6 +358,7 @@ where
     let mut prefetch_host = false;
     let mut no_read_mostly = false;
     let mut no_preferred = false;
+    let mut no_mem_prefetch = false;
     let mut wait_value = false;
     let mut multicast = false;
     let mut it = args.into_iter();
@@ -529,6 +533,9 @@ where
             "--no-preferred" => {
                 no_preferred = !matches!(inline.as_deref(), Some("0" | "false"));
             }
+            "--no-mem-prefetch" => {
+                no_mem_prefetch = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
             "--wait-value" => {
                 wait_value = !matches!(inline.as_deref(), Some("0" | "false"));
             }
@@ -669,6 +676,7 @@ where
         prefetch_host,
         no_read_mostly,
         no_preferred,
+        no_mem_prefetch,
         wait_value,
         multicast,
     })
