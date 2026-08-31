@@ -4680,7 +4680,16 @@ model, do not celebrate the sim.
     capture. `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-423. [ ] Next numbered PLAN item after 422 is the next `gpu-sim` / Engine /
+423. [x] CUDA `cudaDevAttrGPUDirectRDMAWritesOrdering`
+    (`DeviceAttr::GpuDirectRdmaWritesOrdering`): always None. Native write
+    visibility is not modeled, so `flush_gpu_direct_rdma_writes` is never a
+    no-op. Distinct from `GpuDirectRdmaFlushWritesOptions` (Host on an RDMA
+    SKU). Also `DeviceProperties.gpu_direct_rdma_writes_ordering`. Query;
+    legal during capture. Do not invent Owner / AllDevices as reported
+    values. `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+424. [ ] Next numbered PLAN item after 423 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4703,6 +4712,9 @@ model, do not celebrate the sim.
     Do not invent a second `cuDevicePrimaryCtxGetState`. Do not invent
     `cuDevicePrimaryCtxRetain` / `Release` / `Reset` (no `CUcontext` object).
     Do not invent a second `cudaDevAttrMaxAccessPolicyWindowSize`.
+    Do not invent a second `cudaDevAttrGPUDirectRDMAWritesOrdering`.
+    Do not invent Owner / AllDevices GPUDirect RDMA write ordering (flush
+    would become a no-op).
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

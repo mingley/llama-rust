@@ -865,9 +865,13 @@ pub enum DeviceAttr {
     /// [`FlushGpuDirectRdmaWritesOptions::HOST`] when this device has a
     /// GPU↔GPU [`crate::LinkKind::Rdma`] link ([`crate::Sim::flush_gpu_direct_rdma_writes`]
     /// is a host-sync barrier). [`FlushGpuDirectRdmaWritesOptions::MEMOPS`]
-    /// is not modeled and is never reported. Write-ordering options are not
-    /// modeled.
+    /// is not modeled and is never reported.
     GpuDirectRdmaFlushWritesOptions,
+    /// `cudaDevAttrGPUDirectRDMAWritesOrdering` (always
+    /// [`GpuDirectRdmaWritesOrdering::NONE`]; native write visibility is not
+    /// modeled, so [`crate::Sim::flush_gpu_direct_rdma_writes`] is never a
+    /// no-op). Distinct from [`Self::GpuDirectRdmaFlushWritesOptions`].
+    GpuDirectRdmaWritesOrdering,
     /// `cudaDevAttrGPUDirectRDMAWithCudaVMMSupported` (same RDMA SKU bit as
     /// [`Self::GpuDirectRdmaSupported`]; this VM always has VMM).
     GpuDirectRdmaWithCudaVMMSupported,
@@ -1068,6 +1072,10 @@ pub struct DeviceProperties {
     /// `cudaDevAttrGPUDirectRDMAFlushWritesOptions` ([`FlushGpuDirectRdmaWritesOptions::HOST`]
     /// on an RDMA SKU; MemOps is never set).
     pub gpu_direct_rdma_flush_writes_options: u64,
+    /// `cudaDevAttrGPUDirectRDMAWritesOrdering` (always
+    /// [`GpuDirectRdmaWritesOrdering::NONE`]). Distinct from
+    /// [`Self::gpu_direct_rdma_flush_writes_options`].
+    pub gpu_direct_rdma_writes_ordering: u64,
     /// `cudaDevAttrGPUDirectRDMAWithCudaVMMSupported` (RDMA SKU; VMM is always on).
     pub gpu_direct_rdma_with_cuda_vmm_supported: bool,
     /// `cudaDevAttrGenericCompressionSupported` (compression is not modeled).
@@ -2668,6 +2676,23 @@ impl FlushGpuDirectRdmaWritesOptions {
     pub const HOST: u64 = 1;
     /// `cudaFlushGPUDirectRDMAWritesOptionMemOps`. Not modeled.
     pub const MEMOPS: u64 = 2;
+}
+
+/// `cudaGPUDirectRDMAWritesOrdering` for
+/// [`DeviceAttr::GpuDirectRdmaWritesOrdering`].
+///
+/// This VM always reports [`Self::NONE`]: remote writes are not natively
+/// ordered, so [`crate::Sim::flush_gpu_direct_rdma_writes`] is never a no-op.
+/// [`Self::OWNER`] / [`Self::ALL_DEVICES`] are CUDA names only (not reported).
+pub struct GpuDirectRdmaWritesOrdering;
+
+impl GpuDirectRdmaWritesOrdering {
+    /// `cudaGPUDirectRDMAWritesOrderingNone`.
+    pub const NONE: u64 = 0;
+    /// `cudaGPUDirectRDMAWritesOrderingOwner`. Not reported.
+    pub const OWNER: u64 = 100;
+    /// `cudaGPUDirectRDMAWritesOrderingAllDevices`. Not reported.
+    pub const ALL_DEVICES: u64 = 200;
 }
 
 /// `cudaDeviceFlushGPUDirectRDMAWrites` target for

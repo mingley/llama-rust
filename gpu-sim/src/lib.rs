@@ -410,7 +410,11 @@
 //! has POSIX-FD shareable pools).
 //! [`DeviceAttr::GpuDirectRdmaFlushWritesOptions`] is
 //! [`FlushGpuDirectRdmaWritesOptions::HOST`] on an RDMA SKU (MemOps is never
-//! reported). [`DeviceAttr::GpuDirectRdmaWithCudaVMMSupported`] is the same
+//! reported). [`DeviceAttr::GpuDirectRdmaWritesOrdering`] is always
+//! [`GpuDirectRdmaWritesOrdering::NONE`] (native write visibility is not
+//! modeled; flush is never a no-op). Distinct from
+//! [`DeviceAttr::GpuDirectRdmaFlushWritesOptions`].
+//! [`DeviceAttr::GpuDirectRdmaWithCudaVMMSupported`] is the same
 //! RDMA SKU bit (VMM is always on). [`DeviceAttr::GenericCompressionSupported`]
 //! is always 0 (compression is not modeled).
 //! [`DeviceAttr::HandleTypeWin32HandleSupported`] /
@@ -1018,22 +1022,22 @@ pub use ops::{
     DevResourceType, DevSmResourceSplitFlags, DeviceAttr, DeviceFlags, DeviceLimit,
     DeviceNumaConfig, DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags,
     EventWaitFlags, FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget,
-    FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, GpuOp, GraphAddNode,
-    GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
-    GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
-    GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams,
-    IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue,
-    KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise,
-    MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags,
-    MemCreateFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr, MemPoolExportFlags,
-    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags, MemSyncDomain,
-    MemSyncDomainMap, MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType,
-    MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
-    Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes,
-    PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
-    SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue,
-    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
+    FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, GpuDirectRdmaWritesOrdering, GpuOp,
+    GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo,
+    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
+    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags,
+    HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind,
+    KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessDesc,
+    MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType,
+    MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType, MemMapFlags,
+    MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
+    MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyFlags, MemcpyOp,
+    MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags, MulticastCreateFlags,
+    MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch, PeerAccessFlags, Place,
+    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
+    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource,
+    StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -12639,6 +12643,46 @@ mod tests {
             h100.device_get_attribute(d, DeviceAttr::GenericCompressionSupported)
                 .unwrap(),
             0
+        );
+        let _g = h100.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_rdma_writes_ordering_is_none() {
+        let mut h100 = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = h100.device_get_properties(d).unwrap();
+        assert_eq!(
+            hp.gpu_direct_rdma_writes_ordering,
+            GpuDirectRdmaWritesOrdering::NONE
+        );
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::GpuDirectRdmaWritesOrdering)
+                .unwrap(),
+            GpuDirectRdmaWritesOrdering::NONE
+        );
+        let rdma = Sim::new(HardwareProfile::example_2node_rdma());
+        assert_eq!(
+            rdma.device_get_attribute(DeviceId(0), DeviceAttr::GpuDirectRdmaWritesOrdering)
+                .unwrap(),
+            GpuDirectRdmaWritesOrdering::NONE
+        );
+        assert_eq!(
+            rdma.device_get_attribute(DeviceId(0), DeviceAttr::GpuDirectRdmaFlushWritesOptions)
+                .unwrap(),
+            FlushGpuDirectRdmaWritesOptions::HOST
+        );
+        assert_eq!(
+            rdma.device_get_properties(DeviceId(0))
+                .unwrap()
+                .gpu_direct_rdma_writes_ordering,
+            GpuDirectRdmaWritesOrdering::NONE
+        );
+        h100.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            h100.device_get_attribute(d, DeviceAttr::GpuDirectRdmaWritesOrdering)
+                .unwrap(),
+            GpuDirectRdmaWritesOrdering::NONE
         );
         let _g = h100.end_capture().unwrap();
     }

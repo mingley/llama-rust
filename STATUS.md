@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cudaDevAttrGPUDirectRDMAWritesOrdering`
+
+`gpu-sim` `DeviceAttr::GpuDirectRdmaWritesOrdering` is always None. Native
+write visibility is not modeled, so `flush_gpu_direct_rdma_writes` is never
+a no-op. Distinct from `GpuDirectRdmaFlushWritesOptions` (Host on an RDMA
+SKU). Also `DeviceProperties.gpu_direct_rdma_writes_ordering`. Query; legal
+during capture. `gpu-profile capture` is still refused. Dual score still
+has no `$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cudaDevAttrMaxAccessPolicyWindowSize`
 
 `gpu-sim` `DeviceAttr::MaxAccessPolicyWindowSize` is L2 bytes, same as
