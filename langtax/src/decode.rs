@@ -81,6 +81,9 @@
 //! fixture with `rope.freq_base` vs `rope.freq_base_swa` as in E2B/E4B.
 //! Writer-tiny omitted `wv` ([`tiny_gemma4_no_wv_gguf`]) is dense gemma4
 //! without `attn_v`; decode uses K as V before the unweighted V RMSNorm.
+//! Writer-tiny layer output scale ([`tiny_gemma4_out_scale_gguf`]) is dense
+//! gemma4 with `blk.0.layer_output_scale` (broadcast `ggml_mul` after the
+//! FFN residual).
 
 use crate::gguf::{load_gguf_owned, GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 pub use crate::kv_page::PagedKvPool;
@@ -179,6 +182,10 @@ const TINY_GEMMA4_FREQ_BASE_SWA: f32 = 10_000.0;
 /// unrotated self key and a different global `rope.freq_base` cannot move
 /// logits. `0.1` keeps scores O(1) so RoPE wavelengths are observable.
 const TINY_GEMMA4_GLOBAL_QK_NORM: f32 = 0.1;
+/// Writer-tiny Gemma4 `layer_output_scale` (broadcast scalar). Official
+/// `ggml_mul` after the FFN residual (and PLE inject). Not 1, so the walk
+/// is observable vs dense `tiny-gemma4`.
+const TINY_GEMMA4_OUT_SCALE: f32 = 0.5;
 /// Writer-built tiny Qwen3Next `qwen3next.expert_count` (official load rejects 0).
 const TINY_QWEN3NEXT_N_EXPERT: usize = 4;
 /// Writer-built tiny `qwen3next.expert_used_count`.
@@ -585,6 +592,9 @@ struct Layer {
     gemma3n: Option<Gemma3nLayer>,
     /// Official gemma4.cpp per-layer embedding inject (`n_embd_per_layer > 0`).
     gemma4_ple: Option<Gemma4PleLayer>,
+    /// Official gemma4 `blk.{i}.layer_output_scale` (`TENSOR_NOT_REQUIRED`).
+    /// Broadcast scalar `ggml_mul` after the FFN residual (and PLE inject).
+    out_scale: Option<f32>,
 }
 
 /// Official gemma4.cpp per-layer input inject weights (`inp_gate` / `proj` / `post_norm`).
@@ -1672,7 +1682,8 @@ impl Llama {
     /// Shared KV is [`tiny_gemma4_shared_kv_gguf`]. Mixed SWA/global head
     /// dims are [`tiny_gemma4_mixed_hd_gguf`]. SWA RoPE base is
     /// [`tiny_gemma4_swa_base_gguf`]. Omitted `wv` (K as V) is
-    /// [`tiny_gemma4_no_wv_gguf`].
+    /// [`tiny_gemma4_no_wv_gguf`]. Layer output scale is
+    /// [`tiny_gemma4_out_scale_gguf`].
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
     /// blob; they do not clone tensor bytes. When `output.weight` is absent,
@@ -2754,6 +2765,11 @@ impl Llama {
                         .as_ref()
                         .ok_or_else(|| LlamaError::Shape("gemma4 per_layer".into()))?;
                     self.gemma4_per_layer_inject(w, gl, li, n, s, pool)?;
+                }
+            }
+            if let Some(scale) = layer.out_scale {
+                for v in s.x.iter_mut() {
+                    *v *= scale;
                 }
             }
         }
@@ -4009,6 +4025,7 @@ pub fn tiny_gemma3n_gguf() -> Vec<u8> {
 /// ([`tiny_gemma4_mixed_hd_gguf`]).
 /// Official Gemma4 SWA RoPE base is the same arch ([`tiny_gemma4_swa_base_gguf`]).
 /// Official Gemma4 omitted `wv` (K as V) is the same arch ([`tiny_gemma4_no_wv_gguf`]).
+/// Official Gemma4 layer output scale is the same arch ([`tiny_gemma4_out_scale_gguf`]).
 pub fn tiny_gemma4_gguf() -> Vec<u8> {
     tiny_arch_gguf_lm_head(
         TinySpec {
@@ -4458,6 +4475,41 @@ fn omit_tiny_gemma4_wv(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
             data: t.data.to_vec(),
         });
     }
+    Ok(write_gguf_with_kv(&kv, &tensors))
+}
+
+/// Writer-built official Gemma4 layer-output-scale GGUF: `architecture=gemma4`
+/// with `blk.0.layer_output_scale`.
+///
+/// Same dense `gemma4.*` KV and tensors as [`tiny_gemma4_gguf`] plus a
+/// length-1 F32 scale. Decode follows llama.cpp `src/models/gemma4.cpp`:
+/// `out_scale` is `TENSOR_NOT_REQUIRED`; when present, `ggml_mul` broadcasts
+/// it onto the residual after FFN (and PLE inject). Not a second architecture.
+/// Optional `rope_freqs` stay omitted.
+pub fn tiny_gemma4_out_scale_gguf() -> Vec<u8> {
+    rewrite_tiny_gemma4_out_scale(tiny_gemma4_gguf()).unwrap_or_else(|_| Vec::new())
+}
+
+/// Append `blk.0.layer_output_scale.weight` = [`TINY_GEMMA4_OUT_SCALE`].
+fn rewrite_tiny_gemma4_out_scale(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
+    let g = load_gguf_owned(bytes)?;
+    let kv: Vec<(String, Kv)> = g.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut tensors = Vec::new();
+    for t in g.tensors() {
+        tensors.push(TensorWrite {
+            name: t.name.to_string(),
+            ty: t.ty,
+            shape: t.shape.to_vec(),
+            data: t.data.to_vec(),
+        });
+    }
+    let scale = [TINY_GEMMA4_OUT_SCALE];
+    tensors.push(tw(
+        "blk.0.layer_output_scale.weight",
+        GgmlType::F32,
+        vec![1],
+        pack_vec1d(GgmlType::F32, &scale),
+    ));
     Ok(write_gguf_with_kv(&kv, &tensors))
 }
 
@@ -8152,6 +8204,19 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
         },
         gemma4_ple: if h.gemma4 && h.gemma4_n_pl > 0 {
             Some(load_gemma4_ple_layer(g, i)?)
+        } else {
+            None
+        },
+        out_scale: if h.gemma4 {
+            match optional_f32(g, &format!("blk.{i}.layer_output_scale.weight"))? {
+                Some(v) if v.len() == 1 => v.first().copied(),
+                Some(_) => {
+                    return Err(LlamaError::Shape(format!(
+                        "blk.{i}.layer_output_scale.weight"
+                    )));
+                }
+                None => None,
+            }
         } else {
             None
         },
@@ -13603,6 +13668,16 @@ mod tests {
                         }
                     }
                 }
+                if gemma4 {
+                    if let Some(t) = g.tensor(&tname(li, "layer_output_scale.weight")) {
+                        let w = f32s(t).unwrap();
+                        if let Some(&scale) = w.first() {
+                            for v in &mut x {
+                                *v *= scale;
+                            }
+                        }
+                    }
+                }
                 residual = x.clone();
             }
             let on = f32s(g.tensor("output_norm.weight").unwrap()).unwrap();
@@ -14922,6 +14997,7 @@ mod tests {
             tiny_gemma4_mixed_hd_gguf(),
             tiny_gemma4_swa_base_gguf(),
             tiny_gemma4_no_wv_gguf(),
+            tiny_gemma4_out_scale_gguf(),
             tiny_qwen3_gguf(),
             tiny_llama4_gguf(),
             tiny_llama_moe_gguf(),
@@ -14982,6 +15058,7 @@ mod tests {
             ("gemma4-mixed-hd", tiny_gemma4_mixed_hd_gguf()),
             ("gemma4-swa-base", tiny_gemma4_swa_base_gguf()),
             ("gemma4-no-wv", tiny_gemma4_no_wv_gguf()),
+            ("gemma4-out-scale", tiny_gemma4_out_scale_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("f16", tiny_f16_gguf()),
@@ -15077,6 +15154,7 @@ mod tests {
             ("gemma4-mixed-hd", tiny_gemma4_mixed_hd_gguf()),
             ("gemma4-swa-base", tiny_gemma4_swa_base_gguf()),
             ("gemma4-no-wv", tiny_gemma4_no_wv_gguf()),
+            ("gemma4-out-scale", tiny_gemma4_out_scale_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("llama-moe", tiny_llama_moe_gguf()),
@@ -16818,6 +16896,47 @@ mod tests {
         assert_ne!(
             no_wv_pref, dense_pref,
             "omitted wv must use K as V, not copy dense wv logits"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma4_out_scale_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_out_scale_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 out scale");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        let scale = g.tensor("blk.0.layer_output_scale.weight").expect("scale");
+        assert_eq!(scale.n_cols(), 1);
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        assert_eq!(model.layers[0].out_scale, Some(TINY_GEMMA4_OUT_SCALE));
+        let dense = load_gguf(&tiny_gemma4_gguf()).expect("dense");
+        assert!(dense.tensor("blk.0.layer_output_scale.weight").is_none());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&dense, &[1, 2, 3]),
+            "oracle out_scale vs dense"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("scaled pref");
+        let dense_pref = {
+            let dm = Llama::from_gguf(dense).expect("dm");
+            assert!(dm.layers[0].out_scale.is_none());
+            let mut c = dm.new_cache(8).expect("dc");
+            dm.prefill(&mut c, &tokens).expect("dense pref")
+        };
+        assert_ne!(
+            scaled, dense_pref,
+            "layer_output_scale 0.5 must not copy dense logits"
         );
     }
 
@@ -19496,7 +19615,7 @@ mod bench {
     fn bench_logits_fingerprint() {
         // Every zero-argument fixture in the suite, so that each architecture
         // walk and each dtype kernel the decode path can reach is pinned.
-        let cases: [(&str, Vec<u8>); 62] = [
+        let cases: [(&str, Vec<u8>); 63] = [
             ("llama", tiny_llama_gguf()),
             ("tied", tiny_tied_gguf()),
             ("tied_copy", tiny_tied_copy_gguf()),
@@ -19530,6 +19649,7 @@ mod bench {
             ("gemma4_mixed_hd", tiny_gemma4_mixed_hd_gguf()),
             ("gemma4_swa_base", tiny_gemma4_swa_base_gguf()),
             ("gemma4_no_wv", tiny_gemma4_no_wv_gguf()),
+            ("gemma4_out_scale", tiny_gemma4_out_scale_gguf()),
             ("f16", tiny_f16_gguf()),
             ("f16_1d", tiny_f16_1d_gguf()),
             ("f16_1d_bias", tiny_f16_1d_bias_gguf()),
