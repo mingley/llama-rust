@@ -116,6 +116,8 @@ walker does not imply `--decode-priority`). `--shared-mem default|four|eight` is
 scales duration; FourByte / EightByte scale by `1000 / shared_mem_*_permille`).
 `--func-shared-mem default|four|eight` is `cudaFuncSetSharedMemConfig`: launch
 Default inherits that duration scale (distinct from `--shared-mem`).
+`--device-shared-mem default|four|eight` is `cudaDeviceSetSharedMemConfig`:
+launch Default inherits when function config is also Default.
 `--portable-cluster default|portable|non-portable` is
 `cudaLaunchAttributePortableClusterSizeMode` on grouped expert GEMMs (Default
 uses the function attribute; `portable` always refuses oversize; `non-portable`
@@ -276,9 +278,9 @@ on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--mempool-trim` / `--mempool-no-reuse` / `--shareable` / `--vmm-page` /
 `--pageable` / `--host-register` / `--host-register-mapped` / `--sync-memops` / `--device-sync-memops` / `--memcpy-batch` / `--accessed-by` / `--legacy-null` / `--stream-priority` /
 `--seq-streams` / `--kv-sim` / `--kv-bytes` / `--decode-priority` /
-`--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--max-shared` / `--func-max-shared` / `--non-portable-cluster` / `--sync-policy` / `--mem-sync-domain` / `--shared-mem` / `--func-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--wait-value` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
+`--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--max-shared` / `--func-max-shared` / `--non-portable-cluster` / `--sync-policy` / `--mem-sync-domain` / `--shared-mem` / `--func-shared-mem` / `--device-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--wait-value` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
 `expertvm sim` / `schedule` / `store` take `--compute-slots` / `--decode-sms`
-/ `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--max-shared` / `--func-max-shared` / `--non-portable-cluster` / `--sync-policy` / `--mem-sync-domain` / `--shared-mem` / `--func-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--wait-value` / `--multicast` / `--shareable` (Hyper-Q occupancy, green-context SM fraction,
+/ `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--max-shared` / `--func-max-shared` / `--non-portable-cluster` / `--sync-policy` / `--mem-sync-domain` / `--shared-mem` / `--func-shared-mem` / `--device-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--wait-value` / `--multicast` / `--shareable` (Hyper-Q occupancy, green-context SM fraction,
 decode-stream ITL, exclusive cooperative GEMMs, same-stream PDL overlap, Hopper cluster occupancy / preferred dim / Spread scheduling / non-portable size, NVLS replica fanout, and POSIX-FD mempool IPC on the trace walker). Walker `--decode-sms` does **not**
 imply `--decode-priority` (token 0 is prefill). Engine `--mem-sync-domain remote`
 implies `--decode-priority`. `--decode-priority` implies
@@ -309,7 +311,8 @@ up to the SKU max. `--sync-policy auto|spin|yield|blocking` is stream host-wait
 `cudaLaunchAttributeMemSyncDomain` (Remote isolates leftover prefill fence
 tax; engine implies `--decode-priority`). `--shared-mem default|four|eight` is kernel-node bank width
 (Default never scales). `--func-shared-mem default|four|eight` is function bank
-width (launch Default inherits; distinct from `--shared-mem`). `--portable-cluster default|portable|non-portable` is
+width (launch Default inherits; distinct from `--shared-mem`). `--device-shared-mem default|four|eight` is
+device bank width (launch Default inherits when function is Default). `--portable-cluster default|portable|non-portable` is
 launch-time portable cluster mode (Default uses the function attribute).
 `--optin-shared` is MaxDynamicSharedMemorySize to the SKU opt-in.
 `--dynamic-shared N` is `sharedMemBytes` (`N` > 0). `--portable-shared
@@ -461,6 +464,7 @@ expertvm sim      trace.jsonl --capacity 2 --compute-slots 2 --pdl
 expertvm sim      trace.jsonl --capacity 2 --l2-persist
 expertvm sim      trace.jsonl --capacity 2 --l2-reset
 expertvm sim      trace.jsonl --capacity 2 --func-shared-mem eight
+expertvm sim      trace.jsonl --capacity 2 --device-shared-mem eight
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 2 --cluster 2
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 4 --cluster 2 --preferred-cluster 4
 expertvm sim      trace.jsonl --capacity 2 --seq-streams --compute-slots 4 --cluster 2 --cluster-spread

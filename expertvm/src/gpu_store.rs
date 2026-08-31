@@ -10,14 +10,14 @@ use crate::planner::{
 };
 use crate::sim_replay::{
     add_leaf_gemm, alloc_launch_completion, alloc_programmatic_event, alloc_resident_copy_mailbox,
-    allow_non_portable_cluster_if, allow_optin_shared_if, apply_device_sync_memops,
-    apply_exec_mem_sync_domain, apply_func_cluster_spread, apply_func_max_shared,
-    apply_func_shared_mem, apply_stream_mem_sync_domain, apply_stream_sync_policy,
-    bind_shareable_mempools, check_cluster_preferred, check_device_graph_flags,
-    ensure_single_attach, free_copy_mailbox, free_mapped_host, instantiate_exec, kernel_leaf,
-    mark_sync_memops, replay_exec, replay_streams, reset_persisting_l2_if, retarget_parked_kernel,
-    signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem,
-    StreamPlan,
+    allow_non_portable_cluster_if, allow_optin_shared_if, apply_device_shared_mem,
+    apply_device_sync_memops, apply_exec_mem_sync_domain, apply_func_cluster_spread,
+    apply_func_max_shared, apply_func_shared_mem, apply_stream_mem_sync_domain,
+    apply_stream_sync_policy, bind_shareable_mempools, check_cluster_preferred,
+    check_device_graph_flags, ensure_single_attach, free_copy_mailbox, free_mapped_host,
+    instantiate_exec, kernel_leaf, mark_sync_memops, replay_exec, replay_streams,
+    reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
+    upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -327,6 +327,12 @@ pub struct GpuStoreCfg {
     /// Launch Default inherits this duration scale. Distinct from launch-attribute
     /// [`Self::shared_mem`]. Decode identity stays Default.
     pub func_shared_mem: gpu_sim::SharedMemoryMode,
+    /// Device shared-mem bank width (`cudaDeviceSetSharedMemConfig`).
+    ///
+    /// Launch Default inherits this duration scale when the function config is
+    /// also Default. Distinct from [`Self::func_shared_mem`] and launch-attribute
+    /// [`Self::shared_mem`]. Decode identity stays Default.
+    pub device_shared_mem: gpu_sim::SharedMemoryMode,
     /// Portable-cluster size mode (`cudaLaunchAttributePortableClusterSizeMode`).
     ///
     /// Default uses the current function attribute. RequirePortable always
@@ -723,6 +729,8 @@ impl SimulatedGpuStore {
     /// (`cudaLaunchAttributeSharedMemoryMode`; Default never scales).
     /// [`GpuStoreCfg::func_shared_mem`] is `cudaFuncSetSharedMemConfig`
     /// (launch Default inherits; distinct from launch-attribute `--shared-mem`).
+    /// [`GpuStoreCfg::device_shared_mem`] is `cudaDeviceSetSharedMemConfig`
+    /// (launch Default inherits when function config is also Default).
     /// [`GpuStoreCfg::portable_cluster`] is launch-time portable cluster mode
     /// (`cudaLaunchAttributePortableClusterSizeMode`; Default uses the function attr).
     /// [`GpuStoreCfg::optin_shared`] is `cudaFuncAttributeMaxDynamicSharedMemorySize`
@@ -892,6 +900,7 @@ impl SimulatedGpuStore {
         apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
         apply_func_cluster_spread(&mut sim, cfg.func_cluster_spread)?;
         apply_func_shared_mem(&mut sim, cfg.func_shared_mem)?;
+        apply_device_shared_mem(&mut sim, cfg.device_shared_mem)?;
         if cfg.l2_persist || cfg.l2_reset {
             sim.enable_persisting_l2()?;
         }
@@ -1125,6 +1134,14 @@ impl SimulatedGpuStore {
     pub fn func_shared_mem(&self) -> SharedMemoryMode {
         self.sim
             .get_func_shared_mem_config(self.device)
+            .unwrap_or(SharedMemoryMode::Default)
+    }
+
+    /// Device shared-mem bank width set at construction (`cudaDeviceSetSharedMemConfig`).
+    #[must_use]
+    pub fn device_shared_mem(&self) -> SharedMemoryMode {
+        self.sim
+            .get_shared_mem_config(self.device)
             .unwrap_or(SharedMemoryMode::Default)
     }
 

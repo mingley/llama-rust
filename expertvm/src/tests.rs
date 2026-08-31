@@ -7243,6 +7243,87 @@ fn simulated_gpu_store_func_shared_mem_lengthens_gemm() {
 }
 
 #[test]
+fn simulated_gpu_store_device_shared_mem_lengthens_gemm() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile =
+        HardwareProfile::parse("gpus=1\nshared_mem_eight_byte_permille=500\nfp16_flops=1000000\n")
+            .expect("shared-mem profile");
+    let run = |device: SharedMemoryMode, func: SharedMemoryMode, launch: SharedMemoryMode| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = match SimulatedGpuStore::with_cfg(
+            inner,
+            1,
+            profile.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                device_shared_mem: device,
+                func_shared_mem: func,
+                shared_mem: launch,
+                ..GpuStoreCfg::default()
+            },
+        ) {
+            Ok(gpu) => gpu,
+            Err(err) => panic!("gpu: {err}"),
+        };
+        assert_eq!(gpu.device_shared_mem(), device);
+        let key = ExpertKey::new(0, 0);
+        match gpu.acquire(key) {
+            Ok(_) => {}
+            Err(err) => panic!("warm: {err}"),
+        }
+        gpu.release(key);
+        let t0 = gpu.clock_ns().expect("drain");
+        match gpu.acquire(key) {
+            Ok(_) => {}
+            Err(err) => panic!("hit: {err}"),
+        }
+        gpu.release(key);
+        gpu.clock_ns().expect("done").saturating_sub(t0)
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut identity = SimulatedGpuStore::new(inner, 1, profile.clone(), 4096).expect("id");
+    let k0 = ExpertKey::new(0, 0);
+    let _a = identity.acquire(k0).expect("id acq");
+    assert_eq!(identity.device_shared_mem(), SharedMemoryMode::Default);
+    let _s = identity.score().expect("id score");
+    let def = run(
+        SharedMemoryMode::Default,
+        SharedMemoryMode::Default,
+        SharedMemoryMode::Default,
+    );
+    let eight = run(
+        SharedMemoryMode::EightByte,
+        SharedMemoryMode::Default,
+        SharedMemoryMode::Default,
+    );
+    let overridden = run(
+        SharedMemoryMode::EightByte,
+        SharedMemoryMode::Default,
+        SharedMemoryMode::FourByte,
+    );
+    let func_wins = run(
+        SharedMemoryMode::FourByte,
+        SharedMemoryMode::EightByte,
+        SharedMemoryMode::Default,
+    );
+    assert!(
+        eight > def,
+        "device EightByte at permille 500 must lengthen hit GEMM; default={def} eight={eight}"
+    );
+    assert!(
+        overridden < eight,
+        "launch FourByte must override device EightByte; override={overridden} eight={eight}"
+    );
+    assert!(
+        func_wins > def,
+        "func EightByte must override device FourByte; default={def} func={func_wins}"
+    );
+}
+
+#[test]
 fn simulated_gpu_store_compute_slots_overlap_across_token_clock() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1])],
@@ -7923,6 +8004,68 @@ fn sim_replay_func_shared_mem_eight_lengthens() {
         "launch FourByte must override func EightByte; override={} eight={}",
         overridden.sim_ns,
         eight.sim_ns
+    );
+}
+
+#[test]
+fn sim_replay_device_shared_mem_eight_lengthens() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0]), ev(2, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse(
+        "gpus=1\nshared_mem_eight_byte_permille=500\nfp16_flops=1000000\ncopy_engines=2\n",
+    )
+    .expect("shared-mem profile");
+    let base = SimCfg::lru(1, 4096, 0);
+    let def = sim_replay_cfg(&t, profile.clone(), base).expect("default");
+    let eight = sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            device_shared_mem: SharedMemoryMode::EightByte,
+            ..base
+        },
+    )
+    .expect("device eight");
+    let overridden = sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            device_shared_mem: SharedMemoryMode::EightByte,
+            shared_mem: SharedMemoryMode::FourByte,
+            ..base
+        },
+    )
+    .expect("launch four overrides");
+    let func_wins = sim_replay_cfg(
+        &t,
+        profile,
+        SimCfg {
+            device_shared_mem: SharedMemoryMode::FourByte,
+            func_shared_mem: SharedMemoryMode::EightByte,
+            ..base
+        },
+    )
+    .expect("func eight overrides device");
+    assert_eq!(def.hits, eight.hits);
+    assert_eq!(def.misses, eight.misses);
+    assert!(
+        eight.sim_ns > def.sim_ns,
+        "device EightByte at permille 500 must lengthen replay GEMMs; default={} eight={}",
+        def.sim_ns,
+        eight.sim_ns
+    );
+    assert!(
+        overridden.sim_ns < eight.sim_ns,
+        "launch FourByte must override device EightByte; override={} eight={}",
+        overridden.sim_ns,
+        eight.sim_ns
+    );
+    assert!(
+        func_wins.sim_ns > def.sim_ns,
+        "func EightByte must override device FourByte; default={} func={}",
+        def.sim_ns,
+        func_wins.sim_ns
     );
 }
 
@@ -10149,6 +10292,21 @@ fn sim_replay_func_shared_mem_keeps_hits() {
     };
     let a = sim_replay_cfg(&t, profile.clone(), off).expect("identity");
     let b = sim_replay_cfg(&t, profile, on).expect("func-shared-mem");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+}
+
+#[test]
+fn sim_replay_device_shared_mem_keeps_hits() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg::lru(2, 4096, 0);
+    let on = SimCfg {
+        device_shared_mem: SharedMemoryMode::EightByte,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("identity");
+    let b = sim_replay_cfg(&t, profile, on).expect("device-shared-mem");
     assert_eq!(a.hits, b.hits);
     assert_eq!(a.misses, b.misses);
 }

@@ -629,6 +629,8 @@
 //! `1000 / GpuProfile::shared_mem_*_permille` (profile default `1000`).
 //! `expertvm sim --func-shared-mem eight` sets function EightByte so launch
 //! Default inherits that duration scale (distinct from `--shared-mem`).
+//! `expertvm sim --device-shared-mem eight` sets device EightByte so launch
+//! Default inherits when function config is also Default.
 //! [`PortableClusterMode`] is `cudaLaunchAttributePortableClusterSizeMode`:
 //! Default uses the function attribute; RequirePortable always refuses a
 //! non-portable size; AllowNonPortable allows up to `max_blocks_per_cluster`.

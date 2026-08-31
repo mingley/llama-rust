@@ -18,7 +18,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--max-shared] [--func-max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--max-shared] [--func-max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -144,6 +144,7 @@ fn run() -> Result<(), String> {
             sim_cfg.sync_policy = cfg.sync_policy;
             sim_cfg.shared_mem = cfg.shared_mem;
             sim_cfg.func_shared_mem = cfg.func_shared_mem;
+            sim_cfg.device_shared_mem = cfg.device_shared_mem;
             sim_cfg.portable_cluster = cfg.portable_cluster;
             sim_cfg.optin_shared = cfg.optin_shared;
             sim_cfg.dynamic_shared = cfg.dynamic_shared;
@@ -242,6 +243,7 @@ struct Cfg {
     sync_policy: SynchronizationPolicy,
     shared_mem: SharedMemoryMode,
     func_shared_mem: SharedMemoryMode,
+    device_shared_mem: SharedMemoryMode,
     portable_cluster: PortableClusterMode,
     optin_shared: bool,
     dynamic_shared: u32,
@@ -303,6 +305,7 @@ where
     let mut sync_policy = SynchronizationPolicy::Auto;
     let mut shared_mem = SharedMemoryMode::Default;
     let mut func_shared_mem = SharedMemoryMode::Default;
+    let mut device_shared_mem = SharedMemoryMode::Default;
     let mut portable_cluster = PortableClusterMode::Default;
     let mut optin_shared = false;
     let mut dynamic_shared = 0u32;
@@ -412,6 +415,10 @@ where
             "--func-shared-mem" => {
                 func_shared_mem =
                     parse_func_shared_mem(&value("func-shared-mem", inline, &mut it)?)?
+            }
+            "--device-shared-mem" => {
+                device_shared_mem =
+                    parse_device_shared_mem(&value("device-shared-mem", inline, &mut it)?)?
             }
             "--portable-cluster" => {
                 portable_cluster =
@@ -550,6 +557,7 @@ where
         sync_policy,
         shared_mem,
         func_shared_mem,
+        device_shared_mem,
         portable_cluster,
         optin_shared,
         dynamic_shared,
@@ -623,6 +631,10 @@ fn parse_shared_mem(s: &str) -> Result<SharedMemoryMode, String> {
 
 fn parse_func_shared_mem(s: &str) -> Result<SharedMemoryMode, String> {
     SharedMemoryMode::parse(s).map_err(|_| format!("unknown func-shared-mem {s}"))
+}
+
+fn parse_device_shared_mem(s: &str) -> Result<SharedMemoryMode, String> {
+    SharedMemoryMode::parse(s).map_err(|_| format!("unknown device-shared-mem {s}"))
 }
 
 fn parse_portable_cluster(s: &str) -> Result<PortableClusterMode, String> {

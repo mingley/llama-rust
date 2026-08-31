@@ -13550,6 +13550,7 @@ impl Sim {
     /// time when the function config is also Default. Unset is
     /// [`SharedMemoryMode::Default`] (unscaled). Launch FourByte / EightByte
     /// still override. Decode identity stays unset.
+    /// `expertvm sim --device-shared-mem eight` sets [`SharedMemoryMode::EightByte`].
     pub fn set_shared_mem_config(
         &mut self,
         device: DeviceId,

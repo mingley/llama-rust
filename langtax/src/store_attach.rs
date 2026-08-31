@@ -119,6 +119,10 @@ pub(crate) struct GpuCli {
     pub func_shared_mem: SharedMemoryMode,
     /// True when `--func-shared-mem` appeared.
     pub func_shared_mem_set: bool,
+    /// Device shared-mem bank width (`GpuStoreCfg::device_shared_mem`).
+    pub device_shared_mem: SharedMemoryMode,
+    /// True when `--device-shared-mem` appeared.
+    pub device_shared_mem_set: bool,
     /// Portable-cluster size mode (`GpuStoreCfg::portable_cluster`).
     pub portable_cluster: PortableClusterMode,
     /// True when `--portable-cluster` appeared.
@@ -377,6 +381,14 @@ impl GpuCli {
         Ok(())
     }
 
+    /// Device shared-mem bank width (`--device-shared-mem default|four|eight`).
+    pub(crate) fn set_device_shared_mem(&mut self, raw: &str) -> Result<(), String> {
+        self.device_shared_mem =
+            SharedMemoryMode::parse(raw).map_err(|_| format!("unknown device-shared-mem {raw}"))?;
+        self.device_shared_mem_set = true;
+        Ok(())
+    }
+
     /// Launch-time portable cluster (`--portable-cluster default|portable|non-portable`).
     pub(crate) fn set_portable_cluster(&mut self, raw: &str) -> Result<(), String> {
         self.portable_cluster = PortableClusterMode::parse(raw)
@@ -477,6 +489,7 @@ impl GpuCli {
             (self.mem_sync_domain_set, "--mem-sync-domain"),
             (self.shared_mem_set, "--shared-mem"),
             (self.func_shared_mem_set, "--func-shared-mem"),
+            (self.device_shared_mem_set, "--device-shared-mem"),
             (self.portable_cluster_set, "--portable-cluster"),
             (self.optin_shared, "--optin-shared"),
             (self.dynamic_shared_set, "--dynamic-shared"),
@@ -552,6 +565,7 @@ enum PlanSlot {
     MemSyncDomain,
     SharedMem,
     FuncSharedMem,
+    DeviceSharedMem,
     PortableCluster,
     DynamicShared,
     PortableShared,
@@ -574,6 +588,7 @@ impl PlanSlot {
             Self::MemSyncDomain => "mem-sync-domain",
             Self::SharedMem => "shared-mem",
             Self::FuncSharedMem => "func-shared-mem",
+            Self::DeviceSharedMem => "device-shared-mem",
             Self::PortableCluster => "portable-cluster",
             Self::DynamicShared => "dynamic-shared",
             Self::PortableShared => "portable-shared",
@@ -601,6 +616,7 @@ impl PlannerCli {
             "--mem-sync-domain" => Dash::Need(PlanSlot::MemSyncDomain),
             "--shared-mem" => Dash::Need(PlanSlot::SharedMem),
             "--func-shared-mem" => Dash::Need(PlanSlot::FuncSharedMem),
+            "--device-shared-mem" => Dash::Need(PlanSlot::DeviceSharedMem),
             "--portable-cluster" => Dash::Need(PlanSlot::PortableCluster),
             "--dynamic-shared" => Dash::Need(PlanSlot::DynamicShared),
             "--portable-shared" => Dash::Need(PlanSlot::PortableShared),
@@ -649,6 +665,7 @@ impl PlannerCli {
             PlanSlot::MemSyncDomain => self.gpu.set_mem_sync_domain(raw)?,
             PlanSlot::SharedMem => self.gpu.set_shared_mem(raw)?,
             PlanSlot::FuncSharedMem => self.gpu.set_func_shared_mem(raw)?,
+            PlanSlot::DeviceSharedMem => self.gpu.set_device_shared_mem(raw)?,
             PlanSlot::PortableCluster => self.gpu.set_portable_cluster(raw)?,
             PlanSlot::DynamicShared => {
                 let n = raw
@@ -780,6 +797,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         mem_sync_domain: gpu.mem_sync_domain,
         shared_mem: gpu.shared_mem,
         func_shared_mem: gpu.func_shared_mem,
+        device_shared_mem: gpu.device_shared_mem,
         portable_cluster: gpu.portable_cluster,
         optin_shared: gpu.optin_shared,
         dynamic_shared: gpu.dynamic_shared,

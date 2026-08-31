@@ -34,6 +34,7 @@ infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --comp
 infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --l2-persist
 infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --l2-reset
 infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --func-shared-mem eight
+infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --device-shared-mem eight
 infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --seq-streams --compute-slots 2 --cluster 2
 infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --seq-streams --compute-slots 4 --cluster 2 --preferred-cluster 4
 infer-bench schedule tests/traces/tiny-qwen3moe-2layer.jsonl --capacity 2 --seq-streams --compute-slots 4 --cluster 2 --cluster-spread

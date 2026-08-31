@@ -765,6 +765,13 @@ pub struct SimCfg {
     /// [`Self::shared_mem`]. Decode identity stays Default.
     /// [`crate::GpuStoreCfg::func_shared_mem`] is the store path.
     pub func_shared_mem: gpu_sim::SharedMemoryMode,
+    /// Device shared-mem bank width (`cudaDeviceSetSharedMemConfig`).
+    ///
+    /// Launch Default inherits this duration scale when the function config is
+    /// also Default. Distinct from [`Self::func_shared_mem`] and launch-attribute
+    /// [`Self::shared_mem`]. Decode identity stays Default.
+    /// [`crate::GpuStoreCfg::device_shared_mem`] is the store path.
+    pub device_shared_mem: gpu_sim::SharedMemoryMode,
     /// Portable-cluster size mode (`cudaLaunchAttributePortableClusterSizeMode`).
     ///
     /// Default uses the current function attribute. RequirePortable always
@@ -960,6 +967,7 @@ impl SimCfg {
             mem_sync_domain: gpu_sim::MemSyncDomain::Default,
             shared_mem: gpu_sim::SharedMemoryMode::Default,
             func_shared_mem: gpu_sim::SharedMemoryMode::Default,
+            device_shared_mem: gpu_sim::SharedMemoryMode::Default,
             portable_cluster: gpu_sim::PortableClusterMode::Default,
             optin_shared: false,
             dynamic_shared: 0,
@@ -1116,6 +1124,7 @@ pub fn sim_replay_cfg(
     apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
     apply_func_cluster_spread(&mut sim, cfg.func_cluster_spread)?;
     apply_func_shared_mem(&mut sim, cfg.func_shared_mem)?;
+    apply_device_shared_mem(&mut sim, cfg.device_shared_mem)?;
     if cfg.shareable {
         let _imported = bind_shareable_mempools(&mut sim)?;
     }
@@ -1540,6 +1549,22 @@ pub(crate) fn apply_func_shared_mem(sim: &mut Sim, mode: SharedMemoryMode) -> Re
     let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
     for g in 0..n {
         sim.set_func_shared_mem_config(DeviceId(g), mode)?;
+    }
+    Ok(())
+}
+
+/// `cudaDeviceSetSharedMemConfig` so launch Default inherits when function is Default.
+///
+/// Call after [`Sim::new`]. Capture cannot include it; construction is live.
+/// Function FourByte / EightByte still override. Launch FourByte / EightByte
+/// still override.
+pub(crate) fn apply_device_shared_mem(sim: &mut Sim, mode: SharedMemoryMode) -> Result<(), Error> {
+    if mode == SharedMemoryMode::Default {
+        return Ok(());
+    }
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        sim.set_shared_mem_config(DeviceId(g), mode)?;
     }
     Ok(())
 }

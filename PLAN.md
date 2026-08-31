@@ -3600,7 +3600,20 @@ model, do not celebrate the sim.
     identity stays Default function policy. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-342. [ ] Next numbered PLAN item after 341 is the next `gpu-sim` / Engine /
+342. [x] `cudaDeviceSetSharedMemConfig` device bank width:
+    [`GpuStoreCfg::device_shared_mem`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::device_shared_mem`](expertvm/src/sim_replay.rs)
+    [`set_shared_mem_config`](gpu-sim/src/sim.rs) after `Sim::new`. Launch
+    Default inherits that duration scale when function config is also Default.
+    Distinct from `--func-shared-mem` and launch-attribute `--shared-mem`
+    (launch FourByte / EightByte still override; function FourByte / EightByte
+    still override). Hits stay the same. Legal with `--pdl` and
+    `--cooperative`. `--device-shared-mem` on `expertvm sim` / `schedule` /
+    `store` and `gguf_gemv engine --expert-sim`. Decode identity stays Default
+    device config. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+343. [ ] Next numbered PLAN item after 342 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
