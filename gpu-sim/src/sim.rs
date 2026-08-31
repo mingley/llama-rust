@@ -7773,6 +7773,23 @@ impl Sim {
             .collect())
     }
 
+    /// `cuGraphNodeGetLocalId`. Query; legal during capture.
+    ///
+    /// Matches the node id printed by [`Self::graph_debug_dot`] (`n0`, `n1`,
+    /// …). Together with [`Self::graph_get_id`] the pair uniquely identifies a
+    /// live node. Destroyed or unknown nodes are Invalid `"unknown graph node"`.
+    pub fn graph_node_get_local_id(&self, graph: GraphId, node: usize) -> Result<u32, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+            why: "unknown graph node",
+        })?)?;
+        u32::try_from(node).map_err(|_| SimError::Invalid {
+            why: "unknown graph node",
+        })
+    }
+
     /// `cudaGraphNodeGetType` for node `i`.
     pub fn graph_node_kind(&self, graph: GraphId, i: usize) -> Result<GraphNodeKind, SimError> {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
