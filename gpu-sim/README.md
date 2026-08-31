@@ -791,7 +791,8 @@ restore by prefetching the same alloc back (identity stays `cudaFree`).
 `mem_advise_with_location` is `cudaMemAdvise_v2` (`Place` location;
 AccessedBy requires a device place; host preferred is
 `SetPreferredLocationHost`). Typed `mem_advise` stays.
-`SetReadMostly` makes prefetch replicate; `SetAccessedBy` lets a kernel
+`SetReadMostly` makes prefetch replicate; `expertvm --no-read-mostly` is
+`UnsetReadMostly` so dest prefetch moves. `SetAccessedBy` lets a kernel
 read without migrating. `SetPreferredLocation` keeps a page already at
 that GPU there on a remote read (writes still migrate; host preferred
 does not skip kernel first-touch). `mem_range_get_attribute` /

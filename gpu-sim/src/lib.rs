@@ -140,6 +140,8 @@
 //! `expertvm sim --prefetch-host` evicts managed pages with
 //! [`prefetch_host`](Sim::prefetch_host) and restores by prefetching the same
 //! alloc back (identity stays `cudaFree`).
+//! `expertvm sim --no-read-mostly` is [`MemAdvise::UnsetReadMostly`] at
+//! managed fill so dest prefetch moves instead of replicating.
 //! [`mem_advise_with_location`](Sim::mem_advise_with_location) is
 //! `cudaMemAdvise_v2` ([`Place`] location; AccessedBy requires
 //! [`Place::Device`]; host preferred is [`MemAdvise::SetPreferredLocationHost`]).

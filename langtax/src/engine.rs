@@ -161,7 +161,9 @@
 //! `cudaMallocManaged(..., cudaMemAttachHost)` then Global attach on the copy
 //! stream (implies `--managed`; identity stays Global at alloc). `--prefetch-host` is
 //! `cudaMemPrefetchAsync` to host on managed evict (implies `--managed`; next miss
-//! prefetches the same alloc back; identity stays `free_sync`). `--host-register-mapped` is
+//! prefetches the same alloc back; identity stays `free_sync`). `--no-read-mostly`
+//! skips `cudaMemAdviseSetReadMostly` (implies `--managed`; dest prefetch moves;
+//! identity stays SetReadMostly). `--host-register-mapped` is
 //! `cudaHostRegisterMapped` on expert pages (implies `--mapped`; identity stays
 //! `cudaHostAllocMapped`). `--sync-memops` is `cuPointerSetAttribute` SyncMemops
 //! on miss device pages (host-sync H2D / managed prefetch; illegal with `--mapped`
@@ -184,7 +186,7 @@
 //! identity stays `cudaLaunchKernel` (no cluster / Default policy / no preferred
 //! dim / Default carveout / non-portable disallowed / Auto sync policy /
 //! Auto device schedule / Default mem-sync domain / Default shared-mem / Default portable-cluster / 0 dynamic shared / Default
-//! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event / no programmatic event / Global managed attach / events copy-ready / no mempool trim / opportunistic reuse / unlimited mempool maxSize / stream-order memcpy-batch / free_sync managed evict / cudaHostAllocMapped not HostRegisterMapped / async memcpy not SyncMemops / no device SyncMemops / disable-timing non-blocking copy events).
+//! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event / no programmatic event / Global managed attach / SetReadMostly / events copy-ready / no mempool trim / opportunistic reuse / unlimited mempool maxSize / stream-order memcpy-batch / free_sync managed evict / cudaHostAllocMapped not HostRegisterMapped / async memcpy not SyncMemops / no device SyncMemops / disable-timing non-blocking copy events).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode

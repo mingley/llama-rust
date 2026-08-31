@@ -9,21 +9,21 @@ use crate::planner::{
     Prefetch, DECODE_ACTIVATION_BYTES,
 };
 use crate::sim_replay::{
-    add_leaf_gemm, alloc_launch_completion, alloc_programmatic_event, alloc_resident_copy_mailbox,
-    allow_non_portable_cluster_if, allow_optin_shared_if, apply_cluster_dim_must_be_set,
-    apply_device_shared_mem, apply_device_sync_memops, apply_device_sync_policy,
-    apply_exec_mem_sync_domain, apply_exec_mem_sync_map, apply_func_cluster_spread,
-    apply_func_max_shared, apply_func_shared_mem, apply_l2_fetch, apply_required_cluster_width,
-    apply_stream_mem_sync_domain, apply_stream_mem_sync_map, apply_stream_sync_policy,
-    bind_device_mempools, check_cluster_load_balance, check_cluster_must_set,
-    check_cluster_preferred, check_device_graph_flags, check_l2_fetch, check_l2_ratio,
-    check_max_l1, check_mem_sync_collapse, check_mem_sync_launch, check_mem_sync_launch_map,
-    check_memset_fill, check_required_cluster, collapse_mem_sync_map, ensure_single_attach,
-    free_copy_mailbox, free_mapped_host, host_after_copy, instantiate_exec, kernel_leaf,
-    mark_sync_memops, memcpy_batch_attr, mempool_hold, persist_armed, replay_exec, replay_streams,
-    reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
-    upload_after_set_params, wait_copy_ready, wait_memcpy_during_allocs, GemmFlags, LeafMem,
-    LeafWork, StreamPlan,
+    add_leaf_gemm, advise_managed_home, alloc_launch_completion, alloc_programmatic_event,
+    alloc_resident_copy_mailbox, allow_non_portable_cluster_if, allow_optin_shared_if,
+    apply_cluster_dim_must_be_set, apply_device_shared_mem, apply_device_sync_memops,
+    apply_device_sync_policy, apply_exec_mem_sync_domain, apply_exec_mem_sync_map,
+    apply_func_cluster_spread, apply_func_max_shared, apply_func_shared_mem, apply_l2_fetch,
+    apply_required_cluster_width, apply_stream_mem_sync_domain, apply_stream_mem_sync_map,
+    apply_stream_sync_policy, bind_device_mempools, check_cluster_load_balance,
+    check_cluster_must_set, check_cluster_preferred, check_device_graph_flags, check_l2_fetch,
+    check_l2_ratio, check_max_l1, check_mem_sync_collapse, check_mem_sync_launch,
+    check_mem_sync_launch_map, check_memset_fill, check_required_cluster, collapse_mem_sync_map,
+    drop_managed_replica, ensure_single_attach, free_copy_mailbox, free_mapped_host,
+    host_after_copy, instantiate_exec, kernel_leaf, mark_sync_memops, memcpy_batch_attr,
+    mempool_hold, persist_armed, replay_exec, replay_streams, reset_persisting_l2_if,
+    retarget_parked_kernel, signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready,
+    wait_memcpy_during_allocs, GemmFlags, LeafMem, LeafWork, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -47,8 +47,10 @@ pub enum GpuFill {
     /// `cudaMemAttachHost` at alloc, then Global attach on the copy stream
     /// (or Single when stream-attach). [`GpuStoreCfg::prefetch_host`] evicts
     /// with `cudaMemPrefetchAsync` to the host and restores by prefetching
-    /// the same alloc back. Default is Global attach at alloc +
-    /// copy-stream prefetch.
+    /// the same alloc back. [`GpuStoreCfg::no_read_mostly`] is
+    /// [`gpu_sim::MemAdvise::UnsetReadMostly`] so dest prefetch moves.
+    /// Default is Global attach at alloc, copy-stream prefetch, and
+    /// SetReadMostly.
     Managed,
     /// `cudaHostAllocMapped` (PCIe kernel, no H2D).
     ///
@@ -204,6 +206,15 @@ pub struct GpuStoreCfg {
     /// [`GpuFill::Mapped`] or host-sync [`Self::sync_alloc`] (`cudaMalloc` is
     /// not a mempool). Decode identity stays off.
     pub accessed_by: bool,
+    /// Skip `cudaMemAdviseSetReadMostly` at a managed fill (`UnsetReadMostly`).
+    ///
+    /// Default managed fill Sets ReadMostly so a later dest prefetch
+    /// replicates. This calls [`gpu_sim::MemAdvise::UnsetReadMostly`] instead
+    /// so prefetch **moves** (one GPU holds the page; `hbm_peak` stays one
+    /// copy). Needs [`GpuFill::Managed`]. Implies managed on the CLI. Hits
+    /// stay the same. Distinct from [`Self::accessed_by`] (dest GEMM without
+    /// a second copy). Decode identity stays SetReadMostly.
+    pub no_read_mostly: bool,
     /// CUDA legacy null stream: copy (`StreamId(0)`) serializes with compute.
     ///
     /// Off by default (`cudaStreamNonBlocking` compute). Decode identity stays
@@ -786,6 +797,8 @@ pub struct SimulatedGpuStore {
     wait_value: bool,
     /// [`GpuStoreCfg::accessed_by`]: managed/VMM/mempool pages stay on the home GPU.
     accessed_by: bool,
+    /// [`GpuStoreCfg::no_read_mostly`]: skip SetReadMostly at managed fill.
+    no_read_mostly: bool,
     /// Successful D2D [`Self::migrate`] calls (source device ≠ dest).
     migrates: u64,
     /// [`plan_placement`] chose [`Placement::DispatchActivations`] (no D2D).
@@ -1132,6 +1145,9 @@ impl SimulatedGpuStore {
         if cfg.prefetch_host && fill != GpuFill::Managed {
             return Err(Error::Store("prefetch-host needs managed"));
         }
+        if cfg.no_read_mostly && fill != GpuFill::Managed {
+            return Err(Error::Store("no-read-mostly needs managed"));
+        }
         if cfg.pdl && cfg.cooperative {
             return Err(Error::Store("choose one of pdl, cooperative"));
         }
@@ -1394,6 +1410,7 @@ impl SimulatedGpuStore {
             memset_fill: cfg.memset_fill,
             wait_value: cfg.wait_value,
             accessed_by: cfg.accessed_by,
+            no_read_mostly: cfg.no_read_mostly,
             migrates: 0,
             dispatches: 0,
             replicates: 0,
@@ -2097,7 +2114,7 @@ impl SimulatedGpuStore {
             self.sim.synchronize_stream(dst, self.dma_stream())?;
         }
         if self.sim.is_resident(id, src)? {
-            self.sim.drop_managed_copy(id, src)?;
+            drop_managed_replica(&mut self.sim, id, src)?;
         }
         let _gone = self.replicas.remove(&key);
         self.rehome_mailbox(key, dst, false)?;
@@ -2211,6 +2228,15 @@ impl SimulatedGpuStore {
         self.pages
             .get(&key)
             .and_then(|p| self.sim.is_accessed_by(p.id, device).ok())
+            .unwrap_or(false)
+    }
+
+    /// Whether `key`'s managed page has [`gpu_sim::MemAdvise::SetReadMostly`].
+    #[must_use]
+    pub fn page_read_mostly(&self, key: ExpertKey) -> bool {
+        self.pages
+            .get(&key)
+            .and_then(|p| self.sim.is_read_mostly(p.id).ok())
             .unwrap_or(false)
     }
 
@@ -2691,9 +2717,7 @@ impl SimulatedGpuStore {
                 } else {
                     self.sim.alloc_managed(bytes)?
                 };
-                self.sim.mem_advise(id, MemAdvise::SetReadMostly, d)?;
-                self.sim
-                    .mem_advise(id, MemAdvise::SetPreferredLocation, d)?;
+                advise_managed_home(&mut self.sim, id, d, self.no_read_mostly)?;
                 if self.accessed_by {
                     advise_accessed_by(&mut self.sim, id)?;
                 }

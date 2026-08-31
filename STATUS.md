@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — skip `cudaMemAdviseSetReadMostly`
+
+`GpuStoreCfg::no_read_mostly` / `SimCfg::no_read_mostly` call
+`UnsetReadMostly` at managed fill instead of SetReadMostly so dest prefetch
+**moves** (one GPU copy; lower `hbm_peak`) instead of replicating. Implies
+`--managed`. Hits/misses stay the same. Distinct from `--accessed-by` (dest
+GEMM without a second copy). Keep SetPreferredLocation. `--no-read-mostly`
+is off by default (decode identity: SetReadMostly). Store and walker (not
+walker-only). infer-bench has managed fill via `--managed-host`, so it gets
+`--no-read-mostly`. Dest replica drop is a no-op when the page is not
+ReadMostly. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaGraphAddIf` combo reuse
 
 `GpuStoreCfg::graph_if` / `SimCfg::graph_if` wrap walker combo children in

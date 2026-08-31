@@ -730,7 +730,8 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   plus `cudaMemAdviseSetReadMostly` plus `SetPreferredLocation` plus
   `cudaMemPrefetchAsync` on miss (HBM charged on migrate; a second GPU
   prefetch keeps the copy; a remote read can keep the page on the preferred GPU).
-  `--accessed-by` is `cudaMemAdviseSetAccessedBy` on every GPU at fill
+  `--no-read-mostly` is `cudaMemAdviseUnsetReadMostly` at that fill so dest
+  prefetch moves instead of replicating. `--accessed-by` is `cudaMemAdviseSetAccessedBy` on every GPU at fill
   (dest GEMM reads without migrating; migrate/pin skip dest prefetch).
   `--place replicas` then `prefetch`s hot keys onto dest GPUs unless
   `--accessed-by`; dest eviction is `drop_managed_copy` (one GPU's copy, allocation stays). `--vmm` is
@@ -1040,7 +1041,7 @@ model, do not celebrate the sim.
     Dual score still has no `$/M tokens`.
 52. [x] Engine SimulatedGpuStore CUDA knobs: `--host-func` /
     `--blocking-streams` / `--sync-alloc` / `--mempool` / `--vmm-page` /
-    `--pageable` / `--memset-fill` / `--copy-host` / `--accessed-by` / `--legacy-null` / `--stream-priority`
+    `--pageable` / `--memset-fill` / `--copy-host` / `--accessed-by` / `--no-read-mostly` / `--legacy-null` / `--stream-priority`
     match `GpuStoreCfg` / `expertvm sim` on `gguf_gemv engine` and
     `serve --engine --expert-sim`. Default pinned async stays decode
     identity. Dual score still has no `$/M tokens`.
@@ -4032,7 +4033,23 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no `$/M
     tokens`.
 
-370. [ ] Next numbered PLAN item after 369 is the next `gpu-sim` / Engine /
+370. [x] Skip `cudaMemAdviseSetReadMostly` (`UnsetReadMostly`):
+    [`GpuStoreCfg::no_read_mostly`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::no_read_mostly`](expertvm/src/sim_replay.rs) call
+    [`MemAdvise::UnsetReadMostly`](gpu-sim/src/ops.rs) at managed fill
+    instead of SetReadMostly so dest prefetch **moves** (one GPU copy;
+    lower `hbm_peak`) instead of replicating. Implies `--managed`. Hits
+    stay the same. Distinct from `--accessed-by` (dest GEMM without a
+    second copy; pin skips dest prefetch). Keep SetPreferredLocation.
+    `--no-read-mostly` on `expertvm sim` / `schedule` / `store` and
+    `gguf_gemv engine --expert-sim`. infer-bench has managed fill via
+    `--managed-host`, so it gets `--no-read-mostly`. Decode identity stays
+    SetReadMostly. Store and walker (not walker-only). Dest replica drop is
+    a no-op when the page is not ReadMostly (prefetch already moved).
+    `gpu-profile capture` is still refused. Dual score still has no `$/M
+    tokens`.
+
+371. [ ] Next numbered PLAN item after 370 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
@@ -4073,7 +4090,9 @@ model, do not celebrate the sim.
     second graph-build `cudaGraphSetConditional` flag. Live `set_conditional`
     before `launch_graph` is still wiped (create-time default). Do not invent a
     second `--graph-if` / IF wrap flag (SetParams upload tax is the wall vs
-    `--graph-enable`). Do not invent
+    `--graph-enable`). Do not invent a second `--no-read-mostly` /
+    UnsetReadMostly flag (prefetch-move vs replicate is the wall vs default
+    SetReadMostly). Do not invent
     `--memcpy-peer` host-sync pin_hot (alias of D2D; wall matches after
     `score()`). Do not invent `graph_add_empty` as a decode-path flag
     (1 ns join/fork). Do not invent a second `cudaGraphAddMemsetNode` of

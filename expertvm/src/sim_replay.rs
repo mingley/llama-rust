@@ -720,7 +720,9 @@ pub struct SimCfg {
     /// dest HBM copy. `--place replicas` uses
     /// that dest prefetch; dest eviction is `drop_managed_copy`. [`Self::accessed_by`]
     /// maps every GPU at fill so dest GEMMs read without a second copy.
-    /// Hits/misses match H2D. [`crate::SimulatedGpuStore::new`] stays on pinned
+    /// [`Self::no_read_mostly`] is `UnsetReadMostly` so dest prefetch moves
+    /// instead of replicating. Hits/misses match H2D.
+    /// [`crate::SimulatedGpuStore::new`] stays on pinned
     /// H2D; [`crate::SimulatedGpuStore::with_managed`] uses this path.
     pub managed: bool,
     /// `va_acquire` on miss (reuse an unmapped VA, else reserve+map), then
@@ -830,6 +832,15 @@ pub struct SimCfg {
     /// [`Self::sync_alloc`] (`cudaMalloc`) still D2Ds. [`crate::GpuStoreCfg::accessed_by`]
     /// is the store path.
     pub accessed_by: bool,
+    /// Skip `cudaMemAdviseSetReadMostly` at a managed fill (`UnsetReadMostly`).
+    ///
+    /// Default managed fill Sets ReadMostly so dest prefetch replicates. This
+    /// calls [`gpu_sim::MemAdvise::UnsetReadMostly`] so prefetch **moves**
+    /// (`hbm_peak` stays one copy). Implies [`Self::managed`] on the CLI.
+    /// Hits stay the same. Distinct from [`Self::accessed_by`]. Decode
+    /// identity stays SetReadMostly. [`crate::GpuStoreCfg::no_read_mostly`]
+    /// is the store path.
+    pub no_read_mostly: bool,
     /// CUDA legacy null stream (`set_legacy_null_stream`): NULL serializes
     /// with every other stream. Off by default. [`crate::GpuStoreCfg::legacy_null`]
     /// is the store path (copy NULL vs compute `StreamId(1)`).
@@ -1365,6 +1376,7 @@ impl SimCfg {
             sync_memops: false,
             device_sync_memops: false,
             accessed_by: false,
+            no_read_mostly: false,
             legacy_null: false,
             stream_priority: false,
             graph_update: false,
@@ -1520,6 +1532,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     }
     if cfg.prefetch_host && !cfg.managed {
         return Err(Error::Store("prefetch-host needs managed"));
+    }
+    if cfg.no_read_mostly && !cfg.managed {
+        return Err(Error::Store("no-read-mostly needs managed"));
     }
     if cfg.pdl && cfg.cooperative {
         return Err(Error::Store("choose one of pdl, cooperative"));
@@ -1704,6 +1719,7 @@ pub fn sim_replay_cfg(
         memset_fill: cfg.memset_fill,
         copy_host: cfg.copy_host,
         accessed_by: cfg.accessed_by,
+        no_read_mostly: cfg.no_read_mostly,
         wait_value: cfg.wait_value,
         stream_attach: cfg.stream_attach,
         managed_host: cfg.managed_host,
@@ -1889,6 +1905,8 @@ pub(crate) struct TouchArgs {
     /// [`SimCfg::accessed_by`]: SetAccessedBy / VMM SetAccess / mempool SetAccess
     /// on every GPU (fill or default pools).
     pub accessed_by: bool,
+    /// [`SimCfg::no_read_mostly`]: UnsetReadMostly at managed fill (prefetch moves).
+    pub no_read_mostly: bool,
     /// [`SimCfg::wait_value`]: per-page 8-byte mailbox + live wait/write-value.
     pub wait_value: bool,
     /// [`SimCfg::stream_attach`]: `cudaStreamAttachMemAsync` Single then prefetch
@@ -2101,6 +2119,39 @@ pub(crate) fn advise_pool_access(sim: &mut Sim) -> Result<(), Error> {
             sim.pool_set_access(pool, DeviceId(d))?;
         }
     }
+    Ok(())
+}
+
+/// `cudaMemAdvise` ReadMostly vs UnsetReadMostly, then PreferredLocation on `d`.
+pub(crate) fn advise_managed_home(
+    sim: &mut Sim,
+    id: AllocId,
+    d: DeviceId,
+    no_read_mostly: bool,
+) -> Result<(), Error> {
+    let advice = if no_read_mostly {
+        gpu_sim::MemAdvise::UnsetReadMostly
+    } else {
+        gpu_sim::MemAdvise::SetReadMostly
+    };
+    sim.mem_advise(id, advice, d)?;
+    sim.mem_advise(id, gpu_sim::MemAdvise::SetPreferredLocation, d)?;
+    Ok(())
+}
+
+/// Dest eviction of a ReadMostly extra copy. No-op when prefetch already moved.
+pub(crate) fn drop_managed_replica(
+    sim: &mut Sim,
+    id: AllocId,
+    device: DeviceId,
+) -> Result<(), Error> {
+    if !sim.is_read_mostly(id)? {
+        return Ok(());
+    }
+    if !sim.is_resident(id, device)? {
+        return Ok(());
+    }
+    sim.drop_managed_copy(id, device)?;
     Ok(())
 }
 
@@ -3165,8 +3216,7 @@ fn alloc_touch_page(sim: &mut Sim, args: TouchArgs) -> Result<AllocId, Error> {
         } else {
             sim.alloc_managed(args.bytes)?
         };
-        sim.mem_advise(id, gpu_sim::MemAdvise::SetReadMostly, args.d)?;
-        sim.mem_advise(id, gpu_sim::MemAdvise::SetPreferredLocation, args.d)?;
+        advise_managed_home(sim, id, args.d, args.no_read_mostly)?;
         if args.accessed_by {
             advise_accessed_by(sim, id)?;
         }
@@ -3397,7 +3447,7 @@ fn drop_replica(
     }
     wait_peer(sim, page.device, dst, page.stream, next_event)?;
     if page_is_managed(sim, page.id) {
-        sim.drop_managed_copy(page.id, dst)?;
+        drop_managed_replica(sim, page.id, dst)?;
     } else if page_is_vmm(sim, page.id) {
         sim.va_unmap_range(page.id, dst, 0, bytes)?;
     } else {
@@ -4502,6 +4552,7 @@ pub fn sim_remote_home_cfg(
                         sync_alloc: false,
                         managed: false,
                         accessed_by: false,
+                        no_read_mostly: false,
                         stream_attach: false,
                         managed_host: false,
                     },
@@ -4550,6 +4601,8 @@ pub(crate) struct RemoteFetch {
     pub(crate) managed: bool,
     /// [`SimCfg::accessed_by`]: map compute without a dest migrate (managed, VMM, or mempool).
     pub(crate) accessed_by: bool,
+    /// [`SimCfg::no_read_mostly`]: UnsetReadMostly at managed fill (prefetch moves).
+    pub(crate) no_read_mostly: bool,
     /// [`SimCfg::stream_attach`]: Single-attach then prefetch on `stream`.
     pub(crate) stream_attach: bool,
     /// [`SimCfg::managed_host`]: Host alloc then Global attach before prefetch.
@@ -4669,8 +4722,7 @@ fn fill_remote_managed(
     } else {
         sim.alloc_managed(fetch.expert_bytes)?
     };
-    sim.mem_advise(id, gpu_sim::MemAdvise::SetReadMostly, fetch.home)?;
-    sim.mem_advise(id, gpu_sim::MemAdvise::SetPreferredLocation, fetch.home)?;
+    advise_managed_home(sim, id, fetch.home, fetch.no_read_mostly)?;
     if fetch.accessed_by {
         advise_accessed_by(sim, id)?;
     }

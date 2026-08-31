@@ -850,6 +850,7 @@ fn vmm_evict_reacquires_same_va() {
         memset_fill: false,
         copy_host: false,
         accessed_by: false,
+        no_read_mostly: false,
         wait_value: false,
         stream_attach: false,
         managed_host: false,
@@ -1634,6 +1635,37 @@ fn schedule_managed_hot_replicas_prefetch() {
 }
 
 #[test]
+fn schedule_managed_no_read_mostly_replicas_lower_hbm() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1]), ev(2, 0, &[0])],
+    };
+    let p = HardwareProfile::example_2xh100_pcie();
+    let bytes = 1u64 << 20;
+    let stripe = striped(&t, 2);
+    let hot = with_hot_replicas(stripe, &t, 2, 200);
+    let run = |no_read_mostly: bool| {
+        let cfg = SimCfg {
+            managed: true,
+            no_read_mostly,
+            ..SimCfg::lru(4, bytes, 0)
+        };
+        schedule_placed(&t, p.clone(), cfg, SchedCfg::closed(0), Some(&hot)).expect("sched")
+    };
+    let off = run(false);
+    let on = run(true);
+    assert_eq!(off.replay.hits, on.replay.hits);
+    assert_eq!(off.replay.misses, on.replay.misses);
+    // Score.hbm_peak is the greediest GPU. ReadMostly keeps both experts on
+    // each GPU after dest prefetch (2×bytes); UnsetReadMostly moves.
+    assert!(
+        on.replay.hbm_peak < off.replay.hbm_peak,
+        "no-read-mostly peak={} read-mostly peak={}",
+        on.replay.hbm_peak,
+        off.replay.hbm_peak
+    );
+}
+
+#[test]
 fn schedule_replica_evict_frees_peer_hbm() {
     let t = Trace {
         events: vec![
@@ -2106,6 +2138,125 @@ fn simulated_gpu_store_managed_pin_replicates_by_prefetch() {
     let _p = gpu.acquire(k0).expect("hit");
     let score = gpu.score().expect("score");
     assert!(score.bytes_moved >= 8192, "{}", score.bytes_moved);
+}
+
+#[test]
+fn simulated_gpu_store_no_read_mostly_pin_moves() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let k0 = ExpertKey::new(0, 0);
+    let p = HardwareProfile::example_2xh100_pcie();
+    let bytes = 4096u64;
+    let mut off = SimulatedGpuStore::with_managed(DirectStore::from_trace(&t), 2, p.clone(), bytes)
+        .expect("read-mostly");
+    off.pin_hot(&[k0]).expect("pin");
+    let _off_score = off.score().expect("score");
+    assert!(off.page_read_mostly(k0));
+    assert!(off.page_resident(k0, DeviceId(0)));
+    assert!(off.page_resident(k0, DeviceId(1)));
+    let off_sum =
+        off.hbm_used(DeviceId(0)).expect("off0") + off.hbm_used(DeviceId(1)).expect("off1");
+    assert!(off_sum >= bytes * 2, "{off_sum}");
+
+    let mut on = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        2,
+        p,
+        bytes,
+        GpuFill::Managed,
+        GpuStoreCfg {
+            no_read_mostly: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("no-read-mostly");
+    on.pin_hot(&[k0]).expect("pin");
+    let _on_score = on.score().expect("score");
+    assert!(!on.page_read_mostly(k0));
+    assert!(!on.page_resident(k0, DeviceId(0)));
+    assert!(on.page_resident(k0, DeviceId(1)));
+    let on_sum = on.hbm_used(DeviceId(0)).expect("on0") + on.hbm_used(DeviceId(1)).expect("on1");
+    assert_eq!(on_sum, bytes);
+    assert!(
+        on_sum < off_sum,
+        "no-read-mostly cluster={on_sum} read-mostly cluster={off_sum}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_no_read_mostly_pin_gemm_moves_back() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let k0 = ExpertKey::new(0, 0);
+    let p = HardwareProfile::example_2xh100_pcie();
+    let bytes = 4096u64;
+    let run = |no_read_mostly: bool| {
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            DirectStore::from_trace(&t),
+            2,
+            p.clone(),
+            bytes,
+            GpuFill::Managed,
+            GpuStoreCfg {
+                no_read_mostly,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        gpu.pin_hot(&[k0]).expect("pin");
+        let _p = gpu.acquire(k0).expect("gemm");
+        let score = gpu.score().expect("score");
+        let cluster =
+            gpu.hbm_used(DeviceId(0)).expect("h0") + gpu.hbm_used(DeviceId(1)).expect("h1");
+        (
+            score.bytes_moved,
+            cluster,
+            gpu.page_resident(k0, DeviceId(0)),
+            gpu.page_resident(k0, DeviceId(1)),
+        )
+    };
+    let off = run(false);
+    let on = run(true);
+    assert!(
+        on.0 > off.0,
+        "no-read-mostly must migrate back; off={} on={}",
+        off.0,
+        on.0
+    );
+    assert!(off.2 && off.3, "read-mostly pin keeps both copies");
+    assert!(on.2 && !on.3, "no-read-mostly GEMM moves back to home");
+    assert!(
+        on.1 < off.1,
+        "no-read-mostly must not keep two copies; off={} on={}",
+        off.1,
+        on.1
+    );
+}
+
+#[test]
+fn simulated_gpu_store_no_read_mostly_needs_managed() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            no_read_mostly: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("no-read-mostly without managed must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("no-read-mostly needs managed"),
+            "{err}"
+        ),
+    }
 }
 
 #[test]
@@ -7456,6 +7607,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         memset_fill: false,
         copy_host: false,
         accessed_by: true,
+        no_read_mostly: false,
         wait_value: false,
         stream_attach: false,
         managed_host: false,
@@ -7527,6 +7679,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         memset_fill: false,
         copy_host: false,
         accessed_by: true,
+        no_read_mostly: false,
         wait_value: false,
         stream_attach: false,
         managed_host: false,
@@ -7599,6 +7752,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         memset_fill: false,
         copy_host: false,
         accessed_by: true,
+        no_read_mostly: false,
         wait_value: false,
         stream_attach: false,
         managed_host: false,
@@ -8037,6 +8191,7 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         memset_fill: false,
         copy_host: false,
         accessed_by: false,
+        no_read_mostly: false,
         wait_value: false,
         stream_attach: false,
         managed_host: false,
@@ -8102,6 +8257,7 @@ fn memcpy_during_apply_misses_waits_copies() {
             memset_fill: false,
             copy_host: false,
             accessed_by: false,
+            no_read_mostly: false,
             wait_value: false,
             stream_attach: false,
             managed_host: false,
@@ -8169,6 +8325,7 @@ fn memcpy_any_apply_misses_empty_deps() {
             memset_fill: false,
             copy_host: false,
             accessed_by: false,
+            no_read_mostly: false,
             wait_value: false,
             stream_attach: false,
             managed_host: false,
@@ -8870,6 +9027,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             memset_fill: false,
             copy_host: false,
             accessed_by: false,
+            no_read_mostly: false,
             wait_value: false,
             stream_attach: false,
             managed_host: false,
@@ -13315,6 +13473,28 @@ fn sim_cfg_prefetch_host_needs_managed() {
 }
 
 #[test]
+fn sim_cfg_no_read_mostly_needs_managed() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = match sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            no_read_mostly: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("no-read-mostly without managed must fail"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string().contains("no-read-mostly needs managed"),
+        "{err}"
+    );
+}
+
+#[test]
 fn simulated_gpu_store_prefetch_host_needs_managed() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],
@@ -13737,6 +13917,7 @@ fn sim_replay_sync_memops_h2d_host_sync() {
             memset_fill: false,
             copy_host: false,
             accessed_by: false,
+            no_read_mostly: false,
             wait_value: false,
             stream_attach: false,
             managed_host: false,
@@ -13951,6 +14132,7 @@ fn sim_replay_device_sync_memops_h2d_host_sync() {
             memset_fill: false,
             copy_host: false,
             accessed_by: false,
+            no_read_mostly: false,
             wait_value: false,
             stream_attach: false,
             managed_host: false,
