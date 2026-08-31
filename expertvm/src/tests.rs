@@ -4236,9 +4236,10 @@ fn simulated_gpu_store_event_blocking_sync_pays_host_wait_tax() {
     assert!(!identity.event_blocking_sync());
     let (elapsed_t, h0, m0, clock_t) = run(false, true, SynchronizationPolicy::Auto);
     let (elapsed_b, h1, m1, clock_b) = run(true, false, SynchronizationPolicy::Auto);
-    let (elapsed_s, h2, m2, clock_s) = run(false, true, SynchronizationPolicy::BlockingSync);
+    let (elapsed_s, h2, m2, clock_s) = run(false, false, SynchronizationPolicy::BlockingSync);
     assert!(elapsed_t > 0, "timing elapsed={elapsed_t}");
     assert!(elapsed_b > 0, "blocking elapsed={elapsed_b}");
+    assert_eq!(elapsed_s, 0);
     assert_eq!(h0, h1);
     assert_eq!(m0, m1);
     assert_eq!(h0, h2);
@@ -4252,9 +4253,9 @@ fn simulated_gpu_store_event_blocking_sync_pays_host_wait_tax() {
         20_000,
         "two synchronize_event taxes; timing={clock_t} blocking={clock_b}"
     );
-    assert_ne!(
-        clock_b, clock_s,
-        "event BlockingSync must be distinct from stream --sync-policy blocking; event={clock_b} stream={clock_s} elapsed_s={elapsed_s}"
+    assert!(
+        clock_b > clock_s,
+        "event BlockingSync taxes synchronize_event; stream --sync-policy blocking without timing events does not; event={clock_b} stream={clock_s}"
     );
 }
 
