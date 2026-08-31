@@ -475,8 +475,11 @@ pub struct SimCfg {
     pub shareable: bool,
     /// `cudaHostAllocMapped`: miss pages are mapped host, not HBM. Kernels run
     /// over PCIe with no H2D. Hits/misses follow the same walker; `hbm_peak`
-    /// stays near zero. [`crate::SimulatedGpuStore::new`] stays on the H2D path;
-    /// [`crate::SimulatedGpuStore::with_mapped`] uses this path.
+    /// stays near zero. [`Self::host_register_mapped`] is `alloc_host` then
+    /// `cudaHostRegisterMapped` (evict unregisters). Decode identity stays
+    /// [`crate::SimulatedGpuStore::with_mapped`]. [`crate::SimulatedGpuStore::new`]
+    /// stays on the H2D path; [`crate::SimulatedGpuStore::with_mapped`] uses this
+    /// path.
     pub mapped: bool,
     /// `cudaMallocManaged` + `cudaMemAdviseSetReadMostly` + prefetch on miss.
     /// Alloc does not charge HBM; prefetch migrates (and replicates if a
@@ -528,6 +531,13 @@ pub struct SimCfg {
     /// [`Self::pageable`]. Illegal with [`Self::mapped`] / [`Self::managed`].
     /// [`crate::GpuStoreCfg::host_register`] is the store path.
     pub host_register: bool,
+    /// `cudaHostRegisterMapped` on mapped expert pages (`alloc_host` then register).
+    ///
+    /// Implies [`Self::mapped`]. Illegal with [`Self::host_register`]. Evict is
+    /// `host_unregister` then `free_host`. Decode identity stays
+    /// `cudaHostAllocMapped`. [`crate::GpuStoreCfg::host_register_mapped`] is
+    /// the store path.
+    pub host_register_mapped: bool,
     /// `cudaMemcpyBatchAsync` for a multi-expert pinned/VMM prefetch window.
     ///
     /// Sibling H2D copies share one stream-order snapshot. Illegal with
@@ -876,6 +886,7 @@ impl SimCfg {
             blocking_streams: false,
             pageable: false,
             host_register: false,
+            host_register_mapped: false,
             accessed_by: false,
             legacy_null: false,
             stream_priority: false,
@@ -970,7 +981,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     if cfg.mempool_no_reuse && cfg.sync_alloc {
         return Err(Error::Store("mempool-no-reuse needs cudaMallocAsync"));
     }
-    if cfg.memcpy_batch && (cfg.pageable || cfg.sync_alloc || cfg.mapped || cfg.managed) {
+    if cfg.memcpy_batch
+        && (cfg.pageable || cfg.sync_alloc || cfg.mapped || cfg.managed || cfg.host_register_mapped)
+    {
         return Err(Error::Store("memcpy-batch needs async pinned/vmm H2D"));
     }
     if cfg.host_register && !cfg.pageable {
@@ -978,6 +991,14 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     }
     if cfg.host_register && (cfg.mapped || cfg.managed) {
         return Err(Error::Store("host-register needs pinned/vmm H2D"));
+    }
+    if cfg.host_register_mapped && !cfg.mapped {
+        return Err(Error::Store("host-register-mapped needs mapped"));
+    }
+    if cfg.host_register_mapped && cfg.host_register {
+        return Err(Error::Store(
+            "choose one of host-register, host-register-mapped",
+        ));
     }
     if !cfg.multicast {
         return Ok(());
@@ -1076,6 +1097,7 @@ pub fn sim_replay_cfg(
         vmm_page: cfg.vmm_page,
         pageable: cfg.pageable,
         host_register: cfg.host_register,
+        host_register_mapped: cfg.host_register_mapped,
         memcpy_batch: cfg.memcpy_batch,
         accessed_by: cfg.accessed_by,
         wait_value: cfg.wait_value,
@@ -1225,6 +1247,8 @@ pub(crate) struct TouchArgs {
     pub pageable: bool,
     /// [`SimCfg::host_register`]: `cudaHostRegister` then pinned DMA H2D.
     pub host_register: bool,
+    /// [`SimCfg::host_register_mapped`]: `alloc_host` then `cudaHostRegisterMapped`.
+    pub host_register_mapped: bool,
     /// [`SimCfg::memcpy_batch`]: multi-expert prefetch uses `cudaMemcpyBatchAsync`.
     pub memcpy_batch: bool,
     /// [`SimCfg::accessed_by`]: SetAccessedBy / VMM SetAccess / mempool SetAccess
@@ -2090,6 +2114,11 @@ pub(crate) fn apply_misses(
 
 fn alloc_touch_page(sim: &mut Sim, args: TouchArgs) -> Result<AllocId, Error> {
     if args.mapped {
+        if args.host_register_mapped {
+            let h = sim.alloc_host(args.bytes)?;
+            sim.host_register_mapped(h)?;
+            return Ok(h);
+        }
         return Ok(sim.alloc_host_mapped(args.bytes)?);
     }
     if args.managed {
@@ -2170,8 +2199,9 @@ fn drop_handle(
     }
     if page_is_mapped(sim, page.id) {
         // cudaFreeHost waits GPU work on this pointer, then the mapping is gone.
+        // Registered mapped pages must cudaHostUnregister then free pageable host.
         sim.synchronize_stream(page.device, page.stream)?;
-        sim.free_host_pinned(page.id)?;
+        free_mapped_host(sim, page.id)?;
         return Ok(());
     }
     if page_is_managed(sim, page.id) {
@@ -2252,6 +2282,18 @@ fn drop_replica(
 
 fn page_is_mapped(sim: &Sim, id: AllocId) -> bool {
     sim.is_host_mapped(id).unwrap_or(false)
+}
+
+/// Drop a mapped host page: `cudaFreeHost`, or unregister then `free_host`
+/// when the id came from `cudaHostRegisterMapped`.
+pub(crate) fn free_mapped_host(sim: &mut Sim, id: AllocId) -> Result<(), Error> {
+    if sim.is_host_registered(id)? {
+        sim.host_unregister(id)?;
+        sim.free_host(id)?;
+    } else {
+        sim.free_host_pinned(id)?;
+    }
+    Ok(())
 }
 
 fn page_is_managed(sim: &Sim, id: AllocId) -> bool {

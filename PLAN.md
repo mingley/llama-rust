@@ -3512,7 +3512,20 @@ model, do not celebrate the sim.
     evict. `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-335. [ ] Next numbered PLAN item after 334 is the next `gpu-sim` / Engine /
+335. [x] `cudaHostRegisterMapped` expert pages:
+    [`GpuStoreCfg::host_register_mapped`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::host_register_mapped`](expertvm/src/sim_replay.rs)
+    `alloc_host` then [`host_register_mapped`](gpu-sim/src/sim.rs) so miss
+    pages are pin-and-map (`cudaHostRegisterMapped`) instead of
+    `cudaHostAllocMapped`. Implies `--mapped`. Illegal with
+    `--host-register` (unmapped staging). Hits/misses and `hbm_peak` 0 stay
+    the same; evict is `host_unregister` then `free_host`. `--host-register-mapped`
+    on `expertvm sim` / `schedule` / `store` and
+    `gguf_gemv engine --expert-sim`. Decode identity stays
+    `cudaHostAllocMapped`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+336. [ ] Next numbered PLAN item after 335 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

@@ -842,6 +842,7 @@ fn vmm_evict_reacquires_same_va() {
         vmm_page: 0,
         pageable: false,
         host_register: false,
+        host_register_mapped: false,
         memcpy_batch: false,
         accessed_by: false,
         wait_value: false,
@@ -4991,7 +4992,8 @@ fn simulated_gpu_store_host_register_refuses_managed() {
     ) {
         Ok(_) => panic!("host-register + managed must fail"),
         Err(err) => assert!(
-            err.to_string().contains("host-register needs pinned/vmm H2D"),
+            err.to_string()
+                .contains("host-register needs pinned/vmm H2D"),
             "{err}"
         ),
     }
@@ -5343,6 +5345,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         vmm_page: 0,
         pageable: false,
         host_register: false,
+        host_register_mapped: false,
         memcpy_batch: false,
         accessed_by: true,
         wait_value: false,
@@ -5408,6 +5411,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         vmm_page: 0,
         pageable: false,
         host_register: false,
+        host_register_mapped: false,
         memcpy_batch: false,
         accessed_by: true,
         wait_value: false,
@@ -5474,6 +5478,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         vmm_page: 0,
         pageable: false,
         host_register: false,
+        host_register_mapped: false,
         memcpy_batch: false,
         accessed_by: true,
         wait_value: false,
@@ -5906,6 +5911,7 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         vmm_page: 0,
         pageable: false,
         host_register: false,
+        host_register_mapped: false,
         memcpy_batch: true,
         accessed_by: false,
         wait_value: false,
@@ -6046,6 +6052,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             vmm_page: 0,
             pageable: false,
             host_register: false,
+            host_register_mapped: false,
             memcpy_batch: false,
             accessed_by: false,
             wait_value: false,
@@ -8561,8 +8568,8 @@ fn simulated_gpu_store_stream_attach_serializes_miss_prefetch() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1])],
     };
-    let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
-        .expect("slow gemm");
+    let profile =
+        HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n").expect("slow gemm");
     let run = |stream_attach: bool| {
         let inner = DirectStore::from_trace(&t);
         let mut gpu = match SimulatedGpuStore::with_cfg(
@@ -8605,9 +8612,7 @@ fn simulated_gpu_store_stream_attach_serializes_miss_prefetch() {
         let prefetches: Vec<_> = gpu
             .operations()
             .filter(|o| match &o.kind {
-                GpuOp::Memcpy(m) => {
-                    !matches!((m.src, m.dst), (Place::Device(_), Place::Device(_)))
-                }
+                GpuOp::Memcpy(m) => !matches!((m.src, m.dst), (Place::Device(_), Place::Device(_))),
                 _ => false,
             })
             .collect();
@@ -8740,8 +8745,8 @@ fn simulated_gpu_store_managed_host_attach_overlaps_leftover() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1])],
     };
-    let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
-        .expect("slow gemm");
+    let profile =
+        HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n").expect("slow gemm");
     let run = |managed_host: bool, stream_attach: bool| {
         let inner = DirectStore::from_trace(&t);
         let mut gpu = match SimulatedGpuStore::with_cfg(
@@ -8785,9 +8790,7 @@ fn simulated_gpu_store_managed_host_attach_overlaps_leftover() {
         let prefetches: Vec<_> = gpu
             .operations()
             .filter(|o| match &o.kind {
-                GpuOp::Memcpy(m) => {
-                    !matches!((m.src, m.dst), (Place::Device(_), Place::Device(_)))
-                }
+                GpuOp::Memcpy(m) => !matches!((m.src, m.dst), (Place::Device(_), Place::Device(_))),
                 _ => false,
             })
             .collect();
@@ -8812,7 +8815,10 @@ fn simulated_gpu_store_managed_host_attach_overlaps_leftover() {
     let (off_wall, off_done, off_pf, off_att) = run(false, false);
     let (host_wall, host_done, host_pf, host_att) = run(true, false);
     let (_both_wall, both_done, both_pf, both_att) = run(true, true);
-    assert!(off_att.is_empty(), "identity managed has no Attach; {off_att:?}");
+    assert!(
+        off_att.is_empty(),
+        "identity managed has no Attach; {off_att:?}"
+    );
     assert!(
         host_att.contains(&gpu_sim::MemAttach::Global),
         "managed-host must Global-attach; {host_att:?}"
@@ -8843,7 +8849,8 @@ fn count_host_prefetch(gpu: &SimulatedGpuStore) -> usize {
     gpu.operations()
         .filter(|o| match &o.kind {
             GpuOp::Memcpy(m) => {
-                matches!(m.dst, Place::Host | Place::HostPinned) && matches!(m.src, Place::Device(_))
+                matches!(m.dst, Place::Host | Place::HostPinned)
+                    && matches!(m.src, Place::Device(_))
             }
             _ => false,
         })
@@ -8983,4 +8990,150 @@ fn simulated_gpu_store_prefetch_host_evicts_without_free() {
         on_host >= 1,
         "prefetch-host must submit Device→Host memcpy; n={on_host}"
     );
+}
+
+#[test]
+fn sim_cfg_host_register_mapped_needs_mapped() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = match sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            host_register_mapped: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("host-register-mapped without mapped must fail"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string()
+            .contains("host-register-mapped needs mapped"),
+        "{err}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_host_register_mapped_needs_mapped() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            host_register_mapped: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("host-register-mapped without mapped must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("host-register-mapped needs mapped"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn simulated_gpu_store_host_register_mapped_refuses_host_register() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Mapped,
+        GpuStoreCfg {
+            pageable: true,
+            host_register: true,
+            host_register_mapped: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("host-register + host-register-mapped must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("choose one of host-register, host-register-mapped"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn sim_replay_host_register_mapped_keeps_hits() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let host_alloc = SimCfg {
+        mapped: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let registered = SimCfg {
+        mapped: true,
+        host_register_mapped: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), host_alloc).expect("mapped");
+    let b = sim_replay_cfg(&t, profile, registered).expect("register-mapped");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+    assert_eq!(a.hbm_peak, 0);
+    assert_eq!(b.hbm_peak, 0);
+}
+
+#[test]
+fn simulated_gpu_store_host_register_mapped_is_registered_not_host_alloc() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let run = |host_register_mapped: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = match SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            4096,
+            GpuFill::Mapped,
+            GpuStoreCfg {
+                host_register_mapped,
+                ..GpuStoreCfg::default()
+            },
+        ) {
+            Ok(gpu) => gpu,
+            Err(err) => panic!("gpu: {err}"),
+        };
+        let k0 = ExpertKey::new(0, 0);
+        let _a = gpu.acquire(k0).expect("acq");
+        assert!(gpu.uses_mapped());
+        assert!(gpu.page_is_host_mapped(k0));
+        assert_eq!(gpu.page_is_host_registered(k0), host_register_mapped);
+        gpu.release(k0);
+        for key in t.keys() {
+            let _p = gpu.acquire(key).expect("acquire");
+            gpu.release(key);
+        }
+        let metrics = gpu.metrics();
+        let score = gpu.score().expect("score");
+        assert_eq!(score.hbm_peak, 0);
+        assert_eq!(score.bytes_moved, 0);
+        (metrics.hits, metrics.misses)
+    };
+    let mut identity =
+        SimulatedGpuStore::with_mapped(DirectStore::from_trace(&t), 2, p.clone(), 4096)
+            .expect("identity mapped");
+    let k0 = ExpertKey::new(0, 0);
+    let _a = identity.acquire(k0).expect("id acq");
+    assert!(identity.page_is_host_mapped(k0));
+    assert!(!identity.page_is_host_registered(k0));
+    let _s = identity.score().expect("id score");
+    let host_alloc = run(false);
+    let registered = run(true);
+    assert_eq!(host_alloc.0, registered.0);
+    assert_eq!(host_alloc.1, registered.1);
 }

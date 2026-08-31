@@ -13,9 +13,9 @@ use crate::sim_replay::{
     allow_non_portable_cluster_if, allow_optin_shared_if, apply_exec_mem_sync_domain,
     apply_stream_mem_sync_domain, apply_stream_sync_policy, bind_shareable_mempools,
     check_cluster_preferred, check_device_graph_flags, ensure_single_attach, free_copy_mailbox,
-    instantiate_exec, kernel_leaf, replay_exec, replay_streams, retarget_parked_kernel,
-    signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem,
-    StreamPlan,
+    free_mapped_host, instantiate_exec, kernel_leaf, replay_exec, replay_streams,
+    retarget_parked_kernel, signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready,
+    GemmFlags, LeafMem, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -42,6 +42,11 @@ pub enum GpuFill {
     /// copy-stream prefetch.
     Managed,
     /// `cudaHostAllocMapped` (PCIe kernel, no H2D).
+    ///
+    /// [`GpuStoreCfg::host_register_mapped`] is `alloc_host` then
+    /// `cudaHostRegisterMapped` instead (same PCIe GEMM / pin budget /
+    /// `hbm_peak` 0; evict `host_unregister` then `free_host`). Decode identity
+    /// stays `cudaHostAllocMapped`.
     Mapped,
     /// `va_acquire` + pinned H2D; evict [`gpu_sim::Sim::va_release`].
     Vmm,
@@ -111,6 +116,13 @@ pub struct GpuStoreCfg {
     /// [`Self::pageable`]. Illegal with mapped/managed. Decode identity stays
     /// `cudaMallocHost` staging (no register).
     pub host_register: bool,
+    /// `cudaHostRegisterMapped` on mapped expert pages (`alloc_host` then register).
+    ///
+    /// Kernels still read over PCIe with no H2D (`hbm_peak` 0). Implies mapped
+    /// fill. Illegal with [`Self::host_register`] (unmapped staging). Evict is
+    /// `host_unregister` then `free_host`. Decode identity stays
+    /// `cudaHostAllocMapped`.
+    pub host_register_mapped: bool,
     /// `cudaMemcpyBatchAsync` for a multi-expert pinned/VMM prefetch on one stream.
     ///
     /// Sibling H2D copies share one stream-order snapshot so they can occupy
@@ -492,6 +504,8 @@ pub struct SimulatedGpuStore {
     pageable: bool,
     /// [`GpuStoreCfg::host_register`]: pageable staging is `cudaHostRegister`'d.
     host_register: bool,
+    /// [`GpuStoreCfg::host_register_mapped`]: mapped pages are `cudaHostRegisterMapped`.
+    host_register_mapped: bool,
     /// [`GpuStoreCfg::memcpy_batch`]: prefetch uses `cudaMemcpyBatchAsync`.
     memcpy_batch: bool,
     /// [`GpuStoreCfg::wait_value`]: copy-ready is wait/write-value, not events.
@@ -688,6 +702,9 @@ impl SimulatedGpuStore {
     /// with pageable, host-sync, mapped, or managed fills.
     /// [`GpuStoreCfg::host_register`] is `cudaHostRegister` on pageable staging
     /// so miss H2D is pinned DMA (implies pageable; illegal with mapped/managed).
+    /// [`GpuStoreCfg::host_register_mapped`] is `cudaHostRegisterMapped` on
+    /// mapped expert pages (`alloc_host` then register; implies mapped; illegal
+    /// with [`GpuStoreCfg::host_register`]; identity stays `cudaHostAllocMapped`).
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
     /// exclusive compute). [`GpuStoreCfg::decode_sm_permille`] `0` keeps a
     /// full chip. `1..=1000` without [`GpuStoreCfg::decode_priority`] caps the
@@ -760,6 +777,14 @@ impl SimulatedGpuStore {
         }
         if cfg.host_register && (fill == GpuFill::Mapped || fill == GpuFill::Managed) {
             return Err(Error::Store("host-register needs pinned/vmm H2D"));
+        }
+        if cfg.host_register_mapped && fill != GpuFill::Mapped {
+            return Err(Error::Store("host-register-mapped needs mapped"));
+        }
+        if cfg.host_register_mapped && cfg.host_register {
+            return Err(Error::Store(
+                "choose one of host-register, host-register-mapped",
+            ));
         }
         if cfg.multicast {
             if fill != GpuFill::Vmm {
@@ -898,6 +923,7 @@ impl SimulatedGpuStore {
             vmm_page: cfg.vmm_page,
             pageable: cfg.pageable,
             host_register: cfg.host_register,
+            host_register_mapped: cfg.host_register_mapped,
             memcpy_batch: cfg.memcpy_batch,
             wait_value: cfg.wait_value,
             accessed_by: cfg.accessed_by,
@@ -925,7 +951,8 @@ impl SimulatedGpuStore {
         matches!(self.mode, GpuFill::Managed)
     }
 
-    /// Whether miss pages use mapped host (`cudaHostAllocMapped`).
+    /// Whether miss pages use mapped host (`cudaHostAllocMapped` or
+    /// `cudaHostRegisterMapped`).
     #[must_use]
     pub fn uses_mapped(&self) -> bool {
         matches!(self.mode, GpuFill::Mapped)
@@ -950,6 +977,24 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn staging_is_pinned(&self) -> bool {
         self.sim.is_host_pinned(self.staging).unwrap_or(false)
+    }
+
+    /// Whether the resident page for `key` came from `cudaHostRegisterMapped`.
+    #[must_use]
+    pub fn page_is_host_registered(&self, key: ExpertKey) -> bool {
+        self.pages
+            .get(&key)
+            .and_then(|p| self.sim.is_host_registered(p.id).ok())
+            .unwrap_or(false)
+    }
+
+    /// Whether the resident page for `key` is mapped into the device VA.
+    #[must_use]
+    pub fn page_is_host_mapped(&self, key: ExpertKey) -> bool {
+        self.pages
+            .get(&key)
+            .and_then(|p| self.sim.is_host_mapped(p.id).ok())
+            .unwrap_or(false)
     }
 
     /// Unused bytes in GPU0's `cudaMallocAsync` pool after a device drain.
@@ -1947,7 +1992,15 @@ impl SimulatedGpuStore {
                 }
                 Ok(id)
             }
-            GpuFill::Mapped => Ok(self.sim.alloc_host_mapped(bytes)?),
+            GpuFill::Mapped => {
+                if self.host_register_mapped {
+                    let h = self.sim.alloc_host(bytes)?;
+                    self.sim.host_register_mapped(h)?;
+                    Ok(h)
+                } else {
+                    Ok(self.sim.alloc_host_mapped(bytes)?)
+                }
+            }
             GpuFill::Vmm => {
                 let id = self.vmm_alloc(d)?;
                 self.fill_hbm(d, id)?;
@@ -2252,7 +2305,7 @@ impl SimulatedGpuStore {
             GpuFill::Mapped => {
                 self.wait_compute(page.device)?;
                 self.free_page_mailbox(page.device, page.mailbox)?;
-                self.sim.free_host_pinned(page.id)?;
+                free_mapped_host(&mut self.sim, page.id)?;
                 let _gone = self.replicas.remove(&key);
                 return Ok(());
             }

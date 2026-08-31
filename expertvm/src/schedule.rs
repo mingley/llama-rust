@@ -11,10 +11,9 @@ use crate::sim_replay::{
     apply_stream_mem_sync_domain, apply_stream_sms, apply_stream_sync_policy, apply_touch,
     bind_shareable_mempools, bump_null_for_attach, disable_pool_opportunistic_reuse, drop_remote,
     fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots,
-    pin_pageable_staging, reclaim_victim,
-    remote_hit, replay_from_sim, sim_profile, sync_work, trim_device_pools, trim_graph_pools,
-    validate_sim_cfg, GraphBank, LeafMem, PageHandle, RemoteFetch, RemotePage, ReplayCounters,
-    SimCfg, SimReplay, StreamPlan, TouchArgs,
+    pin_pageable_staging, reclaim_victim, remote_hit, replay_from_sim, sim_profile, sync_work,
+    trim_device_pools, trim_graph_pools, validate_sim_cfg, GraphBank, LeafMem, PageHandle,
+    RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, StreamPlan, TouchArgs,
 };
 use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -339,6 +338,7 @@ impl SchedRt {
                 vmm_page: cfg.vmm_page,
                 pageable: cfg.pageable,
                 host_register: cfg.host_register,
+                host_register_mapped: cfg.host_register_mapped,
                 memcpy_batch: cfg.memcpy_batch,
                 accessed_by: cfg.accessed_by,
                 wait_value: cfg.wait_value,
@@ -428,8 +428,10 @@ impl SchedRt {
             }
             return Ok(());
         }
-        self.args.s =
-            bump_null_for_attach(self.plan.work(ev.sequence, ev.token), self.cfg.stream_attach);
+        self.args.s = bump_null_for_attach(
+            self.plan.work(ev.sequence, ev.token),
+            self.cfg.stream_attach,
+        );
         let ek = ev.keys();
         for key in &ek {
             let home = self.home(*key);
@@ -605,8 +607,10 @@ impl SchedRt {
     }
 
     fn touch_remote(&mut self, ev: &ExpertAccess) -> Result<(), Error> {
-        self.args.s =
-            bump_null_for_attach(self.plan.work(ev.sequence, ev.token), self.cfg.stream_attach);
+        self.args.s = bump_null_for_attach(
+            self.plan.work(ev.sequence, ev.token),
+            self.cfg.stream_attach,
+        );
         let ek = ev.keys();
         let fan_in = u64::try_from(ev.experts.len()).unwrap_or(1).max(1);
         let act = self.remote_act.unwrap_or(1);
@@ -755,11 +759,7 @@ impl SchedRt {
     }
 
     fn forget_peer_if_home_dropped(&mut self, key: ExpertKey) {
-        if self
-            .handles
-            .get(&key)
-            .is_some_and(|p| !p.host_resident)
-        {
+        if self.handles.get(&key).is_some_and(|p| !p.host_resident) {
             return;
         }
         let home = self.home(key);

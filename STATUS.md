@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaHostRegisterMapped` expert pages
+
+`GpuStoreCfg::host_register_mapped` / `SimCfg::host_register_mapped` allocate
+pageable host (`cudaMalloc`) then `cudaHostRegisterMapped` so miss pages are
+pin-and-map zero-copy (PCIe GEMM, `hbm_peak` 0) instead of `cudaHostAllocMapped`.
+Implies `--mapped`. Illegal with `--host-register`. Hits/misses stay the same.
+Evict is `cudaHostUnregister` then `free_host`. `--host-register-mapped` is off
+by default (decode identity: `cudaHostAllocMapped`). `gpu-profile capture` is
+still refused.
+
 ## Shipped 2026-08-31 — `cudaMemPrefetchAsync` to host on managed evict
 
 `GpuStoreCfg::prefetch_host` / `SimCfg::prefetch_host` call

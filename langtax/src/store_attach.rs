@@ -58,6 +58,8 @@ pub(crate) struct GpuCli {
     pub pageable: bool,
     /// `cudaHostRegister` (`GpuStoreCfg::host_register`). Implies pageable.
     pub host_register: bool,
+    /// `cudaHostRegisterMapped` expert pages (`GpuStoreCfg::host_register_mapped`). Implies mapped.
+    pub host_register_mapped: bool,
     /// `cudaMemcpyBatchAsync` prefetch (`GpuStoreCfg::memcpy_batch`).
     pub memcpy_batch: bool,
     pub accessed_by: bool,
@@ -180,6 +182,7 @@ impl GpuCli {
             "--shareable" => &mut self.shareable,
             "--pageable" => &mut self.pageable,
             "--host-register" => &mut self.host_register,
+            "--host-register-mapped" => &mut self.host_register_mapped,
             "--memcpy-batch" => &mut self.memcpy_batch,
             "--accessed-by" => &mut self.accessed_by,
             "--legacy-null" => &mut self.legacy_null,
@@ -230,6 +233,13 @@ impl GpuCli {
     pub(crate) fn imply_managed(&mut self) {
         if self.stream_attach || self.managed_host || self.prefetch_host {
             self.managed = true;
+        }
+    }
+
+    /// `--host-register-mapped` implies [`Self::mapped`]. Call after sim-flag checks.
+    pub(crate) fn imply_mapped(&mut self) {
+        if self.host_register_mapped {
+            self.mapped = true;
         }
     }
 
@@ -403,6 +413,7 @@ impl GpuCli {
             (self.shareable, "--shareable"),
             (self.pageable, "--pageable"),
             (self.host_register, "--host-register"),
+            (self.host_register_mapped, "--host-register-mapped"),
             (self.memcpy_batch, "--memcpy-batch"),
             (self.accessed_by, "--accessed-by"),
             (self.legacy_null, "--legacy-null"),
@@ -688,6 +699,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         vmm_page: gpu.vmm_page,
         pageable: gpu.pageable,
         host_register: gpu.host_register,
+        host_register_mapped: gpu.host_register_mapped,
         memcpy_batch: gpu.memcpy_batch,
         accessed_by: gpu.accessed_by,
         legacy_null: gpu.legacy_null,

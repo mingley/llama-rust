@@ -12083,6 +12083,12 @@ impl Sim {
         Ok(a.live && a.host_mapped)
     }
 
+    /// Whether `alloc` came from [`Self::host_register`] (not `cudaMallocHost`).
+    pub fn is_host_registered(&self, alloc: AllocId) -> Result<bool, SimError> {
+        let a = self.alloc_ref(alloc)?;
+        Ok(a.live && a.host_registered)
+    }
+
     /// `cudaHostRegister`: pin pageable host for DMA. Host-synchronous (mlock).
     ///
     /// Capture cannot include it. Already-pinned ids fail. [`Self::host_register_mapped`]

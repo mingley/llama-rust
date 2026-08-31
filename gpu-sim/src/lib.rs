@@ -105,7 +105,10 @@
 //! existing and later allocs from that pool. [`Sim::malloc`] cannot consume another pool's cache.
 //! [`Sim::alloc_host`] is pageable; [`Sim::host_register`] / [`host_register_mapped`](Sim::host_register_mapped)
 //! are `cudaHostRegister` (host-synchronous mlock). `expertvm sim --host-register`
-//! registers pageable staging then DMA H2D. [`Sim::alloc_host_mapped`] is
+//! registers pageable staging then DMA H2D. `expertvm sim --host-register-mapped`
+//! is [`host_register_mapped`](Sim::host_register_mapped) on expert pages
+//! (implies `--mapped`; identity mapped stays [`Sim::alloc_host_mapped`]).
+//! [`Sim::alloc_host_mapped`] is
 //! `cudaHostAllocMapped`: a kernel may read it without H2D, billed at host PCIe.
 //! [`Sim::alloc_managed`] is `cudaMallocManaged` (no HBM until first-touch or
 //! [`Sim::prefetch`] / [`prefetch_host`](Sim::prefetch_host)). Default attach is
@@ -14516,6 +14519,7 @@ mod tests {
         let h = sim.alloc_host(4096).unwrap();
         sim.host_register_mapped(h).unwrap();
         assert!(sim.is_host_mapped(h).unwrap());
+        assert!(sim.is_host_registered(h).unwrap());
         enq(sim.kernel(d, KernelKind::other(8, 4096), &[h], &[h], s));
         sim.synchronize().unwrap();
         assert_eq!(sim.hbm_used(d).unwrap(), 0);

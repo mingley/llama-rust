@@ -20,8 +20,8 @@ const USAGE: &str = "\
 usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
-  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--shareable] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--host-register] [--memcpy-batch] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
-  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--shareable] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--host-register] [--memcpy-batch] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
+  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--shareable] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--host-register] [--host-register-mapped] [--memcpy-batch] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--shareable] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--host-register] [--host-register-mapped] [--memcpy-batch] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
@@ -30,7 +30,7 @@ usage: expertvm <command> [args]
   place    <trace.jsonl> [--gpus N] [--hot-pt N]
   remote   <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
   kv       [--pages N] [--page-bytes B] [--capacity C] [--tokens T] [--profile NAME] [--fill h2d|memset] [--sequences N] [--row-width W] [--pitch P]
-  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--shareable] [--host-func] [--blocking-streams] [--pageable] [--host-register] [--memcpy-batch] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
+  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--shareable] [--host-func] [--blocking-streams] [--pageable] [--host-register] [--host-register-mapped] [--memcpy-batch] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -123,6 +123,7 @@ struct Cfg {
     blocking_streams: bool,
     pageable: bool,
     host_register: bool,
+    host_register_mapped: bool,
     memcpy_batch: bool,
     accessed_by: bool,
     legacy_null: bool,
@@ -212,6 +213,7 @@ where
     let mut blocking_streams = false;
     let mut pageable = false;
     let mut host_register = false;
+    let mut host_register_mapped = false;
     let mut memcpy_batch = false;
     let mut accessed_by = false;
     let mut legacy_null = false;
@@ -313,6 +315,7 @@ where
             "--blocking-streams" => blocking_streams = switch(&inline),
             "--pageable" => pageable = switch(&inline),
             "--host-register" => host_register = switch(&inline),
+            "--host-register-mapped" => host_register_mapped = switch(&inline),
             "--memcpy-batch" => memcpy_batch = switch(&inline),
             "--accessed-by" => accessed_by = switch(&inline),
             "--legacy-null" => legacy_null = switch(&inline),
@@ -492,8 +495,14 @@ where
     if shareable && (sync_alloc || mapped || managed || vmm) {
         return Err("shareable needs cudaMallocAsync".into());
     }
+    if host_register_mapped {
+        mapped = true;
+    }
     if host_register {
         pageable = true;
+    }
+    if host_register && host_register_mapped {
+        return Err("choose one of --host-register, --host-register-mapped".into());
     }
     if host_register && (mapped || managed) {
         return Err("host-register needs pinned/vmm H2D".into());
@@ -536,6 +545,7 @@ where
         blocking_streams,
         pageable,
         host_register,
+        host_register_mapped,
         memcpy_batch,
         accessed_by,
         legacy_null,
@@ -623,6 +633,7 @@ fn sim_cfg_from(cfg: &Cfg, prefetch: Prefetch, max_batch: usize) -> SimCfg {
         blocking_streams: cfg.blocking_streams,
         pageable: cfg.pageable,
         host_register: cfg.host_register,
+        host_register_mapped: cfg.host_register_mapped,
         memcpy_batch: cfg.memcpy_batch,
         accessed_by: cfg.accessed_by,
         legacy_null: cfg.legacy_null,
@@ -996,6 +1007,7 @@ where
                 vmm_page: cfg.vmm_page,
                 pageable: cfg.pageable,
                 host_register: cfg.host_register,
+                host_register_mapped: cfg.host_register_mapped,
                 memcpy_batch: cfg.memcpy_batch,
                 accessed_by: cfg.accessed_by,
                 legacy_null: cfg.legacy_null,

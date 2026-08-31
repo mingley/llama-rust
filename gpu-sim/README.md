@@ -696,6 +696,9 @@ PCIe, and it does not charge HBM. `alloc_host_with_flags` /
 are Invalid. Capture cannot include host
 alloc/register. `expertvm sim --host-register` / `gguf_gemv engine --expert-sim --host-register`
 register pageable staging then DMA H2D (identity stays `cudaMallocHost`).
+`expertvm sim --host-register-mapped` / `gguf_gemv engine --expert-sim --host-register-mapped`
+is `cudaHostRegisterMapped` on expert pages (`alloc_host` then register+map;
+implies `--mapped`; identity mapped stays `cudaHostAllocMapped`).
 `alloc_managed` is `cudaMallocManaged` (no HBM until
 `prefetch` / first-touch at kernel start). Default attach is Global.
 `alloc_managed_host` is `cudaMemAttachHost`. `alloc_managed_with_flags` is
