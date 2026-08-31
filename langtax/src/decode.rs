@@ -198,7 +198,7 @@ const TINY_GEMMA4_ROPE_FREQ_UNROT: f32 = f32::from_bits(0x7149_F2CA);
 /// Writer-tiny per-expert `ffn_down_exps.scale` (`{n_expert}`). Not all 1, so
 /// the walk is observable vs `tiny-gemma4-moe`. Matches
 /// [`TINY_GEMMA4_N_EXPERT`].
-const TINY_GEMMA4_DOWN_S: [f32; TINY_GEMMA4_N_EXPERT] = [1.0, 0.5, 2.0, 0.25];
+const TINY_GEMMA4_DOWN_S: [f32; TINY_GEMMA4_N_EXPERT] = [0.5, 2.0, 0.25, 4.0];
 /// Writer-built tiny Qwen3Next `qwen3next.expert_count` (official load rejects 0).
 const TINY_QWEN3NEXT_N_EXPERT: usize = 4;
 /// Writer-built tiny `qwen3next.expert_used_count`.
@@ -4600,30 +4600,91 @@ fn rewrite_tiny_gemma4_rope_freqs(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> 
 /// Same split-MoE tensors as [`tiny_gemma4_moe_gguf`] plus `{n_expert}` F32
 /// scales. Decode follows llama.cpp `build_lora_mm_id`: after the down expert
 /// GEMM, `ggml_mul` broadcasts `ffn_down_exps.scale[e]` onto that expert's
-/// output. `TENSOR_NOT_REQUIRED`; missing is `1.0`. Not a second architecture.
+/// output. `TENSOR_NOT_REQUIRED`; missing is `1.0`. Writer-tiny zeros
+/// `ffn_gate_inp.weight` so softmax is uniform, and packs split experts as
+/// F32: Q4_K `GELU(gate)` on the tiny is ~0, so a one-hot mix plus
+/// `ffn_post_norm_2` RMSNorm would hide per-expert scale. Not a second
+/// architecture.
 pub fn tiny_gemma4_moe_down_s_gguf() -> Vec<u8> {
     rewrite_tiny_gemma4_moe_down_s(tiny_gemma4_moe_gguf()).unwrap_or_else(|_| Vec::new())
 }
 
-/// Append `blk.0.ffn_down_exps.scale` = [`TINY_GEMMA4_DOWN_S`].
+/// Append `blk.0.ffn_down_exps.scale` = [`TINY_GEMMA4_DOWN_S`]. Zero
+/// `ffn_gate_inp.weight` and rewrite split experts as F32 so per-expert
+/// scale is not hidden by Q4_K-zero GELU or `ffn_post_norm_2` RMSNorm.
 fn rewrite_tiny_gemma4_moe_down_s(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_gemma4_moe_down_s_scale(bytes, Some(&TINY_GEMMA4_DOWN_S))
+}
+
+fn rewrite_tiny_gemma4_moe_down_s_scale(
+    bytes: Vec<u8>,
+    down_s: Option<&[f32]>,
+) -> Result<Vec<u8>, GgufError> {
     let g = load_gguf_owned(bytes)?;
     let kv: Vec<(String, Kv)> = g.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
     let mut tensors = Vec::new();
     for t in g.tensors() {
+        if t.name == "blk.0.ffn_gate_exps.weight"
+            || t.name == "blk.0.ffn_up_exps.weight"
+            || t.name == "blk.0.ffn_down_exps.weight"
+        {
+            continue;
+        }
+        let mut data = t.data.to_vec();
+        if t.name == "blk.0.ffn_gate_inp.weight" {
+            data.fill(0);
+        }
         tensors.push(TensorWrite {
             name: t.name.to_string(),
             ty: t.ty,
             shape: t.shape.to_vec(),
-            data: t.data.to_vec(),
+            data,
         });
     }
     tensors.push(tw(
-        "blk.0.ffn_down_exps.scale",
+        "blk.0.ffn_gate_exps.weight",
         GgmlType::F32,
-        vec![TINY_GEMMA4_N_EXPERT],
-        pack_vec1d(GgmlType::F32, &TINY_GEMMA4_DOWN_S),
+        vec![TINY_N_EMBD, TINY_N_FF, TINY_GEMMA4_N_EXPERT],
+        pack_mat_exps(
+            GgmlType::F32,
+            TINY_N_EMBD,
+            TINY_N_FF,
+            TINY_GEMMA4_N_EXPERT,
+            23,
+        ),
     ));
+    tensors.push(tw(
+        "blk.0.ffn_up_exps.weight",
+        GgmlType::F32,
+        vec![TINY_N_EMBD, TINY_N_FF, TINY_GEMMA4_N_EXPERT],
+        pack_mat_exps(
+            GgmlType::F32,
+            TINY_N_EMBD,
+            TINY_N_FF,
+            TINY_GEMMA4_N_EXPERT,
+            24,
+        ),
+    ));
+    tensors.push(tw(
+        "blk.0.ffn_down_exps.weight",
+        GgmlType::F32,
+        vec![TINY_N_FF, TINY_N_EMBD, TINY_GEMMA4_N_EXPERT],
+        pack_mat_exps(
+            GgmlType::F32,
+            TINY_N_FF,
+            TINY_N_EMBD,
+            TINY_GEMMA4_N_EXPERT,
+            25,
+        ),
+    ));
+    if let Some(s) = down_s {
+        tensors.push(tw(
+            "blk.0.ffn_down_exps.scale",
+            GgmlType::F32,
+            vec![TINY_GEMMA4_N_EXPERT],
+            pack_vec1d(GgmlType::F32, s),
+        ));
+    }
     Ok(write_gguf_with_kv(&kv, &tensors))
 }
 
@@ -17283,6 +17344,11 @@ mod tests {
             f32s(scale).expect("f32s").as_slice(),
             TINY_GEMMA4_DOWN_S.as_slice()
         );
+        let gate_inp = g.tensor("blk.0.ffn_gate_inp.weight").expect("gate_inp");
+        assert!(
+            gate_inp.data.iter().all(|b| *b == 0),
+            "writer-tiny must zero ffn_gate_inp so routing is not one-hot"
+        );
         let model = Llama::from_gguf(g.clone()).expect("model");
         assert!(model.gemma4);
         match &model.layers[0].ffn {
@@ -17293,10 +17359,27 @@ mod tests {
         }
         let moe = load_gguf(&tiny_gemma4_moe_gguf()).expect("moe");
         assert!(moe.tensor("blk.0.ffn_down_exps.scale").is_none());
+        let flat = load_gguf(
+            &rewrite_tiny_gemma4_moe_down_s_scale(tiny_gemma4_moe_gguf(), None)
+                .expect("flat bytes"),
+        )
+        .expect("flat");
+        assert!(flat.tensor("blk.0.ffn_down_exps.scale").is_none());
+        assert_eq!(
+            flat.tensor("blk.0.ffn_gate_exps.weight")
+                .expect("flat gate")
+                .ty,
+            GgmlType::F32
+        );
         assert_ne!(
             oracle_forward_seq(&g, &[1, 2, 3]),
             oracle_forward_seq(&moe, &[1, 2, 3]),
             "oracle down_s vs moe"
+        );
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&flat, &[1, 2, 3]),
+            "oracle down_s vs uniform-router F32 moe"
         );
         load_fwd_match(&bytes, 3);
         load_prefill_match(&bytes, &[1, 2, 3]);
@@ -17320,42 +17403,36 @@ mod tests {
             scaled, moe_pref,
             "per-expert down_s must not copy moe logits"
         );
+        let flat_pref = {
+            let fm = Llama::from_gguf(flat.clone()).expect("fm");
+            let mut c = fm.new_cache(8).expect("fc");
+            fm.prefill(&mut c, &tokens).expect("flat pref")
+        };
+        assert_ne!(
+            scaled, flat_pref,
+            "per-expert down_s must not copy uniform-router F32 logits"
+        );
         let catalog = model.expert_direct_store().expect("catalog");
         let via_direct = store_prefill(&model, LiveStore::Direct(catalog), &tokens);
         assert_eq!(scaled, via_direct, "DirectStore GEMV must match the blob");
         let ones_pref = {
-            let g0 = load_gguf_owned(tiny_gemma4_moe_gguf()).expect("ones g0");
-            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-            let mut tensors = Vec::new();
-            for t in g0.tensors() {
-                tensors.push(TensorWrite {
-                    name: t.name.to_string(),
-                    ty: t.ty,
-                    shape: t.shape.to_vec(),
-                    data: t.data.to_vec(),
-                });
-            }
-            let ones = vec![1.0f32; TINY_GEMMA4_N_EXPERT];
-            tensors.push(tw(
-                "blk.0.ffn_down_exps.scale",
-                GgmlType::F32,
-                vec![TINY_GEMMA4_N_EXPERT],
-                pack_vec1d(GgmlType::F32, &ones),
-            ));
-            let ones_bytes = write_gguf_with_kv(&kv, &tensors);
+            let ones = [1.0f32; TINY_GEMMA4_N_EXPERT];
+            let ones_bytes =
+                rewrite_tiny_gemma4_moe_down_s_scale(tiny_gemma4_moe_gguf(), Some(&ones))
+                    .expect("ones bytes");
             let og = load_gguf(&ones_bytes).expect("ones g");
             assert_eq!(
                 oracle_forward_seq(&og, &tokens),
-                oracle_forward_seq(&moe, &tokens),
-                "scale=1.0 must match omitted down_s"
+                oracle_forward_seq(&flat, &tokens),
+                "scale=1.0 must match omitted down_s on the same router"
             );
             let om = Llama::from_gguf(og).expect("om");
             let mut c = om.new_cache(8).expect("oc");
             om.prefill(&mut c, &tokens).expect("ones pref")
         };
         assert_eq!(
-            ones_pref, moe_pref,
-            "all-ones down_s must be identity with moe"
+            ones_pref, flat_pref,
+            "all-ones down_s must be identity with uniform-router F32 moe"
         );
         let bad = {
             let g0 = load_gguf_owned(tiny_gemma4_moe_gguf()).expect("bad g0");

@@ -4408,9 +4408,11 @@ model, do not celebrate the sim.
     `ffn_down_exps.scale[e]` onto that expert's output
     (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Writer-tiny
     `tiny-gemma4-moe-down-s` is split `tiny-gemma4-moe` plus `{n_expert}` F32.
-    Fused/PLE/shared-KV/mixed-hd omit the tensor. Decode identity vs
-    oracle. `gpu-profile capture` is still refused. Dual score still has
-    no `$/M tokens`.
+    Writer-tiny zeros `ffn_gate_inp` so softmax is uniform and packs split
+    experts as F32 (Q4_K GELU(gate) is ~0 on the tiny, and `ffn_post_norm_2`
+    RMSNorm would cancel a one-hot mix). Fused/PLE/shared-KV/mixed-hd omit
+    the tensor. Decode identity vs oracle. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
 
 394. [ ] Next numbered PLAN item after 393 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official

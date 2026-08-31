@@ -13,7 +13,10 @@ gemma4, not a second family). Decode follows llama.cpp `build_lora_mm_id`:
 after the down expert GEMM, `ggml_mul` broadcasts `{n_expert}` onto that
 expert's output (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Writer-tiny
 `tiny-gemma4-moe-down-s` is split `tiny-gemma4-moe` plus scales
-`[1.0, 0.5, 2.0, 0.25]`. Fused/PLE/shared-KV/mixed-hd omit the tensor.
+`[0.5, 2.0, 0.25, 4.0]`. Writer-tiny zeros `ffn_gate_inp` so softmax is
+uniform and packs split experts as F32 (Q4_K GELU(gate) is ~0 on the
+tiny, and `ffn_post_norm_2` RMSNorm would cancel a one-hot mix).
+Fused/PLE/shared-KV/mixed-hd omit the tensor.
 `mixtral` stays rejected.
 
 ## Shipped 2026-08-31 — official gemma4 proportional `rope_freqs`
