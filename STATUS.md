@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — graph-build `cudaGraphSetConditional` + exec SetParams
+
+`Sim::graph_add_set_conditional` is the graph-build analog of captured
+`cudaGraphSetConditional`. Handle is topology; `value` is
+`graph_exec_set_conditional_params` / `GraphNodeParams::SetConditional`.
+Device-launch instantiate refuses the node. Decode identity does not add
+set-conditional nodes. `--graph-if` is not an Engine flag yet (launch still
+resets handles to create-time default first).
+
 ## Shipped 2026-08-31 — `cudaLaunchHostFunc` after miss DMA
 
 `GpuStoreCfg::copy_host` / `SimCfg::copy_host` enqueue `cudaLaunchHostFunc`

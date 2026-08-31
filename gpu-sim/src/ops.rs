@@ -3084,8 +3084,9 @@ pub enum GraphNodeKind {
 /// [`crate::Sim::graph_node_get_params`].
 ///
 /// IF/WHILE/SWITCH stay [`crate::Sim::graph_add_if`] / `graph_add_while` /
-/// `graph_add_switch` (those return body graphs). External-semaphore nodes are
-/// not modeled.
+/// `graph_add_switch` (those return body graphs). Set-conditional is
+/// [`crate::Sim::graph_add_set_conditional`] / [`Self::SetConditional`].
+/// External-semaphore nodes are not modeled.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GraphNodeParams {
     /// `cudaGraphKernelNode`.
@@ -3123,6 +3124,15 @@ pub enum GraphNodeParams {
     Free(AllocId),
     /// `cudaGraphBatchMemOpNode` (item list; empty is Invalid).
     BatchMemOp(Vec<BatchMemOp>),
+    /// Captured / graph-build [`crate::Sim::set_conditional`]
+    /// (`cudaGraphSetConditional`). [`Self::SetConditional::handle`] is
+    /// topology; `value` is a parameter.
+    SetConditional {
+        /// Handle created with [`crate::Sim::graph_conditional_create`].
+        handle: CondId,
+        /// Value written when this node starts.
+        value: u32,
+    },
 }
 
 /// Result of [`crate::Sim::graph_add_node`] (`cudaGraphAddNode`).

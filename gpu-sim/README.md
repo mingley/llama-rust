@@ -317,6 +317,9 @@ it. Independent streams still launch live. `cudaMallocAsync` / `cudaFreeAsync`
 `graph_add_node` is `cudaGraphAddNode` (`GraphNodeParams` plus dependency
 indices in the same call). Typed `graph_add_*` stay (empty deps).
 IF/WHILE/SWITCH stay `graph_add_if` / `graph_add_while` / `graph_add_switch`.
+`graph_add_set_conditional` is the graph-build analog of captured
+`set_conditional` (`GraphNodeParams::SetConditional`; handle is topology,
+`value` is a parameter).
 `graph_node_set_params` / `graph_exec_node_set_params` are
 `cudaGraphNodeSetParams` / `cudaGraphExecNodeSetParams` (typed SetParams;
 Alloc would resize HBM; Empty has no params).
@@ -466,6 +469,8 @@ submits). `thread_exchange_stream_capture_mode` is
 `cudaGraphConditionalHandleCreate` and an IF node. Body ops skip at
 start when the handle is `0`. `set_conditional` is device
 `cudaGraphSetConditional` (each launch resets to the create-time default).
+`graph_add_set_conditional` is the graph-build analog (handle topology;
+`value` is `graph_exec_set_conditional_params`).
 `graph_add_while` / `graph_while_nodes` / `graph_add_switch` /
 `graph_switch_nodes` are WHILE / SWITCH (WHILE caps at
 64 iterations; SWITCH runs body `i` when the handle equals `i`).

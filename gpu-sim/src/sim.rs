@@ -4061,6 +4061,9 @@ impl Sim {
                     self.graph_batch_mem_ops_set_params(graph, node, &ops)
                 }
             }
+            GraphNodeParams::SetConditional { handle, value } => {
+                self.set_conditional_node_params(graph, node, handle, value, exec)
+            }
         }
     }
 
@@ -4068,6 +4071,8 @@ impl Sim {
     ///
     /// Query; legal during capture. Typed GetParams stay. IF/WHILE/SWITCH stay
     /// [`Self::graph_if_nodes`] / `graph_while_nodes` / `graph_switch_nodes`.
+    /// Set-conditional is [`Self::graph_set_conditional_nodes`] /
+    /// [`GraphNodeParams::SetConditional`].
     /// [`GraphNodeParams::Alloc`] is bytes only; the pointer is
     /// [`Self::graph_alloc_get_params`]. Empty returns [`GraphNodeParams::Empty`].
     pub fn graph_node_get_params(
@@ -4647,6 +4652,133 @@ impl Sim {
         Ok(())
     }
 
+    /// `cudaGraphNodeSetParams` for a set-conditional node on the definition.
+    ///
+    /// After instantiate this does not retarget the exec; use
+    /// [`Self::graph_exec_set_conditional_params`]. [`CondId`] must match
+    /// (topology). Capture cannot include it. Host-sync 1 ns.
+    pub fn graph_set_conditional_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        value: u32,
+    ) -> Result<(), SimError> {
+        let handle = self.set_conditional_handle(graph, node, false)?;
+        self.set_conditional_node_params(graph, node, handle, value, false)
+    }
+
+    /// `cudaGraphExecNodeSetParams` for a set-conditional node on an exec.
+    ///
+    /// [`CondId`] must match (topology). `value` may change. Pays
+    /// `graph_set_params_ns` and clears the upload flag. Capture cannot
+    /// include it. Graphs with mem alloc/free nodes are legal.
+    pub fn graph_exec_set_conditional_params(
+        &mut self,
+        exec: GraphId,
+        node: usize,
+        value: u32,
+    ) -> Result<(), SimError> {
+        let handle = self.set_conditional_handle(exec, node, true)?;
+        self.set_conditional_node_params(exec, node, handle, value, true)
+    }
+
+    fn set_conditional_handle(
+        &self,
+        graph: GraphId,
+        node: usize,
+        exec: bool,
+    ) -> Result<CondId, SimError> {
+        let step = if exec {
+            self.graph_exec_step(self.as_exec(graph)?, node)?
+        } else {
+            self.graph_def_step(graph, node)?
+        };
+        match step.kind {
+            Kind::SetConditional { handle, .. } => Ok(handle),
+            _ => Err(SimError::Invalid {
+                why: "not a set-conditional node",
+            }),
+        }
+    }
+
+    fn set_conditional_node_params(
+        &mut self,
+        graph: GraphId,
+        node: usize,
+        handle: CondId,
+        value: u32,
+        exec: bool,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing(if exec {
+            "cannot capture set-conditional set params"
+        } else {
+            "cannot capture set-conditional node set params"
+        })?;
+        if exec {
+            let exec = self.as_exec(graph)?;
+            let device = {
+                let g = self.graphs.get(&exec).ok_or(SimError::Invalid {
+                    why: "unknown graph",
+                })?;
+                let step = live_ok(g.view().get(node).ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?)?;
+                let Kind::SetConditional { handle: have, .. } = step.kind else {
+                    return Err(SimError::Invalid {
+                        why: "not a set-conditional node",
+                    });
+                };
+                if have != handle {
+                    return Err(SimError::Invalid {
+                        why: "conditional handle is topology",
+                    });
+                }
+                step.device
+            };
+            let ns = self.profile.gpu(device)?.graph_set_params_ns.max(1);
+            self.clock = self.clock.saturating_add(ns);
+            let g = self.graphs.get_mut(&exec).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.exec_mut()?.get_mut(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            step.kind = Kind::SetConditional { handle, value };
+            g.uploaded = false;
+            Ok(())
+        } else {
+            let device = {
+                let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+                    why: "unknown graph",
+                })?;
+                let step = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+                    why: "unknown graph node",
+                })?)?;
+                let Kind::SetConditional { handle: have, .. } = step.kind else {
+                    return Err(SimError::Invalid {
+                        why: "not a set-conditional node",
+                    });
+                };
+                if have != handle {
+                    return Err(SimError::Invalid {
+                        why: "conditional handle is topology",
+                    });
+                }
+                step.device
+            };
+            let _gpu = self.profile.gpu(device)?;
+            self.clock = self.clock.saturating_add(1);
+            let g = self.graphs.get_mut(&graph).ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?;
+            let step = live_ok_mut(g.steps.get_mut(node).ok_or(SimError::Invalid {
+                why: "unknown graph node",
+            })?)?;
+            step.kind = Kind::SetConditional { handle, value };
+            Ok(())
+        }
+    }
+
     /// Unique kernel node on `graph` plus its current [`KernelNodeParams`].
     ///
     /// Zero or more than one kernel node is Invalid. Used by
@@ -4821,6 +4953,51 @@ impl Sim {
                     user_data: *user_data,
                 },
             ));
+        }
+        Ok(found)
+    }
+
+    /// Unique set-conditional node on `graph` plus `(handle, value)`.
+    ///
+    /// Zero nodes is Invalid (`not a set-conditional node`). More than one is
+    /// `not unique set-conditional node`.
+    pub fn graph_unique_set_conditional(
+        &self,
+        graph: GraphId,
+    ) -> Result<(usize, CondId, u32), SimError> {
+        match self.graph_try_unique_set_conditional(graph)? {
+            Some(v) => Ok(v),
+            None => Err(SimError::Invalid {
+                why: "not a set-conditional node",
+            }),
+        }
+    }
+
+    /// Unique set-conditional node, or `None` when the graph has none.
+    ///
+    /// More than one is Invalid.
+    pub fn graph_try_unique_set_conditional(
+        &self,
+        graph: GraphId,
+    ) -> Result<Option<(usize, CondId, u32)>, SimError> {
+        let graph = self.resolved_graph(graph)?;
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut found = None;
+        for (i, step) in g.view().iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            let Kind::SetConditional { handle, value } = step.kind else {
+                continue;
+            };
+            if found.is_some() {
+                return Err(SimError::Invalid {
+                    why: "not unique set-conditional node",
+                });
+            }
+            found = Some((i, handle, value));
         }
         Ok(found)
     }
@@ -5911,7 +6088,9 @@ impl Sim {
     /// Typed [`Self::graph_add_kernel`] / `graph_add_memcpy` / … stay; they
     /// start with no dependencies. This call binds `deps` in the same step (all
     /// indices must already exist). IF/WHILE/SWITCH stay
-    /// [`Self::graph_add_if`] / `graph_add_while` / `graph_add_switch`. Capture
+    /// [`Self::graph_add_if`] / `graph_add_while` / `graph_add_switch`.
+    /// [`GraphNodeParams::SetConditional`] is
+    /// [`Self::graph_add_set_conditional`]. Capture
     /// cannot include it. Illegal on an instantiated exec.
     /// [`GraphNodeParams::Alloc`] fills [`GraphAddNode::alloc`].
     pub fn graph_add_node(
@@ -5979,6 +6158,10 @@ impl Sim {
             }
             GraphNodeParams::BatchMemOp(ops) => {
                 self.graph_add_batch_mem_op(graph, &ops)?;
+                Ok(None)
+            }
+            GraphNodeParams::SetConditional { handle, value } => {
+                self.graph_add_set_conditional(graph, handle, value)?;
                 Ok(None)
             }
         }
@@ -6363,6 +6546,27 @@ impl Sim {
         self.submit(device, stream, Kind::SetConditional { handle, value })
     }
 
+    /// Graph-build analog of captured [`Self::set_conditional`].
+    ///
+    /// `handle` must have been created on `graph`. Capture cannot include it.
+    /// Illegal on an instantiated exec. Device-launch instantiate refuses this
+    /// node (conditionals). Decode identity does not add set-conditional nodes.
+    pub fn graph_add_set_conditional(
+        &mut self,
+        graph: GraphId,
+        handle: CondId,
+        value: u32,
+    ) -> Result<(), SimError> {
+        let (device, stream) = self.graph_origin_for_add(graph)?;
+        self.require_cond_on_graph(handle, graph)?;
+        self.graph_push(
+            graph,
+            device,
+            stream,
+            Kind::SetConditional { handle, value },
+        )
+    }
+
     /// IF nodes on `graph` as `(index, handle, body)` in add order.
     pub fn graph_if_nodes(
         &self,
@@ -6418,6 +6622,26 @@ impl Sim {
             }
             if let Kind::Switch { handle, bodies } = &step.kind {
                 out.push((i, *handle, bodies.clone()));
+            }
+        }
+        Ok(out)
+    }
+
+    /// Set-conditional nodes on `graph` as `(index, handle, value)` in add order.
+    pub fn graph_set_conditional_nodes(
+        &self,
+        graph: GraphId,
+    ) -> Result<Vec<(usize, CondId, u32)>, SimError> {
+        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
+            why: "unknown graph",
+        })?;
+        let mut out = Vec::new();
+        for (i, step) in g.steps.iter().enumerate() {
+            if step.destroyed {
+                continue;
+            }
+            if let Kind::SetConditional { handle, value } = step.kind {
+                out.push((i, handle, value));
             }
         }
         Ok(out)
@@ -18599,6 +18823,7 @@ fn device_launch_refused(kind: &Kind) -> bool {
             | Kind::While { .. }
             | Kind::Switch { .. }
             | Kind::WhileTick { .. }
+            | Kind::SetConditional { .. }
             | Kind::Attach { .. }
             | Kind::AllReduce { .. }
             | Kind::HostFunc { .. }
@@ -18794,10 +19019,13 @@ fn node_params_of(kind: &Kind) -> Result<GraphNodeParams, SimError> {
                 why: "not a batch mem op node",
             })?)
         }
+        Kind::SetConditional { handle, value } => GraphNodeParams::SetConditional {
+            handle: *handle,
+            value: *value,
+        },
         Kind::If { .. }
         | Kind::While { .. }
         | Kind::Switch { .. }
-        | Kind::SetConditional { .. }
         | Kind::WhileTick { .. }
         | Kind::Attach { .. }
         | Kind::AllReduce { .. }
