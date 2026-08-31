@@ -709,7 +709,8 @@ do not invent `cudaDevAttrNumaId`).
 are not modeled; distinct from `HostNativeAtomicSupported`).
 `MaxAccessPolicyWindowSize` is L2 bytes (same as `MaxPersistingL2CacheSize`).
 `GlobalL1CacheSupported` is always 0 (this VM does not model L1 caches;
-distinct from `L2CacheSize`).
+distinct from `L2CacheSize`). `LocalL1CacheSupported` is always 0 (this
+VM does not model L1 caches; distinct from `GlobalL1CacheSupported`).
 `StreamPrioritiesSupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields

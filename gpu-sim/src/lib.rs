@@ -473,6 +473,9 @@
 //! (same as [`MaxPersistingL2CacheSize`](DeviceAttr::MaxPersistingL2CacheSize)).
 //! [`DeviceAttr::GlobalL1CacheSupported`] is always 0 (this VM does not model
 //! L1 caches). Distinct from [`L2CacheSize`](DeviceAttr::L2CacheSize).
+//! [`DeviceAttr::LocalL1CacheSupported`] is always 0 (this VM does not model
+//! L1 caches). Distinct from
+//! [`GlobalL1CacheSupported`](DeviceAttr::GlobalL1CacheSupported).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -12708,6 +12711,32 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::GlobalL1CacheSupported)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_local_l1_cache_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert!(!hp.global_l1_cache_supported);
+        assert!(!hp.local_l1_cache_supported);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::LocalL1CacheSupported)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::GlobalL1CacheSupported)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::LocalL1CacheSupported)
                 .unwrap(),
             0
         );

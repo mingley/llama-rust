@@ -14941,6 +14941,7 @@ impl Sim {
             | DeviceAttr::DmaBufSupported
             | DeviceAttr::GenericCompressionSupported
             | DeviceAttr::GlobalL1CacheSupported
+            | DeviceAttr::LocalL1CacheSupported
             | DeviceAttr::HandleTypeWin32HandleSupported
             | DeviceAttr::HandleTypeWin32KmtHandleSupported
             | DeviceAttr::HandleTypeFabricSupported
@@ -14991,6 +14992,7 @@ impl Sim {
             l2_cache_size: gpu.l2_bytes,
             access_policy_max_window_size: gpu.l2_bytes,
             global_l1_cache_supported: false,
+            local_l1_cache_supported: false,
             async_engine_count: u32::from(gpu.copy_engines),
             concurrent_kernels: gpu.compute_slots > 1,
             cooperative_launch: gpu.cooperative_launch,

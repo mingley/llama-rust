@@ -790,6 +790,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrGlobalL1CacheSupported` (always 0; this VM does not model
     /// L1 caches). Distinct from [`Self::L2CacheSize`].
     GlobalL1CacheSupported,
+    /// `cudaDevAttrLocalL1CacheSupported` (always 0; this VM does not model
+    /// L1 caches). Distinct from [`Self::GlobalL1CacheSupported`].
+    LocalL1CacheSupported,
     /// `cudaDevAttrMaxBlocksPerCluster`.
     MaxBlocksPerCluster,
     /// `cudaDevAttrMemSyncDomainCount`.
@@ -1006,6 +1009,10 @@ pub struct DeviceProperties {
     /// `cudaDevAttrGlobalL1CacheSupported` ([`DeviceAttr::GlobalL1CacheSupported`]).
     /// Always false; this VM does not model L1 caches.
     pub global_l1_cache_supported: bool,
+    /// `cudaDevAttrLocalL1CacheSupported` ([`DeviceAttr::LocalL1CacheSupported`]).
+    /// Always false; this VM does not model L1 caches. Distinct from
+    /// [`Self::global_l1_cache_supported`].
+    pub local_l1_cache_supported: bool,
     /// [`crate::GpuProfile::copy_engines`].
     pub async_engine_count: u32,
     /// [`crate::GpuProfile::compute_slots`] `> 1`.

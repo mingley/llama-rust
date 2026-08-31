@@ -4697,7 +4697,14 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-425. [ ] Next numbered PLAN item after 424 is the next `gpu-sim` / Engine /
+425. [x] CUDA `cudaDevAttrLocalL1CacheSupported`
+    (`DeviceAttr::LocalL1CacheSupported`): always 0. This VM does not
+    model L1 caches. Distinct from `GlobalL1CacheSupported`. Also
+    `DeviceProperties.local_l1_cache_supported`. Query; legal during
+    capture. `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+426. [ ] Next numbered PLAN item after 425 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4724,6 +4731,7 @@ model, do not celebrate the sim.
     Do not invent Owner / AllDevices GPUDirect RDMA write ordering (flush
     would become a no-op).
     Do not invent a second `cudaDevAttrGlobalL1CacheSupported`.
+    Do not invent a second `cudaDevAttrLocalL1CacheSupported`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
