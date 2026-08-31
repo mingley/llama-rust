@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cudaDeviceSetCacheConfig`
+
+`gpu-sim` `set_cache_config` / `get_cache_config` are
+`cudaDeviceSetCacheConfig` / `GetCacheConfig`. `set_func_cache_config` /
+`get_func_cache_config` are `cudaFuncSetCacheConfig` (per device; CUDA has
+no FuncGet). Default PreferNone. PreferShared / PreferL1 / PreferEqual
+are stored; L1 is not modeled, so kernel duration does not change.
+Host-sync 1 ns on Set. Capture cannot include Set. Get is a query.
+Distinct from SharedMemCarveout and SharedMemoryMode. No Engine
+`--cache-config`. `gpu-profile capture` is still refused. Dual score still
+has no `$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cudaDevAttrEccEnabled`
 
 `gpu-sim` `DeviceAttr::EccEnabled` is always 0. ECC is not modeled.

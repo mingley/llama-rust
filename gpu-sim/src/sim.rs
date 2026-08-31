@@ -15,7 +15,7 @@ use crate::ops::{
     ClusterSchedulingPolicy, ComputeMode, DevResource, DevResourceType, DevSmResourceSplitFlags,
     DeviceAttr, DeviceFlags, DeviceLimit, DeviceNumaConfig, DeviceP2pAttr, DeviceProperties,
     EventCreateFlags, EventRecordFlags, EventWaitFlags, FlushGpuDirectRdmaScope,
-    FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes,
+    FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
     GpuDirectRdmaWritesOrdering, GpuOp as Kind, GraphAddNode, GraphDebugDotFlags,
     GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
     GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
@@ -363,6 +363,11 @@ struct GpuRt {
     /// `cudaFuncSetSharedMemConfig`. Launch Default inherits this before the
     /// device config.
     func_shared_mem_config: SharedMemoryMode,
+    /// `cudaDeviceSetCacheConfig`. Stored; L1 is not modeled, so this does not
+    /// change kernel duration.
+    cache_config: FuncCache,
+    /// `cudaFuncSetCacheConfig`. Stored; L1 is not modeled.
+    func_cache_config: FuncCache,
     /// `cudaFuncAttributePreferredSharedMemoryCarveout`. Launch Default inherits
     /// this occupancy.
     func_carveout: SharedMemCarveout,
@@ -869,6 +874,8 @@ impl Sim {
                     limits: DeviceLimits::sm80(),
                     shared_mem_config: SharedMemoryMode::Default,
                     func_shared_mem_config: SharedMemoryMode::Default,
+                    cache_config: FuncCache::PreferNone,
+                    func_cache_config: FuncCache::PreferNone,
                     func_carveout: SharedMemCarveout::Default,
                     cluster_dim_must_be_set: false,
                     required_cluster_x: 0,
@@ -14422,6 +14429,52 @@ impl Sim {
     ) -> Result<SharedMemoryMode, SimError> {
         let _gpu = self.profile.gpu(device)?;
         Ok(self.gpu_rt(device)?.func_shared_mem_config)
+    }
+
+    /// `cudaDeviceSetCacheConfig`. Host-synchronous. Capture cannot include it.
+    ///
+    /// [`FuncCache::PreferNone`] is the CUDA default. PreferShared / PreferL1 /
+    /// PreferEqual are stored. This VM does not model L1 caches, so cache
+    /// config does not change kernel duration. Distinct from
+    /// [`Self::set_shared_mem_config`] and [`Self::set_func_carveout`].
+    /// Decode identity stays PreferNone.
+    pub fn set_cache_config(&mut self, device: DeviceId, cache: FuncCache) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture cache config")?;
+        let _gpu = self.profile.gpu(device)?;
+        self.gpu_rt_mut(device)?.cache_config = cache;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// `cudaDeviceGetCacheConfig`. Query; legal during capture.
+    pub fn get_cache_config(&self, device: DeviceId) -> Result<FuncCache, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.cache_config)
+    }
+
+    /// `cudaFuncSetCacheConfig`. Host-synchronous. Capture cannot include it.
+    ///
+    /// Per device (this VM is not per kernel-function object). Stored; L1 is
+    /// not modeled. Decode identity stays PreferNone.
+    pub fn set_func_cache_config(
+        &mut self,
+        device: DeviceId,
+        cache: FuncCache,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture func cache config")?;
+        let _gpu = self.profile.gpu(device)?;
+        self.gpu_rt_mut(device)?.func_cache_config = cache;
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
+    }
+
+    /// Current [`Self::set_func_cache_config`]. Query; legal during capture.
+    ///
+    /// CUDA has no `cudaFuncGetCacheConfig`; this is the twin of
+    /// [`Self::get_func_shared_mem_config`].
+    pub fn get_func_cache_config(&self, device: DeviceId) -> Result<FuncCache, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.gpu_rt(device)?.func_cache_config)
     }
 
     /// `cudaFuncSetAttribute(..., cudaFuncAttributePreferredSharedMemoryCarveout)`.

@@ -752,6 +752,12 @@ range.
 inherit the function config, then this; unset is unscaled).
 `set_func_shared_mem_config` / `get_func_shared_mem_config` are
 `cudaFuncSetSharedMemConfig` / `GetSharedMemConfig` (per device).
+`set_cache_config` / `get_cache_config` are `cudaDeviceSetCacheConfig` /
+`GetCacheConfig` (`FuncCache`; PreferNone default). PreferShared /
+PreferL1 / PreferEqual are stored; L1 is not modeled, so kernel duration
+does not change. `set_func_cache_config` / `get_func_cache_config` are
+`cudaFuncSetCacheConfig` (per device; CUDA has no FuncGet). Distinct from
+shared-mem carveout and bank width. No Engine `--cache-config`.
 `set_device_flags` / `get_device_flags` are
 `cudaSetDeviceFlags` / `GetDeviceFlags` (`DeviceFlags` schedule plus stored
 MapHost / LmemResizeToMax; `SYNC_MEMOPS` waits memcpy/memset like pointer

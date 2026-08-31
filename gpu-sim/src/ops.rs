@@ -1918,6 +1918,28 @@ impl SharedMemoryMode {
     }
 }
 
+/// `cudaFuncCache` for [`crate::Sim::set_cache_config`] /
+/// [`get_cache_config`](crate::Sim::get_cache_config) /
+/// [`set_func_cache_config`](crate::Sim::set_func_cache_config).
+///
+/// Default [`Self::PreferNone`]. [`Self::PreferShared`] / [`Self::PreferL1`] /
+/// [`Self::PreferEqual`] are stored. This VM does not model L1 caches, so
+/// cache config does not change kernel duration. Distinct from
+/// [`SharedMemCarveout`] (occupancy) and [`SharedMemoryMode`] (bank width).
+/// Decode identity stays [`Self::PreferNone`]. No Engine `--cache-config`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum FuncCache {
+    /// `cudaFuncCachePreferNone` (`0`). Default; no L1/shared preference.
+    #[default]
+    PreferNone,
+    /// `cudaFuncCachePreferShared` (`1`). Stored; L1 is not modeled.
+    PreferShared,
+    /// `cudaFuncCachePreferL1` (`2`). Stored; L1 is not modeled.
+    PreferL1,
+    /// `cudaFuncCachePreferEqual` (`3`). Stored; L1 is not modeled.
+    PreferEqual,
+}
+
 /// `cudaLaunchAttributePortableClusterSizeMode`.
 ///
 /// Launch-time override of [`crate::Sim::set_non_portable_cluster_size_allowed`].

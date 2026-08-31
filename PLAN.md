@@ -4717,7 +4717,18 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-428. [ ] Next numbered PLAN item after 427 is the next `gpu-sim` / Engine /
+428. [x] CUDA `cudaDeviceSetCacheConfig` / `GetCacheConfig` /
+    `cudaFuncSetCacheConfig`: `set_cache_config` / `get_cache_config` /
+    `set_func_cache_config` / `get_func_cache_config`. Default PreferNone.
+    PreferShared / PreferL1 / PreferEqual are stored; L1 is not modeled so
+    kernel duration does not change. Host-sync 1 ns on Set. Capture cannot
+    include Set. Get is a query. Per device (this VM is not per
+    kernel-function object). Decode identity stays PreferNone. No Engine
+    `--cache-config`. Distinct from SharedMemCarveout / SharedMemoryMode.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+429. [ ] Next numbered PLAN item after 428 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4747,6 +4758,9 @@ model, do not celebrate the sim.
     Do not invent a second `cudaDevAttrLocalL1CacheSupported`.
     Do not invent a second `cudaDevAttrComputePreemptionSupported`.
     Do not invent a second `cudaDevAttrEccEnabled`.
+    Do not invent a second `cudaDeviceSetCacheConfig` / `GetCacheConfig` /
+    `cudaFuncSetCacheConfig`. Do not invent Engine `--cache-config`
+    (stored-only; L1 vs Shared is not mechanically distinct).
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

@@ -579,6 +579,14 @@
 //! [`set_func_shared_mem_config`](Sim::set_func_shared_mem_config) /
 //! [`get_func_shared_mem_config`](Sim::get_func_shared_mem_config) are
 //! `cudaFuncSetSharedMemConfig` / `GetSharedMemConfig` (per device).
+//! [`set_cache_config`](Sim::set_cache_config) /
+//! [`get_cache_config`](Sim::get_cache_config) are `cudaDeviceSetCacheConfig` /
+//! `GetCacheConfig` ([`FuncCache`]; PreferNone default). PreferShared /
+//! PreferL1 / PreferEqual are stored; L1 is not modeled, so kernel duration
+//! does not change. [`set_func_cache_config`](Sim::set_func_cache_config) /
+//! [`get_func_cache_config`](Sim::get_func_cache_config) are
+//! `cudaFuncSetCacheConfig` (per device; CUDA has no FuncGet). Distinct from
+//! [`SharedMemCarveout`] and [`SharedMemoryMode`]. No Engine `--cache-config`.
 //! [`set_device_flags`](Sim::set_device_flags) /
 //! [`get_device_flags`](Sim::get_device_flags) are `cudaSetDeviceFlags` /
 //! `GetDeviceFlags` ([`DeviceFlags`] schedule plus stored MapHost /
@@ -1032,22 +1040,23 @@ pub use ops::{
     DevResourceType, DevSmResourceSplitFlags, DeviceAttr, DeviceFlags, DeviceLimit,
     DeviceNumaConfig, DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags,
     EventWaitFlags, FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget,
-    FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, GpuDirectRdmaWritesOrdering, GpuOp,
-    GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo,
-    GraphInstantiateFlags, GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr,
-    GraphNodeKind, GraphNodeParams, GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags,
-    HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind,
-    KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessDesc,
-    MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType,
-    MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType, MemMapFlags,
-    MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
-    MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyFlags, MemcpyOp,
-    MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags, MulticastCreateFlags,
-    MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch, PeerAccessFlags, Place,
-    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource,
-    StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
+    FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, FuncCache,
+    GpuDirectRdmaWritesOrdering, GpuOp, GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult,
+    GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
+    GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
+    GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags,
+    KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
+    LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity,
+    MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType,
+    MemLocationType, MemMapFlags, MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr,
+    MemRangeAttrValue, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
+    MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags,
+    MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch,
+    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
+    SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCaptureInfo,
+    StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    WaitValueFlags, WriteValueFlags,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -7036,6 +7045,57 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_cache_config_is_stored_without_duration_change() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        assert_eq!(sim.get_cache_config(d).unwrap(), FuncCache::PreferNone);
+        assert_eq!(sim.get_func_cache_config(d).unwrap(), FuncCache::PreferNone);
+        sim.set_cache_config(d, FuncCache::PreferShared).unwrap();
+        sim.set_func_cache_config(d, FuncCache::PreferL1).unwrap();
+        assert_eq!(sim.get_cache_config(d).unwrap(), FuncCache::PreferShared);
+        assert_eq!(sim.get_func_cache_config(d).unwrap(), FuncCache::PreferL1);
+        sim.set_cache_config(d, FuncCache::PreferEqual).unwrap();
+        assert_eq!(sim.get_cache_config(d).unwrap(), FuncCache::PreferEqual);
+        assert_eq!(sim.get_func_cache_config(d).unwrap(), FuncCache::PreferL1);
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.get_cache_config(d).unwrap(), FuncCache::PreferEqual);
+        match sim.set_cache_config(d, FuncCache::PreferNone) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        match sim.set_func_cache_config(d, FuncCache::PreferNone) {
+            Err(SimError::Invalid { why }) => assert!(why.contains("capture"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        let _g = sim.end_capture().unwrap();
+        match sim.get_cache_config(DeviceId(9)) {
+            Err(SimError::Invalid { why }) => {
+                assert_eq!(why, "device not in profile");
+            }
+            other => panic!("{other:?}"),
+        }
+        let kind = KernelKind::other(1 << 40, 4096);
+        let duration = |cache: FuncCache| {
+            let mut s = Sim::new(h100());
+            let dev = DeviceId(0);
+            s.set_cache_config(dev, cache).unwrap();
+            s.set_func_cache_config(dev, cache).unwrap();
+            let a = s.alloc(dev, 4096, StreamId(0)).unwrap();
+            enq(s.memcpy_pinned_to_device(dev, a, 4096, StreamId(0)));
+            s.synchronize().unwrap();
+            let t0 = s.clock_ns();
+            enq(s.kernel(dev, kind.clone(), &[a], &[a], StreamId(1)));
+            s.synchronize().unwrap();
+            s.clock_ns().saturating_sub(t0)
+        };
+        let none = duration(FuncCache::PreferNone);
+        assert_eq!(duration(FuncCache::PreferShared), none);
+        assert_eq!(duration(FuncCache::PreferL1), none);
+        assert_eq!(duration(FuncCache::PreferEqual), none);
+        assert!(none > 0);
     }
 
     #[test]
