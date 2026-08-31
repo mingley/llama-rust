@@ -56,6 +56,8 @@ pub(crate) struct GpuCli {
     /// POSIX-FD shareable mempool IPC (`GpuStoreCfg::shareable`). Implies mempool.
     pub shareable: bool,
     pub pageable: bool,
+    /// `cudaHostRegister` (`GpuStoreCfg::host_register`). Implies pageable.
+    pub host_register: bool,
     /// `cudaMemcpyBatchAsync` prefetch (`GpuStoreCfg::memcpy_batch`).
     pub memcpy_batch: bool,
     pub accessed_by: bool,
@@ -175,6 +177,7 @@ impl GpuCli {
             "--mempool-no-reuse" => &mut self.mempool_no_reuse,
             "--shareable" => &mut self.shareable,
             "--pageable" => &mut self.pageable,
+            "--host-register" => &mut self.host_register,
             "--memcpy-batch" => &mut self.memcpy_batch,
             "--accessed-by" => &mut self.accessed_by,
             "--legacy-null" => &mut self.legacy_null,
@@ -231,6 +234,13 @@ impl GpuCli {
     pub(crate) fn imply_shareable(&mut self) {
         if self.shareable || self.mempool_trim || self.mempool_no_reuse {
             self.mempool = true;
+        }
+    }
+
+    /// `--host-register` implies [`Self::pageable`]. Call after sim-flag checks.
+    pub(crate) fn imply_pageable(&mut self) {
+        if self.host_register {
+            self.pageable = true;
         }
     }
 
@@ -389,6 +399,7 @@ impl GpuCli {
             (self.mempool_no_reuse, "--mempool-no-reuse"),
             (self.shareable, "--shareable"),
             (self.pageable, "--pageable"),
+            (self.host_register, "--host-register"),
             (self.memcpy_batch, "--memcpy-batch"),
             (self.accessed_by, "--accessed-by"),
             (self.legacy_null, "--legacy-null"),
@@ -672,6 +683,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         shareable: gpu.shareable,
         vmm_page: gpu.vmm_page,
         pageable: gpu.pageable,
+        host_register: gpu.host_register,
         memcpy_batch: gpu.memcpy_batch,
         accessed_by: gpu.accessed_by,
         legacy_null: gpu.legacy_null,

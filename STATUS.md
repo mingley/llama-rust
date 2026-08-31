@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaHostRegister` pageable staging then pinned DMA
+
+`GpuStoreCfg::host_register` / `SimCfg::host_register` allocate pageable
+staging (`cudaMalloc`) then `cudaHostRegister` so miss H2D is pinned DMA
+instead of host-sync pageable copies. Implies `--pageable`. Illegal with
+`--mapped` / `--managed`. Hits/misses stay the same. `--host-register` is
+off by default (decode identity: `cudaMallocHost` staging). `gpu-profile
+capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaMallocManaged(..., cudaMemAttachHost)` then Global attach
 
 `GpuStoreCfg::managed_host` / `SimCfg::managed_host` allocate managed experts

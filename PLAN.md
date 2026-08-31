@@ -3489,7 +3489,18 @@ model, do not celebrate the sim.
     alloc + copy-stream prefetch. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-333. [ ] Next numbered PLAN item after 332 is the next `gpu-sim` / Engine /
+333. [x] `cudaHostRegister` pageable staging then pinned DMA:
+    [`GpuStoreCfg::host_register`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::host_register`](expertvm/src/sim_replay.rs) `alloc_host` then
+    [`host_register`](gpu-sim/src/sim.rs) so miss H2D is
+    `memcpy_pinned_to_device` (not host-sync pageable). Implies `--pageable`.
+    Illegal with `--mapped` / `--managed` (and therefore `--memcpy-batch`).
+    Hits/misses stay the same. `--host-register` on `expertvm sim` /
+    `schedule` / `store` and `gguf_gemv engine --expert-sim`. Decode identity
+    stays `cudaMallocHost` staging. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+334. [ ] Next numbered PLAN item after 333 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

@@ -10,7 +10,8 @@ use crate::sim_replay::{
     allow_non_portable_cluster_if, allow_optin_shared_if, apply_misses,
     apply_stream_mem_sync_domain, apply_stream_sms, apply_stream_sync_policy, apply_touch,
     bind_shareable_mempools, bump_null_for_attach, disable_pool_opportunistic_reuse, drop_remote,
-    fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots, reclaim_victim,
+    fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots,
+    pin_pageable_staging, reclaim_victim,
     remote_hit, replay_from_sim, sim_profile, sync_work, trim_device_pools, trim_graph_pools,
     validate_sim_cfg, GraphBank, LeafMem, PageHandle, RemoteFetch, RemotePage, ReplayCounters,
     SimCfg, SimReplay, StreamPlan, TouchArgs,
@@ -316,6 +317,7 @@ impl SchedRt {
         allow_optin_shared_if(&mut sim, cfg.optin_shared)?;
         let n_gpus = u16::try_from(sim.profile().n_gpus()).unwrap_or(1).max(1);
         let bytes = cfg.bytes_per_expert.max(1);
+        pin_pageable_staging(&mut sim, &cfg, bytes)?;
         let mut cfg = cfg;
         cfg.slots = occupancy_slots(&cfg, sim.pin_budget());
         let mut next_event = 1u32;
@@ -336,6 +338,7 @@ impl SchedRt {
                 vmm: cfg.vmm,
                 vmm_page: cfg.vmm_page,
                 pageable: cfg.pageable,
+                host_register: cfg.host_register,
                 memcpy_batch: cfg.memcpy_batch,
                 accessed_by: cfg.accessed_by,
                 wait_value: cfg.wait_value,

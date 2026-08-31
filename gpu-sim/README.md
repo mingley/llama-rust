@@ -694,7 +694,9 @@ PCIe, and it does not charge HBM. `alloc_host_with_flags` /
 `host_register_with_flags` store `PORTABLE` / `WRITE_COMBINED` (alloc) and
 `PORTABLE` (register); those bits do not change DMA. IoMemory / ReadOnly
 are Invalid. Capture cannot include host
-alloc/register. `alloc_managed` is `cudaMallocManaged` (no HBM until
+alloc/register. `expertvm sim --host-register` / `gguf_gemv engine --expert-sim --host-register`
+register pageable staging then DMA H2D (identity stays `cudaMallocHost`).
+`alloc_managed` is `cudaMallocManaged` (no HBM until
 `prefetch` / first-touch at kernel start). Default attach is Global.
 `alloc_managed_host` is `cudaMemAttachHost`. `alloc_managed_with_flags` is
 `cudaMallocManaged` (`MemAttachFlags::GLOBAL` / `HOST`; Single is Invalid). `stream_attach` is

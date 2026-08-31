@@ -522,6 +522,12 @@ pub struct SimCfg {
     /// Host-synchronous (`pageable_permille`). [`crate::SimulatedGpuStore::new`]
     /// stays pinned; [`crate::GpuStoreCfg::pageable`] is the store path.
     pub pageable: bool,
+    /// `cudaHostRegister` on pageable staging so miss H2D is pinned DMA.
+    ///
+    /// Walker keeps a registered host buffer for the pin tax. Implies
+    /// [`Self::pageable`]. Illegal with [`Self::mapped`] / [`Self::managed`].
+    /// [`crate::GpuStoreCfg::host_register`] is the store path.
+    pub host_register: bool,
     /// `cudaMemcpyBatchAsync` for a multi-expert pinned/VMM prefetch window.
     ///
     /// Sibling H2D copies share one stream-order snapshot. Illegal with
@@ -862,6 +868,7 @@ impl SimCfg {
             host_func: false,
             blocking_streams: false,
             pageable: false,
+            host_register: false,
             accessed_by: false,
             legacy_null: false,
             stream_priority: false,
@@ -955,6 +962,12 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     if cfg.memcpy_batch && (cfg.pageable || cfg.sync_alloc || cfg.mapped || cfg.managed) {
         return Err(Error::Store("memcpy-batch needs async pinned/vmm H2D"));
     }
+    if cfg.host_register && !cfg.pageable {
+        return Err(Error::Store("host-register needs pageable"));
+    }
+    if cfg.host_register && (cfg.mapped || cfg.managed) {
+        return Err(Error::Store("host-register needs pinned/vmm H2D"));
+    }
     if !cfg.multicast {
         return Ok(());
     }
@@ -1018,6 +1031,7 @@ pub fn sim_replay_cfg(
     let d = DeviceId(0);
     let s = StreamId(0);
     let bytes = cfg.bytes_per_expert.max(1);
+    pin_pageable_staging(&mut sim, &cfg, bytes)?;
     let slots = occupancy_slots(&cfg, sim.pin_budget());
     let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
     let mut w = Walker::new(&keys, slots, cfg.policy, cfg.lookahead);
@@ -1050,6 +1064,7 @@ pub fn sim_replay_cfg(
         vmm: cfg.vmm,
         vmm_page: cfg.vmm_page,
         pageable: cfg.pageable,
+        host_register: cfg.host_register,
         memcpy_batch: cfg.memcpy_batch,
         accessed_by: cfg.accessed_by,
         wait_value: cfg.wait_value,
@@ -1196,6 +1211,8 @@ pub(crate) struct TouchArgs {
     pub vmm_page: u64,
     /// [`SimCfg::pageable`]: host-sync pageable H2D.
     pub pageable: bool,
+    /// [`SimCfg::host_register`]: `cudaHostRegister` then pinned DMA H2D.
+    pub host_register: bool,
     /// [`SimCfg::memcpy_batch`]: multi-expert prefetch uses `cudaMemcpyBatchAsync`.
     pub memcpy_batch: bool,
     /// [`SimCfg::accessed_by`]: SetAccessedBy / VMM SetAccess / mempool SetAccess
@@ -1275,7 +1292,7 @@ fn hbm_h2d_many(sim: &mut Sim, args: TouchArgs, allocs: &[AllocId]) -> Result<()
         return Ok(());
     }
     for id in allocs {
-        if args.pageable {
+        if args.pageable && !args.host_register {
             let _id = sim.memcpy_host_to_device(args.d, *id, args.bytes, args.s)?;
         } else {
             hbm_h2d_pinned(sim, args.d, *id, args.bytes, args.s, args.sync_alloc)?;
@@ -2597,6 +2614,18 @@ fn sequence_done(events: &[ExpertAccess], i: usize) -> bool {
         Some(n) => n.token != cur.token || n.sequence != cur.sequence,
         None => true,
     }
+}
+
+/// `cudaHostRegister` a pageable staging buffer so walker H2D can DMA.
+///
+/// Kept live for the pin tax; dropped with the Sim.
+pub(crate) fn pin_pageable_staging(sim: &mut Sim, cfg: &SimCfg, bytes: u64) -> Result<(), Error> {
+    if !cfg.host_register {
+        return Ok(());
+    }
+    let h = sim.alloc_host(bytes)?;
+    sim.host_register(h)?;
+    Ok(())
 }
 
 /// `--mapped` occupancy: `min(slots, pin / expert_bytes)`.

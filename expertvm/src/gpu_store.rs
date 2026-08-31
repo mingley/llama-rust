@@ -103,6 +103,12 @@ pub struct GpuStoreCfg {
     /// Host-synchronous and slower (`pageable_permille`). Decode identity stays
     /// on pinned H2D.
     pub pageable: bool,
+    /// `cudaHostRegister` on pageable staging so miss H2D is pinned DMA.
+    ///
+    /// Construction is `alloc_host` then `host_register` (mlock). Implies
+    /// [`Self::pageable`]. Illegal with mapped/managed. Decode identity stays
+    /// `cudaMallocHost` staging (no register).
+    pub host_register: bool,
     /// `cudaMemcpyBatchAsync` for a multi-expert pinned/VMM prefetch on one stream.
     ///
     /// Sibling H2D copies share one stream-order snapshot so they can occupy
@@ -475,6 +481,8 @@ pub struct SimulatedGpuStore {
     vmm_page: u64,
     /// Pageable H2D (`memcpy_host_to_device`) instead of pinned DMA.
     pageable: bool,
+    /// [`GpuStoreCfg::host_register`]: pageable staging is `cudaHostRegister`'d.
+    host_register: bool,
     /// [`GpuStoreCfg::memcpy_batch`]: prefetch uses `cudaMemcpyBatchAsync`.
     memcpy_batch: bool,
     /// [`GpuStoreCfg::wait_value`]: copy-ready is wait/write-value, not events.
@@ -662,6 +670,8 @@ impl SimulatedGpuStore {
     /// with `cudaMemcpyBatchAsync` (sibling H2D copies share one stream-order
     /// snapshot). Demand [`ExpertStore::acquire`] stays sequential. Illegal
     /// with pageable, host-sync, mapped, or managed fills.
+    /// [`GpuStoreCfg::host_register`] is `cudaHostRegister` on pageable staging
+    /// so miss H2D is pinned DMA (implies pageable; illegal with mapped/managed).
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
     /// exclusive compute). [`GpuStoreCfg::decode_sm_permille`] `0` keeps a
     /// full chip. `1..=1000` without [`GpuStoreCfg::decode_priority`] caps the
@@ -725,6 +735,12 @@ impl SimulatedGpuStore {
                 || fill == GpuFill::Managed)
         {
             return Err(Error::Store("memcpy-batch needs async pinned/vmm H2D"));
+        }
+        if cfg.host_register && !cfg.pageable {
+            return Err(Error::Store("host-register needs pageable"));
+        }
+        if cfg.host_register && (fill == GpuFill::Mapped || fill == GpuFill::Managed) {
+            return Err(Error::Store("host-register needs pinned/vmm H2D"));
         }
         if cfg.multicast {
             if fill != GpuFill::Vmm {
@@ -797,9 +813,13 @@ impl SimulatedGpuStore {
         }
         let cache_slots = mapped_occupancy(slots, fill, sim.pin_budget(), bytes);
         // Mapped expert pages already charge the pin budget. Pageable H2D
-        // does not need a second mlock either.
-        let staging = if fill == GpuFill::Mapped || cfg.pageable {
+        // does not need a second mlock either unless `--host-register`.
+        let staging = if fill == GpuFill::Mapped || (cfg.pageable && !cfg.host_register) {
             sim.alloc_host(bytes)?
+        } else if cfg.host_register {
+            let h = sim.alloc_host(bytes)?;
+            sim.host_register(h)?;
+            h
         } else {
             sim.alloc_host_pinned(bytes)?
         };
@@ -858,6 +878,7 @@ impl SimulatedGpuStore {
             sync_alloc: cfg.sync_alloc,
             vmm_page: cfg.vmm_page,
             pageable: cfg.pageable,
+            host_register: cfg.host_register,
             memcpy_batch: cfg.memcpy_batch,
             wait_value: cfg.wait_value,
             accessed_by: cfg.accessed_by,
@@ -1939,7 +1960,7 @@ impl SimulatedGpuStore {
 
     fn fill_hbm(&mut self, d: DeviceId, id: AllocId) -> Result<(), Error> {
         let bytes = self.bytes_per_expert;
-        if self.pageable {
+        if self.pageable && !self.host_register {
             let _id = self.sim.memcpy_host_to_device(d, id, bytes, self.copy)?;
         } else if self.sync_alloc {
             let _id = self.sim.memcpy_sync(

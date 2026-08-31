@@ -104,7 +104,8 @@
 //! **and write** pool allocations without dest HBM (interconnect). Applies to
 //! existing and later allocs from that pool. [`Sim::malloc`] cannot consume another pool's cache.
 //! [`Sim::alloc_host`] is pageable; [`Sim::host_register`] / [`host_register_mapped`](Sim::host_register_mapped)
-//! are `cudaHostRegister` (host-synchronous mlock). [`Sim::alloc_host_mapped`] is
+//! are `cudaHostRegister` (host-synchronous mlock). `expertvm sim --host-register`
+//! registers pageable staging then DMA H2D. [`Sim::alloc_host_mapped`] is
 //! `cudaHostAllocMapped`: a kernel may read it without H2D, billed at host PCIe.
 //! [`Sim::alloc_managed`] is `cudaMallocManaged` (no HBM until first-touch or
 //! [`Sim::prefetch`] / [`prefetch_host`](Sim::prefetch_host)). Default attach is

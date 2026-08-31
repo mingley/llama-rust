@@ -841,6 +841,7 @@ fn vmm_evict_reacquires_same_va() {
         vmm: true,
         vmm_page: 0,
         pageable: false,
+        host_register: false,
         memcpy_batch: false,
         accessed_by: false,
         wait_value: false,
@@ -4925,6 +4926,145 @@ fn simulated_gpu_store_pageable_h2d_is_slower_than_pinned() {
 }
 
 #[test]
+fn sim_cfg_host_register_needs_pageable() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = match sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            host_register: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("host-register without pageable must fail"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string().contains("host-register needs pageable"),
+        "{err}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_host_register_needs_pageable() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            host_register: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("host-register without pageable must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("host-register needs pageable"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn simulated_gpu_store_host_register_refuses_managed() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Managed,
+        GpuStoreCfg {
+            pageable: true,
+            host_register: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("host-register + managed must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("host-register needs pinned/vmm H2D"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn sim_replay_host_register_keeps_hits() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    let pin = SimCfg::lru(1, 4096, 0);
+    let reg = SimCfg {
+        pageable: true,
+        host_register: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), pin).expect("pin");
+    let b = sim_replay_cfg(&t, profile, reg).expect("reg");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+}
+
+#[test]
+fn simulated_gpu_store_host_register_is_faster_than_pageable() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let bytes = 32u64 << 20;
+    let run = |pageable: bool, host_register: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = match SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            bytes,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                pageable,
+                host_register,
+                ..GpuStoreCfg::default()
+            },
+        ) {
+            Ok(gpu) => gpu,
+            Err(err) => panic!("gpu: {err}"),
+        };
+        if host_register {
+            assert!(gpu.staging_is_pinned());
+        } else if pageable {
+            assert!(!gpu.staging_is_pinned());
+        }
+        let _a = gpu.acquire(ExpertKey::new(0, 0)).expect("k0");
+        let _b = gpu.acquire(ExpertKey::new(0, 1)).expect("k1");
+        gpu.score().expect("score")
+    };
+    let pin = run(false, false);
+    let page = run(true, false);
+    let reg = run(true, true);
+    assert!(
+        page.wall_ns > pin.wall_ns,
+        "pageable={} pinned={}",
+        page.wall_ns,
+        pin.wall_ns
+    );
+    assert!(
+        page.wall_ns > reg.wall_ns,
+        "pageable={} host-register={}",
+        page.wall_ns,
+        reg.wall_ns
+    );
+}
+
+#[test]
 fn store_replay_markov_prefetch_beats_demand() {
     let mut events = Vec::new();
     for tok in 0..16u32 {
@@ -5201,6 +5341,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         vmm: false,
         vmm_page: 0,
         pageable: false,
+        host_register: false,
         memcpy_batch: false,
         accessed_by: true,
         wait_value: false,
@@ -5264,6 +5405,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         vmm: true,
         vmm_page: 0,
         pageable: false,
+        host_register: false,
         memcpy_batch: false,
         accessed_by: true,
         wait_value: false,
@@ -5328,6 +5470,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         vmm: false,
         vmm_page: 0,
         pageable: false,
+        host_register: false,
         memcpy_batch: false,
         accessed_by: true,
         wait_value: false,
@@ -5758,6 +5901,7 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         vmm: false,
         vmm_page: 0,
         pageable: false,
+        host_register: false,
         memcpy_batch: true,
         accessed_by: false,
         wait_value: false,
@@ -5896,6 +6040,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             vmm: false,
             vmm_page: 0,
             pageable: false,
+            host_register: false,
             memcpy_batch: false,
             accessed_by: false,
             wait_value: false,
