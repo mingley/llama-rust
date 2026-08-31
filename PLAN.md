@@ -4389,7 +4389,19 @@ model, do not celebrate the sim.
     omitted. Decode identity vs oracle. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-392. [ ] Next numbered PLAN item after 391 is the next `gpu-sim` / Engine /
+392. [x] Official Gemma4 `rope_freqs` (proportional RoPE): same arch as
+    dense/MoE/PLE/fused/shared-KV/mixed-hd/SWA-base/no-wv/out-scale gemma4,
+    not a second family. Decode follows llama.cpp `src/models/gemma4.cpp`:
+    non-SWA layers pass `rope_freqs.weight` (`{n_embd_head/2}`) into
+    `ggml_rope_ext`; ggml `ggml_rope_cache_init` uses `theta/ff`. SWA keeps
+    `freq_factors` null. Writer-tiny `tiny-gemma4-rope-freqs` is mixed-hd
+    plus convert `generate_extra_tensors` packing (`1` then `1e30` for the
+    unrotated NeoX pairs, `partial_rotary_factor=0.25`). Mixed-hd /
+    SWA-base / no-wv / out-scale omit the tensor. Decode identity vs
+    oracle. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+393. [ ] Next numbered PLAN item after 392 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
