@@ -4788,7 +4788,17 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-437. [ ] Next numbered PLAN item after 436 is the next `gpu-sim` / Engine /
+437. [x] `gpu-sim` `init_device` / `init_device_with_flags` are
+    `cudaInitDevice`. Primary ctx is already seeded; this does not make a
+    thread-current device. `InitDeviceFlags::FLAGS_ARE_VALID` applies
+    `deviceFlags` like `set_device_flags`; without that bit they are
+    ignored. Unknown flags Invalid `"init device flags"`. Host-sync 1 ns.
+    Capture cannot include it. Distinct from `set_device_flags` (always
+    applies) and from parked `cudaSetDevice`. No Engine `--init-device`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+438. [ ] Next numbered PLAN item after 437 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4834,6 +4844,9 @@ model, do not celebrate the sim.
     Do not invent `cudaDeviceGetP2PAtomicCapabilities` (atomics are not
     modeled; partial is 0). Do not invent
     `cudaDeviceGetHostAtomicCapabilities`.
+    Do not invent a second `cudaInitDevice`. Do not invent Engine
+    `--init-device` (same wall as `set_device_flags`). Do not invent
+    `cudaSetDevice` (no thread-current device).
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

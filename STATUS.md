@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cudaInitDevice`
+
+`gpu-sim` `init_device` / `init_device_with_flags` are `cudaInitDevice`.
+Primary ctx is already seeded; this does not make a thread-current
+device. `FLAGS_ARE_VALID` applies `deviceFlags` like `set_device_flags`;
+without that bit they are ignored. Host-sync 1 ns. Capture cannot include
+it. No Engine `--init-device`. `gpu-profile capture` is still refused.
+Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cudaDevP2PAttrOnlyPartialNativeAtomicSupported`
 
 `gpu-sim` `DeviceP2pAttr::OnlyPartialNativeAtomicSupported` is always 0.

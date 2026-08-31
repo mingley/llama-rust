@@ -1658,6 +1658,22 @@ impl DeviceFlags {
     pub const SYNC_MEMOPS: u32 = 128;
 }
 
+/// `cudaInitDevice` flags for [`crate::Sim::init_device_with_flags`].
+///
+/// [`Self::FLAGS_ARE_VALID`] (`cudaInitDeviceFlagsAreValid`) means
+/// `deviceFlags` are applied like [`crate::Sim::set_device_flags`]. Without
+/// that bit, `deviceFlags` are ignored (this VM already seeds a primary
+/// context at construct and does not make a thread-current device).
+/// Unknown bits Invalid `"init device flags"`.
+pub struct InitDeviceFlags;
+
+impl InitDeviceFlags {
+    /// `0`: initialize only; do not apply `deviceFlags`.
+    pub const DEFAULT: u32 = 0;
+    /// `cudaInitDeviceFlagsAreValid` (`0x01`).
+    pub const FLAGS_ARE_VALID: u32 = 1;
+}
+
 impl SynchronizationPolicy {
     /// CLI token: `auto` / `spin` / `yield` / `blocking`.
     pub fn parse(s: &str) -> Result<Self, crate::error::SimError> {

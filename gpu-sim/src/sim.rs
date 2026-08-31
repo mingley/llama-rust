@@ -20,17 +20,17 @@ use crate::ops::{
     GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
     GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
     GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams,
-    IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue,
-    KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise,
-    MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags,
-    MemCreateFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr, MemPoolExportFlags,
-    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags, MemSyncDomain,
-    MemSyncDomainMap, MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType,
-    MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
-    Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes,
-    PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
-    SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue,
-    StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    InitDeviceFlags, IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr,
+    KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags,
+    MemAdvise, MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach,
+    MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr,
+    MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags,
+    MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder,
+    MemoryType, MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity,
+    MulticastObjectProp, Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr,
+    PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent,
+    ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr,
+    StreamAttrValue, StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
     SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WriteValueFlags,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
@@ -14680,6 +14680,42 @@ impl Sim {
     pub fn device_primary_ctx_get_state(&self, device: DeviceId) -> Result<(u32, bool), SimError> {
         let flags = self.get_device_flags(device)?;
         Ok((flags, true))
+    }
+
+    /// `cudaInitDevice(device, 0, 0)`. Ensures the primary context (already
+    /// seeded at construct). Does not make a thread-current device and does
+    /// not change [`Self::get_device_flags`]. Host-synchronous 1 ns. Capture
+    /// cannot include it.
+    pub fn init_device(&mut self, device: DeviceId) -> Result<(), SimError> {
+        self.init_device_with_flags(device, DeviceFlags::SCHEDULE_AUTO, InitDeviceFlags::DEFAULT)
+    }
+
+    /// `cudaInitDevice` with `deviceFlags` and an [`InitDeviceFlags`] word.
+    ///
+    /// [`InitDeviceFlags::FLAGS_ARE_VALID`] applies `deviceFlags` like
+    /// [`Self::set_device_flags`]. Without that bit, `deviceFlags` are
+    /// ignored. Unknown bits Invalid `"init device flags"`. Host-synchronous.
+    /// Capture cannot include it (`"cannot capture init device"`). Distinct
+    /// from [`Self::set_device_flags`] (always applies) and from parked
+    /// `cudaSetDevice` (no thread-current device). No Engine `--init-device`.
+    pub fn init_device_with_flags(
+        &mut self,
+        device: DeviceId,
+        device_flags: u32,
+        flags: u32,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture init device")?;
+        if flags & !InitDeviceFlags::FLAGS_ARE_VALID != 0 {
+            return Err(SimError::Invalid {
+                why: "init device flags",
+            });
+        }
+        let _gpu = self.profile.gpu(device)?;
+        if flags & InitDeviceFlags::FLAGS_ARE_VALID != 0 {
+            return self.set_device_flags(device, device_flags);
+        }
+        self.clock = self.clock.saturating_add(1);
+        Ok(())
     }
 
     /// `cudaPointerGetAttributes`. Query; legal during capture.

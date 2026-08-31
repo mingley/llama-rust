@@ -150,6 +150,7 @@ warp scheduler, L1, …   ← do not model
 | `set_shared_mem_config` / `get_shared_mem_config`; Default kernels inherit function then device | `cudaDeviceSetSharedMemConfig` / `GetSharedMemConfig` |
 | `set_func_shared_mem_config` / `get_func_shared_mem_config`; per-device function config | `cudaFuncSetSharedMemConfig` / `GetSharedMemConfig` |
 | `set_device_flags` / `get_device_flags` schedule + MapHost / Lmem / SyncMemops; Auto streams inherit the tax | `cudaSetDeviceFlags` / `GetDeviceFlags` |
+| `init_device` / `init_device_with_flags` seed is already done; `FLAGS_ARE_VALID` applies `deviceFlags` | `cudaInitDevice` |
 | `device_primary_ctx_get_state` is flags plus always-active (no lazy retain) | `cuDevicePrimaryCtxGetState` |
 | access-policy windows align to `cudaLimitMaxL2FetchGranularity` (default 128; `expertvm sim --l2-fetch N` sets 32/64/128) | exact |
 | `AccessPolicyWindow.hit_ratio_permille` is CUDA `hitRatio` (`expertvm sim --l2-ratio N`; unset 1000) | exact |
@@ -783,6 +784,11 @@ shared-mem carveout and bank width. No Engine `--cache-config`.
 `cudaSetDeviceFlags` / `GetDeviceFlags` (`DeviceFlags` schedule plus stored
 MapHost / LmemResizeToMax; `SYNC_MEMOPS` waits memcpy/memset like pointer
 SyncMemops; Auto streams inherit the tax). This VM does not model `cudaErrorSetOnActiveProcess`.
+`init_device` / `init_device_with_flags` are `cudaInitDevice` (primary ctx
+already seeded; does not make a thread-current device).
+`InitDeviceFlags::FLAGS_ARE_VALID` applies `deviceFlags` like
+`set_device_flags`; without that bit they are ignored. No Engine
+`--init-device`.
 `device_primary_ctx_get_state` is `cuDevicePrimaryCtxGetState` (flags match
 `get_device_flags`; active is always true). No `cuDevicePrimaryCtxRetain`.
 `expertvm sim --device-sync-memops` sets `DeviceFlags::SYNC_MEMOPS`.

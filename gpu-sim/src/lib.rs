@@ -615,6 +615,11 @@
 //! `GetDeviceFlags` ([`DeviceFlags`] schedule plus stored MapHost /
 //! LmemResizeToMax; [`DeviceFlags::SYNC_MEMOPS`] waits memcpy/memset like
 //! pointer SyncMemops; Auto streams inherit the tax).
+//! [`init_device`](Sim::init_device) / [`init_device_with_flags`](Sim::init_device_with_flags)
+//! are `cudaInitDevice` (primary ctx already seeded; does not make a
+//! thread-current device). [`InitDeviceFlags::FLAGS_ARE_VALID`] applies
+//! `deviceFlags` like [`set_device_flags`](Sim::set_device_flags); without
+//! that bit they are ignored. No Engine `--init-device`.
 //! [`device_primary_ctx_get_state`](Sim::device_primary_ctx_get_state) is
 //! `cuDevicePrimaryCtxGetState` (flags match [`get_device_flags`](Sim::get_device_flags);
 //! active is always true). No `cuDevicePrimaryCtxRetain`.
@@ -1067,19 +1072,19 @@ pub use ops::{
     GpuDirectRdmaWritesOrdering, GpuOp, GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult,
     GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
     GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
-    GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags,
-    KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
-    LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity,
-    MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType,
-    MemLocationType, MemMapFlags, MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr,
-    MemRangeAttrValue, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
-    MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags,
-    MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch,
-    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
-    SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCallbackFlags,
-    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
-    UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
+    GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, InitDeviceFlags,
+    IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue,
+    KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise,
+    MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags,
+    MemCreateFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr, MemPoolExportFlags,
+    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags, MemSyncDomain,
+    MemSyncDomainMap, MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType,
+    MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
+    Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes,
+    PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
+    SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue,
+    StreamCallbackFlags, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
+    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -8943,6 +8948,59 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn init_device_applies_flags_only_when_valid_bit_set() {
+        let p = HardwareProfile::parse("gpus=1\nhost_sync_spin_ns=1000\n").unwrap();
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let mut sim = Sim::new(p);
+        assert_eq!(sim.get_device_flags(d).unwrap(), DeviceFlags::SCHEDULE_AUTO);
+        let t0 = sim.clock_ns();
+        sim.init_device(d).unwrap();
+        assert_eq!(sim.clock_ns(), t0.saturating_add(1));
+        assert_eq!(sim.get_device_flags(d).unwrap(), DeviceFlags::SCHEDULE_AUTO);
+        let (flags, active) = sim.device_primary_ctx_get_state(d).unwrap();
+        assert_eq!(flags, DeviceFlags::SCHEDULE_AUTO);
+        assert!(active);
+        sim.init_device_with_flags(d, DeviceFlags::SCHEDULE_SPIN, InitDeviceFlags::DEFAULT)
+            .unwrap();
+        assert_eq!(sim.get_device_flags(d).unwrap(), DeviceFlags::SCHEDULE_AUTO);
+        let t_auto = sim.clock_ns();
+        sim.synchronize_stream(d, s).unwrap();
+        assert_eq!(sim.clock_ns(), t_auto);
+        sim.init_device_with_flags(
+            d,
+            DeviceFlags::SCHEDULE_SPIN,
+            InitDeviceFlags::FLAGS_ARE_VALID,
+        )
+        .unwrap();
+        assert_eq!(sim.get_device_flags(d).unwrap(), DeviceFlags::SCHEDULE_SPIN);
+        let t_spin = sim.clock_ns();
+        sim.synchronize_stream(d, s).unwrap();
+        assert_eq!(sim.clock_ns(), t_spin.saturating_add(1_000));
+        match sim.init_device_with_flags(d, 0, 2) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("init device flags"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.begin_capture(d, s).unwrap();
+        match sim.init_device(d) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("cannot capture init device"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(sim.get_device_flags(d).unwrap(), DeviceFlags::SCHEDULE_SPIN);
+        let _g = sim.end_capture().unwrap();
+        match sim.init_device(DeviceId(99)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
