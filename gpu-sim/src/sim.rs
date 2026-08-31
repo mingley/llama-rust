@@ -7782,7 +7782,7 @@ impl Sim {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
             why: "unknown graph",
         })?;
-        live_ok(g.steps.get(node).ok_or(SimError::Invalid {
+        let _live = live_ok(g.steps.get(node).ok_or(SimError::Invalid {
             why: "unknown graph node",
         })?)?;
         u32::try_from(node).map_err(|_| SimError::Invalid {
