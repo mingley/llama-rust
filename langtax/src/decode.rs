@@ -1745,16 +1745,11 @@ impl Llama {
         } else {
             Vec::new()
         };
-        let gemma4_n_pl;
-        let n_layer_kv_from_start;
-        if gemma4 {
-            let h = load_gemma4_hparams(&g, arch, n_embd, n_head, n_layer)?;
-            gemma4_n_pl = h.0;
-            n_layer_kv_from_start = h.1;
+        let (gemma4_n_pl, n_layer_kv_from_start) = if gemma4 {
+            load_gemma4_hparams(&g, arch, n_embd, n_head, n_layer)?
         } else {
-            gemma4_n_pl = 0;
-            n_layer_kv_from_start = i32::try_from(n_layer).unwrap_or(i32::MAX);
-        }
+            (0, i32::try_from(n_layer).unwrap_or(i32::MAX))
+        };
         let n_rot = rope_dimension(&g, arch, n_embd, n_head)?;
         let rope_sections = if arch == "qwen2vl" || arch == "qwen3vl" || arch == "qwen35" {
             Some(load_rope_dimension_sections(&g, arch)?)
@@ -12844,11 +12839,14 @@ mod tests {
         } else {
             0
         };
-        let n_from_start = if gemma4 {
-            let n_shared = arch_u32(g, arch, "attention.shared_kv_layers").unwrap_or(0);
-            (n_layer as i32) - (n_shared as i32)
-        } else {
-            n_layer as i32
+        let n_from_start = {
+            let n_layer_i = i32::try_from(n_layer).unwrap_or(i32::MAX);
+            if gemma4 {
+                let n_shared = arch_u32(g, arch, "attention.shared_kv_layers").unwrap_or(0);
+                n_layer_i.saturating_sub(i32::try_from(n_shared).unwrap_or(0))
+            } else {
+                n_layer_i
+            }
         };
         let embed_scale = if gemma {
             f32::from(u16::try_from(n_embd).unwrap_or(1)).sqrt()
