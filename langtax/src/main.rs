@@ -15,12 +15,13 @@ use llama_rust::{
     tiny_gemma4_moe_fused_ple_gguf, tiny_gemma4_moe_gate_up_s_gguf, tiny_gemma4_moe_gguf,
     tiny_gemma4_moe_ple_gguf, tiny_gemma4_no_wv_gguf, tiny_gemma4_out_scale_gguf,
     tiny_gemma4_ple_gguf, tiny_gemma4_rope_freqs_gguf, tiny_gemma4_shared_kv_gguf,
-    tiny_gemma4_swa_base_gguf, tiny_gemma_gguf, tiny_llama4_gguf, tiny_llama_gguf,
-    tiny_llama_moe_gguf, tiny_phi2_gguf, tiny_qwen2_gguf, tiny_qwen2moe_gguf, tiny_qwen2vl_gguf,
-    tiny_qwen35_gguf, tiny_qwen3_gguf, tiny_qwen3moe_2layer_gguf, tiny_qwen3moe_gguf,
-    tiny_qwen3next_gguf, tiny_qwen3vl_gguf, write_gguf, write_gguf_with_kv, ChatCmd, EngineCmd,
-    GgmlType, InferArgs, InferCmd, Kv, Llama, ServeCmd, TensorWrite, Tokenizer, TraceCmd,
-    BIN_USAGE, CHAT_USAGE, ENGINE_USAGE, INFER_USAGE, QK8_0, QK_K, SERVE_USAGE, TRACE_USAGE,
+    tiny_gemma4_swa_base_gguf, tiny_gemma_gguf, tiny_llama4_gguf, tiny_llama_ffn_down_s_gguf,
+    tiny_llama_gguf, tiny_llama_moe_gguf, tiny_phi2_gguf, tiny_qwen2_gguf, tiny_qwen2moe_gguf,
+    tiny_qwen2vl_gguf, tiny_qwen35_gguf, tiny_qwen3_gguf, tiny_qwen3moe_2layer_gguf,
+    tiny_qwen3moe_gguf, tiny_qwen3next_gguf, tiny_qwen3vl_gguf, write_gguf, write_gguf_with_kv,
+    ChatCmd, EngineCmd, GgmlType, InferArgs, InferCmd, Kv, Llama, ServeCmd, TensorWrite, Tokenizer,
+    TraceCmd, BIN_USAGE, CHAT_USAGE, ENGINE_USAGE, INFER_USAGE, QK8_0, QK_K, SERVE_USAGE,
+    TRACE_USAGE,
 };
 
 fn y_checksum(y: &[f32]) -> u64 {
@@ -440,6 +441,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 .next()
                 .ok_or("write-tiny-gemma4-moe-gate-up-s <path>")?;
             let bytes = tiny_gemma4_moe_gate_up_s_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-llama-ffn-down-s" => {
+            let path = args.next().ok_or("write-tiny-llama-ffn-down-s <path>")?;
+            let bytes = tiny_llama_ffn_down_s_gguf();
             write_path(Path::new(&path), &bytes)?;
             println!("wrote {path} bytes={}", bytes.len());
             Ok(())
