@@ -268,7 +268,10 @@ per-leaf). `--graph-piecewise` is `cudaStreamBeginCaptureToGraph` combo
 parents (each leaf is an extra root on one parent; same Hyper-Q overlap;
 illegal with `--graph-build`). `--graph-capture-deps` chains those
 fragments (`numDependencies > 0`; needs `--graph-piecewise`; sibling GEMMs
-serialize; does not imply piecewise; store GEMM stays per-leaf). Combo overlap stays separate capture
+serialize; does not imply piecewise; store GEMM stays per-leaf). `--graph-capture-host`
+is captured `cudaLaunchHostFunc` BETWEEN those fragments (`host_func_ns`; needs
+`--graph-piecewise`; does not imply `--host-func` or piecewise; store GEMM stays
+per-leaf). Combo overlap stays separate capture
 sessions: `cudaStreamUpdateCaptureDependencies` extra deps are additive
 with stream-order, so they cannot split same-stream children. `--graph-enable`
 is `cudaGraphNodeSetEnabled` on a wide combo parent so a later token that
@@ -318,7 +321,7 @@ same Stay vs Fetch predictor on real decode; upcoming keys are the
 online predicted list, not this walker's JSONL future window.
 `--expert-sim` captures
 per-page GEMM graphs (`graph_launches=`; `--cuda-graphs` documents that).
-`--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-build-deps` / `--graph-host` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-enable` / `--graph-mem` / `--graph-memset` / `--graph-memcpy` / `--graph-auto-free` / `--graph-mem-trim` / `--timing-events` / `--event-blocking-sync` are `GpuStoreCfg`
+`--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-build-deps` / `--graph-host` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-capture-host` / `--graph-enable` / `--graph-mem` / `--graph-memset` / `--graph-memcpy` / `--graph-auto-free` / `--graph-mem-trim` / `--timing-events` / `--event-blocking-sync` are `GpuStoreCfg`
 on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 (`gguf_gemv engine --expert-sim --managed`). `--host-func` /
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--mempool-trim` / `--mempool-no-reuse` / `--mempool-max` / `--shareable` / `--vmm-page` /
@@ -488,6 +491,7 @@ expertvm sim      trace.jsonl --capacity 1 --graph-build --graph-build-deps
 expertvm sim      trace.jsonl --capacity 1 --graph-build --graph-host
 expertvm sim      trace.jsonl --capacity 1 --graph-piecewise
 expertvm sim      trace.jsonl --capacity 1 --graph-piecewise --graph-capture-deps
+expertvm sim      trace.jsonl --capacity 1 --graph-piecewise --graph-capture-host
 expertvm sim      trace.jsonl --capacity 1 --graph-mem
 expertvm sim      trace.jsonl --capacity 1 --graph-mem --graph-memset
 expertvm sim      trace.jsonl --capacity 1 --graph-mem --graph-memcpy
@@ -530,6 +534,7 @@ expertvm store    trace.jsonl --capacity 1 --graph-build --graph-build-deps
 expertvm store    trace.jsonl --capacity 1 --graph-build --graph-host
 expertvm store    trace.jsonl --capacity 1 --graph-piecewise
 expertvm store    trace.jsonl --capacity 1 --graph-piecewise --graph-capture-deps
+expertvm store    trace.jsonl --capacity 1 --graph-piecewise --graph-capture-host
 expertvm store    trace.jsonl --capacity 1 --graph-mem
 expertvm store    trace.jsonl --capacity 1 --graph-mem --graph-memset
 expertvm store    trace.jsonl --capacity 1 --graph-mem --graph-memcpy

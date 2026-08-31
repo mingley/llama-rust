@@ -856,6 +856,16 @@ pub struct SimCfg {
     /// stays empty deps. [`crate::GpuStoreCfg::graph_capture_deps`] is the
     /// store CLI field (store GEMM stays per-leaf).
     pub graph_capture_deps: bool,
+    /// `cudaLaunchHostFunc` BETWEEN piecewise combo fragments.
+    ///
+    /// Needs [`Self::graph_piecewise`]. Later fragments depend on a captured
+    /// host node so sibling expert GEMMs serialize through `host_func_ns`.
+    /// Does not imply piecewise or [`Self::host_func`]. Hits stay the same.
+    /// Distinct from [`Self::graph_capture_deps`] (serialize without host tax)
+    /// and [`Self::graph_host`] (`cudaGraphAddHostNode` on graph-build).
+    /// Decode identity stays no host nodes. Store GEMM stays per-leaf.
+    /// [`crate::GpuStoreCfg::graph_capture_host`] is the store CLI field.
+    pub graph_capture_host: bool,
     /// `cudaGraphNodeSetEnabled` on a wide combo parent instead of recapture.
     ///
     /// A later token that GEMMs a subset of a stored combo (or of currently
@@ -1273,6 +1283,7 @@ impl SimCfg {
             graph_host: false,
             graph_piecewise: false,
             graph_capture_deps: false,
+            graph_capture_host: false,
             graph_enable: false,
             graph_mem: false,
             graph_memset: false,
@@ -1377,6 +1388,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     }
     if cfg.graph_capture_deps && !cfg.graph_piecewise {
         return Err(Error::Store("graph-capture-deps needs graph-piecewise"));
+    }
+    if cfg.graph_capture_host && !cfg.graph_piecewise {
+        return Err(Error::Store("graph-capture-host needs graph-piecewise"));
     }
     if cfg.graph_enable && cfg.device_launch {
         return Err(Error::Store("graph-enable cannot device-launch"));
@@ -1626,6 +1640,7 @@ pub fn sim_replay_cfg(
         .with_memcpy(cfg.graph_memcpy)
         .with_piecewise(cfg.graph_piecewise)
         .with_capture_deps(cfg.graph_capture_deps)
+        .with_capture_host(cfg.graph_capture_host)
         .with_enable(cfg.graph_enable);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
     for (i, event) in trace.events.iter().enumerate() {
@@ -2134,6 +2149,7 @@ pub(crate) struct GraphBank {
     graph_host: bool,
     piecewise: bool,
     capture_deps: bool,
+    capture_host: bool,
     mem: LeafMem,
     /// [`SimCfg::graph_memset`]: memset graph-mem scratch BETWEEN alloc and GEMM.
     memset: bool,
@@ -2182,6 +2198,7 @@ impl GraphBank {
             graph_host: false,
             piecewise: false,
             capture_deps: false,
+            capture_host: false,
             mem,
             memset: false,
             memcpy: false,
@@ -2400,6 +2417,11 @@ impl GraphBank {
 
     pub(crate) fn with_capture_deps(mut self, yes: bool) -> Self {
         self.capture_deps = yes;
+        self
+    }
+
+    pub(crate) fn with_capture_host(mut self, yes: bool) -> Self {
+        self.capture_host = yes;
         self
     }
 
@@ -3453,15 +3475,19 @@ fn piecewise_expert_graph(
 ) -> Result<Option<GraphId>, Error> {
     let parent = sim.create_graph(d, stream)?;
     let mut deps: Vec<usize> = Vec::new();
-    for g in leaves {
-        let extra: &[usize] = if graphs.capture_deps { &deps } else { &[] };
+    let chain = graphs.capture_deps || graphs.capture_host;
+    for (i, g) in leaves.iter().enumerate() {
+        let extra: &[usize] = if chain { &deps } else { &[] };
         sim.begin_capture_to_graph(d, stream, parent, extra)?;
         let _n = sim.launch_graph(*g, stream)?;
+        if graphs.capture_host && i.saturating_add(1) < leaves.len() {
+            let _h = sim.host_func(d, stream)?;
+        }
         let ended = sim.end_capture()?;
         if ended != parent {
             return Err(Error::Store("capture-to-graph id"));
         }
-        if graphs.capture_deps {
+        if chain {
             deps = sim
                 .graph_nodes(parent)?
                 .last()

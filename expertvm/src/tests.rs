@@ -3693,6 +3693,57 @@ fn cuda_graphs_graph_capture_deps_serializes_piecewise_children() {
 }
 
 #[test]
+fn cuda_graphs_graph_capture_host_serializes_piecewise_children_with_host_tax() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000\nhbm_bps=1000000000000\ngraph_instantiate_ns=1\ngraph_upload_ns=1\ngraph_launch_ns=1\nlaunch_overhead_ns=1\ncopy_engines=2\nhost_func_ns=100000\n",
+    )
+    .expect("profile");
+    let run = |graph_capture_deps: bool, graph_capture_host: bool| {
+        sim_replay_cfg(
+            &t,
+            p.clone(),
+            SimCfg {
+                cuda_graphs: true,
+                graph_piecewise: true,
+                graph_capture_deps,
+                graph_capture_host,
+                compute_slots: 2,
+                ..SimCfg::lru(2, 4096, 0)
+            },
+        )
+        .expect("replay")
+    };
+    let piece = run(false, false);
+    let chained = run(true, false);
+    let hosted = run(false, true);
+    let both = run(true, true);
+    assert_eq!(piece.hits, hosted.hits);
+    assert_eq!(piece.misses, hosted.misses);
+    assert_eq!(chained.hits, hosted.hits);
+    assert_eq!(both.hits, hosted.hits);
+    assert!(
+        piece.sim_ns < hosted.sim_ns,
+        "graph-capture-host must serialize piecewise children with host tax; host={} piecewise={}",
+        hosted.sim_ns,
+        piece.sim_ns
+    );
+    assert!(
+        chained.sim_ns < hosted.sim_ns,
+        "graph-capture-host must add host_func_ns over capture-deps; host={} deps={}",
+        hosted.sim_ns,
+        chained.sim_ns
+    );
+    assert_eq!(
+        hosted.sim_ns, both.sim_ns,
+        "capture-host already chains through the host node; capture-deps must not double-tax; host={} both={}",
+        hosted.sim_ns, both.sim_ns
+    );
+}
+
+#[test]
 fn sim_cfg_graph_build_and_piecewise_conflict() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1])],
@@ -4066,6 +4117,85 @@ fn sim_replay_graph_capture_deps_needs_graph_piecewise() {
 }
 
 #[test]
+fn sim_replay_graph_capture_host_needs_graph_piecewise() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    match sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            graph_capture_host: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("graph-capture-host without piecewise must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("graph-capture-host needs graph-piecewise"),
+            "{err}"
+        ),
+    }
+    match sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            cuda_graphs: true,
+            graph_capture_host: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("graph-capture-host with cuda-graphs still needs piecewise"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("graph-capture-host needs graph-piecewise"),
+            "{err}"
+        ),
+    }
+    match sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            cuda_graphs: true,
+            graph_build: true,
+            graph_capture_host: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("graph-capture-host with graph-build still needs piecewise"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("graph-capture-host needs graph-piecewise"),
+            "{err}"
+        ),
+    }
+    let _ok = sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            cuda_graphs: true,
+            graph_piecewise: true,
+            graph_capture_host: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    )
+    .expect("piecewise arms capture-host");
+    let _both = sim_replay_cfg(
+        &t,
+        profile,
+        SimCfg {
+            cuda_graphs: true,
+            graph_piecewise: true,
+            graph_capture_deps: true,
+            graph_capture_host: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    )
+    .expect("capture-deps and capture-host together need piecewise");
+}
+
+#[test]
 fn simulated_gpu_store_graph_build_launches() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],
@@ -4391,6 +4521,47 @@ fn simulated_gpu_store_graph_capture_deps_needs_graph_piecewise() {
     )
     .expect("piecewise arms capture-deps");
     assert!(gpu.graph_capture_deps());
+    let _s = gpu.score().expect("score");
+}
+
+#[test]
+fn simulated_gpu_store_graph_capture_host_needs_graph_piecewise() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile.clone(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_capture_host: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("graph-capture-host without piecewise must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("graph-capture-host needs graph-piecewise"),
+            "{err}"
+        ),
+    }
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_piecewise: true,
+            graph_capture_host: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("piecewise arms capture-host");
+    assert!(gpu.graph_capture_host());
     let _s = gpu.score().expect("score");
 }
 

@@ -413,6 +413,7 @@ impl SchedRt {
             .with_memcpy(cfg.graph_memcpy)
             .with_piecewise(cfg.graph_piecewise)
             .with_capture_deps(cfg.graph_capture_deps)
+            .with_capture_host(cfg.graph_capture_host)
             .with_enable(cfg.graph_enable),
             ctr: ReplayCounters::default(),
             prefetched: BTreeSet::new(),

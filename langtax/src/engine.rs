@@ -77,7 +77,10 @@
 //! `--graph-piecewise` is `cudaStreamBeginCaptureToGraph` combo parents
 //! (independent child roots; store GEMM stays per-leaf). `--graph-capture-deps`
 //! chains those fragments (`numDependencies > 0`; needs `--graph-piecewise`;
-//! sibling GEMMs serialize; store GEMM stays per-leaf). `--graph-build-deps`
+//! sibling GEMMs serialize; store GEMM stays per-leaf). `--graph-capture-host`
+//! is captured `cudaLaunchHostFunc` BETWEEN those fragments (needs
+//! `--graph-piecewise`; sibling GEMMs serialize through `host_func_ns`; does
+//! not imply `--host-func`; store GEMM stays per-leaf). `--graph-build-deps`
 //! is `cudaGraphAddDependencies` on `--graph-build` combo parents (needs
 //! `--graph-build`; sibling GEMMs serialize; store GEMM stays per-leaf).
 //! `--graph-host` is `cudaGraphAddHostNode` BETWEEN those combo children
@@ -4451,6 +4454,42 @@ mod tests {
         assert_eq!(
             piece.4, deps.4,
             "graph-capture-deps must keep greedy identity"
+        );
+    }
+
+    #[test]
+    fn engine_gpu_graph_capture_host_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse(
+            "gpus=1\nfp16_flops=1000000\ngraph_instantiate_ns=1\ngraph_upload_ns=1\ngraph_launch_ns=1\nlaunch_overhead_ns=1\ncopy_engines=2\n",
+        )
+        .expect("graph profile");
+        let piece = mixed_gpu_decode_itl_at(
+            bytes.clone(),
+            false,
+            None,
+            GpuStoreCfg {
+                graph_piecewise: true,
+                ..GpuStoreCfg::default()
+            },
+            profile.clone(),
+        );
+        let host = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                graph_piecewise: true,
+                graph_capture_host: true,
+                ..GpuStoreCfg::default()
+            },
+            profile,
+        );
+        assert_eq!(piece.2, 4);
+        assert_eq!(host.2, 4);
+        assert_eq!(
+            piece.4, host.4,
+            "graph-capture-host must keep greedy identity"
         );
     }
 

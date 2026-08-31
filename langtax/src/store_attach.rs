@@ -42,6 +42,8 @@ pub(crate) struct GpuCli {
     pub graph_piecewise: bool,
     /// `cudaStreamBeginCaptureToGraph` deps (`GpuStoreCfg::graph_capture_deps`). Needs piecewise.
     pub graph_capture_deps: bool,
+    /// Captured `cudaLaunchHostFunc` BETWEEN piecewise fragments (`GpuStoreCfg::graph_capture_host`). Needs piecewise.
+    pub graph_capture_host: bool,
     /// `cudaGraphNodeSetEnabled` skip extra combo children (`GpuStoreCfg::graph_enable`).
     pub graph_enable: bool,
     pub graph_mem: bool,
@@ -242,6 +244,7 @@ impl GpuCli {
             "--graph-host" => &mut self.graph_host,
             "--graph-piecewise" => &mut self.graph_piecewise,
             "--graph-capture-deps" => &mut self.graph_capture_deps,
+            "--graph-capture-host" => &mut self.graph_capture_host,
             "--graph-enable" => &mut self.graph_enable,
             "--graph-mem" => &mut self.graph_mem,
             "--graph-memset" => &mut self.graph_memset,
@@ -673,6 +676,14 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--graph-capture-host` needs `--graph-piecewise`.
+    pub(crate) fn check_graph_capture_host(self) -> Result<(), String> {
+        if self.graph_capture_host && !self.graph_piecewise {
+            return Err("--graph-capture-host needs --graph-piecewise".into());
+        }
+        Ok(())
+    }
+
     /// `--graph-build-deps` needs `--graph-build`.
     pub(crate) fn check_graph_build_deps(self) -> Result<(), String> {
         if self.graph_build_deps && !self.graph_build {
@@ -718,6 +729,7 @@ impl GpuCli {
             (self.graph_host, "--graph-host"),
             (self.graph_piecewise, "--graph-piecewise"),
             (self.graph_capture_deps, "--graph-capture-deps"),
+            (self.graph_capture_host, "--graph-capture-host"),
             (self.graph_enable, "--graph-enable"),
             (self.graph_mem, "--graph-mem"),
             (self.graph_memset, "--graph-memset"),
@@ -1115,6 +1127,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         graph_host: gpu.graph_host,
         graph_piecewise: gpu.graph_piecewise,
         graph_capture_deps: gpu.graph_capture_deps,
+        graph_capture_host: gpu.graph_capture_host,
         graph_enable: gpu.graph_enable,
         graph_mem: gpu.graph_mem,
         graph_memset: gpu.graph_memset,

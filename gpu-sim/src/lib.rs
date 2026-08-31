@@ -846,7 +846,9 @@
 //! uninstantiated graph; capture roots additionally depend on the given node
 //! indices (empty means extra roots). [`Sim::end_capture`] returns that graph.
 //! `expertvm --graph-piecewise` captures combo parents as extra roots;
-//! `--graph-capture-deps` chains those fragments.
+//! `--graph-capture-deps` chains those fragments;
+//! `--graph-capture-host` inserts captured [`host_func`](Sim::host_func)
+//! BETWEEN those fragments (`host_func_ns`; not a JOIN).
 //! [`stream_update_capture_dependencies`](Sim::stream_update_capture_dependencies)
 //! is `cudaStreamUpdateCaptureDependencies`: extra deps for the next captured
 //! node **in addition to** stream-order (`Set` replaces, `Add` unions).

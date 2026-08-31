@@ -482,6 +482,8 @@ Hyper-Q overlap unless `graph_add_dependencies` chains them).
 `--graph-piecewise`
 is `cudaStreamBeginCaptureToGraph` combo parents (independent child roots).
 `expertvm --graph-capture-deps` chains those fragments (`numDependencies > 0`).
+`expertvm --graph-capture-host` inserts captured `host_func` BETWEEN those
+fragments (`host_func_ns`; not a JOIN).
 `--graph-mem` is in-graph
 scratch (`graph_add_alloc` / capture `alloc`). `--graph-memset` memsets that
 scratch BETWEEN alloc and GEMM (`graph_add_memset` / capture `memset`; needs

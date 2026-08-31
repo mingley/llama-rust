@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — captured `cudaLaunchHostFunc` between piecewise fragments
+
+`GpuStoreCfg::graph_capture_host` / `SimCfg::graph_capture_host` insert
+captured `cudaLaunchHostFunc` BETWEEN `--graph-piecewise` combo fragments so
+sibling expert GEMMs serialize through `host_func_ns` (`child → host → child`).
+Needs `--graph-piecewise`. Does not imply piecewise or `--host-func`.
+Hits/misses stay the same. Distinct from `--graph-piecewise` (overlap vs
+serial+tax), `--graph-capture-deps` (serialize without host tax), and
+`--graph-host` (`cudaGraphAddHostNode` on graph-build). `--graph-capture-host`
+is off by default (decode identity: no host nodes in combo parents). Store
+GEMM stays per-leaf. infer-bench has no `--graph-piecewise`, so it does not
+get `--graph-capture-host`. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaGraphAddMemcpyNode` H2D of graph-mem scratch
 
 `GpuStoreCfg::graph_memcpy` / `SimCfg::graph_memcpy` insert
