@@ -4474,16 +4474,26 @@ model, do not celebrate the sim.
     vs oracle. `gpu-profile capture` is still refused. Dual score still has
     no `$/M tokens`.
 
-399. [ ] Next numbered PLAN item after 398 is the next `gpu-sim` / Engine /
+399. [x] Official dense `{1}` `attn_k.scale`: llama.cpp generic post-load
+    (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Decode follows `build_lora_mm`:
+    `ggml_mul` after the K GEMM, before K-norm. Writer-tiny
+    `tiny-llama-attn-k-s` is `tiny-llama` plus scale `0.75`. Gemma3/4
+    K-norm would cancel a positive scalar, so the observable fixture is
+    llama, not a second gemma4 family. Decode identity vs oracle.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+400. [ ] Next numbered PLAN item after 399 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
-    OpenAI HTTP veneer. Next decode candidate: generic `{1}` `attn_k.scale`
-    on llama (no K-norm, so a scalar is observable). Do not invent gemma4
-    `attn_q.scale` / `attn_output.scale` / `attn_k.scale` as the writer-tiny
-    (QK-Norm / `post_attention_norm` cancel). Do not invent F32
+    OpenAI HTTP veneer. Next decode candidate: generic `{1}` `attn_v.scale`
+    on llama (no V-norm, so a scalar is observable), or dense
+    `ffn_gate.scale`. Do not invent gemma4 `attn_q.scale` /
+    `attn_output.scale` / `attn_k.scale` / `attn_v.scale` as the writer-tiny
+    (QK-Norm / `post_attention_norm` / V RMSNorm cancel). Do not invent F32
     `output.scale` unless NVFP4. Do not invent a second dense
-    `ffn_down.scale` / second `attn_q.scale` / second `attn_output.scale`
-    as a new family. Do not invent a second `--decode-sms` flag.
+    `ffn_down.scale` / second `attn_q.scale` / second `attn_output.scale` /
+    second `attn_k.scale` as a new family. Do not invent a second `--decode-sms` flag.
     Do not invent a second `--green-ctx`. Do not invent a second
     `ffn_down_exps.scale` / second gate/up scale as a new family.
     Do not invent `CU_GREEN_CTX_DEFAULT_STREAM` as a second NULL stream.

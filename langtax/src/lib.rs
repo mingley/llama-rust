@@ -40,7 +40,7 @@ pub use decode::{
     tiny_gemma4_out_scale_gguf, tiny_gemma4_ple_gguf, tiny_gemma4_rope_freqs_gguf,
     tiny_gemma4_shared_kv_gguf, tiny_gemma4_swa_base_gguf, tiny_gemma_gguf, tiny_iq1m_gguf,
     tiny_iq1s_gguf, tiny_iq2s_gguf, tiny_iq2xs_gguf, tiny_iq2xxs_gguf, tiny_iq3s_gguf,
-    tiny_iq3xxs_gguf, tiny_iq4nl_gguf, tiny_iq4xs_gguf, tiny_llama4_gguf,
+    tiny_iq3xxs_gguf, tiny_iq4nl_gguf, tiny_iq4xs_gguf, tiny_llama4_gguf, tiny_llama_attn_k_s_gguf,
     tiny_llama_attn_out_s_gguf, tiny_llama_attn_q_s_gguf, tiny_llama_ffn_down_s_gguf,
     tiny_llama_gguf, tiny_llama_moe_gguf, tiny_mha_gguf, tiny_mistral_gguf, tiny_mqa_gguf,
     tiny_mxfp4_gguf, tiny_nvfp4_gguf, tiny_phi2_gguf, tiny_phi3_gguf, tiny_q10_gguf, tiny_q20_gguf,
