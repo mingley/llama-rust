@@ -792,6 +792,9 @@ impl SchedRt {
                 }
             } else if self.args.managed {
                 let _p = self.sim.prefetch(dst, id, stream)?;
+                if self.cfg.no_read_mostly {
+                    self.sim.synchronize_stream(dst, stream)?;
+                }
             } else {
                 let _c = self
                     .sim

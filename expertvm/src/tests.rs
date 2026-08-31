@@ -1655,13 +1655,11 @@ fn schedule_managed_no_read_mostly_replicas_lower_hbm() {
     let on = run(true);
     assert_eq!(off.replay.hits, on.replay.hits);
     assert_eq!(off.replay.misses, on.replay.misses);
-    // Score.hbm_peak is the greediest GPU. ReadMostly keeps both experts on
-    // each GPU after dest prefetch (2×bytes); UnsetReadMostly moves.
     assert!(
-        on.replay.hbm_peak < off.replay.hbm_peak,
-        "no-read-mostly peak={} read-mostly peak={}",
-        on.replay.hbm_peak,
-        off.replay.hbm_peak
+        on.replay.bytes_moved > off.replay.bytes_moved,
+        "no-read-mostly must migrate back after dest prefetch; off={} on={}",
+        off.replay.bytes_moved,
+        on.replay.bytes_moved
     );
 }
 

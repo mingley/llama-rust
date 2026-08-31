@@ -2848,7 +2848,13 @@ impl SimulatedGpuStore {
             }
             self.note_copy_elapsed(start, ev)?;
         }
-        ensure_single_attach(&mut self.sim, device, id, self.compute)?;
+        let compute = self.compute;
+        ensure_single_attach(&mut self.sim, device, id, compute)?;
+        // Dest prefetch without ReadMostly moved the page. Live kernels
+        // first-touch; graphs need this prefetch before capture.
+        if self.mode == GpuFill::Managed && !self.sim.is_resident(id, device)? {
+            let _p = self.sim.prefetch(device, id, compute)?;
+        }
         self.launch_or_gemm(device, id)?;
         reset_persisting_l2_if(&mut self.sim, device, self.l2_reset)?;
         if self.host_func {
@@ -3135,7 +3141,11 @@ impl SimulatedGpuStore {
         match self.mode {
             GpuFill::Managed => {
                 if !self.accessed_by {
-                    let _p = self.sim.prefetch(dst, id, self.dma_stream())?;
+                    let dma = self.dma_stream();
+                    let _p = self.sim.prefetch(dst, id, dma)?;
+                    if self.no_read_mostly {
+                        self.sim.synchronize_stream(dst, dma)?;
+                    }
                     self.note_replicate();
                 }
                 let _prev = self.replicas.insert(key, dst);
