@@ -4432,10 +4432,27 @@ model, do not celebrate the sim.
     compute (decode identity). `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-395. [ ] Next numbered PLAN item after 394 is the next `gpu-sim` / Engine /
+395. [x] Official Gemma4 `ffn_gate_exps.scale` / `ffn_up_exps.scale` (per-expert
+    gate/up scale): same arch as dense/MoE/PLE/fused/shared-KV/mixed-hd/
+    SWA-base/no-wv/out-scale/rope-freqs/down-s gemma4, not a second family.
+    Decode follows llama.cpp `build_lora_mm_id`: after the gate/up expert
+    GEMM, `ggml_mul` broadcasts `ffn_{gate,up}_exps.scale[e]` onto that
+    expert's output (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Fused
+    `ffn_gate_up_exps` applies `up_exps_s` to both halves and ignores
+    `gate_exps_s`. Writer-tiny `tiny-gemma4-moe-gate-up-s` is split
+    `tiny-gemma4-moe` plus `{n_expert}` F32. Writer-tiny zeros `ffn_gate_inp`
+    so softmax is uniform and packs split experts as F32 (Q4_K GELU(gate) is
+    ~0 on the tiny, and `ffn_post_norm_2` RMSNorm would cancel a one-hot
+    mix). Omits `ffn_down_exps.scale`. Fused/PLE/shared-KV/mixed-hd omit the
+    tensors. Decode identity vs oracle. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+396. [ ] Next numbered PLAN item after 395 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent a second `--decode-sms` flag.
+    Do not invent a second `--green-ctx`. Do not invent a second
+    `ffn_down_exps.scale` / second gate/up scale as a new family.
     Do not invent `CU_GREEN_CTX_DEFAULT_STREAM` as a second NULL stream.
     Do not invent split `IGNORE_SM_COSCHEDULING` / max-cluster bits.
     Do not invent `cuCtxFromGreenCtx` (no `CUcontext` object).
