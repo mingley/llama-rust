@@ -4369,7 +4369,17 @@ model, do not celebrate the sim.
     omitted. Decode identity vs oracle. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-390. [ ] Next numbered PLAN item after 389 is the next `gpu-sim` / Engine /
+390. [x] Official Gemma4 omitted `wv` (K as V): same arch as
+    dense/MoE/PLE/fused/shared-KV/mixed-hd/SWA-base gemma4, not a second
+    family. Decode follows llama.cpp `src/models/gemma4.cpp`: `wv` is
+    `TENSOR_NOT_REQUIRED`; when missing, `Vcur = Kcur` before the
+    unweighted V RMSNorm (K still gets `attn_k_norm` and RoPE). Writer-tiny
+    `tiny-gemma4-no-wv` is dense `tiny-gemma4` without `attn_v`. Mixed-hd /
+    SWA-base keep `wv`. Optional `out_scale` and `rope_freqs` stay omitted.
+    Decode identity vs oracle. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+391. [ ] Next numbered PLAN item after 390 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
