@@ -1301,6 +1301,12 @@ pub enum DeviceP2pAttr {
     /// `cudaDevP2PAttrCudaArrayAccessFromDevice`. Always 0; CUDA arrays are
     /// not modeled.
     CudaArrayAccessFromDevice,
+    /// `cudaDevP2PAttrOnlyPartialNativeAtomicSupported`. Always 0; native
+    /// atomics are not modeled. Distinct from [`Self::NativeAtomicSupported`]
+    /// (full P2P atomics) and from
+    /// [`DeviceAttr::OnlyPartialHostNativeAtomicSupported`] (host-mapped).
+    /// Do not invent `cudaDeviceGetP2PAtomicCapabilities`.
+    OnlyPartialNativeAtomicSupported,
 }
 
 /// One kernel buffer: a whole allocation or a mapped VMM span.

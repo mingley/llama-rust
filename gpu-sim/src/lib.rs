@@ -532,7 +532,8 @@
 //! are `cudaDeviceCanAccessPeer` / `cudaDeviceGetP2PAttribute` (topology links;
 //! [`DeviceP2pAttr::AccessSupported`] and [`PerformanceRank`](DeviceP2pAttr::PerformanceRank)
 //! from GPU↔GPU `bps`; [`DeviceP2pAttr::NativeAtomicSupported`] /
-//! [`CudaArrayAccessFromDevice`](DeviceP2pAttr::CudaArrayAccessFromDevice)
+//! [`CudaArrayAccessFromDevice`](DeviceP2pAttr::CudaArrayAccessFromDevice) /
+//! [`OnlyPartialNativeAtomicSupported`](DeviceP2pAttr::OnlyPartialNativeAtomicSupported)
 //! are always 0).
 //! [`enable_peer_with_flags`](Sim::enable_peer_with_flags) is
 //! `cudaDeviceEnablePeerAccess` ([`PeerAccessFlags::DEFAULT`] only; typed
@@ -12379,6 +12380,15 @@ mod tests {
             .unwrap(),
             0
         );
+        assert_eq!(
+            nv.device_get_p2p_attribute(
+                DeviceId(0),
+                DeviceId(1),
+                DeviceP2pAttr::OnlyPartialNativeAtomicSupported
+            )
+            .unwrap(),
+            0
+        );
         nv.begin_capture(DeviceId(0), StreamId(0)).unwrap();
         assert_eq!(
             nv.device_get_p2p_attribute(
@@ -13028,6 +13038,50 @@ mod tests {
             0
         );
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_p2p_attribute_only_partial_native_atomic_is_zero() {
+        let mut sim = Sim::new(HardwareProfile::example_8xh100_nvlink());
+        let d0 = DeviceId(0);
+        let d1 = DeviceId(1);
+        assert_eq!(
+            sim.device_get_p2p_attribute(d0, d1, DeviceP2pAttr::AccessSupported)
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            sim.device_get_p2p_attribute(d0, d1, DeviceP2pAttr::NativeAtomicSupported)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_p2p_attribute(d0, d1, DeviceP2pAttr::OnlyPartialNativeAtomicSupported)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d0, DeviceAttr::OnlyPartialHostNativeAtomicSupported)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d0, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_p2p_attribute(d0, d1, DeviceP2pAttr::OnlyPartialNativeAtomicSupported)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+        match sim.device_get_p2p_attribute(
+            d0,
+            DeviceId(99),
+            DeviceP2pAttr::OnlyPartialNativeAtomicSupported,
+        ) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

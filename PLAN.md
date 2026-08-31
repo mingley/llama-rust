@@ -4780,7 +4780,15 @@ model, do not celebrate the sim.
     events. `gpu-profile capture` is still refused. Dual score still has
     no `$/M tokens`.
 
-436. [ ] Next numbered PLAN item after 435 is the next `gpu-sim` / Engine /
+436. [x] `gpu-sim` `DeviceP2pAttr::OnlyPartialNativeAtomicSupported` is
+    always 0. P2P native atomics are not modeled. Distinct from
+    `NativeAtomicSupported` (full P2P atomics) and from
+    `OnlyPartialHostNativeAtomicSupported` (host-mapped). Query; legal
+    during capture. Do not invent `cudaDeviceGetP2PAtomicCapabilities`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+437. [ ] Next numbered PLAN item after 436 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4822,6 +4830,10 @@ model, do not celebrate the sim.
     Do not invent a second `cudaStreamAddCallback`.
     Do not invent Engine `--stream-callback` (same wall as second live
     `cudaLaunchHostFunc` after miss DMA).
+    Do not invent a second `cudaDevP2PAttrOnlyPartialNativeAtomicSupported`.
+    Do not invent `cudaDeviceGetP2PAtomicCapabilities` (atomics are not
+    modeled; partial is 0). Do not invent
+    `cudaDeviceGetHostAtomicCapabilities`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

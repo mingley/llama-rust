@@ -731,6 +731,10 @@ from `TextureAlignment`).
 distinct from `TextureAlignment` and from `MemcpyOp` 2D pitches).
 `MaxTexture1DWidth` is always 0 (CUDA arrays / textures are not modeled;
 distinct from `TextureAlignment`).
+`DeviceP2pAttr::OnlyPartialNativeAtomicSupported` is always 0 (P2P native
+atomics are not modeled; distinct from `NativeAtomicSupported` and from
+`OnlyPartialHostNativeAtomicSupported`). This VM does not invent
+`cudaDeviceGetP2PAtomicCapabilities`.
 `StreamPrioritiesSupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields

@@ -15240,7 +15240,8 @@ impl Sim {
     /// descending (lower is better). Same device is 0. Missing links are 0,
     /// not [`SimError::NoPeer`]. Unknown devices are Invalid.
     /// [`DeviceP2pAttr::NativeAtomicSupported`] /
-    /// [`CudaArrayAccessFromDevice`](DeviceP2pAttr::CudaArrayAccessFromDevice)
+    /// [`CudaArrayAccessFromDevice`](DeviceP2pAttr::CudaArrayAccessFromDevice) /
+    /// [`OnlyPartialNativeAtomicSupported`](DeviceP2pAttr::OnlyPartialNativeAtomicSupported)
     /// are always 0.
     pub fn device_get_p2p_attribute(
         &self,
@@ -15259,7 +15260,9 @@ impl Sim {
                 }
             }
             DeviceP2pAttr::PerformanceRank => self.profile.p2p_performance_rank(src, dst),
-            DeviceP2pAttr::NativeAtomicSupported | DeviceP2pAttr::CudaArrayAccessFromDevice => 0,
+            DeviceP2pAttr::NativeAtomicSupported
+            | DeviceP2pAttr::CudaArrayAccessFromDevice
+            | DeviceP2pAttr::OnlyPartialNativeAtomicSupported => 0,
         })
     }
 
