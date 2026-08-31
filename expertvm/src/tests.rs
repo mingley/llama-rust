@@ -846,6 +846,7 @@ fn vmm_evict_reacquires_same_va() {
         sync_memops: false,
         memcpy_batch: false,
         memcpy_during: false,
+        memcpy_any: false,
         accessed_by: false,
         wait_value: false,
         stream_attach: false,
@@ -5712,6 +5713,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         sync_memops: false,
         memcpy_batch: false,
         memcpy_during: false,
+        memcpy_any: false,
         accessed_by: true,
         wait_value: false,
         stream_attach: false,
@@ -5780,6 +5782,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         sync_memops: false,
         memcpy_batch: false,
         memcpy_during: false,
+        memcpy_any: false,
         accessed_by: true,
         wait_value: false,
         stream_attach: false,
@@ -5849,6 +5852,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         sync_memops: false,
         memcpy_batch: false,
         memcpy_during: false,
+        memcpy_any: false,
         accessed_by: true,
         wait_value: false,
         stream_attach: false,
@@ -6284,6 +6288,7 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         sync_memops: false,
         memcpy_batch: true,
         memcpy_during: false,
+        memcpy_any: false,
         accessed_by: false,
         wait_value: false,
         stream_attach: false,
@@ -6346,6 +6351,7 @@ fn memcpy_during_apply_misses_waits_copies() {
             sync_memops: false,
             memcpy_batch: true,
             memcpy_during: during,
+            memcpy_any: false,
             accessed_by: false,
             wait_value: false,
             stream_attach: false,
@@ -6380,6 +6386,79 @@ fn memcpy_during_apply_misses_waits_copies() {
     assert!(
         during.iter().all(|c| c.done),
         "DuringApiCall must wait those copies; {during:?}"
+    );
+}
+
+#[test]
+fn memcpy_any_apply_misses_empty_deps() {
+    use crate::replay::Touch;
+    use crate::sim_replay::{apply_misses, GraphBank, PageHandle, TouchArgs};
+    use gpu_sim::{Sim, StreamId};
+    use std::collections::BTreeMap;
+
+    let run = |any: bool| {
+        let mut sim = Sim::new(HardwareProfile::example_h100_sxm());
+        let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
+        let mut graphs = GraphBank::new(false, false, false, crate::sim_replay::LeafMem::None);
+        let args = TouchArgs {
+            d: DeviceId(0),
+            s: StreamId(0),
+            bytes: 4 << 20,
+            slots: 2,
+            sync_alloc: false,
+            mapped: false,
+            managed: false,
+            vmm: false,
+            vmm_page: 0,
+            pageable: false,
+            host_register: false,
+            host_register_mapped: false,
+            sync_memops: false,
+            memcpy_batch: true,
+            memcpy_during: false,
+            memcpy_any: any,
+            accessed_by: false,
+            wait_value: false,
+            stream_attach: false,
+            managed_host: false,
+            prefetch_host: false,
+        };
+        let mut next_event = 1u32;
+        apply_misses(
+            &mut sim,
+            &mut handles,
+            &mut graphs,
+            args,
+            &[
+                (ExpertKey::new(0, 0), Touch::Miss { evicted: None }),
+                (ExpertKey::new(0, 1), Touch::Miss { evicted: None }),
+            ],
+            &mut next_event,
+        )
+        .expect("misses");
+        sim.operations()
+            .filter(|o| matches!(o.kind, gpu_sim::GpuOp::Memcpy(_)))
+            .collect::<Vec<_>>()
+    };
+    let stream = run(false);
+    assert_eq!(stream.len(), 2, "{stream:?}");
+    assert!(
+        stream.iter().all(|c| !c.done),
+        "Stream copies stay in flight; {stream:?}"
+    );
+    assert!(
+        stream.iter().any(|c| !c.deps.is_empty()),
+        "Stream snapshot has predecessors; {stream:?}"
+    );
+    let any = run(true);
+    assert_eq!(any.len(), 2, "{any:?}");
+    assert!(
+        any.iter().all(|c| !c.done),
+        "Any copies stay in flight; {any:?}"
+    );
+    assert!(
+        any.iter().all(|c| c.deps.is_empty()),
+        "Any copies have empty deps; {any:?}"
     );
 }
 
@@ -6574,6 +6653,171 @@ fn sim_replay_memcpy_during_needs_memcpy_batch() {
 }
 
 #[test]
+fn simulated_gpu_store_memcpy_any_empty_deps() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let prefetch = |any: bool| {
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner.clone(),
+            2,
+            HardwareProfile::example_h100_sxm(),
+            4 << 20,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                memcpy_batch: true,
+                memcpy_any: any,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let _n = gpu
+            .prefetch(&[ExpertKey::new(0, 0), ExpertKey::new(0, 1)])
+            .expect("prefetch");
+        assert_eq!(gpu.memcpy_any(), any);
+        gpu.memcpy_operations()
+    };
+    let stream = prefetch(false);
+    assert_eq!(stream.len(), 2, "{stream:?}");
+    assert!(
+        stream.iter().all(|c| !c.done),
+        "Stream copies stay in flight; {stream:?}"
+    );
+    assert!(
+        stream.iter().any(|c| !c.deps.is_empty()),
+        "Stream snapshot has predecessors; {stream:?}"
+    );
+    let any = prefetch(true);
+    assert_eq!(any.len(), 2, "{any:?}");
+    assert!(
+        any.iter().all(|c| !c.done),
+        "Any copies stay in flight; {any:?}"
+    );
+    assert!(
+        any.iter().all(|c| c.deps.is_empty()),
+        "Any copies have empty deps; {any:?}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_memcpy_any_needs_memcpy_batch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            memcpy_any: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("memcpy-any without memcpy-batch must fail"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("memcpy-any"), "{s}");
+        }
+    }
+}
+
+#[test]
+fn simulated_gpu_store_memcpy_any_refuses_during() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            memcpy_batch: true,
+            memcpy_during: true,
+            memcpy_any: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("memcpy-any + memcpy-during must fail"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("memcpy-any"), "{s}");
+            assert!(s.contains("memcpy-during"), "{s}");
+        }
+    }
+}
+
+#[test]
+fn sim_replay_memcpy_any_keeps_hits() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let batch = SimCfg {
+        prefetch: Prefetch::CopyForward,
+        memcpy_batch: true,
+        ..SimCfg::lru(2, 4096, 8)
+    };
+    let any = SimCfg {
+        memcpy_any: true,
+        ..batch
+    };
+    let a = sim_replay_cfg(&t, p.clone(), batch).expect("batch");
+    let b = sim_replay_cfg(&t, p.clone(), any).expect("any");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+    let sched_a = schedule_replay(&t, p.clone(), batch, SchedCfg::closed(0)).expect("sa");
+    let sched_b = schedule_replay(&t, p, any, SchedCfg::closed(0)).expect("sb");
+    assert_eq!(sched_a.replay.hits, sched_b.replay.hits);
+    assert_eq!(sched_a.replay.misses, sched_b.replay.misses);
+}
+
+#[test]
+fn sim_replay_memcpy_any_needs_memcpy_batch() {
+    match sim_replay_cfg(
+        &Trace {
+            events: vec![ev(0, 0, &[0])],
+        },
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            memcpy_any: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("memcpy-any without memcpy-batch must fail"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("memcpy-any"), "{s}");
+        }
+    }
+}
+
+#[test]
+fn sim_replay_memcpy_any_refuses_during() {
+    match sim_replay_cfg(
+        &Trace {
+            events: vec![ev(0, 0, &[0])],
+        },
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            memcpy_batch: true,
+            memcpy_during: true,
+            memcpy_any: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("memcpy-any + memcpy-during must fail"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("memcpy-any"), "{s}");
+            assert!(s.contains("memcpy-during"), "{s}");
+        }
+    }
+}
+
+#[test]
 fn seq_stream_priority_starts_higher_stream_first() {
     use crate::replay::Touch;
     use crate::sim_replay::{
@@ -6606,6 +6850,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             sync_memops: false,
             memcpy_batch: false,
             memcpy_during: false,
+            memcpy_any: false,
             accessed_by: false,
             wait_value: false,
             stream_attach: false,
@@ -11386,6 +11631,7 @@ fn sim_replay_sync_memops_h2d_host_sync() {
             sync_memops,
             memcpy_batch: false,
             memcpy_during: false,
+            memcpy_any: false,
             accessed_by: false,
             wait_value: false,
             stream_attach: false,
@@ -11597,6 +11843,7 @@ fn sim_replay_device_sync_memops_h2d_host_sync() {
             sync_memops: false,
             memcpy_batch: false,
             memcpy_during: false,
+            memcpy_any: false,
             accessed_by: false,
             wait_value: false,
             stream_attach: false,

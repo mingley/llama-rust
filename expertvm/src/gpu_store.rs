@@ -173,6 +173,12 @@ pub struct GpuStoreCfg {
     /// Needs [`Self::memcpy_batch`]. Hits/misses stay the same. Decode identity
     /// stays Stream order (or sequential H2D).
     pub memcpy_during: bool,
+    /// `cudaMemcpySrcAccessOrderAny` on [`Self::memcpy_batch`].
+    ///
+    /// Empty intra-batch deps and no API wait (copies stay in flight). Needs
+    /// [`Self::memcpy_batch`]. Exclusive with [`Self::memcpy_during`]. Hits/misses
+    /// stay the same. Decode identity stays Stream order (or sequential H2D).
+    pub memcpy_any: bool,
     /// Peer map without dest HBM: managed [`gpu_sim::MemAdvise::SetAccessedBy`],
     /// VMM [`gpu_sim::Sim::va_set_access`], or pinned-async
     /// [`gpu_sim::Sim::pool_set_access`] on every GPU.
@@ -663,6 +669,8 @@ pub struct SimulatedGpuStore {
     memcpy_batch: bool,
     /// [`GpuStoreCfg::memcpy_during`]: batch attrs use DuringApiCall.
     memcpy_during: bool,
+    /// [`GpuStoreCfg::memcpy_any`]: batch attrs use Any (empty deps, no wait).
+    memcpy_any: bool,
     /// [`GpuStoreCfg::wait_value`]: copy-ready is wait/write-value, not events.
     wait_value: bool,
     /// [`GpuStoreCfg::accessed_by`]: managed/VMM/mempool pages stay on the home GPU.
@@ -987,6 +995,12 @@ impl SimulatedGpuStore {
         if cfg.memcpy_during && !cfg.memcpy_batch {
             return Err(Error::Store("memcpy-during needs memcpy-batch"));
         }
+        if cfg.memcpy_any && !cfg.memcpy_batch {
+            return Err(Error::Store("memcpy-any needs memcpy-batch"));
+        }
+        if cfg.memcpy_any && cfg.memcpy_during {
+            return Err(Error::Store("choose one of memcpy-any, memcpy-during"));
+        }
         if cfg.memcpy_batch
             && (cfg.pageable
                 || cfg.sync_alloc
@@ -1185,6 +1199,7 @@ impl SimulatedGpuStore {
             sync_memops: cfg.sync_memops,
             memcpy_batch: cfg.memcpy_batch,
             memcpy_during: cfg.memcpy_during,
+            memcpy_any: cfg.memcpy_any,
             wait_value: cfg.wait_value,
             accessed_by: cfg.accessed_by,
             migrates: 0,
@@ -1228,6 +1243,12 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn memcpy_during(&self) -> bool {
         self.memcpy_during
+    }
+
+    /// Whether batched prefetch uses Any access order (empty deps, no wait).
+    #[must_use]
+    pub fn memcpy_any(&self) -> bool {
+        self.memcpy_any
     }
 
     /// Stream memcpy ops (H2D / D2D) currently in the attached Sim.
@@ -2327,8 +2348,13 @@ impl SimulatedGpuStore {
                 MemcpyOp::packed_1d(Place::HostPinned, Place::Device(d), *id, bytes)
             })
             .collect();
-        wait_memcpy_during_allocs(&mut self.sim, d, self.copy, self.memcpy_during)?;
-        let attr = memcpy_batch_attr(self.memcpy_during);
+        wait_memcpy_during_allocs(
+            &mut self.sim,
+            d,
+            self.copy,
+            self.memcpy_during || self.memcpy_any,
+        )?;
+        let attr = memcpy_batch_attr(self.memcpy_during, self.memcpy_any);
         let _ids =
             self.sim
                 .memcpy_batch_async(d, &ops, std::slice::from_ref(&attr), &[0], self.copy)?;

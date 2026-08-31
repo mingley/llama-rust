@@ -76,6 +76,8 @@ pub(crate) struct GpuCli {
     pub memcpy_batch: bool,
     /// `cudaMemcpySrcAccessOrderDuringApiCall` on [`Self::memcpy_batch`].
     pub memcpy_during: bool,
+    /// `cudaMemcpySrcAccessOrderAny` on [`Self::memcpy_batch`].
+    pub memcpy_any: bool,
     pub accessed_by: bool,
     pub legacy_null: bool,
     pub stream_priority: bool,
@@ -248,6 +250,7 @@ impl GpuCli {
             "--device-sync-memops" => &mut self.device_sync_memops,
             "--memcpy-batch" => &mut self.memcpy_batch,
             "--memcpy-during" => &mut self.memcpy_during,
+            "--memcpy-any" => &mut self.memcpy_any,
             "--accessed-by" => &mut self.accessed_by,
             "--legacy-null" => &mut self.legacy_null,
             "--stream-priority" => &mut self.stream_priority,
@@ -620,6 +623,17 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--memcpy-any` needs `--memcpy-batch` and is exclusive with `--memcpy-during`.
+    pub(crate) fn check_memcpy_any(self) -> Result<(), String> {
+        if self.memcpy_any && !self.memcpy_batch {
+            return Err("--memcpy-any needs --memcpy-batch".into());
+        }
+        if self.memcpy_any && self.memcpy_during {
+            return Err("choose one of --memcpy-any, --memcpy-during".into());
+        }
+        Ok(())
+    }
+
     /// First CUDA knob that needs `--expert-sim`, if any.
     #[must_use]
     pub(crate) fn sim_flag(self) -> Option<&'static str> {
@@ -654,6 +668,7 @@ impl GpuCli {
             (self.device_sync_memops, "--device-sync-memops"),
             (self.memcpy_batch, "--memcpy-batch"),
             (self.memcpy_during, "--memcpy-during"),
+            (self.memcpy_any, "--memcpy-any"),
             (self.accessed_by, "--accessed-by"),
             (self.legacy_null, "--legacy-null"),
             (self.stream_priority, "--stream-priority"),
@@ -1011,6 +1026,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         device_sync_memops: gpu.device_sync_memops,
         memcpy_batch: gpu.memcpy_batch,
         memcpy_during: gpu.memcpy_during,
+        memcpy_any: gpu.memcpy_any,
         accessed_by: gpu.accessed_by,
         legacy_null: gpu.legacy_null,
         stream_priority: gpu.stream_priority,

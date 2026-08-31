@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaMemcpySrcAccessOrderAny`
+
+`GpuStoreCfg::memcpy_any` / `SimCfg::memcpy_any` put
+`cudaMemcpySrcAccessOrderAny` on `--memcpy-batch` H2D so intra-batch copies
+have empty deps and the API does not wait (copies stay in flight). Needs
+`--memcpy-batch`. Exclusive with `--memcpy-during`. Hits/misses stay the
+same. Distinct from `--memcpy-during` (wait vs no wait) and Stream order
+(empty deps vs stream-order snapshot). `--memcpy-any` is off by default
+(decode identity: Stream order, or sequential H2D). infer-bench has no
+`--memcpy-batch`, so it does not get `--memcpy-any`. `gpu-profile capture`
+is still refused.
+
 ## Shipped 2026-08-31 — `cudaMemcpySrcAccessOrderDuringApiCall`
 
 `GpuStoreCfg::memcpy_during` / `SimCfg::memcpy_during` put

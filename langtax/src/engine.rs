@@ -27,7 +27,7 @@
 //! (`ttft_ns` / `itl_ns` / `ns_per_token`; not `$/M tokens`). Default GPU
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
-//! `mempool_trim`, `mempool_no_reuse`, `mempool_max`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `memcpy_during`, `SetAccessedBy`, legacy NULL, stream priority,
+//! `mempool_trim`, `mempool_no_reuse`, `mempool_max`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `memcpy_during`, `memcpy_any`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/enable, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
 //! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `l2_ratio`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `mem_sync_launch`, `mem_sync_launch_map`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
@@ -143,7 +143,9 @@
 //! `cudaMemPoolProps::maxSize` then `cudaDeviceSetMemPool` (implies `--mempool`;
 //! illegal with `--sync-alloc`; reserved `live+cached` cannot grow past `N`). `--memcpy-during` is
 //! `cudaMemcpySrcAccessOrderDuringApiCall` on `--memcpy-batch` prefetch (needs
-//! `--memcpy-batch`; the batch API waits those copies; identity stays Stream order). Decode
+//! `--memcpy-batch`; the batch API waits those copies; identity stays Stream order). `--memcpy-any` is
+//! `cudaMemcpySrcAccessOrderAny` on `--memcpy-batch` prefetch (needs `--memcpy-batch`; empty deps;
+//! no API wait; not with `--memcpy-during`). Decode
 //! identity stays `cudaLaunchKernel` (no cluster / Default policy / no preferred
 //! dim / Default carveout / non-portable disallowed / Auto sync policy /
 //! Auto device schedule / Default mem-sync domain / Default shared-mem / Default portable-cluster / 0 dynamic shared / Default
@@ -3460,6 +3462,25 @@ mod tests {
         assert_eq!(iso.2, 4);
         assert_eq!(during.2, 4);
         assert_eq!(iso.4, during.4, "memcpy-during must keep greedy identity");
+    }
+
+    #[test]
+    fn engine_gpu_memcpy_any_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let iso = mixed_gpu_decode_itl_on(bytes.clone(), false, None, GpuStoreCfg::default());
+        let any = mixed_gpu_decode_itl_on(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                memcpy_batch: true,
+                memcpy_any: true,
+                ..GpuStoreCfg::default()
+            },
+        );
+        assert_eq!(iso.2, 4);
+        assert_eq!(any.2, 4);
+        assert_eq!(iso.4, any.4, "memcpy-any must keep greedy identity");
     }
 
     #[test]

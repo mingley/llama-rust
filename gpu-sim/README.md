@@ -505,7 +505,8 @@ cannot include it). `memcpy_with_attributes` is
 `cudaMemcpyWithAttributesAsync` (Stream is `memcpy`; DuringApiCall waits
 those copies). `expertvm sim --memcpy-during` / `gguf_gemv engine --expert-sim --memcpy-during`
 is DuringApiCall on batched prefetch (needs `--memcpy-batch`; identity stays
-Stream). `memcpy_3d_batch_async`
+Stream). `expertvm sim --memcpy-any` / `gguf_gemv engine --expert-sim --memcpy-any`
+is Any on batched prefetch (needs `--memcpy-batch`; empty deps; no API wait). `memcpy_3d_batch_async`
 is `cudaMemcpy3DBatchAsync` (3D pointer-to-pointer; `flags` must be 0; CUDA
 arrays are not modeled; capture cannot include it).
 `memcpy_3d_with_attributes` is `cudaMemcpy3DWithAttributesAsync` (Stream is

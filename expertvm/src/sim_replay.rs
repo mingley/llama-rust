@@ -721,6 +721,13 @@ pub struct SimCfg {
     /// Stream order (or sequential H2D). [`crate::GpuStoreCfg::memcpy_during`]
     /// is the store path.
     pub memcpy_during: bool,
+    /// `cudaMemcpySrcAccessOrderAny` on [`Self::memcpy_batch`].
+    ///
+    /// Empty intra-batch deps and no API wait. Needs [`Self::memcpy_batch`].
+    /// Exclusive with [`Self::memcpy_during`]. Hits stay the same. Decode
+    /// identity stays Stream order (or sequential H2D).
+    /// [`crate::GpuStoreCfg::memcpy_any`] is the store path.
+    pub memcpy_any: bool,
     /// Peer map without dest HBM at a managed or VMM fill.
     ///
     /// Dest GEMMs may read without migrating or charging dest HBM. `--place replicas`
@@ -1226,6 +1233,7 @@ impl SimCfg {
             decode_priority: false,
             memcpy_batch: false,
             memcpy_during: false,
+            memcpy_any: false,
         }
     }
 }
@@ -1296,6 +1304,12 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     }
     if cfg.memcpy_during && !cfg.memcpy_batch {
         return Err(Error::Store("memcpy-during needs memcpy-batch"));
+    }
+    if cfg.memcpy_any && !cfg.memcpy_batch {
+        return Err(Error::Store("memcpy-any needs memcpy-batch"));
+    }
+    if cfg.memcpy_any && cfg.memcpy_during {
+        return Err(Error::Store("choose one of memcpy-any, memcpy-during"));
     }
     if cfg.memcpy_batch
         && (cfg.pageable
@@ -1445,6 +1459,7 @@ pub fn sim_replay_cfg(
         sync_memops: cfg.sync_memops,
         memcpy_batch: cfg.memcpy_batch,
         memcpy_during: cfg.memcpy_during,
+        memcpy_any: cfg.memcpy_any,
         accessed_by: cfg.accessed_by,
         wait_value: cfg.wait_value,
         stream_attach: cfg.stream_attach,
@@ -1612,6 +1627,8 @@ pub(crate) struct TouchArgs {
     pub memcpy_batch: bool,
     /// [`SimCfg::memcpy_during`]: batch attrs use DuringApiCall.
     pub memcpy_during: bool,
+    /// [`SimCfg::memcpy_any`]: batch attrs use Any.
+    pub memcpy_any: bool,
     /// [`SimCfg::accessed_by`]: SetAccessedBy / VMM SetAccess / mempool SetAccess
     /// on every GPU (fill or default pools).
     pub accessed_by: bool,
@@ -1669,10 +1686,14 @@ fn hbm_h2d_pinned(
     Ok(())
 }
 
-/// `cudaMemcpyAttributes` for a batched H2D. DuringApiCall waits those copies.
-pub(crate) fn memcpy_batch_attr(during: bool) -> MemcpyAttributes {
+/// `cudaMemcpyAttributes` for a batched H2D.
+///
+/// DuringApiCall waits those copies. Any uses empty deps and does not wait.
+pub(crate) fn memcpy_batch_attr(during: bool, any: bool) -> MemcpyAttributes {
     MemcpyAttributes {
-        src_access_order: if during {
+        src_access_order: if any {
+            MemcpySrcAccessOrder::Any
+        } else if during {
             MemcpySrcAccessOrder::DuringApiCall
         } else {
             MemcpySrcAccessOrder::Stream
@@ -1681,14 +1702,14 @@ pub(crate) fn memcpy_batch_attr(during: bool) -> MemcpyAttributes {
     }
 }
 
-/// DuringApiCall copies do not wait stream-ordered `cudaMallocAsync`.
+/// Out-of-order batch copies do not wait stream-ordered `cudaMallocAsync`.
 pub(crate) fn wait_memcpy_during_allocs(
     sim: &mut Sim,
     device: DeviceId,
     stream: StreamId,
-    during: bool,
+    wait: bool,
 ) -> Result<(), Error> {
-    if during {
+    if wait {
         sim.synchronize_stream(device, stream)?;
     }
     Ok(())
@@ -1711,8 +1732,8 @@ fn hbm_h2d_many(sim: &mut Sim, args: TouchArgs, allocs: &[AllocId]) -> Result<()
                 MemcpyOp::packed_1d(Place::HostPinned, Place::Device(args.d), *id, args.bytes)
             })
             .collect();
-        wait_memcpy_during_allocs(sim, args.d, args.s, args.memcpy_during)?;
-        let attr = memcpy_batch_attr(args.memcpy_during);
+        wait_memcpy_during_allocs(sim, args.d, args.s, args.memcpy_during || args.memcpy_any)?;
+        let attr = memcpy_batch_attr(args.memcpy_during, args.memcpy_any);
         let _ids =
             sim.memcpy_batch_async(args.d, &ops, std::slice::from_ref(&attr), &[0], args.s)?;
         return Ok(());

@@ -3781,7 +3781,20 @@ model, do not celebrate the sim.
     identity stays Stream order (or sequential H2D). `gpu-profile capture`
     is still refused. Dual score still has no `$/M tokens`.
 
-356. [ ] Next numbered PLAN item after 355 is the next `gpu-sim` / Engine /
+356. [x] `cudaMemcpySrcAccessOrderAny`:
+    [`GpuStoreCfg::memcpy_any`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::memcpy_any`](expertvm/src/sim_replay.rs) on `--memcpy-batch`
+    H2D. Empty intra-batch deps and no API wait (copies stay in flight).
+    Needs `--memcpy-batch`. Exclusive with `--memcpy-during`. Hits stay the
+    same. Distinct from `--memcpy-during` (wait vs no wait) and
+    `--memcpy-batch` Stream (empty deps vs stream-order snapshot). Legal
+    with `--pdl` and `--cooperative`. `--memcpy-any` on `expertvm sim` /
+    `schedule` / `store` and `gguf_gemv engine --expert-sim`. infer-bench
+    has no `--memcpy-batch`, so it does not get `--memcpy-any`. Decode
+    identity stays Stream order (or sequential H2D). `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+357. [ ] Next numbered PLAN item after 356 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
@@ -3803,9 +3816,9 @@ model, do not celebrate the sim.
     `set_stream_nvlink_util_centric`) — `kernel_with` / graph replay use
     launch/node, not stream. Do not invent
     `GraphInstantiateFlags::UPLOAD`, height/depth required cluster, or
-    function LoadBalancing / MaxL1 occupancy standalone. Do not invent
-    `MemcpySrcAccessOrder::Any` as the next item unless it is the chosen
-    twin. Do not spend the next item on an OpenAI-compatible HTTP veneer.
+    function LoadBalancing / MaxL1 occupancy standalone. Do not invent a
+    second `MemcpySrcAccessOrder::Any` flag. Do not spend the next item
+    on an OpenAI-compatible HTTP veneer.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
