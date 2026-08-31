@@ -840,6 +840,7 @@ fn vmm_evict_reacquires_same_va() {
         managed: false,
         vmm: true,
         vmm_page: 0,
+        vmm_retain: false,
         pageable: false,
         host_register: false,
         host_unregister: false,
@@ -8235,6 +8236,195 @@ fn simulated_gpu_store_share_ptr_allows_pdl() {
 }
 
 #[test]
+fn sim_cfg_vmm_retain_needs_vmm() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = match sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            vmm_retain: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("vmm-retain without vmm must fail"),
+        Err(e) => e,
+    };
+    assert!(err.to_string().contains("vmm-retain needs vmm"), "{err}");
+}
+
+#[test]
+fn simulated_gpu_store_vmm_retain_needs_vmm() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            vmm_retain: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("vmm-retain without vmm must fail"),
+        Err(err) => assert!(err.to_string().contains("vmm-retain needs vmm"), "{err}"),
+    }
+}
+
+#[test]
+fn sim_replay_vmm_retain_keeps_hits() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    let vmm = SimCfg {
+        vmm: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let retain = SimCfg {
+        vmm: true,
+        vmm_retain: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), vmm).expect("vmm");
+    let b = sim_replay_cfg(&t, profile.clone(), retain).expect("vmm-retain");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+    let sched_a = schedule_replay(&t, profile.clone(), vmm, SchedCfg::closed(0)).expect("sa");
+    let sched_b = schedule_replay(&t, profile, retain, SchedCfg::closed(0)).expect("sb");
+    assert_eq!(sched_a.replay.hits, sched_b.replay.hits);
+    assert_eq!(sched_a.replay.misses, sched_b.replay.misses);
+}
+
+#[test]
+fn simulated_gpu_store_vmm_retain_opens_handle_on_miss() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = match SimulatedGpuStore::with_cfg(
+        inner,
+        2,
+        p,
+        4096,
+        GpuFill::Vmm,
+        GpuStoreCfg {
+            vmm_retain: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(gpu) => gpu,
+        Err(err) => panic!("gpu: {err}"),
+    };
+    assert!(gpu.vmm_retain());
+    let k0 = ExpertKey::new(0, 0);
+    let _a = gpu.acquire(k0).expect("k0");
+    assert!(gpu.page_is_vmm_retain(k0));
+    gpu.release(k0);
+    assert!(gpu.page_is_vmm_retain(k0));
+    let k1 = ExpertKey::new(0, 1);
+    let _b = gpu.acquire(k1).expect("k1");
+    assert!(gpu.page_is_vmm_retain(k1));
+    gpu.release(k1);
+    let _s = gpu.score().expect("score");
+    assert!(gpu.page_is_vmm_retain(k0));
+    assert!(gpu.page_is_vmm_retain(k1));
+}
+
+#[test]
+fn simulated_gpu_store_vmm_retain_is_slower_than_vmm() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let bytes = 32u64 << 20;
+    let run = |vmm_retain: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = match SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            bytes,
+            GpuFill::Vmm,
+            GpuStoreCfg {
+                vmm_retain,
+                ..GpuStoreCfg::default()
+            },
+        ) {
+            Ok(gpu) => gpu,
+            Err(err) => panic!("gpu: {err}"),
+        };
+        let _a = gpu.acquire(ExpertKey::new(0, 0)).expect("k0");
+        let _b = gpu.acquire(ExpertKey::new(0, 1)).expect("k1");
+        if vmm_retain {
+            assert!(gpu.page_is_vmm_retain(ExpertKey::new(0, 0)));
+            assert!(gpu.page_is_vmm_retain(ExpertKey::new(0, 1)));
+        } else {
+            assert!(!gpu.page_is_vmm_retain(ExpertKey::new(0, 0)));
+        }
+        let metrics = gpu.metrics();
+        let score = gpu.score().expect("score");
+        (metrics.hits, metrics.misses, score)
+    };
+    let (keep_hits, keep_misses, keep) = run(false);
+    let (ret_hits, ret_misses, ret) = run(true);
+    assert_eq!(keep_hits, ret_hits);
+    assert_eq!(keep_misses, ret_misses);
+    assert!(
+        ret.wall_ns > keep.wall_ns,
+        "vmm-retain={} vmm={}",
+        ret.wall_ns,
+        keep.wall_ns
+    );
+}
+
+#[test]
+fn simulated_gpu_store_vmm_retain_refuses_mapped() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Mapped,
+        GpuStoreCfg {
+            vmm_retain: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("vmm-retain mapped must fail"),
+        Err(err) => assert!(err.to_string().contains("vmm-retain needs vmm"), "{err}"),
+    }
+}
+
+#[test]
+fn simulated_gpu_store_vmm_retain_allows_pdl() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let _gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Vmm,
+        GpuStoreCfg {
+            vmm_retain: true,
+            pdl: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("pdl vmm-retain");
+}
+
+#[test]
 fn store_replay_markov_prefetch_beats_demand() {
     let mut events = Vec::new();
     for tok in 0..16u32 {
@@ -8510,6 +8700,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         managed: true,
         vmm: false,
         vmm_page: 0,
+        vmm_retain: false,
         pageable: false,
         host_register: false,
         host_unregister: false,
@@ -8592,6 +8783,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         managed: false,
         vmm: true,
         vmm_page: 0,
+        vmm_retain: false,
         pageable: false,
         host_register: false,
         host_unregister: false,
@@ -8675,6 +8867,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         managed: false,
         vmm: false,
         vmm_page: 0,
+        vmm_retain: false,
         pageable: false,
         host_register: false,
         host_unregister: false,
@@ -9124,6 +9317,7 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         managed: false,
         vmm: false,
         vmm_page: 0,
+        vmm_retain: false,
         pageable: false,
         host_register: false,
         host_unregister: false,
@@ -9200,6 +9394,7 @@ fn memcpy_during_apply_misses_waits_copies() {
             managed: false,
             vmm: false,
             vmm_page: 0,
+            vmm_retain: false,
             pageable: false,
             host_register: false,
             host_unregister: false,
@@ -9278,6 +9473,7 @@ fn memcpy_any_apply_misses_empty_deps() {
             managed: false,
             vmm: false,
             vmm_page: 0,
+            vmm_retain: false,
             pageable: false,
             host_register: false,
             host_unregister: false,
@@ -9364,6 +9560,7 @@ fn memcpy_attr_apply_misses_waits_copies() {
             managed: false,
             vmm: false,
             vmm_page: 0,
+            vmm_retain: false,
             pageable: false,
             host_register: false,
             host_unregister: false,
@@ -10097,6 +10294,7 @@ fn d2h_evict_apply_misses_copies() {
             managed: false,
             vmm: false,
             vmm_page: 0,
+            vmm_retain: false,
             pageable: false,
             host_register: false,
             host_unregister: false,
@@ -10180,6 +10378,7 @@ fn d2h_pageable_apply_misses_copies() {
             managed: false,
             vmm: false,
             vmm_page: 0,
+            vmm_retain: false,
             pageable: true,
             host_register: false,
             host_unregister: false,
@@ -10409,6 +10608,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             managed: false,
             vmm: false,
             vmm_page: 0,
+            vmm_retain: false,
             pageable: false,
             host_register: false,
             host_unregister: false,
@@ -15761,6 +15961,7 @@ fn sim_replay_sync_memops_h2d_host_sync() {
             managed: false,
             vmm: false,
             vmm_page: 0,
+            vmm_retain: false,
             pageable: false,
             host_register: false,
             host_unregister: false,
@@ -15986,6 +16187,7 @@ fn sim_replay_device_sync_memops_h2d_host_sync() {
             managed: false,
             vmm: false,
             vmm_page: 0,
+            vmm_retain: false,
             pageable: false,
             host_register: false,
             host_unregister: false,

@@ -460,6 +460,47 @@ pub(crate) fn close_ipc_alias(sim: &mut Sim, import: Option<AllocId>) -> Result<
     Ok(())
 }
 
+/// `--vmm-retain` needs `--vmm` (`cuMemRetainAllocationHandle`).
+///
+/// No auto-imply of `--vmm` here (CLI implies; `with_cfg` / `validate_sim_cfg`
+/// refuse). Hits stay the same iff [`Sim::va_release_handle`] runs before
+/// [`Sim::va_release`].
+pub(crate) fn check_vmm_retain(vmm_retain: bool, vmm: bool) -> Result<(), Error> {
+    if vmm_retain && !vmm {
+        return Err(Error::Store("vmm-retain needs vmm"));
+    }
+    Ok(())
+}
+
+/// `cuMemRetainAllocationHandle` of a live VMM map at offset 0.
+///
+/// Maps are live immediately after `va_acquire` (no alloc-wait). Paged VMM
+/// retains the first physical only; later pages stay combined. No-op when
+/// `vmm_retain` is off. Do not call twice on the same map (second retain
+/// increments refs).
+pub(crate) fn retain_vmm_handle(
+    sim: &mut Sim,
+    device: DeviceId,
+    id: AllocId,
+    vmm_retain: bool,
+) -> Result<Option<MemHandleId>, Error> {
+    if !vmm_retain {
+        return Ok(None);
+    }
+    Ok(Some(sim.va_retain_handle(id, device, 0)?))
+}
+
+/// `cuMemRelease` of a retained VMM handle. No-op when `None` or already released.
+pub(crate) fn release_vmm_handle(sim: &mut Sim, handle: Option<MemHandleId>) -> Result<(), Error> {
+    let Some(h) = handle else {
+        return Ok(());
+    };
+    if sim.is_handle_live(h)? {
+        sim.va_release_handle(h)?;
+    }
+    Ok(())
+}
+
 /// `--share-ptr` needs POSIX-FD `--shareable` (`cudaMemPoolExportPointer`).
 ///
 /// Distinct from `--ipc` (`cudaIpcGetMemHandle` of `cudaMalloc`). No auto-imply
@@ -697,11 +738,11 @@ use crate::replay::{Touch, Walker};
 use gpu_sim::{
     AccessPolicyWindow, AccessProperty, AllocId, ClusterSchedulingPolicy, CondId, DType,
     DeviceFlags, DeviceId, DeviceLimit, EventId, GraphId, GraphInstantiateFlags, HardwareProfile,
-    KernelAttrs, KernelBuf, KernelKind, LaunchCompletionEvent, MemAttach, MemHandleType,
-    MemPoolAttr, MemPoolProps, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyOp,
-    MemcpySrcAccessOrder, Place, PointerAttr, PoolId, PortableClusterMode, PortableSharedMode,
-    ProgrammaticEvent, ProgrammaticLaunch, Score, SharedMemCarveout, SharedMemoryMode, Sim,
-    StreamId, SynchronizationPolicy, WaitValueCmp,
+    KernelAttrs, KernelBuf, KernelKind, LaunchCompletionEvent, MemAttach, MemHandleId,
+    MemHandleType, MemPoolAttr, MemPoolProps, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
+    MemcpyOp, MemcpySrcAccessOrder, Place, PointerAttr, PoolId, PortableClusterMode,
+    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, Score, SharedMemCarveout,
+    SharedMemoryMode, Sim, StreamId, SynchronizationPolicy, WaitValueCmp,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -922,6 +963,13 @@ pub struct SimCfg {
     /// [`crate::SimulatedGpuStore::with_vmm`] stays whole-VA;
     /// [`crate::GpuStoreCfg::vmm_page`] is the store path.
     pub vmm_page: u64,
+    /// `cuMemRetainAllocationHandle` after each VMM miss map.
+    ///
+    /// Bills `alloc_overhead_ns` on every retain. Hits stay the same iff
+    /// `va_release_handle` runs before `va_release`. Paged VMM retains offset
+    /// 0 only. Decode identity stays combined `va_map` without a handle.
+    /// [`crate::GpuStoreCfg::vmm_retain`] is the store path.
+    pub vmm_retain: bool,
     /// `cudaLaunchHostFunc` after each event's GEMMs (CPU scheduler roundtrip).
     ///
     /// Does not change hits/misses. Lengthens wall by `host_func_ns` per
@@ -1606,6 +1654,7 @@ impl SimCfg {
             managed: false,
             vmm: false,
             vmm_page: 0,
+            vmm_retain: false,
             host_func: false,
             copy_host: false,
             blocking_streams: false,
@@ -1882,6 +1931,7 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
         cfg.shareable || cfg.share_ptr,
     )?;
     check_share_ptr(cfg.share_ptr, cfg.shareable, cfg.ipc)?;
+    check_vmm_retain(cfg.vmm_retain, cfg.vmm)?;
     if cfg.host_register_mapped && !cfg.mapped {
         return Err(Error::Store("host-register-mapped needs mapped"));
     }
@@ -1998,6 +2048,7 @@ pub fn sim_replay_cfg(
         managed: cfg.managed,
         vmm: cfg.vmm,
         vmm_page: cfg.vmm_page,
+        vmm_retain: cfg.vmm_retain,
         pageable: cfg.pageable,
         host_register: cfg.host_register,
         host_unregister: cfg.host_unregister,
@@ -2183,6 +2234,8 @@ pub(crate) struct TouchArgs {
     pub vmm: bool,
     /// [`SimCfg::vmm_page`]: physical span for paged VMM (`0` = whole expert).
     pub vmm_page: u64,
+    /// [`SimCfg::vmm_retain`]: `cuMemRetainAllocationHandle` after VMM miss map.
+    pub vmm_retain: bool,
     /// [`SimCfg::pageable`]: host-sync pageable H2D.
     pub pageable: bool,
     /// [`SimCfg::host_register`]: `cudaHostRegister` then pinned DMA H2D.
@@ -3422,6 +3475,8 @@ pub(crate) struct PageHandle {
     pub(crate) ipc: Option<AllocId>,
     /// [`TouchArgs::share_ptr`]: live `cudaMemPoolImportPointer` alias of `id`.
     pub(crate) share: Option<AllocId>,
+    /// [`TouchArgs::vmm_retain`]: live `cuMemRetainAllocationHandle` of `id`.
+    pub(crate) retain: Option<MemHandleId>,
 }
 
 pub(crate) fn note_touch(
@@ -3601,6 +3656,7 @@ pub(crate) fn apply_misses(
                     id,
                     args.share_ptr && !args.mapped && !args.managed && !args.vmm,
                 )?,
+                retain: retain_vmm_handle(sim, args.d, id, args.vmm && args.vmm_retain)?,
             },
         );
     }
@@ -3802,6 +3858,7 @@ fn drop_handle(
         if args.d2h_evict {
             sim.synchronize_stream(page.device, page.stream)?;
         }
+        release_vmm_handle(sim, page.retain)?;
         sim.va_release(page.id)?;
         return Ok(());
     }

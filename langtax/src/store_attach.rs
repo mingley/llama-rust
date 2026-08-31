@@ -87,6 +87,8 @@ pub(crate) struct GpuCli {
     pub ipc: bool,
     /// `cudaMemPoolExportPointer` / `ImportPointer` (`GpuStoreCfg::share_ptr`). Implies shareable.
     pub share_ptr: bool,
+    /// `cuMemRetainAllocationHandle` after VMM miss map (`GpuStoreCfg::vmm_retain`). Implies vmm.
+    pub vmm_retain: bool,
     pub pageable: bool,
     /// `cudaHostRegister` (`GpuStoreCfg::host_register`). Implies pageable.
     pub host_register: bool,
@@ -297,6 +299,7 @@ impl GpuCli {
             "--shareable" => &mut self.shareable,
             "--ipc" => &mut self.ipc,
             "--share-ptr" => &mut self.share_ptr,
+            "--vmm-retain" => &mut self.vmm_retain,
             "--pageable" => &mut self.pageable,
             "--host-register" => &mut self.host_register,
             "--host-unregister" => &mut self.host_unregister,
@@ -360,9 +363,9 @@ impl GpuCli {
         self.vmm_page_set = true;
     }
 
-    /// `--vmm-page N` with `N>0` implies [`Self::vmm`]. Call after sim-flag checks.
+    /// `--vmm-page N` with `N>0`, `--multicast`, or `--vmm-retain` implies [`Self::vmm`]. Call after sim-flag checks.
     pub(crate) fn imply_vmm(&mut self) {
-        if self.vmm_page > 0 || self.multicast {
+        if self.vmm_page > 0 || self.multicast || self.vmm_retain {
             self.vmm = true;
         }
     }
@@ -743,6 +746,7 @@ impl GpuCli {
             || self.host_register_mapped
             || self.managed
             || self.vmm
+            || self.vmm_retain
             || self.stream_attach
             || self.managed_host
             || self.prefetch_host
@@ -964,6 +968,7 @@ impl GpuCli {
             (self.shareable, "--shareable"),
             (self.ipc, "--ipc"),
             (self.share_ptr, "--share-ptr"),
+            (self.vmm_retain, "--vmm-retain"),
             (self.pageable, "--pageable"),
             (self.host_register, "--host-register"),
             (self.host_unregister, "--host-unregister"),
@@ -1038,7 +1043,8 @@ impl GpuCli {
 
     /// Pinned when every fill flag is off; otherwise exactly one of mapped/managed/vmm.
     pub(crate) fn fill(self) -> Result<GpuFill, String> {
-        GpuFill::from_flags(self.mapped, self.managed, self.vmm).map_err(|e| e.to_string())
+        GpuFill::from_flags(self.mapped, self.managed, self.vmm || self.vmm_retain)
+            .map_err(|e| e.to_string())
     }
 }
 
@@ -1333,6 +1339,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         shareable: gpu.shareable,
         ipc: gpu.ipc,
         share_ptr: gpu.share_ptr,
+        vmm_retain: gpu.vmm_retain,
         vmm_page: gpu.vmm_page,
         pageable: gpu.pageable,
         host_register: gpu.host_register,

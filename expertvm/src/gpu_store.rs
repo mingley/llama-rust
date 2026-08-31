@@ -19,12 +19,13 @@ use crate::sim_replay::{
     check_cluster_must_set, check_cluster_preferred, check_d2h_evict, check_d2h_pageable,
     check_device_graph_flags, check_host_unregister, check_ipc, check_l2_fetch, check_l2_ratio,
     check_max_l1, check_mem_sync_collapse, check_mem_sync_launch, check_mem_sync_launch_map,
-    check_memcpy_attr, check_memset_fill, check_required_cluster, check_share_ptr, close_ipc_alias,
-    close_share_alias, collapse_mem_sync_map, d2h_evict_page, d2h_pageable_page,
-    drop_managed_replica, ensure_single_attach, free_copy_mailbox, free_mapped_host, hbm_h2d_attr,
-    host_after_copy, instantiate_exec, kernel_leaf, mark_sync_memops, memcpy_batch_attr,
-    mempool_hold, open_ipc_alias, open_share_alias, persist_armed, pin_staging_for_fill,
-    replay_exec, replay_streams, reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready,
+    check_memcpy_attr, check_memset_fill, check_required_cluster, check_share_ptr,
+    check_vmm_retain, close_ipc_alias, close_share_alias, collapse_mem_sync_map, d2h_evict_page,
+    d2h_pageable_page, drop_managed_replica, ensure_single_attach, free_copy_mailbox,
+    free_mapped_host, hbm_h2d_attr, host_after_copy, instantiate_exec, kernel_leaf,
+    mark_sync_memops, memcpy_batch_attr, mempool_hold, open_ipc_alias, open_share_alias,
+    persist_armed, pin_staging_for_fill, release_vmm_handle, replay_exec, replay_streams,
+    reset_persisting_l2_if, retain_vmm_handle, retarget_parked_kernel, signal_copy_ready,
     stream_of, unpin_staging_after_fill, upload_after_set_params, wait_copy_ready,
     wait_memcpy_during_allocs, wait_share_ptr_alloc, GemmFlags, LeafMem, LeafWork, StreamPlan,
 };
@@ -152,6 +153,13 @@ pub struct GpuStoreCfg {
     pub share_ptr: bool,
     /// Physical span for [`GpuFill::Vmm`]. `0` maps the whole expert (`va_acquire`).
     pub vmm_page: u64,
+    /// `cuMemRetainAllocationHandle` after each VMM miss map.
+    ///
+    /// Bills [`gpu_sim::GpuProfile::alloc_overhead_ns`]. Hits stay the same
+    /// iff [`gpu_sim::Sim::va_release_handle`] runs before
+    /// [`gpu_sim::Sim::va_release`]. Paged VMM retains offset 0 only.
+    /// Decode identity stays combined `va_map` without a handle.
+    pub vmm_retain: bool,
     /// Pageable `cudaMemcpyAsync` (`memcpy_host_to_device`) instead of pinned DMA.
     ///
     /// Host-synchronous and slower (`pageable_permille`). Decode identity stays
@@ -768,6 +776,8 @@ struct GpuPage {
     ipc: Option<AllocId>,
     /// [`GpuStoreCfg::share_ptr`]: live `cudaMemPoolImportPointer` alias of `id`.
     share: Option<AllocId>,
+    /// [`GpuStoreCfg::vmm_retain`]: live `cuMemRetainAllocationHandle` of `id`.
+    retain: Option<MemHandleId>,
 }
 
 /// Bounded cache whose misses pay pinned H2D, mapped host, managed prefetch, or VMM.
@@ -855,6 +865,8 @@ pub struct SimulatedGpuStore {
     ipc: bool,
     /// [`GpuStoreCfg::share_ptr`]: `cudaMemPoolExportPointer` / `ImportPointer` after miss fill.
     share_ptr: bool,
+    /// [`GpuStoreCfg::vmm_retain`]: `cuMemRetainAllocationHandle` after VMM miss map.
+    vmm_retain: bool,
     /// [`GpuStoreCfg::vmm_page`]: KV-sized physicals when [`GpuFill::Vmm`].
     vmm_page: u64,
     /// Pageable H2D (`memcpy_host_to_device`) instead of pinned DMA.
@@ -1162,6 +1174,9 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::share_ptr`] is `cudaMemPoolExportPointer` /
     /// `cudaMemPoolImportPointer` of each miss `cudaMallocAsync` (implies
     /// shareable; close before free; distinct from `--ipc`).
+    /// [`GpuStoreCfg::vmm_retain`] is `cuMemRetainAllocationHandle` after
+    /// each VMM miss map (implies VMM fill; `va_release_handle` before
+    /// `va_release`; paged VMM retains offset 0 only).
     /// [`GpuStoreCfg::host_register_mapped`] is `cudaHostRegisterMapped` on
     /// mapped expert pages (`alloc_host` then register; implies mapped; illegal
     /// with [`GpuStoreCfg::host_register`]; identity stays `cudaHostAllocMapped`).
@@ -1372,6 +1387,7 @@ impl SimulatedGpuStore {
             cfg.shareable || cfg.share_ptr,
         )?;
         check_share_ptr(cfg.share_ptr, cfg.shareable, cfg.ipc)?;
+        check_vmm_retain(cfg.vmm_retain, fill == GpuFill::Vmm)?;
         if cfg.host_register_mapped && fill != GpuFill::Mapped {
             return Err(Error::Store("host-register-mapped needs mapped"));
         }
@@ -1550,6 +1566,7 @@ impl SimulatedGpuStore {
             sync_alloc: cfg.sync_alloc,
             ipc: cfg.ipc,
             share_ptr: cfg.share_ptr,
+            vmm_retain: cfg.vmm_retain,
             vmm_page: cfg.vmm_page,
             pageable: cfg.pageable,
             host_register: cfg.host_register,
@@ -1682,6 +1699,28 @@ impl SimulatedGpuStore {
             .get(&key)
             .and_then(|p| p.share)
             .and_then(|id| self.sim.is_share_import(id).ok())
+            .unwrap_or(false)
+    }
+
+    /// Whether miss pages call `cuMemRetainAllocationHandle` after VMM map.
+    #[must_use]
+    pub fn vmm_retain(&self) -> bool {
+        self.vmm_retain
+    }
+
+    /// Live `cuMemRetainAllocationHandle` of the resident VMM page, if any.
+    #[must_use]
+    pub fn page_vmm_handle(&self, key: ExpertKey) -> Option<MemHandleId> {
+        self.pages.get(&key).and_then(|p| p.retain)
+    }
+
+    /// Whether the resident page for `key` currently holds a live VMM retain handle.
+    #[must_use]
+    pub fn page_is_vmm_retain(&self, key: ExpertKey) -> bool {
+        self.pages
+            .get(&key)
+            .and_then(|p| p.retain)
+            .and_then(|h| self.sim.is_handle_live(h).ok())
             .unwrap_or(false)
     }
 
@@ -2400,6 +2439,7 @@ impl SimulatedGpuStore {
         if self.decode != self.prefill {
             self.sim.synchronize_stream(src, self.decode)?;
         }
+        let src_retain = self.pages.get(&key).and_then(|p| p.retain);
         if !self.sim.is_resident(id, dst)? {
             self.sim.va_map(id, dst)?;
             let _c =
@@ -2407,14 +2447,18 @@ impl SimulatedGpuStore {
                     .memcpy_device_to_device(src, dst, id, self.bytes_per_expert, self.copy)?;
             self.sim.synchronize_stream(src, self.copy)?;
         }
+        release_vmm_handle(&mut self.sim, src_retain)?;
         if self.sim.is_resident(id, src)? {
             self.sim.va_unmap_range(id, src, 0, self.bytes_per_expert)?;
         }
+        let retain_on = self.vmm_retain;
+        let dest_retain = retain_vmm_handle(&mut self.sim, dst, id, retain_on)?;
         let _gone = self.replicas.remove(&key);
         self.rehome_mailbox(key, dst, false)?;
         if let Some(page) = self.pages.get_mut(&key) {
             page.device = dst;
             page.ready = None;
+            page.retain = dest_retain;
         }
         self.note_migrate();
         Ok(())
@@ -2773,6 +2817,8 @@ impl SimulatedGpuStore {
             id,
             self.share_ptr && self.mode == GpuFill::Pinned,
         )?;
+        let retain_on = self.mode == GpuFill::Vmm && self.vmm_retain;
+        let retain = retain_vmm_handle(&mut self.sim, d, id, retain_on)?;
         let _prev = self.pages.insert(
             key,
             GpuPage {
@@ -2784,6 +2830,7 @@ impl SimulatedGpuStore {
                 ready_gen,
                 ipc,
                 share,
+                retain,
             },
         );
         Ok(())
@@ -3364,6 +3411,7 @@ impl SimulatedGpuStore {
                 self.d2h_evict_home(page.device, page.id)?;
                 self.d2h_pageable_home(page.device, page.id)?;
                 self.free_page_mailbox(page.device, page.mailbox)?;
+                release_vmm_handle(&mut self.sim, page.retain)?;
                 self.sim.va_release(page.id)?;
                 let _gone = self.replicas.remove(&key);
                 return Ok(());

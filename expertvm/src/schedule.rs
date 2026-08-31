@@ -359,6 +359,7 @@ impl SchedRt {
                 managed: cfg.managed,
                 vmm: cfg.vmm,
                 vmm_page: cfg.vmm_page,
+                vmm_retain: cfg.vmm_retain,
                 pageable: cfg.pageable,
                 host_register: cfg.host_register,
                 host_unregister: cfg.host_unregister,

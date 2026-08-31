@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cuMemRetainAllocationHandle` after each VMM miss map
+
+`GpuStoreCfg::vmm_retain` / `SimCfg::vmm_retain` call
+`cuMemRetainAllocationHandle` at offset 0 after each VMM miss `va_acquire`
+/ `va_acquire_paged` so the page holds a live handle and `va_release_handle`
+before `va_release` (`alloc_overhead_ns` on every retain). Hits/misses stay
+the same. Distinct from `--vmm` (combined `va_map` without a handle) and
+`--vmm-page` (split maps; retain still one handle at offset 0). Implies
+`--vmm`. Illegal with `--mapped` / `--managed`. `--vmm-retain` is off by
+default (decode identity: `--vmm` without a handle handshake). Store and
+walker (not walker-only). infer-bench schedule gets `--vmm-retain` (implies
+`--vmm`; no standalone `--vmm`). `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaMemPoolExportPointer` of each miss `cudaMallocAsync`
 
 `GpuStoreCfg::share_ptr` / `SimCfg::share_ptr` call `cudaMemPoolExportPointer`
