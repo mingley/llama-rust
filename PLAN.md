@@ -4401,7 +4401,18 @@ model, do not celebrate the sim.
     oracle. `gpu-profile capture` is still refused. Dual score still has
     no `$/M tokens`.
 
-393. [ ] Next numbered PLAN item after 392 is the next `gpu-sim` / Engine /
+393. [x] Official Gemma4 `ffn_down_exps.scale` (per-expert down scale): same
+    arch as dense/MoE/PLE/fused/shared-KV/mixed-hd/SWA-base/no-wv/out-scale/
+    rope-freqs gemma4, not a second family. Decode follows llama.cpp
+    `build_lora_mm_id`: after the down expert GEMM, `ggml_mul` broadcasts
+    `ffn_down_exps.scale[e]` onto that expert's output
+    (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Writer-tiny
+    `tiny-gemma4-moe-down-s` is split `tiny-gemma4-moe` plus `{n_expert}` F32.
+    Fused/PLE/shared-KV/mixed-hd omit the tensor. Decode identity vs
+    oracle. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+394. [ ] Next numbered PLAN item after 393 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

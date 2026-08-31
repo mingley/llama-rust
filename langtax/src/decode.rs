@@ -85,6 +85,8 @@
 //! gemma4 with `blk.0.layer_output_scale` (broadcast `ggml_mul` after the
 //! FFN residual). Writer-tiny proportional RoPE ([`tiny_gemma4_rope_freqs_gguf`])
 //! is mixed-hd plus `rope_freqs.weight` (`theta/ff` on global layers).
+//! Writer-tiny per-expert down scale ([`tiny_gemma4_moe_down_s_gguf`]) is MoE
+//! plus `ffn_down_exps.scale`.
 
 use crate::gguf::{load_gguf_owned, GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 pub use crate::kv_page::PagedKvPool;
@@ -193,6 +195,10 @@ const TINY_GEMMA4_ROPE_PAIRS_DEN: usize = 8;
 /// Exact IEEE-754 bits of torch/CPython `float32(1e30)` written by convert
 /// `generate_extra_tensors` for unrotated NeoX pairs (`theta/ff ≈ 0`).
 const TINY_GEMMA4_ROPE_FREQ_UNROT: f32 = f32::from_bits(0x7149_F2CA);
+/// Writer-tiny per-expert `ffn_down_exps.scale` (`{n_expert}`). Not all 1, so
+/// the walk is observable vs `tiny-gemma4-moe`. Matches
+/// [`TINY_GEMMA4_N_EXPERT`].
+const TINY_GEMMA4_DOWN_S: [f32; TINY_GEMMA4_N_EXPERT] = [1.0, 0.5, 2.0, 0.25];
 /// Writer-built tiny Qwen3Next `qwen3next.expert_count` (official load rejects 0).
 const TINY_QWEN3NEXT_N_EXPERT: usize = 4;
 /// Writer-built tiny `qwen3next.expert_used_count`.
@@ -402,6 +408,9 @@ struct SoftmaxMoE<'a> {
     gelu: bool,
     /// Official gemma4.cpp fused `ffn_gate_up_exps` (twice `n_ff` rows, gate then up).
     fused: bool,
+    /// Official `ffn_down_exps.scale` (`{n_expert}`). ggml `build_lora_mm_id`
+    /// multiplies the down expert output. Missing is `1.0`.
+    down_s: Option<&'a [f32]>,
     err: &'static str,
 }
 
@@ -493,6 +502,8 @@ struct Gemma4Moe {
     /// Official fused `ffn_gate_up_exps` (`n_embd` by twice `n_ff` by `n_expert`).
     gate_up: Option<QuantMat>,
     down_exps: QuantMat,
+    /// Official `blk.{i}.ffn_down_exps.scale` (`TENSOR_NOT_REQUIRED`, `{n_expert}`).
+    down_s: Option<Vec<f32>>,
     n_expert: usize,
     n_expert_used: usize,
 }
@@ -1696,7 +1707,8 @@ impl Llama {
     /// [`tiny_gemma4_swa_base_gguf`]. Omitted `wv` (K as V) is
     /// [`tiny_gemma4_no_wv_gguf`]. Layer output scale is
     /// [`tiny_gemma4_out_scale_gguf`]. Proportional RoPE is
-    /// [`tiny_gemma4_rope_freqs_gguf`].
+    /// [`tiny_gemma4_rope_freqs_gguf`]. Per-expert down scale is
+    /// [`tiny_gemma4_moe_down_s_gguf`].
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
     /// blob; they do not clone tensor bytes. When `output.weight` is absent,
@@ -4044,6 +4056,7 @@ pub fn tiny_gemma3n_gguf() -> Vec<u8> {
 /// Official Gemma4 omitted `wv` (K as V) is the same arch ([`tiny_gemma4_no_wv_gguf`]).
 /// Official Gemma4 layer output scale is the same arch ([`tiny_gemma4_out_scale_gguf`]).
 /// Official Gemma4 proportional RoPE is the same arch ([`tiny_gemma4_rope_freqs_gguf`]).
+/// Official Gemma4 per-expert down scale is the same arch ([`tiny_gemma4_moe_down_s_gguf`]).
 pub fn tiny_gemma4_gguf() -> Vec<u8> {
     tiny_arch_gguf_lm_head(
         TinySpec {
@@ -4078,6 +4091,7 @@ pub fn tiny_gemma4_gguf() -> Vec<u8> {
 /// [`tiny_gemma4_mixed_hd_gguf`].
 /// Shared KV is [`tiny_gemma4_shared_kv_gguf`].
 /// Writer-tiny uses `n_expert=4`, `n_expert_used=2`, `n_ff_exp=n_ff`.
+/// Per-expert `ffn_down_exps.scale` is [`tiny_gemma4_moe_down_s_gguf`].
 /// PLE is the same arch ([`tiny_gemma4_ple_gguf`]). MoE plus PLE is the same arch
 /// ([`tiny_gemma4_moe_ple_gguf`]).
 pub fn tiny_gemma4_moe_gguf() -> Vec<u8> {
@@ -4171,6 +4185,7 @@ pub fn tiny_gemma4_moe_ple_gguf() -> Vec<u8> {
 /// present. Not a second architecture. Mixed SWA/global head dims are
 /// [`tiny_gemma4_mixed_hd_gguf`]. Shared KV is [`tiny_gemma4_shared_kv_gguf`].
 /// Fused plus PLE is the same arch ([`tiny_gemma4_moe_fused_ple_gguf`]).
+/// Per-expert `ffn_down_exps.scale` is [`tiny_gemma4_moe_down_s_gguf`].
 pub fn tiny_gemma4_moe_fused_gguf() -> Vec<u8> {
     tiny_arch_gguf_lm_head(
         TinySpec {
@@ -4575,6 +4590,39 @@ fn rewrite_tiny_gemma4_rope_freqs(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> 
         GgmlType::F32,
         vec![n],
         pack_vec1d(GgmlType::F32, &freqs),
+    ));
+    Ok(write_gguf_with_kv(&kv, &tensors))
+}
+
+/// Writer-built official Gemma4 per-expert down-scale GGUF: `architecture=gemma4`
+/// with `ffn_down_exps.scale`.
+///
+/// Same split-MoE tensors as [`tiny_gemma4_moe_gguf`] plus `{n_expert}` F32
+/// scales. Decode follows llama.cpp `build_lora_mm_id`: after the down expert
+/// GEMM, `ggml_mul` broadcasts `ffn_down_exps.scale[e]` onto that expert's
+/// output. `TENSOR_NOT_REQUIRED`; missing is `1.0`. Not a second architecture.
+pub fn tiny_gemma4_moe_down_s_gguf() -> Vec<u8> {
+    rewrite_tiny_gemma4_moe_down_s(tiny_gemma4_moe_gguf()).unwrap_or_else(|_| Vec::new())
+}
+
+/// Append `blk.0.ffn_down_exps.scale` = [`TINY_GEMMA4_DOWN_S`].
+fn rewrite_tiny_gemma4_moe_down_s(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
+    let g = load_gguf_owned(bytes)?;
+    let kv: Vec<(String, Kv)> = g.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut tensors = Vec::new();
+    for t in g.tensors() {
+        tensors.push(TensorWrite {
+            name: t.name.to_string(),
+            ty: t.ty,
+            shape: t.shape.to_vec(),
+            data: t.data.to_vec(),
+        });
+    }
+    tensors.push(tw(
+        "blk.0.ffn_down_exps.scale",
+        GgmlType::F32,
+        vec![TINY_GEMMA4_N_EXPERT],
+        pack_vec1d(GgmlType::F32, &TINY_GEMMA4_DOWN_S),
     ));
     Ok(write_gguf_with_kv(&kv, &tensors))
 }
@@ -8716,6 +8764,7 @@ fn load_gemma4_moe(g: &Gguf, i: usize, h: &Gemma4MoeHparams) -> Result<Gemma4Moe
         up_exps,
         gate_up,
         down_exps,
+        down_s: load_down_exps_s(g, i, h.n_expert)?,
         n_expert: h.n_expert,
         n_expert_used: h.n_expert_used,
     })
@@ -8724,6 +8773,14 @@ fn load_gemma4_moe(g: &Gguf, i: usize, h: &Gemma4MoeHparams) -> Result<Gemma4Moe
 fn optional_f32(g: &Gguf, name: &str) -> Result<Option<Vec<f32>>, LlamaError> {
     match g.tensor(name) {
         Some(t) => Ok(Some(f32s(t)?)),
+        None => Ok(None),
+    }
+}
+
+fn load_down_exps_s(g: &Gguf, i: usize, n_expert: usize) -> Result<Option<Vec<f32>>, LlamaError> {
+    match optional_f32(g, &format!("blk.{i}.ffn_down_exps.scale"))? {
+        Some(v) if v.len() == n_expert => Ok(Some(v)),
+        Some(_) => Err(LlamaError::Shape(format!("blk.{i}.ffn_down_exps.scale"))),
         None => Ok(None),
     }
 }
@@ -8743,6 +8800,7 @@ fn is_applied_norm_or_bias(name: &str) -> bool {
         || name.ends_with(".ffn_pre_norm_2.weight")
         || name.ends_with(".ffn_post_norm_2.weight")
         || name.ends_with(".ffn_gate_inp.scale")
+        || name.ends_with(".ffn_down_exps.scale")
         || name.ends_with(".attn_q_norm.weight")
         || name.ends_with(".attn_k_norm.weight")
         || name.ends_with(".post_norm.weight")
@@ -9448,8 +9506,12 @@ impl Llama {
                 .ffn_out
                 .get_mut(dst_off..dst_off.saturating_add(spec.n_embd))
                 .ok_or_else(|| LlamaError::Shape(spec.err.into()))?;
+            let scale = spec
+                .down_s
+                .and_then(|ds| ds.get(expert).copied())
+                .unwrap_or(1.0);
             for (d, v) in dst.iter_mut().zip(src.iter()) {
-                *d += *v * w;
+                *d += *v * w * scale;
             }
         }
         Ok(())
@@ -9530,6 +9592,7 @@ impl Llama {
                 scale_x: false,
                 gelu: false,
                 fused: false,
+                down_s: None,
                 err: "llama moe",
             },
             n_tokens,
@@ -9581,6 +9644,7 @@ impl Llama {
             scale_x: true,
             gelu: false,
             fused: false,
+            down_s: None,
             err: "llama4 moe",
         };
         self.grouped_routed_ffn(
@@ -9629,6 +9693,7 @@ impl Llama {
                 scale_x: false,
                 gelu: false,
                 fused: false,
+                down_s: None,
                 err: "qwen2moe",
             },
             n_tokens,
@@ -9675,6 +9740,7 @@ impl Llama {
                 scale_x: false,
                 gelu: false,
                 fused: false,
+                down_s: None,
                 err: "qwen3moe",
             },
             n_tokens,
@@ -9718,6 +9784,7 @@ impl Llama {
                 scale_x: false,
                 gelu: false,
                 fused: false,
+                down_s: None,
                 err: "qwen3next",
             },
             n_tokens,
@@ -9805,6 +9872,7 @@ impl Llama {
             scale_x: false,
             gelu: true,
             fused: fused.is_some(),
+            down_s: moe.down_s.as_deref(),
             err: "gemma4 moe",
         };
         Self::softmax_select_tokens(&spec, n_tokens, s, moe_trace)?;
@@ -12559,8 +12627,16 @@ mod tests {
                 })
                 .collect();
             let y = oracle_gemv_expert(down_exps, *e, &h);
+            let scale = if arch == "gemma4" {
+                g.tensor(&tname(layer, "ffn_down_exps.scale"))
+                    .and_then(|t| f32s(t).ok())
+                    .and_then(|s| s.get(*e).copied())
+                    .unwrap_or(1.0)
+            } else {
+                1.0
+            };
             for (o, v) in routed.iter_mut().zip(y.iter()) {
-                *o += *v * *w;
+                *o += *v * *w * scale;
             }
         }
         routed
@@ -15127,6 +15203,7 @@ mod tests {
             tiny_gemma4_no_wv_gguf(),
             tiny_gemma4_out_scale_gguf(),
             tiny_gemma4_rope_freqs_gguf(),
+            tiny_gemma4_moe_down_s_gguf(),
             tiny_qwen3_gguf(),
             tiny_llama4_gguf(),
             tiny_llama_moe_gguf(),
@@ -15189,6 +15266,7 @@ mod tests {
             ("gemma4-no-wv", tiny_gemma4_no_wv_gguf()),
             ("gemma4-out-scale", tiny_gemma4_out_scale_gguf()),
             ("gemma4-rope-freqs", tiny_gemma4_rope_freqs_gguf()),
+            ("gemma4-moe-down-s", tiny_gemma4_moe_down_s_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("f16", tiny_f16_gguf()),
@@ -15286,6 +15364,7 @@ mod tests {
             ("gemma4-no-wv", tiny_gemma4_no_wv_gguf()),
             ("gemma4-out-scale", tiny_gemma4_out_scale_gguf()),
             ("gemma4-rope-freqs", tiny_gemma4_rope_freqs_gguf()),
+            ("gemma4-moe-down-s", tiny_gemma4_moe_down_s_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("llama-moe", tiny_llama_moe_gguf()),
@@ -17186,6 +17265,125 @@ mod tests {
         };
         assert!(
             err.contains("rope_freqs.weight"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma4_moe_down_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_moe_down_s_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 moe down_s");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        let scale = g.tensor("blk.0.ffn_down_exps.scale").expect("down_s");
+        assert_eq!(scale.n_cols(), TINY_GEMMA4_N_EXPERT);
+        assert_eq!(
+            f32s(scale).expect("f32s").as_slice(),
+            TINY_GEMMA4_DOWN_S.as_slice()
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        match &model.layers[0].ffn {
+            LayerFfn::Gemma4Moe(moe) => {
+                assert_eq!(moe.down_s.as_deref(), Some(TINY_GEMMA4_DOWN_S.as_slice()));
+            }
+            _ => panic!("expected gemma4 moe"),
+        }
+        let moe = load_gguf(&tiny_gemma4_moe_gguf()).expect("moe");
+        assert!(moe.tensor("blk.0.ffn_down_exps.scale").is_none());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&moe, &[1, 2, 3]),
+            "oracle down_s vs moe"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("down_s pref");
+        let moe_pref = {
+            let mm = Llama::from_gguf(moe.clone()).expect("mm");
+            match &mm.layers[0].ffn {
+                LayerFfn::Gemma4Moe(m) => assert!(m.down_s.is_none()),
+                _ => panic!("expected gemma4 moe"),
+            }
+            let mut c = mm.new_cache(8).expect("mc");
+            mm.prefill(&mut c, &tokens).expect("moe pref")
+        };
+        assert_ne!(
+            scaled, moe_pref,
+            "per-expert down_s must not copy moe logits"
+        );
+        let catalog = model.expert_direct_store().expect("catalog");
+        let via_direct = store_prefill(&model, LiveStore::Direct(catalog), &tokens);
+        assert_eq!(scaled, via_direct, "DirectStore GEMV must match the blob");
+        let ones_pref = {
+            let g0 = load_gguf_owned(tiny_gemma4_moe_gguf()).expect("ones g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let ones = vec![1.0f32; TINY_GEMMA4_N_EXPERT];
+            tensors.push(tw(
+                "blk.0.ffn_down_exps.scale",
+                GgmlType::F32,
+                vec![TINY_GEMMA4_N_EXPERT],
+                pack_vec1d(GgmlType::F32, &ones),
+            ));
+            let ones_bytes = write_gguf_with_kv(&kv, &tensors);
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&moe, &tokens),
+                "scale=1.0 must match omitted down_s"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, moe_pref,
+            "all-ones down_s must be identity with moe"
+        );
+        let bad = {
+            let g0 = load_gguf_owned(tiny_gemma4_moe_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32];
+            tensors.push(tw(
+                "blk.0.ffn_down_exps.scale",
+                GgmlType::F32,
+                vec![1],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected ffn_down_exps.scale shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("ffn_down_exps.scale"),
             "error should name tensor: {err}"
         );
     }
@@ -19865,7 +20063,7 @@ mod bench {
     fn bench_logits_fingerprint() {
         // Every zero-argument fixture in the suite, so that each architecture
         // walk and each dtype kernel the decode path can reach is pinned.
-        let cases: [(&str, Vec<u8>); 64] = [
+        let cases: [(&str, Vec<u8>); 65] = [
             ("llama", tiny_llama_gguf()),
             ("tied", tiny_tied_gguf()),
             ("tied_copy", tiny_tied_copy_gguf()),
@@ -19901,6 +20099,7 @@ mod bench {
             ("gemma4_no_wv", tiny_gemma4_no_wv_gguf()),
             ("gemma4_out_scale", tiny_gemma4_out_scale_gguf()),
             ("gemma4_rope_freqs", tiny_gemma4_rope_freqs_gguf()),
+            ("gemma4_moe_down_s", tiny_gemma4_moe_down_s_gguf()),
             ("f16", tiny_f16_gguf()),
             ("f16_1d", tiny_f16_1d_gguf()),
             ("f16_1d_bias", tiny_f16_1d_bias_gguf()),
