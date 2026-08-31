@@ -720,7 +720,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--shareable`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-build-deps`, `--graph-host`, `--graph-piecewise`, `--graph-capture-deps`, `--graph-capture-host`, `--graph-mem`, `--graph-memset`, `--graph-memcpy`, `--graph-auto-free`, `--timing-events`, `--event-blocking-sync`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, `--non-portable-cluster`, `--sync-policy`, `--device-sync-policy`, `--shared-mem`, and `--multicast`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-build-deps`, `--graph-host`, `--graph-piecewise`, `--graph-capture-deps`, `--graph-capture-host`, `--graph-mem`, `--graph-memset`, `--graph-memcpy`, `--graph-leaf-host`, `--graph-auto-free`, `--timing-events`, `--event-blocking-sync`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, `--non-portable-cluster`, `--sync-policy`, `--device-sync-policy`, `--shared-mem`, and `--multicast`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--shareable` is POSIX-FD mempool IPC
   (implies `--mempool`; illegal with `--sync-alloc` / mapped / managed / vmm). `--mapped` is `cudaHostAllocMapped`
@@ -767,6 +767,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `--graph-memcpy` is `cudaGraphAddMemcpyNode` / capture `cudaMemcpyAsync` H2D of
   that scratch BETWEEN alloc and GEMM (needs `--graph-mem`; copy-engine PCIe tax;
   legal with `--graph-memset`).
+  `--graph-leaf-host` is `cudaGraphAddHostNode` / captured `cudaLaunchHostFunc`
+  BEFORE the leaf GEMM (implies `--cuda-graphs`; each leaf bills `host_func_ns`;
+  not with `--device-launch`; does not imply `--host-func`).
   `--graph-update` is skipped because CUDA cannot update mem nodes.
   `--graph-auto-free` is AutoFreeOnLaunch scratch without a matching free
   (illegal with `--graph-mem`).
@@ -1009,7 +1012,7 @@ model, do not celebrate the sim.
     Dual score still has no `$/M tokens`.
 48. [x] Engine SimulatedGpuStore CUDA graphs: default `--expert-sim` captures
     per-page GEMM graphs (`Engine::graph_launches`). `--graph-update` /
-    `--graph-clone` / `--graph-build` / `--graph-build-deps` / `--graph-host` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-capture-host` / `--graph-mem` / `--graph-memset` / `--graph-memcpy` / `--graph-auto-free` / `--timing-events` / `--event-blocking-sync` / `--cuda-graphs` match
+    `--graph-clone` / `--graph-build` / `--graph-build-deps` / `--graph-host` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-capture-host` / `--graph-mem` / `--graph-memset` / `--graph-memcpy` / `--graph-leaf-host` / `--graph-auto-free` / `--timing-events` / `--event-blocking-sync` / `--cuda-graphs` match
     `GpuStoreCfg` / `expertvm sim`. Tight slots park+update. Identity stays.
     Dual score still has no `$/M tokens`.
 49. [x] Engine `itl_slo_ns`: count later-token gaps over a virtual-ns budget
@@ -3925,7 +3928,25 @@ model, do not celebrate the sim.
     nodes in combo parents. Store GEMM stays per-leaf. `gpu-profile capture`
     is still refused. Dual score still has no `$/M tokens`.
 
-364. [ ] Next numbered PLAN item after 363 is the next `gpu-sim` / Engine /
+364. [x] `cudaGraphAddHostNode` / captured `cudaLaunchHostFunc` BEFORE the leaf GEMM:
+    [`GpuStoreCfg::graph_leaf_host`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::graph_leaf_host`](expertvm/src/sim_replay.rs) on leaf GEMM graphs.
+    A host callback sits BEFORE the kernel (`host → kernel`, or
+    `alloc → [memset] → [memcpy] → host → kernel → [free]` with `--graph-mem`)
+    so each leaf launch bills `host_func_ns`. Implies `--cuda-graphs`. Does not
+    imply `--host-func`, `--graph-host`, or `--graph-capture-host`. Hits stay
+    the same. Distinct from `--host-func` (live after the token GEMM),
+    `--graph-host` (`cudaGraphAddHostNode` BETWEEN graph-build combo children),
+    and `--graph-capture-host` (captured host BETWEEN piecewise fragments).
+    Illegal with `--device-launch` (CUDA cannot device-launch host nodes).
+    Legal with `--pdl` and `--cooperative`. `--graph-leaf-host` on
+    `expertvm sim` / `schedule` / `store` and `gguf_gemv engine --expert-sim`.
+    infer-bench has no CUDA-graph leaf construction, so it does not get
+    `--graph-leaf-host`. Decode identity stays kernel-only graphs. Store leaf
+    GEMMs host too (not walker-only). `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+365. [ ] Next numbered PLAN item after 364 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
@@ -3954,7 +3975,9 @@ model, do not celebrate the sim.
     invent a second `cudaStreamBeginCaptureToGraph` deps flag. Do not invent
     a second `graph_add_dependencies` flag. Do not invent a second
     `cudaGraphAddHostNode` BETWEEN flag. Do not invent a second captured
-    `cudaLaunchHostFunc` BETWEEN piecewise flag. Do not invent JOIN-style host
+    `cudaLaunchHostFunc` BETWEEN piecewise flag. Do not invent a second leaf
+    `cudaGraphAddHostNode` / captured `cudaLaunchHostFunc` BEFORE GEMM flag.
+    Do not invent JOIN-style host
     after overlapping combo children (same wall as live `--host-func`
     after `launch_graph`). Do not invent `stream_update_capture_dependencies`
     as an Engine flag (same topology as begin-capture deps). Do not invent

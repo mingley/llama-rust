@@ -4050,6 +4050,50 @@ fn sim_replay_graph_memcpy_needs_graph_mem() {
 }
 
 #[test]
+fn sim_replay_graph_leaf_host_cannot_device_launch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    match sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            graph_leaf_host: true,
+            device_launch: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("graph-leaf-host with device-launch must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("graph-leaf-host cannot device-launch"),
+            "{err}"
+        ),
+    }
+    let _ok = sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            graph_leaf_host: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    )
+    .expect("leaf-host implies graphs");
+    let _mem = sim_replay_cfg(
+        &t,
+        profile,
+        SimCfg {
+            cuda_graphs: true,
+            graph_mem: true,
+            graph_leaf_host: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    )
+    .expect("leaf-host is legal with graph-mem");
+}
+
+#[test]
 fn sim_replay_graph_capture_deps_needs_graph_piecewise() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1])],
@@ -4447,6 +4491,47 @@ fn simulated_gpu_store_graph_memcpy_needs_graph_mem() {
 }
 
 #[test]
+fn simulated_gpu_store_graph_leaf_host_cannot_device_launch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile.clone(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_leaf_host: true,
+            device_launch: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("graph-leaf-host with device-launch must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("graph-leaf-host cannot device-launch"),
+            "{err}"
+        ),
+    }
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_leaf_host: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("leaf-host on store graphs");
+    assert!(gpu.graph_leaf_host());
+    let _s = gpu.score().expect("score");
+}
+
+#[test]
 fn simulated_gpu_store_graph_piecewise_launches() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],
@@ -4726,6 +4811,40 @@ fn cuda_graphs_graph_memcpy_slows_graph_mem_scratch() {
         "graph-memcpy must add PCIe tax on graph-mem scratch; mem={} memcpy={}",
         mem.sim_ns,
         memcpy.sim_ns
+    );
+}
+
+#[test]
+fn cuda_graphs_graph_leaf_host_slows_leaf_gemm() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000\nhbm_bps=1000000000000\ngraph_instantiate_ns=1\ngraph_upload_ns=1\ngraph_launch_ns=1\nlaunch_overhead_ns=1\ncopy_engines=2\nhost_func_ns=100000\n",
+    )
+    .expect("profile");
+    let run = |graph_leaf_host: bool| {
+        sim_replay_cfg(
+            &t,
+            p.clone(),
+            SimCfg {
+                cuda_graphs: true,
+                graph_leaf_host,
+                ..SimCfg::lru(1, 4096, 0)
+            },
+        )
+        .expect("replay")
+    };
+    let graphs = run(false);
+    let hosted = run(true);
+    assert_eq!(graphs.hits, hosted.hits);
+    assert_eq!(graphs.misses, hosted.misses);
+    assert_eq!(graphs.graph_launches, hosted.graph_launches);
+    assert!(
+        graphs.sim_ns < hosted.sim_ns,
+        "graph-leaf-host must add host_func_ns before the leaf GEMM; graphs={} host={}",
+        graphs.sim_ns,
+        hosted.sim_ns
     );
 }
 

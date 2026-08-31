@@ -489,7 +489,9 @@ scratch (`graph_add_alloc` / capture `alloc`). `--graph-memset` memsets that
 scratch BETWEEN alloc and GEMM (`graph_add_memset` / capture `memset`; needs
 `--graph-mem`). `--graph-memcpy` H2Ds that scratch BETWEEN alloc and GEMM
 (`graph_add_memcpy_1d` / capture `memcpy_pinned_to_device`; needs `--graph-mem`;
-copy-engine PCIe; legal with `--graph-memset`). `--graph-auto-free` is
+copy-engine PCIe; legal with `--graph-memset`). `--graph-leaf-host` inserts
+`graph_add_host_func` / captured `host_func` BEFORE the leaf GEMM (`host_func_ns`;
+not with `--device-launch`). `--graph-auto-free` is
 AutoFreeOnLaunch (relaunch recharges HBM; not with `--graph-mem`).
 `cooperative_kernel` / `graph_add_cooperative_kernel` are
 `cudaLaunchCooperativeKernel` (occupy every Hyper-Q slot; capture allowed).

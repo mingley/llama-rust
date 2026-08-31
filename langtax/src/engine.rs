@@ -92,6 +92,10 @@
 //! `--graph-memcpy` is `cudaGraphAddMemcpyNode` / `cudaMemcpyAsync` H2D of
 //! `--graph-mem` scratch BETWEEN alloc and GEMM (needs `--graph-mem`; copy-engine
 //! PCIe tax; store and walker leaf GEMMs).
+//! `--graph-leaf-host` is `cudaGraphAddHostNode` / captured `cudaLaunchHostFunc`
+//! BEFORE the leaf GEMM (implies `--cuda-graphs`; each leaf bills `host_func_ns`;
+//! does not imply `--host-func`; not with `--device-launch`; store and walker
+//! leaf GEMMs).
 //! `--cluster N` is `cudaLaunchAttributeClusterDimension` on grouped expert
 //! GEMMs: the launch occupies `min(N, compute_slots)` Hyper-Q slots (Hopper
 //! portable max 8; legal with `--pdl` and `--cooperative`). `--preferred-cluster N`
@@ -4623,6 +4627,38 @@ mod tests {
         assert_eq!(mem.2, 4);
         assert_eq!(memcpy.2, 4);
         assert_eq!(mem.4, memcpy.4, "graph-memcpy must keep greedy identity");
+    }
+
+    #[test]
+    fn engine_gpu_graph_leaf_host_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse(
+            "gpus=1\nfp16_flops=1000000\ngraph_instantiate_ns=1\ngraph_upload_ns=1\ngraph_launch_ns=1\nlaunch_overhead_ns=1\ncopy_engines=2\nhost_func_ns=100000\n",
+        )
+        .expect("graph profile");
+        let graphs = mixed_gpu_decode_itl_at(
+            bytes.clone(),
+            false,
+            None,
+            GpuStoreCfg::default(),
+            profile.clone(),
+        );
+        let host = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                graph_leaf_host: true,
+                ..GpuStoreCfg::default()
+            },
+            profile,
+        );
+        assert_eq!(graphs.2, 4);
+        assert_eq!(host.2, 4);
+        assert_eq!(
+            graphs.4, host.4,
+            "graph-leaf-host must keep greedy identity"
+        );
     }
 
     #[test]

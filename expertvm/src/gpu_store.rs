@@ -296,6 +296,15 @@ pub struct GpuStoreCfg {
     /// with [`Self::graph_auto_free`] alone. Store leaf GEMMs memcpy too (not
     /// walker-only). Decode identity stays kernel-only graphs.
     pub graph_memcpy: bool,
+    /// `cudaGraphAddHostNode` / captured `cudaLaunchHostFunc` BEFORE the leaf GEMM.
+    ///
+    /// Implies CUDA graphs on the walker. A host callback sits BEFORE the
+    /// kernel so each leaf launch bills `host_func_ns`. Does not imply
+    /// [`Self::host_func`], [`Self::graph_host`], or [`Self::graph_capture_host`].
+    /// Hits stay the same. Illegal with [`Self::device_launch`] (CUDA cannot
+    /// device-launch host nodes). Store leaf GEMMs host too (not walker-only).
+    /// Decode identity stays kernel-only graphs.
+    pub graph_leaf_host: bool,
     /// Scratch alloc without a matching free; AutoFreeOnLaunch instantiate.
     ///
     /// Illegal with [`Self::graph_mem`]. `--graph-update` is skipped;
@@ -711,6 +720,8 @@ pub struct SimulatedGpuStore {
     graph_memset: bool,
     /// [`GpuStoreCfg::graph_memcpy`]: H2D graph-mem scratch BETWEEN alloc and GEMM.
     graph_memcpy: bool,
+    /// [`GpuStoreCfg::graph_leaf_host`]: host node BEFORE the leaf GEMM kernel.
+    graph_leaf_host: bool,
     graph_mem_trim: bool,
     mempool_trim: bool,
     /// [`GpuStoreCfg::mempool_max`] (`0` unset / unlimited).
@@ -874,6 +885,9 @@ impl SimulatedGpuStore {
     /// GEMM (needs graph-mem; store leaf GEMMs too);
     /// [`GpuStoreCfg::graph_memcpy`] H2Ds that scratch BETWEEN alloc and
     /// GEMM (needs graph-mem; copy-engine PCIe; store leaf GEMMs too);
+    /// [`GpuStoreCfg::graph_leaf_host`] inserts `cudaGraphAddHostNode` /
+    /// captured `host_func` BEFORE the leaf GEMM (implies graphs; store leaf
+    /// GEMMs too; illegal with device-launch);
     /// [`GpuStoreCfg::graph_auto_free`] is AutoFreeOnLaunch without a free;
     /// [`GpuStoreCfg::graph_set_params`] retargets a parked kernel node;
     /// [`GpuStoreCfg::graph_enable`] is walker combo `cudaGraphNodeSetEnabled`
@@ -1033,6 +1047,9 @@ impl SimulatedGpuStore {
         }
         if cfg.graph_memcpy && !cfg.graph_mem {
             return Err(Error::Store("graph-memcpy needs graph-mem"));
+        }
+        if cfg.graph_leaf_host && cfg.device_launch {
+            return Err(Error::Store("graph-leaf-host cannot device-launch"));
         }
         if cfg.graph_capture_deps && !cfg.graph_piecewise {
             return Err(Error::Store("graph-capture-deps needs graph-piecewise"));
@@ -1293,6 +1310,7 @@ impl SimulatedGpuStore {
             leaf,
             graph_memset: cfg.graph_memset,
             graph_memcpy: cfg.graph_memcpy,
+            graph_leaf_host: cfg.graph_leaf_host,
             graph_mem_trim: cfg.graph_mem_trim,
             mempool_trim: cfg.mempool_trim,
             mempool_max: cfg.mempool_max,
@@ -1526,8 +1544,19 @@ impl SimulatedGpuStore {
         self.graph_memcpy
     }
 
+    /// Whether leaf GEMM graphs insert a host node BEFORE the kernel.
+    #[must_use]
+    pub fn graph_leaf_host(&self) -> bool {
+        self.graph_leaf_host
+    }
+
     fn leaf_work(&self) -> LeafWork {
-        LeafWork::new(self.leaf, self.graph_memset, self.graph_memcpy)
+        LeafWork::new(
+            self.leaf,
+            self.graph_memset,
+            self.graph_memcpy,
+            self.graph_leaf_host,
+        )
     }
 
     /// Whether this store set `cudaFuncAttributeClusterDimMustBeSet`.
@@ -2784,8 +2813,9 @@ impl SimulatedGpuStore {
         // Store GEMM is per-leaf; combo `graph_add_dependencies` /
         // `graph_add_host_func` stay walker-only even when
         // [`GpuStoreCfg::graph_build_deps`] or [`GpuStoreCfg::graph_host`] is set.
-        // [`GpuStoreCfg::graph_memset`] / [`GpuStoreCfg::graph_memcpy`] do apply:
-        // they fill this leaf's graph-mem scratch BETWEEN alloc and GEMM.
+        // [`GpuStoreCfg::graph_memset`] / [`GpuStoreCfg::graph_memcpy`] /
+        // [`GpuStoreCfg::graph_leaf_host`] do apply: they fill this leaf
+        // BETWEEN alloc and GEMM (host sits BEFORE the kernel).
         add_leaf_gemm(&mut self.sim, g, device, id, work, flags)?;
         Ok(g)
     }

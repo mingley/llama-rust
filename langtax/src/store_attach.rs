@@ -51,6 +51,8 @@ pub(crate) struct GpuCli {
     pub graph_memset: bool,
     /// `cudaGraphAddMemcpyNode` / `cudaMemcpyAsync` H2D of graph-mem scratch (`GpuStoreCfg::graph_memcpy`). Needs graph-mem.
     pub graph_memcpy: bool,
+    /// `cudaGraphAddHostNode` / captured `cudaLaunchHostFunc` BEFORE the leaf GEMM (`GpuStoreCfg::graph_leaf_host`). Illegal with device-launch.
+    pub graph_leaf_host: bool,
     pub graph_auto_free: bool,
     pub graph_mem_trim: bool,
     pub timing_events: bool,
@@ -249,6 +251,7 @@ impl GpuCli {
             "--graph-mem" => &mut self.graph_mem,
             "--graph-memset" => &mut self.graph_memset,
             "--graph-memcpy" => &mut self.graph_memcpy,
+            "--graph-leaf-host" => &mut self.graph_leaf_host,
             "--graph-auto-free" => &mut self.graph_auto_free,
             "--graph-mem-trim" => &mut self.graph_mem_trim,
             "--timing-events" => &mut self.timing_events,
@@ -716,6 +719,14 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--graph-leaf-host` cannot `--device-launch`.
+    pub(crate) fn check_graph_leaf_host(self) -> Result<(), String> {
+        if self.graph_leaf_host && self.device_launch {
+            return Err("graph-leaf-host cannot device-launch".into());
+        }
+        Ok(())
+    }
+
     /// First CUDA knob that needs `--expert-sim`, if any.
     #[must_use]
     pub(crate) fn sim_flag(self) -> Option<&'static str> {
@@ -734,6 +745,7 @@ impl GpuCli {
             (self.graph_mem, "--graph-mem"),
             (self.graph_memset, "--graph-memset"),
             (self.graph_memcpy, "--graph-memcpy"),
+            (self.graph_leaf_host, "--graph-leaf-host"),
             (self.graph_auto_free, "--graph-auto-free"),
             (self.graph_mem_trim, "--graph-mem-trim"),
             (self.timing_events, "--timing-events"),
@@ -1132,6 +1144,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         graph_mem: gpu.graph_mem,
         graph_memset: gpu.graph_memset,
         graph_memcpy: gpu.graph_memcpy,
+        graph_leaf_host: gpu.graph_leaf_host,
         graph_auto_free: gpu.graph_auto_free,
         graph_mem_trim: gpu.graph_mem_trim,
         timing_events: gpu.timing_events || gpu.event_blocking_sync,

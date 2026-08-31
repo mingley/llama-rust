@@ -849,6 +849,9 @@
 //! `--graph-capture-deps` chains those fragments;
 //! `--graph-capture-host` inserts captured [`host_func`](Sim::host_func)
 //! BETWEEN those fragments (`host_func_ns`; not a JOIN).
+//! `expertvm --graph-leaf-host` inserts [`graph_add_host_func`](Sim::graph_add_host_func)
+//! / captured [`host_func`](Sim::host_func) BEFORE each leaf GEMM
+//! (`host_func_ns`; illegal with `--device-launch`).
 //! [`stream_update_capture_dependencies`](Sim::stream_update_capture_dependencies)
 //! is `cudaStreamUpdateCaptureDependencies`: extra deps for the next captured
 //! node **in addition to** stream-order (`Set` replaces, `Add` unions).

@@ -5,6 +5,20 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaGraphAddHostNode` before each leaf GEMM
+
+`GpuStoreCfg::graph_leaf_host` / `SimCfg::graph_leaf_host` insert
+`cudaGraphAddHostNode` / captured `cudaLaunchHostFunc` BEFORE the leaf GEMM
+kernel so each launch bills `host_func_ns` (`host → kernel`). Implies
+`--cuda-graphs`. Does not imply `--host-func`, `--graph-host`, or
+`--graph-capture-host`. Hits/misses stay the same. Distinct from live
+`--host-func` (after the token GEMM), `--graph-host` (BETWEEN graph-build combo
+children), and `--graph-capture-host` (BETWEEN piecewise fragments). Illegal
+with `--device-launch`. `--graph-leaf-host` is off by default (decode identity:
+kernel-only graphs). Store leaf GEMMs host too (not walker-only). infer-bench
+has no CUDA-graph leaf construction, so it does not get `--graph-leaf-host`.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — captured `cudaLaunchHostFunc` between piecewise fragments
 
 `GpuStoreCfg::graph_capture_host` / `SimCfg::graph_capture_host` insert

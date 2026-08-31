@@ -284,7 +284,10 @@ includes the workspace; `--graph-update` is skipped). `--graph-memset` is
 and GEMM (needs `--graph-mem`; extra HBM-write tax; store and walker leaves). `--graph-memcpy` is
 `cudaMemcpyAsync` / `cudaGraphAddMemcpyNode` H2D of that scratch BETWEEN alloc
 and GEMM (needs `--graph-mem`; copy-engine PCIe tax; store and walker leaves; legal
-with `--graph-memset`). `--graph-auto-free` is
+with `--graph-memset`). `--graph-leaf-host` is `cudaGraphAddHostNode` / captured
+`cudaLaunchHostFunc` BEFORE the leaf GEMM (implies `--cuda-graphs`; each leaf
+bills `host_func_ns`; not with `--device-launch`; store and walker leaves; does
+not imply `--host-func`). `--graph-auto-free` is
 the same scratch without a matching free, instantiated
 `cudaGraphInstantiateFlagAutoFreeOnLaunch` (relaunch recharges HBM; not with
 `--graph-mem`). Capture waits with
@@ -321,7 +324,7 @@ same Stay vs Fetch predictor on real decode; upcoming keys are the
 online predicted list, not this walker's JSONL future window.
 `--expert-sim` captures
 per-page GEMM graphs (`graph_launches=`; `--cuda-graphs` documents that).
-`--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-build-deps` / `--graph-host` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-capture-host` / `--graph-enable` / `--graph-mem` / `--graph-memset` / `--graph-memcpy` / `--graph-auto-free` / `--graph-mem-trim` / `--timing-events` / `--event-blocking-sync` are `GpuStoreCfg`
+`--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-build-deps` / `--graph-host` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-capture-host` / `--graph-enable` / `--graph-mem` / `--graph-memset` / `--graph-memcpy` / `--graph-leaf-host` / `--graph-auto-free` / `--graph-mem-trim` / `--timing-events` / `--event-blocking-sync` are `GpuStoreCfg`
 on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 (`gguf_gemv engine --expert-sim --managed`). `--host-func` /
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--mempool-trim` / `--mempool-no-reuse` / `--mempool-max` / `--shareable` / `--vmm-page` /
@@ -495,6 +498,7 @@ expertvm sim      trace.jsonl --capacity 1 --graph-piecewise --graph-capture-hos
 expertvm sim      trace.jsonl --capacity 1 --graph-mem
 expertvm sim      trace.jsonl --capacity 1 --graph-mem --graph-memset
 expertvm sim      trace.jsonl --capacity 1 --graph-mem --graph-memcpy
+expertvm sim      trace.jsonl --capacity 1 --graph-leaf-host
 expertvm sim      trace.jsonl --capacity 1 --graph-mem --graph-mem-trim
 expertvm sim      trace.jsonl --capacity 1 --graph-auto-free
 expertvm sim      trace.jsonl --capacity 8 --seq-streams --max-batch 2
@@ -538,6 +542,7 @@ expertvm store    trace.jsonl --capacity 1 --graph-piecewise --graph-capture-hos
 expertvm store    trace.jsonl --capacity 1 --graph-mem
 expertvm store    trace.jsonl --capacity 1 --graph-mem --graph-memset
 expertvm store    trace.jsonl --capacity 1 --graph-mem --graph-memcpy
+expertvm store    trace.jsonl --capacity 1 --graph-leaf-host
 expertvm store    trace.jsonl --capacity 1 --graph-auto-free
 expertvm store    trace.jsonl --capacity 1 --timing-events
 expertvm store    trace.jsonl --capacity 1 --event-blocking-sync

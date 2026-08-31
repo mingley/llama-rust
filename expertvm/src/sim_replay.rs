@@ -32,6 +32,8 @@ pub(crate) struct LeafWork {
     pub mem: LeafMem,
     pub memset: bool,
     pub memcpy: bool,
+    /// [`SimCfg::graph_leaf_host`]: host node BEFORE the GEMM kernel.
+    pub host: bool,
 }
 
 impl LeafWork {
@@ -39,13 +41,15 @@ impl LeafWork {
         mem: LeafMem::None,
         memset: false,
         memcpy: false,
+        host: false,
     };
 
-    pub(crate) fn new(mem: LeafMem, memset: bool, memcpy: bool) -> Self {
+    pub(crate) fn new(mem: LeafMem, memset: bool, memcpy: bool, host: bool) -> Self {
         Self {
             mem,
             memset,
             memcpy,
+            host,
         }
     }
 }
@@ -903,6 +907,17 @@ pub struct SimCfg {
     /// [`crate::GpuStoreCfg::graph_memcpy`] is the store path (store leaf GEMMs
     /// memcpy too; this is not walker-only).
     pub graph_memcpy: bool,
+    /// `cudaGraphAddHostNode` / captured `cudaLaunchHostFunc` BEFORE the leaf GEMM.
+    ///
+    /// Implies [`Self::cuda_graphs`]. A host callback sits BEFORE the kernel
+    /// (`host → kernel`, or `alloc → [memset] → [memcpy] → host → kernel →
+    /// [free]` with graph-mem) so each leaf launch bills `host_func_ns`. Does
+    /// not imply [`Self::host_func`], [`Self::graph_host`], or
+    /// [`Self::graph_capture_host`]. Hits stay the same. Illegal with
+    /// [`Self::device_launch`] (CUDA cannot device-launch host nodes). Decode
+    /// identity stays kernel-only. Store leaf GEMMs host too (not walker-only).
+    /// [`crate::GpuStoreCfg::graph_leaf_host`] is the store path.
+    pub graph_leaf_host: bool,
     /// Leaf GEMM graphs alloc scratch without a matching free.
     ///
     /// Instantiates with [`gpu_sim::Sim::instantiate_graph_auto_free`] so
@@ -1288,6 +1303,7 @@ impl SimCfg {
             graph_mem: false,
             graph_memset: false,
             graph_memcpy: false,
+            graph_leaf_host: false,
             graph_auto_free: false,
             graph_mem_trim: false,
             cooperative: false,
@@ -1385,6 +1401,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     }
     if cfg.graph_memcpy && !cfg.graph_mem {
         return Err(Error::Store("graph-memcpy needs graph-mem"));
+    }
+    if cfg.graph_leaf_host && cfg.device_launch {
+        return Err(Error::Store("graph-leaf-host cannot device-launch"));
     }
     if cfg.graph_capture_deps && !cfg.graph_piecewise {
         return Err(Error::Store("graph-capture-deps needs graph-piecewise"));
@@ -1638,6 +1657,7 @@ pub fn sim_replay_cfg(
         .with_graph_host(cfg.graph_host)
         .with_memset(cfg.graph_memset)
         .with_memcpy(cfg.graph_memcpy)
+        .with_leaf_host(cfg.graph_leaf_host)
         .with_piecewise(cfg.graph_piecewise)
         .with_capture_deps(cfg.graph_capture_deps)
         .with_capture_host(cfg.graph_capture_host)
@@ -2155,6 +2175,8 @@ pub(crate) struct GraphBank {
     memset: bool,
     /// [`SimCfg::graph_memcpy`]: H2D graph-mem scratch BETWEEN alloc and GEMM.
     memcpy: bool,
+    /// [`SimCfg::graph_leaf_host`]: host node BEFORE the leaf GEMM kernel.
+    leaf_host: bool,
     cooperative: bool,
     pdl: bool,
     l2_persist: bool,
@@ -2202,6 +2224,7 @@ impl GraphBank {
             mem,
             memset: false,
             memcpy: false,
+            leaf_host: false,
             cooperative: false,
             pdl: false,
             l2_persist: false,
@@ -2411,8 +2434,13 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_leaf_host(mut self, yes: bool) -> Self {
+        self.leaf_host = yes;
+        self
+    }
+
     fn leaf_work(&self) -> LeafWork {
-        LeafWork::new(self.mem, self.memset, self.memcpy)
+        LeafWork::new(self.mem, self.memset, self.memcpy, self.leaf_host)
     }
 
     pub(crate) fn with_capture_deps(mut self, yes: bool) -> Self {
@@ -3394,6 +3422,7 @@ fn gemm_ids(
         || graphs.device_launch
         || graphs.device_updatable
         || graphs.enable
+        || graphs.leaf_host
     {
         if let Some(g) = capture_expert_graph(sim, graphs, d, stream, &capture_ids)? {
             if capture_ids.len() > 1 {
@@ -3966,6 +3995,9 @@ pub(crate) fn kernel_leaf(
     flags: GemmFlags,
 ) -> Result<(), Error> {
     if work.mem == LeafMem::None {
+        if work.host {
+            let _h = sim.host_func(d, s)?;
+        }
         launch_gemm_kernel(sim, d, s, id, &[], flags)?;
         return Ok(());
     }
@@ -3975,6 +4007,9 @@ pub(crate) fn kernel_leaf(
     }
     if work.memcpy {
         let _c = sim.memcpy_pinned_to_device(d, scratch, GRAPH_SCRATCH_BYTES, s)?;
+    }
+    if work.host {
+        let _h = sim.host_func(d, s)?;
     }
     launch_gemm_kernel(sim, d, s, id, &[scratch], flags)?;
     if work.mem == LeafMem::Free {
@@ -4004,6 +4039,13 @@ pub(crate) fn add_leaf_gemm(
     flags: GemmFlags,
 ) -> Result<(), Error> {
     if work.mem == LeafMem::None {
+        if work.host {
+            sim.graph_add_host_func(graph)?;
+            let kernel = sim.graph_len(graph)?;
+            add_gemm_kernel(sim, graph, id, &[], flags)?;
+            sim.graph_add_dependencies(graph, 0, kernel)?;
+            return Ok(());
+        }
         return add_gemm_kernel(sim, graph, id, &[], flags);
     }
     let scratch = sim.graph_add_alloc(graph, GRAPH_SCRATCH_BYTES)?;
@@ -4025,6 +4067,12 @@ pub(crate) fn add_leaf_gemm(
         let c = sim.graph_len(graph)?.saturating_sub(1);
         sim.graph_add_dependencies(graph, prev, c)?;
         prev = c;
+    }
+    if work.host {
+        sim.graph_add_host_func(graph)?;
+        let h = sim.graph_len(graph)?.saturating_sub(1);
+        sim.graph_add_dependencies(graph, prev, h)?;
+        prev = h;
     }
     let kernel = sim.graph_len(graph)?;
     add_gemm_kernel(sim, graph, id, &[scratch], flags)?;
