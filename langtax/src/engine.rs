@@ -1,7 +1,7 @@
 //! Continuous batching over a shared [`crate::PagedKvPool`].
 //!
 //! Several sequences share interned KV blocks. Each [`Engine::step`] prefills
-//! at most `prefill_chunk` tokens per waiting sequence, then greedily samples
+//! at most `prefill_chunk` tokens per waiting sequence, , then greedily samples
 //! one token for every sequence whose prompt is in KV. [`EngineCfg::decode_first`]
 //! holds leftover prefill while any live sequence is already decoding (same
 //! policy as `expertvm schedule --decode-first`). Sequences may be added
@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `mempool_trim`, `mempool_no_reuse`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/enable, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `func_cluster_spread`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
+//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `func_cluster_spread`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -45,6 +45,9 @@
 //! `cudaLaunchAttributeMemSyncDomain` on that decode stream (prefill stays
 //! Default) so leftover prefill fence tax does not inflate decode ITL
 //! (implies `--decode-priority`). Default `default` is decode identity.
+//! `--mem-sync-map identity|collapse` is `cudaLaunchAttributeMemSyncDomainMap`
+//! on that decode stream (collapse maps remote→0 and restores leftover prefill
+//! fence tax; needs `--mem-sync-domain remote`).
 //! `--compute-slots N` (`N>=2`) is Hyper-Q
 //! occupancy so leftover prefill and decode GEMMs on those two streams overlap
 //! at full issue rate (not SM-partition). Default profile occupancy is
@@ -148,8 +151,8 @@
 use crate::decode::{KvCache, Llama, LlamaError, PagedKvPool, PrefetchChain};
 use crate::sample::argmax;
 use expertvm::{
-    DeviceId, ExpertKey, ExpertStore, LiveStore, MemSyncDomain, Prefetch, Score, StoreMetrics,
-    StreamId, Trace,
+    DeviceId, ExpertKey, ExpertStore, LiveStore, MemSyncDomain, MemSyncDomainMap, Prefetch, Score,
+    StoreMetrics, StreamId, Trace,
 };
 use std::collections::{BTreeMap, VecDeque};
 
@@ -518,6 +521,18 @@ impl<'a> Engine<'a> {
     ) -> Option<MemSyncDomain> {
         self.live_store()
             .and_then(|s| s.stream_mem_sync_domain(device, stream))
+    }
+
+    /// Stream mem-sync map on an attached SimulatedGpuStore (`None` unless GPU).
+    #[must_use]
+    pub fn gpu_stream_mem_sync_domain_map(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Option<MemSyncDomainMap> {
+        self.live_store()
+            .and_then(|s| s.stream_mem_sync_domain_map(device, stream).ok())
+            .flatten()
     }
 
     /// Grouped-GEMM compute stream on an attached SimulatedGpuStore.
@@ -1542,8 +1557,9 @@ mod tests {
     use crate::tok::Tokenizer;
     use expertvm::{
         CachedStore, DeviceId, ExpertKey, GpuFill, GpuStoreCfg, HardwareProfile, LiveStore,
-        MemSyncDomain, PortableClusterMode, PortableSharedMode, Prefetch, Score, SharedMemoryMode,
-        SimulatedGpuStore, StoreMetrics, StreamId, SynchronizationPolicy, TieredStore, Trace,
+        MemSyncDomain, PortableClusterMode, PortableSharedMode, Prefetch, Score,
+        SharedMemoryMode, SimulatedGpuStore, StoreMetrics, StreamId, SynchronizationPolicy,
+        TieredStore, Trace,
     };
 
     struct GpuEngineOut {
@@ -4478,6 +4494,50 @@ mod tests {
             eng.gpu_stream_mem_sync_domain(DeviceId(0), prefill)
                 .expect("prefill domain"),
             MemSyncDomain::Default
+        );
+    }
+
+    #[test]
+    fn engine_gpu_mem_sync_map_collapse_marks_decode_stream() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let pri = GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            mem_sync_domain: MemSyncDomain::Remote,
+            mem_sync_collapse: true,
+            ..GpuStoreCfg::default()
+        };
+        let g = load_gguf_owned(bytes).expect("owned");
+        let model = Llama::from_gguf(g).expect("m");
+        let n = model.expert_direct_store().expect("n").len().max(1);
+        let mut cfg = EngineCfg::tiny();
+        cfg.max_seqs = 2;
+        let mut eng = Engine::new(&model, cfg).expect("eng");
+        let gpu = SimulatedGpuStore::with_cfg(
+            model.expert_direct_store().expect("c"),
+            n,
+            HardwareProfile::example_h100_sxm(),
+            4096,
+            GpuFill::Pinned,
+            pri,
+        )
+        .expect("gpu");
+        let decode = gpu.decode_stream();
+        let prefill = gpu.prefill_stream();
+        eng.attach_expert_store(LiveStore::simulated(gpu));
+        let _a = eng.add(&[1u32, 2], 2).expect("a");
+        eng.run().expect("run");
+        assert_eq!(
+            eng.gpu_stream_mem_sync_domain_map(DeviceId(0), decode)
+                .expect("decode map")
+                .remote,
+            0
+        );
+        assert_eq!(
+            eng.gpu_stream_mem_sync_domain_map(DeviceId(0), prefill)
+                .expect("prefill map")
+                .remote,
+            1
         );
     }
 

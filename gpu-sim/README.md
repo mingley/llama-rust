@@ -157,6 +157,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchAttributeAccessPolicyWindow` persisting hits (`kernel_access_policy`) | HBM discount after `set_persisting_l2_cache_size`; CUDA default size is 0 |
 | `cudaStreamAttributeAccessPolicyWindow` inherited by `kernel` / `kernel_bufs` | same persist billing as `kernel_access_policy`; `kernel_with` / graph replay use launch / node |
 | `cudaLaunchAttributeMemSyncDomain` fence isolation (`kernel_with` / allreduce Remote) | `same_domain_fence_permille` of leftover same-domain traffic; tax default 0 |
+| `cudaLaunchAttributeMemSyncDomainMap` (`set_stream_mem_sync_domain_map`) | Hopper identity remote→1; collapse `{default:0, remote:0}` restores same-domain fence; `expertvm sim --mem-sync-map collapse` (needs `--mem-sync-domain remote`) |
 | `cudaLaunchAttributeClusterDimension` (`kernel_with` cluster) | occupies `min(blocks, compute_slots)`; Hopper portable max 8 |
 | `cudaLaunchAttributeClusterSchedulingPolicyPreference` Spread | occupies every Hyper-Q slot; Default uses `set_func_cluster_policy` (`cudaFuncAttributeClusterSchedulingPolicyPreference`; `expertvm sim --func-cluster-spread` sets Spread; unset never occupies extra slots without `--cluster` >= 2) |
 | `cudaLaunchAttributePreferredClusterDimension` | occupies preferred size when it fits in `compute_slots` |
@@ -916,7 +917,10 @@ enables the persist limit and attaches a window to expert GEMMs.
 leftover same-physical-domain traffic (default tax 0). Remote (and allreduce)
 isolates communication. `expertvm sim --mem-sync-domain remote` /
 `gguf_gemv engine --expert-sim --mem-sync-domain remote` put decode GEMMs
-on Remote (prefill stays Default). `ClusterDim` is `cudaLaunchAttributeClusterDimension`:
+on Remote (prefill stays Default). `expertvm sim --mem-sync-map collapse` /
+`gguf_gemv engine --expert-sim --mem-sync-map collapse` maps remote→0 on
+that decode stream so leftover prefill fence tax returns (needs
+`--mem-sync-domain remote`; Hopper identity is remote→1). `ClusterDim` is `cudaLaunchAttributeClusterDimension`:
 the launch occupies `min(blocks, compute_slots)` Hyper-Q slots (Hopper portable
 max 8). `ClusterSchedulingPolicy::Spread` occupies every slot.
 Launch Default uses `set_func_cluster_policy`

@@ -1246,6 +1246,10 @@ impl Sim {
     }
 
     /// `cudaStreamSetAttribute` for `cudaLaunchAttributeMemSyncDomainMap`.
+    ///
+    /// Does not tick the clock. Hopper identity is default→0, remote→1.
+    /// `expertvm sim --mem-sync-map collapse` sets `{default: 0, remote: 0}`
+    /// on the decode stream (needs `--mem-sync-domain remote`).
     pub fn set_stream_mem_sync_domain_map(
         &mut self,
         device: DeviceId,

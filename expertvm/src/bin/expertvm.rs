@@ -20,8 +20,8 @@ const USAGE: &str = "\
 usage: expertvm <command> [args]
   analyze  <trace.jsonl>
   replay   <trace.jsonl> [--capacity N] [--lookahead N]
-  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--shareable] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--host-register] [--host-register-mapped] [--sync-memops] [--device-sync-memops] [--memcpy-batch] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
-  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--shareable] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--host-register] [--host-register-mapped] [--sync-memops] [--device-sync-memops] [--memcpy-batch] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
+  sim      <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--plan-window N] [--plan-threshold N] [--max-batch N] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--shareable] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--host-register] [--host-register-mapped] [--sync-memops] [--device-sync-memops] [--memcpy-batch] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--mem-sync-map identity|collapse] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--seq-streams] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--plan-window N] [--plan-threshold N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--shareable] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--pageable] [--host-register] [--host-register-mapped] [--sync-memops] [--device-sync-memops] [--memcpy-batch] [--accessed-by] [--legacy-null] [--stream-priority] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--mem-sync-map identity|collapse] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
   bench    <trace.jsonl> [--capacity N] [--lookahead N] [--expert-bytes N] [--profile NAME]
   bench    adversarial [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
@@ -30,7 +30,7 @@ usage: expertvm <command> [args]
   place    <trace.jsonl> [--gpus N] [--hot-pt N]
   remote   <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
   kv       [--pages N] [--page-bytes B] [--capacity C] [--tokens T] [--profile NAME] [--fill h2d|memset] [--sequences N] [--row-width W] [--pitch P]
-  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--shareable] [--host-func] [--blocking-streams] [--pageable] [--host-register] [--host-register-mapped] [--sync-memops] [--device-sync-memops] [--memcpy-batch] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--event-blocking-sync] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
+  store    <trace.jsonl> [--capacity N] [--expert-bytes N] [--profile NAME] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--mapped] [--managed] [--vmm] [--vmm-page N] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--shareable] [--host-func] [--blocking-streams] [--pageable] [--host-register] [--host-register-mapped] [--sync-memops] [--device-sync-memops] [--memcpy-batch] [--accessed-by] [--legacy-null] [--stream-priority] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-piecewise] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--event-blocking-sync] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--mem-sync-map identity|collapse] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -161,6 +161,7 @@ struct Cfg {
     sync_policy: SynchronizationPolicy,
     device_sync_policy: SynchronizationPolicy,
     mem_sync_domain: MemSyncDomain,
+    mem_sync_collapse: bool,
     shared_mem: SharedMemoryMode,
     func_shared_mem: SharedMemoryMode,
     device_shared_mem: SharedMemoryMode,
@@ -263,6 +264,7 @@ where
     let mut sync_policy = SynchronizationPolicy::Auto;
     let mut device_sync_policy = SynchronizationPolicy::Auto;
     let mut mem_sync_domain = MemSyncDomain::Default;
+    let mut mem_sync_collapse = false;
     let mut shared_mem = SharedMemoryMode::Default;
     let mut func_shared_mem = SharedMemoryMode::Default;
     let mut device_shared_mem = SharedMemoryMode::Default;
@@ -377,6 +379,9 @@ where
             "--mem-sync-domain" => {
                 mem_sync_domain =
                     parse_mem_sync_domain(&value("mem-sync-domain", inline, &mut it)?)?
+            }
+            "--mem-sync-map" => {
+                mem_sync_collapse = parse_mem_sync_map(&value("mem-sync-map", inline, &mut it)?)?
             }
             "--shared-mem" => {
                 shared_mem = parse_shared_mem(&value("shared-mem", inline, &mut it)?)?
@@ -584,6 +589,9 @@ where
     if required_cluster != 0 && required_cluster != cluster {
         return Err("required-cluster must match --cluster".into());
     }
+    if mem_sync_collapse && mem_sync_domain != MemSyncDomain::Remote {
+        return Err("--mem-sync-map collapse needs --mem-sync-domain remote".into());
+    }
     Ok(Cfg {
         path: path.ok_or("missing trace.jsonl or workload name")?,
         capacity,
@@ -651,6 +659,7 @@ where
         sync_policy,
         device_sync_policy,
         mem_sync_domain,
+        mem_sync_collapse,
         shared_mem,
         func_shared_mem,
         device_shared_mem,
@@ -749,6 +758,7 @@ fn sim_cfg_from(cfg: &Cfg, prefetch: Prefetch, max_batch: usize) -> SimCfg {
         sync_policy: cfg.sync_policy,
         device_sync_policy: cfg.device_sync_policy,
         mem_sync_domain: cfg.mem_sync_domain,
+        mem_sync_collapse: cfg.mem_sync_collapse,
         shared_mem: cfg.shared_mem,
         func_shared_mem: cfg.func_shared_mem,
         device_shared_mem: cfg.device_shared_mem,
@@ -859,6 +869,14 @@ fn parse_device_sync_policy(s: &str) -> Result<SynchronizationPolicy, String> {
 
 fn parse_mem_sync_domain(s: &str) -> Result<MemSyncDomain, String> {
     MemSyncDomain::parse(s).map_err(|_| format!("unknown mem-sync-domain {s}"))
+}
+
+fn parse_mem_sync_map(s: &str) -> Result<bool, String> {
+    match s {
+        "identity" => Ok(false),
+        "collapse" => Ok(true),
+        _ => Err(format!("unknown mem-sync-map {s}")),
+    }
 }
 
 fn parse_shared_mem(s: &str) -> Result<SharedMemoryMode, String> {
@@ -1168,6 +1186,7 @@ where
                 sync_policy: cfg.sync_policy,
                 device_sync_policy: cfg.device_sync_policy,
                 mem_sync_domain: cfg.mem_sync_domain,
+                mem_sync_collapse: cfg.mem_sync_collapse,
                 shared_mem: cfg.shared_mem,
                 func_shared_mem: cfg.func_shared_mem,
                 device_shared_mem: cfg.device_shared_mem,

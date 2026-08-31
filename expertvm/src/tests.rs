@@ -1270,6 +1270,50 @@ fn schedule_mem_sync_domain_isolates_leftover_prefill() {
 }
 
 #[test]
+fn schedule_mem_sync_map_collapse_restores_leftover_prefill_fence() {
+    let mut events = Vec::new();
+    for layer in 0..16u32 {
+        events.push(ev_seq(0, 0, layer, &[0]));
+    }
+    events.push(ev_seq(1, 0, 0, &[1]));
+    for token in 1..5u32 {
+        events.push(ev_seq(1, token, 0, &[1]));
+    }
+    let t = Trace { events };
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000\ncopy_engines=2\nsame_domain_fence_permille=1000\n",
+    )
+    .expect("fence profile");
+    let base = SimCfg {
+        seq_streams: true,
+        compute_slots: 2,
+        decode_priority: true,
+        stream_priority: true,
+        mem_sync_domain: MemSyncDomain::Remote,
+        ..SimCfg::lru(4, 4096, 0)
+    };
+    let iso = schedule_replay(&t, p.clone(), base, SchedCfg::chunked(0, 1)).expect("iso");
+    let collapsed = schedule_replay(
+        &t,
+        p,
+        SimCfg {
+            mem_sync_collapse: true,
+            ..base
+        },
+        SchedCfg::chunked(0, 1),
+    )
+    .expect("collapse");
+    assert_eq!(iso.completed, 2);
+    assert_eq!(collapsed.completed, 2);
+    let iso_itl = iso.replay.itl_ns.expect("iso itl");
+    let col_itl = collapsed.replay.itl_ns.expect("collapse itl");
+    assert!(
+        col_itl > iso_itl,
+        "collapse map must restore leftover prefill fence; collapse={col_itl} iso={iso_itl}"
+    );
+}
+
+#[test]
 fn schedule_striped_homes_beat_gpu0_on_wide_token() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1, 2, 3, 4, 5, 6, 7])],
@@ -9013,6 +9057,117 @@ fn simulated_gpu_store_mem_sync_domain_marks_decode_stream() {
         gpu.stream_mem_sync_domain(d, gpu.prefill_stream()),
         MemSyncDomain::Default
     );
+}
+
+#[test]
+fn simulated_gpu_store_mem_sync_map_collapse_marks_decode_stream() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            mem_sync_domain: MemSyncDomain::Remote,
+            mem_sync_collapse: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let d = DeviceId(0);
+    assert_eq!(
+        gpu.stream_mem_sync_domain_map(d, gpu.decode_stream())
+            .expect("decode map")
+            .remote,
+        0
+    );
+    assert_eq!(
+        gpu.stream_mem_sync_domain_map(d, gpu.prefill_stream())
+            .expect("prefill map")
+            .remote,
+        1
+    );
+    let inner = DirectStore::from_trace(&t);
+    let identity =
+        SimulatedGpuStore::new(inner, 1, HardwareProfile::example_h100_sxm(), 4096).expect("id");
+    assert_eq!(
+        identity
+            .stream_mem_sync_domain_map(d, identity.decode_stream())
+            .expect("id map")
+            .remote,
+        1
+    );
+}
+
+#[test]
+fn simulated_gpu_store_mem_sync_map_collapse_needs_remote() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            mem_sync_collapse: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("collapse without remote must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("mem-sync-map collapse needs mem-sync-domain remote"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn sim_replay_mem_sync_map_collapse_keeps_hits() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg {
+        decode_priority: true,
+        stream_priority: true,
+        mem_sync_domain: MemSyncDomain::Remote,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let on = SimCfg {
+        mem_sync_collapse: true,
+        ..off
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("off");
+    let b = sim_replay_cfg(&t, profile, on).expect("collapse");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+}
+
+#[test]
+fn sim_replay_mem_sync_map_collapse_needs_remote() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let on = SimCfg {
+        mem_sync_collapse: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    match sim_replay_cfg(&t, profile, on) {
+        Ok(_) => panic!("collapse without remote must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("mem-sync-map collapse needs mem-sync-domain remote"),
+            "{err}"
+        ),
+    }
 }
 
 #[test]

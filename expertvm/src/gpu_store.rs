@@ -12,14 +12,15 @@ use crate::sim_replay::{
     add_leaf_gemm, alloc_launch_completion, alloc_programmatic_event, alloc_resident_copy_mailbox,
     allow_non_portable_cluster_if, allow_optin_shared_if, apply_cluster_dim_must_be_set,
     apply_device_shared_mem, apply_device_sync_memops, apply_device_sync_policy,
-    apply_exec_mem_sync_domain, apply_func_cluster_spread, apply_func_max_shared,
-    apply_func_shared_mem, apply_l2_fetch, apply_required_cluster_width,
-    apply_stream_mem_sync_domain, apply_stream_sync_policy, bind_shareable_mempools,
-    check_cluster_must_set, check_cluster_preferred, check_device_graph_flags, check_l2_fetch,
-    check_required_cluster, ensure_single_attach, free_copy_mailbox, free_mapped_host,
-    instantiate_exec, kernel_leaf, mark_sync_memops, replay_exec, replay_streams,
-    reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
-    upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
+    apply_exec_mem_sync_domain, apply_exec_mem_sync_map, apply_func_cluster_spread,
+    apply_func_max_shared, apply_func_shared_mem, apply_l2_fetch, apply_required_cluster_width,
+    apply_stream_mem_sync_domain, apply_stream_mem_sync_map, apply_stream_sync_policy,
+    bind_shareable_mempools, check_cluster_must_set, check_cluster_preferred,
+    check_device_graph_flags, check_l2_fetch, check_mem_sync_collapse, check_required_cluster,
+    ensure_single_attach, free_copy_mailbox, free_mapped_host, instantiate_exec, kernel_leaf,
+    mark_sync_memops, replay_exec, replay_streams, reset_persisting_l2_if, retarget_parked_kernel,
+    signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem,
+    StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -344,6 +345,11 @@ pub struct GpuStoreCfg {
     /// when they disagree (CUDA graphs bake capture-time domain). Decode
     /// identity stays Default.
     pub mem_sync_domain: gpu_sim::MemSyncDomain,
+    /// `cudaLaunchAttributeMemSyncDomainMap` collapse (remote→0).
+    ///
+    /// Needs [`Self::mem_sync_domain`] Remote. Restores leftover prefill fence
+    /// tax. Decode identity stays CUDA identity (Hopper remote→1).
+    pub mem_sync_collapse: bool,
     /// Shared-memory bank width (`cudaLaunchAttributeSharedMemoryMode`).
     ///
     /// Default never scales duration. FourByte / EightByte scale grouped GEMM
@@ -769,6 +775,9 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::mem_sync_domain`] is decode-stream
     /// `cudaLaunchAttributeMemSyncDomain` (Default identity; Remote isolates
     /// leftover prefill fence tax).
+    /// [`GpuStoreCfg::mem_sync_collapse`] is decode-stream
+    /// `cudaLaunchAttributeMemSyncDomainMap` collapse (needs Remote; restores
+    /// leftover prefill fence tax).
     /// [`GpuStoreCfg::max_shared`] is launch-attribute MaxShared carveout.
     /// [`GpuStoreCfg::func_max_shared`] is `cudaFuncSetAttribute`
     /// PreferredSharedMemoryCarveout MaxShared (launch Default inherits).
@@ -888,6 +897,7 @@ impl SimulatedGpuStore {
         check_cluster_preferred(cfg.cluster, cfg.preferred_cluster)?;
         check_cluster_must_set(cfg.cluster, cfg.cluster_must_set)?;
         check_required_cluster(cfg.cluster, cfg.required_cluster)?;
+        check_mem_sync_collapse(cfg.mem_sync_domain, cfg.mem_sync_collapse)?;
         check_l2_fetch(cfg.l2_fetch)?;
         if cfg.shareable && (cfg.sync_alloc || fill != GpuFill::Pinned) {
             return Err(Error::Store("shareable needs cudaMallocAsync"));
@@ -994,6 +1004,7 @@ impl SimulatedGpuStore {
         }
         apply_stream_sync_policy(&mut sim, plan, cfg.sync_policy)?;
         apply_stream_mem_sync_domain(&mut sim, plan, cfg.mem_sync_domain)?;
+        apply_stream_mem_sync_map(&mut sim, plan, cfg.mem_sync_collapse)?;
         if cfg.decode_sm_permille > 0 {
             let dec = cfg.decode_sm_permille.min(1000);
             let pre = 1000u16.saturating_sub(dec).max(1);
@@ -1792,6 +1803,15 @@ impl SimulatedGpuStore {
         self.sim.stream_mem_sync_domain(device, stream)
     }
 
+    /// [`gpu_sim::Sim::stream_mem_sync_domain_map`] for `(device, stream)`.
+    pub fn stream_mem_sync_domain_map(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<gpu_sim::MemSyncDomainMap, Error> {
+        Ok(self.sim.stream_mem_sync_domain_map(device, stream)?)
+    }
+
     /// Event recorded at grouped-GEMM kernel start when [`GpuStoreCfg::launch_completion`].
     #[must_use]
     pub fn launch_completion_event(&self) -> Option<EventId> {
@@ -2366,6 +2386,7 @@ impl SimulatedGpuStore {
 
     fn launch_graph_exec(&mut self, g: GraphId, device: DeviceId) -> Result<(), Error> {
         apply_exec_mem_sync_domain(&mut self.sim, g, device, self.compute)?;
+        apply_exec_mem_sync_map(&mut self.sim, g, device, self.compute)?;
         self.graph_launches = self.graph_launches.saturating_add(1);
         replay_exec(&mut self.sim, g, device, self.compute, self.device_launch)
     }

@@ -129,6 +129,10 @@ pub(crate) struct GpuCli {
     pub mem_sync_domain: MemSyncDomain,
     /// True when `--mem-sync-domain` appeared.
     pub mem_sync_domain_set: bool,
+    /// Decode-stream mem-sync map collapse (`GpuStoreCfg::mem_sync_collapse`).
+    pub mem_sync_collapse: bool,
+    /// True when `--mem-sync-map` appeared.
+    pub mem_sync_map_set: bool,
     /// Kernel-node bank width (`GpuStoreCfg::shared_mem`).
     pub shared_mem: SharedMemoryMode,
     /// True when `--shared-mem` appeared.
@@ -419,6 +423,17 @@ impl GpuCli {
         Ok(())
     }
 
+    /// Decode-stream mem-sync map (`--mem-sync-map identity|collapse`).
+    pub(crate) fn set_mem_sync_map(&mut self, raw: &str) -> Result<(), String> {
+        self.mem_sync_collapse = match raw {
+            "identity" => false,
+            "collapse" => true,
+            _ => return Err(format!("unknown mem-sync-map {raw}")),
+        };
+        self.mem_sync_map_set = true;
+        Ok(())
+    }
+
     /// Kernel-node bank width (`--shared-mem default|four|eight`).
     pub(crate) fn set_shared_mem(&mut self, raw: &str) -> Result<(), String> {
         self.shared_mem =
@@ -510,6 +525,14 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--mem-sync-map collapse` needs `--mem-sync-domain remote`.
+    pub(crate) fn check_mem_sync_map(self) -> Result<(), String> {
+        if self.mem_sync_collapse && self.mem_sync_domain != MemSyncDomain::Remote {
+            return Err("--mem-sync-map collapse needs --mem-sync-domain remote".into());
+        }
+        Ok(())
+    }
+
     /// First CUDA knob that needs `--expert-sim`, if any.
     #[must_use]
     pub(crate) fn sim_flag(self) -> Option<&'static str> {
@@ -568,6 +591,7 @@ impl GpuCli {
             (self.sync_policy_set, "--sync-policy"),
             (self.device_sync_policy_set, "--device-sync-policy"),
             (self.mem_sync_domain_set, "--mem-sync-domain"),
+            (self.mem_sync_map_set, "--mem-sync-map"),
             (self.shared_mem_set, "--shared-mem"),
             (self.func_shared_mem_set, "--func-shared-mem"),
             (self.device_shared_mem_set, "--device-shared-mem"),
@@ -646,6 +670,7 @@ enum PlanSlot {
     SyncPolicy,
     DeviceSyncPolicy,
     MemSyncDomain,
+    MemSyncMap,
     SharedMem,
     FuncSharedMem,
     DeviceSharedMem,
@@ -672,6 +697,7 @@ impl PlanSlot {
             Self::SyncPolicy => "sync-policy",
             Self::DeviceSyncPolicy => "device-sync-policy",
             Self::MemSyncDomain => "mem-sync-domain",
+            Self::MemSyncMap => "mem-sync-map",
             Self::SharedMem => "shared-mem",
             Self::FuncSharedMem => "func-shared-mem",
             Self::DeviceSharedMem => "device-shared-mem",
@@ -704,6 +730,7 @@ impl PlannerCli {
             "--sync-policy" => Dash::Need(PlanSlot::SyncPolicy),
             "--device-sync-policy" => Dash::Need(PlanSlot::DeviceSyncPolicy),
             "--mem-sync-domain" => Dash::Need(PlanSlot::MemSyncDomain),
+            "--mem-sync-map" => Dash::Need(PlanSlot::MemSyncMap),
             "--shared-mem" => Dash::Need(PlanSlot::SharedMem),
             "--func-shared-mem" => Dash::Need(PlanSlot::FuncSharedMem),
             "--device-shared-mem" => Dash::Need(PlanSlot::DeviceSharedMem),
@@ -766,6 +793,7 @@ impl PlannerCli {
             PlanSlot::SyncPolicy => self.gpu.set_sync_policy(raw)?,
             PlanSlot::DeviceSyncPolicy => self.gpu.set_device_sync_policy(raw)?,
             PlanSlot::MemSyncDomain => self.gpu.set_mem_sync_domain(raw)?,
+            PlanSlot::MemSyncMap => self.gpu.set_mem_sync_map(raw)?,
             PlanSlot::SharedMem => self.gpu.set_shared_mem(raw)?,
             PlanSlot::FuncSharedMem => self.gpu.set_func_shared_mem(raw)?,
             PlanSlot::DeviceSharedMem => self.gpu.set_device_shared_mem(raw)?,
@@ -903,6 +931,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         sync_policy: gpu.sync_policy,
         device_sync_policy: gpu.device_sync_policy,
         mem_sync_domain: gpu.mem_sync_domain,
+        mem_sync_collapse: gpu.mem_sync_collapse,
         shared_mem: gpu.shared_mem,
         func_shared_mem: gpu.func_shared_mem,
         device_shared_mem: gpu.device_shared_mem,

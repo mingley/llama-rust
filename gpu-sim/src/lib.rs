@@ -609,6 +609,10 @@
 //! `mem_sync_domain_count` is 4; tax default is 0 (identity).
 //! `expertvm sim --mem-sync-domain remote` / Engine `--mem-sync-domain remote`
 //! set the decode compute stream to Remote (prefill stays Default).
+//! `expertvm sim --mem-sync-map collapse` sets decode-stream
+//! [`MemSyncDomainMap`] `{default: 0, remote: 0}` so Remote decode pays
+//! leftover prefill fence again (needs `--mem-sync-domain remote`; Hopper
+//! identity is remote→1).
 //! [`ClusterDim`] (`cudaLaunchAttributeClusterDimension`) occupies
 //! `min(blocks, compute_slots)` Hyper-Q slots (Hopper portable max 8).
 //! [`ClusterSchedulingPolicy::Spread`] occupies every slot.

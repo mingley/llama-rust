@@ -185,6 +185,15 @@ pub(crate) fn check_required_cluster(cluster: u8, required: u8) -> Result<(), Er
     Ok(())
 }
 
+pub(crate) fn check_mem_sync_collapse(domain: MemSyncDomain, collapse: bool) -> Result<(), Error> {
+    if collapse && domain != MemSyncDomain::Remote {
+        return Err(Error::Store(
+            "mem-sync-map collapse needs mem-sync-domain remote",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) fn check_l2_fetch(n: u64) -> Result<(), Error> {
     if n == 0 || n == 32 || n == 64 || n == 128 {
         return Ok(());
@@ -338,10 +347,10 @@ use crate::replay::{Touch, Walker};
 use gpu_sim::{
     AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceFlags, DeviceId,
     DeviceLimit, EventId, GraphId, GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf,
-    KernelKind, LaunchCompletionEvent, MemAttach, MemPoolAttr, MemcpyAttributes, MemcpyOp, Place,
-    PointerAttr, PoolId, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
-    ProgrammaticLaunch, Score, SharedMemCarveout, SharedMemoryMode, Sim, StreamId,
-    SynchronizationPolicy, WaitValueCmp,
+    KernelKind, LaunchCompletionEvent, MemAttach, MemPoolAttr, MemSyncDomain, MemSyncDomainMap,
+    MemcpyAttributes, MemcpyOp, Place, PointerAttr, PoolId, PortableClusterMode,
+    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, Score, SharedMemCarveout,
+    SharedMemoryMode, Sim, StreamId, SynchronizationPolicy, WaitValueCmp,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -808,6 +817,12 @@ pub struct SimCfg {
     /// is decode identity. [`crate::GpuStoreCfg::mem_sync_domain`] is the
     /// store path.
     pub mem_sync_domain: gpu_sim::MemSyncDomain,
+    /// `cudaLaunchAttributeMemSyncDomainMap` collapse (remote→0).
+    ///
+    /// Needs [`Self::mem_sync_domain`] Remote. Restores leftover prefill fence
+    /// tax. Decode identity stays CUDA identity (Hopper remote→1).
+    /// [`crate::GpuStoreCfg::mem_sync_collapse`] is the store path.
+    pub mem_sync_collapse: bool,
     /// Shared-memory bank width (`cudaLaunchAttributeSharedMemoryMode`).
     ///
     /// Default never scales duration. FourByte / EightByte scale by
@@ -1025,6 +1040,7 @@ impl SimCfg {
             sync_policy: gpu_sim::SynchronizationPolicy::Auto,
             device_sync_policy: gpu_sim::SynchronizationPolicy::Auto,
             mem_sync_domain: gpu_sim::MemSyncDomain::Default,
+            mem_sync_collapse: false,
             shared_mem: gpu_sim::SharedMemoryMode::Default,
             func_shared_mem: gpu_sim::SharedMemoryMode::Default,
             device_shared_mem: gpu_sim::SharedMemoryMode::Default,
@@ -1055,6 +1071,7 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     check_cluster_preferred(cfg.cluster, cfg.preferred_cluster)?;
     check_cluster_must_set(cfg.cluster, cfg.cluster_must_set)?;
     check_required_cluster(cfg.cluster, cfg.required_cluster)?;
+    check_mem_sync_collapse(cfg.mem_sync_domain, cfg.mem_sync_collapse)?;
     check_l2_fetch(cfg.l2_fetch)?;
     if cfg.graph_update && cfg.graph_set_params {
         return Err(Error::Store("choose one of graph-update, graph-set-params"));
@@ -1222,6 +1239,7 @@ pub fn sim_replay_cfg(
     apply_stream_sms(&mut sim, plan, cfg.decode_sm_permille)?;
     apply_stream_sync_policy(&mut sim, plan, cfg.sync_policy)?;
     apply_stream_mem_sync_domain(&mut sim, plan, cfg.mem_sync_domain)?;
+    apply_stream_mem_sync_map(&mut sim, plan, cfg.mem_sync_collapse)?;
     if cfg.l2_persist || cfg.l2_reset || cfg.l2_fetch != 0 {
         sim.enable_persisting_l2()?;
     }
@@ -3213,6 +3231,31 @@ pub(crate) fn apply_stream_mem_sync_domain(
     Ok(())
 }
 
+/// `cudaStreamSetAttribute` MemSyncDomainMap collapse (remote→0) on the decode stream.
+pub(crate) fn apply_stream_mem_sync_map(
+    sim: &mut Sim,
+    plan: StreamPlan,
+    collapse: bool,
+) -> Result<(), Error> {
+    if !collapse {
+        return Ok(());
+    }
+    let map = MemSyncDomainMap {
+        default: 0,
+        remote: 0,
+    };
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        let d = DeviceId(g);
+        if plan.decode_priority && plan.prefill != plan.decode {
+            sim.set_stream_mem_sync_domain_map(d, plan.decode, map)?;
+        } else {
+            sim.set_stream_mem_sync_domain_map(d, plan.prefill, map)?;
+        }
+    }
+    Ok(())
+}
+
 /// `cudaGraphExecKernelNodeSetAttribute` MemSyncDomain to the launch stream.
 ///
 /// CUDA graphs bake capture-time domain. Store leaves are keyed by alloc, so a
@@ -3230,6 +3273,22 @@ pub(crate) fn apply_exec_mem_sync_domain(
     let have = sim.graph_exec_kernel_node_get_mem_sync_domain(exec, node)?;
     if have != want {
         sim.graph_exec_kernel_node_set_mem_sync_domain(exec, node, want)?;
+    }
+    Ok(())
+}
+
+/// `cudaGraphExecKernelNodeSetAttribute` MemSyncDomainMap to the launch stream.
+pub(crate) fn apply_exec_mem_sync_map(
+    sim: &mut Sim,
+    exec: GraphId,
+    device: DeviceId,
+    stream: StreamId,
+) -> Result<(), Error> {
+    let want = sim.stream_mem_sync_domain_map(device, stream)?;
+    let (node, _) = sim.graph_unique_kernel(exec)?;
+    let have = sim.graph_exec_kernel_node_get_mem_sync_domain_map(exec, node)?;
+    if have != want {
+        sim.graph_exec_kernel_node_set_mem_sync_domain_map(exec, node, want)?;
     }
     Ok(())
 }
