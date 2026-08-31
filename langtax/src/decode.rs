@@ -68,7 +68,9 @@
 //! Writer-tiny MoE+PLE ([`tiny_gemma4_moe_ple_gguf`]) is the production
 //! E2B/E4B shape: both `ffn_gate_inp` and `n_embd_per_layer > 0`.
 //! Writer-tiny fused experts ([`tiny_gemma4_moe_fused_gguf`]) pack
-//! `ffn_gate_up_exps` instead of separate gate/up. Writer-tiny keeps
+//! `ffn_gate_up_exps` instead of separate gate/up. Writer-tiny fused plus
+//! PLE ([`tiny_gemma4_moe_fused_ple_gguf`]) is the production E2B/E4B packing:
+//! fused experts and `n_embd_per_layer > 0`. Writer-tiny keeps
 //! `attention.shared_kv_layers` unset (every layer has KV) and equal
 //! SWA/global head dims. Optional final tanh logit softcap. Shared KV
 //! and mixed SWA/global head dims stay refused with named keys.
@@ -1621,7 +1623,8 @@ impl Llama {
     /// arch. Writer-tiny PLE is the same arch with
     /// `embedding_length_per_layer_input > 0`. Writer-tiny MoE+PLE is the
     /// production E2B/E4B shape on the same arch. Writer-tiny fused experts
-    /// pack `ffn_gate_up_exps`. Shared KV, mixed SWA/global
+    /// pack `ffn_gate_up_exps`. Writer-tiny fused plus PLE packs both.
+    /// Shared KV, mixed SWA/global
     /// head dims stay refused.
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
@@ -3868,6 +3871,7 @@ pub fn tiny_gemma3n_gguf() -> Vec<u8> {
 /// Official Gemma4 PLE is the same arch ([`tiny_gemma4_ple_gguf`]).
 /// Official Gemma4 MoE+PLE is the same arch ([`tiny_gemma4_moe_ple_gguf`]).
 /// Official Gemma4 fused experts are the same arch ([`tiny_gemma4_moe_fused_gguf`]).
+/// Official Gemma4 fused plus PLE is the same arch ([`tiny_gemma4_moe_fused_ple_gguf`]).
 pub fn tiny_gemma4_gguf() -> Vec<u8> {
     tiny_arch_gguf_lm_head(
         TinySpec {
@@ -3989,7 +3993,7 @@ pub fn tiny_gemma4_moe_ple_gguf() -> Vec<u8> {
 /// Same MoE walk as [`tiny_gemma4_moe_gguf`]. Official `src/models/gemma4.cpp`
 /// prefers fused `ffn_gate_up_exps` (twice `n_ff` rows, gate then up) when
 /// present. Not a second architecture. Shared-KV / mixed head dims stay
-/// refused.
+/// refused. Fused plus PLE is the same arch ([`tiny_gemma4_moe_fused_ple_gguf`]).
 pub fn tiny_gemma4_moe_fused_gguf() -> Vec<u8> {
     tiny_arch_gguf_lm_head(
         TinySpec {
@@ -4003,6 +4007,33 @@ pub fn tiny_gemma4_moe_fused_gguf() -> Vec<u8> {
             llama_moe: false,
             gemma4_moe: true,
             gemma4_ple: false,
+            gemma4_fused: true,
+        },
+        TinyLmHead::Tied,
+    )
+}
+
+/// Writer-built official Gemma4 fused-expert plus PLE GGUF: `architecture=gemma4`
+/// with `ffn_gate_up_exps` and `embedding_length_per_layer_input > 0`.
+///
+/// Production E2B/E4B packing on the same arch as [`tiny_gemma4_moe_fused_gguf`]
+/// and [`tiny_gemma4_moe_ple_gguf`]. Decode is fused GELU experts then PLE
+/// inject after the FFN residual. Not a second architecture.
+/// Shared-KV / mixed head dims stay refused. Writer-tiny uses `n_expert=4`,
+/// `n_expert_used=2`, `n_embd_per_layer=64`.
+pub fn tiny_gemma4_moe_fused_ple_gguf() -> Vec<u8> {
+    tiny_arch_gguf_lm_head(
+        TinySpec {
+            arch: "gemma4",
+            token_embd: GgmlType::F32,
+            output: GgmlType::F32,
+            layer: None,
+            rope_dimension_count: false,
+            qkv_bias: false,
+            add_bos_token: None,
+            llama_moe: false,
+            gemma4_moe: true,
+            gemma4_ple: true,
             gemma4_fused: true,
         },
         TinyLmHead::Tied,
@@ -6405,8 +6436,8 @@ fn tiny_kv_gqa(spec: &TinySpec, n_head_kv: usize) -> Vec<(String, Kv)> {
         if arch == "gemma4" {
             // Official gemma4.cpp `get_key` without `false` for SWA head dim and
             // per-layer embedding width. Writer-tiny dense/MoE keep PLE off;
-            // [`tiny_gemma4_ple_gguf`] and [`tiny_gemma4_moe_ple_gguf`] write
-            // `n_embd_per_layer > 0`.
+            // [`tiny_gemma4_ple_gguf`], [`tiny_gemma4_moe_ple_gguf`], and
+            // [`tiny_gemma4_moe_fused_ple_gguf`] write `n_embd_per_layer > 0`.
             let n_pl = if spec.gemma4_ple {
                 TINY_GEMMA4_N_EMBD_PER_LAYER
             } else {
@@ -14277,6 +14308,7 @@ mod tests {
             tiny_gemma4_ple_gguf(),
             tiny_gemma4_moe_ple_gguf(),
             tiny_gemma4_moe_fused_gguf(),
+            tiny_gemma4_moe_fused_ple_gguf(),
             tiny_qwen3_gguf(),
             tiny_llama4_gguf(),
             tiny_llama_moe_gguf(),
@@ -14332,6 +14364,7 @@ mod tests {
             ("gemma4-ple", tiny_gemma4_ple_gguf()),
             ("gemma4-moe-ple", tiny_gemma4_moe_ple_gguf()),
             ("gemma4-moe-fused", tiny_gemma4_moe_fused_gguf()),
+            ("gemma4-moe-fused-ple", tiny_gemma4_moe_fused_ple_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("f16", tiny_f16_gguf()),
@@ -14422,6 +14455,7 @@ mod tests {
             ("gemma4-ple", tiny_gemma4_ple_gguf()),
             ("gemma4-moe-ple", tiny_gemma4_moe_ple_gguf()),
             ("gemma4-moe-fused", tiny_gemma4_moe_fused_gguf()),
+            ("gemma4-moe-fused-ple", tiny_gemma4_moe_fused_ple_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("llama-moe", tiny_llama_moe_gguf()),
@@ -15742,6 +15776,121 @@ mod tests {
     #[test]
     fn tiny_gemma4_moe_fused_trace_is_identity_and_feeds_expertvm() {
         let bytes = tiny_gemma4_moe_fused_gguf();
+        let g = load_gguf(&bytes).expect("load");
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let model = Llama::from_gguf(g).expect("model");
+        let plain = greedy_generate(&model, &tok, "ab", 4).expect("plain");
+        let (traced, trace) =
+            greedy_generate_traced(&model, &tok, "ab", 4, None, 0).expect("traced");
+        assert_eq!(plain, traced, "tracing must not change greedy tokens");
+        assert!(!trace.events.is_empty(), "MoE layers must emit accesses");
+        let mut by_token: BTreeMap<u32, u64> = BTreeMap::new();
+        for e in &trace.events {
+            assert_eq!(e.layer, 0);
+            assert_eq!(e.experts.len(), TINY_GEMMA4_N_EXPERT_USED);
+            assert_eq!(e.weight_pt.len(), e.experts.len());
+            for w in &e.weight_pt {
+                assert!(*w <= 1000);
+            }
+            let p = e.prefix.expect("decode traces hash the token-id prefix");
+            match by_token.get(&e.token) {
+                None => {
+                    let _prev = by_token.insert(e.token, p);
+                }
+                Some(old) => assert_eq!(*old, p, "same token must share prefix hash"),
+            }
+        }
+        assert!(
+            by_token.len() >= 2,
+            "prefill + decode must emit more than one prefix hash"
+        );
+        let mut store = expertvm::DirectStore::from_trace(&trace);
+        for k in trace.keys() {
+            let blob = expertvm::ExpertStore::acquire(&mut store, k).expect("blob");
+            assert_eq!(blob.gate, vec![1]);
+        }
+        assert_eq!(expertvm::ExpertStore::misses(&store), 0);
+    }
+
+    #[test]
+    fn tiny_gemma4_moe_fused_ple_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_moe_fused_ple_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 fused ple");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        assert_eq!(g.kv_u32("gemma4.expert_count"), Some(4));
+        assert_eq!(g.kv_u32("gemma4.expert_used_count"), Some(2));
+        assert_eq!(
+            g.kv_u32("gemma4.embedding_length_per_layer_input"),
+            Some(u32::try_from(TINY_GEMMA4_N_EMBD_PER_LAYER).unwrap())
+        );
+        assert!(g.tensor("blk.0.ffn_gate_up_exps.weight").is_some());
+        assert!(g.tensor("blk.0.ffn_gate_exps.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_up_exps.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_down_exps.weight").is_some());
+        assert!(g.tensor("per_layer_token_embd.weight").is_some());
+        assert!(g.tensor("blk.0.inp_gate.weight").is_some());
+        assert!(g.tensor("blk.0.proj.weight").is_some());
+        assert!(g.tensor("blk.0.post_norm.weight").is_some());
+        assert_eq!(
+            g.tensor("blk.0.ffn_gate_up_exps.weight").unwrap().shape,
+            &[256, 512, 4]
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        assert!(model.gemma4_ple.is_some());
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut fc = model.new_cache(8).expect("fc");
+        let combo_pref = model.prefill(&mut fc, &tokens).expect("combo pref");
+        let fused_pref = {
+            let fg = load_gguf(&tiny_gemma4_moe_fused_gguf()).expect("fused");
+            let fm = Llama::from_gguf(fg).expect("fm");
+            let mut c = fm.new_cache(8).expect("cf");
+            fm.prefill(&mut c, &tokens).expect("fused pref")
+        };
+        assert_ne!(
+            combo_pref, fused_pref,
+            "fused plus PLE must change logits vs fused-only"
+        );
+        let moe_ple_pref = {
+            let mg = load_gguf(&tiny_gemma4_moe_ple_gguf()).expect("moe ple");
+            let mm = Llama::from_gguf(mg).expect("mm");
+            let mut c = mm.new_cache(8).expect("cm");
+            mm.prefill(&mut c, &tokens).expect("moe ple pref")
+        };
+        assert_ne!(
+            combo_pref, moe_ple_pref,
+            "fused plus PLE must change logits vs split MoE plus PLE"
+        );
+        let ple_pref = {
+            let pg = load_gguf(&tiny_gemma4_ple_gguf()).expect("ple");
+            let pm = Llama::from_gguf(pg).expect("pm");
+            let mut c = pm.new_cache(8).expect("cp");
+            pm.prefill(&mut c, &tokens).expect("ple pref")
+        };
+        assert_ne!(
+            combo_pref, ple_pref,
+            "fused plus PLE must change logits vs PLE-only"
+        );
+        let catalog = model.expert_direct_store().expect("catalog");
+        let via_direct = store_prefill(&model, LiveStore::Direct(catalog), &tokens);
+        assert_eq!(
+            combo_pref, via_direct,
+            "DirectStore fused plus PLE GEMV must match the blob"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma4_moe_fused_ple_trace_is_identity_and_feeds_expertvm() {
+        let bytes = tiny_gemma4_moe_fused_ple_gguf();
         let g = load_gguf(&bytes).expect("load");
         let tok = Tokenizer::from_gguf(&g).expect("tok");
         let model = Llama::from_gguf(g).expect("model");
@@ -18453,7 +18602,7 @@ mod bench {
     fn bench_logits_fingerprint() {
         // Every zero-argument fixture in the suite, so that each architecture
         // walk and each dtype kernel the decode path can reach is pinned.
-        let cases: [(&str, Vec<u8>); 57] = [
+        let cases: [(&str, Vec<u8>); 58] = [
             ("llama", tiny_llama_gguf()),
             ("tied", tiny_tied_gguf()),
             ("tied_copy", tiny_tied_copy_gguf()),
@@ -18482,6 +18631,7 @@ mod bench {
             ("gemma4_ple", tiny_gemma4_ple_gguf()),
             ("gemma4_moe_ple", tiny_gemma4_moe_ple_gguf()),
             ("gemma4_moe_fused", tiny_gemma4_moe_fused_gguf()),
+            ("gemma4_moe_fused_ple", tiny_gemma4_moe_fused_ple_gguf()),
             ("f16", tiny_f16_gguf()),
             ("f16_1d", tiny_f16_1d_gguf()),
             ("f16_1d_bias", tiny_f16_1d_bias_gguf()),
