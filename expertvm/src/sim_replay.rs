@@ -146,6 +146,10 @@ impl GemmFlags {
     }
 
     pub(crate) fn kernel_attrs(self, id: AllocId) -> KernelAttrs {
+        #[expect(
+            clippy::needless_update,
+            reason = "KernelAttrs grows; inherit Default for new launch attrs"
+        )]
         KernelAttrs {
             cooperative: self.cooperative,
             pdl: self.pdl_attr().unwrap_or_default(),
