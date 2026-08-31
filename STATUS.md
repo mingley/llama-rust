@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaLaunchAttributeMemSyncDomain` launch Remote
+
+`GpuStoreCfg::mem_sync_launch` / `SimCfg::mem_sync_launch` put
+`cudaLaunchAttributeMemSyncDomain` Remote on grouped GEMMs. Needs
+`--mem-sync-domain remote`. Overrides prefill inherit-Default so leftover
+prefill shares the decode Remote domain and `same_domain_fence_permille`
+returns (Hopper identity tax is 0; SetAttribute does not tick the clock).
+Hits/misses stay the same. Distinct from `--mem-sync-map` (logical launch
+domain vs physical mapping). `--mem-sync-launch` is off by default (decode
+identity: inherit-stream). infer-bench has no `--mem-sync-domain`, so it
+does not get `--mem-sync-launch`. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaAccessPolicyWindow.hitRatio`
 
 `GpuStoreCfg::l2_ratio` / `SimCfg::l2_ratio` set launch `hitRatio` as ‰.

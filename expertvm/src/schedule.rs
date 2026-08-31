@@ -394,6 +394,7 @@ impl SchedRt {
             .with_device_launch(cfg.device_launch)
             .with_launch_completion(launch_completion)
             .with_programmatic_event(programmatic_event)
+            .with_mem_sync_launch(cfg.mem_sync_launch)
             .with_set_params(cfg.graph_set_params)
             .with_piecewise(cfg.graph_piecewise)
             .with_enable(cfg.graph_enable),

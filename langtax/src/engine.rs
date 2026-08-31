@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `mempool_trim`, `mempool_no_reuse`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/enable, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `l2_ratio`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
+//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `l2_ratio`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `mem_sync_launch`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -47,7 +47,10 @@
 //! (implies `--decode-priority`). Default `default` is decode identity.
 //! `--mem-sync-map identity|collapse` is `cudaLaunchAttributeMemSyncDomainMap`
 //! on that decode stream (collapse maps remote→0 and restores leftover prefill
-//! fence tax; needs `--mem-sync-domain remote`).
+//! fence tax; needs `--mem-sync-domain remote`). `--mem-sync-launch` is
+//! launch-attribute Remote on grouped expert GEMMs (overrides prefill
+//! inherit-Default so leftover prefill shares the decode Remote domain and
+//! fence tax returns; needs `--mem-sync-domain remote`).
 //! `--compute-slots N` (`N>=2`) is Hyper-Q
 //! occupancy so leftover prefill and decode GEMMs on those two streams overlap
 //! at full issue rate (not SM-partition). Default profile occupancy is
@@ -4682,6 +4685,44 @@ mod tests {
                 .expect("prefill map")
                 .remote,
             1
+        );
+    }
+
+    #[test]
+    fn engine_gpu_mem_sync_launch_restores_mixed_wall() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse(
+            "gpus=1\nfp16_flops=1000000\ncopy_engines=2\nsame_domain_fence_permille=1000\n",
+        )
+        .expect("fence profile");
+        let pri = GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            compute_slots: 2,
+            mem_sync_domain: MemSyncDomain::Remote,
+            ..GpuStoreCfg::default()
+        };
+        let iso = mixed_gpu_decode_itl_at(bytes.clone(), false, None, pri, profile.clone());
+        let restored = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                mem_sync_launch: true,
+                ..pri
+            },
+            profile,
+        );
+        assert_eq!(iso.2, 4);
+        assert_eq!(restored.2, 4);
+        assert_eq!(iso.4, restored.4, "launch Remote must keep greedy identity");
+        assert!(
+            restored.1.wall_ns > iso.1.wall_ns,
+            "launch Remote must restore leftover prefill fence; launch={} iso={} launch_line={} iso_line={}",
+            restored.1.wall_ns,
+            iso.1.wall_ns,
+            restored.1.line(),
+            iso.1.line()
         );
     }
 

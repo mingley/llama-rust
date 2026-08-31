@@ -159,6 +159,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaStreamAttributeAccessPolicyWindow` inherited by `kernel` / `kernel_bufs` | same persist billing as `kernel_access_policy`; `kernel_with` / graph replay use launch / node |
 | `cudaLaunchAttributeMemSyncDomain` fence isolation (`kernel_with` / allreduce Remote) | `same_domain_fence_permille` of leftover same-domain traffic; tax default 0 |
 | `cudaLaunchAttributeMemSyncDomainMap` (`set_stream_mem_sync_domain_map`) | Hopper identity remote→1; collapse `{default:0, remote:0}` restores same-domain fence; `expertvm sim --mem-sync-map collapse` (needs `--mem-sync-domain remote`) |
+| `cudaLaunchAttributeMemSyncDomain` launch Remote (`kernel_with` / graph node) | leftover prefill inherit-Default joins decode Remote; restores same-domain fence; `expertvm sim --mem-sync-launch` (needs `--mem-sync-domain remote`) |
 | `cudaLaunchAttributeClusterDimension` (`kernel_with` cluster) | occupies `min(blocks, compute_slots)`; Hopper portable max 8 |
 | `cudaLaunchAttributeClusterSchedulingPolicyPreference` Spread | occupies every Hyper-Q slot; Default uses `set_func_cluster_policy` (`cudaFuncAttributeClusterSchedulingPolicyPreference`; `expertvm sim --func-cluster-spread` sets Spread; unset never occupies extra slots without `--cluster` >= 2); LoadBalancing matches Default occupancy and overrides function Spread (`expertvm sim --cluster-load-balance`, needs `--func-cluster-spread`) |
 | `cudaLaunchAttributePreferredClusterDimension` | occupies preferred size when it fits in `compute_slots` |
@@ -922,7 +923,10 @@ isolates communication. `expertvm sim --mem-sync-domain remote` /
 on Remote (prefill stays Default). `expertvm sim --mem-sync-map collapse` /
 `gguf_gemv engine --expert-sim --mem-sync-map collapse` maps remote→0 on
 that decode stream so leftover prefill fence tax returns (needs
-`--mem-sync-domain remote`; Hopper identity is remote→1). `ClusterDim` is `cudaLaunchAttributeClusterDimension`:
+`--mem-sync-domain remote`; Hopper identity is remote→1). `expertvm sim --mem-sync-launch` /
+`gguf_gemv engine --expert-sim --mem-sync-launch` put Remote on grouped GEMMs
+so leftover prefill inherit-Default joins decode Remote (needs
+`--mem-sync-domain remote`). `ClusterDim` is `cudaLaunchAttributeClusterDimension`:
 the launch occupies `min(blocks, compute_slots)` Hyper-Q slots (Hopper portable
 max 8). `ClusterSchedulingPolicy::Spread` occupies every slot.
 Launch Default uses `set_func_cluster_policy`
