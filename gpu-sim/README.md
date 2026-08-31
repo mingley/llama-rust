@@ -711,6 +711,9 @@ stays Global + copy-stream prefetch).
 `expertvm sim --managed-host` / `gguf_gemv engine --expert-sim --managed-host`
 allocate `cudaMemAttachHost` then Global-attach on the copy stream before
 prefetch (identity stays Global at alloc).
+`expertvm sim --prefetch-host` / `gguf_gemv engine --expert-sim --prefetch-host`
+evict managed pages with `cudaMemPrefetchAsync(..., cudaCpuDeviceId)` and
+restore by prefetching the same alloc back (identity stays `cudaFree`).
 `mem_advise` is `cudaMemAdvise` (host-sync).
 `mem_advise_with_location` is `cudaMemAdvise_v2` (`Place` location;
 AccessedBy requires a device place; host preferred is

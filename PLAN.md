@@ -3500,7 +3500,19 @@ model, do not celebrate the sim.
     stays `cudaMallocHost` staging. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-334. [ ] Next numbered PLAN item after 333 is the next `gpu-sim` / Engine /
+334. [x] `cudaMemPrefetchAsync(..., cudaCpuDeviceId)` on managed LRU evict:
+    [`GpuStoreCfg::prefetch_host`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::prefetch_host`](expertvm/src/sim_replay.rs) call
+    [`prefetch_host`](gpu-sim/src/sim.rs) instead of `free_sync` so the
+    `cudaMallocManaged` allocation stays live on the host. The next miss
+    prefetches the same pointer back (no second alloc). Implies `--managed`.
+    Hits/misses stay the same; extra host↔device bytes move on thrash.
+    `--prefetch-host` on `expertvm sim` / `schedule` / `store` and
+    `gguf_gemv engine --expert-sim`. Decode identity stays `free_sync` on
+    evict. `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+335. [ ] Next numbered PLAN item after 334 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

@@ -131,6 +131,8 @@ pub(crate) struct GpuCli {
     pub stream_attach: bool,
     /// `cudaMallocManaged` Host attach then Global (`GpuStoreCfg::managed_host`). Implies managed.
     pub managed_host: bool,
+    /// `cudaMemPrefetchAsync` to host on managed evict (`GpuStoreCfg::prefetch_host`). Implies managed.
+    pub prefetch_host: bool,
     /// `cuStreamWaitValue64` / `WriteValue64` copy-ready (`GpuStoreCfg::wait_value`).
     pub wait_value: bool,
     /// Hopper NVLS replica fanout (`GpuStoreCfg::multicast`). Implies vmm.
@@ -199,6 +201,7 @@ impl GpuCli {
             "--programmatic-event" => &mut self.programmatic_event,
             "--stream-attach" => &mut self.stream_attach,
             "--managed-host" => &mut self.managed_host,
+            "--prefetch-host" => &mut self.prefetch_host,
             "--wait-value" => &mut self.wait_value,
             "--multicast" => &mut self.multicast,
             _ => return Ok(false),
@@ -223,9 +226,9 @@ impl GpuCli {
         }
     }
 
-    /// `--stream-attach` / `--managed-host` imply [`Self::managed`]. Call after sim-flag checks.
+    /// `--stream-attach` / `--managed-host` / `--prefetch-host` imply [`Self::managed`]. Call after sim-flag checks.
     pub(crate) fn imply_managed(&mut self) {
-        if self.stream_attach || self.managed_host {
+        if self.stream_attach || self.managed_host || self.prefetch_host {
             self.managed = true;
         }
     }
@@ -433,6 +436,7 @@ impl GpuCli {
             (self.programmatic_event, "--programmatic-event"),
             (self.stream_attach, "--stream-attach"),
             (self.managed_host, "--managed-host"),
+            (self.prefetch_host, "--prefetch-host"),
             (self.wait_value, "--wait-value"),
             (self.decode_sm_set, "--decode-sms"),
         ]
@@ -724,6 +728,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         programmatic_event: gpu.programmatic_event,
         stream_attach: gpu.stream_attach,
         managed_host: gpu.managed_host,
+        prefetch_host: gpu.prefetch_host,
         wait_value: gpu.wait_value,
         multicast: gpu.multicast,
         compute_slots: gpu.compute_slots,

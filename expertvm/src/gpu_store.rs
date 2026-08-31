@@ -36,7 +36,9 @@ pub enum GpuFill {
     /// [`GpuStoreCfg::stream_attach`] attaches Single to the compute stream
     /// and prefetches there. [`GpuStoreCfg::managed_host`] is
     /// `cudaMemAttachHost` at alloc, then Global attach on the copy stream
-    /// (or Single when stream-attach). Default is Global attach at alloc +
+    /// (or Single when stream-attach). [`GpuStoreCfg::prefetch_host`] evicts
+    /// with `cudaMemPrefetchAsync` to the host and restores by prefetching
+    /// the same alloc back. Default is Global attach at alloc +
     /// copy-stream prefetch.
     Managed,
     /// `cudaHostAllocMapped` (PCIe kernel, no H2D).
@@ -350,6 +352,13 @@ pub struct GpuStoreCfg {
     /// [`Self::stream_attach`] (Single on compute). Decode identity stays
     /// Global alloc + copy-stream prefetch.
     pub managed_host: bool,
+    /// `cudaMemPrefetchAsync(..., cudaCpuDeviceId)` on managed LRU evict.
+    ///
+    /// Keeps the `cudaMallocManaged` allocation host-resident instead of
+    /// `cudaFree`. The next miss prefetches the same pointer back to the
+    /// home GPU (no second alloc). Implies managed fill. Hits/misses stay
+    /// the same. Decode identity stays `free_sync` on evict.
+    pub prefetch_host: bool,
     /// `cuStreamWaitValue64` / `cuStreamWriteValue64` instead of copy-ready events.
     ///
     /// After H2D / prefetch, write a generation into an 8-byte device mailbox
@@ -517,6 +526,10 @@ pub struct SimulatedGpuStore {
     /// [`GpuStoreCfg::managed_host`]: `cudaMallocManaged` Host attach, then
     /// Global attach on the miss DMA stream (unless stream-attach Single).
     managed_host: bool,
+    /// [`GpuStoreCfg::prefetch_host`]: evict prefetches to host instead of free.
+    prefetch_host: bool,
+    /// Managed allocs that left HBM via [`Self::prefetch_host`] (still live).
+    host_pages: BTreeMap<ExpertKey, GpuPage>,
 }
 
 struct KvGpu {
@@ -655,6 +668,9 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::managed_host`] is `cudaMallocManaged(..., cudaMemAttachHost)`
     /// then Global attach on the copy stream so prefetch is legal (implies
     /// managed; identity stays Global at alloc).
+    /// [`GpuStoreCfg::prefetch_host`] is `cudaMemPrefetchAsync` to
+    /// `cudaCpuDeviceId` on managed evict (keeps the alloc; next miss
+    /// prefetches back; implies managed; identity stays `free_sync`).
     /// [`GpuStoreCfg::wait_value`] is `cuStreamWaitValue64` / `WriteValue64`
     /// for the copy-ready handshake (8-byte `cudaMallocAsync` mailbox, copy
     /// stream waited before H2D; decode identity stays events).
@@ -714,6 +730,9 @@ impl SimulatedGpuStore {
         }
         if cfg.managed_host && fill != GpuFill::Managed {
             return Err(Error::Store("managed-host needs managed"));
+        }
+        if cfg.prefetch_host && fill != GpuFill::Managed {
+            return Err(Error::Store("prefetch-host needs managed"));
         }
         if cfg.pdl && cfg.cooperative {
             return Err(Error::Store("choose one of pdl, cooperative"));
@@ -895,6 +914,8 @@ impl SimulatedGpuStore {
             programmatic_event_armed: false,
             stream_attach: cfg.stream_attach,
             managed_host: cfg.managed_host,
+            prefetch_host: cfg.prefetch_host,
+            host_pages: BTreeMap::new(),
         })
     }
 
@@ -1782,6 +1803,9 @@ impl SimulatedGpuStore {
         if self.pages.contains_key(&key) {
             return Ok(());
         }
+        if let Some(page) = self.host_pages.remove(&key) {
+            return self.restore_host_page(key, page);
+        }
         let d = self.home(key);
         let mailbox = self.alloc_resident_mailbox(d)?;
         let start = self.record_copy_start(d)?;
@@ -2134,11 +2158,59 @@ impl SimulatedGpuStore {
     }
 
     fn drop_gpu(&mut self, key: ExpertKey) -> Result<(), Error> {
+        if self.prefetch_host && self.mode == GpuFill::Managed {
+            return self.evict_managed_to_host(key);
+        }
         let Some(page) = self.pages.remove(&key) else {
             return Ok(());
         };
         let _prev = self.evicting.insert(key, page);
         self.finish_drop(key, page)
+    }
+
+    /// `cudaMemPrefetchAsync(..., cudaCpuDeviceId)` then keep the managed alloc.
+    fn evict_managed_to_host(&mut self, key: ExpertKey) -> Result<(), Error> {
+        let Some(page) = self.pages.remove(&key) else {
+            return Ok(());
+        };
+        self.wait_compute(page.device)?;
+        let dma = self.dma_stream();
+        self.sim.synchronize_stream(page.device, dma)?;
+        if let Some(dst) = self.replicas.remove(&key) {
+            if dst != page.device {
+                self.sim.synchronize_stream(dst, dma)?;
+            }
+        }
+        let _p = self.sim.prefetch_host(page.device, page.id, dma)?;
+        self.sim.synchronize_stream(page.device, dma)?;
+        self.free_page_mailbox(page.device, page.mailbox)?;
+        let _prev = self.host_pages.insert(
+            key,
+            GpuPage {
+                mailbox: None,
+                ready: None,
+                start: None,
+                ready_gen: None,
+                ..page
+            },
+        );
+        Ok(())
+    }
+
+    /// Prefetch a host-resident managed page back onto its home GPU.
+    fn restore_host_page(&mut self, key: ExpertKey, page: GpuPage) -> Result<(), Error> {
+        let d = page.device;
+        let mailbox = self.alloc_resident_mailbox(d)?;
+        let start = self.record_copy_start(d)?;
+        let dma = self.dma_stream();
+        if self.stream_attach {
+            ensure_single_attach(&mut self.sim, d, page.id, dma)?;
+        }
+        let _p = self.sim.prefetch(d, page.id, dma)?;
+        if self.sync_alloc {
+            self.sim.synchronize_stream(d, dma)?;
+        }
+        self.insert_page(key, page.id, d, start, mailbox)
     }
 
     fn sweep_evicts(&mut self) {

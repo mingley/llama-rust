@@ -344,6 +344,7 @@ impl SchedRt {
                 wait_value: cfg.wait_value,
                 stream_attach: cfg.stream_attach,
                 managed_host: cfg.managed_host,
+                prefetch_host: cfg.prefetch_host,
             },
             sim,
             handles: BTreeMap::new(),
@@ -478,7 +479,11 @@ impl SchedRt {
         let resident: BTreeSet<ExpertKey> = if self.remote_act.is_some() {
             self.remotes.keys().copied().collect()
         } else {
-            self.handles.keys().copied().collect()
+            self.handles
+                .iter()
+                .filter(|(_, p)| !p.host_resident)
+                .map(|(k, _)| *k)
+                .collect()
         };
         if !want_prefetch(self.cfg, &resident, running) {
             return Ok(());
@@ -750,7 +755,11 @@ impl SchedRt {
     }
 
     fn forget_peer_if_home_dropped(&mut self, key: ExpertKey) {
-        if self.handles.contains_key(&key) {
+        if self
+            .handles
+            .get(&key)
+            .is_some_and(|p| !p.host_resident)
+        {
             return;
         }
         let home = self.home(key);

@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaMemPrefetchAsync` to host on managed evict
+
+`GpuStoreCfg::prefetch_host` / `SimCfg::prefetch_host` call
+`cudaMemPrefetchAsync(..., cudaCpuDeviceId)` on managed LRU evict so the
+`cudaMallocManaged` allocation stays live on the host. The next miss
+prefetches the same pointer back (no second alloc). Implies `--managed`.
+Hits/misses stay the same. `--prefetch-host` is off by default (decode
+identity: `cudaFree` / `free_sync` on evict). `gpu-profile capture` is
+still refused.
+
 ## Shipped 2026-08-31 — `cudaHostRegister` pageable staging then pinned DMA
 
 `GpuStoreCfg::host_register` / `SimCfg::host_register` allocate pageable

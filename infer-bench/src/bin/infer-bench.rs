@@ -18,7 +18,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--max-shared] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -152,7 +152,8 @@ fn run() -> Result<(), String> {
             sim_cfg.programmatic_event = cfg.programmatic_event;
             sim_cfg.stream_attach = cfg.stream_attach;
             sim_cfg.managed_host = cfg.managed_host;
-            if cfg.stream_attach || cfg.managed_host {
+            sim_cfg.prefetch_host = cfg.prefetch_host;
+            if cfg.stream_attach || cfg.managed_host || cfg.prefetch_host {
                 sim_cfg.managed = true;
             }
             sim_cfg.wait_value = cfg.wait_value;
@@ -245,6 +246,7 @@ struct Cfg {
     programmatic_event: bool,
     stream_attach: bool,
     managed_host: bool,
+    prefetch_host: bool,
     wait_value: bool,
     multicast: bool,
 }
@@ -301,6 +303,7 @@ where
     let mut programmatic_event = false;
     let mut stream_attach = false;
     let mut managed_host = false;
+    let mut prefetch_host = false;
     let mut wait_value = false;
     let mut multicast = false;
     let mut it = args.into_iter();
@@ -427,6 +430,9 @@ where
             "--managed-host" => {
                 managed_host = !matches!(inline.as_deref(), Some("0" | "false"));
             }
+            "--prefetch-host" => {
+                prefetch_host = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
             "--wait-value" => {
                 wait_value = !matches!(inline.as_deref(), Some("0" | "false"));
             }
@@ -527,6 +533,7 @@ where
         programmatic_event,
         stream_attach,
         managed_host,
+        prefetch_host,
         wait_value,
         multicast,
     })

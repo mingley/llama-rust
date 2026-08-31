@@ -122,6 +122,9 @@
 //! `expertvm sim --stream-attach` attaches managed experts to the compute stream.
 //! `expertvm sim --managed-host` is `cudaMallocManaged(..., cudaMemAttachHost)`
 //! then Global attach before copy-stream prefetch.
+//! `expertvm sim --prefetch-host` evicts managed pages with
+//! [`prefetch_host`](Sim::prefetch_host) and restores by prefetching the same
+//! alloc back (identity stays `cudaFree`).
 //! [`mem_advise_with_location`](Sim::mem_advise_with_location) is
 //! `cudaMemAdvise_v2` ([`Place`] location; AccessedBy requires
 //! [`Place::Device`]; host preferred is [`MemAdvise::SetPreferredLocationHost`]).

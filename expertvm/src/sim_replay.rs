@@ -802,6 +802,13 @@ pub struct SimCfg {
     /// [`Self::stream_attach`], alloc is Host then Single (no extra Global).
     /// [`crate::GpuStoreCfg::managed_host`] is the store path.
     pub managed_host: bool,
+    /// `cudaMemPrefetchAsync(..., cudaCpuDeviceId)` on managed LRU evict.
+    ///
+    /// Keeps the managed allocation instead of `cudaFree`. The next miss
+    /// prefetches the same pointer back. Implies [`Self::managed`]. Hits stay
+    /// the same; extra host↔device bytes move on thrash. Decode identity stays
+    /// `free_sync`. [`crate::GpuStoreCfg::prefetch_host`] is the store path.
+    pub prefetch_host: bool,
     /// `cuStreamWaitValue64` / `cuStreamWriteValue64` copy-ready handshake.
     ///
     /// After H2D / prefetch, write a generation into an 8-byte device mailbox
@@ -904,6 +911,7 @@ impl SimCfg {
             programmatic_event: false,
             stream_attach: false,
             managed_host: false,
+            prefetch_host: false,
             wait_value: false,
             multicast: false,
             compute_slots: 0,
@@ -946,6 +954,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     }
     if cfg.managed_host && !cfg.managed {
         return Err(Error::Store("managed-host needs managed"));
+    }
+    if cfg.prefetch_host && !cfg.managed {
+        return Err(Error::Store("prefetch-host needs managed"));
     }
     if cfg.pdl && cfg.cooperative {
         return Err(Error::Store("choose one of pdl, cooperative"));
@@ -1070,6 +1081,7 @@ pub fn sim_replay_cfg(
         wait_value: cfg.wait_value,
         stream_attach: cfg.stream_attach,
         managed_host: cfg.managed_host,
+        prefetch_host: cfg.prefetch_host,
     };
     let mut token_ends: Vec<u64> = Vec::new();
     let mut ctr = ReplayCounters::default();
@@ -1226,6 +1238,9 @@ pub(crate) struct TouchArgs {
     /// [`SimCfg::managed_host`]: `cudaMallocManaged` Host attach, then Global
     /// attach on this work stream before prefetch (unless stream-attach Single).
     pub managed_host: bool,
+    /// [`SimCfg::prefetch_host`]: evict `cudaMemPrefetchAsync` to host; restore
+    /// prefetches the same managed alloc back (no second `cudaMallocManaged`).
+    pub prefetch_host: bool,
 }
 
 fn hbm_alloc(
@@ -1916,6 +1931,8 @@ pub(crate) struct PageHandle {
     pub(crate) mailbox: Option<AllocId>,
     /// Generation [`signal_copy_ready`] wrote; [`None`] after GEMM waited.
     pub(crate) ready_gen: Option<u64>,
+    /// [`TouchArgs::prefetch_host`]: alloc is live on the host, not in HBM.
+    pub(crate) host_resident: bool,
 }
 
 pub(crate) fn note_touch(
@@ -1952,7 +1969,11 @@ fn should_prefetch(
     if cfg.plan_window == 0 {
         return true;
     }
-    let resident: BTreeSet<ExpertKey> = handles.keys().copied().collect();
+    let resident: BTreeSet<ExpertKey> = handles
+        .iter()
+        .filter(|(_, p)| !p.host_resident)
+        .map(|(k, _)| *k)
+        .collect();
     !matches!(
         plan_window(
             &resident,
@@ -1995,6 +2016,14 @@ pub(crate) fn apply_misses(
                 }
                 if args.slots == 0 {
                     continue;
+                }
+                if args.prefetch_host && args.managed {
+                    if let Some(page) = handles.get_mut(key) {
+                        if page.host_resident {
+                            restore_managed_from_host(sim, page, args)?;
+                            continue;
+                        }
+                    }
                 }
                 let mailbox = if args.wait_value {
                     Some(alloc_copy_mailbox(sim, args.d, args.s, args.sync_alloc)?)
@@ -2052,6 +2081,7 @@ pub(crate) fn apply_misses(
                 replicas: Vec::new(),
                 mailbox,
                 ready_gen,
+                host_resident: false,
             },
         );
     }
@@ -2105,6 +2135,14 @@ pub(crate) fn reclaim_victim(
     match home {
         None => Ok(()),
         Some(h) if h == args.d => {
+            if args.prefetch_host && args.managed {
+                if let Some(page) = handles.get_mut(&victim) {
+                    if !page.host_resident {
+                        evict_managed_to_host(sim, page)?;
+                    }
+                    return Ok(());
+                }
+            }
             let Some(page) = handles.remove(&victim) else {
                 return Ok(());
             };
@@ -2157,6 +2195,36 @@ fn drop_handle(
         sim.free(*dst, page.id, page.stream)?;
     }
     sim.free(page.device, page.id, page.stream)?;
+    Ok(())
+}
+
+fn evict_managed_to_host(sim: &mut Sim, page: &mut PageHandle) -> Result<(), Error> {
+    sim.synchronize_device(page.device)?;
+    page.replicas.clear();
+    let _p = sim.prefetch_host(page.device, page.id, page.stream)?;
+    sim.synchronize_stream(page.device, page.stream)?;
+    page.host_resident = true;
+    page.ready_gen = None;
+    Ok(())
+}
+
+fn restore_managed_from_host(
+    sim: &mut Sim,
+    page: &mut PageHandle,
+    args: TouchArgs,
+) -> Result<(), Error> {
+    let stream = bump_null_for_attach(args.s, args.stream_attach);
+    ensure_single_attach(sim, args.d, page.id, stream)?;
+    let _p = sim.prefetch(args.d, page.id, stream)?;
+    page.host_resident = false;
+    page.device = args.d;
+    page.stream = stream;
+    if args.wait_value {
+        if let Some(mb) = page.mailbox {
+            signal_copy_ready(sim, args.d, mb, 1, stream)?;
+            page.ready_gen = Some(1);
+        }
+    }
     Ok(())
 }
 
@@ -2255,6 +2323,9 @@ pub(crate) fn gemm_keys(
         let Some(page) = handles.get_mut(key) else {
             continue;
         };
+        if page.host_resident {
+            continue;
+        }
         if let (Some(mb), Some(gen)) = (page.mailbox, page.ready_gen.take()) {
             let stream = work.unwrap_or(page.stream);
             wait_copy_ready(sim, page.device, mb, gen, stream)?;
@@ -2264,6 +2335,9 @@ pub(crate) fn gemm_keys(
         let Some(page) = handles.get(key) else {
             continue;
         };
+        if page.host_resident {
+            continue;
+        }
         let stream = work.unwrap_or(page.stream);
         ensure_single_attach(sim, page.device, page.id, stream)?;
     }
@@ -2272,6 +2346,9 @@ pub(crate) fn gemm_keys(
         let Some(page) = handles.get(key) else {
             continue;
         };
+        if page.host_resident {
+            continue;
+        }
         let stream = work.unwrap_or(page.stream);
         by_dev
             .entry((page.device, stream))
@@ -2297,7 +2374,9 @@ fn resident_cover(
 ) -> Vec<AllocId> {
     let mut ids: Vec<AllocId> = handles
         .values()
-        .filter(|page| page.device == d && work.unwrap_or(page.stream) == stream)
+        .filter(|page| {
+            !page.host_resident && page.device == d && work.unwrap_or(page.stream) == stream
+        })
         .map(|page| page.id)
         .collect();
     ids.sort_unstable();

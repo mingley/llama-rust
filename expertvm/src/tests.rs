@@ -847,6 +847,7 @@ fn vmm_evict_reacquires_same_va() {
         wait_value: false,
         stream_attach: false,
         managed_host: false,
+        prefetch_host: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -5347,6 +5348,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         wait_value: false,
         stream_attach: false,
         managed_host: false,
+        prefetch_host: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -5411,6 +5413,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         wait_value: false,
         stream_attach: false,
         managed_host: false,
+        prefetch_host: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -5476,6 +5479,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         wait_value: false,
         stream_attach: false,
         managed_host: false,
+        prefetch_host: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -5907,6 +5911,7 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         wait_value: false,
         stream_attach: false,
         managed_host: false,
+        prefetch_host: false,
     };
     let mut next_event = 1u32;
     apply_misses(
@@ -6046,6 +6051,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             wait_value: false,
             stream_attach: false,
             managed_host: false,
+            prefetch_host: false,
         };
         let mut next_event = 1u32;
         let k0 = ExpertKey::new(0, 0);
@@ -8830,5 +8836,151 @@ fn simulated_gpu_store_managed_host_attach_overlaps_leftover() {
     assert!(
         host_wall >= off_wall,
         "managed-host Attach must not shorten wall; host={host_wall} off={off_wall}"
+    );
+}
+
+fn count_host_prefetch(gpu: &SimulatedGpuStore) -> usize {
+    gpu.operations()
+        .filter(|o| match &o.kind {
+            GpuOp::Memcpy(m) => {
+                matches!(m.dst, Place::Host | Place::HostPinned) && matches!(m.src, Place::Device(_))
+            }
+            _ => false,
+        })
+        .count()
+}
+
+#[test]
+fn sim_cfg_prefetch_host_needs_managed() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = match sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            prefetch_host: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("prefetch-host without managed must fail"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string().contains("prefetch-host needs managed"),
+        "{err}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_prefetch_host_needs_managed() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            prefetch_host: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("prefetch-host without managed must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("prefetch-host needs managed"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn sim_replay_prefetch_host_keeps_hits() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg {
+        managed: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let on = SimCfg {
+        managed: true,
+        prefetch_host: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("off");
+    let b = sim_replay_cfg(&t, profile, on).expect("on");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+    assert!(
+        b.bytes_moved > a.bytes_moved,
+        "prefetch-host must add host copies; off={} on={}",
+        a.bytes_moved,
+        b.bytes_moved
+    );
+}
+
+#[test]
+fn simulated_gpu_store_prefetch_host_pin_before_acquire_still_replicates() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        2,
+        HardwareProfile::example_8xh100_nvlink(),
+        4096,
+        GpuFill::Managed,
+        GpuStoreCfg {
+            prefetch_host: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    gpu.pin_hot(&[k0]).expect("pin");
+    assert_eq!(gpu.replica_of(k0), Some(DeviceId(1)));
+    assert_eq!(gpu.metrics().replicates, 1);
+    let _s = gpu.score().expect("score");
+}
+
+#[test]
+fn simulated_gpu_store_prefetch_host_evicts_without_free() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let run = |prefetch_host: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = match SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            4096,
+            GpuFill::Managed,
+            GpuStoreCfg {
+                prefetch_host,
+                ..GpuStoreCfg::default()
+            },
+        ) {
+            Ok(gpu) => gpu,
+            Err(err) => panic!("gpu: {err}"),
+        };
+        for key in t.keys() {
+            let _p = gpu.acquire(key).expect("acquire");
+            gpu.release(key);
+        }
+        let host = count_host_prefetch(&gpu);
+        let metrics = gpu.metrics();
+        let _s = gpu.score().expect("score");
+        (metrics.hits, metrics.misses, host)
+    };
+    let (off_hits, off_misses, off_host) = run(false);
+    let (on_hits, on_misses, on_host) = run(true);
+    assert_eq!(off_hits, on_hits);
+    assert_eq!(off_misses, on_misses);
+    assert_eq!(off_host, 0, "identity managed must not prefetch to host");
+    assert!(
+        on_host >= 1,
+        "prefetch-host must submit Device→Host memcpy; n={on_host}"
     );
 }
