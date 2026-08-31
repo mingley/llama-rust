@@ -22,7 +22,7 @@ use crate::sim_replay::{
     free_mapped_host, instantiate_exec, kernel_leaf, mark_sync_memops, memcpy_batch_attr,
     mempool_hold, persist_armed, replay_exec, replay_streams, reset_persisting_l2_if,
     retarget_parked_kernel, signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready,
-    GemmFlags, LeafMem, StreamPlan,
+    wait_memcpy_during_allocs, GemmFlags, LeafMem, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -2327,6 +2327,7 @@ impl SimulatedGpuStore {
                 MemcpyOp::packed_1d(Place::HostPinned, Place::Device(d), *id, bytes)
             })
             .collect();
+        wait_memcpy_during_allocs(&mut self.sim, d, self.copy, self.memcpy_during)?;
         let attr = memcpy_batch_attr(self.memcpy_during);
         let _ids =
             self.sim

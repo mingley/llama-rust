@@ -1681,6 +1681,19 @@ pub(crate) fn memcpy_batch_attr(during: bool) -> MemcpyAttributes {
     }
 }
 
+/// DuringApiCall copies do not wait stream-ordered `cudaMallocAsync`.
+pub(crate) fn wait_memcpy_during_allocs(
+    sim: &mut Sim,
+    device: DeviceId,
+    stream: StreamId,
+    during: bool,
+) -> Result<(), Error> {
+    if during {
+        sim.synchronize_stream(device, stream)?;
+    }
+    Ok(())
+}
+
 fn hbm_h2d_many(sim: &mut Sim, args: TouchArgs, allocs: &[AllocId]) -> Result<(), Error> {
     if allocs.is_empty() {
         return Ok(());
@@ -1698,6 +1711,7 @@ fn hbm_h2d_many(sim: &mut Sim, args: TouchArgs, allocs: &[AllocId]) -> Result<()
                 MemcpyOp::packed_1d(Place::HostPinned, Place::Device(args.d), *id, args.bytes)
             })
             .collect();
+        wait_memcpy_during_allocs(sim, args.d, args.s, args.memcpy_during)?;
         let attr = memcpy_batch_attr(args.memcpy_during);
         let _ids =
             sim.memcpy_batch_async(args.d, &ops, std::slice::from_ref(&attr), &[0], args.s)?;

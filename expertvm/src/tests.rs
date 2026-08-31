@@ -6320,6 +6320,70 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
 }
 
 #[test]
+fn memcpy_during_apply_misses_waits_copies() {
+    use crate::replay::Touch;
+    use crate::sim_replay::{apply_misses, GraphBank, PageHandle, TouchArgs};
+    use gpu_sim::{Sim, StreamId};
+    use std::collections::BTreeMap;
+
+    let run = |during: bool| {
+        let mut sim = Sim::new(HardwareProfile::example_h100_sxm());
+        let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
+        let mut graphs = GraphBank::new(false, false, false, crate::sim_replay::LeafMem::None);
+        let args = TouchArgs {
+            d: DeviceId(0),
+            s: StreamId(0),
+            bytes: 4 << 20,
+            slots: 2,
+            sync_alloc: false,
+            mapped: false,
+            managed: false,
+            vmm: false,
+            vmm_page: 0,
+            pageable: false,
+            host_register: false,
+            host_register_mapped: false,
+            sync_memops: false,
+            memcpy_batch: true,
+            memcpy_during: during,
+            accessed_by: false,
+            wait_value: false,
+            stream_attach: false,
+            managed_host: false,
+            prefetch_host: false,
+        };
+        let mut next_event = 1u32;
+        apply_misses(
+            &mut sim,
+            &mut handles,
+            &mut graphs,
+            args,
+            &[
+                (ExpertKey::new(0, 0), Touch::Miss { evicted: None }),
+                (ExpertKey::new(0, 1), Touch::Miss { evicted: None }),
+            ],
+            &mut next_event,
+        )
+        .expect("misses");
+        sim.operations()
+            .filter(|o| matches!(o.kind, gpu_sim::GpuOp::Memcpy(_)))
+            .collect::<Vec<_>>()
+    };
+    let stream = run(false);
+    assert_eq!(stream.len(), 2, "{stream:?}");
+    assert!(
+        stream.iter().all(|c| !c.done),
+        "Stream copies stay in flight; {stream:?}"
+    );
+    let during = run(true);
+    assert_eq!(during.len(), 2, "{during:?}");
+    assert!(
+        during.iter().all(|c| c.done),
+        "DuringApiCall must wait those copies; {during:?}"
+    );
+}
+
+#[test]
 fn memcpy_batch_sim_replay_copy_forward() {
     let t = cycling_trace();
     let p = HardwareProfile::example_h100_sxm();
