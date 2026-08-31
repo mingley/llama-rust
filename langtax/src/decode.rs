@@ -77,6 +77,8 @@
 //! (`n_layer_kv_from_start` minus 2). Optional final tanh logit softcap.
 //! Writer-tiny mixed SWA/global head dims ([`tiny_gemma4_mixed_hd_gguf`])
 //! is two layers, SWA then global, `key_length_swa` half of `key_length`.
+//! Writer-tiny SWA RoPE base ([`tiny_gemma4_swa_base_gguf`]) is that mixed-hd
+//! fixture with `rope.freq_base` vs `rope.freq_base_swa` as in E2B/E4B.
 
 use crate::gguf::{load_gguf_owned, GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 pub use crate::kv_page::PagedKvPool;
@@ -165,6 +167,16 @@ const TINY_GEMMA4_SHARED_KV_LAYERS: u32 = 1;
 const TINY_GEMMA4_MIXED_N_LAYER: usize = 2;
 /// SWA head dim for [`tiny_gemma4_mixed_hd_gguf`]. Half of [`TINY_N_ROT`].
 const TINY_GEMMA4_HD_SWA: usize = 32;
+/// Official E2B/E4B convert `rope.freq_base` (global layers).
+const TINY_GEMMA4_FREQ_BASE: f32 = 1_000_000.0;
+/// Official E2B/E4B convert `rope.freq_base_swa`. llama.cpp default when the
+/// key is omitted is the same value.
+const TINY_GEMMA4_FREQ_BASE_SWA: f32 = 10_000.0;
+/// Mixed-hd global-layer QK-Norm scale. Gemma4 `f_attention_scale` is `1.0`;
+/// ones-valued QK-Norm makes Q dot K O(hd) so softmax saturates onto the
+/// unrotated self key and a different global `rope.freq_base` cannot move
+/// logits. `0.1` keeps scores O(1) so RoPE wavelengths are observable.
+const TINY_GEMMA4_GLOBAL_QK_NORM: f32 = 0.1;
 /// Writer-built tiny Qwen3Next `qwen3next.expert_count` (official load rejects 0).
 const TINY_QWEN3NEXT_N_EXPERT: usize = 4;
 /// Writer-built tiny `qwen3next.expert_used_count`.
@@ -541,6 +553,9 @@ struct Layer {
     /// Per-layer RoPE dim. Official `n_rot(il)`: SWA uses
     /// `rope.dimension_count_swa` (default the full `n_rot`).
     n_rot: usize,
+    /// Per-layer RoPE base. Official gemma4 `get_rope_freq_base(il)`: SWA uses
+    /// `rope.freq_base_swa` (default `10000`), global uses `rope.freq_base`.
+    rope_base: f32,
     wo: QuantMat,
     /// Official phi2 / bloom `blk.{i}.attn_output.bias` (required, flag 0).
     wo_b: Option<Vec<f32>>,
@@ -1651,7 +1666,8 @@ impl Llama {
     /// production E2B/E4B shape on the same arch. Writer-tiny fused experts
     /// pack `ffn_gate_up_exps`. Writer-tiny fused plus PLE packs both.
     /// Shared KV is [`tiny_gemma4_shared_kv_gguf`]. Mixed SWA/global head
-    /// dims are [`tiny_gemma4_mixed_hd_gguf`].
+    /// dims are [`tiny_gemma4_mixed_hd_gguf`]. SWA RoPE base is
+    /// [`tiny_gemma4_swa_base_gguf`].
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
     /// blob; they do not clone tensor bytes. When `output.weight` is absent,
@@ -1802,6 +1818,11 @@ impl Llama {
             .map(|t| t.n_rows())
             .ok_or_else(|| LlamaError::Tensor("token_embd.weight".into()))?;
         let rope_base = arch_f32(&g, arch, "rope.freq_base").unwrap_or(10_000.0);
+        let rope_base_swa = if gemma4 {
+            arch_f32(&g, arch, "rope.freq_base_swa").unwrap_or(10_000.0)
+        } else {
+            rope_base
+        };
         let gemma = arch == "gemma" || gemma2 || gemma3 || gemma3n || gemma4;
         let n_embd_f = f32::from(u16::try_from(n_embd).unwrap_or(1));
         let embed_scale = if gemma { n_embd_f.sqrt() } else { 1.0 };
@@ -1892,6 +1913,8 @@ impl Llama {
                 hd_swa,
                 n_rot_full: n_rot,
                 n_rot_swa,
+                rope_base_full: rope_base,
+                rope_base_swa,
                 gemma4_moe: gemma4_moe_hparams.as_ref(),
                 llama4: llama4_hparams.as_ref(),
                 llama_moe: llama_moe_hparams.as_ref(),
@@ -2477,6 +2500,7 @@ impl Llama {
             let kv_slot = layer.kv_slot;
             let hd = layer.hd;
             let n_rot = layer.n_rot;
+            let rope_base = layer.rope_base;
             copy_buf(&mut s.residual, &s.x);
             if self.phi2 || self.bloom {
                 layernorm_rows_inplace(
@@ -2532,7 +2556,7 @@ impl Llama {
                                 h,
                                 p,
                                 n_rot,
-                                self.rope_base,
+                                rope_base,
                                 self.rope_sections,
                                 self.rope_imrope,
                                 self.rope_neox,
@@ -2560,7 +2584,7 @@ impl Llama {
                             h,
                             p,
                             n_rot,
-                            self.rope_base,
+                            rope_base,
                             self.rope_sections,
                             self.rope_imrope,
                             self.rope_neox,
@@ -3970,6 +3994,7 @@ pub fn tiny_gemma3n_gguf() -> Vec<u8> {
 /// Official Gemma4 shared KV is the same arch ([`tiny_gemma4_shared_kv_gguf`]).
 /// Official Gemma4 mixed SWA/global head dims are the same arch
 /// ([`tiny_gemma4_mixed_hd_gguf`]).
+/// Official Gemma4 SWA RoPE base is the same arch ([`tiny_gemma4_swa_base_gguf`]).
 pub fn tiny_gemma4_gguf() -> Vec<u8> {
     tiny_arch_gguf_lm_head(
         TinySpec {
@@ -4231,7 +4256,8 @@ fn expand_tiny_gemma4_layers(
 /// SWA uses `attention.key_length_swa` / `rope.dimension_count_swa`, global
 /// uses `attention.key_length` (default `n_embd / n_head`). KV cache stride
 /// is the max head dim. Not a second architecture. Shared KV stays
-/// [`tiny_gemma4_shared_kv_gguf`]. Optional `wv` / `out_scale` /
+/// [`tiny_gemma4_shared_kv_gguf`]. SWA vs global RoPE base is
+/// [`tiny_gemma4_swa_base_gguf`]. Optional `wv` / `out_scale` /
 /// `rope_freqs` stay omitted.
 pub fn tiny_gemma4_mixed_hd_gguf() -> Vec<u8> {
     rewrite_tiny_gemma4_mixed_hd(
@@ -4244,6 +4270,8 @@ pub fn tiny_gemma4_mixed_hd_gguf() -> Vec<u8> {
 /// Shrink layer-0 Q/K/V/wo/QK-norm to the SWA head dim and mark layer 1 global.
 /// SWA `attn_output` is F32: Q4_K needs `n_cols` a multiple of 256, and official
 /// `wo` is `{n_embd_head * n_head, n_embd}` so SWA `n_cols` is 128.
+/// Global QK-Norm is [`TINY_GEMMA4_GLOBAL_QK_NORM`] so Gemma4 attn-scale `1.0`
+/// does not saturate softmax and hide `rope.freq_base`.
 fn rewrite_tiny_gemma4_mixed_hd(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
     let g = load_gguf_owned(bytes)?;
     let hd_swa = TINY_GEMMA4_HD_SWA;
@@ -4273,6 +4301,7 @@ fn rewrite_tiny_gemma4_mixed_hd(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
     }
     kv.push(("gemma4.rope.dimension_count_swa".into(), Kv::U32(hd_swa_u)));
     let qk_ones = vec![1.0f32; hd_swa];
+    let qk_global = vec![TINY_GEMMA4_GLOBAL_QK_NORM; hd_full];
     let mut tensors = Vec::new();
     for t in g.tensors() {
         let replaced = match t.name {
@@ -4312,6 +4341,18 @@ fn rewrite_tiny_gemma4_mixed_hd(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
                 vec![hd_swa],
                 pack_vec1d(GgmlType::F32, &qk_ones),
             )),
+            "blk.1.attn_q_norm.weight" => Some(tw(
+                "blk.1.attn_q_norm.weight",
+                GgmlType::F32,
+                vec![hd_full],
+                pack_vec1d(GgmlType::F32, &qk_global),
+            )),
+            "blk.1.attn_k_norm.weight" => Some(tw(
+                "blk.1.attn_k_norm.weight",
+                GgmlType::F32,
+                vec![hd_full],
+                pack_vec1d(GgmlType::F32, &qk_global),
+            )),
             _ => None,
         };
         if let Some(t) = replaced {
@@ -4324,6 +4365,50 @@ fn rewrite_tiny_gemma4_mixed_hd(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
                 data: t.data.to_vec(),
             });
         }
+    }
+    Ok(write_gguf_with_kv(&kv, &tensors))
+}
+
+/// Writer-built official Gemma4 SWA RoPE-base GGUF: `architecture=gemma4` with
+/// `rope.freq_base_swa != rope.freq_base`.
+///
+/// Same mixed-hd tensors as [`tiny_gemma4_mixed_hd_gguf`]. Decode follows
+/// llama.cpp `get_rope_freq_base(il)`: SWA uses `rope.freq_base_swa` (default
+/// `10000` when omitted), global uses `rope.freq_base`. Writer-tiny matches
+/// E2B/E4B convert (`1000000` vs `10000`). Not a second architecture. Optional
+/// `wv` / `out_scale` / `rope_freqs` stay omitted.
+pub fn tiny_gemma4_swa_base_gguf() -> Vec<u8> {
+    rewrite_tiny_gemma4_swa_base(tiny_gemma4_mixed_hd_gguf()).unwrap_or_else(|_| Vec::new())
+}
+
+/// Set global `rope.freq_base` and SWA `rope.freq_base_swa` on a mixed-hd tiny.
+fn rewrite_tiny_gemma4_swa_base(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
+    let g = load_gguf_owned(bytes)?;
+    let mut kv: Vec<(String, Kv)> = g.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let mut has_swa = false;
+    for (k, v) in &mut kv {
+        if k.ends_with(".rope.freq_base") && !k.ends_with("freq_base_swa") {
+            *v = Kv::F32(TINY_GEMMA4_FREQ_BASE);
+        }
+        if k.ends_with(".rope.freq_base_swa") {
+            *v = Kv::F32(TINY_GEMMA4_FREQ_BASE_SWA);
+            has_swa = true;
+        }
+    }
+    if !has_swa {
+        kv.push((
+            "gemma4.rope.freq_base_swa".into(),
+            Kv::F32(TINY_GEMMA4_FREQ_BASE_SWA),
+        ));
+    }
+    let mut tensors = Vec::new();
+    for t in g.tensors() {
+        tensors.push(TensorWrite {
+            name: t.name.to_string(),
+            ty: t.ty,
+            shape: t.shape.to_vec(),
+            data: t.data.to_vec(),
+        });
     }
     Ok(write_gguf_with_kv(&kv, &tensors))
 }
@@ -7809,6 +7894,8 @@ struct LayerHparams<'a> {
     hd_swa: usize,
     n_rot_full: usize,
     n_rot_swa: usize,
+    rope_base_full: f32,
+    rope_base_swa: f32,
     gemma4_moe: Option<&'a Gemma4MoeHparams>,
     llama4: Option<&'a Llama4Hparams>,
     llama_moe: Option<&'a LlamaMoeHparams>,
@@ -7909,6 +7996,11 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
     let layer_swa = h.is_swa.get(i).copied().unwrap_or(false);
     let hd = if layer_swa { h.hd_swa } else { h.hd_full };
     let n_rot = if layer_swa { h.n_rot_swa } else { h.n_rot_full };
+    let rope_base = if layer_swa {
+        h.rope_base_swa
+    } else {
+        h.rope_base_full
+    };
     let kv_slot = if has_kv {
         i
     } else {
@@ -7952,6 +8044,7 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
         kv_slot,
         hd,
         n_rot,
+        rope_base,
         wo: quant_mat(need(g, &format!("blk.{i}.attn_output.weight"))?)?,
         wo_b: if h.phi2 || h.bloom {
             Some(f32s(need(g, &format!("blk.{i}.attn_output.bias"))?)?)
@@ -13067,6 +13160,11 @@ mod tests {
         } else {
             n_rot
         };
+        let base_swa = if gemma4 {
+            arch_f32(g, arch, "rope.freq_base_swa").unwrap_or(10_000.0)
+        } else {
+            base
+        };
         let gemma4_n_pl = if gemma4 {
             arch_u32(g, arch, "embedding_length_per_layer_input").unwrap_or(0) as usize
         } else {
@@ -13117,6 +13215,7 @@ mod tests {
                 let layer_swa = gemma4 && oracle_gemma4_layer_is_swa(g, arch, li);
                 let hd = if layer_swa { hd_swa } else { hd_full };
                 let n_rot_l = if layer_swa { n_rot_swa } else { n_rot };
+                let base_l = if layer_swa { base_swa } else { base };
                 let an = f32s(g.tensor(&tname(li, "attn_norm.weight")).unwrap()).unwrap();
                 let an_b = g
                     .tensor(&tname(li, "attn_norm.bias"))
@@ -13219,12 +13318,12 @@ mod tests {
                                 h.clone(),
                                 [pos, pos, pos, 0],
                                 n_rot_l,
-                                base,
+                                base_l,
                                 s,
                                 is_imrope,
                             ),
-                            None if neox => oracle_rope_neox(h.clone(), pos, n_rot_l, base),
-                            None => oracle_rope(h.clone(), pos, n_rot_l, base),
+                            None if neox => oracle_rope_neox(h.clone(), pos, n_rot_l, base_l),
+                            None => oracle_rope(h.clone(), pos, n_rot_l, base_l),
                         };
                     }
                     for h in &mut kh {
@@ -13233,12 +13332,12 @@ mod tests {
                                 h.clone(),
                                 [pos, pos, pos, 0],
                                 n_rot_l,
-                                base,
+                                base_l,
                                 s,
                                 is_imrope,
                             ),
-                            None if neox => oracle_rope_neox(h.clone(), pos, n_rot_l, base),
-                            None => oracle_rope(h.clone(), pos, n_rot_l, base),
+                            None if neox => oracle_rope_neox(h.clone(), pos, n_rot_l, base_l),
+                            None => oracle_rope(h.clone(), pos, n_rot_l, base_l),
                         };
                     }
                     if qk_l2 {
@@ -14761,6 +14860,7 @@ mod tests {
             tiny_gemma4_moe_fused_ple_gguf(),
             tiny_gemma4_shared_kv_gguf(),
             tiny_gemma4_mixed_hd_gguf(),
+            tiny_gemma4_swa_base_gguf(),
             tiny_qwen3_gguf(),
             tiny_llama4_gguf(),
             tiny_llama_moe_gguf(),
@@ -14819,6 +14919,7 @@ mod tests {
             ("gemma4-moe-fused-ple", tiny_gemma4_moe_fused_ple_gguf()),
             ("gemma4-shared-kv", tiny_gemma4_shared_kv_gguf()),
             ("gemma4-mixed-hd", tiny_gemma4_mixed_hd_gguf()),
+            ("gemma4-swa-base", tiny_gemma4_swa_base_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("f16", tiny_f16_gguf()),
@@ -14912,6 +15013,7 @@ mod tests {
             ("gemma4-moe-fused-ple", tiny_gemma4_moe_fused_ple_gguf()),
             ("gemma4-shared-kv", tiny_gemma4_shared_kv_gguf()),
             ("gemma4-mixed-hd", tiny_gemma4_mixed_hd_gguf()),
+            ("gemma4-swa-base", tiny_gemma4_swa_base_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("llama-moe", tiny_llama_moe_gguf()),
@@ -16507,6 +16609,16 @@ mod tests {
         assert_eq!(model.layers[1].n_rot, 64);
         assert_eq!(model.cache_hd().expect("cache hd"), 64);
         assert_eq!(model.is_swa, vec![true, false]);
+        assert_eq!(model.layers[0].rope_base, 10_000.0);
+        assert_eq!(model.layers[1].rope_base, 10_000.0);
+        assert_eq!(
+            model.layers[1]
+                .attn_q_norm
+                .as_deref()
+                .and_then(|w| w.first())
+                .copied(),
+            Some(TINY_GEMMA4_GLOBAL_QK_NORM)
+        );
         load_fwd_match(&bytes, 3);
         load_prefill_match(&bytes, &[1, 2, 3]);
         let tok = Tokenizer::from_gguf(&g).expect("tok");
@@ -16540,6 +16652,66 @@ mod tests {
         assert_ne!(
             mixed_pref, equal_pref,
             "SWA hd 32 then global hd 64 must not copy a 2-layer equal-hd walk"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma4_swa_base_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_swa_base_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 swa base");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        assert_eq!(g.kv_f32("gemma4.rope.freq_base"), Some(1_000_000.0));
+        assert_eq!(g.kv_f32("gemma4.rope.freq_base_swa"), Some(10_000.0));
+        assert_eq!(g.kv_u32("gemma4.attention.key_length_swa"), Some(32));
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        assert_eq!(model.layers.len(), 2);
+        assert_eq!(model.layers[0].rope_base, 10_000.0);
+        assert_eq!(model.layers[1].rope_base, 1_000_000.0);
+        assert_eq!(model.layers[0].hd, 32);
+        assert_eq!(model.layers[1].hd, 64);
+        assert_eq!(model.is_swa, vec![true, false]);
+        let mixed_bytes = tiny_gemma4_mixed_hd_gguf();
+        let mixed_g = load_gguf(&mixed_bytes).expect("mixed g");
+        assert_eq!(mixed_g.kv_f32("gemma4.rope.freq_base"), Some(10_000.0));
+        assert!(mixed_g.kv_f32("gemma4.rope.freq_base_swa").is_none());
+        assert_eq!(
+            mixed_g.tensor("blk.1.attn_q_norm.weight").unwrap().n_cols(),
+            64
+        );
+        assert_ne!(
+            oracle_rope_neox(vec![1.0f32; 64], 2, 64, 10_000.0),
+            oracle_rope_neox(vec![1.0f32; 64], 2, 64, 1_000_000.0),
+            "oracle RoPE must depend on base"
+        );
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&mixed_g, &[1, 2, 3]),
+            "oracle SWA-base vs mixed-hd"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let swa_pref = model.prefill(&mut sc, &tokens).expect("swa pref");
+        let mixed_pref = {
+            let mg = load_gguf(&tiny_gemma4_mixed_hd_gguf()).expect("mixed");
+            let mm = Llama::from_gguf(mg).expect("mm");
+            assert_eq!(mm.layers[0].rope_base, 10_000.0);
+            assert_eq!(mm.layers[1].rope_base, 10_000.0);
+            let mut c = mm.new_cache(8).expect("mc");
+            mm.prefill(&mut c, &tokens).expect("mixed pref")
+        };
+        assert_ne!(
+            swa_pref, mixed_pref,
+            "global freq_base 1e6 must not copy mixed-hd 1e4 logits"
         );
     }
 
@@ -19218,7 +19390,7 @@ mod bench {
     fn bench_logits_fingerprint() {
         // Every zero-argument fixture in the suite, so that each architecture
         // walk and each dtype kernel the decode path can reach is pinned.
-        let cases: [(&str, Vec<u8>); 60] = [
+        let cases: [(&str, Vec<u8>); 61] = [
             ("llama", tiny_llama_gguf()),
             ("tied", tiny_tied_gguf()),
             ("tied_copy", tiny_tied_copy_gguf()),
@@ -19250,6 +19422,7 @@ mod bench {
             ("gemma4_moe_fused_ple", tiny_gemma4_moe_fused_ple_gguf()),
             ("gemma4_shared_kv", tiny_gemma4_shared_kv_gguf()),
             ("gemma4_mixed_hd", tiny_gemma4_mixed_hd_gguf()),
+            ("gemma4_swa_base", tiny_gemma4_swa_base_gguf()),
             ("f16", tiny_f16_gguf()),
             ("f16_1d", tiny_f16_1d_gguf()),
             ("f16_1d_bias", tiny_f16_1d_bias_gguf()),
