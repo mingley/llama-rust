@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cudaDevAttrSurfaceAlignment`
+
+`gpu-sim` `DeviceAttr::SurfaceAlignment` is always 0. CUDA surfaces are
+not modeled. Distinct from `TextureAlignment`. Also
+`DeviceProperties.surface_alignment`. Query; legal during capture.
+`gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cudaDevAttrTextureAlignment`
 
 `gpu-sim` `DeviceAttr::TextureAlignment` is always 0. CUDA arrays /

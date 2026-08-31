@@ -4748,7 +4748,13 @@ model, do not celebrate the sim.
     Query; legal during capture. `gpu-profile capture` is still refused.
     Dual score still has no `$/M tokens`.
 
-432. [ ] Next numbered PLAN item after 431 is the next `gpu-sim` / Engine /
+432. [x] CUDA `cudaDevAttrSurfaceAlignment` (`DeviceAttr::SurfaceAlignment`):
+    always 0. CUDA surfaces are not modeled. Distinct from
+    `TextureAlignment`. Also `DeviceProperties.surface_alignment`. Query;
+    legal during capture. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+433. [ ] Next numbered PLAN item after 432 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4784,6 +4790,7 @@ model, do not celebrate the sim.
     Do not invent a second `cudaDevAttrReservedSharedMemoryPerBlock`.
     Do not invent a second `cudaDevAttrTotalConstantMemory`.
     Do not invent a second `cudaDevAttrTextureAlignment`.
+    Do not invent a second `cudaDevAttrSurfaceAlignment`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

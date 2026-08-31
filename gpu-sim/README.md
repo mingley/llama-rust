@@ -720,6 +720,8 @@ is not modeled; distinct from `MaxSharedMemoryPerBlock`).
 distinct from `TotalGlobalMem`).
 `TextureAlignment` is always 0 (CUDA arrays / textures are not modeled;
 distinct from `SparseCudaArraySupported`).
+`SurfaceAlignment` is always 0 (CUDA surfaces are not modeled; distinct
+from `TextureAlignment`).
 `StreamPrioritiesSupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields
