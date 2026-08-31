@@ -2364,6 +2364,18 @@ pub(crate) fn wait_memcpy_during_allocs(
     Ok(())
 }
 
+/// Wait `cudaMallocAsync` so [`Sim::pool_export_ptr`] sees a live pointer.
+///
+/// Host wait is the alloc, not the later H2D. No-op when `share_ptr` is off.
+pub(crate) fn wait_share_ptr_alloc(
+    sim: &mut Sim,
+    device: DeviceId,
+    stream: StreamId,
+    share_ptr: bool,
+) -> Result<(), Error> {
+    wait_memcpy_during_allocs(sim, device, stream, share_ptr)
+}
+
 fn hbm_h2d_many(sim: &mut Sim, args: TouchArgs, allocs: &[AllocId]) -> Result<(), Error> {
     if allocs.is_empty() {
         return Ok(());
@@ -3522,6 +3534,12 @@ pub(crate) fn apply_misses(
         let id = alloc_touch_page(sim, args)?;
         filled.push((key, id, mailbox));
     }
+    wait_share_ptr_alloc(
+        sim,
+        args.d,
+        args.s,
+        args.share_ptr && !args.mapped && !args.managed && !args.vmm,
+    )?;
     let h2d: Vec<AllocId> = filled
         .iter()
         .filter_map(|(_, id, _)| {
@@ -5134,6 +5152,7 @@ pub(crate) fn fill_remote(
         fetch.stream,
         fetch.sync_alloc,
     )?;
+    wait_share_ptr_alloc(sim, fetch.home, fetch.stream, fetch.share_ptr)?;
     hbm_h2d_pinned(
         sim,
         fetch.home,

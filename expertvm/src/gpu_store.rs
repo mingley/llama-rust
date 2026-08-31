@@ -26,7 +26,7 @@ use crate::sim_replay::{
     mempool_hold, open_ipc_alias, open_share_alias, persist_armed, pin_staging_for_fill,
     replay_exec, replay_streams, reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready,
     stream_of, unpin_staging_after_fill, upload_after_set_params, wait_copy_ready,
-    wait_memcpy_during_allocs, GemmFlags, LeafMem, LeafWork, StreamPlan,
+    wait_memcpy_during_allocs, wait_share_ptr_alloc, GemmFlags, LeafMem, LeafWork, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -2886,6 +2886,7 @@ impl SimulatedGpuStore {
             let id = self.alloc_page_no_fill(d)?;
             pending.push((*key, id, start, mailbox));
         }
+        wait_share_ptr_alloc(&mut self.sim, d, self.copy, self.share_ptr)?;
         if pending.len() < 2 {
             for (key, id, start, mailbox) in pending {
                 self.fill_hbm(d, id)?;
@@ -3018,6 +3019,7 @@ impl SimulatedGpuStore {
             }
             GpuFill::Pinned => {
                 let id = self.hbm_alloc(d)?;
+                wait_share_ptr_alloc(&mut self.sim, d, self.copy, self.share_ptr)?;
                 mark_sync_memops(&mut self.sim, id, d, self.copy, self.sync_memops)?;
                 self.fill_hbm(d, id)?;
                 Ok(id)
