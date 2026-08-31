@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaGraphAddHostNode` between combo children
+
+`GpuStoreCfg::graph_host` / `SimCfg::graph_host` insert
+`cudaGraphAddHostNode` BETWEEN `--graph-build` combo children so sibling
+expert GEMMs serialize through `host_func_ns` (`child → host → child`).
+Needs `--graph-build`. Does not imply graph-build or `--host-func`.
+Hits/misses stay the same. Distinct from `--graph-build` (overlap vs
+serial+tax), `--graph-build-deps` (serialize without host tax), and live
+`--host-func` (after the token's GEMMs). `--graph-host` is off by default
+(decode identity: no host nodes in combo parents). Store GEMM stays
+per-leaf. infer-bench has no `--graph-build`, so it does not get
+`--graph-host`. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaGraphAddDependencies` combo edges
 
 `GpuStoreCfg::graph_build_deps` / `SimCfg::graph_build_deps` call

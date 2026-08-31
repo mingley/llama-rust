@@ -720,7 +720,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--shareable`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-build-deps`, `--graph-piecewise`, `--graph-capture-deps`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--event-blocking-sync`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, `--non-portable-cluster`, `--sync-policy`, `--device-sync-policy`, `--shared-mem`, and `--multicast`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-build-deps`, `--graph-host`, `--graph-piecewise`, `--graph-capture-deps`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--event-blocking-sync`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, `--non-portable-cluster`, `--sync-policy`, `--device-sync-policy`, `--shared-mem`, and `--multicast`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--shareable` is POSIX-FD mempool IPC
   (implies `--mempool`; illegal with `--sync-alloc` / mapped / managed / vmm). `--mapped` is `cudaHostAllocMapped`
@@ -755,7 +755,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `cudaStreamBeginCaptureToGraph` deps on those combo parents (needs
   `--graph-piecewise`; sibling GEMMs serialize). `--graph-build-deps` is
   `cudaGraphAddDependencies` on `--graph-build` combo parents (needs
-  `--graph-build`; sibling GEMMs serialize). `--graph-mem`
+  `--graph-build`; sibling GEMMs serialize). `--graph-host` is
+  `cudaGraphAddHostNode` BETWEEN those children (needs `--graph-build`;
+  sibling GEMMs serialize through `host_func_ns`; not a JOIN after overlap). `--graph-mem`
   is in-graph scratch (`cudaGraphAddMemAllocNode` / capture `cudaMallocAsync`);
   `--graph-update` is skipped because CUDA cannot update mem nodes.
   `--graph-auto-free` is AutoFreeOnLaunch scratch without a matching free
@@ -999,7 +1001,7 @@ model, do not celebrate the sim.
     Dual score still has no `$/M tokens`.
 48. [x] Engine SimulatedGpuStore CUDA graphs: default `--expert-sim` captures
     per-page GEMM graphs (`Engine::graph_launches`). `--graph-update` /
-    `--graph-clone` / `--graph-build` / `--graph-build-deps` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-mem` / `--graph-auto-free` / `--timing-events` / `--event-blocking-sync` / `--cuda-graphs` match
+    `--graph-clone` / `--graph-build` / `--graph-build-deps` / `--graph-host` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-mem` / `--graph-auto-free` / `--timing-events` / `--event-blocking-sync` / `--cuda-graphs` match
     `GpuStoreCfg` / `expertvm sim`. Tight slots park+update. Identity stays.
     Dual score still has no `$/M tokens`.
 49. [x] Engine `itl_slo_ns`: count later-token gaps over a virtual-ns budget
@@ -1218,7 +1220,8 @@ model, do not celebrate the sim.
     so Hyper-Q can overlap them; the launch stream still waits for the graph.
     Stream capture records same-stream edges. `--graph-build` combo parents
     leave sibling `graph_add_child` nodes independent. `--graph-build-deps`
-    (PLAN 359) chains those children. `update_graph` treats
+    (PLAN 359) chains those children. `--graph-host` (PLAN 360) inserts
+    `graph_add_host_func` BETWEEN those children (`host_func_ns`). `update_graph` treats
     edges as topology. Leaf `--graph-mem` / `--graph-auto-free` chains
     alloc→kernel→free. Decode identity stays stream capture. Dual score still
     has no `$/M tokens`.
@@ -3844,7 +3847,24 @@ model, do not celebrate the sim.
     Store GEMM stays per-leaf. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-360. [ ] Next numbered PLAN item after 359 is the next `gpu-sim` / Engine /
+360. [x] `cudaGraphAddHostNode` between combo children:
+    [`GpuStoreCfg::graph_host`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::graph_host`](expertvm/src/sim_replay.rs) on
+    `--graph-build` combo parents. A host node sits BETWEEN later
+    `graph_add_child` nodes (`child → host → child`) so sibling expert
+    GEMMs serialize through `host_func_ns`. Needs `--graph-build`. Does
+    not imply graph-build or `--host-func`. Hits stay the same. Distinct
+    from `--graph-build` (overlap vs serial+tax), `--graph-build-deps`
+    (serialize without host tax), and live `--host-func` (after the token's
+    GEMMs, not between combo children). Legal with `--pdl` and
+    `--cooperative`. `--graph-host` on `expertvm sim` / `schedule` /
+    `store` and `gguf_gemv engine --expert-sim`. infer-bench has no
+    `--graph-build`, so it does not get `--graph-host`. Decode identity
+    stays no host nodes in combo parents. Store GEMM stays per-leaf.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+361. [ ] Next numbered PLAN item after 360 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
@@ -3871,7 +3891,16 @@ model, do not celebrate the sim.
     `AccessProperty::Streaming` flag. Do not invent `--l2-normal` (Normal
     vs Streaming is not mechanically distinct in gpu-sim billing). Do not
     invent a second `cudaStreamBeginCaptureToGraph` deps flag. Do not invent
-    a second `graph_add_dependencies` flag. Do not
+    a second `graph_add_dependencies` flag. Do not invent a second
+    `cudaGraphAddHostNode` BETWEEN flag. Do not invent JOIN-style host
+    after overlapping combo children (same wall as live `--host-func`
+    after `launch_graph`). Do not invent `stream_update_capture_dependencies`
+    as an Engine flag (same topology as begin-capture deps). Do not invent
+    `--graph-if` until `graph_add_set_conditional` / exec SetParams exists
+    (`launch_graph` resets handles to create-time default). Do not invent
+    `--memcpy-peer` host-sync pin_hot (alias of D2D; wall matches after
+    `score()`). Do not invent `graph_add_empty` as a decode-path flag
+    (1 ns join/fork). Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

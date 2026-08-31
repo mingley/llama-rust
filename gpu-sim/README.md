@@ -336,6 +336,10 @@ flags are `WaitValueFlags` (FLUSH Invalid); write flags are
 CUDA flags word (`BatchMemOpFlags`; must be 0). Typed helpers stay.
 `graph_add_dependencies` is `cudaGraphAddDependencies` (independent nodes
 may Hyper-Q overlap at launch; capture records same-stream edges).
+`expertvm --graph-build-deps` adds those edges. `graph_add_host_func` is
+`cudaGraphAddHostNode`. `expertvm --graph-host` inserts host nodes BETWEEN
+`--graph-build` combo children (serialize through `host_func_ns`; not a JOIN
+after overlap).
 `graph_add_dependencies_n` / `graph_remove_dependencies_n` are the same
 APIs with `numDependencies` from/to pairs (all-or-nothing).
 `graph_remove_dependencies` is `cudaGraphRemoveDependencies` (illegal on an
@@ -468,7 +472,9 @@ evict and updates the next miss instead of instantiate. `--graph-clone`
 copies the capture (`cudaGraphClone`) before instantiate. `--graph-build` is
 `cudaGraphCreate` / `cudaGraphAdd*` (no idle stream; combo children may
 Hyper-Q overlap unless `graph_add_dependencies` chains them).
-`expertvm --graph-build-deps` adds those edges. `--graph-piecewise`
+`expertvm --graph-build-deps` adds those edges. `--graph-host` inserts
+`graph_add_host_func` BETWEEN those children (`host_func_ns`; not a JOIN).
+`--graph-piecewise`
 is `cudaStreamBeginCaptureToGraph` combo parents (independent child roots).
 `expertvm --graph-capture-deps` chains those fragments (`numDependencies > 0`).
 `--graph-mem` is in-graph

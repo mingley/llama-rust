@@ -408,6 +408,7 @@ impl SchedRt {
             .with_mem_sync_launch_map(cfg.mem_sync_launch_map)
             .with_set_params(cfg.graph_set_params)
             .with_build_deps(cfg.graph_build_deps)
+            .with_graph_host(cfg.graph_host)
             .with_piecewise(cfg.graph_piecewise)
             .with_capture_deps(cfg.graph_capture_deps)
             .with_enable(cfg.graph_enable),

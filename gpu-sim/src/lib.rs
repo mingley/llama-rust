@@ -817,6 +817,8 @@
 //! [`Sim::graph_add_dependencies`] is `cudaGraphAddDependencies` (node indices;
 //! independent nodes may Hyper-Q overlap at launch; capture records same-stream
 //! edges). `expertvm --graph-build-deps` chains `--graph-build` combo children.
+//! `expertvm --graph-host` inserts [`graph_add_host_func`](Sim::graph_add_host_func)
+//! BETWEEN those children (`host_func_ns` tax; not a JOIN after overlap).
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n) /
 //! [`graph_remove_dependencies_n`](Sim::graph_remove_dependencies_n) are the
 //! same APIs with `numDependencies` from/to pairs (all-or-nothing). [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
@@ -20029,6 +20031,58 @@ mod tests {
         assert!(
             exclusive > overlap,
             "one compute slot must serialize independent nodes; exclusive={exclusive} overlap={overlap}"
+        );
+    }
+
+    #[test]
+    fn graph_add_host_between_independent_children_serializes() {
+        let kind = KernelKind::other(1 << 40, 4096);
+        let run = |host: bool, chain: bool| {
+            let mut sim = Sim::new(h100().with_compute_slots(2));
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let a = sim.alloc(d, 4096, s).unwrap();
+            let b = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+            enq(sim.memcpy_pinned_to_device(d, b, 4096, s));
+            sim.synchronize().unwrap();
+            let l0 = sim.create_graph(d, s).unwrap();
+            sim.graph_add_kernel(l0, kind.clone(), &[a], &[a]).unwrap();
+            let _ = sim.instantiate_graph(l0).unwrap();
+            let l1 = sim.create_graph(d, s).unwrap();
+            sim.graph_add_kernel(l1, kind.clone(), &[b], &[b]).unwrap();
+            let _ = sim.instantiate_graph(l1).unwrap();
+            let parent = sim.create_graph(d, s).unwrap();
+            sim.graph_add_child(parent, l0).unwrap();
+            if host {
+                sim.graph_add_host_func(parent).unwrap();
+                sim.graph_add_child(parent, l1).unwrap();
+                sim.graph_add_dependencies(parent, 0, 1).unwrap();
+                sim.graph_add_dependencies(parent, 1, 2).unwrap();
+            } else {
+                sim.graph_add_child(parent, l1).unwrap();
+                if chain {
+                    sim.graph_add_dependencies(parent, 0, 1).unwrap();
+                }
+            }
+            let _ = sim.instantiate_graph(parent).unwrap();
+            sim.upload_graph(parent).unwrap();
+            let t0 = sim.clock_ns();
+            let n = sim.launch_graph(parent, s).unwrap();
+            sim.synchronize().unwrap();
+            assert!(n >= 2);
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let overlap = run(false, false);
+        let chained = run(false, true);
+        let hosted = run(true, false);
+        assert!(
+            overlap < chained,
+            "independent children must Hyper-Q overlap; overlap={overlap} chained={chained}"
+        );
+        assert!(
+            chained < hosted,
+            "host between children must add host_func_ns; chained={chained} hosted={hosted}"
         );
     }
 

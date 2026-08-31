@@ -33,7 +33,7 @@ use expertvm::{GpuFill, GpuStoreCfg, Prefetch};
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--model-id ID] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-build-deps] [--graph-piecewise] [--graph-capture-deps] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--event-blocking-sync] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--mempool-max N] [--shareable] [--pageable] [--host-register] [--host-register-mapped] [--sync-memops] [--device-sync-memops] [--memcpy-batch] [--memcpy-during] [--memcpy-any] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--l2-ratio N] [--l2-streaming] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-load-balance] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--mem-sync-map identity|collapse] [--mem-sync-launch] [--mem-sync-launch-map] [--shared-mem] default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--model-id ID] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-build-deps] [--graph-host] [--graph-piecewise] [--graph-capture-deps] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--event-blocking-sync] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--mempool-max N] [--shareable] [--pageable] [--host-register] [--host-register-mapped] [--sync-memops] [--device-sync-memops] [--memcpy-batch] [--memcpy-during] [--memcpy-any] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--l2-ratio N] [--l2-streaming] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-load-balance] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--mem-sync-map identity|collapse] [--mem-sync-launch] [--mem-sync-launch-map] [--shared-mem] default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
@@ -57,6 +57,7 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --graph-clone     cudaGraphClone before instantiate (`--expert-sim`)
       --graph-build     cudaGraphCreate / cudaGraphAdd* instead of capture (`--expert-sim`; independent children may Hyper-Q overlap; not with `--graph-piecewise`)
       --graph-build-deps  cudaGraphAddDependencies on `--graph-build` combo parents (`--expert-sim`; needs `--graph-build`; sibling GEMMs serialize; legal with `--pdl` and `--cooperative`)
+      --graph-host      cudaGraphAddHostNode BETWEEN `--graph-build` combo children (`--expert-sim`; needs `--graph-build`; sibling GEMMs serialize through `host_func_ns`; does not imply `--host-func`; legal with `--pdl` and `--cooperative`)
       --graph-piecewise cudaStreamBeginCaptureToGraph combo parents (`--expert-sim`; independent child roots may Hyper-Q overlap; not with `--graph-build`)
       --graph-capture-deps  cudaStreamBeginCaptureToGraph deps on `--graph-piecewise` combo parents (`--expert-sim`; needs `--graph-piecewise`; sibling GEMMs serialize; legal with `--pdl` and `--cooperative`)
       --graph-enable    cudaGraphNodeSetEnabled skip extra combo children (`--expert-sim`; walker; not with `--device-launch`)
@@ -165,14 +166,14 @@ completed blocks so a later prompt can hit them after a rewind (`page_hits`).
 leftover prefill while any live sequence is already decoding. `--slo-reject` /
 `--ttft-slo-ns` drop a waiter whose gpu-sim queue wait meets the TTFT budget
 (`--expert-sim`). `--itl-slo-ns` counts later-token ITL misses (does not drop).
-`--cuda-graphs` / `--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-build-deps` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-enable` / `--graph-mem` / `--graph-auto-free` / `--graph-mem-trim` / `--timing-events` / `--event-blocking-sync` are
+`--cuda-graphs` / `--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-build` / `--graph-build-deps` / `--graph-host` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-enable` / `--graph-mem` / `--graph-auto-free` / `--graph-mem-trim` / `--timing-events` / `--event-blocking-sync` are
 the same SimulatedGpuStore knobs as `gguf_gemv engine`. `--host-func` /
 `--blocking-streams` / `--sync-alloc` / `--mempool` / `--mempool-trim` / `--mempool-no-reuse` / `--mempool-max` / `--shareable` / `--vmm-page` /
 `--pageable` / `--host-register` / `--host-register-mapped` / `--sync-memops` / `--device-sync-memops` / `--memcpy-batch` / `--memcpy-during` / `--memcpy-any` / `--accessed-by` / `--legacy-null` / `--stream-priority` / `--seq-streams` /
 `--kv-sim` / `--kv-bytes` / `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--l2-fetch` / `--l2-ratio` / `--l2-streaming` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--cluster-load-balance` / `--cluster-must-set` / `--required-cluster` / `--max-shared` / `--func-max-shared` / `--max-l1` / `--non-portable-cluster` / `--sync-policy` / `--device-sync-policy` / `--event-blocking-sync` / `--mem-sync-domain` / `--mem-sync-map` / `--mem-sync-launch` / `--mem-sync-launch-map` / `--shared-mem` / `--func-shared-mem` / `--device-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--stream-attach` / `--managed-host` / `--prefetch-host` / `--wait-value` / `--multicast` /
 `--compute-slots` / `--decode-sms` match
 `GpuStoreCfg`. `--mempool-max N` is `cudaMemPoolProps::maxSize` (implies `--mempool`;
-illegal with `--sync-alloc`; `N>0`; legal with `--pdl` and `--cooperative`). `--memcpy-during` is `cudaMemcpySrcAccessOrderDuringApiCall` on `--memcpy-batch` prefetch (needs `--memcpy-batch`; the batch API waits those copies; identity stays Stream order; legal with `--pdl` and `--cooperative`). `--memcpy-any` is `cudaMemcpySrcAccessOrderAny` on `--memcpy-batch` prefetch (needs `--memcpy-batch`; empty deps; no API wait; not with `--memcpy-during`; legal with `--pdl` and `--cooperative`). `--graph-capture-deps` is `cudaStreamBeginCaptureToGraph` deps on `--graph-piecewise` combo parents (needs `--graph-piecewise`; later fragments chain so sibling GEMMs serialize; empty deps stay extra roots; store GEMM stays per-leaf; legal with `--pdl` and `--cooperative`). `--graph-build-deps` is `cudaGraphAddDependencies` on `--graph-build` combo parents (needs `--graph-build`; later children chain so sibling GEMMs serialize; empty edges stay independent; store GEMM stays per-leaf; legal with `--pdl` and `--cooperative`). `--kv-sim` bills interned KV on the same clock as expert H2D
+illegal with `--sync-alloc`; `N>0`; legal with `--pdl` and `--cooperative`). `--memcpy-during` is `cudaMemcpySrcAccessOrderDuringApiCall` on `--memcpy-batch` prefetch (needs `--memcpy-batch`; the batch API waits those copies; identity stays Stream order; legal with `--pdl` and `--cooperative`). `--memcpy-any` is `cudaMemcpySrcAccessOrderAny` on `--memcpy-batch` prefetch (needs `--memcpy-batch`; empty deps; no API wait; not with `--memcpy-during`; legal with `--pdl` and `--cooperative`). `--graph-capture-deps` is `cudaStreamBeginCaptureToGraph` deps on `--graph-piecewise` combo parents (needs `--graph-piecewise`; later fragments chain so sibling GEMMs serialize; empty deps stay extra roots; store GEMM stays per-leaf; legal with `--pdl` and `--cooperative`). `--graph-build-deps` is `cudaGraphAddDependencies` on `--graph-build` combo parents (needs `--graph-build`; later children chain so sibling GEMMs serialize; empty edges stay independent; store GEMM stays per-leaf; legal with `--pdl` and `--cooperative`). `--graph-host` is `cudaGraphAddHostNode` BETWEEN `--graph-build` combo children (needs `--graph-build`; later children serialize through `host_func_ns`; does not imply `--host-func`; store GEMM stays per-leaf; legal with `--pdl` and `--cooperative`). `--kv-sim` bills interned KV on the same clock as expert H2D
 (distinct from `expertvm kv`; default off). `--decode-priority` ITL samples
 the decode compute stream so leftover prefill does not inflate it.
 `--compute-slots N` (`N>=2`, with `--decode-priority`) lets leftover prefill
@@ -511,6 +512,9 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
     if let Err(e) = n.plan.gpu.check_graph_build_deps() {
         return usage_err(&e);
     }
+    if let Err(e) = n.plan.gpu.check_graph_host() {
+        return usage_err(&e);
+    }
     if let Err(e) = n.plan.gpu.check_graph_capture_deps() {
         return usage_err(&e);
     }
@@ -613,7 +617,7 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--model-id ID] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-build-deps] [--graph-piecewise] [--graph-capture-deps] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--event-blocking-sync] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--mempool-max N] [--shareable] [--pageable] [--host-register] [--host-register-mapped] [--sync-memops] [--device-sync-memops] [--memcpy-batch] [--memcpy-during] [--memcpy-any] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--l2-ratio N] [--l2-streaming] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-load-balance] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--mem-sync-map identity|collapse] [--mem-sync-launch] [--mem-sync-launch-map] [--shared-mem] default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--model-id ID] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-build] [--graph-build-deps] [--graph-host] [--graph-piecewise] [--graph-capture-deps] [--graph-enable] [--graph-mem] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--event-blocking-sync] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--blocking-streams] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--mempool-max N] [--shareable] [--pageable] [--host-register] [--host-register-mapped] [--sync-memops] [--device-sync-memops] [--memcpy-batch] [--memcpy-during] [--memcpy-any] [--accessed-by] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--l2-ratio N] [--l2-streaming] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-load-balance] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--mem-sync-map identity|collapse] [--mem-sync-launch] [--mem-sync-launch-map] [--shared-mem] default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -2473,6 +2477,45 @@ mod tests {
         ]);
         assert!(a.gpu_cfg.graph_build_deps);
         assert!(a.gpu_cfg.pdl);
+        let err = parse_serve_args(["m.gguf", "--graph-host"]).unwrap_err();
+        assert!(err.contains("--graph-host requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--graph-host"]).unwrap_err();
+        assert!(err.contains("--graph-host requires --expert-sim"), "{err}");
+        let err =
+            parse_serve_args(["m.gguf", "--engine", "--expert-sim", "--graph-host"]).unwrap_err();
+        assert!(err.contains("--graph-host needs --graph-build"), "{err}");
+        let err =
+            parse_serve_args(["m.gguf", "--engine", "--expert-sim", "--graph-host=1"]).unwrap_err();
+        assert!(err.contains("--graph-host does not take a value"), "{err}");
+        let a = run(&[
+            "m.gguf",
+            "--engine",
+            "--expert-sim",
+            "--graph-build",
+            "--graph-host",
+        ]);
+        assert!(a.gpu_cfg.graph_build);
+        assert!(a.gpu_cfg.graph_host);
+        let a = run(&[
+            "m.gguf",
+            "--engine",
+            "--expert-sim",
+            "--graph-build",
+            "--graph-host",
+            "--pdl",
+        ]);
+        assert!(a.gpu_cfg.graph_host);
+        assert!(a.gpu_cfg.pdl);
+        let a = run(&[
+            "m.gguf",
+            "--engine",
+            "--expert-sim",
+            "--graph-build",
+            "--graph-host",
+            "--cooperative",
+        ]);
+        assert!(a.gpu_cfg.graph_host);
+        assert!(a.gpu_cfg.cooperative);
         let err = parse_serve_args(["m.gguf", "--graph-piecewise"]).unwrap_err();
         assert!(err.contains("--graph-piecewise requires --engine"), "{err}");
         let err = parse_serve_args(["m.gguf", "--engine", "--graph-piecewise"]).unwrap_err();

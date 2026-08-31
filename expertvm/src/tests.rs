@@ -3583,6 +3583,50 @@ fn cuda_graphs_graph_build_deps_serializes_combo_children() {
 }
 
 #[test]
+fn cuda_graphs_graph_host_serializes_combo_children_with_host_tax() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000\nhbm_bps=1000000000000\ngraph_instantiate_ns=1\ngraph_upload_ns=1\ngraph_launch_ns=1\nlaunch_overhead_ns=1\ncopy_engines=2\nhost_func_ns=100000\n",
+    )
+    .expect("profile");
+    let run = |graph_build_deps: bool, graph_host: bool| {
+        sim_replay_cfg(
+            &t,
+            p.clone(),
+            SimCfg {
+                cuda_graphs: true,
+                graph_build: true,
+                graph_build_deps,
+                graph_host,
+                compute_slots: 2,
+                ..SimCfg::lru(2, 4096, 0)
+            },
+        )
+        .expect("replay")
+    };
+    let bld = run(false, false);
+    let chained = run(true, false);
+    let hosted = run(false, true);
+    assert_eq!(bld.hits, hosted.hits);
+    assert_eq!(bld.misses, hosted.misses);
+    assert_eq!(chained.hits, hosted.hits);
+    assert!(
+        bld.sim_ns < hosted.sim_ns,
+        "graph-host must serialize combo children with host tax; host={} build={}",
+        hosted.sim_ns,
+        bld.sim_ns
+    );
+    assert!(
+        chained.sim_ns < hosted.sim_ns,
+        "graph-host must add host_func_ns over build-deps; host={} deps={}",
+        hosted.sim_ns,
+        chained.sim_ns
+    );
+}
+
+#[test]
 fn cuda_graphs_graph_piecewise_independent_children_overlap() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1])],
@@ -3739,6 +3783,82 @@ fn sim_replay_graph_build_deps_needs_graph_build() {
 }
 
 #[test]
+fn sim_replay_graph_host_needs_graph_build() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    match sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            graph_host: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("graph-host without graph-build must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("graph-host needs graph-build"),
+            "{err}"
+        ),
+    }
+    match sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            cuda_graphs: true,
+            graph_host: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("graph-host with cuda-graphs still needs graph-build"),
+        Err(err) => assert!(
+            err.to_string().contains("graph-host needs graph-build"),
+            "{err}"
+        ),
+    }
+    match sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            cuda_graphs: true,
+            graph_piecewise: true,
+            graph_host: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("graph-host with piecewise still needs graph-build"),
+        Err(err) => assert!(
+            err.to_string().contains("graph-host needs graph-build"),
+            "{err}"
+        ),
+    }
+    let _ok = sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            cuda_graphs: true,
+            graph_build: true,
+            graph_host: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    )
+    .expect("graph-build arms graph-host");
+    let _both = sim_replay_cfg(
+        &t,
+        profile,
+        SimCfg {
+            cuda_graphs: true,
+            graph_build: true,
+            graph_build_deps: true,
+            graph_host: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    )
+    .expect("graph-host with build-deps");
+}
+
+#[test]
 fn sim_replay_graph_capture_deps_needs_graph_piecewise() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1])],
@@ -3880,6 +4000,46 @@ fn simulated_gpu_store_graph_build_deps_needs_graph_build() {
     )
     .expect("graph-build arms build-deps");
     assert!(gpu.graph_build_deps());
+    let _s = gpu.score().expect("score");
+}
+
+#[test]
+fn simulated_gpu_store_graph_host_needs_graph_build() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile.clone(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_host: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("graph-host without graph-build must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("graph-host needs graph-build"),
+            "{err}"
+        ),
+    }
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_build: true,
+            graph_host: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("graph-build arms graph-host");
+    assert!(gpu.graph_host());
     let _s = gpu.score().expect("score");
 }
 

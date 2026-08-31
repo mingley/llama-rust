@@ -80,6 +80,9 @@
 //! sibling GEMMs serialize; store GEMM stays per-leaf). `--graph-build-deps`
 //! is `cudaGraphAddDependencies` on `--graph-build` combo parents (needs
 //! `--graph-build`; sibling GEMMs serialize; store GEMM stays per-leaf).
+//! `--graph-host` is `cudaGraphAddHostNode` BETWEEN those combo children
+//! (needs `--graph-build`; sibling GEMMs serialize through `host_func_ns`;
+//! does not imply `--host-func`; store GEMM stays per-leaf).
 //! `--cluster N` is `cudaLaunchAttributeClusterDimension` on grouped expert
 //! GEMMs: the launch occupies `min(N, compute_slots)` Hyper-Q slots (Hopper
 //! portable max 8; legal with `--pdl` and `--cooperative`). `--preferred-cluster N`
@@ -4476,6 +4479,39 @@ mod tests {
         assert_eq!(bld.2, 4);
         assert_eq!(deps.2, 4);
         assert_eq!(bld.4, deps.4, "graph-build-deps must keep greedy identity");
+    }
+
+    #[test]
+    fn engine_gpu_graph_host_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse(
+            "gpus=1\nfp16_flops=1000000\ngraph_instantiate_ns=1\ngraph_upload_ns=1\ngraph_launch_ns=1\nlaunch_overhead_ns=1\ncopy_engines=2\n",
+        )
+        .expect("graph profile");
+        let bld = mixed_gpu_decode_itl_at(
+            bytes.clone(),
+            false,
+            None,
+            GpuStoreCfg {
+                graph_build: true,
+                ..GpuStoreCfg::default()
+            },
+            profile.clone(),
+        );
+        let host = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                graph_build: true,
+                graph_host: true,
+                ..GpuStoreCfg::default()
+            },
+            profile,
+        );
+        assert_eq!(bld.2, 4);
+        assert_eq!(host.2, 4);
+        assert_eq!(bld.4, host.4, "graph-host must keep greedy identity");
     }
 
     #[test]
