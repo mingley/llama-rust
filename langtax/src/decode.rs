@@ -5815,14 +5815,17 @@ fn tiny_arch_gguf_gqa(
                 pack_vec1d(vec1d, &ones),
             ));
             if spec.gemma4_fused {
+                // F32 plus a distinct seed so fused logits cannot match split
+                // Q4_K gate/up (Q4_K GELU(gate) on the tiny can be ~0 so the
+                // up-half Q4_K difference would not move the 6 logits).
                 tensors.push(layer_tw_exps(
                     &spec,
                     "blk.0.ffn_gate_up_exps.weight",
                     n_embd,
                     n_ff.saturating_mul(2),
                     TINY_GEMMA4_N_EXPERT,
-                    15,
-                    GgmlType::Q4_K,
+                    23,
+                    GgmlType::F32,
                 ));
             } else {
                 tensors.push(layer_tw_exps(
@@ -15702,6 +15705,10 @@ mod tests {
         assert_eq!(
             g.tensor("blk.0.ffn_gate_up_exps.weight").unwrap().shape,
             &[256, 512, 4]
+        );
+        assert_eq!(
+            g.tensor("blk.0.ffn_gate_up_exps.weight").unwrap().ty,
+            GgmlType::F32
         );
         let model = Llama::from_gguf(g.clone()).expect("model");
         assert!(model.gemma4);
