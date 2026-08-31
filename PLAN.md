@@ -4299,7 +4299,20 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-385. [ ] Next numbered PLAN item after 384 is the next `gpu-sim` / Engine /
+385. [x] Official Gemma4 fused `ffn_gate_up_exps` (`architecture=gemma4` with
+    fused experts instead of separate `ffn_gate_exps` / `ffn_up_exps`): same
+    arch as dense/MoE/PLE gemma4, not a second family. Decode follows
+    llama.cpp `src/models/gemma4.cpp` `build_moe_ffn`: one GEMV of twice
+    `n_ff` rows, then split gate then up, then GELU. DirectStore catalogs
+    fused bytes in `ExpertParts.gate` with empty `up`. Writer-tiny
+    `tiny-gemma4-moe-fused` (`n_expert=4`, `n_expert_used=2`). Split
+    `tiny-gemma4-moe`, PLE, and MoE plus PLE stay. Shared-KV / mixed
+    SWA/global head dims stay refused with named keys. Decode identity vs
+    oracle. ExpertAccess traces plus DirectStore identity.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+386. [ ] Next numbered PLAN item after 385 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

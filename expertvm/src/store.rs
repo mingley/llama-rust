@@ -7,7 +7,8 @@ use crate::replay::{replay, ReplayRow};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// Gate / up / down bytes for one routed expert. DirectStore identity is
-/// bit-identical copies of the GGUF `*_exps` parts.
+/// bit-identical copies of the GGUF `*_exps` parts. Official gemma4 fused
+/// `ffn_gate_up_exps` lives in `gate` with empty `up`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ExpertParts {
     /// `ffn_gate_exps` part.
