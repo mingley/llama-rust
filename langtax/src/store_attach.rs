@@ -105,6 +105,8 @@ pub(crate) struct GpuCli {
     ///
     /// Implies [`Self::l2_persist`]. `1..=1000` when set.
     pub l2_ratio: u16,
+    /// `cudaAccessPropertyStreaming` (`GpuStoreCfg::l2_streaming`). Needs persist.
+    pub l2_streaming: bool,
     /// Hopper cluster X size (`GpuStoreCfg::cluster`). `0` is off.
     pub cluster: u8,
     /// True when `--cluster` appeared.
@@ -261,6 +263,7 @@ impl GpuCli {
             "--pdl" => &mut self.pdl,
             "--l2-persist" => &mut self.l2_persist,
             "--l2-reset" => &mut self.l2_reset,
+            "--l2-streaming" => &mut self.l2_streaming,
             "--cluster-spread" => &mut self.cluster_spread,
             "--func-cluster-spread" => &mut self.func_cluster_spread,
             "--cluster-load-balance" => &mut self.cluster_load_balance,
@@ -615,6 +618,19 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--l2-streaming` needs persist (`--l2-persist` / reset / fetch / ratio).
+    pub(crate) fn check_l2_streaming(self) -> Result<(), String> {
+        if self.l2_streaming
+            && !self.l2_persist
+            && !self.l2_reset
+            && self.l2_fetch == 0
+            && self.l2_ratio == 0
+        {
+            return Err("--l2-streaming needs --l2-persist".into());
+        }
+        Ok(())
+    }
+
     /// `--memcpy-during` needs `--memcpy-batch`.
     pub(crate) fn check_memcpy_during(self) -> Result<(), String> {
         if self.memcpy_during && !self.memcpy_batch {
@@ -681,6 +697,7 @@ impl GpuCli {
             (self.l2_reset, "--l2-reset"),
             (self.l2_fetch != 0, "--l2-fetch"),
             (self.l2_ratio != 0, "--l2-ratio"),
+            (self.l2_streaming, "--l2-streaming"),
             (self.multicast, "--multicast"),
             (self.vmm_page_set, "--vmm-page"),
             (self.compute_slots_set, "--compute-slots"),
@@ -1050,6 +1067,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         l2_reset: gpu.l2_reset,
         l2_fetch: gpu.l2_fetch,
         l2_ratio: gpu.l2_ratio,
+        l2_streaming: gpu.l2_streaming,
         cluster: gpu.cluster,
         preferred_cluster: gpu.preferred_cluster,
         cluster_spread: gpu.cluster_spread,

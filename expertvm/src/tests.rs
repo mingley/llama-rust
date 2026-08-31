@@ -1,7 +1,7 @@
 //! Library tests: JSONL, Zipf-ish traces, policy order, leases, gpu-sim.
 
 use super::*;
-use gpu_sim::{AllocId, DeviceId, EventId, GpuOp, HardwareProfile, Place};
+use gpu_sim::{AccessProperty, AllocId, DeviceId, EventId, GpuOp, HardwareProfile, Place};
 use std::collections::BTreeSet;
 
 fn ev(token: u32, layer: u32, experts: &[u32]) -> ExpertAccess {
@@ -7898,6 +7898,37 @@ fn gemm_flags_persist_ratio_is_launch_attr() {
 }
 
 #[test]
+fn gemm_flags_l2_streaming_is_streaming_hit() {
+    use crate::sim_replay::GemmFlags;
+    let id = AllocId(1);
+    let persist = GemmFlags {
+        l2_persist: true,
+        ..GemmFlags::default()
+    }
+    .kernel_attrs(id);
+    assert_eq!(
+        persist.access_policy.expect("window").hit,
+        AccessProperty::Persisting
+    );
+    let streaming = GemmFlags {
+        l2_persist: true,
+        l2_streaming: true,
+        ..GemmFlags::default()
+    }
+    .kernel_attrs(id);
+    let window = streaming.access_policy.expect("window");
+    assert_eq!(window.hit, AccessProperty::Streaming);
+    assert_eq!(window.miss, AccessProperty::Streaming);
+    assert_eq!(window.hit_ratio_permille, 1000);
+    let none = GemmFlags {
+        l2_streaming: true,
+        ..GemmFlags::default()
+    }
+    .kernel_attrs(id);
+    assert!(none.access_policy.is_none());
+}
+
+#[test]
 fn gemm_flags_mem_sync_launch_is_launch_attr() {
     use crate::sim_replay::GemmFlags;
     let id = AllocId(1);
@@ -9714,6 +9745,59 @@ fn sim_replay_l2_ratio_refuses_over_1000() {
             "{err}"
         ),
     }
+}
+
+#[test]
+fn sim_replay_l2_streaming_keeps_hits() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000000000000\nlaunch_overhead_ns=1\nhbm_bps=1000000000\nl2_persist_hit_permille=1000\n",
+    )
+    .expect("memory-bound persist profile");
+    let persist = SimCfg {
+        l2_persist: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let streaming = SimCfg {
+        l2_persist: true,
+        l2_streaming: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), persist).expect("persist");
+    let b = sim_replay_cfg(&t, profile, streaming).expect("streaming");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+    assert!(
+        b.sim_ns > a.sim_ns,
+        "streaming hits must bill more HBM than persist; streaming={} persist={}",
+        b.sim_ns,
+        a.sim_ns
+    );
+}
+
+#[test]
+fn sim_replay_l2_streaming_needs_l2_persist() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let on = SimCfg {
+        l2_streaming: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    match sim_replay_cfg(&t, profile.clone(), on) {
+        Ok(_) => panic!("l2-streaming without persist must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("l2-streaming needs l2-persist"),
+            "{err}"
+        ),
+    }
+    let ratio = SimCfg {
+        l2_ratio: 500,
+        l2_streaming: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let _ok = sim_replay_cfg(&t, profile, ratio).expect("ratio arms persist");
 }
 
 #[test]
@@ -12699,6 +12783,91 @@ fn simulated_gpu_store_l2_ratio_refuses_over_1000() {
             "{err}"
         ),
     }
+}
+
+#[test]
+fn simulated_gpu_store_l2_streaming_is_slower_than_persist() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000000000000\nlaunch_overhead_ns=1\nhbm_bps=1000000000\nl2_persist_hit_permille=1000\n",
+    )
+    .expect("memory-bound persist profile");
+    let run = |l2_persist: bool, l2_streaming: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                l2_persist,
+                l2_streaming,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        assert_eq!(gpu.l2_streaming(), l2_streaming);
+        for key in t.keys() {
+            let _p = gpu.acquire(key).expect("acquire");
+            gpu.release(key);
+        }
+        let metrics = gpu.metrics();
+        let score = gpu.score().expect("score");
+        (metrics.hits, metrics.misses, score.wall_ns)
+    };
+    let persist = run(true, false);
+    let streaming = run(true, true);
+    assert_eq!(persist.0, streaming.0);
+    assert_eq!(persist.1, streaming.1);
+    assert!(
+        streaming.2 > persist.2,
+        "streaming hits must bill more HBM than persist; streaming={} persist={}",
+        streaming.2,
+        persist.2
+    );
+}
+
+#[test]
+fn simulated_gpu_store_l2_streaming_needs_l2_persist() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile.clone(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            l2_streaming: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("l2-streaming without persist must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("l2-streaming needs l2-persist"),
+            "{err}"
+        ),
+    }
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            l2_ratio: 500,
+            l2_streaming: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("ratio arms persist");
+    assert!(gpu.l2_streaming());
+    let _s = gpu.score().expect("score");
 }
 
 #[test]

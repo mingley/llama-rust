@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `mempool_trim`, `mempool_no_reuse`, `mempool_max`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `memcpy_during`, `memcpy_any`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/enable, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `l2_ratio`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `mem_sync_launch`, `mem_sync_launch_map`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
+//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `l2_ratio`, `l2_streaming`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `mem_sync_launch`, `mem_sync_launch_map`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -72,6 +72,8 @@
 //! (`32`/`64`/`128`; implies `--l2-persist`; access-policy windows must align).
 //! `--l2-ratio N` is CUDA `hitRatio` as ‰ (`1..=1000`; implies `--l2-persist`;
 //! unset is 1000; a partial ratio bills more HBM than full persist).
+//! `--l2-streaming` is `cudaAccessPropertyStreaming` for persist GEMM window
+//! hits (needs `--l2-persist`; a reused expert bills full HBM).
 //! `--cluster N` is `cudaLaunchAttributeClusterDimension` on grouped expert
 //! GEMMs: the launch occupies `min(N, compute_slots)` Hyper-Q slots (Hopper
 //! portable max 8; legal with `--pdl` and `--cooperative`). `--preferred-cluster N`
@@ -4353,6 +4355,50 @@ mod tests {
             half.1.wall_ns,
             persist.1.wall_ns,
             half.1.line(),
+            persist.1.line()
+        );
+    }
+
+    #[test]
+    fn engine_gpu_l2_streaming_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse(
+            "gpus=1\nfp16_flops=1000000000000000\nlaunch_overhead_ns=1\nhbm_bps=1000000000\nl2_persist_hit_permille=1000\n",
+        )
+        .expect("memory-bound persist profile");
+        let persist = mixed_gpu_decode_itl_at(
+            bytes.clone(),
+            false,
+            None,
+            GpuStoreCfg {
+                l2_persist: true,
+                ..GpuStoreCfg::default()
+            },
+            profile.clone(),
+        );
+        let streaming = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                l2_persist: true,
+                l2_streaming: true,
+                ..GpuStoreCfg::default()
+            },
+            profile,
+        );
+        assert_eq!(persist.2, 4);
+        assert_eq!(streaming.2, 4);
+        assert_eq!(
+            persist.4, streaming.4,
+            "l2-streaming must keep greedy identity"
+        );
+        assert!(
+            streaming.1.wall_ns > persist.1.wall_ns,
+            "streaming hits must bill more HBM than persist; streaming={} persist={} streaming_line={} persist_line={}",
+            streaming.1.wall_ns,
+            persist.1.wall_ns,
+            streaming.1.line(),
             persist.1.line()
         );
     }

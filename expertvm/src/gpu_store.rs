@@ -297,6 +297,12 @@ pub struct GpuStoreCfg {
     /// more HBM than full persist on a reused expert. Decode identity stays
     /// 1000.
     pub l2_ratio: u16,
+    /// `cudaAccessPropertyStreaming` for [`Self::l2_persist`] window hits.
+    ///
+    /// Needs persist (or reset/fetch/ratio that arm persist). Hits stay the
+    /// same; a reused expert bills full HBM (no persist fill). Decode identity
+    /// stays Persisting hits.
+    pub l2_streaming: bool,
     /// Hopper cluster X size (`cudaLaunchAttributeClusterDimension`). `0` is off.
     ///
     /// Occupies `min(N, compute_slots)` Hyper-Q slots. Decode identity stays
@@ -608,6 +614,7 @@ pub struct SimulatedGpuStore {
     l2_persist: bool,
     l2_reset: bool,
     l2_ratio: u16,
+    l2_streaming: bool,
     cluster: u8,
     preferred_cluster: u8,
     cluster_spread: bool,
@@ -821,6 +828,8 @@ impl SimulatedGpuStore {
     /// persist; windows must align; `32`/`64`/`128`).
     /// [`GpuStoreCfg::l2_ratio`] is CUDA `hitRatio` as ‰ (implies persist;
     /// `1..=1000`; unset is 1000).
+    /// [`GpuStoreCfg::l2_streaming`] is `cudaAccessPropertyStreaming` on that
+    /// window (needs persist; reused expert bills full HBM).
     /// [`GpuStoreCfg::cluster`] / [`GpuStoreCfg::preferred_cluster`] are Hopper
     /// thread-block cluster dims.
     /// [`GpuStoreCfg::cluster_spread`] is launch-attribute Spread.
@@ -980,6 +989,11 @@ impl SimulatedGpuStore {
         check_max_l1(cfg.max_l1, cfg.func_max_shared, cfg.max_shared)?;
         check_l2_fetch(cfg.l2_fetch)?;
         check_l2_ratio(cfg.l2_ratio)?;
+        if cfg.l2_streaming
+            && !persist_armed(cfg.l2_persist, cfg.l2_reset, cfg.l2_fetch, cfg.l2_ratio)
+        {
+            return Err(Error::Store("l2-streaming needs l2-persist"));
+        }
         if cfg.shareable && (cfg.sync_alloc || fill != GpuFill::Pinned) {
             return Err(Error::Store("shareable needs cudaMallocAsync"));
         }
@@ -1148,6 +1162,7 @@ impl SimulatedGpuStore {
             l2_persist: persist_armed(cfg.l2_persist, cfg.l2_reset, cfg.l2_fetch, cfg.l2_ratio),
             l2_reset: cfg.l2_reset,
             l2_ratio: cfg.l2_ratio,
+            l2_streaming: cfg.l2_streaming,
             cluster: cfg.cluster,
             preferred_cluster: cfg.preferred_cluster,
             cluster_spread: cfg.cluster_spread,
@@ -1374,6 +1389,12 @@ impl SimulatedGpuStore {
         }
     }
 
+    /// Whether GEMM windows use `cudaAccessPropertyStreaming` hits.
+    #[must_use]
+    pub fn l2_streaming(&self) -> bool {
+        self.l2_streaming
+    }
+
     /// Whether this store set `cudaFuncAttributeClusterDimMustBeSet`.
     #[must_use]
     pub fn cluster_must_set(&self) -> bool {
@@ -1478,6 +1499,7 @@ impl SimulatedGpuStore {
             pdl: self.pdl,
             l2_persist: self.l2_persist,
             l2_ratio: self.l2_ratio,
+            l2_streaming: self.l2_streaming,
             cluster: self.cluster,
             preferred_cluster: self.preferred_cluster,
             cluster_spread: self.cluster_spread,

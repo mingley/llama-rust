@@ -600,7 +600,9 @@
 //! (CUDA default size is 0). [`AccessPolicyWindow::hit_ratio_permille`] is
 //! CUDA `hitRatio` (`1000` = the whole window). `expertvm sim --l2-ratio N` /
 //! Engine `--expert-sim --l2-ratio N` sets that ‰ (implies persist; `1..=1000`;
-//! unset is 1000). [`set_stream_access_policy`](Sim::set_stream_access_policy)
+//! unset is 1000). `expertvm sim --l2-streaming` / Engine
+//! `--expert-sim --l2-streaming` set [`AccessProperty::Streaming`] hits on that
+//! window (needs persist; a reused expert bills full HBM). [`set_stream_access_policy`](Sim::set_stream_access_policy)
 //! is the stream twin (`cudaStreamAttributeAccessPolicyWindow`);
 //! [`kernel`](Sim::kernel) inherits it. `expertvm sim --l2-persist` /
 //! Engine `--expert-sim --l2-persist` enable the persist limit and attach a

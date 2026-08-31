@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaAccessPropertyStreaming` persist-window hits
+
+`GpuStoreCfg::l2_streaming` / `SimCfg::l2_streaming` set
+`cudaAccessPropertyStreaming` for `--l2-persist` GEMM window hits so a reused
+expert bills full HBM (no persist fill). Needs persist (`--l2-persist` /
+reset / fetch / ratio). Does not imply persist. Hits/misses stay the same.
+Distinct from `--l2-ratio` (ratio of Persisting window vs hit property) and
+`--l2-reset` (fill then clear). `--l2-streaming` is off by default (decode
+identity: Persisting hits). infer-bench has `--l2-persist`, so it gets
+`--l2-streaming`. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaMemcpySrcAccessOrderAny`
 
 `GpuStoreCfg::memcpy_any` / `SimCfg::memcpy_any` put

@@ -37,6 +37,11 @@ pub(crate) struct GemmFlags {
     pub l2_persist: bool,
     /// CUDA `cudaAccessPolicyWindow.hitRatio` as ‰. `0` is unset (`1000`).
     pub l2_ratio: u16,
+    /// `cudaAccessPropertyStreaming` for [`Self::l2_persist`] window hits.
+    ///
+    /// Needs persist. Hits stay the same; a reused expert bills full HBM
+    /// (no persist fill). Decode identity stays Persisting hits.
+    pub l2_streaming: bool,
     /// Hopper cluster X size (`cudaLaunchAttributeClusterDimension`). `0` is off.
     pub cluster: u8,
     /// Preferred cluster X (`cudaLaunchAttributePreferredClusterDimension`). `0` is off.
@@ -111,8 +116,15 @@ impl GemmFlags {
     }
 
     pub(crate) fn persist_window(self, id: AllocId) -> Option<AccessPolicyWindow> {
-        self.l2_persist.then(|| {
-            AccessPolicyWindow::persisting_ratio(KernelBuf::whole(id), self.persist_ratio())
+        self.l2_persist.then(|| AccessPolicyWindow {
+            buf: KernelBuf::whole(id),
+            hit_ratio_permille: self.persist_ratio(),
+            hit: if self.l2_streaming {
+                AccessProperty::Streaming
+            } else {
+                AccessProperty::Persisting
+            },
+            miss: AccessProperty::Streaming,
         })
     }
 
@@ -450,13 +462,13 @@ use crate::planner::{
 use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
 use gpu_sim::{
-    AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceFlags, DeviceId,
-    DeviceLimit, EventId, GraphId, GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf,
-    KernelKind, LaunchCompletionEvent, MemAttach, MemHandleType, MemPoolAttr, MemPoolProps,
-    MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyOp, MemcpySrcAccessOrder, Place,
-    PointerAttr, PoolId, PortableClusterMode, PortableSharedMode, ProgrammaticEvent,
-    ProgrammaticLaunch, Score, SharedMemCarveout, SharedMemoryMode, Sim, StreamId,
-    SynchronizationPolicy, WaitValueCmp,
+    AccessPolicyWindow, AccessProperty, AllocId, ClusterSchedulingPolicy, DType, DeviceFlags,
+    DeviceId, DeviceLimit, EventId, GraphId, GraphInstantiateFlags, HardwareProfile, KernelAttrs,
+    KernelBuf, KernelKind, LaunchCompletionEvent, MemAttach, MemHandleType, MemPoolAttr,
+    MemPoolProps, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyOp,
+    MemcpySrcAccessOrder, Place, PointerAttr, PoolId, PortableClusterMode, PortableSharedMode,
+    ProgrammaticEvent, ProgrammaticLaunch, Score, SharedMemCarveout, SharedMemoryMode, Sim,
+    StreamId, SynchronizationPolicy, WaitValueCmp,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -867,6 +879,13 @@ pub struct SimCfg {
     /// more HBM than full persist on a reused expert. Decode identity stays
     /// 1000. [`crate::GpuStoreCfg::l2_ratio`] is the store path.
     pub l2_ratio: u16,
+    /// `cudaAccessPropertyStreaming` for [`Self::l2_persist`] window hits.
+    ///
+    /// Needs [`Self::l2_persist`] (or reset/fetch/ratio that arm persist).
+    /// Hits stay the same; a reused expert bills full HBM (no persist fill).
+    /// Decode identity stays Persisting hits.
+    /// [`crate::GpuStoreCfg::l2_streaming`] is the store path.
+    pub l2_streaming: bool,
     /// Hopper cluster X size (`cudaLaunchAttributeClusterDimension`). `0` is off.
     ///
     /// Occupies `min(N, compute_slots)` Hyper-Q slots so leftover kernels
@@ -1193,6 +1212,7 @@ impl SimCfg {
             l2_reset: false,
             l2_fetch: 0,
             l2_ratio: 0,
+            l2_streaming: false,
             cluster: 0,
             preferred_cluster: 0,
             cluster_spread: false,
@@ -1253,6 +1273,10 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     check_max_l1(cfg.max_l1, cfg.func_max_shared, cfg.max_shared)?;
     check_l2_fetch(cfg.l2_fetch)?;
     check_l2_ratio(cfg.l2_ratio)?;
+    if cfg.l2_streaming && !persist_armed(cfg.l2_persist, cfg.l2_reset, cfg.l2_fetch, cfg.l2_ratio)
+    {
+        return Err(Error::Store("l2-streaming needs l2-persist"));
+    }
     if cfg.graph_update && cfg.graph_set_params {
         return Err(Error::Store("choose one of graph-update, graph-set-params"));
     }
@@ -1488,6 +1512,7 @@ pub fn sim_replay_cfg(
         ))
         .with_l2_reset(cfg.l2_reset)
         .with_l2_ratio(cfg.l2_ratio)
+        .with_l2_streaming(cfg.l2_streaming)
         .with_cluster(cfg.cluster)
         .with_preferred_cluster(cfg.preferred_cluster)
         .with_cluster_spread(cfg.cluster_spread)
@@ -2019,6 +2044,7 @@ pub(crate) struct GraphBank {
     l2_persist: bool,
     l2_reset: bool,
     l2_ratio: u16,
+    l2_streaming: bool,
     cluster: u8,
     preferred_cluster: u8,
     cluster_spread: bool,
@@ -2059,6 +2085,7 @@ impl GraphBank {
             l2_persist: false,
             l2_reset: false,
             l2_ratio: 0,
+            l2_streaming: false,
             cluster: 0,
             preferred_cluster: 0,
             cluster_spread: false,
@@ -2107,6 +2134,11 @@ impl GraphBank {
 
     pub(crate) fn with_l2_ratio(mut self, n: u16) -> Self {
         self.l2_ratio = n;
+        self
+    }
+
+    pub(crate) fn with_l2_streaming(mut self, yes: bool) -> Self {
+        self.l2_streaming = yes;
         self
     }
 
@@ -2201,6 +2233,7 @@ impl GraphBank {
             pdl: self.pdl,
             l2_persist: self.l2_persist,
             l2_ratio: self.l2_ratio,
+            l2_streaming: self.l2_streaming,
             cluster: self.cluster,
             preferred_cluster: self.preferred_cluster,
             cluster_spread: self.cluster_spread,

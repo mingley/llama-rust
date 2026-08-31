@@ -387,6 +387,7 @@ impl SchedRt {
             ))
             .with_l2_reset(cfg.l2_reset)
             .with_l2_ratio(cfg.l2_ratio)
+            .with_l2_streaming(cfg.l2_streaming)
             .with_cluster(cfg.cluster)
             .with_preferred_cluster(cfg.preferred_cluster)
             .with_cluster_spread(cfg.cluster_spread)
