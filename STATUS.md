@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaGraphAddMemsetNode` of graph-mem scratch
+
+`GpuStoreCfg::graph_memset` / `SimCfg::graph_memset` insert
+`cudaGraphAddMemsetNode` / `cudaMemsetAsync` BETWEEN `--graph-mem` scratch
+alloc and the GEMM kernel so launch bills an extra HBM write. Needs
+`--graph-mem`. Does not imply graph-mem. Hits/misses stay the same.
+Distinct from `--graph-mem` (scratch alloc+free vs extra memset of that
+scratch). Does not work with `--graph-auto-free` alone. `--graph-memset`
+is off by default (decode identity: kernel-only graphs). Store leaf GEMMs
+memset too (not walker-only). infer-bench has no `--graph-mem`, so it does
+not get `--graph-memset`. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaGraphAddHostNode` between combo children
 
 `GpuStoreCfg::graph_host` / `SimCfg::graph_host` insert

@@ -1,6 +1,6 @@
 //! Replay a trace through [`gpu_sim`] with pinned H2D fills on miss.
 
-/// In-graph scratch workspace for [`SimCfg::graph_mem`] / [`SimCfg::graph_auto_free`].
+/// In-graph scratch workspace for [`SimCfg::graph_mem`] / [`SimCfg::graph_memset`] / [`SimCfg::graph_auto_free`].
 pub(crate) const GRAPH_SCRATCH_BYTES: u64 = 4096;
 
 /// How a leaf GEMM graph owns its scratch workspace.
@@ -850,6 +850,15 @@ pub struct SimCfg {
     /// Implies [`Self::cuda_graphs`]. Decode identity stays kernel-only graphs.
     /// [`crate::GpuStoreCfg::graph_mem`] is the store path.
     pub graph_mem: bool,
+    /// `cudaGraphAddMemsetNode` / `cudaMemsetAsync` of graph-mem scratch.
+    ///
+    /// Needs [`Self::graph_mem`]. Zeros the scratch BETWEEN alloc and GEMM so
+    /// launch bills an extra HBM write (`memset_ns`). Does not imply graph-mem.
+    /// Hits stay the same. Does not work with [`Self::graph_auto_free`] alone.
+    /// Decode identity stays kernel-only (no scratch, no memset).
+    /// [`crate::GpuStoreCfg::graph_memset`] is the store path (store leaf GEMMs
+    /// memset too; this is not walker-only).
+    pub graph_memset: bool,
     /// Leaf GEMM graphs alloc scratch without a matching free.
     ///
     /// Instantiates with [`gpu_sim::Sim::instantiate_graph_auto_free`] so
@@ -1232,6 +1241,7 @@ impl SimCfg {
             graph_capture_deps: false,
             graph_enable: false,
             graph_mem: false,
+            graph_memset: false,
             graph_auto_free: false,
             graph_mem_trim: false,
             cooperative: false,
@@ -1323,6 +1333,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     }
     if cfg.graph_host && !cfg.graph_build {
         return Err(Error::Store("graph-host needs graph-build"));
+    }
+    if cfg.graph_memset && !cfg.graph_mem {
+        return Err(Error::Store("graph-memset needs graph-mem"));
     }
     if cfg.graph_capture_deps && !cfg.graph_piecewise {
         return Err(Error::Store("graph-capture-deps needs graph-piecewise"));
@@ -1571,6 +1584,7 @@ pub fn sim_replay_cfg(
         .with_set_params(cfg.graph_set_params)
         .with_build_deps(cfg.graph_build_deps)
         .with_graph_host(cfg.graph_host)
+        .with_memset(cfg.graph_memset)
         .with_piecewise(cfg.graph_piecewise)
         .with_capture_deps(cfg.graph_capture_deps)
         .with_enable(cfg.graph_enable);
@@ -2082,6 +2096,7 @@ pub(crate) struct GraphBank {
     piecewise: bool,
     capture_deps: bool,
     mem: LeafMem,
+    memset: bool,
     cooperative: bool,
     pdl: bool,
     l2_persist: bool,
@@ -2126,6 +2141,7 @@ impl GraphBank {
             piecewise: false,
             capture_deps: false,
             mem,
+            memset: false,
             cooperative: false,
             pdl: false,
             l2_persist: false,
@@ -2322,6 +2338,11 @@ impl GraphBank {
 
     pub(crate) fn with_graph_host(mut self, yes: bool) -> Self {
         self.graph_host = yes;
+        self
+    }
+
+    pub(crate) fn with_memset(mut self, yes: bool) -> Self {
+        self.memset = yes;
         self
     }
 
@@ -3317,6 +3338,7 @@ fn gemm_ids(
             stream,
             id,
             LeafMem::None,
+            false,
             graphs.gemm_flags().for_stream(),
         )?;
     }
@@ -3352,7 +3374,15 @@ fn capture_expert_graph(
             continue;
         }
         sim.begin_capture(d, stream)?;
-        kernel_leaf(sim, d, stream, *id, graphs.mem, graphs.gemm_flags())?;
+        kernel_leaf(
+            sim,
+            d,
+            stream,
+            *id,
+            graphs.mem,
+            graphs.memset,
+            graphs.gemm_flags(),
+        )?;
         let src = sim.end_capture()?;
         leaves.push(graphs.bind(sim, origin, key, src)?);
     }
@@ -3420,7 +3450,14 @@ fn build_expert_graph(
             continue;
         }
         let src = sim.create_graph(d, stream)?;
-        add_leaf_gemm(sim, src, *id, graphs.mem, graphs.gemm_flags())?;
+        add_leaf_gemm(
+            sim,
+            src,
+            *id,
+            graphs.mem,
+            graphs.memset,
+            graphs.gemm_flags(),
+        )?;
         leaves.push(graphs.bind(sim, origin, key, src)?);
     }
     if ids.len() == 1 {
@@ -3855,7 +3892,7 @@ fn gemm_kind() -> KernelKind {
 
 fn kernel(sim: &mut Sim, d: DeviceId, s: StreamId, id: AllocId) -> Result<(), Error> {
     ensure_single_attach(sim, d, id, s)?;
-    kernel_leaf(sim, d, s, id, LeafMem::None, GemmFlags::default())
+    kernel_leaf(sim, d, s, id, LeafMem::None, false, GemmFlags::default())
 }
 
 pub(crate) fn kernel_leaf(
@@ -3864,6 +3901,7 @@ pub(crate) fn kernel_leaf(
     s: StreamId,
     id: AllocId,
     mem: LeafMem,
+    memset: bool,
     flags: GemmFlags,
 ) -> Result<(), Error> {
     if mem == LeafMem::None {
@@ -3871,6 +3909,9 @@ pub(crate) fn kernel_leaf(
         return Ok(());
     }
     let scratch = sim.alloc(d, GRAPH_SCRATCH_BYTES, s)?;
+    if memset {
+        let _z = sim.memset(d, scratch, GRAPH_SCRATCH_BYTES, s)?;
+    }
     launch_gemm_kernel(sim, d, s, id, &[scratch], flags)?;
     if mem == LeafMem::Free {
         sim.free(d, scratch, s)?;
@@ -3895,17 +3936,24 @@ pub(crate) fn add_leaf_gemm(
     graph: GraphId,
     id: AllocId,
     mem: LeafMem,
+    memset: bool,
     flags: GemmFlags,
 ) -> Result<(), Error> {
     if mem == LeafMem::None {
         return add_gemm_kernel(sim, graph, id, &[], flags);
     }
     let scratch = sim.graph_add_alloc(graph, GRAPH_SCRATCH_BYTES)?;
+    let mut prev = 0usize;
+    if memset {
+        sim.graph_add_memset(graph, KernelBuf::whole(scratch))?;
+        sim.graph_add_dependencies(graph, prev, 1)?;
+        prev = 1;
+    }
     add_gemm_kernel(sim, graph, id, &[scratch], flags)?;
-    sim.graph_add_dependencies(graph, 0, 1)?;
+    sim.graph_add_dependencies(graph, prev, prev.saturating_add(1))?;
     if mem == LeafMem::Free {
         sim.graph_add_free(graph, scratch)?;
-        sim.graph_add_dependencies(graph, 1, 2)?;
+        sim.graph_add_dependencies(graph, prev.saturating_add(1), prev.saturating_add(2))?;
     }
     Ok(())
 }
@@ -3917,75 +3965,60 @@ fn add_gemm_kernel(
     writes: &[gpu_sim::AllocId],
     flags: GemmFlags,
 ) -> Result<(), Error> {
+    let node = sim.graph_len(graph)?;
     if flags.cooperative {
         sim.graph_add_cooperative_kernel(graph, gemm_kind(), &[id], writes)?;
     } else {
         sim.graph_add_kernel(graph, gemm_kind(), &[id], writes)?;
         if let Some(pdl) = flags.pdl_attr() {
-            let node = usize::from(!writes.is_empty());
             sim.graph_kernel_node_set_pdl(graph, node, pdl)?;
         }
     }
     if let Some(w) = flags.persist_window(id) {
-        let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_access_policy(graph, node, Some(w))?;
     }
     if let Some(d) = flags.mem_sync_domain() {
-        let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_mem_sync_domain(graph, node, d)?;
     }
     if let Some(m) = flags.mem_sync_map() {
-        let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_mem_sync_domain_map(graph, node, m)?;
     }
     if let Some(c) = flags.cluster_dim() {
-        let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_cluster(graph, node, Some(c))?;
     }
     if let Some(p) = flags.preferred_cluster_dim() {
-        let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_preferred_cluster(graph, node, Some(p))?;
     }
     let policy = flags.cluster_policy();
     if policy != ClusterSchedulingPolicy::Default {
-        let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_cluster_policy(graph, node, policy)?;
     }
     let carve = flags.carveout();
     if carve != SharedMemCarveout::Default {
-        let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_carveout(graph, node, carve)?;
     }
     if flags.shared_mem != SharedMemoryMode::Default {
-        let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_shared_mem(graph, node, flags.shared_mem)?;
     }
     if flags.portable_cluster != PortableClusterMode::Default {
-        let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_portable_cluster(graph, node, flags.portable_cluster)?;
     }
     if flags.portable_shared != PortableSharedMode::Default {
-        let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_portable_shared(graph, node, flags.portable_shared)?;
     }
     if flags.nvlink_util_centric {
-        let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_nvlink_util_centric(graph, node, true)?;
     }
     if flags.device_updatable {
-        let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_device_updatable(graph, node, true)?;
     }
     if flags.dynamic_shared > 0 {
-        let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_dynamic_shared(graph, node, flags.dynamic_shared)?;
     }
     if let Some(ev) = flags.launch_completion {
-        let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_launch_completion(graph, node, Some(ev))?;
     }
     if let Some(ev) = flags.programmatic_event {
-        let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_programmatic_event(graph, node, Some(ev))?;
     }
     Ok(())

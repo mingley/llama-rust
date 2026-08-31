@@ -3859,6 +3859,70 @@ fn sim_replay_graph_host_needs_graph_build() {
 }
 
 #[test]
+fn sim_replay_graph_memset_needs_graph_mem() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    match sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            graph_memset: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("graph-memset without graph-mem must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("graph-memset needs graph-mem"),
+            "{err}"
+        ),
+    }
+    match sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            cuda_graphs: true,
+            graph_memset: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("graph-memset with cuda-graphs still needs graph-mem"),
+        Err(err) => assert!(
+            err.to_string().contains("graph-memset needs graph-mem"),
+            "{err}"
+        ),
+    }
+    match sim_replay_cfg(
+        &t,
+        profile.clone(),
+        SimCfg {
+            cuda_graphs: true,
+            graph_auto_free: true,
+            graph_memset: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("graph-memset with auto-free still needs graph-mem"),
+        Err(err) => assert!(
+            err.to_string().contains("graph-memset needs graph-mem"),
+            "{err}"
+        ),
+    }
+    let _ok = sim_replay_cfg(
+        &t,
+        profile,
+        SimCfg {
+            cuda_graphs: true,
+            graph_mem: true,
+            graph_memset: true,
+            ..SimCfg::lru(2, 4096, 0)
+        },
+    )
+    .expect("graph-mem arms graph-memset");
+}
+
+#[test]
 fn sim_replay_graph_capture_deps_needs_graph_piecewise() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1])],
@@ -4044,6 +4108,64 @@ fn simulated_gpu_store_graph_host_needs_graph_build() {
 }
 
 #[test]
+fn simulated_gpu_store_graph_memset_needs_graph_mem() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile.clone(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_memset: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("graph-memset without graph-mem must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("graph-memset needs graph-mem"),
+            "{err}"
+        ),
+    }
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile.clone(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_auto_free: true,
+            graph_memset: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("graph-memset with auto-free still needs graph-mem"),
+        Err(err) => assert!(
+            err.to_string().contains("graph-memset needs graph-mem"),
+            "{err}"
+        ),
+    }
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        profile,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            graph_mem: true,
+            graph_memset: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("graph-mem arms graph-memset");
+    assert!(gpu.graph_memset());
+    let _s = gpu.score().expect("score");
+}
+
+#[test]
 fn simulated_gpu_store_graph_piecewise_launches() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],
@@ -4213,6 +4335,41 @@ fn graph_mem_implies_cuda_graphs() {
     .expect("mem");
     assert!(mem.graph_launches > 0, "line={}", mem.line());
     assert_eq!(mem.hbm_peak, 4096 + GRAPH_SCRATCH_BYTES);
+}
+
+#[test]
+fn cuda_graphs_graph_memset_slows_graph_mem_scratch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::parse(
+        "gpus=1\nfp16_flops=1000000\nhbm_bps=1000000000000\ngraph_instantiate_ns=1\ngraph_upload_ns=1\ngraph_launch_ns=1\nlaunch_overhead_ns=100000\ncopy_engines=2\n",
+    )
+    .expect("profile");
+    let run = |graph_memset: bool| {
+        sim_replay_cfg(
+            &t,
+            p.clone(),
+            SimCfg {
+                cuda_graphs: true,
+                graph_mem: true,
+                graph_memset,
+                ..SimCfg::lru(1, 4096, 0)
+            },
+        )
+        .expect("replay")
+    };
+    let mem = run(false);
+    let memset = run(true);
+    assert_eq!(mem.hits, memset.hits);
+    assert_eq!(mem.misses, memset.misses);
+    assert_eq!(mem.graph_launches, memset.graph_launches);
+    assert!(
+        mem.sim_ns < memset.sim_ns,
+        "graph-memset must add memset tax on graph-mem scratch; mem={} memset={}",
+        mem.sim_ns,
+        memset.sim_ns
+    );
 }
 
 #[test]

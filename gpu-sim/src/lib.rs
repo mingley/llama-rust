@@ -819,6 +819,9 @@
 //! edges). `expertvm --graph-build-deps` chains `--graph-build` combo children.
 //! `expertvm --graph-host` inserts [`graph_add_host_func`](Sim::graph_add_host_func)
 //! BETWEEN those children (`host_func_ns` tax; not a JOIN after overlap).
+//! `expertvm --graph-memset` inserts [`graph_add_memset`](Sim::graph_add_memset)
+//! BETWEEN `--graph-mem` scratch alloc and the GEMM kernel (HBM-write tax;
+//! needs `--graph-mem`).
 //! [`graph_add_dependencies_n`](Sim::graph_add_dependencies_n) /
 //! [`graph_remove_dependencies_n`](Sim::graph_remove_dependencies_n) are the
 //! same APIs with `numDependencies` from/to pairs (all-or-nothing). [`graph_remove_dependencies`](Sim::graph_remove_dependencies) is
@@ -1517,6 +1520,55 @@ mod tests {
         assert_eq!(sim.hbm_peak(), 4096);
         sim.graph_mem_trim(d).unwrap();
         assert_eq!(sim.hbm_used(d).unwrap(), 0);
+    }
+
+    #[test]
+    fn graph_add_memset_between_alloc_and_kernel_serializes() {
+        let kind = KernelKind::other(8, 8);
+        let run = |memset: bool| {
+            let mut p = h100();
+            for g in &mut p.gpus {
+                g.hbm_bps = 1_000_000;
+                g.launch_overhead_ns = 1;
+                g.graph_launch_ns = 1;
+                g.graph_instantiate_ns = 1;
+                g.graph_upload_ns = 1;
+            }
+            let mut sim = Sim::new(p);
+            let d = DeviceId(0);
+            let s = StreamId(0);
+            let expert = sim.alloc(d, 4096, s).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, expert, 4096, s));
+            sim.synchronize().unwrap();
+            let g = sim.create_graph(d, s).unwrap();
+            let scratch = sim.graph_add_alloc(g, 4096).unwrap();
+            let mut prev = 0usize;
+            if memset {
+                sim.graph_add_memset(g, KernelBuf::whole(scratch)).unwrap();
+                sim.graph_add_dependencies(g, prev, 1).unwrap();
+                prev = 1;
+            }
+            sim.graph_add_kernel(g, kind.clone(), &[expert], &[scratch])
+                .unwrap();
+            sim.graph_add_dependencies(g, prev, prev.saturating_add(1))
+                .unwrap();
+            sim.graph_add_free(g, scratch).unwrap();
+            sim.graph_add_dependencies(g, prev.saturating_add(1), prev.saturating_add(2))
+                .unwrap();
+            let _ = sim.instantiate_graph(g).unwrap();
+            sim.upload_graph(g).unwrap();
+            let t0 = sim.clock_ns();
+            let n = sim.launch_graph(g, s).unwrap();
+            sim.synchronize().unwrap();
+            assert!(n >= 2);
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let mem = run(false);
+        let memset = run(true);
+        assert!(
+            mem < memset,
+            "memset between alloc and kernel must add HBM-write tax; mem={mem} memset={memset}"
+        );
     }
 
     #[test]

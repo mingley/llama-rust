@@ -340,6 +340,8 @@ may Hyper-Q overlap at launch; capture records same-stream edges).
 `cudaGraphAddHostNode`. `expertvm --graph-host` inserts host nodes BETWEEN
 `--graph-build` combo children (serialize through `host_func_ns`; not a JOIN
 after overlap).
+`expertvm --graph-memset` inserts `graph_add_memset` BETWEEN `--graph-mem`
+scratch alloc and the GEMM kernel (HBM-write tax; needs `--graph-mem`).
 `graph_add_dependencies_n` / `graph_remove_dependencies_n` are the same
 APIs with `numDependencies` from/to pairs (all-or-nothing).
 `graph_remove_dependencies` is `cudaGraphRemoveDependencies` (illegal on an
@@ -478,7 +480,9 @@ Hyper-Q overlap unless `graph_add_dependencies` chains them).
 is `cudaStreamBeginCaptureToGraph` combo parents (independent child roots).
 `expertvm --graph-capture-deps` chains those fragments (`numDependencies > 0`).
 `--graph-mem` is in-graph
-scratch (`graph_add_alloc` / capture `alloc`). `--graph-auto-free` is
+scratch (`graph_add_alloc` / capture `alloc`). `--graph-memset` memsets that
+scratch BETWEEN alloc and GEMM (`graph_add_memset` / capture `memset`; needs
+`--graph-mem`). `--graph-auto-free` is
 AutoFreeOnLaunch (relaunch recharges HBM; not with `--graph-mem`).
 `cooperative_kernel` / `graph_add_cooperative_kernel` are
 `cudaLaunchCooperativeKernel` (occupy every Hyper-Q slot; capture allowed).

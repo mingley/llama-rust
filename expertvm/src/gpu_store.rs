@@ -272,6 +272,14 @@ pub struct GpuStoreCfg {
     /// is skipped. [`Self::graph_set_params`] still retargets the kernel.
     /// Decode identity stays kernel-only graphs.
     pub graph_mem: bool,
+    /// `cudaGraphAddMemsetNode` / `cudaMemsetAsync` of graph-mem scratch.
+    ///
+    /// Needs [`Self::graph_mem`]. Zeros the scratch BETWEEN alloc and GEMM so
+    /// launch bills an extra HBM write. Does not imply graph-mem. Hits stay
+    /// the same. Does not work with [`Self::graph_auto_free`] alone. Store
+    /// leaf GEMMs memset too (not walker-only). Decode identity stays
+    /// kernel-only graphs.
+    pub graph_memset: bool,
     /// Scratch alloc without a matching free; AutoFreeOnLaunch instantiate.
     ///
     /// Illegal with [`Self::graph_mem`]. `--graph-update` is skipped;
@@ -681,6 +689,8 @@ pub struct SimulatedGpuStore {
     /// [`GpuStoreCfg::graph_capture_deps`]: walker combo capture-to-graph deps (store GEMM stays per-leaf).
     graph_capture_deps: bool,
     leaf: LeafMem,
+    /// [`GpuStoreCfg::graph_memset`]: memset graph-mem scratch BETWEEN alloc and GEMM.
+    graph_memset: bool,
     graph_mem_trim: bool,
     mempool_trim: bool,
     /// [`GpuStoreCfg::mempool_max`] (`0` unset / unlimited).
@@ -840,6 +850,8 @@ impl SimulatedGpuStore {
     /// destroy+instantiate graphs (stream capture; [`GpuStoreCfg::graph_build`]
     /// is `cudaGraphCreate` / `cudaGraphAdd*`; [`GpuStoreCfg::graph_mem`]
     /// records in-graph scratch with a matching free;
+    /// [`GpuStoreCfg::graph_memset`] memsets that scratch BETWEEN alloc and
+    /// GEMM (needs graph-mem; store leaf GEMMs too);
     /// [`GpuStoreCfg::graph_auto_free`] is AutoFreeOnLaunch without a free;
     /// [`GpuStoreCfg::graph_set_params`] retargets a parked kernel node;
     /// [`GpuStoreCfg::graph_enable`] is walker combo `cudaGraphNodeSetEnabled`
@@ -991,6 +1003,9 @@ impl SimulatedGpuStore {
         }
         if cfg.graph_host && !cfg.graph_build {
             return Err(Error::Store("graph-host needs graph-build"));
+        }
+        if cfg.graph_memset && !cfg.graph_mem {
+            return Err(Error::Store("graph-memset needs graph-mem"));
         }
         if cfg.graph_capture_deps && !cfg.graph_piecewise {
             return Err(Error::Store("graph-capture-deps needs graph-piecewise"));
@@ -1245,6 +1260,7 @@ impl SimulatedGpuStore {
             graph_piecewise: cfg.graph_piecewise,
             graph_capture_deps: cfg.graph_capture_deps,
             leaf,
+            graph_memset: cfg.graph_memset,
             graph_mem_trim: cfg.graph_mem_trim,
             mempool_trim: cfg.mempool_trim,
             mempool_max: cfg.mempool_max,
@@ -1458,6 +1474,12 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn graph_host(&self) -> bool {
         self.graph_host
+    }
+
+    /// Whether graph-mem scratch is memset BETWEEN alloc and GEMM.
+    #[must_use]
+    pub fn graph_memset(&self) -> bool {
+        self.graph_memset
     }
 
     /// Whether this store set `cudaFuncAttributeClusterDimMustBeSet`.
@@ -2690,7 +2712,15 @@ impl SimulatedGpuStore {
                 return self.launch_graph_exec(g, device);
             }
             self.sim.begin_capture(device, self.compute)?;
-            kernel_leaf(&mut self.sim, device, self.compute, id, self.leaf, flags)?;
+            kernel_leaf(
+                &mut self.sim,
+                device,
+                self.compute,
+                id,
+                self.leaf,
+                self.graph_memset,
+                flags,
+            )?;
             let src = self.sim.end_capture()?;
             let g = self.bind_graph(device, src)?;
             let _prev = self.graphs.insert(id, g);
@@ -2702,6 +2732,7 @@ impl SimulatedGpuStore {
             self.compute,
             id,
             LeafMem::None,
+            false,
             flags.for_stream(),
         )
     }
@@ -2712,7 +2743,9 @@ impl SimulatedGpuStore {
         // Store GEMM is per-leaf; combo `graph_add_dependencies` /
         // `graph_add_host_func` stay walker-only even when
         // [`GpuStoreCfg::graph_build_deps`] or [`GpuStoreCfg::graph_host`] is set.
-        add_leaf_gemm(&mut self.sim, g, id, self.leaf, flags)?;
+        // [`GpuStoreCfg::graph_memset`] does apply: it memsets this leaf's
+        // graph-mem scratch BETWEEN alloc and GEMM.
+        add_leaf_gemm(&mut self.sim, g, id, self.leaf, self.graph_memset, flags)?;
         Ok(g)
     }
 
@@ -2723,7 +2756,15 @@ impl SimulatedGpuStore {
         // [`GpuStoreCfg::graph_capture_deps`] is set (walker combo only).
         self.sim
             .begin_capture_to_graph(device, self.compute, g, &[])?;
-        kernel_leaf(&mut self.sim, device, self.compute, id, self.leaf, flags)?;
+        kernel_leaf(
+            &mut self.sim,
+            device,
+            self.compute,
+            id,
+            self.leaf,
+            self.graph_memset,
+            flags,
+        )?;
         let ended = self.sim.end_capture()?;
         if ended != g {
             return Err(Error::Store("capture-to-graph id"));
