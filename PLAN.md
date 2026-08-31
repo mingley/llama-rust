@@ -4628,7 +4628,14 @@ model, do not celebrate the sim.
     is Invalid. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-416. [ ] Next numbered PLAN item after 415 is the next `gpu-sim` / Engine /
+416. [x] CUDA `cuGraphNodeGetToolsId` (`graph_node_get_tools_id`): unique
+    tools id for a live graph node. Distinct from `graph_node_get_local_id`
+    (debug-dot `n0`) and `graph_get_id`. A definition, instantiate exec, and
+    clone each assign different tools ids. Query; legal during capture.
+    Destroyed or unknown is Invalid. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+417. [ ] Next numbered PLAN item after 416 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4644,6 +4651,7 @@ model, do not celebrate the sim.
     Do not invent a second `cudaExecutionCtxGetDevice`. Do not invent a
     second `cudaEventGetFlags`. Do not invent a second `cudaGraphGetId` /
     `cudaGraphExecGetId`. Do not invent a second `cuGraphNodeGetLocalId`.
+    Do not invent a second `cuGraphNodeGetToolsId`.
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
     `attn_v.scale` as the writer-tiny. Do not invent a second dense
     `ffn_down.scale` / second `ffn_gate.scale` / second `ffn_up.scale` /

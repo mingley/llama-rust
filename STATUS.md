@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cuGraphNodeGetToolsId`
+
+`gpu-sim` `graph_node_get_tools_id` is `cuGraphNodeGetToolsId`. A live graph
+node returns a unique tools id (CUPTI-style). Distinct from
+`graph_node_get_local_id` (debug-dot `n0`) and `graph_get_id`. A
+definition, instantiate exec, and clone each assign different tools ids.
+Query; legal during capture. Destroyed or unknown is Invalid.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cuGraphNodeGetLocalId`
 
 `gpu-sim` `graph_node_get_local_id` is `cuGraphNodeGetLocalId`. A live graph

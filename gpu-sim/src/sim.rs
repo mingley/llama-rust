@@ -7790,6 +7790,19 @@ impl Sim {
         })
     }
 
+    /// `cuGraphNodeGetToolsId`. Query; legal during capture.
+    ///
+    /// Unique `u64` for tools (CUPTI-style). Distinct from
+    /// [`Self::graph_node_get_local_id`] (debug-dot `n0`) and
+    /// [`Self::graph_get_id`]. A definition, instantiate exec, and clone each
+    /// assign different tools ids. Destroyed or unknown nodes are Invalid
+    /// `"unknown graph node"`.
+    pub fn graph_node_get_tools_id(&self, graph: GraphId, node: usize) -> Result<u64, SimError> {
+        let local = self.graph_node_get_local_id(graph, node)?;
+        let gid = self.graph_get_id(graph)?;
+        Ok((u64::from(gid) << 32) | u64::from(local))
+    }
+
     /// `cudaGraphNodeGetType` for node `i`.
     pub fn graph_node_kind(&self, graph: GraphId, i: usize) -> Result<GraphNodeKind, SimError> {
         let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
