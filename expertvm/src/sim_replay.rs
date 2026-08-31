@@ -374,6 +374,7 @@ pub(crate) fn check_memset_fill(
     managed: bool,
     pageable: bool,
     memcpy_batch: bool,
+    memcpy_attr: bool,
 ) -> Result<(), Error> {
     if !memset_fill {
         return Ok(());
@@ -389,6 +390,28 @@ pub(crate) fn check_memset_fill(
     }
     if memcpy_batch {
         return Err(Error::Store("memset-fill cannot memcpy-batch"));
+    }
+    if memcpy_attr {
+        return Err(Error::Store("memset-fill cannot memcpy-attr"));
+    }
+    Ok(())
+}
+
+/// `--memcpy-attr` needs async pinned/VMM H2D (`cudaMemcpyWithAttributesAsync`).
+pub(crate) fn check_memcpy_attr(
+    memcpy_attr: bool,
+    mapped: bool,
+    managed: bool,
+    pageable: bool,
+    sync_alloc: bool,
+    sync_memops: bool,
+    device_sync_memops: bool,
+) -> Result<(), Error> {
+    if !memcpy_attr {
+        return Ok(());
+    }
+    if mapped || managed || pageable || sync_alloc || sync_memops || device_sync_memops {
+        return Err(Error::Store("memcpy-attr needs async pinned/vmm H2D"));
     }
     Ok(())
 }
@@ -820,6 +843,15 @@ pub struct SimCfg {
     /// identity stays Stream order (or sequential H2D).
     /// [`crate::GpuStoreCfg::memcpy_any`] is the store path.
     pub memcpy_any: bool,
+    /// `cudaMemcpyWithAttributesAsync` DuringApiCall on demand pinned/VMM miss H2D.
+    ///
+    /// The API waits that copy before return. Hits stay the same. Does not imply
+    /// [`Self::memcpy_batch`]. Replica D2D stays memcpy. Illegal with mapped,
+    /// managed, [`Self::pageable`], [`Self::memset_fill`], [`Self::sync_alloc`],
+    /// [`Self::sync_memops`], or [`Self::device_sync_memops`]. Decode identity
+    /// stays `memcpy_pinned_to_device`. [`crate::GpuStoreCfg::memcpy_attr`] is
+    /// the store path.
+    pub memcpy_attr: bool,
     /// `cudaMemsetAsync` miss fill instead of pinned H2D (HBM write, compute).
     ///
     /// Distinct from [`Self::graph_memset`] (in-graph scratch vs miss page).
@@ -1471,6 +1503,7 @@ impl SimCfg {
             memcpy_batch: false,
             memcpy_during: false,
             memcpy_any: false,
+            memcpy_attr: false,
             memset_fill: false,
         }
     }
@@ -1592,12 +1625,22 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     if cfg.memcpy_any && cfg.memcpy_during {
         return Err(Error::Store("choose one of memcpy-any, memcpy-during"));
     }
+    check_memcpy_attr(
+        cfg.memcpy_attr,
+        cfg.mapped || cfg.host_register_mapped,
+        cfg.managed,
+        cfg.pageable,
+        cfg.sync_alloc,
+        cfg.sync_memops,
+        cfg.device_sync_memops,
+    )?;
     check_memset_fill(
         cfg.memset_fill,
         cfg.mapped,
         cfg.managed,
         cfg.pageable,
         cfg.memcpy_batch,
+        cfg.memcpy_attr,
     )?;
     if cfg.memcpy_batch
         && (cfg.pageable
@@ -1748,6 +1791,7 @@ pub fn sim_replay_cfg(
         memcpy_batch: cfg.memcpy_batch,
         memcpy_during: cfg.memcpy_during,
         memcpy_any: cfg.memcpy_any,
+        memcpy_attr: cfg.memcpy_attr,
         memset_fill: cfg.memset_fill,
         copy_host: cfg.copy_host,
         accessed_by: cfg.accessed_by,
@@ -1932,6 +1976,8 @@ pub(crate) struct TouchArgs {
     pub memcpy_during: bool,
     /// [`SimCfg::memcpy_any`]: batch attrs use Any.
     pub memcpy_any: bool,
+    /// [`SimCfg::memcpy_attr`]: demand H2D uses DuringApiCall attributes.
+    pub memcpy_attr: bool,
     /// [`SimCfg::memset_fill`]: miss fill is `cudaMemsetAsync` (not pinned H2D).
     pub memset_fill: bool,
     /// [`SimCfg::copy_host`]: live `cudaLaunchHostFunc` after miss DMA / prefetch.
@@ -1996,6 +2042,21 @@ fn hbm_h2d_pinned(
     } else {
         let _c = sim.memcpy_pinned_to_device(device, alloc, bytes, stream)?;
     }
+    Ok(())
+}
+
+/// Demand pinned/VMM H2D via `cudaMemcpyWithAttributesAsync` DuringApiCall.
+pub(crate) fn hbm_h2d_attr(
+    sim: &mut Sim,
+    device: DeviceId,
+    alloc: AllocId,
+    bytes: u64,
+    stream: StreamId,
+) -> Result<(), Error> {
+    wait_memcpy_during_allocs(sim, device, stream, true)?;
+    let op = MemcpyOp::packed_1d(Place::HostPinned, Place::Device(device), alloc, bytes);
+    let attr = memcpy_batch_attr(true, false);
+    let _c = sim.memcpy_with_attributes(device, op, attr, stream)?;
     Ok(())
 }
 
@@ -2076,6 +2137,8 @@ fn hbm_h2d_many(sim: &mut Sim, args: TouchArgs, allocs: &[AllocId]) -> Result<()
     for id in allocs {
         if args.pageable && !args.host_register {
             let _id = sim.memcpy_host_to_device(args.d, *id, args.bytes, args.s)?;
+        } else if args.memcpy_attr && !args.sync_alloc {
+            hbm_h2d_attr(sim, args.d, *id, args.bytes, args.s)?;
         } else {
             hbm_h2d_pinned(sim, args.d, *id, args.bytes, args.s, args.sync_alloc)?;
         }

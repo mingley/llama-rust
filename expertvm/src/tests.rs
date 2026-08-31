@@ -847,6 +847,7 @@ fn vmm_evict_reacquires_same_va() {
         memcpy_batch: false,
         memcpy_during: false,
         memcpy_any: false,
+        memcpy_attr: false,
         memset_fill: false,
         copy_host: false,
         accessed_by: false,
@@ -7872,6 +7873,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         memcpy_batch: false,
         memcpy_during: false,
         memcpy_any: false,
+        memcpy_attr: false,
         memset_fill: false,
         copy_host: false,
         accessed_by: true,
@@ -7946,6 +7948,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         memcpy_batch: false,
         memcpy_during: false,
         memcpy_any: false,
+        memcpy_attr: false,
         memset_fill: false,
         copy_host: false,
         accessed_by: true,
@@ -8021,6 +8024,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         memcpy_batch: false,
         memcpy_during: false,
         memcpy_any: false,
+        memcpy_attr: false,
         memset_fill: false,
         copy_host: false,
         accessed_by: true,
@@ -8462,6 +8466,7 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         memcpy_batch: true,
         memcpy_during: false,
         memcpy_any: false,
+        memcpy_attr: false,
         memset_fill: false,
         copy_host: false,
         accessed_by: false,
@@ -8530,6 +8535,7 @@ fn memcpy_during_apply_misses_waits_copies() {
             memcpy_batch: true,
             memcpy_during: during,
             memcpy_any: false,
+            memcpy_attr: false,
             memset_fill: false,
             copy_host: false,
             accessed_by: false,
@@ -8600,6 +8606,7 @@ fn memcpy_any_apply_misses_empty_deps() {
             memcpy_batch: true,
             memcpy_during: false,
             memcpy_any: any,
+            memcpy_attr: false,
             memset_fill: false,
             copy_host: false,
             accessed_by: false,
@@ -8647,6 +8654,74 @@ fn memcpy_any_apply_misses_empty_deps() {
     assert!(
         any.iter().all(|c| c.deps.is_empty()),
         "Any copies have empty deps; {any:?}"
+    );
+}
+
+#[test]
+fn memcpy_attr_apply_misses_waits_copies() {
+    use crate::replay::Touch;
+    use crate::sim_replay::{apply_misses, GraphBank, PageHandle, TouchArgs};
+    use gpu_sim::{Sim, StreamId};
+    use std::collections::BTreeMap;
+
+    let run = |attr: bool| {
+        let mut sim = Sim::new(HardwareProfile::example_h100_sxm());
+        let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
+        let mut graphs = GraphBank::new(false, false, false, crate::sim_replay::LeafMem::None);
+        let args = TouchArgs {
+            d: DeviceId(0),
+            s: StreamId(0),
+            bytes: 4 << 20,
+            slots: 1,
+            sync_alloc: false,
+            mapped: false,
+            managed: false,
+            vmm: false,
+            vmm_page: 0,
+            pageable: false,
+            host_register: false,
+            host_register_mapped: false,
+            sync_memops: false,
+            memcpy_batch: false,
+            memcpy_during: false,
+            memcpy_any: false,
+            memcpy_attr: attr,
+            memset_fill: false,
+            copy_host: false,
+            accessed_by: false,
+            no_read_mostly: false,
+            no_preferred: false,
+            no_mem_prefetch: false,
+            wait_value: false,
+            stream_attach: false,
+            managed_host: false,
+            prefetch_host: false,
+        };
+        let mut next_event = 1u32;
+        apply_misses(
+            &mut sim,
+            &mut handles,
+            &mut graphs,
+            args,
+            &[(ExpertKey::new(0, 0), Touch::Miss { evicted: None })],
+            &mut next_event,
+        )
+        .expect("misses");
+        sim.operations()
+            .filter(|o| matches!(o.kind, gpu_sim::GpuOp::Memcpy(_)))
+            .collect::<Vec<_>>()
+    };
+    let stream = run(false);
+    assert_eq!(stream.len(), 1, "{stream:?}");
+    assert!(
+        stream.iter().all(|c| !c.done),
+        "Stream copies stay in flight; {stream:?}"
+    );
+    let attr = run(true);
+    assert_eq!(attr.len(), 1, "{attr:?}");
+    assert!(
+        attr.iter().all(|c| c.done),
+        "DuringApiCall must wait those copies; {attr:?}"
     );
 }
 
@@ -8856,6 +8931,7 @@ fn simulated_gpu_store_memcpy_any_empty_deps() {
             GpuStoreCfg {
                 memcpy_batch: true,
                 memcpy_any: any,
+                memcpy_attr: false,
                 ..GpuStoreCfg::default()
             },
         )
@@ -9131,6 +9207,183 @@ fn sim_replay_memcpy_any_refuses_during() {
 }
 
 #[test]
+fn simulated_gpu_store_memcpy_attr_waits_demand_copy() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let fill = |attr: bool| {
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner.clone(),
+            1,
+            HardwareProfile::example_h100_sxm(),
+            4 << 20,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                memcpy_attr: attr,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let _n = gpu.prefetch(&[ExpertKey::new(0, 0)]).expect("prefetch");
+        assert_eq!(gpu.memcpy_attr(), attr);
+        gpu.memcpy_operations()
+    };
+    let stream = fill(false);
+    assert_eq!(stream.len(), 1, "{stream:?}");
+    assert!(
+        stream.iter().all(|c| !c.done),
+        "Stream copies stay in flight; {stream:?}"
+    );
+    let attr = fill(true);
+    assert_eq!(attr.len(), 1, "{attr:?}");
+    assert!(
+        attr.iter().all(|c| c.done),
+        "DuringApiCall must wait those copies; {attr:?}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_memcpy_attr_needs_async_pinned() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let p = HardwareProfile::example_h100_sxm();
+    let refuse = |fill: GpuFill, cfg: GpuStoreCfg| match SimulatedGpuStore::with_cfg(
+        inner.clone(),
+        1,
+        p.clone(),
+        4096,
+        fill,
+        cfg,
+    ) {
+        Ok(_) => panic!("memcpy-attr must need async pinned/vmm H2D"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("memcpy-attr needs async pinned/vmm H2D"), "{s}");
+        }
+    };
+    refuse(
+        GpuFill::Managed,
+        GpuStoreCfg {
+            memcpy_attr: true,
+            ..GpuStoreCfg::default()
+        },
+    );
+    refuse(
+        GpuFill::Mapped,
+        GpuStoreCfg {
+            memcpy_attr: true,
+            ..GpuStoreCfg::default()
+        },
+    );
+    refuse(
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            memcpy_attr: true,
+            pageable: true,
+            ..GpuStoreCfg::default()
+        },
+    );
+    refuse(
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            memcpy_attr: true,
+            sync_alloc: true,
+            ..GpuStoreCfg::default()
+        },
+    );
+    match SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        p,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            memcpy_attr: true,
+            memset_fill: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("memset-fill cannot memcpy-attr"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("memset-fill cannot memcpy-attr"), "{s}");
+        }
+    }
+}
+
+#[test]
+fn sim_replay_memcpy_attr_keeps_hits() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let base = SimCfg::lru(2, 4096, 8);
+    let attr = SimCfg {
+        memcpy_attr: true,
+        ..base
+    };
+    let a = sim_replay_cfg(&t, p.clone(), base).expect("base");
+    let b = sim_replay_cfg(&t, p.clone(), attr).expect("attr");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+    let sched_a = schedule_replay(&t, p.clone(), base, SchedCfg::closed(0)).expect("sa");
+    let sched_b = schedule_replay(&t, p, attr, SchedCfg::closed(0)).expect("sb");
+    assert_eq!(sched_a.replay.hits, sched_b.replay.hits);
+    assert_eq!(sched_a.replay.misses, sched_b.replay.misses);
+}
+
+#[test]
+fn sim_replay_memcpy_attr_needs_async_pinned() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let refuse = |cfg: SimCfg| match sim_replay_cfg(&t, p.clone(), cfg) {
+        Ok(_) => panic!("memcpy-attr must need async pinned/vmm H2D"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("memcpy-attr needs async pinned/vmm H2D"), "{s}");
+        }
+    };
+    refuse(SimCfg {
+        memcpy_attr: true,
+        managed: true,
+        ..SimCfg::lru(1, 4096, 0)
+    });
+    refuse(SimCfg {
+        memcpy_attr: true,
+        mapped: true,
+        ..SimCfg::lru(1, 4096, 0)
+    });
+    refuse(SimCfg {
+        memcpy_attr: true,
+        pageable: true,
+        ..SimCfg::lru(1, 4096, 0)
+    });
+    refuse(SimCfg {
+        memcpy_attr: true,
+        sync_alloc: true,
+        ..SimCfg::lru(1, 4096, 0)
+    });
+    match sim_replay_cfg(
+        &t,
+        p,
+        SimCfg {
+            memcpy_attr: true,
+            memset_fill: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("memset-fill cannot memcpy-attr"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("memset-fill cannot memcpy-attr"), "{s}");
+        }
+    }
+}
+
+#[test]
 fn sim_replay_memset_fill_is_faster_than_pcie_h2d() {
     let t = cycling_trace();
     let p = HardwareProfile::parse(
@@ -9304,6 +9557,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             memcpy_batch: false,
             memcpy_during: false,
             memcpy_any: false,
+            memcpy_attr: false,
             memset_fill: false,
             copy_host: false,
             accessed_by: false,
@@ -14261,6 +14515,7 @@ fn sim_replay_sync_memops_h2d_host_sync() {
             memcpy_batch: false,
             memcpy_during: false,
             memcpy_any: false,
+            memcpy_attr: false,
             memset_fill: false,
             copy_host: false,
             accessed_by: false,
@@ -14478,6 +14733,7 @@ fn sim_replay_device_sync_memops_h2d_host_sync() {
             memcpy_batch: false,
             memcpy_during: false,
             memcpy_any: false,
+            memcpy_attr: false,
             memset_fill: false,
             copy_host: false,
             accessed_by: false,

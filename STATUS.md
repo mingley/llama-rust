@@ -5,6 +5,20 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaMemcpyWithAttributesAsync` demand miss fill
+
+`GpuStoreCfg::memcpy_attr` / `SimCfg::memcpy_attr` use
+`cudaMemcpyWithAttributesAsync` DuringApiCall for demand pinned/VMM miss H2D
+so the API waits that copy instead of leaving `memcpy_pinned_to_device` in
+flight. Hits/misses stay the same. Does not imply `--memcpy-batch`. Distinct
+from `--memcpy-during` (batch prefetch DuringApiCall) and `--memcpy-any`
+(empty deps, no API wait). Keep replica `pin_hot` D2D as memcpy. Illegal
+with `--mapped` / `--managed` / `--pageable` / `--memset-fill` /
+`--sync-alloc` / `--sync-memops` / `--device-sync-memops`. `--memcpy-attr`
+is off by default (decode identity: sequential pinned H2D). Store and walker
+(not walker-only). infer-bench has no expert H2D fill, so it does not get
+`--memcpy-attr`. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — skip fill `cudaMemPrefetchAsync`
 
 `GpuStoreCfg::no_mem_prefetch` / `SimCfg::no_mem_prefetch` skip

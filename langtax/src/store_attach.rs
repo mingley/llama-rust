@@ -98,6 +98,8 @@ pub(crate) struct GpuCli {
     pub memcpy_during: bool,
     /// `cudaMemcpySrcAccessOrderAny` on [`Self::memcpy_batch`].
     pub memcpy_any: bool,
+    /// `cudaMemcpyWithAttributesAsync` DuringApiCall on demand pinned/VMM H2D.
+    pub memcpy_attr: bool,
     /// `cudaMemsetAsync` miss fill (`GpuStoreCfg::memset_fill`). Not mapped/managed/pageable/batch.
     pub memset_fill: bool,
     pub accessed_by: bool,
@@ -291,6 +293,7 @@ impl GpuCli {
             "--memcpy-batch" => &mut self.memcpy_batch,
             "--memcpy-during" => &mut self.memcpy_during,
             "--memcpy-any" => &mut self.memcpy_any,
+            "--memcpy-attr" => &mut self.memcpy_attr,
             "--memset-fill" => &mut self.memset_fill,
             "--accessed-by" => &mut self.accessed_by,
             "--no-read-mostly" => &mut self.no_read_mostly,
@@ -698,6 +701,31 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--memcpy-attr` needs async pinned/VMM H2D.
+    pub(crate) fn check_memcpy_attr(self) -> Result<(), String> {
+        if !self.memcpy_attr {
+            return Ok(());
+        }
+        if self.mapped
+            || self.host_register_mapped
+            || self.managed
+            || self.stream_attach
+            || self.managed_host
+            || self.prefetch_host
+            || self.no_read_mostly
+            || self.no_preferred
+            || self.no_mem_prefetch
+            || self.pageable
+            || self.host_register
+            || self.sync_alloc
+            || self.sync_memops
+            || self.device_sync_memops
+        {
+            return Err("--memcpy-attr needs async pinned/vmm H2D".into());
+        }
+        Ok(())
+    }
+
     /// `--memset-fill` cannot mapped/managed/pageable/memcpy-batch.
     pub(crate) fn check_memset_fill(self) -> Result<(), String> {
         if !self.memset_fill {
@@ -721,6 +749,9 @@ impl GpuCli {
         }
         if self.memcpy_batch {
             return Err("--memset-fill cannot --memcpy-batch".into());
+        }
+        if self.memcpy_attr {
+            return Err("--memset-fill cannot --memcpy-attr".into());
         }
         Ok(())
     }
@@ -837,6 +868,7 @@ impl GpuCli {
             (self.memcpy_batch, "--memcpy-batch"),
             (self.memcpy_during, "--memcpy-during"),
             (self.memcpy_any, "--memcpy-any"),
+            (self.memcpy_attr, "--memcpy-attr"),
             (self.memset_fill, "--memset-fill"),
             (self.accessed_by, "--accessed-by"),
             (self.no_read_mostly, "--no-read-mostly"),
@@ -1201,6 +1233,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         memcpy_batch: gpu.memcpy_batch,
         memcpy_during: gpu.memcpy_during,
         memcpy_any: gpu.memcpy_any,
+        memcpy_attr: gpu.memcpy_attr,
         memset_fill: gpu.memset_fill,
         accessed_by: gpu.accessed_by,
         no_read_mostly: gpu.no_read_mostly,

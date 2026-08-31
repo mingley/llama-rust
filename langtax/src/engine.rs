@@ -27,7 +27,7 @@
 //! (`ttft_ns` / `itl_ns` / `ns_per_token`; not `$/M tokens`). Default GPU
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
-//! `mempool_trim`, `mempool_no_reuse`, `mempool_max`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `memcpy_during`, `memcpy_any`, `memset_fill`, `SetAccessedBy`, legacy NULL, stream priority,
+//! `mempool_trim`, `mempool_no_reuse`, `mempool_max`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `memcpy_during`, `memcpy_any`, `memcpy_attr`, `memset_fill`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/build/build-deps/host/piecewise/capture-deps/enable/if/mem/memset/memcpy, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
 //! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `l2_ratio`, `l2_streaming`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `mem_sync_launch`, `mem_sync_launch_map`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
@@ -186,11 +186,16 @@
 //! `cudaMemcpySrcAccessOrderDuringApiCall` on `--memcpy-batch` prefetch (needs
 //! `--memcpy-batch`; the batch API waits those copies; identity stays Stream order). `--memcpy-any` is
 //! `cudaMemcpySrcAccessOrderAny` on `--memcpy-batch` prefetch (needs `--memcpy-batch`; empty deps;
-//! no API wait; not with `--memcpy-during`). Decode
+//! no API wait; not with `--memcpy-during`). `--memcpy-attr` is
+//! `cudaMemcpyWithAttributesAsync` DuringApiCall on demand pinned/VMM miss H2D
+//! (the API waits that copy; identity stays `memcpy_pinned_to_device`; does not
+//! imply `--memcpy-batch`; not with `--mapped` / `--managed` / `--pageable` /
+//! `--memset-fill` / `--sync-alloc` / `--sync-memops` / `--device-sync-memops`).
+//! Decode
 //! identity stays `cudaLaunchKernel` (no cluster / Default policy / no preferred
 //! dim / Default carveout / non-portable disallowed / Auto sync policy /
 //! Auto device schedule / Default mem-sync domain / Default shared-mem / Default portable-cluster / 0 dynamic shared / Default
-//! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event / no programmatic event / Global managed attach / SetReadMostly / SetPreferredLocation / fill prefetch / events copy-ready / no mempool trim / opportunistic reuse / unlimited mempool maxSize / stream-order memcpy-batch / free_sync managed evict / cudaHostAllocMapped not HostRegisterMapped / async memcpy not SyncMemops / no device SyncMemops / disable-timing non-blocking copy events).
+//! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event / no programmatic event / Global managed attach / SetReadMostly / SetPreferredLocation / fill prefetch / events copy-ready / no mempool trim / opportunistic reuse / unlimited mempool maxSize / stream-order memcpy-batch / demand memcpy not WithAttributes / free_sync managed evict / cudaHostAllocMapped not HostRegisterMapped / async memcpy not SyncMemops / no device SyncMemops / disable-timing non-blocking copy events).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode
@@ -3554,6 +3559,24 @@ mod tests {
         assert_eq!(iso.2, 4);
         assert_eq!(any.2, 4);
         assert_eq!(iso.4, any.4, "memcpy-any must keep greedy identity");
+    }
+
+    #[test]
+    fn engine_gpu_memcpy_attr_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let iso = mixed_gpu_decode_itl_on(bytes.clone(), false, None, GpuStoreCfg::default());
+        let attr = mixed_gpu_decode_itl_on(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                memcpy_attr: true,
+                ..GpuStoreCfg::default()
+            },
+        );
+        assert_eq!(iso.2, 4);
+        assert_eq!(attr.2, 4);
+        assert_eq!(iso.4, attr.4, "memcpy-attr must keep greedy identity");
     }
 
     #[test]

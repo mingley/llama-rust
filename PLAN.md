@@ -1045,7 +1045,7 @@ model, do not celebrate the sim.
     Dual score still has no `$/M tokens`.
 52. [x] Engine SimulatedGpuStore CUDA knobs: `--host-func` /
     `--blocking-streams` / `--sync-alloc` / `--mempool` / `--vmm-page` /
-    `--pageable` / `--memset-fill` / `--copy-host` / `--accessed-by` / `--no-read-mostly` / `--no-preferred` / `--no-mem-prefetch` / `--legacy-null` / `--stream-priority`
+    `--pageable` / `--memset-fill` / `--memcpy-attr` / `--copy-host` / `--accessed-by` / `--no-read-mostly` / `--no-preferred` / `--no-mem-prefetch` / `--legacy-null` / `--stream-priority`
     match `GpuStoreCfg` / `expertvm sim` on `gguf_gemv engine` and
     `serve --engine --expert-sim`. Default pinned async stays decode
     identity. Dual score still has no `$/M tokens`.
@@ -4086,7 +4086,26 @@ model, do not celebrate the sim.
     second handshake skip: copy-ready may still record. `gpu-profile
     capture` is still refused. Dual score still has no `$/M tokens`.
 
-373. [ ] Next numbered PLAN item after 372 is the next `gpu-sim` / Engine /
+373. [x] `cudaMemcpyWithAttributesAsync` demand miss fill (`--memcpy-attr`):
+    [`GpuStoreCfg::memcpy_attr`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::memcpy_attr`](expertvm/src/sim_replay.rs) use
+    [`gpu_sim::Sim::memcpy_with_attributes`](gpu-sim/src/sim.rs)
+    [`MemcpySrcAccessOrder::DuringApiCall`](gpu-sim/src/ops.rs) for demand
+    pinned/VMM miss H2D so the API waits that copy (synchronize the DMA stream
+    first so empty deps do not race `cudaMallocAsync`). Hits stay the same.
+    Does not imply `--memcpy-batch`. Distinct from `--memcpy-during` (batch
+    prefetch DuringApiCall) and `--memcpy-any` (empty deps, no API wait).
+    Replica `pin_hot` D2D stays memcpy. Illegal with `--mapped` / `--managed` /
+    `--pageable` / `--memset-fill` / `--sync-alloc` / `--sync-memops` /
+    `--device-sync-memops`. Legal with `--pdl` and `--cooperative`.
+    `--memcpy-attr` on `expertvm sim` / `schedule` / `store` and
+    `gguf_gemv engine --expert-sim`. infer-bench has no expert H2D fill, so
+    it does not get `--memcpy-attr`. Decode identity stays
+    `memcpy_pinned_to_device`. Store and walker (not walker-only).
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+374. [ ] Next numbered PLAN item after 373 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
@@ -4134,6 +4153,9 @@ model, do not celebrate the sim.
     wall vs default SetPreferredLocation). Do not invent a second
     `--no-mem-prefetch` / skip fill prefetch (kernel first-touch vs
     copy-engine overlap is the wall vs default fill prefetch). Do not invent
+    a second `--memcpy-attr` / demand `cudaMemcpyWithAttributesAsync`
+    (API wait vs in-flight `memcpy_pinned_to_device` is the wall vs default
+    demand H2D). Do not invent
     `--memcpy-peer` host-sync pin_hot (alias of D2D; wall matches after
     `score()`). Do not invent `graph_add_empty` as a decode-path flag
     (1 ns join/fork). Do not invent a second `cudaGraphAddMemsetNode` of

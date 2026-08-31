@@ -540,6 +540,10 @@ those copies). `expertvm sim --memcpy-during` / `gguf_gemv engine --expert-sim -
 is DuringApiCall on batched prefetch (needs `--memcpy-batch`; identity stays
 Stream). `expertvm sim --memcpy-any` / `gguf_gemv engine --expert-sim --memcpy-any`
 is Any on batched prefetch (needs `--memcpy-batch`; empty deps; no API wait).
+`expertvm sim --memcpy-attr` / `gguf_gemv engine --expert-sim --memcpy-attr`
+is DuringApiCall on demand pinned/VMM miss H2D (the API waits that copy;
+identity stays sequential `memcpy_pinned_to_device`; does not imply
+`--memcpy-batch`).
 `expertvm sim --memset-fill` / `gguf_gemv engine --expert-sim --memset-fill`
 is `cudaMemsetAsync` of pinned/VMM miss pages (HBM write, compute occupancy;
 not mapped/managed/pageable/memcpy-batch; distinct from `--graph-memset`
