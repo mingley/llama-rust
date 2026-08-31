@@ -722,6 +722,8 @@ distinct from `TotalGlobalMem`).
 distinct from `SparseCudaArraySupported`).
 `SurfaceAlignment` is always 0 (CUDA surfaces are not modeled; distinct
 from `TextureAlignment`).
+`TexturePitchAlignment` is always 0 (CUDA textures are not modeled;
+distinct from `TextureAlignment` and from `MemcpyOp` 2D pitches).
 `StreamPrioritiesSupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields

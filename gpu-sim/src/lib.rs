@@ -491,6 +491,9 @@
 //! [`SparseCudaArraySupported`](DeviceAttr::SparseCudaArraySupported).
 //! [`DeviceAttr::SurfaceAlignment`] is always 0 (CUDA surfaces are not
 //! modeled). Distinct from [`TextureAlignment`](DeviceAttr::TextureAlignment).
+//! [`DeviceAttr::TexturePitchAlignment`] is always 0 (CUDA textures are not
+//! modeled). Distinct from [`TextureAlignment`](DeviceAttr::TextureAlignment)
+//! and from [`MemcpyOp`] 2D pitches (which this VM does model).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -12965,6 +12968,32 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::SurfaceAlignment)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_texture_pitch_alignment_is_zero() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert_eq!(hp.texture_pitch_alignment, 0);
+        assert_eq!(hp.texture_alignment, 0);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TexturePitchAlignment)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TextureAlignment)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::TexturePitchAlignment)
                 .unwrap(),
             0
         );
