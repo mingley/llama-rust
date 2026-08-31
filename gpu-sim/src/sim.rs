@@ -6568,15 +6568,14 @@ impl Sim {
     }
 
     /// IF nodes on `graph` as `(index, handle, body)` in add order.
+    ///
+    /// Instantiated ids use the exec snapshot (same as [`Self::graph_child_nodes`]).
     pub fn graph_if_nodes(
         &self,
         graph: GraphId,
     ) -> Result<Vec<(usize, CondId, GraphId)>, SimError> {
-        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
         let mut out = Vec::new();
-        for (i, step) in g.steps.iter().enumerate() {
+        for (i, step) in self.graph_view_steps(graph)?.iter().enumerate() {
             if step.destroyed {
                 continue;
             }
@@ -6588,15 +6587,14 @@ impl Sim {
     }
 
     /// WHILE nodes on `graph` as `(index, handle, body)` in add order.
+    ///
+    /// Instantiated ids use the exec snapshot.
     pub fn graph_while_nodes(
         &self,
         graph: GraphId,
     ) -> Result<Vec<(usize, CondId, GraphId)>, SimError> {
-        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
         let mut out = Vec::new();
-        for (i, step) in g.steps.iter().enumerate() {
+        for (i, step) in self.graph_view_steps(graph)?.iter().enumerate() {
             if step.destroyed {
                 continue;
             }
@@ -6608,15 +6606,14 @@ impl Sim {
     }
 
     /// SWITCH nodes on `graph` as `(index, handle, bodies)` in add order.
+    ///
+    /// Instantiated ids use the exec snapshot.
     pub fn graph_switch_nodes(
         &self,
         graph: GraphId,
     ) -> Result<Vec<(usize, CondId, Vec<GraphId>)>, SimError> {
-        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
         let mut out = Vec::new();
-        for (i, step) in g.steps.iter().enumerate() {
+        for (i, step) in self.graph_view_steps(graph)?.iter().enumerate() {
             if step.destroyed {
                 continue;
             }
@@ -6628,15 +6625,14 @@ impl Sim {
     }
 
     /// Set-conditional nodes on `graph` as `(index, handle, value)` in add order.
+    ///
+    /// Instantiated ids use the exec snapshot, so exec SetParams is visible.
     pub fn graph_set_conditional_nodes(
         &self,
         graph: GraphId,
     ) -> Result<Vec<(usize, CondId, u32)>, SimError> {
-        let g = self.graphs.get(&graph).ok_or(SimError::Invalid {
-            why: "unknown graph",
-        })?;
         let mut out = Vec::new();
-        for (i, step) in g.steps.iter().enumerate() {
+        for (i, step) in self.graph_view_steps(graph)?.iter().enumerate() {
             if step.destroyed {
                 continue;
             }
@@ -6645,6 +6641,17 @@ impl Sim {
             }
         }
         Ok(out)
+    }
+
+    fn graph_view_steps(&self, graph: GraphId) -> Result<&[GraphStep], SimError> {
+        let graph = self.resolved_graph(graph)?;
+        Ok(self
+            .graphs
+            .get(&graph)
+            .ok_or(SimError::Invalid {
+                why: "unknown graph",
+            })?
+            .view())
     }
 
     /// `cudaGraphAddEventRecordNode`. `external` is `cudaEventRecordExternal`.

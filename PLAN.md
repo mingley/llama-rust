@@ -4014,12 +4014,28 @@ model, do not celebrate the sim.
     default first). `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-369. [ ] Next numbered PLAN item after 368 is the next `gpu-sim` / Engine /
+369. [x] `cudaGraphAddIf` combo reuse:
+    [`GpuStoreCfg::graph_if`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::graph_if`](expertvm/src/sim_replay.rs) wrap walker combo
+    children in [`graph_add_if`](gpu-sim/src/sim.rs) +
+    [`graph_add_set_conditional`](gpu-sim/src/sim.rs) (create-time handle
+    default 0; node value 1) so a later subset retargets extras with
+    [`graph_exec_set_conditional_params`](gpu-sim/src/sim.rs) instead of
+    instantiating a new parent. Pays `graph_set_params_ns` and clears upload
+    (next launch re-uploads). Needs `--graph-build`. Does not imply
+    graph-build. Illegal with `--device-launch` (conditionals) and
+    `--graph-enable` (SetEnabled does not clear upload). Store GEMM stays
+    per-leaf. Hits stay the same. `--graph-if` on `expertvm sim` /
+    `schedule` / `store` and `gguf_gemv engine --expert-sim`. infer-bench
+    has no combo graph construction, so it does not get `--graph-if`.
+    Decode identity stays exact combo recapture (no IF nodes).
+    `gpu-profile capture` is still refused. Dual score still has no `$/M
+    tokens`.
+
+370. [ ] Next numbered PLAN item after 369 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
-    OpenAI HTTP veneer. `--graph-if` wrapping combo children with
-    `graph_add_if` + `graph_add_set_conditional` / exec SetParams is now
-    unblocked. Do not invent
+    OpenAI HTTP veneer. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
     numbers, example `$/M tokens` rents, or `cudaStreamDestroy`.
@@ -4055,7 +4071,9 @@ model, do not celebrate the sim.
     after `launch_graph`). Do not invent `stream_update_capture_dependencies`
     as an Engine flag (same topology as begin-capture deps). Do not invent a
     second graph-build `cudaGraphSetConditional` flag. Live `set_conditional`
-    before `launch_graph` is still wiped (create-time default). Do not invent
+    before `launch_graph` is still wiped (create-time default). Do not invent a
+    second `--graph-if` / IF wrap flag (SetParams upload tax is the wall vs
+    `--graph-enable`). Do not invent
     `--memcpy-peer` host-sync pin_hot (alias of D2D; wall matches after
     `score()`). Do not invent `graph_add_empty` as a decode-path flag
     (1 ns join/fork). Do not invent a second `cudaGraphAddMemsetNode` of

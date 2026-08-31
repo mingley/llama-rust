@@ -830,6 +830,9 @@
 //! edges). `expertvm --graph-build-deps` chains `--graph-build` combo children.
 //! `expertvm --graph-host` inserts [`graph_add_host_func`](Sim::graph_add_host_func)
 //! BETWEEN those children (`host_func_ns` tax; not a JOIN after overlap).
+//! `expertvm --graph-if` wraps those children in [`graph_add_if`](Sim::graph_add_if)
+//! + [`graph_add_set_conditional`](Sim::graph_add_set_conditional) and skips extras
+//! with exec SetParams (clears upload; not a second SetEnabled).
 //! `expertvm --graph-memset` inserts [`graph_add_memset`](Sim::graph_add_memset)
 //! BETWEEN `--graph-mem` scratch alloc and the GEMM kernel (HBM-write tax;
 //! needs `--graph-mem`).
@@ -893,7 +896,10 @@
 //! handle equals `i`). [`graph_if_nodes`](Sim::graph_if_nodes) /
 //! [`graph_while_nodes`](Sim::graph_while_nodes) /
 //! [`graph_switch_nodes`](Sim::graph_switch_nodes) /
-//! [`graph_set_conditional_nodes`](Sim::graph_set_conditional_nodes) list those nodes.
+//! [`graph_set_conditional_nodes`](Sim::graph_set_conditional_nodes) list those nodes
+//! (exec snapshot after instantiate). `expertvm --graph-if` wraps `--graph-build`
+//! combo children in IF + set-conditional and retargets with exec SetParams
+//! (clears upload; not a second [`graph_node_set_enabled`](Sim::graph_node_set_enabled)).
 //! [`graph_node_find_in_clone`](Sim::graph_node_find_in_clone) is
 //! `cudaGraphNodeFindInClone` (same index on a graph produced by
 //! [`clone_graph`](Sim::clone_graph) of that original).
@@ -19932,6 +19938,57 @@ mod tests {
         assert!(
             ran > skip,
             "exec SetParams value=1 must run the IF body; ran={ran} skip={skip}"
+        );
+        let sets = sim.graph_set_conditional_nodes(exec).unwrap();
+        assert_eq!(sets.len(), 1);
+        assert_eq!(sets.first().map(|s| s.2), Some(1));
+    }
+
+    #[test]
+    fn graph_add_if_child_skips_via_exec_set_params() {
+        let long = KernelKind::other(1 << 40, 4096);
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let s = StreamId(0);
+        let a = sim.alloc(d, 4096, s).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, s));
+        sim.synchronize().unwrap();
+        let leaf = sim.create_graph(d, s).unwrap();
+        sim.graph_add_kernel(leaf, long, &[a], &[a]).unwrap();
+        let leaf = sim.instantiate_graph(leaf).unwrap();
+        let g = sim.create_graph(d, s).unwrap();
+        let h = sim.graph_conditional_create(g, 0).unwrap();
+        sim.graph_add_set_conditional(g, h, 1).unwrap();
+        let body = sim.graph_add_if(g, h).unwrap();
+        sim.graph_add_child(body, leaf).unwrap();
+        sim.graph_add_dependencies(g, 0, 1).unwrap();
+        let exec = sim.instantiate_graph(g).unwrap();
+        sim.upload_graph(exec).unwrap();
+        let t0 = sim.clock_ns();
+        let n0 = sim.launch_graph(exec, s).unwrap();
+        sim.synchronize().unwrap();
+        let ran = sim.clock_ns().saturating_sub(t0);
+        assert_eq!(n0, 2);
+        let (node, _, value) = sim.graph_unique_set_conditional(exec).unwrap();
+        assert_eq!(value, 1);
+        sim.graph_exec_set_conditional_params(exec, node, 0)
+            .unwrap();
+        assert!(!sim.graph_uploaded(exec).unwrap());
+        let t1 = sim.clock_ns();
+        let n1 = sim.launch_graph(exec, s).unwrap();
+        sim.synchronize().unwrap();
+        let skip = sim.clock_ns().saturating_sub(t1);
+        assert_eq!(n1, 2);
+        assert!(
+            skip < ran,
+            "exec SetParams value=0 must skip the IF child; skip={skip} ran={ran}"
+        );
+        assert_eq!(
+            sim.graph_set_conditional_nodes(exec)
+                .unwrap()
+                .first()
+                .map(|s| s.2),
+            Some(0)
         );
     }
 

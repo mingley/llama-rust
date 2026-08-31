@@ -294,6 +294,14 @@ pub struct GpuStoreCfg {
     /// stays per-leaf (`gemm_resident`). Decode identity stays exact combo
     /// recapture.
     pub graph_enable: bool,
+    /// `cudaGraphAddIf` + set-conditional wrap of walker combo children.
+    ///
+    /// A later token that GEMMs a subset of a stored combo retargets extra
+    /// IF children (`graph_set_params_ns` + re-upload) instead of instantiate.
+    /// Needs [`Self::graph_build`]. Illegal with [`Self::device_launch`] and
+    /// [`Self::graph_enable`]. Store GEMM stays per-leaf (`gemm_resident`).
+    /// Decode identity stays exact combo recapture (no IF nodes).
+    pub graph_if: bool,
     /// Leaf GEMM graphs include a scratch `cudaMallocAsync` + free.
     ///
     /// CUDA cannot `cudaGraphExecUpdate` mem nodes, so [`Self::graph_update`]
@@ -918,6 +926,10 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::graph_set_params`] retargets a parked kernel node;
     /// [`GpuStoreCfg::graph_enable`] is walker combo `cudaGraphNodeSetEnabled`
     /// (store GEMM stays per-leaf; illegal with device-launch);
+    /// [`GpuStoreCfg::graph_if`] wraps walker combo children in
+    /// `graph_add_if` + `graph_add_set_conditional` (needs graph-build; exec
+    /// SetParams clears upload; illegal with device-launch and graph-enable;
+    /// store GEMM stays per-leaf);
     /// [`GpuStoreCfg::graph_capture_deps`] chains piecewise combo
     /// fragments (needs piecewise; store GEMM stays per-leaf);
     /// [`GpuStoreCfg::graph_capture_host`] inserts captured `host_func`
@@ -1092,6 +1104,15 @@ impl SimulatedGpuStore {
         }
         if cfg.graph_enable && cfg.device_launch {
             return Err(Error::Store("graph-enable cannot device-launch"));
+        }
+        if cfg.graph_if && !cfg.graph_build {
+            return Err(Error::Store("graph-if needs graph-build"));
+        }
+        if cfg.graph_if && cfg.device_launch {
+            return Err(Error::Store("graph-if cannot device-launch"));
+        }
+        if cfg.graph_if && cfg.graph_enable {
+            return Err(Error::Store("choose one of graph-if, graph-enable"));
         }
         if cfg.launch_completion && cfg.device_launch {
             return Err(Error::Store("launch-completion cannot device-launch"));

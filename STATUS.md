@@ -5,14 +5,27 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaGraphAddIf` combo reuse
+
+`GpuStoreCfg::graph_if` / `SimCfg::graph_if` wrap walker combo children in
+`graph_add_if` + `graph_add_set_conditional` (handle default 0; node value 1)
+so a later subset retargets extras with `graph_exec_set_conditional_params`
+instead of instantiating a new parent. Pays `graph_set_params_ns` and clears
+upload (next launch re-uploads). Needs `--graph-build`. Does not imply
+graph-build. Illegal with `--device-launch` and `--graph-enable`. Hits/misses
+stay the same. Distinct from `--graph-enable` (SetEnabled does not clear
+upload). `--graph-if` is off by default (decode identity: no IF nodes). Store
+GEMM stays per-leaf. infer-bench has no combo graph construction, so it does
+not get `--graph-if`. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — graph-build `cudaGraphSetConditional` + exec SetParams
 
 `Sim::graph_add_set_conditional` is the graph-build analog of captured
 `cudaGraphSetConditional`. Handle is topology; `value` is
 `graph_exec_set_conditional_params` / `GraphNodeParams::SetConditional`.
 Device-launch instantiate refuses the node. Decode identity does not add
-set-conditional nodes. `--graph-if` is not an Engine flag yet (launch still
-resets handles to create-time default first).
+set-conditional nodes. `--graph-if` is the Engine twin (graph-build combo
+IF wrap + exec SetParams).
 
 ## Shipped 2026-08-31 — `cudaLaunchHostFunc` after miss DMA
 

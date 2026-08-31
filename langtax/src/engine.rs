@@ -28,7 +28,7 @@
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `mempool_trim`, `mempool_no_reuse`, `mempool_max`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `memcpy_during`, `memcpy_any`, `memset_fill`, `SetAccessedBy`, legacy NULL, stream priority,
-//! graph update/clone/set-params/build/build-deps/host/piecewise/capture-deps/enable/mem/memset/memcpy, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
+//! graph update/clone/set-params/build/build-deps/host/piecewise/capture-deps/enable/if/mem/memset/memcpy, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
 //! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `l2_ratio`, `l2_streaming`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `mem_sync_launch`, `mem_sync_launch_map`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
@@ -86,6 +86,10 @@
 //! `--graph-host` is `cudaGraphAddHostNode` BETWEEN those combo children
 //! (needs `--graph-build`; sibling GEMMs serialize through `host_func_ns`;
 //! does not imply `--host-func`; store GEMM stays per-leaf).
+//! `--graph-if` wraps `--graph-build` combo children in `cudaGraphAddIf` +
+//! `cudaGraphSetConditional` (needs `--graph-build`; exec SetParams skips extras
+//! and re-uploads; not with `--device-launch` or `--graph-enable`; store GEMM
+//! stays per-leaf).
 //! `--graph-memset` is `cudaGraphAddMemsetNode` / `cudaMemsetAsync` of
 //! `--graph-mem` scratch BETWEEN alloc and GEMM (needs `--graph-mem`; extra
 //! HBM-write tax; store and walker leaf GEMMs).

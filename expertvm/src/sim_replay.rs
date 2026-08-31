@@ -529,10 +529,10 @@ use crate::planner::{
 use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
 use gpu_sim::{
-    AccessPolicyWindow, AccessProperty, AllocId, ClusterSchedulingPolicy, DType, DeviceFlags,
-    DeviceId, DeviceLimit, EventId, GraphId, GraphInstantiateFlags, HardwareProfile, KernelAttrs,
-    KernelBuf, KernelKind, LaunchCompletionEvent, MemAttach, MemHandleType, MemPoolAttr,
-    MemPoolProps, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyOp,
+    AccessPolicyWindow, AccessProperty, AllocId, ClusterSchedulingPolicy, CondId, DType,
+    DeviceFlags, DeviceId, DeviceLimit, EventId, GraphId, GraphInstantiateFlags, HardwareProfile,
+    KernelAttrs, KernelBuf, KernelKind, LaunchCompletionEvent, MemAttach, MemHandleType,
+    MemPoolAttr, MemPoolProps, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyOp,
     MemcpySrcAccessOrder, Place, PointerAttr, PoolId, PortableClusterMode, PortableSharedMode,
     ProgrammaticEvent, ProgrammaticLaunch, Score, SharedMemCarveout, SharedMemoryMode, Sim,
     StreamId, SynchronizationPolicy, WaitValueCmp,
@@ -943,6 +943,19 @@ pub struct SimCfg {
     /// [`crate::GpuStoreCfg::graph_enable`] is the store CLI field (store GEMM
     /// stays per-leaf).
     pub graph_enable: bool,
+    /// `cudaGraphAddIf` + set-conditional wrap of graph-build combo children.
+    ///
+    /// A later token that GEMMs a subset of a stored combo (or of currently
+    /// resident experts on that origin) retargets extra children with
+    /// [`gpu_sim::Sim::graph_exec_set_conditional_params`] instead of
+    /// instantiating a new parent. Pays `graph_set_params_ns` and clears
+    /// upload (next launch re-uploads). Needs [`Self::graph_build`]. Does not
+    /// imply graph-build. Illegal with [`Self::device_launch`] (conditionals)
+    /// and [`Self::graph_enable`] (SetEnabled vs SetParams). Decode identity
+    /// stays exact combo recapture (no IF nodes).
+    /// [`crate::GpuStoreCfg::graph_if`] is the store CLI field (store GEMM
+    /// stays per-leaf).
+    pub graph_if: bool,
     /// Leaf GEMM graphs include a scratch `cudaMallocAsync` + free.
     ///
     /// Models in-graph workspace (`cudaGraphAddMemAllocNode`). Hits/misses
@@ -1365,6 +1378,7 @@ impl SimCfg {
             graph_capture_deps: false,
             graph_capture_host: false,
             graph_enable: false,
+            graph_if: false,
             graph_mem: false,
             graph_memset: false,
             graph_memcpy: false,
@@ -1479,6 +1493,15 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     }
     if cfg.graph_enable && cfg.device_launch {
         return Err(Error::Store("graph-enable cannot device-launch"));
+    }
+    if cfg.graph_if && !cfg.graph_build {
+        return Err(Error::Store("graph-if needs graph-build"));
+    }
+    if cfg.graph_if && cfg.device_launch {
+        return Err(Error::Store("graph-if cannot device-launch"));
+    }
+    if cfg.graph_if && cfg.graph_enable {
+        return Err(Error::Store("choose one of graph-if, graph-enable"));
     }
     if cfg.launch_completion && cfg.device_launch {
         return Err(Error::Store("launch-completion cannot device-launch"));
@@ -1737,7 +1760,8 @@ pub fn sim_replay_cfg(
         .with_piecewise(cfg.graph_piecewise)
         .with_capture_deps(cfg.graph_capture_deps)
         .with_capture_host(cfg.graph_capture_host)
-        .with_enable(cfg.graph_enable);
+        .with_enable(cfg.graph_enable)
+        .with_if(cfg.graph_if);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
     for (i, event) in trace.events.iter().enumerate() {
         args.s = bump_null_for_attach(plan.work(event.sequence, event.token), cfg.stream_attach);
@@ -2307,6 +2331,8 @@ pub(crate) struct GraphBank {
     mem_sync_launch_map: bool,
     set_params: bool,
     enable: bool,
+    /// [`SimCfg::graph_if`]: wrap combo children in IF + set-conditional.
+    graph_if: bool,
     pub updates: u64,
     pub clones: u64,
     pub kernel_sets: u64,
@@ -2356,6 +2382,7 @@ impl GraphBank {
             mem_sync_launch_map: false,
             set_params: false,
             enable: false,
+            graph_if: false,
             updates: 0,
             clones: 0,
             kernel_sets: 0,
@@ -2568,6 +2595,11 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_if(mut self, yes: bool) -> Self {
+        self.graph_if = yes;
+        self
+    }
+
     pub(crate) fn get(&self, ids: &[AllocId]) -> Option<GraphId> {
         self.graphs.get(ids).map(|(g, _)| *g)
     }
@@ -2632,6 +2664,61 @@ impl GraphBank {
             let on = want.contains(&alloc);
             if sim.graph_node_get_enabled(exec, node)? != on {
                 sim.graph_node_set_enabled(exec, node, on)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn skip_extra(&self) -> bool {
+        self.enable || self.graph_if
+    }
+
+    fn apply_combo_skips(
+        &self,
+        sim: &mut Sim,
+        exec: GraphId,
+        want: &[AllocId],
+    ) -> Result<(), Error> {
+        self.apply_child_enable(sim, exec, want)?;
+        self.apply_child_if(sim, exec, want)
+    }
+
+    /// SetConditional value 1 for `want` leaves; 0 for extra IF children.
+    ///
+    /// Child index is not cover order. Only bills `graph_set_params_ns` (and
+    /// clears upload) when the exec snapshot disagrees.
+    fn apply_child_if(&self, sim: &mut Sim, exec: GraphId, want: &[AllocId]) -> Result<(), Error> {
+        if !self.graph_if {
+            return Ok(());
+        }
+        let want: BTreeSet<AllocId> = want.iter().copied().collect();
+        let ifs = sim.graph_if_nodes(exec)?;
+        if ifs.is_empty() {
+            return Ok(());
+        }
+        let mut by_handle: BTreeMap<CondId, (usize, u32)> = BTreeMap::new();
+        for (node, handle, value) in sim.graph_set_conditional_nodes(exec)? {
+            if by_handle.insert(handle, (node, value)).is_some() {
+                return Err(Error::Store("combo set-conditional handle"));
+            }
+        }
+        for (_, handle, body) in ifs {
+            let children = sim.graph_child_nodes(body)?;
+            let Some((_, child)) = children.first() else {
+                return Err(Error::Store("combo if child"));
+            };
+            if children.get(1).is_some() {
+                return Err(Error::Store("combo if child"));
+            }
+            let Some(alloc) = self.alloc_of(*child) else {
+                return Err(Error::Store("combo child alloc"));
+            };
+            let on = u32::from(want.contains(&alloc));
+            let Some((node, have)) = by_handle.get(&handle).copied() else {
+                return Err(Error::Store("combo if handle"));
+            };
+            if have != on {
+                sim.graph_exec_set_conditional_params(exec, node, on)?;
             }
         }
         Ok(())
@@ -2729,6 +2816,9 @@ impl GraphBank {
     }
 
     fn parks(&self, n_ids: usize) -> bool {
+        if self.graph_if && n_ids >= 2 {
+            return false;
+        }
         self.set_params || (n_ids == 1 && self.update && self.mem == LeafMem::None)
     }
 
@@ -2744,6 +2834,10 @@ impl GraphBank {
         let mut skipped = Vec::new();
         let mut found = None;
         while let Some(exec) = idle.pop() {
+            if n_ids == 1 && !sim.graph_if_nodes(exec)?.is_empty() {
+                skipped.push(exec);
+                continue;
+            }
             let n_child = sim.graph_child_nodes(exec)?.len();
             let ok = if n_ids == 1 {
                 n_child == 0
@@ -3431,7 +3525,7 @@ pub(crate) fn gemm_keys(
             .push(page.id);
     }
     for ((d, stream), ids) in by_dev {
-        let cover = if graphs.enable {
+        let cover = if graphs.skip_extra() {
             resident_cover(handles, d, stream, work)
         } else {
             Vec::new()
@@ -3505,14 +3599,14 @@ fn gemm_ids(
         return Ok(());
     }
     if let Some(g) = graphs.get(&ids) {
-        graphs.apply_child_enable(sim, g, &ids)?;
+        graphs.apply_combo_skips(sim, g, &ids)?;
         replay_exec(sim, g, d, stream, graphs.device_launch)?;
         ctr.graph_launches = ctr.graph_launches.saturating_add(1);
         return Ok(());
     }
-    if graphs.enable {
+    if graphs.skip_extra() {
         if let Some(g) = graphs.find_cover(origin, &ids) {
-            graphs.apply_child_enable(sim, g, &ids)?;
+            graphs.apply_combo_skips(sim, g, &ids)?;
             replay_exec(sim, g, d, stream, graphs.device_launch)?;
             ctr.graph_launches = ctr.graph_launches.saturating_add(1);
             return Ok(());
@@ -3527,7 +3621,8 @@ fn gemm_ids(
             }
         }
     }
-    let capture_ids = if graphs.enable && cover.len() > 1 && is_strict_superset(&cover, &ids) {
+    let capture_ids = if graphs.skip_extra() && cover.len() > 1 && is_strict_superset(&cover, &ids)
+    {
         cover
     } else {
         ids.clone()
@@ -3540,13 +3635,14 @@ fn gemm_ids(
         || graphs.device_launch
         || graphs.device_updatable
         || graphs.enable
+        || graphs.graph_if
         || graphs.leaf_host
     {
         if let Some(g) = capture_expert_graph(sim, graphs, d, stream, &capture_ids)? {
             if capture_ids.len() > 1 {
                 ctr.child_graphs = ctr.child_graphs.saturating_add(1);
             }
-            graphs.apply_child_enable(sim, g, &ids)?;
+            graphs.apply_combo_skips(sim, g, &ids)?;
             replay_exec(sim, g, d, stream, graphs.device_launch)?;
             ctr.graph_launches = ctr.graph_launches.saturating_add(1);
             return Ok(());
@@ -3676,20 +3772,37 @@ fn build_expert_graph(
     let mut prev: Option<usize> = None;
     let mut idx = 0usize;
     for (i, g) in leaves.iter().enumerate() {
-        sim.graph_add_child(parent, *g)?;
-        let child = idx;
-        idx = idx.saturating_add(1);
-        if let Some(p) = prev {
-            sim.graph_add_dependencies(parent, p, child)?;
-        }
+        let join = if graphs.graph_if {
+            let h = sim.graph_conditional_create(parent, 0)?;
+            sim.graph_add_set_conditional(parent, h, 1)?;
+            let set_i = idx;
+            idx = idx.saturating_add(1);
+            let body = sim.graph_add_if(parent, h)?;
+            let if_i = idx;
+            idx = idx.saturating_add(1);
+            sim.graph_add_dependencies(parent, set_i, if_i)?;
+            sim.graph_add_child(body, *g)?;
+            if let Some(p) = prev {
+                sim.graph_add_dependencies(parent, p, set_i)?;
+            }
+            if_i
+        } else {
+            sim.graph_add_child(parent, *g)?;
+            let child = idx;
+            idx = idx.saturating_add(1);
+            if let Some(p) = prev {
+                sim.graph_add_dependencies(parent, p, child)?;
+            }
+            child
+        };
         if graphs.graph_host && i.saturating_add(1) < leaves.len() {
             sim.graph_add_host_func(parent)?;
             let host = idx;
             idx = idx.saturating_add(1);
-            sim.graph_add_dependencies(parent, child, host)?;
+            sim.graph_add_dependencies(parent, join, host)?;
             prev = Some(host);
         } else if graphs.build_deps {
-            prev = Some(child);
+            prev = Some(join);
         } else {
             prev = None;
         }

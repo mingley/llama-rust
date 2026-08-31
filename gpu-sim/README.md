@@ -471,6 +471,9 @@ start when the handle is `0`. `set_conditional` is device
 `cudaGraphSetConditional` (each launch resets to the create-time default).
 `graph_add_set_conditional` is the graph-build analog (handle topology;
 `value` is `graph_exec_set_conditional_params`).
+`expertvm --graph-if` wraps `--graph-build` combo children in
+`graph_add_if` + `graph_add_set_conditional` and skips extras with exec
+SetParams (clears upload; distinct from `--graph-enable` SetEnabled).
 `graph_add_while` / `graph_while_nodes` / `graph_add_switch` /
 `graph_switch_nodes` are WHILE / SWITCH (WHILE caps at
 64 iterations; SWITCH runs body `i` when the handle equals `i`).
@@ -485,6 +488,8 @@ clones combo parents (recursive children). `--graph-build` is
 Hyper-Q overlap unless `graph_add_dependencies` chains them).
 `expertvm --graph-build-deps` adds those edges. `--graph-host` inserts
 `graph_add_host_func` BETWEEN those children (`host_func_ns`; not a JOIN).
+`--graph-if` wraps those children in `graph_add_if` + `graph_add_set_conditional`
+(exec SetParams skips extras and re-uploads; not a second SetEnabled).
 `--graph-piecewise`
 is `cudaStreamBeginCaptureToGraph` combo parents (independent child roots).
 `expertvm --graph-capture-deps` chains those fragments (`numDependencies > 0`).

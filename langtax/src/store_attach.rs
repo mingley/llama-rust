@@ -48,6 +48,8 @@ pub(crate) struct GpuCli {
     pub graph_capture_host: bool,
     /// `cudaGraphNodeSetEnabled` skip extra combo children (`GpuStoreCfg::graph_enable`).
     pub graph_enable: bool,
+    /// `cudaGraphAddIf` wrap combo children (`GpuStoreCfg::graph_if`). Needs graph-build.
+    pub graph_if: bool,
     pub graph_mem: bool,
     /// `cudaGraphAddMemsetNode` / `cudaMemsetAsync` of graph-mem scratch (`GpuStoreCfg::graph_memset`). Needs graph-mem.
     pub graph_memset: bool,
@@ -255,6 +257,7 @@ impl GpuCli {
             "--graph-capture-deps" => &mut self.graph_capture_deps,
             "--graph-capture-host" => &mut self.graph_capture_host,
             "--graph-enable" => &mut self.graph_enable,
+            "--graph-if" => &mut self.graph_if,
             "--graph-mem" => &mut self.graph_mem,
             "--graph-memset" => &mut self.graph_memset,
             "--graph-memcpy" => &mut self.graph_memcpy,
@@ -732,6 +735,17 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--graph-if` needs `--graph-build`. Illegal with `--graph-enable`.
+    pub(crate) fn check_graph_if(self) -> Result<(), String> {
+        if self.graph_if && !self.graph_build {
+            return Err("--graph-if needs --graph-build".into());
+        }
+        if self.graph_if && self.graph_enable {
+            return Err("choose one of --graph-if, --graph-enable".into());
+        }
+        Ok(())
+    }
+
     /// `--graph-memset` needs `--graph-mem`.
     pub(crate) fn check_graph_memset(self) -> Result<(), String> {
         if self.graph_memset && !self.graph_mem {
@@ -772,6 +786,7 @@ impl GpuCli {
             (self.graph_capture_deps, "--graph-capture-deps"),
             (self.graph_capture_host, "--graph-capture-host"),
             (self.graph_enable, "--graph-enable"),
+            (self.graph_if, "--graph-if"),
             (self.graph_mem, "--graph-mem"),
             (self.graph_memset, "--graph-memset"),
             (self.graph_memcpy, "--graph-memcpy"),
@@ -1176,6 +1191,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         graph_capture_deps: gpu.graph_capture_deps,
         graph_capture_host: gpu.graph_capture_host,
         graph_enable: gpu.graph_enable,
+        graph_if: gpu.graph_if,
         graph_mem: gpu.graph_mem,
         graph_memset: gpu.graph_memset,
         graph_memcpy: gpu.graph_memcpy,
