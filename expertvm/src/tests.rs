@@ -5893,15 +5893,16 @@ fn simulated_gpu_store_copy_host_lengthens_miss_not_later_hits() {
         gpu.score().expect("score")
     };
     let plain = run(GpuStoreCfg::default());
-    let mut copy_cfg = GpuStoreCfg::default();
-    copy_cfg.copy_host = true;
     let mut gpu = SimulatedGpuStore::with_cfg(
         DirectStore::from_trace(&t),
         2,
         p.clone(),
         4096,
         GpuFill::Pinned,
-        copy_cfg,
+        GpuStoreCfg {
+            copy_host: true,
+            ..GpuStoreCfg::default()
+        },
     )
     .expect("copy-host");
     assert!(gpu.copy_host());
