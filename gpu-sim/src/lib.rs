@@ -315,6 +315,7 @@
 //! [`Sim::create_event_with_flags`] is `cudaEventCreateWithFlags`
 //! ([`EventCreateFlags::DISABLE_TIMING`] / [`EventCreateFlags::INTERPROCESS`] /
 //! [`EventCreateFlags::BLOCKING_SYNC`]; Interprocess requires DisableTiming).
+//! [`Sim::event_get_flags`] is `cudaEventGetFlags` (query; legal during capture).
 //! [`Sim::create_event_blocking_sync`] is the BlockingSync helper
 //! ([`synchronize_event`](Sim::synchronize_event) pays
 //! [`GpuProfile::host_sync_blocking_ns`]; `expertvm store --event-blocking-sync`
@@ -18777,6 +18778,10 @@ mod tests {
         }
         sim.create_event_with_flags(EventId(8), EventCreateFlags::DISABLE_TIMING)
             .unwrap();
+        assert_eq!(
+            sim.event_get_flags(EventId(8)).unwrap(),
+            EventCreateFlags::DISABLE_TIMING
+        );
         assert!(!sim.event_timing(EventId(8)).unwrap());
         sim.begin_capture(d, copy).unwrap();
         match sim.create_event_with_flags(EventId(10), 0) {
@@ -18784,6 +18789,56 @@ mod tests {
             other => panic!("{other:?}"),
         }
         let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn event_get_flags_wraps_create_flags_word() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        sim.create_event(EventId(1)).unwrap();
+        assert_eq!(
+            sim.event_get_flags(EventId(1)).unwrap(),
+            EventCreateFlags::DEFAULT
+        );
+        sim.create_event_disable_timing(EventId(2)).unwrap();
+        assert_eq!(
+            sim.event_get_flags(EventId(2)).unwrap(),
+            EventCreateFlags::DISABLE_TIMING
+        );
+        sim.create_event_blocking_sync(EventId(3)).unwrap();
+        assert_eq!(
+            sim.event_get_flags(EventId(3)).unwrap(),
+            EventCreateFlags::BLOCKING_SYNC
+        );
+        sim.create_event_interprocess(EventId(4)).unwrap();
+        assert_eq!(
+            sim.event_get_flags(EventId(4)).unwrap(),
+            EventCreateFlags::DISABLE_TIMING | EventCreateFlags::INTERPROCESS
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(sim.event_get_flags(EventId(1)).unwrap(), 0);
+        let _g = sim.end_capture().unwrap();
+        match sim.event_get_flags(EventId(99)) {
+            Err(SimError::UnknownEvent { event }) => assert_eq!(event, 99),
+            other => panic!("{other:?}"),
+        }
+        sim.destroy_event(EventId(1)).unwrap();
+        match sim.event_get_flags(EventId(1)) {
+            Err(SimError::UnknownEvent { event }) => assert_eq!(event, 1),
+            other => panic!("{other:?}"),
+        }
+        enq(sim.record_event(d, EventId(7), StreamId(0)));
+        sim.synchronize().unwrap();
+        assert_eq!(
+            sim.event_get_flags(EventId(7)).unwrap(),
+            EventCreateFlags::DEFAULT
+        );
+        let h = sim.ipc_get_event(EventId(4)).unwrap();
+        let imp = sim.ipc_open_event(h).unwrap();
+        assert_eq!(
+            sim.event_get_flags(imp).unwrap(),
+            EventCreateFlags::DISABLE_TIMING | EventCreateFlags::INTERPROCESS
+        );
     }
 
     #[test]

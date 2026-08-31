@@ -800,6 +800,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `synchronize_stream` / `synchronize_event` / `synchronize_device` are
   `cudaStreamSynchronize` / `cudaEventSynchronize` / `cudaDeviceSynchronize`. `event_elapsed_ns` is `cudaEventElapsedTime` in
   nanoseconds (`create_event_disable_timing` forbids it). `query_event` is `cudaEventQuery`. `query_stream` is `cudaStreamQuery`.
+  `event_get_flags` is `cudaEventGetFlags`.
   `mem_info` is `cudaMemGetInfo` `(free, total)`. Public `GpuOp` / `Operation` is the compiled DAG
   (`Sim::operations`).   `expertvm bench` on a multi-sequence trace prints
   `schedule-all` vs `schedule-1`, `schedule-chunk1` when a first token
@@ -4606,7 +4607,15 @@ model, do not celebrate the sim.
     `cuCtxFromGreenCtx`. No second `--green-ctx`. `gpu-profile capture`
     is still refused. Dual score still has no `$/M tokens`.
 
-413. [ ] Next numbered PLAN item after 412 is the next `gpu-sim` / Engine /
+413. [x] CUDA `cudaEventGetFlags` (`event_get_flags`): create flags word for
+    a live event. Distinct from `event_timing` / `event_blocking_sync`.
+    Query; legal during capture. Unknown or destroyed is UnknownEvent.
+    Implicit first-record events are Default. IPC imports report
+    Interprocess plus DisableTiming. No second `--green-ctx`.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+414. [ ] Next numbered PLAN item after 413 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4619,7 +4628,8 @@ model, do not celebrate the sim.
     `cuGreenCtxRecordEvent` / `WaitEvent`. Do not invent a second
     `cudaExecutionCtxSynchronize`. Do not invent a second
     `cuStreamGetDevResource`. Do not invent a second `cuGreenCtxGetId`.
-    Do not invent a second `cudaExecutionCtxGetDevice`.
+    Do not invent a second `cudaExecutionCtxGetDevice`. Do not invent a
+    second `cudaEventGetFlags`.
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
     `attn_v.scale` as the writer-tiny. Do not invent a second dense
     `ffn_down.scale` / second `ffn_gate.scale` / second `ffn_up.scale` /

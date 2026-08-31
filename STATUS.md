@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cudaEventGetFlags`
+
+`gpu-sim` `event_get_flags` is `cudaEventGetFlags`. A live event returns
+the create flags word (`DisableTiming` / `Interprocess` / `BlockingSync`).
+Distinct from `event_timing` / `event_blocking_sync`. Query; legal during
+capture. Unknown or destroyed is UnknownEvent. Implicit first-record
+events are Default. IPC imports report Interprocess plus DisableTiming.
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cudaExecutionCtxGetDevice`
 
 `gpu-sim` `green_ctx_get_device` is `cudaExecutionCtxGetDevice`. A live

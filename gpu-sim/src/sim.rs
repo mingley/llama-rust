@@ -2470,6 +2470,30 @@ impl Sim {
             .ok_or(SimError::UnknownEvent { event: event.0 })
     }
 
+    /// `cudaEventGetFlags`. Query; legal during capture.
+    ///
+    /// Reconstructs the [`EventCreateFlags`] word stored at create. Unknown
+    /// events are [`SimError::UnknownEvent`]. Distinct from
+    /// [`Self::event_timing`] / [`Self::event_blocking_sync`]. An
+    /// [`Self::ipc_open_event`] alias reports Interprocess plus DisableTiming.
+    pub fn event_get_flags(&self, event: EventId) -> Result<u32, SimError> {
+        let e = self
+            .events
+            .get(&event)
+            .ok_or(SimError::UnknownEvent { event: event.0 })?;
+        let mut flags = EventCreateFlags::DEFAULT;
+        if !e.timing {
+            flags |= EventCreateFlags::DISABLE_TIMING;
+        }
+        if e.interprocess {
+            flags |= EventCreateFlags::INTERPROCESS;
+        }
+        if e.blocking_sync {
+            flags |= EventCreateFlags::BLOCKING_SYNC;
+        }
+        Ok(flags)
+    }
+
     fn insert_event(
         &mut self,
         event: EventId,
