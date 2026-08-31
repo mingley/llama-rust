@@ -4287,7 +4287,19 @@ model, do not celebrate the sim.
     oracle. `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-384. [ ] Next numbered PLAN item after 383 is the next `gpu-sim` / Engine /
+384. [x] Official Gemma4 MoE+PLE (`architecture=gemma4` with `ffn_gate_inp`
+    and `embedding_length_per_layer_input > 0`): production E2B/E4B shape on
+    the same arch as dense/MoE/PLE-only gemma4, not a second family. Decode
+    is PLAN 382 MoE then PLAN 383 PLE inject after the FFN residual.
+    Writer-tiny `tiny-gemma4-moe-ple` (`n_expert=4`, `n_expert_used=2`,
+    `n_embd_per_layer=64`). Dense `tiny-gemma4`, MoE `tiny-gemma4-moe`, and
+    PLE `tiny-gemma4-ple` stay. Fused `ffn_gate_up_exps`, shared-KV, and
+    mixed SWA/global head dims stay refused with named keys. Decode identity
+    vs oracle. ExpertAccess traces plus DirectStore identity.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+385. [ ] Next numbered PLAN item after 384 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
