@@ -34,7 +34,7 @@ pub use decode::{
     generate, generate_ctx, greedy_generate, greedy_generate_cache, greedy_generate_ctx,
     greedy_generate_slot, greedy_generate_traced, tiny_bf16_gguf, tiny_bloom_gguf,
     tiny_f16_1d_bias_gguf, tiny_f16_1d_gguf, tiny_f16_gguf, tiny_gemma2_gguf, tiny_gemma3_gguf,
-    tiny_gemma3n_gguf, tiny_gemma4_gguf, tiny_gemma4_moe_fused_gguf,
+    tiny_gemma3n_gguf, tiny_gemma4_gguf, tiny_gemma4_mixed_hd_gguf, tiny_gemma4_moe_fused_gguf,
     tiny_gemma4_moe_fused_ple_gguf, tiny_gemma4_moe_gguf, tiny_gemma4_moe_ple_gguf,
     tiny_gemma4_ple_gguf, tiny_gemma4_shared_kv_gguf, tiny_gemma_gguf, tiny_iq1m_gguf,
     tiny_iq1s_gguf, tiny_iq2s_gguf, tiny_iq2xs_gguf, tiny_iq2xxs_gguf, tiny_iq3s_gguf,
