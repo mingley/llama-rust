@@ -1045,7 +1045,7 @@ model, do not celebrate the sim.
     Dual score still has no `$/M tokens`.
 52. [x] Engine SimulatedGpuStore CUDA knobs: `--host-func` /
     `--blocking-streams` / `--sync-alloc` / `--mempool` / `--vmm-page` /
-    `--pageable` / `--memset-fill` / `--memcpy-attr` / `--copy-host` / `--accessed-by` / `--no-read-mostly` / `--no-preferred` / `--no-mem-prefetch` / `--legacy-null` / `--stream-priority`
+    `--pageable` / `--memset-fill` / `--memcpy-attr` / `--d2h-evict` / `--copy-host` / `--accessed-by` / `--no-read-mostly` / `--no-preferred` / `--no-mem-prefetch` / `--legacy-null` / `--stream-priority`
     match `GpuStoreCfg` / `expertvm sim` on `gguf_gemv engine` and
     `serve --engine --expert-sim`. Default pinned async stays decode
     identity. Dual score still has no `$/M tokens`.
@@ -4105,7 +4105,23 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-374. [ ] Next numbered PLAN item after 373 is the next `gpu-sim` / Engine /
+374. [x] `cudaMemcpyAsync` Device→HostPinned before pinned/VMM LRU free
+    (`--d2h-evict`): [`GpuStoreCfg::d2h_evict`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::d2h_evict`](expertvm/src/sim_replay.rs) use
+    [`gpu_sim::Sim::memcpy_device_to_pinned`](gpu-sim/src/sim.rs) on the
+    copy stream before `cudaFreeAsync` / `va_release` / `free_sync` so evict
+    pays extra PCIe. Hits stay the same; the next miss still fills from
+    catalog staging. Distinct from `--prefetch-host` (managed keep-alloc).
+    Illegal with `--mapped` / `--managed`. Legal with `--vmm`, `--pageable`,
+    `--memset-fill`, `--sync-alloc`, `--pdl`, and `--cooperative`.
+    `--d2h-evict` on `expertvm sim` / `schedule` / `store` and
+    `gguf_gemv engine --expert-sim`. infer-bench has no pinned/VMM expert
+    evict of this form, so it does not get `--d2h-evict`. Decode identity
+    stays free with no D2H. Store and walker (not walker-only).
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+375. [ ] Next numbered PLAN item after 374 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
@@ -4155,7 +4171,9 @@ model, do not celebrate the sim.
     copy-engine overlap is the wall vs default fill prefetch). Do not invent
     a second `--memcpy-attr` / demand `cudaMemcpyWithAttributesAsync`
     (API wait vs in-flight `memcpy_pinned_to_device` is the wall vs default
-    demand H2D). Do not invent
+    demand H2D). Do not invent a second `--d2h-evict` / evict
+    `cudaMemcpyAsync` Device→HostPinned (extra PCIe vs free-only is the wall
+    vs default pinned/VMM evict). Do not invent
     `--memcpy-peer` host-sync pin_hot (alias of D2D; wall matches after
     `score()`). Do not invent `graph_add_empty` as a decode-path flag
     (1 ns join/fork). Do not invent a second `cudaGraphAddMemsetNode` of

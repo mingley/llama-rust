@@ -397,6 +397,17 @@ pub(crate) fn check_memset_fill(
     Ok(())
 }
 
+/// `--d2h-evict` needs pinned/VMM device pages (`cudaMemcpyAsync` Device→HostPinned).
+pub(crate) fn check_d2h_evict(d2h_evict: bool, mapped: bool, managed: bool) -> Result<(), Error> {
+    if !d2h_evict {
+        return Ok(());
+    }
+    if mapped || managed {
+        return Err(Error::Store("d2h-evict needs pinned/vmm"));
+    }
+    Ok(())
+}
+
 /// `--memcpy-attr` needs async pinned/VMM H2D (`cudaMemcpyWithAttributesAsync`).
 pub(crate) fn check_memcpy_attr(
     memcpy_attr: bool,
@@ -1359,6 +1370,14 @@ pub struct SimCfg {
     /// the same; extra host↔device bytes move on thrash. Decode identity stays
     /// `free_sync`. [`crate::GpuStoreCfg::prefetch_host`] is the store path.
     pub prefetch_host: bool,
+    /// `cudaMemcpyAsync` Device→HostPinned before pinned/VMM LRU free.
+    ///
+    /// Extra PCIe on evict; the next miss still fills from catalog staging.
+    /// Hits stay the same. Distinct from [`Self::prefetch_host`] (managed
+    /// keep-alloc). Illegal with [`Self::mapped`] / [`Self::managed`]. Decode
+    /// identity stays `cudaFreeAsync` / `va_release` / `free_sync` with no D2H.
+    /// [`crate::GpuStoreCfg::d2h_evict`] is the store path.
+    pub d2h_evict: bool,
     /// `cuStreamWaitValue64` / `cuStreamWriteValue64` copy-ready handshake.
     ///
     /// After H2D / prefetch, write a generation into an 8-byte device mailbox
@@ -1495,6 +1514,7 @@ impl SimCfg {
             stream_attach: false,
             managed_host: false,
             prefetch_host: false,
+            d2h_evict: false,
             wait_value: false,
             multicast: false,
             compute_slots: 0,
@@ -1592,6 +1612,11 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     if cfg.prefetch_host && !cfg.managed {
         return Err(Error::Store("prefetch-host needs managed"));
     }
+    check_d2h_evict(
+        cfg.d2h_evict,
+        cfg.mapped || cfg.host_register_mapped,
+        cfg.managed,
+    )?;
     if cfg.no_read_mostly && !cfg.managed {
         return Err(Error::Store("no-read-mostly needs managed"));
     }
@@ -1802,6 +1827,7 @@ pub fn sim_replay_cfg(
         stream_attach: cfg.stream_attach,
         managed_host: cfg.managed_host,
         prefetch_host: cfg.prefetch_host,
+        d2h_evict: cfg.d2h_evict,
     };
     let mut token_ends: Vec<u64> = Vec::new();
     let mut ctr = ReplayCounters::default();
@@ -2002,6 +2028,20 @@ pub(crate) struct TouchArgs {
     /// [`SimCfg::prefetch_host`]: evict `cudaMemPrefetchAsync` to host; restore
     /// prefetches the same managed alloc back (no second `cudaMallocManaged`).
     pub prefetch_host: bool,
+    /// [`SimCfg::d2h_evict`]: Device→HostPinned memcpy before pinned/VMM free.
+    pub d2h_evict: bool,
+}
+
+/// `cudaMemcpyAsync` Device→HostPinned. Source HBM residency is kept until free.
+pub(crate) fn d2h_evict_page(
+    sim: &mut Sim,
+    device: DeviceId,
+    id: AllocId,
+    bytes: u64,
+    stream: StreamId,
+) -> Result<(), Error> {
+    let _c = sim.memcpy_device_to_pinned(device, id, bytes, stream)?;
+    Ok(())
 }
 
 fn hbm_alloc(
@@ -3460,7 +3500,15 @@ pub(crate) fn reclaim_victim(
             let Some(page) = handles.remove(&victim) else {
                 return Ok(());
             };
-            drop_handle(sim, graphs, page, next_event, args.sync_alloc)
+            drop_handle(
+                sim,
+                graphs,
+                page,
+                next_event,
+                args.sync_alloc,
+                args.d2h_evict,
+                args.bytes,
+            )
         }
         Some(_) => {
             let Some(page) = handles.get_mut(&victim) else {
@@ -3477,6 +3525,8 @@ fn drop_handle(
     page: PageHandle,
     next_event: &mut u32,
     sync: bool,
+    d2h_evict: bool,
+    bytes: u64,
 ) -> Result<(), Error> {
     graphs.drop_alloc(sim, page.id)?;
     if let Some(mb) = page.mailbox {
@@ -3493,11 +3543,26 @@ fn drop_handle(
         sim.free_sync(page.id)?;
         return Ok(());
     }
+    if d2h_evict {
+        d2h_evict_page(sim, page.device, page.id, bytes, page.stream)?;
+    }
     if page_is_vmm(sim, page.id) {
+        if d2h_evict {
+            sim.synchronize_stream(page.device, page.stream)?;
+        }
         sim.va_release(page.id)?;
         return Ok(());
     }
     if sync {
+        if d2h_evict {
+            sim.synchronize_stream(page.device, page.stream)?;
+            sim.free(page.device, page.id, page.stream)?;
+            sim.synchronize_stream(page.device, page.stream)?;
+            if sim.is_host_pinned(page.id)? {
+                sim.free_host_pinned(page.id)?;
+            }
+            return Ok(());
+        }
         // cudaFree: one host call, every device copy is gone.
         sim.free_sync(page.id)?;
         return Ok(());

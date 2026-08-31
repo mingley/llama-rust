@@ -544,6 +544,10 @@ is Any on batched prefetch (needs `--memcpy-batch`; empty deps; no API wait).
 is DuringApiCall on demand pinned/VMM miss H2D (the API waits that copy;
 identity stays sequential `memcpy_pinned_to_device`; does not imply
 `--memcpy-batch`).
+`expertvm sim --d2h-evict` / `gguf_gemv engine --expert-sim --d2h-evict`
+is `cudaMemcpyAsync` Device→HostPinned before pinned/VMM LRU free (extra
+PCIe; next miss still fills from staging; not mapped/managed; distinct from
+`--prefetch-host`).
 `expertvm sim --memset-fill` / `gguf_gemv engine --expert-sim --memset-fill`
 is `cudaMemsetAsync` of pinned/VMM miss pages (HBM write, compute occupancy;
 not mapped/managed/pageable/memcpy-batch; distinct from `--graph-memset`

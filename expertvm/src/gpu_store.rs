@@ -16,13 +16,13 @@ use crate::sim_replay::{
     apply_func_cluster_spread, apply_func_max_shared, apply_func_shared_mem, apply_l2_fetch,
     apply_required_cluster_width, apply_stream_mem_sync_domain, apply_stream_mem_sync_map,
     apply_stream_sync_policy, bind_device_mempools, check_cluster_load_balance,
-    check_cluster_must_set, check_cluster_preferred, check_device_graph_flags, check_l2_fetch,
-    check_l2_ratio, check_max_l1, check_mem_sync_collapse, check_mem_sync_launch,
+    check_cluster_must_set, check_cluster_preferred, check_d2h_evict, check_device_graph_flags,
+    check_l2_fetch, check_l2_ratio, check_max_l1, check_mem_sync_collapse, check_mem_sync_launch,
     check_mem_sync_launch_map, check_memcpy_attr, check_memset_fill, check_required_cluster,
-    collapse_mem_sync_map, drop_managed_replica, ensure_single_attach, free_copy_mailbox,
-    free_mapped_host, hbm_h2d_attr, host_after_copy, instantiate_exec, kernel_leaf,
-    mark_sync_memops, memcpy_batch_attr, mempool_hold, persist_armed, replay_exec, replay_streams,
-    reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
+    collapse_mem_sync_map, d2h_evict_page, drop_managed_replica, ensure_single_attach,
+    free_copy_mailbox, free_mapped_host, hbm_h2d_attr, host_after_copy, instantiate_exec,
+    kernel_leaf, mark_sync_memops, memcpy_batch_attr, mempool_hold, persist_armed, replay_exec,
+    replay_streams, reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
     upload_after_set_params, wait_copy_ready, wait_memcpy_during_allocs, GemmFlags, LeafMem,
     LeafWork, StreamPlan,
 };
@@ -648,6 +648,13 @@ pub struct GpuStoreCfg {
     /// home GPU (no second alloc). Implies managed fill. Hits/misses stay
     /// the same. Decode identity stays `free_sync` on evict.
     pub prefetch_host: bool,
+    /// `cudaMemcpyAsync` Device→HostPinned before pinned/VMM LRU free.
+    ///
+    /// Extra PCIe on evict; the next miss still fills from catalog staging.
+    /// Hits/misses stay the same. Distinct from [`Self::prefetch_host`] (managed
+    /// keep-alloc). Illegal with mapped or managed fill. Decode identity stays
+    /// `cudaFreeAsync` / `va_release` / `free_sync` with no D2H.
+    pub d2h_evict: bool,
     /// `cuStreamWaitValue64` / `cuStreamWriteValue64` instead of copy-ready events.
     ///
     /// After H2D / prefetch, write a generation into an 8-byte device mailbox
@@ -871,6 +878,8 @@ pub struct SimulatedGpuStore {
     managed_host: bool,
     /// [`GpuStoreCfg::prefetch_host`]: evict prefetches to host instead of free.
     prefetch_host: bool,
+    /// [`GpuStoreCfg::d2h_evict`]: Device→HostPinned memcpy before pinned/VMM free.
+    d2h_evict: bool,
     /// Managed allocs that left HBM via [`Self::prefetch_host`] (still live).
     host_pages: BTreeMap<ExpertKey, GpuPage>,
 }
@@ -1187,6 +1196,11 @@ impl SimulatedGpuStore {
         if cfg.prefetch_host && fill != GpuFill::Managed {
             return Err(Error::Store("prefetch-host needs managed"));
         }
+        check_d2h_evict(
+            cfg.d2h_evict,
+            fill == GpuFill::Mapped,
+            fill == GpuFill::Managed,
+        )?;
         if cfg.no_read_mostly && fill != GpuFill::Managed {
             return Err(Error::Store("no-read-mostly needs managed"));
         }
@@ -1486,6 +1500,7 @@ impl SimulatedGpuStore {
             stream_attach: cfg.stream_attach,
             managed_host: cfg.managed_host,
             prefetch_host: cfg.prefetch_host,
+            d2h_evict: cfg.d2h_evict,
             host_pages: BTreeMap::new(),
         })
     }
@@ -1525,6 +1540,12 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn memcpy_attr(&self) -> bool {
         self.memcpy_attr
+    }
+
+    /// Whether pinned/VMM LRU evict copies Device→HostPinned before free.
+    #[must_use]
+    pub fn d2h_evict(&self) -> bool {
+        self.d2h_evict
     }
 
     /// Whether miss fill is `cudaMemsetAsync` instead of pinned H2D.
@@ -3170,6 +3191,7 @@ impl SimulatedGpuStore {
             }
             GpuFill::Vmm => {
                 self.wait_compute(page.device)?;
+                self.d2h_evict_home(page.device, page.id)?;
                 self.free_page_mailbox(page.device, page.mailbox)?;
                 self.sim.va_release(page.id)?;
                 let _gone = self.replicas.remove(&key);
@@ -3177,8 +3199,14 @@ impl SimulatedGpuStore {
             }
             GpuFill::Pinned if self.sync_alloc => {
                 self.wait_compute(page.device)?;
-                self.free_page_mailbox(page.device, page.mailbox)?;
-                self.sim.free_sync(page.id)?;
+                if self.d2h_evict {
+                    self.d2h_evict_home(page.device, page.id)?;
+                    self.free_page_mailbox(page.device, page.mailbox)?;
+                    self.free_pinned_after_d2h(page.device, page.id)?;
+                } else {
+                    self.free_page_mailbox(page.device, page.mailbox)?;
+                    self.sim.free_sync(page.id)?;
+                }
                 let _gone = self.replicas.remove(&key);
                 return Ok(());
             }
@@ -3192,6 +3220,7 @@ impl SimulatedGpuStore {
         self.sim.create_event_disable_timing(ev)?;
         let _r = self.sim.record_event(page.device, ev, self.compute)?;
         let _w = self.sim.wait_event(page.device, ev, self.copy)?;
+        self.d2h_evict_home(page.device, page.id)?;
         if let Some(dst) = self.replicas.remove(&key) {
             if self.sim.is_resident(page.id, dst)? {
                 self.sim.free(dst, page.id, self.copy)?;
@@ -3199,6 +3228,26 @@ impl SimulatedGpuStore {
         }
         self.free_page_mailbox(page.device, page.mailbox)?;
         self.sim.free(page.device, page.id, self.copy)?;
+        Ok(())
+    }
+
+    fn d2h_evict_home(&mut self, device: DeviceId, id: AllocId) -> Result<(), Error> {
+        if !self.d2h_evict {
+            return Ok(());
+        }
+        let bytes = self.bytes_per_expert;
+        let dma = self.dma_stream();
+        d2h_evict_page(&mut self.sim, device, id, bytes, dma)
+    }
+
+    fn free_pinned_after_d2h(&mut self, device: DeviceId, id: AllocId) -> Result<(), Error> {
+        let dma = self.dma_stream();
+        self.sim.synchronize_stream(device, dma)?;
+        self.sim.free(device, id, dma)?;
+        self.sim.synchronize_stream(device, dma)?;
+        if self.sim.is_host_pinned(id)? {
+            self.sim.free_host_pinned(id)?;
+        }
         Ok(())
     }
 

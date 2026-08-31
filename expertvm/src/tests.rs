@@ -858,6 +858,7 @@ fn vmm_evict_reacquires_same_va() {
         stream_attach: false,
         managed_host: false,
         prefetch_host: false,
+        d2h_evict: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -7884,6 +7885,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         stream_attach: false,
         managed_host: false,
         prefetch_host: false,
+        d2h_evict: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -7959,6 +7961,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         stream_attach: false,
         managed_host: false,
         prefetch_host: false,
+        d2h_evict: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -8035,6 +8038,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         stream_attach: false,
         managed_host: false,
         prefetch_host: false,
+        d2h_evict: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -8477,6 +8481,7 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         stream_attach: false,
         managed_host: false,
         prefetch_host: false,
+        d2h_evict: false,
     };
     let mut next_event = 1u32;
     apply_misses(
@@ -8546,6 +8551,7 @@ fn memcpy_during_apply_misses_waits_copies() {
             stream_attach: false,
             managed_host: false,
             prefetch_host: false,
+            d2h_evict: false,
         };
         let mut next_event = 1u32;
         apply_misses(
@@ -8617,6 +8623,7 @@ fn memcpy_any_apply_misses_empty_deps() {
             stream_attach: false,
             managed_host: false,
             prefetch_host: false,
+            d2h_evict: false,
         };
         let mut next_event = 1u32;
         apply_misses(
@@ -8696,6 +8703,7 @@ fn memcpy_attr_apply_misses_waits_copies() {
             stream_attach: false,
             managed_host: false,
             prefetch_host: false,
+            d2h_evict: false,
         };
         let mut next_event = 1u32;
         apply_misses(
@@ -9384,6 +9392,83 @@ fn sim_replay_memcpy_attr_needs_async_pinned() {
 }
 
 #[test]
+fn d2h_evict_apply_misses_copies() {
+    use crate::replay::Touch;
+    use crate::sim_replay::{apply_touch, GraphBank, PageHandle, TouchArgs};
+    use gpu_sim::{Sim, StreamId};
+    use std::collections::BTreeMap;
+
+    let run = |d2h: bool| {
+        let mut sim = Sim::new(HardwareProfile::example_h100_sxm());
+        let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
+        let mut graphs = GraphBank::new(false, false, false, crate::sim_replay::LeafMem::None);
+        let args = TouchArgs {
+            d: DeviceId(0),
+            s: StreamId(0),
+            bytes: 4096,
+            slots: 1,
+            sync_alloc: false,
+            mapped: false,
+            managed: false,
+            vmm: false,
+            vmm_page: 0,
+            pageable: false,
+            host_register: false,
+            host_register_mapped: false,
+            sync_memops: false,
+            memcpy_batch: false,
+            memcpy_during: false,
+            memcpy_any: false,
+            memcpy_attr: false,
+            memset_fill: false,
+            copy_host: false,
+            accessed_by: false,
+            no_read_mostly: false,
+            no_preferred: false,
+            no_mem_prefetch: false,
+            wait_value: false,
+            stream_attach: false,
+            managed_host: false,
+            prefetch_host: false,
+            d2h_evict: d2h,
+        };
+        let mut next_event = 1u32;
+        let k0 = ExpertKey::new(0, 0);
+        let k1 = ExpertKey::new(0, 1);
+        apply_touch(
+            &mut sim,
+            &mut handles,
+            &mut graphs,
+            args,
+            k0,
+            Touch::Miss { evicted: None },
+            &mut next_event,
+        )
+        .expect("k0");
+        apply_touch(
+            &mut sim,
+            &mut handles,
+            &mut graphs,
+            args,
+            k1,
+            Touch::Miss { evicted: Some(k0) },
+            &mut next_event,
+        )
+        .expect("k1");
+        sim.operations()
+            .filter(|o| match &o.kind {
+                GpuOp::Memcpy(m) => {
+                    matches!(m.dst, Place::HostPinned) && matches!(m.src, Place::Device(_))
+                }
+                _ => false,
+            })
+            .count()
+    };
+    assert_eq!(run(false), 0, "identity pinned evict is free, not D2H");
+    assert!(run(true) >= 1, "d2h-evict must copy Device→HostPinned");
+}
+
+#[test]
 fn sim_replay_memset_fill_is_faster_than_pcie_h2d() {
     let t = cycling_trace();
     let p = HardwareProfile::parse(
@@ -9568,6 +9653,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             stream_attach: false,
             managed_host: false,
             prefetch_host: false,
+            d2h_evict: false,
         };
         let mut next_event = 1u32;
         let k0 = ExpertKey::new(0, 0);
@@ -13996,6 +14082,7 @@ fn sim_cfg_prefetch_host_needs_managed() {
         HardwareProfile::example_h100_sxm(),
         SimCfg {
             prefetch_host: true,
+            d2h_evict: false,
             ..SimCfg::lru(1, 4096, 0)
         },
     ) {
@@ -14108,6 +14195,7 @@ fn simulated_gpu_store_prefetch_host_needs_managed() {
         GpuFill::Pinned,
         GpuStoreCfg {
             prefetch_host: true,
+            d2h_evict: false,
             ..GpuStoreCfg::default()
         },
     ) {
@@ -14130,6 +14218,7 @@ fn sim_replay_prefetch_host_keeps_hits() {
     let on = SimCfg {
         managed: true,
         prefetch_host: true,
+        d2h_evict: false,
         ..SimCfg::lru(2, 4096, 0)
     };
     let a = sim_replay_cfg(&t, profile.clone(), off).expect("off");
@@ -14157,6 +14246,7 @@ fn simulated_gpu_store_prefetch_host_pin_before_acquire_still_replicates() {
         GpuFill::Managed,
         GpuStoreCfg {
             prefetch_host: true,
+            d2h_evict: false,
             ..GpuStoreCfg::default()
         },
     )
@@ -14205,6 +14295,131 @@ fn simulated_gpu_store_prefetch_host_evicts_without_free() {
     assert!(
         on_host >= 1,
         "prefetch-host must submit Device→Host memcpy; n={on_host}"
+    );
+}
+
+#[test]
+fn sim_cfg_d2h_evict_needs_pinned_vmm() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let refuse = |cfg: SimCfg| match sim_replay_cfg(&t, p.clone(), cfg) {
+        Ok(_) => panic!("d2h-evict must need pinned/vmm"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("d2h-evict needs pinned/vmm"), "{s}");
+        }
+    };
+    refuse(SimCfg {
+        d2h_evict: true,
+        managed: true,
+        ..SimCfg::lru(1, 4096, 0)
+    });
+    refuse(SimCfg {
+        d2h_evict: true,
+        mapped: true,
+        ..SimCfg::lru(1, 4096, 0)
+    });
+}
+
+#[test]
+fn simulated_gpu_store_d2h_evict_needs_pinned_vmm() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let p = HardwareProfile::example_h100_sxm();
+    let refuse = |fill: GpuFill| match SimulatedGpuStore::with_cfg(
+        inner.clone(),
+        1,
+        p.clone(),
+        4096,
+        fill,
+        GpuStoreCfg {
+            d2h_evict: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("d2h-evict must need pinned/vmm"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("d2h-evict needs pinned/vmm"), "{s}");
+        }
+    };
+    refuse(GpuFill::Managed);
+    refuse(GpuFill::Mapped);
+    let _gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        p,
+        4096,
+        GpuFill::Vmm,
+        GpuStoreCfg {
+            d2h_evict: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("vmm d2h-evict");
+}
+
+#[test]
+fn sim_replay_d2h_evict_keeps_hits() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let base = SimCfg::lru(2, 4096, 8);
+    let d2h = SimCfg {
+        d2h_evict: true,
+        ..base
+    };
+    let a = sim_replay_cfg(&t, p.clone(), base).expect("base");
+    let b = sim_replay_cfg(&t, p.clone(), d2h).expect("d2h");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+    let sched_a = schedule_replay(&t, p.clone(), base, SchedCfg::closed(0)).expect("sa");
+    let sched_b = schedule_replay(&t, p, d2h, SchedCfg::closed(0)).expect("sb");
+    assert_eq!(sched_a.replay.hits, sched_b.replay.hits);
+    assert_eq!(sched_a.replay.misses, sched_b.replay.misses);
+}
+
+#[test]
+fn simulated_gpu_store_d2h_evict_copies_on_thrash() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let run = |d2h_evict: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = match SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                d2h_evict,
+                ..GpuStoreCfg::default()
+            },
+        ) {
+            Ok(gpu) => gpu,
+            Err(err) => panic!("gpu: {err}"),
+        };
+        for key in t.keys() {
+            let _p = gpu.acquire(key).expect("acquire");
+            gpu.release(key);
+        }
+        assert_eq!(gpu.d2h_evict(), d2h_evict);
+        let host = count_host_prefetch(&gpu);
+        let metrics = gpu.metrics();
+        let _s = gpu.score().expect("score");
+        (metrics.hits, metrics.misses, host)
+    };
+    let (off_hits, off_misses, off_host) = run(false);
+    let (on_hits, on_misses, on_host) = run(true);
+    assert_eq!(off_hits, on_hits);
+    assert_eq!(off_misses, on_misses);
+    assert_eq!(off_host, 0, "identity pinned must not D2H on evict");
+    assert!(
+        on_host >= 1,
+        "d2h-evict must submit Device→HostPinned memcpy; n={on_host}"
     );
 }
 
@@ -14526,6 +14741,7 @@ fn sim_replay_sync_memops_h2d_host_sync() {
             stream_attach: false,
             managed_host: false,
             prefetch_host: false,
+            d2h_evict: false,
         };
         let mut next_event = 1u32;
         let k0 = ExpertKey::new(0, 0);
@@ -14744,6 +14960,7 @@ fn sim_replay_device_sync_memops_h2d_host_sync() {
             stream_attach: false,
             managed_host: false,
             prefetch_host: false,
+            d2h_evict: false,
         };
         let mut next_event = 1u32;
         let k0 = ExpertKey::new(0, 0);

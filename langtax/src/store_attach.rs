@@ -229,6 +229,8 @@ pub(crate) struct GpuCli {
     pub managed_host: bool,
     /// `cudaMemPrefetchAsync` to host on managed evict (`GpuStoreCfg::prefetch_host`). Implies managed.
     pub prefetch_host: bool,
+    /// `cudaMemcpyAsync` Device→HostPinned before pinned/VMM LRU free (`GpuStoreCfg::d2h_evict`).
+    pub d2h_evict: bool,
     /// `cuStreamWaitValue64` / `WriteValue64` copy-ready (`GpuStoreCfg::wait_value`).
     pub wait_value: bool,
     /// Hopper NVLS replica fanout (`GpuStoreCfg::multicast`). Implies vmm.
@@ -328,6 +330,7 @@ impl GpuCli {
             "--stream-attach" => &mut self.stream_attach,
             "--managed-host" => &mut self.managed_host,
             "--prefetch-host" => &mut self.prefetch_host,
+            "--d2h-evict" => &mut self.d2h_evict,
             "--wait-value" => &mut self.wait_value,
             "--multicast" => &mut self.multicast,
             _ => return Ok(false),
@@ -726,6 +729,26 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--d2h-evict` needs pinned/VMM device pages.
+    pub(crate) fn check_d2h_evict(self) -> Result<(), String> {
+        if !self.d2h_evict {
+            return Ok(());
+        }
+        if self.mapped
+            || self.host_register_mapped
+            || self.managed
+            || self.stream_attach
+            || self.managed_host
+            || self.prefetch_host
+            || self.no_read_mostly
+            || self.no_preferred
+            || self.no_mem_prefetch
+        {
+            return Err("--d2h-evict needs pinned/vmm".into());
+        }
+        Ok(())
+    }
+
     /// `--memset-fill` cannot mapped/managed/pageable/memcpy-batch.
     pub(crate) fn check_memset_fill(self) -> Result<(), String> {
         if !self.memset_fill {
@@ -922,6 +945,7 @@ impl GpuCli {
             (self.stream_attach, "--stream-attach"),
             (self.managed_host, "--managed-host"),
             (self.prefetch_host, "--prefetch-host"),
+            (self.d2h_evict, "--d2h-evict"),
             (self.wait_value, "--wait-value"),
             (self.decode_sm_set, "--decode-sms"),
         ]
@@ -1304,6 +1328,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         stream_attach: gpu.stream_attach,
         managed_host: gpu.managed_host,
         prefetch_host: gpu.prefetch_host,
+        d2h_evict: gpu.d2h_evict,
         wait_value: gpu.wait_value,
         multicast: gpu.multicast,
         compute_slots: gpu.compute_slots,

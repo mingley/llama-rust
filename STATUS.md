@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — Device→HostPinned memcpy on pinned/VMM LRU evict
+
+`GpuStoreCfg::d2h_evict` / `SimCfg::d2h_evict` use `cudaMemcpyAsync`
+Device→HostPinned on the copy stream before `cudaFreeAsync` / `va_release`
+/ `free_sync` so evict pays extra PCIe. Hits/misses stay the same; the next
+miss still fills from catalog staging. Distinct from `--prefetch-host`
+(managed keep-alloc). Illegal with `--mapped` / `--managed`. `--d2h-evict`
+is off by default (decode identity: free with no D2H). Store and walker
+(not walker-only). infer-bench has no pinned/VMM expert evict of this form,
+so it does not get `--d2h-evict`. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaMemcpyWithAttributesAsync` demand miss fill
 
 `GpuStoreCfg::memcpy_attr` / `SimCfg::memcpy_attr` use

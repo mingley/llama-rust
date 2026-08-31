@@ -374,6 +374,7 @@ impl SchedRt {
                 stream_attach: cfg.stream_attach,
                 managed_host: cfg.managed_host,
                 prefetch_host: cfg.prefetch_host,
+                d2h_evict: cfg.d2h_evict,
             },
             sim,
             handles: BTreeMap::new(),
