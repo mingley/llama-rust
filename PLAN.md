@@ -4704,7 +4704,14 @@ model, do not celebrate the sim.
     capture. `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-426. [ ] Next numbered PLAN item after 425 is the next `gpu-sim` / Engine /
+426. [x] CUDA `cudaDevAttrComputePreemptionSupported`
+    (`DeviceAttr::ComputePreemptionSupported`): always 0. Kernel
+    preemption is not modeled. Distinct from `KernelExecTimeout`. Also
+    `DeviceProperties.compute_preemption_supported`. Query; legal during
+    capture. `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+427. [ ] Next numbered PLAN item after 426 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4732,6 +4739,7 @@ model, do not celebrate the sim.
     would become a no-op).
     Do not invent a second `cudaDevAttrGlobalL1CacheSupported`.
     Do not invent a second `cudaDevAttrLocalL1CacheSupported`.
+    Do not invent a second `cudaDevAttrComputePreemptionSupported`.
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cudaDevAttrComputePreemptionSupported`
+
+`gpu-sim` `DeviceAttr::ComputePreemptionSupported` is always 0. Kernel
+preemption is not modeled. Distinct from `KernelExecTimeout`. Also
+`DeviceProperties.compute_preemption_supported`. Query; legal during
+capture. `gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cudaDevAttrLocalL1CacheSupported`
 
 `gpu-sim` `DeviceAttr::LocalL1CacheSupported` is always 0. This VM does

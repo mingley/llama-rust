@@ -476,6 +476,9 @@
 //! [`DeviceAttr::LocalL1CacheSupported`] is always 0 (this VM does not model
 //! L1 caches). Distinct from
 //! [`GlobalL1CacheSupported`](DeviceAttr::GlobalL1CacheSupported).
+//! [`DeviceAttr::ComputePreemptionSupported`] is always 0 (kernel preemption
+//! is not modeled). Distinct from
+//! [`KernelExecTimeout`](DeviceAttr::KernelExecTimeout).
 //! [`DeviceAttr::StreamPrioritiesSupported`] / [`UnifiedAddressing`](DeviceAttr::UnifiedAddressing)
 //! are always 1. [`DeviceAttr::GpuOverlap`] is `copy_engines > 0`. [`Sim::func_get_attributes`] is `cudaFuncGetAttributes` of modeled
 //! per-device function attrs ([`FuncAttributes`]; not per kernel).
@@ -12737,6 +12740,32 @@ mod tests {
         sim.begin_capture(d, StreamId(0)).unwrap();
         assert_eq!(
             sim.device_get_attribute(d, DeviceAttr::LocalL1CacheSupported)
+                .unwrap(),
+            0
+        );
+        let _g = sim.end_capture().unwrap();
+    }
+
+    #[test]
+    fn device_get_attribute_compute_preemption_unsupported() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let hp = sim.device_get_properties(d).unwrap();
+        assert!(!hp.compute_preemption_supported);
+        assert!(!hp.kernel_exec_timeout);
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::ComputePreemptionSupported)
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::KernelExecTimeout)
+                .unwrap(),
+            0
+        );
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        assert_eq!(
+            sim.device_get_attribute(d, DeviceAttr::ComputePreemptionSupported)
                 .unwrap(),
             0
         );

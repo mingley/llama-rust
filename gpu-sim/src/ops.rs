@@ -793,6 +793,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrLocalL1CacheSupported` (always 0; this VM does not model
     /// L1 caches). Distinct from [`Self::GlobalL1CacheSupported`].
     LocalL1CacheSupported,
+    /// `cudaDevAttrComputePreemptionSupported` (always 0; kernel preemption
+    /// is not modeled). Distinct from [`Self::KernelExecTimeout`].
+    ComputePreemptionSupported,
     /// `cudaDevAttrMaxBlocksPerCluster`.
     MaxBlocksPerCluster,
     /// `cudaDevAttrMemSyncDomainCount`.
@@ -1013,6 +1016,10 @@ pub struct DeviceProperties {
     /// Always false; this VM does not model L1 caches. Distinct from
     /// [`Self::global_l1_cache_supported`].
     pub local_l1_cache_supported: bool,
+    /// `cudaDevAttrComputePreemptionSupported`
+    /// ([`DeviceAttr::ComputePreemptionSupported`]). Always false; kernel
+    /// preemption is not modeled. Distinct from [`Self::kernel_exec_timeout`].
+    pub compute_preemption_supported: bool,
     /// [`crate::GpuProfile::copy_engines`].
     pub async_engine_count: u32,
     /// [`crate::GpuProfile::compute_slots`] `> 1`.
