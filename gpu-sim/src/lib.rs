@@ -115,6 +115,10 @@
 //! [`DeviceFlags::SYNC_MEMOPS`] so every memcpy/memset on that GPU is
 //! host-synchronous (distinct from per-page `--sync-memops`; illegal with
 //! `--mapped` / `--memcpy-batch`).
+//! `expertvm sim --device-sync-policy blocking` is
+//! [`set_device_flags`](Sim::set_device_flags)
+//! [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`] so Auto streams inherit host-wait
+//! tax (explicit `--sync-policy` wins).
 //! [`Sim::alloc_host_mapped`] is
 //! `cudaHostAllocMapped`: a kernel may read it without H2D, billed at host PCIe.
 //! [`Sim::alloc_managed`] is `cudaMallocManaged` (no HBM until first-touch or
@@ -306,6 +310,8 @@
 //! [`PointerAttr::SyncMemops`] on miss pages (host-sync H2D).
 //! `expertvm sim --device-sync-memops` is [`set_device_flags`](Sim::set_device_flags)
 //! [`DeviceFlags::SYNC_MEMOPS`] (host-sync memcpy on that GPU).
+//! `expertvm sim --device-sync-policy blocking` is
+//! [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`] (Auto streams inherit host-wait tax).
 //! [`Sim::mem_get_address_range`] is `cudaMemGetAddressRange` (base is the
 //! alloc id; interior offsets are not modeled). Query; legal during capture.
 //! [`Sim::host_get_device_pointer`] is `cudaHostGetDevicePointer` (mapped host).
@@ -489,6 +495,8 @@
 //! LmemResizeToMax; [`DeviceFlags::SYNC_MEMOPS`] waits memcpy/memset like
 //! pointer SyncMemops; Auto streams inherit the tax).
 //! `expertvm sim --device-sync-memops` sets [`DeviceFlags::SYNC_MEMOPS`].
+//! `expertvm sim --device-sync-policy blocking` sets
+//! [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`].
 //! [`Sim::malloc_pitch`] is `cudaMallocPitch`.
 //! [`MemcpyOp`] `height` / pitches are `cudaMemcpy2DAsync` (payload `width *
 //! height`, not pitch padding). [`MemsetOp`] `height` / `pitch` are

@@ -720,7 +720,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--shareable`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-piecewise`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--event-blocking-sync`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, `--non-portable-cluster`, `--sync-policy`, `--shared-mem`, and `--multicast`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-piecewise`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--event-blocking-sync`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, `--non-portable-cluster`, `--sync-policy`, `--device-sync-policy`, `--shared-mem`, and `--multicast`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--shareable` is POSIX-FD mempool IPC
   (implies `--mempool`; illegal with `--sync-alloc` / mapped / managed / vmm). `--mapped` is `cudaHostAllocMapped`
@@ -3649,7 +3649,20 @@ model, do not celebrate the sim.
     identity stays 128. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-346. [ ] Next numbered PLAN item after 345 is the next `gpu-sim` / Engine /
+346. [x] `cudaSetDeviceFlags` schedule (`cudaDeviceScheduleSpin` /
+    `Yield` / `BlockingSync`):
+    [`GpuStoreCfg::device_sync_policy`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::device_sync_policy`](expertvm/src/sim_replay.rs)
+    [`set_device_flags`](gpu-sim/src/sim.rs) after `Sim::new`. Auto streams
+    inherit the schedule as host-wait tax. Explicit `--sync-policy` wins.
+    ORs with `--device-sync-memops` (`SYNC_MEMOPS` stays). Auto skips
+    `set_device_flags` (decode identity). Hits stay the same. Legal with
+    `--pdl` and `--cooperative`. `--device-sync-policy auto|spin|yield|blocking`
+    on `expertvm sim` / `schedule` / `store` and
+    `gguf_gemv engine --expert-sim`. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+347. [ ] Next numbered PLAN item after 346 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

@@ -13760,6 +13760,8 @@ impl Sim {
     /// Invalid `"device flags"`. This VM does not model
     /// `cudaErrorSetOnActiveProcess`. Auto streams inherit the schedule as
     /// host-wait tax; explicit stream policy wins. Default `0` is identity.
+    /// `expertvm sim --device-sync-policy blocking` sets
+    /// [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`].
     pub fn set_device_flags(&mut self, device: DeviceId, flags: u32) -> Result<(), SimError> {
         self.fail_if_capturing("cannot capture device flags")?;
         let _gpu = self.profile.gpu(device)?;

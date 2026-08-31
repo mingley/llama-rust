@@ -772,6 +772,14 @@ pub struct SimCfg {
     /// Decode identity stays Auto. [`crate::GpuStoreCfg::sync_policy`] is the
     /// store path.
     pub sync_policy: gpu_sim::SynchronizationPolicy,
+    /// Device host-wait schedule (`cudaSetDeviceFlags` SCHEDULE_*).
+    ///
+    /// Auto streams inherit this tax on `synchronize_stream`. Explicit
+    /// [`Self::sync_policy`] wins. [`gpu_sim::SynchronizationPolicy::Auto`]
+    /// skips `set_device_flags` (decode identity). ORs with
+    /// [`Self::device_sync_memops`]. Distinct from stream `--sync-policy`.
+    /// [`crate::GpuStoreCfg::device_sync_policy`] is the store path.
+    pub device_sync_policy: gpu_sim::SynchronizationPolicy,
     /// `cudaLaunchAttributeMemSyncDomain` on the decode compute stream.
     ///
     /// [`gpu_sim::MemSyncDomain::Remote`] isolates leftover prefill fence tax
@@ -994,6 +1002,7 @@ impl SimCfg {
             func_max_shared: false,
             non_portable_cluster: false,
             sync_policy: gpu_sim::SynchronizationPolicy::Auto,
+            device_sync_policy: gpu_sim::SynchronizationPolicy::Auto,
             mem_sync_domain: gpu_sim::MemSyncDomain::Default,
             shared_mem: gpu_sim::SharedMemoryMode::Default,
             func_shared_mem: gpu_sim::SharedMemoryMode::Default,
@@ -1153,6 +1162,7 @@ pub fn sim_replay_cfg(
     let keys = trace.keys();
     let mut sim = Sim::new(sim_profile(profile, &cfg));
     apply_device_sync_memops(&mut sim, cfg.device_sync_memops)?;
+    apply_device_sync_policy(&mut sim, cfg.device_sync_policy)?;
     apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
     apply_func_cluster_spread(&mut sim, cfg.func_cluster_spread)?;
     apply_cluster_dim_must_be_set(&mut sim, cfg.cluster_must_set)?;
@@ -2423,6 +2433,48 @@ pub(crate) fn apply_device_sync_memops(sim: &mut Sim, on: bool) -> Result<(), Er
         sim.set_device_flags(d, flags | DeviceFlags::SYNC_MEMOPS)?;
     }
     Ok(())
+}
+
+/// `cudaSetDeviceFlags` schedule bits on every GPU.
+///
+/// Call after [`Sim::new`] (and after [`apply_device_sync_memops`] so
+/// `SYNC_MEMOPS` stays). Auto streams inherit the tax; explicit stream
+/// [`SynchronizationPolicy`] wins. [`SynchronizationPolicy::Auto`] skips
+/// `set_device_flags` (no +1 ns). Capture cannot include it; construction-time
+/// is legal.
+pub(crate) fn apply_device_sync_policy(
+    sim: &mut Sim,
+    policy: SynchronizationPolicy,
+) -> Result<(), Error> {
+    if policy == SynchronizationPolicy::Auto {
+        return Ok(());
+    }
+    let bit = device_schedule_bits(policy);
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        let d = DeviceId(g);
+        let flags = sim.get_device_flags(d)?;
+        sim.set_device_flags(d, (flags & !DeviceFlags::SCHEDULE_MASK) | bit)?;
+    }
+    Ok(())
+}
+
+fn device_schedule_bits(policy: SynchronizationPolicy) -> u32 {
+    match policy {
+        SynchronizationPolicy::Auto => DeviceFlags::SCHEDULE_AUTO,
+        SynchronizationPolicy::Spin => DeviceFlags::SCHEDULE_SPIN,
+        SynchronizationPolicy::Yield => DeviceFlags::SCHEDULE_YIELD,
+        SynchronizationPolicy::BlockingSync => DeviceFlags::SCHEDULE_BLOCKING_SYNC,
+    }
+}
+
+pub(crate) fn device_schedule_from_flags(flags: u32) -> SynchronizationPolicy {
+    match flags & DeviceFlags::SCHEDULE_MASK {
+        DeviceFlags::SCHEDULE_SPIN => SynchronizationPolicy::Spin,
+        DeviceFlags::SCHEDULE_YIELD => SynchronizationPolicy::Yield,
+        DeviceFlags::SCHEDULE_BLOCKING_SYNC => SynchronizationPolicy::BlockingSync,
+        _ => SynchronizationPolicy::Auto,
+    }
 }
 
 /// Free `victim` on `device` only (replica) or the whole page (home).

@@ -11,14 +11,14 @@ use crate::planner::{
 use crate::sim_replay::{
     add_leaf_gemm, alloc_launch_completion, alloc_programmatic_event, alloc_resident_copy_mailbox,
     allow_non_portable_cluster_if, allow_optin_shared_if, apply_cluster_dim_must_be_set,
-    apply_device_shared_mem, apply_device_sync_memops, apply_exec_mem_sync_domain,
-    apply_func_cluster_spread, apply_func_max_shared, apply_func_shared_mem, apply_l2_fetch,
-    apply_stream_mem_sync_domain, apply_stream_sync_policy, bind_shareable_mempools,
-    check_cluster_must_set, check_cluster_preferred, check_device_graph_flags, check_l2_fetch,
-    ensure_single_attach, free_copy_mailbox, free_mapped_host, instantiate_exec, kernel_leaf,
-    mark_sync_memops, replay_exec, replay_streams, reset_persisting_l2_if, retarget_parked_kernel,
-    signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem,
-    StreamPlan,
+    apply_device_shared_mem, apply_device_sync_memops, apply_device_sync_policy,
+    apply_exec_mem_sync_domain, apply_func_cluster_spread, apply_func_max_shared,
+    apply_func_shared_mem, apply_l2_fetch, apply_stream_mem_sync_domain, apply_stream_sync_policy,
+    bind_shareable_mempools, check_cluster_must_set, check_cluster_preferred,
+    check_device_graph_flags, check_l2_fetch, ensure_single_attach, free_copy_mailbox,
+    free_mapped_host, instantiate_exec, kernel_leaf, mark_sync_memops, replay_exec, replay_streams,
+    reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
+    upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -26,6 +26,7 @@ use gpu_sim::{
     GraphMemAttr, HardwareProfile, KernelBuf, KernelKind, LaunchCompletionEvent, MemAdvise,
     MemAttach, MemHandleId, MemcpyAttributes, MemcpyOp, Place, PointerAttr, PoolId,
     ProgrammaticEvent, Score, SharedMemCarveout, SharedMemoryMode, Sim, StreamId,
+    SynchronizationPolicy,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -321,6 +322,13 @@ pub struct GpuStoreCfg {
     /// [`Self::decode_priority`]). [`gpu_sim::SynchronizationPolicy::Auto`] tax
     /// is 0. Decode identity stays Auto.
     pub sync_policy: gpu_sim::SynchronizationPolicy,
+    /// Device host-wait schedule (`cudaSetDeviceFlags` SCHEDULE_*).
+    ///
+    /// Auto streams inherit this tax on `synchronize_stream`. Explicit
+    /// [`Self::sync_policy`] wins. [`gpu_sim::SynchronizationPolicy::Auto`]
+    /// skips `set_device_flags` (decode identity). ORs with
+    /// [`Self::device_sync_memops`]. Distinct from stream `--sync-policy`.
+    pub device_sync_policy: gpu_sim::SynchronizationPolicy,
     /// `cudaLaunchAttributeMemSyncDomain` on the decode compute stream.
     ///
     /// [`gpu_sim::MemSyncDomain::Remote`] isolates leftover prefill fence tax
@@ -745,6 +753,9 @@ impl SimulatedGpuStore {
     /// ClusterDimMustBeSet (needs `--cluster`; occupancy matches `--cluster`).
     /// [`GpuStoreCfg::sync_policy`] is stream host-wait
     /// (`cudaLaunchAttributeSynchronizationPolicy`; Auto tax 0).
+    /// [`GpuStoreCfg::device_sync_policy`] is device host-wait
+    /// (`cudaSetDeviceFlags` SCHEDULE_*; Auto streams inherit; explicit
+    /// stream policy wins).
     /// [`GpuStoreCfg::mem_sync_domain`] is decode-stream
     /// `cudaLaunchAttributeMemSyncDomain` (Default identity; Remote isolates
     /// leftover prefill fence tax).
@@ -812,6 +823,9 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::device_sync_memops`] is `cudaSetDeviceFlags` SyncMemops
     /// so every memcpy/memset on that GPU is host-synchronous (illegal with
     /// mapped or memcpy-batch; identity stays async pinned H2D).
+    /// [`GpuStoreCfg::device_sync_policy`] is `cudaSetDeviceFlags` SCHEDULE_*
+    /// so Auto streams inherit host-wait tax (explicit stream
+    /// [`GpuStoreCfg::sync_policy`] wins; ORs with SyncMemops).
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
     /// exclusive compute). [`GpuStoreCfg::decode_sm_permille`] `0` keeps a
     /// full chip. `1..=1000` without [`GpuStoreCfg::decode_priority`] caps the
@@ -929,6 +943,7 @@ impl SimulatedGpuStore {
         };
         let mut sim = Sim::new(profile);
         apply_device_sync_memops(&mut sim, cfg.device_sync_memops)?;
+        apply_device_sync_policy(&mut sim, cfg.device_sync_policy)?;
         apply_func_max_shared(&mut sim, cfg.func_max_shared)?;
         apply_func_cluster_spread(&mut sim, cfg.func_cluster_spread)?;
         apply_cluster_dim_must_be_set(&mut sim, cfg.cluster_must_set)?;
@@ -1144,6 +1159,15 @@ impl SimulatedGpuStore {
             .get_device_flags(self.device)
             .map(|f| f & DeviceFlags::SYNC_MEMOPS != 0)
             .unwrap_or(false)
+    }
+
+    /// Device schedule inherited by Auto streams (`cudaSetDeviceFlags`).
+    #[must_use]
+    pub fn device_sync_policy(&self) -> SynchronizationPolicy {
+        self.sim
+            .get_device_flags(self.device)
+            .map(crate::sim_replay::device_schedule_from_flags)
+            .unwrap_or(SynchronizationPolicy::Auto)
     }
 
     /// Whether this store set function MaxShared carveout at construction.

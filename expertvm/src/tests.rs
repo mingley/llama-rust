@@ -7322,6 +7322,140 @@ fn simulated_gpu_store_sync_policy_taxes_decode_stream() {
 }
 
 #[test]
+fn simulated_gpu_store_device_sync_policy_taxes_decode_stream() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile =
+        HardwareProfile::parse("gpus=1\nhost_sync_blocking_ns=10000\nfp16_flops=1000000\n")
+            .expect("host-sync profile");
+    let run = |policy: SynchronizationPolicy| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            1,
+            profile.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                decode_priority: true,
+                stream_priority: true,
+                device_sync_policy: policy,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        assert_eq!(gpu.device_sync_policy(), policy);
+        let key = ExpertKey::new(0, 0);
+        gpu.bind_decode_compute(true);
+        let _warm = gpu.acquire(key).expect("warm");
+        gpu.release(key);
+        let t0 = gpu.clock_ns().expect("drain");
+        gpu.bind_decode_compute(true);
+        let _hit = gpu.acquire(key).expect("hit");
+        gpu.release(key);
+        gpu.token_clock_ns().expect("token").saturating_sub(t0)
+    };
+    let auto = run(SynchronizationPolicy::Auto);
+    let block = run(SynchronizationPolicy::BlockingSync);
+    assert_eq!(
+        block,
+        auto.saturating_add(10_000),
+        "device BlockingSync must tax Auto streams; auto={auto} block={block}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_device_sync_policy_stream_wins() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse(
+        "gpus=1\nhost_sync_spin_ns=1000\nhost_sync_blocking_ns=10000\nfp16_flops=1000000\n",
+    )
+    .expect("host-sync profile");
+    let run = |device: SynchronizationPolicy, stream: SynchronizationPolicy| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            1,
+            profile.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                decode_priority: true,
+                stream_priority: true,
+                device_sync_policy: device,
+                sync_policy: stream,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        assert_eq!(gpu.device_sync_policy(), device);
+        let key = ExpertKey::new(0, 0);
+        gpu.bind_decode_compute(true);
+        let _warm = gpu.acquire(key).expect("warm");
+        gpu.release(key);
+        let t0 = gpu.clock_ns().expect("drain");
+        gpu.bind_decode_compute(true);
+        let _hit = gpu.acquire(key).expect("hit");
+        gpu.release(key);
+        gpu.token_clock_ns().expect("token").saturating_sub(t0)
+    };
+    let device_block = run(
+        SynchronizationPolicy::BlockingSync,
+        SynchronizationPolicy::Auto,
+    );
+    let stream_spin = run(
+        SynchronizationPolicy::BlockingSync,
+        SynchronizationPolicy::Spin,
+    );
+    assert_eq!(
+        stream_spin,
+        device_block.saturating_sub(9_000),
+        "explicit stream Spin must beat device BlockingSync; device={device_block} stream={stream_spin}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_device_sync_policy_ors_sync_memops() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = match SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            device_sync_memops: true,
+            device_sync_policy: SynchronizationPolicy::BlockingSync,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(gpu) => gpu,
+        Err(err) => panic!("gpu: {err}"),
+    };
+    assert!(gpu.device_sync_memops());
+    assert_eq!(
+        gpu.device_sync_policy(),
+        SynchronizationPolicy::BlockingSync
+    );
+    let identity = SimulatedGpuStore::new(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+    )
+    .expect("id");
+    assert!(!identity.device_sync_memops());
+    assert_eq!(identity.device_sync_policy(), SynchronizationPolicy::Auto);
+    let _s = gpu.score().expect("drain");
+}
+
+#[test]
 fn simulated_gpu_store_shared_mem_eight_lengthens_gemm() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],
@@ -8173,6 +8307,39 @@ fn sim_replay_sync_policy_taxes_decode_priority_itl() {
     assert!(
         block_itl > auto_itl,
         "blocking host wait must inflate decode ITL; auto={auto_itl} block={block_itl}"
+    );
+}
+
+#[test]
+fn sim_replay_device_sync_policy_taxes_decode_priority_itl() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let profile = HardwareProfile::parse(
+        "gpus=1\nhost_sync_blocking_ns=10000\nfp16_flops=1000000\ncopy_engines=2\n",
+    )
+    .expect("host-sync profile");
+    let base = SimCfg {
+        decode_priority: true,
+        stream_priority: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let auto = sim_replay_cfg(&t, profile.clone(), base).expect("auto");
+    let block = sim_replay_cfg(
+        &t,
+        profile,
+        SimCfg {
+            device_sync_policy: SynchronizationPolicy::BlockingSync,
+            ..base
+        },
+    )
+    .expect("block");
+    assert_eq!(auto.hits, block.hits);
+    let auto_itl = auto.itl_ns.expect("auto itl");
+    let block_itl = block.itl_ns.expect("block itl");
+    assert!(
+        block_itl > auto_itl,
+        "device BlockingSync must inflate decode ITL; auto={auto_itl} block={block_itl}"
     );
 }
 

@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `mempool_trim`, `mempool_no_reuse`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/enable, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `func_cluster_spread`, `cluster_must_set`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
+//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `func_cluster_spread`, `cluster_must_set`, `device_sync_policy`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -78,7 +78,9 @@
 //! Default inherits that occupancy. `--non-portable-cluster`
 //! allows `--cluster N` above portable size up to the SKU max. `--sync-policy`
 //! auto|spin|yield|blocking is stream host-wait (`cudaLaunchAttributeSynchronizationPolicy`;
-//! Auto tax 0). `--shared-mem` default|four|eight is kernel-node bank width
+//! Auto tax 0). `--device-sync-policy` auto|spin|yield|blocking is
+//! `cudaSetDeviceFlags` SCHEDULE_* (Auto streams inherit; explicit `--sync-policy`
+//! wins). `--shared-mem` default|four|eight is kernel-node bank width
 //! (`cudaLaunchAttributeSharedMemoryMode`; Default never scales duration).
 //! `--func-shared-mem` default|four|eight is `cudaFuncSetSharedMemConfig`:
 //! launch Default inherits that duration scale (distinct from `--shared-mem`).
@@ -124,7 +126,7 @@
 //! stays reserved). Decode
 //! identity stays `cudaLaunchKernel` (no cluster / Default policy / no preferred
 //! dim / Default carveout / non-portable disallowed / Auto sync policy /
-//! Default mem-sync domain / Default shared-mem / Default portable-cluster / 0 dynamic shared / Default
+//! Auto device schedule / Default mem-sync domain / Default shared-mem / Default portable-cluster / 0 dynamic shared / Default
 //! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event / no programmatic event / Global managed attach / events copy-ready / no mempool trim / opportunistic reuse / free_sync managed evict / cudaHostAllocMapped not HostRegisterMapped / async memcpy not SyncMemops / no device SyncMemops / disable-timing non-blocking copy events).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
@@ -4339,6 +4341,44 @@ mod tests {
         assert!(
             block.0 > auto.0,
             "blocking host wait must inflate decode-stream ITL; auto={} block={}",
+            auto.0,
+            block.0
+        );
+    }
+
+    #[test]
+    fn engine_gpu_device_sync_policy_taxes_decode_itl() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse(
+            "gpus=1\nhost_sync_blocking_ns=10000\nfp16_flops=1000000\ncopy_engines=2\n",
+        )
+        .expect("host-sync profile");
+        let pri = GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            compute_slots: 2,
+            ..GpuStoreCfg::default()
+        };
+        let auto = mixed_gpu_decode_itl_at(bytes.clone(), false, None, pri, profile.clone());
+        let block = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                device_sync_policy: SynchronizationPolicy::BlockingSync,
+                ..pri
+            },
+            profile,
+        );
+        assert_eq!(auto.2, 4);
+        assert_eq!(block.2, 4);
+        assert_eq!(
+            auto.4, block.4,
+            "device BlockingSync must keep greedy identity"
+        );
+        assert!(
+            block.0 > auto.0,
+            "device BlockingSync must inflate decode-stream ITL; auto={} block={}",
             auto.0,
             block.0
         );

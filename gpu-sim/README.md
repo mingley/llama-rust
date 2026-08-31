@@ -635,6 +635,8 @@ inherit the function config, then this; unset is unscaled).
 MapHost / LmemResizeToMax; `SYNC_MEMOPS` waits memcpy/memset like pointer
 SyncMemops; Auto streams inherit the tax). This VM does not model `cudaErrorSetOnActiveProcess`.
 `expertvm sim --device-sync-memops` sets `DeviceFlags::SYNC_MEMOPS`.
+`expertvm sim --device-sync-policy blocking` sets `DeviceFlags::SCHEDULE_BLOCKING_SYNC`
+(Auto streams inherit host-wait tax; explicit `--sync-policy` wins).
 Persisting L2 is `cudaLimitPersistingL2CacheSize`. Access-policy windows
 must align to `cudaLimitMaxL2FetchGranularity` (SM 8.0+ default 128).
 `malloc_pitch` is `cudaMallocPitch`. `MemcpyOp` `height` / pitches are
@@ -965,7 +967,9 @@ carveout (occupies every Hyper-Q slot). `--func-max-shared` is
 Default inherits; occupies every Hyper-Q slot). `--non-portable-cluster` is
 `cudaFuncAttributeNonPortableClusterSizeAllowed`. `--sync-policy auto|spin|yield|blocking`
 is `cudaLaunchAttributeSynchronizationPolicy` on created streams (host-wait
-tax on `synchronize_stream`; Auto inherits `set_device_flags`, unset tax 0). `--shared-mem default|four|eight` is
+tax on `synchronize_stream`; Auto inherits `set_device_flags`, unset tax 0). `--device-sync-policy auto|spin|yield|blocking`
+is `cudaSetDeviceFlags` SCHEDULE_* (Auto streams inherit that tax; explicit
+`--sync-policy` wins). `--shared-mem default|four|eight` is
 `cudaLaunchAttributeSharedMemoryMode` on grouped expert GEMMs (Default uses
 function then device shared-mem config; unset never scales duration). `--portable-cluster default|portable|non-portable` is
 `cudaLaunchAttributePortableClusterSizeMode` on grouped expert GEMMs (Default

@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaSetDeviceFlags` schedule
+
+`GpuStoreCfg::device_sync_policy` / `SimCfg::device_sync_policy` call
+`cudaSetDeviceFlags` SCHEDULE_SPIN / YIELD / BLOCKING_SYNC after `Sim::new`.
+Auto streams inherit that host-wait tax. Explicit `--sync-policy` wins.
+ORs with `--device-sync-memops` (`SYNC_MEMOPS` stays). Hits/misses stay
+the same. `--device-sync-policy` is Auto by default (decode identity: skip
+`set_device_flags`). `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaLimitMaxL2FetchGranularity`
 
 `GpuStoreCfg::l2_fetch` / `SimCfg::l2_fetch` call

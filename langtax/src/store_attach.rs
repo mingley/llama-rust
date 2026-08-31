@@ -117,6 +117,10 @@ pub(crate) struct GpuCli {
     pub sync_policy: SynchronizationPolicy,
     /// True when `--sync-policy` appeared.
     pub sync_policy_set: bool,
+    /// Device host-wait schedule (`GpuStoreCfg::device_sync_policy`).
+    pub device_sync_policy: SynchronizationPolicy,
+    /// True when `--device-sync-policy` appeared.
+    pub device_sync_policy_set: bool,
     /// Decode-stream mem-sync domain (`GpuStoreCfg::mem_sync_domain`).
     pub mem_sync_domain: MemSyncDomain,
     /// True when `--mem-sync-domain` appeared.
@@ -385,6 +389,14 @@ impl GpuCli {
         Ok(())
     }
 
+    /// Device host-wait schedule (`--device-sync-policy auto|spin|yield|blocking`).
+    pub(crate) fn set_device_sync_policy(&mut self, raw: &str) -> Result<(), String> {
+        self.device_sync_policy = SynchronizationPolicy::parse(raw)
+            .map_err(|_| format!("unknown device-sync-policy {raw}"))?;
+        self.device_sync_policy_set = true;
+        Ok(())
+    }
+
     /// Decode-stream mem-sync domain (`--mem-sync-domain default|remote`).
     pub(crate) fn set_mem_sync_domain(&mut self, raw: &str) -> Result<(), String> {
         self.mem_sync_domain =
@@ -525,6 +537,7 @@ impl GpuCli {
             (self.func_max_shared, "--func-max-shared"),
             (self.non_portable_cluster, "--non-portable-cluster"),
             (self.sync_policy_set, "--sync-policy"),
+            (self.device_sync_policy_set, "--device-sync-policy"),
             (self.mem_sync_domain_set, "--mem-sync-domain"),
             (self.shared_mem_set, "--shared-mem"),
             (self.func_shared_mem_set, "--func-shared-mem"),
@@ -601,6 +614,7 @@ enum PlanSlot {
     Cluster,
     PreferredCluster,
     SyncPolicy,
+    DeviceSyncPolicy,
     MemSyncDomain,
     SharedMem,
     FuncSharedMem,
@@ -625,6 +639,7 @@ impl PlanSlot {
             Self::Cluster => "cluster",
             Self::PreferredCluster => "preferred-cluster",
             Self::SyncPolicy => "sync-policy",
+            Self::DeviceSyncPolicy => "device-sync-policy",
             Self::MemSyncDomain => "mem-sync-domain",
             Self::SharedMem => "shared-mem",
             Self::FuncSharedMem => "func-shared-mem",
@@ -655,6 +670,7 @@ impl PlannerCli {
             "--l2-fetch" => Dash::Need(PlanSlot::L2Fetch),
             "--preferred-cluster" => Dash::Need(PlanSlot::PreferredCluster),
             "--sync-policy" => Dash::Need(PlanSlot::SyncPolicy),
+            "--device-sync-policy" => Dash::Need(PlanSlot::DeviceSyncPolicy),
             "--mem-sync-domain" => Dash::Need(PlanSlot::MemSyncDomain),
             "--shared-mem" => Dash::Need(PlanSlot::SharedMem),
             "--func-shared-mem" => Dash::Need(PlanSlot::FuncSharedMem),
@@ -710,6 +726,7 @@ impl PlannerCli {
                 self.gpu.set_preferred_cluster(n)?;
             }
             PlanSlot::SyncPolicy => self.gpu.set_sync_policy(raw)?,
+            PlanSlot::DeviceSyncPolicy => self.gpu.set_device_sync_policy(raw)?,
             PlanSlot::MemSyncDomain => self.gpu.set_mem_sync_domain(raw)?,
             PlanSlot::SharedMem => self.gpu.set_shared_mem(raw)?,
             PlanSlot::FuncSharedMem => self.gpu.set_func_shared_mem(raw)?,
@@ -845,6 +862,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         func_max_shared: gpu.func_max_shared,
         non_portable_cluster: gpu.non_portable_cluster,
         sync_policy: gpu.sync_policy,
+        device_sync_policy: gpu.device_sync_policy,
         mem_sync_domain: gpu.mem_sync_domain,
         shared_mem: gpu.shared_mem,
         func_shared_mem: gpu.func_shared_mem,
