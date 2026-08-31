@@ -3525,7 +3525,21 @@ model, do not celebrate the sim.
     `cudaHostAllocMapped`. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-336. [ ] Next numbered PLAN item after 335 is the next `gpu-sim` / Engine /
+336. [x] `cuPointerSetAttribute` SyncMemops on miss pages:
+    [`GpuStoreCfg::sync_memops`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::sync_memops`](expertvm/src/sim_replay.rs)
+    [`pointer_set_attribute`](gpu-sim/src/sim.rs) [`PointerAttr::SyncMemops`]
+    after device alloc, before H2D / managed prefetch, so memcpy of that
+    pointer is host-synchronous (`synchronize_stream` after submit). Hits
+    stay the same; leftover compute cannot overlap that copy. Illegal with
+    `--mapped` (no device memcpy) and `--memcpy-batch` (needs async H2D).
+    Does not imply pageable or `--sync-alloc`. `--sync-memops` on
+    `expertvm sim` / `schedule` / `store` and
+    `gguf_gemv engine --expert-sim`. Decode identity stays async
+    `memcpy_pinned_to_device`. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+337. [ ] Next numbered PLAN item after 336 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

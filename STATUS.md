@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cuPointerSetAttribute` SyncMemops on miss pages
+
+`GpuStoreCfg::sync_memops` / `SimCfg::sync_memops` call
+`cuPointerSetAttribute(CU_POINTER_ATTRIBUTE_SYNC_MEMOPS)` after device
+alloc so miss H2D and managed prefetch are host-synchronous. Hits/misses
+stay the same. Illegal with `--mapped` / `--memcpy-batch`. `--sync-memops`
+is off by default (decode identity: async `cudaMemcpyAsync` pinned H2D).
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaHostRegisterMapped` expert pages
 
 `GpuStoreCfg::host_register_mapped` / `SimCfg::host_register_mapped` allocate

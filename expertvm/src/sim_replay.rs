@@ -311,8 +311,8 @@ use crate::replay::{Touch, Walker};
 use gpu_sim::{
     AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceId, EventId, GraphId,
     GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf, KernelKind,
-    LaunchCompletionEvent, MemAttach, MemPoolAttr, MemcpyAttributes, MemcpyOp, Place, PoolId,
-    PortableClusterMode, PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, Score,
+    LaunchCompletionEvent, MemAttach, MemPoolAttr, MemcpyAttributes, MemcpyOp, Place, PointerAttr,
+    PoolId, PortableClusterMode, PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, Score,
     SharedMemCarveout, SharedMemoryMode, Sim, StreamId, SynchronizationPolicy, WaitValueCmp,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -538,12 +538,19 @@ pub struct SimCfg {
     /// `cudaHostAllocMapped`. [`crate::GpuStoreCfg::host_register_mapped`] is
     /// the store path.
     pub host_register_mapped: bool,
+    /// `cuPointerSetAttribute` SyncMemops on miss device pages.
+    ///
+    /// After alloc, before H2D / managed prefetch: memcpy of that pointer is
+    /// host-synchronous. Illegal with [`Self::mapped`] and [`Self::memcpy_batch`].
+    /// Decode identity stays async pinned H2D. [`crate::GpuStoreCfg::sync_memops`]
+    /// is the store path.
+    pub sync_memops: bool,
     /// `cudaMemcpyBatchAsync` for a multi-expert pinned/VMM prefetch window.
     ///
     /// Sibling H2D copies share one stream-order snapshot. Illegal with
-    /// pageable, host-sync, mapped, or managed fills. Decode identity stays
-    /// sequential `memcpy_pinned_to_device`. [`crate::GpuStoreCfg::memcpy_batch`]
-    /// is the store path.
+    /// pageable, host-sync, mapped, managed, or [`Self::sync_memops`] fills.
+    /// Decode identity stays sequential `memcpy_pinned_to_device`.
+    /// [`crate::GpuStoreCfg::memcpy_batch`] is the store path.
     pub memcpy_batch: bool,
     /// Peer map without dest HBM at a managed or VMM fill.
     ///
@@ -887,6 +894,7 @@ impl SimCfg {
             pageable: false,
             host_register: false,
             host_register_mapped: false,
+            sync_memops: false,
             accessed_by: false,
             legacy_null: false,
             stream_priority: false,
@@ -982,9 +990,17 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
         return Err(Error::Store("mempool-no-reuse needs cudaMallocAsync"));
     }
     if cfg.memcpy_batch
-        && (cfg.pageable || cfg.sync_alloc || cfg.mapped || cfg.managed || cfg.host_register_mapped)
+        && (cfg.pageable
+            || cfg.sync_alloc
+            || cfg.mapped
+            || cfg.managed
+            || cfg.host_register_mapped
+            || cfg.sync_memops)
     {
         return Err(Error::Store("memcpy-batch needs async pinned/vmm H2D"));
+    }
+    if cfg.sync_memops && cfg.mapped {
+        return Err(Error::Store("sync-memops needs device memcpy"));
     }
     if cfg.host_register_mapped && cfg.host_register {
         return Err(Error::Store(
@@ -1098,6 +1114,7 @@ pub fn sim_replay_cfg(
         pageable: cfg.pageable,
         host_register: cfg.host_register,
         host_register_mapped: cfg.host_register_mapped,
+        sync_memops: cfg.sync_memops,
         memcpy_batch: cfg.memcpy_batch,
         accessed_by: cfg.accessed_by,
         wait_value: cfg.wait_value,
@@ -1249,6 +1266,8 @@ pub(crate) struct TouchArgs {
     pub host_register: bool,
     /// [`SimCfg::host_register_mapped`]: `alloc_host` then `cudaHostRegisterMapped`.
     pub host_register_mapped: bool,
+    /// [`SimCfg::sync_memops`]: `cuPointerSetAttribute` SyncMemops after device alloc.
+    pub sync_memops: bool,
     /// [`SimCfg::memcpy_batch`]: multi-expert prefetch uses `cudaMemcpyBatchAsync`.
     pub memcpy_batch: bool,
     /// [`SimCfg::accessed_by`]: SetAccessedBy / VMM SetAccess / mempool SetAccess
@@ -2121,7 +2140,7 @@ fn alloc_touch_page(sim: &mut Sim, args: TouchArgs) -> Result<AllocId, Error> {
         }
         return Ok(sim.alloc_host_mapped(args.bytes)?);
     }
-    if args.managed {
+    let id = if args.managed {
         let id = if args.managed_host {
             sim.alloc_managed_host(args.bytes)?
         } else {
@@ -2140,15 +2159,26 @@ fn alloc_touch_page(sim: &mut Sim, args: TouchArgs) -> Result<AllocId, Error> {
             args.stream_attach,
             args.managed_host,
         )?;
-        return Ok(id);
-    }
-    if args.vmm {
+        id
+    } else if args.vmm {
         if args.vmm_page > 0 && args.vmm_page < args.bytes {
-            return Ok(sim.va_acquire_paged(args.d, args.bytes, args.vmm_page)?);
+            sim.va_acquire_paged(args.d, args.bytes, args.vmm_page)?
+        } else {
+            sim.va_acquire(args.d, args.bytes)?
         }
-        return Ok(sim.va_acquire(args.d, args.bytes)?);
+    } else {
+        hbm_alloc(sim, args.d, args.bytes, args.s, args.sync_alloc)?
+    };
+    mark_sync_memops(sim, id, args.sync_memops)?;
+    Ok(id)
+}
+
+/// `cuPointerSetAttribute` SyncMemops on a miss page before H2D / prefetch.
+pub(crate) fn mark_sync_memops(sim: &mut Sim, id: AllocId, on: bool) -> Result<(), Error> {
+    if on {
+        sim.pointer_set_attribute(id, PointerAttr::SyncMemops, 1)?;
     }
-    hbm_alloc(sim, args.d, args.bytes, args.s, args.sync_alloc)
+    Ok(())
 }
 
 /// Free `victim` on `device` only (replica) or the whole page (home).

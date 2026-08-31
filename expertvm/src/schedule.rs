@@ -339,6 +339,7 @@ impl SchedRt {
                 pageable: cfg.pageable,
                 host_register: cfg.host_register,
                 host_register_mapped: cfg.host_register_mapped,
+                sync_memops: cfg.sync_memops,
                 memcpy_batch: cfg.memcpy_batch,
                 accessed_by: cfg.accessed_by,
                 wait_value: cfg.wait_value,

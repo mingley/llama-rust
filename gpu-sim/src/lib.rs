@@ -108,6 +108,9 @@
 //! registers pageable staging then DMA H2D. `expertvm sim --host-register-mapped`
 //! is [`host_register_mapped`](Sim::host_register_mapped) on expert pages
 //! (implies `--mapped`; identity mapped stays [`Sim::alloc_host_mapped`]).
+//! `expertvm sim --sync-memops` sets [`PointerAttr::SyncMemops`] on miss
+//! device pages so H2D / managed prefetch is host-synchronous (identity
+//! stays async pinned DMA; illegal with `--mapped` / `--memcpy-batch`).
 //! [`Sim::alloc_host_mapped`] is
 //! `cudaHostAllocMapped`: a kernel may read it without H2D, billed at host PCIe.
 //! [`Sim::alloc_managed`] is `cudaMallocManaged` (no HBM until first-touch or
@@ -294,7 +297,8 @@
 //! wrappers of existing pointer state; VMM mapping size is the
 //! `cuMemMap` span at offset 0, not the reserved VA; hardware decompress
 //! is always 0; memory-block id is the [`MemHandleId`] covering offset 0). Set is
-//! capture-refused; Get is a query.
+//! capture-refused; Get is a query. `expertvm sim --sync-memops` sets
+//! [`PointerAttr::SyncMemops`] on miss pages (host-sync H2D).
 //! [`Sim::mem_get_address_range`] is `cudaMemGetAddressRange` (base is the
 //! alloc id; interior offsets are not modeled). Query; legal during capture.
 //! [`Sim::host_get_device_pointer`] is `cudaHostGetDevicePointer` (mapped host).

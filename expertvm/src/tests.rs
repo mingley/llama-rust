@@ -843,6 +843,7 @@ fn vmm_evict_reacquires_same_va() {
         pageable: false,
         host_register: false,
         host_register_mapped: false,
+        sync_memops: false,
         memcpy_batch: false,
         accessed_by: false,
         wait_value: false,
@@ -5346,6 +5347,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         pageable: false,
         host_register: false,
         host_register_mapped: false,
+        sync_memops: false,
         memcpy_batch: false,
         accessed_by: true,
         wait_value: false,
@@ -5412,6 +5414,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         pageable: false,
         host_register: false,
         host_register_mapped: false,
+        sync_memops: false,
         memcpy_batch: false,
         accessed_by: true,
         wait_value: false,
@@ -5479,6 +5482,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         pageable: false,
         host_register: false,
         host_register_mapped: false,
+        sync_memops: false,
         memcpy_batch: false,
         accessed_by: true,
         wait_value: false,
@@ -5912,6 +5916,7 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         pageable: false,
         host_register: false,
         host_register_mapped: false,
+        sync_memops: false,
         memcpy_batch: true,
         accessed_by: false,
         wait_value: false,
@@ -6014,6 +6019,14 @@ fn memcpy_batch_rejects_pageable_and_managed() {
                 ..GpuStoreCfg::default()
             },
         ),
+        refuse(
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                memcpy_batch: true,
+                sync_memops: true,
+                ..GpuStoreCfg::default()
+            },
+        ),
     ] {
         assert!(
             err.to_string()
@@ -6053,6 +6066,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             pageable: false,
             host_register: false,
             host_register_mapped: false,
+            sync_memops: false,
             memcpy_batch: false,
             accessed_by: false,
             wait_value: false,
@@ -9136,4 +9150,202 @@ fn simulated_gpu_store_host_register_mapped_is_registered_not_host_alloc() {
     let registered = run(true);
     assert_eq!(host_alloc.0, registered.0);
     assert_eq!(host_alloc.1, registered.1);
+}
+
+#[test]
+fn sim_cfg_sync_memops_refuses_mapped() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = match sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            mapped: true,
+            sync_memops: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("sync-memops + mapped must fail"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string().contains("sync-memops needs device memcpy"),
+        "{err}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_sync_memops_refuses_mapped() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Mapped,
+        GpuStoreCfg {
+            sync_memops: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("sync-memops + mapped must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("sync-memops needs device memcpy"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn simulated_gpu_store_sync_memops_refuses_memcpy_batch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            memcpy_batch: true,
+            sync_memops: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("sync-memops + memcpy-batch must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("memcpy-batch needs async pinned/vmm H2D"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn sim_replay_sync_memops_keeps_hits() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg::lru(2, 4096, 0);
+    let on = SimCfg {
+        sync_memops: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("async");
+    let b = sim_replay_cfg(&t, profile, on).expect("sync-memops");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+}
+
+#[test]
+fn simulated_gpu_store_sync_memops_marks_pointer() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let run = |sync_memops: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = match SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                sync_memops,
+                ..GpuStoreCfg::default()
+            },
+        ) {
+            Ok(gpu) => gpu,
+            Err(err) => panic!("gpu: {err}"),
+        };
+        let k0 = ExpertKey::new(0, 0);
+        let _a = gpu.acquire(k0).expect("acq");
+        assert_eq!(gpu.page_sync_memops(k0), sync_memops);
+        gpu.release(k0);
+        for key in t.keys() {
+            let _p = gpu.acquire(key).expect("acquire");
+            gpu.release(key);
+        }
+        let metrics = gpu.metrics();
+        let _s = gpu.score().expect("score");
+        (metrics.hits, metrics.misses)
+    };
+    let mut identity =
+        SimulatedGpuStore::new(DirectStore::from_trace(&t), 2, p.clone(), 4096).expect("identity");
+    let k0 = ExpertKey::new(0, 0);
+    let _a = identity.acquire(k0).expect("id acq");
+    assert!(!identity.page_sync_memops(k0));
+    let _s = identity.score().expect("id score");
+    let off = run(false);
+    let on = run(true);
+    assert_eq!(off.0, on.0);
+    assert_eq!(off.1, on.1);
+}
+
+#[test]
+fn sim_replay_sync_memops_h2d_host_sync() {
+    use crate::replay::Touch;
+    use crate::sim_replay::{apply_touch, GraphBank, PageHandle, TouchArgs};
+    use gpu_sim::{PointerAttr, Sim, StreamId};
+    use std::collections::BTreeMap;
+
+    let bytes = 8u64 << 20;
+    let run = |sync_memops: bool| {
+        let mut sim = Sim::new(HardwareProfile::example_h100_sxm());
+        let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
+        let mut graphs = GraphBank::new(false, false, false, crate::sim_replay::LeafMem::None);
+        let args = TouchArgs {
+            d: DeviceId(0),
+            s: StreamId(0),
+            bytes,
+            slots: 1,
+            sync_alloc: false,
+            mapped: false,
+            managed: false,
+            vmm: false,
+            vmm_page: 0,
+            pageable: false,
+            host_register: false,
+            host_register_mapped: false,
+            sync_memops,
+            memcpy_batch: false,
+            accessed_by: false,
+            wait_value: false,
+            stream_attach: false,
+            managed_host: false,
+            prefetch_host: false,
+        };
+        let mut next_event = 1u32;
+        let k0 = ExpertKey::new(0, 0);
+        apply_touch(
+            &mut sim,
+            &mut handles,
+            &mut graphs,
+            args,
+            k0,
+            Touch::Miss { evicted: None },
+            &mut next_event,
+        )
+        .expect("miss");
+        let id = handles.get(&k0).expect("page").id;
+        let attr = sim
+            .pointer_get_attribute(id, PointerAttr::SyncMemops)
+            .expect("attr");
+        let idle = sim.query_stream(DeviceId(0), StreamId(0)).expect("query");
+        (attr, idle)
+    };
+    let (off_attr, off_idle) = run(false);
+    let (on_attr, on_idle) = run(true);
+    assert_eq!(off_attr, 0);
+    assert!(
+        !off_idle,
+        "async pinned H2D must leave the copy stream busy"
+    );
+    assert_eq!(on_attr, 1);
+    assert!(
+        on_idle,
+        "SyncMemops H2D must host-wait the copy stream before return"
+    );
 }

@@ -27,7 +27,7 @@
 //! (`ttft_ns` / `itl_ns` / `ns_per_token`; not `$/M tokens`). Default GPU
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
-//! `mempool_trim`, `mempool_no_reuse`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `memcpy_batch`, `SetAccessedBy`, legacy NULL, stream priority,
+//! `mempool_trim`, `mempool_no_reuse`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `memcpy_batch`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/enable, timing events, `seq_streams`, `kv_sim`, `decode_priority`,
 //! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `cluster`, `shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
@@ -92,7 +92,9 @@
 //! `cudaMemPrefetchAsync` to host on managed evict (implies `--managed`; next miss
 //! prefetches the same alloc back; identity stays `free_sync`). `--host-register-mapped` is
 //! `cudaHostRegisterMapped` on expert pages (implies `--mapped`; identity stays
-//! `cudaHostAllocMapped`). `--wait-value` is
+//! `cudaHostAllocMapped`). `--sync-memops` is `cuPointerSetAttribute` SyncMemops
+//! on miss device pages (host-sync H2D / managed prefetch; illegal with `--mapped`
+//! / `--memcpy-batch`; identity stays async pinned H2D). `--wait-value` is
 //! `cuStreamWaitValue64` / `WriteValue64` for the copy-ready handshake (8-byte
 //! `cudaMallocAsync` mailbox, copy stream waited before H2D; decode identity
 //! stays events). `--mempool-trim` is `cudaMemPoolTrimTo(0)` after
@@ -103,7 +105,7 @@
 //! identity stays `cudaLaunchKernel` (no cluster / Default policy / no preferred
 //! dim / Default carveout / non-portable disallowed / Auto sync policy /
 //! Default mem-sync domain / Default shared-mem / Default portable-cluster / 0 dynamic shared / Default
-//! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event / no programmatic event / Global managed attach / events copy-ready / no mempool trim / opportunistic reuse / free_sync managed evict / cudaHostAllocMapped not HostRegisterMapped).
+//! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event / no programmatic event / Global managed attach / events copy-ready / no mempool trim / opportunistic reuse / free_sync managed evict / cudaHostAllocMapped not HostRegisterMapped / async memcpy not SyncMemops).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
 //! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode

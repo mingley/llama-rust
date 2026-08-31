@@ -532,6 +532,9 @@ IsHwDecompressCapable / MemoryBlockId are query-only;
 VMM mapping size is the `cuMemMap` span at offset 0, not the reserved
 VA; hardware decompress is always 0; memory-block id is the
 `MemHandleId` covering offset 0). Set is capture-refused; Get is a query.
+`expertvm sim --sync-memops` / `gguf_gemv engine --expert-sim --sync-memops`
+sets `PointerAttr::SyncMemops` on miss device pages so H2D / managed
+prefetch is host-synchronous (identity stays async pinned DMA).
 `mem_get_address_range` is `cudaMemGetAddressRange` (base is the alloc id;
 interior offsets are not modeled). Query; legal during capture.
 `host_get_device_pointer` is `cudaHostGetDevicePointer` (mapped host;
@@ -699,6 +702,10 @@ register pageable staging then DMA H2D (identity stays `cudaMallocHost`).
 `expertvm sim --host-register-mapped` / `gguf_gemv engine --expert-sim --host-register-mapped`
 is `cudaHostRegisterMapped` on expert pages (`alloc_host` then register+map;
 implies `--mapped`; identity mapped stays `cudaHostAllocMapped`).
+`expertvm sim --sync-memops` / `gguf_gemv engine --expert-sim --sync-memops`
+sets `PointerAttr::SyncMemops` on miss device pages so H2D / managed
+prefetch is host-synchronous (illegal with `--mapped` / `--memcpy-batch`;
+identity stays async pinned DMA).
 `alloc_managed` is `cudaMallocManaged` (no HBM until
 `prefetch` / first-touch at kernel start). Default attach is Global.
 `alloc_managed_host` is `cudaMemAttachHost`. `alloc_managed_with_flags` is
