@@ -720,7 +720,7 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `SimulatedGpuStore::with_cfg` opts into `--sync-alloc`, `--mempool`,
   `--shareable`,
   `--host-func`, blocking compute, `--pageable`, `--accessed-by`,
-  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-piecewise`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--event-blocking-sync`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, `--non-portable-cluster`, `--sync-policy`, `--device-sync-policy`, `--shared-mem`, and `--multicast`. `--mempool` sets the default
+  `--legacy-null`, `--stream-priority`, `--graph-update`, `--graph-set-params`, `--graph-clone`, `--graph-build`, `--graph-piecewise`, `--graph-capture-deps`, `--graph-mem`, `--graph-auto-free`, `--timing-events`, `--event-blocking-sync`, `--cooperative`, `--pdl`, `--l2-persist`, `--cluster`, `--preferred-cluster`, `--cluster-spread`, `--max-shared`, `--non-portable-cluster`, `--sync-policy`, `--device-sync-policy`, `--shared-mem`, and `--multicast`. `--mempool` sets the default
   pool release threshold to `u64::MAX` (vLLM-style hold); reuse of a
   cached page pays `pool_reuse_ns`. `--shareable` is POSIX-FD mempool IPC
   (implies `--mempool`; illegal with `--sync-alloc` / mapped / managed / vmm). `--mapped` is `cudaHostAllocMapped`
@@ -751,7 +751,9 @@ Agent loop: modify expertvm → `cargo test` (semantics) → simulator
   `cudaGraphAddKernelNode` (and child add for combo parents; independent
   children may Hyper-Q overlap). `--graph-piecewise` is
   `cudaStreamBeginCaptureToGraph` combo parents (independent child roots;
-  not with `--graph-build`).   `--graph-mem`
+  not with `--graph-build`). `--graph-capture-deps` is non-empty
+  `cudaStreamBeginCaptureToGraph` deps on those combo parents (needs
+  `--graph-piecewise`; sibling GEMMs serialize). `--graph-mem`
   is in-graph scratch (`cudaGraphAddMemAllocNode` / capture `cudaMallocAsync`);
   `--graph-update` is skipped because CUDA cannot update mem nodes.
   `--graph-auto-free` is AutoFreeOnLaunch scratch without a matching free
@@ -995,7 +997,7 @@ model, do not celebrate the sim.
     Dual score still has no `$/M tokens`.
 48. [x] Engine SimulatedGpuStore CUDA graphs: default `--expert-sim` captures
     per-page GEMM graphs (`Engine::graph_launches`). `--graph-update` /
-    `--graph-clone` / `--graph-build` / `--graph-piecewise` / `--graph-mem` / `--graph-auto-free` / `--timing-events` / `--event-blocking-sync` / `--cuda-graphs` match
+    `--graph-clone` / `--graph-build` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-mem` / `--graph-auto-free` / `--timing-events` / `--event-blocking-sync` / `--cuda-graphs` match
     `GpuStoreCfg` / `expertvm sim`. Tight slots park+update. Identity stays.
     Dual score still has no `$/M tokens`.
 49. [x] Engine `itl_slo_ns`: count later-token gaps over a virtual-ns budget
@@ -1326,7 +1328,8 @@ model, do not celebrate the sim.
     `NodeGetDependentNodes`. `--graph-piecewise` on `expertvm sim` /
     `schedule` / `store`, `gguf_gemv engine` / `serve --engine --expert-sim`
     captures combo parents as independent child roots (implies
-    `--cuda-graphs` on the walker). Illegal with `--graph-build`. Decode
+    `--cuda-graphs` on the walker). Illegal with `--graph-build`.
+    `--graph-capture-deps` (PLAN 358) chains those fragments. Decode
     identity stays a single `begin_capture` of child launches. Dual score
     still has no `$/M tokens`.
 
@@ -3807,7 +3810,23 @@ model, do not celebrate the sim.
     Persisting hits. `gpu-profile capture` is still refused. Dual score
     still has no `$/M tokens`.
 
-358. [ ] Next numbered PLAN item after 357 is the next `gpu-sim` / Engine /
+358. [x] `cudaStreamBeginCaptureToGraph` dependency array:
+    [`GpuStoreCfg::graph_capture_deps`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::graph_capture_deps`](expertvm/src/sim_replay.rs) on
+    `--graph-piecewise` combo parents. Later capture fragments depend on
+    the previous last node (`numDependencies > 0`) so sibling expert GEMMs
+    serialize. Needs `--graph-piecewise`. Does not imply piecewise. Hits
+    stay the same. Distinct from `--graph-piecewise` (empty deps / extra
+    roots vs chained deps) and `--graph-build` (no `graph_add_dependencies`
+    edges). Legal with `--pdl` and `--cooperative`. `--graph-capture-deps`
+    on `expertvm sim` / `schedule` / `store` and
+    `gguf_gemv engine --expert-sim`. infer-bench has no `--graph-piecewise`,
+    so it does not get `--graph-capture-deps`. Decode identity stays empty
+    deps (Hyper-Q overlap when `compute_slots >= 2`). Store GEMM stays
+    per-leaf. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+359. [ ] Next numbered PLAN item after 358 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
@@ -3833,6 +3852,9 @@ model, do not celebrate the sim.
     second `MemcpySrcAccessOrder::Any` flag. Do not invent a second
     `AccessProperty::Streaming` flag. Do not invent `--l2-normal` (Normal
     vs Streaming is not mechanically distinct in gpu-sim billing). Do not
+    invent a second `cudaStreamBeginCaptureToGraph` deps flag. Do not invent
+    `--graph-build-deps` in this item (`graph_add_dependencies` is a
+    different CUDA API). Do not
     spend the next item on an OpenAI-compatible HTTP veneer.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an

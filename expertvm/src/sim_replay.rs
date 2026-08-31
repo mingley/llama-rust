@@ -807,6 +807,14 @@ pub struct SimCfg {
     /// edges serialize). [`crate::GpuStoreCfg::graph_piecewise`] is the store
     /// path (leaf capture-to-graph into `create_graph`).
     pub graph_piecewise: bool,
+    /// `cudaStreamBeginCaptureToGraph` dependency chaining on combo parents.
+    ///
+    /// Needs [`Self::graph_piecewise`]. Later capture fragments depend on the
+    /// previous last node (`numDependencies > 0`) so sibling expert GEMMs
+    /// serialize. Does not imply piecewise. Hits stay the same. Decode identity
+    /// stays empty deps. [`crate::GpuStoreCfg::graph_capture_deps`] is the
+    /// store CLI field (store GEMM stays per-leaf).
+    pub graph_capture_deps: bool,
     /// `cudaGraphNodeSetEnabled` on a wide combo parent instead of recapture.
     ///
     /// A later token that GEMMs a subset of a stored combo (or of currently
@@ -1202,6 +1210,7 @@ impl SimCfg {
             graph_clone: false,
             graph_build: false,
             graph_piecewise: false,
+            graph_capture_deps: false,
             graph_enable: false,
             graph_mem: false,
             graph_auto_free: false,
@@ -1289,6 +1298,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     )?;
     if cfg.graph_build && cfg.graph_piecewise {
         return Err(Error::Store("choose one of graph-build, graph-piecewise"));
+    }
+    if cfg.graph_capture_deps && !cfg.graph_piecewise {
+        return Err(Error::Store("graph-capture-deps needs graph-piecewise"));
     }
     if cfg.graph_enable && cfg.device_launch {
         return Err(Error::Store("graph-enable cannot device-launch"));
@@ -1533,6 +1545,7 @@ pub fn sim_replay_cfg(
         .with_mem_sync_launch_map(cfg.mem_sync_launch_map)
         .with_set_params(cfg.graph_set_params)
         .with_piecewise(cfg.graph_piecewise)
+        .with_capture_deps(cfg.graph_capture_deps)
         .with_enable(cfg.graph_enable);
     let mut admitted: BTreeSet<u64> = BTreeSet::new();
     for (i, event) in trace.events.iter().enumerate() {
@@ -2038,6 +2051,7 @@ pub(crate) struct GraphBank {
     clone: bool,
     build: bool,
     piecewise: bool,
+    capture_deps: bool,
     mem: LeafMem,
     cooperative: bool,
     pdl: bool,
@@ -2079,6 +2093,7 @@ impl GraphBank {
             clone,
             build,
             piecewise: false,
+            capture_deps: false,
             mem,
             cooperative: false,
             pdl: false,
@@ -2266,6 +2281,11 @@ impl GraphBank {
 
     pub(crate) fn with_piecewise(mut self, yes: bool) -> Self {
         self.piecewise = yes;
+        self
+    }
+
+    pub(crate) fn with_capture_deps(mut self, yes: bool) -> Self {
+        self.capture_deps = yes;
         self
     }
 
@@ -3318,12 +3338,22 @@ fn piecewise_expert_graph(
     leaves: &[GraphId],
 ) -> Result<Option<GraphId>, Error> {
     let parent = sim.create_graph(d, stream)?;
+    let mut deps: Vec<usize> = Vec::new();
     for g in leaves {
-        sim.begin_capture_to_graph(d, stream, parent, &[])?;
+        let extra: &[usize] = if graphs.capture_deps { &deps } else { &[] };
+        sim.begin_capture_to_graph(d, stream, parent, extra)?;
         let _n = sim.launch_graph(*g, stream)?;
         let ended = sim.end_capture()?;
         if ended != parent {
             return Err(Error::Store("capture-to-graph id"));
+        }
+        if graphs.capture_deps {
+            deps = sim
+                .graph_nodes(parent)?
+                .last()
+                .copied()
+                .into_iter()
+                .collect();
         }
     }
     Ok(Some(graphs.bind(sim, (d, stream), ids.to_vec(), parent)?))

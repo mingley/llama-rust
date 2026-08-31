@@ -469,6 +469,7 @@ copies the capture (`cudaGraphClone`) before instantiate. `--graph-build` is
 `cudaGraphCreate` / `cudaGraphAdd*` (no idle stream; combo children may
 Hyper-Q overlap unless `graph_add_dependencies` chains them). `--graph-piecewise`
 is `cudaStreamBeginCaptureToGraph` combo parents (independent child roots).
+`expertvm --graph-capture-deps` chains those fragments (`numDependencies > 0`).
 `--graph-mem` is in-graph
 scratch (`graph_add_alloc` / capture `alloc`). `--graph-auto-free` is
 AutoFreeOnLaunch (relaunch recharges HBM; not with `--graph-mem`).

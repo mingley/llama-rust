@@ -235,6 +235,13 @@ pub struct GpuStoreCfg {
     /// into `create_graph`. Illegal with [`Self::graph_build`]. Decode identity
     /// stays `begin_capture` / `end_capture`.
     pub graph_piecewise: bool,
+    /// `cudaStreamBeginCaptureToGraph` dependency chaining on combo parents.
+    ///
+    /// Needs [`Self::graph_piecewise`]. Later fragments depend on the previous
+    /// last node so sibling GEMMs serialize (empty deps stay extra roots).
+    /// Does not imply piecewise. Hits stay the same. Decode identity stays
+    /// empty deps (Hyper-Q overlap when `compute_slots >= 2`).
+    pub graph_capture_deps: bool,
     /// `cudaGraphNodeSetEnabled` on walker combo parents instead of recapture.
     ///
     /// A later token that GEMMs a subset of a stored combo skips extra child
@@ -651,6 +658,8 @@ pub struct SimulatedGpuStore {
     graph_clone: bool,
     graph_build: bool,
     graph_piecewise: bool,
+    /// [`GpuStoreCfg::graph_capture_deps`]: walker combo capture-to-graph deps (store GEMM stays per-leaf).
+    graph_capture_deps: bool,
     leaf: LeafMem,
     graph_mem_trim: bool,
     mempool_trim: bool,
@@ -814,7 +823,9 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::graph_auto_free`] is AutoFreeOnLaunch without a free;
     /// [`GpuStoreCfg::graph_set_params`] retargets a parked kernel node;
     /// [`GpuStoreCfg::graph_enable`] is walker combo `cudaGraphNodeSetEnabled`
-    /// (store GEMM stays per-leaf; illegal with device-launch)),
+    /// (store GEMM stays per-leaf; illegal with device-launch);
+    /// [`GpuStoreCfg::graph_capture_deps`] chains piecewise combo
+    /// fragments (needs piecewise; store GEMM stays per-leaf)),
     /// disable-timing copy events.
     /// [`GpuStoreCfg::cooperative`] launches GEMMs with
     /// `cudaLaunchCooperativeKernel` (exclusive compute).
@@ -950,6 +961,9 @@ impl SimulatedGpuStore {
         )?;
         if cfg.graph_build && cfg.graph_piecewise {
             return Err(Error::Store("choose one of graph-build, graph-piecewise"));
+        }
+        if cfg.graph_capture_deps && !cfg.graph_piecewise {
+            return Err(Error::Store("graph-capture-deps needs graph-piecewise"));
         }
         if cfg.graph_enable && cfg.device_launch {
             return Err(Error::Store("graph-enable cannot device-launch"));
@@ -1197,6 +1211,7 @@ impl SimulatedGpuStore {
             graph_clone: cfg.graph_clone,
             graph_build: cfg.graph_build,
             graph_piecewise: cfg.graph_piecewise,
+            graph_capture_deps: cfg.graph_capture_deps,
             leaf,
             graph_mem_trim: cfg.graph_mem_trim,
             mempool_trim: cfg.mempool_trim,
@@ -1393,6 +1408,12 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn l2_streaming(&self) -> bool {
         self.l2_streaming
+    }
+
+    /// Whether walker combo capture-to-graph deps were requested (store GEMM stays per-leaf).
+    #[must_use]
+    pub fn graph_capture_deps(&self) -> bool {
+        self.graph_capture_deps
     }
 
     /// Whether this store set `cudaFuncAttributeClusterDimMustBeSet`.
@@ -2651,6 +2672,8 @@ impl SimulatedGpuStore {
     fn piecewise_gemm_graph(&mut self, device: DeviceId, id: AllocId) -> Result<GraphId, Error> {
         let flags = self.gemm_flags();
         let g = self.sim.create_graph(device, self.compute)?;
+        // Store GEMM is per-leaf; capture-to-graph deps stay empty even when
+        // [`GpuStoreCfg::graph_capture_deps`] is set (walker combo only).
         self.sim
             .begin_capture_to_graph(device, self.compute, g, &[])?;
         kernel_leaf(&mut self.sim, device, self.compute, id, self.leaf, flags)?;

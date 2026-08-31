@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaStreamBeginCaptureToGraph` deps
+
+`GpuStoreCfg::graph_capture_deps` / `SimCfg::graph_capture_deps` pass a
+non-empty `cudaStreamBeginCaptureToGraph` dependency array on
+`--graph-piecewise` combo parents so later fragments chain to the previous
+last node and sibling expert GEMMs serialize. Needs `--graph-piecewise`.
+Does not imply piecewise. Hits/misses stay the same. Distinct from
+`--graph-piecewise` (empty deps / extra roots vs chained deps) and
+`--graph-build` (no `graph_add_dependencies` edges). `--graph-capture-deps`
+is off by default (decode identity: empty deps). Store GEMM stays
+per-leaf. infer-bench has no `--graph-piecewise`, so it does not get
+`--graph-capture-deps`. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaAccessPropertyStreaming` persist-window hits
 
 `GpuStoreCfg::l2_streaming` / `SimCfg::l2_streaming` set

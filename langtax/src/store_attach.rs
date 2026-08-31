@@ -36,6 +36,8 @@ pub(crate) struct GpuCli {
     pub graph_clone: bool,
     pub graph_build: bool,
     pub graph_piecewise: bool,
+    /// `cudaStreamBeginCaptureToGraph` deps (`GpuStoreCfg::graph_capture_deps`). Needs piecewise.
+    pub graph_capture_deps: bool,
     /// `cudaGraphNodeSetEnabled` skip extra combo children (`GpuStoreCfg::graph_enable`).
     pub graph_enable: bool,
     pub graph_mem: bool,
@@ -229,6 +231,7 @@ impl GpuCli {
             "--graph-clone" => &mut self.graph_clone,
             "--graph-build" => &mut self.graph_build,
             "--graph-piecewise" => &mut self.graph_piecewise,
+            "--graph-capture-deps" => &mut self.graph_capture_deps,
             "--graph-enable" => &mut self.graph_enable,
             "--graph-mem" => &mut self.graph_mem,
             "--graph-auto-free" => &mut self.graph_auto_free,
@@ -650,6 +653,14 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--graph-capture-deps` needs `--graph-piecewise`.
+    pub(crate) fn check_graph_capture_deps(self) -> Result<(), String> {
+        if self.graph_capture_deps && !self.graph_piecewise {
+            return Err("--graph-capture-deps needs --graph-piecewise".into());
+        }
+        Ok(())
+    }
+
     /// First CUDA knob that needs `--expert-sim`, if any.
     #[must_use]
     pub(crate) fn sim_flag(self) -> Option<&'static str> {
@@ -660,6 +671,7 @@ impl GpuCli {
             (self.graph_clone, "--graph-clone"),
             (self.graph_build, "--graph-build"),
             (self.graph_piecewise, "--graph-piecewise"),
+            (self.graph_capture_deps, "--graph-capture-deps"),
             (self.graph_enable, "--graph-enable"),
             (self.graph_mem, "--graph-mem"),
             (self.graph_auto_free, "--graph-auto-free"),
@@ -1052,6 +1064,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         graph_clone: gpu.graph_clone,
         graph_build: gpu.graph_build,
         graph_piecewise: gpu.graph_piecewise,
+        graph_capture_deps: gpu.graph_capture_deps,
         graph_enable: gpu.graph_enable,
         graph_mem: gpu.graph_mem,
         graph_auto_free: gpu.graph_auto_free,

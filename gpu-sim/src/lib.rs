@@ -836,6 +836,8 @@
 //! `cudaStreamBeginCaptureToGraph`: append captured nodes onto an existing
 //! uninstantiated graph; capture roots additionally depend on the given node
 //! indices (empty means extra roots). [`Sim::end_capture`] returns that graph.
+//! `expertvm --graph-piecewise` captures combo parents as extra roots;
+//! `--graph-capture-deps` chains those fragments.
 //! [`stream_update_capture_dependencies`](Sim::stream_update_capture_dependencies)
 //! is `cudaStreamUpdateCaptureDependencies`: extra deps for the next captured
 //! node **in addition to** stream-order (`Set` replaces, `Add` unions).
