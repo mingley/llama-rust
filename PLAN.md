@@ -4324,7 +4324,23 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-387. [ ] Next numbered PLAN item after 386 is the next `gpu-sim` / Engine /
+387. [x] Official Gemma4 shared KV (`architecture=gemma4` with
+    `attention.shared_kv_layers > 0`): same arch as dense/MoE/PLE/fused
+    gemma4, not a second family. Decode follows llama.cpp
+    `src/models/gemma4.cpp` `has_kv(il)` plus `llama_model::create_memory`
+    reuse: `n_layer_kv_from_start = n_layer - shared_kv_layers`; layers
+    `il >= n_from_start` skip K/V project/store (`wk` / `wv` /
+    `attn_k_norm` are `TENSOR_NOT_REQUIRED`) and `build_attn` against the
+    donor `n_from_start` minus 2 (SWA) or minus 1 (global). Nonzero shared
+    KV requires `n_from_start >= 2` (llama.cpp `GGML_ASSERT`). Writer-tiny
+    `tiny-gemma4-shared-kv` is three dense layers, all SWA,
+    `shared_kv_layers=1`, so layer 2 reuses layer 0. 1-layer tinies still
+    omit the key (every layer has KV). Mixed SWA/global head dims stay
+    refused with named keys. Decode identity vs oracle.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+388. [ ] Next numbered PLAN item after 387 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

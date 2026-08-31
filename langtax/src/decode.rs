@@ -70,10 +70,12 @@
 //! Writer-tiny fused experts ([`tiny_gemma4_moe_fused_gguf`]) pack
 //! `ffn_gate_up_exps` instead of separate gate/up. Writer-tiny fused plus
 //! PLE ([`tiny_gemma4_moe_fused_ple_gguf`]) is the production E2B/E4B packing:
-//! fused experts and `n_embd_per_layer > 0`. Writer-tiny keeps
-//! `attention.shared_kv_layers` unset (every layer has KV) and equal
-//! SWA/global head dims. Optional final tanh logit softcap. Shared KV
-//! and mixed SWA/global head dims stay refused with named keys.
+//! fused experts and `n_embd_per_layer > 0`. Writer-tiny dense/MoE/PLE keep
+//! `attention.shared_kv_layers` unset (every layer has KV). Writer-tiny
+//! shared KV ([`tiny_gemma4_shared_kv_gguf`]) is three layers, all SWA,
+//! `shared_kv_layers=1`, so layer 2 reuses layer 0's KV
+//! (`n_layer_kv_from_start` minus 2). Optional final tanh logit softcap.
+//! Mixed SWA/global head dims stay refused with named keys.
 
 use crate::gguf::{load_gguf_owned, GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 pub use crate::kv_page::PagedKvPool;
@@ -150,6 +152,12 @@ const TINY_GEMMA4_N_EXPERT_USED: usize = 2;
 /// Writer-built tiny Gemma4 PLE `embedding_length_per_layer_input`. Distinct
 /// from [`TINY_N_EMBD`] so a layout mix-up cannot silently match dense gemma4.
 const TINY_GEMMA4_N_EMBD_PER_LAYER: usize = 64;
+/// Writer-built tiny Gemma4 shared KV (`attention.shared_kv_layers=1`).
+/// llama.cpp `create_memory` asserts `n_layer_kv_from_start >= 2`, and the SWA
+/// donor is `n_from_start` minus 2, so the smallest valid fixture is 3 layers.
+const TINY_GEMMA4_SHARED_N_LAYER: usize = 3;
+/// Official `n_layer_kv_from_start` is `n_layer` minus `shared_kv_layers`.
+const TINY_GEMMA4_SHARED_KV_LAYERS: u32 = 1;
 /// Writer-built tiny Qwen3Next `qwen3next.expert_count` (official load rejects 0).
 const TINY_QWEN3NEXT_N_EXPERT: usize = 4;
 /// Writer-built tiny `qwen3next.expert_used_count`.
@@ -511,10 +519,15 @@ struct Layer {
     attn_norm_b: Option<Vec<f32>>,
     wq: QuantMat,
     bq: Option<Vec<f32>>,
-    wk: QuantMat,
+    /// `None` on official gemma4 shared-KV layers (`!has_kv(il)`).
+    wk: Option<QuantMat>,
     bk: Option<Vec<f32>>,
-    wv: QuantMat,
+    /// `None` on official gemma4 shared-KV layers (`!has_kv(il)`).
+    wv: Option<QuantMat>,
     bv: Option<Vec<f32>>,
+    /// KV cache layer index: `il` when `has_kv`, else the official reuse donor
+    /// (`n_layer_kv_from_start` minus 2 on SWA, minus 1 on global).
+    kv_slot: usize,
     wo: QuantMat,
     /// Official phi2 / bloom `blk.{i}.attn_output.bias` (required, flag 0).
     wo_b: Option<Vec<f32>>,
@@ -1732,11 +1745,16 @@ impl Llama {
         } else {
             Vec::new()
         };
-        let gemma4_n_pl = if gemma4 {
-            load_gemma4_hparams(&g, arch, n_embd, n_head)?
+        let gemma4_n_pl;
+        let n_layer_kv_from_start;
+        if gemma4 {
+            let h = load_gemma4_hparams(&g, arch, n_embd, n_head, n_layer)?;
+            gemma4_n_pl = h.0;
+            n_layer_kv_from_start = h.1;
         } else {
-            0
-        };
+            gemma4_n_pl = 0;
+            n_layer_kv_from_start = i32::try_from(n_layer).unwrap_or(i32::MAX);
+        }
         let n_rot = rope_dimension(&g, arch, n_embd, n_head)?;
         let rope_sections = if arch == "qwen2vl" || arch == "qwen3vl" || arch == "qwen35" {
             Some(load_rope_dimension_sections(&g, arch)?)
@@ -1824,27 +1842,32 @@ impl Llama {
         } else {
             None
         };
-        let layer_h = LayerHparams {
-            qk_norm,
-            phi2,
-            bloom,
-            gemma2,
-            gemma3,
-            gemma3n,
-            gemma4,
-            gemma4_n_pl,
-            gemma4_moe: gemma4_moe_hparams.as_ref(),
-            llama4: llama4_hparams.as_ref(),
-            llama_moe: llama_moe_hparams.as_ref(),
-            qwen2moe: qwen2moe_hparams.as_ref(),
-            qwen3moe: qwen3moe_hparams.as_ref(),
-            qwen3next: qwen3next_hparams.as_ref(),
-            qwen35: qwen35_hparams.as_ref(),
+        let layers = {
+            let layer_h = LayerHparams {
+                qk_norm,
+                phi2,
+                bloom,
+                gemma2,
+                gemma3,
+                gemma3n,
+                gemma4,
+                gemma4_n_pl,
+                n_layer_kv_from_start,
+                is_swa: &is_swa,
+                gemma4_moe: gemma4_moe_hparams.as_ref(),
+                llama4: llama4_hparams.as_ref(),
+                llama_moe: llama_moe_hparams.as_ref(),
+                qwen2moe: qwen2moe_hparams.as_ref(),
+                qwen3moe: qwen3moe_hparams.as_ref(),
+                qwen3next: qwen3next_hparams.as_ref(),
+                qwen35: qwen35_hparams.as_ref(),
+            };
+            let mut layers = Vec::new();
+            for i in 0..n_layer {
+                layers.push(load_layer(&g, i, &layer_h)?);
+            }
+            layers
         };
-        let mut layers = Vec::new();
-        for i in 0..n_layer {
-            layers.push(load_layer(&g, i, &layer_h)?);
-        }
         let gemma3n = if gemma3n {
             Some(load_gemma3n_weights(&g, n_embd, n_layer, n_vocab)?)
         } else {
@@ -2400,11 +2423,7 @@ impl Llama {
         }
         for (li, layer) in self.layers.iter().enumerate() {
             moe_trace.layer = u32::try_from(li).unwrap_or(u32::MAX);
-            if layer.wk.n_rows != self.n_head_kv.saturating_mul(hd)
-                || layer.wv.n_rows != self.n_head_kv.saturating_mul(hd)
-            {
-                return Err(LlamaError::Shape("qkv head split".into()));
-            }
+            let kv_slot = layer.kv_slot;
             copy_buf(&mut s.residual, &s.x);
             if self.phi2 || self.bloom {
                 layernorm_rows_inplace(
@@ -2419,10 +2438,21 @@ impl Llama {
             }
             self.gemm_into(&layer.wq, n, &s.x, &mut s.q, pool)?;
             add_bias_rows(&mut s.q, layer.wq.n_rows, layer.bq.as_deref())?;
-            self.gemm_into(&layer.wk, n, &s.x, &mut s.k, pool)?;
-            add_bias_rows(&mut s.k, layer.wk.n_rows, layer.bk.as_deref())?;
-            self.gemm_into(&layer.wv, n, &s.x, &mut s.v, pool)?;
-            add_bias_rows(&mut s.v, layer.wv.n_rows, layer.bv.as_deref())?;
+            match (&layer.wk, &layer.wv) {
+                (Some(wk), Some(wv)) => {
+                    if wk.n_rows != self.n_head_kv.saturating_mul(hd)
+                        || wv.n_rows != self.n_head_kv.saturating_mul(hd)
+                    {
+                        return Err(LlamaError::Shape("qkv head split".into()));
+                    }
+                    self.gemm_into(wk, n, &s.x, &mut s.k, pool)?;
+                    add_bias_rows(&mut s.k, wk.n_rows, layer.bk.as_deref())?;
+                    self.gemm_into(wv, n, &s.x, &mut s.v, pool)?;
+                    add_bias_rows(&mut s.v, wv.n_rows, layer.bv.as_deref())?;
+                }
+                (None, None) => {}
+                _ => return Err(LlamaError::Shape("qkv head split".into())),
+            }
             let q_width = self.n_head.saturating_mul(hd);
             if layer.attn_q_gate {
                 split_qwen3next_q_gate_into(&mut s.q, &mut s.q_gate, n, self.n_head, hd)?;
@@ -2435,34 +2465,36 @@ impl Llama {
             if let Some(w) = layer.attn_k_norm.as_deref() {
                 rmsnorm_rows_inplace(&mut s.k, hd, w, self.rms_eps)?;
             }
-            if self.gemma4 {
+            if self.gemma4 && layer.wv.is_some() {
                 rmsnorm_unweighted_rows_inplace(&mut s.v, hd, self.rms_eps)?;
             }
-            for t in 0..n {
-                let p = token_pos(pos, t)?;
-                let geom = kv_addr(addrs, t)?.geom(self.n_head_kv, hd);
-                let k_t = token_row_mut(&mut s.k, t, layer.wk.n_rows, "prefill k")?;
-                if layer.use_rope {
-                    for h in k_t.chunks_mut(hd) {
-                        apply_rope(
-                            h,
-                            p,
-                            self.n_rot,
-                            self.rope_base,
-                            self.rope_sections,
-                            self.rope_imrope,
-                            self.rope_neox,
-                        )?;
-                    }
-                    if layer.qk_l2 {
+            if let (Some(wk), Some(wv)) = (&layer.wk, &layer.wv) {
+                for t in 0..n {
+                    let p = token_pos(pos, t)?;
+                    let geom = kv_addr(addrs, t)?.geom(self.n_head_kv, hd);
+                    let k_t = token_row_mut(&mut s.k, t, wk.n_rows, "prefill k")?;
+                    if layer.use_rope {
                         for h in k_t.chunks_mut(hd) {
-                            rmsnorm_unweighted_inplace(h, self.rms_eps);
+                            apply_rope(
+                                h,
+                                p,
+                                self.n_rot,
+                                self.rope_base,
+                                self.rope_sections,
+                                self.rope_imrope,
+                                self.rope_neox,
+                            )?;
+                        }
+                        if layer.qk_l2 {
+                            for h in k_t.chunks_mut(hd) {
+                                rmsnorm_unweighted_inplace(h, self.rms_eps);
+                            }
                         }
                     }
+                    store_kv(cache_k, kv_slot, &geom, p, k_t)?;
+                    let v_t = token_row(&s.v, t, wv.n_rows, "prefill v")?;
+                    store_kv(cache_v, kv_slot, &geom, p, v_t)?;
                 }
-                store_kv(cache_k, li, &geom, p, k_t)?;
-                let v_t = token_row(&s.v, t, layer.wv.n_rows, "prefill v")?;
-                store_kv(cache_v, li, &geom, p, v_t)?;
             }
             fit(&mut s.attn, width);
             for t in 0..n {
@@ -2518,7 +2550,7 @@ impl Llama {
                 attend_query(
                     cache_k,
                     cache_v,
-                    li,
+                    kv_slot,
                     q_t,
                     &geom,
                     p.saturating_add(1),
@@ -2977,14 +3009,22 @@ impl Llama {
         let pool = &mut *run.pool;
         let cache_k = &mut *run.cache_k;
         let cache_v = &mut *run.cache_v;
-        if layer.wk.n_rows != self.n_head_kv.saturating_mul(hd)
-            || layer.wv.n_rows != self.n_head_kv.saturating_mul(hd)
+        let wk = layer
+            .wk
+            .as_ref()
+            .ok_or_else(|| LlamaError::Shape("qkv head split".into()))?;
+        let wv = layer
+            .wv
+            .as_ref()
+            .ok_or_else(|| LlamaError::Shape("qkv head split".into()))?;
+        if wk.n_rows != self.n_head_kv.saturating_mul(hd)
+            || wv.n_rows != self.n_head_kv.saturating_mul(hd)
         {
             return Err(LlamaError::Shape("qkv head split".into()));
         }
         self.gemm_into(&layer.wq, n, &s.x, &mut s.q, pool)?;
-        self.gemm_into(&layer.wk, n, &s.x, &mut s.k, pool)?;
-        self.gemm_into(&layer.wv, n, &s.x, &mut s.v, pool)?;
+        self.gemm_into(wk, n, &s.x, &mut s.k, pool)?;
+        self.gemm_into(wv, n, &s.x, &mut s.v, pool)?;
         let q_width = self.n_head.saturating_mul(hd);
         if layer.wq.n_rows != q_width {
             return Err(LlamaError::Shape("qkv head split".into()));
@@ -2999,7 +3039,7 @@ impl Llama {
         for t in 0..n {
             let p = token_pos(pos, t)?;
             let geom = kv_addr(addrs, t)?.geom(self.n_head_kv, hd);
-            let k_t = token_row_mut(&mut s.k, t, layer.wk.n_rows, "gemma3n k")?;
+            let k_t = token_row_mut(&mut s.k, t, wk.n_rows, "gemma3n k")?;
             for h in k_t.chunks_mut(hd) {
                 apply_rope(
                     h,
@@ -3012,7 +3052,7 @@ impl Llama {
                 )?;
             }
             store_kv(cache_k, li, &geom, p, k_t)?;
-            let v_t = token_row(&s.v, t, layer.wv.n_rows, "gemma3n v")?;
+            let v_t = token_row(&s.v, t, wv.n_rows, "gemma3n v")?;
             store_kv(cache_v, li, &geom, p, v_t)?;
         }
         fit(&mut s.attn, width);
@@ -3872,6 +3912,7 @@ pub fn tiny_gemma3n_gguf() -> Vec<u8> {
 /// Official Gemma4 MoE+PLE is the same arch ([`tiny_gemma4_moe_ple_gguf`]).
 /// Official Gemma4 fused experts are the same arch ([`tiny_gemma4_moe_fused_gguf`]).
 /// Official Gemma4 fused plus PLE is the same arch ([`tiny_gemma4_moe_fused_ple_gguf`]).
+/// Official Gemma4 shared KV is the same arch ([`tiny_gemma4_shared_kv_gguf`]).
 pub fn tiny_gemma4_gguf() -> Vec<u8> {
     tiny_arch_gguf_lm_head(
         TinySpec {
@@ -3902,7 +3943,8 @@ pub fn tiny_gemma4_gguf() -> Vec<u8> {
 /// softmax then top-k with `norm_w` clamp `2^-14` and **GELU** experts; then
 /// `ffn_post_norm_2` and add into the shared MLP. Not a second architecture.
 /// This tiny writes separate `ffn_gate_exps` / `ffn_up_exps`; fused packing is
-/// [`tiny_gemma4_moe_fused_gguf`]. Shared-KV / mixed head dims stay refused.
+/// [`tiny_gemma4_moe_fused_gguf`]. Mixed SWA/global head dims stay refused.
+/// Shared KV is [`tiny_gemma4_shared_kv_gguf`].
 /// Writer-tiny uses `n_expert=4`, `n_expert_used=2`, `n_ff_exp=n_ff`.
 /// PLE is the same arch ([`tiny_gemma4_ple_gguf`]). MoE+PLE is the same arch
 /// ([`tiny_gemma4_moe_ple_gguf`]).
@@ -3935,8 +3977,9 @@ pub fn tiny_gemma4_moe_gguf() -> Vec<u8> {
 /// (`mm(per_layer_model_proj, inpL)` scaled by `1/sqrt(n_embd)`, RMSNorm,
 /// add, scale `1/sqrt(2)`), then after the FFN residual
 /// `gelu(mm(inp_gate, cur)) * slice(il)`, `mm(proj)`, RMSNorm `post_norm`,
-/// residual add. No AltUp / Laurel. Not a second architecture. Shared-KV /
-/// mixed head dims stay refused. Writer-tiny is dense (no `ffn_gate_inp`).
+/// residual add. No AltUp / Laurel. Not a second architecture. Mixed
+/// SWA/global head dims stay refused. Shared KV is
+/// [`tiny_gemma4_shared_kv_gguf`]. Writer-tiny is dense (no `ffn_gate_inp`).
 /// MoE+PLE is the same arch ([`tiny_gemma4_moe_ple_gguf`]).
 pub fn tiny_gemma4_ple_gguf() -> Vec<u8> {
     tiny_arch_gguf_lm_head(
@@ -3965,8 +4008,9 @@ pub fn tiny_gemma4_ple_gguf() -> Vec<u8> {
 /// family. Decode follows llama.cpp `src/models/gemma4.cpp`: shared GeGLU plus
 /// custom-router GELU experts, then after the FFN residual the PLE inject
 /// (`gelu(mm(inp_gate)) * slice(il)`, `mm(proj)`, RMSNorm `post_norm`). No
-/// AltUp / Laurel. This tiny writes separate gate/up experts. Shared-KV /
-/// mixed head dims stay refused. Writer-tiny uses `n_expert=4`,
+/// AltUp / Laurel. This tiny writes separate gate/up experts. Mixed
+/// SWA/global head dims stay refused. Shared KV is
+/// [`tiny_gemma4_shared_kv_gguf`]. Writer-tiny uses `n_expert=4`,
 /// `n_expert_used=2`, `n_embd_per_layer=64`.
 pub fn tiny_gemma4_moe_ple_gguf() -> Vec<u8> {
     tiny_arch_gguf_lm_head(
@@ -3992,8 +4036,9 @@ pub fn tiny_gemma4_moe_ple_gguf() -> Vec<u8> {
 ///
 /// Same MoE walk as [`tiny_gemma4_moe_gguf`]. Official `src/models/gemma4.cpp`
 /// prefers fused `ffn_gate_up_exps` (twice `n_ff` rows, gate then up) when
-/// present. Not a second architecture. Shared-KV / mixed head dims stay
-/// refused. Fused plus PLE is the same arch ([`tiny_gemma4_moe_fused_ple_gguf`]).
+/// present. Not a second architecture. Mixed SWA/global head dims stay
+/// refused. Shared KV is [`tiny_gemma4_shared_kv_gguf`]. Fused plus PLE is
+/// the same arch ([`tiny_gemma4_moe_fused_ple_gguf`]).
 pub fn tiny_gemma4_moe_fused_gguf() -> Vec<u8> {
     tiny_arch_gguf_lm_head(
         TinySpec {
@@ -4019,7 +4064,7 @@ pub fn tiny_gemma4_moe_fused_gguf() -> Vec<u8> {
 /// Production E2B/E4B packing on the same arch as [`tiny_gemma4_moe_fused_gguf`]
 /// and [`tiny_gemma4_moe_ple_gguf`]. Decode is fused GELU experts then PLE
 /// inject after the FFN residual. Not a second architecture.
-/// Shared-KV / mixed head dims stay refused. Writer-tiny uses `n_expert=4`,
+/// Mixed SWA/global head dims stay refused. Writer-tiny uses `n_expert=4`,
 /// `n_expert_used=2`, `n_embd_per_layer=64`.
 pub fn tiny_gemma4_moe_fused_ple_gguf() -> Vec<u8> {
     tiny_arch_gguf_lm_head(
@@ -4038,6 +4083,84 @@ pub fn tiny_gemma4_moe_fused_ple_gguf() -> Vec<u8> {
         },
         TinyLmHead::Tied,
     )
+}
+
+/// Writer-built official Gemma4 shared-KV GGUF: `architecture=gemma4` with
+/// `attention.shared_kv_layers=1`.
+///
+/// Same dense `gemma4.*` KV as [`tiny_gemma4_gguf`] except three layers, all
+/// SWA, `n_layer_kv_from_start = 2`. Decode follows llama.cpp
+/// `src/models/gemma4.cpp` plus `llama_model::create_memory` reuse:
+/// `has_kv(il) = il < n_layer_kv_from_start`; shared layers skip K/V project
+/// and store, then `build_attn` against the donor
+/// `n_layer_kv_from_start` minus 2 (SWA) or minus 1 (global). Layer 2 is SWA
+/// so it reuses layer 0. `wk` / `wv` / `attn_k_norm` are omitted on the
+/// shared layer (`TENSOR_NOT_REQUIRED`). Not a second architecture. Mixed
+/// SWA/global head dims stay refused. 1-layer tinies stay full-KV.
+pub fn tiny_gemma4_shared_kv_gguf() -> Vec<u8> {
+    expand_tiny_gemma4_layers(
+        tiny_gemma4_gguf(),
+        TINY_GEMMA4_SHARED_N_LAYER,
+        TINY_GEMMA4_SHARED_KV_LAYERS,
+    )
+    .unwrap_or_else(|_| Vec::new())
+}
+
+/// Clone `blk.0.*` onto `blk.1..n_layer-1`, set `block_count`, expand the SWA
+/// pattern, and omit K/V tensors on shared layers when `shared_kv > 0`.
+fn expand_tiny_gemma4_layers(
+    bytes: Vec<u8>,
+    n_layer: usize,
+    shared_kv: u32,
+) -> Result<Vec<u8>, GgufError> {
+    let g = load_gguf_owned(bytes)?;
+    let n_layer_u32 = u32::try_from(n_layer).unwrap_or(0);
+    let n_from_start = n_layer.saturating_sub(usize::try_from(shared_kv).unwrap_or(0));
+    let mut kv: Vec<(String, Kv)> = g.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    for (k, v) in &mut kv {
+        if k.ends_with(".block_count") {
+            *v = Kv::U32(n_layer_u32);
+        }
+        if k.ends_with(".attention.sliding_window_pattern") {
+            *v = Kv::Array {
+                elem: GGUF_TYPE_BOOL,
+                items: vec![Kv::Bool(true); n_layer],
+            };
+        }
+    }
+    if shared_kv != 0 {
+        kv.push((
+            "gemma4.attention.shared_kv_layers".into(),
+            Kv::U32(shared_kv),
+        ));
+    }
+    let mut tensors = Vec::new();
+    let mut extra = Vec::new();
+    for t in g.tensors() {
+        let shape = t.shape.to_vec();
+        let data = t.data.to_vec();
+        if let Some(rest) = t.name.strip_prefix("blk.0.") {
+            for li in 1..n_layer {
+                if li >= n_from_start && gemma4_shared_kv_omitted(rest) {
+                    continue;
+                }
+                extra.push(TensorWrite {
+                    name: format!("blk.{li}.{rest}"),
+                    ty: t.ty,
+                    shape: shape.clone(),
+                    data: data.clone(),
+                });
+            }
+        }
+        tensors.push(TensorWrite {
+            name: t.name.to_string(),
+            ty: t.ty,
+            shape,
+            data,
+        });
+    }
+    tensors.extend(extra);
+    Ok(write_gguf_with_kv(&kv, &tensors))
 }
 
 /// Writer-built Qwen3-shaped GGUF: `architecture=qwen3` with `qwen3.*` KV.
@@ -7515,6 +7638,8 @@ struct LayerHparams<'a> {
     gemma3n: bool,
     gemma4: bool,
     gemma4_n_pl: usize,
+    n_layer_kv_from_start: i32,
+    is_swa: &'a [bool],
     gemma4_moe: Option<&'a Gemma4MoeHparams>,
     llama4: Option<&'a Llama4Hparams>,
     llama_moe: Option<&'a LlamaMoeHparams>,
@@ -7611,17 +7736,33 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
             down: quant_mat(need(g, &format!("blk.{i}.ffn_down.weight"))?)?,
         }))
     };
+    let has_kv = gemma4_has_kv(h.n_layer_kv_from_start, i);
+    let layer_swa = h.is_swa.get(i).copied().unwrap_or(false);
+    let kv_slot = if has_kv {
+        i
+    } else {
+        gemma4_kv_slot(h.n_layer_kv_from_start, i, layer_swa)?
+    };
     let (wq, bq, wk, bk, wv, bv) = if h.bloom {
         let qkv = load_bloom_qkv(g, i)?;
-        (qkv.wq, qkv.bq, qkv.wk, qkv.bk, qkv.wv, qkv.bv)
+        (qkv.wq, qkv.bq, Some(qkv.wk), qkv.bk, Some(qkv.wv), qkv.bv)
+    } else if has_kv {
+        (
+            quant_mat(need(g, &format!("blk.{i}.attn_q.weight"))?)?,
+            optional_f32(g, &format!("blk.{i}.attn_q.bias"))?,
+            Some(quant_mat(need(g, &format!("blk.{i}.attn_k.weight"))?)?),
+            optional_f32(g, &format!("blk.{i}.attn_k.bias"))?,
+            Some(quant_mat(need(g, &format!("blk.{i}.attn_v.weight"))?)?),
+            optional_f32(g, &format!("blk.{i}.attn_v.bias"))?,
+        )
     } else {
         (
             quant_mat(need(g, &format!("blk.{i}.attn_q.weight"))?)?,
             optional_f32(g, &format!("blk.{i}.attn_q.bias"))?,
-            quant_mat(need(g, &format!("blk.{i}.attn_k.weight"))?)?,
-            optional_f32(g, &format!("blk.{i}.attn_k.bias"))?,
-            quant_mat(need(g, &format!("blk.{i}.attn_v.weight"))?)?,
-            optional_f32(g, &format!("blk.{i}.attn_v.bias"))?,
+            None,
+            None,
+            None,
+            None,
         )
     };
     Ok(Layer {
@@ -7637,6 +7778,7 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
         bk,
         wv,
         bv,
+        kv_slot,
         wo: quant_mat(need(g, &format!("blk.{i}.attn_output.weight"))?)?,
         wo_b: if h.phi2 || h.bloom {
             Some(f32s(need(g, &format!("blk.{i}.attn_output.bias"))?)?)
@@ -7648,7 +7790,7 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
         } else {
             None
         },
-        attn_k_norm: if qk_norm {
+        attn_k_norm: if qk_norm && has_kv {
             Some(f32s(need(g, &format!("blk.{i}.attn_k_norm.weight"))?)?)
         } else {
             None
@@ -10327,20 +10469,74 @@ fn load_gemma4_is_swa(g: &Gguf, arch: &str, n_layer: usize) -> Result<Vec<bool>,
     }
 }
 
+/// Official `llama_hparams::has_kv`: when `n_layer_kv_from_start >= 0`, the first
+/// that many layers own KV. A negative value (unset) means every layer has KV.
+fn gemma4_has_kv(n_layer_kv_from_start: i32, il: usize) -> bool {
+    match usize::try_from(n_layer_kv_from_start) {
+        Ok(n) => il < n,
+        Err(_) => true,
+    }
+}
+
+/// Official gemma4 / gemma3n `layer_reuse_cb` when `!has_kv(il)`:
+/// `n_from_start` minus 2 on SWA, minus 1 on global.
+/// llama.cpp `create_memory` asserts `n_layer_kv_from_start >= 2`.
+fn gemma4_kv_slot(
+    n_layer_kv_from_start: i32,
+    il: usize,
+    is_swa: bool,
+) -> Result<usize, LlamaError> {
+    if gemma4_has_kv(n_layer_kv_from_start, il) {
+        return Ok(il);
+    }
+    if n_layer_kv_from_start < 2 {
+        return Err(LlamaError::Shape(arch_key(
+            "gemma4",
+            "attention.shared_kv_layers",
+        )));
+    }
+    let delta = if is_swa { 2 } else { 1 };
+    let donor = n_layer_kv_from_start - delta;
+    let donor = usize::try_from(donor)
+        .map_err(|_| LlamaError::Shape(arch_key("gemma4", "attention.shared_kv_layers")))?;
+    if !gemma4_has_kv(n_layer_kv_from_start, donor) {
+        return Err(LlamaError::Shape(arch_key(
+            "gemma4",
+            "attention.shared_kv_layers",
+        )));
+    }
+    Ok(donor)
+}
+
+fn gemma4_shared_kv_omitted(rest: &str) -> bool {
+    matches!(
+        rest,
+        "attn_k.weight" | "attn_v.weight" | "attn_k_norm.weight"
+    )
+}
+
 /// Official gemma4.cpp required KV that the writer-tiny honors, plus
-/// refusals for shared-KV / mixed SWA head dim (not this item).
-/// Returns `embedding_length_per_layer_input` (`0` is dense/MoE without PLE).
+/// refusal for mixed SWA head dim (not this item).
+/// Returns `(embedding_length_per_layer_input, n_layer_kv_from_start)`.
+/// `n_pl == 0` is dense/MoE without PLE. Unset `shared_kv_layers` is 0
+/// (every layer has KV). Nonzero shared KV requires `n_from_start >= 2`.
 fn load_gemma4_hparams(
     g: &Gguf,
     arch: &str,
     n_embd: usize,
     n_head: usize,
-) -> Result<usize, LlamaError> {
+    n_layer: usize,
+) -> Result<(usize, i32), LlamaError> {
     let n_pl = require_usize(g, arch, "embedding_length_per_layer_input")?;
-    if g.kv_u32(&arch_key(arch, "attention.shared_kv_layers"))
-        .unwrap_or(0)
-        != 0
-    {
+    let n_shared = g
+        .kv_u32(&arch_key(arch, "attention.shared_kv_layers"))
+        .unwrap_or(0);
+    let n_layer_i =
+        i32::try_from(n_layer).map_err(|_| LlamaError::Shape(arch_key(arch, "block_count")))?;
+    let n_shared_i = i32::try_from(n_shared)
+        .map_err(|_| LlamaError::Shape(arch_key(arch, "attention.shared_kv_layers")))?;
+    let n_from_start = n_layer_i - n_shared_i;
+    if n_shared != 0 && n_from_start < 2 {
         return Err(LlamaError::Shape(arch_key(
             arch,
             "attention.shared_kv_layers",
@@ -10365,7 +10561,7 @@ fn load_gemma4_hparams(
             return Err(LlamaError::Shape(arch_key(arch, "attention.key_length")));
         }
     }
-    Ok(n_pl)
+    Ok((n_pl, n_from_start))
 }
 
 fn softmax(x: &mut [f32]) {
@@ -12648,6 +12844,12 @@ mod tests {
         } else {
             0
         };
+        let n_from_start = if gemma4 {
+            let n_shared = arch_u32(g, arch, "attention.shared_kv_layers").unwrap_or(0);
+            (n_layer as i32) - (n_shared as i32)
+        } else {
+            n_layer as i32
+        };
         let embed_scale = if gemma {
             f32::from(u16::try_from(n_embd).unwrap_or(1)).sqrt()
         } else {
@@ -12703,20 +12905,31 @@ mod tests {
                     let v = qkv[n_q + n_k..].to_vec();
                     (q, k, v)
                 } else {
-                    (
-                        oracle_add_bias(
-                            oracle_gemv(g.tensor(&tname(li, "attn_q.weight")).unwrap(), &xn_attn),
-                            g.tensor(&tname(li, "attn_q.bias")),
-                        ),
-                        oracle_add_bias(
-                            oracle_gemv(g.tensor(&tname(li, "attn_k.weight")).unwrap(), &xn_attn),
-                            g.tensor(&tname(li, "attn_k.bias")),
-                        ),
-                        oracle_add_bias(
-                            oracle_gemv(g.tensor(&tname(li, "attn_v.weight")).unwrap(), &xn_attn),
-                            g.tensor(&tname(li, "attn_v.bias")),
-                        ),
-                    )
+                    let q = oracle_add_bias(
+                        oracle_gemv(g.tensor(&tname(li, "attn_q.weight")).unwrap(), &xn_attn),
+                        g.tensor(&tname(li, "attn_q.bias")),
+                    );
+                    let (k, v) = if gemma4 && !gemma4_has_kv(n_from_start, li) {
+                        (Vec::new(), Vec::new())
+                    } else {
+                        (
+                            oracle_add_bias(
+                                oracle_gemv(
+                                    g.tensor(&tname(li, "attn_k.weight")).unwrap(),
+                                    &xn_attn,
+                                ),
+                                g.tensor(&tname(li, "attn_k.bias")),
+                            ),
+                            oracle_add_bias(
+                                oracle_gemv(
+                                    g.tensor(&tname(li, "attn_v.weight")).unwrap(),
+                                    &xn_attn,
+                                ),
+                                g.tensor(&tname(li, "attn_v.bias")),
+                            ),
+                        )
+                    };
+                    (q, k, v)
                 };
                 let qwen3next = arch == "qwen3next";
                 let qwen35 = arch == "qwen35";
@@ -12747,7 +12960,7 @@ mod tests {
                         *h = oracle_rmsnorm(h, &w, eps);
                     }
                 }
-                if gemma4 {
+                if gemma4 && gemma4_has_kv(n_from_start, li) {
                     for h in &mut vh {
                         *h = oracle_rmsnorm_unweighted(h, eps);
                     }
@@ -12810,9 +13023,11 @@ mod tests {
                         }
                     }
                 }
-                for (hkv, khv) in kh.iter().enumerate() {
-                    k_cache[li][hkv].push(khv.clone());
-                    v_cache[li][hkv].push(vh[hkv].clone());
+                if gemma4_has_kv(n_from_start, li) {
+                    for (hkv, khv) in kh.iter().enumerate() {
+                        k_cache[li][hkv].push(khv.clone());
+                        v_cache[li][hkv].push(vh[hkv].clone());
+                    }
                 }
                 if phi2 && use_rope {
                     let q_scale = 1.0 / (hd as f32).sqrt();
@@ -12822,6 +13037,12 @@ mod tests {
                         }
                     }
                 }
+                let kv_slot = gemma4_kv_slot(
+                    n_from_start,
+                    li,
+                    gemma4 && oracle_gemma4_layer_is_swa(g, arch, li),
+                )
+                .expect("kv slot");
                 let seq = pos + 1;
                 let inv = if phi2 || gemma4 {
                     1.0
@@ -12833,7 +13054,7 @@ mod tests {
                     let hkv = hq / gqa;
                     let mut scores = vec![0.0f32; seq];
                     for t in 0..seq {
-                        let kv = &k_cache[li][hkv][t];
+                        let kv = &k_cache[kv_slot][hkv][t];
                         let mut s =
                             qvec.iter().zip(kv.iter()).map(|(a, b)| a * b).sum::<f32>() * inv;
                         if bloom {
@@ -12880,7 +13101,7 @@ mod tests {
                     let mut acc = vec![0.0f32; hd];
                     for t in 0..seq {
                         let st = scores[t];
-                        for (a, b) in acc.iter_mut().zip(v_cache[li][hkv][t].iter()) {
+                        for (a, b) in acc.iter_mut().zip(v_cache[kv_slot][hkv][t].iter()) {
                             *a += st * *b;
                         }
                     }
@@ -14309,6 +14530,7 @@ mod tests {
             tiny_gemma4_moe_ple_gguf(),
             tiny_gemma4_moe_fused_gguf(),
             tiny_gemma4_moe_fused_ple_gguf(),
+            tiny_gemma4_shared_kv_gguf(),
             tiny_qwen3_gguf(),
             tiny_llama4_gguf(),
             tiny_llama_moe_gguf(),
@@ -14365,6 +14587,7 @@ mod tests {
             ("gemma4-moe-ple", tiny_gemma4_moe_ple_gguf()),
             ("gemma4-moe-fused", tiny_gemma4_moe_fused_gguf()),
             ("gemma4-moe-fused-ple", tiny_gemma4_moe_fused_ple_gguf()),
+            ("gemma4-shared-kv", tiny_gemma4_shared_kv_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("f16", tiny_f16_gguf()),
@@ -14456,6 +14679,7 @@ mod tests {
             ("gemma4-moe-ple", tiny_gemma4_moe_ple_gguf()),
             ("gemma4-moe-fused", tiny_gemma4_moe_fused_gguf()),
             ("gemma4-moe-fused-ple", tiny_gemma4_moe_fused_ple_gguf()),
+            ("gemma4-shared-kv", tiny_gemma4_shared_kv_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("llama-moe", tiny_llama_moe_gguf()),
@@ -15925,6 +16149,91 @@ mod tests {
             assert_eq!(blob.gate, vec![1]);
         }
         assert_eq!(expertvm::ExpertStore::misses(&store), 0);
+    }
+
+    #[test]
+    fn gemma4_kv_slot_matches_llama_cpp_reuse() {
+        assert!(gemma4_has_kv(2, 0));
+        assert!(gemma4_has_kv(2, 1));
+        assert!(!gemma4_has_kv(2, 2));
+        assert_eq!(gemma4_kv_slot(2, 0, true).expect("l0"), 0);
+        assert_eq!(gemma4_kv_slot(2, 1, false).expect("l1"), 1);
+        assert_eq!(gemma4_kv_slot(2, 2, true).expect("swa share"), 0);
+        assert_eq!(gemma4_kv_slot(2, 2, false).expect("global share"), 1);
+        assert!(gemma4_kv_slot(1, 1, true).is_err());
+        assert!(gemma4_has_kv(-19, 0));
+    }
+
+    #[test]
+    fn tiny_gemma4_shared_kv_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_shared_kv_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4 shared kv");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        assert_eq!(g.kv_u32("gemma4.block_count"), Some(3));
+        assert_eq!(g.kv_u32("gemma4.attention.shared_kv_layers"), Some(1));
+        assert_eq!(
+            g.kv("gemma4.attention.sliding_window_pattern"),
+            Some(&Kv::Array {
+                elem: GGUF_TYPE_BOOL,
+                items: vec![Kv::Bool(true), Kv::Bool(true), Kv::Bool(true)],
+            })
+        );
+        assert!(g.tensor("blk.0.attn_k.weight").is_some());
+        assert!(g.tensor("blk.1.attn_k.weight").is_some());
+        assert!(g.tensor("blk.2.attn_k.weight").is_none());
+        assert!(g.tensor("blk.2.attn_v.weight").is_none());
+        assert!(g.tensor("blk.2.attn_k_norm.weight").is_none());
+        assert!(g.tensor("blk.2.attn_q.weight").is_some());
+        assert!(g.tensor("blk.2.attn_q_norm.weight").is_some());
+        assert!(g.tensor("blk.2.attn_output.weight").is_some());
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        assert_eq!(model.layers.len(), 3);
+        assert!(model.layers[0].wk.is_some());
+        assert!(model.layers[1].wk.is_some());
+        assert!(model.layers[2].wk.is_none());
+        assert!(model.layers[2].wv.is_none());
+        assert_eq!(model.layers[0].kv_slot, 0);
+        assert_eq!(model.layers[1].kv_slot, 1);
+        assert_eq!(model.layers[2].kv_slot, 0);
+        assert_eq!(model.is_swa, vec![true, true, true]);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let shared_pref = model.prefill(&mut sc, &tokens).expect("shared pref");
+        let dense_pref = {
+            let dg = load_gguf(&tiny_gemma4_gguf()).expect("dense");
+            let dm = Llama::from_gguf(dg).expect("dm");
+            let mut c = dm.new_cache(8).expect("dc");
+            dm.prefill(&mut c, &tokens).expect("dense pref")
+        };
+        assert_ne!(
+            shared_pref, dense_pref,
+            "shared KV 3-layer must not copy 1-layer dense logits"
+        );
+        let full_pref = {
+            let fb = expand_tiny_gemma4_layers(tiny_gemma4_gguf(), 3, 0).expect("full kv");
+            let fg = load_gguf(&fb).expect("full g");
+            assert!(fg.tensor("blk.2.attn_k.weight").is_some());
+            assert!(fg.kv_u32("gemma4.attention.shared_kv_layers").is_none());
+            let fm = Llama::from_gguf(fg).expect("fm");
+            assert!(fm.layers[2].wk.is_some());
+            assert_eq!(fm.layers[2].kv_slot, 2);
+            let mut c = fm.new_cache(8).expect("fc");
+            fm.prefill(&mut c, &tokens).expect("full pref")
+        };
+        assert_ne!(
+            shared_pref, full_pref,
+            "reusing layer 0 KV must not copy a 3-layer full-KV walk"
+        );
     }
 
     #[test]
@@ -17827,7 +18136,7 @@ mod tests {
     }
 
     #[test]
-    fn gemma4_shared_kv_layers_is_refused() {
+    fn gemma4_shared_kv_too_small_is_refused() {
         let bytes = write_gguf_with_kv(
             &[
                 ("general.alignment".into(), Kv::U32(32)),
@@ -18602,7 +18911,7 @@ mod bench {
     fn bench_logits_fingerprint() {
         // Every zero-argument fixture in the suite, so that each architecture
         // walk and each dtype kernel the decode path can reach is pinned.
-        let cases: [(&str, Vec<u8>); 58] = [
+        let cases: [(&str, Vec<u8>); 59] = [
             ("llama", tiny_llama_gguf()),
             ("tied", tiny_tied_gguf()),
             ("tied_copy", tiny_tied_copy_gguf()),
@@ -18632,6 +18941,7 @@ mod bench {
             ("gemma4_moe_ple", tiny_gemma4_moe_ple_gguf()),
             ("gemma4_moe_fused", tiny_gemma4_moe_fused_gguf()),
             ("gemma4_moe_fused_ple", tiny_gemma4_moe_fused_ple_gguf()),
+            ("gemma4_shared_kv", tiny_gemma4_shared_kv_gguf()),
             ("f16", tiny_f16_gguf()),
             ("f16_1d", tiny_f16_1d_gguf()),
             ("f16_1d_bias", tiny_f16_1d_bias_gguf()),
@@ -18848,9 +19158,14 @@ mod bench {
         // Every GEMV a decode step performs, in the order the step does them.
         let mut mats: Vec<(&QuantMat, &[f32])> = Vec::new();
         for layer in &model.layers {
-            for m in [&layer.wq, &layer.wk, &layer.wv, &layer.wo] {
-                mats.push((m, &x));
+            mats.push((&layer.wq, &x));
+            if let Some(wk) = layer.wk.as_ref() {
+                mats.push((wk, &x));
             }
+            if let Some(wv) = layer.wv.as_ref() {
+                mats.push((wv, &x));
+            }
+            mats.push((&layer.wo, &x));
             if let LayerFfn::Dense(dense) = &layer.ffn {
                 mats.push((&dense.gate, &x));
                 mats.push((&dense.up, &x));
