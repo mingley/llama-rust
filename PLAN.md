@@ -4483,17 +4483,25 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-400. [ ] Next numbered PLAN item after 399 is the next `gpu-sim` / Engine /
+400. [x] Official dense `{1}` `attn_v.scale`: llama.cpp generic post-load
+    (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Decode follows `build_lora_mm`:
+    `ggml_mul` after the V GEMM, before V RMSNorm. Writer-tiny
+    `tiny-llama-attn-v-s` is `tiny-llama` plus scale `2.5`. Gemma3/4
+    unweighted V RMSNorm would cancel a positive scalar, so the observable
+    fixture is llama, not a second gemma4 family. Decode identity vs oracle.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+401. [ ] Next numbered PLAN item after 400 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
-    OpenAI HTTP veneer. Next decode candidate: generic `{1}` `attn_v.scale`
-    on llama (no V-norm, so a scalar is observable), or dense
-    `ffn_gate.scale`. Do not invent gemma4 `attn_q.scale` /
-    `attn_output.scale` / `attn_k.scale` / `attn_v.scale` as the writer-tiny
-    (QK-Norm / `post_attention_norm` / V RMSNorm cancel). Do not invent F32
-    `output.scale` unless NVFP4. Do not invent a second dense
+    OpenAI HTTP veneer. Next decode candidate: generic `{1}` `ffn_gate.scale`
+    on llama (before SiLU), or dense `ffn_up.scale`. Do not invent gemma4
+    `attn_q.scale` / `attn_output.scale` / `attn_k.scale` / `attn_v.scale`
+    as the writer-tiny (QK-Norm / `post_attention_norm` / V RMSNorm cancel).
+    Do not invent F32 `output.scale` unless NVFP4. Do not invent a second dense
     `ffn_down.scale` / second `attn_q.scale` / second `attn_output.scale` /
-    second `attn_k.scale` as a new family. Do not invent a second `--decode-sms` flag.
+    second `attn_k.scale` / second `attn_v.scale` as a new family. Do not invent a second `--decode-sms` flag.
     Do not invent a second `--green-ctx`. Do not invent a second
     `ffn_down_exps.scale` / second gate/up scale as a new family.
     Do not invent `CU_GREEN_CTX_DEFAULT_STREAM` as a second NULL stream.

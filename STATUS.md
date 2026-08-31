@@ -5,6 +5,17 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — official dense `{1}` `attn_v.scale`
+
+Generic llama.cpp post-load `blk.{i}.attn_v.scale` shape `{1}`
+(`TENSOR_NOT_REQUIRED`; missing is `1.0`). Decode follows `build_lora_mm`:
+`ggml_mul` after the V GEMM, before V RMSNorm. Writer-tiny
+`tiny-llama-attn-v-s` is `tiny-llama` plus scale `2.5` (distinct from
+dense `ffn_down.scale` `0.5`, `attn_q.scale` `2.0`, `attn_output.scale`
+`1.5`, and `attn_k.scale` `0.75`). Gemma3/4 unweighted V RMSNorm would
+cancel a positive scalar, so the observable fixture is llama, not a
+second gemma4 family.
+
 ## Shipped 2026-08-31 — official dense `{1}` `attn_k.scale`
 
 Generic llama.cpp post-load `blk.{i}.attn_k.scale` shape `{1}`
