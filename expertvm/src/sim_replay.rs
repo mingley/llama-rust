@@ -986,6 +986,11 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     {
         return Err(Error::Store("memcpy-batch needs async pinned/vmm H2D"));
     }
+    if cfg.host_register_mapped && cfg.host_register {
+        return Err(Error::Store(
+            "choose one of host-register, host-register-mapped",
+        ));
+    }
     if cfg.host_register && !cfg.pageable {
         return Err(Error::Store("host-register needs pageable"));
     }
@@ -994,11 +999,6 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     }
     if cfg.host_register_mapped && !cfg.mapped {
         return Err(Error::Store("host-register-mapped needs mapped"));
-    }
-    if cfg.host_register_mapped && cfg.host_register {
-        return Err(Error::Store(
-            "choose one of host-register, host-register-mapped",
-        ));
     }
     if !cfg.multicast {
         return Ok(());
