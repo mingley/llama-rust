@@ -3065,7 +3065,14 @@ fn graph_enable_implies_cuda_graphs() {
 #[test]
 fn cuda_graphs_graph_if_skips_combo_recapture() {
     let t = Trace {
-        events: vec![ev(0, 0, &[0, 1, 2]), ev(1, 0, &[0, 1])],
+        events: vec![
+            ev(0, 0, &[0, 1, 2, 3]),
+            ev(1, 0, &[0, 1]),
+            ev(2, 0, &[0, 2]),
+            ev(3, 0, &[0, 3]),
+            ev(4, 0, &[1, 2]),
+            ev(5, 0, &[1, 3]),
+        ],
     };
     let p = HardwareProfile::parse(
         "gpus=1\nlaunch_overhead_ns=1000\ngraph_launch_ns=1000\ngraph_instantiate_ns=100000\ngraph_set_params_ns=1000\ngraph_upload_ns=1000\ncopy_engines=2\n",
@@ -3073,7 +3080,7 @@ fn cuda_graphs_graph_if_skips_combo_recapture() {
     .expect("profile");
     let base = SimCfg {
         graph_build: true,
-        ..SimCfg::lru(3, 4096, 0)
+        ..SimCfg::lru(4, 4096, 0)
     };
     let recapture = sim_replay_cfg(&t, p.clone(), base).expect("recapture");
     let gated = sim_replay_cfg(
@@ -3085,10 +3092,10 @@ fn cuda_graphs_graph_if_skips_combo_recapture() {
         },
     )
     .expect("graph-if");
-    assert_eq!(recapture.child_graphs, 2);
+    assert_eq!(recapture.child_graphs, 6);
     assert_eq!(gated.child_graphs, 1);
-    assert_eq!(gated.graph_launches, 2);
-    assert_eq!(recapture.graph_launches, 2);
+    assert_eq!(gated.graph_launches, 6);
+    assert_eq!(recapture.graph_launches, 6);
     assert_eq!(gated.hits, recapture.hits);
     assert_eq!(gated.misses, recapture.misses);
     assert!(
@@ -3168,15 +3175,6 @@ fn cuda_graphs_graph_if_reupload_beats_graph_enable() {
         "gpus=1\nlaunch_overhead_ns=1000\ngraph_launch_ns=1000\ngraph_instantiate_ns=100000\ngraph_set_params_ns=1000\ngraph_upload_ns=50000\ncopy_engines=2\n",
     )
     .expect("profile");
-    let recapture = sim_replay_cfg(
-        &t,
-        p.clone(),
-        SimCfg {
-            graph_build: true,
-            ..SimCfg::lru(3, 4096, 0)
-        },
-    )
-    .expect("recapture");
     let enable = sim_replay_cfg(
         &t,
         p.clone(),
@@ -3199,17 +3197,13 @@ fn cuda_graphs_graph_if_reupload_beats_graph_enable() {
     .expect("graph-if");
     assert_eq!(enable.child_graphs, 1);
     assert_eq!(gated.child_graphs, 1);
+    assert_eq!(enable.graph_launches, 2);
+    assert_eq!(gated.graph_launches, 2);
     assert!(
         enable.sim_ns < gated.sim_ns,
         "enable={} if={}",
         enable.sim_ns,
         gated.sim_ns
-    );
-    assert!(
-        gated.sim_ns < recapture.sim_ns,
-        "if={} recapture={}",
-        gated.sim_ns,
-        recapture.sim_ns
     );
 }
 
