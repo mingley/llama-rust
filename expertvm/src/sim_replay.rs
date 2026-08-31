@@ -3557,16 +3557,7 @@ pub(crate) fn reclaim_victim(
             let Some(page) = handles.remove(&victim) else {
                 return Ok(());
             };
-            drop_handle(
-                sim,
-                graphs,
-                page,
-                next_event,
-                args.sync_alloc,
-                args.d2h_evict,
-                args.d2h_pageable,
-                args.bytes,
-            )
+            drop_handle(sim, graphs, page, next_event, args)
         }
         Some(_) => {
             let Some(page) = handles.get_mut(&victim) else {
@@ -3582,14 +3573,11 @@ fn drop_handle(
     graphs: &mut GraphBank,
     page: PageHandle,
     next_event: &mut u32,
-    sync: bool,
-    d2h_evict: bool,
-    d2h_pageable: bool,
-    bytes: u64,
+    args: TouchArgs,
 ) -> Result<(), Error> {
     graphs.drop_alloc(sim, page.id)?;
     if let Some(mb) = page.mailbox {
-        free_copy_mailbox(sim, page.device, mb, page.stream, sync)?;
+        free_copy_mailbox(sim, page.device, mb, page.stream, args.sync_alloc)?;
     }
     if page_is_mapped(sim, page.id) {
         // cudaFreeHost waits GPU work on this pointer, then the mapping is gone.
@@ -3602,21 +3590,21 @@ fn drop_handle(
         sim.free_sync(page.id)?;
         return Ok(());
     }
-    if d2h_evict {
-        d2h_evict_page(sim, page.device, page.id, bytes, page.stream)?;
+    if args.d2h_evict {
+        d2h_evict_page(sim, page.device, page.id, args.bytes, page.stream)?;
     }
-    if d2h_pageable {
-        d2h_pageable_page(sim, page.device, page.id, bytes, page.stream)?;
+    if args.d2h_pageable {
+        d2h_pageable_page(sim, page.device, page.id, args.bytes, page.stream)?;
     }
     if page_is_vmm(sim, page.id) {
-        if d2h_evict {
+        if args.d2h_evict {
             sim.synchronize_stream(page.device, page.stream)?;
         }
         sim.va_release(page.id)?;
         return Ok(());
     }
-    if sync {
-        if d2h_evict {
+    if args.sync_alloc {
+        if args.d2h_evict {
             sim.synchronize_stream(page.device, page.stream)?;
             sim.free(page.device, page.id, page.stream)?;
             sim.synchronize_stream(page.device, page.stream)?;
