@@ -36,11 +36,12 @@
 //! [`green_ctx_record_event`](Sim::green_ctx_record_event) /
 //! [`green_ctx_wait_event`](Sim::green_ctx_wait_event) /
 //! [`green_ctx_synchronize`](Sim::green_ctx_synchronize) /
+//! [`green_ctx_get_id`](Sim::green_ctx_get_id) /
 //! [`stream_get_dev_resource`](Sim::stream_get_dev_resource) are CUDA green contexts
 //! (`cuDeviceGetDevResource` / `cuDevSmResourceSplitByCount` /
 //! `cuDevResourceGenerateDesc` / `cuGreenCtxCreate` / `cuGreenCtxStreamCreate` /
 //! `cuGreenCtxRecordEvent` / `cuGreenCtxWaitEvent` / `cudaExecutionCtxSynchronize` /
-//! `cuStreamGetDevResource`).
+//! `cuGreenCtxGetId` / `cudaExecutionCtxGetId` / `cuStreamGetDevResource`).
 //! SM resources are ‰ of the chip, not occupancy SM counts. Complementary
 //! green contexts may overlap kernels even when [`GpuProfile::compute_slots`]
 //! is 1. Same-span contexts still share exclusive compute. Capture cannot
@@ -9362,6 +9363,56 @@ mod tests {
             Err(SimError::Invalid { why }) => assert!(why.contains("gap"), "{why}"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn green_ctx_get_id_is_unique_and_stable() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let desc = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 0,
+                width: 500,
+            }])
+            .unwrap();
+        let c0 = sim
+            .green_ctx_create(desc, d, GreenCtxFlags::DEFAULT)
+            .unwrap();
+        let c1 = sim
+            .green_ctx_create(desc, d, GreenCtxFlags::DEFAULT)
+            .unwrap();
+        let id0 = sim.green_ctx_get_id(c0).unwrap();
+        let id1 = sim.green_ctx_get_id(c1).unwrap();
+        assert_ne!(id0, id1);
+        assert_eq!(id0, sim.green_ctx_get_id(c0).unwrap());
+        assert_ne!(id0, u64::from(c0.0));
+        assert_ne!(id1, u64::from(c1.0));
+        sim.green_ctx_stream_create(c0, StreamId(1), StreamCreateFlags::NON_BLOCKING, 0)
+            .unwrap();
+        let stream_id = sim.stream_get_id(d, StreamId(1)).unwrap();
+        assert_ne!(id0, stream_id);
+        sim.begin_capture(d, StreamId(2)).unwrap();
+        assert_eq!(sim.green_ctx_get_id(c0).unwrap(), id0);
+        let _g = sim.end_capture().unwrap();
+        match sim.green_ctx_get_id(GreenCtxId(0)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown green ctx"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        sim.green_ctx_destroy(c1).unwrap();
+        match sim.green_ctx_get_id(c1) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("unknown green ctx"), "{why}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let c2 = sim
+            .green_ctx_create(desc, d, GreenCtxFlags::DEFAULT)
+            .unwrap();
+        let id2 = sim.green_ctx_get_id(c2).unwrap();
+        assert_ne!(id2, id0);
+        assert_ne!(id2, id1);
     }
 
     #[test]

@@ -251,12 +251,18 @@ struct Multicast {
     maps: u32,
 }
 
+/// High bit so [`Sim::green_ctx_get_id`] never collides with
+/// [`Sim::stream_get_id`] (`(device << 16) + stream + 1`).
+const GREEN_CTX_CUDA_ID_TAG: u64 = 1u64 << 63;
+
 struct GreenCtx {
     device: DeviceId,
     sm: SmResource,
     /// [`Sim::green_ctx_wait_event`] ops. Future submits on bound streams wait
     /// these (`cuGreenCtxWaitEvent`).
     wait_ops: Vec<OpId>,
+    /// `cuGreenCtxGetId` identity. Distinct from [`GreenCtxId`] (the VM handle).
+    cuda_id: u64,
 }
 
 struct Op {
@@ -1336,6 +1342,7 @@ impl Sim {
                 why: "unknown resource desc",
             })?;
         let id = GreenCtxId(self.next_green_ctx);
+        let cuda_id = GREEN_CTX_CUDA_ID_TAG | u64::from(self.next_green_ctx);
         self.next_green_ctx = self.next_green_ctx.saturating_add(1);
         let _prev = self.green_ctxs.insert(
             id,
@@ -1343,6 +1350,7 @@ impl Sim {
                 device,
                 sm,
                 wait_ops: Vec::new(),
+                cuda_id,
             },
         );
         Ok(id)
@@ -1379,6 +1387,20 @@ impl Sim {
         match kind {
             DevResourceType::Sm => Ok(DevResource::Sm(g.sm)),
         }
+    }
+
+    /// `cuGreenCtxGetId` / `cudaExecutionCtxGetId`. Query; legal during capture.
+    ///
+    /// Unique per live green context for this VM, for the life of the `Sim`.
+    /// Distinct from [`GreenCtxId`] (the VM handle) and from
+    /// [`Self::stream_get_id`]. Unknown or destroyed contexts are Invalid
+    /// `"unknown green ctx"`. This VM does not invent an unset handle as the
+    /// current context, and does not invent `cuCtxFromGreenCtx`.
+    pub fn green_ctx_get_id(&self, ctx: GreenCtxId) -> Result<u64, SimError> {
+        let g = self.green_ctxs.get(&ctx).ok_or(SimError::Invalid {
+            why: "unknown green ctx",
+        })?;
+        Ok(g.cuda_id)
     }
 
     /// Bind `stream` to `ctx` (`cuGreenCtxStreamCreate` without creating).

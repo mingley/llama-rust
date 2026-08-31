@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cuGreenCtxGetId`
+
+`gpu-sim` `green_ctx_get_id` is `cuGreenCtxGetId` / `cudaExecutionCtxGetId`.
+A live green context returns a unique id for the life of the `Sim`. Distinct
+from `GreenCtxId` (the VM handle), `stream_get_id`, and
+`stream_get_green_ctx`. Query; legal during capture. Unknown or destroyed
+is Invalid. No NULL-means-current. No `cuCtxFromGreenCtx`. No second
+`--green-ctx`. `gpu-profile capture` is still refused. Dual score still
+has no `$/M tokens`.
+
 ## Shipped 2026-08-31 — official shared-expert `{1}` `ffn_up_shexp.scale`
 
 llama.cpp `build_ffn` applies `ggml_mul` after the shared-expert up GEMM
