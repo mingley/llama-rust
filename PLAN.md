@@ -4138,7 +4138,23 @@ model, do not celebrate the sim.
     walker (not walker-only). `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-376. [ ] Next numbered PLAN item after 375 is the next `gpu-sim` / Engine /
+376. [x] `cudaHostUnregister` after miss DMA (`--host-unregister`):
+    [`GpuStoreCfg::host_unregister`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::host_unregister`](expertvm/src/sim_replay.rs) call
+    [`gpu_sim::Sim::host_unregister`](gpu-sim/src/sim.rs) after each miss
+    DMA so staging is pageable between misses and the next miss re-registers
+    (`synchronize` plus `first_alloc_ns` pin tax). Hits stay the same.
+    Distinct from `--host-register` (keep registered for lifetime). Implies
+    `--host-register` (which implies `--pageable`). Illegal with `--mapped`
+    / `--managed` / `--host-register-mapped` / `--d2h-pageable`. Legal with
+    `--vmm`, `--sync-alloc`, `--pdl`, and `--cooperative`. `--host-unregister`
+    on `expertvm sim` / `schedule` / `store` and `gguf_gemv engine --expert-sim`.
+    infer-bench has no pageable staging of this form, so it does not get
+    `--host-unregister`. Decode identity keeps staging registered. Store and
+    walker (not walker-only). `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+377. [ ] Next numbered PLAN item after 376 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
@@ -4193,6 +4209,9 @@ model, do not celebrate the sim.
     vs default pinned/VMM evict). Do not invent a second `--d2h-pageable` /
     evict `cudaMemcpyAsync` Device→Host (host-sync bounce-buffer PCIe vs
     free-only is the wall vs default pageable pinned/VMM evict). Do not invent
+    a second `--host-unregister` / `cudaHostUnregister` after miss DMA
+    (re-register plus `synchronize` tax vs keep-registered is the wall vs
+    `--host-register`). Do not invent
     `--memcpy-peer` host-sync pin_hot (alias of D2D; wall matches after
     `score()`). Do not invent `graph_add_empty` as a decode-path flag
     (1 ns join/fork). Do not invent a second `cudaGraphAddMemsetNode` of

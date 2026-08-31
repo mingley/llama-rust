@@ -86,6 +86,8 @@ pub(crate) struct GpuCli {
     pub pageable: bool,
     /// `cudaHostRegister` (`GpuStoreCfg::host_register`). Implies pageable.
     pub host_register: bool,
+    /// `cudaHostUnregister` after miss DMA (`GpuStoreCfg::host_unregister`). Implies host-register.
+    pub host_unregister: bool,
     /// `cudaHostRegisterMapped` expert pages (`GpuStoreCfg::host_register_mapped`). Implies mapped.
     pub host_register_mapped: bool,
     /// `cuPointerSetAttribute` SyncMemops (`GpuStoreCfg::sync_memops`). Host-sync H2D.
@@ -291,6 +293,7 @@ impl GpuCli {
             "--shareable" => &mut self.shareable,
             "--pageable" => &mut self.pageable,
             "--host-register" => &mut self.host_register,
+            "--host-unregister" => &mut self.host_unregister,
             "--host-register-mapped" => &mut self.host_register_mapped,
             "--sync-memops" => &mut self.sync_memops,
             "--device-sync-memops" => &mut self.device_sync_memops,
@@ -385,8 +388,12 @@ impl GpuCli {
         }
     }
 
-    /// `--host-register` / `--d2h-pageable` imply [`Self::pageable`]. Call after sim-flag checks.
+    /// `--host-register` / `--host-unregister` / `--d2h-pageable` imply [`Self::pageable`].
+    /// `--host-unregister` also implies [`Self::host_register`]. Call after sim-flag checks.
     pub(crate) fn imply_pageable(&mut self) {
+        if self.host_unregister {
+            self.host_register = true;
+        }
         if self.host_register || self.d2h_pageable {
             self.pageable = true;
         }
@@ -723,6 +730,7 @@ impl GpuCli {
             || self.no_mem_prefetch
             || self.pageable
             || self.host_register
+            || self.host_unregister
             || self.sync_alloc
             || self.sync_memops
             || self.device_sync_memops
@@ -760,7 +768,7 @@ impl GpuCli {
         if self.d2h_evict {
             return Err("choose one of --d2h-pageable, --d2h-evict".into());
         }
-        if self.host_register {
+        if self.host_register || self.host_unregister {
             return Err("--d2h-pageable cannot --host-register".into());
         }
         if self.mapped
@@ -796,7 +804,7 @@ impl GpuCli {
         {
             return Err("--memset-fill cannot --managed".into());
         }
-        if self.pageable || self.host_register {
+        if self.pageable || self.host_register || self.host_unregister {
             return Err("--memset-fill cannot --pageable".into());
         }
         if self.memcpy_batch {
@@ -914,6 +922,7 @@ impl GpuCli {
             (self.shareable, "--shareable"),
             (self.pageable, "--pageable"),
             (self.host_register, "--host-register"),
+            (self.host_unregister, "--host-unregister"),
             (self.host_register_mapped, "--host-register-mapped"),
             (self.sync_memops, "--sync-memops"),
             (self.device_sync_memops, "--device-sync-memops"),
@@ -1281,6 +1290,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         vmm_page: gpu.vmm_page,
         pageable: gpu.pageable,
         host_register: gpu.host_register,
+        host_unregister: gpu.host_unregister,
         host_register_mapped: gpu.host_register_mapped,
         sync_memops: gpu.sync_memops,
         device_sync_memops: gpu.device_sync_memops,

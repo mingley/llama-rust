@@ -108,7 +108,9 @@
 //! existing and later allocs from that pool. [`Sim::malloc`] cannot consume another pool's cache.
 //! [`Sim::alloc_host`] is pageable; [`Sim::host_register`] / [`host_register_mapped`](Sim::host_register_mapped)
 //! are `cudaHostRegister` (host-synchronous mlock). `expertvm sim --host-register`
-//! registers pageable staging then DMA H2D. `expertvm sim --host-register-mapped`
+//! registers pageable staging then DMA H2D. `expertvm sim --host-unregister`
+//! unregisters that staging after each miss DMA (`synchronize`; next miss
+//! re-registers). `expertvm sim --host-register-mapped`
 //! is [`host_register_mapped`](Sim::host_register_mapped) on expert pages
 //! (implies `--mapped`; identity mapped stays [`Sim::alloc_host_mapped`]).
 //! `expertvm sim --sync-memops` sets [`PointerAttr::SyncMemops`] on miss
@@ -495,6 +497,10 @@
 //! is [`memcpy_device_to_host`](Sim::memcpy_device_to_host) before that free
 //! (host-synchronous bounce-buffer; implies `--pageable`; not mapped/managed/
 //! host-register/`--d2h-evict`).
+//! `expertvm sim --host-unregister` / `gguf_gemv engine --expert-sim --host-unregister`
+//! is [`host_unregister`](Sim::host_unregister) after each miss DMA (implies
+//! `--host-register`; pin refunded between misses; `synchronize`; identity keeps
+//! staging registered).
 //! `expertvm sim --memset-fill` / `gguf_gemv engine --expert-sim --memset-fill`
 //! is `cudaMemsetAsync` of pinned/VMM miss pages (HBM write, compute occupancy;
 //! not mapped/managed/pageable/memcpy-batch; distinct from `--graph-memset` scratch).

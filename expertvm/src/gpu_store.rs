@@ -17,15 +17,15 @@ use crate::sim_replay::{
     apply_required_cluster_width, apply_stream_mem_sync_domain, apply_stream_mem_sync_map,
     apply_stream_sync_policy, bind_device_mempools, check_cluster_load_balance,
     check_cluster_must_set, check_cluster_preferred, check_d2h_evict, check_d2h_pageable,
-    check_device_graph_flags, check_l2_fetch, check_l2_ratio, check_max_l1,
+    check_device_graph_flags, check_host_unregister, check_l2_fetch, check_l2_ratio, check_max_l1,
     check_mem_sync_collapse, check_mem_sync_launch, check_mem_sync_launch_map, check_memcpy_attr,
     check_memset_fill, check_required_cluster, collapse_mem_sync_map, d2h_evict_page,
     d2h_pageable_page, drop_managed_replica, ensure_single_attach, free_copy_mailbox,
     free_mapped_host, hbm_h2d_attr, host_after_copy, instantiate_exec, kernel_leaf,
-    mark_sync_memops, memcpy_batch_attr, mempool_hold, persist_armed, replay_exec, replay_streams,
-    reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
-    upload_after_set_params, wait_copy_ready, wait_memcpy_during_allocs, GemmFlags, LeafMem,
-    LeafWork, StreamPlan,
+    mark_sync_memops, memcpy_batch_attr, mempool_hold, persist_armed, pin_staging_for_fill,
+    replay_exec, replay_streams, reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready,
+    stream_of, unpin_staging_after_fill, upload_after_set_params, wait_copy_ready,
+    wait_memcpy_during_allocs, GemmFlags, LeafMem, LeafWork, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -148,6 +148,11 @@ pub struct GpuStoreCfg {
     /// [`Self::pageable`]. Illegal with mapped/managed. Decode identity stays
     /// `cudaMallocHost` staging (no register).
     pub host_register: bool,
+    /// `cudaHostUnregister` after each miss DMA, then re-register on the next miss.
+    ///
+    /// Host-synchronous (`synchronize`); pin budget is refunded between misses.
+    /// Implies [`Self::host_register`]. Decode identity keeps staging registered.
+    pub host_unregister: bool,
     /// `cudaHostRegisterMapped` on mapped expert pages (`alloc_host` then register).
     ///
     /// Kernels still read over PCIe with no H2D (`hbm_peak` 0). Implies mapped
@@ -833,6 +838,8 @@ pub struct SimulatedGpuStore {
     pageable: bool,
     /// [`GpuStoreCfg::host_register`]: pageable staging is `cudaHostRegister`'d.
     host_register: bool,
+    /// [`GpuStoreCfg::host_unregister`]: unregister staging after miss DMA.
+    host_unregister: bool,
     /// [`GpuStoreCfg::host_register_mapped`]: mapped pages are `cudaHostRegisterMapped`.
     host_register_mapped: bool,
     /// [`GpuStoreCfg::sync_memops`]: miss pages set [`PointerAttr::SyncMemops`].
@@ -1124,6 +1131,8 @@ impl SimulatedGpuStore {
     /// or [`GpuStoreCfg::device_sync_memops`].
     /// [`GpuStoreCfg::host_register`] is `cudaHostRegister` on pageable staging
     /// so miss H2D is pinned DMA (implies pageable; illegal with mapped/managed).
+    /// [`GpuStoreCfg::host_unregister`] is `cudaHostUnregister` after each miss
+    /// DMA (implies host-register; pin refunded between misses; `synchronize`).
     /// [`GpuStoreCfg::host_register_mapped`] is `cudaHostRegisterMapped` on
     /// mapped expert pages (`alloc_host` then register; implies mapped; illegal
     /// with [`GpuStoreCfg::host_register`]; identity stays `cudaHostAllocMapped`).
@@ -1222,7 +1231,7 @@ impl SimulatedGpuStore {
             cfg.pageable,
             fill == GpuFill::Mapped,
             fill == GpuFill::Managed,
-            cfg.host_register,
+            cfg.host_register || cfg.host_unregister,
             cfg.d2h_evict,
         )?;
         if cfg.no_read_mostly && fill != GpuFill::Managed {
@@ -1321,6 +1330,7 @@ impl SimulatedGpuStore {
         if cfg.host_register && (fill == GpuFill::Mapped || fill == GpuFill::Managed) {
             return Err(Error::Store("host-register needs pinned/vmm H2D"));
         }
+        check_host_unregister(cfg.host_unregister, cfg.host_register)?;
         if cfg.host_register_mapped && fill != GpuFill::Mapped {
             return Err(Error::Store("host-register-mapped needs mapped"));
         }
@@ -1419,7 +1429,9 @@ impl SimulatedGpuStore {
             sim.alloc_host(bytes)?
         } else if cfg.host_register {
             let h = sim.alloc_host(bytes)?;
-            sim.host_register(h)?;
+            if !cfg.host_unregister {
+                sim.host_register(h)?;
+            }
             h
         } else {
             sim.alloc_host_pinned(bytes)?
@@ -1498,6 +1510,7 @@ impl SimulatedGpuStore {
             vmm_page: cfg.vmm_page,
             pageable: cfg.pageable,
             host_register: cfg.host_register,
+            host_unregister: cfg.host_unregister,
             host_register_mapped: cfg.host_register_mapped,
             sync_memops: cfg.sync_memops,
             memcpy_batch: cfg.memcpy_batch,
@@ -1577,6 +1590,12 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn d2h_pageable(&self) -> bool {
         self.d2h_pageable
+    }
+
+    /// Whether staging is `cudaHostUnregister`'d after each miss DMA.
+    #[must_use]
+    pub fn host_unregister(&self) -> bool {
+        self.host_unregister
     }
 
     /// Whether miss fill is `cudaMemsetAsync` instead of pinned H2D.
@@ -2912,6 +2931,7 @@ impl SimulatedGpuStore {
 
     fn fill_hbm(&mut self, d: DeviceId, id: AllocId) -> Result<(), Error> {
         let bytes = self.bytes_per_expert;
+        pin_staging_for_fill(&mut self.sim, Some(self.staging), self.host_unregister)?;
         if self.memset_fill {
             if self.sync_alloc {
                 let _id = self.sim.memset_sync(d, id, bytes, self.copy)?;
@@ -2940,6 +2960,7 @@ impl SimulatedGpuStore {
             let _c = self.sim.memcpy_pinned_to_device(d, id, bytes, self.copy)?;
         }
         host_after_copy(&mut self.sim, d, self.copy, self.copy_host)?;
+        unpin_staging_after_fill(&mut self.sim, Some(self.staging), self.host_unregister)?;
         Ok(())
     }
 

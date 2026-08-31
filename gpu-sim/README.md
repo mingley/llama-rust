@@ -552,6 +552,9 @@ PCIe; next miss still fills from staging; not mapped/managed; distinct from
 is `cudaMemcpyAsync` Device→Host (pageable bounce-buffer) before that free
 (host-synchronous; implies `--pageable`; not mapped/managed/host-register/
 `--d2h-evict`).
+`expertvm sim --host-unregister` / `gguf_gemv engine --expert-sim --host-unregister`
+is `cudaHostUnregister` after each miss DMA (implies `--host-register`; pin
+refunded between misses; `synchronize`; identity keeps staging registered).
 `expertvm sim --memset-fill` / `gguf_gemv engine --expert-sim --memset-fill`
 is `cudaMemsetAsync` of pinned/VMM miss pages (HBM write, compute occupancy;
 not mapped/managed/pageable/memcpy-batch; distinct from `--graph-memset`
@@ -770,6 +773,9 @@ PCIe, and it does not charge HBM. `alloc_host_with_flags` /
 are Invalid. Capture cannot include host
 alloc/register. `expertvm sim --host-register` / `gguf_gemv engine --expert-sim --host-register`
 register pageable staging then DMA H2D (identity stays `cudaMallocHost`).
+`expertvm sim --host-unregister` / `gguf_gemv engine --expert-sim --host-unregister`
+unregister that staging after each miss DMA (`synchronize`; next miss
+re-registers; identity keeps staging registered).
 `expertvm sim --host-register-mapped` / `gguf_gemv engine --expert-sim --host-register-mapped`
 is `cudaHostRegisterMapped` on expert pages (`alloc_host` then register+map;
 implies `--mapped`; identity mapped stays `cudaHostAllocMapped`).

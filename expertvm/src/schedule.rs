@@ -336,7 +336,7 @@ impl SchedRt {
         allow_optin_shared_if(&mut sim, cfg.optin_shared)?;
         let n_gpus = u16::try_from(sim.profile().n_gpus()).unwrap_or(1).max(1);
         let bytes = cfg.bytes_per_expert.max(1);
-        pin_pageable_staging(&mut sim, &cfg, bytes)?;
+        let staging = pin_pageable_staging(&mut sim, &cfg, bytes)?;
         let mut cfg = cfg;
         cfg.slots = occupancy_slots(&cfg, sim.pin_budget());
         let mut next_event = 1u32;
@@ -358,6 +358,8 @@ impl SchedRt {
                 vmm_page: cfg.vmm_page,
                 pageable: cfg.pageable,
                 host_register: cfg.host_register,
+                host_unregister: cfg.host_unregister,
+                staging,
                 host_register_mapped: cfg.host_register_mapped,
                 sync_memops: cfg.sync_memops,
                 memcpy_batch: cfg.memcpy_batch,

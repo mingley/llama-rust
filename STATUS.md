@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaHostUnregister` after miss DMA
+
+`GpuStoreCfg::host_unregister` / `SimCfg::host_unregister` call
+`cudaHostUnregister` on pageable staging after each miss DMA so the next
+miss re-registers (`synchronize` plus `first_alloc_ns`; pin refunded
+between misses). Hits/misses stay the same. Distinct from `--host-register`
+(keep registered for lifetime). Implies `--host-register` (which implies
+`--pageable`). Illegal with `--mapped` / `--managed` /
+`--host-register-mapped` / `--d2h-pageable`. `--host-unregister` is off by
+default (decode identity: keep staging registered). Store and walker (not
+walker-only). infer-bench has no pageable staging of this form, so it does
+not get `--host-unregister`. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — Device→Host pageable memcpy on pinned/VMM LRU evict
 
 `GpuStoreCfg::d2h_pageable` / `SimCfg::d2h_pageable` use `cudaMemcpyAsync`

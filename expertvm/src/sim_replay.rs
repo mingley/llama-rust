@@ -397,6 +397,20 @@ pub(crate) fn check_memset_fill(
     Ok(())
 }
 
+/// `--host-unregister` needs `--host-register` (`cudaHostUnregister` after miss DMA).
+pub(crate) fn check_host_unregister(
+    host_unregister: bool,
+    host_register: bool,
+) -> Result<(), Error> {
+    if !host_unregister {
+        return Ok(());
+    }
+    if !host_register {
+        return Err(Error::Store("host-unregister needs host-register"));
+    }
+    Ok(())
+}
+
 /// `--d2h-evict` needs pinned/VMM device pages (`cudaMemcpyAsync` Device→HostPinned).
 pub(crate) fn check_d2h_evict(d2h_evict: bool, mapped: bool, managed: bool) -> Result<(), Error> {
     if !d2h_evict {
@@ -833,6 +847,12 @@ pub struct SimCfg {
     /// [`Self::pageable`]. Illegal with [`Self::mapped`] / [`Self::managed`].
     /// [`crate::GpuStoreCfg::host_register`] is the store path.
     pub host_register: bool,
+    /// `cudaHostUnregister` after each miss DMA, then re-register on the next miss.
+    ///
+    /// Host-synchronous (`synchronize`); pin budget is refunded between misses.
+    /// Implies [`Self::host_register`]. Decode identity keeps staging registered.
+    /// [`crate::GpuStoreCfg::host_unregister`] is the store path.
+    pub host_unregister: bool,
     /// `cudaHostRegisterMapped` on mapped expert pages (`alloc_host` then register).
     ///
     /// Implies [`Self::mapped`]. Illegal with [`Self::host_register`]. Evict is
@@ -1480,6 +1500,7 @@ impl SimCfg {
             blocking_streams: false,
             pageable: false,
             host_register: false,
+            host_unregister: false,
             host_register_mapped: false,
             sync_memops: false,
             device_sync_memops: false,
@@ -1656,7 +1677,7 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
         cfg.pageable,
         cfg.mapped || cfg.host_register_mapped,
         cfg.managed,
-        cfg.host_register,
+        cfg.host_register || cfg.host_unregister,
         cfg.d2h_evict,
     )?;
     if cfg.no_read_mostly && !cfg.managed {
@@ -1737,6 +1758,7 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     if cfg.host_register && (cfg.mapped || cfg.managed) {
         return Err(Error::Store("host-register needs pinned/vmm H2D"));
     }
+    check_host_unregister(cfg.host_unregister, cfg.host_register)?;
     if cfg.host_register_mapped && !cfg.mapped {
         return Err(Error::Store("host-register-mapped needs mapped"));
     }
@@ -1818,7 +1840,7 @@ pub fn sim_replay_cfg(
     let d = DeviceId(0);
     let s = StreamId(0);
     let bytes = cfg.bytes_per_expert.max(1);
-    pin_pageable_staging(&mut sim, &cfg, bytes)?;
+    let staging = pin_pageable_staging(&mut sim, &cfg, bytes)?;
     let slots = occupancy_slots(&cfg, sim.pin_budget());
     let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
     let mut w = Walker::new(&keys, slots, cfg.policy, cfg.lookahead);
@@ -1853,6 +1875,8 @@ pub fn sim_replay_cfg(
         vmm_page: cfg.vmm_page,
         pageable: cfg.pageable,
         host_register: cfg.host_register,
+        host_unregister: cfg.host_unregister,
+        staging,
         host_register_mapped: cfg.host_register_mapped,
         sync_memops: cfg.sync_memops,
         memcpy_batch: cfg.memcpy_batch,
@@ -2035,6 +2059,10 @@ pub(crate) struct TouchArgs {
     pub pageable: bool,
     /// [`SimCfg::host_register`]: `cudaHostRegister` then pinned DMA H2D.
     pub host_register: bool,
+    /// [`SimCfg::host_unregister`]: unregister staging after miss DMA.
+    pub host_unregister: bool,
+    /// Pageable staging alloc when [`Self::host_register`] (pin tax / unregister).
+    pub staging: Option<AllocId>,
     /// [`SimCfg::host_register_mapped`]: `alloc_host` then `cudaHostRegisterMapped`.
     pub host_register_mapped: bool,
     /// [`SimCfg::sync_memops`]: `cuPointerSetAttribute` SyncMemops after device alloc.
@@ -3371,6 +3399,7 @@ pub(crate) fn apply_misses(
             let _p = sim.prefetch(args.d, *id, args.s)?;
         }
     } else if !args.mapped && !args.managed {
+        pin_staging_for_fill(sim, args.staging, args.host_unregister)?;
         hbm_h2d_many(sim, args, &h2d)?;
     }
     host_after_copy(
@@ -3381,6 +3410,9 @@ pub(crate) fn apply_misses(
             && !filled.is_empty()
             && ((args.managed && !args.no_mem_prefetch) || (!args.mapped && !args.managed)),
     )?;
+    if !args.mapped && !args.managed && !h2d.is_empty() {
+        unpin_staging_after_fill(sim, args.staging, args.host_unregister)?;
+    }
     for (key, id, mailbox) in filled {
         if args.vmm && args.accessed_by {
             advise_vmm_access(sim, id)?;
@@ -4193,13 +4225,56 @@ fn sequence_done(events: &[ExpertAccess], i: usize) -> bool {
 
 /// `cudaHostRegister` a pageable staging buffer so walker H2D can DMA.
 ///
-/// Kept live for the pin tax; dropped with the Sim.
-pub(crate) fn pin_pageable_staging(sim: &mut Sim, cfg: &SimCfg, bytes: u64) -> Result<(), Error> {
+/// [`SimCfg::host_unregister`] allocates without pinning; each miss registers,
+/// copies, then unregisters. Otherwise kept live for the pin tax.
+pub(crate) fn pin_pageable_staging(
+    sim: &mut Sim,
+    cfg: &SimCfg,
+    bytes: u64,
+) -> Result<Option<AllocId>, Error> {
     if !cfg.host_register {
-        return Ok(());
+        return Ok(None);
     }
     let h = sim.alloc_host(bytes)?;
-    sim.host_register(h)?;
+    if !cfg.host_unregister {
+        sim.host_register(h)?;
+    }
+    Ok(Some(h))
+}
+
+/// Pin staging for a miss fill when [`TouchArgs::host_unregister`].
+pub(crate) fn pin_staging_for_fill(
+    sim: &mut Sim,
+    staging: Option<AllocId>,
+    unregister: bool,
+) -> Result<(), Error> {
+    let Some(id) = staging else {
+        return Ok(());
+    };
+    if !unregister {
+        return Ok(());
+    }
+    if !sim.is_host_registered(id)? {
+        sim.host_register(id)?;
+    }
+    Ok(())
+}
+
+/// `cudaHostUnregister` staging after miss DMA when [`TouchArgs::host_unregister`].
+pub(crate) fn unpin_staging_after_fill(
+    sim: &mut Sim,
+    staging: Option<AllocId>,
+    unregister: bool,
+) -> Result<(), Error> {
+    if !unregister {
+        return Ok(());
+    }
+    let Some(id) = staging else {
+        return Ok(());
+    };
+    if sim.is_host_registered(id)? {
+        sim.host_unregister(id)?;
+    }
     Ok(())
 }
 

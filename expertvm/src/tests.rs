@@ -842,6 +842,8 @@ fn vmm_evict_reacquires_same_va() {
         vmm_page: 0,
         pageable: false,
         host_register: false,
+        host_unregister: false,
+        staging: None,
         host_register_mapped: false,
         sync_memops: false,
         memcpy_batch: false,
@@ -7462,6 +7464,7 @@ fn sim_cfg_host_register_needs_pageable() {
         HardwareProfile::example_h100_sxm(),
         SimCfg {
             host_register: true,
+            host_unregister: false,
             ..SimCfg::lru(1, 4096, 0)
         },
     ) {
@@ -7487,6 +7490,7 @@ fn simulated_gpu_store_host_register_needs_pageable() {
         GpuFill::Pinned,
         GpuStoreCfg {
             host_register: true,
+            host_unregister: false,
             ..GpuStoreCfg::default()
         },
     ) {
@@ -7512,6 +7516,7 @@ fn simulated_gpu_store_host_register_refuses_managed() {
         GpuStoreCfg {
             pageable: true,
             host_register: true,
+            host_unregister: false,
             ..GpuStoreCfg::default()
         },
     ) {
@@ -7534,6 +7539,7 @@ fn sim_replay_host_register_keeps_hits() {
     let reg = SimCfg {
         pageable: true,
         host_register: true,
+        host_unregister: false,
         ..SimCfg::lru(1, 4096, 0)
     };
     let a = sim_replay_cfg(&t, profile.clone(), pin).expect("pin");
@@ -7590,6 +7596,215 @@ fn simulated_gpu_store_host_register_is_faster_than_pageable() {
         page.wall_ns,
         reg.wall_ns
     );
+}
+
+#[test]
+fn sim_cfg_host_unregister_needs_host_register() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = match sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            pageable: true,
+            host_unregister: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("host-unregister without host-register must fail"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string()
+            .contains("host-unregister needs host-register"),
+        "{err}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_host_unregister_needs_host_register() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            pageable: true,
+            host_unregister: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("host-unregister without host-register must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("host-unregister needs host-register"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn sim_replay_host_unregister_keeps_hits() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    let keep = SimCfg {
+        pageable: true,
+        host_register: true,
+        host_unregister: false,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let unreg = SimCfg {
+        pageable: true,
+        host_register: true,
+        host_unregister: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), keep).expect("keep");
+    let b = sim_replay_cfg(&t, profile.clone(), unreg).expect("unreg");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+    let sched_a = schedule_replay(&t, profile.clone(), keep, SchedCfg::closed(0)).expect("sa");
+    let sched_b = schedule_replay(&t, profile, unreg, SchedCfg::closed(0)).expect("sb");
+    assert_eq!(sched_a.replay.hits, sched_b.replay.hits);
+    assert_eq!(sched_a.replay.misses, sched_b.replay.misses);
+}
+
+#[test]
+fn simulated_gpu_store_host_unregister_unpins_between_misses() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = match SimulatedGpuStore::with_cfg(
+        inner,
+        2,
+        p,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            pageable: true,
+            host_register: true,
+            host_unregister: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(gpu) => gpu,
+        Err(err) => panic!("gpu: {err}"),
+    };
+    assert!(!gpu.staging_is_pinned());
+    assert!(gpu.host_unregister());
+    let _a = gpu.acquire(ExpertKey::new(0, 0)).expect("k0");
+    gpu.release(ExpertKey::new(0, 0));
+    assert!(!gpu.staging_is_pinned());
+    let _b = gpu.acquire(ExpertKey::new(0, 1)).expect("k1");
+    gpu.release(ExpertKey::new(0, 1));
+    assert!(!gpu.staging_is_pinned());
+    let _s = gpu.score().expect("score");
+    assert!(!gpu.staging_is_pinned());
+}
+
+#[test]
+fn simulated_gpu_store_host_unregister_is_slower_than_host_register() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let bytes = 32u64 << 20;
+    let run = |host_unregister: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = match SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            bytes,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                pageable: true,
+                host_register: true,
+                host_unregister,
+                ..GpuStoreCfg::default()
+            },
+        ) {
+            Ok(gpu) => gpu,
+            Err(err) => panic!("gpu: {err}"),
+        };
+        if host_unregister {
+            assert!(!gpu.staging_is_pinned());
+        } else {
+            assert!(gpu.staging_is_pinned());
+        }
+        let _a = gpu.acquire(ExpertKey::new(0, 0)).expect("k0");
+        let _b = gpu.acquire(ExpertKey::new(0, 1)).expect("k1");
+        if host_unregister {
+            assert!(!gpu.staging_is_pinned());
+        } else {
+            assert!(gpu.staging_is_pinned());
+        }
+        let metrics = gpu.metrics();
+        let score = gpu.score().expect("score");
+        (metrics.hits, metrics.misses, score)
+    };
+    let (keep_hits, keep_misses, keep) = run(false);
+    let (unreg_hits, unreg_misses, unreg) = run(true);
+    assert_eq!(keep_hits, unreg_hits);
+    assert_eq!(keep_misses, unreg_misses);
+    assert!(
+        unreg.wall_ns > keep.wall_ns,
+        "host-unregister={} host-register={}",
+        unreg.wall_ns,
+        keep.wall_ns
+    );
+}
+
+#[test]
+fn simulated_gpu_store_host_unregister_allows_vmm() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let _gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Vmm,
+        GpuStoreCfg {
+            pageable: true,
+            host_register: true,
+            host_unregister: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("vmm host-unregister");
+}
+
+#[test]
+fn simulated_gpu_store_host_unregister_allows_pdl() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let _gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            pageable: true,
+            host_register: true,
+            host_unregister: true,
+            pdl: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("pdl host-unregister");
 }
 
 #[test]
@@ -7870,6 +8085,8 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         vmm_page: 0,
         pageable: false,
         host_register: false,
+        host_unregister: false,
+        staging: None,
         host_register_mapped: false,
         sync_memops: false,
         memcpy_batch: false,
@@ -7947,6 +8164,8 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         vmm_page: 0,
         pageable: false,
         host_register: false,
+        host_unregister: false,
+        staging: None,
         host_register_mapped: false,
         sync_memops: false,
         memcpy_batch: false,
@@ -8025,6 +8244,8 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         vmm_page: 0,
         pageable: false,
         host_register: false,
+        host_unregister: false,
+        staging: None,
         host_register_mapped: false,
         sync_memops: false,
         memcpy_batch: false,
@@ -8469,6 +8690,8 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         vmm_page: 0,
         pageable: false,
         host_register: false,
+        host_unregister: false,
+        staging: None,
         host_register_mapped: false,
         sync_memops: false,
         memcpy_batch: true,
@@ -8540,6 +8763,8 @@ fn memcpy_during_apply_misses_waits_copies() {
             vmm_page: 0,
             pageable: false,
             host_register: false,
+            host_unregister: false,
+            staging: None,
             host_register_mapped: false,
             sync_memops: false,
             memcpy_batch: true,
@@ -8613,6 +8838,8 @@ fn memcpy_any_apply_misses_empty_deps() {
             vmm_page: 0,
             pageable: false,
             host_register: false,
+            host_unregister: false,
+            staging: None,
             host_register_mapped: false,
             sync_memops: false,
             memcpy_batch: true,
@@ -8694,6 +8921,8 @@ fn memcpy_attr_apply_misses_waits_copies() {
             vmm_page: 0,
             pageable: false,
             host_register: false,
+            host_unregister: false,
+            staging: None,
             host_register_mapped: false,
             sync_memops: false,
             memcpy_batch: false,
@@ -9422,6 +9651,8 @@ fn d2h_evict_apply_misses_copies() {
             vmm_page: 0,
             pageable: false,
             host_register: false,
+            host_unregister: false,
+            staging: None,
             host_register_mapped: false,
             sync_memops: false,
             memcpy_batch: false,
@@ -9500,6 +9731,8 @@ fn d2h_pageable_apply_misses_copies() {
             vmm_page: 0,
             pageable: true,
             host_register: false,
+            host_unregister: false,
+            staging: None,
             host_register_mapped: false,
             sync_memops: false,
             memcpy_batch: false,
@@ -9724,6 +9957,8 @@ fn seq_stream_priority_starts_higher_stream_first() {
             vmm_page: 0,
             pageable: false,
             host_register: false,
+            host_unregister: false,
+            staging: None,
             host_register_mapped: false,
             sync_memops: false,
             memcpy_batch: false,
@@ -14562,6 +14797,7 @@ fn sim_cfg_d2h_pageable_needs_pageable() {
         SimCfg {
             pageable: true,
             host_register: true,
+            host_unregister: false,
             d2h_pageable: true,
             ..SimCfg::lru(1, 4096, 0)
         },
@@ -14630,6 +14866,7 @@ fn simulated_gpu_store_d2h_pageable_needs_pageable() {
         GpuStoreCfg {
             pageable: true,
             host_register: true,
+            host_unregister: false,
             d2h_pageable: true,
             ..GpuStoreCfg::default()
         },
@@ -14828,6 +15065,7 @@ fn simulated_gpu_store_host_register_mapped_refuses_host_register() {
         GpuStoreCfg {
             pageable: true,
             host_register: true,
+            host_unregister: false,
             host_register_mapped: true,
             ..GpuStoreCfg::default()
         },
@@ -15068,6 +15306,8 @@ fn sim_replay_sync_memops_h2d_host_sync() {
             vmm_page: 0,
             pageable: false,
             host_register: false,
+            host_unregister: false,
+            staging: None,
             host_register_mapped: false,
             sync_memops,
             memcpy_batch: false,
@@ -15288,6 +15528,8 @@ fn sim_replay_device_sync_memops_h2d_host_sync() {
             vmm_page: 0,
             pageable: false,
             host_register: false,
+            host_unregister: false,
+            staging: None,
             host_register_mapped: false,
             sync_memops: false,
             memcpy_batch: false,

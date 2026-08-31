@@ -27,9 +27,9 @@
 //! (`ttft_ns` / `itl_ns` / `ns_per_token`; not `$/M tokens`). Default GPU
 //! stores capture per-page GEMM graphs (`Engine::graph_launches`).
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
-//! `mempool_trim`, `mempool_no_reuse`, `mempool_max`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `memcpy_during`, `memcpy_any`, `memcpy_attr`, `memset_fill`, `SetAccessedBy`, legacy NULL, stream priority,
+//! `mempool_trim`, `mempool_no_reuse`, `mempool_max`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_unregister`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `memcpy_during`, `memcpy_any`, `memcpy_attr`, `memset_fill`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/build/build-deps/host/piecewise/capture-deps/enable/if/mem/memset/memcpy, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `l2_ratio`, `l2_streaming`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `mem_sync_launch`, `mem_sync_launch_map`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`, `d2h_evict`) are the same mechanical
+//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `l2_ratio`, `l2_streaming`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `mem_sync_launch`, `mem_sync_launch_map`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`, `d2h_evict`, `d2h_pageable`, `host_unregister`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -167,7 +167,10 @@
 //! no D2H). `--d2h-pageable` is `cudaMemcpyAsync` Device→Host (pageable) before
 //! that free (host-sync bounce-buffer; implies `--pageable`; not with `--mapped`
 //! / `--managed` / `--host-register` / `--d2h-evict`; identity stays free with no
-//! D2H). `--no-read-mostly`
+//! D2H). `--host-unregister` is `cudaHostUnregister` after each miss DMA so the
+//! next miss re-registers (`synchronize` plus `first_alloc_ns`; pin refunded
+//! between misses; implies `--host-register`; identity keeps staging registered).
+//! `--no-read-mostly`
 //! skips `cudaMemAdviseSetReadMostly` (implies `--managed`; dest prefetch moves;
 //! identity stays SetReadMostly). `--no-preferred` skips
 //! `cudaMemAdviseSetPreferredLocation` (implies `--managed`; remote GEMM
@@ -3620,6 +3623,26 @@ mod tests {
         assert_eq!(iso.2, 4);
         assert_eq!(d2h.2, 4);
         assert_eq!(iso.4, d2h.4, "d2h-pageable must keep greedy identity");
+    }
+
+    #[test]
+    fn engine_gpu_host_unregister_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let iso = mixed_gpu_decode_itl_on(bytes.clone(), false, None, GpuStoreCfg::default());
+        let unreg = mixed_gpu_decode_itl_on(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                pageable: true,
+                host_register: true,
+                host_unregister: true,
+                ..GpuStoreCfg::default()
+            },
+        );
+        assert_eq!(iso.2, 4);
+        assert_eq!(unreg.2, 4);
+        assert_eq!(iso.4, unreg.4, "host-unregister must keep greedy identity");
     }
 
     #[test]
