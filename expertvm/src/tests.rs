@@ -12702,6 +12702,124 @@ fn simulated_gpu_store_decode_sms_lengthens_token_clock() {
 }
 
 #[test]
+fn simulated_gpu_store_green_ctx_overlap_leftover_prefill() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let run = |green_ctx: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            HardwareProfile::example_h100_sxm(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                decode_priority: true,
+                stream_priority: true,
+                green_ctx,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let pre = ExpertKey::new(0, 0);
+        let dec = ExpertKey::new(0, 1);
+        gpu.bind_decode_compute(false);
+        let _warm_pre = gpu.acquire(pre).expect("warm pre");
+        gpu.release(pre);
+        let _warm_dec = gpu.acquire(dec).expect("warm dec");
+        gpu.release(dec);
+        let t0 = gpu.clock_ns().expect("drain h2d");
+        gpu.bind_decode_compute(false);
+        let _prefill = gpu.acquire(pre).expect("prefill");
+        gpu.release(pre);
+        gpu.bind_decode_compute(true);
+        let _decode = gpu.acquire(dec).expect("decode");
+        gpu.release(dec);
+        gpu.score().expect("score").wall_ns.saturating_sub(t0)
+    };
+    let serial = run(false);
+    let overlap = run(true);
+    assert!(
+        overlap < serial,
+        "green ctx must overlap leftover prefill under exclusive compute; overlap={overlap} serial={serial}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_green_ctx_needs_decode_priority() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            green_ctx: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .err()
+    .expect("need decode-priority");
+    assert!(
+        err.to_string().contains("green-ctx needs decode-priority"),
+        "{err}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_green_ctx_refuses_full_decode_sms() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            green_ctx: true,
+            decode_sm_permille: 1000,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .err()
+    .expect("full chip");
+    assert!(
+        err.to_string()
+            .contains("green-ctx decode-sms must leave leftover SMs"),
+        "{err}"
+    );
+}
+
+#[test]
+fn sim_replay_green_ctx_needs_decode_priority() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            green_ctx: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    )
+    .err()
+    .expect("need decode-priority");
+    assert!(
+        err.to_string().contains("green-ctx needs decode-priority"),
+        "{err}"
+    );
+}
+
+#[test]
 fn sim_replay_compute_slots_overlap_seq_streams() {
     let t = Trace {
         events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],

@@ -2511,6 +2511,124 @@ impl StreamCreateFlags {
     pub const NON_BLOCKING: u32 = 1;
 }
 
+/// `CUdevResourceType` for [`crate::Sim::device_get_dev_resource`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DevResourceType {
+    /// `CU_DEV_RESOURCE_TYPE_SM` (‰ of the chip, not an SM count).
+    Sm,
+}
+
+/// Green-context SM span in permille of peak FLOP/s.
+///
+/// [`Self::FULL`] is the whole chip (`start` 0, `width` 1000). This VM does not
+/// invent occupancy SM counts; the unit matches
+/// [`crate::Sim::set_stream_sm_permille`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SmResource {
+    /// Offset into the chip, `0..1000`.
+    pub start: u16,
+    /// Width in ‰, `1..=1000`. `start plus width` must be `<= 1000`.
+    pub width: u16,
+}
+
+impl SmResource {
+    /// Full-chip SM resource (`cuDeviceGetDevResource`).
+    pub const FULL: Self = Self {
+        start: 0,
+        width: 1000,
+    };
+
+    /// Half-open `[start, start+width)` ranges overlap.
+    #[must_use]
+    pub fn overlaps(self, other: Self) -> bool {
+        let a1 = self.start.saturating_add(self.width);
+        let b1 = other.start.saturating_add(other.width);
+        self.start < b1 && other.start < a1
+    }
+
+    /// `cuDevSmResourceSplitByCount`: even groups of at least `min_count` ‰.
+    ///
+    /// `nb_groups` is the requested count; the actual count is
+    /// `min(nb_groups, width / min_count)`. Leftover ‰ after even division
+    /// is [`remaining`](Self). `min_count` `0` or `nb_groups` `0` is Invalid.
+    pub fn split_by_count(
+        self,
+        nb_groups: u32,
+        min_count: u32,
+    ) -> Result<(Vec<Self>, Self), crate::SimError> {
+        if self.width == 0 || self.start.saturating_add(self.width) > 1000 {
+            return Err(crate::SimError::Invalid { why: "sm resource" });
+        }
+        if nb_groups == 0 {
+            return Err(crate::SimError::Invalid {
+                why: "sm split groups",
+            });
+        }
+        if min_count == 0 {
+            return Err(crate::SimError::Invalid {
+                why: "sm split min count",
+            });
+        }
+        let min = u16::try_from(min_count.min(u32::from(u16::MAX))).unwrap_or(u16::MAX);
+        if min > self.width {
+            return Ok((Vec::new(), self));
+        }
+        let max_groups = u32::from(self.width / min);
+        let n = nb_groups.min(max_groups).max(1);
+        let n_u16 = u16::try_from(n).unwrap_or(1);
+        let each = self.width / n_u16;
+        let used = each.saturating_mul(n_u16);
+        let mut groups = Vec::new();
+        let mut start = self.start;
+        for _ in 0..n_u16 {
+            groups.push(Self { start, width: each });
+            start = start.saturating_add(each);
+        }
+        Ok((
+            groups,
+            Self {
+                start,
+                width: self.width.saturating_sub(used),
+            },
+        ))
+    }
+}
+
+impl Default for SmResource {
+    fn default() -> Self {
+        Self::FULL
+    }
+}
+
+/// `CUdevResource` from [`crate::Sim::device_get_dev_resource`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DevResource {
+    /// SM partition ([`SmResource`]).
+    Sm(SmResource),
+}
+
+/// `cuGreenCtxCreate` flags for [`crate::Sim::green_ctx_create`].
+///
+/// Only [`Self::DEFAULT`]. `CU_GREEN_CTX_DEFAULT_STREAM` is not modeled
+/// (this VM has no second NULL stream).
+pub struct GreenCtxFlags;
+
+impl GreenCtxFlags {
+    /// `CU_GREEN_CTX_FLAG_DEFAULT` (`0`).
+    pub const DEFAULT: u32 = 0;
+}
+
+/// `cuDevSmResourceSplitByCount` `useFlags`.
+///
+/// Only [`Self::DEFAULT`]. Coscheduling / max-cluster split bits are not
+/// modeled.
+pub struct DevSmResourceSplitFlags;
+
+impl DevSmResourceSplitFlags {
+    /// Flags `0`.
+    pub const DEFAULT: u32 = 0;
+}
+
 /// `cudaFlushGPUDirectRDMAWritesOptions` bits for
 /// [`DeviceAttr::GpuDirectRdmaFlushWritesOptions`].
 ///

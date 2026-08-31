@@ -6,29 +6,32 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::SimError;
 use crate::ids::{
-    AllocId, CondId, DeviceId, EventId, GraphId, IpcEventHandleId, IpcHandleId, MemHandleId,
-    MulticastId, OpId, PoolId, PtrExportId, ShareableHandleId, StreamId, UserObjectId,
+    AllocId, CondId, DevResourceDescId, DeviceId, EventId, GraphId, GreenCtxId, IpcEventHandleId,
+    IpcHandleId, MemHandleId, MulticastId, OpId, PoolId, PtrExportId, ShareableHandleId, StreamId,
+    UserObjectId,
 };
 use crate::ops::{
     AccessPolicyWindow, AccessProperty, BatchMemOp, BatchMemOpFlags, CaptureDepOp, ClusterDim,
-    ClusterSchedulingPolicy, ComputeMode, DeviceAttr, DeviceFlags, DeviceLimit, DeviceNumaConfig,
-    DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags, EventWaitFlags,
-    FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr,
-    FuncAttributes, GpuOp as Kind, GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult,
+    ClusterSchedulingPolicy, ComputeMode, DevResource, DevResourceType, DevSmResourceSplitFlags,
+    DeviceAttr, DeviceFlags, DeviceLimit, DeviceNumaConfig, DeviceP2pAttr, DeviceProperties,
+    EventCreateFlags, EventRecordFlags, EventWaitFlags, FlushGpuDirectRdmaScope,
+    FlushGpuDirectRdmaTarget, FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes,
+    GpuOp as Kind, GraphAddNode, GraphDebugDotFlags, GraphExecUpdateResult,
     GraphExecUpdateResultInfo, GraphInstantiateFlags, GraphInstantiateParams,
     GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams, GraphUserObjectFlags,
-    HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags, KernelAttrs, KernelBuf,
-    KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams, LaunchCompletionEvent,
-    MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity, MemAllocationProp,
-    MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType, MemLocationType,
-    MemMapFlags, MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr, MemRangeAttrValue,
-    MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyFlags, MemcpyOp,
-    MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags, MulticastCreateFlags,
-    MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch, PeerAccessFlags, Place,
-    PointerAttr, PointerAttributes, PortableClusterMode, PortableSharedMode, PrefetchFlags,
-    ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout, SharedMemoryMode, StreamAttr,
-    StreamAttrValue, StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags,
-    SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WriteValueFlags,
+    GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags,
+    KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
+    LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity,
+    MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType,
+    MemLocationType, MemMapFlags, MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr,
+    MemRangeAttrValue, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
+    MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags,
+    MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch,
+    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
+    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
+    SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue, StreamCaptureInfo,
+    StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp,
+    WriteValueFlags,
 };
 use crate::profile::{align_up, ns_for_bytes, scale_ns_permille, HardwareProfile, LinkKind};
 
@@ -248,6 +251,11 @@ struct Multicast {
     maps: u32,
 }
 
+struct GreenCtx {
+    device: DeviceId,
+    sm: SmResource,
+}
+
 struct Op {
     device: DeviceId,
     stream: StreamId,
@@ -294,6 +302,11 @@ struct Op {
     /// `cudaLaunchAttributeNvlinkUtilCentricScheduling`. Occupies every Hyper-Q
     /// slot when the profile has NVLink.
     nvlink_util_centric: bool,
+    /// Green-context SM span for occupancy (`cuGreenCtxStreamCreate`).
+    ///
+    /// Full chip when the stream is not bound. Distinct from
+    /// [`Sim::set_stream_sm_permille`] (duration only).
+    sm_span: SmResource,
 }
 
 /// How a submitted op pays kernel/graph launch overhead.
@@ -726,8 +739,14 @@ pub struct Sim {
     priority: BTreeMap<(DeviceId, StreamId), i32>,
     /// `cudaStreamCreate` (blocking) streams. They serialize with [`StreamId::NULL`].
     blocking: BTreeSet<(DeviceId, StreamId)>,
-    /// Green-context SM fraction per stream (‰). Missing is full chip (`1000`).
+    /// Duration-only SM fraction per stream (‰). Missing is full chip (`1000`).
     sm_permille: BTreeMap<(DeviceId, StreamId), u16>,
+    /// `cuGreenCtxStreamCreate` binding. Missing is the primary context.
+    stream_green_ctx: BTreeMap<(DeviceId, StreamId), GreenCtxId>,
+    next_green_ctx: u32,
+    green_ctxs: BTreeMap<GreenCtxId, GreenCtx>,
+    next_dev_desc: u32,
+    dev_descs: BTreeMap<DevResourceDescId, SmResource>,
     /// `cudaLaunchAttributeMemSyncDomain` per stream. Missing is Default.
     stream_mem_sync_domain: BTreeMap<(DeviceId, StreamId), MemSyncDomain>,
     /// `cudaLaunchAttributeMemSyncDomainMap` per stream. Missing is identity.
@@ -895,6 +914,11 @@ impl Sim {
             priority: BTreeMap::new(),
             blocking: BTreeSet::new(),
             sm_permille: BTreeMap::new(),
+            stream_green_ctx: BTreeMap::new(),
+            next_green_ctx: 1,
+            green_ctxs: BTreeMap::new(),
+            next_dev_desc: 1,
+            dev_descs: BTreeMap::new(),
             stream_mem_sync_domain: BTreeMap::new(),
             stream_mem_sync_map: BTreeMap::new(),
             stream_sync_policy: BTreeMap::new(),
@@ -1188,11 +1212,13 @@ impl Sim {
             .unwrap_or_else(|| self.stream_priority(device, stream))
     }
 
-    /// Reserve a green-context SM fraction for `(device, stream)` (‰ of peak FLOP/s).
+    /// Reserve a duration-only SM fraction for `(device, stream)` (‰ of peak FLOP/s).
     ///
     /// `1000` is a full chip. Compute-bound kernels scale as `1000 / permille`;
     /// memory-bound kernels keep full HBM. Default (unset) is `1000`. `0` is
-    /// [`SimError::Invalid`].
+    /// [`SimError::Invalid`]. Does not partition Hyper-Q occupancy; use
+    /// [`Self::green_ctx_set_stream`] for complementary green contexts.
+    /// A stream already bound to a green context is Invalid `"green ctx stream"`.
     pub fn set_stream_sm_permille(
         &mut self,
         device: DeviceId,
@@ -1200,6 +1226,11 @@ impl Sim {
         permille: u16,
     ) -> Result<(), SimError> {
         let _gpu = self.profile.gpu(device)?;
+        if self.stream_green_ctx.contains_key(&(device, stream)) {
+            return Err(SimError::Invalid {
+                why: "green ctx stream",
+            });
+        }
         if permille == 0 || permille > 1000 {
             return Err(SimError::Invalid {
                 why: "sm permille must be 1..=1000",
@@ -1217,6 +1248,190 @@ impl Sim {
             .copied()
             .unwrap_or(1000)
             .max(1)
+    }
+
+    fn stream_sm_span(&self, device: DeviceId, stream: StreamId) -> SmResource {
+        self.stream_green_ctx
+            .get(&(device, stream))
+            .and_then(|id| self.green_ctxs.get(id))
+            .map(|c| c.sm)
+            .unwrap_or(SmResource::FULL)
+    }
+
+    /// `cuDeviceGetDevResource` / `cudaDeviceGetDevResource`.
+    ///
+    /// Query; legal during capture. Only [`DevResourceType::Sm`]. The span is
+    /// ‰ of the chip ([`SmResource::FULL`]), not an SM count.
+    pub fn device_get_dev_resource(
+        &self,
+        device: DeviceId,
+        kind: DevResourceType,
+    ) -> Result<DevResource, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        match kind {
+            DevResourceType::Sm => Ok(DevResource::Sm(SmResource::FULL)),
+        }
+    }
+
+    /// `cuDevSmResourceSplitByCount`. Query; legal during capture.
+    ///
+    /// `flags` must be [`DevSmResourceSplitFlags::DEFAULT`]. `min_count` is
+    /// minimum ‰ per group. Returns `(groups, remaining)`.
+    pub fn dev_sm_resource_split_by_count(
+        &self,
+        input: SmResource,
+        nb_groups: u32,
+        min_count: u32,
+        flags: u32,
+    ) -> Result<(Vec<SmResource>, SmResource), SimError> {
+        if flags != DevSmResourceSplitFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "sm split flags",
+            });
+        }
+        input.split_by_count(nb_groups, min_count)
+    }
+
+    /// `cuDevResourceGenerateDesc`. Capture cannot include it.
+    ///
+    /// Resources must be contiguous (no overlap, no gap). Empty is Invalid
+    /// `"sm resource desc"`.
+    pub fn dev_resource_generate_desc(
+        &mut self,
+        resources: &[SmResource],
+    ) -> Result<DevResourceDescId, SimError> {
+        self.fail_if_capturing("cannot capture dev resource desc")?;
+        let sm = merge_sm_resources(resources)?;
+        let id = DevResourceDescId(self.next_dev_desc);
+        self.next_dev_desc = self.next_dev_desc.saturating_add(1);
+        let _prev = self.dev_descs.insert(id, sm);
+        Ok(id)
+    }
+
+    /// `cuGreenCtxCreate` / `cudaGreenCtxCreate`. Capture cannot include it.
+    ///
+    /// `flags` must be [`GreenCtxFlags::DEFAULT`]. The desc may be reused
+    /// (same-span contexts share occupancy).
+    pub fn green_ctx_create(
+        &mut self,
+        desc: DevResourceDescId,
+        device: DeviceId,
+        flags: u32,
+    ) -> Result<GreenCtxId, SimError> {
+        self.fail_if_capturing("cannot capture green ctx create")?;
+        let _gpu = self.profile.gpu(device)?;
+        if flags != GreenCtxFlags::DEFAULT {
+            return Err(SimError::Invalid {
+                why: "green ctx flags",
+            });
+        }
+        let sm = self
+            .dev_descs
+            .get(&desc)
+            .copied()
+            .ok_or(SimError::Invalid {
+                why: "unknown resource desc",
+            })?;
+        let id = GreenCtxId(self.next_green_ctx);
+        self.next_green_ctx = self.next_green_ctx.saturating_add(1);
+        let _prev = self.green_ctxs.insert(id, GreenCtx { device, sm });
+        Ok(id)
+    }
+
+    /// `cuGreenCtxDestroy`. Capture cannot include it.
+    ///
+    /// Streams still bound to `ctx` are Invalid `"green ctx has streams"`.
+    pub fn green_ctx_destroy(&mut self, ctx: GreenCtxId) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture green ctx destroy")?;
+        if !self.green_ctxs.contains_key(&ctx) {
+            return Err(SimError::Invalid {
+                why: "unknown green ctx",
+            });
+        }
+        if self.stream_green_ctx.values().any(|c| *c == ctx) {
+            return Err(SimError::Invalid {
+                why: "green ctx has streams",
+            });
+        }
+        let _gone = self.green_ctxs.remove(&ctx);
+        Ok(())
+    }
+
+    /// `cuGreenCtxGetDevResource`. Query; legal during capture.
+    pub fn green_ctx_get_dev_resource(
+        &self,
+        ctx: GreenCtxId,
+        kind: DevResourceType,
+    ) -> Result<DevResource, SimError> {
+        let g = self.green_ctxs.get(&ctx).ok_or(SimError::Invalid {
+            why: "unknown green ctx",
+        })?;
+        match kind {
+            DevResourceType::Sm => Ok(DevResource::Sm(g.sm)),
+        }
+    }
+
+    /// Bind `stream` to `ctx` (`cuGreenCtxStreamCreate` without creating).
+    ///
+    /// Sets duration permille to the span width. [`StreamId::NULL`] is Invalid.
+    /// Already-bound streams are Invalid `"stream has green ctx"`. Capture
+    /// cannot include it.
+    pub fn green_ctx_set_stream(
+        &mut self,
+        ctx: GreenCtxId,
+        stream: StreamId,
+    ) -> Result<(), SimError> {
+        self.fail_if_capturing("cannot capture green ctx stream")?;
+        if stream == StreamId::NULL {
+            return Err(SimError::Invalid {
+                why: "green ctx stream",
+            });
+        }
+        let g = self.green_ctxs.get(&ctx).ok_or(SimError::Invalid {
+            why: "unknown green ctx",
+        })?;
+        let device = g.device;
+        let width = g.sm.width.max(1);
+        if self.stream_green_ctx.contains_key(&(device, stream)) {
+            return Err(SimError::Invalid {
+                why: "stream has green ctx",
+            });
+        }
+        let _prev = self.stream_green_ctx.insert((device, stream), ctx);
+        let _prev_sm = self.sm_permille.insert((device, stream), width);
+        Ok(())
+    }
+
+    /// `cuGreenCtxStreamCreate`: flags plus priority, then
+    /// [`Self::green_ctx_set_stream`].
+    pub fn green_ctx_stream_create(
+        &mut self,
+        ctx: GreenCtxId,
+        stream: StreamId,
+        flags: u32,
+        priority: i32,
+    ) -> Result<(), SimError> {
+        let device = self
+            .green_ctxs
+            .get(&ctx)
+            .ok_or(SimError::Invalid {
+                why: "unknown green ctx",
+            })?
+            .device;
+        self.stream_create_with_priority(device, stream, flags, priority)?;
+        self.green_ctx_set_stream(ctx, stream)
+    }
+
+    /// `cuStreamGetGreenCtx`. Query; legal during capture.
+    ///
+    /// Unbound streams return [`None`]. Unknown devices are Invalid.
+    pub fn stream_get_green_ctx(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+    ) -> Result<Option<GreenCtxId>, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        Ok(self.stream_green_ctx.get(&(device, stream)).copied())
     }
 
     /// `cudaDevAttrMemSyncDomainCount`.
@@ -1639,20 +1854,59 @@ impl Sim {
     }
 
     /// Take one Hyper-Q compute slot, or `false` if [`GpuProfile::compute_slots`] are full.
-    fn take_compute(&mut self, device: DeviceId) -> Result<bool, SimError> {
-        self.take_compute_n(device, 1)
+    fn take_compute(&mut self, device: DeviceId, span: SmResource) -> Result<bool, SimError> {
+        self.take_compute_n(device, 1, span)
     }
 
     /// Take `n` Hyper-Q slots (`cudaLaunchCooperativeKernel` takes every slot).
-    fn take_compute_n(&mut self, device: DeviceId, n: u8) -> Result<bool, SimError> {
+    ///
+    /// Occupancy is among running kernels whose green-context SM spans overlap
+    /// `span`. Disjoint green contexts do not share exclusive compute.
+    fn take_compute_n(
+        &mut self,
+        device: DeviceId,
+        n: u8,
+        span: SmResource,
+    ) -> Result<bool, SimError> {
         let cap = self.profile.gpu(device)?.compute_slots.max(1);
         let need = n.max(1);
-        let rt = self.gpu_rt_mut(device)?;
-        if rt.compute.saturating_add(need) > cap {
+        let used = self.overlapping_compute_slots(device, span)?;
+        if used.saturating_add(need) > cap {
             return Ok(false);
         }
+        let rt = self.gpu_rt_mut(device)?;
         rt.compute = rt.compute.saturating_add(need);
         Ok(true)
+    }
+
+    fn overlapping_compute_slots(
+        &self,
+        device: DeviceId,
+        span: SmResource,
+    ) -> Result<u8, SimError> {
+        let mut used = 0u8;
+        for r in &self.running {
+            let Some(op) = self.ops.get(&r.op) else {
+                continue;
+            };
+            if op.device != device {
+                continue;
+            }
+            if !matches!(
+                op.kind,
+                Kind::Kernel { .. }
+                    | Kind::Memset(_)
+                    | Kind::DeviceLaunch { .. }
+                    | Kind::AllReduce { .. }
+            ) {
+                continue;
+            }
+            if !op.sm_span.overlaps(span) {
+                continue;
+            }
+            used = used.saturating_add(self.op_kernel_slots(op)?);
+        }
+        Ok(used)
     }
 
     /// Release one Hyper-Q compute slot.
@@ -2913,6 +3167,9 @@ impl Sim {
         }
         if let Some(sm) = self.sm_permille.get(&(device, launch)).copied() {
             let _prev = self.sm_permille.insert((device, worker), sm);
+        }
+        if let Some(ctx) = self.stream_green_ctx.get(&(device, launch)).copied() {
+            let _prev = self.stream_green_ctx.insert((device, worker), ctx);
         }
     }
 
@@ -15846,6 +16103,7 @@ impl Sim {
                 carveout: self.enqueue_carveout,
                 shared_mem: self.enqueue_shared_mem,
                 nvlink_util_centric: self.enqueue_nvlink_util_centric,
+                sm_span: self.stream_sm_span(device, stream),
             },
         );
         if let Some(pe) = pde {
@@ -16255,6 +16513,7 @@ impl Sim {
                 carveout: SharedMemCarveout::Default,
                 shared_mem: SharedMemoryMode::Default,
                 nvlink_util_centric: false,
+                sm_span: self.stream_sm_span(device, stream),
             },
         );
         self.add_op_dep(kernel, id);
@@ -16302,7 +16561,12 @@ impl Sim {
                 .ok_or(SimError::Invalid { why: "unknown op" })?;
             self.op_kernel_slots(op)?
         };
-        if !self.take_compute_n(device, slots)? {
+        let span = self
+            .ops
+            .get(&id)
+            .ok_or(SimError::Invalid { why: "unknown op" })?
+            .sm_span;
+        if !self.take_compute_n(device, slots, span)? {
             return Ok(false);
         }
         let mem_bps = self.kernel_mem_bps(device, &reads, &writes)?;
@@ -16372,7 +16636,12 @@ impl Sim {
             }
         };
         self.require_device_attach(op.id, stream)?;
-        if !self.take_compute(device)? {
+        let span = self
+            .ops
+            .get(&id)
+            .ok_or(SimError::Invalid { why: "unknown op" })?
+            .sm_span;
+        if !self.take_compute(device, span)? {
             return Ok(false);
         }
         let writes = [KernelBuf::span(op.id, op.offset, op.extent_bytes())];
@@ -17197,7 +17466,12 @@ impl Sim {
     }
 
     fn start_device_launch(&mut self, op: OpId, device: DeviceId) -> Result<bool, SimError> {
-        if !self.take_compute(device)? {
+        let span = self
+            .ops
+            .get(&op)
+            .ok_or(SimError::Invalid { why: "unknown op" })?
+            .sm_span;
+        if !self.take_compute(device, span)? {
             return Ok(false);
         }
         let ns = self.profile.gpu(device)?.graph_launch_ns.max(1);
@@ -17632,7 +17906,12 @@ impl Sim {
             }
         }
         let ns = self.allreduce_ns(parts, bytes)?;
-        if !self.take_compute(device)? {
+        let span = self
+            .ops
+            .get(&id)
+            .ok_or(SimError::Invalid { why: "unknown op" })?
+            .sm_span;
+        if !self.take_compute(device, span)? {
             return Ok(false);
         }
         for (_, a) in parts {
@@ -19950,6 +20229,45 @@ fn attach_state(flags: MemAttach, stream: StreamId) -> Attach {
         MemAttach::Host => Attach::Host,
         MemAttach::Single => Attach::Single(stream),
     }
+}
+
+fn merge_sm_resources(resources: &[SmResource]) -> Result<SmResource, SimError> {
+    let Some(first) = resources.first().copied() else {
+        return Err(SimError::Invalid {
+            why: "sm resource desc",
+        });
+    };
+    if first.width == 0 || first.start.saturating_add(first.width) > 1000 {
+        return Err(SimError::Invalid { why: "sm resource" });
+    }
+    let mut ordered: Vec<SmResource> = resources.to_vec();
+    ordered.sort_by_key(|r| r.start);
+    let Some(head) = ordered.first().copied() else {
+        return Err(SimError::Invalid {
+            why: "sm resource desc",
+        });
+    };
+    let mut end = head.start.saturating_add(head.width);
+    for r in ordered.iter().skip(1) {
+        if r.width == 0 || r.start.saturating_add(r.width) > 1000 {
+            return Err(SimError::Invalid { why: "sm resource" });
+        }
+        if r.start < end {
+            return Err(SimError::Invalid {
+                why: "sm resource overlap",
+            });
+        }
+        if r.start > end {
+            return Err(SimError::Invalid {
+                why: "sm resource gap",
+            });
+        }
+        end = r.start.saturating_add(r.width);
+    }
+    Ok(SmResource {
+        start: head.start,
+        width: end.saturating_sub(head.start),
+    })
 }
 
 fn seed_pools(

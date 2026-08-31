@@ -177,7 +177,8 @@ warp scheduler, L1, …   ← do not model
 | `cudaLaunchKernel` `sharedMemBytes` | `0` is identity; above `max_shared_mem_per_block` needs the function attr or AllowNonPortable |
 | `cudaLaunchAttributeNvlinkUtilCentricScheduling` | hint `0`/`1`; occupies every Hyper-Q slot when the profile has NVLink |
 | `cudaLaunchAttributePriority` (`kernel_with` / `KernelAttrs::priority`) | `None` inherits stream create priority; `Some` overrides that kernel; higher starts first under contention |
-| `set_stream_sm_permille` is a green-context SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM |
+| `set_stream_sm_permille` is a duration-only SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM; does not partition Hyper-Q |
+| CUDA green contexts (`cuGreenCtxCreate`) | complementary SM spans may overlap kernels even when `compute_slots` is 1; same-span contexts share exclusive compute |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host); `memset_op` height/pitch is 2D | HBM write of payload + launch overhead |
 | `cudaMemset` / `2D` / `3D` (`memset_sync` / `memset_op_sync`) wait the stream | host-synchronous; capture refused |
 | peer D2D needs topology + `enable_peer` (`enable_peer_with_flags` must be 0) | link bandwidth |
@@ -197,9 +198,14 @@ cache-line copy. Eight thousand tiny copies cannot harvest full PCIe
 bandwidth. Concurrent copies on the same link share bandwidth. Kernels on
 one GPU default to exclusive compute (`compute_slots=1`); `>=2` is Hyper-Q
 occupancy at full issue rate (not an SM-partition model).
-`set_stream_sm_permille` is the green-context SM fraction: compute-bound
+`set_stream_sm_permille` is duration-only: compute-bound
 kernels scale as `1000 / permille`; memory-bound keep full HBM. Default
-unset is a full chip (`1000`). Copy engines still overlap compute. Profile knobs `gemm_util_permille` (achieved/peak) and `grouped_moe_permille`
+unset is a full chip (`1000`). It does not partition Hyper-Q occupancy.
+CUDA green contexts (`cuDeviceGetDevResource` / `cuDevSmResourceSplitByCount` /
+`cuDevResourceGenerateDesc` / `cuGreenCtxCreate`) split the chip in ‰ (not
+occupancy SM counts). Complementary spans may overlap kernels even when
+`compute_slots` is 1; same-span contexts still share exclusive compute.
+Copy engines still overlap compute. Profile knobs `gemm_util_permille` (achieved/peak) and `grouped_moe_permille`
 (grouped vs dense duration) scale kernel time. Defaults are 1000
 (identity roofline). They are parseable; they are not a capture. Host PCIe
 links also carry `pageable_permille` (default `500`: pageable H2D takes
@@ -1090,9 +1096,11 @@ default instantiate still uses the launch stream unless `USE_NODE_PRIORITY`).
 `--kernel-priority N` is `cudaLaunchAttributePriority`.
 Decode identity stays `kernel`. `USE_NODE_PRIORITY` at
 instantiate schedules those node priorities instead of the launch stream. `set_created_streams_priority` assigns created streams
-their id. `set_stream_sm_permille` is a green-context SM fraction
+their id. `set_stream_sm_permille` is a duration-only SM fraction
 (compute-bound kernels scale; memory-bound keep full HBM; default unset is
-a full chip). `Operation` carries `submit_ns` / `start_ns` / `done_ns`
+a full chip; does not partition Hyper-Q). CUDA green contexts bind an SM
+span so complementary streams may overlap under exclusive compute.
+`Operation` carries `submit_ns` / `start_ns` / `done_ns`
 so stream[i+1].start ≥ stream[i].finish is inspectable. `GpuOp` /
 `Operation` is the compiled submit DAG (`Sim::operations`).
 

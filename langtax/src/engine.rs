@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `mempool_trim`, `mempool_no_reuse`, `mempool_max`, shareable POSIX-FD IPC, ipc cudaMalloc IPC, share_ptr mempool ExportPointer, vmm_retain cuMemRetainAllocationHandle, vmm_handle cuMemCreate plus cuMemMap, `vmm_page`, pageable H2D, `host_register`, `host_unregister`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `memcpy_during`, `memcpy_any`, `memcpy_attr`, `memset_fill`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/build/build-deps/host/piecewise/capture-deps/enable/if/mem/memset/memcpy, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `l2_ratio`, `l2_streaming`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `mem_sync_launch`, `mem_sync_launch_map`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`, `d2h_evict`, `d2h_pageable`, `host_unregister`, `ipc`, `share_ptr`, `vmm_retain`, `vmm_handle`) are the same mechanical
+//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `green_ctx`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `l2_ratio`, `l2_streaming`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `mem_sync_launch`, `mem_sync_launch_map`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`, `d2h_evict`, `d2h_pageable`, `host_unregister`, `ipc`, `share_ptr`, `vmm_retain`, `vmm_handle`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -207,10 +207,15 @@
 //! portable-shared / nvlink-util off / inherit-stream priority / no launch-completion event / no programmatic event / Global managed attach / SetReadMostly / SetPreferredLocation / fill prefetch / events copy-ready / no mempool trim / opportunistic reuse / unlimited mempool maxSize / stream-order memcpy-batch / demand memcpy not WithAttributes / free_sync managed evict / no Device→HostPinned evict / cudaHostAllocMapped not HostRegisterMapped / async memcpy not SyncMemops / no device SyncMemops / disable-timing non-blocking copy events).
 //! `--multicast` is Hopper NVLS replica fanout (`cuMulticastCreate`; implies
 //! `--vmm`; needs NVLink / `--expert-8gpu`). Decode identity stays D2D.
-//! `--decode-sms N` (`1..=1000`) is a green-context SM fraction on the decode
+//! `--decode-sms N` (`1..=1000`) is a duration-only SM fraction on the decode
 //! stream (compute-bound kernels scale; memory-bound keep full HBM). Leftover
 //! prefill gets the remainder. Implies `--decode-priority`. Default unset is a
-//! full chip (`1000`).
+//! full chip (`1000`). `--green-ctx` binds complementary CUDA green contexts
+//! (`cuGreenCtxCreate`) so leftover prefill may overlap decode even when
+//! `compute_slots` is 1 (implies `--decode-priority`; default 500/500;
+//! `--decode-sms 1000` refused). Distinct from `--decode-sms` alone (exclusive
+//! occupancy still serializes leftover prefill). Off by default keeps full-chip
+//! exclusive compute (decode identity).
 //! [`EngineCfg::slo_reject`] drops waiters whose gpu-sim queue wait already
 //! meets [`EngineCfg::ttft_slo_ns`]. [`EngineCfg::itl_slo_ns`] counts later-token
 //! gaps that miss the ITL budget (`Engine::itl_slo_miss`; does not drop).

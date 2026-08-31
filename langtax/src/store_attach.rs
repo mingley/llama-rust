@@ -255,6 +255,11 @@ pub(crate) struct GpuCli {
     pub decode_sm_permille: u16,
     /// True when `--decode-sms` appeared.
     pub decode_sm_set: bool,
+    /// Complementary CUDA green contexts (`GpuStoreCfg::green_ctx`).
+    ///
+    /// Occupancy partition of decode vs leftover prefill. Distinct from
+    /// [`Self::decode_sm_permille`] (duration scale). Implies decode-priority.
+    pub green_ctx: bool,
     /// `--kv-bytes` override. `None` uses intern K+V geometry.
     pub kv_bytes: Option<u64>,
     /// Physical span for [`GpuFill::Vmm`]. `0` maps the whole expert.
@@ -323,6 +328,7 @@ impl GpuCli {
             "--seq-streams" => &mut self.seq_streams,
             "--kv-sim" => &mut self.kv_sim,
             "--decode-priority" => &mut self.decode_priority,
+            "--green-ctx" => &mut self.green_ctx,
             "--cooperative" => &mut self.cooperative,
             "--pdl" => &mut self.pdl,
             "--l2-persist" => &mut self.l2_persist,
@@ -436,15 +442,26 @@ impl GpuCli {
         }
     }
 
-    /// `--decode-priority` implies [`Self::stream_priority`]. `--decode-sms`
-    /// and `--mem-sync-domain remote` imply both. Call after sim-flag checks.
+    /// `--decode-priority` implies [`Self::stream_priority`]. `--decode-sms`,
+    /// `--green-ctx`, and `--mem-sync-domain remote` imply both. Call after sim-flag checks.
     pub(crate) fn imply_decode_priority(&mut self) {
-        if self.decode_sm_permille > 0 || self.mem_sync_domain == MemSyncDomain::Remote {
+        if self.decode_sm_permille > 0
+            || self.green_ctx
+            || self.mem_sync_domain == MemSyncDomain::Remote
+        {
             self.decode_priority = true;
         }
         if self.decode_priority {
             self.stream_priority = true;
         }
+    }
+
+    /// `--green-ctx` plus `--decode-sms 1000` is refused (no leftover SMs).
+    pub(crate) fn check_green_ctx(&self) -> Result<(), String> {
+        if self.green_ctx && self.decode_sm_permille == 1000 {
+            return Err("green-ctx decode-sms must leave leftover SMs".into());
+        }
+        Ok(())
     }
 
     /// Decode-stream SM permille (`--decode-sms`). `0` and `>1000` are refused.
@@ -1049,6 +1066,7 @@ impl GpuCli {
             (self.d2h_pageable, "--d2h-pageable"),
             (self.wait_value, "--wait-value"),
             (self.decode_sm_set, "--decode-sms"),
+            (self.green_ctx, "--green-ctx"),
         ]
         .into_iter()
         .find_map(|(on, name)| on.then_some(name))
@@ -1445,6 +1463,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         multicast: gpu.multicast,
         compute_slots: gpu.compute_slots,
         decode_sm_permille: gpu.decode_sm_permille,
+        green_ctx: gpu.green_ctx,
     }
 }
 

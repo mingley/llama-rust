@@ -13,22 +13,22 @@ use crate::sim_replay::{
     alloc_resident_copy_mailbox, allow_non_portable_cluster_if, allow_optin_shared_if,
     apply_cluster_dim_must_be_set, apply_device_shared_mem, apply_device_sync_memops,
     apply_device_sync_policy, apply_exec_mem_sync_domain, apply_exec_mem_sync_map,
-    apply_func_cluster_spread, apply_func_max_shared, apply_func_shared_mem, apply_l2_fetch,
-    apply_required_cluster_width, apply_stream_mem_sync_domain, apply_stream_mem_sync_map,
-    apply_stream_sync_policy, bind_device_mempools, check_cluster_load_balance,
-    check_cluster_must_set, check_cluster_preferred, check_d2h_evict, check_d2h_pageable,
-    check_device_graph_flags, check_host_unregister, check_ipc, check_l2_fetch, check_l2_ratio,
-    check_max_l1, check_mem_sync_collapse, check_mem_sync_launch, check_mem_sync_launch_map,
-    check_memcpy_attr, check_memset_fill, check_required_cluster, check_share_ptr,
-    check_vmm_handle, check_vmm_retain, close_ipc_alias, close_share_alias, collapse_mem_sync_map,
-    d2h_evict_page, d2h_pageable_page, drop_managed_replica, ensure_single_attach,
-    free_copy_mailbox, free_mapped_host, hbm_h2d_attr, host_after_copy, instantiate_exec,
-    kernel_leaf, mark_sync_memops, memcpy_batch_attr, mempool_hold, open_ipc_alias,
-    open_share_alias, persist_armed, pin_staging_for_fill, release_vmm_handle, replay_exec,
-    replay_streams, reset_persisting_l2_if, retain_vmm_handle, retarget_parked_kernel,
-    signal_copy_ready, stream_of, unpin_staging_after_fill, upload_after_set_params,
-    vmm_alloc_handle, vmm_handle_of, wait_copy_ready, wait_memcpy_during_allocs,
-    wait_share_ptr_alloc, GemmFlags, LeafMem, LeafWork, StreamPlan,
+    apply_func_cluster_spread, apply_func_max_shared, apply_func_shared_mem, apply_green_ctx,
+    apply_l2_fetch, apply_required_cluster_width, apply_stream_mem_sync_domain,
+    apply_stream_mem_sync_map, apply_stream_sync_policy, bind_device_mempools,
+    check_cluster_load_balance, check_cluster_must_set, check_cluster_preferred, check_d2h_evict,
+    check_d2h_pageable, check_device_graph_flags, check_green_ctx, check_host_unregister,
+    check_ipc, check_l2_fetch, check_l2_ratio, check_max_l1, check_mem_sync_collapse,
+    check_mem_sync_launch, check_mem_sync_launch_map, check_memcpy_attr, check_memset_fill,
+    check_required_cluster, check_share_ptr, check_vmm_handle, check_vmm_retain, close_ipc_alias,
+    close_share_alias, collapse_mem_sync_map, d2h_evict_page, d2h_pageable_page,
+    drop_managed_replica, ensure_single_attach, free_copy_mailbox, free_mapped_host, hbm_h2d_attr,
+    host_after_copy, instantiate_exec, kernel_leaf, mark_sync_memops, memcpy_batch_attr,
+    mempool_hold, open_ipc_alias, open_share_alias, persist_armed, pin_staging_for_fill,
+    release_vmm_handle, replay_exec, replay_streams, reset_persisting_l2_if, retain_vmm_handle,
+    retarget_parked_kernel, signal_copy_ready, stream_of, unpin_staging_after_fill,
+    upload_after_set_params, vmm_alloc_handle, vmm_handle_of, wait_copy_ready,
+    wait_memcpy_during_allocs, wait_share_ptr_alloc, GemmFlags, LeafMem, LeafWork, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -766,6 +766,15 @@ pub struct GpuStoreCfg {
     /// stream; leftover prefill gets the remainder when
     /// [`Self::decode_priority`] is on. Default `0` keeps decode identity.
     pub decode_sm_permille: u16,
+    /// Complementary CUDA green contexts for decode vs leftover prefill.
+    ///
+    /// Splits the device SM resource (‰) and
+    /// [`gpu_sim::Sim::green_ctx_set_stream`]s decode vs prefill so they may
+    /// overlap even when `compute_slots` is 1. Distinct from
+    /// [`Self::decode_sm_permille`] (duration scale without occupancy
+    /// partition). Needs [`Self::decode_priority`]. Default off keeps
+    /// exclusive full-chip compute.
+    pub green_ctx: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -1205,7 +1214,9 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
     /// exclusive compute). [`GpuStoreCfg::decode_sm_permille`] `0` keeps a
     /// full chip. `1..=1000` without [`GpuStoreCfg::decode_priority`] caps the
-    /// single compute stream.
+    /// single compute stream. [`GpuStoreCfg::green_ctx`] binds complementary
+    /// CUDA green contexts on decode vs leftover prefill (needs decode-priority;
+    /// default exclusive compute may still overlap).
     pub fn with_cfg(
         inner: DirectStore,
         slots: usize,
@@ -1402,6 +1413,7 @@ impl SimulatedGpuStore {
         check_share_ptr(cfg.share_ptr, cfg.shareable, cfg.ipc)?;
         check_vmm_retain(cfg.vmm_retain, fill == GpuFill::Vmm)?;
         check_vmm_handle(cfg.vmm_handle, fill == GpuFill::Vmm, cfg.vmm_retain)?;
+        check_green_ctx(cfg.green_ctx, cfg.decode_priority, cfg.decode_sm_permille)?;
         if cfg.host_register_mapped && fill != GpuFill::Mapped {
             return Err(Error::Store("host-register-mapped needs mapped"));
         }
@@ -1481,7 +1493,9 @@ impl SimulatedGpuStore {
         apply_stream_sync_policy(&mut sim, plan, cfg.sync_policy)?;
         apply_stream_mem_sync_domain(&mut sim, plan, cfg.mem_sync_domain)?;
         apply_stream_mem_sync_map(&mut sim, plan, cfg.mem_sync_collapse)?;
-        if cfg.decode_sm_permille > 0 {
+        if cfg.green_ctx {
+            apply_green_ctx(&mut sim, plan, cfg.decode_sm_permille)?;
+        } else if cfg.decode_sm_permille > 0 {
             let dec = cfg.decode_sm_permille.min(1000);
             let pre = 1000u16.saturating_sub(dec).max(1);
             let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);

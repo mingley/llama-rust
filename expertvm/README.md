@@ -175,8 +175,12 @@ expert compute behind communication. `--cooperative` is
 `cudaLaunchCooperativeKernel`: GEMMs occupy every Hyper-Q slot, so
 independent sequences cannot overlap even with `--compute-slots 2`.
 `--decode-sms N` (`1..=1000`) is a
-green-context SM fraction on every replay stream (compute-bound kernels
-scale; memory-bound keep full HBM; default unset is a full chip). `--multicast`
+duration-only SM fraction on every replay stream (compute-bound kernels
+scale; memory-bound keep full HBM; default unset is a full chip; does not
+partition Hyper-Q). `--green-ctx` binds complementary CUDA green contexts
+on decode vs leftover prefill (implies `--decode-priority`; default 500/500;
+`--decode-sms 1000` refused) so they may overlap even when `compute_slots`
+is 1. `--multicast`
 is Hopper NVLS replica fanout (implies `--vmm`; illegal with `--accessed-by`
 / `--vmm-page`; needs an NVLink clique). `--sync-alloc` uses host-sync `cudaMalloc` /
 `cudaMemcpy` / `cudaFree` on every miss (`Sim::malloc`); the default is
@@ -358,11 +362,11 @@ on the Engine store. `--mapped` / `--managed` / `--vmm` select `GpuFill`
 `--blocking-streams` / `--sync-alloc` / `--ipc` / `--mempool` / `--mempool-trim` / `--mempool-no-reuse` / `--mempool-max` / `--shareable` / `--share-ptr` / `--vmm-retain` / `--vmm-handle` / `--vmm-page` /
 `--pageable` / `--host-register` / `--host-unregister` / `--host-register-mapped` / `--sync-memops` / `--device-sync-memops` / `--memcpy-batch` / `--memcpy-during` / `--memcpy-any` / `--memcpy-attr` / `--d2h-evict` / `--d2h-pageable` / `--memset-fill` / `--copy-host` / `--accessed-by` / `--legacy-null` / `--stream-priority` /
 `--seq-streams` / `--kv-sim` / `--kv-bytes` / `--decode-priority` /
-`--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--l2-fetch` / `--l2-ratio` / `--l2-streaming` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--cluster-load-balance` / `--cluster-must-set` / `--required-cluster` / `--max-shared` / `--func-max-shared` / `--max-l1` / `--non-portable-cluster` / `--sync-policy` / `--device-sync-policy` / `--event-blocking-sync` / `--mem-sync-domain` / `--mem-sync-map` / `--mem-sync-launch` / `--mem-sync-launch-map` / `--shared-mem` / `--func-shared-mem` / `--device-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--wait-value` / `--compute-slots` / `--decode-sms` / `--multicast` / `--shareable` / `--ipc` / `--share-ptr` / `--vmm-retain` / `--vmm-handle` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
-`expertvm sim` / `schedule` / `store` take `--compute-slots` / `--decode-sms`
-/ `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--l2-fetch` / `--l2-ratio` / `--l2-streaming` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--cluster-load-balance` / `--cluster-must-set` / `--required-cluster` / `--max-shared` / `--func-max-shared` / `--max-l1` / `--non-portable-cluster` / `--sync-policy` / `--device-sync-policy` / `--mem-sync-domain` / `--mem-sync-map` / `--mem-sync-launch` / `--mem-sync-launch-map` / `--shared-mem` / `--func-shared-mem` / `--device-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--wait-value` / `--multicast` / `--shareable` / `--ipc` / `--share-ptr` / `--vmm-retain` / `--vmm-handle` (Hyper-Q occupancy, green-context SM fraction,
+`--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--l2-fetch` / `--l2-ratio` / `--l2-streaming` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--cluster-load-balance` / `--cluster-must-set` / `--required-cluster` / `--max-shared` / `--func-max-shared` / `--max-l1` / `--non-portable-cluster` / `--sync-policy` / `--device-sync-policy` / `--event-blocking-sync` / `--mem-sync-domain` / `--mem-sync-map` / `--mem-sync-launch` / `--mem-sync-launch-map` / `--shared-mem` / `--func-shared-mem` / `--device-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--wait-value` / `--compute-slots` / `--decode-sms` / `--green-ctx` / `--multicast` / `--shareable` / `--ipc` / `--share-ptr` / `--vmm-retain` / `--vmm-handle` are `GpuStoreCfg` knobs on `gguf_gemv engine`.
+`expertvm sim` / `schedule` / `store` take `--compute-slots` / `--decode-sms` / `--green-ctx`
+/ `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--l2-fetch` / `--l2-ratio` / `--l2-streaming` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--cluster-load-balance` / `--cluster-must-set` / `--required-cluster` / `--max-shared` / `--func-max-shared` / `--max-l1` / `--non-portable-cluster` / `--sync-policy` / `--device-sync-policy` / `--mem-sync-domain` / `--mem-sync-map` / `--mem-sync-launch` / `--mem-sync-launch-map` / `--shared-mem` / `--func-shared-mem` / `--device-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--wait-value` / `--multicast` / `--shareable` / `--ipc` / `--share-ptr` / `--vmm-retain` / `--vmm-handle` (Hyper-Q occupancy, duration-only SM fraction, CUDA green-context occupancy partition,
 decode-stream ITL, exclusive cooperative GEMMs, same-stream PDL overlap, Hopper cluster occupancy / preferred dim / Spread scheduling / ClusterDimMustBeSet / RequiredClusterWidth / non-portable size, NVLS replica fanout, POSIX-FD mempool IPC, and cudaMalloc IPC on the trace walker). Walker `--decode-sms` does **not**
-imply `--decode-priority` (token 0 is prefill). Engine `--mem-sync-domain remote`
+imply `--decode-priority` (token 0 is prefill). Walker `--green-ctx` **does**. Engine `--mem-sync-domain remote`
 implies `--decode-priority`. `--decode-priority` implies
 `--stream-priority` so leftover prefill does not inflate decode ITL.
 `gguf_gemv engine --expert-sim --kv-sim` maps interned KV onto that Sim
@@ -438,8 +442,13 @@ H2D so compute wait is resident during DMA; decode identity stays events).
 `--cooperative` is
 `cudaLaunchCooperativeKernel`: those GEMMs occupy every Hyper-Q slot, so
 leftover prefill cannot overlap even with `--compute-slots 2`. `--decode-sms N` (`1..=1000`)
-is a green-context SM fraction on the decode stream (leftover prefill gets
-the remainder; implies `--decode-priority`). Default `--expert-sim` keeps
+is a duration-only SM fraction on the decode stream (leftover prefill gets
+the remainder; implies `--decode-priority` on Engine, not on the walker).
+`--green-ctx` binds complementary CUDA green contexts so leftover prefill
+may overlap decode even when occupancy is exclusive (implies
+`--decode-priority`; default 500/500; `--decode-sms 1000` refused). Distinct
+from `--decode-sms` alone (exclusive compute still serializes leftover
+prefill). Default `--expert-sim` keeps
 one compute stream, exclusive compute (`compute_slots=1`), a full chip of
 SMs, and a full-device clock sample.
 `gguf_gemv engine --expert-sim --seq-streams` is the real-KV analog of

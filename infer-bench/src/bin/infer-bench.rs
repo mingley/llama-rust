@@ -18,7 +18,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--l2-ratio N] [--l2-streaming] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-load-balance] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--no-read-mostly] [--no-preferred] [--no-mem-prefetch] [--wait-value] [--vmm-retain] [--vmm-handle] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--l2-ratio N] [--l2-streaming] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-load-balance] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--no-read-mostly] [--no-preferred] [--no-mem-prefetch] [--wait-value] [--vmm-retain] [--vmm-handle] [--multicast] [--compute-slots N] [--decode-sms N] [--green-ctx]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -129,6 +129,7 @@ fn run() -> Result<(), String> {
             let mut sim_cfg = SimCfg::lru(cfg.capacity, cfg.expert_bytes, 8);
             sim_cfg.compute_slots = cfg.compute_slots;
             sim_cfg.decode_sm_permille = cfg.decode_sm_permille;
+            sim_cfg.green_ctx = cfg.green_ctx;
             sim_cfg.decode_priority = cfg.decode_priority;
             sim_cfg.cooperative = cfg.cooperative;
             sim_cfg.pdl = cfg.pdl;
@@ -248,6 +249,7 @@ struct Cfg {
     place: String,
     compute_slots: u8,
     decode_sm_permille: u16,
+    green_ctx: bool,
     decode_priority: bool,
     cooperative: bool,
     pdl: bool,
@@ -323,6 +325,7 @@ where
     let mut place = String::from("none");
     let mut compute_slots = 0u8;
     let mut decode_sm_permille = 0u16;
+    let mut green_ctx = false;
     let mut decode_priority = false;
     let mut cooperative = false;
     let mut pdl = false;
@@ -582,6 +585,9 @@ where
                 }
                 decode_sm_permille = n;
             }
+            "--green-ctx" => {
+                green_ctx = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
             flag if flag.starts_with('-') => return Err(format!("unknown flag {flag}\n{USAGE}")),
             other => {
                 if path.is_some() {
@@ -593,6 +599,12 @@ where
     }
     if vmm_handle && vmm_retain {
         return Err("choose one of --vmm-handle, --vmm-retain".into());
+    }
+    if green_ctx {
+        decode_priority = true;
+    }
+    if green_ctx && decode_sm_permille == 1000 {
+        return Err("green-ctx decode-sms must leave leftover SMs".into());
     }
     if pdl && cooperative {
         return Err("choose one of --pdl, --cooperative".into());
@@ -652,6 +664,7 @@ where
         place,
         compute_slots,
         decode_sm_permille,
+        green_ctx,
         decode_priority,
         cooperative,
         pdl,

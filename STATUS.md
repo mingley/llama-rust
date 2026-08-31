@@ -5,6 +5,23 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA green contexts (`cuGreenCtxCreate`)
+
+`gpu-sim` `device_get_dev_resource` / `dev_sm_resource_split_by_count` /
+`dev_resource_generate_desc` / `green_ctx_create` / `green_ctx_stream_create` /
+`green_ctx_set_stream` / `stream_get_green_ctx` are CUDA green contexts.
+SM resources are ‰ of the chip, not occupancy SM counts.
+`set_stream_sm_permille` stays duration-only (does not partition Hyper-Q).
+Complementary spans may overlap kernels even when `compute_slots` is 1;
+same-span contexts still share exclusive compute. Capture cannot include
+create / desc / bind / destroy. Flags 0 only.
+`expertvm sim` / `schedule` / `store` / Engine / serve `--green-ctx` binds
+decode vs leftover prefill (implies `--decode-priority`; default 500/500;
+`--decode-sms 1000` refused). Distinct from `--decode-sms` (duration scale,
+exclusive occupancy still serializes leftover prefill). Off by default
+keeps full-chip exclusive compute (decode identity).
+`gpu-profile capture` is still refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-31 — official gemma4 per-expert `ffn_down_exps.scale`
 
 `general.architecture=gemma4` with `blk.{i}.ffn_down_exps.scale` (same arch

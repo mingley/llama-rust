@@ -25,8 +25,23 @@
 //! `cudaDevAttrCooperativeLaunch` (example H100 is true).
 //! [`KernelNodeAttr::Cooperative`] is `cudaLaunchAttributeCooperative` on graph
 //! kernel nodes (Get/Set/CopyAttributes).
-//! [`Sim::set_stream_sm_permille`] is a green-context SM fraction (compute-bound
+//! [`Sim::set_stream_sm_permille`] is a duration-only SM fraction (compute-bound
 //! kernels scale; memory-bound keep full HBM). Default unset is a full chip.
+//! It does not partition Hyper-Q occupancy. [`Sim::device_get_dev_resource`] /
+//! [`dev_sm_resource_split_by_count`](Sim::dev_sm_resource_split_by_count) /
+//! [`dev_resource_generate_desc`](Sim::dev_resource_generate_desc) /
+//! [`green_ctx_create`](Sim::green_ctx_create) /
+//! [`green_ctx_stream_create`](Sim::green_ctx_stream_create) /
+//! [`green_ctx_set_stream`](Sim::green_ctx_set_stream) are CUDA green contexts
+//! (`cuDeviceGetDevResource` / `cuDevSmResourceSplitByCount` /
+//! `cuDevResourceGenerateDesc` / `cuGreenCtxCreate` / `cuGreenCtxStreamCreate`).
+//! SM resources are ‰ of the chip, not occupancy SM counts. Complementary
+//! green contexts may overlap kernels even when [`GpuProfile::compute_slots`]
+//! is 1. Same-span contexts still share exclusive compute. Capture cannot
+//! include create / split-flags / bind. `expertvm sim --green-ctx` /
+//! `gguf_gemv engine --expert-sim --green-ctx` binds decode vs leftover
+//! prefill to complementary contexts (implies `--decode-priority`; identity
+//! stays full-chip exclusive).
 //! [`Sim::synchronize_device`] is `cudaDeviceSynchronize` (one GPU).
 //! [`Sim::synchronize_event`] is `cudaEventSynchronize`.
 //! [`Sim::alloc`] / [`memcpy`](Sim::memcpy) / [`free`](Sim::free) are
@@ -963,30 +978,32 @@ mod sim;
 
 pub use error::SimError;
 pub use ids::{
-    AllocId, CondId, DeviceId, EventId, GraphId, IpcEventHandleId, IpcHandleId, LinkId,
-    MemHandleId, MulticastId, OpId, PoolId, PtrExportId, ShareableHandleId, StreamId, UserObjectId,
+    AllocId, CondId, DevResourceDescId, DeviceId, EventId, GraphId, GreenCtxId, IpcEventHandleId,
+    IpcHandleId, LinkId, MemHandleId, MulticastId, OpId, PoolId, PtrExportId, ShareableHandleId,
+    StreamId, UserObjectId,
 };
 pub use ops::{
     parse_nvlink_util_centric, AccessPolicyWindow, AccessProperty, BatchMemOp, BatchMemOpFlags,
-    CaptureDepOp, ClusterDim, ClusterSchedulingPolicy, ComputeMode, DType, DeviceAttr, DeviceFlags,
-    DeviceLimit, DeviceNumaConfig, DeviceP2pAttr, DeviceProperties, EventCreateFlags,
-    EventRecordFlags, EventWaitFlags, FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget,
+    CaptureDepOp, ClusterDim, ClusterSchedulingPolicy, ComputeMode, DType, DevResource,
+    DevResourceType, DevSmResourceSplitFlags, DeviceAttr, DeviceFlags, DeviceLimit,
+    DeviceNumaConfig, DeviceP2pAttr, DeviceProperties, EventCreateFlags, EventRecordFlags,
+    EventWaitFlags, FlushGpuDirectRdmaScope, FlushGpuDirectRdmaTarget,
     FlushGpuDirectRdmaWritesOptions, FuncAttr, FuncAttributes, GpuOp, GraphAddNode,
     GraphDebugDotFlags, GraphExecUpdateResult, GraphExecUpdateResultInfo, GraphInstantiateFlags,
     GraphInstantiateParams, GraphInstantiateResult, GraphMemAttr, GraphNodeKind, GraphNodeParams,
-    GraphUserObjectFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams, IpcMemFlags,
-    KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue, KernelNodeParams,
-    LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise, MemAllocationGranularity,
-    MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags, MemCreateFlags, MemHandleType,
-    MemLocationType, MemMapFlags, MemPoolAttr, MemPoolExportFlags, MemPoolProps, MemRangeAttr,
-    MemRangeAttrValue, MemReserveFlags, MemSyncDomain, MemSyncDomainMap, MemcpyAttributes,
-    MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType, MemsetOp, MulticastBindFlags,
-    MulticastCreateFlags, MulticastGranularity, MulticastObjectProp, Operation, PdlLaunch,
-    PeerAccessFlags, Place, PointerAttr, PointerAttributes, PortableClusterMode,
-    PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch, SharedMemCarveout,
-    SharedMemoryMode, StreamAttr, StreamAttrValue, StreamCaptureInfo, StreamCaptureMode,
-    StreamCreateFlags, SynchronizationPolicy, UserObjectFlags, WaitValueCmp, WaitValueFlags,
-    WriteValueFlags,
+    GraphUserObjectFlags, GreenCtxFlags, HostAllocFlags, HostGetDevicePointerFlags, HostNodeParams,
+    IpcMemFlags, KernelAttrs, KernelBuf, KernelKind, KernelNodeAttr, KernelNodeAttrValue,
+    KernelNodeParams, LaunchCompletionEvent, MemAccessDesc, MemAccessFlags, MemAdvise,
+    MemAllocationGranularity, MemAllocationProp, MemAllocationType, MemAttach, MemAttachFlags,
+    MemCreateFlags, MemHandleType, MemLocationType, MemMapFlags, MemPoolAttr, MemPoolExportFlags,
+    MemPoolProps, MemRangeAttr, MemRangeAttrValue, MemReserveFlags, MemSyncDomain,
+    MemSyncDomainMap, MemcpyAttributes, MemcpyFlags, MemcpyOp, MemcpySrcAccessOrder, MemoryType,
+    MemsetOp, MulticastBindFlags, MulticastCreateFlags, MulticastGranularity, MulticastObjectProp,
+    Operation, PdlLaunch, PeerAccessFlags, Place, PointerAttr, PointerAttributes,
+    PortableClusterMode, PortableSharedMode, PrefetchFlags, ProgrammaticEvent, ProgrammaticLaunch,
+    SharedMemCarveout, SharedMemoryMode, SmResource, StreamAttr, StreamAttrValue,
+    StreamCaptureInfo, StreamCaptureMode, StreamCreateFlags, SynchronizationPolicy,
+    UserObjectFlags, WaitValueCmp, WaitValueFlags, WriteValueFlags,
 };
 pub use probe::{probe_topology, P2pProbe, TopologyProbe};
 pub use profile::{
@@ -9254,6 +9271,151 @@ mod tests {
         assert_eq!(
             mem_quarter, mem_full,
             "250‰ SMs must keep full HBM for a memory-bound kernel; quarter={mem_quarter} full={mem_full}"
+        );
+    }
+
+    #[test]
+    fn green_ctx_split_and_bind() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        match sim.device_get_dev_resource(d, DevResourceType::Sm).unwrap() {
+            DevResource::Sm(sm) => {
+                assert_eq!(sm, SmResource::FULL);
+                let (groups, rem) = sim
+                    .dev_sm_resource_split_by_count(sm, 2, 1, DevSmResourceSplitFlags::DEFAULT)
+                    .unwrap();
+                assert_eq!(groups.len(), 2);
+                assert_eq!(groups[0].width, 500);
+                assert_eq!(groups[1].start, 500);
+                assert_eq!(rem.width, 0);
+            }
+        }
+        let err = sim
+            .dev_sm_resource_split_by_count(SmResource::FULL, 2, 1, 1)
+            .unwrap_err();
+        assert!(format!("{err:?}").contains("sm split flags"), "{err:?}");
+        let (thirds, rem) = SmResource::FULL.split_by_count(3, 1).unwrap();
+        assert_eq!(thirds.len(), 3);
+        assert_eq!(thirds[0].width, 333);
+        assert_eq!(rem.width, 1);
+        let desc = sim
+            .dev_resource_generate_desc(&[SmResource {
+                start: 0,
+                width: 500,
+            }])
+            .unwrap();
+        let ctx = sim
+            .green_ctx_create(desc, d, GreenCtxFlags::DEFAULT)
+            .unwrap();
+        match sim
+            .green_ctx_get_dev_resource(ctx, DevResourceType::Sm)
+            .unwrap()
+        {
+            DevResource::Sm(sm) => assert_eq!(sm.width, 500),
+        }
+        sim.green_ctx_stream_create(ctx, StreamId(1), StreamCreateFlags::NON_BLOCKING, 0)
+            .unwrap();
+        assert_eq!(sim.stream_get_green_ctx(d, StreamId(1)).unwrap(), Some(ctx));
+        assert_eq!(sim.stream_sm_permille(d, StreamId(1)), 500);
+        let err = sim.set_stream_sm_permille(d, StreamId(1), 250).unwrap_err();
+        assert!(format!("{err:?}").contains("green ctx stream"), "{err:?}");
+        let err = sim.green_ctx_destroy(ctx).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("green ctx has streams"),
+            "{err:?}"
+        );
+        let err = sim
+            .green_ctx_stream_create(ctx, StreamId::NULL, StreamCreateFlags::NON_BLOCKING, 0)
+            .unwrap_err();
+        assert!(format!("{err:?}").contains("green ctx stream"), "{err:?}");
+        sim.begin_capture(d, StreamId(2)).unwrap();
+        let err = sim
+            .green_ctx_create(desc, d, GreenCtxFlags::DEFAULT)
+            .unwrap_err();
+        assert!(
+            format!("{err:?}").contains("cannot capture green ctx create"),
+            "{err:?}"
+        );
+        let _g = sim.end_capture().unwrap();
+        let gap = sim.dev_resource_generate_desc(&[
+            SmResource {
+                start: 0,
+                width: 250,
+            },
+            SmResource {
+                start: 500,
+                width: 250,
+            },
+        ]);
+        match gap {
+            Err(SimError::Invalid { why }) => assert!(why.contains("gap"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn green_ctx_disjoint_kernels_overlap_exclusive_compute() {
+        let d = DeviceId(0);
+        let kind = KernelKind::other(1 << 40, 8);
+        let run = |partition: bool| {
+            let mut sim = Sim::new(h100());
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            if partition {
+                let full = match sim.device_get_dev_resource(d, DevResourceType::Sm).unwrap() {
+                    DevResource::Sm(sm) => sm,
+                };
+                let (groups, _) = sim.dev_sm_resource_split_by_count(full, 2, 1, 0).unwrap();
+                let g0 = groups[0];
+                let g1 = groups[1];
+                let d0 = sim.dev_resource_generate_desc(&[g0]).unwrap();
+                let d1 = sim.dev_resource_generate_desc(&[g1]).unwrap();
+                let c0 = sim.green_ctx_create(d0, d, 0).unwrap();
+                let c1 = sim.green_ctx_create(d1, d, 0).unwrap();
+                sim.green_ctx_stream_create(c0, StreamId(1), StreamCreateFlags::NON_BLOCKING, 0)
+                    .unwrap();
+                sim.green_ctx_stream_create(c1, StreamId(2), StreamCreateFlags::NON_BLOCKING, 0)
+                    .unwrap();
+            }
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+            enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(2)));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        let serial = run(false);
+        let overlap = run(true);
+        assert!(
+            overlap < serial,
+            "disjoint green ctxs must overlap under exclusive compute; overlap={overlap} serial={serial}"
+        );
+        let same_span = {
+            let mut sim = Sim::new(h100());
+            let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+            enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+            sim.synchronize().unwrap();
+            let desc = sim
+                .dev_resource_generate_desc(&[SmResource {
+                    start: 0,
+                    width: 500,
+                }])
+                .unwrap();
+            let c0 = sim.green_ctx_create(desc, d, 0).unwrap();
+            let c1 = sim.green_ctx_create(desc, d, 0).unwrap();
+            sim.green_ctx_stream_create(c0, StreamId(1), StreamCreateFlags::NON_BLOCKING, 0)
+                .unwrap();
+            sim.green_ctx_stream_create(c1, StreamId(2), StreamCreateFlags::NON_BLOCKING, 0)
+                .unwrap();
+            let t0 = sim.clock_ns();
+            enq(sim.kernel(d, kind.clone(), &[a], &[a], StreamId(1)));
+            enq(sim.kernel(d, kind, &[a], &[a], StreamId(2)));
+            sim.synchronize().unwrap();
+            sim.clock_ns().saturating_sub(t0)
+        };
+        assert!(
+            same_span > overlap,
+            "same-span green ctxs must share exclusive compute; same={same_span} overlap={overlap}"
         );
     }
 

@@ -165,3 +165,30 @@ impl fmt::Display for CondId {
         write!(f, "cond{}", self.0)
     }
 }
+
+/// `CUdevResourceDesc` from [`crate::Sim::dev_resource_generate_desc`].
+///
+/// [`crate::Sim::green_ctx_create`] consumes a copy of the SM span; the desc
+/// stays. `DevResourceDescId(0)` is reserved (unset).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct DevResourceDescId(pub u32);
+
+impl fmt::Display for DevResourceDescId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "desc{}", self.0)
+    }
+}
+
+/// `CUgreenCtx` / `cudaGreenCtx_t` from [`crate::Sim::green_ctx_create`].
+///
+/// Streams bound with [`crate::Sim::green_ctx_stream_create`] /
+/// [`crate::Sim::green_ctx_set_stream`] inherit that SM span (duration and
+/// occupancy). `GreenCtxId(0)` is reserved (unset).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct GreenCtxId(pub u32);
+
+impl fmt::Display for GreenCtxId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "green{}", self.0)
+    }
+}

@@ -1701,6 +1701,11 @@ pub struct SimCfg {
     /// prefill gets the remainder. Walker `--decode-sms` does not imply
     /// decode-priority (token 0 is prefill).
     pub decode_sm_permille: u16,
+    /// Complementary CUDA green contexts for decode vs leftover prefill.
+    ///
+    /// Needs [`Self::decode_priority`]. Distinct from [`Self::decode_sm_permille`]
+    /// (duration scale without occupancy partition). Default off.
+    pub green_ctx: bool,
     /// Decode GEMMs on a second compute stream (`StreamId(n_copy + 1)`).
     ///
     /// Token 0 stays on the prefill stream. Token-boundary ITL samples the
@@ -1818,6 +1823,7 @@ impl SimCfg {
             multicast: false,
             compute_slots: 0,
             decode_sm_permille: 0,
+            green_ctx: false,
             decode_priority: false,
             memcpy_batch: false,
             memcpy_during: false,
@@ -1843,6 +1849,7 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     check_max_l1(cfg.max_l1, cfg.func_max_shared, cfg.max_shared)?;
     check_l2_fetch(cfg.l2_fetch)?;
     check_l2_ratio(cfg.l2_ratio)?;
+    check_green_ctx(cfg.green_ctx, cfg.decode_priority, cfg.decode_sm_permille)?;
     if cfg.l2_streaming && !persist_armed(cfg.l2_persist, cfg.l2_reset, cfg.l2_fetch, cfg.l2_ratio)
     {
         return Err(Error::Store("l2-streaming needs l2-persist"));
@@ -2115,6 +2122,9 @@ pub fn sim_replay_cfg(
         sim.set_created_streams_priority(plan.mark)?;
     }
     apply_stream_sms(&mut sim, plan, cfg.decode_sm_permille)?;
+    if cfg.green_ctx {
+        apply_green_ctx(&mut sim, plan, cfg.decode_sm_permille)?;
+    }
     apply_stream_sync_policy(&mut sim, plan, cfg.sync_policy)?;
     apply_stream_mem_sync_domain(&mut sim, plan, cfg.mem_sync_domain)?;
     apply_stream_mem_sync_map(&mut sim, plan, cfg.mem_sync_collapse)?;
@@ -4656,6 +4666,61 @@ pub(crate) fn apply_stream_sms(
         for s in 0..plan.n_copy.max(1) {
             sim.set_stream_sm_permille(DeviceId(g), StreamId(u16::from(s)), permille)?;
         }
+    }
+    Ok(())
+}
+
+pub(crate) fn check_green_ctx(
+    green_ctx: bool,
+    decode_priority: bool,
+    decode_sms: u16,
+) -> Result<(), Error> {
+    if !green_ctx {
+        return Ok(());
+    }
+    if !decode_priority {
+        return Err(Error::Store("green-ctx needs decode-priority"));
+    }
+    if decode_sms == 1000 {
+        return Err(Error::Store("green-ctx decode-sms must leave leftover SMs"));
+    }
+    Ok(())
+}
+
+pub(crate) fn apply_green_ctx(
+    sim: &mut Sim,
+    plan: StreamPlan,
+    decode_sms: u16,
+) -> Result<(), Error> {
+    if plan.prefill == plan.decode {
+        return Err(Error::Store("green-ctx needs decode-priority"));
+    }
+    let dec = if decode_sms == 0 {
+        500
+    } else {
+        decode_sms.min(999)
+    };
+    let pre = 1000u16.saturating_sub(dec);
+    if dec == 0 || pre == 0 {
+        return Err(Error::Store("green-ctx decode-sms must leave leftover SMs"));
+    }
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        let d = DeviceId(g);
+        let decode_sm = gpu_sim::SmResource {
+            start: 0,
+            width: dec,
+        };
+        let prefill_sm = gpu_sim::SmResource {
+            start: dec,
+            width: pre,
+        };
+        let ddesc = sim.dev_resource_generate_desc(std::slice::from_ref(&decode_sm))?;
+        let pdesc = sim.dev_resource_generate_desc(std::slice::from_ref(&prefill_sm))?;
+        let dctx = sim.green_ctx_create(ddesc, d, gpu_sim::GreenCtxFlags::DEFAULT)?;
+        let pctx = sim.green_ctx_create(pdesc, d, gpu_sim::GreenCtxFlags::DEFAULT)?;
+        sim.green_ctx_set_stream(dctx, plan.decode)?;
+        sim.green_ctx_set_stream(pctx, plan.prefill)?;
     }
     Ok(())
 }

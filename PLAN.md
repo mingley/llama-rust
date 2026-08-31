@@ -4414,12 +4414,36 @@ model, do not celebrate the sim.
     the tensor. Decode identity vs oracle. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-394. [ ] Next numbered PLAN item after 393 is the next `gpu-sim` / Engine /
+394. [x] CUDA green contexts (`cuDeviceGetDevResource` /
+    `cuDevSmResourceSplitByCount` / `cuDevResourceGenerateDesc` /
+    `cuGreenCtxCreate` / `cuGreenCtxStreamCreate` / `cuGreenCtxSetStream` /
+    `cuStreamGetGreenCtx`): SM resources are ‰ of the chip, not occupancy
+    SM counts. `set_stream_sm_permille` stays duration-only (compute-bound
+    kernels scale; memory-bound keep full HBM; does not partition Hyper-Q).
+    Complementary green contexts may overlap kernels even when
+    `compute_slots` is 1. Same-span contexts still share exclusive compute.
+    Capture cannot include create / desc / bind / destroy. Flags 0 only
+    (no `CU_GREEN_CTX_DEFAULT_STREAM`, no split coscheduling bits).
+    `expertvm sim` / `schedule` / `store` / Engine `--green-ctx` binds decode
+    vs leftover prefill (implies `--decode-priority`; default 500/500;
+    `--decode-sms N` with leftover SMs; `--decode-sms 1000` refused). Distinct
+    from `--decode-sms` alone (duration scale, exclusive occupancy still
+    serializes leftover prefill). Off by default keeps full-chip exclusive
+    compute (decode identity). `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+395. [ ] Next numbered PLAN item after 394 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
-    OpenAI HTTP veneer. Do not invent
+    OpenAI HTTP veneer. Do not invent a second `--decode-sms` flag.
+    Do not invent `CU_GREEN_CTX_DEFAULT_STREAM` as a second NULL stream.
+    Do not invent split `IGNORE_SM_COSCHEDULING` / max-cluster bits.
+    Do not invent `cuCtxFromGreenCtx` (no `CUcontext` object).
+    Do not invent `cuGreenCtxRecordEvent` / `WaitEvent` this item.
+    Do not invent occupancy SM counts (`cudaDevAttrMultiProcessorCount`,
+    occupancy APIs). Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
-    `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
+    `cudaDeviceGetStreamPriorityRange`, CUDA version
     numbers, example `$/M tokens` rents, or `cudaStreamDestroy`.
     **`best_of` / `use_beam_search` stay out of `parse_gen_req` until a
     real beam Engine exists.** Do not default `--engine`. Do not invent
