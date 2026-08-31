@@ -560,6 +560,11 @@ is `cudaIpcGetMemHandle` / `OpenMemHandle` of each miss `cudaMalloc` (implies
 `--sync-alloc`; alias shares source HBM; close before free; not with
 `--shareable` / mapped / managed / vmm; identity GEMMs on the `cudaMalloc`
 pointer).
+`expertvm sim --share-ptr` / `gguf_gemv engine --expert-sim --share-ptr`
+is `cudaMemPoolExportPointer` / `ImportPointer` of each miss `cudaMallocAsync`
+(implies `--shareable`; alias shares source HBM; `cudaFreeAsync` import
+before source; not with `--ipc` / mapped / managed / vmm / `--sync-alloc`;
+identity is pool-level `--shareable`).
 `expertvm sim --memset-fill` / `gguf_gemv engine --expert-sim --memset-fill`
 is `cudaMemsetAsync` of pinned/VMM miss pages (HBM write, compute occupancy;
 not mapped/managed/pageable/memcpy-batch; distinct from `--graph-memset`
@@ -767,7 +772,9 @@ live/cached/threshold with the exporter. `pool_export_with_type` /
 `pool_import_with_type` take POSIX-FD and flags 0 (`MemPoolExportFlags`).
 Typed helpers stay. `pool_export_ptr` /
 `pool_import_ptr` are `cudaMemPoolExportPointer` / `ImportPointer` (alias,
-no extra HBM). `set_device_mempool` is `cudaDeviceSetMemPool`. `default_pool` is
+no extra HBM). `expertvm sim --share-ptr` / `gguf_gemv engine --expert-sim --share-ptr`
+export each miss `cudaMallocAsync` then import an alias (implies `--shareable`;
+GEMM stays on the source pointer; `cudaFreeAsync` import before source). `set_device_mempool` is `cudaDeviceSetMemPool`. `default_pool` is
 `cudaDeviceGetDefaultMemPool` (seeded; SetMemPool does not replace it).
 `device_mempool` is `cudaDeviceGetMemPool` (`alloc` draws from it). Default and
 `create_pool` pools cannot be exported. Capture cannot include shareable

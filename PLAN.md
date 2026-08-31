@@ -4172,7 +4172,26 @@ model, do not celebrate the sim.
     handshake. Store and walker (not walker-only). `gpu-profile capture`
     is still refused. Dual score still has no `$/M tokens`.
 
-378. [ ] Next numbered PLAN item after 377 is the next `gpu-sim` / Engine /
+378. [x] `cudaMemPoolExportPointer` / `cudaMemPoolImportPointer` of each miss
+    `cudaMallocAsync` (`--share-ptr`): [`GpuStoreCfg::share_ptr`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::share_ptr`](expertvm/src/sim_replay.rs) call
+    [`gpu_sim::Sim::pool_export_ptr`](gpu-sim/src/sim.rs) then
+    [`pool_import_ptr`](gpu-sim/src/sim.rs) after each pinned miss fill so
+    the page holds a live alias (no extra HBM) and `cudaFreeAsync` of the
+    import before the source (`alloc_overhead_ns` on first export and every
+    import). Hits stay the same. Distinct from `--shareable` (POSIX-FD
+    pool-level IPC) and `--ipc` (`cudaIpcGetMemHandle` of `cudaMalloc`).
+    Implies `--shareable` (which implies `--mempool`). Illegal with `--ipc`
+    / `--mapped` / `--managed` / `--vmm` / `--sync-alloc`. Legal with
+    `--pdl`, `--cooperative`, `--pageable`, `--memcpy-batch`, and
+    `--wait-value`. `--share-ptr` on `expertvm sim` / `schedule` / `store`
+    and `gguf_gemv engine --expert-sim`. infer-bench has no shareable pool
+    expert fill of this form, so it does not get `--share-ptr`. Decode
+    identity is `--shareable` without a per-page pointer handshake. Store
+    and walker (not walker-only). `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+379. [ ] Next numbered PLAN item after 378 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
@@ -4231,7 +4250,9 @@ model, do not celebrate the sim.
     (re-register plus `synchronize` tax vs keep-registered is the wall vs
     `--host-register`). Do not invent a second `--ipc` /
     `cudaIpcGetMemHandle` (handshake tax vs no-handshake is the wall vs
-    default `cudaMalloc`). Do not invent
+    default `cudaMalloc`). Do not invent a second `--share-ptr` /
+    `cudaMemPoolExportPointer` (per-page pointer handshake vs pool-level
+    `--shareable` is the wall). Do not invent
     `--memcpy-peer` host-sync pin_hot (alias of D2D; wall matches after
     `score()`). Do not invent `graph_add_empty` as a decode-path flag
     (1 ns join/fork). Do not invent a second `cudaGraphAddMemsetNode` of

@@ -85,6 +85,8 @@ pub(crate) struct GpuCli {
     pub shareable: bool,
     /// `cudaIpcGetMemHandle` / `OpenMemHandle` (`GpuStoreCfg::ipc`). Implies sync-alloc.
     pub ipc: bool,
+    /// `cudaMemPoolExportPointer` / `ImportPointer` (`GpuStoreCfg::share_ptr`). Implies shareable.
+    pub share_ptr: bool,
     pub pageable: bool,
     /// `cudaHostRegister` (`GpuStoreCfg::host_register`). Implies pageable.
     pub host_register: bool,
@@ -294,6 +296,7 @@ impl GpuCli {
             "--mempool-no-reuse" => &mut self.mempool_no_reuse,
             "--shareable" => &mut self.shareable,
             "--ipc" => &mut self.ipc,
+            "--share-ptr" => &mut self.share_ptr,
             "--pageable" => &mut self.pageable,
             "--host-register" => &mut self.host_register,
             "--host-unregister" => &mut self.host_unregister,
@@ -384,8 +387,12 @@ impl GpuCli {
         }
     }
 
-    /// `--shareable` / `--mempool-trim` / `--mempool-no-reuse` / `--mempool-max` imply [`Self::mempool`]. Call after sim-flag checks.
+    /// `--share-ptr` implies [`Self::shareable`]. `--shareable` / `--mempool-trim` /
+    /// `--mempool-no-reuse` / `--mempool-max` imply [`Self::mempool`]. Call after sim-flag checks.
     pub(crate) fn imply_shareable(&mut self) {
+        if self.share_ptr {
+            self.shareable = true;
+        }
         if self.shareable || self.mempool_trim || self.mempool_no_reuse || self.mempool_max != 0 {
             self.mempool = true;
         }
@@ -729,7 +736,7 @@ impl GpuCli {
         if !self.ipc {
             return Ok(());
         }
-        if self.shareable {
+        if self.shareable || self.share_ptr {
             return Err("choose one of --ipc, --shareable".into());
         }
         if self.mapped
@@ -956,6 +963,7 @@ impl GpuCli {
             (self.mempool_max != 0, "--mempool-max"),
             (self.shareable, "--shareable"),
             (self.ipc, "--ipc"),
+            (self.share_ptr, "--share-ptr"),
             (self.pageable, "--pageable"),
             (self.host_register, "--host-register"),
             (self.host_unregister, "--host-unregister"),
@@ -1324,6 +1332,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         mempool_max: gpu.mempool_max,
         shareable: gpu.shareable,
         ipc: gpu.ipc,
+        share_ptr: gpu.share_ptr,
         vmm_page: gpu.vmm_page,
         pageable: gpu.pageable,
         host_register: gpu.host_register,

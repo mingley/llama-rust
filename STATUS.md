@@ -5,6 +5,21 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaMemPoolExportPointer` of each miss `cudaMallocAsync`
+
+`GpuStoreCfg::share_ptr` / `SimCfg::share_ptr` call `cudaMemPoolExportPointer`
+then `cudaMemPoolImportPointer` after each pinned miss fill so the page
+holds a live alias (no extra HBM) and `cudaFreeAsync` of the import before
+the source (`alloc_overhead_ns` on first export and every import).
+Hits/misses stay the same. Distinct from `--shareable` (POSIX-FD pool-level
+IPC) and `--ipc` (`cudaIpcGetMemHandle` of `cudaMalloc`). Implies
+`--shareable` (which implies `--mempool`). Illegal with `--ipc` /
+`--mapped` / `--managed` / `--vmm` / `--sync-alloc`. `--share-ptr` is off
+by default (decode identity: pool-level `--shareable` without a per-page
+pointer handshake). Store and walker (not walker-only). infer-bench has no
+shareable pool expert fill of this form, so it does not get `--share-ptr`.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaIpcGetMemHandle` of each miss `cudaMalloc`
 
 `GpuStoreCfg::ipc` / `SimCfg::ipc` call `cudaIpcGetMemHandle` then

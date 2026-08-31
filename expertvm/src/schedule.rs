@@ -19,7 +19,7 @@ use crate::sim_replay::{
     GraphBank, LeafMem, PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay,
     StreamPlan, TouchArgs,
 };
-use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
+use gpu_sim::{DeviceId, HardwareProfile, PoolId, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::Write;
 
@@ -279,6 +279,7 @@ struct SchedRt {
     walkers: BTreeMap<DeviceId, Walker>,
     prefixes: BTreeSet<u64>,
     prefix_hits: u64,
+    share_imports: BTreeMap<DeviceId, PoolId>,
 }
 
 impl SchedRt {
@@ -299,12 +300,14 @@ impl SchedRt {
         apply_l2_fetch(&mut sim, cfg.l2_fetch)?;
         apply_func_shared_mem(&mut sim, cfg.func_shared_mem)?;
         apply_device_shared_mem(&mut sim, cfg.device_shared_mem)?;
-        if cfg.shareable || cfg.mempool_max > 0 {
-            let _imported = bind_device_mempools(&mut sim, cfg.shareable, cfg.mempool_max)?;
-        }
+        let share_imports = if cfg.shareable || cfg.share_ptr || cfg.mempool_max > 0 {
+            bind_device_mempools(&mut sim, cfg.shareable || cfg.share_ptr, cfg.mempool_max)?
+        } else {
+            BTreeMap::new()
+        };
         if mempool_hold(
             cfg.mempool,
-            cfg.shareable,
+            cfg.shareable || cfg.share_ptr,
             cfg.mempool_trim,
             cfg.mempool_no_reuse,
             cfg.mempool_max,
@@ -379,6 +382,8 @@ impl SchedRt {
                 d2h_evict: cfg.d2h_evict,
                 d2h_pageable: cfg.d2h_pageable,
                 ipc: cfg.ipc,
+                share_ptr: cfg.share_ptr,
+                share_pool: share_imports.get(&DeviceId(0)).copied(),
             },
             sim,
             handles: BTreeMap::new(),
@@ -444,6 +449,7 @@ impl SchedRt {
             next_event,
             prefixes: BTreeSet::new(),
             prefix_hits: 0,
+            share_imports,
         })
     }
 
@@ -457,12 +463,14 @@ impl SchedRt {
     fn args_for(&self, key: ExpertKey) -> TouchArgs {
         let mut a = self.args;
         a.d = self.home(key);
+        a.share_pool = self.share_imports.get(&a.d).copied();
         a
     }
 
     fn args_on(&self, device: DeviceId) -> TouchArgs {
         let mut a = self.args;
         a.d = device;
+        a.share_pool = self.share_imports.get(&device).copied();
         a
     }
 
@@ -653,6 +661,8 @@ impl SchedRt {
                             stream_attach: self.cfg.stream_attach,
                             managed_host: self.cfg.managed_host,
                             ipc: self.cfg.ipc,
+                            share_ptr: self.cfg.share_ptr,
+                            share_pool: self.share_imports.get(&home).copied(),
                         },
                         reuse,
                         fan_in,
@@ -734,6 +744,8 @@ impl SchedRt {
                             stream_attach: self.cfg.stream_attach,
                             managed_host: self.cfg.managed_host,
                             ipc: self.cfg.ipc,
+                            share_ptr: self.cfg.share_ptr,
+                            share_pool: self.share_imports.get(&home).copied(),
                         },
                         reuse,
                         fan_in,

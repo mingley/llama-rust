@@ -19,14 +19,14 @@ use crate::sim_replay::{
     check_cluster_must_set, check_cluster_preferred, check_d2h_evict, check_d2h_pageable,
     check_device_graph_flags, check_host_unregister, check_ipc, check_l2_fetch, check_l2_ratio,
     check_max_l1, check_mem_sync_collapse, check_mem_sync_launch, check_mem_sync_launch_map,
-    check_memcpy_attr, check_memset_fill, check_required_cluster, close_ipc_alias,
-    collapse_mem_sync_map, d2h_evict_page, d2h_pageable_page, drop_managed_replica,
-    ensure_single_attach, free_copy_mailbox, free_mapped_host, hbm_h2d_attr, host_after_copy,
-    instantiate_exec, kernel_leaf, mark_sync_memops, memcpy_batch_attr, mempool_hold,
-    open_ipc_alias, persist_armed, pin_staging_for_fill, replay_exec, replay_streams,
-    reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
-    unpin_staging_after_fill, upload_after_set_params, wait_copy_ready, wait_memcpy_during_allocs,
-    GemmFlags, LeafMem, LeafWork, StreamPlan,
+    check_memcpy_attr, check_memset_fill, check_required_cluster, check_share_ptr, close_ipc_alias,
+    close_share_alias, collapse_mem_sync_map, d2h_evict_page, d2h_pageable_page,
+    drop_managed_replica, ensure_single_attach, free_copy_mailbox, free_mapped_host, hbm_h2d_attr,
+    host_after_copy, instantiate_exec, kernel_leaf, mark_sync_memops, memcpy_batch_attr,
+    mempool_hold, open_ipc_alias, open_share_alias, persist_armed, pin_staging_for_fill,
+    replay_exec, replay_streams, reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready,
+    stream_of, unpin_staging_after_fill, upload_after_set_params, wait_copy_ready,
+    wait_memcpy_during_allocs, GemmFlags, LeafMem, LeafWork, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -143,6 +143,13 @@ pub struct GpuStoreCfg {
     /// [`Self::shareable`]. Decode identity GEMMs on the `cudaMalloc` pointer
     /// with no IPC handshake.
     pub ipc: bool,
+    /// `cudaMemPoolExportPointer` / `ImportPointer` of each miss `cudaMallocAsync`.
+    ///
+    /// Alias shares source physicals (no extra HBM). `cudaFreeAsync` the import
+    /// before the source. Implies [`Self::shareable`]. Illegal with
+    /// [`Self::ipc`]. Decode identity is pool-level [`Self::shareable`] without
+    /// a per-page pointer handshake.
+    pub share_ptr: bool,
     /// Physical span for [`GpuFill::Vmm`]. `0` maps the whole expert (`va_acquire`).
     pub vmm_page: u64,
     /// Pageable `cudaMemcpyAsync` (`memcpy_host_to_device`) instead of pinned DMA.
@@ -759,6 +766,8 @@ struct GpuPage {
     ready_gen: Option<u64>,
     /// [`GpuStoreCfg::ipc`]: live `cudaIpcOpenMemHandle` alias of `id`.
     ipc: Option<AllocId>,
+    /// [`GpuStoreCfg::share_ptr`]: live `cudaMemPoolImportPointer` alias of `id`.
+    share: Option<AllocId>,
 }
 
 /// Bounded cache whose misses pay pinned H2D, mapped host, managed prefetch, or VMM.
@@ -844,6 +853,8 @@ pub struct SimulatedGpuStore {
     sync_alloc: bool,
     /// [`GpuStoreCfg::ipc`]: `cudaIpcGetMemHandle` / `OpenMemHandle` after miss fill.
     ipc: bool,
+    /// [`GpuStoreCfg::share_ptr`]: `cudaMemPoolExportPointer` / `ImportPointer` after miss fill.
+    share_ptr: bool,
     /// [`GpuStoreCfg::vmm_page`]: KV-sized physicals when [`GpuFill::Vmm`].
     vmm_page: u64,
     /// Pageable H2D (`memcpy_host_to_device`) instead of pinned DMA.
@@ -887,8 +898,8 @@ pub struct SimulatedGpuStore {
     /// [`GpuStoreCfg::kv_sim`]: Engine interned KV on this Sim.
     kv_sim: bool,
     kv: Option<KvGpu>,
-    /// Imported sibling of GPU0's shareable device mempool.
-    share_import: Option<PoolId>,
+    /// Imported siblings of shareable device mempools, keyed by GPU.
+    share_imports: BTreeMap<DeviceId, PoolId>,
     /// [`GpuStoreCfg::launch_completion`]: event recorded at GEMM kernel start
     /// so replica D2D can wait start instead of completion.
     launch_completion_event: Option<EventId>,
@@ -1148,6 +1159,9 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::ipc`] is `cudaIpcGetMemHandle` / `cudaIpcOpenMemHandle` of
     /// each miss `cudaMalloc` (implies sync-alloc; close before free; distinct
     /// from POSIX-FD [`GpuStoreCfg::shareable`]).
+    /// [`GpuStoreCfg::share_ptr`] is `cudaMemPoolExportPointer` /
+    /// `cudaMemPoolImportPointer` of each miss `cudaMallocAsync` (implies
+    /// shareable; close before free; distinct from `--ipc`).
     /// [`GpuStoreCfg::host_register_mapped`] is `cudaHostRegisterMapped` on
     /// mapped expert pages (`alloc_host` then register; implies mapped; illegal
     /// with [`GpuStoreCfg::host_register`]; identity stays `cudaHostAllocMapped`).
@@ -1280,7 +1294,9 @@ impl SimulatedGpuStore {
         {
             return Err(Error::Store("l2-streaming needs l2-persist"));
         }
-        if cfg.shareable && (cfg.sync_alloc || cfg.ipc || fill != GpuFill::Pinned) {
+        if (cfg.shareable || cfg.share_ptr)
+            && (cfg.sync_alloc || cfg.ipc || fill != GpuFill::Pinned)
+        {
             return Err(Error::Store("shareable needs cudaMallocAsync"));
         }
         if cfg.mempool_trim && (cfg.sync_alloc || cfg.ipc) {
@@ -1353,8 +1369,9 @@ impl SimulatedGpuStore {
             fill == GpuFill::Mapped,
             fill == GpuFill::Managed,
             fill == GpuFill::Vmm,
-            cfg.shareable,
+            cfg.shareable || cfg.share_ptr,
         )?;
+        check_share_ptr(cfg.share_ptr, cfg.shareable, cfg.ipc)?;
         if cfg.host_register_mapped && fill != GpuFill::Mapped {
             return Err(Error::Store("host-register-mapped needs mapped"));
         }
@@ -1397,19 +1414,19 @@ impl SimulatedGpuStore {
         }
         allow_non_portable_cluster_if(&mut sim, cfg.non_portable_cluster)?;
         allow_optin_shared_if(&mut sim, cfg.optin_shared)?;
-        let imported = if cfg.shareable || cfg.mempool_max > 0 {
-            bind_device_mempools(&mut sim, cfg.shareable, cfg.mempool_max)?
+        let imported = if cfg.shareable || cfg.share_ptr || cfg.mempool_max > 0 {
+            bind_device_mempools(&mut sim, cfg.shareable || cfg.share_ptr, cfg.mempool_max)?
         } else {
             BTreeMap::new()
         };
-        let share_import = if cfg.shareable {
-            imported.get(&DeviceId(0)).copied()
+        let share_imports = if cfg.shareable || cfg.share_ptr {
+            imported
         } else {
-            None
+            BTreeMap::new()
         };
         if mempool_hold(
             cfg.mempool,
-            cfg.shareable,
+            cfg.shareable || cfg.share_ptr,
             cfg.mempool_trim,
             cfg.mempool_no_reuse,
             cfg.mempool_max,
@@ -1532,6 +1549,7 @@ impl SimulatedGpuStore {
             copy_host: cfg.copy_host,
             sync_alloc: cfg.sync_alloc,
             ipc: cfg.ipc,
+            share_ptr: cfg.share_ptr,
             vmm_page: cfg.vmm_page,
             pageable: cfg.pageable,
             host_register: cfg.host_register,
@@ -1554,7 +1572,7 @@ impl SimulatedGpuStore {
             seq_streams: cfg.seq_streams,
             kv_sim: cfg.kv_sim,
             kv: None,
-            share_import,
+            share_imports,
             launch_completion_event: launch_ev.map(|e| e.event),
             launch_completion_armed: false,
             programmatic_event: pde.map(|e| e.event),
@@ -1642,6 +1660,28 @@ impl SimulatedGpuStore {
             .get(&key)
             .and_then(|p| p.ipc)
             .and_then(|id| self.sim.is_ipc_import(id).ok())
+            .unwrap_or(false)
+    }
+
+    /// Whether miss pages export `cudaMemPoolExportPointer` and GEMM keeps the import live.
+    #[must_use]
+    pub fn share_ptr(&self) -> bool {
+        self.share_ptr
+    }
+
+    /// Live `cudaMemPoolImportPointer` alias of the resident page, if any.
+    #[must_use]
+    pub fn page_share_import(&self, key: ExpertKey) -> Option<AllocId> {
+        self.pages.get(&key).and_then(|p| p.share)
+    }
+
+    /// Whether the resident page for `key` currently holds a live shareable pointer import.
+    #[must_use]
+    pub fn page_is_share_import(&self, key: ExpertKey) -> bool {
+        self.pages
+            .get(&key)
+            .and_then(|p| p.share)
+            .and_then(|id| self.sim.is_share_import(id).ok())
             .unwrap_or(false)
     }
 
@@ -1904,7 +1944,7 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::shareable`]).
     #[must_use]
     pub fn share_imported_pool(&self) -> Option<PoolId> {
-        self.share_import
+        self.share_imports.get(&DeviceId(0)).copied()
     }
 
     /// `cudaMallocFromPoolAsync` from the imported shareable sibling.
@@ -1913,7 +1953,9 @@ impl SimulatedGpuStore {
     /// HBM). Illegal unless [`GpuStoreCfg::shareable`].
     pub fn alloc_from_imported_pool(&mut self, bytes: u64) -> Result<AllocId, Error> {
         let pool = self
-            .share_import
+            .share_imports
+            .get(&self.device)
+            .copied()
             .ok_or(Error::Store("no shareable import"))?;
         let id = self
             .sim
@@ -2204,6 +2246,7 @@ impl SimulatedGpuStore {
         let _w = self.sim.wait_event(src, ev_compute, self.copy)?;
         if let Some(page) = self.pages.get_mut(&key) {
             close_ipc_alias(&mut self.sim, page.ipc.take())?;
+            close_share_alias(&mut self.sim, src, self.copy, page.share.take())?;
         }
         self.sim.free(src, id, self.copy)?;
         let _gone = self.replicas.remove(&key);
@@ -2216,6 +2259,12 @@ impl SimulatedGpuStore {
                 page.ready = Some(ev_copy);
             }
             page.ipc = open_ipc_alias(&mut self.sim, dst, id, self.ipc)?;
+            page.share = open_share_alias(
+                &mut self.sim,
+                self.share_imports.get(&dst).copied(),
+                id,
+                self.share_ptr,
+            )?;
         }
         self.note_migrate();
         Ok(())
@@ -2718,6 +2767,12 @@ impl SimulatedGpuStore {
             id,
             self.ipc && self.mode == GpuFill::Pinned,
         )?;
+        let share = open_share_alias(
+            &mut self.sim,
+            self.share_imports.get(&d).copied(),
+            id,
+            self.share_ptr && self.mode == GpuFill::Pinned,
+        )?;
         let _prev = self.pages.insert(
             key,
             GpuPage {
@@ -2728,6 +2783,7 @@ impl SimulatedGpuStore {
                 mailbox,
                 ready_gen,
                 ipc,
+                share,
             },
         );
         Ok(())
@@ -3282,6 +3338,7 @@ impl SimulatedGpuStore {
             }
         }
         close_ipc_alias(&mut self.sim, page.ipc)?;
+        close_share_alias(&mut self.sim, page.device, self.copy, page.share)?;
         match self.mode {
             GpuFill::Managed => {
                 self.wait_compute(page.device)?;

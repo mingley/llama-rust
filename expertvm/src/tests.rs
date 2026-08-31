@@ -863,6 +863,8 @@ fn vmm_evict_reacquires_same_va() {
         d2h_evict: false,
         d2h_pageable: false,
         ipc: false,
+        share_ptr: false,
+        share_pool: None,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -8029,6 +8031,210 @@ fn simulated_gpu_store_ipc_allows_pdl() {
 }
 
 #[test]
+fn sim_cfg_share_ptr_needs_shareable() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = match sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            share_ptr: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("share-ptr without shareable must fail"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string().contains("share-ptr needs shareable"),
+        "{err}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_share_ptr_needs_shareable() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            share_ptr: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("share-ptr without shareable must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("share-ptr needs shareable"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn sim_replay_share_ptr_keeps_hits() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    let shareable = SimCfg {
+        shareable: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let share_ptr = SimCfg {
+        shareable: true,
+        share_ptr: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), shareable).expect("shareable");
+    let b = sim_replay_cfg(&t, profile.clone(), share_ptr).expect("share-ptr");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+    let sched_a = schedule_replay(&t, profile.clone(), shareable, SchedCfg::closed(0)).expect("sa");
+    let sched_b = schedule_replay(&t, profile, share_ptr, SchedCfg::closed(0)).expect("sb");
+    assert_eq!(sched_a.replay.hits, sched_b.replay.hits);
+    assert_eq!(sched_a.replay.misses, sched_b.replay.misses);
+}
+
+#[test]
+fn simulated_gpu_store_share_ptr_opens_alias_on_miss() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = match SimulatedGpuStore::with_cfg(
+        inner,
+        2,
+        p,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            shareable: true,
+            share_ptr: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(gpu) => gpu,
+        Err(err) => panic!("gpu: {err}"),
+    };
+    assert!(gpu.share_ptr());
+    let k0 = ExpertKey::new(0, 0);
+    let _a = gpu.acquire(k0).expect("k0");
+    assert!(gpu.page_is_share_import(k0));
+    gpu.release(k0);
+    assert!(gpu.page_is_share_import(k0));
+    let k1 = ExpertKey::new(0, 1);
+    let _b = gpu.acquire(k1).expect("k1");
+    assert!(gpu.page_is_share_import(k1));
+    gpu.release(k1);
+    let _s = gpu.score().expect("score");
+    assert!(gpu.page_is_share_import(k0));
+    assert!(gpu.page_is_share_import(k1));
+}
+
+#[test]
+fn simulated_gpu_store_share_ptr_is_slower_than_shareable() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let bytes = 32u64 << 20;
+    let run = |share_ptr: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = match SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            bytes,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                shareable: true,
+                share_ptr,
+                ..GpuStoreCfg::default()
+            },
+        ) {
+            Ok(gpu) => gpu,
+            Err(err) => panic!("gpu: {err}"),
+        };
+        let _a = gpu.acquire(ExpertKey::new(0, 0)).expect("k0");
+        let _b = gpu.acquire(ExpertKey::new(0, 1)).expect("k1");
+        if share_ptr {
+            assert!(gpu.page_is_share_import(ExpertKey::new(0, 0)));
+            assert!(gpu.page_is_share_import(ExpertKey::new(0, 1)));
+        } else {
+            assert!(!gpu.page_is_share_import(ExpertKey::new(0, 0)));
+        }
+        let metrics = gpu.metrics();
+        let score = gpu.score().expect("score");
+        (metrics.hits, metrics.misses, score)
+    };
+    let (keep_hits, keep_misses, keep) = run(false);
+    let (ptr_hits, ptr_misses, ptr) = run(true);
+    assert_eq!(keep_hits, ptr_hits);
+    assert_eq!(keep_misses, ptr_misses);
+    assert!(
+        ptr.wall_ns > keep.wall_ns,
+        "share-ptr={} shareable={}",
+        ptr.wall_ns,
+        keep.wall_ns
+    );
+}
+
+#[test]
+fn simulated_gpu_store_share_ptr_refuses_ipc() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            shareable: true,
+            share_ptr: true,
+            ipc: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("share-ptr ipc must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("choose one of ipc, shareable")
+                || err.to_string().contains("shareable needs cudaMallocAsync"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn simulated_gpu_store_share_ptr_allows_pdl() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let _gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            shareable: true,
+            share_ptr: true,
+            pdl: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("pdl share-ptr");
+}
+
+#[test]
 fn store_replay_markov_prefetch_beats_demand() {
     let mut events = Vec::new();
     for tok in 0..16u32 {
@@ -8327,6 +8533,8 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         d2h_evict: false,
         d2h_pageable: false,
         ipc: false,
+        share_ptr: false,
+        share_pool: None,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -8407,6 +8615,8 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         d2h_evict: false,
         d2h_pageable: false,
         ipc: false,
+        share_ptr: false,
+        share_pool: None,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -8488,6 +8698,8 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         d2h_evict: false,
         d2h_pageable: false,
         ipc: false,
+        share_ptr: false,
+        share_pool: None,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -8935,6 +9147,8 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         d2h_evict: false,
         d2h_pageable: false,
         ipc: false,
+        share_ptr: false,
+        share_pool: None,
     };
     let mut next_event = 1u32;
     apply_misses(
@@ -9009,6 +9223,8 @@ fn memcpy_during_apply_misses_waits_copies() {
             d2h_evict: false,
             d2h_pageable: false,
             ipc: false,
+            share_ptr: false,
+            share_pool: None,
         };
         let mut next_event = 1u32;
         apply_misses(
@@ -9085,6 +9301,8 @@ fn memcpy_any_apply_misses_empty_deps() {
             d2h_evict: false,
             d2h_pageable: false,
             ipc: false,
+            share_ptr: false,
+            share_pool: None,
         };
         let mut next_event = 1u32;
         apply_misses(
@@ -9169,6 +9387,8 @@ fn memcpy_attr_apply_misses_waits_copies() {
             d2h_evict: false,
             d2h_pageable: false,
             ipc: false,
+            share_ptr: false,
+            share_pool: None,
         };
         let mut next_event = 1u32;
         apply_misses(
@@ -9900,6 +10120,8 @@ fn d2h_evict_apply_misses_copies() {
             d2h_evict: d2h,
             d2h_pageable: false,
             ipc: false,
+            share_ptr: false,
+            share_pool: None,
         };
         let mut next_event = 1u32;
         let k0 = ExpertKey::new(0, 0);
@@ -9981,6 +10203,8 @@ fn d2h_pageable_apply_misses_copies() {
             d2h_evict: false,
             d2h_pageable: d2h,
             ipc: false,
+            share_ptr: false,
+            share_pool: None,
         };
         let mut next_event = 1u32;
         let k0 = ExpertKey::new(0, 0);
@@ -10208,6 +10432,8 @@ fn seq_stream_priority_starts_higher_stream_first() {
             d2h_evict: false,
             d2h_pageable: false,
             ipc: false,
+            share_ptr: false,
+            share_pool: None,
         };
         let mut next_event = 1u32;
         let k0 = ExpertKey::new(0, 0);
@@ -15558,6 +15784,8 @@ fn sim_replay_sync_memops_h2d_host_sync() {
             d2h_evict: false,
             d2h_pageable: false,
             ipc: false,
+            share_ptr: false,
+            share_pool: None,
         };
         let mut next_event = 1u32;
         let k0 = ExpertKey::new(0, 0);
@@ -15781,6 +16009,8 @@ fn sim_replay_device_sync_memops_h2d_host_sync() {
             d2h_evict: false,
             d2h_pageable: false,
             ipc: false,
+            share_ptr: false,
+            share_pool: None,
         };
         let mut next_event = 1u32;
         let k0 = ExpertKey::new(0, 0);
