@@ -1545,6 +1545,50 @@ impl Sim {
         Ok(id)
     }
 
+    /// `cudaExecutionCtxSynchronize` for a green context.
+    ///
+    /// Blocks the CPU until every stream bound to `ctx` is idle (and this
+    /// ctx's [`Self::green_ctx_wait_event`] ops have completed). Other green
+    /// contexts on the same device keep running. Distinct from
+    /// [`Self::synchronize_stream`] (one stream) and
+    /// [`Self::synchronize_device`] (whole GPU). Capture is refused when any
+    /// bound stream is capturing. An already-idle ctx returns without starting
+    /// leftover kernels on other streams.
+    pub fn green_ctx_synchronize(&mut self, ctx: GreenCtxId) -> Result<(), SimError> {
+        let device = self
+            .green_ctxs
+            .get(&ctx)
+            .ok_or(SimError::Invalid {
+                why: "unknown green ctx",
+            })?
+            .device;
+        let _gpu = self.profile.gpu(device)?;
+        if self.green_ctx_has_capturing_stream(ctx) {
+            return Err(SimError::Invalid {
+                why: "cannot capture green ctx sync",
+            });
+        }
+        self.drive_until(|sim| sim.green_ctx_idle(ctx))?;
+        if !self.green_ctx_idle(ctx) {
+            return Err(SimError::Invalid {
+                why: "deadlock: green ctx busy but nothing running",
+            });
+        }
+        Ok(())
+    }
+
+    fn green_ctx_idle(&self, ctx: GreenCtxId) -> bool {
+        for (d, s) in self.green_ctx_bound_streams(ctx) {
+            if !self.stream_idle(d, s) {
+                return false;
+            }
+        }
+        let Some(g) = self.green_ctxs.get(&ctx) else {
+            return false;
+        };
+        g.wait_ops.iter().all(|id| self.op_done(*id))
+    }
+
     fn green_ctx_bound_streams(&self, ctx: GreenCtxId) -> Vec<(DeviceId, StreamId)> {
         self.stream_green_ctx
             .iter()

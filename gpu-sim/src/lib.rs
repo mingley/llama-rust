@@ -34,14 +34,15 @@
 //! [`green_ctx_stream_create`](Sim::green_ctx_stream_create) /
 //! [`green_ctx_set_stream`](Sim::green_ctx_set_stream) /
 //! [`green_ctx_record_event`](Sim::green_ctx_record_event) /
-//! [`green_ctx_wait_event`](Sim::green_ctx_wait_event) are CUDA green contexts
+//! [`green_ctx_wait_event`](Sim::green_ctx_wait_event) /
+//! [`green_ctx_synchronize`](Sim::green_ctx_synchronize) are CUDA green contexts
 //! (`cuDeviceGetDevResource` / `cuDevSmResourceSplitByCount` /
 //! `cuDevResourceGenerateDesc` / `cuGreenCtxCreate` / `cuGreenCtxStreamCreate` /
-//! `cuGreenCtxRecordEvent` / `cuGreenCtxWaitEvent`).
+//! `cuGreenCtxRecordEvent` / `cuGreenCtxWaitEvent` / `cudaExecutionCtxSynchronize`).
 //! SM resources are ‰ of the chip, not occupancy SM counts. Complementary
 //! green contexts may overlap kernels even when [`GpuProfile::compute_slots`]
 //! is 1. Same-span contexts still share exclusive compute. Capture cannot
-//! include create / split-flags / bind / record / wait. `expertvm sim --green-ctx` /
+//! include create / split-flags / bind / record / wait / sync. `expertvm sim --green-ctx` /
 //! `gguf_gemv engine --expert-sim --green-ctx` binds decode vs leftover
 //! prefill to complementary contexts (implies `--decode-priority`; identity
 //! stays full-chip exclusive).
@@ -9615,6 +9616,51 @@ mod tests {
         let err = sim
             .green_ctx_record_event(GreenCtxId(99), EventId(8))
             .unwrap_err();
+        assert!(format!("{err:?}").contains("unknown green ctx"), "{err:?}");
+    }
+
+    #[test]
+    fn green_ctx_synchronize_does_not_wait_other_ctx() {
+        let d = DeviceId(0);
+        let kind_short = KernelKind::other(8, 8);
+        let kind_long = KernelKind::other(1 << 40, 8);
+        let mut sim = Sim::new(h100());
+        let a = sim.alloc(d, 4096, StreamId(0)).unwrap();
+        enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
+        sim.synchronize().unwrap();
+        let DevResource::Sm(full) = sim.device_get_dev_resource(d, DevResourceType::Sm).unwrap();
+        let (groups, _) = sim.dev_sm_resource_split_by_count(full, 2, 1, 0).unwrap();
+        let d0 = sim.dev_resource_generate_desc(&[groups[0]]).unwrap();
+        let d1 = sim.dev_resource_generate_desc(&[groups[1]]).unwrap();
+        let c0 = sim.green_ctx_create(d0, d, 0).unwrap();
+        let c1 = sim.green_ctx_create(d1, d, 0).unwrap();
+        sim.green_ctx_stream_create(c0, StreamId(1), StreamCreateFlags::NON_BLOCKING, 0)
+            .unwrap();
+        sim.green_ctx_stream_create(c1, StreamId(2), StreamCreateFlags::NON_BLOCKING, 0)
+            .unwrap();
+        enq(sim.kernel(d, kind_short, &[a], &[a], StreamId(1)));
+        enq(sim.kernel(d, kind_long, &[a], &[a], StreamId(2)));
+        let t0 = sim.clock_ns();
+        sim.green_ctx_synchronize(c0).unwrap();
+        let ctx_ns = sim.clock_ns().saturating_sub(t0);
+        assert!(
+            !sim.stream_is_idle(d, StreamId(2)).unwrap(),
+            "cudaExecutionCtxSynchronize must leave the other green ctx running"
+        );
+        sim.synchronize_device(d).unwrap();
+        let device_ns = sim.clock_ns().saturating_sub(t0);
+        assert!(
+            device_ns > ctx_ns,
+            "device sync must wait the other ctx; ctx={ctx_ns} device={device_ns}"
+        );
+        sim.begin_capture(d, StreamId(1)).unwrap();
+        let err = sim.green_ctx_synchronize(c0).unwrap_err();
+        assert!(
+            format!("{err:?}").contains("cannot capture green ctx sync"),
+            "{err:?}"
+        );
+        let _g = sim.end_capture().unwrap();
+        let err = sim.green_ctx_synchronize(GreenCtxId(99)).unwrap_err();
         assert!(format!("{err:?}").contains("unknown green ctx"), "{err:?}");
     }
 

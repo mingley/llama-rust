@@ -511,6 +511,7 @@ Exact (mechanical invariants agents may rely on):
   `set_stream_sm_permille` (compute-bound kernels scale; memory-bound keep
   full HBM; default unset is a full chip), `cuGreenCtxRecordEvent` /
   `cuGreenCtxWaitEvent` (`green_ctx_record_event` / `green_ctx_wait_event`),
+  `cudaExecutionCtxSynchronize` (`green_ctx_synchronize`),
   peer accessibility
 - HBM vs host-pinned residency (`Place::{Host, HostPinned, Device}`,
   `alloc_host_pinned`, `memcpy_pinned_to_device`; pageable
@@ -4527,13 +4528,22 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-405. [ ] Next numbered PLAN item after 404 is the next `gpu-sim` / Engine /
+405. [x] CUDA green-context CPU sync (`cudaExecutionCtxSynchronize`):
+    `green_ctx_synchronize` waits every stream bound to that ctx (and that
+    ctx's wait-event ops). Other green contexts on the same GPU keep
+    running. Distinct from `synchronize_stream` and `synchronize_device`.
+    Capture is refused when a bound stream is capturing. No second
+    `--green-ctx`. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+406. [ ] Next numbered PLAN item after 405 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
     second NVFP4 `output.scale` as a new family. Do not invent
     `output.input_scale` / `*.input_scale` this slice. Do not invent a second
-    `cuGreenCtxRecordEvent` / `WaitEvent`. Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
+    `cuGreenCtxRecordEvent` / `WaitEvent`. Do not invent a second
+    `cudaExecutionCtxSynchronize`. Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
     `attn_v.scale` as the writer-tiny. Do not invent a second dense
     `ffn_down.scale` / second `ffn_gate.scale` / second `ffn_up.scale` /
     second `attn_q.scale` / second `attn_output.scale` /

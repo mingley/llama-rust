@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA green-context sync (`cudaExecutionCtxSynchronize`)
+
+`gpu-sim` `green_ctx_synchronize` is `cudaExecutionCtxSynchronize` for a
+green context: CPU waits every bound stream (and that ctx's
+`green_ctx_wait_event` ops). Other green contexts on the same GPU keep
+running. Distinct from `synchronize_stream` (one stream) and
+`synchronize_device` (whole GPU). Capture is refused when a bound stream
+is capturing. No second `--green-ctx`. `gpu-profile capture` is still
+refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA green-context events (`cuGreenCtxRecordEvent`)
 
 `gpu-sim` `green_ctx_record_event` / `green_ctx_wait_event` are

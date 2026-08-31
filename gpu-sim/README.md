@@ -180,6 +180,7 @@ warp scheduler, L1, …   ← do not model
 | `set_stream_sm_permille` is a duration-only SM fraction (‰) | compute-bound kernels scale; memory-bound keep full HBM; does not partition Hyper-Q |
 | CUDA green contexts (`cuGreenCtxCreate`) | complementary SM spans may overlap kernels even when `compute_slots` is 1; same-span contexts share exclusive compute |
 | `cuGreenCtxRecordEvent` / `cuGreenCtxWaitEvent` | record joins every bound stream; wait holds later work on the ctx (including streams bound after the wait); not a per-stream record/wait |
+| `cudaExecutionCtxSynchronize` (`green_ctx_synchronize`) | CPU waits that green ctx; other ctxs on the same GPU keep running |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host); `memset_op` height/pitch is 2D | HBM write of payload + launch overhead |
 | `cudaMemset` / `2D` / `3D` (`memset_sync` / `memset_op_sync`) wait the stream | host-synchronous; capture refused |
 | peer D2D needs topology + `enable_peer` (`enable_peer_with_flags` must be 0) | link bandwidth |
@@ -209,6 +210,8 @@ occupancy SM counts). Complementary spans may overlap kernels even when
 `cuGreenCtxRecordEvent` joins work already submitted on every bound stream;
 `cuGreenCtxWaitEvent` holds later submits on that ctx (including streams
 bound after the wait). Distinct from `cudaEventRecord` / `cudaStreamWaitEvent`.
+`cudaExecutionCtxSynchronize` (`green_ctx_synchronize`) waits one green ctx;
+other ctxs on the same GPU keep running. Distinct from `cudaDeviceSynchronize`.
 Copy engines still overlap compute. Profile knobs `gemm_util_permille` (achieved/peak) and `grouped_moe_permille`
 (grouped vs dense duration) scale kernel time. Defaults are 1000
 (identity roofline). They are parseable; they are not a capture. Host PCIe

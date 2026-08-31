@@ -451,7 +451,9 @@ may overlap decode even when occupancy is exclusive (implies
 `--decode-priority`; default 500/500; `--decode-sms 1000` refused). Distinct
 from `--decode-sms` alone (exclusive compute still serializes leftover
 prefill). `gpu-sim` `green_ctx_record_event` / `green_ctx_wait_event` join or
-hold every stream bound to a ctx (not a second `--green-ctx`). Default `--expert-sim` keeps
+hold every stream bound to a ctx (not a second `--green-ctx`).
+`green_ctx_synchronize` is `cudaExecutionCtxSynchronize` (one ctx; other
+ctxs keep running). Default `--expert-sim` keeps
 one compute stream, exclusive compute (`compute_slots=1`), a full chip of
 SMs, and a full-device clock sample.
 `gguf_gemv engine --expert-sim --seq-streams` is the real-KV analog of
