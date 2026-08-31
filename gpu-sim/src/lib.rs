@@ -35,10 +35,12 @@
 //! [`green_ctx_set_stream`](Sim::green_ctx_set_stream) /
 //! [`green_ctx_record_event`](Sim::green_ctx_record_event) /
 //! [`green_ctx_wait_event`](Sim::green_ctx_wait_event) /
-//! [`green_ctx_synchronize`](Sim::green_ctx_synchronize) are CUDA green contexts
+//! [`green_ctx_synchronize`](Sim::green_ctx_synchronize) /
+//! [`stream_get_dev_resource`](Sim::stream_get_dev_resource) are CUDA green contexts
 //! (`cuDeviceGetDevResource` / `cuDevSmResourceSplitByCount` /
 //! `cuDevResourceGenerateDesc` / `cuGreenCtxCreate` / `cuGreenCtxStreamCreate` /
-//! `cuGreenCtxRecordEvent` / `cuGreenCtxWaitEvent` / `cudaExecutionCtxSynchronize`).
+//! `cuGreenCtxRecordEvent` / `cuGreenCtxWaitEvent` / `cudaExecutionCtxSynchronize` /
+//! `cuStreamGetDevResource`).
 //! SM resources are ‰ of the chip, not occupancy SM counts. Complementary
 //! green contexts may overlap kernels even when [`GpuProfile::compute_slots`]
 //! is 1. Same-span contexts still share exclusive compute. Capture cannot
@@ -9316,6 +9318,14 @@ mod tests {
             .unwrap();
         assert_eq!(sim.stream_get_green_ctx(d, StreamId(1)).unwrap(), Some(ctx));
         assert_eq!(sim.stream_sm_permille(d, StreamId(1)), 500);
+        let DevResource::Sm(stream_sm) = sim
+            .stream_get_dev_resource(d, StreamId(1), DevResourceType::Sm)
+            .unwrap();
+        assert_eq!(stream_sm, sm);
+        let DevResource::Sm(unbound) = sim
+            .stream_get_dev_resource(d, StreamId(2), DevResourceType::Sm)
+            .unwrap();
+        assert_eq!(unbound, SmResource::FULL);
         let err = sim.set_stream_sm_permille(d, StreamId(1), 250).unwrap_err();
         assert!(format!("{err:?}").contains("green ctx stream"), "{err:?}");
         let err = sim.green_ctx_destroy(ctx).unwrap_err();
@@ -9326,6 +9336,10 @@ mod tests {
         let err = sim.green_ctx_set_stream(ctx, StreamId::NULL).unwrap_err();
         assert!(format!("{err:?}").contains("green ctx stream"), "{err:?}");
         sim.begin_capture(d, StreamId(2)).unwrap();
+        let DevResource::Sm(during) = sim
+            .stream_get_dev_resource(d, StreamId(1), DevResourceType::Sm)
+            .unwrap();
+        assert_eq!(during, sm);
         let err = sim
             .green_ctx_create(desc, d, GreenCtxFlags::DEFAULT)
             .unwrap_err();

@@ -2511,7 +2511,8 @@ impl StreamCreateFlags {
     pub const NON_BLOCKING: u32 = 1;
 }
 
-/// `CUdevResourceType` for [`crate::Sim::device_get_dev_resource`].
+/// `CUdevResourceType` for [`crate::Sim::device_get_dev_resource`] /
+/// [`crate::Sim::stream_get_dev_resource`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DevResourceType {
     /// `CU_DEV_RESOURCE_TYPE_SM` (‰ of the chip, not an SM count).

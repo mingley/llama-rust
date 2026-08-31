@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cuStreamGetDevResource`
+
+`gpu-sim` `stream_get_dev_resource` is `cuStreamGetDevResource`. A stream
+bound to a green context returns that ctx's SM span (‰ of the chip). An
+unbound stream returns a full chip. Query; legal during capture. Distinct
+from `stream_get_green_ctx` (ctx id) and `device_get_dev_resource` (always
+full chip). No second `--green-ctx`. `gpu-profile capture` is still
+refused. Dual score still has no `$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA green-context sync (`cudaExecutionCtxSynchronize`)
 
 `gpu-sim` `green_ctx_synchronize` is `cudaExecutionCtxSynchronize` for a

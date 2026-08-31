@@ -1444,6 +1444,25 @@ impl Sim {
         Ok(self.stream_green_ctx.get(&(device, stream)).copied())
     }
 
+    /// `cuStreamGetDevResource`. Query; legal during capture.
+    ///
+    /// Only [`DevResourceType::Sm`]. A stream bound to a green context returns
+    /// that ctx's SM span; an unbound stream returns [`SmResource::FULL`].
+    pub fn stream_get_dev_resource(
+        &self,
+        device: DeviceId,
+        stream: StreamId,
+        kind: DevResourceType,
+    ) -> Result<DevResource, SimError> {
+        let _gpu = self.profile.gpu(device)?;
+        match self.stream_green_ctx.get(&(device, stream)) {
+            Some(ctx) => self.green_ctx_get_dev_resource(*ctx, kind),
+            None => match kind {
+                DevResourceType::Sm => Ok(DevResource::Sm(SmResource::FULL)),
+            },
+        }
+    }
+
     /// `cuGreenCtxRecordEvent`. Capture is refused when any stream bound to
     /// `ctx` is capturing (`CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED`).
     ///

@@ -181,6 +181,7 @@ warp scheduler, L1, …   ← do not model
 | CUDA green contexts (`cuGreenCtxCreate`) | complementary SM spans may overlap kernels even when `compute_slots` is 1; same-span contexts share exclusive compute |
 | `cuGreenCtxRecordEvent` / `cuGreenCtxWaitEvent` | record joins every bound stream; wait holds later work on the ctx (including streams bound after the wait); not a per-stream record/wait |
 | `cudaExecutionCtxSynchronize` (`green_ctx_synchronize`) | CPU waits that green ctx; other ctxs on the same GPU keep running |
+| `cuStreamGetDevResource` (`stream_get_dev_resource`) | bound stream returns that ctx's SM span; unbound is a full chip; query during capture |
 | `memset` / `memset_buf` needs the filled span resident (not mapped host); `memset_op` height/pitch is 2D | HBM write of payload + launch overhead |
 | `cudaMemset` / `2D` / `3D` (`memset_sync` / `memset_op_sync`) wait the stream | host-synchronous; capture refused |
 | peer D2D needs topology + `enable_peer` (`enable_peer_with_flags` must be 0) | link bandwidth |
