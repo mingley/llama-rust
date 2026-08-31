@@ -13069,7 +13069,9 @@ mod tests {
         assert_eq!(a.device_get_uuid(DeviceId(0)).unwrap(), u0);
         let _g = a.end_capture().unwrap();
         match a.device_get_uuid(DeviceId(99)) {
-            Err(SimError::Invalid { why }) => assert!(why.contains("unknown device"), "{why}"),
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}")
+            }
             other => panic!("{other:?}"),
         }
     }
