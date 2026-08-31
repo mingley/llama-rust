@@ -73,6 +73,10 @@ pub(crate) struct GemmFlags {
     ///
     /// Off inherits the stream. Decode identity stays inherit-stream.
     pub mem_sync_launch: bool,
+    /// `cudaLaunchAttributeMemSyncDomainMap` collapse on grouped GEMMs.
+    ///
+    /// Off inherits the stream. Decode identity stays inherit-stream.
+    pub mem_sync_launch_map: bool,
     /// `cudaLaunchAttributeProgrammaticEvent`. [`None`] records nothing.
     ///
     /// Other streams may `wait_event` at the PDL trigger. Decode identity stays
@@ -160,12 +164,17 @@ impl GemmFlags {
             programmatic_event: self.programmatic_event,
             launch_completion: self.launch_completion,
             mem_sync_domain: self.mem_sync_domain(),
+            mem_sync_map: self.mem_sync_map(),
             ..KernelAttrs::default()
         }
     }
 
     pub(crate) fn mem_sync_domain(self) -> Option<MemSyncDomain> {
         self.mem_sync_launch.then_some(MemSyncDomain::Remote)
+    }
+
+    pub(crate) fn mem_sync_map(self) -> Option<MemSyncDomainMap> {
+        self.mem_sync_launch_map.then_some(collapse_mem_sync_map())
     }
 
     /// Stream launch cannot carry the graphs-only device-updatable attr.
@@ -257,6 +266,18 @@ pub(crate) fn check_mem_sync_collapse(domain: MemSyncDomain, collapse: bool) -> 
 pub(crate) fn check_mem_sync_launch(domain: MemSyncDomain, launch: bool) -> Result<(), Error> {
     if launch && domain != MemSyncDomain::Remote {
         return Err(Error::Store("mem-sync-launch needs mem-sync-domain remote"));
+    }
+    Ok(())
+}
+
+pub(crate) fn check_mem_sync_launch_map(
+    domain: MemSyncDomain,
+    launch_map: bool,
+) -> Result<(), Error> {
+    if launch_map && domain != MemSyncDomain::Remote {
+        return Err(Error::Store(
+            "mem-sync-launch-map needs mem-sync-domain remote",
+        ));
     }
     Ok(())
 }
@@ -930,6 +951,13 @@ pub struct SimCfg {
     /// returns. Decode identity stays inherit-stream.
     /// [`crate::GpuStoreCfg::mem_sync_launch`] is the store path.
     pub mem_sync_launch: bool,
+    /// `cudaLaunchAttributeMemSyncDomainMap` collapse on grouped expert GEMMs.
+    ///
+    /// Needs [`Self::mem_sync_domain`] Remote. Overrides prefill inherit-identity
+    /// so leftover prefill maps Default→0 with decode Remote→0 and fence tax
+    /// returns. Decode identity stays inherit-stream.
+    /// [`crate::GpuStoreCfg::mem_sync_launch_map`] is the store path.
+    pub mem_sync_launch_map: bool,
     /// Shared-memory bank width (`cudaLaunchAttributeSharedMemoryMode`).
     ///
     /// Default never scales duration. FourByte / EightByte scale by
@@ -1152,6 +1180,7 @@ impl SimCfg {
             mem_sync_domain: gpu_sim::MemSyncDomain::Default,
             mem_sync_collapse: false,
             mem_sync_launch: false,
+            mem_sync_launch_map: false,
             shared_mem: gpu_sim::SharedMemoryMode::Default,
             func_shared_mem: gpu_sim::SharedMemoryMode::Default,
             device_shared_mem: gpu_sim::SharedMemoryMode::Default,
@@ -1184,6 +1213,7 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     check_required_cluster(cfg.cluster, cfg.required_cluster)?;
     check_mem_sync_collapse(cfg.mem_sync_domain, cfg.mem_sync_collapse)?;
     check_mem_sync_launch(cfg.mem_sync_domain, cfg.mem_sync_launch)?;
+    check_mem_sync_launch_map(cfg.mem_sync_domain, cfg.mem_sync_launch_map)?;
     check_cluster_load_balance(
         cfg.cluster_load_balance,
         cfg.func_cluster_spread,
@@ -1424,6 +1454,7 @@ pub fn sim_replay_cfg(
         .with_launch_completion(launch_completion)
         .with_programmatic_event(programmatic_event)
         .with_mem_sync_launch(cfg.mem_sync_launch)
+        .with_mem_sync_launch_map(cfg.mem_sync_launch_map)
         .with_set_params(cfg.graph_set_params)
         .with_piecewise(cfg.graph_piecewise)
         .with_enable(cfg.graph_enable);
@@ -1889,6 +1920,7 @@ pub(crate) struct GraphBank {
     launch_completion: Option<LaunchCompletionEvent>,
     programmatic_event: Option<ProgrammaticEvent>,
     mem_sync_launch: bool,
+    mem_sync_launch_map: bool,
     set_params: bool,
     enable: bool,
     pub updates: u64,
@@ -1928,6 +1960,7 @@ impl GraphBank {
             launch_completion: None,
             programmatic_event: None,
             mem_sync_launch: false,
+            mem_sync_launch_map: false,
             set_params: false,
             enable: false,
             updates: 0,
@@ -2041,6 +2074,11 @@ impl GraphBank {
         self
     }
 
+    pub(crate) fn with_mem_sync_launch_map(mut self, yes: bool) -> Self {
+        self.mem_sync_launch_map = yes;
+        self
+    }
+
     fn gemm_flags(&self) -> GemmFlags {
         GemmFlags {
             cooperative: self.cooperative,
@@ -2063,6 +2101,7 @@ impl GraphBank {
             launch_completion: self.launch_completion,
             programmatic_event: self.programmatic_event,
             mem_sync_launch: self.mem_sync_launch,
+            mem_sync_launch_map: self.mem_sync_launch_map,
         }
     }
 
@@ -3391,6 +3430,14 @@ pub(crate) fn apply_stream_mem_sync_domain(
     Ok(())
 }
 
+/// Hopper collapse `{default: 0, remote: 0}`.
+pub(crate) fn collapse_mem_sync_map() -> MemSyncDomainMap {
+    MemSyncDomainMap {
+        default: 0,
+        remote: 0,
+    }
+}
+
 /// `cudaStreamSetAttribute` MemSyncDomainMap collapse (remote→0) on the decode stream.
 pub(crate) fn apply_stream_mem_sync_map(
     sim: &mut Sim,
@@ -3400,10 +3447,7 @@ pub(crate) fn apply_stream_mem_sync_map(
     if !collapse {
         return Ok(());
     }
-    let map = MemSyncDomainMap {
-        default: 0,
-        remote: 0,
-    };
+    let map = collapse_mem_sync_map();
     let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
     for g in 0..n {
         let d = DeviceId(g);
@@ -3439,13 +3483,21 @@ pub(crate) fn apply_exec_mem_sync_domain(
 }
 
 /// `cudaGraphExecKernelNodeSetAttribute` MemSyncDomainMap to the launch stream.
+///
+/// Launch collapse overrides prefill inherit-identity so leftover prefill
+/// maps Default→0 with decode Remote→0. Store leaves keyed by alloc would
+/// otherwise snap back to the launch stream map.
 pub(crate) fn apply_exec_mem_sync_map(
     sim: &mut Sim,
     exec: GraphId,
     device: DeviceId,
     stream: StreamId,
+    launch: Option<MemSyncDomainMap>,
 ) -> Result<(), Error> {
-    let want = sim.stream_mem_sync_domain_map(device, stream)?;
+    let want = match launch {
+        Some(m) => m,
+        None => sim.stream_mem_sync_domain_map(device, stream)?,
+    };
     let (node, _) = sim.graph_unique_kernel(exec)?;
     let have = sim.graph_exec_kernel_node_get_mem_sync_domain_map(exec, node)?;
     if have != want {
@@ -3643,6 +3695,10 @@ fn add_gemm_kernel(
     if let Some(d) = flags.mem_sync_domain() {
         let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_mem_sync_domain(graph, node, d)?;
+    }
+    if let Some(m) = flags.mem_sync_map() {
+        let node = usize::from(!writes.is_empty());
+        sim.graph_kernel_node_set_mem_sync_domain_map(graph, node, m)?;
     }
     if let Some(c) = flags.cluster_dim() {
         let node = usize::from(!writes.is_empty());

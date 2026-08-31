@@ -143,6 +143,8 @@ pub(crate) struct GpuCli {
     pub mem_sync_map_set: bool,
     /// Launch-attribute Remote on grouped GEMMs (`GpuStoreCfg::mem_sync_launch`).
     pub mem_sync_launch: bool,
+    /// Launch-attribute collapse map on grouped GEMMs (`GpuStoreCfg::mem_sync_launch_map`).
+    pub mem_sync_launch_map: bool,
     /// Kernel-node bank width (`GpuStoreCfg::shared_mem`).
     pub shared_mem: SharedMemoryMode,
     /// True when `--shared-mem` appeared.
@@ -257,6 +259,7 @@ impl GpuCli {
             "--func-max-shared" => &mut self.func_max_shared,
             "--max-l1" => &mut self.max_l1,
             "--mem-sync-launch" => &mut self.mem_sync_launch,
+            "--mem-sync-launch-map" => &mut self.mem_sync_launch_map,
             "--non-portable-cluster" => &mut self.non_portable_cluster,
             "--optin-shared" => &mut self.optin_shared,
             "--nvlink-util" => &mut self.nvlink_util,
@@ -585,6 +588,14 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--mem-sync-launch-map` needs `--mem-sync-domain remote`.
+    pub(crate) fn check_mem_sync_launch_map(self) -> Result<(), String> {
+        if self.mem_sync_launch_map && self.mem_sync_domain != MemSyncDomain::Remote {
+            return Err("--mem-sync-launch-map needs --mem-sync-domain remote".into());
+        }
+        Ok(())
+    }
+
     /// First CUDA knob that needs `--expert-sim`, if any.
     #[must_use]
     pub(crate) fn sim_flag(self) -> Option<&'static str> {
@@ -648,6 +659,7 @@ impl GpuCli {
             (self.mem_sync_domain_set, "--mem-sync-domain"),
             (self.mem_sync_map_set, "--mem-sync-map"),
             (self.mem_sync_launch, "--mem-sync-launch"),
+            (self.mem_sync_launch_map, "--mem-sync-launch-map"),
             (self.shared_mem_set, "--shared-mem"),
             (self.func_shared_mem_set, "--func-shared-mem"),
             (self.device_shared_mem_set, "--device-shared-mem"),
@@ -1001,6 +1013,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         mem_sync_domain: gpu.mem_sync_domain,
         mem_sync_collapse: gpu.mem_sync_collapse,
         mem_sync_launch: gpu.mem_sync_launch,
+        mem_sync_launch_map: gpu.mem_sync_launch_map,
         shared_mem: gpu.shared_mem,
         func_shared_mem: gpu.func_shared_mem,
         device_shared_mem: gpu.device_shared_mem,

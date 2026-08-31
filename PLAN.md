@@ -3739,7 +3739,22 @@ model, do not celebrate the sim.
     Decode identity stays inherit-stream. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-353. [ ] Next numbered PLAN item after 352 is the next `gpu-sim` / Engine /
+353. [x] `cudaLaunchAttributeMemSyncDomainMap` launch collapse:
+    [`GpuStoreCfg::mem_sync_launch_map`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::mem_sync_launch_map`](expertvm/src/sim_replay.rs) launch attr on
+    grouped GEMMs. Needs `--mem-sync-domain remote`. Overrides prefill
+    inherit-identity so leftover prefill maps Default→0 with decode Remote→0
+    and `same_domain_fence_permille` returns (Hopper identity tax is 0;
+    SetAttribute does not tick the clock). Distinct from `--mem-sync-launch`
+    (physical mapping vs logical domain) and `--mem-sync-map` (launch vs
+    stream). Hits stay the same. Legal with `--pdl` and `--cooperative`.
+    `--mem-sync-launch-map` on `expertvm sim` / `schedule` / `store` and
+    `gguf_gemv engine --expert-sim`. infer-bench has no `--mem-sync-domain`,
+    so it does not get `--mem-sync-launch-map`. Decode identity stays
+    inherit-stream. `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+354. [ ] Next numbered PLAN item after 353 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

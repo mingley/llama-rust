@@ -17,11 +17,11 @@ use crate::sim_replay::{
     apply_stream_mem_sync_domain, apply_stream_mem_sync_map, apply_stream_sync_policy,
     bind_shareable_mempools, check_cluster_load_balance, check_cluster_must_set,
     check_cluster_preferred, check_device_graph_flags, check_l2_fetch, check_l2_ratio,
-    check_max_l1, check_mem_sync_collapse, check_mem_sync_launch, check_required_cluster,
-    ensure_single_attach, free_copy_mailbox, free_mapped_host, instantiate_exec, kernel_leaf,
-    mark_sync_memops, persist_armed, replay_exec, replay_streams, reset_persisting_l2_if,
-    retarget_parked_kernel, signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready,
-    GemmFlags, LeafMem, StreamPlan,
+    check_max_l1, check_mem_sync_collapse, check_mem_sync_launch, check_mem_sync_launch_map,
+    check_required_cluster, collapse_mem_sync_map, ensure_single_attach, free_copy_mailbox,
+    free_mapped_host, instantiate_exec, kernel_leaf, mark_sync_memops, persist_armed, replay_exec,
+    replay_streams, reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
+    upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -375,6 +375,12 @@ pub struct GpuStoreCfg {
     /// so leftover prefill shares the decode Remote domain and fence tax
     /// returns. Decode identity stays inherit-stream.
     pub mem_sync_launch: bool,
+    /// `cudaLaunchAttributeMemSyncDomainMap` collapse on grouped expert GEMMs.
+    ///
+    /// Needs [`Self::mem_sync_domain`] Remote. Overrides prefill inherit-identity
+    /// so leftover prefill maps Default→0 with decode Remote→0 and fence tax
+    /// returns. Decode identity stays inherit-stream.
+    pub mem_sync_launch_map: bool,
     /// Shared-memory bank width (`cudaLaunchAttributeSharedMemoryMode`).
     ///
     /// Default never scales duration. FourByte / EightByte scale grouped GEMM
@@ -589,6 +595,7 @@ pub struct SimulatedGpuStore {
     max_shared: bool,
     max_l1: bool,
     mem_sync_launch: bool,
+    mem_sync_launch_map: bool,
     shared_mem: gpu_sim::SharedMemoryMode,
     portable_cluster: gpu_sim::PortableClusterMode,
     dynamic_shared: u32,
@@ -813,6 +820,8 @@ impl SimulatedGpuStore {
     /// leftover prefill fence tax).
     /// [`GpuStoreCfg::mem_sync_launch`] is launch-attribute Remote on grouped
     /// GEMMs (needs Remote; restores leftover prefill fence tax).
+    /// [`GpuStoreCfg::mem_sync_launch_map`] is launch-attribute collapse map on
+    /// grouped GEMMs (needs Remote; restores leftover prefill fence tax).
     /// [`GpuStoreCfg::max_shared`] is launch-attribute MaxShared carveout.
     /// [`GpuStoreCfg::func_max_shared`] is `cudaFuncSetAttribute`
     /// PreferredSharedMemoryCarveout MaxShared (launch Default inherits).
@@ -936,6 +945,7 @@ impl SimulatedGpuStore {
         check_required_cluster(cfg.cluster, cfg.required_cluster)?;
         check_mem_sync_collapse(cfg.mem_sync_domain, cfg.mem_sync_collapse)?;
         check_mem_sync_launch(cfg.mem_sync_domain, cfg.mem_sync_launch)?;
+        check_mem_sync_launch_map(cfg.mem_sync_domain, cfg.mem_sync_launch_map)?;
         check_cluster_load_balance(
             cfg.cluster_load_balance,
             cfg.func_cluster_spread,
@@ -1098,6 +1108,7 @@ impl SimulatedGpuStore {
             max_shared: cfg.max_shared,
             max_l1: cfg.max_l1,
             mem_sync_launch: cfg.mem_sync_launch,
+            mem_sync_launch_map: cfg.mem_sync_launch_map,
             shared_mem: cfg.shared_mem,
             portable_cluster: cfg.portable_cluster,
             dynamic_shared: cfg.dynamic_shared,
@@ -1278,6 +1289,12 @@ impl SimulatedGpuStore {
         self.gemm_flags().mem_sync_domain() == Some(MemSyncDomain::Remote)
     }
 
+    /// Whether grouped GEMMs launch with a collapsed mem-sync map.
+    #[must_use]
+    pub fn mem_sync_launch_map(&self) -> bool {
+        self.gemm_flags().mem_sync_map() == Some(collapse_mem_sync_map())
+    }
+
     /// Current `cudaLimitMaxL2FetchGranularity` (`128` when unset).
     #[must_use]
     pub fn l2_fetch(&self) -> u64 {
@@ -1400,6 +1417,7 @@ impl SimulatedGpuStore {
             max_shared: self.max_shared,
             max_l1: self.max_l1,
             mem_sync_launch: self.mem_sync_launch,
+            mem_sync_launch_map: self.mem_sync_launch_map,
             shared_mem: self.shared_mem,
             portable_cluster: self.portable_cluster,
             dynamic_shared: self.dynamic_shared,
@@ -2465,9 +2483,11 @@ impl SimulatedGpuStore {
     }
 
     fn launch_graph_exec(&mut self, g: GraphId, device: DeviceId) -> Result<(), Error> {
-        let launch = self.gemm_flags().mem_sync_domain();
+        let flags = self.gemm_flags();
+        let launch = flags.mem_sync_domain();
+        let launch_map = flags.mem_sync_map();
         apply_exec_mem_sync_domain(&mut self.sim, g, device, self.compute, launch)?;
-        apply_exec_mem_sync_map(&mut self.sim, g, device, self.compute)?;
+        apply_exec_mem_sync_map(&mut self.sim, g, device, self.compute, launch_map)?;
         self.graph_launches = self.graph_launches.saturating_add(1);
         replay_exec(&mut self.sim, g, device, self.compute, self.device_launch)
     }

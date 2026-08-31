@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `mempool_trim`, `mempool_no_reuse`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/enable, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `l2_ratio`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `mem_sync_launch`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
+//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `l2_ratio`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `mem_sync_launch`, `mem_sync_launch_map`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -51,6 +51,9 @@
 //! launch-attribute Remote on grouped expert GEMMs (overrides prefill
 //! inherit-Default so leftover prefill shares the decode Remote domain and
 //! fence tax returns; needs `--mem-sync-domain remote`).
+//! `--mem-sync-launch-map` is launch-attribute collapse map on grouped expert
+//! GEMMs (keeps logical domains different but maps both to physical 0 so
+//! leftover prefill fence tax returns; needs `--mem-sync-domain remote`).
 //! `--compute-slots N` (`N>=2`) is Hyper-Q
 //! occupancy so leftover prefill and decode GEMMs on those two streams overlap
 //! at full issue rate (not SM-partition). Default profile occupancy is
@@ -4710,6 +4713,33 @@ mod tests {
         assert_eq!(iso.2, 4);
         assert_eq!(launch.2, 4);
         assert_eq!(iso.4, launch.4, "launch Remote must keep greedy identity");
+    }
+
+    #[test]
+    fn engine_gpu_mem_sync_launch_map_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let pri = GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            mem_sync_domain: MemSyncDomain::Remote,
+            ..GpuStoreCfg::default()
+        };
+        let iso = mixed_gpu_decode_itl_on(bytes.clone(), false, None, pri);
+        let launch = mixed_gpu_decode_itl_on(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                mem_sync_launch_map: true,
+                ..pri
+            },
+        );
+        assert_eq!(iso.2, 4);
+        assert_eq!(launch.2, 4);
+        assert_eq!(
+            iso.4, launch.4,
+            "launch collapse map must keep greedy identity"
+        );
     }
 
     #[test]
