@@ -452,10 +452,10 @@ use crate::replay::{Touch, Walker};
 use gpu_sim::{
     AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceFlags, DeviceId,
     DeviceLimit, EventId, GraphId, GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf,
-    KernelKind, LaunchCompletionEvent, MemAttach, MemPoolAttr, MemSyncDomain, MemSyncDomainMap,
-    MemcpyAttributes, MemcpyOp, Place, PointerAttr, PoolId, PortableClusterMode,
-    PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, Score, SharedMemCarveout,
-    SharedMemoryMode, Sim, StreamId, SynchronizationPolicy, WaitValueCmp,
+    KernelKind, LaunchCompletionEvent, MemAttach, MemHandleType, MemPoolAttr, MemPoolProps,
+    MemSyncDomain, MemSyncDomainMap, MemcpyAttributes, MemcpyOp, Place, PointerAttr, PoolId,
+    PortableClusterMode, PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, Score,
+    SharedMemCarveout, SharedMemoryMode, Sim, StreamId, SynchronizationPolicy, WaitValueCmp,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
@@ -606,6 +606,15 @@ pub struct SimCfg {
     /// the same; leftover cache stays reserved. Decode identity stays reuse-on.
     /// [`crate::GpuStoreCfg::mempool_no_reuse`] is the store path.
     pub mempool_no_reuse: bool,
+    /// `cudaMemPoolProps::maxSize` on a `cudaMemPoolCreate` pool rebound with
+    /// `cudaDeviceSetMemPool`.
+    ///
+    /// `0` is unset (unlimited). Implies [`Self::mempool`]. Illegal with
+    /// [`Self::sync_alloc`]. Hits stay the same when `N` fits the working
+    /// set; reserved `live+cached` cannot grow past `N`. Decode identity
+    /// stays the device default pool. [`crate::GpuStoreCfg::mempool_max`] is
+    /// the store path.
+    pub mempool_max: u64,
     /// POSIX-FD shareable mempool IPC (`cudaMemPoolExportToShareableHandle`).
     ///
     /// Creates a shareable pool, exports it, imports a sibling that shares
@@ -1138,6 +1147,7 @@ impl SimCfg {
             mempool: false,
             mempool_trim: false,
             mempool_no_reuse: false,
+            mempool_max: 0,
             shareable: false,
             mapped: false,
             managed: false,
@@ -1272,6 +1282,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     if cfg.mempool_no_reuse && cfg.sync_alloc {
         return Err(Error::Store("mempool-no-reuse needs cudaMallocAsync"));
     }
+    if cfg.mempool_max > 0 && cfg.sync_alloc {
+        return Err(Error::Store("mempool-max needs cudaMallocAsync"));
+    }
     if cfg.memcpy_batch
         && (cfg.pageable
             || cfg.sync_alloc
@@ -1362,10 +1375,16 @@ pub fn sim_replay_cfg(
     apply_l2_fetch(&mut sim, cfg.l2_fetch)?;
     apply_func_shared_mem(&mut sim, cfg.func_shared_mem)?;
     apply_device_shared_mem(&mut sim, cfg.device_shared_mem)?;
-    if cfg.shareable {
-        let _imported = bind_shareable_mempools(&mut sim)?;
+    if cfg.shareable || cfg.mempool_max > 0 {
+        let _imported = bind_device_mempools(&mut sim, cfg.shareable, cfg.mempool_max)?;
     }
-    if cfg.mempool || cfg.shareable || cfg.mempool_trim || cfg.mempool_no_reuse {
+    if mempool_hold(
+        cfg.mempool,
+        cfg.shareable,
+        cfg.mempool_trim,
+        cfg.mempool_no_reuse,
+        cfg.mempool_max,
+    ) {
         sim.set_default_pool_release_threshold(u64::MAX)?;
     }
     if cfg.mempool_no_reuse {
@@ -1685,17 +1704,48 @@ pub(crate) fn advise_vmm_access(sim: &mut Sim, id: AllocId) -> Result<(), Error>
     Ok(())
 }
 
-/// POSIX-FD shareable pool per GPU, export, import sibling, `cudaDeviceSetMemPool`.
-pub(crate) fn bind_shareable_mempools(sim: &mut Sim) -> Result<BTreeMap<DeviceId, PoolId>, Error> {
+/// Whether unused `cudaMallocAsync` bytes should stay in the current mempool.
+pub(crate) fn mempool_hold(
+    mempool: bool,
+    shareable: bool,
+    trim: bool,
+    no_reuse: bool,
+    max_size: u64,
+) -> bool {
+    mempool || shareable || trim || no_reuse || max_size > 0
+}
+
+/// `cudaMemPoolCreate` per GPU, then `cudaDeviceSetMemPool`.
+///
+/// [`MemPoolProps::max_size`] `0` is unlimited. Shareable pools export/import
+/// a POSIX-FD sibling that shares live/cached. `max_size` is create-time
+/// only (`cudaMemPoolProps::maxSize`); the default pool cannot grow a cap.
+pub(crate) fn bind_device_mempools(
+    sim: &mut Sim,
+    shareable: bool,
+    max_size: u64,
+) -> Result<BTreeMap<DeviceId, PoolId>, Error> {
     let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
     let mut imported = BTreeMap::new();
     for g in 0..n {
         let d = DeviceId(g);
-        let pool = sim.create_shareable_pool(d)?;
-        let h = sim.pool_export(pool)?;
-        let imp = sim.pool_import(d, h)?;
+        let handle_types = if shareable {
+            MemHandleType::POSIX_FILE_DESCRIPTOR
+        } else {
+            MemHandleType::NONE
+        };
+        let pool = sim.create_pool_with_props(MemPoolProps {
+            handle_types,
+            location: Place::Device(d),
+            max_size,
+            ..MemPoolProps::default()
+        })?;
+        if shareable {
+            let h = sim.pool_export(pool)?;
+            let imp = sim.pool_import(d, h)?;
+            let _prev = imported.insert(d, imp);
+        }
         sim.set_device_mempool(d, pool)?;
-        let _prev = imported.insert(d, imp);
     }
     Ok(imported)
 }

@@ -33,6 +33,7 @@ warp scheduler, L1, …   ← do not model
 | `cudaMallocAsync` (`alloc`) is stream-ordered; pointer not usable until the stream catches up | `alloc_overhead_ns` (first touch) / `pool_reuse_ns` (cached) |
 | `cudaMallocAsync` from a pool reuses cached bytes; `cudaMemGetInfo` still counts them used until `pool_trim_to` | `pool_reuse_ns` |
 | `ReuseAllowOpportunistic=0` skips that cache reuse (OS alloc; cache stays reserved) | `alloc_overhead_ns` |
+| `cudaMemPoolProps::maxSize` (`create_pool_with_props`); reserved cannot grow past it | OOM |
 | `cudaMemPoolSetAccess` (`pool_set_access`) ReadWrite on a peer; dest HBM stays 0; writes allowed | interconnect, not local HBM |
 | `cudaMalloc` (`malloc`) device-syncs that GPU, then the pointer is usable; it cannot consume another pool's cache | `alloc_overhead_ns` (charged at the call) |
 | `cudaIpcGetMemHandle` / `ipc_open` / `ipc_close` share physicals (`ipc_open_with_flags` lazy-peer is a no-op) | `alloc_overhead_ns` (export/import) |
@@ -672,7 +673,9 @@ or extra sync. High-water Set `0` resets to current; graph mem stays
 until trim. `expertvm sim --mempool-trim` is `pool_trim_to(device_mempool, 0)`
 after score (hold during the run, return cache at idle).
 `expertvm sim --mempool-no-reuse` is `ReuseAllowOpportunistic=0` (OS alloc;
-leftover cache stays reserved). Destroying a user pool (`destroy_pool` / `cudaMemPoolDestroy`)
+leftover cache stays reserved). `expertvm sim --mempool-max N` is
+`cudaMemPoolCreate` + `MemPoolProps::max_size` then `cudaDeviceSetMemPool`
+(reserved `live+cached` cannot grow past `N`; `0` unset is unlimited). Destroying a user pool (`destroy_pool` / `cudaMemPoolDestroy`)
 returns unused cache to the OS; outstanding allocs stay valid; the default
 pool cannot be destroyed; destroying the current pool rebinds GetMemPool
 to GetDefaultMemPool. Capture cannot include pool create/trim/set-attribute

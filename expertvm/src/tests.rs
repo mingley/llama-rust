@@ -4928,6 +4928,125 @@ fn sim_replay_mempool_no_reuse_keeps_hits() {
 }
 
 #[test]
+fn sim_replay_mempool_max_keeps_hits() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg::lru(2, 4096, 0);
+    let cap = SimCfg {
+        mempool_max: 1 << 30,
+        ..off
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("off");
+    let b = sim_replay_cfg(&t, profile.clone(), cap).expect("cap");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+    let sched_off = schedule_replay(&t, profile.clone(), off, SchedCfg::closed(0)).expect("so");
+    let sched_cap = schedule_replay(&t, profile, cap, SchedCfg::closed(0)).expect("sc");
+    assert_eq!(sched_off.replay.hits, sched_cap.replay.hits);
+    assert_eq!(sched_off.replay.misses, sched_cap.replay.misses);
+}
+
+#[test]
+fn sim_replay_mempool_max_ooms_without_reuse() {
+    match sim_replay_cfg(
+        &Trace {
+            events: vec![ev(0, 0, &[0]), ev(1, 0, &[1])],
+        },
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            mempool_no_reuse: true,
+            mempool_max: 4096,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("capped no-reuse thrash must OOM"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("OOM"), "{s}");
+        }
+    }
+}
+
+#[test]
+fn sim_replay_mempool_max_needs_cuda_malloc_async() {
+    match sim_replay_cfg(
+        &Trace {
+            events: vec![ev(0, 0, &[0])],
+        },
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            mempool_max: 4096,
+            sync_alloc: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("mempool-max + sync-alloc must fail"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("mempool-max"), "{s}");
+        }
+    }
+}
+
+#[test]
+fn simulated_gpu_store_mempool_max_ooms_without_reuse() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let bytes = 4096u64;
+    let k0 = ExpertKey::new(0, 0);
+    let mut skip = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        p,
+        bytes,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            mempool_no_reuse: true,
+            mempool_max: 4096,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("skip");
+    assert_eq!(skip.mempool_max(), 4096);
+    let _a = skip.acquire(k0).expect("skip acq");
+    skip.evict(k0).expect("skip evict");
+    let _clk = skip.clock_ns().expect("skip drain");
+    match skip.acquire(k0) {
+        Ok(_) => panic!("capped no-reuse leftover must OOM"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("OOM"), "{s}");
+        }
+    }
+}
+
+#[test]
+fn simulated_gpu_store_mempool_max_needs_cuda_malloc_async() {
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&Trace {
+            events: vec![ev(0, 0, &[0])],
+        }),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            mempool_max: 4096,
+            sync_alloc: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("mempool-max + sync-alloc must fail"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains("mempool-max"), "{s}");
+        }
+    }
+}
+
+#[test]
 fn simulated_gpu_store_shareable_imported_pool_reuses_cache() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],

@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaMemPoolProps::maxSize`
+
+`GpuStoreCfg::mempool_max` / `SimCfg::mempool_max` `cudaMemPoolCreate` with
+`cudaMemPoolProps::maxSize` then `cudaDeviceSetMemPool` so `cudaMallocAsync`
+draws from the capped pool. Implies `--mempool` (`u64::MAX` hold). Illegal
+with `--sync-alloc`. Hits/misses stay the same when `N` fits. Reserved
+`live+cached` cannot grow past `N` (leftover cache plus
+`--mempool-no-reuse` OS alloc OOMs). Distinct from `--mempool` (hold),
+`--mempool-trim` (idle `TrimTo(0)`), and `--mempool-no-reuse` (skip
+opportunistic reuse). `--mempool-max` is unset (`0`, unlimited) by default
+(decode identity: device default pool). infer-bench has no `--mempool`, so
+it does not get `--mempool-max`. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaLaunchAttributeMemSyncDomainMap` launch collapse
 
 `GpuStoreCfg::mem_sync_launch_map` / `SimCfg::mem_sync_launch_map` put

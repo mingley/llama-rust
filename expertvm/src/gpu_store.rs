@@ -15,13 +15,13 @@ use crate::sim_replay::{
     apply_exec_mem_sync_domain, apply_exec_mem_sync_map, apply_func_cluster_spread,
     apply_func_max_shared, apply_func_shared_mem, apply_l2_fetch, apply_required_cluster_width,
     apply_stream_mem_sync_domain, apply_stream_mem_sync_map, apply_stream_sync_policy,
-    bind_shareable_mempools, check_cluster_load_balance, check_cluster_must_set,
+    bind_device_mempools, check_cluster_load_balance, check_cluster_must_set,
     check_cluster_preferred, check_device_graph_flags, check_l2_fetch, check_l2_ratio,
     check_max_l1, check_mem_sync_collapse, check_mem_sync_launch, check_mem_sync_launch_map,
     check_required_cluster, collapse_mem_sync_map, ensure_single_attach, free_copy_mailbox,
-    free_mapped_host, instantiate_exec, kernel_leaf, mark_sync_memops, persist_armed, replay_exec,
-    replay_streams, reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
-    upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
+    free_mapped_host, instantiate_exec, kernel_leaf, mark_sync_memops, mempool_hold, persist_armed,
+    replay_exec, replay_streams, reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready,
+    stream_of, upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -104,6 +104,14 @@ pub struct GpuStoreCfg {
     /// (`alloc_overhead_ns` instead of `pool_reuse_ns`). Decode identity stays
     /// opportunistic reuse (CUDA default 1).
     pub mempool_no_reuse: bool,
+    /// `cudaMemPoolProps::maxSize` on a `cudaMemPoolCreate` pool rebound with
+    /// `cudaDeviceSetMemPool`.
+    ///
+    /// `0` is unset (unlimited). Implies [`Self::mempool`]. Illegal with
+    /// [`Self::sync_alloc`]. Hits/misses stay the same when `N` fits the
+    /// working set; reserved `live+cached` cannot grow past `N`. Decode
+    /// identity stays the device default pool.
+    pub mempool_max: u64,
     /// POSIX-FD shareable mempool IPC (`cudaMemPoolExportToShareableHandle`).
     ///
     /// Creates a shareable pool, exports it, imports a sibling that shares
@@ -627,6 +635,8 @@ pub struct SimulatedGpuStore {
     leaf: LeafMem,
     graph_mem_trim: bool,
     mempool_trim: bool,
+    /// [`GpuStoreCfg::mempool_max`] (`0` unset / unlimited).
+    mempool_max: u64,
     timing_events: bool,
     event_blocking_sync: bool,
     copy_elapsed_ns: u64,
@@ -963,6 +973,9 @@ impl SimulatedGpuStore {
         if cfg.mempool_no_reuse && cfg.sync_alloc {
             return Err(Error::Store("mempool-no-reuse needs cudaMallocAsync"));
         }
+        if cfg.mempool_max > 0 && cfg.sync_alloc {
+            return Err(Error::Store("mempool-max needs cudaMallocAsync"));
+        }
         if cfg.memcpy_batch
             && (cfg.pageable
                 || cfg.sync_alloc
@@ -1032,14 +1045,23 @@ impl SimulatedGpuStore {
         }
         allow_non_portable_cluster_if(&mut sim, cfg.non_portable_cluster)?;
         allow_optin_shared_if(&mut sim, cfg.optin_shared)?;
+        let imported = if cfg.shareable || cfg.mempool_max > 0 {
+            bind_device_mempools(&mut sim, cfg.shareable, cfg.mempool_max)?
+        } else {
+            BTreeMap::new()
+        };
         let share_import = if cfg.shareable {
-            bind_shareable_mempools(&mut sim)?
-                .get(&DeviceId(0))
-                .copied()
+            imported.get(&DeviceId(0)).copied()
         } else {
             None
         };
-        if cfg.mempool || cfg.shareable || cfg.mempool_trim || cfg.mempool_no_reuse {
+        if mempool_hold(
+            cfg.mempool,
+            cfg.shareable,
+            cfg.mempool_trim,
+            cfg.mempool_no_reuse,
+            cfg.mempool_max,
+        ) {
             sim.set_default_pool_release_threshold(u64::MAX)?;
         }
         if cfg.mempool_no_reuse {
@@ -1138,6 +1160,7 @@ impl SimulatedGpuStore {
             leaf,
             graph_mem_trim: cfg.graph_mem_trim,
             mempool_trim: cfg.mempool_trim,
+            mempool_max: cfg.mempool_max,
             timing_events: cfg.timing_events || cfg.event_blocking_sync,
             event_blocking_sync: cfg.event_blocking_sync,
             copy_elapsed_ns: 0,
@@ -1361,6 +1384,12 @@ impl SimulatedGpuStore {
         Ok(self
             .sim
             .pool_cached(self.sim.device_mempool(self.device)?)?)
+    }
+
+    /// `cudaMemPoolProps::maxSize` (`0` unset / unlimited).
+    #[must_use]
+    pub fn mempool_max(&self) -> u64 {
+        self.mempool_max
     }
 
     /// Imported sibling of the shareable device mempool (`None` unless

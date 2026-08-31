@@ -57,6 +57,10 @@ pub(crate) struct GpuCli {
     pub mempool_trim: bool,
     /// `cudaMemPoolReuseAllowOpportunistic=0` (`GpuStoreCfg::mempool_no_reuse`). Implies mempool.
     pub mempool_no_reuse: bool,
+    /// `cudaMemPoolProps::maxSize` (`GpuStoreCfg::mempool_max`). `0` is unset.
+    ///
+    /// Implies [`Self::mempool`]. `N>0` only.
+    pub mempool_max: u64,
     /// POSIX-FD shareable mempool IPC (`GpuStoreCfg::shareable`). Implies mempool.
     pub shareable: bool,
     pub pageable: bool,
@@ -308,9 +312,9 @@ impl GpuCli {
         }
     }
 
-    /// `--shareable` / `--mempool-trim` / `--mempool-no-reuse` imply [`Self::mempool`]. Call after sim-flag checks.
+    /// `--shareable` / `--mempool-trim` / `--mempool-no-reuse` / `--mempool-max` imply [`Self::mempool`]. Call after sim-flag checks.
     pub(crate) fn imply_shareable(&mut self) {
-        if self.shareable || self.mempool_trim || self.mempool_no_reuse {
+        if self.shareable || self.mempool_trim || self.mempool_no_reuse || self.mempool_max != 0 {
             self.mempool = true;
         }
     }
@@ -411,6 +415,15 @@ impl GpuCli {
             return Err("l2-ratio must be 1..=1000".into());
         }
         self.l2_ratio = n;
+        Ok(())
+    }
+
+    /// `cudaMemPoolProps::maxSize` (`--mempool-max`). `N>0`.
+    pub(crate) fn set_mempool_max(&mut self, n: u64) -> Result<(), String> {
+        if n == 0 {
+            return Err("mempool-max must be > 0".into());
+        }
+        self.mempool_max = n;
         Ok(())
     }
 
@@ -621,6 +634,7 @@ impl GpuCli {
             (self.mempool, "--mempool"),
             (self.mempool_trim, "--mempool-trim"),
             (self.mempool_no_reuse, "--mempool-no-reuse"),
+            (self.mempool_max != 0, "--mempool-max"),
             (self.shareable, "--shareable"),
             (self.pageable, "--pageable"),
             (self.host_register, "--host-register"),
@@ -749,6 +763,7 @@ enum PlanSlot {
     DecodeSms,
     L2Fetch,
     L2Ratio,
+    MempoolMax,
     Prefetch,
     PlanWindow,
     PlanThreshold,
@@ -777,6 +792,7 @@ impl PlanSlot {
             Self::DecodeSms => "decode-sms",
             Self::L2Fetch => "l2-fetch",
             Self::L2Ratio => "l2-ratio",
+            Self::MempoolMax => "mempool-max",
             Self::Prefetch => "prefetch",
             Self::PlanWindow => "plan-window",
             Self::PlanThreshold => "plan-threshold",
@@ -797,6 +813,7 @@ impl PlannerCli {
             "--required-cluster" => Dash::Need(PlanSlot::RequiredCluster),
             "--l2-fetch" => Dash::Need(PlanSlot::L2Fetch),
             "--l2-ratio" => Dash::Need(PlanSlot::L2Ratio),
+            "--mempool-max" => Dash::Need(PlanSlot::MempoolMax),
             "--preferred-cluster" => Dash::Need(PlanSlot::PreferredCluster),
             "--sync-policy" => Dash::Need(PlanSlot::SyncPolicy),
             "--device-sync-policy" => Dash::Need(PlanSlot::DeviceSyncPolicy),
@@ -860,6 +877,12 @@ impl PlannerCli {
                     .parse::<u16>()
                     .map_err(|_| format!("invalid l2-ratio {raw:?}"))?;
                 self.gpu.set_l2_ratio(n)?;
+            }
+            PlanSlot::MempoolMax => {
+                let n = raw
+                    .parse::<u64>()
+                    .map_err(|_| format!("invalid mempool-max {raw:?}"))?;
+                self.gpu.set_mempool_max(n)?;
             }
             PlanSlot::PreferredCluster => {
                 let n = raw
@@ -966,6 +989,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         mempool: gpu.mempool,
         mempool_trim: gpu.mempool_trim,
         mempool_no_reuse: gpu.mempool_no_reuse,
+        mempool_max: gpu.mempool_max,
         shareable: gpu.shareable,
         vmm_page: gpu.vmm_page,
         pageable: gpu.pageable,

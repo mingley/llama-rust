@@ -12,11 +12,12 @@ use crate::sim_replay::{
     apply_func_cluster_spread, apply_func_max_shared, apply_func_shared_mem, apply_l2_fetch,
     apply_misses, apply_required_cluster_width, apply_stream_mem_sync_domain,
     apply_stream_mem_sync_map, apply_stream_sms, apply_stream_sync_policy, apply_touch,
-    bind_shareable_mempools, bump_null_for_attach, disable_pool_opportunistic_reuse, drop_remote,
-    fetch_remote, fill_remote, gemm_keys, host_callbacks, note_touch, occupancy_slots,
-    persist_armed, pin_pageable_staging, reclaim_victim, remote_hit, replay_from_sim, sim_profile,
-    sync_work, trim_device_pools, trim_graph_pools, validate_sim_cfg, GraphBank, LeafMem,
-    PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay, StreamPlan, TouchArgs,
+    bind_device_mempools, bump_null_for_attach, disable_pool_opportunistic_reuse, drop_remote,
+    fetch_remote, fill_remote, gemm_keys, host_callbacks, mempool_hold, note_touch,
+    occupancy_slots, persist_armed, pin_pageable_staging, reclaim_victim, remote_hit,
+    replay_from_sim, sim_profile, sync_work, trim_device_pools, trim_graph_pools, validate_sim_cfg,
+    GraphBank, LeafMem, PageHandle, RemoteFetch, RemotePage, ReplayCounters, SimCfg, SimReplay,
+    StreamPlan, TouchArgs,
 };
 use gpu_sim::{DeviceId, HardwareProfile, Sim, StreamId};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -298,10 +299,16 @@ impl SchedRt {
         apply_l2_fetch(&mut sim, cfg.l2_fetch)?;
         apply_func_shared_mem(&mut sim, cfg.func_shared_mem)?;
         apply_device_shared_mem(&mut sim, cfg.device_shared_mem)?;
-        if cfg.shareable {
-            let _imported = bind_shareable_mempools(&mut sim)?;
+        if cfg.shareable || cfg.mempool_max > 0 {
+            let _imported = bind_device_mempools(&mut sim, cfg.shareable, cfg.mempool_max)?;
         }
-        if cfg.mempool || cfg.shareable || cfg.mempool_trim || cfg.mempool_no_reuse {
+        if mempool_hold(
+            cfg.mempool,
+            cfg.shareable,
+            cfg.mempool_trim,
+            cfg.mempool_no_reuse,
+            cfg.mempool_max,
+        ) {
             sim.set_default_pool_release_threshold(u64::MAX)?;
         }
         if cfg.mempool_no_reuse {

@@ -3754,7 +3754,21 @@ model, do not celebrate the sim.
     inherit-stream. `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-354. [ ] Next numbered PLAN item after 353 is the next `gpu-sim` / Engine /
+354. [x] `cudaMemPoolProps::maxSize`:
+    [`GpuStoreCfg::mempool_max`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::mempool_max`](expertvm/src/sim_replay.rs) `cudaMemPoolCreate` +
+    `maxSize` then `cudaDeviceSetMemPool`. Implies `--mempool`. Illegal with
+    `--sync-alloc`. Hits stay the same when `N` fits; reserved `live+cached`
+    cannot grow past `N` (leftover cache plus `--mempool-no-reuse` OS alloc
+    OOMs). Distinct from `--mempool` (hold), `--mempool-trim` (idle
+    `TrimTo(0)`), and `--mempool-no-reuse` (skip opportunistic reuse).
+    `--mempool-max N` on `expertvm sim` / `schedule` / `store` and
+    `gguf_gemv engine --expert-sim`. infer-bench has no `--mempool`, so it
+    does not get `--mempool-max`. Decode identity stays the device default
+    pool (`0` unset). `gpu-profile capture` is still refused. Dual score still
+    has no `$/M tokens`.
+
+355. [ ] Next numbered PLAN item after 354 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
@@ -3767,6 +3781,17 @@ model, do not celebrate the sim.
     CUDA arrays on `memcpy_3d_batch_async`. Do not invent
     `ConcurrentManagedAccess` / discard contents to make batch prefetch
     succeed.
+    Do not invent `ReuseFollowEventDependencies` /
+    `ReuseAllowInternalDependencies` as Engine flags (stored-only; 0 does
+    not insert waits). Do not invent `SetPreferredLocationHost` as a
+    decode-path skip of kernel first-touch. Do not invent finite
+    `--mempool-release N` (weaker than max-size OOM). Do not invent
+    stream inherit (`set_stream_access_policy` /
+    `set_stream_nvlink_util_centric`) — `kernel_with` / graph replay use
+    launch/node, not stream. Do not invent
+    `GraphInstantiateFlags::UPLOAD`, height/depth required cluster, or
+    function LoadBalancing / MaxL1 occupancy standalone. Do not spend the
+    next item on an OpenAI-compatible HTTP veneer.
 
 Stop if Phase 1 traces say residency cannot work. Do not invent an
 architecture or a dtype. Do not list `mixtral` or `qwen3vlmoe` as
