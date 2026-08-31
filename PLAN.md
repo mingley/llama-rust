@@ -4500,15 +4500,21 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-402. [ ] Next numbered PLAN item after 401 is the next `gpu-sim` / Engine /
+402. [x] Official dense `{1}` `ffn_up.scale`: llama.cpp generic post-load
+    (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Decode follows `build_ffn`:
+    `ggml_mul` after the up GEMM, before the gated product. Writer-tiny
+    `tiny-llama-ffn-up-s` is `tiny-llama` plus scale `3.5`. Decode identity
+    vs oracle. `gpu-profile capture` is still refused. Dual score still has
+    no `$/M tokens`.
+
+403. [ ] Next numbered PLAN item after 402 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
-    OpenAI HTTP veneer. Next decode candidate: generic `{1}` `ffn_up.scale`
-    on llama. Do not invent gemma4
-    `attn_q.scale` / `attn_output.scale` / `attn_k.scale` / `attn_v.scale`
-    as the writer-tiny (QK-Norm / `post_attention_norm` / V RMSNorm cancel).
-    Do not invent F32 `output.scale` unless NVFP4. Do not invent a second dense
-    `ffn_down.scale` / second `ffn_gate.scale` / second `attn_q.scale` / second `attn_output.scale` /
+    OpenAI HTTP veneer. Do not invent F32 `output.scale` unless NVFP4. Do not
+    invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
+    `attn_v.scale` as the writer-tiny. Do not invent a second dense
+    `ffn_down.scale` / second `ffn_gate.scale` / second `ffn_up.scale` /
+    second `attn_q.scale` / second `attn_output.scale` /
     second `attn_k.scale` / second `attn_v.scale` as a new family. Do not invent a second `--decode-sms` flag.
     Do not invent a second `--green-ctx`. Do not invent a second
     `ffn_down_exps.scale` / second gate/up scale as a new family.

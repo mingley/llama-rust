@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — official dense `{1}` `ffn_up.scale`
+
+Generic llama.cpp post-load `blk.{i}.ffn_up.scale` shape `{1}`
+(`TENSOR_NOT_REQUIRED`; missing is `1.0`). Decode follows `build_ffn`:
+`ggml_mul` after the up GEMM, before the gated product. Writer-tiny
+`tiny-llama-ffn-up-s` is `tiny-llama` plus scale `3.5` (distinct from
+dense `ffn_down.scale` `0.5` and `ffn_gate.scale` `1.25`). Phi2/Bloom stay
+on `Phi2Ffn` (no up-gate split). Per-expert `ffn_up_exps.scale` stays the
+gemma4 MoE tensor.
+
 ## Shipped 2026-08-31 — official dense `{1}` `ffn_gate.scale`
 
 Generic llama.cpp post-load `blk.{i}.ffn_gate.scale` shape `{1}`
