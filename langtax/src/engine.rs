@@ -29,7 +29,7 @@
 //! `GpuStoreCfg` knobs (`host_func`, blocking streams, `sync_alloc`, mempool,
 //! `mempool_trim`, `mempool_no_reuse`, shareable POSIX-FD IPC, `vmm_page`, pageable H2D, `host_register`, `host_register_mapped`, `sync_memops`, `device_sync_memops`, `memcpy_batch`, `SetAccessedBy`, legacy NULL, stream priority,
 //! graph update/clone/set-params/enable, timing events, `event_blocking_sync`, `seq_streams`, `kv_sim`, `decode_priority`,
-//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
+//! `mem_sync_domain`, `compute_slots`, `decode_sm_permille`, `cooperative`, `pdl`, `l2_persist`, `l2_reset`, `l2_fetch`, `cluster`, `shared_mem`, `func_shared_mem`, `device_shared_mem`, `portable_cluster`, `optin_shared`, `dynamic_shared`, `portable_shared`, `nvlink_util_centric`, `func_max_shared`, `max_l1`, `func_cluster_spread`, `cluster_load_balance`, `cluster_must_set`, `required_cluster`, `device_sync_policy`, `mem_sync_collapse`, `launch_completion`, `programmatic_event`, `stream_attach`, `managed_host`, `prefetch_host`) are the same mechanical
 //! CUDA surface as `expertvm sim`. Default pinned async stays decode identity.
 //! `--seq-streams` maps each Engine sequence onto a copy stream
 //! (`sequence % copy_engines.max(2)`) so concurrent H2D can overlap; grouped
@@ -73,7 +73,9 @@
 //! is Spread scheduling: occupies every Hyper-Q slot even when `N` is smaller
 //! than `compute_slots` (no-op without `--cluster` of at least 2). `--func-cluster-spread`
 //! is `cudaFuncSetAttribute` ClusterSchedulingPolicyPreference Spread: launch
-//! Default inherits that occupancy (distinct from `--cluster-spread`). `--cluster-must-set`
+//! Default inherits that occupancy (distinct from `--cluster-spread`). `--cluster-load-balance`
+//! is launch LoadBalancing (needs `--func-cluster-spread`; restores Hyper-Q overlap;
+//! exclusive with `--cluster-spread`). `--cluster-must-set`
 //! is `cudaFuncSetAttribute` ClusterDimMustBeSet (needs `--cluster`; occupancy
 //! matches `--cluster`; SetAttribute is +1 ns). `--required-cluster N`
 //! is `cudaFuncSetAttribute` RequiredClusterWidth (needs `--cluster`; must match
@@ -3902,6 +3904,46 @@ mod tests {
             overlap.1.wall_ns,
             serial.1.wall_ns,
             overlap.1.line(),
+            serial.1.line()
+        );
+    }
+
+    #[test]
+    fn engine_gpu_cluster_load_balance_restores_mixed_wall() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+            .expect("slow gemm profile");
+        let pri = GpuStoreCfg {
+            decode_priority: true,
+            stream_priority: true,
+            compute_slots: 4,
+            cluster: 2,
+            func_cluster_spread: true,
+            ..GpuStoreCfg::default()
+        };
+        let serial = mixed_gpu_decode_itl_at(bytes.clone(), false, None, pri, profile.clone());
+        let restored = mixed_gpu_decode_itl_at(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                cluster_load_balance: true,
+                ..pri
+            },
+            profile,
+        );
+        assert_eq!(serial.2, 4);
+        assert_eq!(restored.2, 4);
+        assert_eq!(
+            serial.4, restored.4,
+            "launch LoadBalancing must keep greedy identity"
+        );
+        assert!(
+            restored.1.wall_ns < serial.1.wall_ns,
+            "launch LoadBalancing must restore leftover prefill overlap; restored={} serial={} restored_line={} serial_line={}",
+            restored.1.wall_ns,
+            serial.1.wall_ns,
+            restored.1.line(),
             serial.1.line()
         );
     }

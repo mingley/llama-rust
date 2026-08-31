@@ -41,6 +41,8 @@ pub(crate) struct GemmFlags {
     pub preferred_cluster: u8,
     /// `cudaLaunchAttributeClusterSchedulingPolicyPreference` Spread.
     pub cluster_spread: bool,
+    /// `cudaLaunchAttributeClusterSchedulingPolicyPreference` LoadBalancing.
+    pub cluster_load_balance: bool,
     /// `cudaLaunchAttributePreferredSharedMemoryCarveout` MaxShared.
     pub max_shared: bool,
     /// `cudaLaunchAttributePreferredSharedMemoryCarveout` MaxL1.
@@ -107,6 +109,8 @@ impl GemmFlags {
     pub(crate) fn cluster_policy(self) -> ClusterSchedulingPolicy {
         if self.cluster_spread {
             ClusterSchedulingPolicy::Spread
+        } else if self.cluster_load_balance {
+            ClusterSchedulingPolicy::LoadBalancing
         } else {
             ClusterSchedulingPolicy::Default
         }
@@ -185,6 +189,24 @@ pub(crate) fn check_required_cluster(cluster: u8, required: u8) -> Result<(), Er
     }
     if required != cluster {
         return Err(Error::Store("required-cluster must match cluster"));
+    }
+    Ok(())
+}
+
+pub(crate) fn check_cluster_load_balance(
+    load: bool,
+    func_spread: bool,
+    launch_spread: bool,
+) -> Result<(), Error> {
+    if load && launch_spread {
+        return Err(Error::Store(
+            "choose one of cluster-load-balance, cluster-spread",
+        ));
+    }
+    if load && !func_spread {
+        return Err(Error::Store(
+            "cluster-load-balance needs func-cluster-spread",
+        ));
     }
     Ok(())
 }
@@ -780,6 +802,13 @@ pub struct SimCfg {
     /// cluster blocks `> 1`. Decode identity stays Default.
     /// [`crate::GpuStoreCfg::func_cluster_spread`] is the store path.
     pub func_cluster_spread: bool,
+    /// Launch LoadBalancing cluster scheduling (`cudaLaunchAttributeClusterSchedulingPolicyPreference`).
+    ///
+    /// Needs [`Self::func_cluster_spread`]. Overrides function Spread so leftover
+    /// kernels can Hyper-Q overlap again. Exclusive with [`Self::cluster_spread`].
+    /// A no-op unless cluster blocks `> 1`. Decode identity stays Default.
+    /// [`crate::GpuStoreCfg::cluster_load_balance`] is the store path.
+    pub cluster_load_balance: bool,
     /// `cudaFuncSetAttribute` ClusterDimMustBeSet.
     ///
     /// A grouped GEMM without [`Self::cluster`] is Invalid. Needs
@@ -1057,6 +1086,7 @@ impl SimCfg {
             preferred_cluster: 0,
             cluster_spread: false,
             func_cluster_spread: false,
+            cluster_load_balance: false,
             cluster_must_set: false,
             required_cluster: 0,
             max_shared: false,
@@ -1098,6 +1128,11 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     check_cluster_must_set(cfg.cluster, cfg.cluster_must_set)?;
     check_required_cluster(cfg.cluster, cfg.required_cluster)?;
     check_mem_sync_collapse(cfg.mem_sync_domain, cfg.mem_sync_collapse)?;
+    check_cluster_load_balance(
+        cfg.cluster_load_balance,
+        cfg.func_cluster_spread,
+        cfg.cluster_spread,
+    )?;
     check_max_l1(cfg.max_l1, cfg.func_max_shared, cfg.max_shared)?;
     check_l2_fetch(cfg.l2_fetch)?;
     if cfg.graph_update && cfg.graph_set_params {
@@ -1312,6 +1347,7 @@ pub fn sim_replay_cfg(
         .with_cluster(cfg.cluster)
         .with_preferred_cluster(cfg.preferred_cluster)
         .with_cluster_spread(cfg.cluster_spread)
+        .with_cluster_load_balance(cfg.cluster_load_balance)
         .with_max_shared(cfg.max_shared)
         .with_max_l1(cfg.max_l1)
         .with_shared_mem(cfg.shared_mem)
@@ -1774,6 +1810,7 @@ pub(crate) struct GraphBank {
     cluster: u8,
     preferred_cluster: u8,
     cluster_spread: bool,
+    cluster_load_balance: bool,
     max_shared: bool,
     max_l1: bool,
     shared_mem: gpu_sim::SharedMemoryMode,
@@ -1810,6 +1847,7 @@ impl GraphBank {
             cluster: 0,
             preferred_cluster: 0,
             cluster_spread: false,
+            cluster_load_balance: false,
             max_shared: false,
             max_l1: false,
             shared_mem: gpu_sim::SharedMemoryMode::Default,
@@ -1862,6 +1900,11 @@ impl GraphBank {
 
     pub(crate) fn with_cluster_spread(mut self, yes: bool) -> Self {
         self.cluster_spread = yes;
+        self
+    }
+
+    pub(crate) fn with_cluster_load_balance(mut self, yes: bool) -> Self {
+        self.cluster_load_balance = yes;
         self
     }
 
@@ -1928,6 +1971,7 @@ impl GraphBank {
             cluster: self.cluster,
             preferred_cluster: self.preferred_cluster,
             cluster_spread: self.cluster_spread,
+            cluster_load_balance: self.cluster_load_balance,
             max_shared: self.max_shared,
             max_l1: self.max_l1,
             shared_mem: self.shared_mem,
@@ -3523,9 +3567,10 @@ fn add_gemm_kernel(
         let node = usize::from(!writes.is_empty());
         sim.graph_kernel_node_set_preferred_cluster(graph, node, Some(p))?;
     }
-    if flags.cluster_spread {
+    let policy = flags.cluster_policy();
+    if policy != ClusterSchedulingPolicy::Default {
         let node = usize::from(!writes.is_empty());
-        sim.graph_kernel_node_set_cluster_policy(graph, node, ClusterSchedulingPolicy::Spread)?;
+        sim.graph_kernel_node_set_cluster_policy(graph, node, policy)?;
     }
     let carve = flags.carveout();
     if carve != SharedMemCarveout::Default {

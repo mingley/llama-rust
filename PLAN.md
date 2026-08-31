@@ -3700,9 +3700,21 @@ model, do not celebrate the sim.
     `--max-l1` on `expertvm sim` / `schedule` / `store` and
     `gguf_gemv engine --expert-sim`. infer-bench has `--func-max-shared`,
     so it gets `--max-l1`. Decode identity stays Default. `gpu-profile
-    capture` is still refused. Dual score still has no `$/M tokens`.
+    capture` is still refused.     Dual score still has no `$/M tokens`.
 
-350. [ ] Next numbered PLAN item after 349 is the next `gpu-sim` / Engine /
+350. [x] `cudaLaunchAttributeClusterSchedulingPolicyPreference` LoadBalancing:
+    [`GpuStoreCfg::cluster_load_balance`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::cluster_load_balance`](expertvm/src/sim_replay.rs) launch
+    policy. Needs `--func-cluster-spread`. Overrides function Spread so
+    leftover kernels can Hyper-Q overlap again. Exclusive with
+    `--cluster-spread`. Hits stay the same. Legal with `--pdl` and
+    `--cooperative`. `--cluster-load-balance` on `expertvm sim` /
+    `schedule` / `store` and `gguf_gemv engine --expert-sim`. infer-bench
+    has `--func-cluster-spread`, so it gets `--cluster-load-balance`.
+    Decode identity stays Default. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+351. [ ] Next numbered PLAN item after 350 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent

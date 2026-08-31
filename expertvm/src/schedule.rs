@@ -375,6 +375,7 @@ impl SchedRt {
             .with_cluster(cfg.cluster)
             .with_preferred_cluster(cfg.preferred_cluster)
             .with_cluster_spread(cfg.cluster_spread)
+            .with_cluster_load_balance(cfg.cluster_load_balance)
             .with_max_shared(cfg.max_shared)
             .with_max_l1(cfg.max_l1)
             .with_shared_mem(cfg.shared_mem)

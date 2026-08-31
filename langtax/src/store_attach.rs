@@ -105,6 +105,8 @@ pub(crate) struct GpuCli {
     pub cluster_spread: bool,
     /// Function Spread cluster scheduling (`GpuStoreCfg::func_cluster_spread`).
     pub func_cluster_spread: bool,
+    /// Launch LoadBalancing cluster scheduling (`GpuStoreCfg::cluster_load_balance`).
+    pub cluster_load_balance: bool,
     /// `cudaFuncAttributeClusterDimMustBeSet` (`GpuStoreCfg::cluster_must_set`).
     pub cluster_must_set: bool,
     /// `cudaFuncAttributeRequiredClusterWidth` (`GpuStoreCfg::required_cluster`). `0` is unset.
@@ -243,6 +245,7 @@ impl GpuCli {
             "--l2-reset" => &mut self.l2_reset,
             "--cluster-spread" => &mut self.cluster_spread,
             "--func-cluster-spread" => &mut self.func_cluster_spread,
+            "--cluster-load-balance" => &mut self.cluster_load_balance,
             "--cluster-must-set" => &mut self.cluster_must_set,
             "--max-shared" => &mut self.max_shared,
             "--func-max-shared" => &mut self.func_max_shared,
@@ -528,6 +531,17 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--cluster-load-balance` needs `--func-cluster-spread` and is exclusive with `--cluster-spread`.
+    pub(crate) fn check_cluster_load_balance(self) -> Result<(), String> {
+        if self.cluster_load_balance && self.cluster_spread {
+            return Err("choose one of --cluster-load-balance, --cluster-spread".into());
+        }
+        if self.cluster_load_balance && !self.func_cluster_spread {
+            return Err("--cluster-load-balance needs --func-cluster-spread".into());
+        }
+        Ok(())
+    }
+
     /// `--max-l1` needs `--func-max-shared` and is exclusive with `--max-shared`.
     pub(crate) fn check_max_l1(self) -> Result<(), String> {
         if self.max_l1 && self.max_shared {
@@ -597,6 +611,7 @@ impl GpuCli {
             (self.preferred_cluster_set, "--preferred-cluster"),
             (self.cluster_spread, "--cluster-spread"),
             (self.func_cluster_spread, "--func-cluster-spread"),
+            (self.cluster_load_balance, "--cluster-load-balance"),
             (self.cluster_must_set, "--cluster-must-set"),
             (self.required_cluster_set, "--required-cluster"),
             (self.max_shared, "--max-shared"),
@@ -938,6 +953,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         preferred_cluster: gpu.preferred_cluster,
         cluster_spread: gpu.cluster_spread,
         func_cluster_spread: gpu.func_cluster_spread,
+        cluster_load_balance: gpu.cluster_load_balance,
         cluster_must_set: gpu.cluster_must_set,
         required_cluster: gpu.required_cluster,
         max_shared: gpu.max_shared,

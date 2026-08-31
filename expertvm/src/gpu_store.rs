@@ -15,10 +15,10 @@ use crate::sim_replay::{
     apply_exec_mem_sync_domain, apply_exec_mem_sync_map, apply_func_cluster_spread,
     apply_func_max_shared, apply_func_shared_mem, apply_l2_fetch, apply_required_cluster_width,
     apply_stream_mem_sync_domain, apply_stream_mem_sync_map, apply_stream_sync_policy,
-    bind_shareable_mempools, check_cluster_must_set, check_cluster_preferred,
-    check_device_graph_flags, check_l2_fetch, check_max_l1, check_mem_sync_collapse,
-    check_required_cluster, ensure_single_attach, free_copy_mailbox, free_mapped_host,
-    instantiate_exec, kernel_leaf, mark_sync_memops, replay_exec, replay_streams,
+    bind_shareable_mempools, check_cluster_load_balance, check_cluster_must_set,
+    check_cluster_preferred, check_device_graph_flags, check_l2_fetch, check_max_l1,
+    check_mem_sync_collapse, check_required_cluster, ensure_single_attach, free_copy_mailbox,
+    free_mapped_host, instantiate_exec, kernel_leaf, mark_sync_memops, replay_exec, replay_streams,
     reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
     upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
 };
@@ -295,6 +295,12 @@ pub struct GpuStoreCfg {
     /// Distinct from launch-attribute [`Self::cluster_spread`]. A no-op unless
     /// cluster blocks `> 1`. Decode identity stays Default.
     pub func_cluster_spread: bool,
+    /// Launch LoadBalancing cluster scheduling (`cudaLaunchAttributeClusterSchedulingPolicyPreference`).
+    ///
+    /// Needs [`Self::func_cluster_spread`]. Overrides function Spread so leftover
+    /// kernels can Hyper-Q overlap again. Exclusive with [`Self::cluster_spread`].
+    /// A no-op unless cluster blocks `> 1`. Decode identity stays Default.
+    pub cluster_load_balance: bool,
     /// `cudaFuncSetAttribute` ClusterDimMustBeSet.
     ///
     /// A grouped GEMM without [`Self::cluster`] is Invalid. Needs
@@ -565,6 +571,7 @@ pub struct SimulatedGpuStore {
     cluster: u8,
     preferred_cluster: u8,
     cluster_spread: bool,
+    cluster_load_balance: bool,
     max_shared: bool,
     max_l1: bool,
     shared_mem: gpu_sim::SharedMemoryMode,
@@ -769,6 +776,8 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::cluster_spread`] is launch-attribute Spread.
     /// [`GpuStoreCfg::func_cluster_spread`] is `cudaFuncSetAttribute`
     /// ClusterSchedulingPolicyPreference Spread (launch Default inherits).
+    /// [`GpuStoreCfg::cluster_load_balance`] is launch-attribute LoadBalancing
+    /// (needs `--func-cluster-spread`; restores Hyper-Q overlap).
     /// [`GpuStoreCfg::cluster_must_set`] is `cudaFuncSetAttribute`
     /// ClusterDimMustBeSet (needs `--cluster`; occupancy matches `--cluster`).
     /// [`GpuStoreCfg::required_cluster`] is `cudaFuncSetAttribute`
@@ -907,6 +916,11 @@ impl SimulatedGpuStore {
         check_cluster_must_set(cfg.cluster, cfg.cluster_must_set)?;
         check_required_cluster(cfg.cluster, cfg.required_cluster)?;
         check_mem_sync_collapse(cfg.mem_sync_domain, cfg.mem_sync_collapse)?;
+        check_cluster_load_balance(
+            cfg.cluster_load_balance,
+            cfg.func_cluster_spread,
+            cfg.cluster_spread,
+        )?;
         check_max_l1(cfg.max_l1, cfg.func_max_shared, cfg.max_shared)?;
         check_l2_fetch(cfg.l2_fetch)?;
         if cfg.shareable && (cfg.sync_alloc || fill != GpuFill::Pinned) {
@@ -1058,6 +1072,7 @@ impl SimulatedGpuStore {
             cluster: cfg.cluster,
             preferred_cluster: cfg.preferred_cluster,
             cluster_spread: cfg.cluster_spread,
+            cluster_load_balance: cfg.cluster_load_balance,
             max_shared: cfg.max_shared,
             max_l1: cfg.max_l1,
             shared_mem: cfg.shared_mem,
@@ -1228,6 +1243,12 @@ impl SimulatedGpuStore {
             .unwrap_or(false)
     }
 
+    /// Whether grouped GEMMs launch with LoadBalancing cluster policy.
+    #[must_use]
+    pub fn cluster_load_balance(&self) -> bool {
+        self.gemm_flags().cluster_policy() == ClusterSchedulingPolicy::LoadBalancing
+    }
+
     /// Current `cudaLimitMaxL2FetchGranularity` (`128` when unset).
     #[must_use]
     pub fn l2_fetch(&self) -> u64 {
@@ -1336,6 +1357,7 @@ impl SimulatedGpuStore {
             cluster: self.cluster,
             preferred_cluster: self.preferred_cluster,
             cluster_spread: self.cluster_spread,
+            cluster_load_balance: self.cluster_load_balance,
             max_shared: self.max_shared,
             max_l1: self.max_l1,
             shared_mem: self.shared_mem,

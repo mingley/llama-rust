@@ -629,6 +629,9 @@
 //! `expertvm sim --func-cluster-spread` sets function Spread so launch Default
 //! occupies every Hyper-Q slot when `--cluster` is at least 2 (distinct from
 //! `--cluster-spread` launch attribute).
+//! `expertvm sim --cluster-load-balance` is launch LoadBalancing (needs
+//! `--func-cluster-spread`; restores leftover Hyper-Q overlap; exclusive with
+//! `--cluster-spread`).
 //! `expertvm sim --cluster-must-set` is `cudaFuncAttributeClusterDimMustBeSet`
 //! (needs `--cluster`; occupancy matches `--cluster`; SetAttribute is +1 ns).
 //! `expertvm sim --required-cluster N` is `cudaFuncAttributeRequiredClusterWidth`

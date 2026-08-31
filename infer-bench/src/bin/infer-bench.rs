@@ -18,7 +18,7 @@ usage: infer-bench <command> [args]
   workload <NAME> [--tokens N] [--experts N] [--capacity N] [--profile NAME]
   topology [--bytes N]
   remote <trace.jsonl> [--expert-bytes N] [--activation-bytes N] [--profile NAME]
-  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
+  schedule <trace.jsonl> [--capacity N] [--profile NAME] [--expert-bytes N] [--max-batch N] [--interarrival-ns N] [--ttft-slo-ns N] [--itl-slo-ns N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--prefix-cache] [--place none|striped|colocated|replicas|remote] [--activation-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-load-balance] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--shared-mem default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N]
 
 NAME: uniform, hotset, shifting-hotset, thrash, coding, chat, long-context,
       prefill-heavy, decode-heavy, batch-1, batch, batch-128, prefill-batch,
@@ -139,6 +139,7 @@ fn run() -> Result<(), String> {
             sim_cfg.preferred_cluster = cfg.preferred_cluster;
             sim_cfg.cluster_spread = cfg.cluster_spread;
             sim_cfg.func_cluster_spread = cfg.func_cluster_spread;
+            sim_cfg.cluster_load_balance = cfg.cluster_load_balance;
             sim_cfg.cluster_must_set = cfg.cluster_must_set;
             sim_cfg.required_cluster = cfg.required_cluster;
             sim_cfg.max_shared = cfg.max_shared;
@@ -243,6 +244,7 @@ struct Cfg {
     preferred_cluster: u8,
     cluster_spread: bool,
     func_cluster_spread: bool,
+    cluster_load_balance: bool,
     cluster_must_set: bool,
     required_cluster: u8,
     max_shared: bool,
@@ -310,6 +312,7 @@ where
     let mut preferred_cluster = 0u8;
     let mut cluster_spread = false;
     let mut func_cluster_spread = false;
+    let mut cluster_load_balance = false;
     let mut cluster_must_set = false;
     let mut required_cluster = 0u8;
     let mut max_shared = false;
@@ -412,6 +415,9 @@ where
             }
             "--func-cluster-spread" => {
                 func_cluster_spread = !matches!(inline.as_deref(), Some("0" | "false"));
+            }
+            "--cluster-load-balance" => {
+                cluster_load_balance = !matches!(inline.as_deref(), Some("0" | "false"));
             }
             "--cluster-must-set" => {
                 cluster_must_set = !matches!(inline.as_deref(), Some("0" | "false"));
@@ -562,6 +568,12 @@ where
     if required_cluster != 0 && required_cluster != cluster {
         return Err("required-cluster must match --cluster".into());
     }
+    if cluster_load_balance && cluster_spread {
+        return Err("choose one of --cluster-load-balance, --cluster-spread".into());
+    }
+    if cluster_load_balance && !func_cluster_spread {
+        return Err("--cluster-load-balance needs --func-cluster-spread".into());
+    }
     if max_l1 && max_shared {
         return Err("choose one of --max-l1, --max-shared".into());
     }
@@ -597,6 +609,7 @@ where
         preferred_cluster,
         cluster_spread,
         func_cluster_spread,
+        cluster_load_balance,
         cluster_must_set,
         required_cluster,
         max_shared,

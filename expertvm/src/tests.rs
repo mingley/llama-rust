@@ -6672,6 +6672,56 @@ fn simulated_gpu_store_func_cluster_spread_serializes_leftover_prefill() {
 }
 
 #[test]
+fn simulated_gpu_store_cluster_load_balance_restores_leftover_prefill_overlap() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("slow gemm profile");
+    let run = |cluster_load_balance: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            profile.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                decode_priority: true,
+                stream_priority: true,
+                compute_slots: 4,
+                cluster: 2,
+                func_cluster_spread: true,
+                cluster_load_balance,
+                ..GpuStoreCfg::default()
+            },
+        )
+        .expect("gpu");
+        let pre = ExpertKey::new(0, 0);
+        let dec = ExpertKey::new(0, 1);
+        gpu.bind_decode_compute(false);
+        let _warm_pre = gpu.acquire(pre).expect("warm pre");
+        gpu.release(pre);
+        let _warm_dec = gpu.acquire(dec).expect("warm dec");
+        gpu.release(dec);
+        let t0 = gpu.clock_ns().expect("drain h2d");
+        gpu.bind_decode_compute(false);
+        let _prefill = gpu.acquire(pre).expect("prefill");
+        gpu.release(pre);
+        gpu.bind_decode_compute(true);
+        let _decode = gpu.acquire(dec).expect("decode");
+        gpu.release(dec);
+        gpu.score().expect("score").wall_ns.saturating_sub(t0)
+    };
+    let serial = run(false);
+    let restored = run(true);
+    assert!(
+        restored < serial,
+        "launch LoadBalancing must restore leftover prefill overlap; restored={restored} serial={serial}"
+    );
+}
+
+#[test]
 fn simulated_gpu_store_cluster_must_set_matches_cluster_occupancy() {
     let t = Trace {
         events: vec![ev(0, 0, &[0, 1])],
@@ -8065,6 +8115,40 @@ fn sim_replay_func_cluster_spread_serializes_seq_streams() {
         overlap.sim_ns < serial.sim_ns,
         "func cluster Spread must not Hyper-Q overlap leftover seq GEMMs; overlap={} serial={}",
         overlap.sim_ns,
+        serial.sim_ns
+    );
+}
+
+#[test]
+fn sim_replay_cluster_load_balance_restores_seq_stream_overlap() {
+    let t = Trace {
+        events: vec![ev_seq(0, 0, 0, &[0]), ev_seq(1, 0, 0, &[1])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("slow gemm profile");
+    let packed = SimCfg {
+        seq_streams: true,
+        compute_slots: 4,
+        cluster: 2,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let serial = SimCfg {
+        func_cluster_spread: true,
+        ..packed
+    };
+    let restored = SimCfg {
+        cluster_load_balance: true,
+        ..serial
+    };
+    let overlap = sim_replay_cfg(&t, profile.clone(), packed).expect("packed");
+    let serial = sim_replay_cfg(&t, profile.clone(), serial).expect("func-cluster-spread");
+    let restored = sim_replay_cfg(&t, profile, restored).expect("cluster-load-balance");
+    assert_eq!(overlap.hits, restored.hits);
+    assert_eq!(overlap.misses, restored.misses);
+    assert!(
+        restored.sim_ns < serial.sim_ns,
+        "launch LoadBalancing must restore Hyper-Q overlap; restored={} serial={}",
+        restored.sim_ns,
         serial.sim_ns
     );
 }
@@ -11049,6 +11133,129 @@ fn sim_replay_func_cluster_spread_keeps_hits() {
     let b = sim_replay_cfg(&t, profile, on).expect("func-cluster-spread");
     assert_eq!(a.hits, b.hits);
     assert_eq!(a.misses, b.misses);
+}
+
+#[test]
+fn sim_replay_cluster_load_balance_keeps_hits() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg {
+        cluster: 2,
+        func_cluster_spread: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    let on = SimCfg {
+        cluster_load_balance: true,
+        ..off
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("func-cluster-spread");
+    let b = sim_replay_cfg(&t, profile, on).expect("cluster-load-balance");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+}
+
+#[test]
+fn sim_replay_cluster_load_balance_needs_func_cluster_spread() {
+    let t = cycling_trace();
+    let profile = HardwareProfile::example_h100_sxm();
+    let on = SimCfg {
+        cluster: 2,
+        cluster_load_balance: true,
+        ..SimCfg::lru(2, 4096, 0)
+    };
+    match sim_replay_cfg(&t, profile, on) {
+        Ok(_) => panic!("cluster-load-balance without func-cluster-spread must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("cluster-load-balance needs func-cluster-spread"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn simulated_gpu_store_cluster_load_balance_needs_func_cluster_spread() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            cluster: 2,
+            cluster_load_balance: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("cluster-load-balance without func-cluster-spread must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("cluster-load-balance needs func-cluster-spread"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn simulated_gpu_store_cluster_load_balance_refuses_cluster_spread() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            cluster: 2,
+            func_cluster_spread: true,
+            cluster_spread: true,
+            cluster_load_balance: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("cluster-load-balance with cluster-spread must fail"),
+        Err(err) => assert!(
+            err.to_string()
+                .contains("choose one of cluster-load-balance, cluster-spread"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn simulated_gpu_store_cluster_load_balance_marks_launch() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            cluster: 2,
+            func_cluster_spread: true,
+            cluster_load_balance: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    assert!(gpu.cluster_load_balance());
+    assert!(gpu.func_cluster_spread());
+    let identity = SimulatedGpuStore::new(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+    )
+    .expect("id");
+    assert!(!identity.cluster_load_balance());
 }
 
 #[test]

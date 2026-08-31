@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaLaunchAttributeClusterSchedulingPolicyPreference` LoadBalancing
+
+`GpuStoreCfg::cluster_load_balance` / `SimCfg::cluster_load_balance` set
+launch LoadBalancing. Needs `--func-cluster-spread`. Overrides function
+Spread so leftover kernels can Hyper-Q overlap again. Exclusive with
+`--cluster-spread`. Hits/misses stay the same. `--cluster-load-balance` is
+off by default (decode identity: Default policy). `gpu-profile capture` is
+still refused.
+
 ## Shipped 2026-08-31 — `cudaLaunchAttributePreferredSharedMemoryCarveout` MaxL1
 
 `GpuStoreCfg::max_l1` / `SimCfg::max_l1` set launch MaxL1 carveout. Needs
