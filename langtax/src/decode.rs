@@ -39,6 +39,8 @@
 //! interleaved QKV to concatenated Q/K/V), `LLM_NORM` on attn/ffn/output,
 //! sequential residual, `LLM_FFN_GELU`/`LLM_FFN_SEQ` with biases, ALiBi
 //! (`f_max_alibi_bias = 8`, no RoPE). Not Mixtral, not `qwen3vlmoe`.
+//! Writer-tiny fused QKV scale ([`tiny_bloom_attn_qkv_s_gguf`]) is bloom plus
+//! `{1}` `attn_qkv.scale`.
 //! Official Gemma2 (`architecture=gemma2`) follows `src/models/gemma2.cpp`:
 //! Gemma embed-scale + GeGLU, `post_attention_norm` / `post_ffw_norm`,
 //! sliding-window attention (`set_swa_pattern(2)`, `LLAMA_SWA_TYPE_STANDARD`),
@@ -100,7 +102,8 @@
 //! `{1}` `ffn_gate.scale`. Writer-tiny dense up scale
 //! ([`tiny_llama_ffn_up_s_gguf`]) is llama plus `{1}` `ffn_up.scale`.
 //! Writer-tiny NVFP4 LM-head scale ([`tiny_nvfp4_output_s_gguf`]) is NVFP4
-//! plus `{1}` `output.scale`.
+//! plus `{1}` `output.scale`. Writer-tiny fused QKV scale
+//! ([`tiny_bloom_attn_qkv_s_gguf`]) is bloom plus `{1}` `attn_qkv.scale`.
 
 use crate::gguf::{load_gguf_owned, GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 pub use crate::kv_page::PagedKvPool;
@@ -237,6 +240,11 @@ const TINY_LLAMA_FFN_UP_S: f32 = 3.5;
 /// tensor only when `output.weight` is `GGML_TYPE_NVFP4`. Not 1. F32
 /// `output.scale` is ignored (not loaded).
 const TINY_NVFP4_OUTPUT_S: f32 = 4.0;
+/// Writer-tiny fused `attn_qkv.scale` (`{1}`). Official llama.cpp
+/// `build_qkv` applies this after the fused QKV GEMM, before bias. Not 1,
+/// and distinct from split `attn_q.scale` / `attn_k.scale` / `attn_v.scale`.
+/// Loaded only when fused `attn_qkv.weight` is present (bloom).
+const TINY_BLOOM_ATTN_QKV_S: f32 = 5.0;
 /// Writer-tiny dense `attn_q.scale` (`{1}`). Not 1, and distinct from
 /// [`TINY_LLAMA_FFN_DOWN_S`], so the walk is observable vs [`tiny_llama_gguf`]
 /// and a mix-up with down scale cannot silently match. Gemma3/4 QK-Norm
@@ -649,6 +657,11 @@ struct Layer {
     /// Official llama.cpp generic `{1}` `attn_q.scale` (`TENSOR_NOT_REQUIRED`).
     /// `build_lora_mm` `ggml_mul` after the Q GEMM, before QK-Norm. Missing is `1.0`.
     q_s: Option<f32>,
+    /// Official llama.cpp generic `{1}` `attn_qkv.scale` (`TENSOR_NOT_REQUIRED`).
+    /// `build_qkv` fused path: `build_lora_mm` `ggml_mul` after the QKV GEMM,
+    /// before QKV bias. Missing is `1.0`. Loaded only when fused `attn_qkv`
+    /// is present (bloom).
+    qkv_s: Option<f32>,
     /// `None` on official gemma4 shared-KV layers (`!has_kv(il)`).
     wk: Option<QuantMat>,
     bk: Option<Vec<f32>>,
@@ -1815,7 +1828,8 @@ impl Llama {
     /// [`tiny_llama_attn_v_s_gguf`]. Dense `{1}` `ffn_gate.scale` is
     /// [`tiny_llama_ffn_gate_s_gguf`]. Dense `{1}` `ffn_up.scale` is
     /// [`tiny_llama_ffn_up_s_gguf`]. NVFP4 `{1}` `output.scale` is
-    /// [`tiny_nvfp4_output_s_gguf`].
+    /// [`tiny_nvfp4_output_s_gguf`]. Fused `{1}` `attn_qkv.scale` is
+    /// [`tiny_bloom_attn_qkv_s_gguf`].
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
     /// blob; they do not clone tensor bytes. When `output.weight` is absent,
@@ -2668,6 +2682,9 @@ impl Llama {
                 rmsnorm_rows_inplace(&mut s.x, self.n_embd, &layer.attn_norm, self.rms_eps)?;
             }
             self.gemm_into(&layer.wq, n, &s.x, &mut s.q, pool)?;
+            if let Some(scale) = layer.qkv_s {
+                scale_expert_rows(&mut s.q, n, layer.wq.n_rows, scale, "attn_qkv.scale")?;
+            }
             add_bias_rows(&mut s.q, layer.wq.n_rows, layer.bq.as_deref())?;
             if let Some(scale) = layer.q_s {
                 scale_expert_rows(&mut s.q, n, layer.wq.n_rows, scale, "attn_q.scale")?;
@@ -2679,11 +2696,17 @@ impl Llama {
                         return Err(LlamaError::Shape("qkv head split".into()));
                     }
                     self.gemm_into(wk, n, &s.x, &mut s.k, pool)?;
+                    if let Some(scale) = layer.qkv_s {
+                        scale_expert_rows(&mut s.k, n, wk.n_rows, scale, "attn_qkv.scale")?;
+                    }
                     add_bias_rows(&mut s.k, wk.n_rows, layer.bk.as_deref())?;
                     if let Some(scale) = layer.k_s {
                         scale_expert_rows(&mut s.k, n, wk.n_rows, scale, "attn_k.scale")?;
                     }
                     self.gemm_into(wv, n, &s.x, &mut s.v, pool)?;
+                    if let Some(scale) = layer.qkv_s {
+                        scale_expert_rows(&mut s.v, n, wv.n_rows, scale, "attn_qkv.scale")?;
+                    }
                     add_bias_rows(&mut s.v, wv.n_rows, layer.bv.as_deref())?;
                     if let Some(scale) = layer.v_s {
                         scale_expert_rows(&mut s.v, n, wv.n_rows, scale, "attn_v.scale")?;
@@ -5616,6 +5639,7 @@ pub fn tiny_phi2_gguf() -> Vec<u8> {
 /// and `add_bos_token=false`. No `rope.dimension_count` / `rope.freq_base`.
 /// No `output.bias`. Tied `output.weight` reuse is allowed. Not Mixtral, not
 /// `qwen3vlmoe`, not linear-attn, not a phi2 redo.
+/// Optional `{1}` `attn_qkv.scale` is [`tiny_bloom_attn_qkv_s_gguf`].
 pub fn tiny_bloom_gguf() -> Vec<u8> {
     let n_embd = TINY_N_EMBD;
     let n_ff = TINY_BLOOM_N_FF;
@@ -5797,6 +5821,24 @@ pub fn tiny_bloom_gguf() -> Vec<u8> {
         ),
     ];
     write_gguf_with_kv(&kv, &tensors)
+}
+
+/// Writer-built Bloom GGUF with official `{1}` `attn_qkv.scale`.
+///
+/// Same tensors as [`tiny_bloom_gguf`] plus `blk.0.attn_qkv.scale`. llama.cpp
+/// `build_qkv` fused path: after the QKV GEMM, `ggml_mul` broadcasts the
+/// scalar (`TENSOR_NOT_REQUIRED`; missing is `1.0`) before QKV bias. Not a
+/// second architecture. Split `attn_q.scale` / `attn_k.scale` /
+/// `attn_v.scale` stay the llama tensors. Llama files that contain
+/// `attn_qkv.scale` are ignored (not loaded).
+pub fn tiny_bloom_attn_qkv_s_gguf() -> Vec<u8> {
+    rewrite_tiny_bloom_attn_qkv_s(tiny_bloom_gguf(), Some(TINY_BLOOM_ATTN_QKV_S))
+        .unwrap_or_else(|_| Vec::new())
+}
+
+/// Append or omit `blk.0.attn_qkv.scale`.
+fn rewrite_tiny_bloom_attn_qkv_s(bytes: Vec<u8>, scale: Option<f32>) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_llama_unit_scale(bytes, "blk.0.attn_qkv.scale", scale)
 }
 
 /// Writer-built Llama GGUF with Q4_K `token_embd.weight`.
@@ -8759,6 +8801,11 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
         wq,
         bq,
         q_s: load_unit_scale(g, &format!("blk.{i}.attn_q.scale"))?,
+        qkv_s: if h.bloom {
+            load_unit_scale(g, &format!("blk.{i}.attn_qkv.scale"))?
+        } else {
+            None
+        },
         wk,
         bk,
         k_s: load_unit_scale(g, &format!("blk.{i}.attn_k.scale"))?,
@@ -9366,6 +9413,7 @@ fn is_applied_norm_or_bias(name: &str) -> bool {
         || name.ends_with(".attn_k.scale")
         || name.ends_with(".attn_v.scale")
         || name.ends_with(".attn_output.scale")
+        || name.ends_with(".attn_qkv.scale")
         || name.ends_with(".attn_q_norm.weight")
         || name.ends_with(".attn_k_norm.weight")
         || name.ends_with(".post_norm.weight")
@@ -13308,6 +13356,13 @@ mod tests {
         oracle_mul_unit_scale(g, layer, "attn_v.scale", y);
     }
 
+    /// Official llama.cpp `build_qkv` fused path: `{1}` `attn_qkv.scale`
+    /// `ggml_mul` after the QKV GEMM, before bias (`TENSOR_NOT_REQUIRED`;
+    /// missing is `1.0`).
+    fn oracle_mul_attn_qkv_s(g: &Gguf, layer: usize, y: &mut [f32]) {
+        oracle_mul_unit_scale(g, layer, "attn_qkv.scale", y);
+    }
+
     /// Official llama.cpp `build_lora_mm`: `{1}` `output.scale` after the
     /// NVFP4 LM-head GEMM (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Loaded
     /// only when `output.weight` is [`GgmlType::NVFP4`].
@@ -14250,10 +14305,10 @@ mod tests {
                 };
                 let attn_norm_output = xn_attn.clone();
                 let (mut q_full, k, v) = if bloom {
-                    let qkv = oracle_add_bias(
-                        oracle_gemv(g.tensor(&tname(li, "attn_qkv.weight")).unwrap(), &xn_attn),
-                        g.tensor(&tname(li, "attn_qkv.bias")),
-                    );
+                    let mut qkv =
+                        oracle_gemv(g.tensor(&tname(li, "attn_qkv.weight")).unwrap(), &xn_attn);
+                    oracle_mul_attn_qkv_s(g, li, &mut qkv);
+                    let qkv = oracle_add_bias(qkv, g.tensor(&tname(li, "attn_qkv.bias")));
                     let n_q = n_head * hd;
                     let n_k = n_kv * hd;
                     let q = qkv[..n_q].to_vec();
@@ -15883,6 +15938,7 @@ mod tests {
             tiny_mxfp4_gguf(),
             tiny_nvfp4_gguf(),
             tiny_nvfp4_output_s_gguf(),
+            tiny_bloom_attn_qkv_s_gguf(),
             tiny_q10_gguf(),
             tiny_q20_gguf(),
             tiny_q40_gguf(),
@@ -15941,6 +15997,7 @@ mod tests {
             tiny_qwen35_gguf(),
             tiny_phi2_gguf(),
             tiny_bloom_gguf(),
+            tiny_bloom_attn_qkv_s_gguf(),
         ] {
             load_prefill_match(&bytes, &tokens);
             load_prefill_match(&bytes, &[3]);
@@ -16001,6 +16058,7 @@ mod tests {
             ("llama-ffn-gate-s", tiny_llama_ffn_gate_s_gguf()),
             ("llama-ffn-up-s", tiny_llama_ffn_up_s_gguf()),
             ("nvfp4-output-s", tiny_nvfp4_output_s_gguf()),
+            ("bloom-attn-qkv-s", tiny_bloom_attn_qkv_s_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("f16", tiny_f16_gguf()),
@@ -16108,6 +16166,7 @@ mod tests {
             ("llama-ffn-gate-s", tiny_llama_ffn_gate_s_gguf()),
             ("llama-ffn-up-s", tiny_llama_ffn_up_s_gguf()),
             ("nvfp4-output-s", tiny_nvfp4_output_s_gguf()),
+            ("bloom-attn-qkv-s", tiny_bloom_attn_qkv_s_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("llama-moe", tiny_llama_moe_gguf()),
@@ -19277,6 +19336,133 @@ mod tests {
     }
 
     #[test]
+    fn tiny_bloom_attn_qkv_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_bloom_attn_qkv_s_gguf();
+        let g = load_gguf(&bytes).expect("load bloom attn_qkv.scale");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("bloom".into()))
+        );
+        let scale = g.tensor("blk.0.attn_qkv.scale").expect("qkv_s");
+        assert_eq!(scale.n_cols(), 1);
+        assert_eq!(
+            f32s(scale).expect("f32s").first().copied(),
+            Some(TINY_BLOOM_ATTN_QKV_S)
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert_eq!(model.layers[0].qkv_s, Some(TINY_BLOOM_ATTN_QKV_S));
+        let bloom = load_gguf(&tiny_bloom_gguf()).expect("bloom");
+        assert!(bloom.tensor("blk.0.attn_qkv.scale").is_none());
+        assert!(bloom.tensor("blk.0.attn_qkv.weight").is_some());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&bloom, &[1, 2, 3]),
+            "oracle attn_qkv.scale vs bloom"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("qkv_s pref");
+        let bloom_pref = {
+            let bm = Llama::from_gguf(bloom.clone()).expect("bm");
+            assert!(bm.layers[0].qkv_s.is_none());
+            let mut c = bm.new_cache(8).expect("bc");
+            bm.prefill(&mut c, &tokens).expect("bloom pref")
+        };
+        assert_ne!(
+            scaled, bloom_pref,
+            "attn_qkv.scale 5.0 must not copy bloom logits"
+        );
+        let ones_pref = {
+            let ones_bytes =
+                rewrite_tiny_bloom_attn_qkv_s(tiny_bloom_gguf(), Some(1.0)).expect("ones bytes");
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&bloom, &tokens),
+                "scale=1.0 must match omitted attn_qkv.scale"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, bloom_pref,
+            "all-ones attn_qkv.scale must be identity with bloom"
+        );
+        let q_s = load_gguf(&tiny_llama_attn_q_s_gguf()).expect("q_s");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&q_s, &tokens),
+            "attn_qkv.scale must not copy attn_q.scale logits"
+        );
+        let llama_with = {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_llama_gguf(),
+                "blk.0.attn_qkv.scale",
+                Some(TINY_BLOOM_ATTN_QKV_S),
+            )
+            .expect("llama qkv_s bytes");
+            let lg = load_gguf(&bytes).expect("llama qkv_s g");
+            assert!(lg.tensor("blk.0.attn_qkv.scale").is_some());
+            let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+            assert_eq!(
+                oracle_forward_seq(&lg, &tokens),
+                oracle_forward_seq(&llama, &tokens),
+                "llama attn_qkv.scale must be ignored"
+            );
+            let lm = Llama::from_gguf(lg).expect("lm");
+            assert!(lm.layers[0].qkv_s.is_none());
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama qkv_s pref")
+        };
+        let llama_pref = {
+            let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+            let lm = Llama::from_gguf(llama).expect("lm");
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        assert_eq!(
+            llama_with, llama_pref,
+            "llama attn_qkv.scale must be identity with llama"
+        );
+        let bad = {
+            let g0 = load_gguf_owned(tiny_bloom_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32, 3.0];
+            tensors.push(tw(
+                "blk.0.attn_qkv.scale",
+                GgmlType::F32,
+                vec![2],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected attn_qkv.scale shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("attn_qkv.scale"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
     fn tiny_qwen3_load_gemv_gemm_embed_and_greedy() {
         let bytes = tiny_qwen3_gguf();
         let g = load_gguf(&bytes).expect("load qwen3");
@@ -21951,7 +22137,7 @@ mod bench {
     fn bench_logits_fingerprint() {
         // Every zero-argument fixture in the suite, so that each architecture
         // walk and each dtype kernel the decode path can reach is pinned.
-        let cases: [(&str, Vec<u8>); 74] = [
+        let cases: [(&str, Vec<u8>); 75] = [
             ("llama", tiny_llama_gguf()),
             ("tied", tiny_tied_gguf()),
             ("tied_copy", tiny_tied_copy_gguf()),
@@ -22017,6 +22203,7 @@ mod bench {
             ("mxfp4", tiny_mxfp4_gguf()),
             ("nvfp4", tiny_nvfp4_gguf()),
             ("nvfp4_output_s", tiny_nvfp4_output_s_gguf()),
+            ("bloom_attn_qkv_s", tiny_bloom_attn_qkv_s_gguf()),
             ("iq1s", tiny_iq1s_gguf()),
             ("iq1m", tiny_iq1m_gguf()),
             ("iq2xxs", tiny_iq2xxs_gguf()),

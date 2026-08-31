@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — official fused `{1}` `attn_qkv.scale`
+
+llama.cpp `build_qkv` applies `wqkv_s` after the fused QKV GEMM, before
+QKV bias (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Decode loads
+`blk.{i}.attn_qkv.scale` only when fused `attn_qkv.weight` is present
+(bloom). Writer-tiny `tiny-bloom-attn-qkv-s` is `tiny-bloom` plus scale
+`5.0`. Llama files that contain `attn_qkv.scale` are ignored (not
+loaded). Split `attn_q.scale` / `attn_k.scale` / `attn_v.scale` stay the
+llama tensors. Do not invent `output.input_scale` this slice.
+
 ## Shipped 2026-08-31 — CUDA `cuStreamGetDevResource`
 
 `gpu-sim` `stream_get_dev_resource` is `cuStreamGetDevResource`. A stream

@@ -4544,12 +4544,23 @@ model, do not celebrate the sim.
     full chip). No second `--green-ctx`. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-407. [ ] Next numbered PLAN item after 406 is the next `gpu-sim` / Engine /
+407. [x] Official fused `{1}` `attn_qkv.scale`: llama.cpp `build_qkv` applies
+    `wqkv_s` after the fused QKV GEMM, before QKV bias
+    (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Loaded only when fused
+    `attn_qkv.weight` is present (bloom). Writer-tiny `tiny-bloom-attn-qkv-s`
+    is `tiny-bloom` plus scale `5.0`. Llama files that contain
+    `attn_qkv.scale` are ignored (not loaded). Split `attn_q.scale` /
+    `attn_k.scale` / `attn_v.scale` stay the llama tensors. Do not invent
+    `output.input_scale` this slice. `gpu-profile capture` is still
+    refused. Dual score still has no `$/M tokens`.
+
+408. [ ] Next numbered PLAN item after 407 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
     second NVFP4 `output.scale` as a new family. Do not invent
     `output.input_scale` / `*.input_scale` this slice. Do not invent a second
+    fused `attn_qkv.scale` as a new family. Do not invent a second
     `cuGreenCtxRecordEvent` / `WaitEvent`. Do not invent a second
     `cudaExecutionCtxSynchronize`. Do not invent a second
     `cuStreamGetDevResource`. Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
