@@ -535,6 +535,9 @@ VA; hardware decompress is always 0; memory-block id is the
 `expertvm sim --sync-memops` / `gguf_gemv engine --expert-sim --sync-memops`
 sets `PointerAttr::SyncMemops` on miss device pages so H2D / managed
 prefetch is host-synchronous (identity stays async pinned DMA).
+`expertvm sim --device-sync-memops` / `gguf_gemv engine --expert-sim --device-sync-memops`
+is `cudaSetDeviceFlags(cudaDeviceSyncMemops)` so every memcpy/memset on
+that GPU is host-synchronous (distinct from per-page `--sync-memops`).
 `mem_get_address_range` is `cudaMemGetAddressRange` (base is the alloc id;
 interior offsets are not modeled). Query; legal during capture.
 `host_get_device_pointer` is `cudaHostGetDevicePointer` (mapped host;
@@ -629,6 +632,7 @@ inherit the function config, then this; unset is unscaled).
 `cudaSetDeviceFlags` / `GetDeviceFlags` (`DeviceFlags` schedule plus stored
 MapHost / LmemResizeToMax; `SYNC_MEMOPS` waits memcpy/memset like pointer
 SyncMemops; Auto streams inherit the tax). This VM does not model `cudaErrorSetOnActiveProcess`.
+`expertvm sim --device-sync-memops` sets `DeviceFlags::SYNC_MEMOPS`.
 Persisting L2 is `cudaLimitPersistingL2CacheSize`. Access-policy windows
 must align to `cudaLimitMaxL2FetchGranularity` (SM 8.0+ default 128).
 `malloc_pitch` is `cudaMallocPitch`. `MemcpyOp` `height` / pitches are
@@ -706,6 +710,10 @@ implies `--mapped`; identity mapped stays `cudaHostAllocMapped`).
 sets `PointerAttr::SyncMemops` on miss device pages so H2D / managed
 prefetch is host-synchronous (illegal with `--mapped` / `--memcpy-batch`;
 identity stays async pinned DMA).
+`expertvm sim --device-sync-memops` / `gguf_gemv engine --expert-sim --device-sync-memops`
+is `cudaSetDeviceFlags(cudaDeviceSyncMemops)` so every memcpy/memset on
+that GPU is host-synchronous (illegal with `--mapped` / `--memcpy-batch`;
+identity stays async pinned DMA; distinct from per-page `--sync-memops`).
 `alloc_managed` is `cudaMallocManaged` (no HBM until
 `prefetch` / first-touch at kernel start). Default attach is Global.
 `alloc_managed_host` is `cudaMemAttachHost`. `alloc_managed_with_flags` is

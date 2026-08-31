@@ -309,8 +309,8 @@ use crate::planner::{
 use crate::policy::Policy;
 use crate::replay::{Touch, Walker};
 use gpu_sim::{
-    AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceId, EventId, GraphId,
-    GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf, KernelKind,
+    AccessPolicyWindow, AllocId, ClusterSchedulingPolicy, DType, DeviceFlags, DeviceId, EventId,
+    GraphId, GraphInstantiateFlags, HardwareProfile, KernelAttrs, KernelBuf, KernelKind,
     LaunchCompletionEvent, MemAttach, MemPoolAttr, MemcpyAttributes, MemcpyOp, Place, PointerAttr,
     PoolId, PortableClusterMode, PortableSharedMode, ProgrammaticEvent, ProgrammaticLaunch, Score,
     SharedMemCarveout, SharedMemoryMode, Sim, StreamId, SynchronizationPolicy, WaitValueCmp,
@@ -545,10 +545,20 @@ pub struct SimCfg {
     /// Decode identity stays async pinned H2D. [`crate::GpuStoreCfg::sync_memops`]
     /// is the store path.
     pub sync_memops: bool,
+    /// `cudaSetDeviceFlags(cudaDeviceSyncMemops)` on every GPU.
+    ///
+    /// All runtime memcpy/memset on that device are host-synchronous, including
+    /// unmarked pointers (replica D2D, KV). Distinct from per-page
+    /// [`Self::sync_memops`]. Illegal with [`Self::mapped`] and
+    /// [`Self::memcpy_batch`]. Does not imply pageable or [`Self::sync_alloc`].
+    /// Decode identity stays async pinned H2D.
+    /// [`crate::GpuStoreCfg::device_sync_memops`] is the store path.
+    pub device_sync_memops: bool,
     /// `cudaMemcpyBatchAsync` for a multi-expert pinned/VMM prefetch window.
     ///
     /// Sibling H2D copies share one stream-order snapshot. Illegal with
-    /// pageable, host-sync, mapped, managed, or [`Self::sync_memops`] fills.
+    /// pageable, host-sync, mapped, managed, [`Self::sync_memops`], or
+    /// [`Self::device_sync_memops`] fills.
     /// Decode identity stays sequential `memcpy_pinned_to_device`.
     /// [`crate::GpuStoreCfg::memcpy_batch`] is the store path.
     pub memcpy_batch: bool,
@@ -895,6 +905,7 @@ impl SimCfg {
             host_register: false,
             host_register_mapped: false,
             sync_memops: false,
+            device_sync_memops: false,
             accessed_by: false,
             legacy_null: false,
             stream_priority: false,
@@ -995,12 +1006,16 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
             || cfg.mapped
             || cfg.managed
             || cfg.host_register_mapped
-            || cfg.sync_memops)
+            || cfg.sync_memops
+            || cfg.device_sync_memops)
     {
         return Err(Error::Store("memcpy-batch needs async pinned/vmm H2D"));
     }
     if cfg.sync_memops && cfg.mapped {
         return Err(Error::Store("sync-memops needs device memcpy"));
+    }
+    if cfg.device_sync_memops && cfg.mapped {
+        return Err(Error::Store("device-sync-memops needs device memcpy"));
     }
     if cfg.host_register_mapped && cfg.host_register {
         return Err(Error::Store(
@@ -1066,6 +1081,7 @@ pub fn sim_replay_cfg(
     validate_sim_cfg(&cfg, &profile)?;
     let keys = trace.keys();
     let mut sim = Sim::new(sim_profile(profile, &cfg));
+    apply_device_sync_memops(&mut sim, cfg.device_sync_memops)?;
     if cfg.shareable {
         let _imported = bind_shareable_mempools(&mut sim)?;
     }
@@ -2195,6 +2211,24 @@ pub(crate) fn mark_sync_memops(
         sim.synchronize_stream(device, stream)?;
     }
     sim.pointer_set_attribute(id, PointerAttr::SyncMemops, 1)?;
+    Ok(())
+}
+
+/// `cudaSetDeviceFlags(cudaDeviceSyncMemops)` on every GPU.
+///
+/// Call after [`Sim::new`] so memcpy/memset (including unmarked pointers)
+/// host-wait the submitting stream. Capture of those copies is refused;
+/// kernel-only graphs stay legal.
+pub(crate) fn apply_device_sync_memops(sim: &mut Sim, on: bool) -> Result<(), Error> {
+    if !on {
+        return Ok(());
+    }
+    let n = u16::try_from(sim.profile().n_gpus()).unwrap_or(1);
+    for g in 0..n {
+        let d = DeviceId(g);
+        let flags = sim.get_device_flags(d)?;
+        sim.set_device_flags(d, flags | DeviceFlags::SYNC_MEMOPS)?;
+    }
     Ok(())
 }
 

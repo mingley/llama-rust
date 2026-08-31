@@ -10,18 +10,18 @@ use crate::planner::{
 };
 use crate::sim_replay::{
     add_leaf_gemm, alloc_launch_completion, alloc_programmatic_event, alloc_resident_copy_mailbox,
-    allow_non_portable_cluster_if, allow_optin_shared_if, apply_exec_mem_sync_domain,
-    apply_stream_mem_sync_domain, apply_stream_sync_policy, bind_shareable_mempools,
-    check_cluster_preferred, check_device_graph_flags, ensure_single_attach, free_copy_mailbox,
-    free_mapped_host, instantiate_exec, kernel_leaf, mark_sync_memops, replay_exec, replay_streams,
-    retarget_parked_kernel, signal_copy_ready, stream_of, upload_after_set_params, wait_copy_ready,
-    GemmFlags, LeafMem, StreamPlan,
+    allow_non_portable_cluster_if, allow_optin_shared_if, apply_device_sync_memops,
+    apply_exec_mem_sync_domain, apply_stream_mem_sync_domain, apply_stream_sync_policy,
+    bind_shareable_mempools, check_cluster_preferred, check_device_graph_flags,
+    ensure_single_attach, free_copy_mailbox, free_mapped_host, instantiate_exec, kernel_leaf,
+    mark_sync_memops, replay_exec, replay_streams, retarget_parked_kernel, signal_copy_ready,
+    stream_of, upload_after_set_params, wait_copy_ready, GemmFlags, LeafMem, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
-    AllocId, DeviceId, EventId, GraphId, GraphMemAttr, HardwareProfile, KernelBuf, KernelKind,
-    LaunchCompletionEvent, MemAdvise, MemAttach, MemHandleId, MemcpyAttributes, MemcpyOp, Place,
-    PointerAttr, PoolId, ProgrammaticEvent, Score, Sim, StreamId,
+    AllocId, DeviceFlags, DeviceId, EventId, GraphId, GraphMemAttr, HardwareProfile, KernelBuf,
+    KernelKind, LaunchCompletionEvent, MemAdvise, MemAttach, MemHandleId, MemcpyAttributes,
+    MemcpyOp, Place, PointerAttr, PoolId, ProgrammaticEvent, Score, Sim, StreamId,
 };
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -134,12 +134,22 @@ pub struct GpuStoreCfg {
     /// or [`Self::sync_alloc`]. Decode identity stays async
     /// `memcpy_pinned_to_device`.
     pub sync_memops: bool,
+    /// `cudaSetDeviceFlags(cudaDeviceSyncMemops)` on every GPU at construction.
+    ///
+    /// All runtime memcpy/memset on that device are host-synchronous, including
+    /// unmarked pointers (replica D2D, KV). Distinct from per-page
+    /// [`Self::sync_memops`]. Hits stay the same; leftover compute cannot
+    /// overlap those copies. Illegal with mapped fill (no device memcpy) and
+    /// [`Self::memcpy_batch`] (needs async H2D). Does not imply pageable or
+    /// [`Self::sync_alloc`]. Decode identity stays async
+    /// `memcpy_pinned_to_device`.
+    pub device_sync_memops: bool,
     /// `cudaMemcpyBatchAsync` for a multi-expert pinned/VMM prefetch on one stream.
     ///
     /// Sibling H2D copies share one stream-order snapshot so they can occupy
     /// copy engines together. Illegal with pageable, host-sync, mapped,
-    /// managed, or [`Self::sync_memops`] fills. Decode identity stays sequential
-    /// `memcpy_pinned_to_device`.
+    /// managed, [`Self::sync_memops`], or [`Self::device_sync_memops`] fills.
+    /// Decode identity stays sequential `memcpy_pinned_to_device`.
     pub memcpy_batch: bool,
     /// Peer map without dest HBM: managed [`gpu_sim::MemAdvise::SetAccessedBy`],
     /// VMM [`gpu_sim::Sim::va_set_access`], or pinned-async
@@ -713,7 +723,8 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::memcpy_batch`] fills a multi-expert pinned/VMM prefetch
     /// with `cudaMemcpyBatchAsync` (sibling H2D copies share one stream-order
     /// snapshot). Demand [`ExpertStore::acquire`] stays sequential. Illegal
-    /// with pageable, host-sync, mapped, managed, or [`GpuStoreCfg::sync_memops`].
+    /// with pageable, host-sync, mapped, managed, [`GpuStoreCfg::sync_memops`],
+    /// or [`GpuStoreCfg::device_sync_memops`].
     /// [`GpuStoreCfg::host_register`] is `cudaHostRegister` on pageable staging
     /// so miss H2D is pinned DMA (implies pageable; illegal with mapped/managed).
     /// [`GpuStoreCfg::host_register_mapped`] is `cudaHostRegisterMapped` on
@@ -722,6 +733,9 @@ impl SimulatedGpuStore {
     /// [`GpuStoreCfg::sync_memops`] is `cuPointerSetAttribute` SyncMemops on
     /// miss device pages so H2D / managed prefetch is host-synchronous
     /// (illegal with mapped or memcpy-batch; identity stays async pinned H2D).
+    /// [`GpuStoreCfg::device_sync_memops`] is `cudaSetDeviceFlags` SyncMemops
+    /// so every memcpy/memset on that GPU is host-synchronous (illegal with
+    /// mapped or memcpy-batch; identity stays async pinned H2D).
     /// [`GpuStoreCfg::compute_slots`] `0` keeps the profile (example H100 is
     /// exclusive compute). [`GpuStoreCfg::decode_sm_permille`] `0` keeps a
     /// full chip. `1..=1000` without [`GpuStoreCfg::decode_priority`] caps the
@@ -785,6 +799,7 @@ impl SimulatedGpuStore {
             && (cfg.pageable
                 || cfg.sync_alloc
                 || cfg.sync_memops
+                || cfg.device_sync_memops
                 || fill == GpuFill::Mapped
                 || fill == GpuFill::Managed)
         {
@@ -792,6 +807,9 @@ impl SimulatedGpuStore {
         }
         if cfg.sync_memops && fill == GpuFill::Mapped {
             return Err(Error::Store("sync-memops needs device memcpy"));
+        }
+        if cfg.device_sync_memops && fill == GpuFill::Mapped {
+            return Err(Error::Store("device-sync-memops needs device memcpy"));
         }
         if cfg.host_register_mapped && cfg.host_register {
             return Err(Error::Store(
@@ -832,6 +850,7 @@ impl SimulatedGpuStore {
             profile
         };
         let mut sim = Sim::new(profile);
+        apply_device_sync_memops(&mut sim, cfg.device_sync_memops)?;
         if cfg.l2_persist {
             sim.enable_persisting_l2()?;
         }
@@ -1030,6 +1049,15 @@ impl SimulatedGpuStore {
                     .ok()
             })
             .is_some_and(|v| v != 0)
+    }
+
+    /// Whether this store set [`DeviceFlags::SYNC_MEMOPS`] at construction.
+    #[must_use]
+    pub fn device_sync_memops(&self) -> bool {
+        self.sim
+            .get_device_flags(self.device)
+            .map(|f| f & DeviceFlags::SYNC_MEMOPS != 0)
+            .unwrap_or(false)
     }
 
     /// Unused bytes in GPU0's `cudaMallocAsync` pool after a device drain.

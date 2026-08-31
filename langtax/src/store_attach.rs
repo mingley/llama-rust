@@ -62,6 +62,8 @@ pub(crate) struct GpuCli {
     pub host_register_mapped: bool,
     /// `cuPointerSetAttribute` SyncMemops (`GpuStoreCfg::sync_memops`). Host-sync H2D.
     pub sync_memops: bool,
+    /// `cudaSetDeviceFlags` SyncMemops (`GpuStoreCfg::device_sync_memops`). Host-sync memcpy.
+    pub device_sync_memops: bool,
     /// `cudaMemcpyBatchAsync` prefetch (`GpuStoreCfg::memcpy_batch`).
     pub memcpy_batch: bool,
     pub accessed_by: bool,
@@ -186,6 +188,7 @@ impl GpuCli {
             "--host-register" => &mut self.host_register,
             "--host-register-mapped" => &mut self.host_register_mapped,
             "--sync-memops" => &mut self.sync_memops,
+            "--device-sync-memops" => &mut self.device_sync_memops,
             "--memcpy-batch" => &mut self.memcpy_batch,
             "--accessed-by" => &mut self.accessed_by,
             "--legacy-null" => &mut self.legacy_null,
@@ -418,6 +421,7 @@ impl GpuCli {
             (self.host_register, "--host-register"),
             (self.host_register_mapped, "--host-register-mapped"),
             (self.sync_memops, "--sync-memops"),
+            (self.device_sync_memops, "--device-sync-memops"),
             (self.memcpy_batch, "--memcpy-batch"),
             (self.accessed_by, "--accessed-by"),
             (self.legacy_null, "--legacy-null"),
@@ -705,6 +709,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         host_register: gpu.host_register,
         host_register_mapped: gpu.host_register_mapped,
         sync_memops: gpu.sync_memops,
+        device_sync_memops: gpu.device_sync_memops,
         memcpy_batch: gpu.memcpy_batch,
         accessed_by: gpu.accessed_by,
         legacy_null: gpu.legacy_null,

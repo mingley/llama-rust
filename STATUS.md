@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaSetDeviceFlags` SyncMemops
+
+`GpuStoreCfg::device_sync_memops` / `SimCfg::device_sync_memops` call
+`cudaSetDeviceFlags(cudaDeviceSyncMemops)` after `Sim::new` so every
+runtime memcpy/memset on that GPU is host-synchronous (including unmarked
+pointers). Hits/misses stay the same. Distinct from per-page `--sync-memops`.
+Illegal with `--mapped` / `--memcpy-batch`. `--device-sync-memops` is off by
+default (decode identity: async `cudaMemcpyAsync` pinned H2D).
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cuPointerSetAttribute` SyncMemops on miss pages
 
 `GpuStoreCfg::sync_memops` / `SimCfg::sync_memops` call
