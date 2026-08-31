@@ -34,6 +34,8 @@
 //! except pageable [`Place::Host`] copies, which wait the stream (CUDA bounce
 //! buffer). [`PointerAttr::SyncMemops`] on the copy alloc also waits the stream.
 //! [`Sim::memcpy_pinned_to_device`] is the overlapping DMA path.
+//! [`Sim::memcpy_device_to_host`] is pageable Device→Host (waits the stream).
+//! [`Sim::memcpy_device_to_pinned`] is overlapping Device→HostPinned.
 //! [`Sim::malloc`] / [`memcpy_sync`](Sim::memcpy_sync) / [`free_sync`](Sim::free_sync)
 //! / [`memset_sync`](Sim::memset_sync) are host-synchronous (`cudaMalloc` /
 //! `cudaMemcpy` / `cudaFree` / `cudaMemset`). [`memset_op_sync`](Sim::memset_op_sync)
@@ -486,6 +488,13 @@
 //! `expertvm sim --memcpy-attr` / `gguf_gemv engine --expert-sim --memcpy-attr`
 //! is DuringApiCall on demand pinned/VMM miss H2D (the API waits that copy;
 //! identity stays `memcpy_pinned_to_device`; does not imply `--memcpy-batch`).
+//! `expertvm sim --d2h-evict` / `gguf_gemv engine --expert-sim --d2h-evict`
+//! is [`memcpy_device_to_pinned`](Sim::memcpy_device_to_pinned) before
+//! pinned/VMM LRU free (extra PCIe; identity stays free with no D2H).
+//! `expertvm sim --d2h-pageable` / `gguf_gemv engine --expert-sim --d2h-pageable`
+//! is [`memcpy_device_to_host`](Sim::memcpy_device_to_host) before that free
+//! (host-synchronous bounce-buffer; implies `--pageable`; not mapped/managed/
+//! host-register/`--d2h-evict`).
 //! `expertvm sim --memset-fill` / `gguf_gemv engine --expert-sim --memset-fill`
 //! is `cudaMemsetAsync` of pinned/VMM miss pages (HBM write, compute occupancy;
 //! not mapped/managed/pageable/memcpy-batch; distinct from `--graph-memset` scratch).

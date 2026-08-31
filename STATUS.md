@@ -5,6 +5,20 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — Device→Host pageable memcpy on pinned/VMM LRU evict
+
+`GpuStoreCfg::d2h_pageable` / `SimCfg::d2h_pageable` use `cudaMemcpyAsync`
+Device→Host (pageable bounce-buffer) on the copy stream before
+`cudaFreeAsync` / `va_release` / `free_sync` so evict pays extra
+host-synchronous PCIe. Hits/misses stay the same; the next miss still fills
+from catalog staging. Distinct from `--d2h-evict` (Device→HostPinned
+overlapping DMA) and `--prefetch-host` (managed keep-alloc). Implies
+`--pageable`. Illegal with `--mapped` / `--managed` / `--host-register` /
+`--d2h-evict`. `--d2h-pageable` is off by default (decode identity: free
+with no D2H). Store and walker (not walker-only). infer-bench has no
+pinned/VMM expert evict of this form, so it does not get `--d2h-pageable`.
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — Device→HostPinned memcpy on pinned/VMM LRU evict
 
 `GpuStoreCfg::d2h_evict` / `SimCfg::d2h_evict` use `cudaMemcpyAsync`

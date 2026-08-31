@@ -33,7 +33,7 @@ use expertvm::{GpuFill, GpuStoreCfg, Prefetch};
 
 /// Usage for the `serve` verb.
 pub const SERVE_USAGE: &str = "\
-usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--model-id ID] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-clone-parent] [--graph-build] [--graph-build-deps] [--graph-host] [--graph-piecewise] [--graph-capture-deps] [--graph-capture-host] [--graph-enable] [--graph-if] [--graph-mem] [--graph-memset] [--graph-memcpy] [--graph-leaf-host] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--event-blocking-sync] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--copy-host] [--blocking-streams] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--mempool-max N] [--shareable] [--pageable] [--host-register] [--host-register-mapped] [--sync-memops] [--device-sync-memops] [--memcpy-batch] [--memcpy-during] [--memcpy-any] [--memcpy-attr] [--memset-fill] [--accessed-by] [--no-read-mostly] [--no-preferred] [--no-mem-prefetch] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--l2-ratio N] [--l2-streaming] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-load-balance] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--mem-sync-map identity|collapse] [--mem-sync-launch] [--mem-sync-launch-map] [--shared-mem] default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--d2h-evict] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
+usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--model-id ID] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-clone-parent] [--graph-build] [--graph-build-deps] [--graph-host] [--graph-piecewise] [--graph-capture-deps] [--graph-capture-host] [--graph-enable] [--graph-if] [--graph-mem] [--graph-memset] [--graph-memcpy] [--graph-leaf-host] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--event-blocking-sync] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--copy-host] [--blocking-streams] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--mempool-max N] [--shareable] [--pageable] [--host-register] [--host-register-mapped] [--sync-memops] [--device-sync-memops] [--memcpy-batch] [--memcpy-during] [--memcpy-any] [--memcpy-attr] [--memset-fill] [--accessed-by] [--no-read-mostly] [--no-preferred] [--no-mem-prefetch] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--l2-ratio N] [--l2-streaming] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-load-balance] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--mem-sync-map identity|collapse] [--mem-sync-launch] [--mem-sync-launch-map] [--shared-mem] default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--d2h-evict] [--d2h-pageable] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]
   -n, --n-predict N   tokens to generate (default: 2)
       --n-ctx N       KV capacity (default: grow per request; `--engine` default 64)
       --kv-page N     paged KV block size (default: dense; `--engine` default 16)
@@ -146,6 +146,7 @@ usage: gguf_gemv serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind 
       --managed-host    cudaMallocManaged Host attach then Global on the copy stream (`--expert-sim`; implies `--managed`; prefetch still overlaps leftover GEMM)
       --prefetch-host   cudaMemPrefetchAsync to host on managed evict (`--expert-sim`; implies `--managed`; next miss prefetches the same alloc back)
       --d2h-evict       cudaMemcpyAsync Device→HostPinned before pinned/VMM LRU free (`--expert-sim`; extra PCIe; next miss still fills from staging; not with `--mapped`/`--managed`)
+      --d2h-pageable    cudaMemcpyAsync Device→Host (pageable) before pinned/VMM LRU free (`--expert-sim`; host-sync bounce-buffer; implies `--pageable`; not with `--mapped`/`--managed`/`--host-register`/`--d2h-evict`)
       --wait-value      cuStreamWaitValue64 / WriteValue64 copy-ready handshake (`--expert-sim`; 8-byte device mailbox; decode identity stays events)
       --multicast       cuMulticastCreate NVLS replica fanout (`--expert-sim`; implies `--vmm`; needs NVLink)
       --compute-slots N Hyper-Q occupancy (`--expert-sim`; `1` exclusive, `>=2` overlaps leftover prefill with decode on two streams; default profile `1`)
@@ -182,8 +183,8 @@ leftover prefill while any live sequence is already decoding. `--slo-reject` /
 `--cuda-graphs` / `--graph-update` / `--graph-set-params` / `--graph-clone` / `--graph-clone-parent` / `--graph-build` / `--graph-build-deps` / `--graph-host` / `--graph-piecewise` / `--graph-capture-deps` / `--graph-capture-host` / `--graph-enable` / `--graph-if` / `--graph-mem` / `--graph-memset` / `--graph-memcpy` / `--graph-leaf-host` / `--graph-auto-free` / `--graph-mem-trim` / `--timing-events` / `--event-blocking-sync` are
 the same SimulatedGpuStore knobs as `gguf_gemv engine`. `--host-func` /
 `--copy-host` / `--blocking-streams` / `--sync-alloc` / `--mempool` / `--mempool-trim` / `--mempool-no-reuse` / `--mempool-max` / `--shareable` / `--vmm-page` /
-`--pageable` / `--host-register` / `--host-register-mapped` / `--sync-memops` / `--device-sync-memops` / `--memcpy-batch` / `--memcpy-during` / `--memcpy-any` / `--memcpy-attr` / `--d2h-evict` / `--memset-fill` / `--accessed-by` / `--no-read-mostly` / `--no-preferred` / `--no-mem-prefetch` / `--legacy-null` / `--stream-priority` / `--seq-streams` /
-`--kv-sim` / `--kv-bytes` / `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--l2-fetch` / `--l2-ratio` / `--l2-streaming` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--cluster-load-balance` / `--cluster-must-set` / `--required-cluster` / `--max-shared` / `--func-max-shared` / `--max-l1` / `--non-portable-cluster` / `--sync-policy` / `--device-sync-policy` / `--event-blocking-sync` / `--mem-sync-domain` / `--mem-sync-map` / `--mem-sync-launch` / `--mem-sync-launch-map` / `--shared-mem` / `--func-shared-mem` / `--device-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--stream-attach` / `--managed-host` / `--prefetch-host` / `--d2h-evict` / `--wait-value` / `--multicast` /
+`--pageable` / `--host-register` / `--host-register-mapped` / `--sync-memops` / `--device-sync-memops` / `--memcpy-batch` / `--memcpy-during` / `--memcpy-any` / `--memcpy-attr` / `--d2h-evict` / `--d2h-pageable` / `--memset-fill` / `--accessed-by` / `--no-read-mostly` / `--no-preferred` / `--no-mem-prefetch` / `--legacy-null` / `--stream-priority` / `--seq-streams` /
+`--kv-sim` / `--kv-bytes` / `--decode-priority` / `--cooperative` / `--pdl` / `--l2-persist` / `--l2-reset` / `--l2-fetch` / `--l2-ratio` / `--l2-streaming` / `--cluster` / `--preferred-cluster` / `--cluster-spread` / `--func-cluster-spread` / `--cluster-load-balance` / `--cluster-must-set` / `--required-cluster` / `--max-shared` / `--func-max-shared` / `--max-l1` / `--non-portable-cluster` / `--sync-policy` / `--device-sync-policy` / `--event-blocking-sync` / `--mem-sync-domain` / `--mem-sync-map` / `--mem-sync-launch` / `--mem-sync-launch-map` / `--shared-mem` / `--func-shared-mem` / `--device-shared-mem` / `--portable-cluster` / `--optin-shared` / `--dynamic-shared` / `--portable-shared` / `--nvlink-util` / `--device-launch` / `--device-updatable` / `--kernel-priority` / `--launch-completion` / `--programmatic-event` / `--stream-attach` / `--managed-host` / `--prefetch-host` / `--d2h-evict` / `--d2h-pageable` / `--wait-value` / `--multicast` /
 `--compute-slots` / `--decode-sms` match
 `GpuStoreCfg`. `--mempool-max N` is `cudaMemPoolProps::maxSize` (implies `--mempool`;
 illegal with `--sync-alloc`; `N>0`; legal with `--pdl` and `--cooperative`). `--memcpy-during` is `cudaMemcpySrcAccessOrderDuringApiCall` on `--memcpy-batch` prefetch (needs `--memcpy-batch`; the batch API waits those copies; identity stays Stream order; legal with `--pdl` and `--cooperative`). `--memcpy-any` is `cudaMemcpySrcAccessOrderAny` on `--memcpy-batch` prefetch (needs `--memcpy-batch`; empty deps; no API wait; not with `--memcpy-during`; legal with `--pdl` and `--cooperative`). `--memcpy-attr` is `cudaMemcpyWithAttributesAsync` DuringApiCall on demand pinned/VMM miss H2D (the API waits that copy; identity stays `memcpy_pinned_to_device`; does not imply `--memcpy-batch`; not with `--mapped` / `--managed` / `--pageable` / `--memset-fill` / `--sync-alloc` / `--sync-memops` / `--device-sync-memops`; legal with `--pdl` and `--cooperative`). `--d2h-evict` is `cudaMemcpyAsync` Device→HostPinned before pinned/VMM LRU free (extra PCIe; next miss still fills from staging; not with `--mapped` / `--managed`; distinct from `--prefetch-host`; legal with `--pdl` and `--cooperative`). `--memset-fill` is `cudaMemsetAsync` of pinned/VMM miss pages (HBM write, compute occupancy; not with `--mapped` / `--managed` / `--pageable` / `--memcpy-batch`; legal with `--pdl` and `--cooperative`). `--copy-host` is `cudaLaunchHostFunc` after miss DMA / prefetch (bills `host_func_ns` before copy-ready; does not imply `--host-func`; mapped misses are a no-op; legal with `--pdl` and `--cooperative`). `--graph-capture-deps` is `cudaStreamBeginCaptureToGraph` deps on `--graph-piecewise` combo parents (needs `--graph-piecewise`; later fragments chain so sibling GEMMs serialize; empty deps stay extra roots; store GEMM stays per-leaf; legal with `--pdl` and `--cooperative`). `--graph-capture-host` is captured `cudaLaunchHostFunc` BETWEEN those fragments (needs `--graph-piecewise`; later fragments chain through `host_func_ns`; does not imply `--host-func`; store GEMM stays per-leaf; legal with `--pdl` and `--cooperative`). `--graph-clone-parent` is `cudaGraphClone` of combo parents (recursive children; does not imply `--graph-clone`; store GEMM stays per-leaf; legal with `--pdl` and `--cooperative`). `--graph-build-deps` is `cudaGraphAddDependencies` on `--graph-build` combo parents (needs `--graph-build`; later children chain so sibling GEMMs serialize; empty edges stay independent; store GEMM stays per-leaf; legal with `--pdl` and `--cooperative`). `--graph-host` is `cudaGraphAddHostNode` BETWEEN `--graph-build` combo children (needs `--graph-build`; later children serialize through `host_func_ns`; does not imply `--host-func`; store GEMM stays per-leaf; legal with `--pdl` and `--cooperative`). `--graph-if` wraps `--graph-build` combo children in `cudaGraphAddIf` + `cudaGraphSetConditional` (needs `--graph-build`; exec SetParams skips extras and re-uploads; not with `--device-launch` or `--graph-enable`; store GEMM stays per-leaf; legal with `--pdl` and `--cooperative`). `--graph-memset` is `cudaGraphAddMemsetNode` / `cudaMemsetAsync` of `--graph-mem` scratch BETWEEN alloc and GEMM (needs `--graph-mem`; extra HBM-write tax; does not imply graph-mem; store and walker leaf GEMMs; legal with `--pdl` and `--cooperative`). `--graph-memcpy` is `cudaGraphAddMemcpyNode` / `cudaMemcpyAsync` H2D of `--graph-mem` scratch BETWEEN alloc and GEMM (needs `--graph-mem`; copy-engine PCIe tax; does not imply graph-mem or `--graph-memset`; store and walker leaf GEMMs; legal with `--pdl` and `--cooperative`). `--graph-leaf-host` is `cudaGraphAddHostNode` / captured `cudaLaunchHostFunc` BEFORE the leaf GEMM (implies `--cuda-graphs`; each leaf bills `host_func_ns`; does not imply `--host-func`; not with `--device-launch`; store and walker leaf GEMMs; legal with `--pdl` and `--cooperative`). `--kv-sim` bills interned KV on the same clock as expert H2D
@@ -297,6 +298,10 @@ the same pointer back (implies `--managed`; identity stays `cudaFree`).
 free (extra PCIe; the next miss still fills from catalog staging; not with
 `--mapped` / `--managed`; identity stays free with no D2H). Distinct from
 `--prefetch-host` (managed keep-alloc).
+`--d2h-pageable` is `cudaMemcpyAsync` Device→Host (pageable bounce-buffer)
+before that free (host-synchronous; implies `--pageable`; not with
+`--mapped` / `--managed` / `--host-register` / `--d2h-evict`; identity stays
+free with no D2H).
 `--no-read-mostly` skips `cudaMemAdviseSetReadMostly` (`UnsetReadMostly` so dest
 prefetch moves instead of replicating; implies `--managed`; identity stays
 SetReadMostly).
@@ -649,6 +654,9 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
     if let Err(e) = n.plan.gpu.check_d2h_evict() {
         return usage_err(&e);
     }
+    if let Err(e) = n.plan.gpu.check_d2h_pageable() {
+        return usage_err(&e);
+    }
     if let Err(e) = n.plan.gpu.check_memset_fill() {
         return usage_err(&e);
     }
@@ -671,7 +679,7 @@ fn check_serve_need(n: &ServeNeed) -> Result<(), String> {
 
 /// Parse operands after the `serve` verb.
 ///
-/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--model-id ID] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-clone-parent] [--graph-build] [--graph-build-deps] [--graph-host] [--graph-piecewise] [--graph-capture-deps] [--graph-capture-host] [--graph-enable] [--graph-if] [--graph-mem] [--graph-memset] [--graph-memcpy] [--graph-leaf-host] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--event-blocking-sync] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--copy-host] [--blocking-streams] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--mempool-max N] [--shareable] [--pageable] [--host-register] [--host-register-mapped] [--sync-memops] [--device-sync-memops] [--memcpy-batch] [--memcpy-during] [--memcpy-any] [--memcpy-attr] [--memset-fill] [--accessed-by] [--no-read-mostly] [--no-preferred] [--no-mem-prefetch] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--l2-ratio N] [--l2-streaming] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-load-balance] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--mem-sync-map identity|collapse] [--mem-sync-launch] [--mem-sync-launch-map] [--shared-mem] default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--d2h-evict] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
+/// `serve <path> [--n-predict N] [--n-ctx N] [--kv-page N] [--bind HOST:PORT] [--model-id ID] [--engine] [--max-seqs N] [--expert-slots N] [--expert-sim] [--expert-8gpu] [--expert-bytes N] [--prefill-chunk N] [--decode-first] [--slo-reject] [--ttft-slo-ns N] [--itl-slo-ns N] [--cuda-graphs] [--graph-update] [--graph-set-params] [--graph-clone] [--graph-clone-parent] [--graph-build] [--graph-build-deps] [--graph-host] [--graph-piecewise] [--graph-capture-deps] [--graph-capture-host] [--graph-enable] [--graph-if] [--graph-mem] [--graph-memset] [--graph-memcpy] [--graph-leaf-host] [--graph-auto-free] [--graph-mem-trim] [--timing-events] [--event-blocking-sync] [--mapped] [--managed] [--vmm] [--vmm-page N] [--host-func] [--copy-host] [--blocking-streams] [--sync-alloc] [--mempool] [--mempool-trim] [--mempool-no-reuse] [--mempool-max N] [--shareable] [--pageable] [--host-register] [--host-register-mapped] [--sync-memops] [--device-sync-memops] [--memcpy-batch] [--memcpy-during] [--memcpy-any] [--memcpy-attr] [--memset-fill] [--accessed-by] [--no-read-mostly] [--no-preferred] [--no-mem-prefetch] [--legacy-null] [--stream-priority] [--seq-streams] [--kv-sim] [--kv-bytes N] [--decode-priority] [--cooperative] [--pdl] [--l2-persist] [--l2-reset] [--l2-fetch N] [--l2-ratio N] [--l2-streaming] [--cluster N] [--preferred-cluster N] [--cluster-spread] [--func-cluster-spread] [--cluster-load-balance] [--cluster-must-set] [--required-cluster N] [--max-shared] [--func-max-shared] [--max-l1] [--non-portable-cluster] [--sync-policy auto|spin|yield|blocking] [--device-sync-policy auto|spin|yield|blocking] [--mem-sync-domain default|remote] [--mem-sync-map identity|collapse] [--mem-sync-launch] [--mem-sync-launch-map] [--shared-mem] default|four|eight] [--func-shared-mem default|four|eight] [--device-shared-mem default|four|eight] [--portable-cluster default|portable|non-portable] [--optin-shared] [--dynamic-shared N] [--portable-shared default|portable|non-portable] [--nvlink-util] [--device-launch] [--device-updatable] [--kernel-priority N] [--launch-completion] [--programmatic-event] [--stream-attach] [--managed-host] [--prefetch-host] [--d2h-evict] [--d2h-pageable] [--wait-value] [--multicast] [--compute-slots N] [--decode-sms N] [--prefetch none|copy-forward|markov|both] [--plan-window N] [--plan-threshold N] [--trace-out FILE]`
 /// Path may appear before or after flags. `--flag=value` is accepted.
 pub fn parse_serve_args<I, S>(args: I) -> Result<ServeCmd, String>
 where
@@ -3079,6 +3087,65 @@ mod tests {
         ])
         .unwrap_err();
         assert!(err.contains("d2h-evict needs pinned/vmm"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--d2h-pageable"]).unwrap_err();
+        assert!(err.contains("--d2h-pageable requires --engine"), "{err}");
+        let err = parse_serve_args(["m.gguf", "--engine", "--d2h-pageable"]).unwrap_err();
+        assert!(
+            err.contains("--d2h-pageable requires --expert-sim"),
+            "{err}"
+        );
+        let a = run(&["m.gguf", "--engine", "--expert-sim", "--d2h-pageable"]);
+        assert!(a.gpu_cfg.d2h_pageable);
+        assert!(a.gpu_cfg.pageable);
+        assert_eq!(a.fill, GpuFill::Pinned);
+        let a = run(&[
+            "m.gguf",
+            "--engine",
+            "--expert-sim",
+            "--d2h-pageable",
+            "--pdl",
+        ]);
+        assert!(a.gpu_cfg.d2h_pageable);
+        assert!(a.gpu_cfg.pdl);
+        let err = parse_serve_args(["m.gguf", "--engine", "--expert-sim", "--d2h-pageable=1"])
+            .unwrap_err();
+        assert!(
+            err.contains("--d2h-pageable does not take a value"),
+            "{err}"
+        );
+        let err = parse_serve_args([
+            "m.gguf",
+            "--engine",
+            "--expert-sim",
+            "--d2h-pageable",
+            "--managed",
+        ])
+        .unwrap_err();
+        assert!(err.contains("d2h-pageable needs pageable"), "{err}");
+        let err = parse_serve_args([
+            "m.gguf",
+            "--engine",
+            "--expert-sim",
+            "--d2h-pageable",
+            "--d2h-evict",
+        ])
+        .unwrap_err();
+        assert!(
+            err.contains("choose one of --d2h-pageable, --d2h-evict"),
+            "{err}"
+        );
+        let err = parse_serve_args([
+            "m.gguf",
+            "--engine",
+            "--expert-sim",
+            "--d2h-pageable",
+            "--host-register",
+        ])
+        .unwrap_err();
+        assert!(
+            err.contains("--d2h-pageable cannot --host-register"),
+            "{err}"
+        );
         let err = parse_serve_args(["m.gguf", "--no-read-mostly"]).unwrap_err();
         assert!(err.contains("--no-read-mostly requires --engine"), "{err}");
         let err = parse_serve_args(["m.gguf", "--engine", "--no-read-mostly"]).unwrap_err();

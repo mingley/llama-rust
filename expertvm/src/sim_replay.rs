@@ -408,6 +408,30 @@ pub(crate) fn check_d2h_evict(d2h_evict: bool, mapped: bool, managed: bool) -> R
     Ok(())
 }
 
+/// `--d2h-pageable` needs pageable Device→Host (`cudaMemcpyAsync` bounce-buffer D2H).
+pub(crate) fn check_d2h_pageable(
+    d2h_pageable: bool,
+    pageable: bool,
+    mapped: bool,
+    managed: bool,
+    host_register: bool,
+    d2h_evict: bool,
+) -> Result<(), Error> {
+    if !d2h_pageable {
+        return Ok(());
+    }
+    if d2h_evict {
+        return Err(Error::Store("choose one of d2h-pageable, d2h-evict"));
+    }
+    if host_register {
+        return Err(Error::Store("d2h-pageable cannot host-register"));
+    }
+    if mapped || managed || !pageable {
+        return Err(Error::Store("d2h-pageable needs pageable"));
+    }
+    Ok(())
+}
+
 /// `--memcpy-attr` needs async pinned/VMM H2D (`cudaMemcpyWithAttributesAsync`).
 pub(crate) fn check_memcpy_attr(
     memcpy_attr: bool,
@@ -1378,6 +1402,15 @@ pub struct SimCfg {
     /// identity stays `cudaFreeAsync` / `va_release` / `free_sync` with no D2H.
     /// [`crate::GpuStoreCfg::d2h_evict`] is the store path.
     pub d2h_evict: bool,
+    /// `cudaMemcpyAsync` Device→Host (pageable) before pinned/VMM LRU free.
+    ///
+    /// Host-synchronous bounce-buffer D2H; extra PCIe on evict; the next miss
+    /// still fills from catalog staging. Hits stay the same. Distinct from
+    /// [`Self::d2h_evict`] (Device→HostPinned overlapping DMA). Implies
+    /// [`Self::pageable`]. Illegal with [`Self::mapped`] / [`Self::managed`] /
+    /// [`Self::host_register`] / [`Self::d2h_evict`]. Decode identity stays
+    /// free with no D2H. [`crate::GpuStoreCfg::d2h_pageable`] is the store path.
+    pub d2h_pageable: bool,
     /// `cuStreamWaitValue64` / `cuStreamWriteValue64` copy-ready handshake.
     ///
     /// After H2D / prefetch, write a generation into an 8-byte device mailbox
@@ -1515,6 +1548,7 @@ impl SimCfg {
             managed_host: false,
             prefetch_host: false,
             d2h_evict: false,
+            d2h_pageable: false,
             wait_value: false,
             multicast: false,
             compute_slots: 0,
@@ -1616,6 +1650,14 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
         cfg.d2h_evict,
         cfg.mapped || cfg.host_register_mapped,
         cfg.managed,
+    )?;
+    check_d2h_pageable(
+        cfg.d2h_pageable,
+        cfg.pageable,
+        cfg.mapped || cfg.host_register_mapped,
+        cfg.managed,
+        cfg.host_register,
+        cfg.d2h_evict,
     )?;
     if cfg.no_read_mostly && !cfg.managed {
         return Err(Error::Store("no-read-mostly needs managed"));
@@ -1828,6 +1870,7 @@ pub fn sim_replay_cfg(
         managed_host: cfg.managed_host,
         prefetch_host: cfg.prefetch_host,
         d2h_evict: cfg.d2h_evict,
+        d2h_pageable: cfg.d2h_pageable,
     };
     let mut token_ends: Vec<u64> = Vec::new();
     let mut ctr = ReplayCounters::default();
@@ -2030,6 +2073,8 @@ pub(crate) struct TouchArgs {
     pub prefetch_host: bool,
     /// [`SimCfg::d2h_evict`]: Device→HostPinned memcpy before pinned/VMM free.
     pub d2h_evict: bool,
+    /// [`SimCfg::d2h_pageable`]: Device→Host pageable memcpy before pinned/VMM free.
+    pub d2h_pageable: bool,
 }
 
 /// `cudaMemcpyAsync` Device→HostPinned. Source HBM residency is kept until free.
@@ -2041,6 +2086,18 @@ pub(crate) fn d2h_evict_page(
     stream: StreamId,
 ) -> Result<(), Error> {
     let _c = sim.memcpy_device_to_pinned(device, id, bytes, stream)?;
+    Ok(())
+}
+
+/// `cudaMemcpyAsync` Device→Host (pageable). Host-synchronous; source HBM stays.
+pub(crate) fn d2h_pageable_page(
+    sim: &mut Sim,
+    device: DeviceId,
+    id: AllocId,
+    bytes: u64,
+    stream: StreamId,
+) -> Result<(), Error> {
+    let _c = sim.memcpy_device_to_host(device, id, bytes, stream)?;
     Ok(())
 }
 
@@ -3507,6 +3564,7 @@ pub(crate) fn reclaim_victim(
                 next_event,
                 args.sync_alloc,
                 args.d2h_evict,
+                args.d2h_pageable,
                 args.bytes,
             )
         }
@@ -3526,6 +3584,7 @@ fn drop_handle(
     next_event: &mut u32,
     sync: bool,
     d2h_evict: bool,
+    d2h_pageable: bool,
     bytes: u64,
 ) -> Result<(), Error> {
     graphs.drop_alloc(sim, page.id)?;
@@ -3545,6 +3604,9 @@ fn drop_handle(
     }
     if d2h_evict {
         d2h_evict_page(sim, page.device, page.id, bytes, page.stream)?;
+    }
+    if d2h_pageable {
+        d2h_pageable_page(sim, page.device, page.id, bytes, page.stream)?;
     }
     if page_is_vmm(sim, page.id) {
         if d2h_evict {

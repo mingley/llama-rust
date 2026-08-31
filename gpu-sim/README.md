@@ -548,6 +548,10 @@ identity stays sequential `memcpy_pinned_to_device`; does not imply
 is `cudaMemcpyAsync` Device→HostPinned before pinned/VMM LRU free (extra
 PCIe; next miss still fills from staging; not mapped/managed; distinct from
 `--prefetch-host`).
+`expertvm sim --d2h-pageable` / `gguf_gemv engine --expert-sim --d2h-pageable`
+is `cudaMemcpyAsync` Device→Host (pageable bounce-buffer) before that free
+(host-synchronous; implies `--pageable`; not mapped/managed/host-register/
+`--d2h-evict`).
 `expertvm sim --memset-fill` / `gguf_gemv engine --expert-sim --memset-fill`
 is `cudaMemsetAsync` of pinned/VMM miss pages (HBM write, compute occupancy;
 not mapped/managed/pageable/memcpy-batch; distinct from `--graph-memset`

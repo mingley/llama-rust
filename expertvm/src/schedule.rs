@@ -375,6 +375,7 @@ impl SchedRt {
                 managed_host: cfg.managed_host,
                 prefetch_host: cfg.prefetch_host,
                 d2h_evict: cfg.d2h_evict,
+                d2h_pageable: cfg.d2h_pageable,
             },
             sim,
             handles: BTreeMap::new(),

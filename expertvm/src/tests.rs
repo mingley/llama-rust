@@ -859,6 +859,7 @@ fn vmm_evict_reacquires_same_va() {
         managed_host: false,
         prefetch_host: false,
         d2h_evict: false,
+        d2h_pageable: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -7886,6 +7887,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         managed_host: false,
         prefetch_host: false,
         d2h_evict: false,
+        d2h_pageable: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -7962,6 +7964,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         managed_host: false,
         prefetch_host: false,
         d2h_evict: false,
+        d2h_pageable: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -8039,6 +8042,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         managed_host: false,
         prefetch_host: false,
         d2h_evict: false,
+        d2h_pageable: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -8482,6 +8486,7 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         managed_host: false,
         prefetch_host: false,
         d2h_evict: false,
+        d2h_pageable: false,
     };
     let mut next_event = 1u32;
     apply_misses(
@@ -8552,6 +8557,7 @@ fn memcpy_during_apply_misses_waits_copies() {
             managed_host: false,
             prefetch_host: false,
             d2h_evict: false,
+            d2h_pageable: false,
         };
         let mut next_event = 1u32;
         apply_misses(
@@ -8624,6 +8630,7 @@ fn memcpy_any_apply_misses_empty_deps() {
             managed_host: false,
             prefetch_host: false,
             d2h_evict: false,
+            d2h_pageable: false,
         };
         let mut next_event = 1u32;
         apply_misses(
@@ -8704,6 +8711,7 @@ fn memcpy_attr_apply_misses_waits_copies() {
             managed_host: false,
             prefetch_host: false,
             d2h_evict: false,
+            d2h_pageable: false,
         };
         let mut next_event = 1u32;
         apply_misses(
@@ -9431,6 +9439,7 @@ fn d2h_evict_apply_misses_copies() {
             managed_host: false,
             prefetch_host: false,
             d2h_evict: d2h,
+            d2h_pageable: false,
         };
         let mut next_event = 1u32;
         let k0 = ExpertKey::new(0, 0);
@@ -9466,6 +9475,84 @@ fn d2h_evict_apply_misses_copies() {
     };
     assert_eq!(run(false), 0, "identity pinned evict is free, not D2H");
     assert!(run(true) >= 1, "d2h-evict must copy Device→HostPinned");
+}
+
+#[test]
+fn d2h_pageable_apply_misses_copies() {
+    use crate::replay::Touch;
+    use crate::sim_replay::{apply_touch, GraphBank, PageHandle, TouchArgs};
+    use gpu_sim::{Sim, StreamId};
+    use std::collections::BTreeMap;
+
+    let run = |d2h: bool| {
+        let mut sim = Sim::new(HardwareProfile::example_h100_sxm());
+        let mut handles: BTreeMap<ExpertKey, PageHandle> = BTreeMap::new();
+        let mut graphs = GraphBank::new(false, false, false, crate::sim_replay::LeafMem::None);
+        let args = TouchArgs {
+            d: DeviceId(0),
+            s: StreamId(0),
+            bytes: 4096,
+            slots: 1,
+            sync_alloc: false,
+            mapped: false,
+            managed: false,
+            vmm: false,
+            vmm_page: 0,
+            pageable: true,
+            host_register: false,
+            host_register_mapped: false,
+            sync_memops: false,
+            memcpy_batch: false,
+            memcpy_during: false,
+            memcpy_any: false,
+            memcpy_attr: false,
+            memset_fill: false,
+            copy_host: false,
+            accessed_by: false,
+            no_read_mostly: false,
+            no_preferred: false,
+            no_mem_prefetch: false,
+            wait_value: false,
+            stream_attach: false,
+            managed_host: false,
+            prefetch_host: false,
+            d2h_evict: false,
+            d2h_pageable: d2h,
+        };
+        let mut next_event = 1u32;
+        let k0 = ExpertKey::new(0, 0);
+        let k1 = ExpertKey::new(0, 1);
+        apply_touch(
+            &mut sim,
+            &mut handles,
+            &mut graphs,
+            args,
+            k0,
+            Touch::Miss { evicted: None },
+            &mut next_event,
+        )
+        .expect("k0");
+        apply_touch(
+            &mut sim,
+            &mut handles,
+            &mut graphs,
+            args,
+            k1,
+            Touch::Miss { evicted: Some(k0) },
+            &mut next_event,
+        )
+        .expect("k1");
+        sim.operations()
+            .filter(|o| match &o.kind {
+                GpuOp::Memcpy(m) => {
+                    matches!(m.dst, Place::Host) && matches!(m.src, Place::Device(_))
+                }
+                _ => false,
+            })
+            .count()
+    };
+    assert_eq!(run(false), 0, "identity pageable evict is free, not D2H");
+    assert!(run(true) >= 1, "d2h-pageable must copy Device→Host");
 }
 
 #[test]
@@ -9654,6 +9741,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             managed_host: false,
             prefetch_host: false,
             d2h_evict: false,
+            d2h_pageable: false,
         };
         let mut next_event = 1u32;
         let k0 = ExpertKey::new(0, 0);
@@ -14083,6 +14171,7 @@ fn sim_cfg_prefetch_host_needs_managed() {
         SimCfg {
             prefetch_host: true,
             d2h_evict: false,
+            d2h_pageable: false,
             ..SimCfg::lru(1, 4096, 0)
         },
     ) {
@@ -14196,6 +14285,7 @@ fn simulated_gpu_store_prefetch_host_needs_managed() {
         GpuStoreCfg {
             prefetch_host: true,
             d2h_evict: false,
+            d2h_pageable: false,
             ..GpuStoreCfg::default()
         },
     ) {
@@ -14219,6 +14309,7 @@ fn sim_replay_prefetch_host_keeps_hits() {
         managed: true,
         prefetch_host: true,
         d2h_evict: false,
+        d2h_pageable: false,
         ..SimCfg::lru(2, 4096, 0)
     };
     let a = sim_replay_cfg(&t, profile.clone(), off).expect("off");
@@ -14247,6 +14338,7 @@ fn simulated_gpu_store_prefetch_host_pin_before_acquire_still_replicates() {
         GpuStoreCfg {
             prefetch_host: true,
             d2h_evict: false,
+            d2h_pageable: false,
             ..GpuStoreCfg::default()
         },
     )
@@ -14313,11 +14405,13 @@ fn sim_cfg_d2h_evict_needs_pinned_vmm() {
     };
     refuse(SimCfg {
         d2h_evict: true,
+        d2h_pageable: false,
         managed: true,
         ..SimCfg::lru(1, 4096, 0)
     });
     refuse(SimCfg {
         d2h_evict: true,
+        d2h_pageable: false,
         mapped: true,
         ..SimCfg::lru(1, 4096, 0)
     });
@@ -14338,6 +14432,7 @@ fn simulated_gpu_store_d2h_evict_needs_pinned_vmm() {
         fill,
         GpuStoreCfg {
             d2h_evict: true,
+            d2h_pageable: false,
             ..GpuStoreCfg::default()
         },
     ) {
@@ -14357,6 +14452,7 @@ fn simulated_gpu_store_d2h_evict_needs_pinned_vmm() {
         GpuFill::Vmm,
         GpuStoreCfg {
             d2h_evict: true,
+            d2h_pageable: false,
             ..GpuStoreCfg::default()
         },
     )
@@ -14370,6 +14466,7 @@ fn sim_replay_d2h_evict_keeps_hits() {
     let base = SimCfg::lru(2, 4096, 8);
     let d2h = SimCfg {
         d2h_evict: true,
+        d2h_pageable: false,
         ..base
     };
     let a = sim_replay_cfg(&t, p.clone(), base).expect("base");
@@ -14421,6 +14518,252 @@ fn simulated_gpu_store_d2h_evict_copies_on_thrash() {
         on_host >= 1,
         "d2h-evict must submit Device→HostPinned memcpy; n={on_host}"
     );
+}
+
+#[test]
+fn sim_cfg_d2h_pageable_needs_pageable() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let p = HardwareProfile::example_h100_sxm();
+    let refuse = |cfg: SimCfg, needle: &str| match sim_replay_cfg(&t, p.clone(), cfg) {
+        Ok(_) => panic!("d2h-pageable must need pageable"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains(needle), "{s}");
+        }
+    };
+    refuse(
+        SimCfg {
+            d2h_pageable: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+        "d2h-pageable needs pageable",
+    );
+    refuse(
+        SimCfg {
+            pageable: true,
+            d2h_pageable: true,
+            managed: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+        "d2h-pageable needs pageable",
+    );
+    refuse(
+        SimCfg {
+            pageable: true,
+            d2h_pageable: true,
+            mapped: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+        "d2h-pageable needs pageable",
+    );
+    refuse(
+        SimCfg {
+            pageable: true,
+            host_register: true,
+            d2h_pageable: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+        "d2h-pageable cannot host-register",
+    );
+    refuse(
+        SimCfg {
+            pageable: true,
+            d2h_pageable: true,
+            d2h_evict: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+        "choose one of d2h-pageable, d2h-evict",
+    );
+}
+
+#[test]
+fn simulated_gpu_store_d2h_pageable_needs_pageable() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let inner = DirectStore::from_trace(&t);
+    let p = HardwareProfile::example_h100_sxm();
+    let refuse = |fill: GpuFill, cfg: GpuStoreCfg, needle: &str| match SimulatedGpuStore::with_cfg(
+        inner.clone(),
+        1,
+        p.clone(),
+        4096,
+        fill,
+        cfg,
+    ) {
+        Ok(_) => panic!("d2h-pageable must need pageable"),
+        Err(e) => {
+            let s = e.to_string();
+            assert!(s.contains(needle), "{s}");
+        }
+    };
+    refuse(
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            d2h_pageable: true,
+            ..GpuStoreCfg::default()
+        },
+        "d2h-pageable needs pageable",
+    );
+    refuse(
+        GpuFill::Managed,
+        GpuStoreCfg {
+            pageable: true,
+            d2h_pageable: true,
+            ..GpuStoreCfg::default()
+        },
+        "d2h-pageable needs pageable",
+    );
+    refuse(
+        GpuFill::Mapped,
+        GpuStoreCfg {
+            pageable: true,
+            d2h_pageable: true,
+            ..GpuStoreCfg::default()
+        },
+        "d2h-pageable needs pageable",
+    );
+    refuse(
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            pageable: true,
+            host_register: true,
+            d2h_pageable: true,
+            ..GpuStoreCfg::default()
+        },
+        "d2h-pageable cannot host-register",
+    );
+    let _gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        1,
+        p,
+        4096,
+        GpuFill::Vmm,
+        GpuStoreCfg {
+            pageable: true,
+            d2h_pageable: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("vmm d2h-pageable");
+}
+
+#[test]
+fn sim_replay_d2h_pageable_keeps_hits() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let base = SimCfg {
+        pageable: true,
+        ..SimCfg::lru(2, 4096, 8)
+    };
+    let d2h = SimCfg {
+        pageable: true,
+        d2h_pageable: true,
+        ..SimCfg::lru(2, 4096, 8)
+    };
+    let a = sim_replay_cfg(&t, p.clone(), base).expect("base");
+    let b = sim_replay_cfg(&t, p.clone(), d2h).expect("d2h");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+    assert!(
+        b.bytes_moved > a.bytes_moved,
+        "d2h-pageable must add Device→Host copies; off={} on={}",
+        a.bytes_moved,
+        b.bytes_moved
+    );
+    let sched_a = schedule_replay(&t, p.clone(), base, SchedCfg::closed(0)).expect("sa");
+    let sched_b = schedule_replay(&t, p, d2h, SchedCfg::closed(0)).expect("sb");
+    assert_eq!(sched_a.replay.hits, sched_b.replay.hits);
+    assert_eq!(sched_a.replay.misses, sched_b.replay.misses);
+}
+
+#[test]
+fn simulated_gpu_store_d2h_pageable_copies_on_thrash() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let run = |d2h_pageable: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = match SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            p.clone(),
+            4096,
+            GpuFill::Pinned,
+            GpuStoreCfg {
+                pageable: true,
+                d2h_pageable,
+                ..GpuStoreCfg::default()
+            },
+        ) {
+            Ok(gpu) => gpu,
+            Err(err) => panic!("gpu: {err}"),
+        };
+        for key in t.keys() {
+            let _p = gpu.acquire(key).expect("acquire");
+            gpu.release(key);
+        }
+        assert_eq!(gpu.d2h_pageable(), d2h_pageable);
+        let host = gpu
+            .operations()
+            .filter(|o| match &o.kind {
+                GpuOp::Memcpy(m) => {
+                    matches!(m.dst, Place::Host) && matches!(m.src, Place::Device(_))
+                }
+                _ => false,
+            })
+            .count();
+        let metrics = gpu.metrics();
+        let _s = gpu.score().expect("score");
+        (metrics.hits, metrics.misses, host)
+    };
+    let (off_hits, off_misses, off_host) = run(false);
+    let (on_hits, on_misses, on_host) = run(true);
+    assert_eq!(off_hits, on_hits);
+    assert_eq!(off_misses, on_misses);
+    assert_eq!(off_host, 0, "identity pageable must not D2H on evict");
+    assert!(
+        on_host >= 1,
+        "d2h-pageable must submit Device→Host memcpy; n={on_host}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_d2h_pageable_sync_alloc_copies_on_thrash() {
+    let t = cycling_trace();
+    let p = HardwareProfile::example_h100_sxm();
+    let inner = DirectStore::from_trace(&t);
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        inner,
+        2,
+        p,
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            pageable: true,
+            sync_alloc: true,
+            d2h_pageable: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("sync-alloc d2h-pageable");
+    for key in t.keys() {
+        let _p = gpu.acquire(key).expect("acquire");
+        gpu.release(key);
+    }
+    let host = gpu
+        .operations()
+        .filter(|o| match &o.kind {
+            GpuOp::Memcpy(m) => matches!(m.dst, Place::Host) && matches!(m.src, Place::Device(_)),
+            _ => false,
+        })
+        .count();
+    assert!(
+        host >= 1,
+        "sync-alloc d2h-pageable must submit Device→Host memcpy; n={host}"
+    );
+    let _s = gpu.score().expect("score after pageable D2H free_sync");
 }
 
 #[test]
@@ -14742,6 +15085,7 @@ fn sim_replay_sync_memops_h2d_host_sync() {
             managed_host: false,
             prefetch_host: false,
             d2h_evict: false,
+            d2h_pageable: false,
         };
         let mut next_event = 1u32;
         let k0 = ExpertKey::new(0, 0);
@@ -14961,6 +15305,7 @@ fn sim_replay_device_sync_memops_h2d_host_sync() {
             managed_host: false,
             prefetch_host: false,
             d2h_evict: false,
+            d2h_pageable: false,
         };
         let mut next_event = 1u32;
         let k0 = ExpertKey::new(0, 0);

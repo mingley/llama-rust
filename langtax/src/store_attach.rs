@@ -231,6 +231,8 @@ pub(crate) struct GpuCli {
     pub prefetch_host: bool,
     /// `cudaMemcpyAsync` Device→HostPinned before pinned/VMM LRU free (`GpuStoreCfg::d2h_evict`).
     pub d2h_evict: bool,
+    /// `cudaMemcpyAsync` Device→Host (pageable) before pinned/VMM LRU free (`GpuStoreCfg::d2h_pageable`).
+    pub d2h_pageable: bool,
     /// `cuStreamWaitValue64` / `WriteValue64` copy-ready (`GpuStoreCfg::wait_value`).
     pub wait_value: bool,
     /// Hopper NVLS replica fanout (`GpuStoreCfg::multicast`). Implies vmm.
@@ -331,6 +333,7 @@ impl GpuCli {
             "--managed-host" => &mut self.managed_host,
             "--prefetch-host" => &mut self.prefetch_host,
             "--d2h-evict" => &mut self.d2h_evict,
+            "--d2h-pageable" => &mut self.d2h_pageable,
             "--wait-value" => &mut self.wait_value,
             "--multicast" => &mut self.multicast,
             _ => return Ok(false),
@@ -382,9 +385,9 @@ impl GpuCli {
         }
     }
 
-    /// `--host-register` implies [`Self::pageable`]. Call after sim-flag checks.
+    /// `--host-register` / `--d2h-pageable` imply [`Self::pageable`]. Call after sim-flag checks.
     pub(crate) fn imply_pageable(&mut self) {
-        if self.host_register {
+        if self.host_register || self.d2h_pageable {
             self.pageable = true;
         }
     }
@@ -749,6 +752,32 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--d2h-pageable` needs pageable Device→Host.
+    pub(crate) fn check_d2h_pageable(self) -> Result<(), String> {
+        if !self.d2h_pageable {
+            return Ok(());
+        }
+        if self.d2h_evict {
+            return Err("choose one of --d2h-pageable, --d2h-evict".into());
+        }
+        if self.host_register {
+            return Err("--d2h-pageable cannot --host-register".into());
+        }
+        if self.mapped
+            || self.host_register_mapped
+            || self.managed
+            || self.stream_attach
+            || self.managed_host
+            || self.prefetch_host
+            || self.no_read_mostly
+            || self.no_preferred
+            || self.no_mem_prefetch
+        {
+            return Err("--d2h-pageable needs pageable".into());
+        }
+        Ok(())
+    }
+
     /// `--memset-fill` cannot mapped/managed/pageable/memcpy-batch.
     pub(crate) fn check_memset_fill(self) -> Result<(), String> {
         if !self.memset_fill {
@@ -946,6 +975,7 @@ impl GpuCli {
             (self.managed_host, "--managed-host"),
             (self.prefetch_host, "--prefetch-host"),
             (self.d2h_evict, "--d2h-evict"),
+            (self.d2h_pageable, "--d2h-pageable"),
             (self.wait_value, "--wait-value"),
             (self.decode_sm_set, "--decode-sms"),
         ]
@@ -1329,6 +1359,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         managed_host: gpu.managed_host,
         prefetch_host: gpu.prefetch_host,
         d2h_evict: gpu.d2h_evict,
+        d2h_pageable: gpu.d2h_pageable,
         wait_value: gpu.wait_value,
         multicast: gpu.multicast,
         compute_slots: gpu.compute_slots,

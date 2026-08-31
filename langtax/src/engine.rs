@@ -164,7 +164,10 @@
 //! prefetches the same alloc back; identity stays `free_sync`). `--d2h-evict` is
 //! `cudaMemcpyAsync` Device→HostPinned before pinned/VMM LRU free (next miss still
 //! fills from staging; not with `--mapped` / `--managed`; identity stays free with
-//! no D2H). `--no-read-mostly`
+//! no D2H). `--d2h-pageable` is `cudaMemcpyAsync` Device→Host (pageable) before
+//! that free (host-sync bounce-buffer; implies `--pageable`; not with `--mapped`
+//! / `--managed` / `--host-register` / `--d2h-evict`; identity stays free with no
+//! D2H). `--no-read-mostly`
 //! skips `cudaMemAdviseSetReadMostly` (implies `--managed`; dest prefetch moves;
 //! identity stays SetReadMostly). `--no-preferred` skips
 //! `cudaMemAdviseSetPreferredLocation` (implies `--managed`; remote GEMM
@@ -3598,6 +3601,25 @@ mod tests {
         assert_eq!(iso.2, 4);
         assert_eq!(d2h.2, 4);
         assert_eq!(iso.4, d2h.4, "d2h-evict must keep greedy identity");
+    }
+
+    #[test]
+    fn engine_gpu_d2h_pageable_keeps_greedy_identity() {
+        let bytes = tiny_qwen3moe_2layer_gguf();
+        let iso = mixed_gpu_decode_itl_on(bytes.clone(), false, None, GpuStoreCfg::default());
+        let d2h = mixed_gpu_decode_itl_on(
+            bytes,
+            false,
+            None,
+            GpuStoreCfg {
+                pageable: true,
+                d2h_pageable: true,
+                ..GpuStoreCfg::default()
+            },
+        );
+        assert_eq!(iso.2, 4);
+        assert_eq!(d2h.2, 4);
+        assert_eq!(iso.4, d2h.4, "d2h-pageable must keep greedy identity");
     }
 
     #[test]
