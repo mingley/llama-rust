@@ -9278,18 +9278,15 @@ mod tests {
     fn green_ctx_split_and_bind() {
         let mut sim = Sim::new(h100());
         let d = DeviceId(0);
-        match sim.device_get_dev_resource(d, DevResourceType::Sm).unwrap() {
-            DevResource::Sm(sm) => {
-                assert_eq!(sm, SmResource::FULL);
-                let (groups, rem) = sim
-                    .dev_sm_resource_split_by_count(sm, 2, 1, DevSmResourceSplitFlags::DEFAULT)
-                    .unwrap();
-                assert_eq!(groups.len(), 2);
-                assert_eq!(groups[0].width, 500);
-                assert_eq!(groups[1].start, 500);
-                assert_eq!(rem.width, 0);
-            }
-        }
+        let DevResource::Sm(sm) = sim.device_get_dev_resource(d, DevResourceType::Sm).unwrap();
+        assert_eq!(sm, SmResource::FULL);
+        let (groups, rem) = sim
+            .dev_sm_resource_split_by_count(sm, 2, 1, DevSmResourceSplitFlags::DEFAULT)
+            .unwrap();
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].width, 500);
+        assert_eq!(groups[1].start, 500);
+        assert_eq!(rem.width, 0);
         let err = sim
             .dev_sm_resource_split_by_count(SmResource::FULL, 2, 1, 1)
             .unwrap_err();
@@ -9307,12 +9304,10 @@ mod tests {
         let ctx = sim
             .green_ctx_create(desc, d, GreenCtxFlags::DEFAULT)
             .unwrap();
-        match sim
+        let DevResource::Sm(sm) = sim
             .green_ctx_get_dev_resource(ctx, DevResourceType::Sm)
-            .unwrap()
-        {
-            DevResource::Sm(sm) => assert_eq!(sm.width, 500),
-        }
+            .unwrap();
+        assert_eq!(sm.width, 500);
         sim.green_ctx_stream_create(ctx, StreamId(1), StreamCreateFlags::NON_BLOCKING, 0)
             .unwrap();
         assert_eq!(sim.stream_get_green_ctx(d, StreamId(1)).unwrap(), Some(ctx));
@@ -9324,9 +9319,7 @@ mod tests {
             format!("{err:?}").contains("green ctx has streams"),
             "{err:?}"
         );
-        let err = sim
-            .green_ctx_stream_create(ctx, StreamId::NULL, StreamCreateFlags::NON_BLOCKING, 0)
-            .unwrap_err();
+        let err = sim.green_ctx_set_stream(ctx, StreamId::NULL).unwrap_err();
         assert!(format!("{err:?}").contains("green ctx stream"), "{err:?}");
         sim.begin_capture(d, StreamId(2)).unwrap();
         let err = sim
@@ -9363,9 +9356,8 @@ mod tests {
             enq(sim.memcpy_pinned_to_device(d, a, 4096, StreamId(0)));
             sim.synchronize().unwrap();
             if partition {
-                let full = match sim.device_get_dev_resource(d, DevResourceType::Sm).unwrap() {
-                    DevResource::Sm(sm) => sm,
-                };
+                let DevResource::Sm(full) =
+                    sim.device_get_dev_resource(d, DevResourceType::Sm).unwrap();
                 let (groups, _) = sim.dev_sm_resource_split_by_count(full, 2, 1, 0).unwrap();
                 let g0 = groups[0];
                 let g1 = groups[1];

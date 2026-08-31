@@ -12762,8 +12762,8 @@ fn simulated_gpu_store_green_ctx_needs_decode_priority() {
             ..GpuStoreCfg::default()
         },
     )
-    .err()
-    .expect("need decode-priority");
+    .map(|_| ())
+    .expect_err("need decode-priority");
     assert!(
         err.to_string().contains("green-ctx needs decode-priority"),
         "{err}"
@@ -12789,8 +12789,8 @@ fn simulated_gpu_store_green_ctx_refuses_full_decode_sms() {
             ..GpuStoreCfg::default()
         },
     )
-    .err()
-    .expect("full chip");
+    .map(|_| ())
+    .expect_err("full chip");
     assert!(
         err.to_string()
             .contains("green-ctx decode-sms must leave leftover SMs"),
@@ -12811,8 +12811,7 @@ fn sim_replay_green_ctx_needs_decode_priority() {
             ..SimCfg::lru(1, 4096, 0)
         },
     )
-    .err()
-    .expect("need decode-priority");
+    .expect_err("need decode-priority");
     assert!(
         err.to_string().contains("green-ctx needs decode-priority"),
         "{err}"
