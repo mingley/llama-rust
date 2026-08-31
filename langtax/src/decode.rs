@@ -4242,6 +4242,8 @@ pub fn tiny_gemma4_mixed_hd_gguf() -> Vec<u8> {
 }
 
 /// Shrink layer-0 Q/K/V/wo/QK-norm to the SWA head dim and mark layer 1 global.
+/// SWA `attn_output` is F32: Q4_K needs `n_cols` a multiple of 256, and official
+/// `wo` is `{n_embd_head * n_head, n_embd}` so SWA `n_cols` is 128.
 fn rewrite_tiny_gemma4_mixed_hd(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
     let g = load_gguf_owned(bytes)?;
     let hd_swa = TINY_GEMMA4_HD_SWA;
@@ -4294,9 +4296,9 @@ fn rewrite_tiny_gemma4_mixed_hd(bytes: Vec<u8>) -> Result<Vec<u8>, GgufError> {
             )),
             "blk.0.attn_output.weight" => Some(tw(
                 "blk.0.attn_output.weight",
-                GgmlType::Q4_K,
+                GgmlType::F32,
                 vec![q_rows, n_embd],
-                pack_mat(GgmlType::Q4_K, q_rows, n_embd, 34),
+                pack_mat(GgmlType::F32, q_rows, n_embd, 34),
             )),
             "blk.0.attn_q_norm.weight" => Some(tw(
                 "blk.0.attn_q_norm.weight",
