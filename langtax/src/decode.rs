@@ -50,7 +50,16 @@
 //! Gemma3 QK-Norm + post-norms + GeGLU, attention scale `1.0`, unweighted
 //! RMSNorm on V, SWA period 5, required sliding window, final tanh softcap
 //! (default 30), AltUp (4 streams) + Laurel + per-layer inputs, gaussian_topk
-//! on the first 10 layers. `gemma4` stays rejected.
+//! on the first 10 layers.
+//! Official Gemma4 (`architecture=gemma4`) follows `src/models/gemma4.cpp`:
+//! Gemma embed-scale + GeGLU, QK-Norm before RoPE, unweighted RMSNorm on V,
+//! attention scale `1.0`, RMSNorm `post_attention_norm` / `ffn_norm` /
+//! `post_ffw_norm`, required SWA plus convert `attention.sliding_window_pattern`
+//! as a per-layer bool array, required `attention.key_length_swa` /
+//! `value_length_swa` and `embedding_length_per_layer_input`. Writer-tiny is
+//! dense (no MoE), `embedding_length_per_layer_input = 0` (no per-layer
+//! embeddings), `attention.shared_kv_layers = 0` (every layer has KV), and
+//! equal SWA/global head dims. Optional final tanh logit softcap.
 
 use crate::gguf::{load_gguf_owned, GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 pub use crate::kv_page::PagedKvPool;
@@ -210,6 +219,8 @@ const GEMMA3N_N_LAYER_SPARSITY: usize = 10;
 const GEMMA3N_SPARSITY_STD_MUL: f32 = 1.644_853_4;
 /// Official gemma3n.cpp `n_layer_kv_from_start` (convert `attention.shared_kv_layers`).
 const GEMMA3N_N_LAYER_KV_FROM_START: u32 = 20;
+/// Official GGUF `GGUF_TYPE_BOOL` (array elem for `attention.sliding_window_pattern`).
+const GGUF_TYPE_BOOL: i32 = 7;
 
 /// Decode / load failure.
 #[derive(Debug)]
@@ -463,9 +474,9 @@ struct Layer {
     wo: QuantMat,
     /// Official phi2 / bloom `blk.{i}.attn_output.bias` (required, flag 0).
     wo_b: Option<Vec<f32>>,
-    /// Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 / Gemma3 / Gemma3n `blk.{i}.attn_q_norm` (RMSNorm on Q after projection, before RoPE).
+    /// Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 / Gemma3 / Gemma3n / Gemma4 `blk.{i}.attn_q_norm` (RMSNorm on Q after projection, before RoPE).
     attn_q_norm: Option<Vec<f32>>,
-    /// Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 / Gemma3 / Gemma3n `blk.{i}.attn_k_norm` (RMSNorm on K after projection, before RoPE).
+    /// Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 / Gemma3 / Gemma3n / Gemma4 `blk.{i}.attn_k_norm` (RMSNorm on K after projection, before RoPE).
     attn_k_norm: Option<Vec<f32>>,
     /// Official Qwen3Next / Qwen35: `attn_q` is query+gate (`n_embd_head * n_head * 2`).
     attn_q_gate: bool,
@@ -476,9 +487,9 @@ struct Layer {
     ffn_norm: Vec<f32>,
     /// Official bloom `blk.{i}.ffn_norm.bias` (`LLM_NORM`). Phi2 has no `ffn_norm`.
     ffn_norm_b: Option<Vec<f32>>,
-    /// Official gemma2 / gemma3 / gemma3n `blk.{i}.post_attention_norm` (RMSNorm on attn out before residual).
+    /// Official gemma2 / gemma3 / gemma3n / gemma4 `blk.{i}.post_attention_norm` (RMSNorm on attn out before residual).
     attn_post_norm: Option<Vec<f32>>,
-    /// Official gemma2 / gemma3 / gemma3n `blk.{i}.post_ffw_norm` (RMSNorm on FFN out before residual).
+    /// Official gemma2 / gemma3 / gemma3n / gemma4 `blk.{i}.post_ffw_norm` (RMSNorm on FFN out before residual).
     ffn_post_norm: Option<Vec<f32>>,
     ffn: LayerFfn,
     /// Official gemma3n AltUp / Laurel / per-layer input tensors.
@@ -562,6 +573,12 @@ pub struct Llama {
     n_swa: usize,
     /// Official gemma2 `set_swa_pattern` period (default 2; `0` means every layer).
     swa_period: u32,
+    /// Official gemma4 convert `attention.sliding_window_pattern` bool array.
+    /// Empty means [`gemma2_is_swa`] with [`Self::swa_period`].
+    is_swa: Vec<bool>,
+    /// Official `architecture=gemma4` language walk (`src/models/gemma4.cpp`):
+    /// attention scale `1.0` and unweighted RMSNorm on V.
+    gemma4: bool,
     /// Official `architecture=gemma3n` AltUp / Laurel / per-layer embeddings.
     gemma3n: Option<Gemma3nWeights>,
     layers: Vec<Layer>,
@@ -1510,7 +1527,7 @@ fn gemma3n_fit(s: &mut Scratch, w: &Gemma3nWeights, n: usize, n_embd: usize, n_l
 
 impl Llama {
     /// Build from a loaded GGUF using `{arch}.*` KV (`llama`, `qwen2`, `mistral`,
-    /// `phi3`, `gemma`, `gemma2`, `gemma3`, `gemma3n`, `qwen3`, `llama4`, `qwen2moe`, `qwen3moe`, `qwen2vl`,
+    /// `phi3`, `gemma`, `gemma2`, `gemma3`, `gemma3n`, `gemma4`, `qwen3`, `llama4`, `qwen2moe`, `qwen3moe`, `qwen2vl`,
     /// `qwen3vl`, `qwen3next`, `qwen35`, `phi2`, or `bloom`) and `blk.{i}.*` tensor names. Official llama
     /// MoE is still `architecture=llama` with `n_expert>0`. Official Qwen2VL is
     /// Qwen2 plus m-RoPE (`LLAMA_ROPE_TYPE_MROPE`). Official Qwen3VL is Qwen3
@@ -1524,8 +1541,11 @@ impl Llama {
     /// softcap. Official Gemma3 is Gemma2 post-norms + GeGLU plus QK-Norm,
     /// no attn softcap, optional final softcap. Official Gemma3n is Gemma3
     /// plus attention scale `1.0`, unweighted V RMSNorm, AltUp, Laurel,
-    /// per-layer inputs, gaussian_topk, SWA period 5, and final softcap 30
-    /// (`gemma4` stays rejected).
+    /// per-layer inputs, gaussian_topk, SWA period 5, and final softcap 30.
+    /// Official Gemma4 is Gemma3 QK-Norm plus post-norms plus GeGLU, attention
+    /// scale `1.0`, unweighted V RMSNorm, convert bool-array SWA pattern, and
+    /// no AltUp / Laurel / gaussian_topk. Writer-tiny stays dense (no MoE,
+    /// no per-layer embeddings, no shared KV).
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
     /// blob; they do not clone tensor bytes. When `output.weight` is absent,
@@ -1573,10 +1593,11 @@ impl Llama {
         let gemma2 = arch == "gemma2";
         let gemma3 = arch == "gemma3";
         let gemma3n = arch == "gemma3n";
+        let gemma4 = arch == "gemma4";
         let rms_eps = if phi2 || bloom {
             require_f32(&g, arch, "attention.layer_norm_epsilon")?
-        } else if gemma2 || gemma3 || gemma3n {
-            // Official gemma2.cpp / gemma3.cpp / gemma3n.cpp `get_key` without `false`.
+        } else if gemma2 || gemma3 || gemma3n || gemma4 {
+            // Official gemma2.cpp / gemma3.cpp / gemma3n.cpp / gemma4.cpp `get_key` without `false`.
             require_f32(&g, arch, "attention.layer_norm_rms_epsilon")?
         } else {
             arch_f32(&g, arch, "attention.layer_norm_rms_epsilon").unwrap_or(1e-5)
@@ -1612,9 +1633,28 @@ impl Llama {
                 g.kv_u32(&arch_key(arch, "attention.sliding_window_pattern"))
                     .unwrap_or(GEMMA3N_SWA_PERIOD_DEFAULT),
             )
+        } else if gemma4 {
+            // Official gemma4.cpp: SWA required; pattern is convert bool[] via
+            // `get_key_or_arr`; final softcap optional (default 0); attn scale
+            // 1.0 is not a KV. `swa_period` stays 0; [`Llama::is_swa`] holds
+            // the per-layer flags.
+            (
+                0.0,
+                arch_f32(&g, arch, "final_logit_softcapping").unwrap_or(0.0),
+                require_usize(&g, arch, "attention.sliding_window")?,
+                0,
+            )
         } else {
             (0.0, 0.0, 0, 0)
         };
+        let is_swa = if gemma4 {
+            load_gemma4_is_swa(&g, arch, n_layer)?
+        } else {
+            Vec::new()
+        };
+        if gemma4 {
+            load_gemma4_hparams(&g, arch, n_embd, n_head)?;
+        }
         let n_rot = rope_dimension(&g, arch, n_embd, n_head)?;
         let rope_sections = if arch == "qwen2vl" || arch == "qwen3vl" || arch == "qwen35" {
             Some(load_rope_dimension_sections(&g, arch)?)
@@ -1628,7 +1668,7 @@ impl Llama {
             .map(|t| t.n_rows())
             .ok_or_else(|| LlamaError::Tensor("token_embd.weight".into()))?;
         let rope_base = arch_f32(&g, arch, "rope.freq_base").unwrap_or(10_000.0);
-        let gemma = arch == "gemma" || gemma2 || gemma3 || gemma3n;
+        let gemma = arch == "gemma" || gemma2 || gemma3 || gemma3n || gemma4;
         let n_embd_f = f32::from(u16::try_from(n_embd).unwrap_or(1));
         let embed_scale = if gemma { n_embd_f.sqrt() } else { 1.0 };
         let token_embd = quant_mat(need(&g, "token_embd.weight")?)?;
@@ -1663,7 +1703,8 @@ impl Llama {
             || arch == "qwen3next"
             || arch == "qwen35"
             || gemma3
-            || gemma3n;
+            || gemma3n
+            || gemma4;
         let llama4 = arch == "llama4";
         let llama4_hparams = if llama4 {
             Some(load_llama4_hparams(&g, arch, n_layer)?)
@@ -1692,6 +1733,7 @@ impl Llama {
             gemma2,
             gemma3,
             gemma3n,
+            gemma4,
             llama4: llama4_hparams.as_ref(),
             llama_moe: llama_moe_hparams.as_ref(),
             qwen2moe: qwen2moe_hparams.as_ref(),
@@ -1735,6 +1777,8 @@ impl Llama {
             final_logit_softcapping,
             n_swa,
             swa_period,
+            is_swa,
+            gemma4,
             gemma3n,
             layers,
         })
@@ -2008,6 +2052,14 @@ impl Llama {
         }
     }
 
+    /// Official gemma4 convert bool-array SWA, else [`gemma2_is_swa`].
+    fn layer_is_swa(&self, li: usize) -> bool {
+        self.is_swa
+            .get(li)
+            .copied()
+            .unwrap_or_else(|| gemma2_is_swa(li, self.swa_period))
+    }
+
     /// One decode token per cache. Shared-pool paged caches GEMM together.
     ///
     /// Q/K/V, FFN, and lm_head are one GEMM of `caches.len()` rows. Attention
@@ -2243,6 +2295,9 @@ impl Llama {
             if let Some(w) = layer.attn_k_norm.as_deref() {
                 rmsnorm_rows_inplace(&mut s.k, hd, w, self.rms_eps)?;
             }
+            if self.gemma4 {
+                rmsnorm_unweighted_rows_inplace(&mut s.v, hd, self.rms_eps)?;
+            }
             for t in 0..n {
                 let p = token_pos(pos, t)?;
                 let geom = kv_addr(addrs, t)?.geom(self.n_head_kv, hd);
@@ -2304,7 +2359,7 @@ impl Llama {
                         *v *= scale;
                     }
                 }
-                let score_scale = if self.phi2 {
+                let score_scale = if self.phi2 || self.gemma4 {
                     1.0
                 } else {
                     let scale = f32::from(u16::try_from(hd).unwrap_or(1)).sqrt();
@@ -2319,11 +2374,7 @@ impl Llama {
                     .attn
                     .get_mut(dst_off..dst_off.saturating_add(self.n_embd))
                     .ok_or_else(|| LlamaError::Shape("prefill attn".into()))?;
-                let layer_swa = if gemma2_is_swa(li, self.swa_period) {
-                    self.n_swa
-                } else {
-                    0
-                };
+                let layer_swa = if self.layer_is_swa(li) { self.n_swa } else { 0 };
                 attend_query(
                     cache_k,
                     cache_v,
@@ -3524,7 +3575,8 @@ pub fn tiny_gemma3_gguf() -> Vec<u8> {
 /// `attention.sliding_window = 2` so short-seq tests clip, omits
 /// `sliding_window_pattern` (period 5), and writes convert-shaped
 /// `gemma3n.altup.*` / `embedding_length_per_layer_input`. Convert
-/// `norm_shift` is 0 (runtime does not add 1). `gemma4` stays rejected.
+/// `norm_shift` is 0 (runtime does not add 1). `gemma4` is a separate official
+/// family (`architecture=gemma4`).
 pub fn tiny_gemma3n_gguf() -> Vec<u8> {
     tiny_arch_gguf_lm_head(
         TinySpec {
@@ -3541,7 +3593,37 @@ pub fn tiny_gemma3n_gguf() -> Vec<u8> {
     )
 }
 
-/// Writer-built Qwen3-shaped GGUF: `qwen3.*` KV plus official QK-Norm tensors.
+/// Writer-built official Gemma4 GGUF: `architecture=gemma4` with `gemma4.*` KV.
+///
+/// Official `general.architecture=gemma4` (`MODEL_ARCH_NAMES[GEMMA4] = "gemma4"`,
+/// `Gemma4ForCausalLM` → `MODEL_ARCH.GEMMA4`). Decode follows llama.cpp
+/// `src/models/gemma4.cpp`: Gemma embed-scale + GeGLU, QK-Norm before RoPE,
+/// unweighted RMSNorm on V, attention scale `1.0`, RMSNorm `post_attention_norm`
+/// / `ffn_norm` / `post_ffw_norm`, required `attention.sliding_window`, convert
+/// `attention.sliding_window_pattern` as a per-layer bool array, required
+/// `attention.key_length_swa` / `value_length_swa` and
+/// `embedding_length_per_layer_input`. Optional final tanh logit softcap
+/// (default 0). Writer-tiny is dense (no `ffn_gate_inp`), writes
+/// `embedding_length_per_layer_input = 0` (no per-layer embeddings), omits
+/// `attention.shared_kv_layers` (every layer has KV), uses equal SWA/global
+/// head dims, and `attention.sliding_window = 2` so short-seq tests clip.
+/// Convert skips `lm_head.weight` when tied, omits `attn_logit_softcapping` /
+/// `rope.dimension_count`. Convert `norm_shift` is 0 (runtime does not add 1).
+pub fn tiny_gemma4_gguf() -> Vec<u8> {
+    tiny_arch_gguf_lm_head(
+        TinySpec {
+            arch: "gemma4",
+            token_embd: GgmlType::F32,
+            output: GgmlType::F32,
+            layer: None,
+            rope_dimension_count: false,
+            qkv_bias: false,
+            add_bos_token: None,
+            llama_moe: false,
+        },
+        TinyLmHead::Tied,
+    )
+}
 ///
 /// Official `general.architecture=qwen3` (`MODEL_ARCH_NAMES[QWEN3] = "qwen3"`,
 /// not `qwen3moe`). Decode follows llama.cpp `src/models/qwen3.cpp`: RMSNorm
@@ -4813,7 +4895,11 @@ fn tiny_arch_gguf_gqa(
             vec![n_embd],
             pack_vec1d(vec1d, &ones),
         ));
-        if spec.arch == "gemma2" || spec.arch == "gemma3" || spec.arch == "gemma3n" {
+        if spec.arch == "gemma2"
+            || spec.arch == "gemma3"
+            || spec.arch == "gemma3n"
+            || spec.arch == "gemma4"
+        {
             // Official gemma2.cpp: `post_attention_norm` AND `ffn_norm` AND
             // `post_ffw_norm`. Not the qwen3next reuse of post_attention_norm
             // as pre-FFN.
@@ -4838,6 +4924,7 @@ fn tiny_arch_gguf_gqa(
         || spec.arch == "qwen35"
         || spec.arch == "gemma3"
         || spec.arch == "gemma3n"
+        || spec.arch == "gemma4"
     {
         // Official Qwen3Next / Qwen35 QK-Norm is `{n_embd_head_k}`, not `n_rot`.
         let qk_len = if spec.arch == "qwen3next" || spec.arch == "qwen35" {
@@ -5360,6 +5447,7 @@ fn supported_arch(s: &str) -> bool {
         || s == "gemma2"
         || s == "gemma3"
         || s == "gemma3n"
+        || s == "gemma4"
         || s == "qwen3"
         || s == "llama4"
         || s == "qwen2moe"
@@ -5634,8 +5722,8 @@ fn tiny_kv_gqa(spec: &TinySpec, n_head_kv: usize) -> Vec<(String, Kv)> {
             },
         ));
     }
-    if arch == "gemma2" || arch == "gemma3" || arch == "gemma3n" {
-        // Official convert/gemma.py Gemma2Model / Gemma3Model / Gemma3NModel.
+    if arch == "gemma2" || arch == "gemma3" || arch == "gemma3n" || arch == "gemma4" {
+        // Official convert/gemma.py Gemma2Model / Gemma3Model / Gemma3NModel / Gemma4Model.
         if arch == "gemma2" {
             kv.push((
                 arch_key(arch, "attn_logit_softcapping"),
@@ -5666,6 +5754,30 @@ fn tiny_kv_gqa(spec: &TinySpec, n_head_kv: usize) -> Vec<(String, Kv)> {
             kv.push((
                 arch_key(arch, "attention.shared_kv_layers"),
                 Kv::U32(GEMMA3N_N_LAYER_KV_FROM_START),
+            ));
+        }
+        if arch == "gemma4" {
+            // Official gemma4.cpp `get_key` without `false` for SWA head dim and
+            // per-layer embedding width. Writer-tiny is dense SWA-only with
+            // equal head dims and no PLE.
+            kv.push((
+                arch_key(arch, "embedding_length_per_layer_input"),
+                Kv::U32(0),
+            ));
+            kv.push((
+                arch_key(arch, "attention.key_length_swa"),
+                Kv::U32(u32::try_from(TINY_N_ROT).unwrap_or(0)),
+            ));
+            kv.push((
+                arch_key(arch, "attention.value_length_swa"),
+                Kv::U32(u32::try_from(TINY_N_ROT).unwrap_or(0)),
+            ));
+            kv.push((
+                arch_key(arch, "attention.sliding_window_pattern"),
+                Kv::Array {
+                    elem: GGUF_TYPE_BOOL,
+                    items: vec![Kv::Bool(true); TINY_N_LAYER],
+                },
             ));
         }
         kv.push((
@@ -6668,6 +6780,7 @@ struct LayerHparams<'a> {
     gemma2: bool,
     gemma3: bool,
     gemma3n: bool,
+    gemma4: bool,
     llama4: Option<&'a Llama4Hparams>,
     llama_moe: Option<&'a LlamaMoeHparams>,
     qwen2moe: Option<&'a Qwen2MoeHparams>,
@@ -6684,6 +6797,9 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
     let qwen3next = h.qwen3next;
     let qwen35 = h.qwen35;
     let qk_norm = h.qk_norm;
+    if h.gemma4 && g.tensor(&format!("blk.{i}.ffn_gate_inp.weight")).is_some() {
+        return Err(LlamaError::Shape(format!("blk.{i}.ffn_gate_inp.weight")));
+    }
     let use_rope = if h.bloom {
         false
     } else {
@@ -6807,7 +6923,7 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
         } else {
             None
         },
-        attn_post_norm: if h.gemma2 || h.gemma3 || h.gemma3n {
+        attn_post_norm: if h.gemma2 || h.gemma3 || h.gemma3n || h.gemma4 {
             Some(f32s(need(
                 g,
                 &format!("blk.{i}.post_attention_norm.weight"),
@@ -6815,7 +6931,7 @@ fn load_layer(g: &Gguf, i: usize, h: &LayerHparams<'_>) -> Result<Layer, LlamaEr
         } else {
             None
         },
-        ffn_post_norm: if h.gemma2 || h.gemma3 || h.gemma3n {
+        ffn_post_norm: if h.gemma2 || h.gemma3 || h.gemma3n || h.gemma4 {
             Some(f32s(need(g, &format!("blk.{i}.post_ffw_norm.weight"))?)?)
         } else {
             None
@@ -8393,8 +8509,8 @@ fn alibi_slope(head: usize, n_head: usize, max_bias: f32) -> f32 {
 /// query head `hq` to KV head `hq / (n_head / n_head_kv)`.
 ///
 /// `score_scale` is `1/sqrt(hd)` for every arch except official phi2, which
-/// scales Q after RoPE instead and passes 1.0 here, and official gemma3n,
-/// which passes `hparams.f_attention_scale = 1.0`.
+/// scales Q after RoPE instead and passes 1.0 here, and official gemma3n /
+/// gemma4, which pass `hparams.f_attention_scale = 1.0`.
 ///
 /// `alibi_bias` is official bloom `f_max_alibi_bias` (`8`); `0` disables ALiBi.
 ///
@@ -8475,6 +8591,7 @@ fn attend_query(
 
 /// Official Llama4 `ggml_rms_norm` without a weight (`Llama4TextL2Norm`).
 /// Gemma3n applies the same op to V (`n_embd_head` rows) before KV store.
+/// Official gemma4.cpp uses the same unweighted V RMSNorm.
 fn rmsnorm_unweighted_inplace(x: &mut [f32], eps: f32) {
     let mut ss = 0.0f32;
     for v in x.iter() {
@@ -8951,7 +9068,7 @@ fn rope_is_neox(arch: &str) -> bool {
         // QWEN2 / QWEN2MOE / QWEN3 / QWEN3MOE / QWEN3NEXT / PHI2 / PHI3 / GEMMA /
         // GEMMA2 / GEMMA3 => LLAMA_ROPE_TYPE_NEOX.
         "qwen2" | "qwen2moe" | "qwen3" | "qwen3moe" | "qwen3next" | "phi2" | "phi3" | "gemma"
-        | "gemma2" | "gemma3" | "gemma3n" => true,
+        | "gemma2" | "gemma3" | "gemma3n" | "gemma4" => true,
         // MROPE / IMROPE arches reach `rope_multi`; the flag is unused for them.
         _ => false,
     }
@@ -9123,6 +9240,80 @@ fn gemma2_is_swa(il: usize, period: u32) -> bool {
         let il = u32::try_from(il).unwrap_or(u32::MAX);
         il % period < period.saturating_sub(1)
     }
+}
+
+/// Official gemma4.cpp `get_key_or_arr(LLM_KV_ATTENTION_SLIDING_WINDOW_PATTERN)`.
+/// Convert writes a per-layer bool array; a scalar broadcasts (`!= 0` is SWA).
+fn load_gemma4_is_swa(g: &Gguf, arch: &str, n_layer: usize) -> Result<Vec<bool>, LlamaError> {
+    let key = arch_key(arch, "attention.sliding_window_pattern");
+    match g.kv(&key) {
+        Some(Kv::Array { items, .. }) => {
+            if items.len() != n_layer {
+                return Err(LlamaError::Shape(key));
+            }
+            let mut out = Vec::with_capacity(n_layer);
+            for it in items {
+                match it {
+                    Kv::Bool(b) => out.push(*b),
+                    Kv::U32(v) => out.push(*v != 0),
+                    Kv::I32(v) => out.push(*v != 0),
+                    _ => return Err(LlamaError::Shape(key)),
+                }
+            }
+            Ok(out)
+        }
+        Some(Kv::U32(v)) => Ok(vec![*v != 0; n_layer]),
+        Some(Kv::I32(v)) => Ok(vec![*v != 0; n_layer]),
+        Some(Kv::Bool(b)) => Ok(vec![*b; n_layer]),
+        None => Err(LlamaError::MissingKv(key)),
+        _ => Err(LlamaError::Shape(key)),
+    }
+}
+
+/// Official gemma4.cpp required KV that the dense writer-tiny honors, plus
+/// refusals for PLE / shared-KV / mixed SWA head dim (not this item).
+fn load_gemma4_hparams(
+    g: &Gguf,
+    arch: &str,
+    n_embd: usize,
+    n_head: usize,
+) -> Result<(), LlamaError> {
+    let n_pl = require_usize(g, arch, "embedding_length_per_layer_input")?;
+    if n_pl != 0 {
+        return Err(LlamaError::Shape(arch_key(
+            arch,
+            "embedding_length_per_layer_input",
+        )));
+    }
+    if g.kv_u32(&arch_key(arch, "attention.shared_kv_layers"))
+        .unwrap_or(0)
+        != 0
+    {
+        return Err(LlamaError::Shape(arch_key(
+            arch,
+            "attention.shared_kv_layers",
+        )));
+    }
+    if n_head == 0 || !n_embd.is_multiple_of(n_head) {
+        return Err(LlamaError::Shape(arch_key(arch, "attention.head_count")));
+    }
+    let hd = n_embd / n_head;
+    let k_swa = require_usize(g, arch, "attention.key_length_swa")?;
+    let v_swa = require_usize(g, arch, "attention.value_length_swa")?;
+    if k_swa != v_swa || k_swa != hd {
+        return Err(LlamaError::Shape(arch_key(
+            arch,
+            "attention.key_length_swa",
+        )));
+    }
+    let k = g.kv_u32(&arch_key(arch, "attention.key_length"));
+    let v = g.kv_u32(&arch_key(arch, "attention.value_length"));
+    if let (Some(k), Some(v)) = (k, v) {
+        if k != v {
+            return Err(LlamaError::Shape(arch_key(arch, "attention.key_length")));
+        }
+    }
+    Ok(())
 }
 
 fn softmax(x: &mut [f32]) {
@@ -10798,6 +10989,7 @@ mod tests {
                 | "gemma2"
                 | "gemma3"
                 | "gemma3n"
+                | "gemma4"
         )
     }
 
@@ -11227,6 +11419,21 @@ mod tests {
         last
     }
 
+    fn oracle_gemma4_layer_is_swa(g: &Gguf, arch: &str, li: usize) -> bool {
+        match g.kv(&arch_key(arch, "attention.sliding_window_pattern")) {
+            Some(Kv::Array { items, .. }) => match items.get(li) {
+                Some(Kv::Bool(b)) => *b,
+                Some(Kv::U32(v)) => *v != 0,
+                Some(Kv::I32(v)) => *v != 0,
+                _ => false,
+            },
+            Some(Kv::U32(v)) => *v != 0,
+            Some(Kv::I32(v)) => *v != 0,
+            Some(Kv::Bool(b)) => *b,
+            _ => false,
+        }
+    }
+
     /// Independent scalar Llama math for a token sequence (causal attn + GQA).
     fn oracle_forward_seq(g: &Gguf, tokens: &[u32]) -> Vec<f32> {
         let arch = architecture(g).expect("arch");
@@ -11251,8 +11458,9 @@ mod tests {
         let emb = g.tensor("token_embd.weight").unwrap();
         let gemma2 = arch == "gemma2";
         let gemma3 = arch == "gemma3";
-        let gemma = arch == "gemma" || gemma2 || gemma3;
-        let gemma_post = gemma2 || gemma3;
+        let gemma4 = arch == "gemma4";
+        let gemma = arch == "gemma" || gemma2 || gemma3 || gemma4;
+        let gemma_post = gemma2 || gemma3 || gemma4;
         let embed_scale = if gemma {
             f32::from(u16::try_from(n_embd).unwrap_or(1)).sqrt()
         } else {
@@ -11325,7 +11533,7 @@ mod tests {
                 };
                 let mut qh: Vec<Vec<f32>> = q.chunks(hd).map(<[f32]>::to_vec).collect();
                 let mut kh: Vec<Vec<f32>> = k.chunks(hd).map(<[f32]>::to_vec).collect();
-                let vh: Vec<Vec<f32>> = v.chunks(hd).map(<[f32]>::to_vec).collect();
+                let mut vh: Vec<Vec<f32>> = v.chunks(hd).map(<[f32]>::to_vec).collect();
                 // Official Qwen3 / Qwen3MoE / Qwen3VL / Qwen3Next / Qwen35 QK-Norm (`LLM_NORM_RMS` on each head) before RoPE.
                 if let Some(qn) = g.tensor(&tname(li, "attn_q_norm.weight")) {
                     let w = f32s(qn).unwrap();
@@ -11337,6 +11545,11 @@ mod tests {
                     let w = f32s(kn).unwrap();
                     for h in &mut kh {
                         *h = oracle_rmsnorm(h, &w, eps);
+                    }
+                }
+                if gemma4 {
+                    for h in &mut vh {
+                        *h = oracle_rmsnorm_unweighted(h, eps);
                     }
                 }
                 // Official llama4.cpp: iRoPE when `(il+1) % n_no_rope_layer_step != 0`.
@@ -11410,7 +11623,11 @@ mod tests {
                     }
                 }
                 let seq = pos + 1;
-                let inv = if phi2 { 1.0 } else { 1.0 / (hd as f32).sqrt() };
+                let inv = if phi2 || gemma4 {
+                    1.0
+                } else {
+                    1.0 / (hd as f32).sqrt()
+                };
                 let mut attn = vec![0.0f32; n_embd];
                 for (hq, qvec) in qh.iter().enumerate() {
                     let hkv = hq / gqa;
@@ -11429,19 +11646,21 @@ mod tests {
                                 s = cap * (s / cap).tanh();
                             }
                         }
-                        if gemma2 || gemma3 {
+                        if gemma2 || gemma3 || gemma4 {
                             let n_swa =
                                 arch_u32(g, arch, "attention.sliding_window").unwrap_or(0) as usize;
-                            let period = arch_u32(g, arch, "attention.sliding_window_pattern")
-                                .unwrap_or(if gemma3 {
-                                    GEMMA3_SWA_PERIOD_DEFAULT
-                                } else {
-                                    GEMMA2_SWA_PERIOD_DEFAULT
-                                });
-                            if gemma2_is_swa(li, period)
-                                && n_swa > 0
-                                && pos.saturating_sub(t) >= n_swa
-                            {
+                            let is_swa = if gemma4 {
+                                oracle_gemma4_layer_is_swa(g, arch, li)
+                            } else {
+                                let period = arch_u32(g, arch, "attention.sliding_window_pattern")
+                                    .unwrap_or(if gemma3 {
+                                        GEMMA3_SWA_PERIOD_DEFAULT
+                                    } else {
+                                        GEMMA2_SWA_PERIOD_DEFAULT
+                                    });
+                                gemma2_is_swa(li, period)
+                            };
+                            if is_swa && n_swa > 0 && pos.saturating_sub(t) >= n_swa {
                                 s = f32::NEG_INFINITY;
                             }
                         }
@@ -11582,7 +11801,7 @@ mod tests {
                 .or_else(|| g.tensor("token_embd.weight"))
                 .expect("lm_head");
             last = oracle_add_bias(oracle_gemv(lm_head, &x), g.tensor("output.bias"));
-            if gemma2 || gemma3 {
+            if gemma2 || gemma3 || gemma4 {
                 let cap = arch_f32(g, arch, "final_logit_softcapping").unwrap_or(0.0);
                 if cap > 0.0 {
                     for v in &mut last {
@@ -11681,6 +11900,7 @@ mod tests {
             "gemma2",
             "gemma3",
             "gemma3n",
+            "gemma4",
         ] {
             assert!(rope_is_neox(arch), "{arch} is LLAMA_ROPE_TYPE_NEOX");
             assert!(oracle_rope_is_neox(arch), "{arch} oracle NEOX");
@@ -12876,6 +13096,7 @@ mod tests {
             tiny_gemma2_gguf(),
             tiny_gemma3_gguf(),
             tiny_gemma3n_gguf(),
+            tiny_gemma4_gguf(),
             tiny_qwen3_gguf(),
             tiny_llama4_gguf(),
             tiny_llama_moe_gguf(),
@@ -12926,6 +13147,7 @@ mod tests {
             ("gemma2", tiny_gemma2_gguf()),
             ("gemma3", tiny_gemma3_gguf()),
             ("gemma3n", tiny_gemma3n_gguf()),
+            ("gemma4", tiny_gemma4_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("f16", tiny_f16_gguf()),
@@ -13011,6 +13233,7 @@ mod tests {
             ("gemma2", tiny_gemma2_gguf()),
             ("gemma3", tiny_gemma3_gguf()),
             ("gemma3n", tiny_gemma3n_gguf()),
+            ("gemma4", tiny_gemma4_gguf()),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("llama-moe", tiny_llama_moe_gguf()),
@@ -13845,6 +14068,96 @@ mod tests {
         assert!(
             !gemma2_is_swa(4, GEMMA3N_SWA_PERIOD_DEFAULT),
             "layer 4 is dense under set_swa_pattern(5)"
+        );
+    }
+
+    #[test]
+    fn tiny_gemma4_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_gemma4_gguf();
+        let g = load_gguf(&bytes).expect("load gemma4");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("gemma4".into()))
+        );
+        assert_eq!(g.kv_u32("gemma4.block_count"), Some(1));
+        assert_eq!(g.kv_u32("gemma4.embedding_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma4.feed_forward_length"), Some(256));
+        assert_eq!(g.kv_u32("gemma4.attention.head_count"), Some(4));
+        assert_eq!(g.kv_u32("gemma4.attention.head_count_kv"), Some(2));
+        assert_eq!(g.kv_u32("gemma4.context_length"), Some(256));
+        assert_eq!(
+            g.kv_u32("gemma4.attention.sliding_window"),
+            Some(GEMMA2_TINY_N_SWA)
+        );
+        assert_eq!(g.kv_u32("gemma4.attention.key_length"), Some(64));
+        assert_eq!(g.kv_u32("gemma4.attention.value_length"), Some(64));
+        assert_eq!(g.kv_u32("gemma4.attention.key_length_swa"), Some(64));
+        assert_eq!(g.kv_u32("gemma4.attention.value_length_swa"), Some(64));
+        assert_eq!(g.kv_u32("gemma4.embedding_length_per_layer_input"), Some(0));
+        assert_eq!(
+            g.kv("gemma4.attention.sliding_window_pattern"),
+            Some(&Kv::Array {
+                elem: GGUF_TYPE_BOOL,
+                items: vec![Kv::Bool(true)],
+            })
+        );
+        assert!(g.kv_f32("gemma4.attn_logit_softcapping").is_none());
+        assert!(g.kv_f32("gemma4.final_logit_softcapping").is_none());
+        assert!(g.kv_u32("gemma4.rope.dimension_count").is_none());
+        assert!(g.kv_u32("gemma4.attention.shared_kv_layers").is_none());
+        assert!(g.kv_u32("gemma3.block_count").is_none());
+        assert!(g.kv_u32("gemma3n.block_count").is_none());
+        assert!(g.kv_u32("llama.block_count").is_none());
+        assert!(g.kv_u32("mixtral.block_count").is_none());
+        assert!(g.tensor("output.weight").is_none());
+        assert!(g.tensor("altup_proj.weight").is_none());
+        assert!(g.tensor("per_layer_token_embd.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_gate_inp.weight").is_none());
+        assert!(g.tensor("blk.0.ffn_norm.weight").is_some());
+        assert!(g.tensor("blk.0.post_attention_norm.weight").is_some());
+        assert!(g.tensor("blk.0.post_ffw_norm.weight").is_some());
+        assert!(g.tensor("blk.0.attn_q_norm.weight").is_some());
+        assert!(g.tensor("blk.0.attn_k_norm.weight").is_some());
+        assert_eq!(
+            g.tensor("blk.0.attn_q_norm.weight").unwrap().n_cols(),
+            TINY_N_ROT
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        assert!(model.gemma4);
+        assert_eq!(model.is_swa, vec![true]);
+        let x = pat_f32(TINY_N_EMBD, 21);
+        let got_gemv = model.gemv_output(&x).expect("gemv");
+        let exp_gemv = oracle_gemv(g.tensor("token_embd.weight").unwrap(), &x);
+        assert_logits_match(&got_gemv, &exp_gemv);
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        assert!(!out.is_empty());
+        let tokens = [1u32, 2, 3];
+        let gemma3_pref = {
+            let g3 = load_gguf(&tiny_gemma3_gguf()).expect("gemma3");
+            let m = Llama::from_gguf(g3).expect("m3");
+            let mut c = m.new_cache(8).expect("c3");
+            m.prefill(&mut c, &tokens).expect("gemma3 pref")
+        };
+        let mut gc = model.new_cache(8).expect("gc");
+        let gemma4_pref = model.prefill(&mut gc, &tokens).expect("gemma4 pref");
+        assert_ne!(
+            gemma4_pref, gemma3_pref,
+            "gemma4 V-norm and attn-scale 1.0 must change logits vs gemma3"
+        );
+        let gemma3n_pref = {
+            let g3n = load_gguf(&tiny_gemma3n_gguf()).expect("gemma3n");
+            let m = Llama::from_gguf(g3n).expect("m3n");
+            let mut c = m.new_cache(8).expect("c3n");
+            m.prefill(&mut c, &tokens).expect("gemma3n pref")
+        };
+        assert_ne!(
+            gemma4_pref, gemma3n_pref,
+            "gemma4 must not copy gemma3n AltUp/Laurel/per-layer/softcap"
         );
     }
 
@@ -15638,23 +15951,301 @@ mod tests {
     }
 
     #[test]
-    fn gemma4_architecture_error_names_arch() {
+    fn gemma4_missing_layer_norm_rms_epsilon_names_key() {
         let bytes = write_gguf_with_kv(
             &[
                 ("general.alignment".into(), Kv::U32(32)),
                 ("general.architecture".into(), Kv::String("gemma4".into())),
+                ("gemma4.block_count".into(), Kv::U32(1)),
+                ("gemma4.embedding_length".into(), Kv::U32(256)),
+                ("gemma4.attention.head_count".into(), Kv::U32(4)),
+                ("gemma4.attention.head_count_kv".into(), Kv::U32(2)),
             ],
             &[],
         );
         let g = load_gguf(&bytes).expect("load");
         let err = match Llama::from_gguf(g) {
-            Ok(_) => panic!("expected unknown arch"),
+            Ok(_) => panic!("expected missing layer_norm_rms_epsilon"),
             Err(e) => e.to_string(),
         };
-        assert!(err.contains("gemma4"), "error should name arch: {err}");
         assert!(
-            err.contains("unknown architecture"),
-            "error should name unknown architecture: {err}"
+            err.contains("gemma4.attention.layer_norm_rms_epsilon"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma4_missing_sliding_window_pattern_names_key() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma4".into())),
+                ("gemma4.block_count".into(), Kv::U32(1)),
+                ("gemma4.embedding_length".into(), Kv::U32(256)),
+                ("gemma4.attention.head_count".into(), Kv::U32(4)),
+                ("gemma4.attention.head_count_kv".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.layer_norm_rms_epsilon".into(),
+                    Kv::F32(1.0 / 100_000.0),
+                ),
+                ("gemma4.attention.sliding_window".into(), Kv::U32(2)),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected missing sliding_window_pattern"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("gemma4.attention.sliding_window_pattern"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma4_per_layer_embedding_is_refused() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma4".into())),
+                ("gemma4.block_count".into(), Kv::U32(1)),
+                ("gemma4.embedding_length".into(), Kv::U32(256)),
+                ("gemma4.attention.head_count".into(), Kv::U32(4)),
+                ("gemma4.attention.head_count_kv".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.layer_norm_rms_epsilon".into(),
+                    Kv::F32(1.0 / 100_000.0),
+                ),
+                ("gemma4.attention.sliding_window".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.sliding_window_pattern".into(),
+                    Kv::Array {
+                        elem: GGUF_TYPE_BOOL,
+                        items: vec![Kv::Bool(true)],
+                    },
+                ),
+                (
+                    "gemma4.embedding_length_per_layer_input".into(),
+                    Kv::U32(32),
+                ),
+                ("gemma4.attention.key_length_swa".into(), Kv::U32(64)),
+                ("gemma4.attention.value_length_swa".into(), Kv::U32(64)),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected per-layer embedding refuse"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("gemma4.embedding_length_per_layer_input"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma4_shared_kv_layers_is_refused() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma4".into())),
+                ("gemma4.block_count".into(), Kv::U32(1)),
+                ("gemma4.embedding_length".into(), Kv::U32(256)),
+                ("gemma4.attention.head_count".into(), Kv::U32(4)),
+                ("gemma4.attention.head_count_kv".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.layer_norm_rms_epsilon".into(),
+                    Kv::F32(1.0 / 100_000.0),
+                ),
+                ("gemma4.attention.sliding_window".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.sliding_window_pattern".into(),
+                    Kv::Array {
+                        elem: GGUF_TYPE_BOOL,
+                        items: vec![Kv::Bool(true)],
+                    },
+                ),
+                ("gemma4.embedding_length_per_layer_input".into(), Kv::U32(0)),
+                ("gemma4.attention.shared_kv_layers".into(), Kv::U32(1)),
+                ("gemma4.attention.key_length_swa".into(), Kv::U32(64)),
+                ("gemma4.attention.value_length_swa".into(), Kv::U32(64)),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected shared KV refuse"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("gemma4.attention.shared_kv_layers"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma4_mixed_swa_head_dim_is_refused() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma4".into())),
+                ("gemma4.block_count".into(), Kv::U32(1)),
+                ("gemma4.embedding_length".into(), Kv::U32(256)),
+                ("gemma4.attention.head_count".into(), Kv::U32(4)),
+                ("gemma4.attention.head_count_kv".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.layer_norm_rms_epsilon".into(),
+                    Kv::F32(1.0 / 100_000.0),
+                ),
+                ("gemma4.attention.sliding_window".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.sliding_window_pattern".into(),
+                    Kv::Array {
+                        elem: GGUF_TYPE_BOOL,
+                        items: vec![Kv::Bool(true)],
+                    },
+                ),
+                ("gemma4.embedding_length_per_layer_input".into(), Kv::U32(0)),
+                ("gemma4.attention.key_length_swa".into(), Kv::U32(32)),
+                ("gemma4.attention.value_length_swa".into(), Kv::U32(64)),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected mixed SWA head dim refuse"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("gemma4.attention.key_length_swa"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma4_missing_sliding_window_names_key() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma4".into())),
+                ("gemma4.block_count".into(), Kv::U32(1)),
+                ("gemma4.embedding_length".into(), Kv::U32(256)),
+                ("gemma4.attention.head_count".into(), Kv::U32(4)),
+                ("gemma4.attention.head_count_kv".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.layer_norm_rms_epsilon".into(),
+                    Kv::F32(1.0 / 100_000.0),
+                ),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected missing sliding_window"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("gemma4.attention.sliding_window"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma4_missing_key_length_swa_names_key() {
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma4".into())),
+                ("gemma4.block_count".into(), Kv::U32(1)),
+                ("gemma4.embedding_length".into(), Kv::U32(256)),
+                ("gemma4.attention.head_count".into(), Kv::U32(4)),
+                ("gemma4.attention.head_count_kv".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.layer_norm_rms_epsilon".into(),
+                    Kv::F32(1.0 / 100_000.0),
+                ),
+                ("gemma4.attention.sliding_window".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.sliding_window_pattern".into(),
+                    Kv::Array {
+                        elem: GGUF_TYPE_BOOL,
+                        items: vec![Kv::Bool(true)],
+                    },
+                ),
+                ("gemma4.embedding_length_per_layer_input".into(), Kv::U32(0)),
+            ],
+            &[],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected missing key_length_swa"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("gemma4.attention.key_length_swa"),
+            "error should name kv key: {err}"
+        );
+    }
+
+    #[test]
+    fn gemma4_moe_router_is_refused() {
+        let n_embd = TINY_N_EMBD;
+        let ones = vec![1.0f32; n_embd];
+        let bytes = write_gguf_with_kv(
+            &[
+                ("general.alignment".into(), Kv::U32(32)),
+                ("general.architecture".into(), Kv::String("gemma4".into())),
+                ("gemma4.block_count".into(), Kv::U32(1)),
+                ("gemma4.embedding_length".into(), Kv::U32(256)),
+                ("gemma4.attention.head_count".into(), Kv::U32(4)),
+                ("gemma4.attention.head_count_kv".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.layer_norm_rms_epsilon".into(),
+                    Kv::F32(1.0 / 100_000.0),
+                ),
+                ("gemma4.attention.sliding_window".into(), Kv::U32(2)),
+                (
+                    "gemma4.attention.sliding_window_pattern".into(),
+                    Kv::Array {
+                        elem: GGUF_TYPE_BOOL,
+                        items: vec![Kv::Bool(true)],
+                    },
+                ),
+                ("gemma4.embedding_length_per_layer_input".into(), Kv::U32(0)),
+                ("gemma4.attention.key_length_swa".into(), Kv::U32(64)),
+                ("gemma4.attention.value_length_swa".into(), Kv::U32(64)),
+            ],
+            &[
+                tw(
+                    "token_embd.weight",
+                    GgmlType::F32,
+                    vec![n_embd, TINY_N_VOCAB],
+                    pack_mat(GgmlType::F32, n_embd, TINY_N_VOCAB, 1),
+                ),
+                tw(
+                    "output_norm.weight",
+                    GgmlType::F32,
+                    vec![n_embd],
+                    pack_vec1d(GgmlType::F32, &ones),
+                ),
+                tw(
+                    "blk.0.ffn_gate_inp.weight",
+                    GgmlType::F32,
+                    vec![n_embd, 1],
+                    pack_mat(GgmlType::F32, n_embd, 1, 7),
+                ),
+            ],
+        );
+        let g = load_gguf(&bytes).expect("load");
+        let err = match Llama::from_gguf(g) {
+            Ok(_) => panic!("expected MoE router refuse"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("blk.0.ffn_gate_inp.weight"),
+            "error should name tensor: {err}"
         );
     }
 
@@ -16158,7 +16749,7 @@ mod bench {
     fn bench_logits_fingerprint() {
         // Every zero-argument fixture in the suite, so that each architecture
         // walk and each dtype kernel the decode path can reach is pinned.
-        let cases: [(&str, Vec<u8>); 52] = [
+        let cases: [(&str, Vec<u8>); 53] = [
             ("llama", tiny_llama_gguf()),
             ("tied", tiny_tied_gguf()),
             ("tied_copy", tiny_tied_copy_gguf()),
@@ -16182,6 +16773,7 @@ mod bench {
             ("gemma2", tiny_gemma2_gguf()),
             ("gemma3", tiny_gemma3_gguf()),
             ("gemma3n", tiny_gemma3n_gguf()),
+            ("gemma4", tiny_gemma4_gguf()),
             ("f16", tiny_f16_gguf()),
             ("f16_1d", tiny_f16_1d_gguf()),
             ("f16_1d_bias", tiny_f16_1d_bias_gguf()),

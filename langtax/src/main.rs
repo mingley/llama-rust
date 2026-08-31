@@ -10,9 +10,9 @@ use llama_rust::{
     gemv_q4_k, gemv_q8_0, greedy_generate_ctx, greedy_generate_traced, load_gguf_owned,
     pack_q4_k_block, pack_q8_0_block, pack_q8_k_block, parse_chat_args, parse_engine_args,
     parse_infer_args, parse_serve_args, parse_trace_args, run_chat, run_engine, run_serve,
-    tiny_bloom_gguf, tiny_gemma2_gguf, tiny_gemma3_gguf, tiny_gemma3n_gguf, tiny_gemma_gguf,
-    tiny_llama4_gguf, tiny_llama_gguf, tiny_llama_moe_gguf, tiny_phi2_gguf, tiny_qwen2_gguf,
-    tiny_qwen2moe_gguf, tiny_qwen2vl_gguf, tiny_qwen35_gguf, tiny_qwen3_gguf,
+    tiny_bloom_gguf, tiny_gemma2_gguf, tiny_gemma3_gguf, tiny_gemma3n_gguf, tiny_gemma4_gguf,
+    tiny_gemma_gguf, tiny_llama4_gguf, tiny_llama_gguf, tiny_llama_moe_gguf, tiny_phi2_gguf,
+    tiny_qwen2_gguf, tiny_qwen2moe_gguf, tiny_qwen2vl_gguf, tiny_qwen35_gguf, tiny_qwen3_gguf,
     tiny_qwen3moe_2layer_gguf, tiny_qwen3moe_gguf, tiny_qwen3next_gguf, tiny_qwen3vl_gguf,
     write_gguf, write_gguf_with_kv, ChatCmd, EngineCmd, GgmlType, InferArgs, InferCmd, Kv, Llama,
     ServeCmd, TensorWrite, Tokenizer, TraceCmd, BIN_USAGE, CHAT_USAGE, ENGINE_USAGE, INFER_USAGE,
@@ -334,6 +334,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "write-tiny-gemma3n" => {
             let path = args.next().ok_or("write-tiny-gemma3n <path>")?;
             let bytes = tiny_gemma3n_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-gemma4" => {
+            let path = args.next().ok_or("write-tiny-gemma4 <path>")?;
+            let bytes = tiny_gemma4_gguf();
             write_path(Path::new(&path), &bytes)?;
             println!("wrote {path} bytes={}", bytes.len());
             Ok(())

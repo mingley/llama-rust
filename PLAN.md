@@ -4230,17 +4230,36 @@ model, do not celebrate the sim.
     walker-only). `gpu-profile capture` is still refused. Dual score still
     has no `$/M tokens`.
 
-381. [ ] Next numbered PLAN item after 380 is the next `gpu-sim` / Engine /
+381. [x] Official Gemma4 (`architecture=gemma4`): writer-built
+    `tiny-gemma4` plus decode of llama.cpp `src/models/gemma4.cpp` —
+    Gemma embed-scale + GeGLU, QK-Norm before RoPE, unweighted RMSNorm on
+    V, attention scale `1.0`, RMSNorm `post_attention_norm` / `ffn_norm` /
+    `post_ffw_norm`, required `attention.sliding_window`, convert
+    `attention.sliding_window_pattern` as a per-layer bool array, required
+    `attention.key_length_swa` / `value_length_swa` and
+    `embedding_length_per_layer_input`. Optional final tanh logit softcap
+    (default 0). Writer-tiny is dense (no `ffn_gate_inp`), writes
+    `embedding_length_per_layer_input = 0` (no per-layer embeddings), omits
+    `attention.shared_kv_layers` (every layer has KV), uses equal SWA/global
+    head dims, and `attention.sliding_window = 2` so short-seq tests clip.
+    Convert skips `lm_head.weight` when tied, omits `attn_logit_softcapping`
+    / `rope.dimension_count`. Convert `norm_shift` is 0. `{arch}.context_length`
+    is still unused for KV sizing. Gemma4 MoE, per-layer embeddings, shared
+    KV, and mixed SWA/global head dims stay refused with named keys.
+    Decode identity vs oracle. `gpu-profile capture` is still refused. Dual
+    score still has no `$/M tokens`.
+
+382. [ ] Next numbered PLAN item after 381 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
-    decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
+    decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
     `cudaGraphMemAllocNodeSetParams` (it would resize HBM),
     `cudaDeviceGetStreamPriorityRange`, occupancy SM counts, CUDA version
     numbers, example `$/M tokens` rents, or `cudaStreamDestroy`.
     **`best_of` / `use_beam_search` stay out of `parse_gen_req` until a
     real beam Engine exists.** Do not default `--engine`. Do not invent
-    `max_model_len` or `/v1/tokenize`. Do not invent `gemma4`. Do not invent
-    CUDA arrays on `memcpy_3d_batch_async`. Do not invent
+    `max_model_len` or `/v1/tokenize`. Do not invent a second `gemma4`.
+    Do not invent CUDA arrays on `memcpy_3d_batch_async`. Do not invent
     `ConcurrentManagedAccess` / discard contents to make batch prefetch
     succeed.
     Do not invent `ReuseFollowEventDependencies` /
