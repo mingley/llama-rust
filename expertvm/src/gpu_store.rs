@@ -2852,7 +2852,7 @@ impl SimulatedGpuStore {
         ensure_single_attach(&mut self.sim, device, id, compute)?;
         // Dest prefetch without ReadMostly moved the page. Live kernels
         // first-touch; graphs need this prefetch before capture.
-        if self.mode == GpuFill::Managed && !self.sim.is_resident(id, device)? {
+        if self.no_read_mostly && !self.sim.is_resident(id, device)? {
             let _p = self.sim.prefetch(device, id, compute)?;
         }
         self.launch_or_gemm(device, id)?;
