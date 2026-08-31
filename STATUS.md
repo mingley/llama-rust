@@ -5,6 +5,14 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cudaDevAttrGlobalL1CacheSupported`
+
+`gpu-sim` `DeviceAttr::GlobalL1CacheSupported` is always 0. This VM does
+not model L1 caches. Distinct from `L2CacheSize`. Also
+`DeviceProperties.global_l1_cache_supported`. Query; legal during
+capture. `gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cudaDevAttrGPUDirectRDMAWritesOrdering`
 
 `gpu-sim` `DeviceAttr::GpuDirectRdmaWritesOrdering` is always None. Native

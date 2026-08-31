@@ -708,6 +708,8 @@ do not invent `cudaDevAttrNumaId`).
 `OnlyPartialHostNativeAtomicSupported` is always 0 (host-mapped atomics
 are not modeled; distinct from `HostNativeAtomicSupported`).
 `MaxAccessPolicyWindowSize` is L2 bytes (same as `MaxPersistingL2CacheSize`).
+`GlobalL1CacheSupported` is always 0 (this VM does not model L1 caches;
+distinct from `L2CacheSize`).
 `StreamPrioritiesSupported` /
 `UnifiedAddressing` are always 1. `GpuOverlap` is `copy_engines > 0`.
 `device_get_properties` is `cudaGetDeviceProperties` of those same fields

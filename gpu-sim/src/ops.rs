@@ -787,6 +787,9 @@ pub enum DeviceAttr {
     /// `cudaDevAttrMaxAccessPolicyWindowSize` (same bytes as
     /// [`Self::MaxPersistingL2CacheSize`] / [`crate::GpuProfile::l2_bytes`]).
     MaxAccessPolicyWindowSize,
+    /// `cudaDevAttrGlobalL1CacheSupported` (always 0; this VM does not model
+    /// L1 caches). Distinct from [`Self::L2CacheSize`].
+    GlobalL1CacheSupported,
     /// `cudaDevAttrMaxBlocksPerCluster`.
     MaxBlocksPerCluster,
     /// `cudaDevAttrMemSyncDomainCount`.
@@ -1000,6 +1003,9 @@ pub struct DeviceProperties {
     /// `accessPolicyMaxWindowSize` ([`DeviceAttr::MaxAccessPolicyWindowSize`]).
     /// Same bytes as [`Self::l2_cache_size`].
     pub access_policy_max_window_size: u64,
+    /// `cudaDevAttrGlobalL1CacheSupported` ([`DeviceAttr::GlobalL1CacheSupported`]).
+    /// Always false; this VM does not model L1 caches.
+    pub global_l1_cache_supported: bool,
     /// [`crate::GpuProfile::copy_engines`].
     pub async_engine_count: u32,
     /// [`crate::GpuProfile::compute_slots`] `> 1`.
