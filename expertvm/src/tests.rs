@@ -8663,11 +8663,11 @@ fn simulated_gpu_store_managed_host_attach_overlaps_leftover() {
     let (_both_wall, both_done, both_pf, both_att) = run(true, true);
     assert!(off_att.is_empty(), "identity managed has no Attach; {off_att:?}");
     assert!(
-        host_att.iter().any(|f| *f == gpu_sim::MemAttach::Global),
+        host_att.contains(&gpu_sim::MemAttach::Global),
         "managed-host must Global-attach; {host_att:?}"
     );
     assert!(
-        both_att.iter().any(|f| *f == gpu_sim::MemAttach::Single),
+        both_att.contains(&gpu_sim::MemAttach::Single),
         "managed-host + stream-attach must Single-attach; {both_att:?}"
     );
     assert!(
