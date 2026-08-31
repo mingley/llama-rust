@@ -11,7 +11,7 @@ llama.cpp `build_qkv` applies `wqkv_s` after the fused QKV GEMM, before
 QKV bias (`TENSOR_NOT_REQUIRED`; missing is `1.0`). Decode loads
 `blk.{i}.attn_qkv.scale` only when fused `attn_qkv.weight` is present
 (bloom). Writer-tiny `tiny-bloom-attn-qkv-s` is `tiny-bloom` plus scale
-`5.0`. Llama files that contain `attn_qkv.scale` are ignored (not
+`3.0`. Llama files that contain `attn_qkv.scale` are ignored (not
 loaded). Split `attn_q.scale` / `attn_k.scale` / `attn_v.scale` stay the
 llama tensors. Do not invent `output.input_scale` this slice.
 

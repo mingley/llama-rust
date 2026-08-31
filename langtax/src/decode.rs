@@ -242,9 +242,10 @@ const TINY_LLAMA_FFN_UP_S: f32 = 3.5;
 const TINY_NVFP4_OUTPUT_S: f32 = 4.0;
 /// Writer-tiny fused `attn_qkv.scale` (`{1}`). Official llama.cpp
 /// `build_qkv` applies this after the fused QKV GEMM, before bias. Not 1,
-/// and distinct from split `attn_q.scale` / `attn_k.scale` / `attn_v.scale`.
-/// Loaded only when fused `attn_qkv.weight` is present (bloom).
-const TINY_BLOOM_ATTN_QKV_S: f32 = 5.0;
+/// and distinct from split `attn_q.scale` / `attn_k.scale` / `attn_v.scale`
+/// and from NVFP4 `output.scale`. Loaded only when fused
+/// `attn_qkv.weight` is present (bloom).
+const TINY_BLOOM_ATTN_QKV_S: f32 = 3.0;
 /// Writer-tiny dense `attn_q.scale` (`{1}`). Not 1, and distinct from
 /// [`TINY_LLAMA_FFN_DOWN_S`], so the walk is observable vs [`tiny_llama_gguf`]
 /// and a mix-up with down scale cannot silently match. Gemma3/4 QK-Norm
@@ -19376,7 +19377,7 @@ mod tests {
         };
         assert_ne!(
             scaled, bloom_pref,
-            "attn_qkv.scale 5.0 must not copy bloom logits"
+            "attn_qkv.scale 3.0 must not copy bloom logits"
         );
         let ones_pref = {
             let ones_bytes =
