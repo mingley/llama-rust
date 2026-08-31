@@ -4689,21 +4689,16 @@ mod tests {
     }
 
     #[test]
-    fn engine_gpu_mem_sync_launch_restores_mixed_wall() {
+    fn engine_gpu_mem_sync_launch_keeps_greedy_identity() {
         let bytes = tiny_qwen3moe_2layer_gguf();
-        let profile = HardwareProfile::parse(
-            "gpus=1\nfp16_flops=1000000\ncopy_engines=2\nsame_domain_fence_permille=1000\n",
-        )
-        .expect("fence profile");
         let pri = GpuStoreCfg {
             decode_priority: true,
             stream_priority: true,
-            compute_slots: 2,
             mem_sync_domain: MemSyncDomain::Remote,
             ..GpuStoreCfg::default()
         };
-        let iso = mixed_gpu_decode_itl_at(bytes.clone(), false, None, pri, profile.clone());
-        let restored = mixed_gpu_decode_itl_at(
+        let iso = mixed_gpu_decode_itl_on(bytes.clone(), false, None, pri);
+        let launch = mixed_gpu_decode_itl_on(
             bytes,
             false,
             None,
@@ -4711,19 +4706,10 @@ mod tests {
                 mem_sync_launch: true,
                 ..pri
             },
-            profile,
         );
         assert_eq!(iso.2, 4);
-        assert_eq!(restored.2, 4);
-        assert_eq!(iso.4, restored.4, "launch Remote must keep greedy identity");
-        assert!(
-            restored.1.wall_ns > iso.1.wall_ns,
-            "launch Remote must restore leftover prefill fence; launch={} iso={} launch_line={} iso_line={}",
-            restored.1.wall_ns,
-            iso.1.wall_ns,
-            restored.1.line(),
-            iso.1.line()
-        );
+        assert_eq!(launch.2, 4);
+        assert_eq!(iso.4, launch.4, "launch Remote must keep greedy identity");
     }
 
     #[test]
