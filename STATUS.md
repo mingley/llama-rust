@@ -5,6 +5,16 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-30 — `cudaMallocManaged(..., cudaMemAttachHost)` then Global attach
+
+`GpuStoreCfg::managed_host` / `SimCfg::managed_host` allocate managed experts
+with `cudaMemAttachHost`, then `cudaStreamAttachMemAsync` Global on the copy
+stream so device prefetch is legal. Identity managed is Global at alloc (no
+Attach op). Implies `--managed`. Prefetch stays on the copy stream and still
+overlaps leftover compute unless `--stream-attach`. `--managed-host` is off
+by default (decode identity: Global alloc + copy-stream prefetch).
+`gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-30 — `cudaStreamAttachMemAsync` Single on managed experts
 
 `GpuStoreCfg::stream_attach` / `SimCfg::stream_attach` call

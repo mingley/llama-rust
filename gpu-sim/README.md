@@ -706,6 +706,9 @@ stream; capture is refused). `stream_attach_with_flags` maps
 `expertvm sim --stream-attach` / `gguf_gemv engine --expert-sim --stream-attach`
 attach managed experts to the compute stream and prefetch there (identity
 stays Global + copy-stream prefetch).
+`expertvm sim --managed-host` / `gguf_gemv engine --expert-sim --managed-host`
+allocate `cudaMemAttachHost` then Global-attach on the copy stream before
+prefetch (identity stays Global at alloc).
 `mem_advise` is `cudaMemAdvise` (host-sync).
 `mem_advise_with_location` is `cudaMemAdvise_v2` (`Place` location;
 AccessedBy requires a device place; host preferred is

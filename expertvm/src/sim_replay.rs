@@ -788,6 +788,14 @@ pub struct SimCfg {
     /// [`Self::seq_streams`]. [`crate::GpuStoreCfg::stream_attach`] is the
     /// store path.
     pub stream_attach: bool,
+    /// `cudaMallocManaged(..., cudaMemAttachHost)` then Global attach.
+    ///
+    /// After alloc+advise, attach Global on the work stream so device prefetch
+    /// is legal. Identity managed is Global at alloc (no Attach op). Implies
+    /// [`Self::managed`]. Prefetch stays on the work stream. Combined with
+    /// [`Self::stream_attach`], alloc is Host then Single (no extra Global).
+    /// [`crate::GpuStoreCfg::managed_host`] is the store path.
+    pub managed_host: bool,
     /// `cuStreamWaitValue64` / `cuStreamWriteValue64` copy-ready handshake.
     ///
     /// After H2D / prefetch, write a generation into an 8-byte device mailbox
@@ -888,6 +896,7 @@ impl SimCfg {
             launch_completion: false,
             programmatic_event: false,
             stream_attach: false,
+            managed_host: false,
             wait_value: false,
             multicast: false,
             compute_slots: 0,
@@ -927,6 +936,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     }
     if cfg.stream_attach && cfg.seq_streams {
         return Err(Error::Store("stream-attach cannot seq-streams"));
+    }
+    if cfg.managed_host && !cfg.managed {
+        return Err(Error::Store("managed-host needs managed"));
     }
     if cfg.pdl && cfg.cooperative {
         return Err(Error::Store("choose one of pdl, cooperative"));
@@ -1042,6 +1054,7 @@ pub fn sim_replay_cfg(
         accessed_by: cfg.accessed_by,
         wait_value: cfg.wait_value,
         stream_attach: cfg.stream_attach,
+        managed_host: cfg.managed_host,
     };
     let mut token_ends: Vec<u64> = Vec::new();
     let mut ctr = ReplayCounters::default();
@@ -1193,6 +1206,9 @@ pub(crate) struct TouchArgs {
     /// [`SimCfg::stream_attach`]: `cudaStreamAttachMemAsync` Single then prefetch
     /// on this work stream (`StreamId(1)` when the plan would use NULL).
     pub stream_attach: bool,
+    /// [`SimCfg::managed_host`]: `cudaMallocManaged` Host attach, then Global
+    /// attach on this work stream before prefetch (unless stream-attach Single).
+    pub managed_host: bool,
 }
 
 fn hbm_alloc(
@@ -2030,15 +2046,24 @@ fn alloc_touch_page(sim: &mut Sim, args: TouchArgs) -> Result<AllocId, Error> {
         return Ok(sim.alloc_host_mapped(args.bytes)?);
     }
     if args.managed {
-        let id = sim.alloc_managed(args.bytes)?;
+        let id = if args.managed_host {
+            sim.alloc_managed_host(args.bytes)?
+        } else {
+            sim.alloc_managed(args.bytes)?
+        };
         sim.mem_advise(id, gpu_sim::MemAdvise::SetReadMostly, args.d)?;
         sim.mem_advise(id, gpu_sim::MemAdvise::SetPreferredLocation, args.d)?;
         if args.accessed_by {
             advise_accessed_by(sim, id)?;
         }
-        if args.stream_attach {
-            let _a = sim.stream_attach(args.d, id, args.s, MemAttach::Single)?;
-        }
+        attach_managed_visibility(
+            sim,
+            args.d,
+            id,
+            args.s,
+            args.stream_attach,
+            args.managed_host,
+        )?;
         return Ok(id);
     }
     if args.vmm {
@@ -2159,6 +2184,24 @@ pub(crate) fn bump_null_for_attach(s: StreamId, stream_attach: bool) -> StreamId
     } else {
         s
     }
+}
+
+/// Host-attached managed pages need a later Global/Single attach before
+/// device prefetch. Stream-attach Single wins over a Host→Global attach.
+fn attach_managed_visibility(
+    sim: &mut Sim,
+    device: DeviceId,
+    id: AllocId,
+    stream: StreamId,
+    stream_attach: bool,
+    managed_host: bool,
+) -> Result<(), Error> {
+    if stream_attach {
+        let _a = sim.stream_attach(device, id, stream, MemAttach::Single)?;
+    } else if managed_host {
+        let _a = sim.stream_attach(device, id, stream, MemAttach::Global)?;
+    }
+    Ok(())
 }
 
 /// Live `cudaStreamAttachMemAsync` Single onto `stream` when the page is already
@@ -3034,6 +3077,7 @@ pub fn sim_remote_home_cfg(
                         managed: false,
                         accessed_by: false,
                         stream_attach: false,
+                        managed_host: false,
                     },
                     reuse,
                     fan_in,
@@ -3082,6 +3126,8 @@ pub(crate) struct RemoteFetch {
     pub(crate) accessed_by: bool,
     /// [`SimCfg::stream_attach`]: Single-attach then prefetch on `stream`.
     pub(crate) stream_attach: bool,
+    /// [`SimCfg::managed_host`]: Host alloc then Global attach before prefetch.
+    pub(crate) managed_host: bool,
 }
 
 pub(crate) fn remote_hit(
@@ -3192,16 +3238,25 @@ fn fill_remote_managed(
     fetch: RemoteFetch,
     next_event: &mut u32,
 ) -> Result<RemotePage, Error> {
-    let id = sim.alloc_managed(fetch.expert_bytes)?;
+    let id = if fetch.managed_host {
+        sim.alloc_managed_host(fetch.expert_bytes)?
+    } else {
+        sim.alloc_managed(fetch.expert_bytes)?
+    };
     sim.mem_advise(id, gpu_sim::MemAdvise::SetReadMostly, fetch.home)?;
     sim.mem_advise(id, gpu_sim::MemAdvise::SetPreferredLocation, fetch.home)?;
     if fetch.accessed_by {
         advise_accessed_by(sim, id)?;
     }
     let stream = bump_null_for_attach(fetch.stream, fetch.stream_attach);
-    if fetch.stream_attach {
-        let _a = sim.stream_attach(fetch.home, id, stream, MemAttach::Single)?;
-    }
+    attach_managed_visibility(
+        sim,
+        fetch.home,
+        id,
+        stream,
+        fetch.stream_attach,
+        fetch.managed_host,
+    )?;
     let _p = sim.prefetch(fetch.home, id, stream)?;
     if fetch.home != fetch.compute {
         wait_peer(sim, fetch.home, fetch.compute, stream, next_event)?;

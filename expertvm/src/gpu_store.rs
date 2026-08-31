@@ -34,7 +34,10 @@ pub enum GpuFill {
     /// `cudaMallocManaged` + ReadMostly + PreferredLocation + prefetch.
     ///
     /// [`GpuStoreCfg::stream_attach`] attaches Single to the compute stream
-    /// and prefetches there. Default is Global attach + copy-stream prefetch.
+    /// and prefetches there. [`GpuStoreCfg::managed_host`] is
+    /// `cudaMemAttachHost` at alloc, then Global attach on the copy stream
+    /// (or Single when stream-attach). Default is Global attach at alloc +
+    /// copy-stream prefetch.
     Managed,
     /// `cudaHostAllocMapped` (PCIe kernel, no H2D).
     Mapped,
@@ -332,6 +335,15 @@ pub struct GpuStoreCfg {
     /// put walker GEMMs on per-sequence streams including NULL). Decode
     /// identity stays Global attach + copy-stream prefetch.
     pub stream_attach: bool,
+    /// `cudaMallocManaged(..., cudaMemAttachHost)` then Global attach.
+    ///
+    /// After alloc+advise, attach Global on the copy stream so device prefetch
+    /// is legal (Host attach fails device prefetch / kernels with
+    /// `not attached`). Identity managed is Global at alloc (no Attach op).
+    /// Implies managed fill. Prefetch stays on the copy stream unless
+    /// [`Self::stream_attach`] (Single on compute). Decode identity stays
+    /// Global alloc + copy-stream prefetch.
+    pub managed_host: bool,
     /// `cuStreamWaitValue64` / `cuStreamWriteValue64` instead of copy-ready events.
     ///
     /// After H2D / prefetch, write a generation into an 8-byte device mailbox
@@ -494,6 +506,9 @@ pub struct SimulatedGpuStore {
     /// [`GpuStoreCfg::stream_attach`]: managed pages are `MemAttach::Single`
     /// on the compute stream; miss prefetch uses that stream.
     stream_attach: bool,
+    /// [`GpuStoreCfg::managed_host`]: `cudaMallocManaged` Host attach, then
+    /// Global attach on the miss DMA stream (unless stream-attach Single).
+    managed_host: bool,
 }
 
 struct KvGpu {
@@ -629,6 +644,9 @@ impl SimulatedGpuStore {
     /// waits the PDL trigger; illegal with device-launch).
     /// [`GpuStoreCfg::stream_attach`] is `cudaStreamAttachMemAsync` Single
     /// on managed experts (prefetch on compute; illegal with seq-streams).
+    /// [`GpuStoreCfg::managed_host`] is `cudaMallocManaged(..., cudaMemAttachHost)`
+    /// then Global attach on the copy stream so prefetch is legal (implies
+    /// managed; identity stays Global at alloc).
     /// [`GpuStoreCfg::wait_value`] is `cuStreamWaitValue64` / `WriteValue64`
     /// for the copy-ready handshake (8-byte `cudaMallocAsync` mailbox, copy
     /// stream waited before H2D; decode identity stays events).
@@ -683,6 +701,9 @@ impl SimulatedGpuStore {
         }
         if cfg.stream_attach && cfg.seq_streams {
             return Err(Error::Store("stream-attach cannot seq-streams"));
+        }
+        if cfg.managed_host && fill != GpuFill::Managed {
+            return Err(Error::Store("managed-host needs managed"));
         }
         if cfg.pdl && cfg.cooperative {
             return Err(Error::Store("choose one of pdl, cooperative"));
@@ -852,6 +873,7 @@ impl SimulatedGpuStore {
             programmatic_event: pde.map(|e| e.event),
             programmatic_event_armed: false,
             stream_attach: cfg.stream_attach,
+            managed_host: cfg.managed_host,
         })
     }
 
@@ -1857,21 +1879,26 @@ impl SimulatedGpuStore {
         let bytes = self.bytes_per_expert;
         match self.mode {
             GpuFill::Managed => {
-                let id = self.sim.alloc_managed(bytes)?;
+                let id = if self.managed_host {
+                    self.sim.alloc_managed_host(bytes)?
+                } else {
+                    self.sim.alloc_managed(bytes)?
+                };
                 self.sim.mem_advise(id, MemAdvise::SetReadMostly, d)?;
                 self.sim
                     .mem_advise(id, MemAdvise::SetPreferredLocation, d)?;
                 if self.accessed_by {
                     advise_accessed_by(&mut self.sim, id)?;
                 }
+                let dma = self.dma_stream();
                 if self.stream_attach {
-                    let _a = self
-                        .sim
-                        .stream_attach(d, id, self.compute, MemAttach::Single)?;
+                    let _a = self.sim.stream_attach(d, id, dma, MemAttach::Single)?;
+                } else if self.managed_host {
+                    let _a = self.sim.stream_attach(d, id, dma, MemAttach::Global)?;
                 }
-                let _p = self.sim.prefetch(d, id, self.dma_stream())?;
+                let _p = self.sim.prefetch(d, id, dma)?;
                 if self.sync_alloc {
-                    self.sim.synchronize_stream(d, self.dma_stream())?;
+                    self.sim.synchronize_stream(d, dma)?;
                 }
                 Ok(id)
             }

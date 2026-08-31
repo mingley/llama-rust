@@ -845,6 +845,7 @@ fn vmm_evict_reacquires_same_va() {
         accessed_by: false,
         wait_value: false,
         stream_attach: false,
+        managed_host: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -5204,6 +5205,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         accessed_by: true,
         wait_value: false,
         stream_attach: false,
+        managed_host: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -5266,6 +5268,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         accessed_by: true,
         wait_value: false,
         stream_attach: false,
+        managed_host: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -5329,6 +5332,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         accessed_by: true,
         wait_value: false,
         stream_attach: false,
+        managed_host: false,
     };
     let mut next_event = 1u32;
     let k0 = ExpertKey::new(0, 0);
@@ -5758,6 +5762,7 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         accessed_by: false,
         wait_value: false,
         stream_attach: false,
+        managed_host: false,
     };
     let mut next_event = 1u32;
     apply_misses(
@@ -5895,6 +5900,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             accessed_by: false,
             wait_value: false,
             stream_attach: false,
+            managed_host: false,
         };
         let mut next_event = 1u32;
         let k0 = ExpertKey::new(0, 0);
@@ -8484,5 +8490,200 @@ fn simulated_gpu_store_stream_attach_serializes_miss_prefetch() {
     assert!(
         on_wall > off_wall,
         "stream-attach must lengthen wall; on={on_wall} off={off_wall}"
+    );
+}
+
+#[test]
+fn sim_cfg_managed_host_needs_managed() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = match sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            managed_host: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("managed-host without managed must fail"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string().contains("managed-host needs managed"),
+        "{err}"
+    );
+}
+
+#[test]
+fn simulated_gpu_store_managed_host_needs_managed() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            managed_host: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("managed-host without managed must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("managed-host needs managed"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn sim_replay_managed_host_keeps_hits() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0]), ev(1, 0, &[0])],
+    };
+    let profile = HardwareProfile::example_h100_sxm();
+    let off = SimCfg {
+        managed: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let on = SimCfg {
+        managed: true,
+        managed_host: true,
+        ..SimCfg::lru(1, 4096, 0)
+    };
+    let a = sim_replay_cfg(&t, profile.clone(), off).expect("off");
+    let b = sim_replay_cfg(&t, profile, on).expect("on");
+    assert_eq!(a.hits, b.hits);
+    assert_eq!(a.misses, b.misses);
+}
+
+#[test]
+fn simulated_gpu_store_managed_host_pin_before_acquire_still_replicates() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let mut gpu = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        2,
+        HardwareProfile::example_8xh100_nvlink(),
+        4096,
+        GpuFill::Managed,
+        GpuStoreCfg {
+            managed_host: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("gpu");
+    let k0 = ExpertKey::new(0, 0);
+    gpu.pin_hot(&[k0]).expect("pin");
+    assert_eq!(gpu.replica_of(k0), Some(DeviceId(1)));
+    assert_eq!(gpu.metrics().replicates, 1);
+    let _s = gpu.score().expect("score");
+}
+
+#[test]
+fn simulated_gpu_store_managed_host_attach_overlaps_leftover() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0, 1])],
+    };
+    let profile = HardwareProfile::parse("gpus=1\nfp16_flops=1000000\ncopy_engines=2\n")
+        .expect("slow gemm");
+    let run = |managed_host: bool, stream_attach: bool| {
+        let inner = DirectStore::from_trace(&t);
+        let mut gpu = match SimulatedGpuStore::with_cfg(
+            inner,
+            2,
+            profile.clone(),
+            4096,
+            GpuFill::Managed,
+            GpuStoreCfg {
+                managed_host,
+                stream_attach,
+                ..GpuStoreCfg::default()
+            },
+        ) {
+            Ok(gpu) => gpu,
+            Err(err) => panic!("gpu: {err}"),
+        };
+        let k0 = ExpertKey::new(0, 0);
+        let k1 = ExpertKey::new(0, 1);
+        let _p = match gpu.acquire(k0) {
+            Ok(v) => v,
+            Err(err) => panic!("warm: {err}"),
+        };
+        gpu.release(k0);
+        let _d = gpu.clock_ns().expect("drain");
+        let _p = match gpu.acquire(k0) {
+            Ok(v) => v,
+            Err(err) => panic!("leftover: {err}"),
+        };
+        gpu.release(k0);
+        let _p = match gpu.acquire(k1) {
+            Ok(v) => v,
+            Err(err) => panic!("miss: {err}"),
+        };
+        gpu.release(k1);
+        let score = gpu.score().expect("score");
+        let kernels: Vec<_> = gpu
+            .operations()
+            .filter(|o| matches!(o.kind, GpuOp::Kernel { .. }))
+            .collect();
+        let prefetches: Vec<_> = gpu
+            .operations()
+            .filter(|o| match &o.kind {
+                GpuOp::Memcpy(m) => {
+                    !matches!((m.src, m.dst), (Place::Device(_), Place::Device(_)))
+                }
+                _ => false,
+            })
+            .collect();
+        let attaches: Vec<_> = gpu
+            .operations()
+            .filter_map(|o| match o.kind {
+                GpuOp::Attach { flags, .. } => Some(flags),
+                _ => None,
+            })
+            .collect();
+        let leftover = kernels
+            .get(kernels.len().saturating_sub(2))
+            .expect("leftover gemm");
+        let miss = prefetches.last().expect("miss prefetch");
+        (
+            score.wall_ns,
+            leftover.done_ns.expect("k done"),
+            miss.start_ns.expect("prefetch start"),
+            attaches,
+        )
+    };
+    let (off_wall, off_done, off_pf, off_att) = run(false, false);
+    let (host_wall, host_done, host_pf, host_att) = run(true, false);
+    let (_both_wall, both_done, both_pf, both_att) = run(true, true);
+    assert!(off_att.is_empty(), "identity managed has no Attach; {off_att:?}");
+    assert!(
+        host_att.iter().any(|f| *f == gpu_sim::MemAttach::Global),
+        "managed-host must Global-attach; {host_att:?}"
+    );
+    assert!(
+        both_att.iter().any(|f| *f == gpu_sim::MemAttach::Single),
+        "managed-host + stream-attach must Single-attach; {both_att:?}"
+    );
+    assert!(
+        off_pf < off_done,
+        "identity managed prefetch must overlap leftover GEMM; pf={off_pf} kdone={off_done}"
+    );
+    assert!(
+        host_pf < host_done,
+        "managed-host prefetch must still overlap leftover GEMM; pf={host_pf} kdone={host_done}"
+    );
+    assert!(
+        both_pf >= both_done,
+        "managed-host + stream-attach prefetch must wait leftover GEMM; pf={both_pf} kdone={both_done}"
+    );
+    assert!(
+        host_wall >= off_wall,
+        "managed-host Attach must not shorten wall; host={host_wall} off={off_wall}"
     );
 }

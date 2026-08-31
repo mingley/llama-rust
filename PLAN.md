@@ -3475,7 +3475,21 @@ model, do not celebrate the sim.
     + copy-stream prefetch. `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-332. [ ] Next numbered PLAN item after 331 is the next `gpu-sim` / Engine /
+332. [x] `cudaMallocManaged(..., cudaMemAttachHost)` then Global attach:
+    [`GpuStoreCfg::managed_host`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::managed_host`](expertvm/src/sim_replay.rs) call
+    [`alloc_managed_host`](gpu-sim/src/sim.rs) then
+    [`stream_attach`](gpu-sim/src/sim.rs) `MemAttach::Global` on the copy
+    stream so device prefetch is legal (Host attach fails device prefetch /
+    kernels with `not attached`). Identity managed is Global at alloc (no
+    Attach op). Implies `--managed`. Prefetch stays on the copy stream and
+    still overlaps leftover compute unless `--stream-attach` (Host alloc then
+    Single on compute). `--managed-host` on `expertvm sim` / `schedule` /
+    `store` and `gguf_gemv engine --expert-sim`. Decode identity stays Global
+    alloc + copy-stream prefetch. `gpu-profile capture` is still refused.
+    Dual score still has no `$/M tokens`.
+
+333. [ ] Next numbered PLAN item after 332 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
