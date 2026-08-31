@@ -4270,7 +4270,24 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-383. [ ] Next numbered PLAN item after 382 is the next `gpu-sim` / Engine /
+383. [x] Official Gemma4 PLE (`architecture=gemma4` with
+    `embedding_length_per_layer_input > 0`): same arch as dense/MoE gemma4,
+    not a second family. Decode follows llama.cpp `src/models/gemma4.cpp`
+    when `n_embd_per_layer > 0`: `build_inp_per_layer` (token table scaled
+    by `sqrt(n_embd_per_layer)`), `project_per_layer_inputs`
+    (`mm(per_layer_model_proj, inpL)` scaled by `1/sqrt(n_embd)`, RMSNorm
+    `per_layer_proj_norm`, add, scale `1/sqrt(2)`), then after the FFN
+    residual `gelu(mm(inp_gate, cur)) * slice(il)`, `mm(proj)`, RMSNorm
+    `post_norm`, residual add. No AltUp / Laurel. Writer-tiny keeps dense
+    `tiny-gemma4` and MoE `tiny-gemma4-moe` at `n_embd_per_layer=0`; PLE
+    writes `embedding_length_per_layer_input=64` plus
+    `per_layer_token_embd` / `per_layer_model_proj` / `per_layer_proj_norm`
+    and per-layer `inp_gate` / `proj` / `post_norm`. Shared-KV / mixed
+    SWA/global head dims stay refused with named keys. Decode identity vs
+    oracle. `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+384. [ ] Next numbered PLAN item after 383 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
