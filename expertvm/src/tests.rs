@@ -851,6 +851,7 @@ fn vmm_evict_reacquires_same_va() {
         copy_host: false,
         accessed_by: false,
         no_read_mostly: false,
+        no_preferred: false,
         wait_value: false,
         stream_attach: false,
         managed_host: false,
@@ -1855,6 +1856,39 @@ fn schedule_managed_remote_reads_without_weight_d2d() {
 }
 
 #[test]
+fn schedule_managed_no_preferred_remote_migrates() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[1])],
+    };
+    let p = HardwareProfile::example_2xh100_pcie();
+    let bytes = 1u64 << 20;
+    let map = striped(&t, 2);
+    let run = |no_preferred: bool| {
+        let cfg = SimCfg {
+            managed: true,
+            no_preferred,
+            ..SimCfg::lru(4, bytes, 0)
+        };
+        schedule_remote(&t, p.clone(), cfg, SchedCfg::closed(0), &map, bytes).expect("sched")
+    };
+    let off = run(false);
+    let on = run(true);
+    assert_eq!(off.replay.hits, on.replay.hits);
+    assert_eq!(off.replay.misses, on.replay.misses);
+    assert!(
+        off.replay.bytes_moved < bytes.saturating_mul(2),
+        "preferred-location GEMM must not D2D the expert; moved={}",
+        off.replay.bytes_moved
+    );
+    assert!(
+        on.replay.bytes_moved > off.replay.bytes_moved,
+        "no-preferred must first-touch migrate; off={} on={}",
+        off.replay.bytes_moved,
+        on.replay.bytes_moved
+    );
+}
+
+#[test]
 fn schedule_remote_prefetch_hits_copy_forward_layer() {
     let t = Trace {
         events: vec![ev(0, 0, &[1]), ev(0, 1, &[1])],
@@ -2252,6 +2286,63 @@ fn simulated_gpu_store_no_read_mostly_needs_managed() {
         Ok(_) => panic!("no-read-mostly without managed must fail"),
         Err(err) => assert!(
             err.to_string().contains("no-read-mostly needs managed"),
+            "{err}"
+        ),
+    }
+}
+
+#[test]
+fn simulated_gpu_store_no_preferred_unsets_home() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let k0 = ExpertKey::new(0, 0);
+    let p = HardwareProfile::example_2xh100_pcie();
+    let bytes = 4096u64;
+    let mut off = SimulatedGpuStore::with_managed(DirectStore::from_trace(&t), 2, p.clone(), bytes)
+        .expect("preferred");
+    let _p = off.acquire(k0).expect("acq");
+    let _s = off.score().expect("score");
+    assert!(off.page_preferred(k0, DeviceId(0)));
+    assert!(off.page_read_mostly(k0));
+
+    let mut on = SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        2,
+        p,
+        bytes,
+        GpuFill::Managed,
+        GpuStoreCfg {
+            no_preferred: true,
+            ..GpuStoreCfg::default()
+        },
+    )
+    .expect("no-preferred");
+    let _p = on.acquire(k0).expect("acq");
+    let _s = on.score().expect("score");
+    assert!(!on.page_preferred(k0, DeviceId(0)));
+    assert!(on.page_read_mostly(k0));
+}
+
+#[test]
+fn simulated_gpu_store_no_preferred_needs_managed() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    match SimulatedGpuStore::with_cfg(
+        DirectStore::from_trace(&t),
+        1,
+        HardwareProfile::example_h100_sxm(),
+        4096,
+        GpuFill::Pinned,
+        GpuStoreCfg {
+            no_preferred: true,
+            ..GpuStoreCfg::default()
+        },
+    ) {
+        Ok(_) => panic!("no-preferred without managed must fail"),
+        Err(err) => assert!(
+            err.to_string().contains("no-preferred needs managed"),
             "{err}"
         ),
     }
@@ -7606,6 +7697,7 @@ fn sim_replay_accessed_by_maps_peer_without_migrating() {
         copy_host: false,
         accessed_by: true,
         no_read_mostly: false,
+        no_preferred: false,
         wait_value: false,
         stream_attach: false,
         managed_host: false,
@@ -7678,6 +7770,7 @@ fn sim_replay_vmm_accessed_by_maps_peer_without_migrating() {
         copy_host: false,
         accessed_by: true,
         no_read_mostly: false,
+        no_preferred: false,
         wait_value: false,
         stream_attach: false,
         managed_host: false,
@@ -7751,6 +7844,7 @@ fn sim_replay_pool_accessed_by_maps_peer_without_migrating() {
         copy_host: false,
         accessed_by: true,
         no_read_mostly: false,
+        no_preferred: false,
         wait_value: false,
         stream_attach: false,
         managed_host: false,
@@ -8190,6 +8284,7 @@ fn memcpy_batch_apply_misses_siblings_share_stream_order_snapshot() {
         copy_host: false,
         accessed_by: false,
         no_read_mostly: false,
+        no_preferred: false,
         wait_value: false,
         stream_attach: false,
         managed_host: false,
@@ -8256,6 +8351,7 @@ fn memcpy_during_apply_misses_waits_copies() {
             copy_host: false,
             accessed_by: false,
             no_read_mostly: false,
+            no_preferred: false,
             wait_value: false,
             stream_attach: false,
             managed_host: false,
@@ -8324,6 +8420,7 @@ fn memcpy_any_apply_misses_empty_deps() {
             copy_host: false,
             accessed_by: false,
             no_read_mostly: false,
+            no_preferred: false,
             wait_value: false,
             stream_attach: false,
             managed_host: false,
@@ -9026,6 +9123,7 @@ fn seq_stream_priority_starts_higher_stream_first() {
             copy_host: false,
             accessed_by: false,
             no_read_mostly: false,
+            no_preferred: false,
             wait_value: false,
             stream_attach: false,
             managed_host: false,
@@ -13493,6 +13591,28 @@ fn sim_cfg_no_read_mostly_needs_managed() {
 }
 
 #[test]
+fn sim_cfg_no_preferred_needs_managed() {
+    let t = Trace {
+        events: vec![ev(0, 0, &[0])],
+    };
+    let err = match sim_replay_cfg(
+        &t,
+        HardwareProfile::example_h100_sxm(),
+        SimCfg {
+            no_preferred: true,
+            ..SimCfg::lru(1, 4096, 0)
+        },
+    ) {
+        Ok(_) => panic!("no-preferred without managed must fail"),
+        Err(e) => e,
+    };
+    assert!(
+        err.to_string().contains("no-preferred needs managed"),
+        "{err}"
+    );
+}
+
+#[test]
 fn simulated_gpu_store_prefetch_host_needs_managed() {
     let t = Trace {
         events: vec![ev(0, 0, &[0])],
@@ -13916,6 +14036,7 @@ fn sim_replay_sync_memops_h2d_host_sync() {
             copy_host: false,
             accessed_by: false,
             no_read_mostly: false,
+            no_preferred: false,
             wait_value: false,
             stream_attach: false,
             managed_host: false,
@@ -14131,6 +14252,7 @@ fn sim_replay_device_sync_memops_h2d_host_sync() {
             copy_host: false,
             accessed_by: false,
             no_read_mostly: false,
+            no_preferred: false,
             wait_value: false,
             stream_attach: false,
             managed_host: false,

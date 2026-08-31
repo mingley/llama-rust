@@ -49,8 +49,11 @@ pub enum GpuFill {
     /// with `cudaMemPrefetchAsync` to the host and restores by prefetching
     /// the same alloc back. [`GpuStoreCfg::no_read_mostly`] is
     /// [`gpu_sim::MemAdvise::UnsetReadMostly`] so dest prefetch moves.
-    /// Default is Global attach at alloc, copy-stream prefetch, and
-    /// SetReadMostly.
+    /// [`GpuStoreCfg::no_preferred`] is
+    /// [`gpu_sim::MemAdvise::UnsetPreferredLocation`] so a remote GEMM
+    /// first-touches instead of staying on home. Default is Global attach
+    /// at alloc, copy-stream prefetch, SetReadMostly, and
+    /// SetPreferredLocation.
     Managed,
     /// `cudaHostAllocMapped` (PCIe kernel, no H2D).
     ///
@@ -215,6 +218,18 @@ pub struct GpuStoreCfg {
     /// stay the same. Distinct from [`Self::accessed_by`] (dest GEMM without
     /// a second copy). Decode identity stays SetReadMostly.
     pub no_read_mostly: bool,
+    /// Skip `cudaMemAdviseSetPreferredLocation` at a managed fill
+    /// (`UnsetPreferredLocation`).
+    ///
+    /// Default managed fill Sets PreferredLocation so a remote GEMM can
+    /// read without migrating. This calls
+    /// [`gpu_sim::MemAdvise::UnsetPreferredLocation`] instead so dest
+    /// first-touch **moves** (weight D2D / migrate onto the compute GPU).
+    /// Needs [`GpuFill::Managed`]. Implies managed on the CLI. Hits stay
+    /// the same. Distinct from [`Self::accessed_by`] (dest GEMM without
+    /// migrating) and [`Self::no_read_mostly`] (prefetch move vs replicate).
+    /// Decode identity stays SetPreferredLocation.
+    pub no_preferred: bool,
     /// CUDA legacy null stream: copy (`StreamId(0)`) serializes with compute.
     ///
     /// Off by default (`cudaStreamNonBlocking` compute). Decode identity stays
@@ -799,6 +814,8 @@ pub struct SimulatedGpuStore {
     accessed_by: bool,
     /// [`GpuStoreCfg::no_read_mostly`]: skip SetReadMostly at managed fill.
     no_read_mostly: bool,
+    /// [`GpuStoreCfg::no_preferred`]: skip SetPreferredLocation at managed fill.
+    no_preferred: bool,
     /// Successful D2D [`Self::migrate`] calls (source device ≠ dest).
     migrates: u64,
     /// [`plan_placement`] chose [`Placement::DispatchActivations`] (no D2D).
@@ -1148,6 +1165,9 @@ impl SimulatedGpuStore {
         if cfg.no_read_mostly && fill != GpuFill::Managed {
             return Err(Error::Store("no-read-mostly needs managed"));
         }
+        if cfg.no_preferred && fill != GpuFill::Managed {
+            return Err(Error::Store("no-preferred needs managed"));
+        }
         if cfg.pdl && cfg.cooperative {
             return Err(Error::Store("choose one of pdl, cooperative"));
         }
@@ -1411,6 +1431,7 @@ impl SimulatedGpuStore {
             wait_value: cfg.wait_value,
             accessed_by: cfg.accessed_by,
             no_read_mostly: cfg.no_read_mostly,
+            no_preferred: cfg.no_preferred,
             migrates: 0,
             dispatches: 0,
             replicates: 0,
@@ -2240,6 +2261,15 @@ impl SimulatedGpuStore {
             .unwrap_or(false)
     }
 
+    /// Whether `key`'s managed page has [`gpu_sim::MemAdvise::SetPreferredLocation`] on `device`.
+    #[must_use]
+    pub fn page_preferred(&self, key: ExpertKey, device: DeviceId) -> bool {
+        self.pages
+            .get(&key)
+            .and_then(|p| self.sim.is_preferred_location(p.id, device).ok())
+            .unwrap_or(false)
+    }
+
     /// True when any placed page is SetAccessedBy / VMM `va_set_access` /
     /// mempool `pool_set_access` on `device`.
     #[must_use]
@@ -2717,7 +2747,7 @@ impl SimulatedGpuStore {
                 } else {
                     self.sim.alloc_managed(bytes)?
                 };
-                advise_managed_home(&mut self.sim, id, d, self.no_read_mostly)?;
+                advise_managed_home(&mut self.sim, id, d, self.no_read_mostly, self.no_preferred)?;
                 if self.accessed_by {
                     advise_accessed_by(&mut self.sim, id)?;
                 }

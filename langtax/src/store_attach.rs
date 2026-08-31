@@ -103,6 +103,8 @@ pub(crate) struct GpuCli {
     pub accessed_by: bool,
     /// Skip SetReadMostly at managed fill (`GpuStoreCfg::no_read_mostly`). Implies managed.
     pub no_read_mostly: bool,
+    /// Skip SetPreferredLocation at managed fill (`GpuStoreCfg::no_preferred`). Implies managed.
+    pub no_preferred: bool,
     pub legacy_null: bool,
     pub stream_priority: bool,
     /// Per-sequence copy streams (`GpuStoreCfg::seq_streams`).
@@ -290,6 +292,7 @@ impl GpuCli {
             "--memset-fill" => &mut self.memset_fill,
             "--accessed-by" => &mut self.accessed_by,
             "--no-read-mostly" => &mut self.no_read_mostly,
+            "--no-preferred" => &mut self.no_preferred,
             "--legacy-null" => &mut self.legacy_null,
             "--stream-priority" => &mut self.stream_priority,
             "--seq-streams" => &mut self.seq_streams,
@@ -343,9 +346,14 @@ impl GpuCli {
         }
     }
 
-    /// `--stream-attach` / `--managed-host` / `--prefetch-host` / `--no-read-mostly` imply [`Self::managed`]. Call after sim-flag checks.
+    /// `--stream-attach` / `--managed-host` / `--prefetch-host` / `--no-read-mostly` / `--no-preferred` imply [`Self::managed`]. Call after sim-flag checks.
     pub(crate) fn imply_managed(&mut self) {
-        if self.stream_attach || self.managed_host || self.prefetch_host || self.no_read_mostly {
+        if self.stream_attach
+            || self.managed_host
+            || self.prefetch_host
+            || self.no_read_mostly
+            || self.no_preferred
+        {
             self.managed = true;
         }
     }
@@ -699,6 +707,7 @@ impl GpuCli {
             || self.managed_host
             || self.prefetch_host
             || self.no_read_mostly
+            || self.no_preferred
         {
             return Err("--memset-fill cannot --managed".into());
         }
@@ -826,6 +835,7 @@ impl GpuCli {
             (self.memset_fill, "--memset-fill"),
             (self.accessed_by, "--accessed-by"),
             (self.no_read_mostly, "--no-read-mostly"),
+            (self.no_preferred, "--no-preferred"),
             (self.legacy_null, "--legacy-null"),
             (self.stream_priority, "--stream-priority"),
             (self.seq_streams, "--seq-streams"),
@@ -1188,6 +1198,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         memset_fill: gpu.memset_fill,
         accessed_by: gpu.accessed_by,
         no_read_mostly: gpu.no_read_mostly,
+        no_preferred: gpu.no_preferred,
         legacy_null: gpu.legacy_null,
         stream_priority: gpu.stream_priority,
         graph_update: gpu.graph_update,

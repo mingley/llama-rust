@@ -5,6 +5,21 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — skip `cudaMemAdviseSetPreferredLocation`
+
+`GpuStoreCfg::no_preferred` / `SimCfg::no_preferred` call
+`UnsetPreferredLocation` at managed fill instead of SetPreferredLocation so
+a remote GEMM first-touches (weight migrate onto the compute GPU) instead
+of staying on home. Implies `--managed`. Hits/misses stay the same.
+Distinct from `--accessed-by` (dest GEMM without migrating) and
+`--no-read-mostly` (prefetch move vs replicate). Keep SetReadMostly unless
+`--no-read-mostly` is also set. `--no-preferred` is off by default (decode
+identity: SetPreferredLocation). Store and walker (not walker-only).
+infer-bench has managed fill via `--managed-host` and `--place remote`, so
+it gets `--no-preferred`. Do not invent `SetPreferredLocationHost` as a
+decode-path skip of kernel first-touch. `gpu-profile capture` is still
+refused.
+
 ## Shipped 2026-08-31 — skip `cudaMemAdviseSetReadMostly`
 
 `GpuStoreCfg::no_read_mostly` / `SimCfg::no_read_mostly` call

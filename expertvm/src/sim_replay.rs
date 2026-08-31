@@ -721,7 +721,9 @@ pub struct SimCfg {
     /// that dest prefetch; dest eviction is `drop_managed_copy`. [`Self::accessed_by`]
     /// maps every GPU at fill so dest GEMMs read without a second copy.
     /// [`Self::no_read_mostly`] is `UnsetReadMostly` so dest prefetch moves
-    /// instead of replicating. Hits/misses match H2D.
+    /// instead of replicating. [`Self::no_preferred`] is
+    /// `UnsetPreferredLocation` so a remote GEMM first-touches instead of
+    /// staying on home. Hits/misses match H2D.
     /// [`crate::SimulatedGpuStore::new`] stays on pinned
     /// H2D; [`crate::SimulatedGpuStore::with_managed`] uses this path.
     pub managed: bool,
@@ -841,6 +843,17 @@ pub struct SimCfg {
     /// identity stays SetReadMostly. [`crate::GpuStoreCfg::no_read_mostly`]
     /// is the store path.
     pub no_read_mostly: bool,
+    /// Skip `cudaMemAdviseSetPreferredLocation` at a managed fill
+    /// (`UnsetPreferredLocation`).
+    ///
+    /// Default managed fill Sets PreferredLocation so a remote GEMM can
+    /// read without migrating. This calls
+    /// [`gpu_sim::MemAdvise::UnsetPreferredLocation`] so dest first-touch
+    /// **moves**. Implies [`Self::managed`] on the CLI. Hits stay the same.
+    /// Distinct from [`Self::accessed_by`] and [`Self::no_read_mostly`].
+    /// Decode identity stays SetPreferredLocation.
+    /// [`crate::GpuStoreCfg::no_preferred`] is the store path.
+    pub no_preferred: bool,
     /// CUDA legacy null stream (`set_legacy_null_stream`): NULL serializes
     /// with every other stream. Off by default. [`crate::GpuStoreCfg::legacy_null`]
     /// is the store path (copy NULL vs compute `StreamId(1)`).
@@ -1377,6 +1390,7 @@ impl SimCfg {
             device_sync_memops: false,
             accessed_by: false,
             no_read_mostly: false,
+            no_preferred: false,
             legacy_null: false,
             stream_priority: false,
             graph_update: false,
@@ -1535,6 +1549,9 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     }
     if cfg.no_read_mostly && !cfg.managed {
         return Err(Error::Store("no-read-mostly needs managed"));
+    }
+    if cfg.no_preferred && !cfg.managed {
+        return Err(Error::Store("no-preferred needs managed"));
     }
     if cfg.pdl && cfg.cooperative {
         return Err(Error::Store("choose one of pdl, cooperative"));
@@ -1720,6 +1737,7 @@ pub fn sim_replay_cfg(
         copy_host: cfg.copy_host,
         accessed_by: cfg.accessed_by,
         no_read_mostly: cfg.no_read_mostly,
+        no_preferred: cfg.no_preferred,
         wait_value: cfg.wait_value,
         stream_attach: cfg.stream_attach,
         managed_host: cfg.managed_host,
@@ -1907,6 +1925,8 @@ pub(crate) struct TouchArgs {
     pub accessed_by: bool,
     /// [`SimCfg::no_read_mostly`]: UnsetReadMostly at managed fill (prefetch moves).
     pub no_read_mostly: bool,
+    /// [`SimCfg::no_preferred`]: UnsetPreferredLocation at managed fill (remote GEMM migrates).
+    pub no_preferred: bool,
     /// [`SimCfg::wait_value`]: per-page 8-byte mailbox + live wait/write-value.
     pub wait_value: bool,
     /// [`SimCfg::stream_attach`]: `cudaStreamAttachMemAsync` Single then prefetch
@@ -2122,12 +2142,13 @@ pub(crate) fn advise_pool_access(sim: &mut Sim) -> Result<(), Error> {
     Ok(())
 }
 
-/// `cudaMemAdvise` ReadMostly vs UnsetReadMostly, then PreferredLocation on `d`.
+/// `cudaMemAdvise` ReadMostly vs UnsetReadMostly, then PreferredLocation vs Unset.
 pub(crate) fn advise_managed_home(
     sim: &mut Sim,
     id: AllocId,
     d: DeviceId,
     no_read_mostly: bool,
+    no_preferred: bool,
 ) -> Result<(), Error> {
     let advice = if no_read_mostly {
         gpu_sim::MemAdvise::UnsetReadMostly
@@ -2135,7 +2156,12 @@ pub(crate) fn advise_managed_home(
         gpu_sim::MemAdvise::SetReadMostly
     };
     sim.mem_advise(id, advice, d)?;
-    sim.mem_advise(id, gpu_sim::MemAdvise::SetPreferredLocation, d)?;
+    let preferred = if no_preferred {
+        gpu_sim::MemAdvise::UnsetPreferredLocation
+    } else {
+        gpu_sim::MemAdvise::SetPreferredLocation
+    };
+    sim.mem_advise(id, preferred, d)?;
     Ok(())
 }
 
@@ -3216,7 +3242,7 @@ fn alloc_touch_page(sim: &mut Sim, args: TouchArgs) -> Result<AllocId, Error> {
         } else {
             sim.alloc_managed(args.bytes)?
         };
-        advise_managed_home(sim, id, args.d, args.no_read_mostly)?;
+        advise_managed_home(sim, id, args.d, args.no_read_mostly, args.no_preferred)?;
         if args.accessed_by {
             advise_accessed_by(sim, id)?;
         }
@@ -4553,6 +4579,7 @@ pub fn sim_remote_home_cfg(
                         managed: false,
                         accessed_by: false,
                         no_read_mostly: false,
+                        no_preferred: false,
                         stream_attach: false,
                         managed_host: false,
                     },
@@ -4603,6 +4630,8 @@ pub(crate) struct RemoteFetch {
     pub(crate) accessed_by: bool,
     /// [`SimCfg::no_read_mostly`]: UnsetReadMostly at managed fill (prefetch moves).
     pub(crate) no_read_mostly: bool,
+    /// [`SimCfg::no_preferred`]: UnsetPreferredLocation at managed fill (remote GEMM migrates).
+    pub(crate) no_preferred: bool,
     /// [`SimCfg::stream_attach`]: Single-attach then prefetch on `stream`.
     pub(crate) stream_attach: bool,
     /// [`SimCfg::managed_host`]: Host alloc then Global attach before prefetch.
@@ -4722,7 +4751,13 @@ fn fill_remote_managed(
     } else {
         sim.alloc_managed(fetch.expert_bytes)?
     };
-    advise_managed_home(sim, id, fetch.home, fetch.no_read_mostly)?;
+    advise_managed_home(
+        sim,
+        id,
+        fetch.home,
+        fetch.no_read_mostly,
+        fetch.no_preferred,
+    )?;
     if fetch.accessed_by {
         advise_accessed_by(sim, id)?;
     }

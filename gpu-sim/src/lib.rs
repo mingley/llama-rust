@@ -142,6 +142,9 @@
 //! alloc back (identity stays `cudaFree`).
 //! `expertvm sim --no-read-mostly` is [`MemAdvise::UnsetReadMostly`] at
 //! managed fill so dest prefetch moves instead of replicating.
+//! `expertvm sim --no-preferred` is [`MemAdvise::UnsetPreferredLocation`]
+//! at managed fill so a remote GEMM first-touches instead of staying on
+//! home.
 //! [`mem_advise_with_location`](Sim::mem_advise_with_location) is
 //! `cudaMemAdvise_v2` ([`Place`] location; AccessedBy requires
 //! [`Place::Device`]; host preferred is [`MemAdvise::SetPreferredLocationHost`]).
