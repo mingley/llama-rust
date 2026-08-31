@@ -14619,6 +14619,16 @@ impl Sim {
         Ok(self.gpu_rt(device)?.device_flags)
     }
 
+    /// `cuDevicePrimaryCtxGetState`. Query; legal during capture.
+    ///
+    /// Flags match [`Self::get_device_flags`]. Active is always true (this VM
+    /// seeds a primary context at construct; no lazy retain). Unknown devices
+    /// are Invalid. No `cuDevicePrimaryCtxRetain` (no `CUcontext` object).
+    pub fn device_primary_ctx_get_state(&self, device: DeviceId) -> Result<(u32, bool), SimError> {
+        let flags = self.get_device_flags(device)?;
+        Ok((flags, true))
+    }
+
     /// `cudaPointerGetAttributes`. Query; legal during capture.
     ///
     /// A never-created id is [`SimError::UnknownAlloc`]. A freed id is

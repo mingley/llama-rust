@@ -4666,7 +4666,14 @@ model, do not celebrate the sim.
     `gpu-profile capture` is still refused. Dual score still has no
     `$/M tokens`.
 
-421. [ ] Next numbered PLAN item after 420 is the next `gpu-sim` / Engine /
+421. [x] CUDA `cuDevicePrimaryCtxGetState` (`device_primary_ctx_get_state`):
+    flags match `get_device_flags`; active is always true (this VM seeds a
+    primary context at construct). Query; legal during capture. Unknown is
+    Invalid. No `cuDevicePrimaryCtxRetain` / `Release` / `Reset` (no
+    `CUcontext` object). `gpu-profile capture` is still refused. Dual score
+    still has no `$/M tokens`.
+
+422. [ ] Next numbered PLAN item after 421 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
@@ -4686,6 +4693,8 @@ model, do not celebrate the sim.
     `cuDeviceGetUuid` / `cudaDeviceGetUuid`. Do not invent a second
     `cuDeviceGetByUuid`. Do not invent a second `cudaDeviceGetPciBusId` /
     `cuDeviceGetPCIBusId`. Do not invent a second `cudaDeviceGetByPCIBusId`.
+    Do not invent a second `cuDevicePrimaryCtxGetState`. Do not invent
+    `cuDevicePrimaryCtxRetain` / `Release` / `Reset` (no `CUcontext` object).
     Do not invent `cuDeviceGetLuid`
     (Windows).
     Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /

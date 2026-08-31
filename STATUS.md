@@ -5,6 +5,15 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — CUDA `cuDevicePrimaryCtxGetState`
+
+`gpu-sim` `device_primary_ctx_get_state` is `cuDevicePrimaryCtxGetState`.
+Flags match `get_device_flags`. Active is always true (this VM seeds a
+primary context at construct; no lazy retain). Query; legal during
+capture. Unknown is Invalid. No `cuDevicePrimaryCtxRetain` / `Release` /
+`Reset`. `gpu-profile capture` is still refused. Dual score still has no
+`$/M tokens`.
+
 ## Shipped 2026-08-31 — CUDA `cudaDeviceGetByPCIBusId`
 
 `gpu-sim` `device_get_by_pci_bus_id` is `cudaDeviceGetByPCIBusId`. A

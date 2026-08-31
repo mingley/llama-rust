@@ -568,6 +568,9 @@
 //! `GetDeviceFlags` ([`DeviceFlags`] schedule plus stored MapHost /
 //! LmemResizeToMax; [`DeviceFlags::SYNC_MEMOPS`] waits memcpy/memset like
 //! pointer SyncMemops; Auto streams inherit the tax).
+//! [`device_primary_ctx_get_state`](Sim::device_primary_ctx_get_state) is
+//! `cuDevicePrimaryCtxGetState` (flags match [`get_device_flags`](Sim::get_device_flags);
+//! active is always true). No `cuDevicePrimaryCtxRetain`.
 //! `expertvm sim --device-sync-memops` sets [`DeviceFlags::SYNC_MEMOPS`].
 //! `expertvm sim --device-sync-policy blocking` sets
 //! [`DeviceFlags::SCHEDULE_BLOCKING_SYNC`].
@@ -13171,6 +13174,30 @@ mod tests {
         match a.device_get_by_pci_bus_id("0000:08:00.0") {
             Err(SimError::Invalid { why }) => {
                 assert!(why.contains("unknown pci bus id"), "{why}")
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn device_primary_ctx_get_state_matches_device_flags() {
+        let mut sim = Sim::new(h100());
+        let d = DeviceId(0);
+        let (flags, active) = sim.device_primary_ctx_get_state(d).unwrap();
+        assert!(active);
+        assert_eq!(flags, sim.get_device_flags(d).unwrap());
+        sim.set_device_flags(d, DeviceFlags::MAP_HOST).unwrap();
+        let (flags, active) = sim.device_primary_ctx_get_state(d).unwrap();
+        assert!(active);
+        assert_eq!(flags, DeviceFlags::MAP_HOST);
+        sim.begin_capture(d, StreamId(0)).unwrap();
+        let (cap, cap_active) = sim.device_primary_ctx_get_state(d).unwrap();
+        assert!(cap_active);
+        assert_eq!(cap, DeviceFlags::MAP_HOST);
+        let _g = sim.end_capture().unwrap();
+        match sim.device_primary_ctx_get_state(DeviceId(9)) {
+            Err(SimError::Invalid { why }) => {
+                assert!(why.contains("device not in profile"), "{why}")
             }
             other => panic!("{other:?}"),
         }
