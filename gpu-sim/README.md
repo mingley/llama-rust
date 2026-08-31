@@ -555,6 +555,11 @@ is `cudaMemcpyAsync` Device→Host (pageable bounce-buffer) before that free
 `expertvm sim --host-unregister` / `gguf_gemv engine --expert-sim --host-unregister`
 is `cudaHostUnregister` after each miss DMA (implies `--host-register`; pin
 refunded between misses; `synchronize`; identity keeps staging registered).
+`expertvm sim --ipc` / `gguf_gemv engine --expert-sim --ipc`
+is `cudaIpcGetMemHandle` / `OpenMemHandle` of each miss `cudaMalloc` (implies
+`--sync-alloc`; alias shares source HBM; close before free; not with
+`--shareable` / mapped / managed / vmm; identity GEMMs on the `cudaMalloc`
+pointer).
 `expertvm sim --memset-fill` / `gguf_gemv engine --expert-sim --memset-fill`
 is `cudaMemsetAsync` of pinned/VMM miss pages (HBM write, compute occupancy;
 not mapped/managed/pageable/memcpy-batch; distinct from `--graph-memset`
@@ -749,6 +754,9 @@ source physicals (no extra HBM). `ipc_open_with_flags` accepts
 `cudaIpcMemLazyEnablePeerAccess` as a no-op (dest must already hold the
 source; cross-GPU lazy peer is not modeled). Free of the source while imports are live
 is Invalid. `ipc_get` of a mempool alloc is Invalid. Capture cannot include IPC.
+`expertvm sim --ipc` / `gguf_gemv engine --expert-sim --ipc` export each miss
+`cudaMalloc` then open an alias (implies `--sync-alloc`; GEMM stays on the
+source pointer; close before free).
 `ipc_get_event` / `ipc_open_event` are `cudaIpcGetEventHandle` /
 `cudaIpcOpenEventHandle` (interprocess event alias; destroy of the source
 while imports are live is Invalid).

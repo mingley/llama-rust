@@ -5,6 +5,19 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — `cudaIpcGetMemHandle` of each miss `cudaMalloc`
+
+`GpuStoreCfg::ipc` / `SimCfg::ipc` call `cudaIpcGetMemHandle` then
+`cudaIpcOpenMemHandle` after each pinned miss fill so the page holds a live
+alias (no extra HBM) and `cudaIpcCloseMemHandle` before `cudaFree`
+(`alloc_overhead_ns` on first get and every open). Hits/misses stay the
+same. Distinct from `--shareable` (POSIX-FD mempool IPC). Implies
+`--sync-alloc`. Illegal with `--mapped` / `--managed` / `--vmm` /
+`--shareable`. `--ipc` is off by default (decode identity: GEMM on the
+`cudaMalloc` pointer with no IPC handshake). Store and walker (not
+walker-only). infer-bench has no `cudaMalloc` expert fill of this form, so
+it does not get `--ipc`. `gpu-profile capture` is still refused.
+
 ## Shipped 2026-08-31 — `cudaHostUnregister` after miss DMA
 
 `GpuStoreCfg::host_unregister` / `SimCfg::host_unregister` call

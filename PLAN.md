@@ -4154,7 +4154,25 @@ model, do not celebrate the sim.
     walker (not walker-only). `gpu-profile capture` is still refused. Dual
     score still has no `$/M tokens`.
 
-377. [ ] Next numbered PLAN item after 376 is the next `gpu-sim` / Engine /
+377. [x] `cudaIpcGetMemHandle` / `cudaIpcOpenMemHandle` of each miss
+    `cudaMalloc` (`--ipc`): [`GpuStoreCfg::ipc`](expertvm/src/gpu_store.rs) /
+    [`SimCfg::ipc`](expertvm/src/sim_replay.rs) call
+    [`gpu_sim::Sim::ipc_get`](gpu-sim/src/sim.rs) then
+    [`ipc_open`](gpu-sim/src/sim.rs) after each pinned miss fill so the page
+    holds a live alias (no extra HBM) and [`ipc_close`](gpu-sim/src/sim.rs)
+    before `cudaFree` (`alloc_overhead_ns` on first get and every open).
+    Hits stay the same. Distinct from `--shareable` (POSIX-FD mempool IPC).
+    Implies `--sync-alloc`. Illegal with `--mapped` / `--managed` / `--vmm`
+    / `--shareable`. Legal with `--pdl`, `--cooperative`, `--pageable`,
+    `--host-register`, `--host-unregister`, `--d2h-evict`, `--d2h-pageable`,
+    `--memset-fill`, and `--wait-value`. `--ipc` on `expertvm sim` /
+    `schedule` / `store` and `gguf_gemv engine --expert-sim`. infer-bench
+    has no `cudaMalloc` expert fill of this form, so it does not get
+    `--ipc`. Decode identity GEMMs on the `cudaMalloc` pointer with no IPC
+    handshake. Store and walker (not walker-only). `gpu-profile capture`
+    is still refused. Dual score still has no `$/M tokens`.
+
+378. [ ] Next numbered PLAN item after 377 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family (`gemma4`). Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent
@@ -4211,7 +4229,9 @@ model, do not celebrate the sim.
     free-only is the wall vs default pageable pinned/VMM evict). Do not invent
     a second `--host-unregister` / `cudaHostUnregister` after miss DMA
     (re-register plus `synchronize` tax vs keep-registered is the wall vs
-    `--host-register`). Do not invent
+    `--host-register`). Do not invent a second `--ipc` /
+    `cudaIpcGetMemHandle` (handshake tax vs no-handshake is the wall vs
+    default `cudaMalloc`). Do not invent
     `--memcpy-peer` host-sync pin_hot (alias of D2D; wall matches after
     `score()`). Do not invent `graph_add_empty` as a decode-path flag
     (1 ns join/fork). Do not invent a second `cudaGraphAddMemsetNode` of

@@ -17,15 +17,16 @@ use crate::sim_replay::{
     apply_required_cluster_width, apply_stream_mem_sync_domain, apply_stream_mem_sync_map,
     apply_stream_sync_policy, bind_device_mempools, check_cluster_load_balance,
     check_cluster_must_set, check_cluster_preferred, check_d2h_evict, check_d2h_pageable,
-    check_device_graph_flags, check_host_unregister, check_l2_fetch, check_l2_ratio, check_max_l1,
-    check_mem_sync_collapse, check_mem_sync_launch, check_mem_sync_launch_map, check_memcpy_attr,
-    check_memset_fill, check_required_cluster, collapse_mem_sync_map, d2h_evict_page,
-    d2h_pageable_page, drop_managed_replica, ensure_single_attach, free_copy_mailbox,
-    free_mapped_host, hbm_h2d_attr, host_after_copy, instantiate_exec, kernel_leaf,
-    mark_sync_memops, memcpy_batch_attr, mempool_hold, persist_armed, pin_staging_for_fill,
-    replay_exec, replay_streams, reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready,
-    stream_of, unpin_staging_after_fill, upload_after_set_params, wait_copy_ready,
-    wait_memcpy_during_allocs, GemmFlags, LeafMem, LeafWork, StreamPlan,
+    check_device_graph_flags, check_host_unregister, check_ipc, check_l2_fetch, check_l2_ratio,
+    check_max_l1, check_mem_sync_collapse, check_mem_sync_launch, check_mem_sync_launch_map,
+    check_memcpy_attr, check_memset_fill, check_required_cluster, close_ipc_alias,
+    collapse_mem_sync_map, d2h_evict_page, d2h_pageable_page, drop_managed_replica,
+    ensure_single_attach, free_copy_mailbox, free_mapped_host, hbm_h2d_attr, host_after_copy,
+    instantiate_exec, kernel_leaf, mark_sync_memops, memcpy_batch_attr, mempool_hold,
+    open_ipc_alias, persist_armed, pin_staging_for_fill, replay_exec, replay_streams,
+    reset_persisting_l2_if, retarget_parked_kernel, signal_copy_ready, stream_of,
+    unpin_staging_after_fill, upload_after_set_params, wait_copy_ready, wait_memcpy_during_allocs,
+    GemmFlags, LeafMem, LeafWork, StreamPlan,
 };
 use crate::store::{CachedStore, DirectStore, ExpertParts, ExpertPhase, ExpertStore, StoreMetrics};
 use gpu_sim::{
@@ -135,6 +136,13 @@ pub struct GpuStoreCfg {
     /// Implies [`Self::mempool`]. Illegal with [`Self::sync_alloc`] or
     /// mapped/managed/vmm fills. Decode identity stays the device default pool.
     pub shareable: bool,
+    /// `cudaIpcGetMemHandle` / `cudaIpcOpenMemHandle` of each miss `cudaMalloc`.
+    ///
+    /// Alias shares source physicals (no extra HBM). Close before `cudaFree`.
+    /// Implies [`Self::sync_alloc`]. Illegal with mapped/managed/vmm and
+    /// [`Self::shareable`]. Decode identity GEMMs on the `cudaMalloc` pointer
+    /// with no IPC handshake.
+    pub ipc: bool,
     /// Physical span for [`GpuFill::Vmm`]. `0` maps the whole expert (`va_acquire`).
     pub vmm_page: u64,
     /// Pageable `cudaMemcpyAsync` (`memcpy_host_to_device`) instead of pinned DMA.
@@ -749,6 +757,8 @@ struct GpuPage {
     mailbox: Option<AllocId>,
     /// Generation [`signal_copy_ready`] wrote; [`None`] after GEMM waited.
     ready_gen: Option<u64>,
+    /// [`GpuStoreCfg::ipc`]: live `cudaIpcOpenMemHandle` alias of `id`.
+    ipc: Option<AllocId>,
 }
 
 /// Bounded cache whose misses pay pinned H2D, mapped host, managed prefetch, or VMM.
@@ -832,6 +842,8 @@ pub struct SimulatedGpuStore {
     /// [`GpuStoreCfg::copy_host`]: live `cudaLaunchHostFunc` after miss DMA.
     copy_host: bool,
     sync_alloc: bool,
+    /// [`GpuStoreCfg::ipc`]: `cudaIpcGetMemHandle` / `OpenMemHandle` after miss fill.
+    ipc: bool,
     /// [`GpuStoreCfg::vmm_page`]: KV-sized physicals when [`GpuFill::Vmm`].
     vmm_page: u64,
     /// Pageable H2D (`memcpy_host_to_device`) instead of pinned DMA.
@@ -1133,6 +1145,9 @@ impl SimulatedGpuStore {
     /// so miss H2D is pinned DMA (implies pageable; illegal with mapped/managed).
     /// [`GpuStoreCfg::host_unregister`] is `cudaHostUnregister` after each miss
     /// DMA (implies host-register; pin refunded between misses; `synchronize`).
+    /// [`GpuStoreCfg::ipc`] is `cudaIpcGetMemHandle` / `cudaIpcOpenMemHandle` of
+    /// each miss `cudaMalloc` (implies sync-alloc; close before free; distinct
+    /// from POSIX-FD [`GpuStoreCfg::shareable`]).
     /// [`GpuStoreCfg::host_register_mapped`] is `cudaHostRegisterMapped` on
     /// mapped expert pages (`alloc_host` then register; implies mapped; illegal
     /// with [`GpuStoreCfg::host_register`]; identity stays `cudaHostAllocMapped`).
@@ -1265,16 +1280,16 @@ impl SimulatedGpuStore {
         {
             return Err(Error::Store("l2-streaming needs l2-persist"));
         }
-        if cfg.shareable && (cfg.sync_alloc || fill != GpuFill::Pinned) {
+        if cfg.shareable && (cfg.sync_alloc || cfg.ipc || fill != GpuFill::Pinned) {
             return Err(Error::Store("shareable needs cudaMallocAsync"));
         }
-        if cfg.mempool_trim && cfg.sync_alloc {
+        if cfg.mempool_trim && (cfg.sync_alloc || cfg.ipc) {
             return Err(Error::Store("mempool-trim needs cudaMallocAsync"));
         }
-        if cfg.mempool_no_reuse && cfg.sync_alloc {
+        if cfg.mempool_no_reuse && (cfg.sync_alloc || cfg.ipc) {
             return Err(Error::Store("mempool-no-reuse needs cudaMallocAsync"));
         }
-        if cfg.mempool_max > 0 && cfg.sync_alloc {
+        if cfg.mempool_max > 0 && (cfg.sync_alloc || cfg.ipc) {
             return Err(Error::Store("mempool-max needs cudaMallocAsync"));
         }
         if cfg.memcpy_during && !cfg.memcpy_batch {
@@ -1291,7 +1306,7 @@ impl SimulatedGpuStore {
             fill == GpuFill::Mapped,
             fill == GpuFill::Managed,
             cfg.pageable,
-            cfg.sync_alloc,
+            cfg.sync_alloc || cfg.ipc,
             cfg.sync_memops,
             cfg.device_sync_memops,
         )?;
@@ -1306,6 +1321,7 @@ impl SimulatedGpuStore {
         if cfg.memcpy_batch
             && (cfg.pageable
                 || cfg.sync_alloc
+                || cfg.ipc
                 || cfg.sync_memops
                 || cfg.device_sync_memops
                 || fill == GpuFill::Mapped
@@ -1331,6 +1347,14 @@ impl SimulatedGpuStore {
             return Err(Error::Store("host-register needs pinned/vmm H2D"));
         }
         check_host_unregister(cfg.host_unregister, cfg.host_register)?;
+        check_ipc(
+            cfg.ipc,
+            cfg.sync_alloc,
+            fill == GpuFill::Mapped,
+            fill == GpuFill::Managed,
+            fill == GpuFill::Vmm,
+            cfg.shareable,
+        )?;
         if cfg.host_register_mapped && fill != GpuFill::Mapped {
             return Err(Error::Store("host-register-mapped needs mapped"));
         }
@@ -1507,6 +1531,7 @@ impl SimulatedGpuStore {
             host_func: cfg.host_func,
             copy_host: cfg.copy_host,
             sync_alloc: cfg.sync_alloc,
+            ipc: cfg.ipc,
             vmm_page: cfg.vmm_page,
             pageable: cfg.pageable,
             host_register: cfg.host_register,
@@ -1596,6 +1621,28 @@ impl SimulatedGpuStore {
     #[must_use]
     pub fn host_unregister(&self) -> bool {
         self.host_unregister
+    }
+
+    /// Whether miss pages export `cudaIpcGetMemHandle` and GEMM keeps the import live.
+    #[must_use]
+    pub fn ipc(&self) -> bool {
+        self.ipc
+    }
+
+    /// Live `cudaIpcOpenMemHandle` alias of the resident page, if any.
+    #[must_use]
+    pub fn page_ipc_import(&self, key: ExpertKey) -> Option<AllocId> {
+        self.pages.get(&key).and_then(|p| p.ipc)
+    }
+
+    /// Whether the resident page for `key` currently holds a live IPC import.
+    #[must_use]
+    pub fn page_is_ipc_import(&self, key: ExpertKey) -> bool {
+        self.pages
+            .get(&key)
+            .and_then(|p| p.ipc)
+            .and_then(|id| self.sim.is_ipc_import(id).ok())
+            .unwrap_or(false)
     }
 
     /// Whether miss fill is `cudaMemsetAsync` instead of pinned H2D.
@@ -2155,6 +2202,9 @@ impl SimulatedGpuStore {
         self.sim.create_event_disable_timing(ev_compute)?;
         let _r2 = self.sim.record_event(src, ev_compute, self.compute)?;
         let _w = self.sim.wait_event(src, ev_compute, self.copy)?;
+        if let Some(page) = self.pages.get_mut(&key) {
+            close_ipc_alias(&mut self.sim, page.ipc.take())?;
+        }
         self.sim.free(src, id, self.copy)?;
         let _gone = self.replicas.remove(&key);
         self.rehome_mailbox(key, dst, true)?;
@@ -2165,6 +2215,7 @@ impl SimulatedGpuStore {
             } else {
                 page.ready = Some(ev_copy);
             }
+            page.ipc = open_ipc_alias(&mut self.sim, dst, id, self.ipc)?;
         }
         self.note_migrate();
         Ok(())
@@ -2661,6 +2712,12 @@ impl SimulatedGpuStore {
             let _r = self.sim.record_event(d, ev, dma)?;
             (Some(ev), None, None)
         };
+        let ipc = open_ipc_alias(
+            &mut self.sim,
+            d,
+            id,
+            self.ipc && self.mode == GpuFill::Pinned,
+        )?;
         let _prev = self.pages.insert(
             key,
             GpuPage {
@@ -2670,6 +2727,7 @@ impl SimulatedGpuStore {
                 start,
                 mailbox,
                 ready_gen,
+                ipc,
             },
         );
         Ok(())
@@ -3223,6 +3281,7 @@ impl SimulatedGpuStore {
                 self.sim.destroy_graph(g)?;
             }
         }
+        close_ipc_alias(&mut self.sim, page.ipc)?;
         match self.mode {
             GpuFill::Managed => {
                 self.wait_compute(page.device)?;

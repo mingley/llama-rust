@@ -83,6 +83,8 @@ pub(crate) struct GpuCli {
     pub mempool_max: u64,
     /// POSIX-FD shareable mempool IPC (`GpuStoreCfg::shareable`). Implies mempool.
     pub shareable: bool,
+    /// `cudaIpcGetMemHandle` / `OpenMemHandle` (`GpuStoreCfg::ipc`). Implies sync-alloc.
+    pub ipc: bool,
     pub pageable: bool,
     /// `cudaHostRegister` (`GpuStoreCfg::host_register`). Implies pageable.
     pub host_register: bool,
@@ -291,6 +293,7 @@ impl GpuCli {
             "--mempool-trim" => &mut self.mempool_trim,
             "--mempool-no-reuse" => &mut self.mempool_no_reuse,
             "--shareable" => &mut self.shareable,
+            "--ipc" => &mut self.ipc,
             "--pageable" => &mut self.pageable,
             "--host-register" => &mut self.host_register,
             "--host-unregister" => &mut self.host_unregister,
@@ -385,6 +388,13 @@ impl GpuCli {
     pub(crate) fn imply_shareable(&mut self) {
         if self.shareable || self.mempool_trim || self.mempool_no_reuse || self.mempool_max != 0 {
             self.mempool = true;
+        }
+    }
+
+    /// `--ipc` implies [`Self::sync_alloc`]. Call after sim-flag checks.
+    pub(crate) fn imply_sync_alloc(&mut self) {
+        if self.ipc {
+            self.sync_alloc = true;
         }
     }
 
@@ -714,6 +724,30 @@ impl GpuCli {
         Ok(())
     }
 
+    /// `--ipc` needs `cudaMalloc` (`cudaIpcGetMemHandle`). Distinct from `--shareable`.
+    pub(crate) fn check_ipc(self) -> Result<(), String> {
+        if !self.ipc {
+            return Ok(());
+        }
+        if self.shareable {
+            return Err("choose one of --ipc, --shareable".into());
+        }
+        if self.mapped
+            || self.host_register_mapped
+            || self.managed
+            || self.vmm
+            || self.stream_attach
+            || self.managed_host
+            || self.prefetch_host
+            || self.no_read_mostly
+            || self.no_preferred
+            || self.no_mem_prefetch
+        {
+            return Err("--ipc needs cudaMalloc".into());
+        }
+        Ok(())
+    }
+
     /// `--memcpy-attr` needs async pinned/VMM H2D.
     pub(crate) fn check_memcpy_attr(self) -> Result<(), String> {
         if !self.memcpy_attr {
@@ -732,6 +766,7 @@ impl GpuCli {
             || self.host_register
             || self.host_unregister
             || self.sync_alloc
+            || self.ipc
             || self.sync_memops
             || self.device_sync_memops
         {
@@ -920,6 +955,7 @@ impl GpuCli {
             (self.mempool_no_reuse, "--mempool-no-reuse"),
             (self.mempool_max != 0, "--mempool-max"),
             (self.shareable, "--shareable"),
+            (self.ipc, "--ipc"),
             (self.pageable, "--pageable"),
             (self.host_register, "--host-register"),
             (self.host_unregister, "--host-unregister"),
@@ -1287,6 +1323,7 @@ pub(crate) fn gpu_knobs(gpu: GpuCli) -> GpuStoreCfg {
         mempool_no_reuse: gpu.mempool_no_reuse,
         mempool_max: gpu.mempool_max,
         shareable: gpu.shareable,
+        ipc: gpu.ipc,
         vmm_page: gpu.vmm_page,
         pageable: gpu.pageable,
         host_register: gpu.host_register,

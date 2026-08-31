@@ -411,6 +411,55 @@ pub(crate) fn check_host_unregister(
     Ok(())
 }
 
+/// `--ipc` needs host-sync `cudaMalloc` (`cudaIpcGetMemHandle` / `OpenMemHandle`).
+///
+/// Distinct from `--shareable` (POSIX-FD mempool IPC). No auto-imply of
+/// `--sync-alloc` here (CLI implies; `with_cfg` / `validate_sim_cfg` refuse).
+pub(crate) fn check_ipc(
+    ipc: bool,
+    sync_alloc: bool,
+    mapped: bool,
+    managed: bool,
+    vmm: bool,
+    shareable: bool,
+) -> Result<(), Error> {
+    if !ipc {
+        return Ok(());
+    }
+    if !sync_alloc {
+        return Err(Error::Store("ipc needs sync-alloc"));
+    }
+    if mapped || managed || vmm {
+        return Err(Error::Store("ipc needs cudaMalloc"));
+    }
+    if shareable {
+        return Err(Error::Store("choose one of ipc, shareable"));
+    }
+    Ok(())
+}
+
+/// `cudaIpcGetMemHandle` then `cudaIpcOpenMemHandle`. Alias shares source HBM.
+pub(crate) fn open_ipc_alias(
+    sim: &mut Sim,
+    device: DeviceId,
+    id: AllocId,
+    ipc: bool,
+) -> Result<Option<AllocId>, Error> {
+    if !ipc {
+        return Ok(None);
+    }
+    let h = sim.ipc_get(id)?;
+    Ok(Some(sim.ipc_open(device, h)?))
+}
+
+/// `cudaIpcCloseMemHandle`. No-op when `None`.
+pub(crate) fn close_ipc_alias(sim: &mut Sim, import: Option<AllocId>) -> Result<(), Error> {
+    if let Some(imp) = import {
+        sim.ipc_close(imp)?;
+    }
+    Ok(())
+}
+
 /// `--d2h-evict` needs pinned/VMM device pages (`cudaMemcpyAsync` Device→HostPinned).
 pub(crate) fn check_d2h_evict(d2h_evict: bool, mapped: bool, managed: bool) -> Result<(), Error> {
     if !d2h_evict {
@@ -776,6 +825,13 @@ pub struct SimCfg {
     /// [`Self::vmm`]. Decode identity stays the device default pool.
     /// [`crate::GpuStoreCfg::shareable`] is the store path.
     pub shareable: bool,
+    /// `cudaIpcGetMemHandle` / `cudaIpcOpenMemHandle` of each miss `cudaMalloc`.
+    ///
+    /// Alias shares source physicals (no extra HBM). Close before `cudaFree`.
+    /// Implies [`Self::sync_alloc`]. Illegal with mapped/managed/vmm and
+    /// [`Self::shareable`]. Decode identity GEMMs on the `cudaMalloc` pointer
+    /// with no IPC handshake. [`crate::GpuStoreCfg::ipc`] is the store path.
+    pub ipc: bool,
     /// `cudaHostAllocMapped`: miss pages are mapped host, not HBM. Kernels run
     /// over PCIe with no H2D. Hits/misses follow the same walker; `hbm_peak`
     /// stays near zero. [`Self::host_register_mapped`] is `alloc_host` then
@@ -1491,6 +1547,7 @@ impl SimCfg {
             mempool_no_reuse: false,
             mempool_max: 0,
             shareable: false,
+            ipc: false,
             mapped: false,
             managed: false,
             vmm: false,
@@ -1692,16 +1749,16 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     if cfg.pdl && cfg.cooperative {
         return Err(Error::Store("choose one of pdl, cooperative"));
     }
-    if cfg.shareable && (cfg.sync_alloc || cfg.mapped || cfg.managed || cfg.vmm) {
+    if cfg.shareable && (cfg.sync_alloc || cfg.ipc || cfg.mapped || cfg.managed || cfg.vmm) {
         return Err(Error::Store("shareable needs cudaMallocAsync"));
     }
-    if cfg.mempool_trim && cfg.sync_alloc {
+    if cfg.mempool_trim && (cfg.sync_alloc || cfg.ipc) {
         return Err(Error::Store("mempool-trim needs cudaMallocAsync"));
     }
-    if cfg.mempool_no_reuse && cfg.sync_alloc {
+    if cfg.mempool_no_reuse && (cfg.sync_alloc || cfg.ipc) {
         return Err(Error::Store("mempool-no-reuse needs cudaMallocAsync"));
     }
-    if cfg.mempool_max > 0 && cfg.sync_alloc {
+    if cfg.mempool_max > 0 && (cfg.sync_alloc || cfg.ipc) {
         return Err(Error::Store("mempool-max needs cudaMallocAsync"));
     }
     if cfg.memcpy_during && !cfg.memcpy_batch {
@@ -1718,7 +1775,7 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
         cfg.mapped || cfg.host_register_mapped,
         cfg.managed,
         cfg.pageable,
-        cfg.sync_alloc,
+        cfg.sync_alloc || cfg.ipc,
         cfg.sync_memops,
         cfg.device_sync_memops,
     )?;
@@ -1733,6 +1790,7 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
     if cfg.memcpy_batch
         && (cfg.pageable
             || cfg.sync_alloc
+            || cfg.ipc
             || cfg.mapped
             || cfg.managed
             || cfg.host_register_mapped
@@ -1759,6 +1817,14 @@ pub(crate) fn validate_sim_cfg(cfg: &SimCfg, profile: &HardwareProfile) -> Resul
         return Err(Error::Store("host-register needs pinned/vmm H2D"));
     }
     check_host_unregister(cfg.host_unregister, cfg.host_register)?;
+    check_ipc(
+        cfg.ipc,
+        cfg.sync_alloc,
+        cfg.mapped || cfg.host_register_mapped,
+        cfg.managed,
+        cfg.vmm,
+        cfg.shareable,
+    )?;
     if cfg.host_register_mapped && !cfg.mapped {
         return Err(Error::Store("host-register-mapped needs mapped"));
     }
@@ -1895,6 +1961,7 @@ pub fn sim_replay_cfg(
         prefetch_host: cfg.prefetch_host,
         d2h_evict: cfg.d2h_evict,
         d2h_pageable: cfg.d2h_pageable,
+        ipc: cfg.ipc,
     };
     let mut token_ends: Vec<u64> = Vec::new();
     let mut ctr = ReplayCounters::default();
@@ -2103,6 +2170,8 @@ pub(crate) struct TouchArgs {
     pub d2h_evict: bool,
     /// [`SimCfg::d2h_pageable`]: Device→Host pageable memcpy before pinned/VMM free.
     pub d2h_pageable: bool,
+    /// [`SimCfg::ipc`]: `cudaIpcGetMemHandle` / `OpenMemHandle` after miss fill.
+    pub ipc: bool,
 }
 
 /// `cudaMemcpyAsync` Device→HostPinned. Source HBM residency is kept until free.
@@ -3272,6 +3341,8 @@ pub(crate) struct PageHandle {
     pub(crate) ready_gen: Option<u64>,
     /// [`TouchArgs::prefetch_host`]: alloc is live on the host, not in HBM.
     pub(crate) host_resident: bool,
+    /// [`TouchArgs::ipc`]: live `cudaIpcOpenMemHandle` alias of `id`.
+    pub(crate) ipc: Option<AllocId>,
 }
 
 pub(crate) fn note_touch(
@@ -3433,6 +3504,12 @@ pub(crate) fn apply_misses(
                 mailbox,
                 ready_gen,
                 host_resident: false,
+                ipc: open_ipc_alias(
+                    sim,
+                    args.d,
+                    id,
+                    args.ipc && !args.mapped && !args.managed && !args.vmm,
+                )?,
             },
         );
     }
@@ -3595,7 +3672,7 @@ pub(crate) fn reclaim_victim(
             let Some(page) = handles.get_mut(&victim) else {
                 return Ok(());
             };
-            drop_replica(sim, page, args.d, next_event, args.bytes)
+            drop_replica(sim, page, args.d, next_event, args.bytes, args.ipc)
         }
     }
 }
@@ -3608,6 +3685,7 @@ fn drop_handle(
     args: TouchArgs,
 ) -> Result<(), Error> {
     graphs.drop_alloc(sim, page.id)?;
+    close_ipc_alias(sim, page.ipc)?;
     if let Some(mb) = page.mailbox {
         free_copy_mailbox(sim, page.device, mb, page.stream, args.sync_alloc)?;
     }
@@ -3697,11 +3775,13 @@ fn drop_replica(
     dst: DeviceId,
     next_event: &mut u32,
     bytes: u64,
+    ipc: bool,
 ) -> Result<(), Error> {
     if !page.replicas.contains(&dst) {
         return Ok(());
     }
     wait_peer(sim, page.device, dst, page.stream, next_event)?;
+    close_ipc_alias(sim, page.ipc.take())?;
     if page_is_managed(sim, page.id) {
         drop_managed_replica(sim, page.id, dst)?;
     } else if page_is_vmm(sim, page.id) {
@@ -3710,6 +3790,14 @@ fn drop_replica(
         sim.free(dst, page.id, page.stream)?;
     }
     page.replicas.retain(|d| *d != dst);
+    page.ipc = open_ipc_alias(
+        sim,
+        page.device,
+        page.id,
+        ipc && !page_is_managed(sim, page.id)
+            && !page_is_vmm(sim, page.id)
+            && !page_is_mapped(sim, page.id),
+    )?;
     Ok(())
 }
 
@@ -4856,6 +4944,7 @@ pub fn sim_remote_home_cfg(
                         no_mem_prefetch: false,
                         stream_attach: false,
                         managed_host: false,
+                        ipc: false,
                     },
                     reuse,
                     fan_in,
@@ -4889,6 +4978,8 @@ pub(crate) struct RemotePage {
     pub(crate) gemm: DeviceId,
     pub(crate) home: DeviceId,
     pub(crate) act: Option<AllocId>,
+    /// [`RemoteFetch::ipc`]: live `cudaIpcOpenMemHandle` alias of `id`.
+    pub(crate) ipc: Option<AllocId>,
 }
 
 pub(crate) struct RemoteFetch {
@@ -4912,6 +5003,8 @@ pub(crate) struct RemoteFetch {
     pub(crate) stream_attach: bool,
     /// [`SimCfg::managed_host`]: Host alloc then Global attach before prefetch.
     pub(crate) managed_host: bool,
+    /// [`SimCfg::ipc`]: `cudaIpcGetMemHandle` / `OpenMemHandle` of the home `cudaMalloc`.
+    pub(crate) ipc: bool,
 }
 
 pub(crate) fn remote_hit(
@@ -4970,12 +5063,14 @@ pub(crate) fn fill_remote(
         fetch.stream,
         fetch.sync_alloc,
     )?;
+    let ipc = open_ipc_alias(sim, fetch.home, id, fetch.ipc)?;
     if fetch.home == fetch.compute {
         return Ok(RemotePage {
             id,
             gemm: fetch.compute,
             home: fetch.home,
             act: None,
+            ipc,
         });
     }
     let bps = sim
@@ -4991,6 +5086,7 @@ pub(crate) fn fill_remote(
                     gemm: fetch.compute,
                     home: fetch.home,
                     act: None,
+                    ipc,
                 });
             }
             let _c = sim.memcpy_device_to_device(
@@ -5006,6 +5102,7 @@ pub(crate) fn fill_remote(
                 gemm: fetch.compute,
                 home: fetch.home,
                 act: None,
+                ipc,
             })
         }
         Placement::DispatchActivations => Ok(RemotePage {
@@ -5013,6 +5110,7 @@ pub(crate) fn fill_remote(
             gemm: fetch.home,
             home: fetch.home,
             act: None,
+            ipc,
         }),
     }
 }
@@ -5057,6 +5155,7 @@ fn fill_remote_managed(
         gemm: fetch.compute,
         home: fetch.home,
         act: None,
+        ipc: None,
     })
 }
 
@@ -5083,6 +5182,7 @@ pub(crate) fn drop_remote(
     stream: StreamId,
     sync: bool,
 ) -> Result<(), Error> {
+    close_ipc_alias(sim, page.ipc)?;
     if page_is_managed(sim, page.id) {
         if page.gemm != page.home {
             sim.synchronize_stream(page.gemm, stream)?;
