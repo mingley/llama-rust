@@ -104,6 +104,9 @@
 //! Writer-tiny NVFP4 LM-head scale ([`tiny_nvfp4_output_s_gguf`]) is NVFP4
 //! plus `{1}` `output.scale`. Writer-tiny fused QKV scale
 //! ([`tiny_bloom_attn_qkv_s_gguf`]) is bloom plus `{1}` `attn_qkv.scale`.
+//! Writer-tiny shared-expert down scale
+//! ([`tiny_qwen2moe_ffn_down_shexp_s_gguf`]) is qwen2moe plus `{1}`
+//! `ffn_down_shexp.scale`.
 
 use crate::gguf::{load_gguf_owned, GgmlType, Gguf, GgufError, Kv, Tensor, TensorWrite};
 pub use crate::kv_page::PagedKvPool;
@@ -246,6 +249,11 @@ const TINY_NVFP4_OUTPUT_S: f32 = 4.0;
 /// and from NVFP4 `output.scale`. Loaded only when fused
 /// `attn_qkv.weight` is present (bloom).
 const TINY_BLOOM_ATTN_QKV_S: f32 = 3.0;
+/// Writer-tiny shared-expert `{1}` `ffn_down_shexp.scale`. Official llama.cpp
+/// generic post-load applies this after the shared-expert down GEMM when
+/// `ffn_down_shexp.weight` is present. Not 1, and distinct from dense
+/// `ffn_down.scale` and per-expert `ffn_down_exps.scale`.
+const TINY_QWEN2MOE_FFN_DOWN_SHEXP_S: f32 = 1.75;
 /// Writer-tiny dense `attn_q.scale` (`{1}`). Not 1, and distinct from
 /// [`TINY_LLAMA_FFN_DOWN_S`], so the walk is observable vs [`tiny_llama_gguf`]
 /// and a mix-up with down scale cannot silently match. Gemma3/4 QK-Norm
@@ -552,6 +560,10 @@ struct Llama4Moe {
     gate_shexp: QuantMat,
     up_shexp: QuantMat,
     down_shexp: QuantMat,
+    /// Official llama.cpp generic `{1}` `ffn_down_shexp.scale`
+    /// (`TENSOR_NOT_REQUIRED`). `build_ffn` `ggml_mul` after the shared-expert
+    /// down GEMM. Missing is `1.0`.
+    down_shexp_s: Option<f32>,
     n_expert: usize,
     n_expert_used: usize,
 }
@@ -599,6 +611,10 @@ struct Qwen2Moe {
     gate_shexp: QuantMat,
     up_shexp: QuantMat,
     down_shexp: QuantMat,
+    /// Official llama.cpp generic `{1}` `ffn_down_shexp.scale`
+    /// (`TENSOR_NOT_REQUIRED`). `build_ffn` `ggml_mul` after the shared-expert
+    /// down GEMM, before `ffn_gate_inp_shexp` sigmoid. Missing is `1.0`.
+    down_shexp_s: Option<f32>,
     n_expert: usize,
     n_expert_used: usize,
 }
@@ -1830,7 +1846,8 @@ impl Llama {
     /// [`tiny_llama_ffn_gate_s_gguf`]. Dense `{1}` `ffn_up.scale` is
     /// [`tiny_llama_ffn_up_s_gguf`]. NVFP4 `{1}` `output.scale` is
     /// [`tiny_nvfp4_output_s_gguf`]. Fused `{1}` `attn_qkv.scale` is
-    /// [`tiny_bloom_attn_qkv_s_gguf`].
+    /// [`tiny_bloom_attn_qkv_s_gguf`]. Shared-expert `{1}`
+    /// `ffn_down_shexp.scale` is [`tiny_qwen2moe_ffn_down_shexp_s_gguf`].
     ///
     /// Takes the GGUF's file blob once. Weight matrices keep offsets into that
     /// blob; they do not clone tensor bytes. When `output.weight` is absent,
@@ -5228,7 +5245,8 @@ pub fn tiny_llama_moe_gguf() -> Vec<u8> {
 /// `general.architecture=qwen2moe`. Decode follows llama.cpp
 /// `src/models/qwen2moe.cpp`: `build_moe_ffn` softmax then top-k, `norm_w=false`;
 /// SwiGLU experts; shared expert (`*_shexp` + `ffn_gate_inp_shexp`) gated by
-/// `silu(x)/x` (sigmoid). Not `qwen3moe`, not Mixtral, not Llama4 sigmoid /
+/// `silu(x)/x` (sigmoid). Optional `{1}` `ffn_down_shexp.scale` is
+/// [`tiny_qwen2moe_ffn_down_shexp_s_gguf`]. Not `qwen3moe`, not Mixtral, not Llama4 sigmoid /
 /// weight-before-FFN, not llama-MoE `norm_w`. No QK-Norm, embed-scale, or vision.
 pub fn tiny_qwen2moe_gguf() -> Vec<u8> {
     tiny_arch_gguf(TinySpec {
@@ -5244,6 +5262,31 @@ pub fn tiny_qwen2moe_gguf() -> Vec<u8> {
         gemma4_ple: false,
         gemma4_fused: false,
     })
+}
+
+/// Writer-built Qwen2MoE GGUF with official `{1}` `ffn_down_shexp.scale`.
+///
+/// Same tensors as [`tiny_qwen2moe_gguf`] plus `blk.0.ffn_down_shexp.scale`.
+/// llama.cpp `build_ffn` applies `ggml_mul` after the shared-expert down GEMM
+/// (`TENSOR_NOT_REQUIRED`; missing is `1.0`) before `ffn_gate_inp_shexp`
+/// sigmoid. Loaded only when `ffn_down_shexp.weight` is present. Dense
+/// `ffn_down.scale` and per-expert `ffn_down_exps.scale` stay those tensors.
+/// Files without shexp that contain `ffn_down_shexp.scale` are ignored (not
+/// loaded).
+pub fn tiny_qwen2moe_ffn_down_shexp_s_gguf() -> Vec<u8> {
+    rewrite_tiny_qwen2moe_ffn_down_shexp_s(
+        tiny_qwen2moe_gguf(),
+        Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S),
+    )
+    .unwrap_or_else(|_| Vec::new())
+}
+
+/// Append or omit `blk.0.ffn_down_shexp.scale`.
+fn rewrite_tiny_qwen2moe_ffn_down_shexp_s(
+    bytes: Vec<u8>,
+    scale: Option<f32>,
+) -> Result<Vec<u8>, GgufError> {
+    rewrite_tiny_llama_unit_scale(bytes, "blk.0.ffn_down_shexp.scale", scale)
 }
 
 /// Writer-built official Qwen3MoE GGUF: `architecture=qwen3moe` with `qwen3moe.*` KV.
@@ -9145,6 +9188,7 @@ fn load_llama4_moe(g: &Gguf, i: usize, h: &Llama4Hparams) -> Result<Llama4Moe, L
         gate_shexp,
         up_shexp,
         down_shexp,
+        down_shexp_s: load_unit_scale(g, &format!("blk.{i}.ffn_down_shexp.scale"))?,
         n_expert: h.n_expert,
         n_expert_used: h.n_expert_used,
     })
@@ -9200,6 +9244,7 @@ fn load_qwen2moe(g: &Gguf, i: usize, h: &Qwen2MoeHparams) -> Result<Qwen2Moe, Ll
         gate_shexp,
         up_shexp,
         down_shexp,
+        down_shexp_s: load_unit_scale(g, &format!("blk.{i}.ffn_down_shexp.scale"))?,
         n_expert: h.n_expert,
         n_expert_used: h.n_expert_used,
     })
@@ -9408,6 +9453,7 @@ fn is_applied_norm_or_bias(name: &str) -> bool {
         || name.ends_with(".ffn_up_exps.scale")
         || name.ends_with(".ffn_down_exps.scale")
         || name.ends_with(".ffn_down.scale")
+        || name.ends_with(".ffn_down_shexp.scale")
         || name.ends_with(".ffn_gate.scale")
         || name.ends_with(".ffn_up.scale")
         || name.ends_with(".attn_q.scale")
@@ -10154,6 +10200,15 @@ impl Llama {
             *hv *= *uv;
         }
         self.gemm_into(&moe.down_shexp, n_tokens, &s.gate, &mut s.ffn_out, pool)?;
+        if let Some(scale) = moe.down_shexp_s {
+            scale_expert_rows(
+                &mut s.ffn_out,
+                n_tokens,
+                n_embd,
+                scale,
+                "ffn_down_shexp.scale",
+            )?;
+        }
         self.gemm_into(
             &moe.gate_inp_shexp,
             n_tokens,
@@ -10252,6 +10307,15 @@ impl Llama {
             *hv *= *uv;
         }
         self.gemm_into(&moe.down_shexp, n_tokens, &s.gate, &mut s.ffn_out, pool)?;
+        if let Some(scale) = moe.down_shexp_s {
+            scale_expert_rows(
+                &mut s.ffn_out,
+                n_tokens,
+                n_embd,
+                scale,
+                "ffn_down_shexp.scale",
+            )?;
+        }
         self.route_llama4_tokens(moe, n_tokens, s, pool, moe_trace)?;
         prefetch_routed(moe_trace, store, n_tokens, moe.n_expert_used, &s.moe.sel_e);
         prefetch_selected(moe_trace, store, n_tokens, moe.n_expert_used, &s.moe.sel_e);
@@ -13331,6 +13395,10 @@ mod tests {
         oracle_mul_unit_scale(g, layer, "ffn_down.scale", y);
     }
 
+    fn oracle_mul_ffn_down_shexp_s(g: &Gguf, layer: usize, y: &mut [f32]) {
+        oracle_mul_unit_scale(g, layer, "ffn_down_shexp.scale", y);
+    }
+
     fn oracle_mul_ffn_gate_s(g: &Gguf, layer: usize, y: &mut [f32]) {
         oracle_mul_unit_scale(g, layer, "ffn_gate.scale", y);
     }
@@ -13475,6 +13543,7 @@ mod tests {
             g.tensor(&tname(layer, "ffn_down_shexp.weight")).unwrap(),
             &h_s,
         );
+        oracle_mul_ffn_down_shexp_s(g, layer, &mut shexp);
         let gate_inp_s = oracle_gemv(
             g.tensor(&tname(layer, "ffn_gate_inp_shexp.weight"))
                 .unwrap(),
@@ -13533,10 +13602,11 @@ mod tests {
             .zip(up_s.iter())
             .map(|(gv, u)| (gv / (1.0 + (-gv).exp())) * u)
             .collect();
-        let shexp = oracle_gemv(
+        let mut shexp = oracle_gemv(
             g.tensor(&tname(layer, "ffn_down_shexp.weight")).unwrap(),
             &h_s,
         );
+        oracle_mul_ffn_down_shexp_s(g, layer, &mut shexp);
         routed
             .iter()
             .zip(shexp.iter())
@@ -13597,6 +13667,7 @@ mod tests {
             g.tensor(&tname(layer, "ffn_down_shexp.weight")).unwrap(),
             &h_s,
         );
+        oracle_mul_ffn_down_shexp_s(g, layer, &mut shexp);
         let gate_inp_s = oracle_gemv(
             g.tensor(&tname(layer, "ffn_gate_inp_shexp.weight"))
                 .unwrap(),
@@ -15940,6 +16011,7 @@ mod tests {
             tiny_nvfp4_gguf(),
             tiny_nvfp4_output_s_gguf(),
             tiny_bloom_attn_qkv_s_gguf(),
+            tiny_qwen2moe_ffn_down_shexp_s_gguf(),
             tiny_q10_gguf(),
             tiny_q20_gguf(),
             tiny_q40_gguf(),
@@ -15990,6 +16062,7 @@ mod tests {
             tiny_llama4_gguf(),
             tiny_llama_moe_gguf(),
             tiny_qwen2moe_gguf(),
+            tiny_qwen2moe_ffn_down_shexp_s_gguf(),
             tiny_qwen3moe_gguf(),
             tiny_qwen3moe_2layer_gguf(),
             tiny_qwen2vl_gguf(),
@@ -15999,6 +16072,7 @@ mod tests {
             tiny_phi2_gguf(),
             tiny_bloom_gguf(),
             tiny_bloom_attn_qkv_s_gguf(),
+            tiny_qwen2moe_ffn_down_shexp_s_gguf(),
         ] {
             load_prefill_match(&bytes, &tokens);
             load_prefill_match(&bytes, &[3]);
@@ -16060,6 +16134,10 @@ mod tests {
             ("llama-ffn-up-s", tiny_llama_ffn_up_s_gguf()),
             ("nvfp4-output-s", tiny_nvfp4_output_s_gguf()),
             ("bloom-attn-qkv-s", tiny_bloom_attn_qkv_s_gguf()),
+            (
+                "qwen2moe-ffn-down-shexp-s",
+                tiny_qwen2moe_ffn_down_shexp_s_gguf(),
+            ),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("f16", tiny_f16_gguf()),
@@ -16168,6 +16246,10 @@ mod tests {
             ("llama-ffn-up-s", tiny_llama_ffn_up_s_gguf()),
             ("nvfp4-output-s", tiny_nvfp4_output_s_gguf()),
             ("bloom-attn-qkv-s", tiny_bloom_attn_qkv_s_gguf()),
+            (
+                "qwen2moe-ffn-down-shexp-s",
+                tiny_qwen2moe_ffn_down_shexp_s_gguf(),
+            ),
             ("qwen3", tiny_qwen3_gguf()),
             ("llama4", tiny_llama4_gguf()),
             ("llama-moe", tiny_llama_moe_gguf()),
@@ -19464,6 +19546,239 @@ mod tests {
     }
 
     #[test]
+    fn tiny_qwen2moe_ffn_down_shexp_s_load_gemv_gemm_embed_and_greedy() {
+        let bytes = tiny_qwen2moe_ffn_down_shexp_s_gguf();
+        let g = load_gguf(&bytes).expect("load qwen2moe ffn_down_shexp.scale");
+        assert_eq!(
+            g.kv("general.architecture"),
+            Some(&Kv::String("qwen2moe".into()))
+        );
+        let scale = g
+            .tensor("blk.0.ffn_down_shexp.scale")
+            .expect("down_shexp_s");
+        assert_eq!(scale.n_cols(), 1);
+        assert_eq!(
+            f32s(scale).expect("f32s").first().copied(),
+            Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S)
+        );
+        let model = Llama::from_gguf(g.clone()).expect("model");
+        match &model.layers[0].ffn {
+            LayerFfn::Qwen2Moe(moe) => {
+                assert_eq!(moe.down_shexp_s, Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S));
+            }
+            _ => panic!("expected qwen2moe ffn"),
+        }
+        let qwen2moe = load_gguf(&tiny_qwen2moe_gguf()).expect("qwen2moe");
+        assert!(qwen2moe.tensor("blk.0.ffn_down_shexp.scale").is_none());
+        assert!(qwen2moe.tensor("blk.0.ffn_down_shexp.weight").is_some());
+        assert_ne!(
+            oracle_forward_seq(&g, &[1, 2, 3]),
+            oracle_forward_seq(&qwen2moe, &[1, 2, 3]),
+            "oracle ffn_down_shexp.scale vs qwen2moe"
+        );
+        load_fwd_match(&bytes, 3);
+        load_prefill_match(&bytes, &[1, 2, 3]);
+        let tok = Tokenizer::from_gguf(&g).expect("tok");
+        let out = greedy_generate(&model, &tok, "ab", 2).expect("gen");
+        let out2 = greedy_generate(&model, &tok, "ab", 2).expect("gen2");
+        assert_eq!(out, out2);
+        let tokens = [1u32, 2, 3];
+        let mut sc = model.new_cache(8).expect("sc");
+        let scaled = model.prefill(&mut sc, &tokens).expect("shexp_s pref");
+        let qwen2moe_pref = {
+            let qm = Llama::from_gguf(qwen2moe.clone()).expect("qm");
+            match &qm.layers[0].ffn {
+                LayerFfn::Qwen2Moe(moe) => assert!(moe.down_shexp_s.is_none()),
+                _ => panic!("expected qwen2moe ffn"),
+            }
+            let mut c = qm.new_cache(8).expect("qc");
+            qm.prefill(&mut c, &tokens).expect("qwen2moe pref")
+        };
+        assert_ne!(
+            scaled, qwen2moe_pref,
+            "ffn_down_shexp.scale 1.75 must not copy qwen2moe logits"
+        );
+        let ones_pref = {
+            let ones_bytes =
+                rewrite_tiny_qwen2moe_ffn_down_shexp_s(tiny_qwen2moe_gguf(), Some(1.0))
+                    .expect("ones bytes");
+            let og = load_gguf(&ones_bytes).expect("ones g");
+            assert_eq!(
+                oracle_forward_seq(&og, &tokens),
+                oracle_forward_seq(&qwen2moe, &tokens),
+                "scale=1.0 must match omitted ffn_down_shexp.scale"
+            );
+            let om = Llama::from_gguf(og).expect("om");
+            let mut c = om.new_cache(8).expect("oc");
+            om.prefill(&mut c, &tokens).expect("ones pref")
+        };
+        assert_eq!(
+            ones_pref, qwen2moe_pref,
+            "all-ones ffn_down_shexp.scale must be identity with qwen2moe"
+        );
+        let down_s = load_gguf(&tiny_llama_ffn_down_s_gguf()).expect("down_s");
+        assert_ne!(
+            oracle_forward_seq(&g, &tokens),
+            oracle_forward_seq(&down_s, &tokens),
+            "ffn_down_shexp.scale must not copy ffn_down.scale logits"
+        );
+        {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_qwen2moe_gguf(),
+                "blk.0.ffn_down.scale",
+                Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S),
+            )
+            .expect("dense on moe bytes");
+            let dg = load_gguf(&bytes).expect("dense on moe g");
+            assert!(dg.tensor("blk.0.ffn_down.scale").is_some());
+            assert_eq!(
+                oracle_forward_seq(&dg, &tokens),
+                oracle_forward_seq(&qwen2moe, &tokens),
+                "qwen2moe ffn_down.scale must be ignored"
+            );
+        }
+        let llama_with = {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_llama_gguf(),
+                "blk.0.ffn_down_shexp.scale",
+                Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S),
+            )
+            .expect("llama shexp_s bytes");
+            let lg = load_gguf(&bytes).expect("llama shexp_s g");
+            assert!(lg.tensor("blk.0.ffn_down_shexp.scale").is_some());
+            let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+            assert_eq!(
+                oracle_forward_seq(&lg, &tokens),
+                oracle_forward_seq(&llama, &tokens),
+                "llama ffn_down_shexp.scale must be ignored"
+            );
+            let lm = Llama::from_gguf(lg).expect("lm");
+            match &lm.layers[0].ffn {
+                LayerFfn::Dense(d) => assert!(d.down_s.is_none()),
+                _ => panic!("expected dense ffn"),
+            }
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama shexp_s pref")
+        };
+        let llama_pref = {
+            let llama = load_gguf(&tiny_llama_gguf()).expect("llama");
+            let lm = Llama::from_gguf(llama).expect("lm");
+            let mut c = lm.new_cache(8).expect("lc");
+            lm.prefill(&mut c, &tokens).expect("llama pref")
+        };
+        assert_eq!(
+            llama_with, llama_pref,
+            "llama ffn_down_shexp.scale must be identity with llama"
+        );
+        let qwen3moe_with = {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_qwen3moe_gguf(),
+                "blk.0.ffn_down_shexp.scale",
+                Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S),
+            )
+            .expect("qwen3moe shexp_s bytes");
+            let mg = load_gguf(&bytes).expect("qwen3moe shexp_s g");
+            assert!(mg.tensor("blk.0.ffn_down_shexp.scale").is_some());
+            let q3 = load_gguf(&tiny_qwen3moe_gguf()).expect("qwen3moe");
+            assert_eq!(
+                oracle_forward_seq(&mg, &tokens),
+                oracle_forward_seq(&q3, &tokens),
+                "qwen3moe ffn_down_shexp.scale must be ignored"
+            );
+            let mm = Llama::from_gguf(mg).expect("mm");
+            match &mm.layers[0].ffn {
+                LayerFfn::Qwen3Moe(_) => {}
+                _ => panic!("expected qwen3moe ffn"),
+            }
+            let mut c = mm.new_cache(8).expect("mc");
+            mm.prefill(&mut c, &tokens).expect("qwen3moe shexp_s pref")
+        };
+        let qwen3moe_pref = {
+            let q3 = load_gguf(&tiny_qwen3moe_gguf()).expect("qwen3moe");
+            let mm = Llama::from_gguf(q3).expect("mm");
+            let mut c = mm.new_cache(8).expect("mc");
+            mm.prefill(&mut c, &tokens).expect("qwen3moe pref")
+        };
+        assert_eq!(
+            qwen3moe_with, qwen3moe_pref,
+            "qwen3moe ffn_down_shexp.scale must be identity with qwen3moe"
+        );
+        {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_llama4_gguf(),
+                "blk.0.ffn_down_shexp.scale",
+                Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S),
+            )
+            .expect("llama4 shexp_s bytes");
+            let l4g = load_gguf(&bytes).expect("llama4 shexp_s g");
+            let l4 = load_gguf(&tiny_llama4_gguf()).expect("llama4");
+            assert_ne!(
+                oracle_forward_seq(&l4g, &tokens),
+                oracle_forward_seq(&l4, &tokens),
+                "llama4 ffn_down_shexp.scale must change logits"
+            );
+            let l4m = Llama::from_gguf(l4g).expect("l4m");
+            match &l4m.layers[0].ffn {
+                LayerFfn::Llama4Moe(moe) => {
+                    assert_eq!(moe.down_shexp_s, Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S));
+                }
+                _ => panic!("expected llama4 moe"),
+            }
+        }
+        {
+            let bytes = rewrite_tiny_llama_unit_scale(
+                tiny_qwen3next_gguf(),
+                "blk.0.ffn_down_shexp.scale",
+                Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S),
+            )
+            .expect("qwen3next shexp_s bytes");
+            let ng = load_gguf(&bytes).expect("qwen3next shexp_s g");
+            let n0 = load_gguf(&tiny_qwen3next_gguf()).expect("qwen3next");
+            assert_ne!(
+                oracle_forward_seq(&ng, &tokens),
+                oracle_forward_seq(&n0, &tokens),
+                "qwen3next ffn_down_shexp.scale must change logits"
+            );
+            let nm = Llama::from_gguf(ng).expect("nm");
+            match &nm.layers[0].ffn {
+                LayerFfn::Qwen3Next(moe) => {
+                    assert_eq!(moe.down_shexp_s, Some(TINY_QWEN2MOE_FFN_DOWN_SHEXP_S));
+                }
+                _ => panic!("expected qwen3next ffn"),
+            }
+        }
+        let bad = {
+            let g0 = load_gguf_owned(tiny_qwen2moe_gguf()).expect("bad g0");
+            let kv: Vec<(String, Kv)> = g0.kv.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+            let mut tensors = Vec::new();
+            for t in g0.tensors() {
+                tensors.push(TensorWrite {
+                    name: t.name.to_string(),
+                    ty: t.ty,
+                    shape: t.shape.to_vec(),
+                    data: t.data.to_vec(),
+                });
+            }
+            let short = [2.0f32, 3.0];
+            tensors.push(tw(
+                "blk.0.ffn_down_shexp.scale",
+                GgmlType::F32,
+                vec![2],
+                pack_vec1d(GgmlType::F32, &short),
+            ));
+            write_gguf_with_kv(&kv, &tensors)
+        };
+        let err = match Llama::from_gguf(load_gguf(&bad).expect("bad load")) {
+            Ok(_) => panic!("expected ffn_down_shexp.scale shape"),
+            Err(e) => e.to_string(),
+        };
+        assert!(
+            err.contains("ffn_down_shexp.scale"),
+            "error should name tensor: {err}"
+        );
+    }
+
+    #[test]
     fn tiny_qwen3_load_gemv_gemm_embed_and_greedy() {
         let bytes = tiny_qwen3_gguf();
         let g = load_gguf(&bytes).expect("load qwen3");
@@ -22138,7 +22453,7 @@ mod bench {
     fn bench_logits_fingerprint() {
         // Every zero-argument fixture in the suite, so that each architecture
         // walk and each dtype kernel the decode path can reach is pinned.
-        let cases: [(&str, Vec<u8>); 75] = [
+        let cases: [(&str, Vec<u8>); 76] = [
             ("llama", tiny_llama_gguf()),
             ("tied", tiny_tied_gguf()),
             ("tied_copy", tiny_tied_copy_gguf()),
@@ -22205,6 +22520,10 @@ mod bench {
             ("nvfp4", tiny_nvfp4_gguf()),
             ("nvfp4_output_s", tiny_nvfp4_output_s_gguf()),
             ("bloom_attn_qkv_s", tiny_bloom_attn_qkv_s_gguf()),
+            (
+                "qwen2moe_ffn_down_shexp_s",
+                tiny_qwen2moe_ffn_down_shexp_s_gguf(),
+            ),
             ("iq1s", tiny_iq1s_gguf()),
             ("iq1m", tiny_iq1m_gguf()),
             ("iq2xxs", tiny_iq2xxs_gguf()),

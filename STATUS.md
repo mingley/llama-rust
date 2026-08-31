@@ -5,6 +5,18 @@ Visible five-turn extract: [docs/chatgpt-share-6a920fe1.md](docs/chatgpt-share-6
 Complete share-API extract: [docs/chatgpt-share-6a920fe1/](docs/chatgpt-share-6a920fe1/).
 Work lands on `main`. No PRs.
 
+## Shipped 2026-08-31 — official shared-expert `{1}` `ffn_down_shexp.scale`
+
+llama.cpp `build_ffn` applies `ggml_mul` after the shared-expert down GEMM
+(`TENSOR_NOT_REQUIRED`; missing is `1.0`) before `ffn_gate_inp_shexp`
+sigmoid. Decode loads `blk.{i}.ffn_down_shexp.scale` only when
+`ffn_down_shexp.weight` is present (qwen2moe / qwen3next / llama4).
+Writer-tiny `tiny-qwen2moe-ffn-down-shexp-s` is `tiny-qwen2moe` plus
+scale `1.75`. Llama / qwen3moe files that contain `ffn_down_shexp.scale`
+are ignored (not loaded). Dense `ffn_down.scale` and per-expert
+`ffn_down_exps.scale` stay those tensors. Do not invent
+`output.input_scale` this slice.
+
 ## Shipped 2026-08-31 — official fused `{1}` `attn_qkv.scale`
 
 llama.cpp `build_qkv` applies `wqkv_s` after the fused QKV GEMM, before

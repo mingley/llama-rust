@@ -19,11 +19,12 @@ use llama_rust::{
     tiny_llama_attn_k_s_gguf, tiny_llama_attn_out_s_gguf, tiny_llama_attn_q_s_gguf,
     tiny_llama_attn_v_s_gguf, tiny_llama_ffn_down_s_gguf, tiny_llama_ffn_gate_s_gguf,
     tiny_llama_ffn_up_s_gguf, tiny_llama_gguf, tiny_llama_moe_gguf, tiny_nvfp4_output_s_gguf,
-    tiny_phi2_gguf, tiny_qwen2_gguf, tiny_qwen2moe_gguf, tiny_qwen2vl_gguf, tiny_qwen35_gguf,
-    tiny_qwen3_gguf, tiny_qwen3moe_2layer_gguf, tiny_qwen3moe_gguf, tiny_qwen3next_gguf,
-    tiny_qwen3vl_gguf, write_gguf, write_gguf_with_kv, ChatCmd, EngineCmd, GgmlType, InferArgs,
-    InferCmd, Kv, Llama, ServeCmd, TensorWrite, Tokenizer, TraceCmd, BIN_USAGE, CHAT_USAGE,
-    ENGINE_USAGE, INFER_USAGE, QK8_0, QK_K, SERVE_USAGE, TRACE_USAGE,
+    tiny_phi2_gguf, tiny_qwen2_gguf, tiny_qwen2moe_ffn_down_shexp_s_gguf, tiny_qwen2moe_gguf,
+    tiny_qwen2vl_gguf, tiny_qwen35_gguf, tiny_qwen3_gguf, tiny_qwen3moe_2layer_gguf,
+    tiny_qwen3moe_gguf, tiny_qwen3next_gguf, tiny_qwen3vl_gguf, write_gguf, write_gguf_with_kv,
+    ChatCmd, EngineCmd, GgmlType, InferArgs, InferCmd, Kv, Llama, ServeCmd, TensorWrite, Tokenizer,
+    TraceCmd, BIN_USAGE, CHAT_USAGE, ENGINE_USAGE, INFER_USAGE, QK8_0, QK_K, SERVE_USAGE,
+    TRACE_USAGE,
 };
 
 fn y_checksum(y: &[f32]) -> u64 {
@@ -520,6 +521,15 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         "write-tiny-llama-moe" => {
             let path = args.next().ok_or("write-tiny-llama-moe <path>")?;
             let bytes = tiny_llama_moe_gguf();
+            write_path(Path::new(&path), &bytes)?;
+            println!("wrote {path} bytes={}", bytes.len());
+            Ok(())
+        }
+        "write-tiny-qwen2moe-ffn-down-shexp-s" => {
+            let path = args
+                .next()
+                .ok_or("write-tiny-qwen2moe-ffn-down-shexp-s <path>")?;
+            let bytes = tiny_qwen2moe_ffn_down_shexp_s_gguf();
             write_path(Path::new(&path), &bytes)?;
             println!("wrote {path} bytes={}", bytes.len());
             Ok(())

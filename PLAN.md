@@ -4554,13 +4554,26 @@ model, do not celebrate the sim.
     `output.input_scale` this slice. `gpu-profile capture` is still
     refused. Dual score still has no `$/M tokens`.
 
-408. [ ] Next numbered PLAN item after 407 is the next `gpu-sim` / Engine /
+408. [x] Official shared-expert `{1}` `ffn_down_shexp.scale`: llama.cpp
+    `build_ffn` applies `ggml_mul` after the shared-expert down GEMM
+    (`TENSOR_NOT_REQUIRED`; missing is `1.0`) before `ffn_gate_inp_shexp`
+    sigmoid. Loaded only when `ffn_down_shexp.weight` is present
+    (qwen2moe / qwen3next / llama4). Writer-tiny
+    `tiny-qwen2moe-ffn-down-shexp-s` is `tiny-qwen2moe` plus scale `1.75`.
+    Llama / qwen3moe files that contain `ffn_down_shexp.scale` are ignored
+    (not loaded). Dense `ffn_down.scale` and per-expert `ffn_down_exps.scale`
+    stay those tensors. Do not invent `output.input_scale` this slice.
+    `gpu-profile capture` is still refused. Dual score still has no
+    `$/M tokens`.
+
+409. [ ] Next numbered PLAN item after 408 is the next `gpu-sim` / Engine /
     serve / expertvm mechanical API that is still missing, or the next official
     decode family. Prefer remaining CUDA-shaped twins over more
     OpenAI HTTP veneer. Do not invent F32 `output.scale`. Do not invent a
     second NVFP4 `output.scale` as a new family. Do not invent
     `output.input_scale` / `*.input_scale` this slice. Do not invent a second
     fused `attn_qkv.scale` as a new family. Do not invent a second
+    `ffn_down_shexp.scale` as a new family. Do not invent a second
     `cuGreenCtxRecordEvent` / `WaitEvent`. Do not invent a second
     `cudaExecutionCtxSynchronize`. Do not invent a second
     `cuStreamGetDevResource`. Do not invent gemma4 `attn_q.scale` / `attn_output.scale` / `attn_k.scale` /
